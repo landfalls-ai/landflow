@@ -3,8 +3,9 @@
  * the caret and sample data (the node's input items, upstream nodes' last
  * output, variable names), it works out what is being typed (`$json.us…`,
  * `$('Na…`, `$now.to…`) and returns the matching fields, methods and
- * variables. Pure functions: the input component (expression-input.tsx) only
- * renders the result.
+ * variables. In credential fields (`scope: 'credential'`) only `$secrets` is
+ * offered: providers, then their secret names. Pure functions: the input
+ * component (expression-input.tsx) only renders the result.
  */
 
 export interface CompletionData {
@@ -14,6 +15,10 @@ export interface CompletionData {
   nodes: Array<{ name: string; json?: unknown }>;
   /** `$vars` names. */
   vars: string[];
+  /** External secrets: each enabled provider's secret names (`$secrets.<provider>.<name>`), for credential fields. */
+  secrets?: Record<string, string[]>;
+  /** `credential`: a credential field, where only `$secrets` is offered (node parameters can't read secrets). */
+  scope?: 'node' | 'credential';
 }
 
 export interface Completion {
@@ -81,6 +86,8 @@ type Abstract =
   | { kind: 'item'; json: unknown }
   | { kind: 'date' }
   | { kind: 'vars'; names: string[] }
+  | { kind: 'secrets'; providers: Record<string, string[]> }
+  | { kind: 'secretNames'; names: string[] }
   | { kind: 'unknown' };
 
 const value = (sample: unknown, known = true): Abstract => ({ kind: 'value', sample, known });
@@ -210,6 +217,8 @@ function member(target: Abstract, key: string): Abstract {
       return key === 'json' ? value(target.json, target.json !== undefined) : { kind: 'unknown' };
     case 'vars':
       return value('');
+    case 'secrets':
+      return target.providers[key] ? { kind: 'secretNames', names: target.providers[key] } : { kind: 'unknown' };
     case 'value': {
       const sample = target.sample;
       if (key === 'length' && (typeof sample === 'string' || Array.isArray(sample))) return value(sample.length);
@@ -244,6 +253,8 @@ function rootValue(root: string, data: CompletionData): Abstract {
       return value(0);
     case '$vars':
       return { kind: 'vars', names: data.vars };
+    case '$secrets':
+      return data.scope === 'credential' ? { kind: 'secrets', providers: data.secrets ?? {} } : { kind: 'unknown' };
     default:
       return { kind: 'unknown' };
   }
@@ -291,6 +302,16 @@ function membersOf(target: Abstract): { items: Completion[]; hint?: string } {
       return target.names.length
         ? { items: target.names.map((name) => ({ label: name, insert: name, kind: 'variable', detail: 'variable', replaceDot: !IDENT.test(name) })) }
         : { items: [], hint: 'No variables yet: add them in Settings → Variables.' };
+    case 'secrets': {
+      const providers = Object.entries(target.providers);
+      return providers.length
+        ? { items: providers.map(([name, names]) => ({ label: name, insert: name, kind: 'variable', detail: `external secrets · ${names.length} name${names.length === 1 ? '' : 's'}` })) }
+        : { items: [], hint: 'No external secrets providers yet: add one in Settings → External secrets.' };
+    }
+    case 'secretNames':
+      return target.names.length
+        ? { items: target.names.map((name) => ({ label: name, insert: IDENT.test(name) ? name : `[${JSON.stringify(name).replace(/^"|"$/g, "'")}]`, replaceDot: !IDENT.test(name), kind: 'field', detail: 'secret' })) }
+        : { items: [], hint: 'No secret names listed: refresh the provider in Settings → External secrets.' };
     case 'value': {
       const sample = target.sample;
       if (!target.known) return { items: [], hint: 'No data yet: run the previous nodes to get field suggestions.' };
@@ -317,6 +338,10 @@ function membersOf(target: Abstract): { items: Completion[]; hint?: string } {
 }
 
 function rootCompletions(data: CompletionData): Completion[] {
+  if (data.scope === 'credential') {
+    const count = Object.keys(data.secrets ?? {}).length;
+    return [{ label: '$secrets', insert: '$secrets', kind: 'variable', detail: count ? `external secrets · ${count} provider${count === 1 ? '' : 's'}` : 'external secrets (none set up)' }];
+  }
   const roots: Completion[] = [
     { label: '$json', insert: '$json', kind: 'variable', detail: data.json !== undefined ? "the current item's data" : 'the current item (no data yet)' },
     { label: '$input', insert: '$input', kind: 'variable', detail: "this node's input items" },
@@ -379,7 +404,7 @@ export function completionsAt(text: string, caret: number, data: CompletionData)
   const word = /(?:^|[^\w$.'"`\])])(\$?[A-Za-z_][\w$]*|\$)$/.exec(code);
   if (word || /(^|[\s(,+\-*/%!?:=<>&|{[])$/.test(code)) {
     const partial = word?.[1] ?? '';
-    const pool = partial.startsWith('$') || !partial ? rootCompletions(data) : [...rootCompletions(data), ...methods(GLOBALS).map((c) => ({ ...c, kind: 'keyword' as const }))];
+    const pool = partial.startsWith('$') || !partial || data.scope === 'credential' ? rootCompletions(data) : [...rootCompletions(data), ...methods(GLOBALS).map((c) => ({ ...c, kind: 'keyword' as const }))];
     const items = rank(pool, partial);
     // An empty term only suggests once something was typed, so `{{ ` alone shows the variables but spaces elsewhere don't.
     if (!partial && !/\{\{\s*$/.test(text.slice(0, caret))) return undefined;

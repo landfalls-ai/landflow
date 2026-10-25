@@ -319,6 +319,7 @@ export function NodePanel() {
                   {descriptor?.credentials?.some((c) => isPropertyVisible(c, wf.parameters)) ? (
                     <NodeCredentials
                       nodeType={wf.type}
+                      workflowId={workflowId || undefined}
                       requirements={descriptor.credentials.filter((c) => isPropertyVisible(c, wf.parameters))}
                       value={wf.credentials}
                       onChange={(credentials) => update({ credentials })}

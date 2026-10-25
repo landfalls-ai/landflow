@@ -1,19 +1,29 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import { KeyRound, Plus } from 'lucide-react';
+import { ArrowRightLeft, KeyRound, MoreHorizontal, Plus, Share2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { timeAgo } from '@/lib/client/format';
+import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
+import type { CredentialSummary } from '@/lib/shared/types';
+import { MoveToProjectDialog, ShareDialog } from '@/components/projects/share-dialog';
 import { CredentialDialog, CredentialTypeIcon } from '@/components/credentials/credential-dialog';
-import { useCredentials } from '@/components/credentials/use-credentials';
+import { useCredentialStore, useCredentials } from '@/components/credentials/use-credentials';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SectionLabel } from '@/components/ui/inputs';
+import { MenuItem, Popover } from '@/components/ui/popover';
+
+/** A listed credential with its project and the viewer's access (GET /api/credentials). */
+type Listed = CredentialSummary & { ownership?: ResourceOwnership };
 
 export default function CredentialsPage() {
   const { credentials, types, error } = useCredentials();
   const [dialog, setDialog] = useState<{ id?: string; type?: string } | null>(null);
+  const [sharing, setSharing] = useState<{ kind: 'share' | 'move'; credential: Listed }>();
+  const refresh = () => void useCredentialStore.getState().refresh();
   const typeOf = (type: string) => types?.find((t) => t.type === type);
 
   return (
@@ -43,37 +53,73 @@ export default function CredentialsPage() {
           </Card>
         ) : (
           <div className="overflow-hidden rounded-2xl border border-hair bg-sf">
-            {(credentials ?? []).map((credential, index) => {
+            {((credentials ?? []) as Listed[]).map((credential, index) => {
               const info = typeOf(credential.type);
+              const access = credential.ownership?.access;
+              // Shared "can use" credentials open nothing: their settings stay with the project that owns them.
+              const editable = !credential.ownership || resourceCan(access, 'update');
               return (
-                <button
-                  key={credential.id}
-                  onClick={() => setDialog({ id: credential.id })}
-                  style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }}
-                  className="flex w-full items-center gap-3.5 border-b border-hair px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-acdim animate-fade-up"
-                >
-                  <CredentialTypeIcon info={info} size={34} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-semibold text-t1">{credential.name}</span>
-                    <span className="block truncate text-[12px] text-t3">
-                      {info ? `${info.descriptor.displayName} · ${info.pluginName}` : credential.type}
+                <div key={credential.id} style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }} className="group flex items-center border-b border-hair transition-colors last:border-b-0 hover:bg-acdim animate-fade-up">
+                  <button
+                    onClick={() => (editable ? setDialog({ id: credential.id }) : toast.info(`Shared with you by ${credential.ownership?.projectName}: you can use it in workflows, not view or change it`))}
+                    className="flex min-w-0 flex-1 items-center gap-3.5 px-4 py-3 text-left"
+                  >
+                    <CredentialTypeIcon info={info} size={34} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold text-t1">{credential.name}</span>
+                      <span className="block truncate text-[12px] text-t3">
+                        {info ? `${info.descriptor.displayName} · ${info.pluginName}` : credential.type}
+                      </span>
                     </span>
-                  </span>
-                  {!info && <Badge tone="warning" title="The plugin that publishes this type is not registered">plugin missing</Badge>}
-                  {info && !info.available && <Badge tone="warning">plugin offline</Badge>}
-                  {credential.oauth2 && (
-                    <Badge
-                      tone={credential.oauth2.error || (credential.oauth2.expired && !credential.oauth2.refreshable) ? 'warning' : credential.oauth2.connected ? 'success' : 'muted'}
-                      title={credential.oauth2.error ?? (credential.oauth2.account ? `Connected as ${credential.oauth2.account}` : undefined)}
+                    {credential.ownership?.shared && <Badge tone="muted" title={`Shared from ${credential.ownership.projectName}`}>Shared · can use</Badge>}
+                    {!info && <Badge tone="warning" title="The plugin that publishes this type is not registered">plugin missing</Badge>}
+                    {info && !info.available && <Badge tone="warning">plugin offline</Badge>}
+                    {credential.oauth2 && (
+                      <Badge
+                        tone={credential.oauth2.error || (credential.oauth2.expired && !credential.oauth2.refreshable) ? 'warning' : credential.oauth2.connected ? 'success' : 'muted'}
+                        title={credential.oauth2.error ?? (credential.oauth2.account ? `Connected as ${credential.oauth2.account}` : undefined)}
+                      >
+                        {credential.oauth2.connected ? (credential.oauth2.expired && !credential.oauth2.refreshable ? 'expired' : 'connected') : 'not connected'}
+                      </Badge>
+                    )}
+                    <span className="w-40 shrink-0 truncate text-right text-[12px] text-t2" title={credential.usedBy.map((u) => u.workflowName).join(', ')}>
+                      {credential.usedBy.length ? `Used by ${credential.usedBy.length} workflow${credential.usedBy.length === 1 ? '' : 's'}` : 'Not used yet'}
+                    </span>
+                    <span className="w-28 shrink-0 text-right text-[12px] text-t3">Updated {timeAgo(credential.updatedAt)}</span>
+                  </button>
+                  <div className="pr-2.5">
+                    <Popover
+                      trigger={({ open, toggle }) => (
+                        <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label={`${credential.name} menu`} className={open ? 'text-t3' : 'text-t3 opacity-0 focus-visible:opacity-100 group-hover:opacity-100'}>
+                          <MoreHorizontal className="size-4" />
+                        </Button>
+                      )}
                     >
-                      {credential.oauth2.connected ? (credential.oauth2.expired && !credential.oauth2.refreshable ? 'expired' : 'connected') : 'not connected'}
-                    </Badge>
-                  )}
-                  <span className="w-40 shrink-0 truncate text-right text-[12px] text-t2" title={credential.usedBy.map((u) => u.workflowName).join(', ')}>
-                    {credential.usedBy.length ? `Used by ${credential.usedBy.length} workflow${credential.usedBy.length === 1 ? '' : 's'}` : 'Not used yet'}
-                  </span>
-                  <span className="w-28 shrink-0 text-right text-[12px] text-t3">Updated {timeAgo(credential.updatedAt)}</span>
-                </button>
+                      {(close) => (
+                        <>
+                          <MenuItem
+                            onClick={() => {
+                              close();
+                              setSharing({ kind: 'share', credential });
+                            }}
+                          >
+                            <Share2 /> {!credential.ownership || resourceCan(access, 'share') ? 'Share…' : 'Who has access…'}
+                          </MenuItem>
+                          {(!credential.ownership || resourceCan(access, 'move')) && (
+                            <MenuItem
+                              onClick={() => {
+                                close();
+                                setSharing({ kind: 'move', credential });
+                              }}
+                            >
+                              <ArrowRightLeft /> Move to project…
+                            </MenuItem>
+                          )}
+                        </>
+                      )}
+                    </Popover>
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -107,6 +153,10 @@ export default function CredentialsPage() {
           </section>
         )}
       </PageBody>
+      {sharing?.kind === 'share' && <ShareDialog kind="credential" id={sharing.credential.id} name={sharing.credential.name} onClose={() => setSharing(undefined)} onChanged={refresh} />}
+      {sharing?.kind === 'move' && (
+        <MoveToProjectDialog kind="credential" id={sharing.credential.id} name={sharing.credential.name} currentProjectId={sharing.credential.ownership?.projectId} onClose={() => setSharing(undefined)} onMoved={refresh} />
+      )}
       {dialog && <CredentialDialog credentialId={dialog.id} allowedTypes={dialog.type ? [dialog.type] : undefined} onClose={() => setDialog(null)} />}
     </>
   );

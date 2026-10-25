@@ -14,7 +14,7 @@ import { appWebhooks, getStaticData, setStaticData, webhookBase, appWebhookUrl, 
 import { error, handler, json } from '@/lib/server/http';
 import { registry } from '@/lib/server/plugins/registry';
 import { productionWorkflowById } from '@/lib/server/publish';
-import { DuplicateRunError, runWorkflow, RunSkippedError } from '@/lib/server/runner';
+import { DuplicateRunError, RunBufferedError, runWorkflow, RunSkippedError } from '@/lib/server/runner';
 import { logger, recordWebhookRequest, startTrigger } from '@/lib/server/telemetry';
 
 export const dynamic = 'force-dynamic';
@@ -105,6 +105,11 @@ async function handle(request: Request, { params }: Ctx) {
       if (!executionId) await run;
     } catch (caught) {
       if (caught instanceof DuplicateRunError) return respond(reply(result.response, () => json({ status: 'duplicate', executionId: caught.executionId })));
+      if (caught instanceof RunBufferedError) {
+        // Held by debounce or batching: the provider sees a success, so it doesn't retry the event.
+        const held = { status: caught.reason, workflowId: workflow.id, count: caught.count, runsAt: caught.dueAt, ...(caught.startedNow && { started: true }) };
+        return respond(reply(result.response, () => json(held, 202)));
+      }
       if (caught instanceof RunSkippedError) return respond(error(caught.message, 429, { workflowId: workflow.id, reason: caught.reason }));
       throw caught;
     }

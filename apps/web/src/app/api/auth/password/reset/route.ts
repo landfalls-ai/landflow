@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '@/lib/shared/auth';
 import { clientIp, deleteUserSessions, findToken, formLimit, getUser, markTokenUsed, setPassword, signedInResponse } from '@/lib/server/auth';
 import { error, handler, json, parseBody } from '@/lib/server/http';
+import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,5 +39,6 @@ export const POST = handler(async (request: Request) => {
   const user = await setPassword(existing.id, body.data.password);
   markTokenUsed(reset.id);
   deleteUserSessions(user.id);
+  recordAudit({ action: 'auth.password_reset', actor: { id: user.id, name: user.name, email: user.email }, target: { type: 'user', id: user.id, name: user.email }, summary: `${user.email} reset their password` });
   return signedInResponse(request, user, 'reset');
 });

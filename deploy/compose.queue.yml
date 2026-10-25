@@ -1,0 +1,172 @@
+# Queue mode with high availability (README "Queue mode, workers and high availability"): two mains behind a small
+# load balancer, two workers and the text-toolkit plugin, on the infra stack's Postgres, Valkey and MinIO.
+#
+#   docker compose -f deploy/compose.infra.yml up -d                    # Postgres, Valkey, MinIO + the landflow-infra network
+#   docker compose -f deploy/compose.infra.yml exec postgres createdb -U landflow landflow_queue   # once
+#   COMPOSE_BAKE=false docker compose -f deploy/compose.queue.yml up -d --build --wait            # http://localhost:53080
+#
+# - lb (53080): round robin over the mains, skipping one that is down; a browser sticks to one main (deploy/queue/lb.mjs).
+# - main-1 (53081), main-2 (53082): UI, API, webhooks. They enqueue production runs on Valkey and elect a leader that
+#   runs the schedules, polls, IMAP IDLE, timers and retention; the other takes over within about 13 s.
+# - worker-1, worker-2 (health and metrics on 55691, 55692): `node worker.mjs`, 10 runs at once each by default.
+# - All of them share the Postgres database `landflow_queue`, the Valkey key prefix, the data volume (credentials,
+#   settings files), the encryption key, the file-link secret and the binary store (MinIO bucket `landflow`, prefix
+#   `queue/`).
+#
+# Development values throughout (dev passwords, a fixed encryption key): don't expose these ports. Details:
+# deploy/README.md "Queue mode (two mains, two workers)".
+
+name: landflow-queue
+
+x-host-env: &host-env
+  LANDFLOW_EXECUTIONS_MODE: queue
+  LANDFLOW_DB: postgres
+  DATABASE_URL: postgres://landflow:landflow-dev-only@postgres:5432/${LANDFLOW_QUEUE_DATABASE:-landflow_queue}
+  LANDFLOW_VALKEY_URL: redis://valkey:6379
+  LANDFLOW_QUEUE_PREFIX: ${LANDFLOW_QUEUE_PREFIX:-landflow-queue}
+  LANDFLOW_LEADER_TTL_SECONDS: ${LANDFLOW_LEADER_TTL_SECONDS:-10}
+  LANDFLOW_STALLED_SECONDS: ${LANDFLOW_STALLED_SECONDS:-30}
+  LANDFLOW_DATA_DIR: /data
+  # Every main and worker decrypts the same credentials and signs file links the same way.
+  LANDFLOW_ENCRYPTION_KEY: ${LANDFLOW_QUEUE_ENCRYPTION_KEY:-landflow-queue-dev-only-encryption-key}
+  LANDFLOW_BINARY_SECRET: ${LANDFLOW_QUEUE_BINARY_SECRET:-landflow-queue-dev-only-binary-secret}
+  # Item files in the infra stack's MinIO (explicit endpoint and keys: never the AWS default credential chain).
+  LANDFLOW_BINARY_STORE: s3
+  LANDFLOW_S3_ENDPOINT: http://minio:9000
+  LANDFLOW_S3_BUCKET: landflow
+  LANDFLOW_S3_PREFIX: queue/
+  LANDFLOW_S3_REGION: us-east-1
+  LANDFLOW_S3_ACCESS_KEY_ID: landflow
+  LANDFLOW_S3_SECRET_ACCESS_KEY: landflow-dev-only
+  LANDFLOW_S3_FORCE_PATH_STYLE: "true"
+  # Links the host hands out (resume URLs) and where plugins fetch item files: through the load balancer.
+  LANDFLOW_PUBLIC_URL: http://localhost:${LANDFLOW_QUEUE_PORT:-53080}
+  LANDFLOW_INTERNAL_URL: http://lb:3000
+  LANDFLOW_SCAN_ON_START: "false"
+  LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${LANDFLOW_QUEUE_OTLP_ENDPOINT:-}
+  LANDFLOW_TRACE_URL: ${LANDFLOW_TRACE_URL:-http://localhost:56686/trace/{traceId}}
+
+x-host: &host
+  image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/host:${LANDFLOW_IMAGE_TAG:-dev}
+  restart: unless-stopped
+  init: true
+  volumes:
+    - landflow-queue-data:/data
+  networks: [landflow-queue, landflow-infra]
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+x-worker-health: &worker-health
+  test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5690/healthz || exit 1"]
+  interval: 5s
+  timeout: 3s
+  start_period: 20s
+  retries: 6
+
+services:
+  main-1:
+    <<: *host
+    build:
+      context: ..
+      dockerfile: deploy/docker/host.Dockerfile
+    ports:
+      - "127.0.0.1:${LANDFLOW_QUEUE_MAIN1_PORT:-53081}:3000"
+    environment:
+      <<: *host-env
+      LANDFLOW_INSTANCE_ID: main-1
+      OTEL_SERVICE_NAME: landflow-main
+      # The first main creates the owner (development values); the others start once it is up.
+      LANDFLOW_OWNER_EMAIL: ${LANDFLOW_OWNER_EMAIL-owner@landflow.test}
+      LANDFLOW_OWNER_PASSWORD: ${LANDFLOW_OWNER_PASSWORD-landflow-dev-only}
+
+  main-2:
+    <<: *host
+    ports:
+      - "127.0.0.1:${LANDFLOW_QUEUE_MAIN2_PORT:-53082}:3000"
+    environment:
+      <<: *host-env
+      LANDFLOW_INSTANCE_ID: main-2
+      OTEL_SERVICE_NAME: landflow-main
+    depends_on:
+      main-1:
+        condition: service_healthy
+
+  worker-1:
+    <<: *host
+    command: ["node", "worker.mjs"]
+    ports:
+      - "127.0.0.1:${LANDFLOW_QUEUE_WORKER1_PORT:-55691}:5690"
+    environment:
+      <<: *host-env
+      LANDFLOW_INSTANCE_ID: worker-1
+      LANDFLOW_WORKER_CONCURRENCY: ${LANDFLOW_WORKER_CONCURRENCY:-10}
+      OTEL_SERVICE_NAME: landflow-worker
+    healthcheck: *worker-health
+    stop_grace_period: 40s
+    depends_on:
+      main-1:
+        condition: service_healthy
+
+  worker-2:
+    <<: *host
+    command: ["node", "worker.mjs"]
+    ports:
+      - "127.0.0.1:${LANDFLOW_QUEUE_WORKER2_PORT:-55692}:5690"
+    environment:
+      <<: *host-env
+      LANDFLOW_INSTANCE_ID: worker-2
+      LANDFLOW_WORKER_CONCURRENCY: ${LANDFLOW_WORKER_CONCURRENCY:-10}
+      OTEL_SERVICE_NAME: landflow-worker
+    healthcheck: *worker-health
+    stop_grace_period: 40s
+    depends_on:
+      main-1:
+        condition: service_healthy
+
+  lb:
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/host:${LANDFLOW_IMAGE_TAG:-dev}
+    restart: unless-stopped
+    init: true
+    command: ["node", "/lb/lb.mjs"]
+    working_dir: /lb
+    environment:
+      LB_UPSTREAMS: main-1:3000,main-2:3000
+      LB_PORT: "3000"
+    volumes:
+      - ./queue/lb.mjs:/lb/lb.mjs:ro
+    ports:
+      - "127.0.0.1:${LANDFLOW_QUEUE_PORT:-53080}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/lb/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+    networks: [landflow-queue]
+
+  # A plugin registered through the load balancer: the mains keep its address in Postgres, and the workers connect to
+  # it directly.
+  text-toolkit:
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-text-toolkit:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: text-toolkit, HTTP_PORT: "7101", GRPC_PORT: "7201" }
+    restart: unless-stopped
+    init: true
+    environment:
+      LANDFLOW_REGISTRY_URL: http://lb:3000
+      LANDFLOW_ADVERTISE_HOST: text-toolkit
+      LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
+    networks: [landflow-queue]
+    depends_on:
+      lb:
+        condition: service_started
+
+volumes:
+  landflow-queue-data:
+
+networks:
+  landflow-queue:
+  landflow-infra:
+    external: true

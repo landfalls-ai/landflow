@@ -4,8 +4,11 @@ Two independent Compose projects:
 
 | Project | File | What |
 |---|---|---|
-| `landflow-infra` | [`compose.infra.yml`](compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`) |
+| `landflow-infra` | [`compose.infra.yml`](compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`), Vector as a SIEM receiver (profile `siem`) |
 | `landflow` | [`compose.yml`](compose.yml) | Landflow itself as images: the host (Next.js standalone), the seven plugins, which announce themselves to the host, and the sandboxed [code runner](#code-runner) for the Code node |
+| `landflow-queue` | [`compose.queue.yml`](compose.queue.yml) | Landflow in [queue mode with high availability](#queue-mode-two-mains-two-workers): two mains behind a load balancer and two workers, on the infra stack's Postgres, Valkey and MinIO |
+
+Kubernetes manifests are in [`k8s/`](k8s): see [Kubernetes](#kubernetes) (tested on OrbStack's local cluster).
 
 Both use their own networks (`landflow-infra`, `landflow-app`), named volumes (`landflow-infra_*`, `landflow_landflow-data`) and host ports in the 5xxxx range, bound to `127.0.0.1`. The dev server on `:3000` keeps running next to them.
 
@@ -26,6 +29,9 @@ docker compose -f deploy/compose.infra.yml --profile mysql up -d --wait mysql
 # ... GreenMail, an IMAP + SMTP test server for the Email Trigger (IMAP)
 docker compose -f deploy/compose.infra.yml --profile mail up -d --wait greenmail
 
+# ... Vector, a SIEM stand-in for audit log streaming (syslog + HTTP JSON lines)
+docker compose -f deploy/compose.infra.yml --profile siem up -d --wait siem
+
 # App: build the images and start the host + 7 plugins + code runner on http://localhost:53000
 COMPOSE_BAKE=false docker compose -f deploy/compose.yml up -d --build --wait
 
@@ -39,6 +45,11 @@ LANDFLOW_OTLP_ENDPOINT=http://jaeger:4318 COMPOSE_BAKE=false \
 
 # Check everything that is running
 deploy/scripts/smoke.sh          # or: smoke.sh infra | smoke.sh app | smoke.sh code
+
+# Queue mode: two mains (behind http://localhost:53080) and two workers on the infra stack ("Queue mode" below)
+docker compose -f deploy/compose.infra.yml exec postgres createdb -U landflow landflow_queue   # once
+COMPOSE_BAKE=false docker compose -f deploy/compose.queue.yml up -d --build --wait
+python3 deploy/scripts/queue-e2e.py
 ```
 
 ## Ports, credentials and URLs
@@ -56,15 +67,21 @@ All credentials are **for local development and tests only**.
 | OpenBao (dev mode) | http://localhost:58200 | `openbao:8200` | root token `landflow-dev-root-token`; KV v2 at `landflow/` (sample `landflow/dev/hello`) |
 | Keycloak 26.0 (`auth`) | http://localhost:58080 (admin console `/admin`) | `keycloak:8080` | admin `admin` / `admin-dev-only` |
 | — realm `landflow` | http://localhost:58080/realms/landflow/.well-known/openid-configuration | | client `landflow` (confidential), secret `landflow-dev-client-secret` |
-| — test users | | | `alice` / `alice-test-only` (role `landflow-admin`), `bob` / `bob-test-only` (role `landflow-editor`) |
+| — SAML client | http://localhost:58080/realms/landflow/protocol/saml/descriptor (IdP metadata) | | client `http://localhost:3000/api/auth/saml/metadata` (Landflow's SP entity id) |
+| — test users | | | `alice` / `alice-test-only` (role `landflow-admin`), `bob` / `bob-test-only` (role `landflow-editor`, group `data-team`) |
 | Jaeger 2 UI (`observability`) | http://localhost:56686 | `jaeger:16686` | none |
 | Jaeger OTLP | HTTP `localhost:54318`, gRPC `localhost:54317` | `jaeger:4318`, `jaeger:4317` | none |
 | MySQL 8.4 (`mysql`) | `localhost:53306` | `mysql:3306` | `landflow` / `landflow-dev-only` (database `landflow_test`), root / `landflow-root-dev-only` |
 | GreenMail 2.1 IMAP (`mail`) | `localhost:53143` | `greenmail:3143` | any user and password (the mailbox is created at first login), no TLS |
 | GreenMail 2.1 SMTP (`mail`) | `localhost:53025` | `greenmail:3025` | none; delivers to GreenMail's own mailboxes |
+| Vector syslog (`siem`) | `localhost:55514` (TCP and UDP) | `siem:5514` | none; RFC 5424, octet counting or newline framing |
+| Vector HTTP (`siem`) | http://localhost:55080/ | `siem:8080` | none; JSON lines (signature headers kept as fields, not checked) |
 | **Landflow host** (app) | http://localhost:53000 | `web:3000`, gRPC registry `web:7070` | owner `owner@landflow.test` / `landflow-dev-only` (`LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`) |
 | Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207` (HTTP/gRPC) | |
 | Code runner (app) | http://127.0.0.1:53300 (through `code-runner-port`) | `code-runner:7300`, on the internal `landflow-code` network only | header `x-landflow-runner-secret: landflow-code-runner-dev-only` |
+| **Queue mode** load balancer | http://localhost:53080 | `lb:3000` | owner `owner@landflow.test` / `landflow-dev-only` |
+| Queue mode mains | http://localhost:53081, http://localhost:53082 | `main-1:3000`, `main-2:3000` | same |
+| Queue mode workers | http://localhost:55691/healthz, http://localhost:55692/healthz (and `/metrics`) | `worker-1:5690`, `worker-2:5690` | none |
 
 "In-network" addresses work from containers on the `landflow-infra` network (the app stack with `compose.infra-link.yml`). Containers without it reach the infra through the Mac: `host.docker.internal:<Mac port>`.
 
@@ -75,6 +92,8 @@ curl -s -d grant_type=password -d client_id=landflow -d client_secret=landflow-d
   -d username=alice -d password=alice-test-only -d scope=openid \
   http://localhost:58080/realms/landflow/protocol/openid-connect/token
 ```
+
+The SAML client (`http://localhost:3000/api/auth/saml/metadata`, the dev server's SP entity id) accepts AuthnRequests for `/api/auth/saml/*` on `:3000` and `:53000` (and `127.0.0.1`), signs both the response and the assertion (RSA-SHA256), forces the persistent NameID format and posts back (HTTP-POST binding). Its mappers send `email`, `firstName`, `lastName`, the realm roles in one `roles` attribute and the groups in `groups` (`data-team`, which bob is in). Single logout goes to `/api/auth/saml/logout`. Unsigned AuthnRequests are fine (client signature off). The dockerised host on `:53000` uses the same client with `LANDFLOW_SAML_ISSUER=http://localhost:3000/api/auth/saml/metadata`.
 
 ## Using the infra from the dev server on the host
 
@@ -129,15 +148,22 @@ LANDFLOW_OIDC_ISSUER=http://localhost:58080/realms/landflow LANDFLOW_OIDC_CLIENT
   LANDFLOW_OIDC_CLIENT_SECRET=landflow-dev-client-secret LANDFLOW_OIDC_ROLE_MAP=landflow-admin=admin,landflow-editor=member
 ```
 
+**SAML sign-in** through the same Keycloak realm (the IdP comes from its metadata; alice becomes an admin, bob a member and, once a team project named `Data` exists, its editor):
+
+```bash
+LANDFLOW_SAML_IDP_METADATA_URL=http://localhost:58080/realms/landflow/protocol/saml/descriptor \
+  LANDFLOW_SAML_ROLE_MAP=landflow-admin=admin,landflow-editor=member LANDFLOW_SAML_PROJECT_MAP=data-team=Data:editor
+```
+
 The dockerised host can't reach `localhost:58080`, so `compose.yml` (commented) adds `LANDFLOW_OIDC_DISCOVERY_URL` pointing at `host.docker.internal:58080` (or `keycloak:8080` with `compose.infra-link.yml`); Keycloak then hands out backchannel endpoints the container can reach, while browsers still go to `localhost:58080`. The realm already allows the `:3000` and `:53000` callback URLs.
 
-Tests: `(cd apps/web && LANDFLOW_INTEGRATION=oidc,smtp npx vitest run test/oidc.integration.test.ts test/smtp.integration.test.ts)` signs in as alice and bob through Keycloak's own login form and sends invites and resets through Mailpit. Mailpit can take about 8 s to greet each new SMTP connection under Docker Desktop, so an invite takes that long to send here.
+Tests: `(cd apps/web && LANDFLOW_INTEGRATION=oidc,smtp npx vitest run test/oidc.integration.test.ts test/smtp.integration.test.ts)` signs in as alice and bob through Keycloak's own login form and sends invites and resets through Mailpit. `LANDFLOW_INTEGRATION=saml npx vitest run test/saml.integration.test.ts` does the SAML round trip (AuthnRequest, Keycloak's login form, its auto-posted SAMLResponse to the ACS, a replay, a deactivated user, single logout). Mailpit can take about 8 s to greet each new SMTP connection under Docker Desktop, so an invite takes that long to send here.
 
 ## The app stack
 
 | Image | Built from | Runs |
 |---|---|---|
-| `landflow/host:dev` | [`docker/host.Dockerfile`](docker/host.Dockerfile) | `node apps/web/server.js` (Next standalone output) as `node` (uid 1000), data in `/data` |
+| `landflow/host:dev` | [`docker/host.Dockerfile`](docker/host.Dockerfile) | `node apps/web/server.js` (Next standalone output) as `node` (uid 1000), data in `/data`; queue-mode workers run `node worker.mjs` (an esbuild bundle of `pnpm worker`) from the same image |
 | `landflow/plugin-text-toolkit:dev`, `landflow/plugin-messaging:dev` | [`docker/node-plugin.Dockerfile`](docker/node-plugin.Dockerfile) | `tsx src/main.ts` as `node` |
 | `landflow/plugin-py-insights:dev`, `landflow/plugin-productivity:dev` | [`docker/python-plugin.Dockerfile`](docker/python-plugin.Dockerfile) | `python main.py` (SDK with `grpc` and `otel` extras) as uid 10001 |
 | `landflow/plugin-go-crypto:dev`, `landflow/plugin-google-workspace:dev`, `landflow/plugin-databases:dev` | [`docker/go-plugin.Dockerfile`](docker/go-plugin.Dockerfile) | static binary on Alpine as uid 10001 |
@@ -160,6 +186,34 @@ docker build -f deploy/docker/go-plugin.Dockerfile --build-arg PLUGIN=databases 
 LANDFLOW_REGISTRY_URL=http://localhost:53000 LANDFLOW_ADVERTISE_HOST=host.docker.internal \
   LANDFLOW_HTTP_PORT=7151 LANDFLOW_GRPC_PORT=7251 pnpm plugin:ts
 ```
+
+## Queue mode (two mains, two workers)
+
+[`compose.queue.yml`](compose.queue.yml) (project `landflow-queue`) runs Landflow in queue mode with high availability (README, "Queue mode, workers and high availability") on the infra stack's Postgres, Valkey and MinIO. One image runs everything: the mains run `node server.js`, the workers `node worker.mjs`.
+
+```bash
+docker compose -f deploy/compose.infra.yml up -d --wait
+docker compose -f deploy/compose.infra.yml exec postgres createdb -U landflow landflow_queue   # once
+COMPOSE_BAKE=false docker compose -f deploy/compose.queue.yml up -d --build --wait              # http://localhost:53080
+python3 deploy/scripts/queue-e2e.py      # load spread, a killed worker, a killed leader: about 3 minutes
+```
+
+| Service | On the Mac | |
+|---|---|---|
+| `lb` | http://localhost:53080 | round robin over the mains, skipping one that is down for 5 s; a browser sticks to one main (cookie `landflow_main`; the `x-landflow-main` header says which one answered). A stand-in for your load balancer: [`queue/lb.mjs`](queue/lb.mjs) |
+| `main-1`, `main-2` | http://localhost:53081, http://localhost:53082 | UI, API, webhooks. `main-1` creates the owner (`owner@landflow.test` / `landflow-dev-only`); `main-2` and the workers start once it is healthy |
+| `worker-1`, `worker-2` | http://localhost:55691/healthz, http://localhost:55692/healthz (`/metrics` too) | 10 runs at once each (`LANDFLOW_WORKER_CONCURRENCY`) |
+| `text-toolkit` | not published | registers through the load balancer; the mains keep its address in Postgres and the workers call it directly |
+
+Every process shares the database `landflow_queue` (`LANDFLOW_QUEUE_DATABASE`), the Valkey key prefix `landflow-queue`, the `landflow-queue_landflow-queue-data` volume at `/data` (credentials, settings files, one insights rollup per process), the encryption key and file-link secret (development values; `LANDFLOW_QUEUE_ENCRYPTION_KEY`, `LANDFLOW_QUEUE_BINARY_SECRET`) and the binary store: MinIO's `landflow` bucket under `queue/`, with the endpoint (`http://minio:9000`) and keys set explicitly, so the AWS default credential chain is never used. Traces: `LANDFLOW_QUEUE_OTLP_ENDPOINT=http://jaeger:4318` (with the `observability` profile); a run's trace goes from the main that took the webhook to the worker that ran it.
+
+What `queue-e2e.py` checks, and what it measured on OrbStack:
+
+- **load**: 40 concurrent webhook calls through the load balancer, each through the text-toolkit plugin: all answered in 0.3 to 0.4 s, split 17 / 23 and 18 / 22 between the workers.
+- **worker**: a run waits 20 s in a Wait node and its worker is killed (SIGKILL). The other worker claims the job once it has been idle for 30 s and continues the run from the checkpoint before the Wait: finished about 55 s after the kill, tagged **Resumed after restart**.
+- **leader**: a schedule fires every 5 s and the leader main is killed. The other main leads 8.5 to 11 s later (fencing token + 1) and the schedule goes on (a 10 s gap: the slot due during the failover runs once, late); the killed main comes back as a follower.
+
+Day to day: **Settings → Workers** on either main shows the leader, the queue and every process; `docker compose -f deploy/compose.queue.yml stop worker-1` sends SIGTERM (runs get 30 s, `stop_grace_period` is 40 s, and what doesn't finish continues on the other worker); `stop main-1` on the leader hands the leadership over within about 3 s. To add a worker, copy `worker-2` with its own `LANDFLOW_INSTANCE_ID` and port. Valkey keys: `docker compose -f deploy/compose.infra.yml exec valkey valkey-cli --scan --pattern 'landflow-queue:*'`.
 
 ## Code runner
 
@@ -260,15 +314,148 @@ docker compose -f deploy/compose.infra.yml --profile mail up -d --wait greenmail
 
 Each test file uses a fresh mailbox (`<name>-<time>@landflow.test`), delivered over GreenMail's SMTP port. `LANDFLOW_GREENMAIL_HOST`, `LANDFLOW_GREENMAIL_IMAP_PORT` and `LANDFLOW_GREENMAIL_SMTP_PORT` point the tests (and the compose ports) elsewhere. GreenMail keeps mail in memory, so a restart empties it.
 
+## Kubernetes
+
+[`k8s/`](k8s) runs the host and the seven plugins on Kubernetes, with the host finding the plugins through
+**Kubernetes discovery** instead of announcements ([protocol §13](../docs/protocol.md#13-kubernetes-discovery-and-registry-proofs)).
+It is plain [kustomize](https://kustomize.io), built into `kubectl` (`apply -k`): no extra tool, plain YAML to read and
+diff, and overlays for the differences between clusters. A Helm chart would add templating Landflow does not need yet.
+
+| Path | What |
+|---|---|
+| `k8s/base/host/` | `landflow-host` Deployment (one replica, `Recreate`: SQLite in `/data`), its Service (`3000`, gRPC registry `7070`), a 5 Gi PVC, and RBAC: a ServiceAccount with a **Role** (not a ClusterRole) allowing `get`/`list`/`watch` on `services` and `endpointslices` in its own namespace |
+| `k8s/base/plugins/` | a Deployment and a Service per plugin: Service label `landflow.dev/plugin: "true"`, annotation `landflow.dev/grpc-port: grpc`, readiness on `GET /landflow/v1/health`, `LANDFLOW_REGISTRY_URL=off`, non-root with a read-only root filesystem |
+| `k8s/components/postgres` | optional: Postgres 16 + pgvector (StatefulSet), and the host on it (`LANDFLOW_DB=postgres`, `DATABASE_URL`) |
+| `k8s/components/valkey` | optional: Valkey 8 and `LANDFLOW_VALKEY_URL` for queue mode |
+| `k8s/components/external-services` | optional: Postgres and Valkey elsewhere, from a Secret `landflow-external` you create (`database-url`, `valkey-url`) |
+| `k8s/overlays/orbstack` | OrbStack: namespace `landflow-dev`, the local `:k8s-dev` images with `imagePullPolicy: Never`, an `emptyDir` instead of the PVC, dev-only Secrets (`landflow-registry`, `landflow-host` with the owner) |
+
+For another cluster, copy the overlay: set the namespace, the image registry and tags (`images:`), real Secrets
+(`landflow-registry` key `secret`; `landflow-host` keys `encryption-key`, `owner-email`, `owner-password`; all optional),
+`LANDFLOW_PUBLIC_URL`, and an Ingress for the host. Add `components:` for Postgres and Valkey, or point at external ones.
+
+### Build the images (OrbStack)
+
+OrbStack's cluster runs on the same Docker engine, so images built locally are used as they are: nothing is pushed or
+pulled. Build with OrbStack's builder, never the shared `lab-builder` (`docker buildx ls`):
+
+```bash
+docker --context orbstack buildx build --builder orbstack --load -f deploy/docker/host.Dockerfile -t landflow/host:k8s-dev .
+docker --context orbstack buildx build --builder orbstack --load -f deploy/docker/go-plugin.Dockerfile \
+  --build-arg PLUGIN=go-crypto --build-arg HTTP_PORT=7103 --build-arg GRPC_PORT=7203 -t landflow/plugin-go-crypto:k8s-dev .
+# … the same for text-toolkit (node, 7101/7201), py-insights (python, 7102/7202), messaging (node, 7104/7204),
+#   productivity (python, 7105/7205), google-workspace (go, 7106/7206), databases (go, 7107/7207)
+```
+
+The `:k8s-dev` tag keeps these apart from the Compose stack's `:dev` images.
+
+### Deploy, use, scale
+
+Always name the context: `--context orbstack`.
+
+```bash
+kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack                    # host + plugins in landflow-dev
+kubectl --context orbstack -n landflow-dev rollout status deploy --timeout=180s
+kubectl --context orbstack -n landflow-dev get deploy,svc,endpointslices
+
+# plugins only (for a host outside the cluster, below)
+kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack -l 'app.kubernetes.io/component in (plugin,config)'
+```
+
+OrbStack makes Service names and cluster IPs reachable from the Mac, so the host is at
+http://landflow-host.landflow-dev.svc.cluster.local:3000 (owner `owner@landflow.test` / `landflow-dev-only`), and
+`curl http://plugin-go-crypto.landflow-dev.svc.cluster.local:7103/landflow/v1/health` answers. On other clusters use
+`kubectl port-forward svc/landflow-host 3000` or an Ingress. The Plugins page shows each plugin with source
+`kubernetes`, `ns/landflow-dev`, and the Service behind each endpoint.
+
+```bash
+kubectl --context orbstack -n landflow-dev scale deploy/plugin-go-crypto --replicas=0   # Plugins page: offline, nodes kept
+kubectl --context orbstack -n landflow-dev scale deploy/plugin-go-crypto --replicas=3   # online again; the manifest is re-pulled
+kubectl --context orbstack -n landflow-dev rollout restart deploy/plugin-go-crypto      # new pods: re-pulled (a new version shows)
+```
+
+Several replicas sit behind one Service endpoint (`grpc://plugin-go-crypto.landflow-dev.svc.cluster.local:7203`). The
+host keeps one HTTP/2 connection to it, so calls do not spread across pods by themselves; scale plugins for availability,
+or put a gRPC-aware proxy (a service mesh) in front for load balancing. Keep the host at one replica on SQLite.
+
+**Your own plugin**: label its Service `landflow.dev/plugin: "true"`, name the gRPC port `grpc` (or annotate
+`landflow.dev/grpc-port`), give the pods a readiness probe on `/landflow/v1/health`, set `LANDFLOW_REGISTRY_URL=off`, and
+`LANDFLOW_REGISTRY_SECRET` when the host has one (the SDKs then answer the host's challenge).
+
+### Host settings
+
+| Variable | Default | |
+|---|---|---|
+| `LANDFLOW_PLUGIN_DISCOVERY` | – | `kubernetes` turns discovery on (the base Deployment sets it) |
+| `LANDFLOW_K8S_NAMESPACES` | the host's own namespace | comma-separated; each needs the Role and a RoleBinding to `landflow-host` (copy `rbac.yaml`'s Role and RoleBinding into it, the subject with `namespace:` set) |
+| `LANDFLOW_K8S_CONTEXT` | – | kubeconfig context for a host outside the cluster; inside a pod the service account is used unless this is set |
+| `LANDFLOW_K8S_ADDRESS` | `dns` | `dns`: `<service>.<namespace>.svc.<domain>`; `cluster-ip`: the Service's ClusterIP |
+| `LANDFLOW_K8S_CLUSTER_DOMAIN` | `cluster.local` | |
+| `LANDFLOW_K8S_LABEL_SELECTOR` | `landflow.dev/plugin=true` | which Services count as plugins |
+| `LANDFLOW_K8S_RESYNC_SECONDS` | `300` | full re-list interval (`0`: off) |
+| `LANDFLOW_REGISTRY_SECRET` | – | discovered plugins must prove it (protocol §13); set the same value on the plugins |
+
+### A host on the Mac against the cluster
+
+Discovery also runs outside the cluster, from the kubeconfig. With the plugins deployed (above), on a free port and a
+throwaway data directory, never the dev server's `:3000`:
+
+```bash
+cd apps/web && LANDFLOW_DATA_DIR=$(mktemp -d) LANDFLOW_PLUGIN_DISCOVERY=kubernetes LANDFLOW_K8S_CONTEXT=orbstack \
+  LANDFLOW_K8S_NAMESPACES=landflow-dev LANDFLOW_REGISTRY_SECRET=landflow-registry-dev-only LANDFLOW_REGISTRY_GRPC_PORT=off \
+  LANDFLOW_SCAN_ON_START=false LANDFLOW_OWNER_EMAIL=owner@landflow.test LANDFLOW_OWNER_PASSWORD=landflow-dev-only \
+  npx next dev --port 53100
+```
+
+It reaches the plugins by their Service names, which OrbStack resolves on the Mac. Where that does not work (most
+clusters), use `LANDFLOW_K8S_ADDRESS=cluster-ip` with a route to the service network, or run the host in the cluster.
+
+### Integration test
+
+`apps/web/test/kubernetes.integration.test.ts` deploys the Go crypto plugin into `landflow-dev` (context `orbstack`;
+`LANDFLOW_K8S_IT_CONTEXT`, `LANDFLOW_K8S_IT_NAMESPACE`, `LANDFLOW_K8S_IT_IMAGE` change them) and runs discovery from the
+test process: a pod with the wrong registry secret is ready but refused, the right secret (a rollout) gets it discovered
+and its node runs over gRPC, scaled to 0 it goes offline, scaled to 1 it runs again, and deleting its Service removes
+it. It labels everything with a run id, watches only that, and deletes it afterwards. It needs the
+`landflow/plugin-go-crypto:k8s-dev` image and the namespace.
+
+```bash
+kubectl --context orbstack create namespace landflow-dev    # once (or apply the overlay)
+(cd apps/web && LANDFLOW_INTEGRATION=k8s npx vitest run test/kubernetes.integration.test.ts)
+```
+
+### Troubleshooting
+
+- **A plugin does not appear.** `kubectl --context orbstack -n landflow-dev get svc -l landflow.dev/plugin=true` lists
+  what discovery sees; `get endpointslices -l kubernetes.io/service-name=<service>` must show a ready address. The
+  Plugins page's Discovery feed and the host log (`landflow.discovery.source=kubernetes`) say why a Service is skipped
+  ("has no gRPC port", "is not a port of Service") or a registration failed.
+- **"did not prove the registry secret" / "wrong registry proof".** The plugin lacks `LANDFLOW_REGISTRY_SECRET`, has
+  another value, or uses an SDK without registry proofs. Check the `landflow-registry` Secret and both Deployments' env.
+- **`forbidden` in the feed** (`services is forbidden: User "system:serviceaccount:…"`): the Role or RoleBinding is
+  missing in that namespace, or the pod runs under another ServiceAccount. Discovery retries with backoff.
+- **`ErrImageNeverPull`.** The image is not in OrbStack's engine under that tag: build it as above (`docker images 'landflow/*'`).
+- **Offline although pods are ready.** The host could not connect: from the host's side, `curl
+  http://<service>.<namespace>.svc.cluster.local:<http port>/landflow/v1/health`. From the Mac this needs OrbStack (or
+  `kubectl port-forward`); in the cluster, check NetworkPolicies between the host and the plugins.
+- **`runAsNonRoot` errors.** The images' users are named, so the manifests set `runAsUser` (1000 for Node images, 10001
+  for Python and Go). Keep that when you change images.
+
+Remove everything (the namespace is the overlay's own): `kubectl --context orbstack delete -k deploy/k8s/overlays/orbstack`.
+
 ## Stop and reset
 
-These commands only touch the `landflow` and `landflow-infra` projects. Don't use `docker system prune` or the other prune commands on this machine: other projects' containers and volumes live here too.
+These commands only touch the `landflow`, `landflow-queue` and `landflow-infra` projects. Don't use `docker system prune` or the other prune commands on this machine: other projects' containers and volumes live here too.
 
 ```bash
 # App: stop and remove the containers, keep the data volume
 docker compose -f deploy/compose.yml down
 # App: also delete its data (workflows, executions, credentials)
 docker compose -f deploy/compose.yml down -v
+
+# Queue mode: stop and remove the containers (keep the volume), or also delete the data and the database
+docker compose -f deploy/compose.queue.yml down
+docker compose -f deploy/compose.queue.yml down -v && docker compose -f deploy/compose.infra.yml exec postgres dropdb -U landflow landflow_queue
 
 # Infra: stop everything, including profiled services, keep the volumes
 docker compose -f deploy/compose.infra.yml --profile '*' down
@@ -279,7 +466,7 @@ docker compose -f deploy/compose.infra.yml --profile '*' down -v
 docker image rm $(docker image ls 'landflow/*' -q)
 ```
 
-If you joined the networks with `compose.infra-link.yml`, pass it to `down` as well, and stop the app stack before the infra stack (the app containers hold the `landflow-infra` network).
+If you joined the networks with `compose.infra-link.yml`, pass it to `down` as well, and stop the app and queue stacks before the infra stack (their containers hold the `landflow-infra` network).
 
 ## Notes
 
@@ -287,5 +474,6 @@ If you joined the networks with `compose.infra-link.yml`, pass it to `down` as w
 - **OpenBao** runs in dev mode: in memory and unsealed. Secrets are gone after a restart; `infra/openbao/dev.sh` re-creates the `landflow/` mount and the sample secret each time.
 - **Jaeger** stores traces in memory.
 - **Mailpit** stands in for MailHog: same SMTP and web UI roles, native arm64, and its store survives restarts.
+- **Vector** (profile `siem`) receives Landflow's audit log streaming (Settings → Audit log → SIEM streaming: Syslog to `siem:5514` or `localhost:55514`, or HTTP JSON lines to `http://siem:8080/`) and prints each event as JSON: `docker compose -f deploy/compose.infra.yml logs -f siem`. It also appends them to `/var/lib/vector/audit-<date>.log` in the `siem-data` volume. Config: `infra/vector/vector.yaml`.
 - **GreenMail** is there because Mailpit has no IMAP: it is the mailbox the Email Trigger (IMAP) reads. Mail sent to its SMTP port lands in its own mailboxes, not in Mailpit.
 - Keycloak's realm is imported only when the realm doesn't exist yet. After editing `infra/keycloak/landflow-realm.json`, run `down -v` on the infra stack (or delete the realm in the admin console) and start it again.

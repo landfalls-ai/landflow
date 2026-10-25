@@ -3,11 +3,12 @@
  * What an import did: nodes converted to Landflow types, placeholders for
  * node types Landflow doesn't have, notes, connections, and warnings
  * (dropped credentials, simplified schedules…). Shown after importing a file
- * or JSON (editor and workflows list; Landflow, n8n or Flowise) and after pasting n8n nodes.
+ * or JSON (editor and workflows list; Landflow, n8n or Flowise) and after pasting n8n nodes, with the nodes the
+ * governance policy blocks.
  */
 import type { ReactNode } from 'react';
 import { create } from 'zustand';
-import { ArrowRight, CircleCheck, CircleDashed, FileJson, TriangleAlert } from 'lucide-react';
+import { ArrowRight, Ban, CircleCheck, CircleDashed, FileJson, TriangleAlert } from 'lucide-react';
 import type { ImportReport } from '@/lib/shared/types';
 import { Dialog } from '../agents/dialog';
 import { Button } from '../ui/button';
@@ -104,6 +105,20 @@ export function ImportReportView({ report }: { report: ImportReport }) {
               <div key={p.name} className="flex items-center gap-2 rounded-lg border border-warnbd bg-warndim px-2.5 py-1.5 text-[12px]">
                 <span className="font-semibold text-t1">{p.name}</span>
                 <span className="ml-auto truncate font-mono text-[11px] text-t3">{p.type}</span>
+              </div>
+            ))}
+          </div>
+        </Group>
+      )}
+      {(report.blocked?.length ?? 0) > 0 && (
+        <Group icon={<Ban className="size-3.5 text-rd" />} title="Blocked by policy">
+          <p className="text-[12px] leading-snug text-t3">The governance policy (Settings → Governance) doesn’t allow these nodes: the workflow saves, but it can’t be published and they fail when run.</p>
+          <div className="space-y-1">
+            {report.blocked!.map((b) => (
+              <div key={b.name} className="flex items-center gap-2 rounded-lg border border-rdbd bg-rddim px-2.5 py-1.5 text-[12px]" title={b.reason}>
+                <span className="font-semibold text-t1">{b.name}</span>
+                <span className="truncate text-t3">{b.reason}</span>
+                <span className="ml-auto truncate font-mono text-[11px] text-t3">{b.type}</span>
               </div>
             ))}
           </div>

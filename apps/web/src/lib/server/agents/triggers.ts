@@ -194,6 +194,11 @@ export const agentTriggers = singleton('agent-triggers', () => {
       timer = setInterval(tick, 1_000);
       timer.unref?.();
     },
+    /** Stop the triggers (queue mode: this main no longer leads). */
+    stop() {
+      clearInterval(timer);
+      timer = undefined;
+    },
     /** Last error per trigger, for the builder. */
     errors: () => Object.fromEntries(failing),
   };

@@ -30,7 +30,7 @@ import {
 } from '@/lib/server/forms';
 import { handler } from '@/lib/server/http';
 import { findIdempotent, idempotencyKeyOf } from '@/lib/server/idempotency';
-import { DuplicateRunError, newExecutionId, runWorkflow, RunSkippedError, type RunReply } from '@/lib/server/runner';
+import { DuplicateRunError, newExecutionId, RunBufferedError, runWorkflow, RunSkippedError, turnedDown, type RunReply } from '@/lib/server/runner';
 import { startTrigger } from '@/lib/server/telemetry';
 import { checkWebhookAuth } from '@/lib/server/webhook-auth';
 import { deferred } from '@/lib/server/webhooks';
@@ -107,6 +107,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const trigger = startTrigger({ source: 'form', workflowId: workflow.id, nodeName: node.name });
   const reply = deferred<RunReply>();
   let started = false;
+  const begun = deferred<void>();
   const run = context.with(trigger.context, () =>
     runWorkflow({
       workflow,
@@ -115,24 +116,26 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
       triggerItems: [submissionItem(submission.json, binary)],
       executionId,
       ...(idempotencyKey && { idempotencyKey }),
-      onStart: () => (started = true),
+      onStart: () => {
+        started = true;
+        begun.resolve();
+      },
       onReply: (value) => reply.resolve(value),
     }),
   );
   run.then(
     () => trigger.end(),
     (caught) => {
-      if (!started && binary) void deleteExecutionBinary(executionId);
+      // Held by the trigger's debounce or batching: its files go with the run that picks the submission up.
+      if (!started && binary && !(caught instanceof RunBufferedError)) void deleteExecutionBinary(executionId);
       trigger.end(caught);
     },
   );
   if (!started) {
-    // Turned down before it started (onStart is called synchronously otherwise).
-    const caught = await run.then(
-      () => undefined,
-      (reason: unknown) => reason,
-    );
+    // Turned down before it started? (onStart comes synchronously, or a moment later in queue mode.)
+    const caught = await turnedDown(run, begun.promise);
     if (caught instanceof DuplicateRunError) return replayed();
+    if (caught instanceof RunBufferedError) return messagePage(fallback);
     if (caught instanceof RunSkippedError) return messagePage({ title: 'Please try again later', message: 'This form is busy right now. Submit it again in a moment.', status: 429 });
     if (caught !== undefined) throw caught;
   }

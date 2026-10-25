@@ -1,6 +1,6 @@
 /**
  * The public API as an OpenAPI 3.1 document (GET /api/openapi.json, Settings → API): workflows (and running them),
- * executions, data tables, variables and your account and API keys. Request bodies of the workflow and row filter
+ * executions, data tables, variables, templates and your account and API keys. Request bodies of the workflow and row filter
  * come from the routes' own zod schemas, so they can't drift; every operation names the API key scope the guard
  * wants (`x-landflow-scope`, from lib/server/auth/policy.ts), so the docs and the guard agree.
  *
@@ -9,9 +9,11 @@
 import { z } from 'zod';
 import { API_KEY_SCOPES } from '../shared/auth';
 import { SESSION_COOKIE } from '../shared/auth-paths';
+import { TEMPLATE_CATEGORIES } from '../shared/templates';
 import { rowFilterSchema } from './datatables/http';
 import { routePolicy } from './auth/policy';
 import { workflowSchema } from './schemas';
+import { saveTemplateSchema } from './templates/schema';
 
 type Json = Record<string, unknown>;
 type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
@@ -34,7 +36,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Account';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account';
   id: string;
   summary: string;
   description?: string;
@@ -205,6 +207,54 @@ const schemas: Record<string, Json> = {
   RowValues: { type: 'object', description: 'Column → value (coerced to the column type)', additionalProperties: true },
   RowFilter: fromZod(rowFilterSchema),
   Variable: object({ key: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$', maxLength: 64 }, value: { type: 'string', maxLength: 10_000 } }, ['key', 'value']),
+  TemplateCredentialSlot: object(
+    {
+      id: { type: 'string', description: 'What the template’s nodes reference as `credentials[key].id`' },
+      type: { type: 'string', description: 'Qualified credential type, e.g. `messaging.slackApi`' },
+      name: { type: 'string' },
+      description: { type: 'string' },
+      optional: { type: 'boolean' },
+      nodes: { ...array({ type: 'string' }), description: 'Names of the nodes that use it' },
+    },
+    ['id', 'type', 'name'],
+  ),
+  TemplateProblem: object({ kind: { type: 'string', enum: ['missing', 'blocked'] }, nodeType: { type: 'string' }, message: { type: 'string' } }, ['kind', 'nodeType', 'message']),
+  TemplateSummary: object(
+    {
+      id: { type: 'string', description: 'Built-in ids are slugs, saved ones `tpl_…`, remote ones `n8n-<number>`' },
+      source: { type: 'string', enum: ['builtin', 'local', 'remote'] },
+      name: { type: 'string' },
+      description: { type: 'string', description: 'Markdown' },
+      categories: array({ type: 'string', enum: TEMPLATE_CATEGORIES.map((c) => c.id) }),
+      nodeTypes: { ...array({ type: 'string' }), description: 'Distinct node types, triggers first' },
+      nodeCount: { type: 'integer' },
+      credentials: array(ref('TemplateCredentialSlot')),
+      author: { type: 'string' },
+      createdAt: { type: 'string' },
+      updatedAt: { type: 'string' },
+      usable: { type: 'boolean', description: 'False when a node type is missing here or blocked by the governance policy' },
+      problems: array(ref('TemplateProblem')),
+    },
+    ['id', 'source', 'name', 'description', 'categories', 'nodeTypes', 'nodeCount', 'credentials', 'usable', 'problems'],
+  ),
+  Template: {
+    allOf: [
+      ref('TemplateSummary'),
+      object(
+        {
+          workflow: { ...ref('WorkflowInput'), description: 'Credentials point at slots; no pinned data or ids of an instance' },
+          setup: { ...array({ type: 'string' }), description: 'Setup steps, Markdown' },
+          dataTables: array(object({ name: { type: 'string' }, columns: array(object({ name: { type: 'string' }, type: { type: 'string' } }, ['name', 'type'])) }, ['name', 'columns'])),
+          report: { ...ref('ImportReport'), description: 'Remote templates: what the n8n importer did' },
+        },
+        ['workflow', 'setup', 'dataTables'],
+      ),
+    ],
+  },
+  TemplateFile: object(
+    { kind: { type: 'string', const: 'landflow/template' }, version: { type: 'integer', const: 1 }, template: { type: 'object', description: 'name, description, categories, credentials, setup, dataTables, workflow', additionalProperties: true } },
+    ['kind', 'version', 'template'],
+  ),
   Viewer: object(
     {
       id: { type: 'string' },
@@ -543,6 +593,172 @@ function paths(): Record<string, Record<string, Json>> {
   });
   add('delete', '/api/variables/{key}', { tag: 'Variables', id: 'deleteVariable', summary: 'Delete a variable', responses: { 200: reply('Deleted', ok), 404: notFound } });
 
+  // ---- templates ----
+  const templateReply = (description: string) => reply(description, object({ template: ref('Template') }, ['template']));
+  add('get', '/api/templates', {
+    tag: 'Templates',
+    id: 'listTemplates',
+    summary: 'List templates',
+    description: 'Saved on this instance, then built-in ones; remote ones (LANDFLOW_TEMPLATES_URL) when searching or with `source=remote`.',
+    query: [
+      { name: 'search', description: 'Matches name, description and node types', schema: { type: 'string' } },
+      { name: 'category', description: 'One category', schema: { type: 'string', enum: TEMPLATE_CATEGORIES.map((c) => c.id) } },
+      { name: 'source', description: 'Only templates from here', schema: { type: 'string', enum: ['builtin', 'local', 'remote'] } },
+    ],
+    responses: {
+      200: reply(
+        'The matches, and whether remote templates are on',
+        object({ templates: array(ref('TemplateSummary')), remote: object({ enabled: { type: 'boolean' }, label: { type: 'string' }, error: { type: 'string' } }, ['enabled']) }, ['templates', 'remote']),
+      ),
+      400: invalid,
+    },
+  });
+  add('post', '/api/templates', {
+    tag: 'Templates',
+    id: 'saveTemplate',
+    summary: 'Save a workflow as a template, or import a template file',
+    description: 'Credentials become slots (never their ids) and pinned data, publication state, folder and tags are left out. `{ data }` imports what `?format=file` exported.',
+    body: jsonBody({ oneOf: [fromZod(saveTemplateSchema), object({ data: ref('TemplateFile') }, ['data'])] }),
+    responses: { 201: templateReply('The saved template'), 400: invalid },
+  });
+  add('get', '/api/templates/{id}', {
+    tag: 'Templates',
+    id: 'getTemplate',
+    summary: 'Get a template',
+    query: [{ name: 'format', description: '`file`: download it as a template file to import elsewhere', schema: { type: 'string', enum: ['file'] } }],
+    responses: { 200: templateReply('The template (or, with `format=file`, a TemplateFile)'), 404: notFound, 502: errorRef('The remote templates API failed') },
+  });
+  add('delete', '/api/templates/{id}', {
+    tag: 'Templates',
+    id: 'deleteTemplate',
+    summary: 'Delete a saved template',
+    description: 'Built-in and remote templates can’t be deleted.',
+    responses: { 200: reply('Deleted', ok), 400: invalid, 404: notFound },
+  });
+  add('post', '/api/templates/{id}/use', {
+    tag: 'Templates',
+    id: 'useTemplate',
+    summary: 'Create a workflow from a template',
+    description: 'Each credential slot gets the saved credential picked for it (of the slot’s type); missing data tables are created and URL paths made unique. Saved as an inactive draft.',
+    body: jsonBody(
+      object({
+        name: { type: 'string', maxLength: 200 },
+        folderId: { type: 'string' },
+        credentials: { type: 'object', description: 'Slot id → credential id (null or left out: none yet)', additionalProperties: { type: ['string', 'null'] } },
+      }),
+      undefined,
+      false,
+    ),
+    responses: {
+      201: reply(
+        'The new workflow',
+        object({ workflow: ref('Workflow'), createdTables: array({ type: 'string' }), warnings: array({ type: 'string' }), report: ref('ImportReport') }, ['workflow', 'createdTables', 'warnings']),
+      ),
+      400: invalid,
+      404: notFound,
+      409: errorRef('The template uses node types that are missing or blocked here (`problems`)'),
+    },
+  });
+
+  // ---- audit and publish requests ----
+  const auditQuery = [
+    { name: 'actor', description: 'A user id, or part of a name or email', schema: { type: 'string' } },
+    { name: 'action', description: 'Comma-separated actions (`workflow.publish`); `workflow.*` for a category', schema: { type: 'string' } },
+    { name: 'targetType', description: 'workflow, credential, user, api_key, settings, execution…', schema: { type: 'string' } },
+    { name: 'targetId', description: 'The target’s id', schema: { type: 'string' } },
+    { name: 'outcome', description: 'success, failure or denied', schema: { type: 'string', enum: ['success', 'failure', 'denied'] } },
+    { name: 'from', description: 'From this time (ISO time or date), inclusive', schema: { type: 'string' } },
+    { name: 'to', description: 'Up to this time (ISO time or date), inclusive', schema: { type: 'string' } },
+    { name: 'q', description: 'Text in the summary or the target’s name', schema: { type: 'string' } },
+  ];
+  const auditEvent = object(
+    {
+      id: { type: 'string' },
+      at: { type: 'string', format: 'date-time' },
+      action: { type: 'string' },
+      category: { type: 'string' },
+      outcome: { type: 'string', enum: ['success', 'failure', 'denied'] },
+      actor: object({ type: { type: 'string', enum: ['user', 'api_key', 'system', 'anonymous'] }, id: { type: 'string' }, name: { type: 'string' }, email: { type: 'string' } }, ['type']),
+      apiKeyId: { type: 'string' },
+      ip: { type: 'string' },
+      userAgent: { type: 'string' },
+      requestId: { type: 'string' },
+      method: { type: 'string' },
+      route: { type: 'string', description: 'The route pattern, never the raw URL' },
+      status: { type: 'integer' },
+      target: object({ type: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' } }, ['type']),
+      summary: { type: 'string' },
+      details: { type: 'object', description: 'Flat ids, names, counts and flags; never secrets', additionalProperties: true },
+    },
+    ['id', 'at', 'action', 'category', 'outcome', 'actor', 'summary'],
+  );
+  add('get', '/api/audit', {
+    tag: 'Audit',
+    id: 'listAuditEvents',
+    summary: 'List audit events',
+    description: 'Newest first; page with `cursor` (the previous page’s `nextCursor`).',
+    query: [
+      ...auditQuery,
+      { name: 'limit', description: 'At most this many (default 50)', schema: { type: 'integer', minimum: 1, maximum: 500, default: 50 } },
+      { name: 'cursor', description: 'The previous page’s `nextCursor`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('A page of events', object({ events: array(auditEvent), nextCursor: { type: 'string' } }, ['events'])) },
+  });
+  add('get', '/api/audit/export', {
+    tag: 'Audit',
+    id: 'exportAuditEvents',
+    summary: 'Export audit events',
+    description: 'The events matching the same filters, newest first, as a CSV or JSON download (at most 100,000). The export is audited too.',
+    query: [...auditQuery, { name: 'format', description: 'csv (default) or json', schema: { type: 'string', enum: ['csv', 'json'], default: 'csv' } }],
+    responses: { 200: { description: 'The download', content: { 'text/csv': { schema: { type: 'string' } }, 'application/json': { schema: array(auditEvent) } } } },
+  });
+  const publishRequest = object(
+    {
+      id: { type: 'string' },
+      workflowId: { type: 'string' },
+      workflowName: { type: 'string' },
+      kind: { type: 'string', enum: ['publish', 'rollback', 'unpublish'] },
+      status: { type: 'string', enum: ['pending', 'approved', 'rejected', 'canceled', 'stale', 'failed'] },
+      versionId: { type: 'string' },
+      versionNumber: { type: 'integer' },
+      note: { type: 'string' },
+      requestedBy: { type: 'string' },
+      requestedAt: { type: 'string', format: 'date-time' },
+      decidedBy: { type: 'string' },
+      decidedAt: { type: 'string', format: 'date-time' },
+      reason: { type: 'string' },
+      canApprove: { type: 'boolean' },
+      canCancel: { type: 'boolean' },
+    },
+    ['id', 'workflowId', 'kind', 'status', 'requestedBy', 'requestedAt'],
+  );
+  add('get', '/api/publish-requests', {
+    tag: 'Audit',
+    id: 'listPublishRequests',
+    summary: 'List four-eyes publish requests',
+    description: 'With four-eyes publishing on (Settings → Governance), publish, rollback and unpublish answer 202 `{ approvalRequired: true, request }` and someone else approves.',
+    query: [
+      { name: 'workflowId', description: 'Only this workflow’s', schema: { type: 'string' } },
+      { name: 'status', description: 'Comma-separated statuses, or `all` (default: pending)', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The requests', object({ requests: array(publishRequest), approvable: { type: 'integer' } }, ['requests'])) },
+  });
+  add('post', '/api/publish-requests/{id}/approve', {
+    tag: 'Audit',
+    id: 'approvePublishRequest',
+    summary: 'Approve a publish request',
+    description: 'Publishes (or unpublishes) it. Not the requester’s own; 409 when it went stale or was decided.',
+    body: jsonBody(object({ comment: { type: 'string', maxLength: 2000 } }), undefined, false),
+    responses: { 200: reply('The request and the publication', object({ request: publishRequest, result: { type: 'object' } }, ['request'])), 404: notFound, 409: errorRef('Out of date or already decided') },
+  });
+  add('post', '/api/publish-requests/{id}/reject', {
+    tag: 'Audit',
+    id: 'rejectPublishRequest',
+    summary: 'Reject a publish request',
+    body: jsonBody(object({ comment: { type: 'string', maxLength: 2000 } }), undefined, false),
+    responses: { 200: reply('The request', object({ request: publishRequest }, ['request'])), 404: notFound, 409: errorRef('Already decided') },
+  });
+
   // ---- account ----
   add('get', '/api/auth/me', {
     tag: 'Account',
@@ -599,6 +815,8 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Executions', description: 'Runs: history, run data, stop, retry and re-run' },
       { name: 'Data tables', description: 'Built-in tables workflows read and write' },
       { name: 'Variables', description: 'Instance variables (`$vars`); changing them needs an owner or admin' },
+      { name: 'Templates', description: 'The templates library: start workflows from templates, save and share your own' },
+      { name: 'Audit', description: 'The audit log (owners and admins) and four-eyes publish requests' },
       { name: 'Account', description: 'Who you are and your API keys' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

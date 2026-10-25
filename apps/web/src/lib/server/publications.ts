@@ -48,14 +48,27 @@ export function onPublicationChanged(listener: (workflowId: string) => void): ()
   return () => listeners.delete(listener);
 }
 
-function changed(workflowId: string) {
-  for (const listener of listeners) {
+/** Listeners that also hear of publications other processes changed (queue mode: app webhooks and IMAP IDLE on the leader). */
+const everywhere = singleton('publication-listeners-everywhere', () => new Set<(workflowId: string) => void>());
+
+export function onPublicationChangedAnywhere(listener: (workflowId: string) => void): () => void {
+  everywhere.add(listener);
+  return () => everywhere.delete(listener);
+}
+
+function changed(workflowId: string, local = true) {
+  for (const listener of [...(local ? listeners : []), ...everywhere]) {
     try {
       listener(workflowId);
     } catch (error) {
       logger.warn('publication listener failed', { error, 'landflow.workflow.id': workflowId });
     }
   }
+}
+
+/** Queue mode: another process changed a workflow's publication (only the listeners that asked for those hear of it). */
+export function publicationChangedElsewhere(workflowId: string) {
+  changed(workflowId, false);
 }
 
 const toPublication = (row: PublicationRow): WorkflowPublication => ({

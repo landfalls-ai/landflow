@@ -7,6 +7,7 @@ import { clientIp, createResetToken, deliverLink, findUserByEmail, formLimit } f
 import { mailConfigured } from '@/lib/server/auth/mail';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { logger } from '@/lib/server/telemetry';
+import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,7 @@ export const POST = handler(async (request: Request) => {
     const { token } = createResetToken(user);
     const sent = await deliverLink('reset', { to: user.email, token, request });
     if (!sent.emailed) logger.warn('the password reset email was not sent', { 'landflow.user.id': user.id, error: sent.emailError });
+    recordAudit({ action: 'auth.password_reset_request', actor: 'anonymous', target: { type: 'user', id: user.id, name: user.email }, summary: `Password reset link asked for ${user.email}`, details: { emailed: sent.emailed } });
   }
   return json({ ok: true, message: 'If that email has an account, a reset link is on its way.' });
 });

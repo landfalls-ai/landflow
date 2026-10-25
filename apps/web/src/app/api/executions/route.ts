@@ -1,4 +1,6 @@
 import { handler, json } from '@/lib/server/http';
+import { visibleIds } from '@/lib/server/projects';
+import { routeActor } from '@/lib/server/projects/http';
 import { liveExecutions } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
 
@@ -11,5 +13,8 @@ export const GET = handler(async (request: Request) => {
   const running = liveExecutions(workflowId);
   // A resumed execution is live and still saved as waiting: list it once.
   const ids = new Set(running.map((e) => e.id));
-  return json({ executions: [...running, ...store.listExecutions({ workflowId, limit }).filter((e) => !ids.has(e.id))].slice(0, limit) });
+  // Members see the executions of the workflows they see (owners and admins: all).
+  const workflows = visibleIds(routeActor(), 'workflow', store.listWorkflows().map((w) => w.id));
+  const all = [...running, ...store.listExecutions({ workflowId, limit: workflows ? Math.max(limit * 4, 500) : limit }).filter((e) => !ids.has(e.id))];
+  return json({ executions: (workflows ? all.filter((e) => e.workflowId && workflows.has(e.workflowId)) : all).slice(0, limit) });
 });

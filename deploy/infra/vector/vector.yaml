@@ -1,0 +1,43 @@
+# A local SIEM stand-in for Landflow's audit log streaming (Settings → Audit log → SIEM streaming): Vector receives
+# RFC 5424 syslog (TCP with octet counting or newlines, and UDP) and JSON lines over HTTP, and prints every event as
+# JSON (`docker compose -f deploy/compose.infra.yml logs -f siem`) and appends it to /var/lib/vector/audit-<date>.log.
+#
+#   syslog:  host localhost, port 55514, protocol TCP or UDP
+#   HTTP:    http://localhost:55080/ (JSON lines; the signature headers are kept as fields, not checked)
+
+api:
+  enabled: true
+  address: 0.0.0.0:8686
+
+sources:
+  syslog_tcp:
+    type: syslog
+    mode: tcp
+    address: 0.0.0.0:5514
+  syslog_udp:
+    type: syslog
+    mode: udp
+    address: 0.0.0.0:5514
+  http_json:
+    type: http_server
+    address: 0.0.0.0:8080
+    path: /
+    strict_path: false
+    headers: [x-landflow-signature, x-landflow-timestamp]
+    framing:
+      method: newline_delimited
+    decoding:
+      codec: json
+
+sinks:
+  console:
+    type: console
+    inputs: [syslog_tcp, syslog_udp, http_json]
+    encoding:
+      codec: json
+  file:
+    type: file
+    inputs: [syslog_tcp, syslog_udp, http_json]
+    path: /var/lib/vector/audit-%Y-%m-%d.log
+    encoding:
+      codec: json

@@ -21,7 +21,7 @@ import { BinaryTooLargeError } from '@/lib/server/binary/store';
 import { error, handler, json } from '@/lib/server/http';
 import { findIdempotent, idempotencyKeyOf } from '@/lib/server/idempotency';
 import { productionWorkflows } from '@/lib/server/publish';
-import { DuplicateRunError, liveExecution, newExecutionId, RunBufferedError, runWorkflow, RunSkippedError, type RunReply } from '@/lib/server/runner';
+import { DuplicateRunError, liveExecution, newExecutionId, RunBufferedError, runWorkflow, RunSkippedError, turnedDown, type RunReply } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
 import { recordWebhookRequest, startTrigger } from '@/lib/server/telemetry';
 import { runStream, streamFormatOf } from '@/lib/server/streaming';
@@ -87,6 +87,7 @@ async function handle(request: Request, { params }: Ctx) {
   // Streaming: AI Agent and chain output goes out as it arrives (SSE or NDJSON, lib/server/streaming.ts).
   const streamed = mode === 'streaming' ? runStream(streamFormatOf(request), { executionId }) : undefined;
   let started = false;
+  const begun = deferred<void>();
   const run = context.with(trigger.context, () =>
     runWorkflow({
       workflow,
@@ -95,7 +96,10 @@ async function handle(request: Request, { params }: Ctx) {
       triggerItems: [item],
       executionId,
       ...(idempotencyKey && { idempotencyKey }),
-      onStart: () => (started = true),
+      onStart: () => {
+        started = true;
+        begun.resolve();
+      },
       ...(mode === 'responseNode' && { onReply: (value: RunReply) => reply.resolve(value) }),
       ...(streamed && { streaming: true, onEvent: streamed.onEvent }),
     }),
@@ -109,11 +113,8 @@ async function handle(request: Request, { params }: Ctx) {
     },
   );
   if (!started) {
-    // Turned down before it started (onStart is called synchronously otherwise).
-    const caught = await run.then(
-      () => undefined,
-      (reason: unknown) => reason,
-    );
+    // Turned down before it started? (onStart comes synchronously, or a moment later in queue mode.)
+    const caught = await turnedDown(run, begun.promise);
     if (caught instanceof DuplicateRunError) return respond(replay(caught.executionId));
     // Held by the trigger's debounce or batching: accepted, a later run takes it.
     if (caught instanceof RunBufferedError) {
@@ -122,7 +123,9 @@ async function handle(request: Request, { params }: Ctx) {
     if (caught instanceof RunSkippedError) return respond(error(caught.message, 429, { workflowId: workflow.id, reason: caught.reason }));
     if (caught !== undefined) throw caught;
   }
-  const queued = store.getExecution(executionId)?.status === 'queued';
+  // Held by the concurrency limit (queue mode: not just waiting for a worker).
+  const stored = store.getExecution(executionId);
+  const queued = stored?.status === 'queued' && !stored.queued?.worker;
   if (streamed) return respond(streamed.respond(run));
   return respond(await answerWebhook(mode, run, reply.promise, { executionId, workflowId: workflow.id, ...(queued && { status: 'queued' }) }));
 }

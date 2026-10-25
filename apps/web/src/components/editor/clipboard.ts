@@ -1,13 +1,14 @@
 /**
  * Copy and paste of canvas selections. The clipboard carries Landflow JSON
- * (`{ kind: 'landflow/nodes', nodes, connections, stickyNotes }`, nodes in the
- * engine's shape), so a selection can move between workflows and tabs. n8n's
+ * (`{ kind: 'landflow/nodes', nodes, connections, stickyNotes, groups }`, nodes in
+ * the engine's shape), so a selection can move between workflows and tabs. A
+ * copied group brings its frame and every node in it. n8n's
  * clipboard JSON (`{ nodes, connections }` keyed by node name) is recognised
  * here and converted by the importer (POST /api/workflows/import).
  *
  * Everything in this module is pure, so paste renaming is unit-tested.
  */
-import type { NodeItem, StickyNote, Workflow, WorkflowConnection, WorkflowNode } from '@/lib/shared/types';
+import type { NodeItem, StickyNote, Workflow, WorkflowConnection, WorkflowGroup, WorkflowNode } from '@/lib/shared/types';
 
 export const CLIPBOARD_KIND = 'landflow/nodes';
 
@@ -19,22 +20,33 @@ export interface ClipboardData {
   /** Only connections whose two ends were copied. */
   connections: WorkflowConnection[];
   stickyNotes: StickyNote[];
+  /** Copied canvas groups, their members limited to the copied nodes. */
+  groups?: WorkflowGroup[];
   /** Pinned output of copied nodes, by node id. */
   pinData?: Record<string, NodeItem[]>;
 }
 
 export type ParsedClipboard = { kind: 'landflow'; data: ClipboardData } | { kind: 'n8n'; data: unknown };
 
-/** The selected nodes and notes of a workflow, with the connections between them. */
-export function serializeSelection(workflow: Pick<Workflow, 'nodes' | 'connections' | 'stickyNotes' | 'pinData'>, nodeIds: Set<string>, stickyIds: Set<string>): ClipboardData {
-  const nodes = workflow.nodes.filter((n) => nodeIds.has(n.id));
-  const pinData = Object.fromEntries(Object.entries(workflow.pinData ?? {}).filter(([id]) => nodeIds.has(id)));
+/** The selected nodes, notes and groups of a workflow, with the connections between them. A group brings all its nodes. */
+export function serializeSelection(
+  workflow: Pick<Workflow, 'nodes' | 'connections' | 'stickyNotes' | 'pinData' | 'groups'>,
+  nodeIds: Set<string>,
+  stickyIds: Set<string>,
+  groupIds: Set<string> = new Set(),
+): ClipboardData {
+  const picked = (workflow.groups ?? []).filter((g) => groupIds.has(g.id));
+  const ids = new Set([...nodeIds, ...picked.flatMap((g) => g.nodeIds)]);
+  const nodes = workflow.nodes.filter((n) => ids.has(n.id));
+  const pinData = Object.fromEntries(Object.entries(workflow.pinData ?? {}).filter(([id]) => ids.has(id)));
+  const groups = picked.map((g) => ({ ...structuredClone(g), nodeIds: g.nodeIds.filter((id) => ids.has(id)) }));
   return {
     kind: CLIPBOARD_KIND,
     version: 1,
     nodes: structuredClone(nodes),
-    connections: workflow.connections.filter((c) => nodeIds.has(c.source) && nodeIds.has(c.target)).map((c) => ({ ...c })),
+    connections: workflow.connections.filter((c) => ids.has(c.source) && ids.has(c.target)).map((c) => ({ ...c })),
     stickyNotes: structuredClone((workflow.stickyNotes ?? []).filter((s) => stickyIds.has(s.id))),
+    ...(groups.length && { groups }),
     ...(Object.keys(pinData).length && { pinData: structuredClone(pinData) }),
   };
 }
@@ -67,6 +79,7 @@ export function parseClipboard(text: string): ParsedClipboard | undefined {
         nodes: nodes as unknown as WorkflowNode[],
         connections: (Array.isArray(value.connections) ? value.connections : []) as WorkflowConnection[],
         stickyNotes: (Array.isArray(value.stickyNotes) ? value.stickyNotes : []) as StickyNote[],
+        ...(Array.isArray(value.groups) && { groups: value.groups.filter(isObject) as unknown as WorkflowGroup[] }),
         ...(isObject(value.pinData) && { pinData: value.pinData as Record<string, NodeItem[]> }),
       },
     };
@@ -117,6 +130,7 @@ export interface PastePlan {
   nodes: WorkflowNode[];
   connections: WorkflowConnection[];
   stickyNotes: StickyNote[];
+  groups: WorkflowGroup[];
   pinData: Record<string, NodeItem[]>;
   /** Old name → new name, for nodes renamed because the name was taken. */
   renamed: Record<string, string>;
@@ -128,12 +142,12 @@ export interface PasteOptions {
   /** Where the top-left corner of the pasted selection goes; otherwise every position moves by `offset`. */
   at?: { x: number; y: number };
   offset?: { x: number; y: number };
-  newId: (kind: 'node' | 'edge' | 'sticky') => string;
+  newId(kind: 'node' | 'edge' | 'sticky' | 'group'): string;
 }
 
-/** The top-left corner of a selection's nodes and notes. */
-export function selectionOrigin(data: Pick<ClipboardData, 'nodes' | 'stickyNotes'>): { x: number; y: number } {
-  const points = [...data.nodes.map((n) => n.position), ...data.stickyNotes.map((s) => s.position)];
+/** The top-left corner of a selection's nodes, notes and group frames. */
+export function selectionOrigin(data: Pick<ClipboardData, 'nodes' | 'stickyNotes' | 'groups'>): { x: number; y: number } {
+  const points = [...data.nodes.map((n) => n.position), ...data.stickyNotes.map((s) => s.position), ...(data.groups ?? []).map((g) => g.position)];
   if (!points.length) return { x: 0, y: 0 };
   return { x: Math.min(...points.map((p) => p[0])), y: Math.min(...points.map((p) => p[1])) };
 }
@@ -141,7 +155,8 @@ export function selectionOrigin(data: Pick<ClipboardData, 'nodes' | 'stickyNotes
 /**
  * Turn clipboard data into nodes that can join a workflow: fresh ids, names made unique against the canvas (and each
  * other), positions moved, `$('Name')` references between pasted nodes following their renamed targets, connections
- * and pinned data re-keyed. Connections to nodes that weren't copied are dropped.
+ * and pinned data re-keyed, groups given fresh ids around their pasted members. Connections to nodes that weren't
+ * copied are dropped.
  */
 export function preparePaste(data: ClipboardData, options: PasteOptions): PastePlan {
   const taken = new Set(options.existingNames);
@@ -166,6 +181,13 @@ export function preparePaste(data: ClipboardData, options: PasteOptions): PasteP
     .filter((c) => ids[c.source] && ids[c.target])
     .map((c) => ({ ...c, id: options.newId('edge'), source: ids[c.source], target: ids[c.target] }));
   const stickyNotes = data.stickyNotes.map((note) => ({ ...structuredClone(note), id: options.newId('sticky'), position: move(note.position) }));
+  // A node joins one pasted group at most (the first that lists it).
+  const grouped = new Set<string>();
+  const groups = (data.groups ?? []).map((group) => {
+    const nodeIds = (group.nodeIds ?? []).flatMap((id) => (ids[id] && !grouped.has(ids[id]) ? [ids[id]] : []));
+    nodeIds.forEach((id) => grouped.add(id));
+    return { ...structuredClone(group), id: options.newId('group'), nodeIds, position: move(group.position) };
+  });
   const pinData = Object.fromEntries(Object.entries(data.pinData ?? {}).flatMap(([id, items]) => (ids[id] ? [[ids[id], structuredClone(items)]] : [])));
-  return { nodes, connections, stickyNotes, pinData, renamed };
+  return { nodes, connections, stickyNotes, groups, pinData, renamed };
 }

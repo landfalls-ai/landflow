@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { currentPrincipal } from '@/lib/server/auth';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { applySync } from '@/lib/server/sync';
+import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +25,9 @@ export const POST = handler(async (request: Request) => {
   if (!body.ok) return body.response;
   const { files, ...options } = body.data;
   const result = await applySync(files, { ...options, by: currentPrincipal()?.user.id, note: 'Git sync (CLI)' });
+  if (!result.dryRun) {
+    recordAudit({ action: 'sync.apply', outcome: result.applied ? 'success' : 'failure', target: { type: 'sync' }, summary: result.applied ? `Applied ${result.appliedCount} Git sync change${result.appliedCount === 1 ? '' : 's'}` : 'Git sync files not applied', details: { files: files.length, applied: result.appliedCount, conflicts: result.conflicts, errors: result.errors.length, prune: options.prune, force: options.force } });
+  }
   if (result.errors.length && !result.applied) return error(result.errors[0], 400, { ...result });
   if (result.conflicts && !result.applied && !result.dryRun) {
     return error(`${result.conflicts} change${result.conflicts === 1 ? '' : 's'} conflict with edits made on the instance since the last sync`, 409, { ...result });

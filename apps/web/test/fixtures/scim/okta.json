@@ -1,0 +1,214 @@
+{
+  "provider": "Okta",
+  "about": "The requests Okta's SCIM 2.0 provisioning sends (Okta SCIM 2.0 reference, 'Create Users', 'Retrieve Users', 'Update a specific User (PUT)', 'Update a specific User (PATCH)' for deactivation and password sync, and Group Push: create, rename, add and remove members, delete). Okta looks a user up by userName before creating them, sends lower-case ops, puts the change in a path-less value object, and pushes group renames as { op: replace, value: { id, displayName } }. {{name}} is a value an earlier step saved; \"{{*}}\" matches anything present. `state` checks the Landflow user afterwards.",
+  "env": { "LANDFLOW_SCIM_GROUP_MAP": "Data Team=project:Data:editor" },
+  "steps": [
+    {
+      "name": "look the user up by userName before creating",
+      "request": { "method": "GET", "path": "/scim/v2/Users?filter=userName%20eq%20%22jane.doe%40okta.example%22&startIndex=1&count=100" },
+      "response": { "status": 200, "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"], "totalResults": 0, "startIndex": 1, "itemsPerPage": 0, "Resources": [] } }
+    },
+    {
+      "name": "create the user",
+      "request": {
+        "method": "POST",
+        "path": "/scim/v2/Users",
+        "body": {
+          "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+          "userName": "jane.doe@okta.example",
+          "name": { "givenName": "Jane", "familyName": "Doe" },
+          "emails": [{ "primary": true, "value": "jane.doe@okta.example", "type": "work" }],
+          "displayName": "Jane Doe",
+          "locale": "en-US",
+          "externalId": "00ujl29u0le5T6Aj10h7",
+          "groups": [],
+          "password": "1mz050nq",
+          "active": true
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": { "content-type": "application/scim+json" },
+        "body": {
+          "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+          "id": "{{*}}",
+          "externalId": "00ujl29u0le5T6Aj10h7",
+          "userName": "jane.doe@okta.example",
+          "name": { "givenName": "Jane", "familyName": "Doe" },
+          "displayName": "Jane Doe",
+          "emails": [{ "value": "jane.doe@okta.example", "type": "work", "primary": true }],
+          "active": true,
+          "groups": [],
+          "meta": { "resourceType": "User" }
+        }
+      },
+      "save": { "user": "id" },
+      "state": { "user": "{{user}}", "role": "member", "active": true, "provisionedBy": "scim", "hasPassword": false }
+    },
+    {
+      "name": "the lookup finds the user now",
+      "request": { "method": "GET", "path": "/scim/v2/Users?filter=userName%20eq%20%22jane.doe%40okta.example%22&startIndex=1&count=100" },
+      "response": { "status": 200, "body": { "totalResults": 1, "itemsPerPage": 1, "Resources": [{ "id": "{{user}}", "userName": "jane.doe@okta.example" }] } }
+    },
+    {
+      "name": "creating the same userName again is a conflict",
+      "request": { "method": "POST", "path": "/scim/v2/Users", "body": { "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"], "userName": "jane.doe@okta.example", "active": true } },
+      "response": { "status": 409, "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"], "status": "409", "scimType": "uniqueness" } }
+    },
+    {
+      "name": "retrieve the user",
+      "request": { "method": "GET", "path": "/scim/v2/Users/{{user}}" },
+      "response": { "status": 200, "body": { "id": "{{user}}", "userName": "jane.doe@okta.example", "active": true, "meta": { "resourceType": "User", "location": "http://localhost:3000/scim/v2/Users/{{user}}" } } }
+    },
+    {
+      "name": "profile update (PUT with the whole user, new name and email)",
+      "request": {
+        "method": "PUT",
+        "path": "/scim/v2/Users/{{user}}",
+        "body": {
+          "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+          "id": "{{user}}",
+          "userName": "jane.smith@okta.example",
+          "name": { "givenName": "Jane", "familyName": "Smith" },
+          "emails": [{ "primary": true, "value": "jane.smith@okta.example", "type": "work" }],
+          "displayName": "Jane Smith",
+          "locale": "en-US",
+          "externalId": "00ujl29u0le5T6Aj10h7",
+          "groups": [],
+          "active": true,
+          "meta": { "resourceType": "User" }
+        }
+      },
+      "response": { "status": 200, "body": { "id": "{{user}}", "userName": "jane.smith@okta.example", "displayName": "Jane Smith", "name": { "givenName": "Jane", "familyName": "Smith" }, "active": true } },
+      "state": { "user": "{{user}}", "email": "jane.smith@okta.example", "name": "Jane Smith" }
+    },
+    {
+      "name": "password sync (ignored: users sign in through SSO)",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Users/{{user}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "replace", "value": { "password": "t1meMa$heen" } }] }
+      },
+      "response": { "status": 200, "body": { "id": "{{user}}", "active": true } },
+      "state": { "user": "{{user}}", "hasPassword": false }
+    },
+    {
+      "name": "deactivate",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Users/{{user}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "replace", "value": { "active": false } }] }
+      },
+      "response": { "status": 200, "body": { "id": "{{user}}", "active": false } },
+      "state": { "user": "{{user}}", "active": false }
+    },
+    {
+      "name": "deactivated users show up in the active filter",
+      "request": { "method": "GET", "path": "/scim/v2/Users?filter=active%20eq%20false&startIndex=1&count=100" },
+      "response": { "status": 200, "body": { "totalResults": 1, "Resources": [{ "id": "{{user}}", "active": false }] } }
+    },
+    {
+      "name": "reactivate",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Users/{{user}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "replace", "value": { "active": true } }] }
+      },
+      "response": { "status": 200, "body": { "id": "{{user}}", "active": true } },
+      "state": { "user": "{{user}}", "active": true }
+    },
+    {
+      "name": "group push: look the group up",
+      "request": { "method": "GET", "path": "/scim/v2/Groups?filter=displayName%20eq%20%22Data%20Team%22&startIndex=1&count=100" },
+      "response": { "status": 200, "body": { "totalResults": 0, "Resources": [] } }
+    },
+    {
+      "name": "group push: create the group",
+      "request": { "method": "POST", "path": "/scim/v2/Groups", "body": { "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"], "displayName": "Data Team", "members": [] } },
+      "response": { "status": 201, "body": { "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"], "id": "{{*}}", "displayName": "Data Team", "members": [], "meta": { "resourceType": "Group" } } },
+      "save": { "group": "id" }
+    },
+    {
+      "name": "group push: add the member",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Groups/{{group}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "add", "path": "members", "value": [{ "value": "{{user}}", "display": "jane.smith@okta.example" }] }] }
+      },
+      "response": { "status": 200, "body": { "id": "{{group}}", "members": [{ "value": "{{user}}", "display": "Jane Smith" }] } },
+      "state": { "user": "{{user}}", "projects": { "Data": "editor" } }
+    },
+    {
+      "name": "the user lists the group",
+      "request": { "method": "GET", "path": "/scim/v2/Users/{{user}}" },
+      "response": { "status": 200, "body": { "groups": [{ "value": "{{group}}", "display": "Data Team" }] } }
+    },
+    {
+      "name": "group push: retrieve without members",
+      "request": { "method": "GET", "path": "/scim/v2/Groups/{{group}}?excludedAttributes=members" },
+      "response": { "status": 200, "body": { "id": "{{group}}", "displayName": "Data Team" } },
+      "absent": ["members"]
+    },
+    {
+      "name": "group push: rename (path-less value with the id)",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Groups/{{group}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "replace", "value": { "id": "{{group}}", "displayName": "Data Team (EU)" } }] }
+      },
+      "response": { "status": 200, "body": { "id": "{{group}}", "displayName": "Data Team (EU)" } },
+      "state": { "user": "{{user}}", "projects": {} }
+    },
+    {
+      "name": "group push: rename back",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Groups/{{group}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "replace", "value": { "id": "{{group}}", "displayName": "Data Team" } }] }
+      },
+      "response": { "status": 200, "body": { "displayName": "Data Team" } },
+      "state": { "user": "{{user}}", "projects": { "Data": "editor" } }
+    },
+    {
+      "name": "group push: remove the member",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Groups/{{group}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "remove", "path": "members[value eq \"{{user}}\"]" }] }
+      },
+      "response": { "status": 200, "body": { "id": "{{group}}", "members": [] } },
+      "state": { "user": "{{user}}", "projects": {} }
+    },
+    {
+      "name": "group push: replace the members (full push)",
+      "request": {
+        "method": "PUT",
+        "path": "/scim/v2/Groups/{{group}}",
+        "body": { "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"], "id": "{{group}}", "displayName": "Data Team", "members": [{ "value": "{{user}}", "display": "jane.smith@okta.example" }] }
+      },
+      "response": { "status": 200, "body": { "members": [{ "value": "{{user}}" }] } },
+      "state": { "user": "{{user}}", "projects": { "Data": "editor" } }
+    },
+    {
+      "name": "group push: delete the group",
+      "request": { "method": "DELETE", "path": "/scim/v2/Groups/{{group}}" },
+      "response": { "status": 204 },
+      "state": { "user": "{{user}}", "projects": {} }
+    },
+    {
+      "name": "the deleted group is gone",
+      "request": { "method": "GET", "path": "/scim/v2/Groups/{{group}}" },
+      "response": { "status": 404, "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"], "status": "404" } }
+    },
+    {
+      "name": "unassigning the app deactivates the user",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Users/{{user}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "replace", "value": { "active": false } }] }
+      },
+      "response": { "status": 200, "body": { "active": false } },
+      "state": { "user": "{{user}}", "active": false }
+    }
+  ]
+}

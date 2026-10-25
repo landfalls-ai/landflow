@@ -1,11 +1,16 @@
 /**
  * Idempotent server bootstrap: the database (and the one-time import of the old JSON files), built-in plugin,
- * static seeds, gRPC registry, lease reaper, an initial network scan, publications and app webhooks, the scheduler, waiting executions' timers,
+ * static seeds, gRPC registry, lease reaper, Kubernetes discovery (when on), an initial network scan, publications and app webhooks, the scheduler, waiting executions' timers,
  * recovery of executions a restart interrupted, automatic retries, queued runs and agent triggers. Called from
  * instrumentation.ts at startup and defensively from API routes.
+ *
+ * Queue mode (LANDFLOW_EXECUTIONS_MODE=queue, lib/server/cluster): the cluster runtime starts right after the database,
+ * and the services only one main may run (`leaderService`) start on the elected leader and move with the leadership.
+ * In regular mode `leaderService` starts them right there, as before.
  */
 import { agentTriggers } from './agents/triggers';
 import { alerts } from './alerts/service';
+import { startAudit } from './audit/start';
 import { appWebhooks } from './app-webhooks';
 import { bootstrapOwnerFromEnv } from './auth/bootstrap';
 import { startBinaryMaintenance } from './binary/access';
@@ -17,8 +22,11 @@ import { imapIdle } from './imap-idle';
 import { corePlugin } from './nodes';
 import { registry } from './plugins/registry';
 import { ensurePublications } from './publish';
+import { adoptUnassignedResources } from './projects/boot';
 import { retries } from './retries';
-import { startRecovery } from './runner';
+import { startRecovery, startTriggerBuffers } from './runner';
+import { clusterActive, ClusterConfigError, leaderService, startCluster } from './cluster';
+import { triggerBuffers } from './trigger-buffers';
 import { startRegistryGrpcServer } from './plugins/registry-grpc';
 import { scheduler } from './scheduler';
 import { seedWorkflows } from './seed';
@@ -26,37 +34,60 @@ import { singleton } from './singleton';
 import { waits } from './waits';
 import { logger, observePluginsOnline } from './telemetry';
 
+/** A setup queue mode can't run on (SQLite across hosts, Valkey unreachable): the server stops rather than answer 500s. */
+function refuseToStart(error: unknown): never {
+  if (error instanceof ClusterConfigError && process.env.NEXT_RUNTIME === 'nodejs') {
+    logger.error(error.message);
+    process.exit(1);
+  }
+  throw error;
+}
+
 export function ensureBootstrapped(): Promise<void> {
   return singleton('bootstrap', async () => {
     // SQLite opens lazily on first use; Postgres mode loads its mirror here, before anything reads the store.
     await openDatabase();
+    // Queue mode: Valkey, the relay and the leader election (refuses SQLite without LANDFLOW_QUEUE_ALLOW_SQLITE).
+    await startCluster().catch(refuseToStart);
     // LANDFLOW_OWNER_EMAIL / LANDFLOW_OWNER_PASSWORD: the owner, created at boot while there is no user (Docker, CI).
     await bootstrapOwnerFromEnv();
     registry.registerBuiltin(corePlugin);
     registry.start();
     observePluginsOnline(() => registry.list());
-    seedWorkflows();
+    leaderService('seed workflows', seedWorkflows);
     // Insights backfill (first boot) and execution retention, before anything can start a run.
-    startDataMaintenance();
+    leaderService('data maintenance', startDataMaintenance);
+    // Audit log: publish/plugin listeners, SIEM outbox delivery and hourly retention (lib/server/audit).
+    startAudit();
     // Binary data goes with its execution; orphaned files are swept hourly.
     startBinaryMaintenance();
     // Draft and publish: an active workflow without a publication (imported after migration 200) publishes its newest version.
-    ensurePublications();
-    scheduler.start();
+    leaderService('publications', ensurePublications);
+    // Projects: credentials and agents (files) and anything else without a project go to the owner's personal project.
+    leaderService('project adoption', adoptUnassignedResources);
+    leaderService('scheduler', () => scheduler.start(), () => scheduler.stop());
     // Waiting executions: re-arm their timers; overdue ones resume shortly (plugins get a moment to announce).
-    waits.start();
+    leaderService('wait timers', () => waits.start(), () => waits.stop());
     // Runs a restart interrupted continue from their last checkpoint, then queued runs start (plugins announce first).
-    startRecovery();
-    retries.start();
+    // Queue mode: the leader hands runs whose process stopped to a worker, and starts queued runs (cluster/index.ts).
+    if (clusterActive()) {
+      startTriggerBuffers();
+      leaderService('held trigger events', () => triggerBuffers.sync(), () => triggerBuffers.stop());
+    } else startRecovery();
+    leaderService('retry timers', () => retries.start(), () => retries.stop());
     // Failure alerts: throttle digests and "waiting too long" checks.
-    alerts.start();
-    agentTriggers.start();
+    leaderService('alerts', () => alerts.start(), () => alerts.stop());
+    leaderService('agent triggers', () => agentTriggers.start(), () => agentTriggers.stop());
     // Online evaluations: a sample of finished agent runs is graded by an LLM judge.
     startOnlineEvaluations();
     await startRegistryGrpcServer();
 
     const seeds = (process.env.LANDFLOW_PLUGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
     await Promise.allSettled(seeds.map((endpoint) => registry.addEndpoint(endpoint, 'static')));
+    // LANDFLOW_PLUGIN_DISCOVERY=kubernetes: plugins behind labelled Services, next to the sources above (plugins/kubernetes.ts).
+    if ((process.env.LANDFLOW_PLUGIN_DISCOVERY ?? '').split(',').some((mode) => mode.trim().toLowerCase() === 'kubernetes')) {
+      void import('./plugins/kubernetes').then((k8s) => k8s.startKubernetesDiscovery());
+    }
 
     if (process.env.LANDFLOW_SCAN_ON_START !== 'false') {
       // Pick up plugins that started before the host (they keep re-announcing anyway).
@@ -65,9 +96,9 @@ export function ensureBootstrapped(): Promise<void> {
     // Node plugins installed from a marketplace run as child processes of the host.
     marketplace.startNodePlugins();
     // App webhook triggers: check the hooks of published workflows once plugins had a moment to announce; retry failures.
-    setTimeout(() => appWebhooks.start(), 3_000).unref?.();
+    setTimeout(() => leaderService('app webhooks', () => appWebhooks.start(), () => appWebhooks.stop()), 3_000).unref?.();
     // Email Trigger (IMAP) with Listen: IDLE keeps a connection per published trigger and polls on new mail.
-    setTimeout(() => imapIdle.start(), 3_000).unref?.();
+    setTimeout(() => leaderService('IMAP IDLE', () => imapIdle.start(), () => imapIdle.stop()), 3_000).unref?.();
     logger.info('host ready: registry, scheduler and discovery running');
   });
 }

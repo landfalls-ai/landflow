@@ -16,6 +16,7 @@ import type { PublicationStatus, PublishResult } from '../shared/publish';
 import type { WorkflowVersion } from '../shared/types';
 import { userNames } from './auth/users';
 import { database } from './db';
+import { publishBlockedReason } from './governance/policy';
 import { clearPublication, deletePublications, getPublication, listPublications, publishLog, publishedVersionId, setPublication } from './publications';
 import { singleton } from './singleton';
 import { store } from './store';
@@ -147,7 +148,11 @@ export async function publicationStatus(workflowId: string): Promise<Publication
 export async function publishVersion(workflowId: string, versionId: string, by?: string, note?: string): Promise<PublishResult> {
   const workflow = store.getWorkflow(workflowId);
   if (!workflow) throw new PublishError('Workflow not found', 404);
-  if (!getVersion(workflowId, versionId)) throw new PublishError('Version not found', 404);
+  const version = getVersion(workflowId, versionId);
+  if (!version) throw new PublishError('Version not found', 404);
+  // Settings → Governance: a version with nodes the policy doesn't allow can't go live.
+  const blocked = publishBlockedReason(version.workflow);
+  if (blocked) throw new PublishError(blocked, 422);
   database().transaction(() => {
     setPublication(workflowId, versionId, by, note);
     if (!workflow.active) store.saveWorkflow({ ...workflow, active: true });

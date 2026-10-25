@@ -26,6 +26,7 @@ const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
 const { publishDraft, unpublishWorkflow, publicationStatus } = await import('@/lib/server/publish');
 const { appWebhooks, getStaticData } = await import('@/lib/server/app-webhooks');
+const { triggerBuffers } = await import('@/lib/server/trigger-buffers');
 const { serveHttp } = await import('@landflow/sdk/http');
 const { serveGrpc } = await import('@landflow/sdk/grpc');
 const appRoute = await import('@/app/api/webhook/app/[workflowId]/[nodeId]/route');
@@ -265,6 +266,24 @@ describe('failures', () => {
     const after = getStaticData(id, 'trigger').hookId as string;
     expect(after).not.toBe(before);
     expect(service.hooks.has(after)).toBe(true);
+    await unpublishWorkflow(id);
+  });
+});
+
+describe('held events', () => {
+  it('answers 202 when the trigger’s debounce holds the event, so the service does not retry it', async () => {
+    const id = 'wf_app_held';
+    const workflow = workflowFor(id, 'hooks');
+    workflow.nodes[0].debounce = { windowSeconds: 60 };
+    store.saveWorkflow(workflow);
+    await publishDraft(id);
+    const { secret } = getStaticData(id, 'trigger') as { secret: string };
+    const response = await deliver(id, { ref: 'main' }, (raw) => ({ 'x-hub-signature-256': githubSignature(secret, raw), 'x-event': 'push', 'x-delivery': 'held-1' }));
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ workflowId: id, count: 1 });
+    expect(triggerBuffers.pending(id)).toHaveLength(1);
+    expect(store.listExecutions({ workflowId: id })).toEqual([]);
+    triggerBuffers.stop();
     await unpublishWorkflow(id);
   });
 });

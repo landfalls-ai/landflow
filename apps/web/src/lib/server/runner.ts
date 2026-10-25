@@ -10,6 +10,10 @@
  * `recoverExecutions()` continues the ones a crash left `running` from their last checkpoint.
  * Trigger idempotency keys (lib/server/idempotency.ts), per-workflow concurrency and the FIFO
  * queue (lib/server/concurrency.ts), retries (lib/server/retries.ts) and stop-all live here too.
+ *
+ * Queue mode (LANDFLOW_EXECUTIONS_MODE=queue, lib/server/cluster): runSegment hands production runs to the workers
+ * (cluster/dispatch.ts) instead of running them, idempotency keys, concurrency slots and the FIFO queue are claimed
+ * in Valkey, and cancel / stop-all reach every process. Regular mode is unchanged.
  */
 import { context, ROOT_CONTEXT } from '@opentelemetry/api';
 import { nanoid } from 'nanoid';
@@ -32,6 +36,7 @@ import type { ExecutionRecord, ExecutionState, ExecutionSummary, FormCompletion,
 import { executionScope, executionUsage, runInUsageScope } from './ai-usage';
 import { notifyFailure } from './alerts/service';
 import { TriggerBuffers, triggerBuffers } from './trigger-buffers';
+import { auditCredentialUse } from './audit';
 import { currentActorId } from './auth/context';
 import { bus } from './bus';
 import { admission, hasFreeSlot, LIMITED_MODES, RunSkippedError } from './concurrency';
@@ -40,13 +45,28 @@ import { publishedVersionId } from './publications';
 import { workflowForCall } from './publish';
 import { retries, retryDueFor } from './retries';
 import { getVersion, versionFor } from './versions';
-import { credentials } from './credentials/vault';
+import { resolveWorkflowCredentials } from './projects/credentials';
 import { registry } from './plugins/registry';
 import { singleton } from './singleton';
 import { store } from './store';
 import { fireTrigger, logger, recordRuntimeEvent } from './telemetry';
 import { variables } from './variables';
 import { waits } from './waits';
+import {
+  awaitRemote,
+  broadcastStopAll,
+  cancelEverywhere,
+  dispatchSegment,
+  drainRemote,
+  forgetQueued,
+  preflight,
+  queueRemote,
+  remoteRunning,
+  shouldDispatch,
+} from './cluster/dispatch';
+import { clusterRateLimiter } from './cluster/limits';
+import { clusterActive, coordinator, instanceId, runLeaseMs } from './cluster/state';
+import { refreshRows } from './db/replication';
 
 /** How deep Execute Workflow may nest executions. */
 export const MAX_WORKFLOW_DEPTH = 10;
@@ -209,24 +229,40 @@ function summaryOf(record: ExecutionRecord, paused?: PausedState): ExecutionSumm
   };
 }
 
-/** Executions still in progress (running or paused), newest first. */
+/** Executions still in progress (running or paused), newest first. Queue mode: also those other processes run. */
 export function liveExecutions(workflowId?: string): ExecutionSummary[] {
-  return [...live.values()]
+  const local = [...live.values()]
     .filter((entry) => !workflowId || entry.record.workflowId === workflowId)
     .map((entry) => summaryOf(entry.record, entry.debug?.paused))
     .reverse();
+  if (!clusterActive()) return local;
+  return [...local, ...remoteRunning(new Set(live.keys()), workflowId)].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
-/** A running execution as a record, with what it has done so far. */
+/** A running execution as a record, with what it has done so far. Queue mode: also one another process runs (its saved steps). */
 export function liveExecution(executionId: string): ExecutionRecord | undefined {
   const entry = live.get(executionId);
-  if (!entry) return undefined;
+  if (!entry) return clusterActive() ? runningElsewhere(executionId) : undefined;
   return { ...entry.record, durationMs: Date.now() - Date.parse(entry.record.startedAt), ...(entry.debug?.paused && { paused: entry.debug.paused }) };
+}
+
+/** Queue mode: an execution saved as running by another process, with the node runs it saved since. */
+function runningElsewhere(executionId: string): ExecutionRecord | undefined {
+  const stored = store.getExecution(executionId);
+  if (stored?.status !== 'running') return undefined;
+  return { ...stored, ...withSavedSteps(stored), durationMs: Math.max(0, Date.now() - Date.parse(stored.startedAt)) };
 }
 
 export function cancelExecution(executionId: string): boolean {
   const entry = live.get(executionId);
   entry?.controller.abort();
+  // Queue mode: it may run in another process (its worker aborts it).
+  if (!entry && clusterActive()) {
+    const stored = store.getExecution(executionId);
+    if (stored?.status !== 'running') return false;
+    void cancelEverywhere(executionId, stored.workflowId);
+    return true;
+  }
   return Boolean(entry);
 }
 
@@ -300,7 +336,10 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     const triggerNode = options.workflow.nodes.find((n) => n.id === (options.triggerOutput?.nodeId ?? options.startNodeId));
     if (TriggerBuffers.applies(triggerNode, options.mode)) {
       startTriggerBuffers();
-      const held = triggerBuffers.add(options.workflow, triggerNode, options.triggerOutput?.items ?? options.triggerItems ?? [{ json: {} }], options.mode, { asOutput: Boolean(options.triggerOutput) });
+      const items = options.triggerOutput?.items ?? options.triggerItems ?? [{ json: {} }];
+      const asOutput = { asOutput: Boolean(options.triggerOutput) };
+      // Queue mode: under a cluster lock, with the buffer rows read fresh (another main may hold events of this trigger).
+      const held = clusterActive() ? await triggerBuffers.addExclusive(options.workflow, triggerNode, items, options.mode, asOutput) : triggerBuffers.add(options.workflow, triggerNode, items, options.mode, asOutput);
       if (held) throw held;
     }
   }
@@ -317,13 +356,15 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
       throw new DuplicateRunError(existing, idempotencyKey);
     }
   }
-  const admitted = isLimitedStart(options) ? admission(options.workflow.settings, slotCounts(options.workflow.id)) : ({ run: true } as const);
+  // Queue mode: the key and the slot are claimed in Valkey, so two processes can't both take them (throws like below).
+  const claimed = clusterActive() ? await preflight(options, isLimitedStart(options), newExecutionId) : undefined;
+  const admitted = claimed?.admitted ?? (isLimitedStart(options) ? admission(options.workflow.settings, slotCounts(options.workflow.id)) : ({ run: true } as const));
   if (!admitted.run && !admitted.queue) {
     recordRuntimeEvent('skipped', options.workflow.id);
     throw new RunSkippedError(options.workflow.id, admitted.reason);
   }
 
-  const executionId = options.executionId ?? newExecutionId();
+  const executionId = claimed?.executionId ?? options.executionId ?? newExecutionId();
   let depth = 0;
   let evaluation = options.evaluation;
   if (options.parent) {
@@ -440,6 +481,8 @@ export class ResumeError extends Error {
  */
 export async function resumeExecution(executionId: string, request: ResumeRequest): Promise<ExecutionRecord> {
   // Everything up to runSegment's live.set() is synchronous, so two resume calls can't both get through.
+  // (Queue mode: the row is read fresh, and dispatchSegment claims the resume in Valkey.)
+  if (clusterActive()) await refreshRows('executions', { id: executionId });
   if (live.has(executionId)) throw new ResumeError('This execution is already running');
   const stored = store.getExecution(executionId);
   if (!stored) throw new ResumeError('Execution not found', 404);
@@ -460,7 +503,7 @@ export async function resumeExecution(executionId: string, request: ResumeReques
   });
 }
 
-interface Segment {
+export interface Segment {
   record: ExecutionRecord;
   workflow: Workflow;
   /** Start or resume options for the engine. */
@@ -471,16 +514,22 @@ interface Segment {
   onStart?: (executionId: string) => void;
   onReply?: (reply: RunReply) => void;
   streaming?: boolean;
+  /** Queue mode: a worker runs this stretch of a job here (it is never handed on). */
+  dispatched?: boolean;
 }
 
 /** One stretch of an execution: from its start or a resume until it finishes or waits. */
 async function runSegment(segment: Segment): Promise<ExecutionRecord> {
+  // Queue mode: production runs go to the workers (cluster/dispatch.ts).
+  if (shouldDispatch(segment)) return dispatchSegment(segment);
   const { record, workflow } = segment;
   const { executionId } = record;
   const controller = new AbortController();
   const signal = segment.signal ? AbortSignal.any([segment.signal, controller.signal]) : controller.signal;
   const limited = countsAgainstLimit(record);
   live.set(executionId, { controller, debug: segment.debug, record, ...(segment.onReply && { onReply: segment.onReply }), ...(limited && { limited }) });
+  // Queue mode: a lease says this process runs it (renewed by the heartbeat): the leader takes over runs without one.
+  if (clusterActive()) void coordinator().set(`lease:${executionId}`, instanceId(), runLeaseMs()).catch(() => {});
   // Saved as running before the first node, with the workflow it runs unless a saved version has it: a crash can't lose it.
   const baseSteps = record.executionOrder.length;
   saveProgress(() => store.saveExecution(record.versionId || record.workflow ? { ...record, status: 'running' } : { ...record, status: 'running', workflow }));
@@ -499,12 +548,16 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       executionId,
       // A poll-started run is recorded as "poll", but only the trigger polls (and it doesn't run again here).
       mode: record.mode === 'poll' ? 'trigger' : record.mode,
-      resolveCredentials: (node, descriptor) => credentials.resolveFor(node, descriptor),
+      // Only credentials the workflow's project may use (lib/server/projects/credentials.ts).
+      // Audit log: which credentials (ids, never values) the run used, once per node (lib/server/audit).
+      resolveCredentials: (node, descriptor) => auditCredentialUse(executionId, workflow.id, node, resolveWorkflowCredentials(workflow.id, node, descriptor)),
       // $vars: read fresh for every run, so a change in Settings applies to the next one.
       variables: variables.record(),
       resumeUrls: resumeUrls(executionId),
       debug: segment.debug,
       signal,
+      // Queue mode: node rate limits count across all processes.
+      ...(clusterActive() && { rateLimiter: clusterRateLimiter(coordinator) }),
       onCheckpoint: (checkpoint) => {
         // The first checkpoint of a segment also keeps where it started and the `$('Node')` outputs it started with.
         const first = !checkpointed;
@@ -560,6 +613,8 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
     }
   } finally {
     live.delete(executionId);
+    // A worker frees its job's lease itself, once the result is out.
+    if (clusterActive() && !segment.dispatched) void coordinator().deleteIfValue(`lease:${executionId}`, instanceId()).catch(() => {});
   }
   afterRun(finished, workflow);
   // A slot may have freed (also when a run starts waiting, unless the workflow is a singleton).
@@ -653,11 +708,34 @@ function dropFinishedChildren(parentId: string) {
 /** A sub-execution finished: resume the parent if it waits for it. */
 function handOverToParent(child: ExecutionRecord) {
   const parentId = child.parentExecutionId!;
+  // Queue mode: the parent may run (or wait) in another process.
+  if (clusterActive() && !live.has(parentId)) {
+    void handOverAcross(child, parentId);
+    return;
+  }
   const parent = store.getExecution(parentId);
   if (parent?.status === 'waiting' && parent.wait?.resume === 'subworkflow' && parent.wait.data?.executionId === child.executionId) {
     resumeParent(parentId, child);
   } else if (live.has(parentId)) {
     finishedChildren.set(child.executionId, child);
+  }
+}
+
+/** Queue mode: wait (up to a minute) for a parent still running elsewhere to start waiting for this child, then resume it. */
+async function handOverAcross(child: ExecutionRecord, parentId: string) {
+  for (let attempt = 0; attempt < 120; attempt++) {
+    if (live.has(parentId)) {
+      finishedChildren.set(child.executionId, child);
+      return;
+    }
+    await refreshRows('executions', { id: parentId }).catch(() => {});
+    const parent = store.getExecution(parentId);
+    if (parent?.status === 'waiting') {
+      if (parent.wait?.resume === 'subworkflow' && parent.wait.data?.executionId === child.executionId) resumeParent(parentId, child);
+      return;
+    }
+    if (parent?.status !== 'running') return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }
 
@@ -763,6 +841,15 @@ export class RerunError extends Error {
   }
 }
 
+/**
+ * For callers that answer once a run has started (a webhook answered at once, a form's end screen, a streamed reply):
+ * resolves when it started (`started` resolved: undefined) or was turned down before it did (its error). onStart comes
+ * synchronously in regular mode, a moment later in queue mode (the idempotency key and the slot are claimed in Valkey).
+ */
+export function turnedDown(run: Promise<unknown>, started: Promise<unknown>): Promise<unknown> {
+  return Promise.race([started.then(() => undefined), run.then(() => undefined, (reason: unknown) => reason)]);
+}
+
 /** Start a run in the background and resolve with its id once it exists. */
 export function startInBackground(options: RunOptions): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -810,6 +897,14 @@ function enqueue(record: ExecutionRecord, options: RunOptions): Promise<Executio
   store.saveExecution(queued);
   recordRuntimeEvent('queued', record.workflowId);
   logger.info('execution queued: the workflow is at its concurrency limit', { 'landflow.execution.id': record.executionId, 'landflow.workflow.id': record.workflowId });
+  // Queue mode: the workflow's FIFO is in Valkey, and whichever process frees a slot starts the head.
+  if (clusterActive()) {
+    const remote = awaitRemote(record.executionId, options);
+    options.signal?.addEventListener('abort', () => void cancelEverywhere(record.executionId, record.workflowId), { once: true });
+    options.onStart?.(record.executionId);
+    void queueRemote(queued, options, queuedAt, startQueued);
+    return remote;
+  }
   const done = new Promise<ExecutionRecord>((resolve, reject) => {
     queueWaiters.set(record.executionId, {
       resolve,
@@ -828,6 +923,11 @@ function enqueue(record: ExecutionRecord, options: RunOptions): Promise<Executio
 
 /** Start a workflow's queued runs, oldest first, while it has free slots. Returns how many started. */
 export function drainQueue(workflowId: string): number {
+  // Queue mode: the head of the Valkey FIFO moves atomically, whoever drains (the count comes later).
+  if (clusterActive()) {
+    void drainRemote(workflowId, startQueued);
+    return 0;
+  }
   const queue = store.executionsWithStatus('queued', workflowId);
   if (!queue.length) return 0;
   // The saved workflow's settings: a changed limit applies to the runs already queued.
@@ -919,6 +1019,8 @@ export function cancelQueuedExecution(executionId: string): boolean {
   const canceled: ExecutionRecord = { ...rest, status: 'canceled', finishedAt, durationMs: 0, error: { message: 'Execution canceled before it started' } };
   store.saveExecution(canceled);
   bus.publish({ channel: 'execution', workflowId: canceled.workflowId, event: { type: 'execution.finished', executionId, status: 'canceled', durationMs: 0, error: canceled.error, at: finishedAt } });
+  // Queue mode: out of the Valkey FIFO, and skipped by the worker that takes its job.
+  if (clusterActive()) void forgetQueued(canceled.workflowId, executionId, startQueued);
   const waiter = queueWaiters.get(executionId);
   queueWaiters.delete(executionId);
   waiter?.resolve(canceled);
@@ -1207,7 +1309,75 @@ export function stopAllExecutions(): StopAllResult {
     entry.controller.abort();
     result.running++;
   }
+  // Queue mode: every other process aborts its own runs.
+  if (clusterActive()) {
+    result.running += remoteRunning(new Set(live.keys())).length;
+    broadcastStopAll();
+  }
   recordRuntimeEvent('stopped', undefined, result.running + result.waiting + result.queued);
   logger.info('all executions stopped', { 'landflow.executions.running': result.running, 'landflow.executions.waiting': result.waiting, 'landflow.executions.queued': result.queued, 'landflow.retries.canceled': result.retries });
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Queue mode: what the cluster runtime (lib/server/cluster) runs here
+// ---------------------------------------------------------------------------
+
+/** A worker runs a job's stretch of an execution here (the record and engine options its main built). */
+export function runJob(record: ExecutionRecord, workflow: Workflow, engine: Partial<ExecuteWorkflowOptions>, callbacks: Pick<Segment, 'signal' | 'onEvent' | 'onReply' | 'streaming'> = {}): Promise<ExecutionRecord> {
+  return runSegment({ record, workflow, engine, ...callbacks, dispatched: true });
+}
+
+/**
+ * A worker took over the job of a run whose process stopped (it is still saved as running): continue it from its last
+ * checkpoint, as recoverExecutions does at boot, or save it as failed when it can't continue.
+ */
+export function recoverExecution(record: ExecutionRecord, callbacks: Pick<Segment, 'signal' | 'onEvent' | 'onReply' | 'streaming'> = {}): Promise<ExecutionRecord> {
+  // Every run saved as running counts: a parent being taken over decides about its children.
+  const running = new Map(store.executionsWithStatus('running').map((stored) => [stored.executionId, stored]));
+  running.set(record.executionId, record);
+  const plan = planRecovery(record, running);
+  if (!plan.resume) {
+    recordRuntimeEvent('recovery_failed', record.workflowId);
+    logger.warn('execution not continued after its process stopped', { 'landflow.execution.id': record.executionId, 'landflow.workflow.id': record.workflowId, reason: plan.reason });
+    return Promise.resolve(failInterrupted(record, plan.reason, plan.status));
+  }
+  recordRuntimeEvent('recovered', record.workflowId);
+  logger.info('execution taken over after its process stopped', { 'landflow.execution.id': record.executionId, 'landflow.workflow.id': record.workflowId, 'landflow.checkpoint.step': plan.stepId });
+  return runSegment({
+    record: plan.record,
+    workflow: plan.workflow,
+    engine: { resume: { state: plan.state, kind: 'restart' }, spanAttributes: { 'landflow.execution.resumed_after_restart': true, 'landflow.checkpoint.step': plan.stepId } },
+    ...callbacks,
+    dispatched: true,
+  });
+}
+
+/** Save a run that can't go on as failed (a job that kept losing its worker). */
+export function failExecution(record: ExecutionRecord, message: string): ExecutionRecord {
+  return failInterrupted(record, message);
+}
+
+/** The runs going in this process (leases, slots, the Workers status). */
+export function localExecutions(): Array<{ executionId: string; workflowId: string; limited: boolean; mode: ExecutionMode }> {
+  return [...live.values()].map((entry) => ({ executionId: entry.record.executionId, workflowId: entry.record.workflowId, limited: Boolean(entry.limited), mode: entry.record.mode }));
+}
+
+/** Abort a run of this process (a cancel from another process). */
+export function abortLocalExecution(executionId: string): boolean {
+  const entry = live.get(executionId);
+  if (!entry || entry.controller.signal.aborted) return false;
+  entry.controller.abort();
+  return true;
+}
+
+/** Abort every run of this process (stop-all from another process). */
+export function abortLocalExecutions(): number {
+  let aborted = 0;
+  for (const entry of [...live.values()]) {
+    if (entry.controller.signal.aborted) continue;
+    entry.controller.abort();
+    aborted++;
+  }
+  return aborted;
 }

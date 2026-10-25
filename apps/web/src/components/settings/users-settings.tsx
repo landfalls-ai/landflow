@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
 import { Input, SectionLabel, Select } from '@/components/ui/inputs';
+import { RemoveUserDialog } from '@/components/projects/remove-user-dialog';
 
 /** A link that was just made: emailed, or to copy. */
 function LinkNotice({ title, result, onClose }: { title: string; result: LinkResponse; onClose: () => void }) {
@@ -48,7 +49,7 @@ export function UsersSettings() {
   const [role, setRole] = useState<AssignableRole>('member');
   const [inviting, setInviting] = useState(false);
   const [notice, setNotice] = useState<{ title: string; result: LinkResponse }>();
-  const [confirm, setConfirm] = useState<string>();
+  const [removing, setRemoving] = useState<UserView>();
 
   const load = () =>
     api<{ users: UserView[]; invites?: InviteView[] }>('/api/users')
@@ -81,7 +82,6 @@ export function UsersSettings() {
     try {
       await run();
       toast.success(done);
-      setConfirm(undefined);
       await load();
     } catch (e) {
       toast.error((e as Error).message);
@@ -148,6 +148,8 @@ export function UsersSettings() {
                     {user.name}
                     {you && <Badge tone="muted">you</Badge>}
                     {user.sso && <Badge tone="accent">SSO</Badge>}
+                    {user.provisionedBy && <Badge tone="muted" title="Created and kept in sync by your identity provider">{user.provisionedBy.toUpperCase()}</Badge>}
+                    {user.disabled && <Badge tone="warning">deactivated</Badge>}
                   </div>
                   <div className="truncate text-[12px] text-t3">{user.email}</div>
                 </div>
@@ -174,28 +176,15 @@ export function UsersSettings() {
                 {user.lastLoginAt ? timeAgo(user.lastLoginAt) : 'never'}
               </span>
               <div className="flex w-[100px] items-center justify-end gap-1">
-                {confirm === user.id ? (
-                  <span role="alertdialog" aria-label={`Remove ${user.name}?`} className="flex items-center gap-1 animate-fade-up">
-                    <Button size="sm" variant="danger" onClick={() => void act(() => api(`/api/users/${user.id}`, { method: 'DELETE' }), `Removed ${user.name}`)}>
-                      Remove
-                    </Button>
-                    <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(undefined)} aria-label="Keep">
-                      <X className="size-3.5" />
-                    </Button>
-                  </span>
-                ) : (
-                  <>
-                    {canManageUser(viewer, user, { kind: 'reset-password' }) && !you && (
-                      <Button size="icon-sm" variant="ghost" onClick={() => void resetLink(user)} aria-label={`Password reset link for ${user.name}`} title="Password reset link">
-                        <KeyRound className="size-3.5" />
-                      </Button>
-                    )}
-                    {canManageUser(viewer, user, { kind: 'remove' }) && (
-                      <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(user.id)} aria-label={`Remove ${user.name}`} title="Remove">
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    )}
-                  </>
+                {canManageUser(viewer, user, { kind: 'reset-password' }) && !you && (
+                  <Button size="icon-sm" variant="ghost" onClick={() => void resetLink(user)} aria-label={`Password reset link for ${user.name}`} title="Password reset link">
+                    <KeyRound className="size-3.5" />
+                  </Button>
+                )}
+                {canManageUser(viewer, user, { kind: 'remove' }) && (
+                  <Button size="icon-sm" variant="ghost" onClick={() => setRemoving(user)} aria-label={`Remove ${user.name}`} title="Remove">
+                    <Trash2 className="size-3.5" />
+                  </Button>
                 )}
               </div>
             </div>
@@ -240,7 +229,8 @@ export function UsersSettings() {
           ))}
         </Card>
       )}
-      <p className={cn('text-[12px] text-t3', !manage && 'hidden')}>Removing a user signs them out and deletes their API keys. What they built stays.</p>
+      <p className={cn('text-[12px] text-t3', !manage && 'hidden')}>Removing a user signs them out and deletes their API keys. What their personal project owns moves to the person or project you choose.</p>
+      {removing && <RemoveUserDialog user={removing} users={users} viewerId={viewer?.id} onClose={() => setRemoving(undefined)} onRemoved={() => void load()} />}
     </div>
   );
 }

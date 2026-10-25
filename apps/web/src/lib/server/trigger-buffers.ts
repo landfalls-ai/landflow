@@ -12,9 +12,13 @@
  * event makes runWorkflow reject with RunBufferedError (a RunSkippedError, so callers that skip runs handle it); the
  * Webhook trigger answers 202 `{ status: 'debounced' | 'batched' }`. Buffers live in `trigger_buffers` (migration 402)
  * and their timers are re-armed at boot, so a restart doesn't lose events.
+ *
+ * Queue mode: events are added under a cluster lock per trigger with the rows read fresh (`addExclusive`), and only
+ * the leader keeps the timers (another process hands the buffer to it; `sync()` re-arms them all on a new leader).
  */
 import { ExpressionResolver, type TriggerBatch, type TriggerDebounce, type Workflow, type WorkflowNode } from '@landflow/engine';
 import type { ExecutionMode, NodeItem } from '@landflow/protocol';
+import { delegated, forwardToLeader } from './cluster/state';
 import { RunSkippedError } from './concurrency';
 import { database, type Database } from './db';
 import { singleton } from './singleton';
@@ -89,16 +93,53 @@ export function debounceKey(workflow: Workflow, setting: TriggerDebounce, item: 
   }
 }
 
+/** Queue mode (set by the cluster runtime): a lock across processes, and rows read fresh from the database. */
+export interface SharedBuffers {
+  exclusive<T>(name: string, fn: () => Promise<T>): Promise<T>;
+  refresh(where: Record<string, string>): Promise<void>;
+}
+
 export class TriggerBuffers {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private starter?: BufferedStart;
+  shared?: SharedBuffers;
 
   constructor(private readonly db: () => Database = database) {}
 
-  /** Set what starts held runs and re-arm the buffers a restart left. */
+  /** Set what starts held runs and re-arm the buffers a restart left (queue mode: the leader's sync() does). */
   start(starter: BufferedStart) {
     this.starter = starter;
-    for (const row of this.db().all<BufferRow>('SELECT * FROM trigger_buffers')) this.arm(row.key, Date.parse(row.due_at));
+    if (!delegated()) this.sync();
+  }
+
+  /** Arm the timer of every buffer (or of one, `key`, read fresh in queue mode), and drop timers of buffers gone. */
+  async sync(key?: string): Promise<void> {
+    if (key) {
+      await this.shared?.refresh({ key });
+      const row = this.db().get<BufferRow>('SELECT * FROM trigger_buffers WHERE key = ?', key);
+      if (row) this.arm(row.key, Date.parse(row.due_at));
+      return;
+    }
+    const rows = this.db().all<BufferRow>('SELECT * FROM trigger_buffers');
+    const keys = new Set(rows.map((row) => row.key));
+    for (const [held, timer] of this.timers) {
+      if (keys.has(held)) continue;
+      clearTimeout(timer);
+      this.timers.delete(held);
+    }
+    for (const row of rows) if (!this.timers.has(row.key)) this.arm(row.key, Date.parse(row.due_at));
+  }
+
+  /** `add` across processes (queue mode): under a lock for the trigger, with its buffers read fresh, written through. */
+  async addExclusive(workflow: Workflow, node: WorkflowNode, items: NodeItem[], mode: ExecutionMode, options: { asOutput?: boolean; now?: number } = {}): Promise<RunBufferedError | undefined> {
+    const shared = this.shared;
+    if (!shared) return this.add(workflow, node, items, mode, options);
+    return shared.exclusive(`buffer:${workflow.id}:${node.id}`, async () => {
+      await shared.refresh({ workflow_id: workflow.id });
+      const held = this.add(workflow, node, items, mode, options);
+      await this.db().flush();
+      return held;
+    });
   }
 
   /** Whether runs of this trigger are held at all. */
@@ -152,6 +193,8 @@ export class TriggerBuffers {
   }
 
   private arm(key: string, dueAt: number) {
+    // Queue mode: the leader keeps the timers.
+    if (delegated()) return forwardToLeader({ t: 'buffer', key });
     clearTimeout(this.timers.get(key));
     const timer = setTimeout(() => void this.fire(key), Math.max(0, Math.min(dueAt - Date.now(), 2_147_000_000)));
     timer.unref?.();
@@ -172,11 +215,21 @@ export class TriggerBuffers {
     clearTimeout(this.timers.get(key));
     this.timers.delete(key);
     // Taken out in one step: an event arriving now starts a new buffer.
-    const row = this.db().transaction(() => {
-      const found = this.db().get<BufferRow>('SELECT * FROM trigger_buffers WHERE key = ?', key);
-      if (found) this.db().delete('trigger_buffers', { key });
-      return found;
-    });
+    const take = () =>
+      this.db().transaction(() => {
+        const found = this.db().get<BufferRow>('SELECT * FROM trigger_buffers WHERE key = ?', key);
+        if (found) this.db().delete('trigger_buffers', { key });
+        return found;
+      });
+    const shared = this.shared;
+    const row = shared
+      ? await shared.exclusive(`buffer:${key.split(':').slice(1, 3).join(':')}`, async () => {
+          await shared.refresh({ key });
+          const found = take();
+          await this.db().flush();
+          return found;
+        })
+      : take();
     if (!row) return false;
     const data = JSON.parse(row.data) as BufferData;
     const saved = store.getWorkflow(row.workflow_id);

@@ -36,6 +36,7 @@ type grpcService struct {
 }
 
 func (g *grpcService) GetManifest(ctx context.Context, _ *pb.GetManifestRequest) (*pb.GetManifestResponse, error) {
+	g.p.sendRegistryProof(ctx)
 	m := g.p.Manifest()
 	nodes := make([]*pb.DynamicValue, 0, len(m.Nodes))
 	for _, d := range m.Nodes {

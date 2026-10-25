@@ -11,7 +11,7 @@ import type { OnlineEvalConfig, OnlineEvalReport, OnlineEvalScore, WorkflowOnlin
 import type { ExecutionRecord } from '../../shared/types';
 import { agentModel } from '../agents/models';
 import { agentStore } from '../agents/store';
-import { bus } from '../bus';
+import { bus, isRelayed } from '../bus';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { logger } from '../telemetry';
@@ -277,6 +277,8 @@ const subscription = singleton('online-eval-subscription', () => ({ stop: undefi
 export function startOnlineEvaluations(): void {
   if (subscription.stop) return;
   subscription.stop = bus.subscribe((message) => {
+    // Queue mode: the process that ran it grades it.
+    if (isRelayed(message)) return;
     try {
       if (message.channel === 'agent' && message.event.type === 'run.finished' && message.event.reason === 'completed') onAgentRunFinished(message.agentId, message.event.sessionId);
       else if (message.channel === 'execution' && message.event.type === 'execution.finished' && message.event.status === 'success') onExecutionFinished(message.workflowId, message.event.executionId);

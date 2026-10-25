@@ -12,6 +12,7 @@ import { Client } from './client';
 import type { Command, Context, Io } from './command';
 import { authCommands } from './commands/auth';
 import { dataCommands } from './commands/data';
+import { envCommands } from './commands/env';
 import { runCommands } from './commands/runs';
 import { syncCommands } from './commands/sync';
 import { transferCommands } from './commands/transfer';
@@ -24,7 +25,7 @@ export type { Io } from './command';
 export { EXIT } from './errors';
 export { VERSION } from './version';
 
-export const COMMANDS: Command[] = [...authCommands, ...workflowCommands, ...runCommands, ...transferCommands, ...dataCommands, ...syncCommands];
+export const COMMANDS: Command[] = [...authCommands, ...workflowCommands, ...runCommands, ...transferCommands, ...dataCommands, ...syncCommands, ...envCommands];
 
 const GLOBAL_FLAGS: FlagSpecs = {
   json: { type: 'boolean', description: 'Print one JSON document (stable shapes; errors too)' },
@@ -41,6 +42,7 @@ const GROUPS: Record<string, string> = {
   variables: 'Manage variables',
   sync: 'Git sync: workflows as files in a directory',
   'source-control': 'The host’s own Git repository (Settings → Source control)',
+  env: 'Environments: promote between environments’ branches, pull this one',
 };
 
 /** Find the command in `tokens` (one or two words, global flags may come first) and drop its words. */

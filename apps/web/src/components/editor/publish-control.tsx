@@ -4,7 +4,9 @@
  * for production triggers (webhooks, forms, schedules, polls, app webhooks, MCP, error workflows and sub-workflow
  * calls), with an optional note. The chip says whether the editor shows what is live ("Published · v4") or has
  * unpublished changes; the menu unpublishes and lists where app webhook triggers stand. Older versions are published
- * (rolled back to) from the version history.
+ * (rolled back to) from the version history. With four-eyes publishing on (Settings → Governance), Publish and Unpublish
+ * ask for approval instead (202 `approvalRequired`), and the menu lists the workflow's pending requests to approve,
+ * reject or withdraw.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { create } from 'zustand';
@@ -14,6 +16,8 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import type { PublicationStatus, PublishResult } from '@/lib/shared/publish';
+import type { PublishRequestView } from '@/lib/shared/governance';
+import { PublishRequestCard, usePublishRequests } from '../governance/publish-requests';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/inputs';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
@@ -26,9 +30,15 @@ interface PublicationStore {
   refresh(workflowId: string): Promise<PublicationStatus | undefined>;
   /** After a publish or unpublish (here or from the version history): the new status, and the editor's active flag in step. */
   apply(workflowId: string, result: PublishResult): void;
+  /** Bumped when a publish request was made (here or from the version history): the menu reloads its requests. */
+  requests: number;
 }
 
+/** A publish or unpublish answer: published, or (four-eyes publishing) a request waiting for someone else. */
+export type PublishAnswer = PublishResult & { approvalRequired?: true; request?: PublishRequestView };
+
 export const usePublication = create<PublicationStore>((set, get) => ({
+  requests: 0,
   async refresh(workflowId) {
     try {
       const status = await api<PublicationStatus>(`/api/workflows/${workflowId}/publication`);
@@ -48,10 +58,16 @@ export const usePublication = create<PublicationStore>((set, get) => ({
 }));
 
 /** Publish a version (default: the saved draft); the version history uses it for rollbacks. */
-export async function publishVersion(workflowId: string, options: { versionId?: string; note?: string } = {}): Promise<PublishResult> {
-  const result = await api<PublishResult>(`/api/workflows/${workflowId}/publish`, { method: 'POST', json: options });
-  usePublication.getState().apply(workflowId, result);
+export async function publishVersion(workflowId: string, options: { versionId?: string; note?: string } = {}): Promise<PublishAnswer> {
+  const result = await api<PublishAnswer>(`/api/workflows/${workflowId}/publish`, { method: 'POST', json: options });
+  if (result.approvalRequired) usePublication.setState((s) => ({ requests: s.requests + 1 }));
+  else usePublication.getState().apply(workflowId, result);
   return result;
+}
+
+/** The toast for a request that waits for approval. */
+export function toastApprovalRequested(result: PublishAnswer) {
+  toast.info('Sent for approval', { description: `${result.request?.diff?.summary ? `${result.request.diff.summary}. ` : ''}Someone else has to approve it before it goes live.` });
 }
 
 export function PublishControl({ workflowId, onSave }: { workflowId: string; onSave: () => Promise<boolean> }) {
@@ -60,6 +76,12 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
   const readOnly = useEditLock((s) => s.readOnly);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState<'publish' | 'unpublish'>();
+  const requestsChanged = usePublication((s) => s.requests);
+  const { list: requests, reload: reloadRequests } = usePublishRequests({ workflowId });
+  const pending = requests?.requests ?? [];
+  useEffect(() => {
+    if (requestsChanged) void reloadRequests();
+  }, [requestsChanged, reloadRequests]);
 
   // Reload after every save (dirty → clean): the draft moved.
   useEffect(() => {
@@ -77,9 +99,10 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
         // Unsaved edits are saved first: what is published is always a saved version.
         if (useEditor.getState().dirty && !(await onSave())) return;
         const result = await publishVersion(workflowId, { ...(note.trim() && { note: note.trim() }) });
-        toast.success(`Published version ${result.published?.versionNumber ?? ''}`.trim(), { description: 'Production triggers run this version now' });
         setNote('');
         close();
+        if (result.approvalRequired) return toastApprovalRequested(result);
+        toast.success(`Published version ${result.published?.versionNumber ?? ''}`.trim(), { description: 'Production triggers run this version now' });
       } catch (e) {
         toast.error(`Publish failed: ${(e as Error).message}`);
       } finally {
@@ -93,7 +116,12 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
     async (close: () => void) => {
       setBusy('unpublish');
       try {
-        const result = await api<PublishResult>(`/api/workflows/${workflowId}/unpublish`, { method: 'POST', json: {} });
+        const result = await api<PublishAnswer>(`/api/workflows/${workflowId}/unpublish`, { method: 'POST', json: {} });
+        close();
+        if (result.approvalRequired) {
+          usePublication.setState((s) => ({ requests: s.requests + 1 }));
+          return toastApprovalRequested(result);
+        }
         usePublication.getState().apply(workflowId, result);
         toast.success('Unpublished', { description: 'Production triggers are off; the draft and its versions stay' });
         close();
@@ -128,6 +156,11 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
         </span>
       )}
       {chip}
+      {pending.length > 0 && (
+        <span className="rounded-md border border-warnbd bg-warndim px-1.5 py-px text-[11px] font-semibold text-warn" title={`${pending.length} publish request${pending.length === 1 ? '' : 's'} waiting for approval`}>
+          Awaiting approval
+        </span>
+      )}
       <Popover
         trigger={({ toggle, open }) => (
           <Button variant={!published || changes ? 'primary' : 'outline'} onClick={toggle} aria-expanded={open} disabled={readOnly} title="Publish the saved draft for production triggers">
@@ -159,8 +192,27 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
               <Button variant="primary" onClick={() => void publish(close)} loading={busy === 'publish'} disabled={Boolean(published && !changes)}>
                 <Rocket className="size-3.5" /> {dirty ? 'Save and publish' : published && !changes ? 'Up to date' : `Publish version ${status?.draft?.versionNumber ?? ''}`.trim()}
               </Button>
-              <div className="text-[11px] leading-snug text-t3">Manual runs in the editor use the draft. Roll back from the version history.</div>
+              <div className="text-[11px] leading-snug text-t3">
+                Manual runs in the editor use the draft. Roll back from the version history.{requests?.fourEyes.enabled && ' Publishing needs someone else’s approval.'}
+              </div>
             </div>
+            {pending.length > 0 && (
+              <>
+                <MenuSeparator />
+                <MenuLabel>Waiting for approval</MenuLabel>
+                {pending.map((request) => (
+                  <PublishRequestCard
+                    key={request.id}
+                    request={request}
+                    className="px-2.5 py-1.5"
+                    onChanged={() => {
+                      void reloadRequests();
+                      void usePublication.getState().refresh(workflowId);
+                    }}
+                  />
+                ))}
+              </>
+            )}
             {(status?.appWebhooks.length ?? 0) > 0 && (
               <>
                 <MenuSeparator />

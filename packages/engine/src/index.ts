@@ -1,6 +1,7 @@
 export * from './types';
 export * from './ai';
 export * from './expression';
+export * from './secrets';
 export * from './executor';
 export * from './in-process';
 export * from './tool-schema';

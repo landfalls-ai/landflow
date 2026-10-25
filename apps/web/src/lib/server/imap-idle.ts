@@ -8,10 +8,10 @@
 import { createHash } from 'node:crypto';
 import type { ImapFlow } from 'imapflow';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
-import { credentials } from './credentials/vault';
+import { resolveWorkflowCredentials } from './projects/credentials';
 import { closeQuietly, imapClient, imapErrorText, type ImapCredential } from './nodes/email-imap';
 import { registry } from './plugins/registry';
-import { onPublicationChanged } from './publications';
+import { onPublicationChangedAnywhere } from './publications';
 import { productionWorkflows } from './publish';
 import { singleton } from './singleton';
 import { logger } from './telemetry';
@@ -93,7 +93,7 @@ export const imapIdle = singleton('imap-idle', () => {
     if ('error' in resolved) return scheduleReconnect(watch, node);
     let client: ImapFlow;
     try {
-      const data = credentials.resolveFor(node, resolved.descriptor).imap as ImapCredential | undefined;
+      const data = resolveWorkflowCredentials(watch.workflowId, node, resolved.descriptor).imap as ImapCredential | undefined;
       if (!data?.host) throw new Error('no IMAP credential');
       // IDLE starts a second after the mailbox opened, and is renewed every 5 minutes.
       client = imapClient(data, { autoIdleDelay: 1_000, maxIdleTime: 5 * 60_000 });
@@ -153,7 +153,7 @@ export const imapIdle = singleton('imap-idle', () => {
   return {
     start() {
       if (timer) return;
-      unsubscribe = onPublicationChanged(() => setImmediate(reconcile));
+      unsubscribe = onPublicationChangedAnywhere(() => setImmediate(reconcile));
       timer = setInterval(reconcile, RECONCILE_MS);
       timer.unref?.();
       reconcile();

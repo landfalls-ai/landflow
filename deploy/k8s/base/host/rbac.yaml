@@ -1,0 +1,34 @@
+# The host's identity for Kubernetes plugin discovery (apps/web/src/lib/server/plugins/kubernetes.ts): read-only access
+# to Services and EndpointSlices in its own namespace, nothing cluster-wide. To discover plugins in more namespaces
+# (LANDFLOW_K8S_NAMESPACES), create this Role and a RoleBinding to this ServiceAccount in each of them.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: landflow-host
+  labels: { app.kubernetes.io/name: landflow-host, app.kubernetes.io/part-of: landflow }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: landflow-plugin-discovery
+  labels: { app.kubernetes.io/name: landflow-host, app.kubernetes.io/part-of: landflow }
+rules:
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: landflow-plugin-discovery
+  labels: { app.kubernetes.io/name: landflow-host, app.kubernetes.io/part-of: landflow }
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: landflow-plugin-discovery
+subjects:
+  - kind: ServiceAccount
+    name: landflow-host

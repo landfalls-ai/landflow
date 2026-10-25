@@ -2,8 +2,9 @@
  * Sign-in and access control: roles, API key scopes and the one place role checks live (`can`), shared by the
  * server (route guard, routes) and the client (which hides what a role can't do). No runtime imports.
  *
- * Roles: the owner (exactly one, created at setup) and admins manage users, settings, credential sharing and the
- * instance MCP server; members build and run workflows and see everything (projects and sharing come in Wave 4).
+ * Roles: the owner (exactly one, created at setup) and admins manage users, settings, team projects and the
+ * instance MCP server, and see everything; members build and run workflows in the projects they belong to (their
+ * personal project and team projects) and what is shared with them (lib/shared/projects.ts).
  */
 
 export const ROLES = ['owner', 'admin', 'member'] as const;
@@ -15,7 +16,7 @@ export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
 export const ROLE_LABELS: Record<Role, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
 
 /** What an API key may do. `admin` includes every other scope (and admin-only routes, if its user is an admin). */
-export const API_KEY_SCOPES = ['workflows:read', 'workflows:write', 'executions:read', 'executions:write', 'run', 'admin'] as const;
+export const API_KEY_SCOPES = ['workflows:read', 'workflows:write', 'executions:read', 'executions:write', 'run', 'admin', 'scim', 'audit:read'] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 export const SCOPE_LABELS: Record<ApiKeyScope, string> = {
@@ -25,6 +26,8 @@ export const SCOPE_LABELS: Record<ApiKeyScope, string> = {
   'executions:write': 'Stop and delete executions',
   run: 'Run workflows, retry and re-run executions',
   admin: 'Everything, including settings, credentials and plugins',
+  scim: 'SCIM provisioning by an identity provider (Okta, Entra ID); nothing else',
+  'audit:read': 'Read and export the audit log (the key’s user must be an owner or admin)',
 };
 
 /** Whether `scopes` grant `needed` (`admin` grants everything). */
@@ -43,7 +46,13 @@ export type Action =
   /** Take over a workflow someone else has open in the editor. */
   | 'workflows:takeover'
   /** Create API keys with the `admin` scope. */
-  | 'apiKeys:admin';
+  | 'apiKeys:admin'
+  /** Create team projects (and see and manage every project). */
+  | 'projects:manage'
+  /** Create SCIM tokens (API keys with the `scim` scope). */
+  | 'scim:manage'
+  /** Read and export the audit log, see its settings. */
+  | 'audit:read';
 
 const ADMINS: readonly Role[] = ['owner', 'admin'];
 
@@ -56,6 +65,9 @@ const ALLOWED: Record<Action, readonly Role[]> = {
   'variables:manage': ADMINS,
   'workflows:takeover': ADMINS,
   'apiKeys:admin': ADMINS,
+  'projects:manage': ADMINS,
+  'scim:manage': ADMINS,
+  'audit:read': ADMINS,
 };
 
 /** The role check: whether `user` may do `action`. */
@@ -85,10 +97,14 @@ export interface Viewer {
   name: string;
   email: string;
   role: Role;
-  /** Signed in through single sign-on (OIDC) at least once. */
+  /** Signed in through single sign-on (OIDC or SAML) at least once. */
   sso: boolean;
   /** Has a Landflow password (SSO-only users don't). */
   hasPassword: boolean;
+  /** Deactivated (SCIM): can't sign in. */
+  disabled?: boolean;
+  /** Created by provisioning: `scim` or `saml`. */
+  provisionedBy?: string;
 }
 
 /** A user in Settings → Users (GET /api/users). */
@@ -132,6 +148,8 @@ export interface AuthStatus {
   setupRequired: boolean;
   /** Single sign-on is configured: the button's label. */
   oidc?: { label: string };
+  /** SAML sign-in is configured: the button's label. */
+  saml?: { label: string };
   /** Invites and password resets go out by email. */
   smtp: boolean;
 }
@@ -152,9 +170,55 @@ export interface SecurityView {
     error?: string;
   };
   smtp: { configured: boolean; host?: string; port?: number; from?: string };
+  /** SAML 2.0 sign-in (lib/server/auth/saml.ts). */
+  saml?: SamlSecurityView;
+  /** SCIM 2.0 provisioning (lib/server/scim). */
+  scim?: ScimSecurityView;
   sessionHours: number;
   registrySecret: boolean;
   metricsPublic: boolean;
+}
+
+export interface SamlSecurityView {
+  configured: boolean;
+  label: string;
+  /** Our entity id (the SP's issuer). */
+  entityId?: string;
+  /** Where the IdP posts responses. */
+  acsUrl?: string;
+  metadataUrl?: string;
+  /** The IdP's single sign-on URL and entity id. */
+  idpSsoUrl?: string;
+  idpIssuer?: string;
+  /** Single logout URL at the IdP, when configured. */
+  idpSloUrl?: string;
+  /** Signing certificates configured (count) and when the first expires. */
+  idpCerts: number;
+  idpCertExpires?: string;
+  wantAssertionsSigned: boolean;
+  /** Seconds of clock skew allowed. */
+  clockSkewSeconds: number;
+  emailAttribute: string;
+  nameAttribute: string;
+  roleAttribute: string;
+  roleMap: Record<string, string>;
+  defaultRole: string;
+  projectAttribute: string;
+  projectMap: Record<string, string>;
+  /** Users are created on their first sign-in. */
+  jit: boolean;
+  error?: string;
+}
+
+export interface ScimSecurityView {
+  /** The SCIM base URL to give the identity provider. */
+  baseUrl: string;
+  /** SCIM tokens (API keys with the `scim` scope) of every admin. */
+  tokens: Array<ApiKeyView & { userName: string }>;
+  /** Group → project membership or instance role (LANDFLOW_SCIM_GROUP_MAP). */
+  groupMap: Record<string, string>;
+  groups: number;
+  provisionedUsers: number;
 }
 
 /** Someone has a workflow open in the editor (GET/POST /api/workflows/<id>/lock, and `lock` events on /api/events). */

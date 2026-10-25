@@ -8,9 +8,13 @@ import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { importWorkflowJson } from '@/lib/server/n8n-import';
+import { createInProject } from '@/lib/server/projects/http';
 import { registry } from '@/lib/server/plugins/registry';
 import { workflowSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
+import { currentActorId } from '@/lib/server/auth/context';
+import { workflowViolations } from '@/lib/server/governance/policy';
+import { governedSave } from '@/lib/server/governance/saves';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,7 +48,15 @@ export const POST = handler(async (request: Request) => {
     return error(`The imported workflow is invalid: ${issue?.path.join('.') || 'workflow'}: ${issue?.message}`, 400, { issues: valid.error.issues.slice(0, 10), report: result.report });
   }
   const imported = valid.data as Omit<Workflow, 'id'>;
-  if (!create) return json({ workflow: { ...imported, id: '' }, report: result.report });
-  const workflow = store.saveWorkflow({ ...imported, id: `wf_${nanoid(10)}` });
-  return json({ workflow, report: result.report }, 201);
+  // Settings → Governance: nodes the policy blocks are reported (the import goes through; publishing is refused).
+  const blocked = workflowViolations(imported).map((v) => ({ name: v.nodeName, type: v.nodeType, reason: v.message }));
+  const report = blocked.length ? { ...result.report, blocked } : result.report;
+  if (!create) return json({ workflow: { ...imported, id: '' }, report });
+  let extras = {};
+  const workflow = createInProject(request, 'workflow', () => {
+    const saved = governedSave({ ...imported, id: `wf_${nanoid(10)}` } as Workflow, undefined, (w) => store.saveWorkflow(w), { by: currentActorId(), action: 'workflow.import', source: result.report.format });
+    extras = saved.extras;
+    return saved.workflow;
+  }, (w) => w.id);
+  return json({ workflow, report, ...extras }, 201);
 });

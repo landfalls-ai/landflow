@@ -82,7 +82,7 @@ export class FolderStore {
       return;
     }
     mkdirSync(dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.${process.pid}.tmp`;
+    const tmp = `${this.file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
     writeFileSync(tmp, JSON.stringify({ folders: this.folders }, null, 2));
     renameSync(tmp, this.file);
   }
@@ -150,5 +150,9 @@ export class FolderStore {
 }
 
 export const folders = singleton('folders', () => new FolderStore());
+/** Queue mode: another process changed folders (they are read again on next use). */
+export function reloadFolders() {
+  (folders as unknown as { cached?: Folder[] }).cached = undefined;
+}
 // Hot reload keeps the first instance (see singleton.ts): give it the current class's methods.
 Object.setPrototypeOf(folders, FolderStore.prototype);

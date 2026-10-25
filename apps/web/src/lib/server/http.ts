@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import type { ZodType } from 'zod';
 import { withAuth } from './auth/context';
 import { AuthError, guardRequest } from './auth/guard';
+import { noteAuditPrincipal } from './audit/context';
+import { auditRequest } from './audit/http';
 import { ensureBootstrapped } from './bootstrap';
 import { logger } from './telemetry';
 
@@ -16,21 +18,24 @@ export function error(message: string, status = 400, extra: Record<string, unkno
 /**
  * Wrap a route handler: bootstrap first, then the auth guard (lib/server/auth/guard.ts: a session or API key unless
  * the path is on the public allow-list, plus the route's scope and role), then the handler as that user; thrown
- * errors become JSON.
+ * errors become JSON. Every request runs in an audit context, and a change that recorded no audit event of its own
+ * gets a generic one (lib/server/audit/http.ts).
  */
 export function handler<A extends unknown[]>(fn: (...args: A) => Promise<Response>) {
-  return async (...args: A): Promise<Response> => {
-    try {
-      await ensureBootstrapped();
-      const gate = guardRequest(args[0] instanceof Request ? args[0] : undefined);
-      if (!gate.ok) return gate.response;
-      return await withAuth(gate.auth, () => fn(...args));
-    } catch (caught) {
-      if (caught instanceof AuthError) return error(caught.message, caught.status);
-      logger.error('route error', { error: caught, 'url.path': routePath(args[0]) });
-      return error((caught as Error).message ?? 'Internal error', 500);
-    }
-  };
+  return async (...args: A): Promise<Response> =>
+    auditRequest(args, async () => {
+      try {
+        await ensureBootstrapped();
+        const gate = guardRequest(args[0] instanceof Request ? args[0] : undefined);
+        if (!gate.ok) return gate.response;
+        noteAuditPrincipal(gate.auth.principal);
+        return await withAuth(gate.auth, () => fn(...args));
+      } catch (caught) {
+        if (caught instanceof AuthError) return error(caught.message, caught.status);
+        logger.error('route error', { error: caught, 'url.path': routePath(args[0]) });
+        return error((caught as Error).message ?? 'Internal error', 500);
+      }
+    });
 }
 
 function routePath(request: unknown): string | undefined {

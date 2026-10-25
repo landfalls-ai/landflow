@@ -1,0 +1,3464 @@
+{
+ "protocol": "landflow.plugin/v1",
+ "plugin": {
+  "id": "productivity",
+  "name": "Productivity",
+  "version": "0.1.0",
+  "language": "python",
+  "sdk": {
+   "name": "landflow-sdk-python",
+   "version": "0.1.0"
+  },
+  "description": "Notion, Airtable, GitHub, Jira, HubSpot and RSS: actions, live pickers, polling triggers and a GitHub webhook trigger.",
+  "color": "#7c3aed",
+  "author": "Landflow"
+ },
+ "nodes": [
+  {
+   "name": "notion",
+   "displayName": "Notion",
+   "description": "Create and query Notion database pages, get, archive and search pages, append blocks",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Productivity"
+   ],
+   "color": "#000000",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://developers.notion.com/reference/intro",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "notionApi",
+     "required": true
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Work with Notion. Pick `resource` (databasePage, page, block) and `operation`: create a database page (`databaseId`, `title`), query a database (`databaseId`, optional `filterJson`), get or archive a page (`pageId`), search pages (`text`), or append paragraphs to a page (`blockId`, `text`).",
+   "keywords": [
+    "notion",
+    "wiki",
+    "database",
+    "page",
+    "notes",
+    "docs"
+   ],
+   "properties": [
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "databasePage",
+     "options": [
+      {
+       "name": "Block",
+       "value": "block"
+      },
+      {
+       "name": "Database Page",
+       "value": "databasePage"
+      },
+      {
+       "name": "Page",
+       "value": "page"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "append",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "block"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Append After",
+       "value": "append",
+       "action": "Append a block"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "get",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Archive",
+       "value": "archive",
+       "action": "Archive a page"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "action": "Get a page"
+      },
+      {
+       "name": "Search",
+       "value": "search",
+       "action": "Search pages"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "databasePage"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "action": "Create a database page"
+      },
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "action": "Get many database pages"
+      }
+     ]
+    },
+    {
+     "name": "databaseId",
+     "displayName": "Database",
+     "type": "options",
+     "default": "",
+     "required": true,
+     "typeOptions": {
+      "loadOptionsMethod": "getDatabases"
+     },
+     "description": "Databases shared with the integration (or an id / URL through an expression)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "databasePage"
+       ],
+       "operation": [
+        "create",
+        "getAll"
+       ]
+      }
+     }
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "default": "",
+     "description": "Value of the database's title property",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "databasePage"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "propertiesUi",
+     "displayName": "Properties",
+     "type": "fixedCollection",
+     "default": {},
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "placeholder": "Add Property",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "databasePage"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "groups": [
+      {
+       "name": "propertyValues",
+       "displayName": "Property",
+       "values": [
+        {
+         "name": "key",
+         "displayName": "Name",
+         "type": "string",
+         "default": "",
+         "description": "Property name as shown in Notion"
+        },
+        {
+         "name": "type",
+         "displayName": "Type",
+         "type": "options",
+         "default": "text",
+         "options": [
+          {
+           "name": "Text",
+           "value": "text"
+          },
+          {
+           "name": "Number",
+           "value": "number"
+          },
+          {
+           "name": "Select",
+           "value": "select"
+          },
+          {
+           "name": "Multi-Select",
+           "value": "multi_select"
+          },
+          {
+           "name": "Status",
+           "value": "status"
+          },
+          {
+           "name": "Checkbox",
+           "value": "checkbox"
+          },
+          {
+           "name": "Date",
+           "value": "date"
+          },
+          {
+           "name": "URL",
+           "value": "url"
+          },
+          {
+           "name": "Email",
+           "value": "email"
+          },
+          {
+           "name": "Phone",
+           "value": "phone_number"
+          },
+          {
+           "name": "Title",
+           "value": "title"
+          }
+         ]
+        },
+        {
+         "name": "value",
+         "displayName": "Value",
+         "type": "string",
+         "default": "",
+         "description": "Multi-select: comma-separated; checkbox: true/false; date: ISO 8601"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "propertiesJson",
+     "displayName": "Properties (JSON)",
+     "type": "json",
+     "default": "",
+     "description": "Raw Notion property values, merged over the fields above, e.g. {\"Tags\": {\"multi_select\": [{\"name\": \"a\"}]}}",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "databasePage"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "databasePage"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "description": "Max number of results to return",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "databasePage"
+       ],
+       "operation": [
+        "getAll"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "filterJson",
+     "displayName": "Filter (JSON)",
+     "type": "json",
+     "default": "",
+     "description": "A Notion filter object, e.g. {\"property\": \"Status\", \"status\": {\"equals\": \"Done\"}}",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "databasePage"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     }
+    },
+    {
+     "name": "sortsJson",
+     "displayName": "Sorts (JSON)",
+     "type": "json",
+     "default": "",
+     "description": "An array of Notion sort objects, e.g. [{\"property\": \"Due\", \"direction\": \"ascending\"}]",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "databasePage"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     }
+    },
+    {
+     "name": "pageId",
+     "displayName": "Page",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "placeholder": "https://www.notion.so/My-page-0123456789abcdef0123456789abcdef",
+     "description": "Page id or URL",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ],
+       "operation": [
+        "archive",
+        "get"
+       ]
+      }
+     }
+    },
+    {
+     "name": "text",
+     "displayName": "Search Text",
+     "type": "string",
+     "default": "",
+     "description": "Text to search for in page titles (empty: everything shared with the integration)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "description": "Max number of results to return",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ],
+       "operation": [
+        "search"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "searchOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "objectType",
+       "displayName": "Object Type",
+       "type": "options",
+       "default": "page",
+       "options": [
+        {
+         "name": "Pages",
+         "value": "page"
+        },
+        {
+         "name": "Databases",
+         "value": "database"
+        }
+       ]
+      },
+      {
+       "name": "sortDirection",
+       "displayName": "Sort by Last Edited",
+       "type": "options",
+       "default": "descending",
+       "options": [
+        {
+         "name": "Newest First",
+         "value": "descending"
+        },
+        {
+         "name": "Oldest First",
+         "value": "ascending"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "simplify",
+     "displayName": "Simplify",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to return a simplified version of the response instead of the raw data",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "databasePage",
+        "page"
+       ],
+       "operation": [
+        "create",
+        "getAll",
+        "get",
+        "archive",
+        "search"
+       ]
+      }
+     }
+    },
+    {
+     "name": "blockId",
+     "displayName": "Page or Block",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "description": "Page or block id or URL; the new blocks are appended to its children",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "block"
+       ]
+      }
+     }
+    },
+    {
+     "name": "blockSource",
+     "displayName": "Content",
+     "type": "options",
+     "default": "text",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "block"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Paragraph Text",
+       "value": "text",
+       "description": "One paragraph per blank-line separated block of text"
+      },
+      {
+       "name": "Blocks (JSON)",
+       "value": "json",
+       "description": "An array of Notion block objects"
+      }
+     ]
+    },
+    {
+     "name": "blockText",
+     "displayName": "Text",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "rows": 4
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "block"
+       ],
+       "blockSource": [
+        "text"
+       ]
+      }
+     }
+    },
+    {
+     "name": "blocksJson",
+     "displayName": "Blocks (JSON)",
+     "type": "json",
+     "default": "",
+     "description": "e.g. [{\"type\": \"to_do\", \"to_do\": {\"rich_text\": [{\"text\": {\"content\": \"Ship it\"}}]}}]",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "block"
+       ],
+       "blockSource": [
+        "json"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "airtable",
+   "displayName": "Airtable",
+   "description": "Create, upsert, get, search, update and delete Airtable records",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Data & Storage",
+    "Productivity"
+   ],
+   "color": "#18BFFF",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://airtable.com/developers/web/api/introduction",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "airtableTokenApi",
+     "required": true
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Read and write Airtable records in a table (`base` and `table` ids). Operations: `search` with an Airtable formula in `filterByFormula`, `get` / `deleteRecord` by record `id`, `create` / `update` / `upsert` with the record fields as a JSON object in `fieldsJson` (set `dataMode` to `json`).",
+   "keywords": [
+    "airtable",
+    "spreadsheet",
+    "database",
+    "table",
+    "records",
+    "rows"
+   ],
+   "properties": [
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "record",
+     "options": [
+      {
+       "name": "Record",
+       "value": "record"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "search",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "action": "Create a record"
+      },
+      {
+       "name": "Create or Update",
+       "value": "upsert",
+       "action": "Create or update a record"
+      },
+      {
+       "name": "Delete",
+       "value": "deleteRecord",
+       "action": "Delete a record"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "action": "Get a record"
+      },
+      {
+       "name": "Search",
+       "value": "search",
+       "action": "Search records"
+      },
+      {
+       "name": "Update",
+       "value": "update",
+       "action": "Update a record"
+      }
+     ]
+    },
+    {
+     "name": "base",
+     "displayName": "Base",
+     "type": "options",
+     "default": "",
+     "required": true,
+     "typeOptions": {
+      "loadOptionsMethod": "getBases"
+     },
+     "description": "Base id (app\u2026)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ]
+      }
+     }
+    },
+    {
+     "name": "table",
+     "displayName": "Table",
+     "type": "options",
+     "default": "",
+     "required": true,
+     "typeOptions": {
+      "loadOptionsMethod": "getTables",
+      "loadOptionsDependsOn": [
+       "base"
+      ]
+     },
+     "description": "Table id (tbl\u2026) or name",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ]
+      }
+     }
+    },
+    {
+     "name": "id",
+     "displayName": "Record ID",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "placeholder": "rec\u2026",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "get",
+        "update",
+        "deleteRecord"
+       ]
+      }
+     }
+    },
+    {
+     "name": "fieldsToMergeOn",
+     "displayName": "Fields to Merge On",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "placeholder": "Email",
+     "description": "Comma-separated fields that identify a record: a match is updated, otherwise a record is created",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "upsert"
+       ]
+      }
+     }
+    },
+    {
+     "name": "dataMode",
+     "displayName": "Fields",
+     "type": "options",
+     "default": "autoMapInputData",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "create",
+        "upsert",
+        "update"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Map Automatically",
+       "value": "autoMapInputData",
+       "description": "Use the input item's fields as the record's fields"
+      },
+      {
+       "name": "Define Below",
+       "value": "defineBelow",
+       "description": "Set field names and values one by one"
+      },
+      {
+       "name": "JSON",
+       "value": "json",
+       "description": "A JSON object of field names to values"
+      }
+     ]
+    },
+    {
+     "name": "fieldsUi",
+     "displayName": "Fields to Send",
+     "type": "fixedCollection",
+     "default": {},
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "create",
+        "upsert",
+        "update"
+       ],
+       "dataMode": [
+        "defineBelow"
+       ]
+      }
+     },
+     "groups": [
+      {
+       "name": "fieldValues",
+       "displayName": "Field",
+       "values": [
+        {
+         "name": "fieldName",
+         "displayName": "Field Name",
+         "type": "string",
+         "default": ""
+        },
+        {
+         "name": "fieldValue",
+         "displayName": "Field Value",
+         "type": "string",
+         "default": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "fieldsJson",
+     "displayName": "Fields (JSON)",
+     "type": "json",
+     "default": "",
+     "description": "e.g. {\"Name\": \"Ada\", \"Score\": 42}",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "create",
+        "upsert",
+        "update"
+       ],
+       "dataMode": [
+        "json"
+       ]
+      }
+     }
+    },
+    {
+     "name": "filterByFormula",
+     "displayName": "Filter By Formula",
+     "type": "string",
+     "default": "",
+     "placeholder": "NOT({Name} = 'Admin')",
+     "description": "An Airtable formula; only records for which it is true are returned",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "description": "Max number of results to return",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "search"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "sort",
+     "displayName": "Sort",
+     "type": "fixedCollection",
+     "default": {},
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "placeholder": "Add Sort Rule",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "groups": [
+      {
+       "name": "property",
+       "displayName": "Rule",
+       "values": [
+        {
+         "name": "field",
+         "displayName": "Field",
+         "type": "string",
+         "default": ""
+        },
+        {
+         "name": "direction",
+         "displayName": "Direction",
+         "type": "options",
+         "default": "asc",
+         "options": [
+          {
+           "name": "Ascending",
+           "value": "asc"
+          },
+          {
+           "name": "Descending",
+           "value": "desc"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "searchOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "view",
+       "displayName": "View",
+       "type": "string",
+       "default": "",
+       "description": "View name or id; its filters and order apply"
+      },
+      {
+       "name": "fields",
+       "displayName": "Output Fields",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated fields to return (all when empty)"
+      }
+     ]
+    },
+    {
+     "name": "writeOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "create",
+        "upsert",
+        "update"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "typecast",
+       "displayName": "Typecast",
+       "type": "boolean",
+       "default": false,
+       "description": "Let Airtable convert string values to the field types (and create missing select options)"
+      },
+      {
+       "name": "ignoreFields",
+       "displayName": "Ignore Fields",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated input fields not to send (Map Automatically)"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "github",
+   "displayName": "GitHub",
+   "description": "Create, edit, comment on and list issues; get repositories, releases and files",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Development"
+   ],
+   "color": "#24292F",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://docs.github.com/en/rest",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "githubApi",
+     "required": true
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Work with a GitHub repository (`owner`, `repository`). Issues: `create` (`title`, `body`), `get` / `edit` / `createComment` by `issueNumber`, `getAll` (filters by state and labels). Also get the repository, list releases, or read a file's text (`filePath`).",
+   "keywords": [
+    "github",
+    "git",
+    "issues",
+    "repository",
+    "release",
+    "code"
+   ],
+   "properties": [
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "issue",
+     "options": [
+      {
+       "name": "File",
+       "value": "file"
+      },
+      {
+       "name": "Issue",
+       "value": "issue"
+      },
+      {
+       "name": "Release",
+       "value": "release"
+      },
+      {
+       "name": "Repository",
+       "value": "repository"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "get",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get",
+       "value": "get",
+       "action": "Get a file"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getAll",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "release"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "action": "Get many releases"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "get",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "repository"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get",
+       "value": "get",
+       "action": "Get a repository"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "action": "Create an issue"
+      },
+      {
+       "name": "Create Comment",
+       "value": "createComment",
+       "action": "Create a comment on an issue"
+      },
+      {
+       "name": "Edit",
+       "value": "edit",
+       "action": "Edit an issue"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "action": "Get an issue"
+      },
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "action": "Get many issues"
+      }
+     ]
+    },
+    {
+     "name": "repo",
+     "displayName": "Repository",
+     "type": "options",
+     "default": "",
+     "typeOptions": {
+      "loadOptionsMethod": "getRepositories"
+     },
+     "options": [
+      {
+       "name": "Enter Owner and Name",
+       "value": ""
+      }
+     ],
+     "description": "Pick one of your repositories, or enter the owner and name below"
+    },
+    {
+     "name": "owner",
+     "displayName": "Repository Owner",
+     "type": "string",
+     "default": "",
+     "placeholder": "n8n-io",
+     "displayOptions": {
+      "show": {
+       "repo": [
+        ""
+       ]
+      }
+     }
+    },
+    {
+     "name": "repository",
+     "displayName": "Repository Name",
+     "type": "string",
+     "default": "",
+     "placeholder": "n8n",
+     "displayOptions": {
+      "show": {
+       "repo": [
+        ""
+       ]
+      }
+     }
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "body",
+     "displayName": "Body",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "rows": 5
+     },
+     "description": "Markdown",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create",
+        "createComment"
+       ]
+      }
+     }
+    },
+    {
+     "name": "labels",
+     "displayName": "Labels",
+     "type": "string",
+     "default": "",
+     "placeholder": "bug, triage",
+     "description": "Comma-separated label names",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "assignees",
+     "displayName": "Assignees",
+     "type": "string",
+     "default": "",
+     "placeholder": "octocat",
+     "description": "Comma-separated user logins",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "issueNumber",
+     "displayName": "Issue Number",
+     "type": "number",
+     "default": 0,
+     "required": true,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "get",
+        "edit",
+        "createComment"
+       ]
+      }
+     }
+    },
+    {
+     "name": "editFields",
+     "displayName": "Edit Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "edit"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "title",
+       "displayName": "Title",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "body",
+       "displayName": "Body",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 5
+       }
+      },
+      {
+       "name": "state",
+       "displayName": "State",
+       "type": "options",
+       "default": "open",
+       "options": [
+        {
+         "name": "Open",
+         "value": "open"
+        },
+        {
+         "name": "Closed",
+         "value": "closed"
+        }
+       ]
+      },
+      {
+       "name": "stateReason",
+       "displayName": "State Reason",
+       "type": "options",
+       "default": "completed",
+       "options": [
+        {
+         "name": "Completed",
+         "value": "completed"
+        },
+        {
+         "name": "Not Planned",
+         "value": "not_planned"
+        },
+        {
+         "name": "Reopened",
+         "value": "reopened"
+        }
+       ]
+      },
+      {
+       "name": "labels",
+       "displayName": "Labels",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated; replaces the current labels"
+      },
+      {
+       "name": "assignees",
+       "displayName": "Assignees",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated logins; replaces the current assignees"
+      }
+     ]
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue",
+        "release"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "description": "Max number of results to return",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue",
+        "release"
+       ],
+       "operation": [
+        "getAll"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "getRepositoryIssuesFilters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Filter",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "state",
+       "displayName": "State",
+       "type": "options",
+       "default": "open",
+       "options": [
+        {
+         "name": "All",
+         "value": "all"
+        },
+        {
+         "name": "Closed",
+         "value": "closed"
+        },
+        {
+         "name": "Open",
+         "value": "open"
+        }
+       ]
+      },
+      {
+       "name": "labels",
+       "displayName": "Labels",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated; issues must have all of them"
+      },
+      {
+       "name": "since",
+       "displayName": "Updated Since",
+       "type": "dateTime",
+       "default": "",
+       "description": "Only issues updated at or after this time"
+      },
+      {
+       "name": "assignee",
+       "displayName": "Assignee",
+       "type": "string",
+       "default": "",
+       "description": "A login, 'none' or '*'"
+      },
+      {
+       "name": "creator",
+       "displayName": "Creator",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "sort",
+       "displayName": "Sort",
+       "type": "options",
+       "default": "created",
+       "options": [
+        {
+         "name": "Created",
+         "value": "created"
+        },
+        {
+         "name": "Updated",
+         "value": "updated"
+        },
+        {
+         "name": "Comments",
+         "value": "comments"
+        }
+       ]
+      },
+      {
+       "name": "direction",
+       "displayName": "Direction",
+       "type": "options",
+       "default": "desc",
+       "options": [
+        {
+         "name": "Descending",
+         "value": "desc"
+        },
+        {
+         "name": "Ascending",
+         "value": "asc"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "filePath",
+     "displayName": "File Path",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "placeholder": "docs/README.md",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "fileOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "reference",
+       "displayName": "Reference",
+       "type": "string",
+       "default": "",
+       "description": "Branch, tag or commit (default branch when empty)"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "githubTrigger",
+   "displayName": "GitHub Trigger",
+   "description": "Starts the workflow when a repository gets a new issue, pull request or release (polling)",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "poll",
+   "categories": [
+    "Development"
+   ],
+   "color": "#24292F",
+   "subtitle": "{{event}}",
+   "documentationUrl": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "githubApi",
+     "required": true
+    }
+   ],
+   "keywords": [
+    "github",
+    "issues",
+    "pull request",
+    "release",
+    "poll"
+   ],
+   "properties": [
+    {
+     "name": "pollInterval",
+     "displayName": "Poll Interval (seconds)",
+     "type": "number",
+     "default": 60,
+     "description": "How often to check for new events while the workflow is active",
+     "typeOptions": {
+      "minValue": 10
+     },
+     "noDataExpression": true
+    },
+    {
+     "name": "repo",
+     "displayName": "Repository",
+     "type": "options",
+     "default": "",
+     "typeOptions": {
+      "loadOptionsMethod": "getRepositories"
+     },
+     "options": [
+      {
+       "name": "Enter Owner and Name",
+       "value": ""
+      }
+     ],
+     "description": "Pick one of your repositories, or enter the owner and name below"
+    },
+    {
+     "name": "owner",
+     "displayName": "Repository Owner",
+     "type": "string",
+     "default": "",
+     "placeholder": "n8n-io",
+     "displayOptions": {
+      "show": {
+       "repo": [
+        ""
+       ]
+      }
+     }
+    },
+    {
+     "name": "repository",
+     "displayName": "Repository Name",
+     "type": "string",
+     "default": "",
+     "placeholder": "n8n",
+     "displayOptions": {
+      "show": {
+       "repo": [
+        ""
+       ]
+      }
+     }
+    },
+    {
+     "name": "event",
+     "displayName": "Event",
+     "type": "options",
+     "default": "newIssue",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "New Issue",
+       "value": "newIssue",
+       "description": "An issue was opened (pull requests excluded)"
+      },
+      {
+       "name": "New Pull Request",
+       "value": "newPullRequest"
+      },
+      {
+       "name": "New Release",
+       "value": "newRelease",
+       "description": "A release was published (or drafted, with push access)"
+      }
+     ]
+    },
+    {
+     "name": "pollNotice",
+     "displayName": "The first poll after activation only records the newest item; later polls emit what is newer, oldest first.",
+     "type": "notice",
+     "default": ""
+    }
+   ]
+  },
+  {
+   "name": "githubWebhookTrigger",
+   "displayName": "GitHub Webhook Trigger",
+   "description": "Starts the workflow on repository events as GitHub sends them: pushes, pull requests, issues, releases, \u2026",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "appWebhook",
+   "categories": [
+    "Development"
+   ],
+   "color": "#24292F",
+   "subtitle": "{{events}}",
+   "documentationUrl": "https://docs.github.com/en/webhooks/webhook-events-and-payloads",
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "githubApi",
+     "required": true
+    }
+   ],
+   "keywords": [
+    "github",
+    "webhook",
+    "push",
+    "pull request",
+    "issues",
+    "release",
+    "event"
+   ],
+   "properties": [
+    {
+     "name": "webhookNotice",
+     "type": "notice",
+     "default": "",
+     "displayName": "Landflow creates the repository webhook when you publish the workflow and deletes it when you unpublish. The token needs admin:repo_hook (classic) or Webhooks read and write (fine-grained), and admin access to the repository."
+    },
+    {
+     "name": "repo",
+     "displayName": "Repository",
+     "type": "options",
+     "default": "",
+     "typeOptions": {
+      "loadOptionsMethod": "getRepositories"
+     },
+     "options": [
+      {
+       "name": "Enter Owner and Name",
+       "value": ""
+      }
+     ],
+     "description": "Pick one of your repositories, or enter the owner and name below"
+    },
+    {
+     "name": "owner",
+     "displayName": "Repository Owner",
+     "type": "string",
+     "default": "",
+     "placeholder": "n8n-io",
+     "displayOptions": {
+      "show": {
+       "repo": [
+        ""
+       ]
+      }
+     }
+    },
+    {
+     "name": "repository",
+     "displayName": "Repository Name",
+     "type": "string",
+     "default": "",
+     "placeholder": "n8n",
+     "displayOptions": {
+      "show": {
+       "repo": [
+        ""
+       ]
+      }
+     }
+    },
+    {
+     "name": "events",
+     "displayName": "Events",
+     "type": "multiOptions",
+     "default": [
+      "push"
+     ],
+     "required": true,
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Any Event",
+       "value": "*",
+       "description": "Every event GitHub sends for the repository"
+      },
+      {
+       "name": "Check Run",
+       "value": "check_run"
+      },
+      {
+       "name": "Check Suite",
+       "value": "check_suite"
+      },
+      {
+       "name": "Commit Comment",
+       "value": "commit_comment"
+      },
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "A branch or tag was created"
+      },
+      {
+       "name": "Delete",
+       "value": "delete",
+       "description": "A branch or tag was deleted"
+      },
+      {
+       "name": "Deployment",
+       "value": "deployment"
+      },
+      {
+       "name": "Deployment Status",
+       "value": "deployment_status"
+      },
+      {
+       "name": "Discussion",
+       "value": "discussion"
+      },
+      {
+       "name": "Discussion Comment",
+       "value": "discussion_comment"
+      },
+      {
+       "name": "Fork",
+       "value": "fork"
+      },
+      {
+       "name": "Issue Comment",
+       "value": "issue_comment",
+       "description": "A comment on an issue or pull request"
+      },
+      {
+       "name": "Issues",
+       "value": "issues",
+       "description": "An issue was opened, edited, closed, labeled, \u2026"
+      },
+      {
+       "name": "Label",
+       "value": "label"
+      },
+      {
+       "name": "Member",
+       "value": "member"
+      },
+      {
+       "name": "Milestone",
+       "value": "milestone"
+      },
+      {
+       "name": "Public",
+       "value": "public"
+      },
+      {
+       "name": "Pull Request",
+       "value": "pull_request",
+       "description": "A pull request was opened, synchronized, closed, \u2026"
+      },
+      {
+       "name": "Pull Request Review",
+       "value": "pull_request_review"
+      },
+      {
+       "name": "Pull Request Review Comment",
+       "value": "pull_request_review_comment"
+      },
+      {
+       "name": "Push",
+       "value": "push",
+       "description": "Commits were pushed to a branch or tag"
+      },
+      {
+       "name": "Release",
+       "value": "release"
+      },
+      {
+       "name": "Repository",
+       "value": "repository"
+      },
+      {
+       "name": "Star",
+       "value": "star"
+      },
+      {
+       "name": "Status",
+       "value": "status",
+       "description": "A commit status changed"
+      },
+      {
+       "name": "Watch",
+       "value": "watch"
+      },
+      {
+       "name": "Wiki Page",
+       "value": "gollum"
+      },
+      {
+       "name": "Workflow Job",
+       "value": "workflow_job"
+      },
+      {
+       "name": "Workflow Run",
+       "value": "workflow_run"
+      }
+     ],
+     "description": "The events GitHub delivers; each starts one run"
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "insecureSsl",
+       "displayName": "Insecure SSL",
+       "type": "boolean",
+       "default": false,
+       "description": "Let GitHub deliver to a URL whose TLS certificate it cannot verify (self-signed); not recommended"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "jira",
+   "displayName": "Jira Software",
+   "description": "Create, get, search, update and transition Jira issues, and add comments",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Development",
+    "Productivity"
+   ],
+   "color": "#0052CC",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "jiraSoftwareCloudApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "jiraVersion": [
+        "cloud"
+       ]
+      }
+     }
+    },
+    {
+     "name": "jiraSoftwareServerPatApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "jiraVersion": [
+        "serverPat"
+       ]
+      }
+     }
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Work with Jira issues. `getAll` searches with a JQL query in `jql`; `get` / `update` / `transition` take an `issueKey` like PROJ-123; `create` needs `project` and `issueType` ids and a `summary`; comments are added with resource `issueComment`, operation `add` and the `comment` text.",
+   "keywords": [
+    "jira",
+    "atlassian",
+    "issue",
+    "ticket",
+    "bug",
+    "jql",
+    "sprint"
+   ],
+   "properties": [
+    {
+     "name": "jiraVersion",
+     "displayName": "Jira Version",
+     "type": "options",
+     "default": "cloud",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Cloud",
+       "value": "cloud"
+      },
+      {
+       "name": "Server / Data Center (PAT)",
+       "value": "serverPat"
+      }
+     ]
+    },
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "issue",
+     "options": [
+      {
+       "name": "Issue",
+       "value": "issue"
+      },
+      {
+       "name": "Issue Comment",
+       "value": "issueComment"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "add",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issueComment"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Add",
+       "value": "add",
+       "action": "Add a comment"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "action": "Create an issue"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "action": "Get an issue"
+      },
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "action": "Get many issues"
+      },
+      {
+       "name": "Transition",
+       "value": "transition",
+       "action": "Move an issue to another status"
+      },
+      {
+       "name": "Update",
+       "value": "update",
+       "action": "Update an issue"
+      }
+     ]
+    },
+    {
+     "name": "project",
+     "displayName": "Project",
+     "type": "options",
+     "default": "",
+     "required": true,
+     "typeOptions": {
+      "loadOptionsMethod": "getProjects",
+      "loadOptionsDependsOn": [
+       "jiraVersion"
+      ]
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "issueType",
+     "displayName": "Issue Type",
+     "type": "options",
+     "default": "",
+     "required": true,
+     "typeOptions": {
+      "loadOptionsMethod": "getIssueTypes",
+      "loadOptionsDependsOn": [
+       "jiraVersion",
+       "project"
+      ]
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "summary",
+     "displayName": "Summary",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "additionalFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "description",
+       "displayName": "Description",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 4
+       },
+       "description": "Plain text; blank lines start new paragraphs (converted to ADF on Cloud)"
+      },
+      {
+       "name": "labels",
+       "displayName": "Labels",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated"
+      },
+      {
+       "name": "priority",
+       "displayName": "Priority",
+       "type": "options",
+       "default": "",
+       "typeOptions": {
+        "loadOptionsMethod": "getPriorities",
+        "loadOptionsDependsOn": [
+         "jiraVersion"
+        ]
+       }
+      },
+      {
+       "name": "assignee",
+       "displayName": "Assignee",
+       "type": "string",
+       "default": "",
+       "description": "Account id (Cloud) or user name (Server)"
+      },
+      {
+       "name": "fieldsJson",
+       "displayName": "Other Fields (JSON)",
+       "type": "json",
+       "default": "",
+       "description": "Merged into `fields`, e.g. {\"customfield_10011\": \"Epic name\"}"
+      }
+     ]
+    },
+    {
+     "name": "issueKey",
+     "displayName": "Issue Key",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "placeholder": "PROJ-123",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue",
+        "issueComment"
+       ],
+       "operation": [
+        "get",
+        "update",
+        "transition",
+        "add"
+       ]
+      }
+     }
+    },
+    {
+     "name": "updateFields",
+     "displayName": "Update Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "update"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "summary",
+       "displayName": "Summary",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "description",
+       "displayName": "Description",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 4
+       },
+       "description": "Plain text; blank lines start new paragraphs (converted to ADF on Cloud)"
+      },
+      {
+       "name": "labels",
+       "displayName": "Labels",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated"
+      },
+      {
+       "name": "priority",
+       "displayName": "Priority",
+       "type": "options",
+       "default": "",
+       "typeOptions": {
+        "loadOptionsMethod": "getPriorities",
+        "loadOptionsDependsOn": [
+         "jiraVersion"
+        ]
+       }
+      },
+      {
+       "name": "assignee",
+       "displayName": "Assignee",
+       "type": "string",
+       "default": "",
+       "description": "Account id (Cloud) or user name (Server)"
+      },
+      {
+       "name": "fieldsJson",
+       "displayName": "Other Fields (JSON)",
+       "type": "json",
+       "default": "",
+       "description": "Merged into `fields`, e.g. {\"customfield_10011\": \"Epic name\"}"
+      }
+     ]
+    },
+    {
+     "name": "transitionId",
+     "displayName": "Transition",
+     "type": "options",
+     "default": "",
+     "required": true,
+     "typeOptions": {
+      "loadOptionsMethod": "getTransitions",
+      "loadOptionsDependsOn": [
+       "jiraVersion",
+       "issueKey"
+      ]
+     },
+     "description": "Transitions available for the issue (enter the issue key first)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "transition"
+       ]
+      }
+     }
+    },
+    {
+     "name": "jql",
+     "displayName": "JQL",
+     "type": "string",
+     "default": "",
+     "placeholder": "project = PROJ AND status != Done ORDER BY created DESC",
+     "description": "Jira Query Language (Cloud requires a bounded query, e.g. with a project)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "description": "Max number of results to return",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "getAll"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "get",
+        "getAll"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "fields",
+       "displayName": "Fields",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated fields to return (default: all navigable fields)"
+      },
+      {
+       "name": "expand",
+       "displayName": "Expand",
+       "type": "string",
+       "default": "",
+       "placeholder": "renderedFields,changelog"
+      }
+     ]
+    },
+    {
+     "name": "simplify",
+     "displayName": "Simplify",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to return a simplified version of the response instead of the raw data",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "get",
+        "getAll"
+       ]
+      }
+     }
+    },
+    {
+     "name": "comment",
+     "displayName": "Comment",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "typeOptions": {
+      "rows": 4
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issueComment"
+       ],
+       "operation": [
+        "add"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "hubspot",
+   "displayName": "HubSpot",
+   "description": "Create or update, get and search HubSpot contacts; create deals",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Sales",
+    "Marketing"
+   ],
+   "color": "#FF7A59",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://developers.hubspot.com/docs/api/crm/understanding-the-crm",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "hubspotAppToken",
+     "required": true
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Work with HubSpot CRM. Contacts: `upsert` by `email` (with optional names, phone, company), `get` by `contactId`, `search` with property filters. Deals: `create` with `dealName`, `stage`, `amount` and optional `associatedContactIds`.",
+   "keywords": [
+    "hubspot",
+    "crm",
+    "contact",
+    "deal",
+    "sales",
+    "lead"
+   ],
+   "properties": [
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "contact",
+     "options": [
+      {
+       "name": "Contact",
+       "value": "contact"
+      },
+      {
+       "name": "Deal",
+       "value": "deal"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "deal"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "action": "Create a deal"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "upsert",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create or Update",
+       "value": "upsert",
+       "action": "Create or update a contact"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "action": "Get a contact"
+      },
+      {
+       "name": "Search",
+       "value": "search",
+       "action": "Search contacts"
+      }
+     ]
+    },
+    {
+     "name": "email",
+     "displayName": "Email",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "placeholder": "name@email.com",
+     "description": "The contact is looked up by email: updated when found, created otherwise",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ],
+       "operation": [
+        "upsert"
+       ]
+      }
+     }
+    },
+    {
+     "name": "additionalFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ],
+       "operation": [
+        "upsert"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "firstName",
+       "displayName": "First Name",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "lastName",
+       "displayName": "Last Name",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "phone",
+       "displayName": "Phone Number",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "companyName",
+       "displayName": "Company Name",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "jobTitle",
+       "displayName": "Job Title",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "websiteUrl",
+       "displayName": "Website URL",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "lifeCycleStage",
+       "displayName": "Lifecycle Stage",
+       "type": "string",
+       "default": ""
+      }
+     ]
+    },
+    {
+     "name": "customPropertiesUi",
+     "displayName": "Custom Properties",
+     "type": "fixedCollection",
+     "default": {},
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "placeholder": "Add Property",
+     "groups": [
+      {
+       "name": "customPropertiesValues",
+       "displayName": "Property",
+       "values": [
+        {
+         "name": "property",
+         "displayName": "Property",
+         "type": "string",
+         "default": "",
+         "description": "Internal property name"
+        },
+        {
+         "name": "value",
+         "displayName": "Value",
+         "type": "string",
+         "default": ""
+        }
+       ]
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ],
+       "operation": [
+        "upsert"
+       ]
+      }
+     }
+    },
+    {
+     "name": "contactId",
+     "displayName": "Contact ID",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     }
+    },
+    {
+     "name": "filtersUi",
+     "displayName": "Filters",
+     "type": "fixedCollection",
+     "default": {},
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "placeholder": "Add Filter",
+     "description": "All filters must match (AND)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     },
+     "groups": [
+      {
+       "name": "filterValues",
+       "displayName": "Filter",
+       "values": [
+        {
+         "name": "propertyName",
+         "displayName": "Property",
+         "type": "string",
+         "default": "",
+         "placeholder": "email"
+        },
+        {
+         "name": "operator",
+         "displayName": "Operator",
+         "type": "options",
+         "default": "EQ",
+         "options": [
+          {
+           "name": "Eq",
+           "value": "EQ"
+          },
+          {
+           "name": "Neq",
+           "value": "NEQ"
+          },
+          {
+           "name": "Lt",
+           "value": "LT"
+          },
+          {
+           "name": "Lte",
+           "value": "LTE"
+          },
+          {
+           "name": "Gt",
+           "value": "GT"
+          },
+          {
+           "name": "Gte",
+           "value": "GTE"
+          },
+          {
+           "name": "Contains Token",
+           "value": "CONTAINS_TOKEN"
+          },
+          {
+           "name": "Not Contains Token",
+           "value": "NOT_CONTAINS_TOKEN"
+          },
+          {
+           "name": "Has Property",
+           "value": "HAS_PROPERTY"
+          },
+          {
+           "name": "Not Has Property",
+           "value": "NOT_HAS_PROPERTY"
+          }
+         ]
+        },
+        {
+         "name": "value",
+         "displayName": "Value",
+         "type": "string",
+         "default": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "query",
+     "displayName": "Search Text",
+     "type": "string",
+     "default": "",
+     "description": "Free text matched against the default searchable properties (name, email, phone, company)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ],
+       "operation": [
+        "search"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "description": "Max number of results to return",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ],
+       "operation": [
+        "search"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ],
+       "operation": [
+        "get",
+        "search"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "properties",
+       "displayName": "Properties",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated properties to return (HubSpot's defaults when empty)"
+      },
+      {
+       "name": "sortBy",
+       "displayName": "Sort By",
+       "type": "string",
+       "default": "",
+       "placeholder": "createdate",
+       "description": "Search only"
+      },
+      {
+       "name": "direction",
+       "displayName": "Sort Direction",
+       "type": "options",
+       "default": "DESCENDING",
+       "options": [
+        {
+         "name": "Descending",
+         "value": "DESCENDING"
+        },
+        {
+         "name": "Ascending",
+         "value": "ASCENDING"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "simplify",
+     "displayName": "Simplify",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to return the id and the properties as flat fields",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "contact"
+       ],
+       "operation": [
+        "upsert",
+        "get",
+        "search"
+       ]
+      }
+     }
+    },
+    {
+     "name": "dealName",
+     "displayName": "Deal Name",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "deal"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "pipeline",
+     "displayName": "Pipeline",
+     "type": "options",
+     "default": "default",
+     "typeOptions": {
+      "loadOptionsMethod": "getDealPipelines"
+     },
+     "options": [
+      {
+       "name": "Sales Pipeline",
+       "value": "default"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "deal"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "stage",
+     "displayName": "Deal Stage",
+     "type": "options",
+     "default": "appointmentscheduled",
+     "required": true,
+     "typeOptions": {
+      "loadOptionsMethod": "getDealStages",
+      "loadOptionsDependsOn": [
+       "pipeline"
+      ]
+     },
+     "options": [
+      {
+       "name": "Appointment Scheduled",
+       "value": "appointmentscheduled"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "deal"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "dealFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "deal"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "amount",
+       "displayName": "Amount",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "closeDate",
+       "displayName": "Close Date",
+       "type": "dateTime",
+       "default": ""
+      },
+      {
+       "name": "dealType",
+       "displayName": "Deal Type",
+       "type": "options",
+       "default": "newbusiness",
+       "options": [
+        {
+         "name": "New Business",
+         "value": "newbusiness"
+        },
+        {
+         "name": "Existing Business",
+         "value": "existingbusiness"
+        }
+       ]
+      },
+      {
+       "name": "description",
+       "displayName": "Description",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "associatedContactIds",
+       "displayName": "Associated Contact IDs",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated contact ids to associate with the deal"
+      }
+     ]
+    },
+    {
+     "name": "customPropertiesUi",
+     "displayName": "Custom Properties",
+     "type": "fixedCollection",
+     "default": {},
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "placeholder": "Add Property",
+     "groups": [
+      {
+       "name": "customPropertiesValues",
+       "displayName": "Property",
+       "values": [
+        {
+         "name": "property",
+         "displayName": "Property",
+         "type": "string",
+         "default": "",
+         "description": "Internal property name"
+        },
+        {
+         "name": "value",
+         "displayName": "Value",
+         "type": "string",
+         "default": ""
+        }
+       ]
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "deal"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "simplify",
+     "displayName": "Simplify",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to return the id and the properties as flat fields",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "deal"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "rssFeedRead",
+   "displayName": "RSS Read",
+   "description": "Read the items of an RSS 2.0, RSS 1.0 (RDF) or Atom feed",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Utility"
+   ],
+   "color": "#F26522",
+   "subtitle": "{{url}}",
+   "documentationUrl": "https://www.rssboard.org/rss-specification",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Read an RSS or Atom feed. Pass the feed address in `url`. Returns one item per entry with `title`, `link`, `isoDate`, `creator`, `contentSnippet` (plain text) and `categories`. Use it to get the latest news or posts.",
+   "keywords": [
+    "rss",
+    "atom",
+    "feed",
+    "news",
+    "blog",
+    "podcast"
+   ],
+   "properties": [
+    {
+     "name": "url",
+     "displayName": "URL",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "placeholder": "https://example.com/feed.xml",
+     "description": "URL of the RSS or Atom feed"
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "customFields",
+       "displayName": "Custom Fields",
+       "type": "string",
+       "default": "",
+       "placeholder": "media:thumbnail, itunes:duration",
+       "description": "Comma-separated extra elements to read from each item (prefix:name for namespaced ones)"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "rssFeedReadTrigger",
+   "displayName": "RSS Feed Trigger",
+   "description": "Starts the workflow when an RSS or Atom feed publishes a new item (polling)",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "poll",
+   "categories": [
+    "Utility"
+   ],
+   "color": "#F26522",
+   "subtitle": "{{feedUrl}}",
+   "documentationUrl": "https://www.rssboard.org/rss-specification",
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "keywords": [
+    "rss",
+    "atom",
+    "feed",
+    "news",
+    "poll"
+   ],
+   "properties": [
+    {
+     "name": "pollInterval",
+     "displayName": "Poll Interval (seconds)",
+     "type": "number",
+     "default": 300,
+     "description": "How often to check for new events while the workflow is active",
+     "typeOptions": {
+      "minValue": 10
+     },
+     "noDataExpression": true
+    },
+    {
+     "name": "feedUrl",
+     "displayName": "Feed URL",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "placeholder": "https://example.com/feed.xml",
+     "description": "URL of the RSS or Atom feed"
+    },
+    {
+     "name": "pollNotice",
+     "type": "notice",
+     "default": "",
+     "displayName": "The first poll after activation only records what is in the feed. Executing the node in the editor returns the latest item."
+    }
+   ]
+  }
+ ],
+ "credentialTypes": [
+  {
+   "name": "notionApi",
+   "displayName": "Notion API",
+   "description": "An internal integration secret. Share the pages and databases with the integration in Notion.",
+   "documentationUrl": "https://developers.notion.com/docs/authorization",
+   "properties": [
+    {
+     "name": "apiKey",
+     "displayName": "Internal Integration Secret",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "placeholder": "secret_\u2026 / ntn_\u2026"
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "API Base URL",
+     "type": "string",
+     "default": "https://api.notion.com",
+     "description": "Change only for a proxy or a test double"
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "airtableTokenApi",
+   "displayName": "Airtable Personal Access Token API",
+   "description": "A personal access token with data.records:read/write and schema.bases:read scopes.",
+   "documentationUrl": "https://airtable.com/developers/web/guides/personal-access-tokens",
+   "properties": [
+    {
+     "name": "accessToken",
+     "displayName": "Access Token",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "placeholder": "pat\u2026"
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "API Base URL",
+     "type": "string",
+     "default": "https://api.airtable.com",
+     "description": "Change only for a proxy or a test double"
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "githubApi",
+   "displayName": "GitHub API",
+   "description": "A personal access token (classic or fine-grained). For GitHub Enterprise use https://<host>/api/v3 as the base URL.",
+   "documentationUrl": "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens",
+   "properties": [
+    {
+     "name": "accessToken",
+     "displayName": "Access Token",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "placeholder": "ghp_\u2026 / github_pat_\u2026"
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "API Base URL",
+     "type": "string",
+     "default": "https://api.github.com",
+     "description": "GitHub Enterprise Server: https://<host>/api/v3"
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "jiraSoftwareCloudApi",
+   "displayName": "Jira SW Cloud API",
+   "description": "Your Atlassian account email and an API token (Basic auth).",
+   "documentationUrl": "https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/",
+   "properties": [
+    {
+     "name": "email",
+     "displayName": "Email",
+     "type": "string",
+     "required": true,
+     "placeholder": "name@example.com"
+    },
+    {
+     "name": "apiToken",
+     "displayName": "API Token",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     }
+    },
+    {
+     "name": "domain",
+     "displayName": "Domain",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "https://your-domain.atlassian.net"
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "jiraSoftwareServerPatApi",
+   "displayName": "Jira SW Server (PAT) API",
+   "description": "Jira Server / Data Center 8.14+ with a personal access token (Bearer auth).",
+   "documentationUrl": "https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html",
+   "properties": [
+    {
+     "name": "domain",
+     "displayName": "Domain",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "https://jira.example.com"
+    },
+    {
+     "name": "personalAccessToken",
+     "displayName": "Personal Access Token",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     }
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "hubspotAppToken",
+   "displayName": "HubSpot App Token",
+   "description": "A private app access token with crm.objects.contacts and crm.objects.deals scopes.",
+   "documentationUrl": "https://developers.hubspot.com/docs/api/private-apps",
+   "properties": [
+    {
+     "name": "appToken",
+     "displayName": "App Token",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "placeholder": "pat-na1-\u2026"
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "API Base URL",
+     "type": "string",
+     "default": "https://api.hubapi.com",
+     "description": "Change only for a proxy or a test double"
+    }
+   ],
+   "testable": true
+  }
+ ]
+}

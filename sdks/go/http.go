@@ -24,6 +24,10 @@ func (p *Plugin) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, p.WellKnown())
 	}))
 	mux.HandleFunc(PathManifest, p.only(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
+		// Kubernetes discovery: prove LANDFLOW_REGISTRY_SECRET when the host sends a challenge (registry_proof.go).
+		if proof := p.answerRegistryChallenge(r.Header.Get(RegistryChallengeHeader)); proof != "" {
+			w.Header().Set(RegistryProofHeader, proof)
+		}
 		writeJSON(w, http.StatusOK, p.Manifest())
 	}))
 	mux.HandleFunc(PathHealth, p.only(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {

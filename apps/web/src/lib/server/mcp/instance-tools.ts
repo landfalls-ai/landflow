@@ -5,6 +5,8 @@
  */
 import { context } from '@opentelemetry/api';
 import { nanoid } from 'nanoid';
+import { governedSave } from '../governance/saves';
+import { currentActorId } from '../auth/context';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -13,8 +15,11 @@ import type { Workflow } from '@landflow/engine';
 import type { ExecutionRecord, ExecutionSummary, NodeTypeInfo } from '../../shared/types';
 import { PARAMETER_FORMATS } from '../flow-builder';
 import { registry } from '../plugins/registry';
+import { productionWorkflowById } from '../publish';
 import { findTrigger, lastNodeItems, liveExecution, liveExecutions, publicUrl, runWorkflow, startInBackground } from '../runner';
 import { workflowSchema } from '../schemas';
+import { protectedMessage } from '../environments/protection';
+import { isProtectedEnvironment } from '../environments/settings';
 import { store } from '../store';
 import { startTrigger } from '../telemetry';
 import { MCP_SERVER_VERSION, textResult } from './server';
@@ -193,11 +198,13 @@ export function instanceServer(): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
+      if (isProtectedEnvironment()) return failure(protectedMessage());
       const normalized = normalizeWorkflow({ ...args, connections: args.connections ?? [] } as WorkflowInput);
       const parsed = workflowSchema.safeParse(normalized);
       if (!parsed.success) return failure(`Invalid workflow: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
-      const saved = store.saveWorkflow({ ...parsed.data, id: `wf_${nanoid(10)}` } as Workflow);
-      return json({ id: saved.id, name: saved.name, active: Boolean(saved.active), url: workflowUrl(saved.id), validation: validateWorkflow(saved) });
+      // Governance: activation may need approval (four-eyes) or be refused (node policy); see lib/server/governance/saves.ts.
+      const { workflow: saved, extras } = governedSave({ ...parsed.data, id: `wf_${nanoid(10)}` } as Workflow, undefined, (w) => store.saveWorkflow(w), { by: currentActorId(), source: 'mcp' });
+      return json({ id: saved.id, name: saved.name, active: Boolean(saved.active), url: workflowUrl(saved.id), validation: validateWorkflow(saved), ...extras });
     },
   );
 
@@ -220,6 +227,7 @@ export function instanceServer(): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async ({ id, ...changes }) => {
+      if (isProtectedEnvironment()) return failure(protectedMessage());
       const existing = store.getWorkflow(id);
       if (!existing) return failure(`Workflow ${id} not found`);
       const defined = Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined));
@@ -229,8 +237,8 @@ export function instanceServer(): McpServer {
       }
       const parsed = workflowSchema.safeParse(merged);
       if (!parsed.success) return failure(`Invalid workflow: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
-      const saved = store.saveWorkflow({ ...existing, ...parsed.data, id } as Workflow);
-      return json({ id: saved.id, name: saved.name, active: Boolean(saved.active), url: workflowUrl(saved.id), validation: validateWorkflow(saved) });
+      const { workflow: saved, extras } = governedSave({ ...existing, ...parsed.data, id } as Workflow, existing, (w) => store.saveWorkflow(w), { by: currentActorId(), source: 'mcp' });
+      return json({ id: saved.id, name: saved.name, active: Boolean(saved.active), url: workflowUrl(saved.id), validation: validateWorkflow(saved), ...extras });
     },
   );
 
@@ -334,7 +342,7 @@ export function instanceServer(): McpServer {
     {
       title: 'Execute a workflow',
       description:
-        'Run a saved workflow from its trigger (or a node you name) with input items, and get the result: status, error, each node\'s item counts and the last node\'s output. With wait false it returns the execution id at once (read it later with get_execution).',
+        'Run a saved workflow from its trigger (or a node you name) with input items, and get the result: status, error, each node\'s item counts and the last node\'s output. It runs the draft unless version is "published". With wait false it returns the execution id at once (read it later with get_execution).',
       inputSchema: {
         id: z.string().describe('Workflow id'),
         input: z
@@ -343,12 +351,15 @@ export function instanceServer(): McpServer {
           .describe('The item (or items) the start node gets, e.g. a webhook body or the arguments of "When Called by a Workflow or Agent"'),
         startNode: z.string().optional().describe('Name or id of the node to start from; default: the manual, webhook, chat or schedule trigger'),
         wait: z.boolean().optional().describe('Wait for the run to finish (default true)'),
+        version: z.enum(['draft', 'published']).optional().describe('Run the saved draft (default, to test changes) or the published version that production triggers run'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async ({ id, input, startNode: ref, wait }) => {
-      const workflow = store.getWorkflow(id);
-      if (!workflow) return failure(`Workflow ${id} not found`);
+    async ({ id, input, startNode: ref, wait, version }) => {
+      const draft = store.getWorkflow(id);
+      if (!draft) return failure(`Workflow ${id} not found`);
+      const workflow = version === 'published' ? productionWorkflowById(id) : draft;
+      if (!workflow) return failure(`“${draft.name}” is not published; run the draft, or publish it first`);
       const start = startNode(workflow, ref);
       if (ref && !start) return failure(`No node "${ref}" in “${workflow.name}”`);
       const triggerItems: NodeItem[] = (Array.isArray(input) ? input : input ? [input] : [{}]).map((json) => ({ json: json as JsonObject }));

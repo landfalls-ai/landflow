@@ -23,7 +23,7 @@ import { database, dataDir } from '../db';
 import { singleton } from '../singleton';
 import { readSyncDir, writeSyncDir } from './files';
 import { MANIFEST_FILE, isSafePath } from './format';
-import { applySync, exportState } from './index';
+import { applySync, exportState, type PlanOptions } from './index';
 
 const SETTINGS_KEY = 'source_control';
 const GIT_TIMEOUT_MS = Number(process.env.LANDFLOW_GIT_TIMEOUT_MS) || 120_000;
@@ -129,7 +129,7 @@ export const sourceControlInputSchema = z.strictObject({
 export type SourceControlInput = z.input<typeof sourceControlInputSchema>;
 
 /** The token for HTTPS and where it came from. */
-function tokenFor(config: SourceControlConfig): { token?: string; source: SourceControlView['tokenSource']; credentialName?: string } {
+export function tokenFor(config: SourceControlConfig): { token?: string; source: SourceControlView['tokenSource']; credentialName?: string } {
   if (config.credentialId) {
     const detail = vault.get(config.credentialId);
     if (!detail) throw new SourceControlError('The source control credential was deleted: pick another one in Settings → Source control');
@@ -234,7 +234,7 @@ export function gitEnvironment(auth: GitAuth = {}): Record<string, string | unde
 }
 
 /** Settings every call carries: no credential helpers, no hooks, no `ext::`, and symlinks checked out as plain files. */
-const SAFE_CONFIG = ['-c', 'credential.helper=', '-c', `core.hooksPath=${devNull}`, '-c', 'protocol.ext.allow=never', '-c', 'commit.gpgSign=false', '-c', 'core.symlinks=false'];
+export const SAFE_CONFIG = ['-c', 'credential.helper=', '-c', `core.hooksPath=${devNull}`, '-c', 'protocol.ext.allow=never', '-c', 'commit.gpgSign=false', '-c', 'core.symlinks=false'];
 
 export function git(args: string[], options: { cwd: string; auth?: GitAuth }): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -358,7 +358,7 @@ export function pushToRepository(input: { message?: string; dryRun?: boolean } =
  * Fetch the branch and apply its files (creates and updates by id; deletes with `prune`). A change the instance made
  * since the last push or pull is a conflict and stops the pull unless `force`. A dry run only plans.
  */
-export function pullFromRepository(input: { dryRun?: boolean; prune?: boolean; force?: boolean; by?: string } = {}): Promise<SourceControlPullResult> {
+export function pullFromRepository(input: { dryRun?: boolean; prune?: boolean; force?: boolean; by?: string; publish?: PlanOptions['publish'] } = {}): Promise<SourceControlPullResult> {
   return exclusive(async () => {
     const { stored, config } = requireConfig();
     const { token } = tokenFor(config);
@@ -369,7 +369,7 @@ export function pullFromRepository(input: { dryRun?: boolean; prune?: boolean; f
     const files = readSyncDir(config.directory ? join(cwd, config.directory) : cwd);
     if (!files.some((f) => f.path === MANIFEST_FILE)) throw new SourceControlError(`No Landflow files (${MANIFEST_FILE}) in ${config.directory || 'the repository root'} on ${config.branch}`, 404);
     const note = `Source control pull (${commit.slice(0, 7)})`;
-    const result = await applySync(files, { dryRun: input.dryRun, prune: input.prune, force: input.force, by: input.by, note, ...(stored.hashes && { base: stored.hashes }) });
+    const result = await applySync(files, { dryRun: input.dryRun, prune: input.prune, force: input.force, by: input.by, note, ...(input.publish && { publish: input.publish }), ...(stored.hashes && { base: stored.hashes }) });
     if (result.applied) {
       write({ ...read(), lastPull: { at: new Date().toISOString(), commit, count: result.appliedCount }, hashes: result.hashes });
     }

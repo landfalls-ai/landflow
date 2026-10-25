@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { BellRing, BookOpen, Braces, CircleDollarSign, GitBranch, KeyRound, Plug, ShieldCheck, SlidersHorizontal, Users } from 'lucide-react';
+import { BellRing, BookOpen, Braces, CircleDollarSign, Cpu, GitBranch, KeyRound, Landmark, Layers, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { can, type Action } from '@/lib/shared/auth';
 import { useViewer } from '@/components/auth/viewer';
@@ -9,12 +9,17 @@ import { AiPricesSettings } from '@/components/settings/ai-prices-settings';
 import { AlertsSettings } from '@/components/settings/alerts-settings';
 import { ApiDocs } from '@/components/settings/api-docs';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
+import { AuditSettings } from '@/components/settings/audit-settings';
+import { EnvironmentsSettings } from '@/components/settings/environments-settings';
+import { ExternalSecretsSettings } from '@/components/settings/external-secrets-settings';
 import { GeneralSettings } from '@/components/settings/general-settings';
+import { GovernanceSettings } from '@/components/settings/governance-settings';
 import { McpSettings } from '@/components/settings/mcp-settings';
 import { SecuritySettings } from '@/components/settings/security-settings';
 import { SourceControlSettings } from '@/components/settings/source-control-settings';
 import { UsersSettings } from '@/components/settings/users-settings';
 import { VariablesSettings } from '@/components/settings/variables-settings';
+import { WorkersSettings } from '@/components/settings/workers-settings';
 
 /** `role`: only shown to roles that `can` do it. */
 const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint: string; role?: Action }[] = [
@@ -27,7 +32,12 @@ const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint:
   { id: 'api-keys', label: 'API keys', icon: KeyRound, hint: 'For scripts, CI and the CLI' },
   { id: 'api', label: 'API docs', icon: BookOpen, hint: 'REST endpoints and OpenAPI' },
   { id: 'security', label: 'Security', icon: ShieldCheck, hint: 'Single sign-on and sessions', role: 'settings:manage' },
+  { id: 'audit', label: 'Audit log', icon: ScrollText, hint: 'Who did what; SIEM streaming', role: 'audit:read' },
+  { id: 'governance', label: 'Governance', icon: Landmark, hint: 'Allowed nodes, publish approval' },
   { id: 'source-control', label: 'Source control', icon: GitBranch, hint: 'Push and pull workflows with Git', role: 'settings:manage' },
+  { id: 'environments', label: 'Environments', icon: Layers, hint: 'Promote between environments', role: 'settings:manage' },
+  { id: 'external-secrets', label: 'External secrets', icon: Vault, hint: 'Vault, 1Password, cloud secret stores', role: 'settings:manage' },
+  { id: 'workers', label: 'Workers', icon: Cpu, hint: 'Queue mode, workers and the leader' },
 ];
 type Section = string;
 
@@ -41,10 +51,15 @@ const BODIES: Record<string, () => React.ReactNode> = {
   'api-keys': () => <ApiKeysSettings />,
   api: () => <ApiDocs />,
   security: () => <SecuritySettings />,
+  audit: () => <AuditSettings />,
+  governance: () => <GovernanceSettings />,
   'source-control': () => <SourceControlSettings />,
+  environments: () => <EnvironmentsSettings />,
+  'external-secrets': () => <ExternalSecretsSettings />,
+  workers: () => <WorkersSettings />,
 };
 
-/** /settings (#general, #variables, #alerts, #ai-prices, #mcp, #users, #api-keys, #api, #security, #source-control): instance settings. */
+/** /settings (#general, #variables, #alerts, #ai-prices, #mcp, #users, #api-keys, #api, #security, #audit, #governance, #source-control, #environments, #external-secrets, #workers): instance settings. */
 export default function SettingsPage() {
   const viewer = useViewer();
   const sections = SECTIONS.filter((s) => !s.role || can(viewer, s.role));

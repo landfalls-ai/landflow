@@ -4,6 +4,7 @@
  * secret-looking keys are redacted. See docs/observability.md §3.
  */
 import { context, trace } from '@opentelemetry/api';
+import { singleton } from '../singleton';
 import { SECRET_KEY, telemetryConfig, type LogLevel } from './config';
 
 export type LogAttributes = Record<string, unknown>;
@@ -54,7 +55,21 @@ export function writeRecord(level: LogLevel, message: string, fields: LogAttribu
     ...(ids && trace.isSpanContextValid(ids) && { trace_id: ids.traceId, span_id: ids.spanId }),
     ...(redact(fields) as LogAttributes),
   };
-  process.stdout.write(`${telemetryConfig.logFormat === 'pretty' ? pretty(record) : safeJson(record)}\n`);
+  const scrubbed = scrub(record);
+  process.stdout.write(`${telemetryConfig.logFormat === 'pretty' ? pretty(scrubbed) : safeJson(scrubbed)}\n`);
+}
+
+/** Extra scrubbing of every record before it is written (lib/server/secrets/install.ts redacts external secret values). */
+export type LogScrubber = (record: LogAttributes) => LogAttributes;
+const scrubbers = singleton('log-scrubbers', () => new Set<LogScrubber>());
+export function addLogScrubber(scrubber: LogScrubber): () => void {
+  scrubbers.add(scrubber);
+  return () => scrubbers.delete(scrubber);
+}
+function scrub(record: LogAttributes): LogAttributes {
+  let out = record;
+  for (const scrubber of scrubbers) out = scrubber(out);
+  return out;
 }
 
 function safeJson(record: LogAttributes): string {

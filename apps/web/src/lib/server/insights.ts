@@ -10,12 +10,16 @@
  * panel). store.saveExecution feeds every finished execution through
  * `recordExecutionInsights`; bootstrap backfills the rollup once from the
  * executions already on disk. Writes are debounced (1 s) and flushed on exit.
+ *
+ * Queue mode: every main and worker keeps its own rollup (insights.<instance>.json, the runs it finished) in the shared
+ * data directory, and a report adds up all of them (and insights.json from before queue mode).
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import type { Workflow } from '@landflow/engine';
 import type { InsightsBucket, InsightsPeriod, InsightsReport, InsightsTotals, InsightsWorkflowRow } from '../shared/platform';
 import type { ExecutionSummary } from '../shared/types';
+import { clusterState } from './cluster/state';
 import { instanceTimezone } from './settings';
 import { singleton } from './singleton';
 import { atomicWrite, store } from './store';
@@ -94,6 +98,21 @@ function load(path: string): RollupData {
   return { version: 1, names: {}, days: {}, hours: {} };
 }
 
+/** Add one rollup's buckets and names to another. */
+function merge(into: RollupData, from: RollupData) {
+  for (const source of ['days', 'hours'] as const) {
+    for (const [workflowId, byKey] of Object.entries(from[source])) {
+      const target = (into[source][workflowId] ??= {});
+      for (const [key, bucket] of Object.entries(byKey)) {
+        const counts = (target[key] ??= {});
+        for (const kind of ['production', 'manual'] as const) if (bucket[kind]) add((counts[kind] ??= empty()), bucket[kind]);
+      }
+    }
+  }
+  for (const [workflowId, name] of Object.entries(from.names)) into.names[workflowId] ??= name;
+  if (!into.backfilledAt && from.backfilledAt) into.backfilledAt = from.backfilledAt;
+}
+
 function totals(counts: Counts, minutes = 0): InsightsTotals {
   const runs = runsOf(counts);
   return {
@@ -112,6 +131,8 @@ export interface ReportOptions {
   includeManual?: boolean;
   /** Current workflows: names, whether a workflow still exists, and its minutes saved per run. */
   workflows?: Array<Pick<Workflow, 'id' | 'name' | 'settings'>>;
+  /** Count only these workflows (a member's insights cover the workflows they see). */
+  only?: Set<string>;
   now?: number;
 }
 
@@ -162,7 +183,8 @@ export class InsightsRollup {
   backfill(executions: RecordedExecution[], now = Date.now()): number {
     if (this.data.backfilledAt) return 0;
     let added = 0;
-    for (const execution of executions) if (this.record(execution, now)) added++;
+    // Queue mode: another process's rollup (or the one from before queue mode) already counted what is on disk.
+    if (!this.peers().some((peer) => peer.backfilledAt)) for (const execution of executions) if (this.record(execution, now)) added++;
     this.data.backfilledAt = new Date(now).toISOString();
     this.flush();
     return added;
@@ -200,7 +222,10 @@ export class InsightsRollup {
       label = (key) => format.format(Date.parse(`${key}T00:00:00Z`));
     }
 
-    const buckets = this.data[source];
+    // Queue mode: with the other processes' rollups.
+    const peers = this.peers();
+    const data = peers.length ? peers.reduce((all, peer) => (merge(all, peer), all), structuredClone(this.data)) : this.data;
+    const buckets = data[source];
     const minutesOf = new Map((options.workflows ?? []).map((w) => [w.id, Math.max(0, Number(w.settings?.timeSavedMinutes) || 0)]));
     const current = empty();
     const previous = empty();
@@ -210,6 +235,7 @@ export class InsightsRollup {
     const rows: InsightsWorkflowRow[] = [];
 
     for (const [workflowId, byKey] of Object.entries(buckets)) {
+      if (options.only && !options.only.has(workflowId)) continue;
       const minutes = minutesOf.get(workflowId) ?? 0;
       const mine = empty();
       keys.forEach((key, index) => {
@@ -230,7 +256,7 @@ export class InsightsRollup {
         const workflow = options.workflows?.find((w) => w.id === workflowId);
         rows.push({
           workflowId,
-          name: workflow?.name ?? this.data.names[workflowId] ?? workflowId,
+          name: workflow?.name ?? data.names[workflowId] ?? workflowId,
           exists: Boolean(workflow),
           ...(workflow?.settings?.timeSavedMinutes !== undefined && { minutesSavedPerRun: minutes }),
           ...totals(mine, minutes),
@@ -247,8 +273,20 @@ export class InsightsRollup {
       previous: { ...totals(previous), timeSavedMinutes: previousTimeSaved },
       series,
       workflows: rows,
-      ...(this.data.backfilledAt && { backfilledAt: this.data.backfilledAt }),
+      ...(data.backfilledAt && { backfilledAt: data.backfilledAt }),
     };
+  }
+
+  /** The other rollups in this one's directory (queue mode: insights.<instance>.json of the other processes), read fresh. */
+  private peers(): RollupData[] {
+    const own = basename(this.path);
+    let names: string[];
+    try {
+      names = readdirSync(dirname(this.path));
+    } catch {
+      return [];
+    }
+    return names.filter((name) => name !== own && /^insights(\.[\w.-]+)?\.json$/.test(name)).map((name) => load(join(dirname(this.path), name)));
   }
 
   /** Write the rollup now (otherwise it is written a second after the last change). */
@@ -260,7 +298,13 @@ export class InsightsRollup {
 
   private schedule() {
     if (this.timer) return;
-    this.timer = setTimeout(() => this.flush(), 1_000);
+    this.timer = setTimeout(() => {
+      try {
+        this.flush();
+      } catch {
+        // Not worth a crash (a full disk): the next change writes it again.
+      }
+    }, 1_000);
     this.timer.unref?.();
   }
 
@@ -279,10 +323,11 @@ export class InsightsRollup {
   }
 }
 
-/** The instance's rollup (<data dir>/insights.json), flushed when the process exits. */
+/** The instance's rollup (<data dir>/insights.json; queue mode: insights.<instance>.json), flushed when the process exits. */
 export function insightsRollup(): InsightsRollup {
   return singleton('insights', () => {
-    const rollup = new InsightsRollup(join(store.dir, 'insights.json'));
+    const { config } = clusterState();
+    const rollup = new InsightsRollup(join(store.dir, config.mode === 'queue' ? `insights.${config.instanceId}.json` : 'insights.json'));
     process.once('exit', () => rollup.flush());
     return rollup;
   });
@@ -303,6 +348,6 @@ export function backfillInsights(): number {
 }
 
 /** The Insights page's report, with the current workflows' names and minutes saved per run. */
-export function insightsReport(period: InsightsPeriod, includeManual = false): InsightsReport {
-  return insightsRollup().report({ period, includeManual, workflows: store.listWorkflows() });
+export function insightsReport(period: InsightsPeriod, includeManual = false, only?: Set<string>): InsightsReport {
+  return insightsRollup().report({ period, includeManual, workflows: store.listWorkflows(), ...(only && { only }) });
 }

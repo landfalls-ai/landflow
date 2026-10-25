@@ -18,9 +18,12 @@ import type { Workflow } from '@landflow/engine';
 import { COLUMN_NAME, COLUMN_TYPES, SYSTEM_COLUMNS, type ColumnType } from '../../shared/data-tables';
 import type { SyncApplyResult, SyncChange, SyncExport } from '../../shared/sync';
 import { credentials as vault } from '../credentials/vault';
+import { ENVIRONMENT_NAME, mappedCredential } from '../environments/settings';
+import { environmentValues } from '../environments/variables';
 import { dataTables } from '../datatables';
 import { folders } from '../folders';
-import { forgetWorkflow, publishDraft, unpublishWorkflow } from '../publish';
+import { forgetWorkflow } from '../publish';
+import { publishOrRequest } from '../governance/approvals';
 import { workflowSchema } from '../schemas';
 import { store } from '../store';
 import { MAX_KEY_LENGTH, MAX_VALUE_LENGTH, VARIABLE_KEY, variables } from '../variables';
@@ -45,12 +48,20 @@ export * from './format';
 /** The workflow fields the API writes: what files hold (the folder comes from the directory). */
 export const workflowKeys = (): string[] => Object.keys(workflowSchema.shape).filter((key) => key !== 'folderId');
 
+/** Variables with their per-environment values (lib/server/environments/variables.ts), where they have some. */
+function withEnvironmentValues(list: Array<{ key: string; value: string }>): SyncState['variables'] {
+  const all = environmentValues.all();
+  return list.map((v) => (all[v.key] ? { ...v, environments: all[v.key] } : v));
+}
+
+const sortedRecord = (record: Record<string, string>) => Object.fromEntries(Object.entries(record).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+
 /** This instance's state, as the format sees it. */
 export function currentState(): SyncState {
   return {
     workflows: store.listWorkflows(),
     folders: folders.list(),
-    variables: variables.list(),
+    variables: withEnvironmentValues(variables.list()),
     dataTables: dataTables()
       .listTables()
       .map((t) => ({ id: t.id, name: t.name, columns: t.columns.map((c) => ({ name: c.name, type: c.type })) })),
@@ -91,6 +102,11 @@ export interface PlanOptions {
   /** Who applies (the publish timeline); `note` labels the publications. */
   by?: string;
   note?: string;
+  /**
+   * Publication of created and updated workflows: `file` (default) publishes those whose file says `active: true` and
+   * unpublishes those it turns off; `all` publishes every one (publish on pull); `none` saves drafts only.
+   */
+  publish?: 'file' | 'all' | 'none';
 }
 
 interface Operation {
@@ -124,7 +140,9 @@ function resolveCredentials(doc: Record<string, unknown>, saved: SyncCredential[
       const name = typeof raw.name === 'string' ? raw.name : '';
       const type = typeof raw.type === 'string' ? raw.type : credentialTypeOf({ type: String(node.type ?? '') }, key);
       const known = typeof raw.id === 'string' ? byId.get(raw.id) : undefined;
-      const match = known ?? saved.find((c) => c.type === type && c.name === name);
+      // An explicit mapping (Settings → Environments) wins over a credential of the same name.
+      const mapped = mappedCredential(type, name);
+      const match = known ?? (mapped ? saved.find((c) => c.id === mapped && c.type === type) : undefined) ?? saved.find((c) => c.type === type && c.name === name);
       if (match) refs[key] = { id: match.id, name: match.name };
       else if (name) {
         refs[key] = { id: '', name };
@@ -255,6 +273,7 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
   // ---- variables: only when variables.json is there; values only when the file has them
   if (desired.variables) {
     const instance = new Map(state.variables.map((v) => [v.key, v.value]));
+    const currentEnvironments = new Map(state.variables.map((v) => [v.key, v.environments]));
     const seen = new Set<string>();
     for (const variable of desired.variables) {
       if (!VARIABLE_KEY.test(variable.key) || variable.key.length > MAX_KEY_LENGTH) errors.push(`variables.json: “${variable.key}” is not a valid variable key`);
@@ -262,13 +281,20 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
       if (seen.has(variable.key)) errors.push(`variables.json: ${variable.key} is listed twice`);
       seen.add(variable.key);
       const current = instance.get(variable.key);
+      // Per-environment values (`environments`) replace this instance's when the file has them.
+      const environments = variable.environments;
+      if (environments) for (const name of Object.keys(environments)) if (!ENVIRONMENT_NAME.test(name)) errors.push(`variables.json: “${name}” (${variable.key}) is not an environment name`);
+      const environmentsChanged = Boolean(environments) && JSON.stringify(sortedRecord(environments!)) !== JSON.stringify(sortedRecord(currentEnvironments.get(variable.key) ?? {}));
       if (current === undefined) {
         add(2, { kind: 'variable', action: 'create', id: variable.key, name: variable.key, path: 'variables.json' }, () => {
           variables.create({ key: variable.key, value: variable.value ?? '' });
+          if (environments) environmentValues.replace(variable.key, environments);
         });
-      } else if (variable.value !== undefined && variable.value !== current) {
-        add(2, { kind: 'variable', action: 'update', id: variable.key, name: variable.key, path: 'variables.json', fields: ['value'] }, () => {
-          variables.update(variable.key, { value: variable.value });
+      } else if ((variable.value !== undefined && variable.value !== current) || environmentsChanged) {
+        const fields = [...(variable.value !== undefined && variable.value !== current ? ['value'] : []), ...(environmentsChanged ? ['environments'] : [])];
+        add(2, { kind: 'variable', action: 'update', id: variable.key, name: variable.key, path: 'variables.json', fields }, () => {
+          if (variable.value !== undefined && variable.value !== current) variables.update(variable.key, { value: variable.value });
+          if (environmentsChanged) environmentValues.replace(variable.key, environments!);
         });
       }
     }
@@ -312,15 +338,20 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
     // Save a draft (keeping the instance's activation), then publish it or unpublish to match the file.
     const save = async () => {
       store.saveWorkflow({ ...next, active: Boolean(existing?.active) });
-      if (next.active) await publishDraft(id, options.by, options.note ?? 'Git sync');
-      else if (existing?.active) await unpublishWorkflow(id, options.by, options.note ?? 'Git sync');
+      const publish = options.publish ?? 'file';
+      // Through the four-eyes gate (Settings → Governance): with it on, Git sync asks for approval instead of publishing.
+      if (publish === 'all' || (publish === 'file' && next.active)) await publishOrRequest({ workflowId: id, action: 'publish', by: options.by, note: options.note ?? 'Git sync' });
+      else if (publish === 'file' && existing?.active) await publishOrRequest({ workflowId: id, action: 'unpublish', by: options.by, note: options.note ?? 'Git sync' });
     };
     if (!existing) {
       add(3, { kind: 'workflow', action: 'create', id, name, path: file.path }, save);
       continue;
     }
     const before = workflowDocument(existing, state.credentials, keys);
-    const after = workflowDocument(next, state.credentials, keys);
+    // Activation follows the file in `file` mode only: `all` wants every workflow published, `none` leaves it as it is.
+    const publishMode = options.publish ?? 'file';
+    const wanted = publishMode === 'file' ? next : { ...next, active: publishMode === 'all' || Boolean(existing.active) };
+    const after = workflowDocument(wanted, state.credentials, keys);
     const fields = changedFields(before, after);
     if ((existing.folderId ?? undefined) !== folderId) fields.push('folder');
     if (fields.length) add(3, { kind: 'workflow', action: 'update', id, name, path: file.path, fields }, save);
@@ -355,7 +386,7 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
   const changes = operations.map((o) => o.change);
   // Credentials the files mention that this instance lacks (credentials.json is informational).
   for (const credential of desired.credentials) {
-    if (!state.credentials.some((c) => c.type === credential.type && c.name === credential.name)) {
+    if (!state.credentials.some((c) => (c.type === credential.type && c.name === credential.name) || c.id === mappedCredential(credential.type, credential.name))) {
       const message = `credential “${credential.name}” (${credential.type}) isn't on this instance`;
       if (!warnings.some((w) => w.includes(message))) warnings.push(`credentials.json: ${message}`);
     }

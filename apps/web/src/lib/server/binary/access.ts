@@ -236,6 +236,9 @@ export function startBinaryMaintenance() {
   singleton('binary-maintenance', () => {
     onExecutionDeleted((executionId) => void deleteExecutionBinary(executionId));
     const sweep = async () => {
+      // Queue mode: the leader main sweeps (the store is shared).
+      const { leads } = await import('../cluster/state');
+      if (!leads()) return;
       try {
         const { liveExecution } = await import('../runner');
         const removed = await sweepBinaryData((scope) => Boolean(liveExecution(scope) || store.getExecution(scope)));

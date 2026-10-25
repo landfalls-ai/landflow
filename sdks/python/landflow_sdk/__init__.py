@@ -35,6 +35,7 @@ from .protocol import (
     HTTP_PATHS,
     PROTOCOL_VERSION,
 )
+from .registry_proof import registry_proof, verify_registry_proof
 from .serve import PluginServer, serve
 from .signatures import (
     DEFAULT_SIGNATURE_TOLERANCE_SECONDS,
@@ -94,12 +95,14 @@ __all__ = [
     "icon_file",
     "mime_type_from_file_name",
     "poll_interval_property",
+    "registry_proof",
     "safe_equal",
     "serve",
     "slack_signature",
     "stripe_signature",
     "verify_github_signature",
     "verify_hmac_sha256",
+    "verify_registry_proof",
     "verify_slack_signature",
     "verify_stripe_signature",
 ]

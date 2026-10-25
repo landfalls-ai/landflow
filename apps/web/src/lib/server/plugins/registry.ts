@@ -3,7 +3,7 @@
  *
  * Four discovery sources feed it — built-in (in-process), announce (plugins
  * push + heartbeat), static seeds (LANDFLOW_PLUGINS) and scan (we probe a port
- * range). A plugin may be reachable through several endpoints (e.g. HTTP and
+ * range) — plus Kubernetes discovery (kubernetes.ts) when it is turned on. A plugin may be reachable through several endpoints (e.g. HTTP and
  * gRPC); the registry tracks each one's health and executes through the
  * preferred online endpoint. It also implements the engine's NodeTypeResolver.
  */
@@ -24,14 +24,25 @@ import {
 } from '@landflow/protocol';
 import { buildManifest, runLoadOptions, runTestCredentials, type IPlugin } from '@landflow/sdk';
 import { inProcessNodeType, type NodeTypeResolver, type ResolvedNodeType, type Transport } from '@landflow/engine';
-import type { CredentialTypeInfo, DiscoverySource, NodeTypeInfo, PluginStatus, PluginSummary, RegistryEvent } from '../../shared/types';
+import type { CredentialTypeInfo, DiscoverySource, EndpointOrigin, NodeTypeInfo, PluginStatus, PluginSummary, RegistryEvent } from '../../shared/types';
 import { withBinaryData } from '../binary/access';
 import { withExtends } from '../credentials/extends';
 import { freshCredentials, withFreshTokens } from '../credentials/oauth2-runtime';
+import { withExternalSecrets } from '../secrets/runtime';
+import { withGovernance } from '../governance/policy';
 import { bus } from '../bus';
 import { singleton } from '../singleton';
 import { withSpan } from '../telemetry';
 import { createClient, HttpPluginClient, GrpcPluginClient, normalizeEndpoint, transportOf, type PluginClient } from './clients';
+import { provenManifest } from './registry-proof';
+
+/** Extras for endpoints found by Kubernetes discovery; a re-registration without them keeps the endpoint's own. */
+export interface EndpointOptions {
+  /** The namespace and Service it came from, shown on the Plugins page. */
+  origin?: EndpointOrigin;
+  /** Prove LANDFLOW_REGISTRY_SECRET on GetManifest (registry-proof.ts): the endpoint never announced with it. */
+  requireProof?: boolean;
+}
 
 interface EndpointState {
   endpoint: string;
@@ -43,6 +54,7 @@ interface EndpointState {
   leaseExpiresAt?: number;
   latencyMs?: number;
   lastError?: string;
+  options?: EndpointOptions;
 }
 
 interface PluginEntry {
@@ -94,13 +106,14 @@ class PluginRegistry implements NodeTypeResolver {
   }
 
   /** Connect to an endpoint, pull + validate its manifest, upsert the plugin. */
-  addEndpoint(rawEndpoint: string, source: DiscoverySource, ttlSeconds?: number): Promise<PluginEntry> {
+  addEndpoint(rawEndpoint: string, source: DiscoverySource, ttlSeconds?: number, options?: EndpointOptions): Promise<PluginEntry> {
     const endpoint = normalizeEndpoint(rawEndpoint);
+    options ??= this.endpointState(endpoint)?.options;
     // Coalesce concurrent registrations of the same endpoint (announce + scan race).
     const inflight = this.pending.get(endpoint);
     if (inflight) return inflight;
     const task = withSpan('registry.register', { attributes: { 'landflow.plugin.endpoint': endpoint, 'landflow.discovery.source': source } }, async (span) => {
-      const entry = await this.connectEndpoint(endpoint, source, ttlSeconds);
+      const entry = await this.connectEndpoint(endpoint, source, ttlSeconds, options);
       span.setAttribute('landflow.plugin.id', entry.id);
       return entry;
     }).finally(() => this.pending.delete(endpoint));
@@ -108,12 +121,12 @@ class PluginRegistry implements NodeTypeResolver {
     return task;
   }
 
-  private async connectEndpoint(endpoint: string, source: DiscoverySource, ttlSeconds?: number): Promise<PluginEntry> {
+  private async connectEndpoint(endpoint: string, source: DiscoverySource, ttlSeconds?: number, options?: EndpointOptions): Promise<PluginEntry> {
     const client = createClient(endpoint);
     const started = Date.now();
     let manifest: PluginManifest;
     try {
-      manifest = await client.manifest();
+      manifest = options?.requireProof ? await provenManifest(client) : await client.manifest();
     } catch (error) {
       client.close();
       const message = (error as Error).message;
@@ -137,6 +150,7 @@ class PluginRegistry implements NodeTypeResolver {
       lastSeen: Date.now(),
       latencyMs,
       ...(ttlSeconds && { leaseExpiresAt: Date.now() + ttlSeconds * 1000 }),
+      ...(options && { options }),
     };
 
     if (existing) {
@@ -201,17 +215,48 @@ class PluginRegistry implements NodeTypeResolver {
     };
   }
 
-  withdraw(rawEndpoint: string) {
+  /** Mark an endpoint offline (a plugin's withdraw; Kubernetes discovery when no pod is ready, with its own `reason`). */
+  withdraw(rawEndpoint: string, reason?: string) {
     const endpoint = normalizeEndpoint(rawEndpoint);
     for (const entry of this.plugins.values()) {
       const state = entry.endpoints.get(endpoint);
       if (!state) continue;
       state.status = 'offline';
       state.leaseExpiresAt = undefined;
-      this.emit({ type: 'plugin.offline', pluginId: entry.id, endpoint, message: `${entry.manifest.plugin.name} withdrew ${endpoint}` });
+      if (reason) state.lastError = reason;
+      this.emit({ type: 'plugin.offline', pluginId: entry.id, endpoint, message: `${entry.manifest.plugin.name} ${reason ? `offline at ${endpoint}: ${reason}` : `withdrew ${endpoint}`}` });
       return true;
     }
     return false;
+  }
+
+  /** Forget one endpoint (a discovered Service was deleted); the plugin goes with its last endpoint. */
+  removeEndpoint(rawEndpoint: string) {
+    const endpoint = normalizeEndpoint(rawEndpoint);
+    for (const entry of this.plugins.values()) {
+      const state = entry.endpoints.get(endpoint);
+      if (!state) continue;
+      if (entry.endpoints.size === 1) return this.remove(entry.id);
+      state.client.close();
+      entry.endpoints.delete(endpoint);
+      entry.updatedAt = Date.now();
+      this.emit({ type: 'plugin.updated', pluginId: entry.id, endpoint, message: `${entry.manifest.plugin.name} no longer listed at ${endpoint}` });
+      return true;
+    }
+    return false;
+  }
+
+  /** Status of one endpoint, if any plugin has it. */
+  endpointStatus(rawEndpoint: string): PluginStatus | undefined {
+    return this.endpointState(normalizeEndpoint(rawEndpoint))?.status;
+  }
+
+  private endpointState(endpoint: string): EndpointState | undefined {
+    for (const entry of this.plugins.values()) {
+      const state = entry.endpoints.get(endpoint);
+      if (state) return state;
+    }
+    return undefined;
   }
 
   remove(id: string) {
@@ -401,6 +446,7 @@ class PluginRegistry implements NodeTypeResolver {
             ...(s.leaseExpiresAt && { leaseExpiresAt: new Date(s.leaseExpiresAt).toISOString() }),
             ...(s.latencyMs !== undefined && { latencyMs: s.latencyMs }),
             ...(s.lastError && { lastError: s.lastError }),
+            ...(s.options?.origin && { origin: s.options.origin }),
           })),
           source: entry.source,
           registeredAt: new Date(entry.registeredAt).toISOString(),
@@ -443,7 +489,9 @@ class PluginRegistry implements NodeTypeResolver {
   /** A node type to execute; binary data (lib/server/binary/access.ts) and fresh OAuth2 tokens (lib/server/credentials/oauth2-runtime.ts) are wired in. */
   resolve(type: string): ResolvedNodeType | { error: string } {
     const resolved = this.resolveType(type);
-    return 'error' in resolved ? resolved : withBinaryData(withFreshTokens(resolved));
+    // External secrets innermost: `$secrets` in credentials resolve after token renewal, and responses are redacted.
+    // Governance outermost: a node type the policy blocks fails before anything else runs (lib/server/governance/policy.ts).
+    return 'error' in resolved ? resolved : withGovernance(withBinaryData(withFreshTokens(withExternalSecrets(resolved))));
   }
 
   private resolveType(type: string): ResolvedNodeType | { error: string } {

@@ -11,7 +11,7 @@
  * calls it before a node runs (and once more when the node's API answered 401).
  */
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nanoid } from 'nanoid';
 import { isPropertyVisible, splitType, withPropertyDefaults, type CredentialTypeDescriptor, type JsonObject, type NodeDescriptor } from '@landflow/protocol';
@@ -74,6 +74,9 @@ function loadKey(dir: string): Buffer {
   return Buffer.from(readFileSync(path, 'utf8').trim(), 'hex');
 }
 
+/** A value that is exactly one `{{ … }}` expression reading `$secrets` (lib/server/secrets resolves it when the credential is used). */
+const isSecretReference = (value: unknown) => typeof value === 'string' && /^\s*=?\{\{[^{}]*\$secrets[^{}]*\}\}\s*$/.test(value);
+
 const secretNames = (descriptor?: CredentialTypeDescriptor) => (descriptor?.properties ?? []).filter((p) => p.typeOptions?.password).map((p) => p.name);
 
 /** Defaults first, then the saved values: a field added to the type later still gets its default. */
@@ -96,8 +99,12 @@ class CredentialVault {
   /** OAuth2 refreshes in flight, by credential id: concurrent nodes wait for the same one. */
   private readonly refreshing = new Map<string, Promise<boolean>>();
 
+  /** When the file was last read or written here (queue mode: other processes write it too). */
+  private loadedAt = 0;
+
   constructor() {
     try {
+      this.loadedAt = statSync(this.path).mtimeMs;
       const saved = JSON.parse(readFileSync(this.path, 'utf8')) as { credentials: StoredCredential[] };
       for (const credential of saved.credentials) this.credentials.set(credential.id, credential);
     } catch {
@@ -106,9 +113,24 @@ class CredentialVault {
   }
 
   private persist() {
-    const tmp = `${this.path}.${process.pid}.tmp`;
+    const tmp = `${this.path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
     writeFileSync(tmp, JSON.stringify({ version: 1, credentials: [...this.credentials.values()] }, null, 2), { mode: 0o600 });
     renameSync(tmp, this.path);
+    this.loadedAt = statSync(this.path).mtimeMs;
+  }
+
+  /** Queue mode (a data directory shared by the processes): read the file again when another process wrote it. */
+  reloadIfChanged(): boolean {
+    try {
+      const mtime = statSync(this.path).mtimeMs;
+      if (mtime === this.loadedAt) return false;
+      const saved = JSON.parse(readFileSync(this.path, 'utf8')) as { credentials: StoredCredential[] };
+      this.credentials = new Map(saved.credentials.map((credential) => [credential.id, credential]));
+      this.loadedAt = mtime;
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private seal(data: JsonObject): Sealed {
@@ -211,10 +233,12 @@ class CredentialVault {
     if (!credential) return undefined;
     const secret = new Set([...credential.secretFields, ...secretNames(registry.credentialType(credential.type)?.descriptor)]);
     const data = this.open(credential);
+    // A secret field that only references an external secret (`{{ $secrets.vault.db.password }}`) holds no secret: it is shown.
+    const hidden = (key: string) => secret.has(key) && !isSecretReference(data[key]);
     return {
       ...this.summary(credential, this.usage()),
-      data: Object.fromEntries(Object.entries(data).filter(([key]) => !secret.has(key) && !reserved.has(key))),
-      secrets: Object.keys(data).filter((key) => secret.has(key) && !reserved.has(key) && data[key] !== '' && data[key] !== null),
+      data: Object.fromEntries(Object.entries(data).filter(([key]) => !hidden(key) && !reserved.has(key))),
+      secrets: Object.keys(data).filter((key) => hidden(key) && !reserved.has(key) && data[key] !== '' && data[key] !== null),
     };
   }
 

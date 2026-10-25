@@ -1,11 +1,16 @@
 'use client';
-/** The node panel's credential pickers: one per credential type the node declares, with create and edit inline. */
+/**
+ * The node panel's credential pickers: one per credential type the node declares, with create and edit inline. With
+ * `workflowId`, only the credentials that workflow's project may use are offered (lib/shared/projects.ts), and new
+ * ones are created in that project.
+ */
 import { useEffect, useState } from 'react';
 import { Pencil, TriangleAlert } from 'lucide-react';
 import type { NodeCredentialRequirement } from '@landflow/protocol';
 import type { CredentialRefs } from '../editor/param-form';
 import { Button } from '../ui/button';
 import { Select } from '../ui/inputs';
+import { useCredentialScope } from '../projects/use-projects';
 import { CredentialDialog, CredentialTypeIcon } from './credential-dialog';
 import { qualifiedCredentialType, useCredentials } from './use-credentials';
 
@@ -16,13 +21,18 @@ export function NodeCredentials({
   requirements,
   value,
   onChange,
+  workflowId,
 }: {
   nodeType: string;
+  /** The workflow the node is in: limits the choice to what its project may use. */
+  workflowId?: string;
   requirements: NodeCredentialRequirement[];
   value?: CredentialRefs;
   onChange: (next: CredentialRefs | undefined) => void;
 }) {
-  const { credentials, types } = useCredentials();
+  const { credentials: all, types } = useCredentials();
+  const { scope, reload } = useCredentialScope(workflowId);
+  const credentials = all && scope ? all.filter((c) => scope.ids.has(c.id)) : all;
   const [dialog, setDialog] = useState<{ requirement: string; type: string; id?: string } | null>(null);
 
   const set = (requirement: string, ref?: { id: string; name: string }) => {
@@ -50,7 +60,9 @@ export function NodeCredentials({
         const info = types?.find((t) => t.type === type);
         const options = (credentials ?? []).filter((c) => c.type === type);
         const ref = value?.[requirement.name];
-        const missing = ref && credentials && !options.some((c) => c.id === ref.id);
+        const deleted = ref && all && !all.some((c) => c.id === ref.id);
+        const unusable = ref && !deleted && credentials && !options.some((c) => c.id === ref.id);
+        const missing = deleted || unusable;
         return (
           <div key={requirement.name}>
             <div className="mb-1.5 flex items-center gap-1.5">
@@ -88,9 +100,14 @@ export function NodeCredentials({
                 </Button>
               )}
             </div>
-            {missing && (
+            {deleted && (
               <p className="mt-1 flex items-center gap-1 text-[12px] text-warn">
                 <TriangleAlert className="size-3" /> “{ref.name}” was deleted — choose or create another.
+              </p>
+            )}
+            {unusable && (
+              <p className="mt-1 flex items-center gap-1 text-[12px] text-warn">
+                <TriangleAlert className="size-3" /> “{ref.name}” isn’t shared with this workflow’s project — choose another, or ask its owner to share it.
               </p>
             )}
             {!ref && requirement.required && credentials && (
@@ -104,8 +121,12 @@ export function NodeCredentials({
         <CredentialDialog
           credentialId={dialog.id}
           allowedTypes={[dialog.type]}
+          {...(scope?.projectId && { projectId: scope.projectId })}
           onClose={() => setDialog(null)}
-          onSaved={(credential) => set(dialog.requirement, { id: credential.id, name: credential.name })}
+          onSaved={(credential) => {
+            set(dialog.requirement, { id: credential.id, name: credential.name });
+            void reload();
+          }}
         />
       )}
     </div>

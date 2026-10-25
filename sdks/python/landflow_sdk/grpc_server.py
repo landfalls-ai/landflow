@@ -22,6 +22,7 @@ from .announce import RegistryRejected, RegistryUnreachable, registry_secret_hea
 from .errors import ProtocolError, UnknownCredentialTypeError, UnknownMethodError, UnknownNodeError
 from .plugin import Plugin
 from .protocol import PROTOCOL_VERSION, dumps
+from .registry_proof import REGISTRY_CHALLENGE_HEADER, REGISTRY_PROOF_HEADER, answer_registry_challenge
 from .webhooks import decode_body
 
 log = logging.getLogger("landflow_sdk.grpc")
@@ -390,6 +391,10 @@ class PluginServicer(pb_grpc.PluginServiceServicer):
             context.abort(grpc.StatusCode.INTERNAL, f"{type(exc).__name__}: {exc}")
 
     def GetManifest(self, request: pb.GetManifestRequest, context: grpc.ServicerContext) -> pb.GetManifestResponse:  # noqa: N802
+        # Kubernetes discovery: prove LANDFLOW_REGISTRY_SECRET in the response metadata when challenged.
+        proof = answer_registry_challenge(self.plugin.id, metadata_dict(context).get(REGISTRY_CHALLENGE_HEADER))
+        if proof:
+            context.send_initial_metadata(((REGISTRY_PROOF_HEADER, proof),))
         return self._guard(context, "GetManifest", lambda: manifest_to_proto(self.plugin.manifest()))
 
     def Execute(self, request: pb.ExecuteRequest, context: grpc.ServicerContext) -> pb.ExecuteResponse:  # noqa: N802

@@ -19,7 +19,7 @@ import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { SectionLabel } from '../ui/inputs';
-import { publishVersion } from './publish-control';
+import { publishVersion, toastApprovalRequested } from './publish-control';
 import { useEditor } from './store';
 
 export const useVersionHistory = create<{ open: boolean; setOpen: (open: boolean) => void }>((set) => ({ open: false, setOpen: (open) => set({ open }) }));
@@ -42,6 +42,7 @@ function DiffDetail({ diff }: { diff: VersionDiff }) {
     diff.connectionsRemoved && `${diff.connectionsRemoved} connection${diff.connectionsRemoved === 1 ? '' : 's'} removed`,
     diff.settingsChanged && 'settings changed',
     diff.stickiesChanged && 'sticky notes changed',
+    diff.groupsChanged && 'groups changed',
   ].filter(Boolean);
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
@@ -141,6 +142,7 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
     setPublishing('busy');
     try {
       const result = await publishVersion(workflowId, { versionId: version.id, note: version.id === newestId ? undefined : `Rolled back to version ${version.number}` });
+      if (result.approvalRequired) return toastApprovalRequested(result);
       setPublishedId(result.published?.versionId);
       toast.success(`Published version ${version.number}`, { description: 'Production triggers run this version now' });
     } catch (e) {

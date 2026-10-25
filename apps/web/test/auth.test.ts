@@ -629,6 +629,9 @@ describe('who created and changed a workflow', () => {
     expect(created.body.workflow).toMatchObject({ createdBy: ownerId, updatedBy: ownerId });
     const id = created.body.workflow.id;
     const max = auth.findUserByEmail('max@example.com')!;
+    // Projects: the owner's workflow is in their personal project; Max edits it once it is shared with him.
+    const projects = await import('@/lib/server/projects');
+    projects.addShare('workflow', id, projects.ensurePersonalProject(max.id)!, 'editor');
     const key = (await call(apiKeysRoute.POST, '/api/api-keys', { body: { label: 'w', scopes: ['workflows:write'] }, session: await signIn('max@example.com', 'Max-password') })).body.token;
     const updated = await call(workflowRoute.PUT, `/api/workflows/${id}`, { method: 'PUT', body: { name: 'Owned (edited)', nodes: [], connections: [], createdBy: 'usr_forged' }, bearer: key }, { id });
     expect(updated.status).toBe(200);

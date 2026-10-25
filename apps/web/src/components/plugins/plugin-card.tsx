@@ -36,6 +36,9 @@ export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChan
   const builtin = plugin.source === 'builtin';
   const [busy, setBusy] = useState(false);
   const transports = [...new Set(plugin.endpoints.map((e) => e.transport))];
+  // Discovery sources besides the first one (a plugin can be announced and discovered), and Kubernetes namespaces.
+  const otherSources = [...new Set(plugin.endpoints.map((e) => e.source))].filter((source) => source !== plugin.source);
+  const namespaces = [...new Set(plugin.endpoints.flatMap((e) => (e.origin ? [e.origin.namespace] : [])))];
 
   const setPreferred = async (transport: 'http' | 'grpc' | null) => {
     const r = await api<{ plugins: PluginSummary[] }>(`/api/plugins/${plugin.id}`, { method: 'PATCH', json: { preferredTransport: transport } });
@@ -75,6 +78,16 @@ export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChan
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <LanguageBadge language={plugin.info.language} />
             <Badge tone="muted">{plugin.source}</Badge>
+            {otherSources.map((source) => (
+              <Badge key={source} tone="muted">
+                {source}
+              </Badge>
+            ))}
+            {namespaces.map((namespace) => (
+              <Badge key={namespace} tone="muted" title="Kubernetes namespace" className="font-mono font-medium">
+                ns/{namespace}
+              </Badge>
+            ))}
             {plugin.info.sdk && <span className="font-mono text-[11px] text-t3">{plugin.info.sdk.name}</span>}
           </div>
         </div>
@@ -106,6 +119,11 @@ export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChan
                 <TransportBadge transport={endpoint.transport} />
                 <span className="truncate font-mono text-[12px] text-t1">{endpoint.endpoint}</span>
                 {active && <Badge tone="accent">active</Badge>}
+                {endpoint.origin && (
+                  <span className="shrink-0 truncate font-mono text-[11px] text-t3" title={`Kubernetes Service ${endpoint.origin.service} in namespace ${endpoint.origin.namespace}`}>
+                    {endpoint.origin.namespace}/{endpoint.origin.service}
+                  </span>
+                )}
                 <span className="ml-auto flex shrink-0 items-center gap-3">
                   {endpoint.latencyMs !== undefined && <span className="font-mono text-[11px] tabular-nums text-t3">{endpoint.latencyMs}ms</span>}
                   {endpoint.source === 'announce' && endpoint.status === 'online' ? <LeaseBar expiresAt={endpoint.leaseExpiresAt} /> : <span className="text-[12px] text-t3">{timeAgo(endpoint.lastSeen)}</span>}

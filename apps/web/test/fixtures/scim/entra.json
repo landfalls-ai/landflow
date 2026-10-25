@@ -1,0 +1,220 @@
+{
+  "provider": "Entra ID",
+  "about": "The requests Microsoft Entra ID's provisioning service sends (Microsoft's 'Develop and plan provisioning for a SCIM endpoint' request/response reference and its SCIM validator): user lookups with + for spaces, the enterprise extension on create, capitalised ops with paths, \"False\" as a string, value-path paths for emails, Add/Remove members with path 'members' and a value list, the membership check filter `id eq … and members[value eq …]` with excludedAttributes=members, Replace displayName, and DELETE for users and groups. {{name}} is a value an earlier step saved; \"{{*}}\" matches anything present. `state` checks the Landflow user afterwards.",
+  "env": { "LANDFLOW_SCIM_GROUP_MAP": "Landflow Admins=role:admin,Data Team=project:Data:editor" },
+  "steps": [
+    {
+      "name": "look the user up by userName",
+      "request": { "method": "GET", "path": "/scim/v2/Users?filter=userName+eq+%22Test_User_ab6490ee%40contoso.example%22" },
+      "response": { "status": 200, "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"], "totalResults": 0, "Resources": [], "startIndex": 1, "itemsPerPage": 0 } }
+    },
+    {
+      "name": "create the user (with the enterprise extension)",
+      "request": {
+        "method": "POST",
+        "path": "/scim/v2/Users",
+        "headers": { "content-type": "application/scim+json" },
+        "body": {
+          "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User", "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"],
+          "externalId": "0a21f0f2-8d2a-4f8e-bf98-7363c4aed4ef",
+          "userName": "Test_User_ab6490ee@contoso.example",
+          "active": true,
+          "emails": [{ "primary": true, "type": "work", "value": "Test_User_fd0ea19b@contoso.example" }],
+          "meta": { "resourceType": "User" },
+          "name": { "formatted": "givenName familyName", "familyName": "familyName", "givenName": "givenName" },
+          "roles": [],
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": { "employeeNumber": "4711", "department": "Engineering", "manager": { "value": "Test_User_f9d1e4b7" } }
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "{{*}}",
+          "externalId": "0a21f0f2-8d2a-4f8e-bf98-7363c4aed4ef",
+          "userName": "test_user_ab6490ee@contoso.example",
+          "displayName": "givenName familyName",
+          "active": true,
+          "meta": { "resourceType": "User", "created": "{{*}}", "lastModified": "{{*}}" }
+        }
+      },
+      "save": { "user": "id" },
+      "state": { "user": "{{user}}", "role": "member", "active": true, "provisionedBy": "scim" }
+    },
+    {
+      "name": "look the user up by externalId",
+      "request": { "method": "GET", "path": "/scim/v2/Users?filter=externalId+eq+%220a21f0f2-8d2a-4f8e-bf98-7363c4aed4ef%22" },
+      "response": { "status": 200, "body": { "totalResults": 1, "Resources": [{ "id": "{{user}}" }] } }
+    },
+    {
+      "name": "look the user up by work email",
+      "request": { "method": "GET", "path": "/scim/v2/Users?filter=emails%5Btype+eq+%22work%22%5D.value+eq+%22Test_User_ab6490ee%40contoso.example%22" },
+      "response": { "status": 200, "body": { "totalResults": 1, "Resources": [{ "id": "{{user}}" }] } }
+    },
+    {
+      "name": "a lookup for someone else finds nobody",
+      "request": { "method": "GET", "path": "/scim/v2/Users?filter=userName+eq+%22non-existent%40contoso.example%22" },
+      "response": { "status": 200, "body": { "totalResults": 0, "Resources": [] } }
+    },
+    {
+      "name": "retrieve the user",
+      "request": { "method": "GET", "path": "/scim/v2/Users/{{user}}" },
+      "response": { "status": 200, "body": { "id": "{{user}}", "name": { "givenName": "givenName", "familyName": "familyName" } } }
+    },
+    {
+      "name": "update attributes with value paths (and an enterprise attribute, ignored)",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Users/{{user}}",
+        "body": {
+          "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+          "Operations": [
+            { "op": "Replace", "path": "userName", "value": "Updated_User_ab6490ee@contoso.example" },
+            { "op": "Replace", "path": "emails[type eq \"work\"].value", "value": "Updated_User_ab6490ee@contoso.example" },
+            { "op": "Replace", "path": "name.familyName", "value": "updatedFamilyName" },
+            { "op": "Add", "path": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department", "value": "Sales" }
+          ]
+        }
+      },
+      "response": { "status": 200, "body": { "id": "{{user}}", "userName": "updated_user_ab6490ee@contoso.example", "displayName": "givenName updatedFamilyName" } },
+      "state": { "user": "{{user}}", "email": "updated_user_ab6490ee@contoso.example", "name": "givenName updatedFamilyName" }
+    },
+    {
+      "name": "replace the display name and given name together",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Users/{{user}}",
+        "body": {
+          "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+          "Operations": [
+            { "op": "Replace", "path": "displayName", "value": "Ada Lovelace" },
+            { "op": "Replace", "path": "name.givenName", "value": "Ada" }
+          ]
+        }
+      },
+      "response": { "status": 200, "body": { "displayName": "Ada Lovelace" } },
+      "state": { "user": "{{user}}", "name": "Ada Lovelace" }
+    },
+    {
+      "name": "disable (\"False\" as a string)",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Users/{{user}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "Replace", "path": "active", "value": "False" }] }
+      },
+      "response": { "status": 200, "body": { "active": false } },
+      "state": { "user": "{{user}}", "active": false }
+    },
+    {
+      "name": "enable",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Users/{{user}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "Replace", "path": "active", "value": "True" }] }
+      },
+      "response": { "status": 200, "body": { "active": true } },
+      "state": { "user": "{{user}}", "active": true }
+    },
+    {
+      "name": "look the group up",
+      "request": { "method": "GET", "path": "/scim/v2/Groups?excludedAttributes=members&filter=displayName+eq+%22Landflow+Admins%22" },
+      "response": { "status": 200, "body": { "totalResults": 0, "Resources": [] } }
+    },
+    {
+      "name": "create the group",
+      "request": {
+        "method": "POST",
+        "path": "/scim/v2/Groups",
+        "body": {
+          "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group", "http://schemas.microsoft.com/2006/11/ResourceManagement/ADSCIM/2.0/Group"],
+          "externalId": "8aa1a0c0-c4c3-4bc0-b4a5-2ef676900159",
+          "displayName": "Landflow Admins",
+          "meta": { "resourceType": "Group" }
+        }
+      },
+      "response": { "status": 201, "body": { "id": "{{*}}", "externalId": "8aa1a0c0-c4c3-4bc0-b4a5-2ef676900159", "displayName": "Landflow Admins", "members": [] } },
+      "save": { "group": "id" }
+    },
+    {
+      "name": "retrieve the group without members",
+      "request": { "method": "GET", "path": "/scim/v2/Groups/{{group}}?excludedAttributes=members" },
+      "response": { "status": 200, "body": { "id": "{{group}}", "displayName": "Landflow Admins" } },
+      "absent": ["members"]
+    },
+    {
+      "name": "add the member",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Groups/{{group}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "Add", "path": "members", "value": [{ "$ref": null, "value": "{{user}}" }] }] }
+      },
+      "response": { "status": 200 },
+      "state": { "user": "{{user}}", "role": "admin" }
+    },
+    {
+      "name": "check the membership with a filter",
+      "request": { "method": "GET", "path": "/scim/v2/Groups?filter=id+eq+%22{{group}}%22+and+members%5Bvalue+eq+%22{{user}}%22%5D&excludedAttributes=members" },
+      "response": { "status": 200, "body": { "totalResults": 1, "Resources": [{ "id": "{{group}}", "displayName": "Landflow Admins" }] } }
+    },
+    {
+      "name": "remove the member (path members, value list)",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Groups/{{group}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "Remove", "path": "members", "value": [{ "$ref": null, "value": "{{user}}" }] }] }
+      },
+      "response": { "status": 200 },
+      "state": { "user": "{{user}}", "role": "member" }
+    },
+    {
+      "name": "the membership check finds nothing now",
+      "request": { "method": "GET", "path": "/scim/v2/Groups?filter=id+eq+%22{{group}}%22+and+members%5Bvalue+eq+%22{{user}}%22%5D&excludedAttributes=members" },
+      "response": { "status": 200, "body": { "totalResults": 0, "Resources": [] } }
+    },
+    {
+      "name": "add the member again",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Groups/{{group}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "Add", "path": "members", "value": [{ "$ref": null, "value": "{{user}}" }] }] }
+      },
+      "response": { "status": 200 },
+      "state": { "user": "{{user}}", "role": "admin" }
+    },
+    {
+      "name": "rename the group to a mapped project group (the admin mapping no longer applies)",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Groups/{{group}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "Replace", "path": "displayName", "value": "Data Team" }] }
+      },
+      "response": { "status": 200, "body": { "displayName": "Data Team" } },
+      "state": { "user": "{{user}}", "role": "member", "projects": { "Data": "editor" } }
+    },
+    {
+      "name": "remove the member with a value filter",
+      "request": {
+        "method": "PATCH",
+        "path": "/scim/v2/Groups/{{group}}",
+        "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{ "op": "Remove", "path": "members[value eq \"{{user}}\"]" }] }
+      },
+      "response": { "status": 200 },
+      "state": { "user": "{{user}}", "projects": {} }
+    },
+    {
+      "name": "delete the group",
+      "request": { "method": "DELETE", "path": "/scim/v2/Groups/{{group}}" },
+      "response": { "status": 204 }
+    },
+    {
+      "name": "delete the user",
+      "request": { "method": "DELETE", "path": "/scim/v2/Users/{{user}}" },
+      "response": { "status": 204 },
+      "state": { "user": "{{user}}", "deleted": true }
+    },
+    {
+      "name": "the deleted user is gone",
+      "request": { "method": "GET", "path": "/scim/v2/Users/{{user}}" },
+      "response": { "status": 404, "body": { "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"], "status": "404" } }
+    }
+  ]
+}

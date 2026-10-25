@@ -9,14 +9,20 @@
  * At boot the file is replayed from there, so writes not yet in Postgres when the host stopped or
  * crashed are not lost; the file is emptied whenever the queue drains.
  *
- * Limits: one host per database (an advisory lock refuses a second one) until queue mode, and the
+ * Limits: one host per database (an advisory lock refuses a second one) in regular mode, and the
  * whole database lives in memory.
+ *
+ * Queue mode (`openPostgres(…, { instanceId })`, lib/server/cluster): mains and workers share the database. Each holds
+ * the instance lock in shared mode (so a regular-mode host can't join, nor start beside them), spools to
+ * `postgres-queue-<instance>.jsonl` with its own replayed sequence number, and notifies the others of every batch it
+ * applies; ./replication keeps its copy in step with theirs.
  */
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Pool, PoolClient } from 'pg';
 import { logger } from '../telemetry/logger';
 import { Database, openSqliteConnection, upsertSql, type SqlValue, type WriteOp, type WriteSink } from './database';
+import { CHANGES_CHANNEL, noticesFor, Replica, rowIdOf } from './replication';
 import { MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type TableName } from './schema';
 
 /** Held for the life of the host: a second host on the same database fails to start. */
@@ -51,8 +57,14 @@ function isConnectionError(error: unknown): boolean {
   return !code || code.startsWith('08') || code.startsWith('57') || code.startsWith('E') || code === '53300';
 }
 
-async function setSeq(client: PoolClient | Pool, seq: number) {
-  await client.query(`INSERT INTO meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, [SEQ_KEY, String(seq)]);
+/** Queue mode: this instance's name (notices carry it) and the meta key of its sequence number. */
+interface Shared {
+  origin: string;
+  seqKey: string;
+}
+
+async function setSeq(client: PoolClient | Pool, seq: number, key = SEQ_KEY) {
+  await client.query(`INSERT INTO meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, [key, String(seq)]);
 }
 
 /** Apply the migrations Postgres lacks, in one transaction (an advisory lock keeps concurrent boots apart). */
@@ -85,17 +97,46 @@ class PostgresSink implements WriteSink {
   private draining?: Promise<void>;
   private failures = 0;
   private closed = false;
+  /** Queue mode: rows with writes not yet in Postgres (the follower leaves them alone), and how many. */
+  private readonly pending = new Map<string, number>();
+  /** Queue mode: the follower (closed with the store). */
+  replica?: Replica;
 
   constructor(
     private readonly pool: Pool,
     private readonly lock: PoolClient,
     private readonly spool: string,
     private seq: number,
+    private readonly shared?: Shared,
   ) {}
+
+  private track(batches: Batch[], delta: 1 | -1) {
+    if (!this.shared) return;
+    for (const batch of batches) {
+      for (const op of batch.ops) {
+        const id = rowIdOf(op);
+        if (!id) continue;
+        const count = (this.pending.get(id) ?? 0) + delta;
+        if (count > 0) this.pending.set(id, count);
+        else this.pending.delete(id);
+      }
+    }
+  }
+
+  /** Rows with writes of this process not yet in Postgres. */
+  pendingRows(): { has(id: string): boolean } {
+    return this.pending;
+  }
+
+  /** Writes not yet in Postgres, in order. */
+  pendingOps(): WriteOp[] {
+    return this.queue.flatMap((batch) => batch.ops);
+  }
 
   enqueue(ops: WriteOp[]) {
     if (this.closed) throw new Error('The Postgres store is closed');
     const batch = { seq: ++this.seq, ops };
+    this.track([batch], 1);
     // On disk before anything else: a crash before Postgres has it replays it at the next boot.
     appendFileSync(this.spool, `${JSON.stringify(batch)}\n`);
     this.queue.push(batch);
@@ -120,8 +161,9 @@ class PostgresSink implements WriteSink {
         ops += batch.ops.length;
       }
       try {
-        await applyBatches(this.pool, take);
+        await applyBatches(this.pool, take, this.shared);
         this.queue.splice(0, take.length);
+        this.track(take, -1);
         this.failures = 0;
         if (!this.queue.length) writeFileSync(this.spool, '');
       } catch (error) {
@@ -131,7 +173,8 @@ class PostgresSink implements WriteSink {
           const dropped = take[0];
           logger.error('postgres store: dropped a write batch Postgres rejects', { error, 'landflow.db.seq': dropped.seq, 'landflow.db.ops': JSON.stringify(dropped.ops).slice(0, 2000) });
           this.queue.shift();
-          await setSeq(this.pool, dropped.seq).catch(() => {});
+          this.track([dropped], -1);
+          await setSeq(this.pool, dropped.seq, this.shared?.seqKey).catch(() => {});
           this.failures = 0;
           continue;
         }
@@ -156,14 +199,15 @@ class PostgresSink implements WriteSink {
       await this.flush();
     } finally {
       this.closed = true;
+      await this.replica?.close();
       this.lock.release();
       await this.pool.end();
     }
   }
 }
 
-/** Apply batches in one Postgres transaction and record the last one's sequence number. */
-async function applyBatches(pool: Pool, batches: Batch[]) {
+/** Apply batches in one Postgres transaction and record the last one's sequence number (queue mode: and notify the others). */
+async function applyBatches(pool: Pool, batches: Batch[], shared?: Shared) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -173,7 +217,11 @@ async function applyBatches(pool: Pool, batches: Batch[]) {
         await client.query(text, values);
       }
     }
-    await setSeq(client, batches.at(-1)!.seq);
+    if (shared) {
+      // Delivered at COMMIT, in commit order, to every other process's LISTEN connection (./replication).
+      for (const payload of noticesFor(shared.origin, batches.flatMap((batch) => batch.ops))) await client.query('SELECT pg_notify($1, $2)', [CHANGES_CHANNEL, payload]);
+    }
+    await setSeq(client, batches.at(-1)!.seq, shared?.seqKey);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -184,8 +232,8 @@ async function applyBatches(pool: Pool, batches: Batch[]) {
 }
 
 /** Replay what the spool holds past Postgres' last applied batch. Returns the sequence number to continue from. */
-async function replaySpool(pool: Pool, spool: string): Promise<number> {
-  const applied = Number((await pool.query('SELECT value FROM meta WHERE key = $1', [SEQ_KEY])).rows[0]?.value ?? 0);
+async function replaySpool(pool: Pool, spool: string, shared?: Shared): Promise<number> {
+  const applied = Number((await pool.query('SELECT value FROM meta WHERE key = $1', [shared?.seqKey ?? SEQ_KEY])).rows[0]?.value ?? 0);
   if (!existsSync(spool)) return applied;
   const batches: Batch[] = [];
   for (const line of readFileSync(spool, 'utf8').split('\n')) {
@@ -198,7 +246,7 @@ async function replaySpool(pool: Pool, spool: string): Promise<number> {
     }
   }
   if (batches.length) {
-    await applyBatches(pool, batches);
+    await applyBatches(pool, batches, shared);
     logger.info('postgres store: replayed queued writes', { 'landflow.db.batches': batches.length });
   }
   writeFileSync(spool, '');
@@ -228,28 +276,45 @@ async function loadMirror(pool: Pool, mirror: Database): Promise<Record<string, 
 
 /**
  * Connect, take the instance lock, migrate, replay the spool and load the in-memory copy. The returned Database
- * reads from the copy and replays its writes on Postgres.
+ * reads from the copy and replays its writes on Postgres. `instanceId` (queue mode): share the database with the
+ * cluster's other processes and follow their writes (./replication).
  */
-export async function openPostgres(url: string, dataDir: string): Promise<Database> {
+export async function openPostgres(url: string, dataDir: string, options: { instanceId?: string } = {}): Promise<Database> {
   const { Pool } = (await import('pg')).default ?? (await import('pg'));
-  const pool: Pool = new Pool({ connectionString: url, max: 4, application_name: 'landflow' });
+  const shared: Shared | undefined = options.instanceId ? { origin: options.instanceId, seqKey: `${SEQ_KEY}:${options.instanceId}` } : undefined;
+  const pool: Pool = new Pool({ connectionString: url, max: shared ? 8 : 4, application_name: shared ? `landflow:${shared.origin}` : 'landflow' });
   pool.on('error', (error) => logger.warn('postgres store: idle connection error', { error }));
   let lock: PoolClient | undefined;
+  let replica: Replica | undefined;
   try {
     lock = await pool.connect();
-    const { rows } = await lock.query('SELECT pg_try_advisory_lock($1) AS locked', [INSTANCE_LOCK]);
-    if (!rows[0]?.locked) throw new Error('Another Landflow host is using this Postgres database (one host per database until queue mode)');
+    const { rows } = await lock.query(`SELECT ${shared ? 'pg_try_advisory_lock_shared' : 'pg_try_advisory_lock'}($1) AS locked`, [INSTANCE_LOCK]);
+    if (!rows[0]?.locked) {
+      throw new Error(
+        shared
+          ? 'A Landflow host in regular mode is using this Postgres database: stop it, or start every process with LANDFLOW_EXECUTIONS_MODE=queue'
+          : 'Another Landflow host is using this Postgres database (one host per database until queue mode: LANDFLOW_EXECUTIONS_MODE=queue)',
+      );
+    }
     await migratePostgres(pool);
-    const spool = join(dataDir, 'postgres-queue.jsonl');
-    const seq = await replaySpool(pool, spool);
-    const sink = new PostgresSink(pool, lock, spool, seq);
+    const spool = join(dataDir, shared ? `postgres-queue-${shared.origin}.jsonl` : 'postgres-queue.jsonl');
+    const seq = await replaySpool(pool, spool, shared);
+    const sink = new PostgresSink(pool, lock, spool, seq, shared);
     const db = new Database(openSqliteConnection(':memory:'), 'postgres', ':memory:', sink);
+    if (shared) {
+      // LISTEN before loading: what commits while the copy loads is applied after it, in order.
+      replica = new Replica(db, pool, url, shared.origin, () => sink.pendingRows(), () => sink.pendingOps());
+      await replica.listen();
+      sink.replica = replica;
+    }
     const counts = await loadMirror(pool, db);
+    replica?.ready();
     logger.info('postgres store loaded', { 'landflow.db.workflows': counts.workflows ?? 0, 'landflow.db.executions': counts.executions ?? 0 });
     // Best effort; anything left is in the spool for the next boot.
     process.once('beforeExit', () => void sink.flush(5_000).catch(() => {}));
     return db;
   } catch (error) {
+    await replica?.close();
     lock?.release();
     await pool.end().catch(() => {});
     throw error;

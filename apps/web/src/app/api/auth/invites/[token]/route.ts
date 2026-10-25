@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '@/lib/shared/auth';
 import { clientIp, createUser, findToken, formLimit, getUser, markTokenUsed, signedInResponse, UserError } from '@/lib/server/auth';
 import { error, handler, json, parseBody } from '@/lib/server/http';
+import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ token: string }> };
@@ -37,6 +38,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   try {
     const user = await createUser({ email: invite.email, name: body.data.name, role: invite.role ?? 'member', password: body.data.password });
     markTokenUsed(invite.id);
+    recordAudit({ action: 'user.invite_accept', actor: { id: user.id, name: user.name, email: user.email }, target: { type: 'user', id: user.id, name: user.email }, summary: `${user.email} accepted an invite (${user.role})`, details: { role: user.role, inviteId: invite.id, invitedBy: invite.createdBy } });
     return signedInResponse(request, user, 'invite', {}, 201);
   } catch (caught) {
     if (caught instanceof UserError) return error(caught.message, caught.status);

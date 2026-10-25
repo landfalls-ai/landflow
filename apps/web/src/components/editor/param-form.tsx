@@ -12,7 +12,7 @@ import type { NodeItem, PropertyDescriptor } from '@/lib/shared/types';
 import { FIELD_DRAG_TYPE } from '../run/data-view';
 import { Input, Select, Switch, Textarea } from '../ui/inputs';
 import { sampleOf, type CompletionData } from './expression-completions';
-import { ExpressionDataContext, ExpressionInput } from './expression-input';
+import { ExpressionDataContext, ExpressionInput, loadSecretNames } from './expression-input';
 
 type Values = Record<string, unknown>;
 
@@ -260,8 +260,23 @@ function MultiOptions({ nodeType, property, value, onChange, parameters }: { nod
   );
 }
 
+/** Credential fields: start a `{{ $secrets.… }}` reference (only when an external secrets provider is set up). */
+function UseSecret({ onPick }: { onPick: (value: string) => void }) {
+  const [providers, setProviders] = useState<string[]>([]);
+  useEffect(() => {
+    void loadSecretNames().then((names) => setProviders(Object.keys(names)));
+  }, []);
+  if (!providers.length) return null;
+  return (
+    <button type="button" className="mt-1 text-[11px] text-t3 hover:text-ac" onClick={() => onPick(`{{ $secrets.${providers.length === 1 ? `${providers[0]}.` : ''} }}`)}>
+      Use an external secret
+    </button>
+  );
+}
+
 function Field({ nodeType, property, value, onChange, parameters }: { nodeType: string; property: PropertyDescriptor; value: unknown; onChange: (v: unknown) => void; parameters: Values }) {
   const expression = isExpression(value);
+  const credentialField = useContext(ExpressionDataContext)?.scope === 'credential';
   const exprClass = expression ? 'border-acbd bg-acdim font-mono' : '';
 
   switch (property.type) {
@@ -373,12 +388,13 @@ function Field({ nodeType, property, value, onChange, parameters }: { nodeType: 
         <div>
           <Label property={property} expression={expression} />
           <DropTarget value={value} onChange={onChange}>
-            {property.typeOptions?.password ? (
+            {property.typeOptions?.password && !(credentialField && /\{\{[^}]*\$secrets/.test(text)) ? (
               <Input value={text} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} type="password" className={exprClass} />
             ) : (
-              <ExpressionInput value={text} placeholder={placeholder} rows={rows} plain={property.noDataExpression} onChange={onChange} aria-label={property.displayName} />
+              <ExpressionInput value={text} placeholder={placeholder} rows={rows} plain={property.noDataExpression && !credentialField} onChange={onChange} aria-label={property.displayName} />
             )}
           </DropTarget>
+          {credentialField && !expression && <UseSecret onPick={onChange} />}
           {expression && <ExpressionPreview value={String(value)} />}
           {property.hint && <div className="mt-1 text-[12px] text-t3">{property.hint}</div>}
         </div>
@@ -557,6 +573,7 @@ export function ParamForm({
   preview,
   credentials,
   fromAI,
+  expressionScope,
 }: {
   nodeType: string;
   properties: PropertyDescriptor[];
@@ -567,13 +584,15 @@ export function ParamForm({
   credentials?: CredentialRefs;
   /** Offer "Let the model decide" per field (an agent's node tools). */
   fromAI?: boolean;
+  /** `credential`: a credential's form, where text fields take `{{ $secrets.<provider>.<name> }}` (and nothing else). */
+  expressionScope?: 'credential';
 }) {
   const visible = properties.filter((p) => isPropertyVisible(p, values));
   // Suggestions for expressions: the input's fields, and nodes that ran upstream with a sample of their output.
   const completionData = useMemo<CompletionData>(() => {
     const names = [...new Set([...(preview?.nodeNames ?? []), ...Object.keys(preview?.nodeOutputs ?? {})])];
-    return { json: sampleOf(preview?.items), nodes: names.map((name) => ({ name, json: sampleOf(preview?.nodeOutputs[name]) })), vars: [] };
-  }, [preview]);
+    return { json: sampleOf(preview?.items), nodes: names.map((name) => ({ name, json: sampleOf(preview?.nodeOutputs[name]) })), vars: [], ...(expressionScope && { scope: expressionScope }) };
+  }, [preview, expressionScope]);
   if (!visible.length) return <div className="rounded-[10px] border border-hair bg-wl p-4 text-center text-[13px] text-t3">This node has no parameters.</div>;
   return (
     <ExpressionDataContext.Provider value={completionData}>

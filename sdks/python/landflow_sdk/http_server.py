@@ -18,6 +18,7 @@ from ._version import __version__
 from .errors import ProtocolError, UnknownCredentialTypeError, UnknownMethodError, UnknownNodeError
 from .plugin import Plugin
 from .protocol import HTTP_PATHS, METRICS_PATH, dumps
+from .registry_proof import REGISTRY_CHALLENGE_HEADER, REGISTRY_PROOF_HEADER, answer_registry_challenge
 
 log = logging.getLogger("landflow_sdk.http")
 
@@ -59,7 +60,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path == HTTP_PATHS["wellKnown"]:
             self._send(200, plugin.well_known())
         elif path == HTTP_PATHS["manifest"]:
-            self._send(200, plugin.manifest())
+            # Kubernetes discovery: prove LANDFLOW_REGISTRY_SECRET when the host sends a challenge.
+            proof = answer_registry_challenge(plugin.id, self.headers.get(REGISTRY_CHALLENGE_HEADER))
+            self._send(200, plugin.manifest(), headers={REGISTRY_PROOF_HEADER: proof} if proof else None)
         elif path == HTTP_PATHS["health"]:
             self._send(200, plugin.health())
         elif path == METRICS_PATH and plugin.telemetry.prometheus:
@@ -152,16 +155,20 @@ class _Handler(BaseHTTPRequestHandler):
             chunks.append(self.rfile.read(size))
             self.rfile.readline()  # CRLF after each chunk
 
-    def _send(self, status: int, payload: Any, allow: str | None = None) -> None:
-        self._send_raw(status, dumps(payload), "application/json; charset=utf-8", allow)
+    def _send(self, status: int, payload: Any, allow: str | None = None, headers: dict[str, str] | None = None) -> None:
+        self._send_raw(status, dumps(payload), "application/json; charset=utf-8", allow, headers)
 
-    def _send_raw(self, status: int, body: bytes, content_type: str, allow: str | None = None) -> None:
+    def _send_raw(
+        self, status: int, body: bytes, content_type: str, allow: str | None = None, headers: dict[str, str] | None = None
+    ) -> None:
         try:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             if allow:
                 self.send_header("Allow", allow)
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
             if self.close_connection:
                 self.send_header("Connection", "close")
             self.end_headers()

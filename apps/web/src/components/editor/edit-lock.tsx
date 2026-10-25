@@ -5,13 +5,15 @@
  * store's editing actions become no-ops) and a banner says who is editing, with Take over for admins (or for you,
  * from your other tab). The lock is released when the tab closes, and `lock` events on /api/events hand it to the
  * next tab straight away. Saves carry the tab id (`x-landflow-editor-tab`), so a tab that lost the lock gets a 423.
+ * In a protected environment (LANDFLOW_ENVIRONMENT) the editor is read-only for everyone, with its own banner.
  */
 import { useCallback, useEffect } from 'react';
 import { create } from 'zustand';
 import { Eye, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 import type { EdgeChange, NodeChange } from '@xyflow/react';
-import { api } from '@/lib/client/api';
+import { api, ApiError } from '@/lib/client/api';
+import { loadEnvironment } from '@/lib/client/environment';
 import { timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
 import { can, type EditLockView } from '@/lib/shared/auth';
@@ -35,6 +37,10 @@ interface LockState {
   readOnly: boolean;
   /** Who holds it when it isn't this tab. */
   holder?: EditLockView;
+  /** Projects: the viewer can see this workflow but not change it (a project viewer, or shared to view). */
+  viewOnly?: boolean;
+  /** A protected environment (LANDFLOW_ENVIRONMENT): its name; workflows are read-only and change by pull or promotion. */
+  protectedEnvironment?: string;
 }
 
 export const useEditLock = create<LockState>(() => ({ tabId: newTabId(), readOnly: false }));
@@ -64,6 +70,9 @@ type Editing = Pick<
   | 'mergeWorkflow'
   | 'addSticky'
   | 'updateSticky'
+  | 'groupSelection'
+  | 'ungroup'
+  | 'updateGroup'
   | 'undo'
   | 'redo'
   | 'setMeta'
@@ -95,6 +104,9 @@ function setReadOnly(on: boolean) {
       mergeWorkflow: state.mergeWorkflow,
       addSticky: state.addSticky,
       updateSticky: state.updateSticky,
+      groupSelection: state.groupSelection,
+      ungroup: state.ungroup,
+      updateGroup: state.updateGroup,
       undo: state.undo,
       redo: state.redo,
       setMeta: state.setMeta,
@@ -123,6 +135,9 @@ function setReadOnly(on: boolean) {
       mergeWorkflow: () => 0,
       addSticky: () => '',
       updateSticky: nothing,
+      groupSelection: () => undefined,
+      ungroup: nothing,
+      updateGroup: nothing,
       undo: nothing,
       redo: nothing,
       setMeta: nothing,
@@ -153,7 +168,26 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
   const sync = useCallback(
     async (takeover = false) => {
       const { tabId, readOnly } = useEditLock.getState();
-      const { mine, lock } = await api<LockResponse>(`/api/workflows/${workflowId}/lock`, { method: 'POST', json: { tabId, ...(takeover && { takeover: true }) } });
+      // A protected environment: read-only for good, no lock to hold (lib/server/environments/protection.ts).
+      const environment = await loadEnvironment();
+      if (environment?.protected) {
+        if (!readOnly) setReadOnly(true);
+        useEditLock.setState({ protectedEnvironment: environment.name ?? 'This environment', holder: undefined });
+        return;
+      }
+      let answer: LockResponse;
+      try {
+        answer = await api<LockResponse>(`/api/workflows/${workflowId}/lock`, { method: 'POST', json: { tabId, ...(takeover && { takeover: true }) } });
+      } catch (caught) {
+        // A viewer of the workflow's project (or a view-only share): read-only for good, no lock to hold.
+        if (caught instanceof ApiError && caught.status === 403) {
+          if (!readOnly) setReadOnly(true);
+          useEditLock.setState({ viewOnly: true, holder: undefined });
+          return;
+        }
+        throw caught;
+      }
+      const { mine, lock } = answer;
       if (mine) {
         if (readOnly) {
           // Back to editing: start from what's saved, then allow edits.
@@ -195,8 +229,8 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
     void beat();
     const timer = setInterval(() => void beat(), 10_000);
     const release = () => {
-      const { tabId, readOnly } = useEditLock.getState();
-      if (!readOnly) void fetch(`/api/workflows/${workflowId}/lock?tabId=${encodeURIComponent(tabId)}`, { method: 'DELETE', keepalive: true }).catch(() => {});
+      const { tabId, readOnly, viewOnly } = useEditLock.getState();
+      if (!readOnly && !viewOnly) void fetch(`/api/workflows/${workflowId}/lock?tabId=${encodeURIComponent(tabId)}`, { method: 'DELETE', keepalive: true }).catch(() => {});
     };
     window.addEventListener('pagehide', release);
     return () => {
@@ -205,7 +239,7 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
       window.removeEventListener('pagehide', release);
       release();
       setReadOnly(false);
-      useEditLock.setState({ workflowId: undefined, holder: undefined });
+      useEditLock.setState({ workflowId: undefined, holder: undefined, viewOnly: false, protectedEnvironment: undefined });
     };
   }, [loaded, workflowId, sync]);
 
@@ -233,6 +267,28 @@ export function EditLockBanner({ onTakeOver }: { onTakeOver: () => void }) {
   const viewer = useViewer();
   const readOnly = useEditLock((s) => s.readOnly);
   const holder = useEditLock((s) => s.holder);
+  const viewOnly = useEditLock((s) => s.viewOnly);
+  const protectedEnvironment = useEditLock((s) => s.protectedEnvironment);
+  if (readOnly && protectedEnvironment) {
+    return (
+      <div role="status" data-testid="protected-banner" className="flex h-10 shrink-0 items-center gap-2.5 border-b border-warnbd bg-warndim px-4 text-[13px] animate-fade-up">
+        <Lock className="size-3.5 text-warn" />
+        <span className="text-t1">
+          <span className="font-semibold">{protectedEnvironment}</span> is a protected environment: this workflow is read-only here
+        </span>
+        <span className="text-[12px] text-t3">change it in an earlier environment, then promote it and pull here</span>
+      </div>
+    );
+  }
+  if (readOnly && viewOnly) {
+    return (
+      <div role="status" className="flex h-10 shrink-0 items-center gap-2.5 border-b border-hair bg-sf2 px-4 text-[13px] animate-fade-up">
+        <Eye className="size-3.5 text-t3" />
+        <span className="text-t1">You can view this workflow but not change it</span>
+        <span className="text-[12px] text-t3">ask an admin of its project for edit access</span>
+      </div>
+    );
+  }
   if (!readOnly || !holder) return null;
   const yours = holder.userId === viewer?.id;
   const canTakeOver = yours || can(viewer, 'workflows:takeover');

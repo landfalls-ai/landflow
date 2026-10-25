@@ -11,7 +11,8 @@
  */
 import { nanoid } from 'nanoid';
 import { defaultVersionOf, isPropertyVisible, withPropertyDefaults, type ConnectionType, type NodeDescriptor } from '@landflow/protocol';
-import type { StickyNote, Workflow, WorkflowConnection, WorkflowNode, WorkflowSettings } from '@landflow/engine';
+import type { StickyNote, Workflow, WorkflowConnection, WorkflowGroup, WorkflowNode, WorkflowSettings } from '@landflow/engine';
+import { normalizeGroups } from '../shared/groups';
 import type { ImportReport } from '../shared/types';
 import { parseCron } from './agents/cron';
 import { convertFlowiseWorkflow, isFlowiseDocument } from './flowise-import';
@@ -1782,6 +1783,10 @@ export function convertLandflowWorkflow(doc: Params): ImportResult {
     ...(s.color !== undefined && { color: clamp(Math.round(num(s.color, 0)), [0, 9]) }),
   }));
   report.stickyNotes = stickyNotes.length;
+  // Canvas groups: members that came along, each node in one group, sizes within limits.
+  const groups = normalizeGroups(list(doc.groups) as unknown as WorkflowGroup[], ids);
+  if (groups.length) report.groups = groups.length;
+  if (list(doc.groups).length > groups.length) report.warnings.push('A canvas group without an id (or a repeated one) was dropped.');
   report.connections = connections.length;
   report.warnings = [...new Set(report.warnings)];
   const pinData = isObject(doc.pinData) ? Object.fromEntries(Object.entries(doc.pinData).filter(([id]) => ids.has(id))) : undefined;
@@ -1794,6 +1799,7 @@ export function convertLandflowWorkflow(doc: Params): ImportResult {
       ...(pinData && Object.keys(pinData).length && { pinData: pinData as Workflow['pinData'] }),
       ...(isObject(doc.settings) && { settings: doc.settings as WorkflowSettings }),
       ...(stickyNotes.length && { stickyNotes }),
+      ...(groups.length && { groups }),
       ...(Array.isArray(doc.tags) && { tags: doc.tags.filter((t): t is string => typeof t === 'string') }),
     },
     report,

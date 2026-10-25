@@ -35,6 +35,18 @@ export const workflowNodeSchema = z.object({
   batch: z.object({ size: z.number().int().min(1).max(10_000), timeoutSeconds: z.number().min(0.1).max(86_400) }).optional(),
 });
 
+/** A canvas group: a labelled frame around nodes (`nodeIds`), expanded size and an optional collapsed state. */
+export const workflowGroupSchema = z.object({
+  id: z.string().min(1).max(100),
+  name: z.string().max(200),
+  nodeIds: z.array(z.string()).max(5000).default([]),
+  position: z.tuple([z.number(), z.number()]),
+  width: z.number().min(40).max(20_000),
+  height: z.number().min(40).max(20_000),
+  color: z.number().int().min(0).max(9).optional(),
+  collapsed: z.boolean().optional(),
+});
+
 export const workflowSchema = z
   .object({
     id: z.string().regex(/^[\w-]+$/).optional(),
@@ -94,6 +106,8 @@ export const workflowSchema = z
         }),
       )
       .optional(),
+    /** Canvas groups (lib/shared/groups.ts): frames around nodes, editor-only like sticky notes. */
+    groups: z.array(workflowGroupSchema).max(500).optional(),
     tags: z.array(z.string()).optional(),
     folderId: z.string().optional(),
   })
@@ -102,6 +116,17 @@ export const workflowSchema = z
     for (const node of workflow.nodes) {
       if (names.has(node.name)) ctx.addIssue({ code: 'custom', message: `Duplicate node name "${node.name}"`, path: ['nodes'] });
       names.add(node.name);
+    }
+    // A node sits in one group at most; ids of nodes that are gone are tolerated (the editor drops them on its next save).
+    const groupIds = new Set<string>();
+    const grouped = new Map<string, string>();
+    for (const group of workflow.groups ?? []) {
+      if (groupIds.has(group.id)) ctx.addIssue({ code: 'custom', message: `Duplicate group id "${group.id}"`, path: ['groups'] });
+      groupIds.add(group.id);
+      for (const nodeId of group.nodeIds) {
+        if (grouped.has(nodeId) && grouped.get(nodeId) !== group.id) ctx.addIssue({ code: 'custom', message: `Node "${nodeId}" is in two groups`, path: ['groups'] });
+        grouped.set(nodeId, group.id);
+      }
     }
   });
 

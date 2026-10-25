@@ -4,13 +4,13 @@
  * state its previous poll returned, saves the new state, and starts an
  * execution when the poll found items. The first poll after activation, or after
  * the trigger's parameters or credentials change, only sets the baseline.
- * Single-process, like the scheduler.
+ * Queue mode: only the leader main polls (its state is in the database, so the next leader goes on from it).
  */
 import { createHash } from 'node:crypto';
 import { PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
 import { ExpressionResolver, type ResolvedNodeType, type Workflow, type WorkflowNode } from '@landflow/engine';
 import type { PollStatus } from '../shared/types';
-import { credentials } from './credentials/vault';
+import { resolveWorkflowCredentials } from './projects/credentials';
 import { registry } from './plugins/registry';
 import { productionWorkflow, productionWorkflows } from './publish';
 import { newExecutionId, runWorkflow } from './runner';
@@ -54,7 +54,7 @@ function buildRequest(workflow: Workflow, node: WorkflowNode, resolved: Resolved
     parameters: node.parameters,
     variables: variables.record(),
   });
-  const data = credentials.resolveFor(node, resolved.descriptor);
+  const data = resolveWorkflowCredentials(workflow.id, node, resolved.descriptor);
   return {
     protocol: PROTOCOL_VERSION,
     executionId,
@@ -166,6 +166,12 @@ export const poller = singleton('poller', () => {
       if (timer) return;
       timer = setInterval(tick, 1_000);
       timer.unref?.();
+    },
+
+    /** Stop polling (queue mode: this main no longer leads); polls in flight finish. */
+    stop() {
+      clearInterval(timer);
+      timer = undefined;
     },
 
     /** Poll a trigger now instead of waiting for its interval. */

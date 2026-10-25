@@ -8,8 +8,10 @@ import { publicOrigin } from '@/lib/server/auth/cookies';
 import { metricsPublic } from '@/lib/server/auth/guard';
 import { smtpConfig } from '@/lib/server/auth/mail';
 import { discover, oidcConfig, redirectUri } from '@/lib/server/auth/oidc';
+import { samlSecurityView } from '@/lib/server/auth/saml';
 import { requireUser, sessionTtlHours } from '@/lib/server/auth';
 import { handler, json } from '@/lib/server/http';
+import { scimSecurityView } from '@/lib/server/scim/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,9 +41,11 @@ export const GET = handler(async (request: Request) => {
       ...(oidcError && { error: oidcError }),
     },
     smtp: { configured: Boolean(smtp), ...(smtp && { host: smtp.host, port: smtp.port, from: smtp.from }) },
+    saml: await samlSecurityView(publicOrigin(request)),
     sessionHours: sessionTtlHours(),
     registrySecret: Boolean(process.env.LANDFLOW_REGISTRY_SECRET),
     metricsPublic: metricsPublic(),
+    scim: scimSecurityView(request),
   };
   return json(view);
 });

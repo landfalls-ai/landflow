@@ -25,6 +25,7 @@ const { runWorkflow, RunBufferedError } = await import('@/lib/server/runner');
 const { TriggerBuffers, debounceKey, triggerBuffers } = await import('@/lib/server/trigger-buffers');
 const { workflowSchema } = await import('@/lib/server/schemas');
 const webhookRoute = await import('@/app/api/webhook/[...path]/route');
+const formRoute = await import('@/app/form/[...path]/route');
 
 registry.registerBuiltin(corePlugin);
 
@@ -143,6 +144,20 @@ describe('what is never held', () => {
     const workflow = await hookWorkflow('wf_buffer_reject', 'buffer-reject', { debounce: { windowSeconds: 60 } });
     await expect(runWorkflow({ workflow, mode: 'webhook', startNodeId: 'Hook', triggerItems: [{ json: {} }] })).rejects.toBeInstanceOf(RunBufferedError);
     expect(triggerBuffers.pending('wf_buffer_reject')).toHaveLength(1);
+  });
+
+  it('a held form submission gets the end screen, not “busy”', async () => {
+    const trigger = node('Form', 'core.formTrigger', { path: 'buffer-form', formTitle: 'Held', formFields: { values: [{ fieldLabel: 'Name', fieldType: 'text' }] } }, {
+      debounce: { windowSeconds: 60 },
+    });
+    store.saveWorkflow({ id: 'wf_buffer_form', name: 'wf_buffer_form', nodes: [trigger, node('Done', 'core.noOp')], connections: [edge('Form', 'Done')] });
+    await publishDraft('wf_buffer_form', 'tester', 'buffers');
+    const response = await formRoute.POST(new Request('http://buffers.test/form/buffer-form', { method: 'POST', body: new URLSearchParams({ f0: 'Ada' }) }), {
+      params: Promise.resolve({ path: ['buffer-form'] }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).not.toMatch(/busy/);
+    expect(triggerBuffers.pending('wf_buffer_form')).toHaveLength(1);
   });
 });
 

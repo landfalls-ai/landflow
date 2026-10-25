@@ -5,6 +5,7 @@
 import { error, handler, json } from '@/lib/server/http';
 import { cancelExecution, cancelQueuedExecution, cancelWaitingExecution, liveExecution } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
+import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -12,10 +13,19 @@ type Ctx = { params: Promise<{ id: string }> };
 export const POST = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   const live = liveExecution(id);
-  if (live) return json({ executionId: id, stopped: cancelExecution(id), status: live.status });
+  const record = live ?? store.getExecution(id);
+  const audit = (status: string) => recordAudit({ action: 'execution.stop', target: { type: 'execution', id, ...(record?.workflowName && { name: record.workflowName }) }, details: { workflowId: record?.workflowId, status } });
+  if (live) {
+    const stopped = cancelExecution(id);
+    audit(live.status);
+    return json({ executionId: id, stopped, status: live.status });
+  }
   const status = store.getExecution(id)?.status;
   if (!status) return error('Execution not found', 404);
-  if (status === 'waiting') return json({ executionId: id, stopped: cancelWaitingExecution(id), status });
-  if (status === 'queued') return json({ executionId: id, stopped: cancelQueuedExecution(id), status });
+  if (status === 'waiting' || status === 'queued') {
+    const stopped = status === 'waiting' ? cancelWaitingExecution(id) : cancelQueuedExecution(id);
+    audit(status);
+    return json({ executionId: id, stopped, status });
+  }
   return error(`The execution isn't running (it ended with status ${status})`, 409, { executionId: id, status });
 });

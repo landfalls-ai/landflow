@@ -3,6 +3,7 @@ export { iconFile, MAX_ICON_BYTES } from './icons';
 export * from './runtime';
 export * from './credentials';
 export * from './signatures';
+export { answerRegistryChallenge, MAX_REGISTRY_CHALLENGE_LENGTH, REGISTRY_CHALLENGE_HEADER, REGISTRY_PROOF_HEADER, registryProof, verifyRegistryProof } from './registry-proof';
 export { runWebhook, runWebhookMethod, type IWebhookContext, type IWebhookFunctions, type IWebhookMethodContext, type IWebhookMethods, type WebhookExtras, type WebhookResult } from './webhooks';
 export { createBinaryHelpers, httpBinaryClient, inlineBinary, type BinaryDataClient, type BinaryFileMeta, type BinaryInput, type IBinaryHelpers } from './binary';
 export {

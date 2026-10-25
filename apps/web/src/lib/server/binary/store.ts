@@ -102,7 +102,7 @@ export class FilesystemBinaryStore implements BinaryStore {
     const id = newBinaryId(scope);
     const paths = this.paths(id)!;
     await mkdir(join(this.dir, scope), { recursive: true });
-    const tmp = `${paths.file}.${process.pid}.tmp`;
+    const tmp = `${paths.file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
     const counter = byteCounter(options.maxBytes);
     try {
       await pipeline(toNodeStream(data), counter, createWriteStream(tmp));

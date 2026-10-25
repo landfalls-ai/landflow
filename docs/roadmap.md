@@ -123,8 +123,8 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   deleted with their execution, `/api/binary` with per-call tokens for plugins, helpers in the
   three SDKs, the file nodes (CSV, XLSX, HTML, JSON, text, PDF text, base64), HTTP Request file
   responses and multipart bodies, webhook and form uploads, Respond to Webhook files, Gmail
-  attachments, Telegram uploads and downloads, and a Binary tab in the run view; see the README's
-  "Files and binary data". Not yet: Google Drive, Slack and the other integrations' files, binary
+  attachments, Telegram and Slack uploads and downloads, and a Binary tab in the run view; see the README's
+  "Files and binary data". Not yet: Google Drive and the other integrations' files, binary
   in the Code node, range requests for video, XLSX/ODS writing.
 - Failure alerts by email or chat, without writing an error workflow. ✅ Done: Settings → Alerts
   with email (the host's SMTP settings), Slack, signed webhook and Telegram channels with a test
@@ -142,7 +142,8 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   Unpublish turns production triggers off, and executions say which version ran ("ran version 7
   (published)"). Workflows that were active before were published on their newest version
   (migration 200); `active` still reads as "has a published version". The API, the CLI and Git
-  sync publish through `lib/server/publish.ts`. Not yet: four-eyes approval of a publish, scheduled publishes.
+  sync publish through `lib/server/publish.ts`. Four-eyes approval of a publish arrived in Wave 4 (Settings →
+  Governance). Not yet: scheduled publishes.
 - App webhook triggers (a register/unregister lifecycle in the protocol) with signature checks;
   webhook authentication. ✅ Done: `triggerSource: "appWebhook"` with `WebhookMethod`
   (checkExists/create/delete) and `ReceiveWebhook` over HTTP and gRPC, static data per workflow
@@ -231,15 +232,113 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
 
 ## Wave 4: operations and teams
 
-- Queue mode with workers on Valkey and Postgres, and high availability.
+- Queue mode with workers on Valkey and Postgres, and high availability. ✅ Done:
+  `LANDFLOW_EXECUTIONS_MODE=queue` (regular mode is unchanged) makes mains enqueue production runs
+  on a Valkey stream (consumer group, XAUTOCLAIM takeover) for `pnpm worker` processes (concurrency,
+  `/healthz` and `/metrics`, heartbeats, graceful SIGTERM that re-queues what doesn't finish); a
+  run whose worker dies continues from its last checkpoint on another worker after 30 s. Editor runs
+  stay in the main (or `LANDFLOW_OFFLOAD_MANUAL_EXECUTIONS`); events, Respond to Webhook replies and
+  results come back over pub/sub; stop, stop all, idempotency, concurrency and singletons, retries,
+  rate limits, debounce and batching work across processes. Mains elect a leader (TTL lock with a
+  fencing token) that runs schedules, polls, IMAP IDLE, timers and retention and adopts orphaned
+  runs; failover in about 13 s. Postgres is shared (each process follows the others' writes through
+  LISTEN/NOTIFY, migration 700 keeps plugin registrations), SQLite is refused without the
+  single-host override, and S3/MinIO is the binary store (a warning for the filesystem). OTel
+  metrics and a read-only Settings → Workers; `deploy/compose.queue.yml` runs two mains behind a
+  load balancer and two workers, with `deploy/scripts/queue-e2e.py` (load spread, a killed worker,
+  a killed leader). See the README, "Queue mode, workers and high availability". Not yet: Valkey
+  Cluster / Sentinel, sticky sessions built in (debug sessions and SSO state live in one main),
+  marketplace node plugins on workers, credentials and settings files in the database instead of
+  the shared data directory.
 - Audit log, written as events through the existing OpenTelemetry pipeline, plus streaming to a
-  SIEM.
-- External secrets: OpenBao/Vault, 1Password and cloud secret managers.
-- Environments and promotion.
-- Projects, sharing, SAML and SCIM.
-- Templates library and canvas groups.
-- An allowlist for nodes and MCP servers; four-eyes publish; ownership transfer.
-- Kubernetes discovery for plugins, tested on OrbStack's local cluster.
+  SIEM. ✅ Done: `audit_events` (migration 900) with its own retention records actor, API key id,
+  IP, user agent, request id, route, target and outcome for sign-in, sign-out and failed sign-ins,
+  password resets, invites, user and role changes, API keys, workflow create, update, delete,
+  import, publish, rollback and unpublish, publish requests, credential changes and credential use
+  in runs (ids only), settings, stopped and deleted executions, Git push and pull, plugins and
+  marketplace installs; a generic layer in the route `handler` records every other change and every
+  denied request. Each event is also an OTel log record (`event.name`, OTLP/HTTP JSON when
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set). `GET /api/audit` (filters, cursor) and
+  `/api/audit/export` (CSV, JSON) need the `audit:read` scope and an admin; Settings → Audit log
+  has the filters and export. SIEM streaming through a durable outbox (queued in the event's
+  transaction, leased, retried with backoff, kept past retention until delivered): syslog RFC 5424
+  over UDP, TCP and TLS, HTTP JSON lines signed with HMAC, Datadog and Elasticsearch presets and
+  Splunk HEC, with **Send test event**; tested against fake receivers, and the infra stack's `siem`
+  profile runs a Vector receiver. See the README, "Audit log and SIEM streaming". Not yet: audit
+  events per project, mTLS client certificates for syslog, a hash chain for tamper evidence.
+- External secrets: OpenBao/Vault, 1Password and cloud secret managers. ✅ Done: Settings →
+  External secrets connects, tests, refreshes and lists the names (never values) of OpenBao/Vault
+  (KV v2; token, AppRole and pluggable Kubernetes auth; namespaces; lease renewal), 1Password
+  Connect, AWS Secrets Manager (SigV4 without an SDK), GCP Secret Manager and Azure Key Vault, with
+  their settings encrypted like credentials (migration 1000). Credential fields read
+  `{{ $secrets.<provider>.<name>[.<key>] }}` (with **Use secret** and autocomplete), resolved at run
+  time in the host or a worker with a short cache, never stored in executions or checkpoints, and
+  redacted from outputs, errors and logs. Tested against the infra stack's OpenBao
+  (`LANDFLOW_INTEGRATION=secrets`) and local fakes of the others; see the README, "External secrets
+  and environments". Not yet: `$secrets` in node parameters (credential fields only, as in n8n),
+  in the OAuth2 Connect client fields and in credentials used outside nodes (agents' models and
+  channels, alert channels, the source control token); a LocalStack service for AWS tests.
+- Environments and promotion. ✅ Done: `LANDFLOW_ENVIRONMENT` with a badge in the shell; protected
+  environments (read-only editor with a banner, the API and the instance MCP server refuse workflow
+  changes; runs and publishing stay open); a Git branch per environment; **Promote** (all or picked
+  workflows, a preview with diffs, conflicts when the target branch changed a workflow since the
+  last promotion, force) in Settings → Environments, the API and `landflow env promote`; pulls with
+  publish on pull (`file`, `all`, `none`) and `landflow env pull`; variable values per environment
+  (migration 1001); credentials matched by name or mapped explicitly, `$secrets` resolving against
+  the target's providers. `landflow-sync/v1` gained only optional fields. Not yet: the workflows
+  list still shows its create buttons in a protected environment (the API refuses them), promotion
+  of credentials' definitions and data table rows, approvals on promotion.
+- Projects, sharing, SAML and SCIM, and ownership transfer. ✅ Done: a personal project per user
+  and team projects with admin, editor and viewer roles; workflows, credentials, data tables and
+  agents belong to one project (migration 800 moves existing data into the owner's personal
+  project); sharing workflows (edit or view) and credentials ("can use", the secret stays hidden)
+  with people and projects; checks in the route guard for every resource route, in lists, search,
+  the credential picker, live events and runs (a workflow only uses its project's credentials);
+  Move to project, deleting a team project and removing a user hand what they own to a person or
+  project in one transaction; a project switcher, project pages, Share and Move dialogs. SAML 2.0
+  sign-in (signed assertions, replay protection, just-in-time users, role and project mapping,
+  single logout; tested against the infra stack's Keycloak) and SCIM 2.0 provisioning (Users and
+  Groups for Okta and Entra ID, deactivation, group-to-role and group-to-project mapping, a
+  scim-only token). See the README, "Authentication". Not yet: projects for folders, variables
+  and plugins; the Data Table node and webhook/MCP trigger auth aren't project-scoped; encrypted
+  SAML assertions; SAML logout state and pending sign-ins are per process.
+- Templates library and canvas groups. ✅ Done: a Templates page with 18 built-in templates
+  (validated against the core nodes and the bundled plugins' manifests in a test), search,
+  categories, cards with node icons, a detail page with a read-only canvas, setup steps and the
+  credential slots and data tables a template needs; **Use template** remaps each slot to a
+  credential of its type (or one created there), creates missing data tables, makes webhook paths
+  unique and opens the new draft (optionally in a folder); **Save as template** from the workflow
+  menu (credentials become slots, pinned data and instance details are left out; stored in the
+  `templates` table, migration 1100), export and import of template files, templates with missing
+  or governance-blocked nodes marked unusable, and an optional n8n-compatible remote library
+  (`LANDFLOW_TEMPLATES_URL`, converted by the n8n importer with its report). Canvas groups: frames
+  around nodes (`⌘G` / `⇧⌘G`, context menu) that move their nodes, resize, rename, recolour,
+  collapse (edges merged per neighbour) and take nodes in and out by dragging, saved in
+  `workflow.groups` (the engine ignores them) and handled by undo, copy and paste, duplicate,
+  import and export, version diffs and Git sync. See the README, "Building and debugging a flow".
+  Not yet: templates per project (they are instance-wide), editing a saved template in place,
+  paging through more than 30 remote results; nested groups, and collapsed groups in the
+  Executions view (it shows them expanded).
+- An allowlist for nodes and MCP servers; four-eyes publish; ownership transfer. ✅ Done (ownership
+  transfer is part of projects, above): Settings → Governance allows or blocks node types (ids,
+  globs, whole plugins, Code nodes), HTTP Request hosts (globs, `host:port`, IPv4 CIDR) and MCP
+  servers. Saving warns, publishing is refused, and blocked nodes fail at run time with a clear node
+  error, in the host and in workers, for manual, trigger and agent runs (agents' MCP tools too); the
+  node creator hides blocked nodes and importers report them. Four-eyes publishing (migration 901):
+  publish, rollback and unpublish become requests that someone else approves or rejects (no
+  self-approval; any builder or admins only), go stale when the draft or the live version changes,
+  notify approvers by email and alert channels, are audited, and show in the editor's Publish menu;
+  the CLI exits 8 (`approval_pending`). See the README, "Governance". Not yet: approvers per
+  project role (the hook is there: `registerApproverCheck`), per-workflow policies, IPv6 CIDR.
+- Kubernetes discovery for plugins, tested on OrbStack's local cluster. ✅ Done:
+  `LANDFLOW_PLUGIN_DISCOVERY=kubernetes` watches Services labelled `landflow.dev/plugin=true` and
+  their EndpointSlices in `LANDFLOW_K8S_NAMESPACES` (in-cluster, or a kubeconfig with an explicit
+  context), with relists, a resync and backoff; a plugin with no ready pod goes offline and comes
+  back, a deleted Service removes it; the registry secret is proven with an HMAC challenge in the
+  three SDKs; kustomize manifests in `deploy/k8s/` (the host with a namespaced Role, the seven
+  plugins, optional Postgres and Valkey) and an integration test (`LANDFLOW_INTEGRATION=k8s`); see
+  [deploy/README.md](../deploy/README.md), "Kubernetes". Not yet: spreading calls across replicas
+  (one connection per Service), watching every namespace with a ClusterRole.
 
 ## Not planned
 

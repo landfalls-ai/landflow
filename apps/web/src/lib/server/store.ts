@@ -24,7 +24,7 @@ import { recordVersion, versionFor } from './versions';
 
 /** Write JSON through a temp file and a rename, so readers never see half a file. */
 export function atomicWrite(path: string, data: unknown) {
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   writeFileSync(tmp, JSON.stringify(data, null, 2));
   renameSync(tmp, path);
 }
@@ -307,6 +307,12 @@ class Store {
   /** Forget the workflow cache (tests that reopen the database). */
   reload() {
     this.workflows = undefined;
+  }
+
+  /** Queue mode: another process changed workflows. Reload them on next use and tell the listeners. */
+  reloadWorkflows() {
+    this.workflows = undefined;
+    this.listeners.forEach((listener) => listener());
   }
 }
 

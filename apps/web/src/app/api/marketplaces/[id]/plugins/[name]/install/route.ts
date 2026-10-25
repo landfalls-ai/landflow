@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { marketplaceRoute } from '@/lib/server/marketplace/http';
 import { marketplace } from '@/lib/server/marketplace/service';
 import { handler, json, parseBody } from '@/lib/server/http';
+import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string; name: string }> };
@@ -16,6 +17,8 @@ export const POST = handler(
     const body = await parseBody(request, z.object({ confirm: z.boolean().optional() }));
     if (!body.ok) return body.response;
     const result = await marketplace.install(id, decodeURIComponent(name), { confirm: body.data.confirm });
-    return 'needsConfirmation' in result ? json(result, 409) : json(result, 201);
+    if ('needsConfirmation' in result) return json(result, 409);
+    recordAudit({ action: 'marketplace.install', target: { type: 'marketplace_plugin', id: decodeURIComponent(name), name: decodeURIComponent(name) }, summary: `Installed ${decodeURIComponent(name)} from a marketplace`, details: { marketplaceId: id, confirmed: Boolean(body.data.confirm) } });
+    return json(result, 201);
   }),
 );

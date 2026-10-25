@@ -18,6 +18,8 @@ export const EXIT = {
   network: 6,
   /** `--wait` gave up. */
   timeout: 7,
+  /** Four-eyes publishing: the publish, rollback or unpublish is a request waiting for another person's approval. */
+  approvalPending: 8,
 } as const;
 
 export type ErrorCode =
@@ -35,6 +37,8 @@ export type ErrorCode =
   | 'execution_failed'
   | 'sync_failed'
   | 'timeout'
+  /** The host recorded a publish request instead of publishing (four-eyes); `details.request` is the request. */
+  | 'approval_pending'
   /** A bug in the CLI. */
   | 'internal';
 
@@ -53,6 +57,7 @@ const EXIT_FOR: Record<ErrorCode, number> = {
   execution_failed: EXIT.error,
   sync_failed: EXIT.error,
   timeout: EXIT.timeout,
+  approval_pending: EXIT.approvalPending,
   internal: EXIT.error,
 };
 

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '@/lib/shared/auth';
 import { clientIp, createOwner, formLimit, signedInResponse, UserError } from '@/lib/server/auth';
 import { error, handler, parseBody } from '@/lib/server/http';
+import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,7 @@ export const POST = handler(async (request: Request) => {
   if (!body.ok) return body.response;
   try {
     const owner = await createOwner(body.data);
+    recordAudit({ action: 'auth.setup', actor: { id: owner.id, name: owner.name, email: owner.email }, target: { type: 'user', id: owner.id, name: owner.email }, summary: `${owner.email} created the owner account` });
     return signedInResponse(request, owner, 'setup', {}, 201);
   } catch (caught) {
     if (caught instanceof UserError) return error(caught.message, caught.status);

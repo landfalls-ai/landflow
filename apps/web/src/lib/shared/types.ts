@@ -6,11 +6,17 @@ import type { EvaluationRef } from './evaluations';
 import type { ExecutionAiUsage } from './ai-usage';
 
 export type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, NodeRun, PauseReason, Transport, Workflow };
-export type { StickyNote, WorkflowConnection, WorkflowNode, WorkflowSettings } from '@landflow/engine';
+export type { StickyNote, WorkflowConnection, WorkflowGroup, WorkflowNode, WorkflowSettings } from '@landflow/engine';
 export type { CredentialTypeDescriptor, NodeDescriptor, NodeItem, PropertyDescriptor, PortDescriptor, ConnectionType } from '@landflow/protocol';
 
-export type DiscoverySource = 'builtin' | 'announce' | 'static' | 'scan' | 'manual';
+export type DiscoverySource = 'builtin' | 'announce' | 'static' | 'scan' | 'manual' | 'kubernetes';
 export type PluginStatus = 'online' | 'offline' | 'error';
+
+/** Where a discovered endpoint came from: the Kubernetes namespace and Service (lib/server/plugins/kubernetes.ts). */
+export interface EndpointOrigin {
+  namespace: string;
+  service: string;
+}
 
 export interface EndpointSummary {
   endpoint: string;
@@ -21,6 +27,7 @@ export interface EndpointSummary {
   leaseExpiresAt?: string;
   latencyMs?: number;
   lastError?: string;
+  origin?: EndpointOrigin;
 }
 
 export interface PluginSummary {
@@ -52,6 +59,8 @@ export interface NodeTypeInfo {
   transport: Transport;
   available: boolean;
   descriptor: NodeDescriptor;
+  /** Why the governance policy blocks this node type (Settings → Governance); the node creator hides it. */
+  blocked?: string;
 }
 
 export interface CredentialTypeInfo {
@@ -141,6 +150,8 @@ export interface QueuedStart {
   triggerItems?: NodeItem[];
   triggerOutput?: { nodeId: string; items: NodeItem[] };
   queuedAt: string;
+  /** Queue mode: waiting for a worker to take its job (not held by the concurrency limit). */
+  worker?: boolean;
 }
 
 export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
@@ -282,6 +293,8 @@ export interface VersionDiff {
   connectionsRemoved: number;
   settingsChanged: boolean;
   stickiesChanged: boolean;
+  /** Canvas groups were added, removed, moved, renamed or regrouped (absent: unchanged). */
+  groupsChanged?: boolean;
 }
 
 /** A saved snapshot of a workflow (GET /api/workflows/:id/versions). */
@@ -316,6 +329,10 @@ export interface ImportReport {
   /** Nodes with no Landflow equivalent: added as disabled No Operation nodes. */
   placeholders: Array<{ name: string; type: string }>;
   stickyNotes: number;
+  /** Canvas groups kept (Landflow JSON; n8n and Flowise have none). */
+  groups?: number;
   connections: number;
   warnings: string[];
+  /** Nodes the governance policy blocks (Settings → Governance): imported, but the workflow can't be published with them. */
+  blocked?: Array<{ name: string; type: string; reason: string }>;
 }

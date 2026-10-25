@@ -29,6 +29,16 @@ function loadVars(): Promise<string[]> {
   return varsPromise;
 }
 
+// External secrets names by provider (GET /api/external-secrets, never values), for credential fields; once per page load.
+let secretsPromise: Promise<Record<string, string[]>> | undefined;
+export function loadSecretNames(): Promise<Record<string, string[]>> {
+  secretsPromise ??= fetch('/api/external-secrets', { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : undefined))
+    .then((body: { providers?: Array<{ name: string; enabled: boolean; names: string[] }> } | undefined) => Object.fromEntries((body?.providers ?? []).filter((p) => p.enabled).map((p) => [p.name, p.names])))
+    .catch(() => ({}));
+  return secretsPromise;
+}
+
 const field = 'w-full rounded-[10px] border px-3 text-[13px] transition-colors duration-[120ms]';
 const KIND_ICON: Record<Completion['kind'], ReactNode> = {
   variable: <Braces className="size-3" />,
@@ -59,14 +69,17 @@ export function ExpressionInput({ value, onChange, placeholder, rows, className,
   const pendingCaret = useRef<number | undefined>(undefined);
   const data = useContext(ExpressionDataContext);
   const [vars, setVars] = useState<string[]>([]);
+  const [secrets, setSecrets] = useState<Record<string, string[]>>();
   const [menu, setMenu] = useState<(CompletionResult & { active: number }) | null>(null);
   const [rect, setRect] = useState<DOMRect>();
 
-  const fullData = useMemo<CompletionData>(() => ({ json: data?.json, nodes: data?.nodes ?? [], vars }), [data, vars]);
+  const credentialField = data?.scope === 'credential';
+  const fullData = useMemo<CompletionData>(() => ({ json: data?.json, nodes: data?.nodes ?? [], vars, ...(credentialField && { scope: 'credential' as const, secrets: secrets ?? {} }) }), [data, vars, credentialField, secrets]);
 
   useEffect(() => {
-    if (expression) void loadVars().then(setVars);
-  }, [expression]);
+    if (expression && credentialField) void loadSecretNames().then(setSecrets);
+    else if (expression) void loadVars().then(setVars);
+  }, [expression, credentialField]);
 
   /** Keep the highlight layer scrolled like the field. */
   const sync = useCallback(() => {

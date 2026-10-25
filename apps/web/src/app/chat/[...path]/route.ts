@@ -32,7 +32,7 @@ import {
 } from '@/lib/server/chat';
 import { CHAT_CLIENT_JS, chatPageHtml } from '@/lib/server/chat-client';
 import { handler } from '@/lib/server/http';
-import { newExecutionId, RunBufferedError, runWorkflow, RunSkippedError } from '@/lib/server/runner';
+import { newExecutionId, RunBufferedError, runWorkflow, RunSkippedError, turnedDown } from '@/lib/server/runner';
 import { replyText, runStream, streamFormatOf } from '@/lib/server/streaming';
 import { logger, startTrigger } from '@/lib/server/telemetry';
 
@@ -167,6 +167,8 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const stream = streaming ? runStream(streamFormatOf(request), { executionId }) : undefined;
   const trigger = startTrigger({ source: 'chat', workflowId: workflow.id, nodeName: node.name });
   let started = false;
+  let markStarted!: () => void;
+  const begun = new Promise<void>((resolve) => (markStarted = resolve));
   const run = context.with(trigger.context, () =>
     runWorkflow({
       workflow,
@@ -174,7 +176,10 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
       startNodeId: node.id,
       triggerItems: [item],
       executionId,
-      onStart: () => (started = true),
+      onStart: () => {
+        started = true;
+        markStarted();
+      },
       ...(stream && { streaming: true, onEvent: stream.onEvent }),
     }),
   );
@@ -193,10 +198,8 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     },
   );
   if (!started) {
-    const caught = await settled.then(
-      () => undefined,
-      (reason: unknown) => reason,
-    );
+    // Turned down before it started? (onStart comes synchronously, or a moment later in queue mode.)
+    const caught = await turnedDown(settled, begun);
     if (caught instanceof RunBufferedError) return jsonResponse({ output: '', status: caught.reason, sessionId: parsed.sessionId }, 202, access.cors);
     if (caught instanceof RunSkippedError) return jsonResponse({ error: 'Too many chats right now — try again in a moment' }, 429, access.cors);
     if (caught !== undefined) throw caught;

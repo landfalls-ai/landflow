@@ -1,0 +1,68 @@
+# Py Insights (Python SDK). The Service's label makes the host discover it; the annotation names its gRPC port.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plugin-py-insights
+  labels: { app.kubernetes.io/name: plugin-py-insights, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: plugin }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: plugin-py-insights }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: plugin-py-insights, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: plugin }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001 # the image's `landflow` user
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: plugin
+          image: landflow/plugin-py-insights:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 7102 }
+            - { name: grpc, containerPort: 7202 }
+          env:
+            # Discovered, so no announcing (set LANDFLOW_REGISTRY_URL to announce as well).
+            - { name: LANDFLOW_REGISTRY_URL, value: "off" }
+            - name: LANDFLOW_REGISTRY_SECRET # answers the host's challenge on GetManifest (docs/protocol.md §13)
+              valueFrom: { secretKeyRef: { name: landflow-registry, key: secret, optional: true } }
+          # Ready only while the plugin answers its health endpoint: the host follows readiness through EndpointSlices.
+          readinessProbe:
+            httpGet: { path: /landflow/v1/health, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /landflow/v1/health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 20m, memory: 160Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plugin-py-insights
+  labels: { app.kubernetes.io/name: plugin-py-insights, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: plugin, landflow.dev/plugin: "true" }
+  annotations:
+    landflow.dev/grpc-port: grpc
+    # landflow.dev/http-port: http   # also register the HTTP binding
+spec:
+  selector: { app.kubernetes.io/name: plugin-py-insights }
+  ports:
+    - { name: grpc, port: 7202, targetPort: grpc, appProtocol: grpc }
+    - { name: http, port: 7102, targetPort: http }

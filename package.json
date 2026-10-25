@@ -10,6 +10,7 @@
     "dev": "pnpm --filter @landflow/web dev",
     "build": "pnpm --filter @landflow/web build",
     "start": "pnpm --filter @landflow/web start",
+    "worker": "pnpm --filter @landflow/web worker",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "landflow": "node packages/cli/dist/main.js",

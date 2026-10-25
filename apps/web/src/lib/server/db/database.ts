@@ -10,6 +10,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync, SQLInputValue, StatementSync } from 'node:sqlite';
+import { singleton } from '../singleton';
 import { MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type Migration, type TableName } from './schema';
 
 export type DbKind = 'sqlite' | 'postgres';
@@ -31,6 +32,14 @@ export interface WriteSink {
 }
 
 const COLUMN = /^[a-z_][a-z0-9_]*$/;
+
+/** Rows pass through this before an upsert or insert, when set (lib/server/secrets/install.ts redacts run data with it). */
+export type RowFilter = (table: TableName, row: Row) => Row;
+const filters = singleton<{ row?: RowFilter }>('db-row-filter', () => ({}));
+export function setRowFilter(filter: RowFilter | undefined) {
+  filters.row = filter;
+}
+const filtered = (table: TableName, row: Row): Row => (filters.row ? filters.row(table, row) : row);
 
 function clean(row: Row): Record<string, SqlValue> {
   const out: Record<string, SqlValue> = {};
@@ -54,6 +63,8 @@ export class Database {
   private readonly statements = new Map<string, StatementSync>();
   private depth = 0;
   private pending: WriteOp[] = [];
+  /** Told of every committed write (queue mode on SQLite: other processes drop their caches). */
+  private readonly observers = new Set<(ops: WriteOp[]) => void>();
 
   constructor(
     readonly sqlite: DatabaseSync,
@@ -82,12 +93,12 @@ export class Database {
 
   /** Insert a row or replace the columns it names (by primary key). */
   upsert(table: TableName, row: Row) {
-    this.write({ op: 'upsert', table, row: clean(row) });
+    this.write({ op: 'upsert', table, row: clean(filtered(table, row)) });
   }
 
   /** Insert a row unless its primary key exists. Returns whether it was inserted. */
   insertNew(table: TableName, row: Row): boolean {
-    return this.write({ op: 'insert', table, row: clean(row) }) > 0;
+    return this.write({ op: 'insert', table, row: clean(filtered(table, row)) }) > 0;
   }
 
   /** Delete the rows whose columns equal `where`. Returns how many went. */
@@ -115,11 +126,22 @@ export class Database {
       changes = Number(this.statement(upsertSql(op.table, columns, op.op, () => '?')).run(...columns.map((c) => op.row[c] as SQLInputValue)).changes);
     }
     // Only changes that happened are replayed (an insert that hit an existing key, a delete of nothing: no op).
-    if (this.sink && (changes > 0 || op.op === 'upsert')) {
+    if ((this.sink || this.observers.size) && (changes > 0 || op.op === 'upsert')) {
       if (this.depth > 0) this.pending.push(op);
-      else this.sink.enqueue([op]);
+      else this.committed([op]);
     }
     return changes;
+  }
+
+  private committed(ops: WriteOp[]) {
+    this.sink?.enqueue(ops);
+    for (const observer of this.observers) observer(ops);
+  }
+
+  /** Hear of every committed write; returns a function that stops it. */
+  observe(observer: (ops: WriteOp[]) => void): () => void {
+    this.observers.add(observer);
+    return () => this.observers.delete(observer);
   }
 
   /** Run `fn` as one transaction (nested calls join the outer one). `fn` must be synchronous. */
@@ -131,7 +153,7 @@ export class Database {
       const result = fn();
       if (result instanceof Promise) throw new Error('Database transactions must be synchronous');
       this.sqlite.exec('COMMIT');
-      if (this.sink && this.pending.length) this.sink.enqueue(this.pending);
+      if (this.pending.length) this.committed(this.pending);
       return result;
     } catch (error) {
       if (this.sqlite.isTransaction) this.sqlite.exec('ROLLBACK');

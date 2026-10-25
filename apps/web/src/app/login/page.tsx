@@ -4,6 +4,7 @@ import { safeNext } from '@/lib/shared/auth-paths';
 import { setupRequired } from '@/lib/server/auth';
 import { mailConfigured } from '@/lib/server/auth/mail';
 import { oidcConfig } from '@/lib/server/auth/oidc';
+import { samlConfig } from '@/lib/server/auth/saml';
 import { currentPageUser } from '@/lib/server/auth/pages';
 import { AuthShell, LoginForm } from '@/components/auth/auth-forms';
 
@@ -16,9 +17,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   if (await currentPageUser()) redirect(next);
   if (setupRequired()) redirect('/setup');
   const oidc = oidcConfig();
+  const saml = samlConfig();
   return (
     <AuthShell title="Sign in" subtitle="Welcome back. Sign in to build and run workflows.">
-      <LoginForm next={next} oidcLabel={oidc?.label} initialError={params.error?.slice(0, 300)} smtp={mailConfigured()} />
+      <LoginForm next={next} oidcLabel={oidc?.label} samlLabel={saml?.label} initialError={params.error?.slice(0, 300)} smtp={mailConfigured()} />
     </AuthShell>
   );
 }

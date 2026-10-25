@@ -1,13 +1,17 @@
 /**
  * Sign-in sessions: a random token in the session cookie, kept as its SHA-256 in `sessions` with an expiry
  * (LANDFLOW_SESSION_TTL_HOURS, default 14 days). Signing out deletes the row; removing a user or resetting their
- * password deletes all of theirs. Expired rows are swept when sessions are created.
+ * password deletes all of theirs. Expired rows are swept when sessions are created. A deactivated user (SCIM) gets
+ * no session, and the sessions they had stop working.
  */
+import { recordAudit } from '../audit';
 import { authDb } from './db';
 import { randomToken, tokenHash } from './passwords';
-import { getUser, updateUser, type UserRecord } from './users';
+import { getUser, updateUser, UserError, type UserRecord } from './users';
 
-export type SessionMethod = 'password' | 'oidc' | 'setup' | 'invite' | 'reset';
+export type SessionMethod = 'password' | 'oidc' | 'saml' | 'setup' | 'invite' | 'reset';
+
+export const DEACTIVATED_MESSAGE = 'This account is deactivated. Ask an admin to reactivate it.';
 
 export interface SessionRecord {
   id: string;
@@ -39,6 +43,7 @@ export function sessionTtlHours(): number {
 
 /** Start a session for `user`: returns the cookie token (shown nowhere else) and when it expires. */
 export function createSession(user: UserRecord, method: SessionMethod, meta: { ip?: string; userAgent?: string } = {}): { token: string; expiresAt: Date } {
+  if (user.disabledAt || getUser(user.id)?.disabledAt) throw new UserError(DEACTIVATED_MESSAGE, 403);
   const db = authDb();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + sessionTtlHours() * 3_600_000);
@@ -57,6 +62,8 @@ export function createSession(user: UserRecord, method: SessionMethod, meta: { i
     });
   });
   updateUser(user.id, { lastLoginAt: now.toISOString() });
+  // Every way in (password, OIDC, SAML, setup, an accepted invite) starts here: one audit event for all of them.
+  recordAudit({ action: 'auth.sign_in', actor: { id: user.id, name: user.name, email: user.email }, target: { type: 'user', id: user.id, name: user.email }, summary: `${user.email} signed in (${method})`, details: { method } });
   return { token, expiresAt };
 }
 
@@ -71,7 +78,7 @@ export function sessionUser(token: string | undefined, now = Date.now()): { user
     return undefined;
   }
   const user = getUser(row.user_id);
-  if (!user) return undefined;
+  if (!user || user.disabledAt) return undefined;
   if (!row.last_seen_at || now - Date.parse(row.last_seen_at) > TOUCH_EVERY_MS) db.upsert('sessions', { ...row, last_seen_at: new Date(now).toISOString() });
   return { user, session: { id: row.id, userId: row.user_id, createdAt: row.created_at, expiresAt: row.expires_at, method: row.method as SessionMethod } };
 }

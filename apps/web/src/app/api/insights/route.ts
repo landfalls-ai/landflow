@@ -1,5 +1,8 @@
 import { handler, json } from '@/lib/server/http';
 import { insightsReport, type InsightsPeriod } from '@/lib/server/insights';
+import { visibleIds } from '@/lib/server/projects';
+import { routeActor } from '@/lib/server/projects/http';
+import { store } from '@/lib/server/store';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,5 +14,7 @@ export const GET = handler(async (request: Request) => {
   const requested = url.searchParams.get('period') as InsightsPeriod;
   const period = PERIODS.includes(requested) ? requested : '7d';
   const includeManual = ['1', 'true'].includes(url.searchParams.get('includeManual') ?? '');
-  return json(insightsReport(period, includeManual));
+  // Members: the workflows they see (owners and admins: all).
+  const only = visibleIds(routeActor(), 'workflow', store.listWorkflows().map((w) => w.id));
+  return json(insightsReport(period, includeManual, only));
 });

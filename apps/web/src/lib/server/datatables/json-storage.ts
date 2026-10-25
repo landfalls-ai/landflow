@@ -80,7 +80,7 @@ export class JsonFileStorage implements DataTableStorage {
       throw new DataTableError(`“${doc.table.name}” would grow past ${Math.round(this.maxBytes / 1024 / 1024)} MB. Delete rows or split the table.`, 413);
     }
     const path = this.path(doc.table.id);
-    const tmp = `${path}.${process.pid}.tmp`;
+    const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
     writeFileSync(tmp, text);
     renameSync(tmp, path);
     this.cache.set(doc.table.id, doc);

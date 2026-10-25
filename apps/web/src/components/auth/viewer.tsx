@@ -16,10 +16,12 @@ export function useViewer(): Viewer | null {
   return useContext(ViewerContext);
 }
 
-/** Sign out and go to the sign-in page (a full load, so nothing of the old session stays on screen). */
+/** Sign out and go to the sign-in page (a full load, so nothing of the old session stays on screen), or to the SAML IdP's logout. */
 export async function signOut() {
-  await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
-  window.location.assign('/login');
+  const result = (await fetch('/api/auth/logout', { method: 'POST' })
+    .then((r) => r.json())
+    .catch(() => undefined)) as { redirect?: string } | undefined;
+  window.location.assign(result?.redirect ?? '/login');
 }
 
 /** Initials for an avatar: "Ada Lovelace" → "AL". */

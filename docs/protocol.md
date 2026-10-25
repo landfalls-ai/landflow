@@ -32,6 +32,8 @@ Discovery sources (all feed the same registry):
 3. **Scan** (pull) — the host probes `LANDFLOW_SCAN_HOSTS` × `LANDFLOW_SCAN_PORTS`
    (default `127.0.0.1` × `7100-7299`): HTTP `GET /.well-known/landflow`, then gRPC `Health`.
 4. **Built-in** — the host's own `core` plugin, registered in-process through the same interface.
+5. **Kubernetes** (pull, opt-in) — with `LANDFLOW_PLUGIN_DISCOVERY=kubernetes` the host watches Services labelled
+   `landflow.dev/plugin=true` and their EndpointSlices, and registers a plugin while it has a ready pod (§13).
 
 A lease that is not renewed within `ttlSeconds` marks the plugin **offline**; its nodes stay
 visible (greyed out) so saved workflows still open.
@@ -483,3 +485,62 @@ A JSON `response` is written as `{ status, json }` in TypeScript and Python (`JS
 serializes it and sets `content-type`. The GitHub Webhook Trigger in `plugins/productivity` (Python) is a complete
 example: it registers a repository hook with a random secret, verifies `X-Hub-Signature-256`, answers GitHub's
 `ping`, and deduplicates redeliveries by `X-GitHub-Delivery`.
+
+## 13. Kubernetes discovery and registry proofs
+
+With `LANDFLOW_PLUGIN_DISCOVERY=kubernetes` the host finds plugins itself: no announce, no heartbeat. It watches the
+Services labelled **`landflow.dev/plugin=true`** in `LANDFLOW_K8S_NAMESPACES` (default: its own namespace), and their
+EndpointSlices (which inherit the label). Announce, static seeds and scan keep working next to it; all feed the same
+registry, and a discovered endpoint shows source `kubernetes` with its namespace and Service on the Plugins page.
+
+| Service field | Meaning |
+|---|---|
+| label `landflow.dev/plugin: "true"` | this Service is a plugin |
+| annotation `landflow.dev/grpc-port` | the gRPC port: a Service port number (`"7203"`) or name (`"grpc"`). Without it: the port named `grpc` (or `landflow-grpc`), else one with `appProtocol: grpc` / `kubernetes.io/h2c` |
+| annotation `landflow.dev/http-port` | optional: also register the HTTP binding on this port (number or name) |
+
+The endpoint is `grpc://<service>.<namespace>.svc.<LANDFLOW_K8S_CLUSTER_DOMAIN, default cluster.local>:<port>`, or the
+ClusterIP with `LANDFLOW_K8S_ADDRESS=cluster-ip`. The host follows the Service's ready pods:
+
+- **a pod becomes ready** → the host pulls the manifest (GetManifest, with a challenge when the registry secret is set,
+  below); a failure is retried with backoff (1 s doubling to 30 s) while a pod stays ready;
+- **the set of ready pods changes** (a rollout, a scale-up) → the manifest is pulled again, so a new version shows;
+- **no pod is ready** (scaled to 0, failing readiness) → the endpoint is marked **offline**, not dropped: nodes stay
+  visible and saved workflows open; the registry's health probes (every 15 s) treat it like any pulled endpoint;
+- **the Service is deleted** or loses the label → the endpoint is removed, and the plugin with its last endpoint.
+
+Plugins should base their readiness probe on `GET /landflow/v1/health` and set `LANDFLOW_REGISTRY_URL=off` (they are
+discovered, so announcing is not needed). The watch is a list followed by a watch from its `resourceVersion`; a watch
+the server closes is resumed, a failed one is retried with exponential backoff (1 s to 30 s) from a fresh list, a
+`410 Gone` re-lists at once, and everything is re-listed every `LANDFLOW_K8S_RESYNC_SECONDS` (300). The host needs
+`get`, `list` and `watch` on `services` and `discovery.k8s.io/endpointslices` in each namespace it watches
+(`deploy/k8s/base/host/rbac.yaml`). Credentials: the pod's service account in a cluster, else the kubeconfig
+(`KUBECONFIG` or `~/.kube/config`) with `LANDFLOW_K8S_CONTEXT`, or its current context when that is unset.
+
+### Registry proofs
+
+`LANDFLOW_REGISTRY_SECRET` on the host makes announcing plugins send the secret (`X-Landflow-Registry-Secret` or gRPC
+metadata). A discovered plugin announces nothing, so the host checks it differently: on every GetManifest it sends a
+random challenge and accepts the manifest only with a valid proof. The secret itself never travels.
+
+| | Host → plugin (GetManifest request) | Plugin → host (response) |
+|---|---|---|
+| HTTP | header `X-Landflow-Registry-Challenge: <challenge>` | header `X-Landflow-Registry-Proof: <proof>` |
+| gRPC | metadata `x-landflow-registry-challenge` | initial (header) metadata `x-landflow-registry-proof` |
+
+`proof = hex(HMAC-SHA256(key = secret, message = "landflow-registry-proof/v1\n" + pluginId + "\n" + challenge))`,
+where `pluginId` is the manifest's `plugin.id` and the challenge is 32 random bytes, base64url (43 characters; plugins
+ignore challenges over 256). Test vector: secret `registry-s3cret`, plugin `test-plugin`, challenge `challenge-123` →
+`d6d47aef6c9f0cdd2357464b9db5c8d2a049d3768756e10af5ec4e37ad47655e`.
+
+- The three SDKs answer by themselves when `LANDFLOW_REGISTRY_SECRET` is set in the plugin's environment
+  (`registryProof` / `answerRegistryChallenge` in TypeScript, `RegistryProof` in Go, `registry_proof` in Python, with
+  `verify…` counterparts). Without the variable, or without a challenge, they send no proof.
+- With the secret set, a discovered plugin that sends no proof ("did not prove the registry secret"), a wrong one, or
+  a proof for another plugin id is not registered; the reason shows in the Plugins page's feed, and it is retried.
+- Only Kubernetes-discovered endpoints are challenged. Announce keeps its header check; static seeds, scan and manual
+  endpoints are configured on the host and are not challenged. Without the secret nothing changes.
+- **Additive.** Older plugins ignore the challenge (and are then refused only if the host has a secret); older hosts
+  never send one. A proof shows that whoever answered holds the secret; it does not stop a process in the Service's
+  path from relaying a real plugin's answer, so who may create Services and pods in the watched namespaces matters as
+  much as the secret.

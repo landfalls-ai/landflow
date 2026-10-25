@@ -8,6 +8,10 @@
  * from `nodes`: the engine never sees them and everything that reads
  * `node.data.wf` keeps working. Canvas edits go through `record()`, which keeps
  * an undo history (drags and typing coalesce into one step).
+ *
+ * Canvas groups (`groups`, React Flow nodes of type `frame`, see ./groups.ts) work the same way: frames behind the
+ * nodes, saved as `workflow.groups`. Moving a frame moves its nodes, and nodes dropped into or out of a frame join or
+ * leave it.
  */
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange } from '@xyflow/react';
 import { nanoid } from 'nanoid';
@@ -31,8 +35,23 @@ import type {
 } from '@/lib/shared/types';
 import { STICKY_DEFAULT_CONTENT, STICKY_DEFAULT_SIZE } from '../canvas/sticky-note';
 import { preparePaste, remapReferences, selectionOrigin, serializeSelection, type ClipboardData } from './clipboard';
+import { GROUP_NAME_MAX, normalizeGroups } from '@/lib/shared/groups';
+import {
+  adoptNodes,
+  frameFor,
+  fromFrames,
+  memberMoves,
+  nextGroupName,
+  refitFrames,
+  refitMembers,
+  toFrames,
+  withoutMembers,
+  type GroupData,
+  type GroupFlowNode,
+} from './groups';
 
 export type { NodeRunState, NodeStatus } from '@/lib/client/run-data';
+export type { GroupData, GroupFlowNode } from './groups';
 
 export interface FlowNodeData extends Record<string, unknown> {
   wf: Omit<WorkflowNode, 'position'>;
@@ -49,8 +68,8 @@ export interface StickyData extends Record<string, unknown> {
   color: number;
 }
 export type StickyFlowNode = Node<StickyData, 'sticky'>;
-/** Everything React Flow draws: notes first, so they sit under the nodes. */
-export type CanvasNode = FlowNode | StickyFlowNode;
+/** Everything React Flow draws: group frames and notes first, so they sit under the nodes. */
+export type CanvasNode = FlowNode | StickyFlowNode | GroupFlowNode;
 
 /** Notes sit under nodes and edges; a selected note (z + 1000) still stays under unselected nodes' edges. */
 export const STICKY_Z = -1000;
@@ -105,6 +124,8 @@ interface EditorState {
   nodes: FlowNode[];
   edges: FlowEdge[];
   stickies: StickyFlowNode[];
+  /** Canvas groups: frames around nodes (./groups.ts). */
+  groups: GroupFlowNode[];
   /** Undo / redo depth, for the toolbar buttons. */
   history: { past: number; future: number };
   nodeTypes: Record<string, NodeTypeInfo>;
@@ -172,9 +193,17 @@ interface EditorState {
   /** Add clipboard data: fresh ids, unique names, at `at` (top-left corner) or offset from the original positions. Returns the number of nodes and notes. */
   paste(data: ClipboardData, at?: { x: number; y: number }): number;
   /** Import a whole workflow into this one (to the right of what is already on the canvas). */
-  mergeWorkflow(workflow: Pick<Workflow, 'nodes' | 'connections' | 'stickyNotes' | 'pinData'>): number;
+  mergeWorkflow(workflow: Pick<Workflow, 'nodes' | 'connections' | 'stickyNotes' | 'pinData' | 'groups'>): number;
   addSticky(position: { x: number; y: number }): string;
   updateSticky(id: string, patch: Partial<StickyData>): void;
+  /** ⌘A: select every visible node and sticky note (not the frames, so ⌘G can group them). */
+  selectAll(): void;
+  /** ⌘G: a frame around the selected nodes (they leave other groups). Returns the group id. */
+  groupSelection(): string | undefined;
+  /** ⇧⌘G: remove frames, keeping their nodes (selected afterwards). Defaults to the selected groups, else those of the selected nodes. */
+  ungroup(ids?: string[]): void;
+  /** Rename, recolour, collapse or expand a group. */
+  updateGroup(id: string, patch: Partial<Pick<GroupData, 'name' | 'color' | 'collapsed'>>): void;
   undo(): void;
   redo(): void;
   setMeta(patch: Partial<Pick<EditorState, 'name' | 'description' | 'active' | 'tags'>>): void;
@@ -276,6 +305,7 @@ interface Snapshot {
   nodes: FlowNode[];
   edges: FlowEdge[];
   stickies: StickyFlowNode[];
+  groups: GroupFlowNode[];
   pinData: Record<string, NodeItem[]>;
 }
 const HISTORY_LIMIT = 100;
@@ -314,7 +344,7 @@ export const useEditor = create<EditorState>((set, get) => {
       return;
     }
     const s = get();
-    history.past.push({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, pinData: s.pinData });
+    history.past.push({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, groups: s.groups, pinData: s.pinData });
     if (history.past.length > HISTORY_LIMIT) history.past.shift();
     history.future = [];
     history.last = key ? { key, at: now } : undefined;
@@ -334,6 +364,7 @@ export const useEditor = create<EditorState>((set, get) => {
       nodes: unselect(snapshot.nodes),
       edges: snapshot.edges,
       stickies: unselect(snapshot.stickies),
+      groups: unselect(snapshot.groups),
       pinData: snapshot.pinData,
       openNodeId: snapshot.nodes.some((n) => n.id === s.openNodeId) ? s.openNodeId : undefined,
       history: { past: history.past.length, future: history.future.length },
@@ -345,17 +376,19 @@ export const useEditor = create<EditorState>((set, get) => {
     record();
     const flow = toFlow({ nodes: plan.nodes, connections: plan.connections });
     const stickies = toStickies(plan.stickyNotes);
+    const frames = toFrames(plan.groups);
     set((s) => ({
       nodes: [...unselect(s.nodes), ...flow.nodes.map((n) => ({ ...n, selected: true }))],
       edges: [...unselect(s.edges), ...flow.edges],
       stickies: [...unselect(s.stickies), ...stickies.map((n) => ({ ...n, selected: true }))],
+      groups: [...unselect(s.groups), ...frames.map((n) => ({ ...n, selected: true }))],
       pinData: { ...s.pinData, ...plan.pinData },
       lastAddedId: flow.nodes.at(-1)?.id ?? s.lastAddedId,
       dirty: true,
     }));
-    return flow.nodes.length + stickies.length;
+    return flow.nodes.length + stickies.length + frames.length;
   };
-  const newId = (kind: 'node' | 'edge' | 'sticky') => `${kind === 'node' ? 'n' : kind === 'edge' ? 'e' : 's'}_${nanoid(8)}`;
+  const newId = (kind: 'node' | 'edge' | 'sticky' | 'group') => `${{ node: 'n', edge: 'e', sticky: 's', group: 'g' }[kind]}_${nanoid(8)}`;
 
   return {
   workflowId: '',
@@ -366,6 +399,7 @@ export const useEditor = create<EditorState>((set, get) => {
   nodes: [],
   edges: [],
   stickies: [],
+  groups: [],
   history: { past: 0, future: 0 },
   nodeTypes: {},
   dirty: false,
@@ -384,6 +418,7 @@ export const useEditor = create<EditorState>((set, get) => {
       settings: workflow.settings ?? {},
       ...toFlow(workflow),
       stickies: toStickies(workflow.stickyNotes),
+      groups: toFrames(normalizeGroups(workflow.groups, workflow.nodes.map((n) => n.id))),
       history: { past: 0, future: 0 },
       nodeTypes: Object.fromEntries(nodeTypes.map((t) => [t.type, t])),
       dirty: false,
@@ -411,15 +446,31 @@ export const useEditor = create<EditorState>((set, get) => {
     if (changes.some((c) => c.type === 'remove')) record('remove', 80);
 
     const stickyIds = new Set(get().stickies.map((n) => n.id));
+    const frameIds = new Set(get().groups.map((n) => n.id));
     const isSticky = (c: NodeChange<CanvasNode>) => ('id' in c ? stickyIds.has(c.id) : c.item.type === 'sticky');
+    const isFrame = (c: NodeChange<CanvasNode>) => ('id' in c ? frameIds.has(c.id) : c.item.type === 'frame');
     const forNotes = changes.filter(isSticky) as NodeChange<StickyFlowNode>[];
-    const forNodes = changes.filter((c) => !isSticky(c)) as NodeChange<FlowNode>[];
+    const forFrames = changes.filter(isFrame) as NodeChange<GroupFlowNode>[];
+    const forNodes = changes.filter((c) => !isSticky(c) && !isFrame(c)) as NodeChange<FlowNode>[];
     const meaningful = changes.some((c) => c.type === 'position' || c.type === 'remove' || c.type === 'add' || (c.type === 'dimensions' && c.resizing !== undefined));
-    set((s) => ({
-      ...(forNodes.length && { nodes: applyNodeChanges(forNodes, s.nodes) }),
-      ...(forNotes.length && { stickies: applyNodeChanges(forNotes, s.stickies) }),
-      dirty: s.dirty || meaningful,
-    }));
+    // Groups: a moved frame takes its nodes along; dropped nodes join or leave groups; a resized frame refits its members.
+    const moves = forFrames.length ? memberMoves(get().groups, get().nodes, changes) : [];
+    const dropped = forNodes.flatMap((c) => (c.type === 'position' && c.dragging === false ? [c.id] : []));
+    const resized = forFrames.flatMap((c) => (c.type === 'dimensions' && c.resizing === false ? [c.id] : []));
+    const removed = new Set(forNodes.flatMap((c) => (c.type === 'remove' ? [c.id] : [])));
+    set((s) => {
+      const nodes = forNodes.length || moves.length ? applyNodeChanges([...forNodes, ...moves], s.nodes) : s.nodes;
+      let groups = forFrames.length ? applyNodeChanges(forFrames, s.groups) : s.groups;
+      if (removed.size) groups = withoutMembers(groups, removed);
+      if (dropped.length) groups = adoptNodes(groups, nodes, dropped);
+      for (const id of resized) groups = refitMembers(groups, nodes, id);
+      return {
+        ...(nodes !== s.nodes && { nodes }),
+        ...(forNotes.length && { stickies: applyNodeChanges(forNotes, s.stickies) }),
+        ...(groups !== s.groups && { groups }),
+        dirty: s.dirty || meaningful,
+      };
+    });
   },
 
   onEdgesChange(changes) {
@@ -597,12 +648,14 @@ export const useEditor = create<EditorState>((set, get) => {
 
   replaceGraph(workflow, focus) {
     record();
-    const before = { nodes: get().nodes, edges: get().edges, pinData: get().pinData };
+    const before = { nodes: get().nodes, edges: get().edges, pinData: get().pinData, groups: get().groups };
     const flow = toFlow(workflow);
     set((s) => {
       const oldNodes = new Map(s.nodes.map((n) => [n.id, n]));
       const oldEdges = new Map(s.edges.map((e) => [e.id, e]));
+      const kept = new Set(flow.nodes.map((n) => n.id));
       return {
+        groups: withoutMembers(s.groups, new Set(s.nodes.map((n) => n.id).filter((id) => !kept.has(id)))),
         nodes: flow.nodes.map((n) => {
           const old = oldNodes.get(n.id);
           const selected = focus ? n.id === focus.id : Boolean(old?.selected);
@@ -659,7 +712,10 @@ export const useEditor = create<EditorState>((set, get) => {
       if (!base) continue;
       children.forEach((id, i) => (positions[id] = { x: base.x + 10 + i * 110, y: base.y + 200 }));
     }
-    set((s) => ({ nodes: s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n)), dirty: true }));
+    set((s) => {
+      const nodes = s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n));
+      return { nodes, groups: s.groups.length ? refitFrames(s.groups, nodes) : s.groups, dirty: true };
+    });
   },
 
   updateNode(id, patch) {
@@ -698,6 +754,7 @@ export const useEditor = create<EditorState>((set, get) => {
     set((s) => ({
       nodes: s.nodes.filter((n) => !drop.has(n.id)),
       stickies: s.stickies.some((n) => drop.has(n.id)) ? s.stickies.filter((n) => !drop.has(n.id)) : s.stickies,
+      groups: s.groups.length ? withoutMembers(s.groups.filter((n) => !drop.has(n.id)), drop) : s.groups,
       edges: s.edges.filter((e) => !drop.has(e.source) && !drop.has(e.target)),
       openNodeId: s.openNodeId && drop.has(s.openNodeId) ? undefined : s.openNodeId,
       pinData: Object.fromEntries(Object.entries(s.pinData).filter(([nodeId]) => !drop.has(nodeId))),
@@ -706,8 +763,8 @@ export const useEditor = create<EditorState>((set, get) => {
   },
 
   duplicateNode(id) {
-    const data = serializeSelection(get().toWorkflow(), new Set([id]), new Set([id]));
-    if (data.nodes.length || data.stickyNotes.length) addPlan(preparePaste(data, { existingNames: get().nodes.map((n) => n.data.wf.name), offset: { x: 40, y: 60 }, newId }));
+    const data = serializeSelection(get().toWorkflow(), new Set([id]), new Set([id]), new Set([id]));
+    if (data.nodes.length || data.stickyNotes.length || data.groups?.length) addPlan(preparePaste(data, { existingNames: get().nodes.map((n) => n.data.wf.name), offset: { x: 40, y: 60 }, newId }));
   },
 
   duplicateSelection() {
@@ -719,8 +776,9 @@ export const useEditor = create<EditorState>((set, get) => {
     const s = get();
     const nodeIds = new Set(s.nodes.filter((n) => n.selected).map((n) => n.id));
     const stickyIds = new Set(s.stickies.filter((n) => n.selected).map((n) => n.id));
-    if (!nodeIds.size && !stickyIds.size) return undefined;
-    return serializeSelection(s.toWorkflow(), nodeIds, stickyIds);
+    const groupIds = new Set(s.groups.filter((n) => n.selected).map((n) => n.id));
+    if (!nodeIds.size && !stickyIds.size && !groupIds.size) return undefined;
+    return serializeSelection(s.toWorkflow(), nodeIds, stickyIds, groupIds);
   },
 
   paste(data, at) {
@@ -743,6 +801,7 @@ export const useEditor = create<EditorState>((set, get) => {
       nodes: workflow.nodes,
       connections: workflow.connections,
       stickyNotes: workflow.stickyNotes ?? [],
+      groups: workflow.groups,
       pinData: workflow.pinData,
     };
     // Next to what is already there, so the import doesn't land on top of it.
@@ -765,11 +824,65 @@ export const useEditor = create<EditorState>((set, get) => {
     set((s) => ({ stickies: s.stickies.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)), dirty: true }));
   },
 
+  selectAll() {
+    set((s) => ({
+      nodes: s.nodes.map((n) => (n.hidden || n.selected ? n : { ...n, selected: true })),
+      stickies: s.stickies.map((n) => (n.selected ? n : { ...n, selected: true })),
+      groups: unselect(s.groups),
+    }));
+  },
+
+  groupSelection() {
+    const s = get();
+    const picked = s.nodes.filter((n) => n.selected && !n.hidden);
+    const frame = frameFor(newId('group'), nextGroupName(s.groups), picked);
+    if (!frame) return undefined;
+    record();
+    const ids = new Set(frame.data.nodeIds);
+    set((s) => ({
+      groups: [...withoutMembers(unselect(s.groups), ids), { ...frame, selected: true }],
+      nodes: unselect(s.nodes),
+      stickies: unselect(s.stickies),
+      dirty: true,
+    }));
+    return frame.id;
+  },
+
+  ungroup(ids) {
+    const s = get();
+    const selectedNodes = new Set(s.nodes.filter((n) => n.selected).map((n) => n.id));
+    const selectedGroups = s.groups.filter((g) => g.selected).map((g) => g.id);
+    const drop = new Set(ids ?? (selectedGroups.length ? selectedGroups : s.groups.filter((g) => g.data.nodeIds.some((id) => selectedNodes.has(id))).map((g) => g.id)));
+    if (!s.groups.some((g) => drop.has(g.id))) return;
+    record();
+    const freed = new Set(s.groups.filter((g) => drop.has(g.id)).flatMap((g) => g.data.nodeIds));
+    set((s) => ({
+      groups: s.groups.filter((g) => !drop.has(g.id)),
+      nodes: s.nodes.map((n) => (freed.has(n.id) ? (n.selected ? n : { ...n, selected: true }) : n.selected ? { ...n, selected: false } : n)),
+      stickies: unselect(s.stickies),
+      dirty: true,
+    }));
+  },
+
+  updateGroup(id, patch) {
+    const frame = get().groups.find((g) => g.id === id);
+    if (!frame) return;
+    record(`group:${id}:${Object.keys(patch).join(',')}`, 1500);
+    const next = { ...patch, ...(patch.name !== undefined && { name: patch.name.slice(0, GROUP_NAME_MAX) }) };
+    // Collapsing hides the members, so they can't stay selected.
+    const members = patch.collapsed ? new Set(frame.data.nodeIds) : undefined;
+    set((s) => ({
+      groups: s.groups.map((g) => (g.id === id ? { ...g, data: { ...g.data, ...next } } : g)),
+      ...(members && { nodes: s.nodes.map((n) => (members.has(n.id) && n.selected ? { ...n, selected: false } : n)) }),
+      dirty: true,
+    }));
+  },
+
   undo() {
     const previous = history.past.pop();
     if (!previous) return;
     const s = get();
-    history.future.push({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, pinData: s.pinData });
+    history.future.push({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, groups: s.groups, pinData: s.pinData });
     history.last = undefined;
     restore(previous);
   },
@@ -778,7 +891,7 @@ export const useEditor = create<EditorState>((set, get) => {
     const next = history.future.pop();
     if (!next) return;
     const s = get();
-    history.past.push({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, pinData: s.pinData });
+    history.past.push({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, groups: s.groups, pinData: s.pinData });
     history.last = undefined;
     restore(next);
   },
@@ -969,6 +1082,7 @@ export const useEditor = create<EditorState>((set, get) => {
       // Always sent (also when empty) so clearing a setting or the last note reaches the server.
       settings: s.settings,
       stickyNotes: fromStickies(s.stickies),
+      groups: fromFrames(s.groups, s.nodes),
       pinData: Object.keys(s.pinData).length ? Object.fromEntries(Object.entries(s.pinData).filter(([id]) => s.nodes.some((n) => n.id === id))) : undefined,
       nodes: s.nodes.map((n) => ({ ...n.data.wf, position: [Math.round(n.position.x), Math.round(n.position.y)] as [number, number] })),
       connections: s.edges.map((e) => {

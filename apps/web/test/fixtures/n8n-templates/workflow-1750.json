@@ -1,0 +1,63 @@
+{
+  "workflow": {
+    "id": 1750,
+    "name": "Post new form submissions to Slack",
+    "views": 5120,
+    "recentViews": 12,
+    "totalViews": 5120,
+    "createdAt": "2024-03-12T09:41:22.000Z",
+    "description": "## What it does\nEvery POST to the webhook is formatted and posted to a Slack channel.\n\n## Setup\n1. Add your Slack credential.\n2. Pick the channel.",
+    "workflow": {
+      "meta": { "instanceId": "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9" },
+      "nodes": [
+        {
+          "id": "3f1a9c52-6a2e-4d3c-9c1d-1f2e3d4c5b6a",
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "typeVersion": 2,
+          "position": [0, 0],
+          "webhookId": "b7c1d2e3-f4a5-4b6c-8d7e-9f0a1b2c3d4e",
+          "parameters": { "httpMethod": "POST", "path": "form-to-slack", "options": {} }
+        },
+        {
+          "id": "8d2e4f60-1b3c-4a5d-8e7f-9a0b1c2d3e4f",
+          "name": "Format message",
+          "type": "n8n-nodes-base.set",
+          "typeVersion": 3.4,
+          "position": [220, 0],
+          "parameters": {
+            "assignments": { "assignments": [{ "id": "a1", "name": "text", "value": "=New submission from {{ $json.body.name }}", "type": "string" }] },
+            "options": {}
+          }
+        },
+        {
+          "id": "c4d5e6f7-0a1b-4c2d-9e3f-4a5b6c7d8e9f",
+          "name": "Slack",
+          "type": "n8n-nodes-base.slack",
+          "typeVersion": 2.2,
+          "position": [440, 0],
+          "parameters": { "select": "channel", "channelId": { "__rl": true, "value": "#general", "mode": "name" }, "text": "={{ $json.text }}", "otherOptions": {} },
+          "credentials": { "slackApi": { "id": "12", "name": "Slack account" } }
+        },
+        {
+          "id": "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b",
+          "name": "Airtop",
+          "type": "n8n-nodes-base.airtop",
+          "typeVersion": 1,
+          "position": [660, 0],
+          "parameters": {}
+        }
+      ],
+      "connections": {
+        "Webhook": { "main": [[{ "node": "Format message", "type": "main", "index": 0 }]] },
+        "Format message": { "main": [[{ "node": "Slack", "type": "main", "index": 0 }]] },
+        "Slack": { "main": [[{ "node": "Airtop", "type": "main", "index": 0 }]] }
+      }
+    },
+    "lastUpdatedBy": 1,
+    "workflowInfo": { "nodeCount": 4, "nodeTypes": { "n8n-nodes-base.webhook": { "count": 1 }, "n8n-nodes-base.set": { "count": 1 }, "n8n-nodes-base.slack": { "count": 1 }, "n8n-nodes-base.airtop": { "count": 1 } } },
+    "user": { "username": "n8n-team", "name": "n8n Team" },
+    "categories": [{ "id": 9, "name": "Marketing" }, { "id": 31, "name": "Lead Generation" }],
+    "image": []
+  }
+}

@@ -11,6 +11,7 @@
  */
 import vm from 'node:vm';
 import type { NodeItem } from '@landflow/protocol';
+import { secretsSandbox, type SecretValues } from './secrets';
 
 const EXPRESSION = /\{\{([\s\S]+?)\}\}/g;
 const scriptCache = new Map<string, vm.Script>();
@@ -29,6 +30,8 @@ export interface ExpressionData {
   toolArgs?: Record<string, unknown>;
   /** Instance variables, read-only as `$vars.NAME` (an unknown name is undefined, as in n8n). */
   variables?: Record<string, string>;
+  /** Fetched external secrets for `$secrets` (see ./secrets.ts); without them `$secrets` throws (only credential fields get them). */
+  secrets?: SecretValues;
 }
 
 export class ExpressionError extends Error {
@@ -89,6 +92,7 @@ export class ExpressionResolver {
       $execution: data.execution,
       $parameter: data.parameters,
       $vars: Object.freeze({ ...data.variables }),
+      $secrets: secretsSandbox(data.secrets),
       $fromAI: (key: string, _description?: string, _type?: string, fallback?: unknown) => data.toolArgs?.[key] ?? fallback ?? '',
       $: (name: string) => {
         const items = data.nodeOutputs[name];

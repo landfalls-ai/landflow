@@ -357,6 +357,223 @@ export const MIGRATIONS: Migration[] = [
       `CREATE TABLE IF NOT EXISTS alert_waiting_sent (rule_id TEXT NOT NULL, execution_id TEXT NOT NULL, sent_at TEXT NOT NULL, PRIMARY KEY (rule_id, execution_id))`,
     ],
   },
+  // 700–799: queue mode, workers and high availability (lib/server/cluster).
+  {
+    version: 700,
+    name: 'plugin_registrations',
+    statements: [
+      // Plugins the mains' registries know (address, transport and manifest), so workers connect to them directly.
+      `CREATE TABLE IF NOT EXISTS plugin_registrations (
+        endpoint TEXT PRIMARY KEY,
+        plugin_id TEXT NOT NULL,
+        transport TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        version TEXT,
+        registered_by TEXT,
+        updated_at TEXT NOT NULL,
+        manifest TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS plugin_registrations_plugin ON plugin_registrations (plugin_id)`,
+    ],
+  },
+  // 800–899: projects, sharing, SAML and SCIM (lib/server/projects, lib/server/auth/saml.ts, lib/server/scim).
+  {
+    version: 800,
+    name: 'projects',
+    statements: [
+      // Personal projects (one per user, `owner_id`) and team projects.
+      `CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        owner_id TEXT,
+        description TEXT,
+        icon TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        created_by TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS projects_owner ON projects (owner_id)`,
+      // Members with a project role (admin, editor, viewer); `source` is who manages the row (a person, saml or scim).
+      `CREATE TABLE IF NOT EXISTS project_members (project_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL, source TEXT, PRIMARY KEY (project_id, user_id))`,
+      `CREATE INDEX IF NOT EXISTS project_members_user ON project_members (user_id)`,
+      // The home project of each workflow, credential, data table and agent (credentials and agents live in files).
+      `CREATE TABLE IF NOT EXISTS project_resources (kind TEXT NOT NULL, resource_id TEXT NOT NULL, project_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (kind, resource_id))`,
+      `CREATE INDEX IF NOT EXISTS project_resources_project ON project_resources (project_id, kind)`,
+      // Workflows (editor/viewer) and credentials (user) shared with other projects.
+      `CREATE TABLE IF NOT EXISTS resource_shares (
+        kind TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        created_by TEXT,
+        PRIMARY KEY (kind, resource_id, project_id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS resource_shares_project ON resource_shares (project_id, kind)`,
+      // Every existing user gets a personal project; what exists goes to the instance owner's (only inserts, nothing changes).
+      // `WHERE true`: without a WHERE, SQLite reads `ON CONFLICT` after `FROM users u` as a join constraint.
+      `INSERT INTO projects (id, name, type, owner_id, created_at, updated_at)
+        SELECT 'personal_' || u.id, u.name, 'personal', u.id, u.created_at, u.created_at FROM users u WHERE true
+        ON CONFLICT (id) DO NOTHING`,
+      `INSERT INTO project_members (project_id, user_id, role, created_at, source)
+        SELECT 'personal_' || u.id, u.id, 'admin', u.created_at, 'personal' FROM users u WHERE true
+        ON CONFLICT (project_id, user_id) DO NOTHING`,
+      `INSERT INTO project_resources (kind, resource_id, project_id, created_at)
+        SELECT 'workflow', w.id, 'personal_' || u.id, COALESCE(w.created_at, u.created_at) FROM workflows w, users u WHERE u.role = 'owner'
+        ON CONFLICT (kind, resource_id) DO NOTHING`,
+      `INSERT INTO project_resources (kind, resource_id, project_id, created_at)
+        SELECT 'dataTable', t.id, 'personal_' || u.id, u.created_at FROM data_tables t, users u WHERE u.role = 'owner'
+        ON CONFLICT (kind, resource_id) DO NOTHING`,
+    ],
+  },
+  {
+    version: 801,
+    name: 'saml_scim',
+    statements: [
+      // Deactivated users (SCIM `active: false`) can't sign in; SAML identities; the IdP's id of a provisioned user.
+      `ALTER TABLE users ADD COLUMN disabled_at TEXT`,
+      `ALTER TABLE users ADD COLUMN saml_issuer TEXT`,
+      `ALTER TABLE users ADD COLUMN saml_subject TEXT`,
+      `ALTER TABLE users ADD COLUMN external_id TEXT`,
+      `ALTER TABLE users ADD COLUMN provisioned_by TEXT`,
+      `CREATE INDEX IF NOT EXISTS users_saml ON users (saml_subject)`,
+      `CREATE INDEX IF NOT EXISTS users_external ON users (external_id)`,
+      // SAML response and assertion ids seen, until they expire (replay protection).
+      `CREATE TABLE IF NOT EXISTS saml_replay (id TEXT PRIMARY KEY, expires_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS saml_replay_expires ON saml_replay (expires_at)`,
+      // SCIM groups and their members; a mapping turns them into project memberships or instance roles.
+      `CREATE TABLE IF NOT EXISTS scim_groups (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, external_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS scim_group_members (group_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (group_id, user_id))`,
+      `CREATE INDEX IF NOT EXISTS scim_group_members_user ON scim_group_members (user_id)`,
+    ],
+  },
+  // 900–999: governance (lib/server/audit, lib/server/governance).
+  {
+    version: 900,
+    name: 'audit_log',
+    statements: [
+      // Who did what, when and from where; `details` is a flat JSON object of ids, names and counts (never bodies or secrets).
+      `CREATE TABLE IF NOT EXISTS audit_events (
+        id TEXT PRIMARY KEY,
+        at TEXT NOT NULL,
+        action TEXT NOT NULL,
+        category TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        actor_type TEXT NOT NULL,
+        actor_id TEXT,
+        actor_name TEXT,
+        actor_email TEXT,
+        api_key_id TEXT,
+        ip TEXT,
+        user_agent TEXT,
+        request_id TEXT,
+        method TEXT,
+        route TEXT,
+        status BIGINT,
+        target_type TEXT,
+        target_id TEXT,
+        target_name TEXT,
+        summary TEXT NOT NULL,
+        details TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS audit_events_at ON audit_events (at)`,
+      `CREATE INDEX IF NOT EXISTS audit_events_actor ON audit_events (actor_id, at)`,
+      `CREATE INDEX IF NOT EXISTS audit_events_action ON audit_events (action, at)`,
+      `CREATE INDEX IF NOT EXISTS audit_events_target ON audit_events (target_type, target_id, at)`,
+      // SIEM destinations (syslog, HTTP, Splunk HEC); settings in `data`, secrets sealed.
+      `CREATE TABLE IF NOT EXISTS audit_destinations (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, enabled BIGINT NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, data TEXT NOT NULL)`,
+      // The durable outbox: one row per event and destination until it is delivered; retried with backoff.
+      `CREATE TABLE IF NOT EXISTS audit_outbox (
+        destination_id TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        attempts BIGINT NOT NULL DEFAULT 0,
+        next_at TEXT NOT NULL,
+        lease_until TEXT,
+        last_error TEXT,
+        PRIMARY KEY (destination_id, event_id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS audit_outbox_due ON audit_outbox (destination_id, next_at)`,
+    ],
+  },
+  {
+    version: 901,
+    name: 'publish_requests',
+    statements: [
+      // Four-eyes publishing: a publish, rollback or unpublish waiting for (or decided by) a second person.
+      `CREATE TABLE IF NOT EXISTS publish_requests (
+        id TEXT PRIMARY KEY,
+        workflow_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        version_id TEXT,
+        draft_version_id TEXT,
+        base_version_id TEXT,
+        requested_by TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        decided_by TEXT,
+        decided_at TEXT,
+        note TEXT,
+        comment TEXT,
+        data TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS publish_requests_workflow ON publish_requests (workflow_id, status)`,
+      `CREATE INDEX IF NOT EXISTS publish_requests_status ON publish_requests (status, requested_at)`,
+    ],
+  },
+  // 1000–1099: external secrets and environments (lib/server/secrets, lib/server/environments).
+  {
+    version: 1000,
+    name: 'external_secret_providers',
+    statements: [
+      // An external secrets provider (`$secrets.<name>`): non-secret settings in `settings`, the secret ones sealed in `secrets`,
+      // the secret names of the last connect or refresh in `names` (never values), the last test in `last_check`.
+      `CREATE TABLE IF NOT EXISTS external_secret_providers (
+        name TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        enabled BIGINT NOT NULL DEFAULT 1,
+        settings TEXT NOT NULL,
+        secrets TEXT,
+        names TEXT,
+        last_check TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 1001,
+    name: 'variable_environment_values',
+    statements: [
+      // A variable's value in one environment: `$vars.KEY` reads it on an instance whose LANDFLOW_ENVIRONMENT matches.
+      `CREATE TABLE IF NOT EXISTS variable_environment_values (
+        key TEXT NOT NULL,
+        environment TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (key, environment)
+      )`,
+    ],
+  },
+  // 1100–1199: templates library (lib/server/templates).
+  {
+    version: 1100,
+    name: 'templates',
+    statements: [
+      // Templates saved on this instance ("Save as template", imported template files): the template document in `data`
+      // (workflow without credentials or pinned data, credential slots, setup steps, data tables); built-in ones ship in code.
+      `CREATE TABLE IF NOT EXISTS templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        data TEXT NOT NULL
+      )`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -393,6 +610,21 @@ export const TABLES = {
   alert_rules: ['id'],
   alert_throttle: ['rule_id', 'workflow_id'],
   alert_waiting_sent: ['rule_id', 'execution_id'],
+  projects: ['id'],
+  project_members: ['project_id', 'user_id'],
+  project_resources: ['kind', 'resource_id'],
+  resource_shares: ['kind', 'resource_id', 'project_id'],
+  saml_replay: ['id'],
+  scim_groups: ['id'],
+  scim_group_members: ['group_id', 'user_id'],
+  audit_events: ['id'],
+  audit_destinations: ['id'],
+  audit_outbox: ['destination_id', 'event_id'],
+  publish_requests: ['id'],
+  external_secret_providers: ['name'],
+  variable_environment_values: ['key', 'environment'],
+  plugin_registrations: ['endpoint'],
+  templates: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

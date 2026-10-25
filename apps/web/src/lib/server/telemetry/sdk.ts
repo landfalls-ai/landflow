@@ -6,7 +6,7 @@
  * Called from instrumentation.ts; the SDK lives on globalThis so module
  * re-evaluation (HMR, per-route module graphs) never registers it twice.
  */
-import { context, diag, DiagLogLevel, metrics, propagation, trace } from '@opentelemetry/api';
+import { context, diag, DiagLogLevel, logs, metrics, propagation, trace } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from '@opentelemetry/core';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
@@ -19,6 +19,7 @@ import { singleton } from '../singleton';
 import { telemetryConfig } from './config';
 import { logger } from './logger';
 import { LandflowSampler, LandflowSpanProcessor, samplerFromEnv } from './processors';
+import { OtlpJsonLogProvider, otlpLogsEndpoint, parseOtlpHeaders } from './logs';
 
 export interface TelemetrySdk {
   enabled: boolean;
@@ -85,9 +86,22 @@ function start(): TelemetrySdk {
   const meterProvider = new MeterProvider({ resource, readers });
   metrics.setGlobalMeterProvider(meterProvider);
 
+  // OTel log records (audit events) over OTLP/HTTP JSON, next to the traces and metrics.
+  const logsUrl = telemetryConfig.exportLogs ? otlpLogsEndpoint() : undefined;
+  const logProvider = logsUrl
+    ? new OtlpJsonLogProvider({
+        url: logsUrl,
+        headers: { ...parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS), ...parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_LOGS_HEADERS) },
+        resource: resource.attributes,
+        intervalMs: Number(process.env.OTEL_BLRP_SCHEDULE_DELAY) || 1_000,
+      })
+    : undefined;
+  if (logProvider) logs.setGlobalLoggerProvider(logProvider);
+
   otelLog.info('telemetry started', {
     'otel.traces.export': telemetryConfig.exportTraces ? 'otlp' : 'none',
     'otel.metrics.export': [prometheus && 'prometheus', telemetryConfig.exportMetrics && 'otlp'].filter(Boolean).join(',') || 'none',
+    'otel.logs.export': logProvider ? 'otlp' : 'none',
     'otel.sampler': process.env.OTEL_TRACES_SAMPLER ?? 'parentbased_always_on',
   });
 
@@ -97,7 +111,7 @@ function start(): TelemetrySdk {
     meterProvider,
     prometheus,
     async shutdown() {
-      await Promise.allSettled([tracerProvider.shutdown(), meterProvider.shutdown()]);
+      await Promise.allSettled([tracerProvider.shutdown(), meterProvider.shutdown(), logProvider?.shutdown()]);
     },
   };
 }

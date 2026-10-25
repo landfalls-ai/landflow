@@ -597,6 +597,16 @@ describe('Instance MCP server', () => {
     expect(Object.keys(one.runData)).toHaveLength(3);
     expect((await call('get_execution', { id: 'ex_nope' })).result.isError).toBe(true);
     expect((await call('execute_workflow', { id: 'wf_nope' })).result.isError).toBe(true);
+
+    // The published version runs only when asked for; the draft stays the default.
+    const unpublished = await call('execute_workflow', { id: created.id, version: 'published' });
+    expect(unpublished.result.isError).toBe(true);
+    expect(JSON.stringify(unpublished.result.content)).toMatch(/not published/);
+    const { publishDraft } = await import('@/lib/server/publish');
+    await publishDraft(created.id);
+    await call('update_workflow', { id: created.id, nodes: saved.nodes, connections: saved.connections });
+    expect((await call('execute_workflow', { id: created.id, input: { word: 'live' }, version: 'published' })).data).toMatchObject({ status: 'success', lastNode: 'Done' });
+    expect((await call('execute_workflow', { id: created.id, input: { word: 'draft' } })).data).toMatchObject({ status: 'success', lastNode: 'Shout' });
   });
 
   it('replaces the token, and turns off', async () => {

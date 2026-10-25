@@ -10,6 +10,7 @@
  * older versions imports them once (./import).
  */
 import { join } from 'node:path';
+import { clusterConfig } from '../cluster/config';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { openSqlite, type Database, type DbKind } from './database';
@@ -66,7 +67,9 @@ export function openDatabase(): Promise<Database> {
     if (!url) throw new Error('LANDFLOW_DB=postgres needs DATABASE_URL');
     const { openPostgres } = await import('./postgres');
     const dir = dataDir();
-    const db = imported(await openPostgres(url, dir), dir);
+    // Queue mode: mains and workers share the database, each following the others' writes (./replication).
+    const cluster = clusterConfig();
+    const db = imported(await openPostgres(url, dir, cluster.mode === 'queue' ? { instanceId: cluster.instanceId } : {}), dir);
     current.db = db;
     return db;
   })().catch((error) => {

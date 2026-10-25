@@ -3,6 +3,8 @@ import type { JsonObject } from '@landflow/protocol';
 import { credentials } from '@/lib/server/credentials/vault';
 import { registry } from '@/lib/server/plugins/registry';
 import { handler, json, parseBody } from '@/lib/server/http';
+import { requireResource } from '@/lib/server/projects';
+import { routeActor } from '@/lib/server/projects/http';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +20,8 @@ export const POST = handler(async (request: Request) => {
     }),
   );
   if (!body.ok) return body.response;
+  // The plugin gets the credentials' values: only for credentials the caller may use.
+  for (const ref of Object.values(body.data.credentials ?? {})) requireResource(routeActor(), 'credential', ref.id, 'use');
   try {
     const { type, method, parameters } = body.data;
     const resolved = registry.resolve(type);

@@ -13,6 +13,7 @@ import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/inputs';
+import { VariableEnvironments } from './variable-environments';
 
 const KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -205,6 +206,7 @@ export function VariablesSettings() {
         )}
         {list && list.length > 0 && !shown.length && <EmptyState compact className="py-6" title="No variable matches" />}
       </Card>
+      <VariableEnvironments variables={list} />
     </div>
   );
 }

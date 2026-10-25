@@ -4,7 +4,8 @@
  * so the sync endpoints, the source-control working copy and the tests share one serializer.
  *
  *   landflow-sync.json                         manifest: { "format": "landflow-sync/v1" }
- *   variables.json                             { "variables": [{ "key": "API_BASE" }] }; `value` only when exported with values
+ *   variables.json                             { "variables": [{ "key": "API_BASE" }] }; `value` (and `environments`, the values per
+ *                                              environment, `{ "production": "…" }`) only when exported with values
  *   credentials.json                           { "credentials": [{ "name", "type" }] }: what the workflows reference, never data
  *   data-tables/<slug>.schema.json             { "id", "name", "columns": [{ "name", "type" }] }: the schema, no rows
  *   workflows/<slug>.workflow.json             a top-level workflow
@@ -52,7 +53,8 @@ export interface SyncTable {
 export interface SyncState {
   workflows: Workflow[];
   folders: Folder[];
-  variables: Array<{ key: string; value: string }>;
+  /** `environments`: per-environment values (lib/server/environments), written with values only. */
+  variables: Array<{ key: string; value: string; environments?: Record<string, string> }>;
   dataTables: SyncTable[];
   credentials: SyncCredential[];
 }
@@ -135,7 +137,7 @@ export function credentialTypeOf(node: Pick<WorkflowNode, 'type'>, key: string, 
   return saved?.type ?? (key.includes('.') ? key : `${pluginOf(node.type)}.${key}`);
 }
 
-const WORKFLOW_KEYS = ['id', 'name', 'description', 'active', 'tags', 'settings', 'nodes', 'connections', 'stickyNotes', 'pinData'];
+const WORKFLOW_KEYS = ['id', 'name', 'description', 'active', 'tags', 'settings', 'nodes', 'connections', 'stickyNotes', 'groups', 'pinData'];
 const NODE_KEYS = ['id', 'name', 'type', 'typeVersion', 'position', 'disabled', 'notes'];
 /** Volatile or implied by the layout: never written. */
 const SKIPPED_WORKFLOW_KEYS = new Set(['createdAt', 'updatedAt', 'folderId']);
@@ -170,7 +172,10 @@ export function workflowDocument(workflow: Workflow, credentials: SyncCredential
   });
   source.connections = (workflow.connections ?? []).map((c) => ordered(c as unknown as Record<string, unknown>, ['id', 'type', 'source', 'sourceIndex', 'target', 'targetIndex']));
   if (workflow.stickyNotes) source.stickyNotes = workflow.stickyNotes.map((s) => ordered(s as unknown as Record<string, unknown>, ['id']));
-  return ordered(source, WORKFLOW_KEYS, ['pinData', 'nodes', 'connections', 'stickyNotes']);
+  // Canvas groups: written when there are some (member order kept), so files of workflows without groups don't change.
+  if (workflow.groups?.length) source.groups = workflow.groups.map((g) => ordered(g as unknown as Record<string, unknown>, ['id', 'name', 'nodeIds', 'position', 'width', 'height'], ['nodeIds']));
+  else delete source.groups;
+  return ordered(source, WORKFLOW_KEYS, ['pinData', 'nodes', 'connections', 'stickyNotes', 'groups']);
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +247,13 @@ export function folderDirectories(folders: Folder[]): Map<string, string> {
   return dirs;
 }
 
-const variableHash = (v: { key: string; value: string }) => sha256(stringify({ key: v.key, value: v.value }));
+/** Per-environment values sorted by environment, or undefined when there are none. */
+const environmentsOf = (v: { environments?: Record<string, string> }) =>
+  v.environments && Object.keys(v.environments).length ? Object.fromEntries(Object.entries(v.environments).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : undefined;
+const variableHash = (v: { key: string; value: string; environments?: Record<string, string> }) => {
+  const environments = environmentsOf(v);
+  return sha256(stringify({ key: v.key, value: v.value, ...(environments && { environments }) }));
+};
 const tableDocument = (t: SyncTable) => ({ id: t.id, name: t.name, columns: t.columns.map((c) => ({ name: c.name, type: c.type })) });
 const folderHash = (f: Folder) => sha256(stringify({ id: f.id, name: f.name, parentId: f.parentId ?? null }));
 
@@ -295,7 +306,15 @@ export function renderState(state: SyncState, options: RenderOptions = {}): Rend
 
   // Variables: names, or names and values.
   const variables = [...state.variables].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  files.push({ path: VARIABLES_FILE, content: stringify({ variables: variables.map((v) => (options.values ? { key: v.key, value: v.value } : { key: v.key })) }) });
+  files.push({
+    path: VARIABLES_FILE,
+    content: stringify({
+      variables: variables.map((v) => {
+        const environments = options.values ? environmentsOf(v) : undefined;
+        return options.values ? { key: v.key, value: v.value, ...(environments && { environments }) } : { key: v.key };
+      }),
+    }),
+  });
   for (const variable of variables) hashes[entityKey('variable', variable.key)] = variableHash(variable);
 
   // Data tables: one schema file each.
@@ -361,7 +380,7 @@ export interface DesiredState {
   folders: DesiredFolder[];
   workflows: DesiredWorkflow[];
   /** Undefined when variables.json is missing: variables are left alone. */
-  variables?: Array<{ key: string; value?: string }>;
+  variables?: Array<{ key: string; value?: string; environments?: Record<string, string> }>;
   dataTables: DesiredTable[];
   /** credentials.json, for warnings only: push never creates credentials. */
   credentials: Array<{ name: string; type: string }>;
@@ -422,7 +441,16 @@ export function parseFiles(input: SyncFile[]): DesiredState {
           errors.push(`${file.path}: variables[${i}] needs a string "key" (and an optional string "value")`);
           continue;
         }
-        state.variables.push({ key: entry.key, ...(typeof entry.value === 'string' && { value: entry.value }) });
+        const environments = entry.environments;
+        if (environments !== undefined && (!isObject(environments) || Object.values(environments).some((v) => typeof v !== 'string'))) {
+          errors.push(`${file.path}: variables[${i}].environments maps environment names to string values`);
+          continue;
+        }
+        state.variables.push({
+          key: entry.key,
+          ...(typeof entry.value === 'string' && { value: entry.value }),
+          ...(environments !== undefined && { environments: environments as Record<string, string> }),
+        });
       }
       continue;
     }

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-host
+  labels: { app.kubernetes.io/name: landflow-host, app.kubernetes.io/part-of: landflow }
+spec:
+  selector: { app.kubernetes.io/name: landflow-host }
+  ports:
+    - { name: http, port: 3000, targetPort: http }
+    # The gRPC RegistryService, for plugins that announce themselves instead of being discovered.
+    - { name: registry, port: 7070, targetPort: registry, appProtocol: grpc }

@@ -20,6 +20,9 @@ export const telemetryConfig = {
   exportMetrics:
     Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT) && process.env.OTEL_METRICS_EXPORTER !== 'none',
   metricExportIntervalMs: Math.max(1_000, Number(process.env.OTEL_METRIC_EXPORT_INTERVAL) || 15_000),
+  /** OTel log records (audit events, lib/server/audit) over OTLP/HTTP JSON (./logs). */
+  exportLogs:
+    Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT) && process.env.OTEL_LOGS_EXPORTER !== 'none',
 };
 
 /**

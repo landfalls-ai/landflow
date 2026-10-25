@@ -15,6 +15,7 @@ import type { NodeRun, NodeTypeInfo, Workflow, WorkflowNode } from '@/lib/shared
 import { EdgeLine } from '../canvas/edge-line';
 import { handleId, NodeTile } from '../canvas/node-tile';
 import { StickyNoteView } from '../canvas/sticky-note';
+import { GroupFrameView } from '../canvas/group-frame';
 
 type ExecNode = Node<{ wf: Omit<WorkflowNode, 'position'> }, 'exec'>;
 type ExecEdge = Edge<{ connectionType: string }, 'exec'>;
@@ -37,6 +38,28 @@ export function toReadOnlyStickies(workflow: Workflow): ExecSticky[] {
 
 const ExecStickyView = memo(function ExecStickyView({ data }: NodeProps<ExecSticky>) {
   return <StickyNoteView content={data.content} color={data.color} className="cursor-default" />;
+});
+
+/** A canvas group, drawn expanded (also when collapsed in the editor) under the notes, so every node shows. */
+type ExecFrame = Node<{ name: string; color: number; count: number }, 'frame'>;
+
+/** The workflow's canvas groups as read-only React Flow nodes. */
+export function toReadOnlyGroups(workflow: Workflow): ExecFrame[] {
+  return (workflow.groups ?? []).map((group) => ({
+    id: group.id,
+    type: 'frame',
+    position: { x: group.position[0], y: group.position[1] },
+    width: group.width,
+    height: group.height,
+    zIndex: -2000,
+    selectable: false,
+    ariaLabel: `Group ${group.name}`,
+    data: { name: group.name, color: group.color ?? 0, count: group.nodeIds.length },
+  }));
+}
+
+const ExecFrameView = memo(function ExecFrameView({ data }: NodeProps<ExecFrame>) {
+  return <GroupFrameView name={data.name} color={data.color} count={data.count} headerClassName="cursor-default" />;
 });
 
 /** Workflow → React Flow elements, with the editor's handle ids ("<type>:<index>"). */
@@ -115,7 +138,7 @@ const ExecEdgeView = memo(function ExecEdgeView({ id, source, target, sourceX, s
   );
 });
 
-const nodeTypesMap = { exec: ExecNodeView, sticky: ExecStickyView };
+const nodeTypesMap = { exec: ExecNodeView, sticky: ExecStickyView, frame: ExecFrameView };
 const edgeTypesMap = { exec: ExecEdgeView };
 
 export interface ExecutionCanvasProps {
@@ -134,8 +157,8 @@ export interface ExecutionCanvasProps {
 
 function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, running = false, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
   const flow = useMemo(() => toReadOnlyFlow(workflow), [workflow]);
-  const allNodes = useMemo(() => [...toReadOnlyStickies(workflow), ...flow.nodes], [workflow, flow]);
-  const [nodes, setNodes, onNodesChange] = useNodesState<ExecNode | ExecSticky>(allNodes);
+  const allNodes = useMemo(() => [...toReadOnlyGroups(workflow), ...toReadOnlyStickies(workflow), ...flow.nodes], [workflow, flow]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<ExecNode | ExecSticky | ExecFrame>(allNodes);
   useEffect(() => setNodes(allNodes), [allNodes, setNodes]);
 
   const state = useMemo<CanvasState>(() => {
@@ -174,7 +197,7 @@ function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId
           onNodesChange={onNodesChange}
           nodeTypes={nodeTypesMap}
           edgeTypes={edgeTypesMap}
-          onNodeClick={(_, node) => node.type !== 'sticky' && onNodeClick?.(node.id)}
+          onNodeClick={(_, node) => node.type === 'exec' && onNodeClick?.(node.id)}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}

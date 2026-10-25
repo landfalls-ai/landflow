@@ -1,0 +1,11 @@
+# Optional: Valkey 8 in the namespace for queue mode (LANDFLOW_VALKEY_URL). In memory only: a restart empties it.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - valkey.yaml
+patches:
+  - target: { kind: Deployment, name: landflow-host }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: LANDFLOW_VALKEY_URL, value: "redis://valkey:6379/0" }

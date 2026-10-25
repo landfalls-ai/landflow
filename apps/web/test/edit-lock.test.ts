@@ -50,7 +50,11 @@ beforeAll(async () => {
   admin = await user('admin@example.com', 'Ada', 'admin');
   member = await user('max@example.com', 'Max', 'member');
   member2 = await user('mia@example.com', 'Mia', 'member');
-  const created = await call(workflowsRoute.POST, '/api/workflows', { method: 'POST', body: { name: 'Locked', nodes: [], connections: [] }, session: owner.session });
+  // A team project everyone edits in (projects: members only reach workflows of their projects).
+  const projects = await import('@/lib/server/projects');
+  const team = projects.createTeamProject({ name: 'Team' });
+  for (const one of [admin, member, member2]) projects.setMember(team.id, one.id, 'editor');
+  const created = await call(workflowsRoute.POST, `/api/workflows?projectId=${team.id}`, { method: 'POST', body: { name: 'Locked', nodes: [], connections: [] }, session: owner.session });
   workflowId = created.body.workflow.id;
 });
 

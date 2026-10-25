@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { handler, json, parseBody } from '@/lib/server/http';
 import { mcpAccess, regenerateMcpToken, setMcpEnabled } from '@/lib/server/mcp/instance';
+import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +15,13 @@ export const GET = handler(async () => json({ access: mcpAccess() }));
 export const PATCH = handler(async (request: Request) => {
   const body = await parseBody(request, z.strictObject({ enabled: z.boolean() }));
   if (!body.ok) return body.response;
-  return json(setMcpEnabled(body.data.enabled));
+  const access = setMcpEnabled(body.data.enabled);
+  recordAudit({ action: 'settings.update', target: { type: 'settings', id: 'mcp', name: 'Instance MCP server' }, summary: `${body.data.enabled ? 'Turned on' : 'Turned off'} the instance MCP server`, details: { enabled: body.data.enabled } });
+  return json(access);
 });
 
-export const POST = handler(async () => json(regenerateMcpToken()));
+export const POST = handler(async () => {
+  const result = regenerateMcpToken();
+  recordAudit({ action: 'settings.update', target: { type: 'settings', id: 'mcp', name: 'Instance MCP server' }, summary: 'Made a new instance MCP token' });
+  return json(result);
+});

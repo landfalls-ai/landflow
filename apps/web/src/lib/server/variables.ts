@@ -11,6 +11,7 @@ import type { Variable } from '../shared/platform';
 import { database, type Database } from './db';
 import { variableRow } from './db/rows';
 import { atomicWrite } from './store';
+import { environmentValues } from './environments/variables';
 
 export type { Variable };
 
@@ -160,9 +161,18 @@ const table = new VariableTable();
 export const variables = {
   file: (): VariableStore => table,
   list: () => variables.file().list(),
-  record: () => variables.file().record(),
+  /** What `$vars` sees: with LANDFLOW_ENVIRONMENT, a variable's value for this environment where it has one (lib/server/environments). */
+  record: () => environmentValues.overlay(variables.file().record()),
   get: (key: string) => variables.file().get(key),
   create: (input: { key: string; value: unknown }) => variables.file().create(input),
-  update: (key: string, patch: { key?: string; value?: unknown }) => variables.file().update(key, patch),
-  delete: (key: string) => variables.file().delete(key),
+  update: (key: string, patch: { key?: string; value?: unknown }) => {
+    const updated = variables.file().update(key, patch);
+    if (updated.key !== key) environmentValues.rename(key, updated.key);
+    return updated;
+  },
+  delete: (key: string) => {
+    const deleted = variables.file().delete(key);
+    if (deleted) environmentValues.remove(key);
+    return deleted;
+  },
 };

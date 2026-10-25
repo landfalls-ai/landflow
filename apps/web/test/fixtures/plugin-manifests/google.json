@@ -1,0 +1,3080 @@
+{
+ "protocol": "landflow.plugin/v1",
+ "plugin": {
+  "id": "google",
+  "name": "Google Workspace",
+  "version": "0.1.0",
+  "description": "Google Sheets, Gmail, Drive, Calendar and Docs, with polling triggers for new rows and new emails.",
+  "language": "go",
+  "sdk": {
+   "name": "landflow-sdk-go",
+   "version": "0.2.0"
+  },
+  "color": "#4285F4",
+  "author": "Landflow",
+  "homepage": "https://developers.google.com/workspace"
+ },
+ "nodes": [
+  {
+   "name": "googleSheets",
+   "displayName": "Google Sheets",
+   "description": "Read, append and update rows in Google Sheets",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Data & Storage",
+    "Productivity"
+   ],
+   "color": "#0F9D58",
+   "subtitle": "{{operation}}: {{resource}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "default": "serviceAccount",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Service Account",
+       "value": "serviceAccount",
+       "description": "A service account key; share files with its email"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Act as a Google user: Connect the credential, or give it a refresh token"
+      }
+     ]
+    },
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "default": "sheet",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Document",
+       "value": "spreadsheet",
+       "description": "A spreadsheet file"
+      },
+      {
+       "name": "Sheet Within Document",
+       "value": "sheet",
+       "description": "Rows of one sheet (tab)"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "create",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Create a spreadsheet",
+       "action": "Create spreadsheet"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "spreadsheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "append",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Append or Update Row",
+       "value": "appendOrUpdate",
+       "description": "Append a new row or update an existing one (upsert)",
+       "action": "Append or update row in sheet"
+      },
+      {
+       "name": "Append Row",
+       "value": "append",
+       "description": "Create a new row in a sheet",
+       "action": "Append row in sheet"
+      },
+      {
+       "name": "Clear",
+       "value": "clear",
+       "description": "Delete all the contents of a sheet",
+       "action": "Clear sheet"
+      },
+      {
+       "name": "Get Row(s)",
+       "value": "read",
+       "description": "Retrieve one or more rows from a sheet",
+       "action": "Get row(s) in sheet"
+      },
+      {
+       "name": "Update Row",
+       "value": "update",
+       "description": "Update an existing row in a sheet",
+       "action": "Update row in sheet"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "default": "",
+     "description": "Title of the new spreadsheet",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "create"
+       ],
+       "resource": [
+        "spreadsheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "sheetsUi",
+     "displayName": "Sheets",
+     "type": "fixedCollection",
+     "default": {},
+     "description": "Sheets (tabs) to create; Google adds one called Sheet1 when empty",
+     "placeholder": "Add Sheet",
+     "groups": [
+      {
+       "name": "sheetValues",
+       "displayName": "Sheet",
+       "values": [
+        {
+         "name": "title",
+         "displayName": "Title",
+         "type": "string",
+         "default": "",
+         "description": "Name of the sheet"
+        }
+       ]
+      }
+     ],
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "create"
+       ],
+       "resource": [
+        "spreadsheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "documentId",
+     "displayName": "Document",
+     "type": "options",
+     "default": "",
+     "description": "Spreadsheet to use. An expression may also give its ID or URL.",
+     "required": true,
+     "typeOptions": {
+      "loadOptionsMethod": "spreadsheets"
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "sheetName",
+     "displayName": "Sheet",
+     "type": "options",
+     "default": "",
+     "description": "Sheet (tab) in the document; empty means the first one",
+     "typeOptions": {
+      "loadOptionsMethod": "sheets",
+      "loadOptionsDependsOn": [
+       "documentId"
+      ]
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "keepFirstRow",
+     "displayName": "Keep First Row",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to keep the header row and clear only the data",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "clear"
+       ],
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "dataMode",
+     "displayName": "Mapping Column Mode",
+     "type": "options",
+     "default": "autoMapInputData",
+     "options": [
+      {
+       "name": "Map Automatically",
+       "value": "autoMapInputData",
+       "description": "Use the input fields whose names match column names"
+      },
+      {
+       "name": "Map Each Column Manually",
+       "value": "defineBelow",
+       "description": "Set the value of each column below"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "append",
+        "appendOrUpdate",
+        "update"
+       ],
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "columnToMatchOn",
+     "displayName": "Column to Match On",
+     "type": "options",
+     "default": "",
+     "description": "Column used to find the row to update. With Map Automatically the item's field of the same name gives the value.",
+     "required": true,
+     "typeOptions": {
+      "loadOptionsMethod": "columns",
+      "loadOptionsDependsOn": [
+       "documentId",
+       "sheetName"
+      ]
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "appendOrUpdate",
+        "update"
+       ],
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "valueToMatchOn",
+     "displayName": "Value of Column to Match On",
+     "type": "string",
+     "default": "",
+     "description": "Rows whose Column to Match On holds this value are updated",
+     "displayOptions": {
+      "show": {
+       "dataMode": [
+        "defineBelow"
+       ],
+       "operation": [
+        "appendOrUpdate",
+        "update"
+       ],
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "fieldsUi",
+     "displayName": "Values to Send",
+     "type": "fixedCollection",
+     "default": {},
+     "placeholder": "Add Field",
+     "groups": [
+      {
+       "name": "fieldValues",
+       "displayName": "Field",
+       "values": [
+        {
+         "name": "fieldId",
+         "displayName": "Column",
+         "type": "string",
+         "default": "",
+         "description": "Column name, as in the header row"
+        },
+        {
+         "name": "fieldValue",
+         "displayName": "Value",
+         "type": "string",
+         "default": ""
+        }
+       ]
+      }
+     ],
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "displayOptions": {
+      "show": {
+       "dataMode": [
+        "defineBelow"
+       ],
+       "operation": [
+        "append",
+        "appendOrUpdate",
+        "update"
+       ],
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "filtersUI",
+     "displayName": "Filters",
+     "type": "fixedCollection",
+     "default": {},
+     "description": "Return only rows where the column equals the value; no filters return every row",
+     "placeholder": "Add Filter",
+     "groups": [
+      {
+       "name": "values",
+       "displayName": "Filter",
+       "values": [
+        {
+         "name": "lookupColumn",
+         "displayName": "Column",
+         "type": "string",
+         "default": ""
+        },
+        {
+         "name": "lookupValue",
+         "displayName": "Value",
+         "type": "string",
+         "default": ""
+        }
+       ]
+      }
+     ],
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "read"
+       ],
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "combineFilters",
+     "displayName": "Combine Filters",
+     "type": "options",
+     "default": "AND",
+     "options": [
+      {
+       "name": "AND",
+       "value": "AND",
+       "description": "Rows must match every filter"
+      },
+      {
+       "name": "OR",
+       "value": "OR",
+       "description": "Rows must match at least one filter"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "read"
+       ],
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "returnAllMatches",
+       "displayName": "When Filter Has Multiple Matches",
+       "type": "options",
+       "default": "returnFirstMatch",
+       "options": [
+        {
+         "name": "Return First Match",
+         "value": "returnFirstMatch"
+        },
+        {
+         "name": "Return All Matches",
+         "value": "returnAllMatches"
+        }
+       ]
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "read"
+       ],
+       "resource": [
+        "sheet"
+       ]
+      }
+     }
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Work with rows of a Google Sheets spreadsheet whose first row holds column names. operation=read returns rows as objects keyed by column name plus row_number, optionally filtered by filtersUI (column = value); append adds a row from the item's fields (keys matching column names); appendOrUpdate and update find the row whose columnToMatchOn equals the item's value for that column. Needs documentId (spreadsheet ID or URL) and sheetName (tab title).",
+   "documentationUrl": "https://developers.google.com/workspace/sheets/api/reference/rest",
+   "keywords": [
+    "spreadsheet",
+    "sheet",
+    "rows",
+    "table",
+    "append",
+    "lookup",
+    "upsert"
+   ],
+   "credentials": [
+    {
+     "name": "googleApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "serviceAccount"
+       ]
+      }
+     }
+    },
+    {
+     "name": "googleOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "googleSheetsTrigger",
+   "displayName": "Google Sheets Trigger",
+   "description": "Starts the workflow when rows are added to a Google Sheet",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "poll",
+   "categories": [
+    "Data & Storage",
+    "Productivity"
+   ],
+   "color": "#0F9D58",
+   "subtitle": "{{event}}",
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "default": "serviceAccount",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Service Account",
+       "value": "serviceAccount",
+       "description": "A service account key; share files with its email"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Act as a Google user: Connect the credential, or give it a refresh token"
+      }
+     ]
+    },
+    {
+     "name": "pollInterval",
+     "displayName": "Poll Interval",
+     "type": "number",
+     "default": 60,
+     "description": "Seconds between checks for new events while the workflow is active (minimum 10)",
+     "noDataExpression": true,
+     "typeOptions": {
+      "minValue": 10,
+      "numberPrecision": 0
+     }
+    },
+    {
+     "name": "documentId",
+     "displayName": "Document",
+     "type": "options",
+     "default": "",
+     "description": "Spreadsheet to watch. An expression may also give its ID or URL.",
+     "required": true,
+     "typeOptions": {
+      "loadOptionsMethod": "spreadsheets"
+     }
+    },
+    {
+     "name": "sheetName",
+     "displayName": "Sheet",
+     "type": "options",
+     "default": "",
+     "description": "Sheet (tab) to watch; empty means the first one",
+     "typeOptions": {
+      "loadOptionsMethod": "sheets",
+      "loadOptionsDependsOn": [
+       "documentId"
+      ]
+     }
+    },
+    {
+     "name": "event",
+     "displayName": "Trigger On",
+     "type": "options",
+     "default": "rowAdded",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Row Added",
+       "value": "rowAdded",
+       "description": "A row was added below the last row seen"
+      }
+     ]
+    }
+   ],
+   "documentationUrl": "https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/get",
+   "keywords": [
+    "spreadsheet",
+    "new row",
+    "poll",
+    "watch"
+   ],
+   "credentials": [
+    {
+     "name": "googleApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "serviceAccount"
+       ]
+      }
+     }
+    },
+    {
+     "name": "googleOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gmail",
+   "displayName": "Gmail",
+   "description": "Send, read and label Gmail messages",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Communication"
+   ],
+   "color": "#EA4335",
+   "subtitle": "{{operation}}: {{resource}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "default": "serviceAccount",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Service Account",
+       "value": "serviceAccount",
+       "description": "A service account key; share files with its email"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Act as a Google user: Connect the credential, or give it a refresh token"
+      }
+     ]
+    },
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "default": "message",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Message",
+       "value": "message"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "send",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Add Label",
+       "value": "addLabels",
+       "description": "Add labels to a message",
+       "action": "Add label to message"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Get a message",
+       "action": "Get a message"
+      },
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "description": "Get many messages",
+       "action": "Get many messages"
+      },
+      {
+       "name": "Mark as Read",
+       "value": "markAsRead",
+       "action": "Mark a message as read"
+      },
+      {
+       "name": "Mark as Unread",
+       "value": "markAsUnread",
+       "action": "Mark a message as unread"
+      },
+      {
+       "name": "Remove Label",
+       "value": "removeLabels",
+       "description": "Remove labels from a message",
+       "action": "Remove label from message"
+      },
+      {
+       "name": "Reply",
+       "value": "reply",
+       "description": "Reply to a message in its thread",
+       "action": "Reply to a message"
+      },
+      {
+       "name": "Send",
+       "value": "send",
+       "description": "Send a message",
+       "action": "Send a message"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "messageId",
+     "displayName": "Message ID",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "get",
+        "reply",
+        "addLabels",
+        "removeLabels",
+        "markAsRead",
+        "markAsUnread"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "sendTo",
+     "displayName": "To",
+     "type": "string",
+     "default": "",
+     "description": "Recipients, separated by commas",
+     "placeholder": "info@example.com",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "send"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "subject",
+     "displayName": "Subject",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "send"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "emailType",
+     "displayName": "Email Type",
+     "type": "options",
+     "default": "text",
+     "options": [
+      {
+       "name": "Text",
+       "value": "text"
+      },
+      {
+       "name": "HTML",
+       "value": "html"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "send",
+        "reply"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "message",
+     "displayName": "Message",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "typeOptions": {
+      "rows": 5
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "send",
+        "reply"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "attachments",
+       "displayName": "Attachments",
+       "type": "string",
+       "default": "",
+       "description": "Binary properties of the input item to attach, separated by commas (a file from Read Files, HTTP Request, a form upload\u2026)",
+       "placeholder": "data, invoice"
+      },
+      {
+       "name": "bccList",
+       "displayName": "BCC",
+       "type": "string",
+       "default": "",
+       "description": "Addresses separated by commas"
+      },
+      {
+       "name": "ccList",
+       "displayName": "CC",
+       "type": "string",
+       "default": "",
+       "description": "Addresses separated by commas"
+      },
+      {
+       "name": "replyTo",
+       "displayName": "Reply To",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "senderName",
+       "displayName": "Sender Name",
+       "type": "string",
+       "default": "",
+       "description": "Display name shown to recipients"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "send"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "attachments",
+       "displayName": "Attachments",
+       "type": "string",
+       "default": "",
+       "description": "Binary properties of the input item to attach, separated by commas (a file from Read Files, HTTP Request, a form upload\u2026)",
+       "placeholder": "data, invoice"
+      },
+      {
+       "name": "bccList",
+       "displayName": "BCC",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "ccList",
+       "displayName": "CC",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "senderName",
+       "displayName": "Sender Name",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "replyToSenderOnly",
+       "displayName": "Reply to Sender Only",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether to reply to the sender only or to every recipient of the original message"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "reply"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "simple",
+     "displayName": "Simplify",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to return a simplified version of the response instead of the raw data",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "get",
+        "getAll"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "description": "Max number of results to return",
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 500,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "message"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "filters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Filter",
+     "values": [
+      {
+       "name": "includeSpamTrash",
+       "displayName": "Include Spam and Trash",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether to include messages from SPAM and TRASH"
+      },
+      {
+       "name": "labelIds",
+       "displayName": "Label Names or IDs",
+       "type": "multiOptions",
+       "default": [],
+       "description": "Label IDs (system labels such as INBOX, or your own labels)",
+       "options": [
+        {
+         "name": "INBOX",
+         "value": "INBOX"
+        },
+        {
+         "name": "UNREAD",
+         "value": "UNREAD"
+        },
+        {
+         "name": "STARRED",
+         "value": "STARRED"
+        },
+        {
+         "name": "IMPORTANT",
+         "value": "IMPORTANT"
+        },
+        {
+         "name": "SENT",
+         "value": "SENT"
+        },
+        {
+         "name": "SPAM",
+         "value": "SPAM"
+        },
+        {
+         "name": "TRASH",
+         "value": "TRASH"
+        },
+        {
+         "name": "CATEGORY_PERSONAL",
+         "value": "CATEGORY_PERSONAL"
+        },
+        {
+         "name": "CATEGORY_SOCIAL",
+         "value": "CATEGORY_SOCIAL"
+        },
+        {
+         "name": "CATEGORY_PROMOTIONS",
+         "value": "CATEGORY_PROMOTIONS"
+        },
+        {
+         "name": "CATEGORY_UPDATES",
+         "value": "CATEGORY_UPDATES"
+        },
+        {
+         "name": "CATEGORY_FORUMS",
+         "value": "CATEGORY_FORUMS"
+        }
+       ],
+       "typeOptions": {
+        "loadOptionsMethod": "labels"
+       }
+      },
+      {
+       "name": "q",
+       "displayName": "Search",
+       "type": "string",
+       "default": "",
+       "description": "Gmail search syntax, as in the Gmail search box",
+       "placeholder": "has:attachment"
+      },
+      {
+       "name": "readStatus",
+       "displayName": "Read Status",
+       "type": "options",
+       "default": "both",
+       "options": [
+        {
+         "name": "Unread and Read Emails",
+         "value": "both"
+        },
+        {
+         "name": "Unread Emails Only",
+         "value": "unread"
+        },
+        {
+         "name": "Read Emails Only",
+         "value": "read"
+        }
+       ]
+      },
+      {
+       "name": "sender",
+       "displayName": "Sender",
+       "type": "string",
+       "default": "",
+       "description": "Sender name or email to filter by"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "labelIds",
+     "displayName": "Label Names or IDs",
+     "type": "multiOptions",
+     "default": [],
+     "description": "Label IDs (system labels such as INBOX, or your own labels)",
+     "required": true,
+     "options": [
+      {
+       "name": "INBOX",
+       "value": "INBOX"
+      },
+      {
+       "name": "UNREAD",
+       "value": "UNREAD"
+      },
+      {
+       "name": "STARRED",
+       "value": "STARRED"
+      },
+      {
+       "name": "IMPORTANT",
+       "value": "IMPORTANT"
+      },
+      {
+       "name": "SENT",
+       "value": "SENT"
+      },
+      {
+       "name": "SPAM",
+       "value": "SPAM"
+      },
+      {
+       "name": "TRASH",
+       "value": "TRASH"
+      },
+      {
+       "name": "CATEGORY_PERSONAL",
+       "value": "CATEGORY_PERSONAL"
+      },
+      {
+       "name": "CATEGORY_SOCIAL",
+       "value": "CATEGORY_SOCIAL"
+      },
+      {
+       "name": "CATEGORY_PROMOTIONS",
+       "value": "CATEGORY_PROMOTIONS"
+      },
+      {
+       "name": "CATEGORY_UPDATES",
+       "value": "CATEGORY_UPDATES"
+      },
+      {
+       "name": "CATEGORY_FORUMS",
+       "value": "CATEGORY_FORUMS"
+      }
+     ],
+     "typeOptions": {
+      "loadOptionsMethod": "labels"
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "addLabels",
+        "removeLabels"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Use Gmail as the connected user. operation=send emails sendTo with subject and message (emailType text or html); reply answers messageId in its thread; get returns one message (simplified: from, to, subject, date, text, html); getAll searches with filters.q in Gmail search syntax; addLabels, removeLabels, markAsRead and markAsUnread change messageId's labels.",
+   "documentationUrl": "https://developers.google.com/workspace/gmail/api/reference/rest",
+   "keywords": [
+    "email",
+    "mail",
+    "google mail",
+    "send",
+    "inbox",
+    "label"
+   ],
+   "credentials": [
+    {
+     "name": "googleApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "serviceAccount"
+       ]
+      }
+     }
+    },
+    {
+     "name": "googleOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gmailTrigger",
+   "displayName": "Gmail Trigger",
+   "description": "Starts the workflow when new emails arrive in Gmail",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "poll",
+   "categories": [
+    "Communication"
+   ],
+   "color": "#EA4335",
+   "subtitle": "{{event}}",
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "default": "serviceAccount",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Service Account",
+       "value": "serviceAccount",
+       "description": "A service account key; share files with its email"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Act as a Google user: Connect the credential, or give it a refresh token"
+      }
+     ]
+    },
+    {
+     "name": "pollInterval",
+     "displayName": "Poll Interval",
+     "type": "number",
+     "default": 60,
+     "description": "Seconds between checks for new events while the workflow is active (minimum 10)",
+     "noDataExpression": true,
+     "typeOptions": {
+      "minValue": 10,
+      "numberPrecision": 0
+     }
+    },
+    {
+     "name": "event",
+     "displayName": "Event",
+     "type": "options",
+     "default": "messageReceived",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Message Received",
+       "value": "messageReceived"
+      }
+     ]
+    },
+    {
+     "name": "simple",
+     "displayName": "Simplify",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to return a simplified version of the response instead of the raw data"
+    },
+    {
+     "name": "filters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Filter",
+     "values": [
+      {
+       "name": "includeSpamTrash",
+       "displayName": "Include Spam and Trash",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether to include messages from SPAM and TRASH"
+      },
+      {
+       "name": "labelIds",
+       "displayName": "Label Names or IDs",
+       "type": "multiOptions",
+       "default": [],
+       "description": "Label IDs (system labels such as INBOX, or your own labels)",
+       "options": [
+        {
+         "name": "INBOX",
+         "value": "INBOX"
+        },
+        {
+         "name": "UNREAD",
+         "value": "UNREAD"
+        },
+        {
+         "name": "STARRED",
+         "value": "STARRED"
+        },
+        {
+         "name": "IMPORTANT",
+         "value": "IMPORTANT"
+        },
+        {
+         "name": "SENT",
+         "value": "SENT"
+        },
+        {
+         "name": "SPAM",
+         "value": "SPAM"
+        },
+        {
+         "name": "TRASH",
+         "value": "TRASH"
+        },
+        {
+         "name": "CATEGORY_PERSONAL",
+         "value": "CATEGORY_PERSONAL"
+        },
+        {
+         "name": "CATEGORY_SOCIAL",
+         "value": "CATEGORY_SOCIAL"
+        },
+        {
+         "name": "CATEGORY_PROMOTIONS",
+         "value": "CATEGORY_PROMOTIONS"
+        },
+        {
+         "name": "CATEGORY_UPDATES",
+         "value": "CATEGORY_UPDATES"
+        },
+        {
+         "name": "CATEGORY_FORUMS",
+         "value": "CATEGORY_FORUMS"
+        }
+       ],
+       "typeOptions": {
+        "loadOptionsMethod": "labels"
+       }
+      },
+      {
+       "name": "q",
+       "displayName": "Search",
+       "type": "string",
+       "default": "",
+       "description": "Gmail search syntax, as in the Gmail search box",
+       "placeholder": "has:attachment"
+      },
+      {
+       "name": "readStatus",
+       "displayName": "Read Status",
+       "type": "options",
+       "default": "both",
+       "options": [
+        {
+         "name": "Unread and Read Emails",
+         "value": "both"
+        },
+        {
+         "name": "Unread Emails Only",
+         "value": "unread"
+        },
+        {
+         "name": "Read Emails Only",
+         "value": "read"
+        }
+       ]
+      },
+      {
+       "name": "sender",
+       "displayName": "Sender",
+       "type": "string",
+       "default": "",
+       "description": "Sender name or email to filter by"
+      }
+     ]
+    }
+   ],
+   "documentationUrl": "https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list",
+   "keywords": [
+    "email",
+    "mail",
+    "new message",
+    "inbox",
+    "poll"
+   ],
+   "credentials": [
+    {
+     "name": "googleApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "serviceAccount"
+       ]
+      }
+     }
+    },
+    {
+     "name": "googleOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "googleDrive",
+   "displayName": "Google Drive",
+   "description": "Search, upload, download and delete Google Drive files",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Data & Storage"
+   ],
+   "color": "#1FA463",
+   "subtitle": "{{operation}}: {{resource}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "default": "serviceAccount",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Service Account",
+       "value": "serviceAccount",
+       "description": "A service account key; share files with its email"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Act as a Google user: Connect the credential, or give it a refresh token"
+      }
+     ]
+    },
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "default": "file",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "File",
+       "value": "file"
+      },
+      {
+       "name": "File/Folder",
+       "value": "fileFolder"
+      },
+      {
+       "name": "Folder",
+       "value": "folder"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "upload",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Delete",
+       "value": "deleteFile",
+       "description": "Move a file to the trash, or delete it permanently",
+       "action": "Delete a file"
+      },
+      {
+       "name": "Download",
+       "value": "download",
+       "description": "Download a file's content",
+       "action": "Download a file"
+      },
+      {
+       "name": "Upload",
+       "value": "upload",
+       "description": "Upload a file",
+       "action": "Upload a file"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "search",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Search",
+       "value": "search",
+       "description": "Search files and folders",
+       "action": "Search files and folders"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "fileFolder"
+       ]
+      }
+     }
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "create",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Create a folder",
+       "action": "Create a folder"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "folder"
+       ]
+      }
+     }
+    },
+    {
+     "name": "name",
+     "displayName": "File Name",
+     "type": "string",
+     "default": "",
+     "placeholder": "report.txt",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "upload"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "folderId",
+     "displayName": "Parent Folder",
+     "type": "options",
+     "default": "root",
+     "description": "Folder to upload into",
+     "options": [
+      {
+       "name": "My Drive (root)",
+       "value": "root"
+      }
+     ],
+     "typeOptions": {
+      "loadOptionsMethod": "folders"
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "upload"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "uploadFrom",
+     "displayName": "Content From",
+     "type": "options",
+     "default": "text",
+     "options": [
+      {
+       "name": "Text",
+       "value": "text",
+       "description": "The text below becomes the file"
+      },
+      {
+       "name": "Base64",
+       "value": "base64",
+       "description": "Base64-encoded bytes, e.g. from a download"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "upload"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "fileContent",
+     "displayName": "File Content",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "rows": 6
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "upload"
+       ],
+       "resource": [
+        "file"
+       ],
+       "uploadFrom": [
+        "text"
+       ]
+      }
+     }
+    },
+    {
+     "name": "base64Content",
+     "displayName": "Base64 Content",
+     "type": "string",
+     "default": "",
+     "description": "Base64 (or a data: URL) of the file's bytes",
+     "placeholder": "{{ $json.content }}",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "upload"
+       ],
+       "resource": [
+        "file"
+       ],
+       "uploadFrom": [
+        "base64"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "mimeType",
+       "displayName": "MIME Type",
+       "type": "string",
+       "default": "",
+       "description": "Defaults to a guess from the file name",
+       "placeholder": "text/csv"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "upload"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "fileId",
+     "displayName": "File ID",
+     "type": "string",
+     "default": "",
+     "description": "ID or link of the file",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "download",
+        "deleteFile"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "deletePermanently",
+       "displayName": "Delete Permanently",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether to delete the file immediately instead of moving it to the trash"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "deleteFile"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "searchMethod",
+     "displayName": "Search Method",
+     "type": "options",
+     "default": "name",
+     "options": [
+      {
+       "name": "Search File/Folder Name",
+       "value": "name",
+       "description": "Names containing the text"
+      },
+      {
+       "name": "Advanced Search",
+       "value": "query",
+       "description": "A Drive query (name contains 'x' and \u2026)"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "search"
+       ],
+       "resource": [
+        "fileFolder"
+       ]
+      }
+     }
+    },
+    {
+     "name": "queryString",
+     "displayName": "Search Query",
+     "type": "string",
+     "default": "",
+     "description": "Text the name contains, or a Drive query for Advanced Search",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "search"
+       ],
+       "resource": [
+        "fileFolder"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "search"
+       ],
+       "resource": [
+        "fileFolder"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "description": "Max number of results to return",
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 1000,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "search"
+       ],
+       "resource": [
+        "fileFolder"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "filter",
+     "displayName": "Filter",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Filter",
+     "values": [
+      {
+       "name": "folderId",
+       "displayName": "Folder",
+       "type": "options",
+       "default": "root",
+       "description": "Only items directly in this folder",
+       "options": [
+        {
+         "name": "My Drive (root)",
+         "value": "root"
+        }
+       ],
+       "typeOptions": {
+        "loadOptionsMethod": "folders"
+       }
+      },
+      {
+       "name": "whatToSearch",
+       "displayName": "What to Search",
+       "type": "options",
+       "default": "all",
+       "options": [
+        {
+         "name": "Files and Folders",
+         "value": "all"
+        },
+        {
+         "name": "Files",
+         "value": "files"
+        },
+        {
+         "name": "Folders",
+         "value": "folders"
+        }
+       ]
+      },
+      {
+       "name": "fileTypes",
+       "displayName": "File Types",
+       "type": "multiOptions",
+       "default": [],
+       "options": [
+        {
+         "name": "Google Docs",
+         "value": "application/vnd.google-apps.document"
+        },
+        {
+         "name": "Google Sheets",
+         "value": "application/vnd.google-apps.spreadsheet"
+        },
+        {
+         "name": "Google Slides",
+         "value": "application/vnd.google-apps.presentation"
+        },
+        {
+         "name": "Folder",
+         "value": "application/vnd.google-apps.folder"
+        },
+        {
+         "name": "PDF",
+         "value": "application/pdf"
+        },
+        {
+         "name": "Plain Text",
+         "value": "text/plain"
+        },
+        {
+         "name": "CSV",
+         "value": "text/csv"
+        },
+        {
+         "name": "JSON",
+         "value": "application/json"
+        },
+        {
+         "name": "PNG Image",
+         "value": "image/png"
+        },
+        {
+         "name": "JPEG Image",
+         "value": "image/jpeg"
+        }
+       ]
+      },
+      {
+       "name": "includeTrashed",
+       "displayName": "Include Trashed Items",
+       "type": "boolean",
+       "default": false
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "search"
+       ],
+       "resource": [
+        "fileFolder"
+       ]
+      }
+     }
+    },
+    {
+     "name": "name",
+     "displayName": "Folder Name",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "create"
+       ],
+       "resource": [
+        "folder"
+       ]
+      }
+     }
+    },
+    {
+     "name": "folderId",
+     "displayName": "Parent Folder",
+     "type": "options",
+     "default": "root",
+     "description": "Folder to create it in",
+     "options": [
+      {
+       "name": "My Drive (root)",
+       "value": "root"
+      }
+     ],
+     "typeOptions": {
+      "loadOptionsMethod": "folders"
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "create"
+       ],
+       "resource": [
+        "folder"
+       ]
+      }
+     }
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Work with Google Drive files. resource=fileFolder, operation=search finds files by name (queryString) or Drive query syntax; resource=file: upload creates a file from fileContent text, download returns `content` (text, or base64 for binary files, max 10 MB), deleteFile trashes fileId; resource=folder, operation=create makes a folder.",
+   "documentationUrl": "https://developers.google.com/workspace/drive/api/reference/rest/v3",
+   "keywords": [
+    "files",
+    "folder",
+    "upload",
+    "download",
+    "storage",
+    "documents"
+   ],
+   "credentials": [
+    {
+     "name": "googleApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "serviceAccount"
+       ]
+      }
+     }
+    },
+    {
+     "name": "googleOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "googleCalendar",
+   "displayName": "Google Calendar",
+   "description": "Create, read, update and delete Google Calendar events",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Productivity"
+   ],
+   "color": "#4285F4",
+   "subtitle": "{{operation}}: {{resource}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "default": "serviceAccount",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Service Account",
+       "value": "serviceAccount",
+       "description": "A service account key; share files with its email"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Act as a Google user: Connect the credential, or give it a refresh token"
+      }
+     ]
+    },
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "default": "event",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Event",
+       "value": "event"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "create",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Add an event to a calendar",
+       "action": "Create an event"
+      },
+      {
+       "name": "Delete",
+       "value": "delete",
+       "description": "Delete an event",
+       "action": "Delete an event"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Retrieve an event",
+       "action": "Get an event"
+      },
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "description": "Retrieve many events from a calendar",
+       "action": "Get many events"
+      },
+      {
+       "name": "Update",
+       "value": "update",
+       "description": "Update an event",
+       "action": "Update an event"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "calendar",
+     "displayName": "Calendar",
+     "type": "options",
+     "default": "primary",
+     "description": "Calendar to use. An expression may also give a calendar ID (often an email address).",
+     "required": true,
+     "options": [
+      {
+       "name": "Primary Calendar",
+       "value": "primary"
+      }
+     ],
+     "typeOptions": {
+      "loadOptionsMethod": "calendars"
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "start",
+     "displayName": "Start",
+     "type": "dateTime",
+     "default": "",
+     "description": "Start time (ISO 8601; without an offset the calendar's timezone applies)",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "create"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "end",
+     "displayName": "End",
+     "type": "dateTime",
+     "default": "",
+     "description": "End time (ISO 8601)",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "create"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "additionalFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "values": [
+      {
+       "name": "allday",
+       "displayName": "All Day",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether the event lasts whole days (start and end are taken as dates; the end date is exclusive)"
+      },
+      {
+       "name": "attendees",
+       "displayName": "Attendees",
+       "type": "string",
+       "default": "",
+       "description": "Guest emails, separated by commas"
+      },
+      {
+       "name": "description",
+       "displayName": "Description",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 3
+       }
+      },
+      {
+       "name": "location",
+       "displayName": "Location",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "summary",
+       "displayName": "Summary",
+       "type": "string",
+       "default": "",
+       "description": "Event title"
+      },
+      {
+       "name": "timezone",
+       "displayName": "Timezone",
+       "type": "string",
+       "default": "",
+       "description": "IANA zone for times without an offset; defaults to the calendar's zone",
+       "placeholder": "Europe/Berlin"
+      },
+      {
+       "name": "sendUpdates",
+       "displayName": "Send Updates",
+       "type": "options",
+       "default": "none",
+       "description": "Whether to email guests about the change",
+       "options": [
+        {
+         "name": "All",
+         "value": "all",
+         "description": "Notify all guests"
+        },
+        {
+         "name": "External Only",
+         "value": "externalOnly",
+         "description": "Notify guests outside the organization"
+        },
+        {
+         "name": "None",
+         "value": "none",
+         "description": "Notify nobody"
+        }
+       ]
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "create"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "eventId",
+     "displayName": "Event ID",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "get",
+        "update",
+        "delete"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "updateFields",
+     "displayName": "Update Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "values": [
+      {
+       "name": "allday",
+       "displayName": "All Day",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether the event lasts whole days (start and end are taken as dates; the end date is exclusive)"
+      },
+      {
+       "name": "attendees",
+       "displayName": "Attendees",
+       "type": "string",
+       "default": "",
+       "description": "Guest emails, separated by commas"
+      },
+      {
+       "name": "description",
+       "displayName": "Description",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 3
+       }
+      },
+      {
+       "name": "location",
+       "displayName": "Location",
+       "type": "string",
+       "default": ""
+      },
+      {
+       "name": "summary",
+       "displayName": "Summary",
+       "type": "string",
+       "default": "",
+       "description": "Event title"
+      },
+      {
+       "name": "timezone",
+       "displayName": "Timezone",
+       "type": "string",
+       "default": "",
+       "description": "IANA zone for times without an offset; defaults to the calendar's zone",
+       "placeholder": "Europe/Berlin"
+      },
+      {
+       "name": "sendUpdates",
+       "displayName": "Send Updates",
+       "type": "options",
+       "default": "none",
+       "description": "Whether to email guests about the change",
+       "options": [
+        {
+         "name": "All",
+         "value": "all",
+         "description": "Notify all guests"
+        },
+        {
+         "name": "External Only",
+         "value": "externalOnly",
+         "description": "Notify guests outside the organization"
+        },
+        {
+         "name": "None",
+         "value": "none",
+         "description": "Notify nobody"
+        }
+       ]
+      },
+      {
+       "name": "start",
+       "displayName": "Start",
+       "type": "dateTime",
+       "default": ""
+      },
+      {
+       "name": "end",
+       "displayName": "End",
+       "type": "dateTime",
+       "default": ""
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "update"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "sendUpdates",
+       "displayName": "Send Updates",
+       "type": "options",
+       "default": "none",
+       "description": "Whether to email guests about the change",
+       "options": [
+        {
+         "name": "All",
+         "value": "all",
+         "description": "Notify all guests"
+        },
+        {
+         "name": "External Only",
+         "value": "externalOnly",
+         "description": "Notify guests outside the organization"
+        },
+        {
+         "name": "None",
+         "value": "none",
+         "description": "Notify nobody"
+        }
+       ]
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "delete"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "description": "Max number of results to return",
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 2500,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "event"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "timeMin",
+     "displayName": "After",
+     "type": "dateTime",
+     "default": "",
+     "description": "Events ending after this time (ISO 8601; UTC without an offset)",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "timeMax",
+     "displayName": "Before",
+     "type": "dateTime",
+     "default": "",
+     "description": "Events starting before this time",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "orderBy",
+       "displayName": "Order By",
+       "type": "options",
+       "default": "startTime",
+       "description": "Start Time expands recurring events into single events",
+       "options": [
+        {
+         "name": "Start Time",
+         "value": "startTime"
+        },
+        {
+         "name": "Updated",
+         "value": "updated"
+        }
+       ]
+      },
+      {
+       "name": "query",
+       "displayName": "Query",
+       "type": "string",
+       "default": "",
+       "description": "Free text matched against summary, description, location and attendees"
+      },
+      {
+       "name": "showDeleted",
+       "displayName": "Show Deleted",
+       "type": "boolean",
+       "default": false
+      },
+      {
+       "name": "singleEvents",
+       "displayName": "Single Events",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether to expand recurring events into instances"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "event"
+       ]
+      }
+     }
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Manage Google Calendar events in `calendar` (default primary). operation=create needs start and end (ISO 8601) and takes additionalFields summary, description, location, attendees (comma-separated emails) and allday; getAll lists events between timeMin and timeMax (options.query searches text); get, update (updateFields) and delete act on eventId.",
+   "documentationUrl": "https://developers.google.com/workspace/calendar/api/v3/reference/events",
+   "keywords": [
+    "calendar",
+    "event",
+    "meeting",
+    "schedule",
+    "appointment"
+   ],
+   "credentials": [
+    {
+     "name": "googleApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "serviceAccount"
+       ]
+      }
+     }
+    },
+    {
+     "name": "googleOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "googleDocs",
+   "displayName": "Google Docs",
+   "description": "Create, read and edit Google Docs",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Productivity"
+   ],
+   "color": "#4285F4",
+   "subtitle": "{{operation}}: {{resource}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "default": "serviceAccount",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Service Account",
+       "value": "serviceAccount",
+       "description": "A service account key; share files with its email"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Act as a Google user: Connect the credential, or give it a refresh token"
+      }
+     ]
+    },
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "default": "document",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Document",
+       "value": "document"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "create",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Create a document",
+       "action": "Create a document"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Get a document",
+       "action": "Get a document"
+      },
+      {
+       "name": "Update",
+       "value": "update",
+       "description": "Update a document",
+       "action": "Update a document"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "document"
+       ]
+      }
+     }
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "create"
+       ],
+       "resource": [
+        "document"
+       ]
+      }
+     }
+    },
+    {
+     "name": "folderId",
+     "displayName": "Folder",
+     "type": "options",
+     "default": "root",
+     "description": "Folder to put the document in (moved there through Drive)",
+     "options": [
+      {
+       "name": "My Drive (root)",
+       "value": "root"
+      }
+     ],
+     "typeOptions": {
+      "loadOptionsMethod": "folders"
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "create"
+       ],
+       "resource": [
+        "document"
+       ]
+      }
+     }
+    },
+    {
+     "name": "documentURL",
+     "displayName": "Doc ID or URL",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "get",
+        "update"
+       ],
+       "resource": [
+        "document"
+       ]
+      }
+     }
+    },
+    {
+     "name": "simple",
+     "displayName": "Simplify",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to return a simplified version of the response instead of the raw data",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "get"
+       ],
+       "resource": [
+        "document"
+       ]
+      }
+     }
+    },
+    {
+     "name": "actionsUi",
+     "displayName": "Actions",
+     "type": "fixedCollection",
+     "default": {},
+     "placeholder": "Add Action",
+     "groups": [
+      {
+       "name": "actionFields",
+       "displayName": "Action",
+       "values": [
+        {
+         "name": "action",
+         "displayName": "Action",
+         "type": "options",
+         "default": "insert",
+         "options": [
+          {
+           "name": "Insert",
+           "value": "insert",
+           "description": "Insert text at the end of the document"
+          },
+          {
+           "name": "Replace All",
+           "value": "replaceAll",
+           "description": "Replace every occurrence of a text"
+          }
+         ]
+        },
+        {
+         "name": "text",
+         "displayName": "Text",
+         "type": "string",
+         "default": "",
+         "description": "Text to insert, or the text to find for Replace All"
+        },
+        {
+         "name": "replaceText",
+         "displayName": "Replace With",
+         "type": "string",
+         "default": "",
+         "displayOptions": {
+          "show": {
+           "action": [
+            "replaceAll"
+           ]
+          }
+         }
+        },
+        {
+         "name": "matchCase",
+         "displayName": "Match Case",
+         "type": "boolean",
+         "default": false,
+         "displayOptions": {
+          "show": {
+           "action": [
+            "replaceAll"
+           ]
+          }
+         }
+        }
+       ]
+      }
+     ],
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "update"
+       ],
+       "resource": [
+        "document"
+       ]
+      }
+     }
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Work with Google Docs. operation=create makes a document called title; get returns documentURL's text as `content`; update applies actionsUi actions to documentURL: insert appends text at the end, replaceAll replaces every occurrence of text with replaceText.",
+   "documentationUrl": "https://developers.google.com/workspace/docs/api/reference/rest",
+   "keywords": [
+    "document",
+    "doc",
+    "text",
+    "write",
+    "word processor"
+   ],
+   "credentials": [
+    {
+     "name": "googleApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "serviceAccount"
+       ]
+      }
+     }
+    },
+    {
+     "name": "googleOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ],
+ "credentialTypes": [
+  {
+   "name": "googleApi",
+   "displayName": "Google Service Account",
+   "description": "A service account key. Share spreadsheets, files and calendars with the service account's email; Gmail needs domain-wide delegation (Impersonate a User).",
+   "documentationUrl": "https://developers.google.com/identity/protocols/oauth2/service-account",
+   "properties": [
+    {
+     "name": "email",
+     "displayName": "Service Account Email",
+     "type": "string",
+     "description": "client_email from the JSON key file",
+     "placeholder": "robot@my-project.iam.gserviceaccount.com",
+     "required": true
+    },
+    {
+     "name": "privateKey",
+     "displayName": "Private Key",
+     "type": "string",
+     "description": "private_key from the JSON key file. Escaped \\n sequences and a pasted line without newlines both work, and so does the whole JSON key file.",
+     "placeholder": "-----BEGIN PRIVATE KEY-----\u2026",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     }
+    },
+    {
+     "name": "delegatedEmail",
+     "displayName": "Impersonate a User",
+     "type": "string",
+     "default": "",
+     "description": "Optional. Act as this Workspace user through domain-wide delegation; required for Gmail.",
+     "placeholder": "someone@your-domain.com"
+    },
+    {
+     "name": "tokenUrl",
+     "displayName": "Token URL",
+     "type": "string",
+     "default": "https://oauth2.googleapis.com/token",
+     "description": "OAuth 2.0 token endpoint"
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "API Base URL (advanced)",
+     "type": "string",
+     "default": "",
+     "description": "Leave empty for Google. When set, it replaces the host of every Google API and keeps the paths (/v4/spreadsheets\u2026, /gmail/v1/\u2026, /drive/v3/\u2026, /calendar/v3/\u2026, /v1/documents\u2026), e.g. for a proxy or a test double.",
+     "placeholder": "https://proxy.example.com"
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "googleOAuth2Api",
+   "displayName": "Google OAuth2",
+   "description": "Sign in with Google: create an OAuth client (Web application) in Google Cloud, add the redirect URL shown below, then Connect. A refresh token obtained elsewhere (OAuth Playground, gcloud) works too.",
+   "documentationUrl": "https://developers.google.com/identity/protocols/oauth2/web-server",
+   "properties": [
+    {
+     "name": "grantType",
+     "displayName": "Grant Type",
+     "type": "hidden",
+     "default": "pkce"
+    },
+    {
+     "name": "authUrl",
+     "displayName": "Authorization URL",
+     "type": "hidden",
+     "default": "https://accounts.google.com/o/oauth2/v2/auth"
+    },
+    {
+     "name": "accessTokenUrl",
+     "displayName": "Access Token URL",
+     "type": "string",
+     "default": "https://oauth2.googleapis.com/token",
+     "description": "OAuth 2.0 token endpoint"
+    },
+    {
+     "name": "clientId",
+     "displayName": "Client ID",
+     "type": "string",
+     "placeholder": "1234-abc.apps.googleusercontent.com",
+     "required": true
+    },
+    {
+     "name": "clientSecret",
+     "displayName": "Client Secret",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     }
+    },
+    {
+     "name": "scope",
+     "displayName": "Scope",
+     "type": "string",
+     "default": "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/documents openid email",
+     "description": "Space-separated scopes asked for at Connect. Trim it to the APIs your workflows use; openid and email show who connected."
+    },
+    {
+     "name": "authQueryParameters",
+     "displayName": "Auth URI Query Parameters",
+     "type": "hidden",
+     "default": "access_type=offline&prompt=consent"
+    },
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "hidden",
+     "default": "body"
+    },
+    {
+     "name": "userInfoUrl",
+     "displayName": "User Info URL",
+     "type": "hidden",
+     "default": "https://openidconnect.googleapis.com/v1/userinfo"
+    },
+    {
+     "name": "refreshToken",
+     "displayName": "Refresh Token (without Connect)",
+     "type": "string",
+     "default": "",
+     "description": "Optional: only when not using Connect. A refresh token for this client with the scopes you need (see the plugin README).",
+     "typeOptions": {
+      "password": true
+     }
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "API Base URL (advanced)",
+     "type": "string",
+     "default": "",
+     "description": "Leave empty for Google. When set, it replaces the host of every Google API and keeps the paths (/v4/spreadsheets\u2026, /gmail/v1/\u2026, /drive/v3/\u2026, /calendar/v3/\u2026, /v1/documents\u2026), e.g. for a proxy or a test double.",
+     "placeholder": "https://proxy.example.com"
+    }
+   ],
+   "testable": true,
+   "extends": [
+    "oAuth2Api"
+   ]
+  }
+ ]
+}

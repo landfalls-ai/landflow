@@ -15,6 +15,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } fr
 import type { JsonObject } from '@landflow/protocol';
 import { executeWorkflow, type ToolSpec, type Workflow, type WorkflowNode } from '@landflow/engine';
 import { credentials } from '../credentials/vault';
+import { resolveWorkflowCredentials } from '../projects/credentials';
 import { registry } from '../plugins/registry';
 import { runWorkflow } from '../runner';
 import { productionWorkflows } from '../publish';
@@ -72,7 +73,7 @@ export async function listTriggerTools(workflow: Workflow, node: WorkflowNode): 
     startNodeId: node.id,
     destinationNodeId: node.id,
     triggerItems: [{ json: {} }],
-    resolveCredentials: (target, descriptor) => credentials.resolveFor(target, descriptor),
+    resolveCredentials: (target, descriptor) => resolveWorkflowCredentials(workflow.id, target, descriptor),
     variables: variables.record(),
     spanAttributes: { 'landflow.mcp.method': 'tools/list' },
   });

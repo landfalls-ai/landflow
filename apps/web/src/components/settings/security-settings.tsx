@@ -12,6 +12,8 @@ import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { CopyButton } from '@/components/ui/copy-button';
 import { SectionLabel } from '@/components/ui/inputs';
+import { SamlSettings } from './saml-settings';
+import { ScimSettings } from './scim-settings';
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -112,6 +114,9 @@ export function SecuritySettings() {
           </p>
         )}
       </Card>
+
+      <SamlSettings saml={view.saml} />
+      {view.scim && <ScimSettings scim={view.scim} />}
 
       <Card className="px-5 py-4">
         <div className="mb-2 flex items-center gap-2">

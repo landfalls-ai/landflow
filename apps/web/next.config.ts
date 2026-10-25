@@ -24,6 +24,8 @@ const nextConfig: NextConfig = {
     // Email Trigger (IMAP): socket clients with lazily required codecs.
     'imapflow',
     'mailparser',
+    // Kubernetes plugin discovery (LANDFLOW_PLUGIN_DISCOVERY=kubernetes), loaded only when it is on.
+    '@kubernetes/client-node',
   ],
   devIndicators: false,
   // Docker image (deploy/docker/host.Dockerfile): a self-contained server in .next/standalone.

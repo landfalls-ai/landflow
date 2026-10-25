@@ -1,5 +1,7 @@
 /**
- * Fires Schedule triggers of active workflows and starts the poller. Single-process; leader election is out of scope.
+ * Fires Schedule triggers of active workflows and starts the poller. Queue mode: only the leader main runs it
+ * (lib/server/cluster), and `snapshot()` / `restore()` carry the seconds checked over to the next leader, so a
+ * failover catches up on what fell due in between instead of skipping it.
  *
  * A Schedule node either has n8n's Trigger Rules (`unit: 'rules'`, `rule.interval[]`: every N seconds,
  * minutes, hours at a minute, days / weeks / months at a time of day, or a cron expression), checked every
@@ -214,6 +216,23 @@ export const scheduler = singleton('scheduler', () => {
       timer = setInterval(() => tick(), 1_000);
       timer.unref?.();
       poller.start();
+    },
+    /** Stop ticking (and polling); the next start() begins afresh unless restore() hands it a snapshot. */
+    stop() {
+      clearInterval(timer);
+      timer = undefined;
+      poller.stop();
+      lastRun.clear();
+      checked.clear();
+    },
+    /** Where each schedule stands: the last second checked (rules) and the last run (`every` schedules). */
+    snapshot(): { checked: Record<string, number>; lastRun: Record<string, number> } {
+      return { checked: Object.fromEntries(checked), lastRun: Object.fromEntries(lastRun) };
+    },
+    /** Continue from a snapshot (another leader's): rule schedules catch up on the seconds since (at most a minute). */
+    restore(snapshot: { checked?: Record<string, number>; lastRun?: Record<string, number> } | undefined) {
+      for (const [key, second] of Object.entries(snapshot?.checked ?? {})) if (Number.isFinite(second)) checked.set(key, Math.max(checked.get(key) ?? 0, second));
+      for (const [key, at] of Object.entries(snapshot?.lastRun ?? {})) if (Number.isFinite(at) && !lastRun.has(key)) lastRun.set(key, at);
     },
     tick,
   };

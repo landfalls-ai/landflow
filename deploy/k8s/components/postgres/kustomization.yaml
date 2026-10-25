@@ -1,0 +1,21 @@
+# Optional: Postgres 16 with pgvector in the namespace, and the host's store on it (LANDFLOW_DB=postgres).
+# Development credentials: replace the generated Secret (or use ../external-services) for anything real.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - postgres.yaml
+secretGenerator:
+  - name: landflow-postgres
+    options: { disableNameSuffixHash: true }
+    literals:
+      - password=landflow-dev-only
+      - database-url=postgres://landflow:landflow-dev-only@postgres:5432/landflow
+patches:
+  - target: { kind: Deployment, name: landflow-host }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: LANDFLOW_DB, value: postgres }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: landflow-postgres, key: database-url } } }

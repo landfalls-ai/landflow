@@ -3,7 +3,8 @@
  * heartbeats (POST /api/workflows/<id>/lock every 10 s) and releases it when it closes; a lock not renewed for 30 s
  * expires, so a crashed tab frees it too. Admins (and the holder, from another tab) can take over. Changes go out
  * as `lock` events on the live event stream. Locks live in memory: the host is one process, and editors re-acquire
- * after a restart on their next heartbeat.
+ * after a restart on their next heartbeat. Queue mode: every main keeps a copy, kept in step by the relayed `lock`
+ * events and renewals (`onRenew`, `applyRemote`).
  */
 import type { EditLockView } from '../../shared/auth';
 import { bus } from '../bus';
@@ -17,6 +18,8 @@ export type LockResult = { mine: true; lock: EditLockView } | { mine: false; loc
 class EditLocks {
   private readonly locks = new Map<string, EditLockView>();
   private timer?: NodeJS.Timeout;
+  /** Queue mode: told of renewals (not published on the bus), so the other mains extend their copy. */
+  onRenew?: (lock: EditLockView) => void;
 
   private publish(workflowId: string, lock: EditLockView | null) {
     bus.publish({ channel: 'lock', workflowId, lock });
@@ -64,11 +67,25 @@ class EditLocks {
     };
     this.locks.set(workflowId, lock);
     if (!renewed) this.publish(workflowId, lock);
-    if (!this.timer) {
-      this.timer = setInterval(() => this.sweep(), 5_000);
-      this.timer.unref?.();
-    }
+    else this.onRenew?.(lock);
+    this.sweepLater();
     return { mine: true, lock };
+  }
+
+  private sweepLater() {
+    if (this.timer) return;
+    this.timer = setInterval(() => this.sweep(), 5_000);
+    this.timer.unref?.();
+  }
+
+  /** Queue mode: a lock another main granted, renewed or released (not published again). */
+  applyRemote(workflowId: string, lock: EditLockView | null) {
+    if (!lock) {
+      this.locks.delete(workflowId);
+      return;
+    }
+    this.locks.set(workflowId, lock);
+    this.sweepLater();
   }
 
   /** Release the lock if `tabId` holds it. */

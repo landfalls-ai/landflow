@@ -3,6 +3,7 @@
  * insights rollup from the executions on disk (first boot only), then apply the
  * execution retention settings now and every hour, and forget expired idempotency keys.
  */
+import { leads } from './cluster/state';
 import { pruneIdempotencyKeys } from './idempotency';
 import { backfillInsights } from './insights';
 import { pruneExecutions } from './settings';
@@ -28,6 +29,8 @@ export function startDataMaintenance(): { backfilled: number; pruned: number } {
     attempt('idempotency key pruning', () => pruneIdempotencyKeys());
     if (backfilled || pruned) logger.info('platform data ready', { 'landflow.insights.backfilled': backfilled, 'landflow.executions.pruned': pruned });
     const timer = setInterval(() => {
+      // Queue mode: the leader main prunes.
+      if (!leads()) return;
       const removed = attempt('execution retention', () => pruneExecutions());
       if (removed) logger.info('pruned executions', { 'landflow.executions.pruned': removed });
       attempt('idempotency key pruning', () => pruneIdempotencyKeys());

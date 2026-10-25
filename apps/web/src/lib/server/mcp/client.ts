@@ -12,6 +12,7 @@ import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontex
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { JsonObject } from '@landflow/protocol';
 import { toToolName, type AgentTool } from '@landflow/engine';
+import { mcpUrlBlocked } from '../governance/policy';
 import { singleton } from '../singleton';
 
 export type McpTransport = 'httpStreamable' | 'sse';
@@ -78,6 +79,9 @@ export function endpointFrom(parameters: McpServerParameters, credentials: { htt
     throw new McpClientError(`“${url}” is not a valid URL`);
   }
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new McpClientError('The endpoint URL must start with http:// or https://');
+  // Settings → Governance: MCP servers outside the allow-list are refused (MCP Client node and tool, agents).
+  const blocked = mcpUrlBlocked(parsed.toString());
+  if (blocked) throw new McpClientError(`Blocked by policy: ${blocked}. An admin can allow it in Settings → Governance.`, 403);
   const options = (parameters.options && typeof parameters.options === 'object' ? parameters.options : {}) as { timeout?: unknown };
   const timeout = Number(options.timeout);
   return {

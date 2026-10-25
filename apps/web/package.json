@@ -8,17 +8,20 @@
     "build": "next build",
     "start": "next start --port 3000",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "worker": "tsx --tsconfig tsconfig.json src/lib/server/cluster/worker-main.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
     "@aws-sdk/client-s3": "^3.1156.0",
     "@grpc/grpc-js": "^1.14.6",
     "@grpc/proto-loader": "^0.8.1",
+    "@kubernetes/client-node": "2.0.0",
     "@landflow/engine": "workspace:*",
     "@landflow/protocol": "workspace:*",
     "@landflow/sdk": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@node-saml/node-saml": "^5.1.0",
     "@opentelemetry/api": "^1.10.0",
     "@opentelemetry/context-async-hooks": "^3.0.0",
     "@opentelemetry/core": "^3.0.0",

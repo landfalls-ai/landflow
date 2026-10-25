@@ -126,6 +126,6 @@ describe('config', () => {
   it('serializes errors with a stable shape', () => {
     expect(new CliError('not_found', 'gone', { status: 404 }).toJSON()).toEqual({ code: 'not_found', message: 'gone', status: 404 });
     expect(new CliError('conflict', 'x').exitCode).toBe(5);
-    expect(EXIT).toEqual({ ok: 0, error: 1, usage: 2, notFound: 3, auth: 4, conflict: 5, network: 6, timeout: 7 });
+    expect(EXIT).toEqual({ ok: 0, error: 1, usage: 2, notFound: 3, auth: 4, conflict: 5, network: 6, timeout: 7, approvalPending: 8 });
   });
 });

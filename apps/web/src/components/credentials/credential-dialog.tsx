@@ -98,9 +98,12 @@ export function CredentialDialog({
   allowedTypes,
   onClose,
   onSaved,
+  projectId,
 }: {
   /** Edit this credential; otherwise create one. */
   credentialId?: string;
+  /** Create it in this project (default: the viewer's personal project). */
+  projectId?: string;
   /** Restrict the type picker (a node's requirement); one type skips the picker. */
   allowedTypes?: string[];
   onClose: () => void;
@@ -181,7 +184,7 @@ export function CredentialDialog({
     try {
       const { credential } = existing
         ? await api<{ credential: CredentialDetail }>(`/api/credentials/${existing.id}`, { method: 'PATCH', json: { name, data: values } })
-        : await api<{ credential: CredentialDetail }>('/api/credentials', { method: 'POST', json: { name, type, data: values } });
+        : await api<{ credential: CredentialDetail }>(`/api/credentials${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`, { method: 'POST', json: { name, type, data: values } });
       await useCredentialStore.getState().refresh();
       return credential;
     } catch (e) {
@@ -266,7 +269,7 @@ export function CredentialDialog({
               {info ? (
                 <>
                   {info.type === OAUTH2_CREDENTIAL && <OAuth2Presets values={values} onChange={setValues} />}
-                  <ParamForm nodeType="" properties={properties} values={values} onChange={setValues} />
+                  <ParamForm nodeType="" properties={properties} values={values} onChange={setValues} expressionScope="credential" />
                   {info.oauth2 && <OAuth2Connection credential={existing} grantType={String(values.grantType ?? 'pkce')} ensureSaved={ensureSaved} onChange={setExisting} />}
                 </>
               ) : (

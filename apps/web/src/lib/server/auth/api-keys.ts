@@ -1,7 +1,8 @@
 /**
  * Personal API keys: `lf_` and 32 random bytes (base64url), shown once and kept as their SHA-256 in `api_keys`
  * with a label, scopes and an optional expiry. Sent as `Authorization: Bearer lf_…` or `X-Landflow-API-Key`.
- * A key acts as its user, limited to its scopes: the role checks still apply.
+ * A key acts as its user, limited to its scopes: the role checks and project access still apply. Keys of a
+ * deactivated user don't work. The `scim` scope is for identity providers (lib/server/scim) and grants nothing else.
  */
 import { nanoid } from 'nanoid';
 import { API_KEY_SCOPES, type ApiKeyScope, type ApiKeyView } from '../../shared/auth';
@@ -108,7 +109,7 @@ export function verifyApiKey(token: string, now = Date.now()): ApiKeyCheck {
   if (!row) return { ok: false, reason: 'unknown' };
   if (row.expires_at && Date.parse(row.expires_at) <= now) return { ok: false, reason: 'expired' };
   const user = getUser(row.user_id);
-  if (!user) return { ok: false, reason: 'unknown' };
+  if (!user || user.disabledAt) return { ok: false, reason: 'unknown' };
   const touched = singleton('api-key-touched', () => new Map<string, number>());
   if (now - (touched.get(row.id) ?? 0) > TOUCH_EVERY_MS) {
     touched.set(row.id, now);

@@ -6,8 +6,10 @@
 import { z } from 'zod';
 import { clientIp, findUserByEmail, loginLimits, normalizeEmail, signedInResponse, verifyPassword } from '@/lib/server/auth';
 import { dummyHash } from '@/lib/server/auth/passwords';
+import { DEACTIVATED_MESSAGE } from '@/lib/server/auth/sessions';
 import { error, handler, parseBody } from '@/lib/server/http';
 import { logger } from '@/lib/server/telemetry';
+import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +23,7 @@ export const POST = handler(async (request: Request) => {
   const limits = loginLimits();
   const blocked = [limits.email.check(email), limits.ip.check(ip)].find((result) => !result.ok);
   if (blocked) {
+    recordAudit({ action: 'auth.sign_in_failed', outcome: 'denied', actor: 'anonymous', target: { type: 'user', name: email }, summary: `Sign-in for ${email} refused: too many failed attempts`, details: { email, reason: 'rate-limited' } });
     return error('Too many failed sign-ins. Try again later.', 429, { retryAfter: blocked.retryAfter });
   }
   const user = findUserByEmail(email);
@@ -28,10 +31,17 @@ export const POST = handler(async (request: Request) => {
   if (!user || !user.passwordHash || !ok) {
     limits.email.hit(email);
     limits.ip.hit(ip);
-    logger.info('sign-in failed', { 'landflow.auth.reason': user ? (user.passwordHash ? 'password' : 'no-password') : 'unknown-email' });
+    const reason = user ? (user.passwordHash ? 'password' : 'no-password') : 'unknown-email';
+    logger.info('sign-in failed', { 'landflow.auth.reason': reason });
+    recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', actor: 'anonymous', target: { type: 'user', ...(user && { id: user.id }), name: email }, summary: `Failed sign-in for ${email}`, details: { email, reason, method: 'password' } });
     return error('Wrong email or password', 401);
   }
   limits.email.reset(email);
+  // Deactivated (SCIM): the right password still doesn't sign them in.
+  if (user.disabledAt) {
+    recordAudit({ action: 'auth.sign_in_failed', outcome: 'denied', actor: 'anonymous', target: { type: 'user', id: user.id, name: email }, summary: `Sign-in for ${email} refused: deactivated`, details: { email, reason: 'deactivated', method: 'password' } });
+    return error(DEACTIVATED_MESSAGE, 403);
+  }
   logger.info('signed in', { 'landflow.user.id': user.id, 'landflow.auth.method': 'password' });
   return signedInResponse(request, user, 'password');
 });

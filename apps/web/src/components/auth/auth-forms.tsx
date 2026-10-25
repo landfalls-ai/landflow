@@ -76,7 +76,7 @@ function useSubmit(run: () => Promise<void>) {
 
 const passwordHint = `At least ${MIN_PASSWORD_LENGTH} characters`;
 
-export function LoginForm({ next, oidcLabel, initialError, smtp }: { next: string; oidcLabel?: string; initialError?: string; smtp: boolean }) {
+export function LoginForm({ next, oidcLabel, samlLabel, initialError, smtp }: { next: string; oidcLabel?: string; samlLabel?: string; initialError?: string; smtp: boolean }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { busy, error, submit } = useSubmit(async () => {
@@ -85,14 +85,24 @@ export function LoginForm({ next, oidcLabel, initialError, smtp }: { next: strin
   });
   return (
     <form onSubmit={submit} className="space-y-3.5">
-      {oidcLabel && (
+      {(oidcLabel || samlLabel) && (
         <>
-          <a
-            href={`/api/auth/oidc/login?next=${encodeURIComponent(next)}`}
-            className="flex h-9 w-full items-center justify-center gap-2 rounded-full border border-bd text-[13px] font-semibold text-t1 transition-colors duration-[120ms] hover:border-ac hover:text-ac"
-          >
-            <KeyRound className="size-3.5" /> {oidcLabel}
-          </a>
+          {oidcLabel && (
+            <a
+              href={`/api/auth/oidc/login?next=${encodeURIComponent(next)}`}
+              className="flex h-9 w-full items-center justify-center gap-2 rounded-full border border-bd text-[13px] font-semibold text-t1 transition-colors duration-[120ms] hover:border-ac hover:text-ac"
+            >
+              <KeyRound className="size-3.5" /> {oidcLabel}
+            </a>
+          )}
+          {samlLabel && (
+            <a
+              href={`/api/auth/saml/login?next=${encodeURIComponent(next)}`}
+              className="flex h-9 w-full items-center justify-center gap-2 rounded-full border border-bd text-[13px] font-semibold text-t1 transition-colors duration-[120ms] hover:border-ac hover:text-ac"
+            >
+              <KeyRound className="size-3.5" /> {samlLabel}
+            </a>
+          )}
           <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">
             <span className="h-px flex-1 bg-hair" /> or <span className="h-px flex-1 bg-hair" />
           </div>

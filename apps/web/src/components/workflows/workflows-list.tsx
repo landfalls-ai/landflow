@@ -9,13 +9,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, MoreHorizontal, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { ArrowRightLeft, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, MoreHorizontal, Pencil, Plus, Search, Share2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
-import type { Folder, ImportReport, NodeTypeInfo, Workflow, WorkflowSummary } from '@/lib/shared/types';
+import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
+import type { Folder, ImportReport, NodeTypeInfo, Workflow, WorkflowSummary as Summary } from '@/lib/shared/types';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,7 +27,11 @@ import { MenuItem, MenuSeparator, Popover } from '@/components/ui/popover';
 import { ImportReportDialog, showImportReport } from '@/components/editor/import-report';
 import { readJsonFile } from '@/components/editor/import-dialog';
 import { workflowFileName } from '@/components/editor/workflow-menu';
+import { MoveToProjectDialog, ShareDialog } from '@/components/projects/share-dialog';
 import { FolderNameDialog, MoveDialog } from './folder-dialogs';
+
+/** A listed workflow with its project and the viewer's access (GET /api/workflows). */
+type WorkflowSummary = Summary & { ownership?: ResourceOwnership };
 
 const MAX_ICONS = 6;
 const SORT_KEY = 'landflow-workflows-sort';
@@ -204,6 +209,8 @@ function WorkflowRow({
   types,
   folderPath,
   onMove,
+  onShare,
+  onTransfer,
   onDelete,
 }: {
   workflow: WorkflowSummary;
@@ -211,6 +218,8 @@ function WorkflowRow({
   /** Shown when the list spans folders (search, tag filter). */
   folderPath?: string;
   onMove: () => void;
+  onShare: () => void;
+  onTransfer: () => void;
   onDelete: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -276,6 +285,7 @@ function WorkflowRow({
               {tag}
             </Badge>
           ))}
+          {workflow.ownership?.shared && <Badge tone="muted" title={`Shared from ${workflow.ownership.projectName}`}>{workflow.ownership.access.role === 'viewer' ? 'Shared · view' : 'Shared'}</Badge>}
           {workflow.active && <Badge tone="success">Published</Badge>}
           <span className="hidden w-16 text-right text-[12px] text-t3 sm:inline">
             {workflow.nodeCount} {workflow.nodeCount === 1 ? 'node' : 'nodes'}
@@ -338,6 +348,24 @@ function WorkflowRow({
                 <MenuItem
                   onClick={() => {
                     close();
+                    onShare();
+                  }}
+                >
+                  <Share2 /> {resourceCan(workflow.ownership?.access, 'share') || !workflow.ownership ? 'Share…' : 'Who has access…'}
+                </MenuItem>
+                {(!workflow.ownership || resourceCan(workflow.ownership.access, 'move')) && (
+                  <MenuItem
+                    onClick={() => {
+                      close();
+                      onTransfer();
+                    }}
+                  >
+                    <ArrowRightLeft /> Move to project…
+                  </MenuItem>
+                )}
+                <MenuItem
+                  onClick={() => {
+                    close();
                     void download();
                   }}
                 >
@@ -368,7 +396,7 @@ export function WorkflowsList() {
   const [query, setQuery] = useState('');
   const [tag, setTag] = useState('');
   const [sort, setSortState] = useState<Sort>('updated');
-  const [dialog, setDialog] = useState<{ kind: 'new-folder' } | { kind: 'rename'; folder: Folder } | { kind: 'move'; workflow: WorkflowSummary }>();
+  const [dialog, setDialog] = useState<{ kind: 'new-folder' } | { kind: 'rename'; folder: Folder } | { kind: 'move' | 'share' | 'transfer'; workflow: WorkflowSummary }>();
   const picker = useRef<HTMLInputElement>(null);
 
   const load = useCallback(
@@ -603,6 +631,8 @@ export function WorkflowsList() {
               types={types}
               folderPath={searching && known(workflow.folderId) ? pathOf(workflow.folderId).map((f) => f.name).join(' / ') : undefined}
               onMove={() => setDialog({ kind: 'move', workflow })}
+              onShare={() => setDialog({ kind: 'share', workflow })}
+              onTransfer={() => setDialog({ kind: 'transfer', workflow })}
               onDelete={() => void removeWorkflow(workflow)}
             />
           ))}
@@ -617,11 +647,14 @@ export function WorkflowsList() {
           <Card>
             <EmptyState
               title="No workflows yet"
-              hint="Chain built-in nodes with plugins written in any language. Every node, local or remote, implements the same interface. You can also import a workflow from n8n or Flowise."
+              hint="Chain built-in nodes with plugins written in any language. Every node, local or remote, implements the same interface. Start from a template, or import a workflow from n8n or Flowise."
               action={
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => picker.current?.click()}>
                     <FileUp className="size-3.5" /> Import
+                  </Button>
+                  <Button size="sm" onClick={() => router.push('/templates')}>
+                    <LayoutTemplate className="size-3.5" /> Browse templates
                   </Button>
                   <Button variant="primary" size="sm" onClick={() => void create()} loading={creating}>
                     New workflow
@@ -641,6 +674,9 @@ export function WorkflowsList() {
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })}>
                     <FolderPlus className="size-3.5" /> New folder
+                  </Button>
+                  <Button size="sm" onClick={() => router.push(`/templates?folder=${encodeURIComponent(current.id)}`)}>
+                    <LayoutTemplate className="size-3.5" /> From a template
                   </Button>
                   <Button variant="primary" size="sm" onClick={() => void create()} loading={creating}>
                     New workflow
@@ -695,6 +731,10 @@ export function WorkflowsList() {
           onClose={() => setDialog(undefined)}
           onMove={(target) => move(dialog.workflow.id, target)}
         />
+      )}
+      {dialog?.kind === 'share' && <ShareDialog kind="workflow" id={dialog.workflow.id} name={dialog.workflow.name} onClose={() => setDialog(undefined)} onChanged={() => void load()} />}
+      {dialog?.kind === 'transfer' && (
+        <MoveToProjectDialog kind="workflow" id={dialog.workflow.id} name={dialog.workflow.name} currentProjectId={dialog.workflow.ownership?.projectId} onClose={() => setDialog(undefined)} onMoved={() => void load()} />
       )}
       <ImportReportDialog />
     </>

@@ -1,5 +1,5 @@
-import { defineCredentialType, defineNode, NodeOperationError, type JsonObject, type JsonValue, type PropertyOption } from '@landflow/sdk';
-import { apiError, baseUrl, countSent, fetchJson, jsonParameter, mapItems, requireString, unsupported, type ApiContext } from '../shared';
+import { defineCredentialType, defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type JsonValue, type PropertyOption } from '@landflow/sdk';
+import { apiError, baseUrl, countSent, fetchJson, ItemWithFiles, jsonParameter, mapItems, requireString, unsupported, type ApiContext } from '../shared';
 
 export interface SlackCredentials extends JsonObject {
   accessToken: string;
@@ -171,13 +171,63 @@ async function listChannels(api: ApiContext, credentials: SlackCredentials, para
   return channels.slice(0, max);
 }
 
+/** POST to an upload URL or GET a file URL, mapping network and HTTP failures to node errors. */
+async function fileRequest(api: ApiContext, url: string, init: RequestInit, what: string, description?: string): Promise<Response> {
+  let response: Response;
+  try {
+    response = await api.http(url, { ...init, signal: AbortSignal.timeout(300_000) });
+  } catch (error) {
+    throw apiError(api, 'slack', 'Slack', undefined, `the file ${what} failed: ${(error as Error).message}`, undefined, 'network');
+  }
+  if (!response.ok) throw apiError(api, 'slack', 'Slack', response.status, `the file ${what} failed`, description);
+  return response;
+}
+
+/** Slack's upload flow: files.getUploadURLExternal, the bytes to that URL, then files.completeUploadExternal shares the file. */
+async function uploadFile(ctx: IExecuteContext, api: ApiContext, credentials: SlackCredentials, i: number, channelId: string): Promise<JsonObject> {
+  const property = String(ctx.getNodeParameter('binaryPropertyName', i, 'data') || 'data').trim();
+  const ref = ctx.helpers.assertBinaryData(i, property);
+  const options = ctx.getNodeParameter<JsonObject>('fileOptions', i, {}) ?? {};
+  const bytes = new Uint8Array(await ctx.helpers.getBinaryDataBuffer(i, property));
+  const filename = String(options.fileName ?? '').trim() || ref.fileName || `${property}.${ref.fileExtension ?? 'bin'}`;
+  const target = await slackCall<{ upload_url: string; file_id: string }>(api, credentials, 'files.getUploadURLExternal', { filename, length: bytes.length }, 'GET');
+  const uploaded = await fileRequest(api, target.upload_url, { method: 'POST', headers: { 'content-type': ref.mimeType || 'application/octet-stream' }, body: bytes }, 'upload');
+  await uploaded.arrayBuffer().catch(() => undefined);
+  const params: JsonObject = { files: [{ id: target.file_id, title: String(options.title ?? '').trim() || filename }], channel_id: channelId };
+  if (options.initial_comment) params.initial_comment = String(options.initial_comment);
+  if (options.thread_ts) params.thread_ts = String(options.thread_ts);
+  const { files } = await slackCall<{ files?: JsonObject[] }>(api, credentials, 'files.completeUploadExternal', params);
+  countSent(api, 'slack', 'upload');
+  return files?.[0] ?? { id: target.file_id };
+}
+
+/** files.info, then the bytes from url_private_download (it needs the token) into item.binary. */
+async function getFile(ctx: IExecuteContext, api: ApiContext, credentials: SlackCredentials, i: number): Promise<JsonObject | ItemWithFiles> {
+  const { file } = await slackCall<{ file: JsonObject }>(api, credentials, 'files.info', { file: requireString(ctx, 'fileId', 'File ID', i) }, 'GET');
+  if (!ctx.getNodeParameter<boolean>('download', i, true)) return file;
+  const url = String(file.url_private_download ?? file.url_private ?? '');
+  if (!url) {
+    throw new NodeOperationError('Slack gave no download URL for this file', { itemIndex: i, description: 'Files linked from other services (Google Drive, Dropbox…) have no copy in Slack.' });
+  }
+  const scope = 'The token needs the files:read scope, and the bot must be able to see the file.';
+  const response = await fileRequest(api, url, { headers: { authorization: `Bearer ${credentials.accessToken}` } }, 'download', scope);
+  const type = response.headers.get('content-type');
+  // Without access Slack answers its sign-in page (HTML, status 200) instead of the file.
+  if (type && /text\/html/i.test(type) && file.mimetype !== 'text/html') throw apiError(api, 'slack', 'Slack', response.status, 'the file download returned a sign-in page', scope);
+  const mimeType = typeof file.mimetype === 'string' && file.mimetype ? file.mimetype : type && !/octet-stream/i.test(type) ? type : undefined;
+  const ref = await ctx.helpers.prepareBinaryData(response.body!, typeof file.name === 'string' ? file.name : undefined, mimeType);
+  const property = String(ctx.getNodeParameter('binaryPropertyName', i, 'data') || 'data').trim();
+  return new ItemWithFiles(file, { [property]: ref });
+}
+
 const messageOps = (operation: string[]) => ({ show: { resource: ['message'], operation } });
+const fileOps = (operation: string[]) => ({ show: { resource: ['file'], operation } });
 
 export const Slack = defineNode({
   description: {
     name: 'slack',
     displayName: 'Slack',
-    description: 'Send, update and delete Slack messages, list channels, look up users and add reactions',
+    description: 'Send, update and delete Slack messages, upload and download files, list channels, look up users and add reactions',
     version: 1,
     kind: 'action',
     categories: ['Communication'],
@@ -185,9 +235,9 @@ export const Slack = defineNode({
     color: '#4A154B',
     subtitle: '{{operation}}: {{resource}}',
     documentationUrl: 'https://api.slack.com/methods',
-    keywords: ['slack', 'chat', 'message', 'channel'],
+    keywords: ['slack', 'chat', 'message', 'channel', 'file', 'upload', 'attachment'],
     usableAsTool: true,
-    toolDescription: 'Send, update or delete a Slack message, get its permalink, list channels, find a user by email, or add an emoji reaction.',
+    toolDescription: 'Send, update or delete a Slack message, get its permalink, upload or download a file, list channels, find a user by email, or add an emoji reaction.',
     inputs: [{ type: 'main' }],
     outputs: [{ type: 'main' }],
     credentials: [{ name: 'slackApi', required: true }],
@@ -200,6 +250,7 @@ export const Slack = defineNode({
         default: 'message',
         options: [
           { name: 'Channel', value: 'channel' },
+          { name: 'File', value: 'file' },
           { name: 'Message', value: 'message' },
           { name: 'Reaction', value: 'reaction' },
           { name: 'User', value: 'user' },
@@ -232,6 +283,18 @@ export const Slack = defineNode({
         displayOptions: { show: { resource: ['user'] } },
         options: [{ name: 'Get by Email', value: 'getByEmail', description: 'Find a user by email address', action: 'Get a user by email' }],
       },
+      {
+        name: 'operation',
+        displayName: 'Operation',
+        type: 'options',
+        noDataExpression: true,
+        default: 'upload',
+        displayOptions: { show: { resource: ['file'] } },
+        options: [
+          { name: 'Get', value: 'get', description: 'Get a file’s details and download it into the item', action: 'Get a file' },
+          { name: 'Upload', value: 'upload', description: 'Upload an item file to a channel or thread', action: 'Upload a file' },
+        ],
+      },
       // The default resource's operation comes last: parameter defaults are keyed by name, last one wins.
       {
         name: 'operation',
@@ -256,6 +319,65 @@ export const Slack = defineNode({
         typeOptions: { loadOptionsMethod: 'getChannels' },
         displayOptions: { show: { resource: ['message', 'reaction'] } },
         description: 'Pick a channel, or set a channel ID (C0123ABCD) with an expression',
+      },
+      {
+        name: 'channelId',
+        displayName: 'Channel',
+        type: 'options',
+        required: true,
+        default: '',
+        typeOptions: { loadOptionsMethod: 'getChannels' },
+        displayOptions: fileOps(['upload']),
+        description: 'The channel to share the file in. Pick one, or set a channel ID (C0123ABCD) with an expression',
+      },
+      {
+        name: 'binaryPropertyName',
+        displayName: 'Input Binary Field',
+        type: 'string',
+        required: true,
+        default: 'data',
+        displayOptions: fileOps(['upload']),
+        description: 'The item file to upload (item.binary.<name>)',
+      },
+      {
+        name: 'fileOptions',
+        displayName: 'Options',
+        type: 'collection',
+        default: {},
+        placeholder: 'Add option',
+        displayOptions: fileOps(['upload']),
+        values: [
+          { name: 'fileName', displayName: 'File Name', type: 'string', default: '', description: 'Default: the item file’s name' },
+          { name: 'title', displayName: 'Title', type: 'string', default: '', description: 'Default: the file name' },
+          { name: 'initial_comment', displayName: 'Message', type: 'string', default: '', typeOptions: { rows: 2 }, description: 'Text posted with the file' },
+          { name: 'thread_ts', displayName: 'Reply to Thread (ts)', type: 'string', default: '', description: 'Share the file as a reply in the thread of this message' },
+        ],
+      },
+      {
+        name: 'fileId',
+        displayName: 'File ID',
+        type: 'string',
+        required: true,
+        default: '',
+        placeholder: 'F0123ABCD',
+        displayOptions: fileOps(['get']),
+        description: 'The file’s ID, e.g. from a message event’s files',
+      },
+      {
+        name: 'download',
+        displayName: 'Download',
+        type: 'boolean',
+        default: true,
+        displayOptions: fileOps(['get']),
+        description: 'Whether to put the file in item.binary; off: only its details',
+      },
+      {
+        name: 'binaryPropertyName',
+        displayName: 'Put Output File in Field',
+        type: 'string',
+        default: 'data',
+        displayOptions: { show: { resource: ['file'], operation: ['get'], download: [true] } },
+        description: 'The item.binary field for the downloaded file',
       },
       {
         name: 'text',
@@ -443,6 +565,8 @@ export const Slack = defineNode({
             throw unsupported(resource, operation);
         }
       }
+      if (resource === 'file' && operation === 'upload') return uploadFile(ctx, api, credentials, i, channel());
+      if (resource === 'file' && operation === 'get') return getFile(ctx, api, credentials, i);
       if (resource === 'channel' && operation === 'getAll') {
         const returnAll = ctx.getNodeParameter<boolean>('returnAll', i, false);
         const limit = Math.max(1, Number(ctx.getNodeParameter('limit', i, 50)) || 50);

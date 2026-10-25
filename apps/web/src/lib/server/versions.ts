@@ -1,7 +1,7 @@
 /**
  * Workflow version history. Every save of a workflow is recorded as a snapshot in the
  * `workflow_versions` table (lib/server/db): the version summary and the workflow as saved.
- * A save that leaves nodes, connections, settings and sticky notes unchanged (same hash) adds no
+ * A save that leaves nodes, connections, settings, sticky notes and groups unchanged (same hash) adds no
  * version, and only the newest MAX_VERSIONS are kept per workflow (plus the published one: lib/server/publications.ts).
  * Executions record the version they started on (`versionFor`), and resume on it after a restart.
  *
@@ -32,9 +32,18 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value) ?? 'null';
 }
 
-/** sha256 of the parts of a workflow that make a new version: nodes, connections, settings and sticky notes. */
+/**
+ * sha256 of the parts of a workflow that make a new version: nodes, connections, settings, sticky notes and canvas groups.
+ * Groups only count when there are some, so workflows without groups keep the hashes they always had.
+ */
 export function versionHash(workflow: Workflow): string {
-  const material = { nodes: workflow.nodes ?? [], connections: workflow.connections ?? [], settings: workflow.settings ?? {}, stickyNotes: workflow.stickyNotes ?? [] };
+  const material = {
+    nodes: workflow.nodes ?? [],
+    connections: workflow.connections ?? [],
+    settings: workflow.settings ?? {},
+    stickyNotes: workflow.stickyNotes ?? [],
+    ...(workflow.groups?.length && { groups: workflow.groups }),
+  };
   return createHash('sha256').update(stableStringify(material)).digest('hex');
 }
 
@@ -60,6 +69,7 @@ export function diffWorkflows(prev: Workflow | undefined, next: Workflow): Versi
     settingsChanged: stableStringify(prev?.settings ?? {}) !== stableStringify(next.settings ?? {}),
     stickiesChanged: stableStringify(prev?.stickyNotes ?? []) !== stableStringify(next.stickyNotes ?? []),
   };
+  if (stableStringify(prev?.groups ?? []) !== stableStringify(next.groups ?? [])) diff.groupsChanged = true;
   for (const [id, node] of after) {
     const old = before.get(id);
     if (!old) diff.nodesAdded.push(node.name);
@@ -90,6 +100,7 @@ export function summarizeDiff(diff: VersionDiff, first: boolean): string {
   if (diff.connectionsAdded || diff.connectionsRemoved) parts.push('connections changed');
   if (diff.settingsChanged) parts.push('settings changed');
   if (diff.stickiesChanged) parts.push('sticky notes changed');
+  if (diff.groupsChanged) parts.push('groups changed');
   if (!parts.length && diff.nodesMoved.length) parts.push('layout changed');
   if (!parts.length) return 'No changes';
   const line = parts.join(' · ');
@@ -174,8 +185,8 @@ export function recordVersion(workflow: Workflow): WorkflowVersionSummary | unde
 }
 
 /**
- * The workflow to save when restoring `version`: its nodes, connections, settings, sticky notes and pin data (for nodes it
- * has), with the current workflow's name, tags, folder and active state.
+ * The workflow to save when restoring `version`: its nodes, connections, settings, sticky notes, groups and pin data (for
+ * nodes it has), with the current workflow's name, tags, folder and active state.
  */
 export function applyVersion(current: Workflow, version: WorkflowVersion): Workflow {
   const snapshot = version.workflow;
@@ -187,6 +198,7 @@ export function applyVersion(current: Workflow, version: WorkflowVersion): Workf
     connections: snapshot.connections,
     settings: snapshot.settings,
     stickyNotes: snapshot.stickyNotes,
+    groups: snapshot.groups?.length ? snapshot.groups : undefined,
     pinData: Object.keys(pinData).length ? pinData : undefined,
   };
 }

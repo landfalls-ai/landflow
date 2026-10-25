@@ -18,11 +18,11 @@ import { PROTOCOL_VERSION, type JsonObject, type WebhookMethodName, type Webhook
 import { ExpressionResolver, type ResolvedNodeType, type Workflow, type WorkflowNode } from '@landflow/engine';
 import type { AppWebhookStatus } from '../shared/publish';
 import { freshCredentials } from './credentials/oauth2-runtime';
-import { credentials } from './credentials/vault';
+import { resolveWorkflowCredentials } from './projects/credentials';
 import { database } from './db';
 import { parse } from './db/rows';
 import { registry } from './plugins/registry';
-import { onPublicationChanged } from './publications';
+import { onPublicationChangedAnywhere } from './publications';
 import { productionWorkflowById } from './publish';
 import { publicUrl } from './runner';
 import { singleton } from './singleton';
@@ -161,7 +161,7 @@ export async function webhookBase(workflow: Pick<Workflow, 'id' | 'name'>, node:
     parameters: node.parameters as JsonObject,
     variables: variables.record(),
   });
-  const data = await freshCredentials(credentials.resolveFor(node, resolved.descriptor));
+  const data = await freshCredentials(resolveWorkflowCredentials(workflow.id, node, resolved.descriptor));
   return {
     protocol: PROTOCOL_VERSION,
     workflowId: workflow.id,
@@ -308,6 +308,7 @@ export const appWebhooks = singleton('app-webhooks', () => {
   /** A reconcile waiting for the one before it: callers until it starts share it. */
   const queued = new Map<string, Promise<TriggerError[]>>();
   let timer: NodeJS.Timeout | undefined;
+  let unsubscribe: (() => void) | undefined;
 
   function reconcile(workflowId: string): Promise<TriggerError[]> {
     if (!ID.test(workflowId)) return Promise.resolve([]);
@@ -400,7 +401,7 @@ export const appWebhooks = singleton('app-webhooks', () => {
     /** At boot: check every published workflow's hooks, follow publication changes, retry failures every minute. */
     start() {
       if (timer) return;
-      onPublicationChanged((workflowId) => void reconcile(workflowId));
+      unsubscribe = onPublicationChangedAnywhere((workflowId) => void reconcile(workflowId));
       const ids = new Set([...store.listWorkflows().filter((w) => w.active).map((w) => w.id), ...entriesOf().map((e) => e.workflowId)]);
       for (const id of ids) {
         if (desiredTriggers(id).nodes.length || entriesOf(id).length) void reconcile(id);
@@ -414,6 +415,8 @@ export const appWebhooks = singleton('app-webhooks', () => {
     stop() {
       if (timer) clearInterval(timer);
       timer = undefined;
+      unsubscribe?.();
+      unsubscribe = undefined;
     },
   };
 });

@@ -11,6 +11,7 @@ import type { ExecuteRequest, ExecuteResponse, JsonObject } from '@landflow/prot
 import type { ResolvedNodeType } from '@landflow/engine';
 import { credentials } from './vault';
 import { looksUnauthorized } from './oauth2';
+import { resolveCredentialSecrets } from '../secrets/runtime';
 
 const withCredentials = (request: ExecuteRequest, record: Record<string, JsonObject> | undefined): ExecuteRequest => (record ? { ...request, credentials: record } : request);
 
@@ -52,7 +53,8 @@ export function withFreshTokens(resolved: ResolvedNodeType): ResolvedNodeType {
   };
 }
 
-/** LoadOptions calls: the credentials with renewed tokens (no retry: a dropdown can be reloaded). */
+/** LoadOptions calls and app webhook registration: the credentials with renewed tokens and external secrets (no retry: a dropdown can be reloaded). */
 export async function freshCredentials(record: Record<string, JsonObject> | undefined): Promise<Record<string, JsonObject> | undefined> {
-  return (await credentials.freshen(record)) ?? record;
+  // `$secrets` in credential fields resolve here too (lib/server/secrets/runtime.ts).
+  return resolveCredentialSecrets((await credentials.freshen(record)) ?? record);
 }

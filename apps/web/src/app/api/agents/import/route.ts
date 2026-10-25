@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { agentConfigSchema, asConfig } from '@/lib/server/agents/http';
 import { agentStore } from '@/lib/server/agents/store';
 import { error, handler, json } from '@/lib/server/http';
+import { createInProject } from '@/lib/server/projects/http';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,13 +23,19 @@ export const POST = handler(async (request: Request) => {
   const reid = <T extends { id: string }>(items: T[] | undefined, prefix: string) => items?.map((item) => ({ ...item, id: `${prefix}_${nanoid(8)}` }));
   return json(
     {
-      agent: agentStore.create({
-        ...config,
-        skills: reid(config.skills, 'sk'),
-        tools: reid(config.tools, 'tl'),
-        schedules: reid(config.schedules, 'sc')?.map((s) => ({ ...s, enabled: false })),
-        channels: reid(config.channels, 'ch')?.map((c) => ({ ...c, enabled: false })),
-      }),
+      agent: createInProject(
+        request,
+        'agent',
+        () =>
+          agentStore.create({
+            ...config,
+            skills: reid(config.skills, 'sk'),
+            tools: reid(config.tools, 'tl'),
+            schedules: reid(config.schedules, 'sc')?.map((s) => ({ ...s, enabled: false })),
+            channels: reid(config.channels, 'ch')?.map((c) => ({ ...c, enabled: false })),
+          }),
+        (a) => a.id,
+      ),
     },
     201,
   );

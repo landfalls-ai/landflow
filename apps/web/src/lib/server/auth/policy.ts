@@ -6,6 +6,7 @@
  */
 import type { Action, ApiKeyScope } from '../../shared/auth';
 import { underPath } from '../../shared/auth-paths';
+import type { ResourceAction, ResourceKind } from '../../shared/projects';
 
 export interface RoutePolicy {
   /** Scope an API key needs; `any` = any valid key. */
@@ -39,19 +40,79 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (path === '/api/sync/export') return { scope: 'workflows:read' };
   if (under('/api/sync') || under('/api/source-control')) return { scope: 'admin', action: 'settings:manage' };
 
+  // External secrets providers and environments (promotion, pull, settings): changes are admin; anyone sees the environment.
+  if (under('/api/external-secrets')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'settings:manage' };
+  if (under('/api/environment')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/users')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'users:manage' };
   if (under('/api/settings/mcp')) return { scope: 'admin', action: 'mcp:manage' };
+  // Audit log: reading (and exporting) needs `audit:read` and an admin; its settings and SIEM destinations are admin-only.
+  if (under('/api/audit')) return { scope: 'audit:read', action: 'audit:read' };
+  if (under('/api/settings/audit')) return { scope: 'admin', action: read ? 'audit:read' : 'settings:manage' };
+  // Four-eyes publish requests: builders list, ask and decide (who may approve is checked by lib/server/governance).
+  if (under('/api/publish-requests')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   if (under('/api/settings/security')) return { scope: 'admin', action: 'settings:manage' };
   if (under('/api/settings')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/variables')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'variables:manage' };
   if (under('/api/plugins') || under('/api/marketplaces')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'plugins:manage' };
   if (under('/api/credentials')) return { scope: 'admin' };
 
-  if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions'].some(under)) {
+  if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };
   }
   if (under('/api/ai') || under('/api/assistant')) return { scope: 'workflows:write' };
   if (under('/api/executions') || under('/api/binary')) return { scope: read ? 'executions:read' : 'executions:write' };
   if (under('/api/events') || under('/api/insights') || under('/api/metrics')) return { scope: 'executions:read' };
   return { scope: 'admin' };
+}
+
+/**
+ * Projects and sharing: the resource a path names and what the method does with it, which the guard checks against
+ * the caller's access (lib/server/projects/access.ts; owners and admins pass). An execution stands for its workflow.
+ * Collection routes (lists, create) aren't here: they filter by access and check the target project themselves.
+ */
+export interface ResourceRule {
+  kind: ResourceKind | 'execution';
+  id: string;
+  action: ResourceAction;
+}
+
+/** `/api/<prefix>/<id>…`, the kind it names and the segments that are routes rather than ids. */
+const RESOURCE_ROUTES: Array<{ pattern: RegExp; kind: ResourceRule['kind']; reserved: string[] }> = [
+  { pattern: /^\/api\/workflows\/([^/]+)(\/.*)?$/, kind: 'workflow', reserved: ['import'] },
+  { pattern: /^\/api\/insights\/workflows\/([^/]+)(\/.*)?$/, kind: 'workflow', reserved: [] },
+  { pattern: /^\/api\/credentials\/([^/]+)(\/.*)?$/, kind: 'credential', reserved: ['test'] },
+  { pattern: /^\/api\/data-tables\/([^/]+)(\/.*)?$/, kind: 'dataTable', reserved: [] },
+  { pattern: /^\/api\/agents\/([^/]+)(\/.*)?$/, kind: 'agent', reserved: ['import', 'models', 'workflow-tools'] },
+  { pattern: /^\/api\/executions\/([^/]+)(\/.*)?$/, kind: 'execution', reserved: ['stop-all'] },
+];
+
+/** The resource rule for `method` on `path`, if the path names one. */
+export function resourceRule(method: string, path: string): ResourceRule | undefined {
+  for (const route of RESOURCE_ROUTES) {
+    const match = route.pattern.exec(path);
+    if (!match) continue;
+    let id: string;
+    try {
+      id = decodeURIComponent(match[1]);
+    } catch {
+      return undefined;
+    }
+    if (route.reserved.includes(id)) return undefined;
+    return { kind: route.kind, id, action: resourceAction(route.kind, match[2] ?? '', method.toUpperCase()) };
+  }
+  return undefined;
+}
+
+function resourceAction(kind: ResourceRule['kind'], rest: string, method: string): ResourceAction {
+  const sub = (name: string) => rest === `/${name}` || rest.startsWith(`/${name}/`);
+  if (sub('shares')) return READ_METHODS.has(method) ? 'read' : 'share';
+  if (sub('transfer')) return 'move';
+  // Starting, retrying or stopping runs and chats; credentials' OAuth2 Connect writes the token.
+  if (kind === 'workflow' && (sub('run') || sub('execute') || (sub('evaluations') && method === 'POST'))) return 'run';
+  if (kind === 'execution' && (sub('retry') || sub('rerun') || sub('debug') || sub('stop') || sub('approvals'))) return READ_METHODS.has(method) ? 'read' : 'run';
+  if (kind === 'agent' && (sub('chat') || (sub('sessions') && !READ_METHODS.has(method)))) return 'run';
+  if (kind === 'credential' && sub('oauth2')) return 'update';
+  if (READ_METHODS.has(method)) return 'read';
+  if (method === 'DELETE' && !rest && kind !== 'execution') return 'delete';
+  return 'update';
 }

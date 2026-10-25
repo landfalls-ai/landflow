@@ -588,8 +588,8 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
           <div className="mt-3 flex items-center gap-2 rounded-xl border border-hair bg-nudim px-3 py-2 text-[13px] text-t2 animate-fade-up">
             <CircleDashed className="size-3.5 shrink-0" />
             <span>
-              Queued{record.queued?.queuedAt && <> since <span className="tabular-nums">{formatStamp(record.queued.queuedAt)}</span></>}: the workflow is busy at its
-              concurrency limit. It starts by itself when a slot frees up.
+              Queued{record.queued?.queuedAt && <> since <span className="tabular-nums">{formatStamp(record.queued.queuedAt)}</span></>}
+              {record.queued?.worker ? ': waiting for a worker to take it (queue mode).' : ': the workflow is busy at its concurrency limit. It starts by itself when a slot frees up.'}
             </span>
           </div>
         )}

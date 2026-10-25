@@ -1,0 +1,19 @@
+# Optional: point the host at Postgres and Valkey that run elsewhere (a managed database, another namespace).
+# Create the Secret yourself, outside Git:
+#   kubectl -n <namespace> create secret generic landflow-external \
+#     --from-literal=database-url='postgres://user:password@db.example.internal:5432/landflow?sslmode=require' \
+#     --from-literal=valkey-url='rediss://:password@cache.example.internal:6380/0'
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target: { kind: Deployment, name: landflow-host }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: LANDFLOW_DB, value: postgres }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: landflow-external, key: database-url } } }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: LANDFLOW_VALKEY_URL, valueFrom: { secretKeyRef: { name: landflow-external, key: valkey-url, optional: true } } }

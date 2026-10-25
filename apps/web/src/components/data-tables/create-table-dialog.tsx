@@ -20,7 +20,7 @@ interface DraftColumn {
 let nextKey = 1;
 const blank = (): DraftColumn => ({ key: nextKey++, name: '', type: 'string' });
 
-export function CreateTableDialog({ onClose, existingNames }: { onClose: () => void; existingNames: string[] }) {
+export function CreateTableDialog({ onClose, existingNames, projectId }: { onClose: () => void; existingNames: string[]; /** Create it in this project (default: the viewer's personal project). */ projectId?: string }) {
   const router = useRouter();
   const [name, setName] = useState('');
   const [columns, setColumns] = useState<DraftColumn[]>([blank()]);
@@ -50,7 +50,7 @@ export function CreateTableDialog({ onClose, existingNames }: { onClose: () => v
     setBusy(true);
     setError(undefined);
     try {
-      const { table } = await api<{ table: DataTable }>('/api/data-tables', { method: 'POST', json: { name: name.trim(), columns: named.map((c) => ({ name: c.name.trim(), type: c.type })) } });
+      const { table } = await api<{ table: DataTable }>(projectId ? `/api/data-tables?projectId=${encodeURIComponent(projectId)}` : '/api/data-tables', { method: 'POST', json: { name: name.trim(), columns: named.map((c) => ({ name: c.name.trim(), type: c.type })) } });
       if (file) {
         try {
           const result = await api<CsvImportResult>(`/api/data-tables/${table.id}/import`, { method: 'POST', body: await file.text(), headers: { 'content-type': 'text/csv' } });

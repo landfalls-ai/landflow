@@ -27,7 +27,7 @@ export interface MemoryNote {
 }
 
 function atomicWrite(path: string, data: unknown) {
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   writeFileSync(tmp, JSON.stringify(data, null, 2));
   renameSync(tmp, path);
 }

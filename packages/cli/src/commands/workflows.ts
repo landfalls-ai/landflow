@@ -150,12 +150,25 @@ export const remove: Command = {
   },
 };
 
+/**
+ * Four-eyes publishing (the host answers 202 with `approvalRequired`): nothing changed yet, a request waits for someone
+ * else's approval. Reported as `approval_pending` (exit 8) with the request in `details.request`.
+ */
+function assertNotPending(result: Json, what: string, workflow: Json) {
+  if (result.approvalRequired !== true) return;
+  const request = (result.request ?? {}) as Json;
+  throw new CliError('approval_pending', `${what} “${workflow.name}” needs approval: request ${String(request.id ?? '')} is waiting for another person (Settings → Governance)`, {
+    status: 202,
+    details: { workflowId: String(workflow.id), request },
+  });
+}
+
 /** Turn a workflow on or off: publish/unpublish when the host has draft and publish, else the `active` flag. */
 async function setActive(ctx: Context, active: boolean) {
   const existing = await findWorkflow(ctx.client, ctx.args[0]);
   const id = seg(String(existing.id));
   try {
-    await ctx.client.post(`/api/workflows/${id}/${active ? 'publish' : 'unpublish'}`, {});
+    assertNotPending(await ctx.client.post<Json>(`/api/workflows/${id}/${active ? 'publish' : 'unpublish'}`, {}), active ? 'Activating' : 'Deactivating', existing);
   } catch (caught) {
     if (!(caught instanceof CliError) || caught.code !== 'not_supported') throw caught;
     await ctx.client.put(`/api/workflows/${id}`, { ...strip(existing), active });
@@ -204,6 +217,7 @@ export const publish: Command = {
       if (caught instanceof CliError && caught.code === 'not_supported') throw new CliError('not_supported', 'This host has no draft and publish: use `landflow workflows activate`');
       throw caught;
     }
+    assertNotPending(result, ctx.flags.version ? 'Publishing a version of' : 'Publishing', workflow);
     const publication = publicationOf(result);
     return {
       data: { workflowId: String(workflow.id), ...publication },
@@ -227,6 +241,7 @@ export const unpublish: Command = {
       if (caught instanceof CliError && caught.code === 'not_supported') throw new CliError('not_supported', 'This host has no draft and publish: use `landflow workflows deactivate`');
       throw caught;
     }
+    assertNotPending(result, 'Unpublishing', workflow);
     return { data: { workflowId: String(workflow.id), ...publicationOf(result) }, human: () => `Unpublished “${workflow.name}”` };
   },
 };

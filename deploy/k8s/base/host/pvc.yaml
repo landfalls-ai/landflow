@@ -1,0 +1,11 @@
+# Workflows, executions, the SQLite store and the credentials vault (LANDFLOW_DATA_DIR). With LANDFLOW_DB=postgres
+# (components/postgres) the store moves to Postgres; credentials and binary files still live here.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: landflow-data
+  labels: { app.kubernetes.io/name: landflow-host, app.kubernetes.io/part-of: landflow }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 5Gi }

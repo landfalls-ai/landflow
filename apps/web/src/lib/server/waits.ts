@@ -3,10 +3,13 @@
  * with a time limit stops waiting then (it continues with what the node returned). At boot,
  * `start()` reloads every waiting execution from the store and resumes the overdue ones after a
  * short grace period. Waits without a time (a webhook or form with no limit, a parent waiting for its
- * sub-execution) have no timer. Single-process, like the scheduler.
+ * sub-execution) have no timer. Queue mode: only the leader keeps the timers (another process hands a new wait to
+ * it, and `sync()` re-arms them all when a main takes over the leadership).
  */
 import { context, ROOT_CONTEXT } from '@opentelemetry/api';
 import type { ExecutionRecord } from '../shared/types';
+import { delegated, forwardToLeader } from './cluster/state';
+import { refreshRows } from './db/replication';
 import { singleton } from './singleton';
 import { store } from './store';
 import { logger } from './telemetry';
@@ -39,6 +42,8 @@ export const waits = singleton('waits', () => {
   }
 
   function arm(record: ExecutionRecord, minDelay = 0) {
+    // Queue mode: the leader keeps the timers.
+    if (delegated()) return forwardToLeader({ t: 'wait', id: record.executionId });
     clear(record.executionId);
     const until = record.wait?.until ? Date.parse(record.wait.until) : NaN;
     if (record.status !== 'waiting' || Number.isNaN(until)) return;
@@ -65,6 +70,23 @@ export const waits = singleton('waits', () => {
     },
 
     clear,
+
+    /**
+     * Queue mode, on the leader: arm the timers of waiting executions that have none and drop those of executions that
+     * stopped waiting (or only `executionId`'s, read fresh: another process just saved it).
+     */
+    async sync(executionId?: string) {
+      if (executionId) {
+        await refreshRows('executions', { id: executionId });
+        const record = store.getExecution(executionId);
+        if (record?.status === 'waiting') arm(record);
+        else clear(executionId);
+        return;
+      }
+      const waiting = new Map(store.waitingExecutions().map((record) => [record.executionId, record]));
+      for (const id of [...timers.keys()]) if (!waiting.has(id)) clear(id);
+      for (const record of waiting.values()) if (!timers.has(record.executionId)) arm(record, 1_000);
+    },
 
     /** Executions with an armed timer. */
     pending(): string[] {

@@ -135,6 +135,28 @@ export interface StickyNote {
   color?: number;
 }
 
+/**
+ * A canvas group: a labelled, coloured frame drawn behind some nodes. Like a sticky note it lives beside the nodes in
+ * its own list (`workflow.groups`), never runs, and the engine ignores it. Membership is explicit (`nodeIds`, a node
+ * in at most one group), so moving, collapsing and copying a group don't depend on where nodes happen to sit.
+ */
+export interface WorkflowGroup {
+  id: string;
+  /** The frame's label. */
+  name: string;
+  /** Ids of the nodes inside the frame. */
+  nodeIds: string[];
+  /** Top-left corner of the frame. */
+  position: [number, number];
+  /** Size of the frame when expanded. */
+  width: number;
+  height: number;
+  /** Index into the editor's palette (the sticky colours). */
+  color?: number;
+  /** Drawn as one compact box: its nodes are hidden and their connections end at the box. */
+  collapsed?: boolean;
+}
+
 export interface Workflow {
   id: string;
   name: string;
@@ -146,6 +168,8 @@ export interface Workflow {
   pinData?: Record<string, NodeItem[]>;
   settings?: WorkflowSettings;
   stickyNotes?: StickyNote[];
+  /** Canvas groups (frames around nodes): editor-only, like sticky notes. */
+  groups?: WorkflowGroup[];
   tags?: string[];
   /** Folder in the workflows list (see the folders store); none = top level. */
   folderId?: string;

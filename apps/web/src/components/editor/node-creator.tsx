@@ -181,7 +181,8 @@ export function NodeCreator() {
     setTimeout(() => input.current?.focus(), 30);
   }, [request]);
 
-  const all = useMemo(() => Object.values(nodeTypes), [nodeTypes]);
+  // Node types the governance policy blocks (Settings → Governance) are not offered.
+  const all = useMemo(() => Object.values(nodeTypes).filter((t) => !t.blocked), [nodeTypes]);
   const segments = useMemo(() => {
     const map = new Map<string, Segment>();
     for (const t of all) {

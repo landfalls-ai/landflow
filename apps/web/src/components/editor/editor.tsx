@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Background, BackgroundVariant, ControlButton, Controls, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, type OnConnectEnd } from '@xyflow/react';
+import { Background, BackgroundVariant, ControlButton, Controls, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, type OnConnectEnd, type OnEdgesChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
   ArrowLeft,
@@ -30,6 +30,7 @@ import { useLiveEvents } from '@/lib/client/live';
 import { tint } from '@/lib/client/node-style';
 import { TEMPLATES } from '@/lib/client/templates';
 import type { DebugCommand, ExecutionEvent, ExecutionRecord, ImportReport, NodeTypeInfo, Workflow } from '@/lib/shared/types';
+import type { PolicyWarnings } from '@/lib/shared/governance';
 import { Badge, executionTone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
@@ -42,6 +43,9 @@ import { ChatPanel, type ChatApproval, type ChatChunk, type ChatFile, type ChatO
 import { parseClipboard, type ClipboardData } from './clipboard';
 import { FlowEdgeView } from './flow-edge';
 import { FlowNodeView } from './flow-node';
+import { CanvasMenu, selectForMenu, useCanvasMenu } from './canvas-menu';
+import { GroupNodeView, GroupProxyEdgeView } from './group-node';
+import { canvasGraph, type GroupProxyEdge } from './groups';
 import { ImportReportDialog, showImportReport } from './import-report';
 import { NodeCreator } from './node-creator';
 import { NodePanel } from './node-panel';
@@ -55,8 +59,8 @@ import { WorkflowMenu } from './workflow-menu';
 import { PublishControl } from './publish-control';
 import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from './edit-lock';
 
-const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView };
-const edgeTypesMap = { lf: FlowEdgeView };
+const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView };
+const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView };
 
 type RunResult = { executionId?: string; status: string; lastNodeId?: string; error?: { message: string }; approval?: ChatApproval };
 
@@ -70,8 +74,11 @@ function replyOf(result: RunResult): string | undefined {
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
-function describeClip(data: Pick<ClipboardData, 'nodes' | 'stickyNotes'>) {
-  return [data.nodes.length && plural(data.nodes.length, 'node'), data.stickyNotes.length && plural(data.stickyNotes.length, 'note')].filter(Boolean).join(' and ');
+function describeClip(data: Pick<ClipboardData, 'nodes' | 'stickyNotes' | 'groups'>) {
+  const groups = data.groups?.length ?? 0;
+  return [groups && plural(groups, 'group'), data.nodes.length && plural(data.nodes.length, 'node'), data.stickyNotes.length && plural(data.stickyNotes.length, 'note')]
+    .filter(Boolean)
+    .join(', ');
 }
 
 /** Keyboard and clipboard events that belong to a field, a dialog or the node panel, not to the canvas. */
@@ -97,10 +104,12 @@ async function pasteN8n(data: unknown, at?: { x: number; y: number }) {
 function Canvas({ onSave }: { onSave: () => void }) {
   const flowNodes = useEditor((s) => s.nodes);
   const stickies = useEditor((s) => s.stickies);
-  const edges = useEditor((s) => s.edges);
+  const groups = useEditor((s) => s.groups);
+  const flowEdges = useEditor((s) => s.edges);
   const canUndo = useEditor((s) => s.history.past > 0);
   const canRedo = useEditor((s) => s.history.future > 0);
-  const nodes = useMemo<CanvasNode[]>(() => [...stickies, ...flowNodes], [stickies, flowNodes]);
+  // Group frames, then notes, then nodes; collapsed groups hide their nodes and take over their connections.
+  const { nodes, edges } = useMemo<{ nodes: CanvasNode[]; edges: (FlowEdge | GroupProxyEdge)[] }>(() => canvasGraph(groups, stickies, flowNodes, flowEdges), [groups, stickies, flowNodes, flowEdges]);
   // Read-only (someone else holds the edit lock) swaps the store's editing actions, so re-read them.
   const readOnly = useEditLock((s) => s.readOnly);
   const { onNodesChange, onEdgesChange, onConnect, openNode, openPalette } = useEditor.getState();
@@ -136,7 +145,7 @@ function Canvas({ onSave }: { onSave: () => void }) {
       if (!data) return;
       event.clipboardData?.setData('text/plain', JSON.stringify(data, null, 2));
       event.preventDefault();
-      if (cut) state.removeNodes([...data.nodes.map((n) => n.id), ...data.stickyNotes.map((n) => n.id)]);
+      if (cut) state.removeNodes([...data.nodes.map((n) => n.id), ...data.stickyNotes.map((n) => n.id), ...(data.groups ?? []).map((g) => g.id)]);
       toast(`${cut ? 'Cut' : 'Copied'} ${describeClip(data)}`, { description: 'Paste with ⌘V, here or in another workflow' });
     };
     const onCopy = (event: ClipboardEvent) => copy(event, false);
@@ -208,6 +217,13 @@ function Canvas({ onSave }: { onSave: () => void }) {
       } else if (!typing && e.shiftKey && e.altKey && e.code === 'KeyT') {
         e.preventDefault();
         document.querySelector<HTMLButtonElement>('[aria-label="Tidy up"]')?.click();
+      } else if (!typing && mod && e.code === 'KeyA' && !e.shiftKey && !e.altKey && !notForCanvas(e)) {
+        e.preventDefault();
+        state.selectAll();
+      } else if (!typing && mod && e.code === 'KeyG' && !e.altKey && !notForCanvas(e)) {
+        e.preventDefault();
+        if (e.shiftKey) state.ungroup();
+        else state.groupSelection();
       } else if (!typing && mod && e.key === 'd') {
         e.preventDefault();
         if (!notForCanvas(e)) state.duplicateSelection();
@@ -238,13 +254,28 @@ function Canvas({ onSave }: { onSave: () => void }) {
       onPointerMove={(e) => (pointer.current = { x: e.clientX, y: e.clientY })}
       onPointerLeave={() => (pointer.current = undefined)}
     >
-    <ReactFlow<CanvasNode, FlowEdge>
+    <ReactFlow<CanvasNode, FlowEdge | GroupProxyEdge>
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypesMap}
       edgeTypes={edgeTypesMap}
       onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
+      // Changes to the lines drawn for collapsed groups name no stored edge, so the store skips them.
+      onEdgesChange={onEdgesChange as OnEdgesChange<FlowEdge | GroupProxyEdge>}
+      onNodeContextMenu={(e, node) => {
+        e.preventDefault();
+        if (readOnly) return;
+        selectForMenu(node.id);
+        useCanvasMenu.getState().open({ x: e.clientX, y: e.clientY, flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }) });
+      }}
+      onSelectionContextMenu={(e) => {
+        e.preventDefault();
+        if (!readOnly) useCanvasMenu.getState().open({ x: e.clientX, y: e.clientY, flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }) });
+      }}
+      onPaneContextMenu={(e) => {
+        e.preventDefault();
+        if (!readOnly) useCanvasMenu.getState().open({ x: e.clientX, y: e.clientY, flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }) });
+      }}
       onConnect={onConnect}
       onConnectEnd={onConnectEnd}
       onNodeDoubleClick={(_e, node) => node.type === 'lf' && openNode(node.id)}
@@ -273,9 +304,10 @@ function Canvas({ onSave }: { onSave: () => void }) {
         className="!bottom-3 !right-3"
         pannable
         zoomable
-        nodeColor={(node) => (node.type === 'sticky' ? 'var(--acbd)' : 'var(--bd)')}
+        nodeColor={(node) => (node.type === 'sticky' ? 'var(--acbd)' : node.type === 'frame' ? 'color-mix(in oklab, var(--t3) 14%, transparent)' : 'var(--bd)')}
       />
     </ReactFlow>
+    <CanvasMenu />
     </div>
   );
 }
@@ -290,7 +322,7 @@ async function sendDebug(executionId: string | undefined, command: DebugCommand)
 }
 
 function EmptyCanvas() {
-  const empty = useEditor((s) => s.nodes.length === 0 && s.stickies.length === 0);
+  const empty = useEditor((s) => s.nodes.length === 0 && s.stickies.length === 0 && s.groups.length === 0);
   const nodeTypes = useEditor((s) => s.nodeTypes);
   const { fitView } = useReactFlow();
   if (!empty) return null;
@@ -542,16 +574,19 @@ export function Editor({ workflowId }: { workflowId: string }) {
 
   const save = useCallback(async (): Promise<boolean> => {
     if (useEditLock.getState().readOnly) {
-      toast.error('Someone else is editing this workflow: it’s read-only here');
+      const environment = useEditLock.getState().protectedEnvironment;
+      toast.error(environment ? `${environment} is a protected environment: workflows change only by pull or promotion` : 'Someone else is editing this workflow: it’s read-only here');
       return false;
     }
     setSaving(true);
     try {
       // `active` stays out: a save is a draft, and Publish / Unpublish (PublishControl) change what is live.
       const { active: _active, ...draft } = useEditor.getState().toWorkflow();
-      const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`, { method: 'PUT', json: draft, headers: editorTabHeaders() });
+      const { workflow, policyWarnings } = await api<{ workflow: Workflow } & PolicyWarnings>(`/api/workflows/${workflowId}`, { method: 'PUT', json: draft, headers: editorTabHeaders() });
       useEditor.getState().markSaved();
       toast.success(`Saved “${workflow.name}”`);
+      // Nodes the governance policy doesn't allow: the save stands, publishing is refused and they fail when run.
+      if (policyWarnings?.length) toast.warning(`${policyWarnings.length === 1 ? '1 node is' : `${policyWarnings.length} nodes are`} blocked by policy`, { description: policyWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
       return true;
     } catch (e) {
       toast.error(`Save failed: ${(e as Error).message}`);

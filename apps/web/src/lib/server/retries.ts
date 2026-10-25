@@ -4,12 +4,15 @@
  * timer; the delay doubles for each attempt (base, 2×base, 4×base…, at most six hours). When it
  * fires, the runner starts a new execution linked to the failed one (`retryOf`), from the failed
  * node when the failed run has a checkpoint, else from the start. Retries survive a restart:
- * `start()` re-arms them at boot (overdue ones after a grace period). Single-process, like waits.
+ * `start()` re-arms them at boot (overdue ones after a grace period). Queue mode: only the leader keeps the timers
+ * (another process hands a new retry to it, and `sync()` re-arms them all when a main takes over the leadership).
  */
 import { context, ROOT_CONTEXT } from '@opentelemetry/api';
 import type { Workflow } from '@landflow/engine';
 import type { ExecutionRecord } from '../shared/types';
+import { delegated, forwardToLeader } from './cluster/state';
 import { database } from './db';
+import { refreshRows } from './db/replication';
 import { singleton } from './singleton';
 import { logger } from './telemetry';
 
@@ -50,6 +53,8 @@ export const retries = singleton('retries', () => {
   }
 
   function arm(executionId: string, dueAt: string, minDelay = 0) {
+    // Queue mode: the leader keeps the timers.
+    if (delegated()) return forwardToLeader({ t: 'retry', id: executionId });
     clear(executionId);
     const delay = Math.min(2 ** 31 - 1, Math.max(minDelay, Date.parse(dueAt) - Date.now()));
     const timer = setTimeout(() => void fire(executionId), delay);
@@ -91,6 +96,21 @@ export const retries = singleton('retries', () => {
     cancel(executionId: string): boolean {
       clear(executionId);
       return database().delete('retries', { execution_id: executionId }) > 0;
+    },
+
+    /** Queue mode, on the leader: arm saved retries that have no timer, drop timers of retries gone (or only `executionId`'s, read fresh). */
+    async sync(executionId?: string) {
+      if (executionId) await refreshRows('retries', { execution_id: executionId });
+      const rows = database().all<RetryRow>('SELECT execution_id, workflow_id, attempt, due_at FROM retries');
+      if (executionId) {
+        const row = rows.find((r) => r.execution_id === executionId);
+        if (row) arm(row.execution_id, row.due_at);
+        else clear(executionId);
+        return;
+      }
+      const ids = new Set(rows.map((row) => row.execution_id));
+      for (const id of [...timers.keys()]) if (!ids.has(id)) clear(id);
+      for (const row of rows) if (!timers.has(row.execution_id)) arm(row.execution_id, row.due_at, 1_000);
     },
 
     /** Failed executions with a retry pending. */

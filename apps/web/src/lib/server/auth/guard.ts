@@ -2,7 +2,8 @@
  * The server-side guard. `handler` (lib/server/http.ts) calls `guardRequest` before every API route: public paths
  * (lib/shared/auth-paths.ts) pass; everything else needs a session cookie or an API key, the API key scope and the
  * role action the route policy (./policy) names, and, for cookie-authenticated changes, a same-origin request.
- * The caller becomes the request's principal (./context), which `requireUser` returns.
+ * The caller becomes the request's principal (./context), which `requireUser` returns. Routes that name a resource
+ * (`resourceRule` in ./policy) also need access to it through its project or a share (lib/server/projects/access.ts).
  *
  * Pages: the proxy (src/proxy.ts) sends visitors without a session cookie to /login, and the root layout checks
  * the session itself with `pageViewer`. Tests that call route handlers directly use `enableTestAuth`
@@ -14,22 +15,18 @@ import { API_KEY_HEADER, API_KEY_PREFIX, isPublicPath, PATH_HEADER, SESSION_COOK
 import { verifyApiKey } from './api-keys';
 import { requestAuth, type Principal, type RequestAuth } from './context';
 import { readCookie } from './cookies';
+import { protectedWriteRefusal } from '../environments/protection';
+import { checkResourceRule } from '../projects/access';
 import { editLocks } from './edit-locks';
+import { AuthError } from './errors';
 import { sameSecret } from './passwords';
-import { routePolicy } from './policy';
+import { resourceRule, routePolicy } from './policy';
 import { sessionUser } from './sessions';
 import { testPrincipal } from './test-bypass';
 import { setupRequired, viewerOf, type UserRecord } from './users';
 
 /** Thrown by `requireUser` inside a route handler; `handler` turns it into a JSON error. */
-export class AuthError extends Error {
-  constructor(
-    message: string,
-    readonly status: 401 | 403 | 423 = 401,
-  ) {
-    super(message);
-  }
-}
+export { AuthError };
 
 // ---- credentials ----------------------------------------------------------------
 
@@ -129,7 +126,14 @@ export function guardRequest(request: Request | undefined): GuardResult {
     }
   }
   if (policy.action && !can(principal.user, policy.action)) return { ok: false, response: deny('Your role can’t do this. Ask an owner or admin.', 403) };
+  // A protected environment: workflows change only by pull or promotion (lib/server/environments/protection.ts).
+  const readOnly = protectedWriteRefusal(method, path);
+  if (readOnly) return { ok: false, response: deny(readOnly, 403, { protected: true }) };
   if (principal.via === 'session' && request && UNSAFE.has(method) && crossSite(request)) return { ok: false, response: deny('Cross-site request refused', 403) };
+  // Projects and sharing: the workflow, credential, data table, agent or execution the path names (./policy).
+  const rule = resourceRule(method, path);
+  const denied = rule && checkResourceRule(principal.user, rule);
+  if (denied) return { ok: false, response: deny(denied.message, denied.status) };
 
   // A save from an editor tab that lost the workflow's edit lock (someone took over).
   const tab = request?.headers.get('x-landflow-editor-tab');

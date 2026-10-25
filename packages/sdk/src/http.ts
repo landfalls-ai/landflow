@@ -20,6 +20,7 @@ import {
 } from '@landflow/protocol';
 import { findCredentialType, serveExecute, serveLoadOptions, serveTestCredentials, serveWebhook, serveWebhookMethod } from './handlers';
 import { buildManifest, type IPlugin } from './node';
+import { answerRegistryChallenge, REGISTRY_CHALLENGE_HEADER } from './registry-proof';
 import { contextFromHeaders, getTelemetry, type Telemetry } from './otel';
 import { findNode, toErrorPayload } from './runtime';
 
@@ -79,7 +80,12 @@ export function createFetchHandler(plugin: IPlugin, options: FetchHandlerOptions
       return json(200, doc);
     }
 
-    if (request.method === 'GET' && path === HTTP_PATHS.manifest) return json(200, manifest);
+    if (request.method === 'GET' && path === HTTP_PATHS.manifest) {
+      // Kubernetes discovery: prove LANDFLOW_REGISTRY_SECRET when the host sends a challenge (registry-proof.ts).
+      const response = json(200, manifest);
+      for (const [name, value] of Object.entries(answerRegistryChallenge(plugin.info.id, request.headers.get(REGISTRY_CHALLENGE_HEADER)))) response.headers.set(name, value);
+      return response;
+    }
 
     if (request.method === 'GET' && path === HTTP_PATHS.health) {
       const health: HealthResponse = {

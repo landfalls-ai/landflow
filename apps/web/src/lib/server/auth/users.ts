@@ -2,6 +2,10 @@
  * Users, in the `users` table: email (unique, lower-cased), name, role, a scrypt password hash (none for users who
  * only sign in through SSO) and the OIDC identity they signed in with. The first user is the owner, created by the
  * setup page or from LANDFLOW_OWNER_EMAIL / LANDFLOW_OWNER_PASSWORD at boot (./bootstrap).
+ *
+ * Wave 4 adds the SAML identity (`samlIssuer`, `samlSubject`), the identity provider's id of a provisioned user
+ * (`externalId`, `provisionedBy`: `scim` or `saml`) and deactivation (`disabledAt`): a deactivated user has no
+ * sessions, and can't sign in or use their API keys (./sessions, ./api-keys) until reactivated.
  */
 import { nanoid } from 'nanoid';
 import type { Role, UserView, Viewer } from '../../shared/auth';
@@ -16,6 +20,14 @@ export interface UserRecord {
   passwordHash?: string;
   oidcIssuer?: string;
   oidcSubject?: string;
+  samlIssuer?: string;
+  samlSubject?: string;
+  /** The identity provider's id (SCIM `externalId`). */
+  externalId?: string;
+  /** Created by provisioning: `scim`, or `saml` (just-in-time). */
+  provisionedBy?: string;
+  /** Deactivated (SCIM `active: false`): no sign-in, no API keys. */
+  disabledAt?: string;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -29,6 +41,11 @@ interface UserRow {
   password_hash: string | null;
   oidc_issuer: string | null;
   oidc_subject: string | null;
+  saml_issuer?: string | null;
+  saml_subject?: string | null;
+  external_id?: string | null;
+  provisioned_by?: string | null;
+  disabled_at?: string | null;
   created_at: string;
   updated_at: string;
   last_login_at: string | null;
@@ -56,6 +73,11 @@ function fromRow(row: UserRow): UserRecord {
     ...(row.password_hash && { passwordHash: row.password_hash }),
     ...(row.oidc_issuer && { oidcIssuer: row.oidc_issuer }),
     ...(row.oidc_subject && { oidcSubject: row.oidc_subject }),
+    ...(row.saml_issuer && { samlIssuer: row.saml_issuer }),
+    ...(row.saml_subject && { samlSubject: row.saml_subject }),
+    ...(row.external_id && { externalId: row.external_id }),
+    ...(row.provisioned_by && { provisionedBy: row.provisioned_by }),
+    ...(row.disabled_at && { disabledAt: row.disabled_at }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.last_login_at && { lastLoginAt: row.last_login_at }),
@@ -71,6 +93,11 @@ function toRow(user: UserRecord) {
     password_hash: user.passwordHash ?? null,
     oidc_issuer: user.oidcIssuer ?? null,
     oidc_subject: user.oidcSubject ?? null,
+    saml_issuer: user.samlIssuer ?? null,
+    saml_subject: user.samlSubject ?? null,
+    external_id: user.externalId ?? null,
+    provisioned_by: user.provisionedBy ?? null,
+    disabled_at: user.disabledAt ?? null,
     created_at: user.createdAt,
     updated_at: user.updatedAt,
     last_login_at: user.lastLoginAt ?? null,
@@ -78,7 +105,16 @@ function toRow(user: UserRecord) {
 }
 
 export function viewerOf(user: UserRecord): Viewer {
-  return { id: user.id, name: user.name, email: user.email, role: user.role, sso: Boolean(user.oidcSubject), hasPassword: Boolean(user.passwordHash) };
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    sso: Boolean(user.oidcSubject || user.samlSubject),
+    hasPassword: Boolean(user.passwordHash),
+    ...(user.disabledAt && { disabled: true }),
+    ...(user.provisionedBy && { provisionedBy: user.provisionedBy }),
+  };
 }
 
 export function userView(user: UserRecord): UserView {
@@ -115,12 +151,26 @@ export function findUserByOidc(issuer: string, subject: string): UserRecord | un
   return row && fromRow(row);
 }
 
+export function findUserBySaml(issuer: string, subject: string): UserRecord | undefined {
+  const row = authDb().get<UserRow>('SELECT * FROM users WHERE saml_subject = ? AND saml_issuer = ?', subject, issuer);
+  return row && fromRow(row);
+}
+
+export function findUserByExternalId(externalId: string): UserRecord | undefined {
+  const row = authDb().get<UserRow>('SELECT * FROM users WHERE external_id = ?', externalId);
+  return row && fromRow(row);
+}
+
 export interface NewUser {
   email: string;
   name: string;
   role: Role;
   password?: string;
   oidc?: { issuer: string; subject: string };
+  saml?: { issuer: string; subject: string };
+  externalId?: string;
+  provisionedBy?: string;
+  disabled?: boolean;
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
@@ -142,6 +192,10 @@ export async function createUser(input: NewUser): Promise<UserRecord> {
       role: input.role,
       ...(passwordHash && { passwordHash }),
       ...(input.oidc && { oidcIssuer: input.oidc.issuer, oidcSubject: input.oidc.subject }),
+      ...(input.saml && { samlIssuer: input.saml.issuer, samlSubject: input.saml.subject }),
+      ...(input.externalId && { externalId: input.externalId }),
+      ...(input.provisionedBy && { provisionedBy: input.provisionedBy }),
+      ...(input.disabled && { disabledAt: now }),
       createdAt: now,
       updatedAt: now,
     };
@@ -165,10 +219,23 @@ export async function createOwner(input: { email: string; name: string; password
   });
 }
 
-export function updateUser(id: string, patch: Partial<Pick<UserRecord, 'name' | 'role' | 'passwordHash' | 'oidcIssuer' | 'oidcSubject' | 'lastLoginAt'>>): UserRecord {
+export type UserPatch = Partial<
+  Pick<UserRecord, 'name' | 'email' | 'role' | 'passwordHash' | 'oidcIssuer' | 'oidcSubject' | 'samlIssuer' | 'samlSubject' | 'externalId' | 'provisionedBy' | 'disabledAt' | 'lastLoginAt'>
+>;
+
+/** Change a user. A key set to `undefined` clears that field (`disabledAt: undefined` reactivates). */
+export function updateUser(id: string, patch: UserPatch): UserRecord {
   const existing = getUser(id);
   if (!existing) throw new UserError('User not found', 404);
+  if (patch.email !== undefined) {
+    const email = normalizeEmail(patch.email);
+    if (!EMAIL.test(email) || email.length > 320) throw new UserError('Enter a valid email address');
+    const taken = findUserByEmail(email);
+    if (taken && taken.id !== id) throw new UserError(`A user with the email ${email} already exists`, 409);
+    patch = { ...patch, email };
+  }
   const updated: UserRecord = { ...existing, ...patch, updatedAt: new Date().toISOString() };
+  for (const [key, value] of Object.entries(patch)) if (value === undefined) delete (updated as unknown as Record<string, unknown>)[key];
   if (patch.name !== undefined) updated.name = patch.name.trim().slice(0, 120) || existing.name;
   authDb().upsert('users', toRow(updated));
   return updated;
@@ -185,6 +252,22 @@ export function deleteUser(id: string): boolean {
     db.delete('sessions', { user_id: id });
     db.delete('api_keys', { user_id: id });
     return db.delete('users', { id }) > 0;
+  });
+}
+
+/**
+ * Deactivate a user (SCIM `active: false`) or reactivate them. Deactivating signs them out everywhere; their API keys
+ * stop working while they are deactivated (./api-keys). The owner can't be deactivated.
+ */
+export function setUserDisabled(id: string, disabled: boolean): UserRecord {
+  const db = authDb();
+  return db.transaction(() => {
+    const user = getUser(id);
+    if (!user) throw new UserError('User not found', 404);
+    if (disabled && user.role === 'owner') throw new UserError('The owner can’t be deactivated', 403);
+    if (disabled === Boolean(user.disabledAt)) return user;
+    if (disabled) db.delete('sessions', { user_id: id });
+    return updateUser(id, { disabledAt: disabled ? new Date().toISOString() : undefined });
   });
 }
 

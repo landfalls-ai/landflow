@@ -23,6 +23,7 @@ import {
 } from '@landflow/protocol/grpc';
 import { findCredentialType, serveExecute, serveLoadOptions, serveTestCredentials, serveWebhook, serveWebhookMethod } from './handlers';
 import { buildManifest, type IPlugin } from './node';
+import { answerRegistryChallenge, REGISTRY_CHALLENGE_HEADER } from './registry-proof';
 import { contextFromMetadata, getTelemetry, type Telemetry } from './otel';
 import { findNode, toErrorPayload } from './runtime';
 
@@ -40,7 +41,15 @@ export function createPluginService(plugin: IPlugin, options: PluginServiceOptio
   const telemetryFor = () => options.telemetry ?? getTelemetry();
 
   return {
-    GetManifest(_call: Call<unknown>, callback: Callback) {
+    GetManifest(call: Call<unknown>, callback: Callback) {
+      // Kubernetes discovery: prove LANDFLOW_REGISTRY_SECRET in the response metadata when challenged (registry-proof.ts).
+      const challenge = call.metadata.get(REGISTRY_CHALLENGE_HEADER)[0];
+      const proof = answerRegistryChallenge(plugin.info.id, typeof challenge === 'string' ? challenge : undefined);
+      if (Object.keys(proof).length) {
+        const metadata = new grpc.Metadata();
+        for (const [name, value] of Object.entries(proof)) metadata.set(name, value);
+        call.sendMetadata(metadata);
+      }
       callback(null, manifest);
     },
     async Execute(call: Call<ExecuteRequestMsg>, callback: Callback) {

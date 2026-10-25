@@ -27,6 +27,11 @@ export const PUBLIC_ROUTES = [
   '/api/health',
   // Sign-in, setup, invites, password resets and OIDC (but /api/auth/me needs a session: see isPublicPath).
   '/api/auth',
+  // SAML 2.0: SP-initiated login, the SP metadata, the ACS (signed responses) and single logout.
+  '/api/auth/saml/login',
+  '/api/auth/saml/metadata',
+  '/api/auth/saml/acs',
+  '/api/auth/saml/logout',
   // Triggers, each with its own auth: webhooks (webhook authentication), hosted forms, waits, MCP Server Triggers.
   '/api/webhook',
   '/form',
@@ -40,6 +45,8 @@ export const PUBLIC_ROUTES = [
   '/api/plugins/announce',
   // Slack Events API and Interactivity (agent channels, approval buttons): verified with the app's signing secret.
   '/api/slack',
+  // SCIM 2.0 provisioning (Okta, Entra ID): a bearer API key with the `scim` scope, checked by the routes.
+  '/scim/v2',
 ] as const;
 
 /** `/api/auth` routes that need a signed-in user. */

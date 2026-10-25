@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Activity, BookOpenText, Bot, ChartColumn, House, KeyRound, Puzzle, Settings, Store, Table2, Workflow } from 'lucide-react';
+import { Activity, BookOpenText, Bot, ChartColumn, House, KeyRound, LayoutTemplate, Puzzle, Settings, Store, Table2, Workflow } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveConnected, useLiveEvents } from '@/lib/client/live';
@@ -10,7 +10,9 @@ import { isChromelessPage } from '@/lib/shared/auth-paths';
 import type { PluginSummary } from '@/lib/shared/types';
 import { UserMenu } from '../auth/user-menu';
 import { useViewer } from '../auth/viewer';
+import { ProjectSwitcher } from '../projects/project-switcher';
 import { StatusDot } from '../ui/badge';
+import { EnvironmentBadge } from './environment-badge';
 import { ThemeToggle } from './theme-toggle';
 
 const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string; icon: typeof House; preview?: boolean }> }> = [
@@ -19,6 +21,7 @@ const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string;
     items: [
       { href: '/', label: 'Home', icon: House },
       { href: '/workflows', label: 'Workflows', icon: Workflow },
+      { href: '/templates', label: 'Templates', icon: LayoutTemplate },
       { href: '/agents', label: 'Agents', icon: Bot, preview: true },
       { href: '/executions', label: 'Executions', icon: Activity },
       { href: '/insights', label: 'Insights', icon: ChartColumn },
@@ -63,6 +66,8 @@ function Rail({ pathname }: { pathname: string }) {
         <span className="grid size-[34px] shrink-0 place-items-center rounded-[9px] border border-acbd bg-ac2 text-[12px] font-bold tracking-[0.02em] text-on-ac">LF</span>
         <span className="truncate text-[13px] font-semibold text-t1">Landflow</span>
       </Link>
+      <EnvironmentBadge />
+      <ProjectSwitcher />
 
       <nav className="flex flex-col">
         {GROUPS.map((group) => (

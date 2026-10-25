@@ -46,6 +46,7 @@ import {
   type WebhookMethodResponseMsg,
 } from '@landflow/protocol/grpc';
 import type { Transport } from '@landflow/engine';
+import { REGISTRY_CHALLENGE_HEADER, REGISTRY_PROOF_HEADER } from '@landflow/sdk';
 import { tracePluginRpc, type RpcMethod } from '../telemetry';
 
 export const EXECUTE_TIMEOUT_MS = Number(process.env.LANDFLOW_EXECUTE_TIMEOUT_MS ?? 120_000);
@@ -56,6 +57,8 @@ export interface PluginClient {
   /** Learned from the first manifest; labels the RPC spans and metrics. */
   pluginId?: string;
   manifest(): Promise<PluginManifest>;
+  /** GetManifest with a registry challenge (Kubernetes discovery, docs/protocol.md §13): the manifest and the plugin's proof, if it sent one. */
+  manifestWithProof?(challenge: string): Promise<{ manifest: PluginManifest; proof?: string }>;
   execute(request: ExecuteRequest, signal?: AbortSignal): Promise<ExecuteResponse>;
   /** `request.credentials` is forwarded, for option lists that call an API. */
   loadOptions(request: LoadOptionsRequest): Promise<PropertyOption[]>;
@@ -96,13 +99,15 @@ export class HttpPluginClient extends TracedClient implements PluginClient {
     super();
   }
 
-  private async request<T>(path: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<T> {
+  private async request<T>(path: string, init: RequestInit & { timeoutMs?: number; onResponse?: (response: Response) => void } = {}): Promise<T> {
     const timeout = AbortSignal.timeout(init.timeoutMs ?? 10_000);
+    const { onResponse, ...rest } = init;
     const response = await fetch(new URL(path, this.endpoint), {
-      ...init,
+      ...rest,
       headers: { 'content-type': 'application/json', ...init.headers },
       signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
     });
+    onResponse?.(response);
     const text = await response.text();
     if (!response.ok) {
       let message = text;
@@ -120,6 +125,17 @@ export class HttpPluginClient extends TracedClient implements PluginClient {
 
   manifest() {
     return this.traced('GetManifest', async (headers) => this.learn(validated(await this.request(HTTP_PATHS.manifest, { headers }), this.endpoint)));
+  }
+
+  manifestWithProof(challenge: string) {
+    return this.traced('GetManifest', async (headers) => {
+      let proof: string | undefined;
+      const raw = await this.request(HTTP_PATHS.manifest, {
+        headers: { ...headers, [REGISTRY_CHALLENGE_HEADER]: challenge },
+        onResponse: (response) => (proof = response.headers.get(REGISTRY_PROOF_HEADER) ?? undefined),
+      });
+      return { manifest: this.learn(validated(raw, this.endpoint)), ...(proof && { proof }) };
+    });
   }
 
   execute(request: ExecuteRequest, signal?: AbortSignal) {
@@ -198,6 +214,30 @@ export class GrpcPluginClient extends TracedClient implements PluginClient {
       const msg = await unary<object, ManifestMsg>(this.client, 'GetManifest', { hostVersion: '0.1.0' }, 5_000, metadata);
       return this.learn(validated(manifestFromMsg(msg), this.endpoint));
     });
+  }
+
+  /** GetManifest with the challenge in the call metadata; the proof comes back in the response metadata. */
+  manifestWithProof(challenge: string) {
+    return this.traced('GetManifest', (traceContext) =>
+      new Promise<{ manifest: PluginManifest; proof?: string }>((resolve, reject) => {
+        const metadata = new grpc.Metadata();
+        for (const [key, value] of Object.entries({ ...traceContext, [REGISTRY_CHALLENGE_HEADER]: challenge })) metadata.set(key, value);
+        let proof: string | undefined;
+        const getManifest = (this.client as unknown as Record<string, Function>).GetManifest;
+        const call = getManifest.call(this.client, { hostVersion: '0.1.0' }, metadata, { deadline: new Date(Date.now() + 5_000) }, (error: grpc.ServiceError | null, msg: ManifestMsg) => {
+          if (error) return reject(error);
+          try {
+            resolve({ manifest: this.learn(validated(manifestFromMsg(msg), this.endpoint)), ...(proof && { proof }) });
+          } catch (invalid) {
+            reject(invalid);
+          }
+        }) as grpc.ClientUnaryCall;
+        call.on('metadata', (received: grpc.Metadata) => {
+          const value = received.get(REGISTRY_PROOF_HEADER)[0];
+          if (typeof value === 'string') proof = value;
+        });
+      }),
+    );
   }
 
   async execute(request: ExecuteRequest, signal?: AbortSignal) {

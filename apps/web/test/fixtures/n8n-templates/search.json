@@ -1,0 +1,36 @@
+{
+  "totalWorkflows": 2,
+  "workflows": [
+    {
+      "id": 1750,
+      "name": "Post new form submissions to Slack",
+      "totalViews": 5120,
+      "recentViews": 0,
+      "price": 0,
+      "purchaseUrl": null,
+      "createdAt": "2024-03-12T09:41:22.000Z",
+      "description": "Send every submission of a web form to a Slack channel.",
+      "user": { "id": 1, "name": "n8n Team", "username": "n8n-team", "verified": true },
+      "nodes": [
+        { "id": 47, "icon": "file:webhook.svg", "name": "n8n-nodes-base.webhook", "displayName": "Webhook", "typeVersion": 2, "group": "[\"trigger\"]", "defaults": { "name": "Webhook" } },
+        { "id": 38, "icon": "fa:pen", "name": "n8n-nodes-base.set", "displayName": "Edit Fields (Set)", "typeVersion": 3, "group": "[\"input\"]", "defaults": { "name": "Edit Fields" } },
+        { "id": 40, "icon": "file:slack.svg", "name": "n8n-nodes-base.slack", "displayName": "Slack", "typeVersion": 2, "group": "[\"output\"]", "defaults": { "name": "Slack" } }
+      ]
+    },
+    {
+      "id": 2291,
+      "name": "Daily RSS digest by email",
+      "totalViews": 980,
+      "recentViews": 0,
+      "price": 0,
+      "purchaseUrl": null,
+      "createdAt": "2024-06-02T15:10:05.000Z",
+      "user": { "id": 7, "name": "Ada", "username": "ada", "verified": false },
+      "nodes": [
+        { "id": 839, "icon": "fa:clock", "name": "n8n-nodes-base.scheduleTrigger", "displayName": "Schedule Trigger", "typeVersion": 1, "group": "[\"trigger\",\"schedule\"]", "defaults": { "name": "Schedule Trigger" } },
+        { "id": 21, "icon": "fa:rss", "name": "n8n-nodes-base.rssFeedRead", "displayName": "RSS Read", "typeVersion": 1, "group": "[\"input\"]", "defaults": { "name": "RSS Read" } }
+      ]
+    }
+  ],
+  "filters": []
+}

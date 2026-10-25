@@ -67,8 +67,46 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "http://localhost:3000/api/auth/saml/metadata",
+      "name": "Landflow (SAML)",
+      "description": "Landflow SAML 2.0 sign-in: the SP entity id of the dev server on :3000 (the dockerised host on :53000 sets LANDFLOW_SAML_ISSUER to it)",
+      "protocol": "saml",
+      "enabled": true,
+      "publicClient": false,
+      "frontchannelLogout": true,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "http://localhost:3000/api/auth/saml/*",
+        "http://127.0.0.1:3000/api/auth/saml/*",
+        "http://localhost:53000/api/auth/saml/*",
+        "http://127.0.0.1:53000/api/auth/saml/*"
+      ],
+      "attributes": {
+        "saml.authnstatement": "true",
+        "saml.server.signature": "true",
+        "saml.assertion.signature": "true",
+        "saml.client.signature": "false",
+        "saml.encrypt": "false",
+        "saml.force.post.binding": "true",
+        "saml.signature.algorithm": "RSA_SHA256",
+        "saml_signature_canonicalization_method": "http://www.w3.org/2001/10/xml-exc-c14n#",
+        "saml_force_name_id_format": "true",
+        "saml_name_id_format": "persistent",
+        "saml_single_logout_service_url_redirect": "http://localhost:3000/api/auth/saml/logout",
+        "saml_single_logout_service_url_post": "http://localhost:3000/api/auth/saml/logout"
+      },
+      "protocolMappers": [
+        { "name": "email", "protocol": "saml", "protocolMapper": "saml-user-property-mapper", "consentRequired": false, "config": { "user.attribute": "email", "friendly.name": "email", "attribute.name": "email", "attribute.nameformat": "Basic" } },
+        { "name": "firstName", "protocol": "saml", "protocolMapper": "saml-user-property-mapper", "consentRequired": false, "config": { "user.attribute": "firstName", "friendly.name": "givenName", "attribute.name": "firstName", "attribute.nameformat": "Basic" } },
+        { "name": "lastName", "protocol": "saml", "protocolMapper": "saml-user-property-mapper", "consentRequired": false, "config": { "user.attribute": "lastName", "friendly.name": "surname", "attribute.name": "lastName", "attribute.nameformat": "Basic" } },
+        { "name": "roles", "protocol": "saml", "protocolMapper": "saml-role-list-mapper", "consentRequired": false, "config": { "single": "true", "attribute.name": "roles", "attribute.nameformat": "Basic", "friendly.name": "roles" } },
+        { "name": "groups", "protocol": "saml", "protocolMapper": "saml-group-membership-mapper", "consentRequired": false, "config": { "single": "true", "full.path": "false", "attribute.name": "groups", "attribute.nameformat": "Basic", "friendly.name": "groups" } }
+      ]
     }
   ],
+  "groups": [{ "name": "data-team" }],
   "users": [
     {
       "username": "alice",
@@ -88,7 +126,8 @@
       "enabled": true,
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "bob-test-only", "temporary": false }],
-      "realmRoles": ["default-roles-landflow", "landflow-editor"]
+      "realmRoles": ["default-roles-landflow", "landflow-editor"],
+      "groups": ["/data-team"]
     }
   ]
 }
