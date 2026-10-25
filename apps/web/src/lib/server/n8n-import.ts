@@ -14,6 +14,7 @@ import { defaultVersionOf, isPropertyVisible, withPropertyDefaults, type Connect
 import type { StickyNote, Workflow, WorkflowConnection, WorkflowNode, WorkflowSettings } from '@landflow/engine';
 import type { ImportReport } from '../shared/types';
 import { parseCron } from './agents/cron';
+import { convertFlowiseWorkflow, isFlowiseDocument } from './flowise-import';
 
 /** Rule outputs of core.switch (SWITCH_OUTPUTS in nodes/flow.ts); its fallback output comes after them. */
 const SWITCH_OUTPUTS = 4;
@@ -21,7 +22,7 @@ const SWITCH_OUTPUTS = 4;
 const CLASSIFIER_OUTPUTS = 4;
 /** Limits of workflowSchema (schemas.ts). */
 const LIMITS = { maxTries: [1, 10], waitMs: [0, 60_000], timeout: [1, 86_400], sticky: [40, 4000], stickyContent: 20_000 } as const;
-const AI_TYPES = new Set<string>(['ai_languageModel', 'ai_memory', 'ai_tool']);
+const AI_TYPES = new Set<string>(['ai_languageModel', 'ai_memory', 'ai_tool', 'ai_embedding', 'ai_document', 'ai_textSplitter', 'ai_retriever', 'ai_reranker']);
 const B = 'n8n-nodes-base.';
 const L = '@n8n/n8n-nodes-langchain.';
 
@@ -65,6 +66,8 @@ interface Ctx {
   warn(message: string): void;
   /** Descriptor of a registered Landflow type. */
   descriptor(type: string): NodeDescriptor | undefined;
+  /** Whether the node has an incoming connection of this type in the n8n file. */
+  incoming(type: string): boolean;
 }
 
 interface Conversion {
@@ -295,13 +298,18 @@ const webhook: Converter = (p, ctx) => {
   }
   // Uploads: n8n's "Field Name for Binary Data" and "Raw Body" exist on Landflow's trigger too.
   const options = isObject(p.options) ? p.options : {};
-  const kept = (['binaryPropertyName', 'rawBody'] as const).filter((key) => options[key] !== undefined);
+  // n8n's "IP(s) Allowlist" exists on Landflow's trigger as well (lib/server/webhook-auth.ts).
+  const kept = (['binaryPropertyName', 'rawBody', 'ipWhitelist'] as const).filter((key) => options[key] !== undefined);
   webhookResponseWarnings(p, respond, ctx, kept);
+  // Basic, Header and JWT Auth have n8n's names; the credential is chosen again (credentials don't come along).
   const auth = str(p.authentication);
-  if (auth && auth !== 'none') ctx.warn(`${name}: Landflow webhooks have no ${auth} authentication; anyone with the URL can call it.`);
+  const authentication = auth && auth !== 'none' && offered('authentication')?.some((o) => o.value === auth) ? auth : undefined;
+  if (auth && auth !== 'none' && !authentication) ctx.warn(`${name}: Landflow webhooks have no ${auth} authentication; anyone with the URL can call it.`);
   const path = str(p.path) ?? 'webhook';
   if (/(^|\/):/.test(path)) ctx.warn(`${name}: path parameters (${path}) aren't supported; the request path has to match exactly.`);
-  return { parameters: { path, method, respond, ...(kept.length && { options: Object.fromEntries(kept.map((key) => [key, options[key]])) }) } };
+  return {
+    parameters: { path, ...(authentication && { authentication }), method, respond, ...(kept.length && { options: Object.fromEntries(kept.map((key) => [key, options[key]])) }) },
+  };
 };
 
 const UNIT_SECONDS: Record<string, number> = { seconds: 1, minutes: 60, hours: 3600, days: 86_400, weeks: 604_800, months: 2_592_000 };
@@ -365,18 +373,49 @@ const scheduleTrigger: Converter = (p, ctx) => {
   return { parameters: { unit: 'rules', rule: { interval: interval.length ? interval : [triggerRule({}, ctx)] } } };
 };
 
-/** Legacy Cron node: `triggerTimes.item[]` with everyMinute / everyHour / everyX / everyDay… */
+/**
+ * One trigger time of the legacy Cron node as a Schedule Trigger rule (then normalized by triggerRule). Exports leave
+ * the Cron node's defaults out: 14:00, Monday, the 1st of the month, every 2 hours.
+ */
+function cronRule(item: Params, ctx: Ctx): Params | undefined {
+  const mode = str(item.mode) ?? 'everyDay';
+  const at = { triggerAtHour: whole(item.hour, 14, 0, 23), triggerAtMinute: whole(item.minute, 0, 0, 59) };
+  switch (mode) {
+    case 'everyMinute':
+      return { field: 'minutes', minutesInterval: 1 };
+    case 'everyHour':
+      return { field: 'hours', hoursInterval: 1, triggerAtMinute: at.triggerAtMinute };
+    case 'everyDay':
+      return { field: 'days', daysInterval: 1, ...at };
+    case 'everyWeek':
+      return { field: 'weeks', weeksInterval: 1, triggerAtDay: [whole(item.weekday, 1, 0, 7)], ...at };
+    case 'everyMonth':
+      return { field: 'months', monthsInterval: 1, triggerAtDayOfMonth: whole(item.dayOfMonth, 1, 1, 31), ...at };
+    case 'everyX': {
+      const value = whole(item.value, 2, 1);
+      const unit = str(item.unit) ?? 'hours';
+      const minutes = unit === 'minutes' ? value : value * 60;
+      if (minutes < 60) return { field: 'minutes', minutesInterval: minutes };
+      if (minutes % 60 === 0 && minutes < 1440) return { field: 'hours', hoursInterval: minutes / 60, triggerAtMinute: 0 };
+      if (minutes % 1440 === 0) return { field: 'days', daysInterval: Math.min(31, minutes / 1440), triggerAtHour: 0, triggerAtMinute: 0 };
+      const hours = Math.min(23, Math.max(1, Math.round(minutes / 60)));
+      ctx.warn(`${ctx.node.name}: “every ${value} ${unit}” has no Trigger Rule; it now runs every ${hours} hour${hours === 1 ? '' : 's'}.`);
+      return { field: 'hours', hoursInterval: hours, triggerAtMinute: 0 };
+    }
+    case 'custom':
+      return { field: 'cronExpression', expression: text(item.cronExpression).trim() || '0 14 * * *' };
+    default:
+      ctx.warn(`${ctx.node.name}: the Cron mode “${mode}” isn't known; that trigger time was dropped.`);
+      return undefined;
+  }
+}
+
+/** Legacy Cron node: every `triggerTimes.item[]` (everyMinute / everyHour / everyDay / everyWeek / everyMonth / everyX / custom) as a Trigger Rule. */
 const cron: Converter = (p, ctx) => {
   const items = isObject(p.triggerTimes) ? list(p.triggerTimes.item) : [];
-  const first = items[0] ?? { mode: 'everyDay' };
-  const mode = str(first.mode) ?? 'everyDay';
-  const table: Record<string, number> = { everyMinute: 60, everyHour: 3600, everyDay: 86_400, everyWeek: 604_800, everyMonth: 2_592_000 };
-  let seconds = mode === 'everyX' ? Math.max(1, num(first.value, 2)) * (UNIT_SECONDS[str(first.unit) ?? 'hours'] ?? 3600) : table[mode];
-  if (seconds === undefined) seconds = 3600;
-  if (!['everyMinute', 'everyHour', 'everyX'].includes(mode) || items.length > 1) {
-    ctx.warn(`${ctx.node.name}: the Cron schedule was simplified to every ${everyUnit(seconds).every} ${everyUnit(seconds).unit}. Check the schedule.`);
-  }
-  return { parameters: everyUnit(seconds) };
+  const rules = (items.length ? items : [{ mode: 'everyDay' }]).map((item) => cronRule(item, ctx)).filter((rule): rule is Params => rule !== undefined);
+  const interval = rules.map((rule) => triggerRule(rule, ctx)).filter((rule): rule is Params => rule !== undefined);
+  return { parameters: { unit: 'rules', rule: { interval: interval.length ? interval : [triggerRule({ field: 'days', triggerAtHour: 14 }, ctx)] } } };
 };
 
 /** Legacy Interval node: `interval` + `unit`. */
@@ -485,14 +524,33 @@ function checkCode(source: string, ctx: Ctx) {
 
 const commentOut = (source: string) => source.split('\n').map((line) => `// ${line}`).join('\n');
 
+/**
+ * n8n's Python (`_input.all()`, `_input.item`, `_json`, `_('Node')`) runs on Landflow's Python Code node as it is, in
+ * the code runner sandbox. "Python (Native)" (`_items`, `_item`) gets a shim for those two names.
+ */
+function pythonCode(p: Params, ctx: Ctx): Conversion {
+  let source = text(p.pythonCode);
+  const each = p.mode === 'runOnceForEachItem';
+  if (p.language === 'pythonNative') {
+    const shim = each ? '_item = {"json": _json}\n' : '_items = [{"json": item.json} for item in _input.all()]\n';
+    if (/\b_items?\b/.test(source)) source = shim + source;
+    ctx.warn(`${ctx.node.name}: n8n's native Python was imported onto Landflow's Python; check what the code returns.`);
+  }
+  const unsupported = /\$\(|_env\b|_getWorkflowStaticData|import\s+requests\b/.exec(source);
+  if (unsupported) ctx.warn(`${ctx.node.name}: the code uses ${unsupported[0]}, which Landflow's Python sandbox may not provide. Check the code.`);
+  ctx.warn(`${ctx.node.name}: Python runs in the code runner sandbox (LANDFLOW_CODE_RUNNER_URL); the node fails while none is configured.`);
+  return { parameters: { language: 'python', mode: each ? 'each' : 'all', [each ? 'pythonCodeEach' : 'pythonCode']: source } };
+}
+
 const code: Converter = (p, ctx) => {
   const language = str(p.language) ?? 'javaScript';
+  if (language === 'python' || language === 'pythonNative') return pythonCode(p, ctx);
   if (language !== 'javaScript') {
-    ctx.warn(`${ctx.node.name}: Python code isn't supported; the node was disabled with the code commented out.`);
+    ctx.warn(`${ctx.node.name}: ${language} code isn't supported; the node was disabled with the code commented out.`);
     return {
-      parameters: { mode: 'all', code: `// Python code imported from n8n: rewrite it in JavaScript.\n${commentOut(text(p.pythonCode))}\nreturn items;` },
+      parameters: { mode: 'all', code: `// ${language} code imported from n8n: rewrite it in JavaScript.\n${commentOut(text(p.pythonCode ?? p.code))}\nreturn items;` },
       disabled: true,
-      notes: 'Imported from n8n with Python code, which Landflow does not run. Rewrite it in JavaScript, then enable the node.',
+      notes: `Imported from n8n with ${language} code, which Landflow does not run. Rewrite it in JavaScript, then enable the node.`,
     };
   }
   const source = text(p.jsCode);
@@ -957,6 +1015,281 @@ const chatTrigger: Converter = (p, ctx) => {
 const toolHttpRequest: Converter = (p) => ({ parameters: { method: str(p.method) ?? 'GET', url: p.url ?? '' } });
 
 // ---------------------------------------------------------------------------
+// RAG: vector stores, embeddings, loaders, splitters, retrieval QA
+// ---------------------------------------------------------------------------
+
+const VECTOR_MODES = new Set(['insert', 'load', 'retrieve', 'retrieve-as-tool']);
+const SEARCH_MODES = new Set(['load', 'retrieve', 'retrieve-as-tool']);
+
+/** A tool name the agent can call: letters, digits, `_` and `-`. */
+const toolNameOf = (value: string) =>
+  value
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64);
+
+/** What every vector store shares: the mode and its fields (prompt, tool name and description, limit, metadata filter). */
+function vectorStoreBase(p: Params, ctx: Ctx): Params {
+  let mode = str(p.mode) ?? 'retrieve';
+  if (mode === 'update') {
+    ctx.warn(`${ctx.node.name}: “Update Documents” isn't available; the store inserts the documents instead (turn on “Clear Store” to replace them).`);
+    mode = 'insert';
+  } else if (!VECTOR_MODES.has(mode)) {
+    ctx.warn(`${ctx.node.name}: the mode “${mode}” isn't available; it was set to Retrieve Documents.`);
+    mode = 'retrieve';
+  }
+  const options = isObject(p.options) ? p.options : {};
+  const out: Params = { mode };
+  if (mode === 'insert') out.clearStore = Boolean(p.clearStore);
+  if (mode === 'load') out.prompt = p.prompt ?? CHAT_INPUT;
+  if (mode === 'retrieve-as-tool') {
+    const name = text(p.toolName).trim();
+    out.toolName = name ? toolNameOf(name) : '';
+    out.toolDescription = text(p.toolDescription ?? p.description);
+  }
+  if (SEARCH_MODES.has(mode)) {
+    out.topK = whole(p.topK, 4, 1, 100);
+    if (p.includeDocumentMetadata !== undefined) out.includeDocumentMetadata = Boolean(p.includeDocumentMetadata);
+    if (p.useReranker) out.useReranker = true;
+    const filter = isObject(options.metadata) ? list(options.metadata.metadataValues) : [];
+    if (filter.length) out.options = { metadataFilter: { values: filter.map((f) => ({ name: text(f.name), value: f.value ?? '' })) } };
+  }
+  return out;
+}
+
+/** n8n's In-Memory Vector Store: its memory key is the collection. */
+const vectorStoreInMemory: Converter = (p, ctx) => ({ parameters: { ...vectorStoreBase(p, ctx), collection: text(p.memoryKey).trim() || 'vector_store_key' } });
+
+/** n8n's PGVector Store: table and collection carry over; Landflow keeps its own column layout. */
+const vectorStorePGVector: Converter = (p, ctx) => {
+  const options = isObject(p.options) ? p.options : {};
+  const collection = isObject(options.collection) && isObject(options.collection.values) ? options.collection.values : {};
+  const tableName = text(p.tableName).trim() || 'n8n_vectors';
+  if (isObject(options.columnNames)) ctx.warn(`${ctx.node.name}: custom column names aren't supported; Landflow uses its own columns in “${tableName}”.`);
+  if (options.distanceStrategy && options.distanceStrategy !== 'cosine') ctx.warn(`${ctx.node.name}: Landflow searches by cosine distance (n8n used ${text(options.distanceStrategy)}).`);
+  ctx.warn(`${ctx.node.name}: Landflow keeps its own table layout; documents n8n stored in “${tableName}” have to be inserted again (or use a new table).`);
+  return {
+    parameters: {
+      ...vectorStoreBase(p, ctx),
+      tableName,
+      collection: collection.useCollection ? text(collection.collectionName).trim() || 'n8n' : 'landflow',
+    },
+  };
+};
+
+const embeddingsOllama: Converter = (p, ctx) => {
+  ctx.warn(`${ctx.node.name}: set the Ollama base URL on the node; n8n kept it in the Ollama credential.`);
+  return { parameters: { model: text(p.model) || 'nomic-embed-text' } };
+};
+
+const embeddingsOpenAi: Converter = (p, ctx) => {
+  const options = isObject(p.options) ? p.options : {};
+  if (options.baseURL) ctx.warn(`${ctx.node.name}: set the base URL (${text(options.baseURL)}) on the OpenAI API credential.`);
+  return { parameters: { model: text(p.model) || 'text-embedding-ada-002', options: pick(options, ['dimensions', 'batchSize']) } };
+};
+
+/** n8n's Default Data Loader: JSON items load the same way; binary data has to go through Extract From File first. */
+const documentDefaultDataLoader: Converter = (p, ctx) => {
+  if (p.dataType === 'binary') ctx.warn(`${ctx.node.name}: Landflow's loader reads the items' JSON; put an Extract From File node before it for binary files.`);
+  const options = isObject(p.options) ? p.options : {};
+  const metadata = isObject(options.metadata) ? list(options.metadata.metadataValues) : [];
+  // v1 always took a text splitter sub-node; later versions default to the simple splitter.
+  const splitting = str(p.textSplittingMode) ?? (ctx.version < 1.1 || ctx.incoming('ai_textSplitter') ? 'custom' : 'simple');
+  return {
+    parameters: {
+      jsonMode: p.jsonMode === 'expressionData' ? 'expressionData' : 'allInputData',
+      ...(p.jsonMode === 'expressionData' && { jsonData: p.jsonData ?? '' }),
+      textSplittingMode: splitting === 'custom' ? 'custom' : 'simple',
+      ...(metadata.length && { options: { metadata: { metadataValues: metadata.map((m) => ({ name: text(m.name), value: text(m.value) })) } } }),
+    },
+  };
+};
+
+const SPLIT_CODE = new Set(['markdown', 'js', 'python', 'go', 'html']);
+
+const recursiveSplitter: Converter = (p, ctx) => {
+  const options = isObject(p.options) ? p.options : {};
+  const language = str(options.splitCode);
+  if (language && !SPLIT_CODE.has(language)) ctx.warn(`${ctx.node.name}: splitting ${language} code isn't available; it splits as plain text.`);
+  return {
+    parameters: {
+      chunkSize: whole(p.chunkSize, 1000, 1),
+      chunkOverlap: whole(p.chunkOverlap, 0, 0),
+      ...(language && SPLIT_CODE.has(language) && { options: { splitCode: language } }),
+    },
+  };
+};
+
+/** n8n's Character Text Splitter: the recursive splitter with its one separator. */
+const characterSplitter: Converter = (p) => ({
+  parameters: { chunkSize: whole(p.chunkSize, 1000, 1), chunkOverlap: whole(p.chunkOverlap, 0, 0), options: { separators: JSON.stringify([text(p.separator) || '\n\n', '']) } },
+});
+
+const tokenSplitter: Converter = (p) => ({ parameters: { chunkSize: whole(p.chunkSize, 1000, 1), chunkOverlap: whole(p.chunkOverlap, 0, 0) } });
+
+const chainRetrievalQa: Converter = (p) => {
+  const prompt = p.promptType === 'define' ? (p.text ?? '') : p.promptType === undefined && typeof p.query === 'string' ? p.query : CHAT_INPUT;
+  return { parameters: { query: prompt, options: pick(p.options, ['systemPromptTemplate']) } };
+};
+
+// ---------------------------------------------------------------------------
+// Guardrails
+// ---------------------------------------------------------------------------
+
+const PII = ['EMAIL_ADDRESS', 'PHONE_NUMBER', 'CREDIT_CARD', 'IBAN_CODE', 'IP_ADDRESS', 'US_SSN', 'CRYPTO'];
+
+/** A guardrail's settings: n8n nests them as `{ value: {…} }`; some versions keep them flat. */
+const guard = (guardrails: Params, key: string): Params | undefined => {
+  const entry = guardrails[key];
+  if (entry === undefined || entry === null || entry === false) return undefined;
+  if (isObject(entry)) return isObject(entry.value) ? entry.value : entry;
+  return {};
+};
+
+/**
+ * n8n's Guardrails: “Check Text for Violations” (`classify`) and “Sanitize Text” with the same guardrails. Every
+ * switch is written out, because Landflow's defaults turn PII, secrets and jailbreak checks on.
+ */
+const guardrails: Converter = (p, ctx) => {
+  const g = isObject(p.guardrails) ? p.guardrails : {};
+  const out: Params = {
+    operation: p.operation === 'sanitize' ? 'sanitize' : 'check',
+    text: p.text ?? CHAT_INPUT,
+    pii: false,
+    secrets: false,
+    keywords: false,
+    urls: false,
+    jailbreak: false,
+    topical: false,
+    nsfw: false,
+  };
+  const pii = guard(g, 'pii');
+  if (pii) {
+    out.pii = true;
+    const picked = Array.isArray(pii.entities) ? pii.entities.map(String) : [];
+    if (pii.type === 'selected' && picked.length) {
+      const known = picked.filter((e) => PII.includes(e));
+      if (known.length < picked.length) ctx.warn(`${ctx.node.name}: PII types ${picked.filter((e) => !PII.includes(e)).join(', ')} aren't detected by Landflow.`);
+      out.piiEntities = known.length ? known : [...PII];
+    } else out.piiEntities = [...PII];
+  }
+  const secrets = guard(g, 'secretKeys') ?? guard(g, 'secrets');
+  if (secrets) {
+    out.secrets = true;
+    out.secretsPermissiveness = ['strict', 'balanced', 'permissive'].includes(text(secrets.permissiveness)) ? secrets.permissiveness : 'balanced';
+  }
+  const keywords = g.keywords;
+  const keywordText = typeof keywords === 'string' ? keywords : isObject(keywords) ? text(guard(g, 'keywords')?.keywords ?? '') : '';
+  if (keywordText.trim()) Object.assign(out, { keywords: true, keywordList: keywordText });
+  const urls = guard(g, 'urls');
+  if (urls) {
+    Object.assign(out, {
+      urls: true,
+      allowedUrls: Array.isArray(urls.allowedUrls) ? urls.allowedUrls.join(', ') : text(urls.allowedUrls),
+      allowedSchemes: Array.isArray(urls.allowedSchemes) && urls.allowedSchemes.length ? urls.allowedSchemes : ['https'],
+      blockUserinfo: urls.blockUserinfo !== false,
+      allowSubdomains: Boolean(urls.allowSubdomains ?? urls.allowSubdomain),
+    });
+  }
+  const regex = isObject(g.customRegex) ? list(g.customRegex.regex ?? g.customRegex.rules) : [];
+  if (regex.length) out.customRegex = { rules: regex.map((r) => ({ name: text(r.name), pattern: text(r.value ?? r.pattern) })) };
+  const jailbreak = guard(g, 'jailbreak');
+  if (jailbreak) Object.assign(out, { jailbreak: true, jailbreakUseModel: true, jailbreakThreshold: num(jailbreak.threshold, 0.7) });
+  const topical = guard(g, 'topicalAlignment') ?? guard(g, 'topical');
+  if (topical) Object.assign(out, { topical: true, topicalPrompt: text(topical.prompt), topicalThreshold: num(topical.threshold, 0.7) });
+  const nsfw = guard(g, 'nsfw');
+  if (nsfw) Object.assign(out, { nsfw: true, nsfwThreshold: num(nsfw.threshold, 0.7) });
+  const custom = isObject(g.custom) ? list(g.custom.guardrail ?? g.custom.checks) : [];
+  if (custom.length) out.customChecks = { checks: custom.map((c) => ({ name: text(c.name), prompt: text(c.prompt), threshold: num(c.threshold, 0.7) })) };
+  if (out.operation === 'sanitize' && (jailbreak || topical || nsfw || custom.length)) ctx.warn(`${ctx.node.name}: model checks only run in “Check Text for Violations”; sanitizing uses the pattern checks.`);
+  if (p.customizeSystemMessage) ctx.warn(`${ctx.node.name}: the custom system message of the model checks isn't imported.`);
+  return { parameters: out };
+};
+
+// ---------------------------------------------------------------------------
+// Workflow tools and evaluations
+// ---------------------------------------------------------------------------
+
+/** n8n's Call n8n Workflow Tool → Execute Workflow used as an agent tool; the tool description goes in the node's notes. */
+const toolWorkflow: Converter = (p, ctx) => {
+  const converted = executeWorkflow(p, ctx);
+  const fields = isObject(p.fields) ? list(p.fields.values) : [];
+  if (fields.length && converted.parameters.inputSource === 'passthrough') {
+    converted.parameters.inputSource = 'map';
+    converted.parameters.workflowInputs = { values: fields.map((f) => ({ name: text(f.name), value: text(f.stringValue ?? f.numberValue ?? f.booleanValue ?? f.objectValue ?? '') })) };
+  }
+  const description = text(p.description).trim();
+  return { ...converted, ...(description && { notes: description }) };
+};
+
+/** n8n's Evaluation Trigger: Data Tables carry over by name; Google Sheets have to be imported as a Data Table. */
+const evaluationTrigger: Converter = (p, ctx) => {
+  const source = str(p.source) ?? (p.documentId !== undefined ? 'googleSheets' : 'dataTable');
+  const locator = isObject(ctx.node.parameters?.dataTableId) ? ctx.node.parameters.dataTableId : {};
+  const table = text(locator.cachedResultName ?? '').trim() || text(p.dataTableId).trim();
+  if (source === 'googleSheets') ctx.warn(`${ctx.node.name}: Landflow reads test cases from a Data Table; import the Google Sheet as one (CSV), then choose it.`);
+  else ctx.warn(`${ctx.node.name}: choose the Data Table with the test cases${table ? ` (“${table}” in n8n)` : ''}.`);
+  return {
+    parameters: {
+      dataTableId: source === 'dataTable' ? text(locator.cachedResultName ?? '') : '',
+      ...(Boolean(p.limitRows) && { limitRows: true, maxRows: whole(p.maxRows, 10, 1) }),
+    },
+  };
+};
+
+/** n8n's assignment collection (`{ assignments: [{ name, value }] }`) → name/value pairs. */
+const assignments = (value: unknown) => (isObject(value) ? list(value.assignments ?? value.values) : []).map((a) => ({ name: text(a.name), value: text(a.value) }));
+
+const N8N_METRICS: Record<string, string> = {
+  correctness: 'correctness',
+  helpfulness: 'helpfulness',
+  stringSimilarity: 'stringSimilarity',
+  categorization: 'exactMatch',
+  toolsUsed: 'toolsUsed',
+  customMetrics: 'customMetrics',
+};
+
+/** n8n's Evaluation node: Set Outputs, Set Metrics (its AI and deterministic metrics) and Check If Evaluating. */
+const evaluation: Converter = (p, ctx) => {
+  const operation = str(p.operation) ?? 'setOutputs';
+  if (operation === 'checkIfEvaluating') return { parameters: { operation } };
+  if (operation === 'setInputs') {
+    ctx.warn(`${ctx.node.name}: “Set Inputs” isn't needed; Landflow records each case's input columns. The node passes items through.`);
+    return { parameters: { operation: 'setOutputs', outputs: { values: [] }, destination: 'run' } };
+  }
+  if (operation === 'setOutputs') return { parameters: { operation, outputs: { values: assignments(p.outputs) }, destination: 'row' } };
+  if (operation !== 'setMetrics') {
+    ctx.warn(`${ctx.node.name}: the operation “${operation}” isn't available; it was set to Set Outputs.`);
+    return { parameters: { operation: 'setOutputs' } };
+  }
+  // Before 4.7, Set Metrics only took custom metrics; since then the default is Correctness.
+  const metric = N8N_METRICS[str(p.metric) ?? (ctx.version >= 4.7 ? 'correctness' : 'customMetrics')];
+  if (!metric) {
+    ctx.warn(`${ctx.node.name}: the metric “${text(p.metric)}” isn't available; it became a custom metric.`);
+    return { parameters: { operation, metric: 'customMetrics', metrics: { values: [] } } };
+  }
+  if (metric === 'customMetrics') return { parameters: { operation, metric, metrics: { values: assignments(p.metrics) } } };
+  const options = isObject(p.options) ? p.options : {};
+  const named = text(options.metricName ?? p.metricName).trim();
+  const out: Params = { operation, metric, ...(named && { metricName: named }), ...(str(p.metric) === 'categorization' && !named && { metricName: 'categorization' }) };
+  if (p.expectedAnswer !== undefined) out.expectedAnswer = p.expectedAnswer;
+  if (p.actualAnswer !== undefined) out.actualAnswer = p.actualAnswer;
+  if (metric === 'correctness' || metric === 'helpfulness') {
+    if (p.userQuery !== undefined) out.userQuery = p.userQuery;
+    const prompt = text(p.prompt ?? options.prompt).trim();
+    if (prompt) out.prompt = prompt;
+  }
+  if (metric === 'toolsUsed') {
+    out.expectedTools = p.expectedTools ?? '';
+    out.toolsSource = 'expression';
+    out.actualTools = p.intermediateSteps ?? '{{ $json.intermediateSteps }}';
+    ctx.warn(`${ctx.node.name}: Landflow's AI Agent returns its tool calls in “steps”; point “Called Tools” at {{ $json.steps }} or use “From This Execution”.`);
+  }
+  return { parameters: out };
+};
+
+// ---------------------------------------------------------------------------
 // The type map
 // ---------------------------------------------------------------------------
 
@@ -1029,6 +1362,19 @@ export const N8N_TYPE_MAP: Record<string, Mapping> = {
   [`${L}mcpClientTool`]: { to: 'core.mcpClientTool', convert: mcpClient, registered: true },
   [`${L}mcpClient`]: { to: 'core.mcpClient', convert: mcpClient, registered: true },
   [`${L}mcpTrigger`]: { to: 'core.mcpTrigger', convert: mcpTrigger, registered: true },
+  [`${L}vectorStoreInMemory`]: { to: 'core.vectorStoreInMemory', convert: vectorStoreInMemory },
+  [`${L}vectorStorePGVector`]: { to: 'core.vectorStorePGVector', convert: vectorStorePGVector },
+  [`${L}embeddingsOllama`]: { to: 'core.embeddingsOllama', convert: embeddingsOllama },
+  [`${L}embeddingsOpenAi`]: { to: 'core.embeddingsOpenAi', convert: embeddingsOpenAi },
+  [`${L}documentDefaultDataLoader`]: { to: 'core.documentDefaultDataLoader', convert: documentDefaultDataLoader },
+  [`${L}textSplitterRecursiveCharacterTextSplitter`]: { to: 'core.textSplitterRecursiveCharacterTextSplitter', convert: recursiveSplitter },
+  [`${L}textSplitterCharacterTextSplitter`]: { to: 'core.textSplitterRecursiveCharacterTextSplitter', convert: characterSplitter },
+  [`${L}textSplitterTokenSplitter`]: { to: 'core.textSplitterTokenSplitter', convert: tokenSplitter },
+  [`${L}chainRetrievalQa`]: { to: 'core.chainRetrievalQa', convert: chainRetrievalQa },
+  [`${L}guardrails`]: { to: 'core.guardrails', convert: guardrails },
+  [`${L}toolWorkflow`]: { to: 'core.executeWorkflow', convert: toolWorkflow },
+  [`${B}evaluationTrigger`]: { to: 'core.evaluationTrigger', convert: evaluationTrigger },
+  [`${B}evaluation`]: { to: 'core.evaluation', convert: evaluation },
 };
 
 /** The mapping of an n8n type, including `<x>Tool` variants (the node used as an agent tool). */
@@ -1089,7 +1435,7 @@ function uniqueName(base: string, taken: Set<string>) {
   return name;
 }
 
-function convertNode(raw: N8nNode, name: string, options: ImportOptions, report: ImportReport, warn: (m: string) => void): Built {
+function convertNode(raw: N8nNode, name: string, options: ImportOptions, report: ImportReport, warn: (m: string) => void, incoming: (type: string) => boolean = () => false): Built {
   const id = `n_${nanoid(8)}`;
   const version = num(raw.typeVersion, 1);
   const position: [number, number] = Array.isArray(raw.position) ? [num(raw.position[0], 0), num(raw.position[1], 0)] : [0, 0];
@@ -1112,7 +1458,7 @@ function convertNode(raw: N8nNode, name: string, options: ImportOptions, report:
   }
 
   const descriptor = descriptorOf(target);
-  const ctx: Ctx = { node: raw, version, warn, descriptor: descriptorOf };
+  const ctx: Ctx = { node: raw, version, warn, descriptor: descriptorOf, incoming };
   const converted = convertValue(raw.parameters ?? {}) as Params;
   const convert: Converter = found.mapping.convert ?? ((p) => ({ parameters: p }));
   const result = convert(converted, ctx);
@@ -1194,12 +1540,87 @@ function tagsFrom(raw: unknown): string[] | undefined {
   return tags.length ? tags : undefined;
 }
 
+const VECTOR_STORE_WRAPPERS: Record<string, 'retrieve-as-tool' | 'retrieve'> = { [`${L}toolVectorStore`]: 'retrieve-as-tool', [`${L}retrieverVectorStore`]: 'retrieve' };
+
+/**
+ * n8n's Vector Store Question Answer Tool and Vector Store Retriever wrap a vector store (connected to them as
+ * `ai_vectorStore`); a Landflow vector store is the tool or retriever itself. Each wrapper is merged into its store:
+ * the store takes the wrapper's mode, tool name, description and limit, and the wrapper's outgoing connections.
+ */
+function mergeVectorStoreWrappers(doc: Params, report: ImportReport, warn: (m: string) => void): Params {
+  const nodes = list(doc.nodes).filter((n): n is Params & N8nNode => typeof n.type === 'string' && typeof n.name === 'string');
+  const connections = isObject(doc.connections) ? doc.connections : {};
+  const byName = new Map(nodes.map((n) => [n.name, n]));
+  const storeOf = new Map<string, string>();
+  const overrides = new Map<string, Params>();
+  for (const [source, byType] of Object.entries(connections)) {
+    if (!isObject(byType) || !Array.isArray(byType.ai_vectorStore)) continue;
+    for (const target of byType.ai_vectorStore.flatMap((targets) => list(targets))) {
+      const wrapper = byName.get(text(target.node));
+      const mode = wrapper && VECTOR_STORE_WRAPPERS[wrapper.type];
+      if (!wrapper || !mode || !byName.has(source) || storeOf.has(wrapper.name)) continue;
+      if (overrides.has(source)) {
+        warn(`${wrapper.name}: “${source}” already serves another tool or retriever; connect a copy of the store to it.`);
+        continue;
+      }
+      const p = convertValue(wrapper.parameters ?? {}) as Params;
+      overrides.set(source, {
+        mode,
+        topK: p.topK ?? 4,
+        ...(mode === 'retrieve-as-tool' && { toolName: toolNameOf(text(p.name) || wrapper.name), toolDescription: text(p.description) }),
+      });
+      storeOf.set(wrapper.name, source);
+      const to = mappingFor(byName.get(source)!.type)?.mapping.to;
+      if (to) report.mapped.push({ name: wrapper.name, from: wrapper.type, to: Array.isArray(to) ? to[0] : to });
+      warn(`${wrapper.name}: merged into “${source}”, which is now ${mode === 'retrieve' ? 'the chain’s retriever' : 'the agent’s tool'} itself.`);
+    }
+  }
+  if (!storeOf.size) return doc;
+
+  const next: Record<string, Record<string, Params[][]>> = {};
+  for (const [source, byType] of Object.entries(connections)) {
+    if (!isObject(byType)) continue;
+    const from = storeOf.get(source) ?? source;
+    for (const [type, outputs] of Object.entries(byType)) {
+      if (!Array.isArray(outputs)) continue;
+      outputs.forEach((targets, index) => {
+        const kept = list(targets).filter((t) => {
+          const into = text(t.node);
+          if (!storeOf.has(into)) return true;
+          if (type !== 'ai_vectorStore') {
+            const why = type === 'ai_languageModel' ? 'Landflow’s vector store hands the documents to the agent, which answers itself' : 'the wrapper was merged into its store';
+            warn(`Connection ${source} → ${into} (${type}) dropped: ${why}.`);
+          }
+          return false;
+        });
+        if (!kept.length) return;
+        const slots = ((next[from] ??= {})[type] ??= []);
+        (slots[index] ??= []).push(...kept);
+      });
+    }
+  }
+  return {
+    ...doc,
+    nodes: nodes.filter((n) => !storeOf.has(n.name)).map((n) => (overrides.has(n.name) ? { ...n, parameters: { ...n.parameters, ...overrides.get(n.name) } } : n)),
+    connections: next,
+  };
+}
+
 /** Convert an n8n workflow (or n8n clipboard JSON) to a Landflow workflow document. */
 export function convertN8nWorkflow(doc: Params, options: ImportOptions = {}): ImportResult {
   const report: ImportReport = { format: 'n8n', mapped: [], placeholders: [], stickyNotes: 0, connections: 0, warnings: [] };
   const warn = (message: string) => report.warnings.push(message);
+  doc = mergeVectorStoreWrappers(doc, report, warn);
   const rawNodes = list(doc.nodes).filter((n): n is Params & N8nNode => typeof n.type === 'string' && typeof n.name === 'string');
   const stickyType = `${B}stickyNote`;
+  // Connection types arriving at each node (by name), for converters that depend on them.
+  const incoming = new Map<string, Set<string>>();
+  for (const byType of Object.values(isObject(doc.connections) ? doc.connections : {})) {
+    if (!isObject(byType)) continue;
+    for (const [type, outputs] of Object.entries(byType)) {
+      if (Array.isArray(outputs)) for (const t of outputs.flatMap((targets) => list(targets))) (incoming.get(text(t.node)) ?? incoming.set(text(t.node), new Set()).get(text(t.node))!).add(type);
+    }
+  }
 
   const stickyNotes = rawNodes.filter((n) => n.type === stickyType).map(stickyFrom);
   const stickyNames = new Set(rawNodes.filter((n) => n.type === stickyType).map((n) => n.name));
@@ -1213,7 +1634,7 @@ export function convertN8nWorkflow(doc: Params, options: ImportOptions = {}): Im
     }
     const name = uniqueName(raw.name, taken);
     if (name !== raw.name) warn(`${raw.name}: renamed to “${name}” (the name was already used).`);
-    if (!byName.has(raw.name)) byName.set(raw.name, convertNode(raw, name, options, report, warn));
+    if (!byName.has(raw.name)) byName.set(raw.name, convertNode(raw, name, options, report, warn, (type) => Boolean(incoming.get(raw.name)?.has(type))));
   }
 
   // Connections: { [sourceName]: { [type]: [ [ { node, type, index } ] per output ] } }
@@ -1404,17 +1825,19 @@ function unwrap(input: unknown): Params {
     else if (isObject(value.data) && Array.isArray(value.data.nodes)) value = value.data;
   }
   if (!isObject(value) || !Array.isArray(value.nodes)) {
-    throw new Error('This isn\'t a workflow: expected JSON with a "nodes" list (a Landflow export, an n8n workflow, or nodes copied in n8n).');
+    throw new Error('This isn\'t a workflow: expected JSON with a "nodes" list (a Landflow export, an n8n workflow, nodes copied in n8n, or a Flowise chatflow).');
   }
   return value;
 }
 
 /**
  * Import workflow JSON. Landflow's format (connections as an array) keeps its ids; n8n's (connections keyed by node
- * name, also n8n's clipboard JSON) is converted. Throws a readable Error for anything else.
+ * name, also n8n's clipboard JSON) and Flowise's (`edges`, components in `data.name`) are converted. Throws a
+ * readable Error for anything else.
  */
 export function importWorkflowJson(input: unknown, options: ImportOptions = {}): ImportResult {
   const doc = unwrap(input);
+  if (isFlowiseDocument(doc)) return convertFlowiseWorkflow(doc, options);
   const nodes = list(doc.nodes);
   const landflow = Array.isArray(doc.connections) || (doc.connections === undefined && nodes.every((n) => typeof n.id === 'string' && !N8N_TYPE.test(text(n.type))));
   if (landflow) return convertLandflowWorkflow(doc);

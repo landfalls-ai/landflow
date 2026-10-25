@@ -75,6 +75,16 @@ describe('migrations', () => {
     sqlite.close();
   });
 
+  it('runs a lower-numbered migration added after a higher one', () => {
+    const sqlite = openSqliteConnection(join(tmp(), 'landflow.db'));
+    const high = { version: LATEST_VERSION + 200, name: 'feature B', statements: ['CREATE TABLE test_b (id TEXT PRIMARY KEY)'] };
+    const low = { version: LATEST_VERSION + 100, name: 'feature A', statements: ['CREATE TABLE test_a (id TEXT PRIMARY KEY)'] };
+    expect(migrateSqlite(sqlite, [...MIGRATIONS, high])).toEqual([high.version]);
+    expect(migrateSqlite(sqlite, [...MIGRATIONS, high, low])).toEqual([low.version]);
+    expect(migrateSqlite(sqlite, [...MIGRATIONS, low, high])).toEqual([]);
+    sqlite.close();
+  });
+
   it('rolls a failing migration back as a whole', () => {
     const sqlite = openSqliteConnection(join(tmp(), 'landflow.db'));
     const broken = [...MIGRATIONS, { version: LATEST_VERSION + 1, name: 'broken', statements: ['CREATE TABLE half_done (id TEXT)', 'THIS IS NOT SQL'] }];

@@ -33,6 +33,7 @@ import type { CredentialTypeDefinition, GetCredentials } from './credentials';
 import type { NodeMetrics, SpanFunction, TracedFetch } from './instrumentation';
 import { resolveIcon, toPath } from './icons';
 import type { LogAttributes } from './logger';
+import type { IWebhookContext, IWebhookMethods, WebhookResult } from './webhooks';
 
 export interface ILogger {
   debug(message: string, attributes?: LogAttributes): void;
@@ -119,6 +120,26 @@ export interface WaitRequest {
   method?: string;
   /** Kept with the wait for the host's resume routes (a form page, a webhook's response mode). */
   data?: JsonObject;
+  /**
+   * Run this node again when the execution resumes, with the same input, instead of taking the resume payload as
+   * its output. The node finds the payload in its node state under `$resume` (`{ kind, data }`), next to what it
+   * saved with `setNodeState` before waiting (an AI Agent continues its loop after a tool approval this way).
+   */
+  rerun?: boolean;
+}
+
+/**
+ * A piece of a streamed answer (`IExecuteContext.sendChunk`): n8n's streaming chunks. `begin` and `end` frame one
+ * item's answer, `item` carries text as it arrives, `tool` reports an agent's tool call, `error` a failure.
+ */
+export interface StreamChunk {
+  type: 'begin' | 'item' | 'end' | 'error' | 'tool';
+  /** `item`: the text delta; `error`: the message. */
+  content?: string;
+  /** The input item the answer belongs to. */
+  itemIndex?: number;
+  /** `tool`: the call, and where it is (`started`, `finished`, `failed`, `approval` when it waits for a person). */
+  tool?: { id: string; name: string; status: 'started' | 'finished' | 'failed' | 'approval'; input?: JsonObject; output?: string };
 }
 
 export interface IExecuteContext extends IBaseContext {
@@ -153,6 +174,11 @@ export interface IExecuteContext extends IBaseContext {
   setNodeState?(state: JsonObject | undefined): void;
   /** In-process only: what `$('Node')` reads for this node (each node's latest output, by name). The Code node forwards it to its sandbox. */
   getNodeOutputs?(): Record<string, NodeItem[]>;
+  /**
+   * In-process only, and only while something listens (a Chat or Webhook trigger in "Streaming" response mode, the
+   * editor's chat panel): send part of the answer before the node finishes. Absent otherwise.
+   */
+  sendChunk?(chunk: StreamChunk): void;
 }
 
 /** A sub-node's context. In-process sub-nodes can pull their own sub-nodes too (a document loader its text splitter). */
@@ -182,6 +208,10 @@ export interface INodeType {
   methods?: {
     loadOptions?: Record<string, (ctx: ILoadOptionsContext) => Promise<PropertyOption[]> | PropertyOption[]>;
   };
+  /** App webhook triggers (`triggerSource: 'appWebhook'`): check, register and remove the node's webhook at its service (docs/protocol.md §12). */
+  webhookMethods?: IWebhookMethods;
+  /** App webhook triggers: turn a call the service made to the webhook URL into items for a run (or just an answer). */
+  webhook?(ctx: IWebhookContext): Promise<WebhookResult | NodeItem[]> | WebhookResult | NodeItem[];
 }
 
 export interface IPlugin {
@@ -246,7 +276,8 @@ export interface PluginDefinition {
 function validateNode(id: string, node: INodeType, credentialNames: Set<string>) {
   const { description } = node;
   for (const requirement of description.credentials ?? []) {
-    if (!credentialNames.has(requirement.name)) {
+    // A qualified name (`messaging.slackApi`) is another plugin's credential type; the host resolves it.
+    if (!requirement.name.includes('.') && !credentialNames.has(requirement.name)) {
       throw new Error(`Plugin ${id}: node "${description.name}" uses credential type "${requirement.name}", which is not in credentialTypes`);
     }
   }
@@ -257,6 +288,11 @@ function validateNode(id: string, node: INodeType, credentialNames: Set<string>)
     if (interval?.type !== 'number') {
       throw new Error(`Plugin ${id}: poll trigger "${description.name}" needs a number property "pollInterval" (add pollIntervalProperty())`);
     }
+  }
+  if (description.triggerSource === 'appWebhook') {
+    if (description.kind !== 'trigger') throw new Error(`Plugin ${id}: node "${description.name}" has triggerSource "appWebhook" but kind "${description.kind}"`);
+    if (!node.webhookMethods?.create || !node.webhookMethods.delete) throw new Error(`Plugin ${id}: app webhook trigger "${description.name}" needs webhookMethods.create and webhookMethods.delete`);
+    if (!node.webhook) throw new Error(`Plugin ${id}: app webhook trigger "${description.name}" needs a webhook() method`);
   }
 }
 

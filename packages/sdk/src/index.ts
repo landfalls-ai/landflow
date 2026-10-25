@@ -2,6 +2,8 @@ export * from './node';
 export { iconFile, MAX_ICON_BYTES } from './icons';
 export * from './runtime';
 export * from './credentials';
+export * from './signatures';
+export { runWebhook, runWebhookMethod, type IWebhookContext, type IWebhookFunctions, type IWebhookMethodContext, type IWebhookMethods, type WebhookExtras, type WebhookResult } from './webhooks';
 export { createBinaryHelpers, httpBinaryClient, inlineBinary, type BinaryDataClient, type BinaryFileMeta, type BinaryInput, type IBinaryHelpers } from './binary';
 export {
   MAX_ATTRIBUTE_LENGTH,

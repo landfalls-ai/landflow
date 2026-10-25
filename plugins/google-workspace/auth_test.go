@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -71,9 +72,25 @@ func TestManifest(t *testing.T) {
 		if !slices.Equal(password, secrets[ct.Name]) {
 			t.Errorf("%s password fields = %v, want %v", ct.Name, password, secrets[ct.Name])
 		}
-		if !names["tokenUrl"] || !names["baseUrl"] {
-			t.Errorf("%s lacks tokenUrl/baseUrl", ct.Name)
+		tokenField := map[string]string{credServiceAccount: "tokenUrl", credOAuth2: "accessTokenUrl"}[ct.Name]
+		if !names[tokenField] || !names["baseUrl"] {
+			t.Errorf("%s lacks %s/baseUrl", ct.Name, tokenField)
 		}
+	}
+	// The OAuth2 type extends the host's generic one (Connect) and pins the flow to Google.
+	oauth := m.CredentialTypes[1]
+	if !slices.Equal(oauth.Extends, []string{"oAuth2Api"}) {
+		t.Errorf("%s extends = %v", oauth.Name, oauth.Extends)
+	}
+	hidden := map[string]any{}
+	for _, p := range oauth.Properties {
+		if p.Type == landflow.PropHidden {
+			hidden[p.Name] = p.Default
+		}
+	}
+	wantHidden := map[string]any{"grantType": "pkce", "authUrl": googleAuthURL, "authQueryParameters": googleAuthQuery, "authentication": "body", "userInfoUrl": googleUserInfoURL}
+	if fmt.Sprint(hidden) != fmt.Sprint(wantHidden) {
+		t.Errorf("hidden OAuth2 fields = %v, want %v", hidden, wantHidden)
 	}
 }
 
@@ -251,8 +268,22 @@ func TestCredentialTests(t *testing.T) {
 	}
 	data = h.oauth()
 	delete(data, "refreshToken")
-	if ok, msg = test(credOAuth2, data); ok || !strings.Contains(msg, "needs a client ID, a client secret and a refresh token") {
+	if ok, msg = test(credOAuth2, data); ok || !strings.Contains(msg, "not connected: Connect it in Credentials") {
 		t.Errorf("missing refresh token test = %v %q", ok, msg)
+	}
+
+	// A Connected credential: the host's access token, no exchange here.
+	connected := h.connected()
+	exchanges := len(h.fake.ExchangeList())
+	if ok, msg = test(credOAuth2, connected); !ok || msg != "Connected as me@example.com" {
+		t.Errorf("connected test = %v %q", ok, msg)
+	}
+	if n := len(h.fake.ExchangeList()) - exchanges; n != 0 {
+		t.Errorf("%d exchanges testing a host token, want 0", n)
+	}
+	h.fake.RevokeTokens()
+	if ok, msg = test(credOAuth2, connected); ok || !strings.Contains(msg, "HTTP 401") || !strings.Contains(msg, "reconnect") {
+		t.Errorf("revoked host token test = %v %q", ok, msg)
 	}
 
 	// Tests bypass the cache: each one is a real exchange.
@@ -281,6 +312,57 @@ func TestOAuth2Credential(t *testing.T) {
 	resp := h.exec("gmail", params, execOpts{creds: map[string]any{}})
 	if !strings.Contains(errorText(resp), `Credentials of type "googleOAuth2Api" are required`) {
 		t.Errorf("missing credential error = %s", errorText(resp))
+	}
+}
+
+func TestHostAccessToken(t *testing.T) {
+	h := newHarness(t)
+	params := map[string]any{"authentication": "oAuth2", "resource": "message", "operation": "getAll", "limit": 5}
+	connected := h.connected()
+	before := len(h.fake.ExchangeList())
+	h.ok(h.exec("gmail", params, execOpts{creds: map[string]any{credOAuth2: connected}}))
+	if n := len(h.fake.ExchangeList()) - before; n != 0 {
+		t.Errorf("%d exchanges with a host token, want 0", n)
+	}
+
+	// Google refuses it: the 401 goes back to the host (which renews the token and runs the node again), without a
+	// second call or an exchange here.
+	h.fake.RevokeTokens()
+	calls := len(h.fake.Calls(http.MethodGet, "/gmail/v1/users/me/messages"))
+	resp := h.exec("gmail", params, execOpts{creds: map[string]any{credOAuth2: connected}})
+	if text := errorText(resp); !strings.Contains(text, "Gmail API error 401") {
+		t.Errorf("revoked host token error = %s", text)
+	}
+	if n := len(h.fake.Calls(http.MethodGet, "/gmail/v1/users/me/messages")) - calls; n != 1 {
+		t.Errorf("%d calls after a 401 to the host token, want 1", n)
+	}
+	if n := len(h.fake.ExchangeList()) - before; n != 0 {
+		t.Errorf("%d exchanges after a 401 to the host token, want 0", n)
+	}
+
+	// With a refresh token entered by hand as well, the plugin renews the token itself.
+	connected["refreshToken"] = "oauth-refresh-token-1"
+	h.ok(h.exec("gmail", params, execOpts{creds: map[string]any{credOAuth2: connected}}))
+	if ex := h.fake.ExchangeList()[before:]; len(ex) != 1 || ex[0].GrantType != "refresh_token" {
+		t.Errorf("exchanges = %+v", ex)
+	}
+}
+
+func TestOAuth2TokenURL(t *testing.T) {
+	for _, c := range []struct {
+		data landflow.CredentialData
+		want string
+	}{
+		{landflow.CredentialData{}, defaultTokenURL},
+		{landflow.CredentialData{"accessTokenUrl": defaultTokenURL}, defaultTokenURL},
+		{landflow.CredentialData{"accessTokenUrl": "http://fake/token"}, "http://fake/token"},
+		// Saved before accessTokenUrl existed: the host fills that one with its default.
+		{landflow.CredentialData{"accessTokenUrl": defaultTokenURL, "tokenUrl": "http://old/token"}, "http://old/token"},
+		{landflow.CredentialData{"accessTokenUrl": "http://new/token", "tokenUrl": "http://old/token"}, "http://new/token"},
+	} {
+		if got := oauth2TokenURL(c.data); got != c.want {
+			t.Errorf("oauth2TokenURL(%v) = %s, want %s", c.data, got, c.want)
+		}
 	}
 }
 

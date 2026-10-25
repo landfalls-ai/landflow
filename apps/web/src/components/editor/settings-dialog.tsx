@@ -2,7 +2,7 @@
 /**
  * Workflow settings (n8n's Workflow settings dialog): error workflow, time
  * zone, timeout, which workflows may call this one, which executions are
- * kept, concurrency and automatic retries. This dialog only edits and saves
+ * kept, concurrency, automatic retries and AI usage limits. This dialog only edits and saves
  * `workflow.settings`; the engine and runner apply them.
  */
 import { useEffect, useMemo, useState } from 'react';
@@ -13,9 +13,19 @@ import type { WorkflowSettings, WorkflowSummary } from '@/lib/shared/types';
 import { Dialog, Field, ToggleRow } from '../agents/dialog';
 import { Button } from '../ui/button';
 import { Input, Select } from '../ui/inputs';
+import { NotifyOnFailure } from './notify-on-failure';
 import { useEditor } from './store';
 
 const ERROR_TRIGGER = 'core.errorTrigger';
+
+/** Workflow settings → AI usage limits (lib/server/ai-usage): token and cost caps per execution and per day. */
+const AI_LIMITS = [
+  { key: 'aiMaxTokensPerExecution', label: 'Tokens per execution', unit: 'tokens', cost: false },
+  { key: 'aiMaxCostPerExecution', label: 'Cost per execution', unit: 'USD', cost: true },
+  { key: 'aiMaxTokensPerDay', label: 'Tokens per day', unit: 'tokens', cost: false },
+  { key: 'aiMaxCostPerDay', label: 'Cost per day', unit: 'USD', cost: true },
+] as const;
+type AiLimitKey = (typeof AI_LIMITS)[number]['key'];
 
 /** The runner's cap on the wait before an automatic retry: six hours. */
 const MAX_RETRY_WAIT_SECONDS = 6 * 3600;
@@ -50,6 +60,9 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
   const [queueSize, setQueueSizeText] = useState(() => (draft.concurrencyQueueSize ? String(draft.concurrencyQueueSize) : ''));
   const [attempts, setAttemptsText] = useState(() => (draft.retryMaxAttempts ? String(draft.retryMaxAttempts) : ''));
   const [retryDelay, setRetryDelayText] = useState(() => (draft.retryBaseDelaySeconds !== undefined ? String(draft.retryBaseDelaySeconds) : ''));
+  const [aiLimits, setAiLimits] = useState<Record<AiLimitKey, string>>(
+    () => Object.fromEntries(AI_LIMITS.map(({ key }) => [key, draft[key] ? String(draft[key]) : ''])) as Record<AiLimitKey, string>,
+  );
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>();
   const [saving, setSaving] = useState(false);
   const zones = useMemo(timeZones, []);
@@ -84,7 +97,13 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
   const retriesOn = !attemptsInvalid && (attemptsValue ?? 0) >= 2;
   const retryDelayValue = retryDelay.trim() === '' ? undefined : Number(retryDelay);
   const retryDelayInvalid = retriesOn && intIn(retryDelayValue, 0, 86_400);
-  const invalid = timeoutInvalid || minutesInvalid || limitInvalid || queueSizeInvalid || attemptsInvalid || retryDelayInvalid;
+  const aiLimitValue = (key: AiLimitKey) => (aiLimits[key].trim() === '' ? undefined : Number(aiLimits[key]));
+  const aiLimitInvalid = (key: AiLimitKey, cost: boolean) => {
+    const value = aiLimitValue(key);
+    return value !== undefined && (cost ? !Number.isFinite(value) || value < 0 || value > 1_000_000 : intIn(value, 0, 1_000_000_000));
+  };
+  const aiLimitsInvalid = AI_LIMITS.some(({ key, cost }) => aiLimitInvalid(key, cost));
+  const invalid = timeoutInvalid || minutesInvalid || limitInvalid || queueSizeInvalid || attemptsInvalid || retryDelayInvalid || aiLimitsInvalid;
   const patch = (next: Partial<WorkflowSettings>) => setDraft((d) => ({ ...d, ...next }));
   const policy = draft.callerPolicy ?? 'any';
   const callers = new Set(draft.callerIds ?? []);
@@ -101,6 +120,8 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
       // One attempt (the run itself) is no retries.
       retryMaxAttempts: retriesOn ? attemptsValue : undefined,
       retryBaseDelaySeconds: retryDelayValue,
+      // 0 or empty: no cap.
+      ...Object.fromEntries(AI_LIMITS.map(({ key }) => [key, aiLimitValue(key) || undefined])),
     };
     // Leave out what is at its default, so the saved document stays small and defaults can change.
     for (const key of Object.keys(settings) as Array<keyof WorkflowSettings>) if (settings[key] === undefined || settings[key] === '') delete settings[key];
@@ -159,6 +180,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
             ))}
           </Select>
         </Field>
+        <NotifyOnFailure workflowId={workflowId} />
 
         <div className="grid grid-cols-2 gap-3">
           <Field id="wf-timezone" label="Time zone" hint="For schedules and $now in this workflow.">
@@ -395,6 +417,33 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
               </>
             )}
             Only production runs (webhooks, forms, schedules, polls, tool calls) are retried, never runs started from the editor or chat. Each retry is a new execution linked to the one that failed.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[12px] font-semibold text-t2">AI usage limits</div>
+          <div className="grid grid-cols-2 gap-3">
+            {AI_LIMITS.map(({ key, label, unit, cost }) => {
+              const bad = aiLimitInvalid(key, cost);
+              return (
+                <Field key={key} id={`wf-${key}`} label={label} hint={bad ? <span className="text-rd">{cost ? 'An amount in US dollars, 0 or more.' : 'A whole number of tokens, 0 or more.'}</span> : undefined}>
+                  <div className="relative">
+                    <Input
+                      id={`wf-${key}`}
+                      inputMode={cost ? 'decimal' : 'numeric'}
+                      value={aiLimits[key]}
+                      onChange={(e) => setAiLimits((current) => ({ ...current, [key]: e.target.value.replace(cost ? /[^\d.]/g : /[^\d]/g, '') }))}
+                      placeholder="No cap"
+                      className={cn('pr-16', bad && 'border-rd')}
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-t3">{unit}</span>
+                  </div>
+                </Field>
+              );
+            })}
+          </div>
+          <p className="text-[12px] leading-snug text-t3">
+            Input and output tokens of every model call (sub-workflows included), cost estimated from the price table in Settings. A run that goes over stops with an error; the day is the instance time zone. Empty or 0: no cap.
           </p>
         </div>
       </div>

@@ -2,8 +2,8 @@
  * Workflow version history. Every save of a workflow is recorded as a snapshot in the
  * `workflow_versions` table (lib/server/db): the version summary and the workflow as saved.
  * A save that leaves nodes, connections, settings and sticky notes unchanged (same hash) adds no
- * version, and only the newest MAX_VERSIONS are kept per workflow. Executions record the version
- * they started on (`versionFor`), and resume on it after a restart.
+ * version, and only the newest MAX_VERSIONS are kept per workflow (plus the published one: lib/server/publications.ts).
+ * Executions record the version they started on (`versionFor`), and resume on it after a restart.
  *
  * This module must not import the store: the store calls recordVersion().
  */
@@ -12,6 +12,7 @@ import type { Workflow, WorkflowConnection, WorkflowNode } from '@landflow/engin
 import type { VersionDiff, WorkflowVersion, WorkflowVersionSummary } from '../shared/types';
 import { database } from './db';
 import { parse, versionRow } from './db/rows';
+import { publishedVersionId } from './publications';
 import { logger } from './telemetry/logger';
 
 /** Versions kept per workflow; older ones are deleted. */
@@ -116,15 +117,18 @@ export function getVersion(workflowId: string, versionId: string): WorkflowVersi
   return summary && workflow ? { ...summary, workflow } : undefined;
 }
 
-/** The newest version whose graph is exactly `workflow`'s (what an execution of it records), if any. */
+/**
+ * The version whose graph is exactly `workflow`'s (what an execution of it records), if any: the published version
+ * when it matches (a production run of it), else the newest that does.
+ */
 export function versionFor(workflow: Workflow): WorkflowVersionSummary | undefined {
   try {
     if (!ID.test(workflow.id)) return undefined;
-    const row = database().get<{ summary: string }>(
-      'SELECT summary FROM workflow_versions WHERE workflow_id = ? AND hash = ? ORDER BY number DESC LIMIT 1',
-      workflow.id,
-      versionHash(workflow),
-    );
+    const hash = versionHash(workflow);
+    const published = publishedVersionId(workflow.id);
+    const row =
+      (published && database().get<{ summary: string }>('SELECT summary FROM workflow_versions WHERE id = ? AND hash = ?', published, hash)) ||
+      database().get<{ summary: string }>('SELECT summary FROM workflow_versions WHERE workflow_id = ? AND hash = ? ORDER BY number DESC LIMIT 1', workflow.id, hash);
     return parse<WorkflowVersionSummary>(row?.summary);
   } catch {
     return undefined;
@@ -158,7 +162,9 @@ export function recordVersion(workflow: Workflow): WorkflowVersionSummary | unde
     db.transaction(() => {
       db.upsert('workflow_versions', versionRow({ ...summary, workflow }));
       const stale = db.all<{ id: string }>('SELECT id FROM workflow_versions WHERE workflow_id = ? ORDER BY number DESC LIMIT -1 OFFSET ?', workflow.id, MAX_VERSIONS);
-      for (const { id } of stale) db.delete('workflow_versions', { id });
+      // The published version stays however old it is: production triggers run it.
+      const published = publishedVersionId(workflow.id);
+      for (const { id } of stale) if (id !== published) db.delete('workflow_versions', { id });
     });
     return summary;
   } catch (error) {

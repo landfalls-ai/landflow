@@ -4,6 +4,8 @@ import { apiError, baseUrl, countSent, fetchJson, jsonParameter, mapItems, requi
 export interface SlackCredentials extends JsonObject {
   accessToken: string;
   baseUrl: string;
+  /** Verifies requests Slack sends to Landflow (agent channels, approval buttons); empty when not set. */
+  signingSecret: string;
 }
 
 const DEFAULT_BASE_URL = 'https://slack.com/api';
@@ -85,6 +87,14 @@ export const slackApi = defineCredentialType<SlackCredentials>({
       description: 'Bot User OAuth Token from your Slack app ("OAuth & Permissions")',
     },
     { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: DEFAULT_BASE_URL, description: 'Change it only for a proxy or a test double' },
+    {
+      name: 'signingSecret',
+      displayName: 'Signing Secret',
+      type: 'string',
+      default: '',
+      typeOptions: { password: true },
+      description: 'From the app\'s "Basic Information" page. Needed when Slack calls Landflow: agent channels (Events API) and approval buttons (Interactivity).',
+    },
   ],
   async test(data, ctx) {
     try {

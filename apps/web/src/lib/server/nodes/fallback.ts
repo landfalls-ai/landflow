@@ -55,7 +55,8 @@ export function withFallback(primary: LanguageModel, fallback: LanguageModel, lo
         lastModel = label(primary);
         return turn;
       } catch (error) {
-        if (input.signal?.aborted) throw error;
+        // A reached AI usage cap applies to every model: no point asking the fallback.
+        if (input.signal?.aborted || (error as Error)?.name === 'UsageCapError') throw error;
         fallbacks++;
         const reason = (error as Error).message ?? String(error);
         log?.(`${label(primary)} failed (${reason}); retrying on the fallback model ${label(fallback)}`);

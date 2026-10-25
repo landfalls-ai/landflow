@@ -1,0 +1,145 @@
+{
+  "_synthetic": "Handwritten for Landflow's importer tests in the shape of a Flowise chatflow export; not exported from a Flowise instance.",
+  "nodes": [
+    {
+      "id": "plainText_0",
+      "position": { "x": 0, "y": 0 },
+      "type": "customNode",
+      "data": {
+        "id": "plainText_0",
+        "label": "Plain Text",
+        "name": "plainText",
+        "version": 2,
+        "category": "Document Loaders",
+        "inputs": { "text": "Landflow ships evaluations and a Flowise importer.", "textSplitter": "{{recursiveCharacterTextSplitter_0.data.instance}}", "metadata": "{\"source\": \"release-notes\"}" }
+      }
+    },
+    {
+      "id": "recursiveCharacterTextSplitter_0",
+      "position": { "x": -400, "y": 0 },
+      "type": "customNode",
+      "data": {
+        "id": "recursiveCharacterTextSplitter_0",
+        "label": "Recursive Character Text Splitter",
+        "name": "recursiveCharacterTextSplitter",
+        "version": 2,
+        "category": "Text Splitters",
+        "inputs": { "chunkSize": 500, "chunkOverlap": "50", "separators": "" }
+      }
+    },
+    {
+      "id": "ollamaEmbedding_0",
+      "position": { "x": 0, "y": 500 },
+      "type": "customNode",
+      "data": {
+        "id": "ollamaEmbedding_0",
+        "label": "Ollama Embeddings",
+        "name": "ollamaEmbedding",
+        "version": 1,
+        "category": "Embeddings",
+        "inputs": { "baseUrl": "http://127.0.0.1:11434", "modelName": "nomic-embed-text", "numGpu": "", "useMMap": true }
+      }
+    },
+    {
+      "id": "memoryVectorStore_0",
+      "position": { "x": 400, "y": 200 },
+      "type": "customNode",
+      "data": {
+        "id": "memoryVectorStore_0",
+        "label": "In-Memory Vector Store",
+        "name": "memoryVectorStore",
+        "version": 1,
+        "category": "Vector Stores",
+        "inputs": { "document": ["{{plainText_0.data.instance}}"], "embeddings": "{{ollamaEmbedding_0.data.instance}}", "topK": "3" }
+      }
+    },
+    {
+      "id": "chatOllama_0",
+      "position": { "x": 400, "y": 700 },
+      "type": "customNode",
+      "data": {
+        "id": "chatOllama_0",
+        "label": "ChatOllama",
+        "name": "chatOllama",
+        "version": 5,
+        "category": "Chat Models",
+        "inputs": { "baseUrl": "http://127.0.0.1:11434", "modelName": "qwen3-coder:30b", "temperature": 0.1 }
+      }
+    },
+    {
+      "id": "bufferWindowMemory_0",
+      "position": { "x": 400, "y": 1100 },
+      "type": "customNode",
+      "data": { "id": "bufferWindowMemory_0", "label": "Buffer Window Memory", "name": "bufferWindowMemory", "version": 2, "category": "Memory", "inputs": { "k": "6", "sessionId": "" } }
+    },
+    {
+      "id": "conversationalRetrievalQAChain_0",
+      "position": { "x": 820, "y": 400 },
+      "type": "customNode",
+      "data": {
+        "id": "conversationalRetrievalQAChain_0",
+        "label": "Conversational Retrieval QA Chain",
+        "name": "conversationalRetrievalQAChain",
+        "version": 3,
+        "category": "Chains",
+        "inputs": {
+          "model": "{{chatOllama_0.data.instance}}",
+          "vectorStoreRetriever": "{{memoryVectorStore_0.data.instance}}",
+          "memory": "{{bufferWindowMemory_0.data.instance}}",
+          "returnSourceDocuments": true,
+          "responsePrompt": "Answer from the context only.\n\n{context}\n\nQuestion: {question}"
+        }
+      }
+    },
+    {
+      "id": "stickyNote_0",
+      "position": { "x": -400, "y": -300 },
+      "type": "stickyNote",
+      "data": { "id": "stickyNote_0", "label": "Sticky Note", "name": "stickyNote", "version": 2, "category": "Utilities", "inputs": { "note": "Upsert the release notes, then ask about them." } }
+    }
+  ],
+  "edges": [
+    {
+      "source": "recursiveCharacterTextSplitter_0",
+      "sourceHandle": "recursiveCharacterTextSplitter_0-output-recursiveCharacterTextSplitter-RecursiveCharacterTextSplitter|TextSplitter",
+      "target": "plainText_0",
+      "targetHandle": "plainText_0-input-textSplitter-TextSplitter",
+      "id": "e1"
+    },
+    {
+      "source": "plainText_0",
+      "sourceHandle": "plainText_0-output-document-Document|json",
+      "target": "memoryVectorStore_0",
+      "targetHandle": "memoryVectorStore_0-input-document-Document",
+      "id": "e2"
+    },
+    {
+      "source": "ollamaEmbedding_0",
+      "sourceHandle": "ollamaEmbedding_0-output-ollamaEmbedding-OllamaEmbeddings|Embeddings",
+      "target": "memoryVectorStore_0",
+      "targetHandle": "memoryVectorStore_0-input-embeddings-Embeddings",
+      "id": "e3"
+    },
+    {
+      "source": "memoryVectorStore_0",
+      "sourceHandle": "memoryVectorStore_0-output-retriever-Memory|VectorStoreRetriever|BaseRetriever",
+      "target": "conversationalRetrievalQAChain_0",
+      "targetHandle": "conversationalRetrievalQAChain_0-input-vectorStoreRetriever-BaseRetriever",
+      "id": "e4"
+    },
+    {
+      "source": "chatOllama_0",
+      "sourceHandle": "chatOllama_0-output-chatOllama-ChatOllama|SimpleChatModel|BaseChatModel",
+      "target": "conversationalRetrievalQAChain_0",
+      "targetHandle": "conversationalRetrievalQAChain_0-input-model-BaseChatModel",
+      "id": "e5"
+    },
+    {
+      "source": "bufferWindowMemory_0",
+      "sourceHandle": "bufferWindowMemory_0-output-bufferWindowMemory-BufferWindowMemory|BaseChatMemory|BaseMemory",
+      "target": "conversationalRetrievalQAChain_0",
+      "targetHandle": "conversationalRetrievalQAChain_0-input-memory-BaseMemory",
+      "id": "e6"
+    }
+  ]
+}

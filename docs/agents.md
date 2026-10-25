@@ -2,14 +2,14 @@
 
 Agents are standalone assistants that use your connected tools and data: you give one a model,
 instructions, skills and capabilities, test it in a chat, publish it, and it then answers on a
-schedule, in Telegram, or from a workflow. They are modelled on n8n's **Agents (Preview)** (see
+schedule, in Telegram or Slack, or from a workflow. They are modelled on n8n's **Agents (Preview)** (see
 [research/03-n8n-ai-agents.md](research/03-n8n-ai-agents.md) §8 for the n8n walkthrough). They are
 separate from the **AI Agent** node, which runs inside a workflow.
 
 | | AI Agent node | Agent |
 |---|---|---|
 | Lives in | a workflow (model, memory, tools wired as sub-nodes) | its own page under **Agents** |
-| Runs when | the workflow runs | test chat, schedules, Telegram, the **Message an Agent** node |
+| Runs when | the workflow runs | test chat, schedules, Telegram, Slack, the **Message an Agent** node |
 | Tools | `usableAsTool` nodes on the canvas, MCP Client Tool | any action node, workflows, other agents, MCP servers, skills |
 | Memory | the Simple Memory sub-node | sessions (always) and cross-session facts per user (optional) |
 | Versions | the workflow's | draft plus published versions, sessions pinned to a version |
@@ -64,7 +64,7 @@ separate from the **AI Agent** node, which runs inside a workflow.
 - **Memory.** Session memory is always on: the session keeps the transcript, and the model
   sees its last 30 user turns. **Cross-session memory** adds a `remember` tool. The saved facts
   (at most 50 per agent and user) are put into the system prompt of that user's later sessions.
-  A user is "you" in the test chat, `telegram:<id>` in Telegram, `workflow:<id>` from a workflow,
+  A user is "you" in the test chat, `telegram:<id>` in Telegram, `slack:<member id>` in Slack, `workflow:<id>` from a workflow,
   and `schedule:<id>` for a schedule.
 - **Triggers** (published version only):
   - **Schedules:** hourly, daily, weekly, monthly, or a five-field cron, in a time zone.
@@ -75,6 +75,9 @@ separate from the **AI Agent** node, which runs inside a workflow.
     Trigger and replies with its Telegram node, so the bot token stays in the vault. Like the
     workflow trigger, the first poll only sets a baseline. A bot can have only one poller, so
     don't also use its token in an active Telegram Trigger workflow.
+  - **Slack channel:** a `messaging.slackApi` credential with the bot token and the app's
+    **Signing Secret**, *Private* (allowed member ids `U…`) or *Public*, and *Reply in thread*
+    (default on). See [Slack](#slack) for the app setup.
 - **Settings:**
 
   | Setting | Default | Meaning |
@@ -83,6 +86,15 @@ separate from the **AI Agent** node, which runs inside a workflow.
   | Tool concurrency | 5 | tool calls of one turn that run at the same time |
   | Session token budget | 0 (off) | stop once a session has used this many input + output tokens |
   | Max delegation depth | 2 | how deep sub-agents may delegate (1–5), for the whole tree |
+  | Daily token limit | 0 (off) | stop the agent's runs once it used this many tokens today (all sessions, instance time zone) |
+  | Daily cost limit | 0 (off) | the same in estimated US dollars |
+  | Monthly cost limit | 0 (off) | estimated US dollars this calendar month |
+
+  The usage limits count every model call the agent makes (sub-agents and tools that call models
+  included) at the prices of Settings → AI prices. A run that reaches one stops with the reason
+  `budget` and a notice saying which limit and where to change it; later runs are refused before
+  any model call until the day or month turns. The Settings tab shows today's and this month's
+  usage ([observability.md](observability.md#token-and-cost-tracking)).
 
 **Publish** snapshots the draft as version N. At most 20 versions are kept, and the builder's
 "…" menu lists them. A session stays on the version it started with. Telegram conversations move
@@ -105,7 +117,8 @@ run. The approval calls are saved in `session.pending`, and the session waits
 the run continues: approved calls execute, and denied ones return *"The user rejected the tool
 call to X. STOP what you are doing and wait for the user…"* (n8n's wording). Some models
 retry anyway, so a call to a just-denied tool in the very next turn is refused without asking
-again, and the model has to reply. Runs that nobody
+again, and the model has to reply. In Slack the approval calls are posted in the thread
+with **Approve** / **Reject** buttons. Runs that nobody
 watches (schedules, Telegram, workflows, sub-agents) never pause. Approval tools are refused
 there with an explanation the model can pass on.
 
@@ -115,7 +128,7 @@ there with an explanation the model can pass on.
 - token usage;
 - one trace id per run.
 
-The **Sessions** tab lists them by source (`test`, `schedule`, `telegram`, `workflow`, `agent`).
+The **Sessions** tab lists them by source (`test`, `schedule`, `telegram`, `slack`, `workflow`, `agent`).
 Only one run can be active per session.
 
 ## From workflows
@@ -130,6 +143,59 @@ Only one run can be active per session.
   per key (for example `{{ $json.sessionId }}`). The node is `usableAsTool`, so an AI Agent node
   can delegate to an agent.
 
+## Evaluations
+
+The **Evaluations** tab grades the agent's conversations online, with an LLM judge:
+
+- **Settings**: on/off, the **sample rate** (percent of finished runs that are graded), the
+  **rubric** the judge grades against, the **judge model** (default: the agent's own model) and the
+  score at or below which a reply is **flagged** (default 2).
+- **When**: after each completed run (any source), sampled at the rate; grading runs in the
+  background, one at a time, and never slows the reply. Failed and canceled runs aren't graded.
+- **What the judge sees**: the conversation so far (shortened), the reply and the tools the agent
+  called. It returns a 1–5 score with its reasoning.
+- **What the tab shows**: graded count, mean score, flagged count, the change between the last 10
+  scores and the 10 before, a 30-day trend of the daily mean (days with flagged replies in red),
+  and the latest scores with a link to their session. **Grade a session** scores one now, whatever
+  the sample rate.
+
+The **AI Agent** node gets the same grading per node, under **AI Agent grading** on the workflow's
+Evaluations tab (judge default: the node's chat model; evaluation and debug runs are skipped).
+Offline evaluations of workflows (test cases from a Data Table) are described in the README's
+Evaluations section. Scores live in `online_eval_scores` (the last 2,000 per agent).
+
+## Slack
+
+An agent answers in Slack through a Slack app of your own:
+
+1. Create an app at <https://api.slack.com/apps>, add the bot scopes `app_mentions:read`,
+   `chat:write` and `im:history`, and install it in the workspace.
+2. Save a **Slack API** credential with the **Bot User OAuth Token** (`xoxb-…`) and the app's
+   **Signing Secret** (Basic Information). Landflow refuses Slack requests it can't verify.
+3. Add a Slack channel to the agent, pick the credential and publish. The channel shows two URLs:
+   - **Event Subscriptions** → Request URL `<LANDFLOW_PUBLIC_URL>/api/slack/events/<agentId>/<channelId>`,
+     bot events `app_mention` and `message.im`;
+   - **Interactivity & Shortcuts** → Request URL `<LANDFLOW_PUBLIC_URL>/api/slack/interactions`.
+
+How it behaves:
+- Every request is checked against the signing secret (HMAC-SHA256 of `v0:<timestamp>:<body>`,
+  timestamps more than five minutes off are refused). `url_verification` answers the challenge.
+- A mention or a DM runs the published agent; the reply goes into the message's thread (or the
+  channel with *Reply in thread* off). Each thread is one session, so follow-ups in the thread
+  keep the context. Slack retries and repeated event ids are ignored; the event is acknowledged
+  at once and the answer follows.
+- Tools that need approval are posted in the thread with **Approve** / **Reject** buttons. Only
+  members the channel allows may click them; the message is updated with who decided, and the
+  run continues in the thread. A click is accepted only when it is signed by the same Slack app
+  that asked.
+- **AI Agent nodes** in workflows use the same buttons: *Tools Requiring Approval* plus *Ask In:
+  Slack*, a channel, optional *Approvers* (member ids) and a timeout. The execution waits (status
+  *Waiting*) until every call is decided, in Slack or in the editor's chat panel / execution view
+  (`POST /api/executions/:id/approvals`).
+
+The routes are public (no Landflow session); the signing secret is what authenticates Slack.
+Tested against a fake Slack Web API (`apps/web/test/slack.test.ts`).
+
 ## API
 
 | Route | |
@@ -140,9 +206,14 @@ Only one run can be active per session.
 | `POST/DELETE /api/agents/:id/publish` | publish the draft as a new version / unpublish |
 | `POST /api/agents/:id/chat` | `{ message, sessionId? }` → SSE of `AgentStreamEvent` (draft, source `test`) |
 | `POST /api/agents/:id/sessions/:sid/approvals` | `{ callId, approved }` → the same SSE stream once the run resumes |
+| `POST /api/slack/events/:agentId/:channelId` | Slack Events API of the agent's Slack channel (signed by Slack) |
+| `POST /api/slack/interactions` | Slack interactivity: the Approve / Reject buttons of agents and AI Agent nodes (signed by Slack) |
+| `GET /api/insights/ai-usage?agentId=` | the agent's tokens and estimated cost: totals, per model, per day, `today` and `month` |
 | `GET /api/agents/:id/sessions`, `GET/DELETE /api/agents/:id/sessions/:sid` | session list / full session |
 | `GET /api/agents/models?provider&credentialId&baseUrl` | `{ options: ModelOption[], error? }` |
 | `GET /api/agents/workflow-tools` | workflows with `eligible` and the `reason` when they aren't |
+| `GET/PUT /api/agents/:id/evaluations` | online grading: `{ report: OnlineEvalReport }` (settings, scores, trend); `PUT` changes the settings |
+| `POST /api/agents/:id/evaluations` | `{ sessionId }` → `{ score }`: grade that session's latest turn now |
 
 The SSE events (`data:` lines) are:
 - `run.started { sessionId, traceId }`;
@@ -158,7 +229,7 @@ in [`apps/web/src/lib/shared/agents.ts`](../apps/web/src/lib/shared/agents.ts).
 - **Spans** (OTel GenAI agent conventions). Each run is an `invoke_agent {name}` span with
   `gen_ai.agent.id`, `gen_ai.agent.name`, `gen_ai.conversation.id` (the session),
   `landflow.agent.source`, `landflow.agent.version` and `landflow.agent.end_reason`.
-  - A test-chat run is a child of the HTTP span. Schedule and Telegram runs are root spans.
+  - A test-chat run is a child of the HTTP span. Schedule, Telegram and Slack runs are root spans.
   - Children: `gen_ai.chat {model}` per model turn, and `execute_tool {tool}` per tool call
     (`gen_ai.tool.name`, `gen_ai.tool.call.id`, `landflow.agent.tool.kind`). A tool call
     contains the node's or plugin's spans, a workflow tool's `workflow.execute`, and a
@@ -173,11 +244,12 @@ in [`apps/web/src/lib/shared/agents.ts`](../apps/web/src/lib/shared/agents.ts).
 
 ## Limits and next steps
 
-- **Channels.** Only Telegram, and text messages only. Slack, Discord and Linear channels
-  would follow the same pattern with their plugins' triggers.
+- **Channels.** Telegram and Slack, text messages only (no files from chat apps yet). Discord,
+  Microsoft Teams and Linear channels would follow the same pattern; Slack slash commands and
+  modals aren't handled.
 - **Knowledge.** Knowledge bases are filled by workflows: the builder can't upload documents
   yet, and the data loader reads item text, not files. No web search capability; an HTTP
   Request node can stand in. Guardrails are a workflow node, not yet an agent setting.
-- **Cost and limits.** No monthly cost cap or per-model routing, both of which n8n has. The
-  session token budget is the cost guard. Runs and schedules are single-process, like the
-  workflow scheduler.
+- **Cost and limits.** Daily token and cost limits and a monthly cost limit per agent, plus the
+  session token budget; no per-model routing yet. Runs and schedules are single-process, like
+  the workflow scheduler.

@@ -8,6 +8,8 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
     environment: 'node',
+    // Route handlers are called directly: guarded routes run as a synthetic owner unless a test turns that off.
+    setupFiles: ['test/setup.ts'],
     // Importing the core plugin loads the store: keep its files out of the real data directory.
     env: { LANDFLOW_DATA_DIR: join(tmpdir(), `landflow-web-test-${process.pid}`), LANDFLOW_LOG_LEVEL: 'error' },
   },

@@ -14,7 +14,8 @@ import {
   type NodeItem,
   type PropertyOption,
 } from '@landflow/sdk';
-import { openAiChat, openAiConnection, openAiEmbeddings, openAiModel, openAiModels, type OpenAiConnection, type OpenAiMessage } from './models';
+import { BINARY_INPUT_OPTIONS, optionalAttachments } from './attachments';
+import { openAiChat, openAiConnection, openAiEmbeddings, openAiModel, openAiModels, openAiParts, type OpenAiConnection, type OpenAiMessage } from './models';
 import { getPath } from './paths';
 import { parseJsonReply } from './structured';
 
@@ -137,7 +138,14 @@ async function messageModel(ctx: IExecuteContext, connection: OpenAiConnection):
     // OpenAI's JSON mode refuses prompts that never mention JSON.
     if (jsonOutput && !messages.some((message) => /json/i.test(String(message.content))))
       messages.unshift({ role: 'system', content: 'Respond with a JSON object.' });
-    const options = ctx.getNodeParameter<{ temperature?: number; maxTokens?: number }>('options', i) ?? {};
+    const options = ctx.getNodeParameter<{ temperature?: number; maxTokens?: number; passthroughBinaryImages?: boolean; binaryPropertyNames?: string }>('options', i) ?? {};
+    // "Include Binary as Input": the item's images and PDFs join the last user message.
+    const attachments = await optionalAttachments(ctx, i, options);
+    if (attachments) {
+      const last = messages.map((m) => m.role).lastIndexOf('user');
+      const message = messages[last] as { role: 'user'; content: string };
+      messages[last] = { role: 'user', content: openAiParts(String(message.content), attachments) };
+    }
     const result = await openAiChat(
       connection,
       {
@@ -308,6 +316,7 @@ export const openAiNode = defineNode({
             typeOptions: { minValue: 0, maxValue: 2, numberPrecision: 2 },
           },
           { name: 'maxTokens', displayName: 'Maximum Number of Tokens', type: 'number', default: 1024, typeOptions: { minValue: 1 } },
+          ...BINARY_INPUT_OPTIONS,
         ],
       },
       {

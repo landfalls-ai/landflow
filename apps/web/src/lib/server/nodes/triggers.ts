@@ -1,5 +1,6 @@
 /** Triggers: manual, webhook, chat, schedule and error. Forms are in forms.ts, agent and sub-workflow calls in agents.ts. */
 import { defineNode } from '@landflow/sdk';
+import { authenticationProperty, ipWhitelistOption, webhookAuthCredentials } from './webhook-auth';
 
 const out = [{ type: 'main' as const }];
 
@@ -38,12 +39,14 @@ export const webhookTrigger = defineNode({
     triggerSource: 'webhook',
     categories: ['Triggers'],
     icon: 'lucide:webhook',
+    credentials: webhookAuthCredentials,
     color: '#f97316',
     subtitle: '{{method}} /{{path}}',
     inputs: [],
     outputs: out,
     properties: [
       { name: 'path', displayName: 'Path', type: 'string', default: 'my-hook', required: true, noDataExpression: true },
+      authenticationProperty(),
       {
         name: 'method',
         displayName: 'HTTP Method',
@@ -62,6 +65,7 @@ export const webhookTrigger = defineNode({
           { name: 'When last node finishes', value: 'lastNode', description: 'Return the last node’s output as JSON' },
           { name: 'Immediately', value: 'immediately', description: 'Return 202 with the execution id' },
           { name: 'Using ‘Respond to Webhook’ Node', value: 'responseNode', description: 'Send what a Respond to Webhook node returns, when it runs' },
+          { name: 'Streaming', value: 'streaming', description: 'Stream what AI Agent and chain nodes write as it arrives: SSE for Accept: text/event-stream, else NDJSON chunks' },
         ],
       },
       {
@@ -73,12 +77,13 @@ export const webhookTrigger = defineNode({
         values: [
           { name: 'binaryPropertyName', displayName: 'Binary Property', type: 'string', default: 'data', description: 'Where a file sent as the whole body goes (item.binary.<name>)' },
           { name: 'rawBody', displayName: 'Raw Body', type: 'boolean', default: false, description: 'Keep any body, also JSON or text, as a file instead of parsing it' },
+          ipWhitelistOption,
         ],
       },
       {
         name: 'notice',
         displayName:
-          'The workflow must be Active for production webhooks. Items contain { method, path, headers, query, body }. Uploaded files (multipart parts, or a PDF, image or other non-text body) arrive as binary data. A run that starts waiting first answers { status: "waiting", executionId }.',
+          'Production webhooks run the published version: publish the workflow to serve them. Items contain { method, path, headers, query, body } (and jwtPayload with JWT Auth). Uploaded files (multipart parts, or a PDF, image or other non-text body) arrive as binary data. A run that starts waiting first answers { status: "waiting", executionId }.',
         type: 'notice',
       },
     ],
@@ -86,11 +91,17 @@ export const webhookTrigger = defineNode({
   execute: (ctx) => [ctx.getInputData()],
 });
 
+/**
+ * Chat Message trigger: the editor's chat panel, and — made public — the hosted chat page /chat/<workflow id or
+ * path>, the embeddable widget (/chat/widget.js) and the chat API (lib/server/chat). Each message becomes an item
+ * `{ chatInput, sessionId, action }`; uploaded files arrive as binary `data0`, `data1`…
+ */
+const whenPublic = { show: { public: [true] } };
 export const chatTrigger = defineNode({
   description: {
     name: 'chatTrigger',
     displayName: 'Chat Message',
-    description: 'Start the workflow from the editor’s chat panel — pairs with the AI Agent',
+    description: 'Start the workflow from a chat: the editor’s chat panel, a hosted chat page or a widget — pairs with the AI Agent',
     version: 1,
     kind: 'trigger',
     triggerSource: 'chat',
@@ -102,8 +113,99 @@ export const chatTrigger = defineNode({
     properties: [
       {
         name: 'notice',
-        displayName: 'Each chat message becomes an item { chatInput, sessionId }.',
+        displayName: 'Each chat message becomes an item { chatInput, sessionId }. Uploaded files arrive as binary data0, data1…',
         type: 'notice',
+      },
+      {
+        name: 'public',
+        displayName: 'Make Chat Publicly Available',
+        type: 'boolean',
+        default: false,
+        noDataExpression: true,
+        description: 'Serve a chat page at /chat/<workflow id or path> and the embeddable widget while the workflow is Active',
+      },
+      {
+        name: 'path',
+        displayName: 'Path',
+        type: 'string',
+        default: '',
+        noDataExpression: true,
+        placeholder: 'support',
+        description: 'The chat’s address: /chat/<path>. Empty: the workflow id.',
+        displayOptions: whenPublic,
+      },
+      { name: 'title', displayName: 'Title', type: 'string', default: 'Hi there! 👋', displayOptions: whenPublic },
+      { name: 'subtitle', displayName: 'Subtitle', type: 'string', default: 'Start a chat. We’re here to help you 24/7.', displayOptions: whenPublic },
+      {
+        name: 'initialMessages',
+        displayName: 'Initial Message(s)',
+        type: 'string',
+        default: 'Hi there! 👋\nMy name is Nathan. How can I assist you today?',
+        typeOptions: { rows: 3 },
+        description: 'Shown when a chat opens, one message per line',
+        displayOptions: whenPublic,
+      },
+      { name: 'inputPlaceholder', displayName: 'Input Placeholder', type: 'string', default: 'Type your question…', displayOptions: whenPublic },
+      {
+        name: 'responseMode',
+        displayName: 'Response Mode',
+        type: 'options',
+        default: 'streaming',
+        noDataExpression: true,
+        options: [
+          { name: 'Streaming', value: 'streaming', description: 'Text appears as the AI Agent writes it (SSE)' },
+          { name: 'When Last Node Finishes', value: 'lastNode', description: 'The last node’s output, in one piece' },
+        ],
+        displayOptions: whenPublic,
+      },
+      {
+        name: 'authentication',
+        displayName: 'Authentication',
+        type: 'options',
+        default: 'none',
+        noDataExpression: true,
+        options: [
+          { name: 'None', value: 'none' },
+          { name: 'Basic Auth', value: 'basicAuth', description: 'The browser asks for a user name and password (hosted page only, not the widget)' },
+        ],
+        displayOptions: whenPublic,
+      },
+      { name: 'basicAuthUser', displayName: 'User', type: 'string', default: '', noDataExpression: true, displayOptions: { show: { public: [true], authentication: ['basicAuth'] } } },
+      {
+        name: 'basicAuthPassword',
+        displayName: 'Password',
+        type: 'string',
+        default: '',
+        noDataExpression: true,
+        typeOptions: { password: true },
+        displayOptions: { show: { public: [true], authentication: ['basicAuth'] } },
+      },
+      {
+        name: 'loadPreviousSession',
+        displayName: 'Load Previous Session',
+        type: 'boolean',
+        default: true,
+        description: 'Show a returning visitor their earlier messages (kept by Landflow per session)',
+        displayOptions: whenPublic,
+      },
+      { name: 'allowFileUploads', displayName: 'Allow File Uploads', type: 'boolean', default: false, displayOptions: whenPublic },
+      {
+        name: 'allowedFilesMimeTypes',
+        displayName: 'Allowed File Types',
+        type: 'string',
+        default: 'image/*,application/pdf',
+        description: 'MIME types visitors may attach, comma-separated (image/* matches every image)',
+        displayOptions: { show: { public: [true], allowFileUploads: [true] } },
+      },
+      {
+        name: 'allowedOrigins',
+        displayName: 'Allowed Origins (CORS)',
+        type: 'string',
+        default: '*',
+        noDataExpression: true,
+        placeholder: 'https://example.com, https://app.example.com',
+        description: 'Sites that may embed the widget or call the chat API, comma-separated. * allows any.',
+        displayOptions: whenPublic,
       },
     ],
   },

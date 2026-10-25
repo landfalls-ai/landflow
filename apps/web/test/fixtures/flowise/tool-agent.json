@@ -1,0 +1,174 @@
+{
+  "_synthetic": "Handwritten for Landflow's importer tests in the shape of a Flowise chatflow export; not exported from a Flowise instance.",
+  "nodes": [
+    {
+      "id": "toolAgent_0",
+      "position": { "x": 1200, "y": 300 },
+      "type": "customNode",
+      "data": {
+        "id": "toolAgent_0",
+        "label": "Tool Agent",
+        "name": "toolAgent",
+        "version": 2,
+        "category": "Agents",
+        "inputs": {
+          "tools": ["{{calculator_0.data.instance}}", "{{customTool_0.data.instance}}", "{{chainTool_0.data.instance}}", "{{requestsGet_0.data.instance}}", "{{retrieverTool_0.data.instance}}", "{{serpAPI_0.data.instance}}"],
+          "memory": "{{bufferWindowMemory_0.data.instance}}",
+          "model": "{{chatAnthropic_0.data.instance}}",
+          "systemMessage": "You help the support team. Use the tools.",
+          "maxIterations": "6"
+        }
+      }
+    },
+    {
+      "id": "chatAnthropic_0",
+      "position": { "x": 800, "y": 0 },
+      "type": "customNode",
+      "data": { "id": "chatAnthropic_0", "label": "ChatAnthropic", "name": "chatAnthropic", "version": 7, "category": "Chat Models", "credential": "cred-anthropic", "inputs": { "modelName": "claude-sonnet-5-5", "temperature": 0.2, "maxTokensToSample": "4000" } }
+    },
+    {
+      "id": "bufferWindowMemory_0",
+      "position": { "x": 800, "y": 500 },
+      "type": "customNode",
+      "data": { "id": "bufferWindowMemory_0", "label": "Buffer Window Memory", "name": "bufferWindowMemory", "version": 2, "category": "Memory", "inputs": { "k": "4" } }
+    },
+    {
+      "id": "calculator_0",
+      "position": { "x": 800, "y": 800 },
+      "type": "customNode",
+      "data": { "id": "calculator_0", "label": "Calculator", "name": "calculator", "version": 1, "category": "Tools", "inputs": {} }
+    },
+    {
+      "id": "customTool_0",
+      "position": { "x": 800, "y": 1000 },
+      "type": "customNode",
+      "data": {
+        "id": "customTool_0",
+        "label": "Custom Tool",
+        "name": "customTool",
+        "version": 3,
+        "category": "Tools",
+        "inputs": {
+          "selectedTool": "tool-123",
+          "returnDirect": false,
+          "customToolName": "order_status",
+          "customToolDesc": "Look up the status of an order by its number",
+          "customToolSchema": "[{\"property\":\"orderId\",\"type\":\"string\",\"description\":\"The order number\",\"required\":true}]",
+          "customToolFunc": "const res = await fetch(`https://shop.example.com/orders/${$orderId}`);\nreturn await res.text();"
+        }
+      }
+    },
+    {
+      "id": "chatOllama_0",
+      "position": { "x": 0, "y": 1200 },
+      "type": "customNode",
+      "data": { "id": "chatOllama_0", "label": "ChatOllama", "name": "chatOllama", "version": 5, "category": "Chat Models", "inputs": { "modelName": "qwen3-coder:30b" } }
+    },
+    {
+      "id": "promptTemplate_0",
+      "position": { "x": 0, "y": 1500 },
+      "type": "customNode",
+      "data": {
+        "id": "promptTemplate_0",
+        "label": "Prompt Template",
+        "name": "promptTemplate",
+        "version": 1,
+        "category": "Prompts",
+        "inputs": { "template": "Write a {tone} reply to this customer message: {message}", "promptValues": "{\"tone\":\"polite\",\"message\":\"{{question}}\"}" }
+      }
+    },
+    {
+      "id": "llmChain_0",
+      "position": { "x": 400, "y": 1300 },
+      "type": "customNode",
+      "data": {
+        "id": "llmChain_0",
+        "label": "LLM Chain",
+        "name": "llmChain",
+        "version": 3,
+        "category": "Chains",
+        "inputs": { "model": "{{chatOllama_0.data.instance}}", "prompt": "{{promptTemplate_0.data.instance}}", "outputParser": "", "chainName": "reply_writer" }
+      }
+    },
+    {
+      "id": "chainTool_0",
+      "position": { "x": 800, "y": 1300 },
+      "type": "customNode",
+      "data": {
+        "id": "chainTool_0",
+        "label": "Chain Tool",
+        "name": "chainTool",
+        "version": 1,
+        "category": "Tools",
+        "inputs": { "name": "reply_writer", "description": "Drafts a polite reply to a customer", "returnDirect": false, "baseChain": "{{llmChain_0.data.instance}}" }
+      }
+    },
+    {
+      "id": "requestsGet_0",
+      "position": { "x": 800, "y": 1700 },
+      "type": "customNode",
+      "data": {
+        "id": "requestsGet_0",
+        "label": "Requests Get",
+        "name": "requestsGet",
+        "version": 2,
+        "category": "Tools",
+        "inputs": { "requestsGetUrl": "https://status.example.com/api", "requestsGetName": "status_page", "requestsGetDescription": "Current service status", "requestsGetHeaders": "" }
+      }
+    },
+    {
+      "id": "openAIEmbeddings_0",
+      "position": { "x": 0, "y": 1900 },
+      "type": "customNode",
+      "data": { "id": "openAIEmbeddings_0", "label": "OpenAI Embeddings", "name": "openAIEmbeddings", "version": 4, "category": "Embeddings", "credential": "cred-openai-1", "inputs": { "modelName": "text-embedding-3-small", "dimensions": "512", "batchSize": "" } }
+    },
+    {
+      "id": "postgres_0",
+      "position": { "x": 400, "y": 1900 },
+      "type": "customNode",
+      "data": {
+        "id": "postgres_0",
+        "label": "Postgres",
+        "name": "postgres",
+        "version": 6,
+        "category": "Vector Stores",
+        "credential": "cred-pg",
+        "inputs": { "document": "", "embeddings": "{{openAIEmbeddings_0.data.instance}}", "host": "db.internal", "database": "kb", "port": "5432", "tableName": "support_docs", "topK": "5" }
+      }
+    },
+    {
+      "id": "retrieverTool_0",
+      "position": { "x": 800, "y": 2000 },
+      "type": "customNode",
+      "data": {
+        "id": "retrieverTool_0",
+        "label": "Retriever Tool",
+        "name": "retrieverTool",
+        "version": 2,
+        "category": "Tools",
+        "inputs": { "name": "search_kb", "description": "Search the support knowledge base", "retriever": "{{postgres_0.data.instance}}", "returnSourceDocuments": true }
+      }
+    },
+    {
+      "id": "serpAPI_0",
+      "position": { "x": 800, "y": 2300 },
+      "type": "customNode",
+      "data": { "id": "serpAPI_0", "label": "Serp API", "name": "serpAPI", "version": 1, "category": "Tools", "credential": "cred-serp", "inputs": {} }
+    }
+  ],
+  "edges": [
+    { "source": "chatAnthropic_0", "sourceHandle": "chatAnthropic_0-output-chatAnthropic-ChatAnthropic|BaseChatModel", "target": "toolAgent_0", "targetHandle": "toolAgent_0-input-model-BaseChatModel", "id": "e1" },
+    { "source": "bufferWindowMemory_0", "sourceHandle": "bufferWindowMemory_0-output-bufferWindowMemory-BufferWindowMemory|BaseMemory", "target": "toolAgent_0", "targetHandle": "toolAgent_0-input-memory-BaseChatMemory", "id": "e2" },
+    { "source": "calculator_0", "sourceHandle": "calculator_0-output-calculator-Calculator|Tool", "target": "toolAgent_0", "targetHandle": "toolAgent_0-input-tools-Tool", "id": "e3" },
+    { "source": "customTool_0", "sourceHandle": "customTool_0-output-customTool-CustomTool|Tool", "target": "toolAgent_0", "targetHandle": "toolAgent_0-input-tools-Tool", "id": "e4" },
+    { "source": "chatOllama_0", "sourceHandle": "chatOllama_0-output-chatOllama-ChatOllama|BaseChatModel", "target": "llmChain_0", "targetHandle": "llmChain_0-input-model-BaseLanguageModel", "id": "e5" },
+    { "source": "promptTemplate_0", "sourceHandle": "promptTemplate_0-output-promptTemplate-PromptTemplate|BasePromptTemplate", "target": "llmChain_0", "targetHandle": "llmChain_0-input-prompt-BasePromptTemplate", "id": "e6" },
+    { "source": "llmChain_0", "sourceHandle": "llmChain_0-output-llmChain-LLMChain|BaseChain", "target": "chainTool_0", "targetHandle": "chainTool_0-input-baseChain-BaseChain", "id": "e7" },
+    { "source": "chainTool_0", "sourceHandle": "chainTool_0-output-chainTool-ChainTool|Tool", "target": "toolAgent_0", "targetHandle": "toolAgent_0-input-tools-Tool", "id": "e8" },
+    { "source": "requestsGet_0", "sourceHandle": "requestsGet_0-output-requestsGet-RequestsGet|Tool", "target": "toolAgent_0", "targetHandle": "toolAgent_0-input-tools-Tool", "id": "e9" },
+    { "source": "openAIEmbeddings_0", "sourceHandle": "openAIEmbeddings_0-output-openAIEmbeddings-OpenAIEmbeddings|Embeddings", "target": "postgres_0", "targetHandle": "postgres_0-input-embeddings-Embeddings", "id": "e10" },
+    { "source": "postgres_0", "sourceHandle": "postgres_0-output-retriever-Postgres|VectorStoreRetriever|BaseRetriever", "target": "retrieverTool_0", "targetHandle": "retrieverTool_0-input-retriever-BaseRetriever", "id": "e11" },
+    { "source": "retrieverTool_0", "sourceHandle": "retrieverTool_0-output-retrieverTool-RetrieverTool|Tool", "target": "toolAgent_0", "targetHandle": "toolAgent_0-input-tools-Tool", "id": "e12" },
+    { "source": "serpAPI_0", "sourceHandle": "serpAPI_0-output-serpAPI-SerpAPI|Tool", "target": "toolAgent_0", "targetHandle": "toolAgent_0-input-tools-Tool", "id": "e13" }
+  ]
+}

@@ -159,9 +159,12 @@ export type NodeKind = 'trigger' | 'action' | 'subnode';
  * How the host should wire up a trigger node. `poll`: the host calls Execute
  * with mode "poll" every `pollInterval` seconds while the workflow is active,
  * passing back the `pollState` the previous poll returned; any items the poll
- * emits start an execution.
+ * emits start an execution. `appWebhook`: the node registers its own webhook
+ * with an external service when the workflow is published and removes it when
+ * it is unpublished (WebhookMethod), and turns the service's calls into items
+ * (ReceiveWebhook); see docs/protocol.md §12.
  */
-export type TriggerSource = 'manual' | 'webhook' | 'schedule' | 'chat' | 'poll';
+export type TriggerSource = 'manual' | 'webhook' | 'schedule' | 'chat' | 'poll' | 'appWebhook';
 
 /** A credential a node can use, by the local name of a credential type its plugin declares. */
 export interface NodeCredentialRequirement {
@@ -232,6 +235,14 @@ export interface CredentialTypeDescriptor {
   properties: PropertyDescriptor[];
   /** The plugin implements TestCredentials for this type ("Test connection" in the UI). */
   testable?: boolean;
+  /**
+   * Credential types this one builds on, n8n's `extends: ['oAuth2Api']`: the host shows the parent's properties
+   * followed by this type's, a property of the same name replacing the parent's (a `hidden` property with a
+   * `default` fixes a value, such as the provider's authorization URL). A local name means a type of this plugin,
+   * else of the core plugin; `<pluginId>.<name>` names one exactly. Extending `oAuth2Api` gives the credential a
+   * Connect button, and the host sends a fresh `accessToken` with it (docs/protocol.md §7).
+   */
+  extends?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +281,9 @@ export interface WellKnownDocument {
     loadOptions: string;
     health: string;
     testCredentials?: string;
+    /** Present when a node has `triggerSource: "appWebhook"`. */
+    webhookMethod?: string;
+    webhook?: string;
   };
 }
 
@@ -423,6 +437,84 @@ export interface HealthResponse {
 }
 
 // ---------------------------------------------------------------------------
+// App webhook triggers (triggerSource "appWebhook", docs/protocol.md §12)
+// ---------------------------------------------------------------------------
+
+/**
+ * n8n's `webhookMethods`: `checkExists` (is the webhook in `staticData` still registered at the service?), `create`
+ * (register `webhookUrl`, store its id or secret in the static data) and `delete` (remove it). The host calls `create`
+ * when the workflow is published (after a `checkExists` that answered false) and `delete` when it is unpublished, the
+ * node changes or the workflow is deleted.
+ */
+export type WebhookMethodName = 'checkExists' | 'create' | 'delete';
+
+export interface WebhookMethodRequest {
+  protocol: ProtocolVersion;
+  method: WebhookMethodName;
+  workflowId: string;
+  node: NodeRef;
+  /** The node's parameters, expressions resolved without items. */
+  parameters: JsonObject;
+  credentials?: Record<string, JsonObject>;
+  /** Where the service must send its calls: `{publicUrl}/api/webhook/app/<workflowId>/<nodeId>`. */
+  webhookUrl: string;
+  /** What the node stored for this workflow and node so far (`{}` at first). */
+  staticData: JsonObject;
+}
+
+export interface WebhookMethodResponse {
+  /** checkExists: the webhook is registered. */
+  exists?: boolean;
+  /** The node's static data after the call (the webhook id, a signing secret); absent = unchanged. */
+  staticData?: JsonObject;
+  logs?: LogEntry[];
+  error?: NodeErrorPayload;
+}
+
+/** A call the external service made to the node's webhook URL, as received. */
+export interface IncomingWebhookRequest {
+  method: string;
+  /** The URL path after the host's origin. */
+  path: string;
+  /** Lower-case header names. */
+  headers: Record<string, string>;
+  query: Record<string, string>;
+  /** The raw body, base64 (gRPC: bytes), exactly as sent: signatures are computed over these bytes. */
+  body: string;
+}
+
+export interface WebhookRequest {
+  protocol: ProtocolVersion;
+  workflowId: string;
+  node: NodeRef;
+  parameters: JsonObject;
+  credentials?: Record<string, JsonObject>;
+  webhookUrl: string;
+  staticData: JsonObject;
+  request: IncomingWebhookRequest;
+}
+
+/** What the service gets back. Default: 200 `{ status, executionId }`. */
+export interface WebhookReply {
+  status?: number;
+  headers?: Record<string, string>;
+  /** Text body (set `content-type` in `headers` for JSON). */
+  body?: string;
+}
+
+export interface WebhookResponse {
+  /** Start a run with these items as the trigger's output; none (or empty) starts no run (a ping, a rejected signature). */
+  items?: NodeItem[];
+  response?: WebhookReply;
+  /** The node's static data after the call; absent = unchanged. */
+  staticData?: JsonObject;
+  /** A key that identifies the event (GitHub's `X-GitHub-Delivery`): a redelivery within the retention window starts no second run. */
+  idempotencyKey?: string;
+  logs?: LogEntry[];
+  error?: NodeErrorPayload;
+}
+
+// ---------------------------------------------------------------------------
 // Registry (self-announcement)
 // ---------------------------------------------------------------------------
 
@@ -457,6 +549,8 @@ export const HTTP_PATHS = {
   loadOptions: '/landflow/v1/load-options',
   testCredentials: '/landflow/v1/test-credentials',
   health: '/landflow/v1/health',
+  webhookMethod: '/landflow/v1/webhook-method',
+  webhook: '/landflow/v1/webhook',
 } as const;
 
 /**

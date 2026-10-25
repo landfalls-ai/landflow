@@ -194,6 +194,119 @@ class TestCredentialsResponse(_message.Message):
     message: str
     def __init__(self, ok: _Optional[bool] = ..., message: _Optional[str] = ...) -> None: ...
 
+class WebhookMethodRequest(_message.Message):
+    __slots__ = ("protocol", "method", "workflow_id", "node", "parameters", "credentials", "webhook_url", "static_data")
+    PROTOCOL_FIELD_NUMBER: _ClassVar[int]
+    METHOD_FIELD_NUMBER: _ClassVar[int]
+    WORKFLOW_ID_FIELD_NUMBER: _ClassVar[int]
+    NODE_FIELD_NUMBER: _ClassVar[int]
+    PARAMETERS_FIELD_NUMBER: _ClassVar[int]
+    CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
+    WEBHOOK_URL_FIELD_NUMBER: _ClassVar[int]
+    STATIC_DATA_FIELD_NUMBER: _ClassVar[int]
+    protocol: str
+    method: str
+    workflow_id: str
+    node: NodeRef
+    parameters: DynamicValue
+    credentials: DynamicValue
+    webhook_url: str
+    static_data: DynamicValue
+    def __init__(self, protocol: _Optional[str] = ..., method: _Optional[str] = ..., workflow_id: _Optional[str] = ..., node: _Optional[_Union[NodeRef, _Mapping]] = ..., parameters: _Optional[_Union[DynamicValue, _Mapping]] = ..., credentials: _Optional[_Union[DynamicValue, _Mapping]] = ..., webhook_url: _Optional[str] = ..., static_data: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+
+class WebhookMethodResponse(_message.Message):
+    __slots__ = ("exists", "static_data", "logs", "error")
+    EXISTS_FIELD_NUMBER: _ClassVar[int]
+    STATIC_DATA_FIELD_NUMBER: _ClassVar[int]
+    LOGS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    exists: bool
+    static_data: DynamicValue
+    logs: _containers.RepeatedCompositeFieldContainer[LogEntry]
+    error: NodeError
+    def __init__(self, exists: _Optional[bool] = ..., static_data: _Optional[_Union[DynamicValue, _Mapping]] = ..., logs: _Optional[_Iterable[_Union[LogEntry, _Mapping]]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ...) -> None: ...
+
+class IncomingWebhookRequest(_message.Message):
+    __slots__ = ("method", "path", "headers", "query", "body")
+    class HeadersEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    class QueryEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    METHOD_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    HEADERS_FIELD_NUMBER: _ClassVar[int]
+    QUERY_FIELD_NUMBER: _ClassVar[int]
+    BODY_FIELD_NUMBER: _ClassVar[int]
+    method: str
+    path: str
+    headers: _containers.ScalarMap[str, str]
+    query: _containers.ScalarMap[str, str]
+    body: bytes
+    def __init__(self, method: _Optional[str] = ..., path: _Optional[str] = ..., headers: _Optional[_Mapping[str, str]] = ..., query: _Optional[_Mapping[str, str]] = ..., body: _Optional[bytes] = ...) -> None: ...
+
+class ReceiveWebhookRequest(_message.Message):
+    __slots__ = ("protocol", "workflow_id", "node", "parameters", "credentials", "webhook_url", "static_data", "request")
+    PROTOCOL_FIELD_NUMBER: _ClassVar[int]
+    WORKFLOW_ID_FIELD_NUMBER: _ClassVar[int]
+    NODE_FIELD_NUMBER: _ClassVar[int]
+    PARAMETERS_FIELD_NUMBER: _ClassVar[int]
+    CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
+    WEBHOOK_URL_FIELD_NUMBER: _ClassVar[int]
+    STATIC_DATA_FIELD_NUMBER: _ClassVar[int]
+    REQUEST_FIELD_NUMBER: _ClassVar[int]
+    protocol: str
+    workflow_id: str
+    node: NodeRef
+    parameters: DynamicValue
+    credentials: DynamicValue
+    webhook_url: str
+    static_data: DynamicValue
+    request: IncomingWebhookRequest
+    def __init__(self, protocol: _Optional[str] = ..., workflow_id: _Optional[str] = ..., node: _Optional[_Union[NodeRef, _Mapping]] = ..., parameters: _Optional[_Union[DynamicValue, _Mapping]] = ..., credentials: _Optional[_Union[DynamicValue, _Mapping]] = ..., webhook_url: _Optional[str] = ..., static_data: _Optional[_Union[DynamicValue, _Mapping]] = ..., request: _Optional[_Union[IncomingWebhookRequest, _Mapping]] = ...) -> None: ...
+
+class WebhookReply(_message.Message):
+    __slots__ = ("status", "headers", "body")
+    class HeadersEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    HEADERS_FIELD_NUMBER: _ClassVar[int]
+    BODY_FIELD_NUMBER: _ClassVar[int]
+    status: int
+    headers: _containers.ScalarMap[str, str]
+    body: bytes
+    def __init__(self, status: _Optional[int] = ..., headers: _Optional[_Mapping[str, str]] = ..., body: _Optional[bytes] = ...) -> None: ...
+
+class ReceiveWebhookResponse(_message.Message):
+    __slots__ = ("items", "response", "static_data", "idempotency_key", "logs", "error")
+    ITEMS_FIELD_NUMBER: _ClassVar[int]
+    RESPONSE_FIELD_NUMBER: _ClassVar[int]
+    STATIC_DATA_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    LOGS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    items: _containers.RepeatedCompositeFieldContainer[Item]
+    response: WebhookReply
+    static_data: DynamicValue
+    idempotency_key: str
+    logs: _containers.RepeatedCompositeFieldContainer[LogEntry]
+    error: NodeError
+    def __init__(self, items: _Optional[_Iterable[_Union[Item, _Mapping]]] = ..., response: _Optional[_Union[WebhookReply, _Mapping]] = ..., static_data: _Optional[_Union[DynamicValue, _Mapping]] = ..., idempotency_key: _Optional[str] = ..., logs: _Optional[_Iterable[_Union[LogEntry, _Mapping]]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ...) -> None: ...
+
 class HealthRequest(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...

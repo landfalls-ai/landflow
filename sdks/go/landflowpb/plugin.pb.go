@@ -597,7 +597,7 @@ type ExecuteRequest struct {
 	Protocol       string                 `protobuf:"bytes,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
 	ExecutionId    string                 `protobuf:"bytes,2,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
 	WorkflowId     string                 `protobuf:"bytes,3,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
-	Mode           string                 `protobuf:"bytes,4,opt,name=mode,proto3" json:"mode,omitempty"` // "manual" | "trigger" | "webhook" | "tool" | "chat" | "poll"
+	Mode           string                 `protobuf:"bytes,4,opt,name=mode,proto3" json:"mode,omitempty"` // "manual" | "trigger" | "webhook" | "tool" | "chat" | "poll" | "mcp"
 	Node           *NodeRef               `protobuf:"bytes,5,opt,name=node,proto3" json:"node,omitempty"`
 	Parameters     *DynamicValue          `protobuf:"bytes,6,opt,name=parameters,proto3" json:"parameters,omitempty"`                                   // resolved against item 0 (or no item)
 	ItemParameters []*DynamicValue        `protobuf:"bytes,7,rep,name=item_parameters,json=itemParameters,proto3" json:"item_parameters,omitempty"`     // resolved per item of input 0
@@ -1128,6 +1128,494 @@ func (x *TestCredentialsResponse) GetMessage() string {
 	return ""
 }
 
+type WebhookMethodRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Protocol      string                 `protobuf:"bytes,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Method        string                 `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"` // "checkExists" | "create" | "delete"
+	WorkflowId    string                 `protobuf:"bytes,3,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
+	Node          *NodeRef               `protobuf:"bytes,4,opt,name=node,proto3" json:"node,omitempty"`
+	Parameters    *DynamicValue          `protobuf:"bytes,5,opt,name=parameters,proto3" json:"parameters,omitempty"`                   // resolved without items
+	Credentials   *DynamicValue          `protobuf:"bytes,6,opt,name=credentials,proto3" json:"credentials,omitempty"`                 // optional, same shape as ExecuteRequest.credentials
+	WebhookUrl    string                 `protobuf:"bytes,7,opt,name=webhook_url,json=webhookUrl,proto3" json:"webhook_url,omitempty"` // where the service must call: {publicUrl}/api/webhook/app/<workflowId>/<nodeId>
+	StaticData    *DynamicValue          `protobuf:"bytes,8,opt,name=static_data,json=staticData,proto3" json:"static_data,omitempty"` // what the node stored so far ({} at first)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WebhookMethodRequest) Reset() {
+	*x = WebhookMethodRequest{}
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WebhookMethodRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WebhookMethodRequest) ProtoMessage() {}
+
+func (x *WebhookMethodRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WebhookMethodRequest.ProtoReflect.Descriptor instead.
+func (*WebhookMethodRequest) Descriptor() ([]byte, []int) {
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *WebhookMethodRequest) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *WebhookMethodRequest) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *WebhookMethodRequest) GetWorkflowId() string {
+	if x != nil {
+		return x.WorkflowId
+	}
+	return ""
+}
+
+func (x *WebhookMethodRequest) GetNode() *NodeRef {
+	if x != nil {
+		return x.Node
+	}
+	return nil
+}
+
+func (x *WebhookMethodRequest) GetParameters() *DynamicValue {
+	if x != nil {
+		return x.Parameters
+	}
+	return nil
+}
+
+func (x *WebhookMethodRequest) GetCredentials() *DynamicValue {
+	if x != nil {
+		return x.Credentials
+	}
+	return nil
+}
+
+func (x *WebhookMethodRequest) GetWebhookUrl() string {
+	if x != nil {
+		return x.WebhookUrl
+	}
+	return ""
+}
+
+func (x *WebhookMethodRequest) GetStaticData() *DynamicValue {
+	if x != nil {
+		return x.StaticData
+	}
+	return nil
+}
+
+type WebhookMethodResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Exists        bool                   `protobuf:"varint,1,opt,name=exists,proto3" json:"exists,omitempty"`                          // checkExists: the webhook is registered
+	StaticData    *DynamicValue          `protobuf:"bytes,2,opt,name=static_data,json=staticData,proto3" json:"static_data,omitempty"` // the node's static data after the call; absent = unchanged
+	Logs          []*LogEntry            `protobuf:"bytes,3,rep,name=logs,proto3" json:"logs,omitempty"`
+	Error         *NodeError             `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WebhookMethodResponse) Reset() {
+	*x = WebhookMethodResponse{}
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WebhookMethodResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WebhookMethodResponse) ProtoMessage() {}
+
+func (x *WebhookMethodResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WebhookMethodResponse.ProtoReflect.Descriptor instead.
+func (*WebhookMethodResponse) Descriptor() ([]byte, []int) {
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *WebhookMethodResponse) GetExists() bool {
+	if x != nil {
+		return x.Exists
+	}
+	return false
+}
+
+func (x *WebhookMethodResponse) GetStaticData() *DynamicValue {
+	if x != nil {
+		return x.StaticData
+	}
+	return nil
+}
+
+func (x *WebhookMethodResponse) GetLogs() []*LogEntry {
+	if x != nil {
+		return x.Logs
+	}
+	return nil
+}
+
+func (x *WebhookMethodResponse) GetError() *NodeError {
+	if x != nil {
+		return x.Error
+	}
+	return nil
+}
+
+type IncomingWebhookRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Method        string                 `protobuf:"bytes,1,opt,name=method,proto3" json:"method,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Headers       map[string]string      `protobuf:"bytes,3,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // lower-case names
+	Query         map[string]string      `protobuf:"bytes,4,rep,name=query,proto3" json:"query,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Body          []byte                 `protobuf:"bytes,5,opt,name=body,proto3" json:"body,omitempty"` // raw, exactly as sent (signatures cover these bytes)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IncomingWebhookRequest) Reset() {
+	*x = IncomingWebhookRequest{}
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IncomingWebhookRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IncomingWebhookRequest) ProtoMessage() {}
+
+func (x *IncomingWebhookRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IncomingWebhookRequest.ProtoReflect.Descriptor instead.
+func (*IncomingWebhookRequest) Descriptor() ([]byte, []int) {
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *IncomingWebhookRequest) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *IncomingWebhookRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *IncomingWebhookRequest) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *IncomingWebhookRequest) GetQuery() map[string]string {
+	if x != nil {
+		return x.Query
+	}
+	return nil
+}
+
+func (x *IncomingWebhookRequest) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+type ReceiveWebhookRequest struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Protocol      string                  `protobuf:"bytes,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	WorkflowId    string                  `protobuf:"bytes,2,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
+	Node          *NodeRef                `protobuf:"bytes,3,opt,name=node,proto3" json:"node,omitempty"`
+	Parameters    *DynamicValue           `protobuf:"bytes,4,opt,name=parameters,proto3" json:"parameters,omitempty"`
+	Credentials   *DynamicValue           `protobuf:"bytes,5,opt,name=credentials,proto3" json:"credentials,omitempty"`
+	WebhookUrl    string                  `protobuf:"bytes,6,opt,name=webhook_url,json=webhookUrl,proto3" json:"webhook_url,omitempty"`
+	StaticData    *DynamicValue           `protobuf:"bytes,7,opt,name=static_data,json=staticData,proto3" json:"static_data,omitempty"`
+	Request       *IncomingWebhookRequest `protobuf:"bytes,8,opt,name=request,proto3" json:"request,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReceiveWebhookRequest) Reset() {
+	*x = ReceiveWebhookRequest{}
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReceiveWebhookRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReceiveWebhookRequest) ProtoMessage() {}
+
+func (x *ReceiveWebhookRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReceiveWebhookRequest.ProtoReflect.Descriptor instead.
+func (*ReceiveWebhookRequest) Descriptor() ([]byte, []int) {
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ReceiveWebhookRequest) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *ReceiveWebhookRequest) GetWorkflowId() string {
+	if x != nil {
+		return x.WorkflowId
+	}
+	return ""
+}
+
+func (x *ReceiveWebhookRequest) GetNode() *NodeRef {
+	if x != nil {
+		return x.Node
+	}
+	return nil
+}
+
+func (x *ReceiveWebhookRequest) GetParameters() *DynamicValue {
+	if x != nil {
+		return x.Parameters
+	}
+	return nil
+}
+
+func (x *ReceiveWebhookRequest) GetCredentials() *DynamicValue {
+	if x != nil {
+		return x.Credentials
+	}
+	return nil
+}
+
+func (x *ReceiveWebhookRequest) GetWebhookUrl() string {
+	if x != nil {
+		return x.WebhookUrl
+	}
+	return ""
+}
+
+func (x *ReceiveWebhookRequest) GetStaticData() *DynamicValue {
+	if x != nil {
+		return x.StaticData
+	}
+	return nil
+}
+
+func (x *ReceiveWebhookRequest) GetRequest() *IncomingWebhookRequest {
+	if x != nil {
+		return x.Request
+	}
+	return nil
+}
+
+type WebhookReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"` // 0 = 200
+	Headers       map[string]string      `protobuf:"bytes,2,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Body          []byte                 `protobuf:"bytes,3,opt,name=body,proto3" json:"body,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WebhookReply) Reset() {
+	*x = WebhookReply{}
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WebhookReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WebhookReply) ProtoMessage() {}
+
+func (x *WebhookReply) ProtoReflect() protoreflect.Message {
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WebhookReply.ProtoReflect.Descriptor instead.
+func (*WebhookReply) Descriptor() ([]byte, []int) {
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *WebhookReply) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
+func (x *WebhookReply) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *WebhookReply) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+type ReceiveWebhookResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Items          []*Item                `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`                                         // the trigger's output for a new run; none = no run
+	Response       *WebhookReply          `protobuf:"bytes,2,opt,name=response,proto3" json:"response,omitempty"`                                   // absent: 200 with the run's id
+	StaticData     *DynamicValue          `protobuf:"bytes,3,opt,name=static_data,json=staticData,proto3" json:"static_data,omitempty"`             // absent = unchanged
+	IdempotencyKey string                 `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"` // identifies the event: a redelivery starts no second run
+	Logs           []*LogEntry            `protobuf:"bytes,5,rep,name=logs,proto3" json:"logs,omitempty"`
+	Error          *NodeError             `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ReceiveWebhookResponse) Reset() {
+	*x = ReceiveWebhookResponse{}
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReceiveWebhookResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReceiveWebhookResponse) ProtoMessage() {}
+
+func (x *ReceiveWebhookResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReceiveWebhookResponse.ProtoReflect.Descriptor instead.
+func (*ReceiveWebhookResponse) Descriptor() ([]byte, []int) {
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *ReceiveWebhookResponse) GetItems() []*Item {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *ReceiveWebhookResponse) GetResponse() *WebhookReply {
+	if x != nil {
+		return x.Response
+	}
+	return nil
+}
+
+func (x *ReceiveWebhookResponse) GetStaticData() *DynamicValue {
+	if x != nil {
+		return x.StaticData
+	}
+	return nil
+}
+
+func (x *ReceiveWebhookResponse) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *ReceiveWebhookResponse) GetLogs() []*LogEntry {
+	if x != nil {
+		return x.Logs
+	}
+	return nil
+}
+
+func (x *ReceiveWebhookResponse) GetError() *NodeError {
+	if x != nil {
+		return x.Error
+	}
+	return nil
+}
+
 type HealthRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1136,7 +1624,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[17]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1148,7 +1636,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[17]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1161,7 +1649,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{17}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{23}
 }
 
 type HealthResponse struct {
@@ -1176,7 +1664,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[18]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1188,7 +1676,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[18]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1201,7 +1689,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{18}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *HealthResponse) GetStatus() string {
@@ -1245,7 +1733,7 @@ type AnnounceRequest struct {
 
 func (x *AnnounceRequest) Reset() {
 	*x = AnnounceRequest{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[19]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1257,7 +1745,7 @@ func (x *AnnounceRequest) String() string {
 func (*AnnounceRequest) ProtoMessage() {}
 
 func (x *AnnounceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[19]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1270,7 +1758,7 @@ func (x *AnnounceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnnounceRequest.ProtoReflect.Descriptor instead.
 func (*AnnounceRequest) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{19}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *AnnounceRequest) GetProtocol() string {
@@ -1319,7 +1807,7 @@ type AnnounceResponse struct {
 
 func (x *AnnounceResponse) Reset() {
 	*x = AnnounceResponse{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[20]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1331,7 +1819,7 @@ func (x *AnnounceResponse) String() string {
 func (*AnnounceResponse) ProtoMessage() {}
 
 func (x *AnnounceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[20]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1344,7 +1832,7 @@ func (x *AnnounceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnnounceResponse.ProtoReflect.Descriptor instead.
 func (*AnnounceResponse) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{20}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *AnnounceResponse) GetAccepted() bool {
@@ -1378,7 +1866,7 @@ type WithdrawRequest struct {
 
 func (x *WithdrawRequest) Reset() {
 	*x = WithdrawRequest{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[21]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1390,7 +1878,7 @@ func (x *WithdrawRequest) String() string {
 func (*WithdrawRequest) ProtoMessage() {}
 
 func (x *WithdrawRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[21]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1403,7 +1891,7 @@ func (x *WithdrawRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WithdrawRequest.ProtoReflect.Descriptor instead.
 func (*WithdrawRequest) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{21}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *WithdrawRequest) GetEndpoint() string {
@@ -1429,7 +1917,7 @@ type WithdrawResponse struct {
 
 func (x *WithdrawResponse) Reset() {
 	*x = WithdrawResponse{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[22]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1441,7 +1929,7 @@ func (x *WithdrawResponse) String() string {
 func (*WithdrawResponse) ProtoMessage() {}
 
 func (x *WithdrawResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[22]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1454,7 +1942,7 @@ func (x *WithdrawResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WithdrawResponse.ProtoReflect.Descriptor instead.
 func (*WithdrawResponse) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{22}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *WithdrawResponse) GetOk() bool {
@@ -1559,7 +2047,69 @@ const file_landflow_plugin_v1_plugin_proto_rawDesc = "" +
 	"\x04data\x18\x02 \x01(\v2 .landflow.plugin.v1.DynamicValueR\x04data\"C\n" +
 	"\x17TestCredentialsResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x0f\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x86\x03\n" +
+	"\x14WebhookMethodRequest\x12\x1a\n" +
+	"\bprotocol\x18\x01 \x01(\tR\bprotocol\x12\x16\n" +
+	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +
+	"\vworkflow_id\x18\x03 \x01(\tR\n" +
+	"workflowId\x12/\n" +
+	"\x04node\x18\x04 \x01(\v2\x1b.landflow.plugin.v1.NodeRefR\x04node\x12@\n" +
+	"\n" +
+	"parameters\x18\x05 \x01(\v2 .landflow.plugin.v1.DynamicValueR\n" +
+	"parameters\x12B\n" +
+	"\vcredentials\x18\x06 \x01(\v2 .landflow.plugin.v1.DynamicValueR\vcredentials\x12\x1f\n" +
+	"\vwebhook_url\x18\a \x01(\tR\n" +
+	"webhookUrl\x12A\n" +
+	"\vstatic_data\x18\b \x01(\v2 .landflow.plugin.v1.DynamicValueR\n" +
+	"staticData\"\xd9\x01\n" +
+	"\x15WebhookMethodResponse\x12\x16\n" +
+	"\x06exists\x18\x01 \x01(\bR\x06exists\x12A\n" +
+	"\vstatic_data\x18\x02 \x01(\v2 .landflow.plugin.v1.DynamicValueR\n" +
+	"staticData\x120\n" +
+	"\x04logs\x18\x03 \x03(\v2\x1c.landflow.plugin.v1.LogEntryR\x04logs\x123\n" +
+	"\x05error\x18\x04 \x01(\v2\x1d.landflow.plugin.v1.NodeErrorR\x05error\"\xee\x02\n" +
+	"\x16IncomingWebhookRequest\x12\x16\n" +
+	"\x06method\x18\x01 \x01(\tR\x06method\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12Q\n" +
+	"\aheaders\x18\x03 \x03(\v27.landflow.plugin.v1.IncomingWebhookRequest.HeadersEntryR\aheaders\x12K\n" +
+	"\x05query\x18\x04 \x03(\v25.landflow.plugin.v1.IncomingWebhookRequest.QueryEntryR\x05query\x12\x12\n" +
+	"\x04body\x18\x05 \x01(\fR\x04body\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a8\n" +
+	"\n" +
+	"QueryEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb5\x03\n" +
+	"\x15ReceiveWebhookRequest\x12\x1a\n" +
+	"\bprotocol\x18\x01 \x01(\tR\bprotocol\x12\x1f\n" +
+	"\vworkflow_id\x18\x02 \x01(\tR\n" +
+	"workflowId\x12/\n" +
+	"\x04node\x18\x03 \x01(\v2\x1b.landflow.plugin.v1.NodeRefR\x04node\x12@\n" +
+	"\n" +
+	"parameters\x18\x04 \x01(\v2 .landflow.plugin.v1.DynamicValueR\n" +
+	"parameters\x12B\n" +
+	"\vcredentials\x18\x05 \x01(\v2 .landflow.plugin.v1.DynamicValueR\vcredentials\x12\x1f\n" +
+	"\vwebhook_url\x18\x06 \x01(\tR\n" +
+	"webhookUrl\x12A\n" +
+	"\vstatic_data\x18\a \x01(\v2 .landflow.plugin.v1.DynamicValueR\n" +
+	"staticData\x12D\n" +
+	"\arequest\x18\b \x01(\v2*.landflow.plugin.v1.IncomingWebhookRequestR\arequest\"\xbf\x01\n" +
+	"\fWebhookReply\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\x12G\n" +
+	"\aheaders\x18\x02 \x03(\v2-.landflow.plugin.v1.WebhookReply.HeadersEntryR\aheaders\x12\x12\n" +
+	"\x04body\x18\x03 \x01(\fR\x04body\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd9\x02\n" +
+	"\x16ReceiveWebhookResponse\x12.\n" +
+	"\x05items\x18\x01 \x03(\v2\x18.landflow.plugin.v1.ItemR\x05items\x12<\n" +
+	"\bresponse\x18\x02 \x01(\v2 .landflow.plugin.v1.WebhookReplyR\bresponse\x12A\n" +
+	"\vstatic_data\x18\x03 \x01(\v2 .landflow.plugin.v1.DynamicValueR\n" +
+	"staticData\x12'\n" +
+	"\x0fidempotency_key\x18\x04 \x01(\tR\x0eidempotencyKey\x120\n" +
+	"\x04logs\x18\x05 \x03(\v2\x1c.landflow.plugin.v1.LogEntryR\x04logs\x123\n" +
+	"\x05error\x18\x06 \x01(\v2\x1d.landflow.plugin.v1.NodeErrorR\x05error\"\x0f\n" +
 	"\rHealthRequest\"|\n" +
 	"\x0eHealthResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x1b\n" +
@@ -1581,13 +2131,15 @@ const file_landflow_plugin_v1_plugin_proto_rawDesc = "" +
 	"\bendpoint\x18\x01 \x01(\tR\bendpoint\x12\x1b\n" +
 	"\tplugin_id\x18\x02 \x01(\tR\bpluginId\"\"\n" +
 	"\x10WithdrawResponse\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok2\xe0\x03\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok2\xaf\x05\n" +
 	"\rPluginService\x12^\n" +
 	"\vGetManifest\x12&.landflow.plugin.v1.GetManifestRequest\x1a'.landflow.plugin.v1.GetManifestResponse\x12R\n" +
 	"\aExecute\x12\".landflow.plugin.v1.ExecuteRequest\x1a#.landflow.plugin.v1.ExecuteResponse\x12^\n" +
 	"\vLoadOptions\x12&.landflow.plugin.v1.LoadOptionsRequest\x1a'.landflow.plugin.v1.LoadOptionsResponse\x12O\n" +
 	"\x06Health\x12!.landflow.plugin.v1.HealthRequest\x1a\".landflow.plugin.v1.HealthResponse\x12j\n" +
-	"\x0fTestCredentials\x12*.landflow.plugin.v1.TestCredentialsRequest\x1a+.landflow.plugin.v1.TestCredentialsResponse2\xbf\x01\n" +
+	"\x0fTestCredentials\x12*.landflow.plugin.v1.TestCredentialsRequest\x1a+.landflow.plugin.v1.TestCredentialsResponse\x12d\n" +
+	"\rWebhookMethod\x12(.landflow.plugin.v1.WebhookMethodRequest\x1a).landflow.plugin.v1.WebhookMethodResponse\x12g\n" +
+	"\x0eReceiveWebhook\x12).landflow.plugin.v1.ReceiveWebhookRequest\x1a*.landflow.plugin.v1.ReceiveWebhookResponse2\xbf\x01\n" +
 	"\x0fRegistryService\x12U\n" +
 	"\bAnnounce\x12#.landflow.plugin.v1.AnnounceRequest\x1a$.landflow.plugin.v1.AnnounceResponse\x12U\n" +
 	"\bWithdraw\x12#.landflow.plugin.v1.WithdrawRequest\x1a$.landflow.plugin.v1.WithdrawResponseB<Z:github.com/landflow/landflow/sdks/go/landflowpb;landflowpbb\x06proto3"
@@ -1604,7 +2156,7 @@ func file_landflow_plugin_v1_plugin_proto_rawDescGZIP() []byte {
 	return file_landflow_plugin_v1_plugin_proto_rawDescData
 }
 
-var file_landflow_plugin_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_landflow_plugin_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_landflow_plugin_v1_plugin_proto_goTypes = []any{
 	(*DynamicValue)(nil),            // 0: landflow.plugin.v1.DynamicValue
 	(*PluginInfo)(nil),              // 1: landflow.plugin.v1.PluginInfo
@@ -1623,12 +2175,21 @@ var file_landflow_plugin_v1_plugin_proto_goTypes = []any{
 	(*LoadOptionsResponse)(nil),     // 14: landflow.plugin.v1.LoadOptionsResponse
 	(*TestCredentialsRequest)(nil),  // 15: landflow.plugin.v1.TestCredentialsRequest
 	(*TestCredentialsResponse)(nil), // 16: landflow.plugin.v1.TestCredentialsResponse
-	(*HealthRequest)(nil),           // 17: landflow.plugin.v1.HealthRequest
-	(*HealthResponse)(nil),          // 18: landflow.plugin.v1.HealthResponse
-	(*AnnounceRequest)(nil),         // 19: landflow.plugin.v1.AnnounceRequest
-	(*AnnounceResponse)(nil),        // 20: landflow.plugin.v1.AnnounceResponse
-	(*WithdrawRequest)(nil),         // 21: landflow.plugin.v1.WithdrawRequest
-	(*WithdrawResponse)(nil),        // 22: landflow.plugin.v1.WithdrawResponse
+	(*WebhookMethodRequest)(nil),    // 17: landflow.plugin.v1.WebhookMethodRequest
+	(*WebhookMethodResponse)(nil),   // 18: landflow.plugin.v1.WebhookMethodResponse
+	(*IncomingWebhookRequest)(nil),  // 19: landflow.plugin.v1.IncomingWebhookRequest
+	(*ReceiveWebhookRequest)(nil),   // 20: landflow.plugin.v1.ReceiveWebhookRequest
+	(*WebhookReply)(nil),            // 21: landflow.plugin.v1.WebhookReply
+	(*ReceiveWebhookResponse)(nil),  // 22: landflow.plugin.v1.ReceiveWebhookResponse
+	(*HealthRequest)(nil),           // 23: landflow.plugin.v1.HealthRequest
+	(*HealthResponse)(nil),          // 24: landflow.plugin.v1.HealthResponse
+	(*AnnounceRequest)(nil),         // 25: landflow.plugin.v1.AnnounceRequest
+	(*AnnounceResponse)(nil),        // 26: landflow.plugin.v1.AnnounceResponse
+	(*WithdrawRequest)(nil),         // 27: landflow.plugin.v1.WithdrawRequest
+	(*WithdrawResponse)(nil),        // 28: landflow.plugin.v1.WithdrawResponse
+	nil,                             // 29: landflow.plugin.v1.IncomingWebhookRequest.HeadersEntry
+	nil,                             // 30: landflow.plugin.v1.IncomingWebhookRequest.QueryEntry
+	nil,                             // 31: landflow.plugin.v1.WebhookReply.HeadersEntry
 }
 var file_landflow_plugin_v1_plugin_proto_depIdxs = []int32{
 	1,  // 0: landflow.plugin.v1.GetManifestResponse.plugin:type_name -> landflow.plugin.v1.PluginInfo
@@ -1653,25 +2214,49 @@ var file_landflow_plugin_v1_plugin_proto_depIdxs = []int32{
 	0,  // 19: landflow.plugin.v1.LoadOptionsRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
 	0,  // 20: landflow.plugin.v1.LoadOptionsResponse.options:type_name -> landflow.plugin.v1.DynamicValue
 	0,  // 21: landflow.plugin.v1.TestCredentialsRequest.data:type_name -> landflow.plugin.v1.DynamicValue
-	2,  // 22: landflow.plugin.v1.PluginService.GetManifest:input_type -> landflow.plugin.v1.GetManifestRequest
-	9,  // 23: landflow.plugin.v1.PluginService.Execute:input_type -> landflow.plugin.v1.ExecuteRequest
-	13, // 24: landflow.plugin.v1.PluginService.LoadOptions:input_type -> landflow.plugin.v1.LoadOptionsRequest
-	17, // 25: landflow.plugin.v1.PluginService.Health:input_type -> landflow.plugin.v1.HealthRequest
-	15, // 26: landflow.plugin.v1.PluginService.TestCredentials:input_type -> landflow.plugin.v1.TestCredentialsRequest
-	19, // 27: landflow.plugin.v1.RegistryService.Announce:input_type -> landflow.plugin.v1.AnnounceRequest
-	21, // 28: landflow.plugin.v1.RegistryService.Withdraw:input_type -> landflow.plugin.v1.WithdrawRequest
-	3,  // 29: landflow.plugin.v1.PluginService.GetManifest:output_type -> landflow.plugin.v1.GetManifestResponse
-	12, // 30: landflow.plugin.v1.PluginService.Execute:output_type -> landflow.plugin.v1.ExecuteResponse
-	14, // 31: landflow.plugin.v1.PluginService.LoadOptions:output_type -> landflow.plugin.v1.LoadOptionsResponse
-	18, // 32: landflow.plugin.v1.PluginService.Health:output_type -> landflow.plugin.v1.HealthResponse
-	16, // 33: landflow.plugin.v1.PluginService.TestCredentials:output_type -> landflow.plugin.v1.TestCredentialsResponse
-	20, // 34: landflow.plugin.v1.RegistryService.Announce:output_type -> landflow.plugin.v1.AnnounceResponse
-	22, // 35: landflow.plugin.v1.RegistryService.Withdraw:output_type -> landflow.plugin.v1.WithdrawResponse
-	29, // [29:36] is the sub-list for method output_type
-	22, // [22:29] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	4,  // 22: landflow.plugin.v1.WebhookMethodRequest.node:type_name -> landflow.plugin.v1.NodeRef
+	0,  // 23: landflow.plugin.v1.WebhookMethodRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 24: landflow.plugin.v1.WebhookMethodRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 25: landflow.plugin.v1.WebhookMethodRequest.static_data:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 26: landflow.plugin.v1.WebhookMethodResponse.static_data:type_name -> landflow.plugin.v1.DynamicValue
+	10, // 27: landflow.plugin.v1.WebhookMethodResponse.logs:type_name -> landflow.plugin.v1.LogEntry
+	11, // 28: landflow.plugin.v1.WebhookMethodResponse.error:type_name -> landflow.plugin.v1.NodeError
+	29, // 29: landflow.plugin.v1.IncomingWebhookRequest.headers:type_name -> landflow.plugin.v1.IncomingWebhookRequest.HeadersEntry
+	30, // 30: landflow.plugin.v1.IncomingWebhookRequest.query:type_name -> landflow.plugin.v1.IncomingWebhookRequest.QueryEntry
+	4,  // 31: landflow.plugin.v1.ReceiveWebhookRequest.node:type_name -> landflow.plugin.v1.NodeRef
+	0,  // 32: landflow.plugin.v1.ReceiveWebhookRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 33: landflow.plugin.v1.ReceiveWebhookRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 34: landflow.plugin.v1.ReceiveWebhookRequest.static_data:type_name -> landflow.plugin.v1.DynamicValue
+	19, // 35: landflow.plugin.v1.ReceiveWebhookRequest.request:type_name -> landflow.plugin.v1.IncomingWebhookRequest
+	31, // 36: landflow.plugin.v1.WebhookReply.headers:type_name -> landflow.plugin.v1.WebhookReply.HeadersEntry
+	6,  // 37: landflow.plugin.v1.ReceiveWebhookResponse.items:type_name -> landflow.plugin.v1.Item
+	21, // 38: landflow.plugin.v1.ReceiveWebhookResponse.response:type_name -> landflow.plugin.v1.WebhookReply
+	0,  // 39: landflow.plugin.v1.ReceiveWebhookResponse.static_data:type_name -> landflow.plugin.v1.DynamicValue
+	10, // 40: landflow.plugin.v1.ReceiveWebhookResponse.logs:type_name -> landflow.plugin.v1.LogEntry
+	11, // 41: landflow.plugin.v1.ReceiveWebhookResponse.error:type_name -> landflow.plugin.v1.NodeError
+	2,  // 42: landflow.plugin.v1.PluginService.GetManifest:input_type -> landflow.plugin.v1.GetManifestRequest
+	9,  // 43: landflow.plugin.v1.PluginService.Execute:input_type -> landflow.plugin.v1.ExecuteRequest
+	13, // 44: landflow.plugin.v1.PluginService.LoadOptions:input_type -> landflow.plugin.v1.LoadOptionsRequest
+	23, // 45: landflow.plugin.v1.PluginService.Health:input_type -> landflow.plugin.v1.HealthRequest
+	15, // 46: landflow.plugin.v1.PluginService.TestCredentials:input_type -> landflow.plugin.v1.TestCredentialsRequest
+	17, // 47: landflow.plugin.v1.PluginService.WebhookMethod:input_type -> landflow.plugin.v1.WebhookMethodRequest
+	20, // 48: landflow.plugin.v1.PluginService.ReceiveWebhook:input_type -> landflow.plugin.v1.ReceiveWebhookRequest
+	25, // 49: landflow.plugin.v1.RegistryService.Announce:input_type -> landflow.plugin.v1.AnnounceRequest
+	27, // 50: landflow.plugin.v1.RegistryService.Withdraw:input_type -> landflow.plugin.v1.WithdrawRequest
+	3,  // 51: landflow.plugin.v1.PluginService.GetManifest:output_type -> landflow.plugin.v1.GetManifestResponse
+	12, // 52: landflow.plugin.v1.PluginService.Execute:output_type -> landflow.plugin.v1.ExecuteResponse
+	14, // 53: landflow.plugin.v1.PluginService.LoadOptions:output_type -> landflow.plugin.v1.LoadOptionsResponse
+	24, // 54: landflow.plugin.v1.PluginService.Health:output_type -> landflow.plugin.v1.HealthResponse
+	16, // 55: landflow.plugin.v1.PluginService.TestCredentials:output_type -> landflow.plugin.v1.TestCredentialsResponse
+	18, // 56: landflow.plugin.v1.PluginService.WebhookMethod:output_type -> landflow.plugin.v1.WebhookMethodResponse
+	22, // 57: landflow.plugin.v1.PluginService.ReceiveWebhook:output_type -> landflow.plugin.v1.ReceiveWebhookResponse
+	26, // 58: landflow.plugin.v1.RegistryService.Announce:output_type -> landflow.plugin.v1.AnnounceResponse
+	28, // 59: landflow.plugin.v1.RegistryService.Withdraw:output_type -> landflow.plugin.v1.WithdrawResponse
+	51, // [51:60] is the sub-list for method output_type
+	42, // [42:51] is the sub-list for method input_type
+	42, // [42:42] is the sub-list for extension type_name
+	42, // [42:42] is the sub-list for extension extendee
+	0,  // [0:42] is the sub-list for field type_name
 }
 
 func init() { file_landflow_plugin_v1_plugin_proto_init() }
@@ -1685,7 +2270,7 @@ func file_landflow_plugin_v1_plugin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_landflow_plugin_v1_plugin_proto_rawDesc), len(file_landflow_plugin_v1_plugin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

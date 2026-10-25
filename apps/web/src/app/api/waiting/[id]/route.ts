@@ -28,6 +28,11 @@ async function handle(request: Request, { params }: Ctx) {
     recordWebhookRequest(409, record.workflowId);
     return error(wait.resume === 'form' ? `This execution waits for a form submission at /form/waiting/${id}` : 'This execution does not wait for a webhook call', 409);
   }
+  // An AI Agent's tool approval is decided through the approvals route (signed in) or Slack, not by anyone with the resume URL.
+  if (wait.data?.approval) {
+    recordWebhookRequest(409, record.workflowId);
+    return error(`This execution waits for a tool approval: decide it in the editor, the execution view or POST /api/executions/${id}/approvals`, 409);
+  }
   if (wait.method && wait.method !== method) {
     recordWebhookRequest(405, record.workflowId);
     return error(`This execution waits for a ${wait.method} request`, 405, { allow: wait.method });

@@ -120,7 +120,8 @@
               "webhook",
               "schedule",
               "chat",
-              "poll"
+              "poll",
+              "appWebhook"
             ]
           },
           "categories": {
@@ -430,6 +431,13 @@
           },
           "testable": {
             "type": "boolean"
+          },
+          "extends": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         "required": [

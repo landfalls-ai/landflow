@@ -1,19 +1,76 @@
 'use client';
-/** Build tab → Triggers: schedules that message the agent, and chat channels it answers in. */
-import { useMemo, useState, type KeyboardEvent } from 'react';
-import { Clock, Info, Pencil, Plus, Send, Trash2, X, Zap } from 'lucide-react';
+/** Build tab → Triggers: schedules that message the agent, and chat channels it answers in (Telegram, Slack). */
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { Clock, Hash, Info, Pencil, Plus, Send, Trash2, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AgentChannel, AgentConfig, AgentSchedule, ScheduleFrequency } from '@/lib/shared/agents';
 import { CredentialDialog } from '../credentials/credential-dialog';
 import { useCredentials } from '../credentials/use-credentials';
 import { Badge, Chip } from '../ui/badge';
 import { Button } from '../ui/button';
+import { CopyButton } from '../ui/copy-button';
 import { Input, Select, Switch, Textarea } from '../ui/inputs';
 import { Dialog, Field, ItemRow, Section, ToggleRow } from './dialog';
 import { describeSchedule, localTimezone, newId, timezones, WEEKDAYS, type UpdateConfig } from './util';
 
 const TELEGRAM = 'messaging.telegramApi';
+const SLACK = 'messaging.slackApi';
 const CREATE = '__create__';
+
+type ChannelType = AgentChannel['type'];
+
+/** What differs between the channel types in the dialog and the list. */
+const CHANNEL_TEXT: Record<ChannelType, { name: string; subtitle: string; bot: string; noCredential: string; publicHint: string; usersHint: string; usersMissing: string; placeholder: string }> = {
+  telegram: {
+    name: 'Telegram',
+    subtitle: 'The published agent answers messages sent to your Telegram bot.',
+    bot: 'Telegram bot',
+    noCredential: 'Create a Telegram API credential with your bot token from @BotFather.',
+    publicHint: 'Anyone who finds the bot',
+    usersHint: 'Telegram usernames or numeric user ids.',
+    usersMissing: 'Add at least one Telegram username or user id.',
+    placeholder: '@username or user id, then Enter',
+  },
+  slack: {
+    name: 'Slack',
+    subtitle: 'The published agent answers when it is mentioned in a channel or sent a direct message, in the message’s thread.',
+    bot: 'Slack app',
+    noCredential: 'Create a Slack API credential with the bot token (xoxb-…) and the app’s Signing Secret.',
+    publicHint: 'Anyone in the workspace who can reach the app',
+    usersHint: 'Slack member ids (U…, from a profile’s “Copy member ID”).',
+    usersMissing: 'Add at least one Slack member id.',
+    placeholder: 'Member id (U0123ABC), then Enter',
+  },
+};
+
+/** The two URLs a Slack app needs (Event Subscriptions and Interactivity). */
+function SlackUrls({ agentId, channelId }: { agentId: string; channelId: string }) {
+  const [origin, setOrigin] = useState('');
+  useEffect(() => setOrigin(window.location.origin), []);
+  const row = (label: string, url: string, hint: string) => (
+    <div>
+      <div className="text-[12px] font-semibold text-t2">{label}</div>
+      <div className="mt-1 flex items-center gap-1 rounded-[10px] border border-hair bg-wl py-1 pl-2.5 pr-1">
+        <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-t1" title={url}>
+          {url}
+        </code>
+        <CopyButton text={url} label={`Copy ${label}`} />
+      </div>
+      <p className="mt-1 text-[12px] leading-snug text-t3">{hint}</p>
+    </div>
+  );
+  return (
+    <div className="space-y-3 rounded-xl border border-hair bg-sf2 px-3 py-3">
+      {row('Event Subscriptions → Request URL', `${origin}/api/slack/events/${agentId}/${channelId}`, 'Subscribe to the bot events app_mention and message.im.')}
+      {row('Interactivity → Request URL', `${origin}/api/slack/interactions`, 'For the Approve / Reject buttons of tools that need approval.')}
+      <p className="flex items-start gap-1.5 text-[12px] leading-snug text-t3">
+        <Info className="mt-0.5 size-3 shrink-0" />
+        Slack checks the Request URL right away: save and publish the agent first. Landflow verifies every request with the credential’s Signing Secret and refuses
+        requests without one. Bot scopes: app_mentions:read, chat:write, im:history.
+      </p>
+    </div>
+  );
+}
 
 const FREQUENCIES: Array<{ value: ScheduleFrequency; label: string }> = [
   { value: 'hourly', label: 'Hourly' },
@@ -182,7 +239,7 @@ function ScheduleDialog({ schedule, onSave, onClose }: { schedule?: AgentSchedul
   );
 }
 
-function UsersInput({ id, value, onChange }: { id: string; value: string[]; onChange: (users: string[]) => void }) {
+function UsersInput({ id, value, onChange, placeholder = '@username or user id, then Enter' }: { id: string; value: string[]; onChange: (users: string[]) => void; placeholder?: string }) {
   const [text, setText] = useState('');
   const add = () => {
     const users = text
@@ -219,16 +276,31 @@ function UsersInput({ id, value, onChange }: { id: string; value: string[]; onCh
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKey}
         onBlur={add}
-        placeholder={value.length ? '' : '@username or user id, then Enter'}
+        placeholder={value.length ? '' : placeholder}
         className="min-w-[140px] flex-1 bg-transparent px-1 text-[13px] text-t1 outline-none placeholder:text-t3"
       />
     </div>
   );
 }
 
-function ChannelDialog({ channel, onSave, onClose }: { channel?: AgentChannel; onSave: (c: AgentChannel) => void; onClose: () => void }) {
+function ChannelDialog({
+  channel,
+  type: newType = 'telegram',
+  agentId,
+  onSave,
+  onClose,
+}: {
+  channel?: AgentChannel;
+  type?: ChannelType;
+  agentId?: string;
+  onSave: (c: AgentChannel) => void;
+  onClose: () => void;
+}) {
+  const type = channel?.type ?? newType;
+  const text = CHANNEL_TEXT[type];
+  const credentialType = type === 'slack' ? SLACK : TELEGRAM;
   const { credentials } = useCredentials();
-  const options = (credentials ?? []).filter((c) => c.type === TELEGRAM);
+  const options = (credentials ?? []).filter((c) => c.type === credentialType);
   const [value, setValue] = useState<
     Omit<AgentChannel, 'credential'> & {
       credential?: AgentChannel['credential'];
@@ -236,11 +308,13 @@ function ChannelDialog({ channel, onSave, onClose }: { channel?: AgentChannel; o
   >(
     channel ?? {
       id: newId('chan'),
-      type: 'telegram',
+      type,
       access: 'private',
       allowedUsers: [],
-      newSessionAfterMinutes: 60,
+      // Slack threads are sessions of their own.
+      newSessionAfterMinutes: type === 'slack' ? 0 : 60,
       enabled: true,
+      ...(type === 'slack' && { threadReplies: true }),
     },
   );
   const [creating, setCreating] = useState(false);
@@ -250,11 +324,11 @@ function ChannelDialog({ channel, onSave, onClose }: { channel?: AgentChannel; o
 
   return (
     <Dialog
-      title={channel ? 'Edit Telegram channel' : 'Add Telegram channel'}
-      subtitle="The published agent answers messages sent to your Telegram bot."
+      title={`${channel ? 'Edit' : 'Add'} ${text.name} channel`}
+      subtitle={text.subtitle}
       icon={
         <span className="grid size-8 place-items-center rounded-[10px] border border-hair bg-wl text-t2">
-          <Send className="size-4" />
+          {type === 'slack' ? <Hash className="size-4" /> : <Send className="size-4" />}
         </span>
       }
       onClose={onClose}
@@ -282,12 +356,7 @@ function ChannelDialog({ channel, onSave, onClose }: { channel?: AgentChannel; o
       }
     >
       <div className="space-y-4">
-        <Field
-          id="channel-credential"
-          label="Telegram bot"
-          required
-          hint={!options.length ? 'Create a Telegram API credential with your bot token from @BotFather.' : undefined}
-        >
+        <Field id="channel-credential" label={text.bot} required hint={!options.length ? text.noCredential : undefined}>
           <Select
             id="channel-credential"
             value={credential?.id ?? ''}
@@ -323,7 +392,7 @@ function ChannelDialog({ channel, onSave, onClose }: { channel?: AgentChannel; o
                 {
                   value: 'public',
                   title: 'Public',
-                  description: 'Anyone who finds the bot',
+                  description: text.publicHint,
                 },
               ] as const
             ).map((option) => (
@@ -349,19 +418,19 @@ function ChannelDialog({ channel, onSave, onClose }: { channel?: AgentChannel; o
           label="Allowed users"
           required={value.access === 'private'}
           hint={
-            value.access === 'private' && !value.allowedUsers.length ? (
-              <span className="text-warn">Add at least one Telegram username or user id.</span>
-            ) : (
-              'Telegram usernames or numeric user ids.'
-            )
+            value.access === 'private' && !value.allowedUsers.length ? <span className="text-warn">{text.usersMissing}</span> : text.usersHint
           }
         >
-          <UsersInput id="channel-users" value={value.allowedUsers} onChange={(allowedUsers) => set({ allowedUsers })} />
+          <UsersInput id="channel-users" value={value.allowedUsers} onChange={(allowedUsers) => set({ allowedUsers })} placeholder={text.placeholder} />
         </Field>
         <Field
           id="channel-idle"
           label="Start a new session after"
-          hint="Minutes without messages before the conversation starts fresh. 0 keeps one session forever."
+          hint={
+            type === 'slack'
+              ? 'Each thread is a session. With “Reply in thread” off, minutes without messages before a channel’s conversation starts fresh; 0 never.'
+              : 'Minutes without messages before the conversation starts fresh. 0 keeps one session forever.'
+          }
         >
           <div className="flex items-center gap-2">
             <Input
@@ -375,18 +444,27 @@ function ChannelDialog({ channel, onSave, onClose }: { channel?: AgentChannel; o
             <span className="text-[13px] text-t2">idle minutes</span>
           </div>
         </Field>
+        {type === 'slack' && (
+          <ToggleRow
+            title="Reply in thread"
+            description="Answer under the message that asked (each thread is its own session); off: answer in the channel."
+            checked={value.threadReplies !== false}
+            onChange={(threadReplies) => set({ threadReplies })}
+          />
+        )}
         <ToggleRow title="Enabled" description="A disabled channel ignores new messages." checked={value.enabled} onChange={(enabled) => set({ enabled })} />
+        {type === 'slack' && agentId && <SlackUrls agentId={agentId} channelId={value.id} />}
       </div>
       {creating && (
-        <CredentialDialog allowedTypes={[TELEGRAM]} onClose={() => setCreating(false)} onSaved={(c) => set({ credential: { id: c.id, name: c.name } })} />
+        <CredentialDialog allowedTypes={[credentialType]} onClose={() => setCreating(false)} onSaved={(c) => set({ credential: { id: c.id, name: c.name } })} />
       )}
     </Dialog>
   );
 }
 
-export function TriggersCard({ config, update, published }: { config: AgentConfig; update: UpdateConfig; published: boolean }) {
+export function TriggersCard({ config, update, published, agentId }: { config: AgentConfig; update: UpdateConfig; published: boolean; agentId?: string }) {
   const [schedule, setSchedule] = useState<{ schedule?: AgentSchedule } | null>(null);
-  const [channel, setChannel] = useState<{ channel?: AgentChannel } | null>(null);
+  const [channel, setChannel] = useState<{ channel?: AgentChannel; type?: ChannelType } | null>(null);
 
   const upsert = <K extends 'schedules' | 'channels'>(key: K, item: AgentConfig[K][number]) =>
     update((c) => {
@@ -419,8 +497,11 @@ export function TriggersCard({ config, update, published }: { config: AgentConfi
           <Button size="sm" variant="outline" onClick={() => setSchedule({})}>
             <Clock className="size-3.5" /> Add schedule
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setChannel({})}>
+          <Button size="sm" variant="outline" onClick={() => setChannel({ type: 'telegram' })}>
             <Send className="size-3.5" /> Add Telegram
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setChannel({ type: 'slack' })}>
+            <Hash className="size-3.5" /> Add Slack
           </Button>
         </>
       }
@@ -468,12 +549,18 @@ export function TriggersCard({ config, update, published }: { config: AgentConfi
           <ItemRow
             key={ch.id}
             icon={
-              <span className="grid size-8 shrink-0 place-items-center rounded-[10px] border border-hair bg-sf text-[#229ED9]">
-                <Send className="size-3.5" />
+              <span className={cn('grid size-8 shrink-0 place-items-center rounded-[10px] border border-hair bg-sf', ch.type === 'slack' ? 'text-[#E01E5A]' : 'text-[#229ED9]')}>
+                {ch.type === 'slack' ? <Hash className="size-3.5" /> : <Send className="size-3.5" />}
               </span>
             }
-            title={`Telegram · ${ch.credential.name}`}
-            subtitle={`${ch.access === 'private' ? `Private, ${ch.allowedUsers.length} ${ch.allowedUsers.length === 1 ? 'user' : 'users'}` : 'Public'} · ${ch.newSessionAfterMinutes ? `new session after ${ch.newSessionAfterMinutes} idle min` : 'one session per chat'}`}
+            title={`${CHANNEL_TEXT[ch.type]?.name ?? ch.type} · ${ch.credential.name}`}
+            subtitle={`${ch.access === 'private' ? `Private, ${ch.allowedUsers.length} ${ch.allowedUsers.length === 1 ? 'user' : 'users'}` : 'Public'} · ${
+              ch.type === 'slack' && ch.threadReplies !== false
+                ? 'a session per thread'
+                : ch.newSessionAfterMinutes
+                  ? `new session after ${ch.newSessionAfterMinutes} idle min`
+                  : 'one session per chat'
+            }`}
             badges={!ch.enabled ? <Badge tone="muted">Off</Badge> : undefined}
             onClick={() => setChannel({ channel: ch })}
             actions={
@@ -505,10 +592,16 @@ export function TriggersCard({ config, update, published }: { config: AgentConfi
               <Plus className="size-3.5" /> Run on a schedule
             </button>
             <button
-              onClick={() => setChannel({})}
+              onClick={() => setChannel({ type: 'telegram' })}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-bd py-2.5 text-[12px] text-t2 transition-colors hover:border-ac hover:text-ac"
             >
               <Plus className="size-3.5" /> Chat on Telegram
+            </button>
+            <button
+              onClick={() => setChannel({ type: 'slack' })}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-bd py-2.5 text-[12px] text-t2 transition-colors hover:border-ac hover:text-ac"
+            >
+              <Plus className="size-3.5" /> Chat in Slack
             </button>
           </div>
         )}
@@ -526,6 +619,8 @@ export function TriggersCard({ config, update, published }: { config: AgentConfi
       {channel && (
         <ChannelDialog
           channel={channel.channel}
+          type={channel.type}
+          agentId={agentId}
           onClose={() => setChannel(null)}
           onSave={(c) => {
             upsert('channels', c);

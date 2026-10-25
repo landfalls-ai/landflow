@@ -17,7 +17,7 @@ import { executeWorkflow, type ToolSpec, type Workflow, type WorkflowNode } from
 import { credentials } from '../credentials/vault';
 import { registry } from '../plugins/registry';
 import { runWorkflow } from '../runner';
-import { store } from '../store';
+import { productionWorkflows } from '../publish';
 import { startTrigger } from '../telemetry';
 import { variables } from '../variables';
 import { bearerToken, jsonRpcError, MCP_SERVER_VERSION, sameSecret, serveMcp, textResult, unauthorized } from './server';
@@ -31,10 +31,9 @@ export function mcpTriggerPath(node: Pick<WorkflowNode, 'parameters'>): string {
     .replace(/^\/+|\/+$/g, '');
 }
 
-/** The active workflow whose (enabled) MCP Server Trigger has this path. */
+/** The published workflow (its published version) whose (enabled) MCP Server Trigger has this path. */
 export function findMcpTrigger(path: string): { workflow: Workflow; node: WorkflowNode } | undefined {
-  for (const workflow of store.listWorkflows()) {
-    if (!workflow.active) continue;
+  for (const workflow of productionWorkflows()) {
     const node = workflow.nodes.find((n) => !n.disabled && n.type === MCP_TRIGGER && mcpTriggerPath(n) === path);
     if (node) return { workflow, node };
   }

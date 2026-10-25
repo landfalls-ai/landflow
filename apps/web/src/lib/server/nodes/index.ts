@@ -7,10 +7,13 @@ import { definePlugin } from '@landflow/sdk';
 import { messageAgentNode, workflowTrigger } from './agents';
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
-import { anthropicApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, openAiApiCredential } from './credentials';
+import { anthropicApiCredential, httpBasicAuthCredential, httpBearerAuthCredential, httpHeaderAuthCredential, jwtAuthCredential, openAiApiCredential } from './credentials';
+import { oAuth2ApiCredential } from './oauth2-credential';
 import { codeNode, httpRequestNode, setNode } from './data';
 import { dataTableNode } from './datatable';
 import { dateTimeNode } from './datetime';
+import { emailReadImapNode, imapCredential } from './email-imap';
+import { evaluationNode, evaluationTrigger } from './evaluation';
 import { convertToFileNode, extractFromFileNode, readWriteFileNode } from './files';
 import { filterNode, ifNode, limitNode, mergeNode, noOpNode, respondToWebhookNode, sortNode, splitInBatchesNode, stopAndErrorNode, switchNode, waitNode } from './flow';
 import { formNode, formTrigger } from './forms';
@@ -47,6 +50,7 @@ export const corePlugin = definePlugin({
     webhookTrigger,
     chatTrigger,
     scheduleTrigger,
+    emailReadImapNode,
     workflowTrigger,
     formTrigger,
     errorTrigger,
@@ -102,6 +106,8 @@ export const corePlugin = definePlugin({
     llmRerankerNode,
     retrievalQaChainNode,
     guardrailsNode,
+    evaluationTrigger,
+    evaluationNode,
   ],
-  credentialTypes: [openAiApiCredential, anthropicApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential],
+  credentialTypes: [openAiApiCredential, anthropicApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential],
 });

@@ -4,7 +4,7 @@
  * search by name, a tag filter and sorting. Searching or filtering looks in
  * every folder and shows where each match lives. Workflows move to folders
  * from their menu or by dragging them onto a folder or a breadcrumb step;
- * Import creates a workflow from a Landflow or n8n JSON file.
+ * Import creates a workflow from a Landflow, n8n or Flowise JSON file.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import Link from 'next/link';
@@ -276,7 +276,7 @@ function WorkflowRow({
               {tag}
             </Badge>
           ))}
-          {workflow.active && <Badge tone="success">Active</Badge>}
+          {workflow.active && <Badge tone="success">Published</Badge>}
           <span className="hidden w-16 text-right text-[12px] text-t3 sm:inline">
             {workflow.nodeCount} {workflow.nodeCount === 1 ? 'node' : 'nodes'}
           </span>
@@ -502,7 +502,7 @@ export function WorkflowsList() {
         meta={count !== undefined && <span>{searching ? `${count} found` : count}</span>}
         actions={
           <>
-            <Button size="sm" variant="ghost" onClick={() => picker.current?.click()} loading={importing} title="Create a workflow from a Landflow or n8n JSON file">
+            <Button size="sm" variant="ghost" onClick={() => picker.current?.click()} loading={importing} title="Create a workflow from a Landflow, n8n or Flowise JSON file">
               {!importing && <FileUp className="size-3.5" />} Import
             </Button>
             <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })}>
@@ -617,7 +617,7 @@ export function WorkflowsList() {
           <Card>
             <EmptyState
               title="No workflows yet"
-              hint="Chain built-in nodes with plugins written in any language. Every node, local or remote, implements the same interface. You can also import a workflow from n8n."
+              hint="Chain built-in nodes with plugins written in any language. Every node, local or remote, implements the same interface. You can also import a workflow from n8n or Flowise."
               action={
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => picker.current?.click()}>

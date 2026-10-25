@@ -231,7 +231,7 @@ describe('n8n import', () => {
   });
 
   it('turns unknown nodes into disabled No Operation placeholders', () => {
-    for (const name of ['Facebook Graph API', 'Docs store', 'Embeddings']) {
+    for (const name of ['Facebook Graph API']) {
       const placeholder = node(name);
       expect(placeholder.type).toBe('core.noOp');
       expect(placeholder.disabled).toBe(true);
@@ -239,11 +239,7 @@ describe('n8n import', () => {
     }
     expect(node('Facebook Graph API').notes).toContain('n8n-nodes-base.facebookGraphApi');
     expect(node('Facebook Graph API').notes).toContain('graphApiVersion');
-    expect(report.placeholders).toEqual([
-      { name: 'Facebook Graph API', type: 'n8n-nodes-base.facebookGraphApi' },
-      { name: 'Docs store', type: '@n8n/n8n-nodes-langchain.vectorStoreInMemory' },
-      { name: 'Embeddings', type: '@n8n/n8n-nodes-langchain.embeddingsOpenAi' },
-    ]);
+    expect(report.placeholders).toEqual([{ name: 'Facebook Graph API', type: 'n8n-nodes-base.facebookGraphApi' }]);
     // A placeholder in the main flow keeps its connection.
     expect(edge('Google Sheets', 'Facebook Graph API')).toHaveLength(1);
   });
@@ -261,10 +257,10 @@ describe('n8n import', () => {
     expect(edge('Window Buffer Memory', 'AI Agent')).toMatchObject([{ type: 'ai_memory' }]);
     expect(edge('Calculator', 'AI Agent')).toMatchObject([{ type: 'ai_tool' }]);
     expect(edge('Company lookup', 'AI Agent')).toMatchObject([{ type: 'ai_tool' }]);
-    expect(edge('Docs store', 'AI Agent')).toHaveLength(0);
-    expect(edge('Embeddings', 'Docs store')).toHaveLength(0);
-    expect(report.warnings).toContain('Connection Docs store → AI Agent (ai_tool) dropped: placeholders can\'t be sub-nodes.');
-    expect(report.warnings).toContain('Connection Embeddings → Docs store (ai_embedding) dropped: Landflow has no embedding sub-nodes yet.');
+    // RAG sub-nodes: the vector store is the agent's tool, fed by the embeddings.
+    expect(edge('Docs store', 'AI Agent')).toMatchObject([{ type: 'ai_tool' }]);
+    expect(edge('Embeddings', 'Docs store')).toMatchObject([{ type: 'ai_embedding' }]);
+    expect(node('Docs store')).toMatchObject({ type: 'core.vectorStoreInMemory', parameters: { mode: 'retrieve-as-tool', toolName: 'docs', collection: 'vector_store_key' } });
     expect(report.connections).toBe(workflow.connections.length);
     expect(workflow.connections.every((c) => /^e_/.test(c.id))).toBe(true);
   });
@@ -490,9 +486,9 @@ describe('n8n import: triggers, waits, forms and sub-workflows', () => {
 
   it('maps the Webhook’s response modes and warns about response settings it lacks', () => {
     const responseNode = importNode('webhook', { httpMethod: 'POST', path: 'orders', responseMode: 'responseNode', options: {} }, { typeVersion: 2 });
-    expect(responseNode.node.parameters).toEqual({ path: 'orders', method: 'POST', respond: 'responseNode', options: {} });
+    expect(responseNode.node.parameters).toEqual({ path: 'orders', authentication: 'none', method: 'POST', respond: 'responseNode', options: {} });
     expect(responseNode.warnings).toEqual([]);
-    expect(importNode('webhook', { path: 'ping' }).node.parameters).toEqual({ path: 'ping', method: 'GET', respond: 'immediately', options: {} });
+    expect(importNode('webhook', { path: 'ping' }).node.parameters).toEqual({ path: 'ping', authentication: 'none', method: 'GET', respond: 'immediately', options: {} });
     const lastNode = importNode('webhook', {
       path: 'report',
       httpMethod: 'HEAD',
@@ -502,13 +498,12 @@ describe('n8n import: triggers, waits, forms and sub-workflows', () => {
       authentication: 'basicAuth',
       options: { rawBody: true, ipWhitelist: '10.0.0.1' },
     });
-    expect(lastNode.node.parameters).toEqual({ path: 'report', method: 'GET', respond: 'lastNode', options: { rawBody: true } });
+    // Basic Auth and the IP allow-list come along (the credential is chosen again).
+    expect(lastNode.node.parameters).toEqual({ path: 'report', authentication: 'basicAuth', method: 'GET', respond: 'lastNode', options: { rawBody: true, ipWhitelist: '10.0.0.1' } });
     expect(lastNode.warnings).toEqual([
       'Node: Landflow webhooks don\'t take HEAD requests; it listens for GET.',
       'Node: the response code 201 isn\'t available here; use a Respond to Webhook node to set it.',
       'Node: responding with “allEntries” isn\'t available; the last node\'s output is sent as JSON (one item as an object, several as an array).',
-      'Node: the option “ipWhitelist” has no Landflow equivalent and was dropped.',
-      'Node: Landflow webhooks have no basicAuth authentication; anyone with the URL can call it.',
     ]);
     // Without Respond to Webhook the caller would wait for the whole run.
     const withoutRespond = (type: string) => (type === 'core.respondToWebhook' ? undefined : resolveType(type));
@@ -829,5 +824,295 @@ describe('n8n import: MCP nodes', () => {
     expect(v1.parameters).not.toHaveProperty('sseEndpoint');
     expect(v11).toMatchObject({ type: 'core.mcpClientTool', parameters: { endpointUrl: 'http://localhost:9000/mcp', serverTransport: 'httpStreamable' } });
     expect(trigger).toMatchObject({ type: 'core.mcpTrigger', parameters: { path: 'tools', authentication: 'bearerAuth' } });
+  });
+});
+
+describe('n8n import: RAG, guardrails, Python, Cron, workflow tools and evaluations', () => {
+  const L = '@n8n/n8n-nodes-langchain.';
+  /** n8n nodes ([name, type, parameters, typeVersion]) and connections ([from, to, type]) imported against the core descriptors. */
+  const importDoc = (nodes: Array<[string, string, Record<string, unknown>, number?]>, edges: Array<[string, string, string]> = []) => {
+    const connections: Record<string, Record<string, Array<Array<{ node: string; type: string; index: number }>>>> = {};
+    for (const [from, to, type] of edges) ((connections[from] ??= {})[type] ??= [[]])[0].push({ node: to, type, index: 0 });
+    const { workflow, report } = importWorkflowJson(
+      { nodes: nodes.map(([name, type, parameters, typeVersion], i) => ({ name, type, parameters, typeVersion: typeVersion ?? 1, position: [i * 200, 0] })), connections },
+      { resolveType },
+    );
+    const parsed = workflowSchema.safeParse(workflow);
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+    const node = (name: string) => workflow.nodes.find((n) => n.name === name)!;
+    const edge = (from: string, to: string) => workflow.connections.filter((c) => c.source === node(from)?.id && c.target === node(to)?.id);
+    return { workflow, report, node, edge };
+  };
+
+  it('maps a RAG ingestion pipeline: loader, splitters, embeddings and the in-memory store', () => {
+    const { node, edge, report } = importDoc(
+      [
+        ['Start', 'n8n-nodes-base.manualTrigger', {}],
+        ['Store', `${L}vectorStoreInMemory`, { mode: 'insert', memoryKey: { __rl: true, value: 'kb', mode: 'list' }, clearStore: true }, 1.1],
+        ['Loader', `${L}documentDefaultDataLoader`, { jsonMode: 'expressionData', jsonData: '={{ $json.text }}', textSplittingMode: 'custom', options: { metadata: { metadataValues: [{ name: 'source', value: '={{ $json.url }}' }] } } }, 1.1],
+        ['Splitter', `${L}textSplitterRecursiveCharacterTextSplitter`, { chunkSize: 400, chunkOverlap: 40, options: { splitCode: 'markdown' } }],
+        ['Embeddings', `${L}embeddingsOllama`, { model: 'mxbai-embed-large' }],
+      ],
+      [
+        ['Start', 'Store', 'main'],
+        ['Loader', 'Store', 'ai_document'],
+        ['Splitter', 'Loader', 'ai_textSplitter'],
+        ['Embeddings', 'Store', 'ai_embedding'],
+      ],
+    );
+    expect(node('Store')).toMatchObject({ type: 'core.vectorStoreInMemory', parameters: { mode: 'insert', collection: 'kb', clearStore: true } });
+    expect(node('Loader')).toMatchObject({
+      type: 'core.documentDefaultDataLoader',
+      parameters: { jsonMode: 'expressionData', jsonData: '{{ $json.text }}', textSplittingMode: 'custom', options: { metadata: { metadataValues: [{ name: 'source', value: '{{ $json.url }}' }] } } },
+    });
+    expect(node('Splitter')).toMatchObject({ type: 'core.textSplitterRecursiveCharacterTextSplitter', parameters: { chunkSize: 400, chunkOverlap: 40, options: { splitCode: 'markdown' } } });
+    expect(node('Embeddings')).toMatchObject({ type: 'core.embeddingsOllama', parameters: { model: 'mxbai-embed-large' } });
+    expect(edge('Loader', 'Store')).toMatchObject([{ type: 'ai_document' }]);
+    expect(edge('Splitter', 'Loader')).toMatchObject([{ type: 'ai_textSplitter' }]);
+    expect(edge('Embeddings', 'Store')).toMatchObject([{ type: 'ai_embedding' }]);
+    expect(edge('Start', 'Store')).toMatchObject([{ type: 'main' }]);
+    expect(report.placeholders).toEqual([]);
+    expect(report.warnings).toContain('Embeddings: set the Ollama base URL on the node; n8n kept it in the Ollama credential.');
+  });
+
+  it('maps token and character splitters, OpenAI embeddings and a v1 loader (which always took a splitter)', () => {
+    const { node } = importDoc([
+      ['Tokens', `${L}textSplitterTokenSplitter`, { chunkSize: 256 }],
+      ['Chars', `${L}textSplitterCharacterTextSplitter`, { separator: '\n---\n', chunkSize: 500 }],
+      ['OpenAI', `${L}embeddingsOpenAi`, { model: 'text-embedding-3-large', options: { dimensions: 1024, stripNewLines: true } }],
+      ['Loader v1', `${L}documentDefaultDataLoader`, {}, 1],
+      ['Loader binary', `${L}documentDefaultDataLoader`, { dataType: 'binary' }, 1.1],
+    ]);
+    expect(node('Tokens')).toMatchObject({ type: 'core.textSplitterTokenSplitter', parameters: { chunkSize: 256, chunkOverlap: 0 } });
+    expect(node('Chars')).toMatchObject({ type: 'core.textSplitterRecursiveCharacterTextSplitter', parameters: { chunkSize: 500, options: { separators: '["\\n---\\n",""]' } } });
+    expect(node('OpenAI').parameters).toMatchObject({ model: 'text-embedding-3-large', options: { dimensions: 1024 } });
+    expect(node('OpenAI').parameters.options).not.toHaveProperty('stripNewLines');
+    expect(node('Loader v1').parameters).toMatchObject({ jsonMode: 'allInputData', textSplittingMode: 'custom' });
+    expect(node('Loader binary').parameters).toMatchObject({ textSplittingMode: 'simple' });
+  });
+
+  it('maps PGVector in its modes, and the retrieval QA chain on a retriever', () => {
+    const { node, edge, report } = importDoc(
+      [
+        ['Chat', `${L}chatTrigger`, {}],
+        ['QA', `${L}chainRetrievalQa`, { promptType: 'define', text: '={{ $json.chatInput }} (answer briefly)', options: { systemPromptTemplate: 'Use {context}' } }, 1.5],
+        ['Model', `${L}lmChatOllama`, { model: 'qwen3-coder:30b' }],
+        ['PG', `${L}vectorStorePGVector`, { mode: 'retrieve', tableName: 'docs', topK: 6, options: { collection: { values: { useCollection: true, collectionName: 'handbook' } }, distanceStrategy: 'innerProduct' } }, 1.1],
+        ['Embed', `${L}embeddingsOpenAi`, {}],
+        ['PG load', `${L}vectorStorePGVector`, { mode: 'load', prompt: '={{ $json.q }}' }, 1.1],
+        ['PG update', `${L}vectorStorePGVector`, { mode: 'update' }, 1.1],
+      ],
+      [
+        ['Chat', 'QA', 'main'],
+        ['Model', 'QA', 'ai_languageModel'],
+        ['PG', 'QA', 'ai_retriever'],
+        ['Embed', 'PG', 'ai_embedding'],
+      ],
+    );
+    expect(node('QA')).toMatchObject({ type: 'core.chainRetrievalQa', parameters: { query: '{{ $json.chatInput }} (answer briefly)', options: { systemPromptTemplate: 'Use {context}' } } });
+    expect(node('PG')).toMatchObject({ type: 'core.vectorStorePGVector', parameters: { mode: 'retrieve', tableName: 'docs', collection: 'handbook', topK: 6 } });
+    expect(edge('PG', 'QA')).toMatchObject([{ type: 'ai_retriever' }]);
+    expect(edge('Model', 'QA')).toMatchObject([{ type: 'ai_languageModel' }]);
+    expect(node('PG load').parameters).toMatchObject({ mode: 'load', prompt: '{{ $json.q }}', tableName: 'n8n_vectors', collection: 'landflow' });
+    expect(node('PG update').parameters).toMatchObject({ mode: 'insert' });
+    expect(report.warnings).toContain('PG: Landflow searches by cosine distance (n8n used innerProduct).');
+    expect(report.warnings.some((w) => w.startsWith('PG update: “Update Documents” isn\'t available'))).toBe(true);
+  });
+
+  it('merges the Vector Store Tool and Retriever into their stores (tool and retriever modes)', () => {
+    const { workflow, node, edge, report } = importDoc(
+      [
+        ['Agent', `${L}agent`, {}, 1.7],
+        ['Agent model', `${L}lmChatOpenAi`, { model: 'gpt-5-mini' }],
+        ['Answer docs', `${L}toolVectorStore`, { name: 'company docs', description: 'Questions about the company', topK: 3 }, 1],
+        ['QA model', `${L}lmChatOpenAi`, {}],
+        ['Docs', `${L}vectorStoreInMemory`, { memoryKey: 'company' }],
+        ['Embed', `${L}embeddingsOpenAi`, {}],
+        ['QA', `${L}chainRetrievalQa`, {}],
+        ['Retriever', `${L}retrieverVectorStore`, { topK: 2 }],
+        ['Handbook', `${L}vectorStorePGVector`, { tableName: 'handbook' }],
+      ],
+      [
+        ['Agent model', 'Agent', 'ai_languageModel'],
+        ['Answer docs', 'Agent', 'ai_tool'],
+        ['QA model', 'Answer docs', 'ai_languageModel'],
+        ['Docs', 'Answer docs', 'ai_vectorStore'],
+        ['Embed', 'Docs', 'ai_embedding'],
+        ['Retriever', 'QA', 'ai_retriever'],
+        ['Handbook', 'Retriever', 'ai_vectorStore'],
+        ['Embed', 'Handbook', 'ai_embedding'],
+      ],
+    );
+    expect(workflow.nodes.map((n) => n.name)).not.toContain('Answer docs');
+    expect(workflow.nodes.map((n) => n.name)).not.toContain('Retriever');
+    expect(node('Docs')).toMatchObject({ type: 'core.vectorStoreInMemory', parameters: { mode: 'retrieve-as-tool', toolName: 'company_docs', toolDescription: 'Questions about the company', topK: 3, collection: 'company' } });
+    expect(edge('Docs', 'Agent')).toMatchObject([{ type: 'ai_tool' }]);
+    expect(node('Handbook')).toMatchObject({ type: 'core.vectorStorePGVector', parameters: { mode: 'retrieve', topK: 2, tableName: 'handbook' } });
+    expect(edge('Handbook', 'QA')).toMatchObject([{ type: 'ai_retriever' }]);
+    expect(edge('Embed', 'Handbook')).toHaveLength(1);
+    expect(report.mapped).toContainEqual({ name: 'Answer docs', from: `${L}toolVectorStore`, to: 'core.vectorStoreInMemory' });
+    expect(report.mapped).toContainEqual({ name: 'Retriever', from: `${L}retrieverVectorStore`, to: 'core.vectorStorePGVector' });
+    expect(report.warnings).toContain('Answer docs: merged into “Docs”, which is now the agent’s tool itself.');
+    expect(report.warnings).toContain('Connection QA model → Answer docs (ai_languageModel) dropped: Landflow’s vector store hands the documents to the agent, which answers itself.');
+    expect(report.placeholders).toEqual([]);
+  });
+
+  it('maps Guardrails, writing every switch out', () => {
+    const { node } = importDoc([
+      [
+        'Check',
+        `${L}guardrails`,
+        {
+          operation: 'classify',
+          text: '={{ $json.chatInput }}',
+          guardrails: {
+            pii: { value: { type: 'selected', entities: ['EMAIL_ADDRESS', 'PERSON'] } },
+            keywords: 'refund, lawsuit',
+            urls: { value: { allowedUrls: 'example.com', allowedSchemes: ['https', 'http'], allowSubdomains: true } },
+            jailbreak: { value: { threshold: 0.8 } },
+            topicalAlignment: { value: { prompt: 'Bike shop questions only', threshold: 0.6 } },
+            custom: { guardrail: [{ name: 'Competitors', prompt: 'mentions a competitor', threshold: 0.5 }] },
+            customRegex: { regex: [{ name: 'ORDER', value: 'ORD-\\d+' }] },
+          },
+        },
+      ],
+      ['Clean', `${L}guardrails`, { operation: 'sanitize', guardrails: { secretKeys: { value: { permissiveness: 'strict' } } } }],
+    ]);
+    expect(node('Check').parameters).toMatchObject({
+      operation: 'check',
+      text: '{{ $json.chatInput }}',
+      pii: true,
+      piiEntities: ['EMAIL_ADDRESS'],
+      secrets: false,
+      keywords: true,
+      keywordList: 'refund, lawsuit',
+      urls: true,
+      allowedUrls: 'example.com',
+      allowedSchemes: ['https', 'http'],
+      allowSubdomains: true,
+      jailbreak: true,
+      jailbreakUseModel: true,
+      jailbreakThreshold: 0.8,
+      topical: true,
+      topicalPrompt: 'Bike shop questions only',
+      topicalThreshold: 0.6,
+      nsfw: false,
+      customChecks: { checks: [{ name: 'Competitors', prompt: 'mentions a competitor', threshold: 0.5 }] },
+      customRegex: { rules: [{ name: 'ORDER', pattern: 'ORD-\\d+' }] },
+    });
+    expect(node('Clean').parameters).toMatchObject({ operation: 'sanitize', secrets: true, secretsPermissiveness: 'strict', pii: false, jailbreak: false });
+  });
+
+  it('keeps Python Code nodes as Python', () => {
+    const { node, report } = importDoc([
+      ['All', 'n8n-nodes-base.code', { language: 'python', pythonCode: 'return [{"json": {"n": len(_input.all())}}]' }, 2],
+      ['Each', 'n8n-nodes-base.code', { language: 'python', mode: 'runOnceForEachItem', pythonCode: '_json["seen"] = True\nreturn _input.item' }, 2],
+      ['Native', 'n8n-nodes-base.code', { language: 'pythonNative', pythonCode: 'return _items' }, 2],
+    ]);
+    expect(node('All')).toMatchObject({ type: 'core.code', parameters: { language: 'python', mode: 'all', pythonCode: 'return [{"json": {"n": len(_input.all())}}]' } });
+    expect(node('All').disabled).toBeUndefined();
+    expect(node('Each').parameters).toMatchObject({ language: 'python', mode: 'each', pythonCodeEach: '_json["seen"] = True\nreturn _input.item' });
+    expect(node('Native').parameters.pythonCode).toBe('_items = [{"json": item.json} for item in _input.all()]\nreturn _items');
+    expect(report.warnings).toContain('All: Python runs in the code runner sandbox (LANDFLOW_CODE_RUNNER_URL); the node fails while none is configured.');
+  });
+
+  it('maps every legacy Cron trigger time onto Schedule rules, with the Cron node’s defaults', () => {
+    const { node, report } = importDoc([
+      [
+        'Cron',
+        'n8n-nodes-base.cron',
+        {
+          triggerTimes: {
+            item: [
+              { mode: 'everyMinute' },
+              { mode: 'everyHour', minute: 15 },
+              { mode: 'everyDay' },
+              { mode: 'everyWeek', hour: 9, weekday: '5' },
+              { mode: 'everyMonth', hour: 6, minute: 30, dayOfMonth: 15 },
+              { mode: 'everyX', value: 10, unit: 'minutes' },
+              { mode: 'everyX', value: 120, unit: 'minutes' },
+              { mode: 'everyX', value: 48, unit: 'hours' },
+              { mode: 'everyX', value: 90, unit: 'minutes' },
+              { mode: 'custom', cronExpression: '0 */5 * * * *' },
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(node('Cron')).toMatchObject({ type: 'core.schedule' });
+    expect(node('Cron').parameters).toEqual({
+      unit: 'rules',
+      rule: {
+        interval: [
+          { field: 'minutes', minutesInterval: 1 },
+          { field: 'hours', hoursInterval: 1, triggerAtMinute: 15 },
+          { field: 'days', daysInterval: 1, triggerAtHour: 14, triggerAtMinute: 0 },
+          { field: 'weeks', weeksInterval: 1, triggerAtDay: [5], triggerAtHour: 9, triggerAtMinute: 0 },
+          { field: 'months', monthsInterval: 1, triggerAtDayOfMonth: 15, triggerAtHour: 6, triggerAtMinute: 30 },
+          { field: 'minutes', minutesInterval: 10 },
+          { field: 'hours', hoursInterval: 2, triggerAtMinute: 0 },
+          { field: 'days', daysInterval: 2, triggerAtHour: 0, triggerAtMinute: 0 },
+          { field: 'hours', hoursInterval: 2, triggerAtMinute: 0 },
+          { field: 'cronExpression', expression: '0 */5 * * * *' },
+        ],
+      },
+    });
+    expect(report.warnings).toContain('Cron: “every 90 minutes” has no Trigger Rule; it now runs every 2 hours.');
+    // No trigger times: n8n's default, every day at 14:00.
+    expect(importDoc([['Cron', 'n8n-nodes-base.cron', {}]]).node('Cron').parameters).toEqual({ unit: 'rules', rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 14, triggerAtMinute: 0 }] } });
+  });
+
+  it('maps the Call n8n Workflow Tool onto an Execute Workflow tool', () => {
+    const { node, edge, report } = importDoc(
+      [
+        ['Agent', `${L}agent`, {}, 1.7],
+        [
+          'Lookup',
+          `${L}toolWorkflow`,
+          { description: 'Look up a customer', workflowId: { __rl: true, value: 'abc', mode: 'list', cachedResultName: 'CRM lookup' }, workflowInputs: { value: { email: '={{ $fromAI("email") }}' } } },
+          2,
+        ],
+        ['Legacy', `${L}toolWorkflow`, { name: 'legacy', description: 'Old tool', source: 'database', workflowId: 'x1', fields: { values: [{ name: 'q', stringValue: '={{ $fromAI("q") }}' }] } }, 1.3],
+      ],
+      [
+        ['Lookup', 'Agent', 'ai_tool'],
+        ['Legacy', 'Agent', 'ai_tool'],
+      ],
+    );
+    expect(node('Lookup')).toMatchObject({ type: 'core.executeWorkflow', notes: 'Look up a customer', parameters: { workflowId: '', inputSource: 'map', workflowInputs: { values: [{ name: 'email', value: '{{ $fromAI("email") }}' }] } } });
+    expect(node('Legacy').parameters).toMatchObject({ inputSource: 'map', workflowInputs: { values: [{ name: 'q', value: '{{ $fromAI("q") }}' }] } });
+    expect(edge('Lookup', 'Agent')).toMatchObject([{ type: 'ai_tool' }]);
+    expect(edge('Legacy', 'Agent')).toMatchObject([{ type: 'ai_tool' }]);
+    expect(report.warnings).toContain('Lookup: choose the workflow to run; in n8n it ran “CRM lookup” (abc), which has to be imported first.');
+  });
+
+  it('maps the n8n Evaluation Trigger and Evaluation node operations onto Landflow’s', () => {
+    const { node, edge, report } = importDoc(
+      [
+        ['When fetching a dataset row', 'n8n-nodes-base.evaluationTrigger', { source: 'dataTable', dataTableId: { __rl: true, value: 'n8nTbl1', mode: 'list', cachedResultName: 'qa_cases' }, limitRows: true, maxRows: 5 }, 4.7],
+        ['Evaluating?', 'n8n-nodes-base.evaluation', { operation: 'checkIfEvaluating' }, 4.7],
+        ['Set outputs', 'n8n-nodes-base.evaluation', { outputs: { assignments: [{ id: 'a', name: 'answer', value: '={{ $json.output }}', type: 'string' }] } }, 4.7],
+        ['Correctness', 'n8n-nodes-base.evaluation', { operation: 'setMetrics', expectedAnswer: "={{ $('When fetching a dataset row').item.json.expected }}", actualAnswer: '={{ $json.output }}', userQuery: '={{ $json.q }}' }, 4.7],
+        ['Category', 'n8n-nodes-base.evaluation', { operation: 'setMetrics', metric: 'categorization', expectedAnswer: 'a', actualAnswer: 'b' }, 4.7],
+        ['Tools', 'n8n-nodes-base.evaluation', { operation: 'setMetrics', metric: 'toolsUsed', expectedTools: 'calculator', intermediateSteps: '={{ $json.intermediateSteps }}' }, 4.7],
+        ['Custom', 'n8n-nodes-base.evaluation', { operation: 'setMetrics', metric: 'customMetrics', metrics: { assignments: [{ name: 'length', value: '={{ $json.output.length }}', type: 'number' }] } }, 4.7],
+        ['Sheet trigger', 'n8n-nodes-base.evaluationTrigger', { documentId: { __rl: true, value: 'sheet' }, sheetName: 'Sheet1' }, 4.6],
+      ],
+      [
+        ['When fetching a dataset row', 'Evaluating?', 'main'],
+        ['Evaluating?', 'Set outputs', 'main'],
+      ],
+    );
+    expect(node('When fetching a dataset row')).toMatchObject({ type: 'core.evaluationTrigger', parameters: { dataTableId: 'qa_cases', limitRows: true, maxRows: 5 } });
+    expect(node('Evaluating?')).toMatchObject({ type: 'core.evaluation', parameters: { operation: 'checkIfEvaluating' } });
+    expect(edge('Evaluating?', 'Set outputs')).toMatchObject([{ sourceIndex: 0 }]);
+    expect(node('Set outputs').parameters).toMatchObject({ operation: 'setOutputs', outputs: { values: [{ name: 'answer', value: '{{ $json.output }}' }] }, destination: 'row' });
+    expect(node('Correctness').parameters).toMatchObject({ operation: 'setMetrics', metric: 'correctness', actualAnswer: '{{ $json.output }}', userQuery: '{{ $json.q }}' });
+    expect(node('Category').parameters).toMatchObject({ metric: 'exactMatch', metricName: 'categorization' });
+    expect(node('Tools').parameters).toMatchObject({ metric: 'toolsUsed', expectedTools: 'calculator', toolsSource: 'expression', actualTools: '{{ $json.intermediateSteps }}' });
+    expect(node('Custom').parameters).toMatchObject({ metric: 'customMetrics', metrics: { values: [{ name: 'length', value: '{{ $json.output.length }}' }] } });
+    expect(node('Sheet trigger').parameters).toMatchObject({ dataTableId: '' });
+    expect(report.warnings).toContain('Sheet trigger: Landflow reads test cases from a Data Table; import the Google Sheet as one (CSV), then choose it.');
+    expect(report.placeholders).toEqual([]);
   });
 });

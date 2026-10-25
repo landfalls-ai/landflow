@@ -28,6 +28,9 @@ const (
 	PathLoadOptions     = "/landflow/v1/load-options"
 	PathTestCredentials = "/landflow/v1/test-credentials"
 	PathHealth          = "/landflow/v1/health"
+	// App webhook triggers (TriggerAppWebhook, docs/protocol.md §12).
+	PathWebhookMethod = "/landflow/v1/webhook-method"
+	PathWebhook       = "/landflow/v1/webhook"
 	// PathMetrics serves Prometheus text (LANDFLOW_METRICS_PROMETHEUS); see docs/observability.md.
 	PathMetrics = "/metrics"
 )
@@ -166,6 +169,9 @@ const (
 	// seconds while the workflow is active (see PollIntervalProperty and
 	// ExecuteContext.PollState).
 	TriggerPoll TriggerSource = "poll"
+	// TriggerAppWebhook: the node registers its own webhook at an external
+	// service when the workflow is published (implement WebhookNode).
+	TriggerAppWebhook TriggerSource = "appWebhook"
 )
 
 // Version is the set of supported type versions. It marshals as a bare number
@@ -249,6 +255,10 @@ type CredentialTypeDescriptor struct {
 	DocumentationURL string               `json:"documentationUrl,omitempty"`
 	Properties       []PropertyDescriptor `json:"properties"`
 	Testable         bool                 `json:"testable,omitempty"`
+	// Extends names the credential types this one builds on ("oAuth2Api"):
+	// the host merges their properties in and gives OAuth2 types a Connect
+	// button (docs/protocol.md §7).
+	Extends []string `json:"extends,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +316,9 @@ type WellKnownEndpoints struct {
 	LoadOptions     string `json:"loadOptions"`
 	Health          string `json:"health"`
 	TestCredentials string `json:"testCredentials,omitempty"`
+	// WebhookMethod and Webhook are listed when a node is an app webhook trigger.
+	WebhookMethod string `json:"webhookMethod,omitempty"`
+	Webhook       string `json:"webhook,omitempty"`
 }
 
 // WellKnownDocument is served at GET /.well-known/landflow.

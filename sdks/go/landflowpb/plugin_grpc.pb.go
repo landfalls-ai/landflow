@@ -36,6 +36,8 @@ const (
 	PluginService_LoadOptions_FullMethodName     = "/landflow.plugin.v1.PluginService/LoadOptions"
 	PluginService_Health_FullMethodName          = "/landflow.plugin.v1.PluginService/Health"
 	PluginService_TestCredentials_FullMethodName = "/landflow.plugin.v1.PluginService/TestCredentials"
+	PluginService_WebhookMethod_FullMethodName   = "/landflow.plugin.v1.PluginService/WebhookMethod"
+	PluginService_ReceiveWebhook_FullMethodName  = "/landflow.plugin.v1.PluginService/ReceiveWebhook"
 )
 
 // PluginServiceClient is the client API for PluginService service.
@@ -54,6 +56,12 @@ type PluginServiceClient interface {
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
 	// Check credential values against the service ("Test connection").
 	TestCredentials(ctx context.Context, in *TestCredentialsRequest, opts ...grpc.CallOption) (*TestCredentialsResponse, error)
+	// App webhook triggers (triggerSource "appWebhook"): check, register or remove
+	// the node's webhook at its service (docs/protocol.md §12).
+	WebhookMethod(ctx context.Context, in *WebhookMethodRequest, opts ...grpc.CallOption) (*WebhookMethodResponse, error)
+	// App webhook triggers: turn a call the service made to the node's webhook URL
+	// into items for a run, and the answer the service gets.
+	ReceiveWebhook(ctx context.Context, in *ReceiveWebhookRequest, opts ...grpc.CallOption) (*ReceiveWebhookResponse, error)
 }
 
 type pluginServiceClient struct {
@@ -114,6 +122,26 @@ func (c *pluginServiceClient) TestCredentials(ctx context.Context, in *TestCrede
 	return out, nil
 }
 
+func (c *pluginServiceClient) WebhookMethod(ctx context.Context, in *WebhookMethodRequest, opts ...grpc.CallOption) (*WebhookMethodResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WebhookMethodResponse)
+	err := c.cc.Invoke(ctx, PluginService_WebhookMethod_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *pluginServiceClient) ReceiveWebhook(ctx context.Context, in *ReceiveWebhookRequest, opts ...grpc.CallOption) (*ReceiveWebhookResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReceiveWebhookResponse)
+	err := c.cc.Invoke(ctx, PluginService_ReceiveWebhook_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PluginServiceServer is the server API for PluginService service.
 // All implementations must embed UnimplementedPluginServiceServer
 // for forward compatibility.
@@ -130,6 +158,12 @@ type PluginServiceServer interface {
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
 	// Check credential values against the service ("Test connection").
 	TestCredentials(context.Context, *TestCredentialsRequest) (*TestCredentialsResponse, error)
+	// App webhook triggers (triggerSource "appWebhook"): check, register or remove
+	// the node's webhook at its service (docs/protocol.md §12).
+	WebhookMethod(context.Context, *WebhookMethodRequest) (*WebhookMethodResponse, error)
+	// App webhook triggers: turn a call the service made to the node's webhook URL
+	// into items for a run, and the answer the service gets.
+	ReceiveWebhook(context.Context, *ReceiveWebhookRequest) (*ReceiveWebhookResponse, error)
 	mustEmbedUnimplementedPluginServiceServer()
 }
 
@@ -154,6 +188,12 @@ func (UnimplementedPluginServiceServer) Health(context.Context, *HealthRequest) 
 }
 func (UnimplementedPluginServiceServer) TestCredentials(context.Context, *TestCredentialsRequest) (*TestCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TestCredentials not implemented")
+}
+func (UnimplementedPluginServiceServer) WebhookMethod(context.Context, *WebhookMethodRequest) (*WebhookMethodResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WebhookMethod not implemented")
+}
+func (UnimplementedPluginServiceServer) ReceiveWebhook(context.Context, *ReceiveWebhookRequest) (*ReceiveWebhookResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReceiveWebhook not implemented")
 }
 func (UnimplementedPluginServiceServer) mustEmbedUnimplementedPluginServiceServer() {}
 func (UnimplementedPluginServiceServer) testEmbeddedByValue()                       {}
@@ -266,6 +306,42 @@ func _PluginService_TestCredentials_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PluginService_WebhookMethod_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WebhookMethodRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PluginServiceServer).WebhookMethod(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PluginService_WebhookMethod_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PluginServiceServer).WebhookMethod(ctx, req.(*WebhookMethodRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PluginService_ReceiveWebhook_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReceiveWebhookRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PluginServiceServer).ReceiveWebhook(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PluginService_ReceiveWebhook_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PluginServiceServer).ReceiveWebhook(ctx, req.(*ReceiveWebhookRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PluginService_ServiceDesc is the grpc.ServiceDesc for PluginService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -292,6 +368,14 @@ var PluginService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TestCredentials",
 			Handler:    _PluginService_TestCredentials_Handler,
+		},
+		{
+			MethodName: "WebhookMethod",
+			Handler:    _PluginService_WebhookMethod_Handler,
+		},
+		{
+			MethodName: "ReceiveWebhook",
+			Handler:    _PluginService_ReceiveWebhook_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

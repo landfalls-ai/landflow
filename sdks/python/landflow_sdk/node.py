@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .context import ExecuteContext, LoadOptionsContext
+    from .webhooks import WebhookContext
 
 POLL_INTERVAL_MIN_SECONDS = 10
 
@@ -34,6 +35,11 @@ class Node(ABC):
     ``poll_interval_property()``; use ``ctx.mode``, ``ctx.is_first_poll()``,
     ``ctx.get_poll_state()`` and ``ctx.set_poll_state(...)`` (docs/protocol.md §8).
 
+    App webhook triggers: ``"kind": "trigger"``, ``"triggerSource": "appWebhook"``, ``webhook_create(ctx)``,
+    ``webhook_delete(ctx)`` and ``webhook(ctx)`` (optionally ``webhook_check_exists(ctx)``); the host registers the
+    webhook when the workflow is published and removes it when it is unpublished (docs/protocol.md §12,
+    ``landflow_sdk.webhooks``).
+
     One instance serves concurrent requests from several threads, so keep
     per-execution state in local variables, not on ``self``.
     """
@@ -52,6 +58,24 @@ class Node(ABC):
     ) -> list[dict[str, Any]]:
         """Resolve a dynamic dropdown. Override and fall back to ``super()`` for unknown methods."""
         raise NotImplementedError(method)
+
+    # App webhook triggers (triggerSource "appWebhook"): override webhook_create, webhook_delete and webhook.
+
+    def webhook_check_exists(self, ctx: "WebhookContext") -> bool:
+        """Is the webhook in ``ctx.get_static_data()`` still registered at the service? Default: no (always create)."""
+        return False
+
+    def webhook_create(self, ctx: "WebhookContext") -> bool | None:
+        """Register ``ctx.get_webhook_url()`` and store what ``webhook_delete`` needs. Raise (or return False) on failure."""
+        raise NotImplementedError("webhook_create")
+
+    def webhook_delete(self, ctx: "WebhookContext") -> bool | None:
+        """Remove the webhook (one that is already gone is not an error)."""
+        raise NotImplementedError("webhook_delete")
+
+    def webhook(self, ctx: "WebhookContext") -> Any:
+        """Turn a call to the webhook URL into ``{"items": [...], "response": {...}, "idempotencyKey": ...}`` (or a list of items)."""
+        raise NotImplementedError("webhook")
 
 
 def poll_interval_property(default_seconds: int = 60) -> dict[str, Any]:

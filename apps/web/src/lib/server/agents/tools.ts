@@ -12,6 +12,7 @@ import type { ExecutionRecord } from '../../shared/types';
 import { credentials } from '../credentials/vault';
 import { agentToolsFrom, endpointFrom, listMcpTools, selectTools } from '../mcp/client';
 import { registry } from '../plugins/registry';
+import { workflowForCall } from '../publish';
 import { runWorkflow } from '../runner';
 import { store } from '../store';
 import { variables } from '../variables';
@@ -190,7 +191,8 @@ interface TriggerField {
 
 /** Why a workflow can or can't be a tool, and the arguments its trigger declares. */
 export function workflowToolInfo(workflowId: string) {
-  const workflow = store.getWorkflow(workflowId);
+  // Its published version, or the saved workflow when it was never published (draft and publish).
+  const workflow = workflowForCall(workflowId, 'tool');
   if (!workflow) return { eligible: false as const, reason: 'The workflow was deleted' };
   const trigger = workflow.nodes.find((n) => n.type === WORKFLOW_TRIGGER && !n.disabled);
   if (!trigger) return { eligible: false as const, workflow, reason: 'Needs a “When Called by a Workflow or Agent” trigger' };

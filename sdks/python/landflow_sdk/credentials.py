@@ -41,6 +41,9 @@ class CredentialType:
     description: str | None = None
     icon: str | None = None
     test: TestFunction | None = None
+    #: Credential types this one builds on, e.g. ``["oAuth2Api"]``: the host merges their properties in and an
+    #: OAuth2 type gets a Connect button and a fresh ``accessToken`` in its data (docs/protocol.md §7).
+    extends: list[str] | None = None
 
     @property
     def testable(self) -> bool:
@@ -58,6 +61,8 @@ class CredentialType:
         out["properties"] = self.properties
         if self.testable:
             out["testable"] = True
+        if self.extends:
+            out["extends"] = list(self.extends)
         return out
 
     def with_defaults(self, data: Mapping[str, Any]) -> dict[str, Any]:

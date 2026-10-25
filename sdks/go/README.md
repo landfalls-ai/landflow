@@ -308,6 +308,49 @@ func (NewIssues) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, error
 `"poll"` and only when the node succeeds; in manual mode it is dropped, as the protocol requires.
 An empty output starts no execution.
 
+## App webhook triggers
+
+A node with `TriggerSource: landflow.TriggerAppWebhook` (protocol §12) registers a webhook at the service when its
+workflow is published and removes it when it is unpublished. It implements `landflow.WebhookNode`
+(`WebhookCreate`, `WebhookDelete`, `Webhook`) and optionally `landflow.WebhookChecker` (`WebhookCheckExists`); without
+the checker the host always calls `WebhookCreate`.
+
+```go
+func (RepoEvents) WebhookCreate(ctx *landflow.WebhookContext) error {
+	secret := randomHex(32)
+	id, err := createHook(ctx, ctx.WebhookURL(), secret)
+	if err != nil {
+		return err
+	}
+	ctx.SetStaticData(map[string]any{"webhookId": id, "webhookSecret": secret})
+	return nil
+}
+
+func (RepoEvents) WebhookDelete(ctx *landflow.WebhookContext) error {
+	err := deleteHook(ctx, ctx.StaticData()["webhookId"]) // a hook that is already gone is fine
+	ctx.SetStaticData(map[string]any{})
+	return err
+}
+
+func (RepoEvents) Webhook(ctx *landflow.WebhookContext) (*landflow.WebhookResult, error) {
+	secret, _ := ctx.StaticData()["webhookSecret"].(string)
+	if !landflow.VerifyGitHubSignature(secret, ctx.RawBody(), ctx.Header("X-Hub-Signature-256")) {
+		return &landflow.WebhookResult{Response: &landflow.WebhookReply{Status: 401}}, nil
+	}
+	return &landflow.WebhookResult{
+		Items:          []landflow.Item{{JSON: ctx.BodyObject()}},
+		IdempotencyKey: ctx.Header("X-GitHub-Delivery"), // a redelivery starts no second run
+	}, nil
+}
+```
+
+`StaticData()` is what the host keeps for this workflow and node; it is sent back only when it changed. A result
+without items starts no run; `JSONReply(status, v)` builds a JSON reply. Signature helpers, all constant-time:
+`VerifyGitHubSignature`, `VerifyStripeSignature(secret, body, header, landflow.SignatureOptions{})` and
+`VerifySlackSignature(secret, body, timestamp, signature, opts)` (5-minute tolerance by default),
+`VerifyHMACSHA256(secret, payload, signature, prefix)`, `VerifyHMACSHA256Base64`, `SafeEqual`, and the signing
+counterparts for tests.
+
 ## Transports
 
 | | HTTP | gRPC (`landflow.plugin.v1.PluginService`) |

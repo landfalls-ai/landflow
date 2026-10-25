@@ -10,7 +10,7 @@ import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { ExecutionRecord, FormCompletion } from '../shared/types';
 import type { RunReply } from './runner';
 import { readMultipart } from './binary/http';
-import { store } from './store';
+import { productionWorkflows } from './publish';
 
 export const FORM_TRIGGER = 'core.formTrigger';
 export const FORM_NODE = 'core.form';
@@ -122,10 +122,9 @@ export function parseSubmission(page: FormPage, data: FormData, formMode: 'produ
 
 export const normalizePath = (path: unknown) => String(path ?? '').trim().replace(/^\/+|\/+$/g, '');
 
-/** The active workflow whose Form Trigger serves /form/<path>. */
+/** The published workflow (its published version) whose Form Trigger serves /form/<path>. */
 export function findFormTrigger(path: string): { workflow: Workflow; node: WorkflowNode } | undefined {
-  for (const workflow of store.listWorkflows()) {
-    if (!workflow.active) continue;
+  for (const workflow of productionWorkflows()) {
     const node = workflow.nodes.find((n) => n.type === FORM_TRIGGER && !n.disabled && normalizePath(n.parameters.path) === path);
     if (node) return { workflow, node };
   }

@@ -20,6 +20,19 @@ export const workflowNodeSchema = z.object({
   timeoutSeconds: z.number().min(0.1).max(86_400).optional(),
   alwaysOutputData: z.boolean().optional(),
   executeOnce: z.boolean().optional(),
+  /** At most `limit` runs of the node per `intervalSeconds`, across executions; extra calls wait their turn. */
+  rateLimit: z.object({ limit: z.number().int().min(1).max(100_000), intervalSeconds: z.number().min(0.1).max(86_400) }).optional(),
+  /** Trigger nodes: collapse events with the same key within the window into one run (lib/server/trigger-buffers.ts). */
+  debounce: z
+    .object({
+      windowSeconds: z.number().min(0.1).max(86_400),
+      key: z.string().max(2_000).optional(),
+      mode: z.enum(['last', 'all']).optional(),
+      maxWaitSeconds: z.number().min(0).max(604_800).optional(),
+    })
+    .optional(),
+  /** Trigger nodes: run once per `size` events or `timeoutSeconds` after the first, with all of them as items. */
+  batch: z.object({ size: z.number().int().min(1).max(10_000), timeoutSeconds: z.number().min(0.1).max(86_400) }).optional(),
 });
 
 export const workflowSchema = z
@@ -62,6 +75,11 @@ export const workflowSchema = z
         /** Automatic retries of failed production runs: attempts in all (2+ enables) and the first delay (doubling). */
         retryMaxAttempts: z.number().int().min(1).max(10).optional(),
         retryBaseDelaySeconds: z.number().int().min(0).max(86_400).optional(),
+        /** AI usage caps (0 or absent = none): tokens or estimated USD per execution, and per day for the workflow. */
+        aiMaxTokensPerExecution: z.number().int().min(0).optional(),
+        aiMaxCostPerExecution: z.number().min(0).optional(),
+        aiMaxTokensPerDay: z.number().int().min(0).optional(),
+        aiMaxCostPerDay: z.number().min(0).optional(),
       })
       .optional(),
     stickyNotes: z

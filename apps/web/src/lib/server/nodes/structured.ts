@@ -5,7 +5,7 @@
  * generate-validate-retry loop that works with any connected chat model.
  */
 import { NodeOperationError } from '@landflow/sdk';
-import type { AgentMessage, LanguageModel } from '@landflow/engine';
+import type { AgentMessage, LanguageModel, ModelAttachment } from '@landflow/engine';
 import type { GenerateInput } from './models';
 import { stableStringify } from './paths';
 
@@ -160,11 +160,13 @@ export async function generateStructured<T = unknown>(
     check?: (value: unknown) => string[];
     soft?: (value: unknown) => string[];
     signal?: AbortSignal;
+    /** Images / PDFs sent with the prompt ("Include Binary as Input"). */
+    attachments?: ModelAttachment[];
   },
 ): Promise<StructuredResult<T>> {
   // JSON mode (OpenAI json_object, Ollama format) only produces objects.
   const responseFormat = input.schema.type === 'object' ? ('json' as const) : undefined;
-  let messages: AgentMessage[] = [{ role: 'user', content: input.prompt }];
+  let messages: AgentMessage[] = [{ role: 'user', content: input.prompt, ...(input.attachments?.length && { attachments: input.attachments }) }];
   for (let attempt = 1; ; attempt++) {
     const request: GenerateInput = {
       system: input.system,

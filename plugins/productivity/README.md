@@ -1,6 +1,6 @@
 # productivity: Notion, Airtable, GitHub, Jira, HubSpot and RSS (Python)
 
-Eight nodes built with [`landflow-sdk`](../../sdks/python), served over HTTP (`:7105`) and gRPC (`:7205`).
+Nine nodes built with [`landflow-sdk`](../../sdks/python), served over HTTP (`:7105`) and gRPC (`:7205`).
 Standard library only (plus the SDK): every API call goes through the SDK's traced `ctx.http`, feeds are
 parsed with `xml.parsers.expat` + `xml.etree.ElementTree`.
 
@@ -10,6 +10,7 @@ parsed with `xml.parsers.expat` + `xml.etree.ElementTree`.
 | Airtable | `productivity.airtable` | **Record**: Create, Create or Update (`performUpsert.fieldsToMergeOn`), Get, Search (formula, sort, view, fields, `offset` paging), Update, Delete. Base and table pickers. Fields: map the input item, define below, or JSON. Writes are batched 10 records per request |
 | GitHub | `productivity.github` | **Issue**: Create, Get, Edit, Create Comment, Get Many (state, labels, since…, `Link` paging, pull requests excluded) · **Repository**: Get · **Release**: Get Many · **File**: Get (base64 decoded into `content`; a directory lists its entries). Owner + name, or a picker from `/user/repos` |
 | GitHub Trigger | `productivity.githubTrigger` | poll (60 s): New Issue, New Pull Request, New Release |
+| GitHub Webhook Trigger | `productivity.githubWebhookTrigger` | app webhook (docs/protocol.md §12): registers a repository webhook with a random secret when the workflow is published, deletes it when unpublished; verifies `X-Hub-Signature-256`, one run per event (`push`, `pull_request`, `issues`, … or any), item `{event, action, deliveryId, body, headers}`, redeliveries deduplicated by `X-GitHub-Delivery`. The token needs `admin:repo_hook` (classic) or Webhooks read and write (fine-grained) |
 | Jira Software | `productivity.jira` | `jiraVersion` Cloud (REST v3, Basic email + API token, ADF descriptions and comments) or Server / Data Center (REST v2, PAT). **Issue**: Create (project, issue type and priority pickers), Get, Get Many (JQL; Cloud `POST /search/jql` + `nextPageToken`, Server `/search` + `startAt`), Update, Transition (transition picker) · **Issue Comment**: Add |
 | HubSpot | `productivity.hubspot` | **Contact**: Create or Update (search by email, then create or patch), Get, Search (property filters, free text, sort, `after` paging) · **Deal**: Create (pipeline and stage pickers, amount, close date, associated contacts) |
 | RSS Read | `productivity.rssFeedRead` | RSS 2.0, RSS 1.0 (RDF) and Atom; one item per entry |

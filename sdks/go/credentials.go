@@ -34,6 +34,11 @@ type CredentialType struct {
 	Icon             string // same forms as NodeDescriptor.Icon, file: included
 	DocumentationURL string
 	Properties       []PropertyDescriptor
+	// Extends names the credential types this one builds on, such as
+	// "oAuth2Api": the host shows their properties before these (a property
+	// of the same name replaces the parent's), and an OAuth2 credential gets a
+	// Connect button and a fresh "accessToken" in its data on every call.
+	Extends []string
 	// Test, when set, implements TestCredentials ("Test connection" in the UI)
 	// and marks the type testable. Make a cheap authenticated call and explain
 	// a failure in message. ctx carries the plugin.test_credentials span, so
@@ -50,6 +55,7 @@ func (t CredentialType) Descriptor() CredentialTypeDescriptor {
 	return CredentialTypeDescriptor{
 		Name: t.Name, DisplayName: t.DisplayName, Description: t.Description, Icon: t.Icon,
 		DocumentationURL: t.DocumentationURL, Properties: props, Testable: t.Test != nil,
+		Extends: t.Extends,
 	}
 }
 

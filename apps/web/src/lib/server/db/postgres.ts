@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import type { Pool, PoolClient } from 'pg';
 import { logger } from '../telemetry/logger';
 import { Database, openSqliteConnection, upsertSql, type SqlValue, type WriteOp, type WriteSink } from './database';
-import { LATEST_VERSION, MIGRATIONS, SCHEMA_VERSION_TABLE, TABLES, type TableName } from './schema';
+import { MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type TableName } from './schema';
 
 /** Held for the life of the host: a second host on the same database fails to start. */
 const INSTANCE_LOCK = 0x4c414e44; // "LAND"
@@ -62,11 +62,9 @@ export async function migratePostgres(pool: Pool): Promise<number[]> {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK]);
     await client.query(SCHEMA_VERSION_TABLE);
-    const current = Number((await client.query('SELECT MAX(version) AS version FROM schema_version')).rows[0]?.version ?? 0);
-    if (current > LATEST_VERSION) throw new Error(`The database has schema version ${current}, newer than this Landflow build knows (${LATEST_VERSION})`);
+    const done = (await client.query('SELECT version FROM schema_version')).rows.map((row: { version: string | number }) => Number(row.version));
     const applied: number[] = [];
-    for (const migration of MIGRATIONS) {
-      if (migration.version <= current) continue;
+    for (const migration of pendingMigrations(MIGRATIONS, done)) {
       for (const statement of migration.postgres ?? migration.statements) await client.query(statement);
       await client.query('INSERT INTO schema_version (version, name, applied_at) VALUES ($1, $2, $3)', [migration.version, migration.name, new Date().toISOString()]);
       applied.push(migration.version);

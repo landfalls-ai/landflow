@@ -1,5 +1,5 @@
 /**
- * Runs poll triggers (`triggerSource: "poll"`) of active workflows: every
+ * Runs poll triggers (`triggerSource: "poll"`) of published workflows (their published version): every
  * `pollInterval` seconds it calls the trigger's Execute with mode "poll" and the
  * state its previous poll returned, saves the new state, and starts an
  * execution when the poll found items. The first poll after activation, or after
@@ -7,13 +7,13 @@
  * Single-process, like the scheduler.
  */
 import { createHash } from 'node:crypto';
-import { nanoid } from 'nanoid';
 import { PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
 import { ExpressionResolver, type ResolvedNodeType, type Workflow, type WorkflowNode } from '@landflow/engine';
 import type { PollStatus } from '../shared/types';
 import { credentials } from './credentials/vault';
 import { registry } from './plugins/registry';
-import { runWorkflow } from './runner';
+import { productionWorkflow, productionWorkflows } from './publish';
+import { newExecutionId, runWorkflow } from './runner';
 import { singleton } from './singleton';
 import { store, type PollRecord } from './store';
 import { fireTrigger, logger, tracePoll } from './telemetry';
@@ -40,8 +40,11 @@ function isPollTrigger(resolved: ResolvedNodeType | { error: string }): resolved
   return !('error' in resolved) && resolved.descriptor.kind === 'trigger' && resolved.descriptor.triggerSource === 'poll';
 }
 
-function buildRequest(workflow: Workflow, node: WorkflowNode, resolved: ResolvedNodeType, state: JsonObject | undefined): ExecuteRequest {
-  const executionId = `poll_${nanoid(10)}`;
+/**
+ * `executionId` is the id the run gets if the poll finds items: files the trigger stores (an email's attachments) land
+ * in that execution's binary scope and are deleted with it.
+ */
+function buildRequest(workflow: Workflow, node: WorkflowNode, resolved: ResolvedNodeType, state: JsonObject | undefined, executionId: string): ExecuteRequest {
   const skip = new Set(resolved.descriptor.properties.filter((p) => p.noDataExpression || p.type === 'code').map((p) => p.name));
   const resolver = new ExpressionResolver({
     items: [],
@@ -88,13 +91,14 @@ export const poller = singleton('poller', () => {
     try {
       // trigger.poll {type} is the root of each poll; a run it starts gets its own trace, linked to it.
       await tracePoll({ workflowId: workflow.id, nodeName: node.name, nodeType: node.type, first: baseline }, async () => {
-        const response = await resolved.execute(buildRequest(workflow, node, resolved, record.state), { signal: AbortSignal.timeout(POLL_TIMEOUT_MS) });
+        const executionId = newExecutionId();
+        const response = await resolved.execute(buildRequest(workflow, node, resolved, record.state, executionId), { signal: AbortSignal.timeout(POLL_TIMEOUT_MS) });
         if (response.error) throw new Error(response.error.message);
         // The baseline poll never starts a run, even if the node returned items.
         const items = baseline ? [] : (response.outputs[0] ?? []);
         if (response.pollState) record.state = response.pollState;
         store.setPoll(key, { ...record, ready: true, lastItems: items.length });
-        if (items.length) await startRun(workflow, node, key, items);
+        if (items.length) await startRun(workflow, node, key, items, executionId);
         return items;
       });
     } catch (error) {
@@ -105,12 +109,13 @@ export const poller = singleton('poller', () => {
   }
 
   /** Start the run for a poll's new items; resolves once the execution has an id. */
-  function startRun(workflow: Workflow, node: WorkflowNode, key: string, items: NodeItem[]) {
+  function startRun(workflow: Workflow, node: WorkflowNode, key: string, items: NodeItem[], executionId: string) {
     return new Promise<void>((resolve) => {
       void fireTrigger({ source: 'poll', workflowId: workflow.id, nodeName: node.name }, () =>
         runWorkflow({
           workflow,
           mode: 'poll',
+          executionId,
           startNodeId: node.id,
           triggerOutput: { nodeId: node.id, items },
           onStart: (executionId) => {
@@ -134,8 +139,8 @@ export const poller = singleton('poller', () => {
   function tick() {
     const now = Date.now();
     const live = new Set<string>();
-    for (const workflow of store.listWorkflows()) {
-      if (!workflow.active) continue;
+    // The published version of each active workflow (draft and publish, lib/server/publish.ts).
+    for (const workflow of productionWorkflows()) {
       for (const node of workflow.nodes) {
         if (node.disabled) continue;
         const key = keyOf(workflow.id, node.id);
@@ -165,10 +170,12 @@ export const poller = singleton('poller', () => {
 
     /** Poll a trigger now instead of waiting for its interval. */
     async pollNow(workflowId: string, nodeId: string): Promise<PollStatus> {
-      const workflow = store.getWorkflow(workflowId);
+      const saved = store.getWorkflow(workflowId);
+      if (!saved?.nodes.some((n) => n.id === nodeId)) throw new Error('Workflow or node not found');
+      if (!saved.active) throw new Error('Publish the workflow to poll its trigger');
+      const workflow = productionWorkflow(saved);
       const node = workflow?.nodes.find((n) => n.id === nodeId);
-      if (!workflow || !node) throw new Error('Workflow or node not found');
-      if (!workflow.active) throw new Error('Activate the workflow to poll its trigger');
+      if (!workflow || !node) throw new Error('This trigger is not in the published version: publish the workflow first');
       const resolved = registry.resolve(node.type);
       if ('error' in resolved) throw new Error(resolved.error);
       if (!isPollTrigger(resolved)) throw new Error(`${node.name} is not a polling trigger`);
@@ -181,8 +188,10 @@ export const poller = singleton('poller', () => {
     },
 
     status(workflowId: string): PollStatus[] {
-      const workflow = store.getWorkflow(workflowId);
-      if (!workflow) return [];
+      const saved = store.getWorkflow(workflowId);
+      if (!saved) return [];
+      // What polls is the published version; an unpublished workflow shows its draft's triggers (not polling).
+      const workflow = productionWorkflow(saved) ?? saved;
       return workflow.nodes
         .filter((node) => !node.disabled && isPollTrigger(registry.resolve(node.type)))
         .map((node) => {

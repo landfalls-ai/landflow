@@ -23,7 +23,7 @@ import { atomicWrite, store } from './store';
 export type { InsightsPeriod, InsightsReport };
 
 /** What the rollup needs from an execution (an ExecutionSummary has it). */
-export type RecordedExecution = Pick<ExecutionSummary, 'id' | 'workflowId' | 'workflowName' | 'mode' | 'status' | 'startedAt' | 'durationMs'>;
+export type RecordedExecution = Pick<ExecutionSummary, 'id' | 'workflowId' | 'workflowName' | 'mode' | 'status' | 'startedAt' | 'durationMs' | 'evaluation'>;
 
 interface Counts {
   succeeded: number;
@@ -134,11 +134,11 @@ export class InsightsRollup {
     return this.data.backfilledAt;
   }
 
-  /** Add one execution. Unfinished ones (running, waiting) and ones already counted are ignored. Returns whether it counted. */
+  /** Add one execution. Unfinished ones (running, waiting), evaluation runs and ones already counted are ignored. Returns whether it counted. */
   record(execution: RecordedExecution, now = Date.now()): boolean {
     const field = STATUS_FIELD[execution.status];
     const started = Date.parse(execution.startedAt);
-    if (!field || !execution.workflowId || Number.isNaN(started) || this.counted.has(execution.id)) return false;
+    if (!field || !execution.workflowId || execution.evaluation || Number.isNaN(started) || this.counted.has(execution.id)) return false;
     this.counted.add(execution.id);
     if (this.counted.size > 20_000) this.counted.delete(this.counted.values().next().value!);
 

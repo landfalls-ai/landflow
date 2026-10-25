@@ -18,7 +18,8 @@ export const DEFAULT_QUEUE_SIZE = 100;
 /** The modes a concurrency limit applies to. */
 export const LIMITED_MODES = new Set<ExecutionMode>(['webhook', 'trigger', 'poll', 'tool']);
 
-export type SkipReason = 'limit' | 'singleton' | 'queue-full';
+/** `debounced` / `batched`: held by the trigger's debounce or batching (lib/server/trigger-buffers.ts), it runs later. */
+export type SkipReason = 'limit' | 'singleton' | 'queue-full' | 'debounced' | 'batched';
 
 /** A trigger run that was not started: the workflow had no free slot and does not queue (or its queue is full). */
 export class RunSkippedError extends Error {

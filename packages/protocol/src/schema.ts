@@ -93,7 +93,7 @@ export const nodeDescriptorSchema: z.ZodType<NodeDescriptor> = z.object({
   version: z.union([z.number().int().positive(), z.array(z.number().int().positive()).min(1)]),
   defaultVersion: z.number().int().positive().optional(),
   kind: z.enum(['trigger', 'action', 'subnode']),
-  triggerSource: z.enum(['manual', 'webhook', 'schedule', 'chat', 'poll']).optional(),
+  triggerSource: z.enum(['manual', 'webhook', 'schedule', 'chat', 'poll', 'appWebhook']).optional(),
   categories: z.array(z.string()).optional(),
   icon: z.string().optional(),
   color: z.string().optional(),
@@ -120,6 +120,7 @@ export const credentialTypeSchema: z.ZodType<CredentialTypeDescriptor> = z.objec
   documentationUrl: z.string().optional(),
   properties: z.array(propertySchema),
   testable: z.boolean().optional(),
+  extends: z.array(z.string().min(1)).optional(),
 });
 
 export const pluginInfoSchema = z.object({
@@ -197,6 +198,36 @@ export const executeResponseSchema = z.object({
     })
     .optional(),
   pollState: jsonObject.optional(),
+});
+
+const nodeRefSchema = z.object({ id: z.string(), name: z.string(), type: z.string(), typeVersion: z.number().int() });
+
+export const webhookMethodRequestSchema = z.object({
+  protocol: z.literal('landflow.plugin/v1'),
+  method: z.enum(['checkExists', 'create', 'delete']),
+  workflowId: z.string(),
+  node: nodeRefSchema,
+  parameters: jsonObject,
+  credentials: z.record(z.string(), jsonObject).optional(),
+  webhookUrl: z.string(),
+  staticData: jsonObject.default({}),
+});
+
+export const webhookRequestSchema = z.object({
+  protocol: z.literal('landflow.plugin/v1'),
+  workflowId: z.string(),
+  node: nodeRefSchema,
+  parameters: jsonObject,
+  credentials: z.record(z.string(), jsonObject).optional(),
+  webhookUrl: z.string(),
+  staticData: jsonObject.default({}),
+  request: z.object({
+    method: z.string(),
+    path: z.string().default(''),
+    headers: z.record(z.string(), z.string()).default({}),
+    query: z.record(z.string(), z.string()).default({}),
+    body: z.string().default(''),
+  }),
 });
 
 export const announceRequestSchema = z.object({

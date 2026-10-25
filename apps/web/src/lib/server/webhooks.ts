@@ -9,7 +9,8 @@ import { fileResponseHeaders, readRequestBody, type RequestBodyOptions } from '.
 import { error, json } from './http';
 import type { RunReply } from './runner';
 
-export type RespondMode = 'immediately' | 'lastNode' | 'responseNode';
+/** `streaming`: the Webhook route streams node chunks itself (lib/server/streaming.ts); here it answers as `lastNode`. */
+export type RespondMode = 'immediately' | 'lastNode' | 'responseNode' | 'streaming';
 
 /**
  * `{ method, path, headers, query, body }`; cookies and the Authorization header are left out. Uploaded files

@@ -19,6 +19,7 @@ const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Ton
   test: { label: 'Test', icon: FlaskConical, tone: 'accent' },
   schedule: { label: 'Schedule', icon: Clock, tone: 'neutral' },
   telegram: { label: 'Telegram', icon: Send, tone: 'neutral' },
+  slack: { label: 'Slack', icon: MessagesSquare, tone: 'neutral' },
   workflow: { label: 'Workflow', icon: Workflow, tone: 'neutral' },
   agent: { label: 'Agent', icon: Bot, tone: 'neutral' },
   api: { label: 'API', icon: Code, tone: 'neutral' },

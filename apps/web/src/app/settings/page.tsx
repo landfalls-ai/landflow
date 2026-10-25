@@ -1,22 +1,55 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Braces, Plug, SlidersHorizontal } from 'lucide-react';
+import { BellRing, BookOpen, Braces, CircleDollarSign, GitBranch, KeyRound, Plug, ShieldCheck, SlidersHorizontal, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { can, type Action } from '@/lib/shared/auth';
+import { useViewer } from '@/components/auth/viewer';
 import { PageBody, PageHeader } from '@/components/shell/page-header';
+import { AiPricesSettings } from '@/components/settings/ai-prices-settings';
+import { AlertsSettings } from '@/components/settings/alerts-settings';
+import { ApiDocs } from '@/components/settings/api-docs';
+import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { GeneralSettings } from '@/components/settings/general-settings';
 import { McpSettings } from '@/components/settings/mcp-settings';
+import { SecuritySettings } from '@/components/settings/security-settings';
+import { SourceControlSettings } from '@/components/settings/source-control-settings';
+import { UsersSettings } from '@/components/settings/users-settings';
 import { VariablesSettings } from '@/components/settings/variables-settings';
 
-const SECTIONS = [
+/** `role`: only shown to roles that `can` do it. */
+const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint: string; role?: Action }[] = [
   { id: 'general', label: 'General', icon: SlidersHorizontal, hint: 'Time zone and execution retention' },
   { id: 'variables', label: 'Variables', icon: Braces, hint: '$vars for expressions' },
+  { id: 'alerts', label: 'Alerts', icon: BellRing, hint: 'Email, Slack or webhook on failures' },
+  { id: 'ai-prices', label: 'AI prices', icon: CircleDollarSign, hint: 'Token prices for AI cost tracking' },
   { id: 'mcp', label: 'MCP', icon: Plug, hint: 'Let coding agents build workflows' },
-] as const;
-type Section = (typeof SECTIONS)[number]['id'];
+  { id: 'users', label: 'Users', icon: Users, hint: 'Invite people, change roles', role: 'users:manage' },
+  { id: 'api-keys', label: 'API keys', icon: KeyRound, hint: 'For scripts, CI and the CLI' },
+  { id: 'api', label: 'API docs', icon: BookOpen, hint: 'REST endpoints and OpenAPI' },
+  { id: 'security', label: 'Security', icon: ShieldCheck, hint: 'Single sign-on and sessions', role: 'settings:manage' },
+  { id: 'source-control', label: 'Source control', icon: GitBranch, hint: 'Push and pull workflows with Git', role: 'settings:manage' },
+];
+type Section = string;
 
-/** /settings (#general, #variables, #mcp): instance settings. */
+const BODIES: Record<string, () => React.ReactNode> = {
+  general: () => <GeneralSettings />,
+  variables: () => <VariablesSettings />,
+  alerts: () => <AlertsSettings />,
+  'ai-prices': () => <AiPricesSettings />,
+  mcp: () => <McpSettings />,
+  users: () => <UsersSettings />,
+  'api-keys': () => <ApiKeysSettings />,
+  api: () => <ApiDocs />,
+  security: () => <SecuritySettings />,
+  'source-control': () => <SourceControlSettings />,
+};
+
+/** /settings (#general, #variables, #alerts, #ai-prices, #mcp, #users, #api-keys, #api, #security, #source-control): instance settings. */
 export default function SettingsPage() {
-  const [section, setSection] = useState<Section>('general');
+  const viewer = useViewer();
+  const sections = SECTIONS.filter((s) => !s.role || can(viewer, s.role));
+  const [chosen, setSection] = useState<Section>('general');
+  const section = sections.some((s) => s.id === chosen) ? chosen : 'general';
 
   useEffect(() => {
     const fromHash = () => setSection(SECTIONS.find((s) => `#${s.id}` === window.location.hash)?.id ?? 'general');
@@ -34,8 +67,8 @@ export default function SettingsPage() {
     <>
       <PageHeader title="Settings" meta={<span>Instance-wide</span>} />
       <PageBody className="grid max-w-[1080px] grid-cols-1 gap-6 md:grid-cols-[200px_minmax(0,1fr)]">
-        <nav aria-label="Settings sections" className="flex gap-1 md:flex-col">
-          {SECTIONS.map((item) => {
+        <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto md:flex-col">
+          {sections.map((item) => {
             const Icon = item.icon;
             const active = section === item.id;
             return (
@@ -56,7 +89,7 @@ export default function SettingsPage() {
         </nav>
         <section key={section} className="min-w-0 animate-fade-up">
           <h2 className="mb-3 text-[15px] font-semibold text-t1">{SECTIONS.find((s) => s.id === section)?.label}</h2>
-          {section === 'general' ? <GeneralSettings /> : section === 'mcp' ? <McpSettings /> : <VariablesSettings />}
+          {BODIES[section]?.()}
         </section>
       </PageBody>
     </>

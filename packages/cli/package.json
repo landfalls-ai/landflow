@@ -1,0 +1,27 @@
+{
+  "name": "@landflow/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The landflow command line: workflows, runs, executions, data and Git sync of workflows as files, with stable JSON output.",
+  "bin": {
+    "landflow": "./dist/main.js"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/main.js",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "vitest": "^5.0.5"
+  }
+}

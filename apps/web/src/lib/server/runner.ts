@@ -27,10 +27,17 @@ import {
   type Workflow,
   type WorkflowSettings,
 } from '@landflow/engine';
+import type { EvaluationRef } from '../shared/evaluations';
 import type { ExecutionRecord, ExecutionState, ExecutionSummary, FormCompletion, PausedState, RerunOf, RerunScope } from '../shared/types';
+import { executionScope, executionUsage, runInUsageScope } from './ai-usage';
+import { notifyFailure } from './alerts/service';
+import { TriggerBuffers, triggerBuffers } from './trigger-buffers';
+import { currentActorId } from './auth/context';
 import { bus } from './bus';
 import { admission, hasFreeSlot, LIMITED_MODES, RunSkippedError } from './concurrency';
 import { DuplicateRunError, findIdempotent, rememberIdempotent } from './idempotency';
+import { publishedVersionId } from './publications';
+import { workflowForCall } from './publish';
 import { retries, retryDueFor } from './retries';
 import { getVersion, versionFor } from './versions';
 import { credentials } from './credentials/vault';
@@ -97,9 +104,16 @@ export interface RunOptions {
   retry?: { of: string; attempt: number };
   /** Continue from this failed execution's last checkpoint: what ran before it is reused, the failed node runs again. */
   fromCheckpoint?: { executionId: string };
+  /** A test case of an offline evaluation run (lib/server/evaluations); sub-executions inherit it. */
+  evaluation?: EvaluationRef;
+  /** Give nodes ctx.sendChunk: what they stream (an AI Agent's reply) arrives as node.chunk events in onEvent (chat and streaming webhook runs). */
+  streaming?: boolean;
+  /** The run of events a trigger's debounce or batching held (lib/server/trigger-buffers.ts): it is not held again. */
+  buffered?: { kind: 'debounce' | 'batch'; key: string; count: number };
 }
 
 export { DuplicateRunError, RunSkippedError };
+export { RunBufferedError } from './trigger-buffers';
 
 /** A fresh execution id. */
 export const newExecutionId = () => `ex_${nanoid(12)}`;
@@ -191,6 +205,7 @@ function summaryOf(record: ExecutionRecord, paused?: PausedState): ExecutionSumm
     ...(record.versionId && { versionId: record.versionId }),
     ...(record.retryOf && { retryOf: record.retryOf, retryAttempt: record.retryAttempt ?? 1 }),
     ...(record.resumedAfterRestart && { resumedAfterRestart: true }),
+    ...(record.evaluation && { evaluation: { runId: record.evaluation.runId } }),
   };
 }
 
@@ -280,6 +295,15 @@ export function debugExecution(executionId: string, request: { command?: DebugCo
 
 /** Execute a workflow through the registry, stream events, persist the result. */
 export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord> {
+  // Debounce / batching of the trigger: the event is held and a later run takes it (RunBufferedError says when).
+  if (!options.buffered && !options.partial && !options.fromCheckpoint) {
+    const triggerNode = options.workflow.nodes.find((n) => n.id === (options.triggerOutput?.nodeId ?? options.startNodeId));
+    if (TriggerBuffers.applies(triggerNode, options.mode)) {
+      startTriggerBuffers();
+      const held = triggerBuffers.add(options.workflow, triggerNode, options.triggerOutput?.items ?? options.triggerItems ?? [{ json: {} }], options.mode, { asOutput: Boolean(options.triggerOutput) });
+      if (held) throw held;
+    }
+  }
   const source = options.partial ? store.getExecution(options.partial.executionId) : undefined;
   if (options.partial && !source) throw new Error(`Execution ${options.partial.executionId} not found`);
   const seed = options.fromCheckpoint ? seedFromCheckpoint(options.fromCheckpoint.executionId, options.workflow) : undefined;
@@ -301,9 +325,12 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
 
   const executionId = options.executionId ?? newExecutionId();
   let depth = 0;
+  let evaluation = options.evaluation;
   if (options.parent) {
     const parentEntry = live.get(options.parent.executionId);
-    depth = ((parentEntry?.record ?? store.getExecution(options.parent.executionId))?.depth ?? 0) + 1;
+    const parentRecord = parentEntry?.record ?? store.getExecution(options.parent.executionId);
+    depth = (parentRecord?.depth ?? 0) + 1;
+    evaluation ??= parentRecord?.evaluation;
     if (depth > MAX_WORKFLOW_DEPTH) throw new Error(`Sub-workflows can be nested at most ${MAX_WORKFLOW_DEPTH} levels deep`);
     // Linked both ways: the parent lists its sub-executions, the child names its parent.
     if (parentEntry) {
@@ -312,7 +339,10 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
   }
   const debug = options.debug ? new DebugSession(options.debug) : undefined;
   // The version it starts on (an unsaved editor draft has none: its graph is saved with the execution instead).
-  const versionId = versionFor(options.workflow)?.id;
+  const version = versionFor(options.workflow);
+  const versionId = version?.id;
+  // A manual run started by a signed-in user (the editor's Execute, the API's run, a retry or re-run).
+  const startedBy = options.mode === 'manual' || options.mode === 'chat' ? currentActorId() : undefined;
   const record: ExecutionRecord = {
     executionId,
     workflowId: options.workflow.id,
@@ -329,9 +359,12 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     ...(options.parent && { parentExecutionId: options.parent.executionId, depth }),
     ...(options.parent?.nodeId && { parentNodeId: options.parent.nodeId }),
     ...(options.errorOf && { errorOf: options.errorOf }),
-    ...(versionId && { versionId }),
+    ...(version && { versionId: version.id, versionNumber: version.number, versionPublished: publishedVersionId(options.workflow.id) === version.id }),
     ...(options.retry && { retryOf: options.retry.of, retryAttempt: options.retry.attempt }),
     ...(idempotencyKey && { idempotencyKey }),
+    ...(evaluation && { evaluation }),
+    ...(startedBy && { startedBy }),
+    ...(options.buffered && { buffered: { kind: options.buffered.kind, count: options.buffered.count } }),
   };
   if (idempotencyKey) rememberIdempotent(options.workflow.id, idempotencyKey, executionId);
   if (!admitted.run) return enqueue(record, options);
@@ -346,6 +379,7 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
       onEvent: options.onEvent,
       onStart: options.onStart,
       onReply: options.onReply,
+      streaming: options.streaming,
     });
   }
   return runSegment({
@@ -375,6 +409,7 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     onEvent: options.onEvent,
     onStart: options.onStart,
     onReply: options.onReply,
+    streaming: options.streaming,
   });
 }
 
@@ -386,6 +421,8 @@ export interface ResumeRequest {
   error?: string;
   onEvent?: (event: ExecutionEvent) => void;
   onReply?: (reply: RunReply) => void;
+  /** Stream node chunks into onEvent (an approval answered from the chat panel or hosted chat). */
+  streaming?: boolean;
 }
 
 export class ResumeError extends Error {
@@ -419,6 +456,7 @@ export async function resumeExecution(executionId: string, request: ResumeReques
     engine: { resume: { state, kind: request.kind, ...(request.outputs && { outputs: request.outputs }), ...(request.error && { error: request.error }) } },
     onEvent: request.onEvent,
     onReply: request.onReply,
+    streaming: request.streaming,
   });
 }
 
@@ -432,6 +470,7 @@ interface Segment {
   onEvent?: (event: ExecutionEvent) => void;
   onStart?: (executionId: string) => void;
   onReply?: (reply: RunReply) => void;
+  streaming?: boolean;
 }
 
 /** One stretch of an execution: from its start or a resume until it finishes or waits. */
@@ -449,9 +488,12 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
 
   let finished: ExecutionRecord;
   let checkpointed = false;
+  // Token & cost tracking: every model call of this segment counts here, under the workflow's AI usage caps.
+  const usage = executionScope({ executionId, workflowId: workflow.id, settings: workflow.settings, previous: record.aiUsage });
   try {
-    const result = await executeWorkflow({
+    const result = await runInUsageScope(usage, () => executeWorkflow({
       ...segment.engine,
+      ...(segment.streaming && segment.onEvent && { streaming: true }),
       workflow,
       resolver: registry,
       executionId,
@@ -487,13 +529,16 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
         if (event.type === 'node.log') {
           logger[event.level](event.message, { 'landflow.execution.id': executionId, 'landflow.node.id': event.nodeId, 'landflow.workflow.id': workflow.id });
         }
-        bus.publish({ channel: 'execution', workflowId: workflow.id, event });
+        // Streamed chunks go only to the caller that asked for them (the chat panel, a hosted chat, a streaming webhook).
+        if (event.type !== 'node.chunk') bus.publish({ channel: 'execution', workflowId: workflow.id, event });
         segment.onEvent?.(event);
       },
-    });
+    }));
+    const aiUsage = executionUsage(usage);
     finished = {
       ...record,
       ...result,
+      ...(aiUsage && { aiUsage }),
       mode: record.mode,
       nodeNames: Object.fromEntries(workflow.nodes.map((n) => [n.id, n.name])),
       // The version that ran: a waiting execution resumes on it, whatever is saved later.
@@ -559,7 +604,8 @@ function slotCounts(workflowId: string) {
 
 /** settings.save*Executions (default: keep). A waiting execution is always kept: it has to be resumed. */
 function keepExecution(record: ExecutionRecord, settings: WorkflowSettings = {}): boolean {
-  if (record.status === 'waiting') return true;
+  // Evaluation results link to their executions.
+  if (record.status === 'waiting' || record.evaluation) return true;
   if (record.mode === 'manual' && settings.saveManualExecutions === false) return false;
   if (record.status === 'success' && settings.saveSuccessfulExecutions === false) return false;
   if (record.status === 'error' && settings.saveFailedExecutions === false) return false;
@@ -595,6 +641,8 @@ function afterRun(record: ExecutionRecord, workflow: Workflow | undefined) {
   if (record.parentExecutionId) handOverToParent(record);
   // An automatic retry follows: the error workflow waits for the last attempt.
   if (record.status === 'error' && workflow && !record.retryAt) void runErrorWorkflow(record, workflow);
+  // Failure alerts (Settings → Alerts), on the same terms: not while an automatic retry is pending.
+  if (record.status === 'error' && !record.retryAt) notifyFailure(record, workflow);
 }
 
 /** Children kept for a parent that didn't wait for them (Execute Workflow without "wait for completion"). */
@@ -651,7 +699,8 @@ async function runErrorWorkflow(failed: ExecutionRecord, workflow: Workflow) {
   const errorWorkflowId = workflow.settings?.errorWorkflowId;
   // Never for manual runs, never for itself, and an error workflow's own failure doesn't start another one.
   if (!errorWorkflowId || errorWorkflowId === workflow.id || failed.mode === 'manual' || failed.errorOf) return;
-  const target = store.getWorkflow(errorWorkflowId);
+  // Its published version (draft and publish), or the saved workflow when it was never published.
+  const target = workflowForCall(errorWorkflowId, failed.mode);
   const trigger = target?.nodes.find((node) => node.type === ERROR_TRIGGER && !node.disabled);
   if (!target || !trigger) {
     logger.warn('error workflow not run', { 'landflow.workflow.id': workflow.id, reason: target ? 'it has no Error Trigger' : `workflow ${errorWorkflowId} not found` });
@@ -1037,8 +1086,25 @@ export function recoverExecutions(): RecoveryReport {
   return report;
 }
 
+/** Held trigger events (debounce, batching) start their runs here; their timers are re-armed at boot. */
+export function startTriggerBuffers(): void {
+  singleton('trigger-buffers-started', () => {
+    triggerBuffers.start((workflow, node, items, mode, meta) =>
+      runWorkflow({
+        workflow,
+        mode,
+        startNodeId: node.id,
+        ...(meta.asOutput ? { triggerOutput: { nodeId: node.id, items } } : { triggerItems: items }),
+        buffered: { kind: meta.kind, key: meta.key, count: meta.count },
+      }),
+    );
+    return true;
+  });
+}
+
 /** Boot: recover interrupted executions and start what the queues can run, after `graceMs` (plugins announce first). */
 export function startRecovery(graceMs = 3_000): void {
+  startTriggerBuffers();
   singleton('execution-recovery', () => {
     const timer = setTimeout(() => {
       try {

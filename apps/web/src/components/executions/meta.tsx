@@ -1,5 +1,5 @@
 'use client';
-import { AlarmClock, Bug, MessageCircle, MousePointerClick, Plug, Power, RadioTower, Redo2, Repeat, RotateCcw, Webhook, Wrench, type LucideIcon } from 'lucide-react';
+import { AlarmClock, Bug, FlaskConical, MessageCircle, MousePointerClick, Plug, Power, RadioTower, Redo2, Repeat, RotateCcw, Webhook, Wrench, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { ExecutionSummary, RerunOf, RerunScope } from '@/lib/shared/types';
@@ -25,7 +25,7 @@ export function retryTitle(execution: Pick<ExecutionSummary, 'retryOf' | 'retryA
   return `Retry #${execution.retryAttempt ?? 1} of ${execution.retryOf}`;
 }
 
-type MarkedExecution = Pick<ExecutionSummary, 'mode' | 'rerunOf' | 'debug' | 'retryOf' | 'retryAttempt' | 'retriedBy' | 'resumedAfterRestart'>;
+type MarkedExecution = Pick<ExecutionSummary, 'mode' | 'rerunOf' | 'debug' | 'retryOf' | 'retryAttempt' | 'retriedBy' | 'resumedAfterRestart'> & Partial<Pick<ExecutionSummary, 'evaluation'>>;
 
 /** The small mode / re-run / retry / debug icons on the right of an execution card or row. */
 export function ExecutionMarks({ execution, className }: { execution: MarkedExecution; className?: string }) {
@@ -51,6 +51,11 @@ export function ExecutionMarks({ execution, className }: { execution: MarkedExec
       {execution.rerunOf && (
         <span title={rerunTitle(execution.rerunOf)} className="grid size-[18px] place-items-center rounded-full bg-[color-mix(in_oklab,var(--viz-1)_14%,transparent)] text-viz-1">
           <RotateCcw className="size-2.5" strokeWidth={2.5} />
+        </span>
+      )}
+      {execution.evaluation && (
+        <span title="Test case of an evaluation run" className="grid size-[18px] place-items-center rounded-full bg-[color-mix(in_oklab,var(--viz-5)_14%,transparent)] text-viz-5">
+          <FlaskConical className="size-2.5" strokeWidth={2.5} />
         </span>
       )}
       {execution.debug && (

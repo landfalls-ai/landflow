@@ -49,7 +49,7 @@ export function PollStatus({ workflowId, nodeId, active, dirty, interval }: { wo
         <RadioTower className={cn('size-3.5 shrink-0', active ? 'text-gn' : 'text-t3', active && polling && 'animate-pulse')} />
         <span className="min-w-0 flex-1 text-t2">
           {!active ? (
-            <>Checks for new items every {seconds} s once the workflow is active. Execute the node to fetch the latest ones now.</>
+            <>Checks for new items every {seconds} s once the workflow is published. Execute the node to fetch the latest ones now.</>
           ) : !status || status.baseline ? (
             <>Polling every {seconds} s · the first poll sets the baseline, later polls start a run for each batch of new items.</>
           ) : (

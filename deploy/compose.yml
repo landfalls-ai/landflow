@@ -61,6 +61,24 @@ services:
       LANDFLOW_CODE_RUNNER_URL: http://code-runner:7300
       LANDFLOW_CODE_RUNNER_SECRET: ${LANDFLOW_CODE_RUNNER_SECRET:-landflow-code-runner-dev-only}
       LANDFLOW_CODE_IN_PROCESS: ${LANDFLOW_CODE_IN_PROCESS:-false}
+      # Sign-in (README "Authentication"): boot creates this owner when the data volume has no user yet, so the stack
+      # (and deploy/scripts/smoke.sh) can sign in. Development values: set your own, or blank both to use /setup.
+      LANDFLOW_OWNER_EMAIL: ${LANDFLOW_OWNER_EMAIL-owner@landflow.test}
+      LANDFLOW_OWNER_PASSWORD: ${LANDFLOW_OWNER_PASSWORD-landflow-dev-only}
+      LANDFLOW_OWNER_NAME: ${LANDFLOW_OWNER_NAME:-Owner}
+      # Invites and password resets by email through the infra stack's Mailpit (unset: Settings shows links to copy).
+      # LANDFLOW_SMTP_HOST: host.docker.internal        # or mailpit, port 1025, with compose.infra-link.yml
+      # LANDFLOW_SMTP_PORT: "51025"
+      # LANDFLOW_SMTP_FROM: Landflow <landflow@landflow.test>
+      # Single sign-on through the infra stack's Keycloak (profile auth). The issuer is the URL browsers use; the
+      # discovery URL is how this container reaches Keycloak (http://keycloak:8080/... with compose.infra-link.yml).
+      # LANDFLOW_OIDC_ISSUER: http://localhost:58080/realms/landflow
+      # LANDFLOW_OIDC_DISCOVERY_URL: http://host.docker.internal:58080/realms/landflow/.well-known/openid-configuration
+      # LANDFLOW_OIDC_CLIENT_ID: landflow
+      # LANDFLOW_OIDC_CLIENT_SECRET: landflow-dev-client-secret
+      # LANDFLOW_OIDC_ROLE_MAP: landflow-admin=admin,landflow-editor=member
+      # Require a shared secret from plugins that register (add the same LANDFLOW_REGISTRY_SECRET to x-plugin-env).
+      # LANDFLOW_REGISTRY_SECRET: change-me
     volumes:
       - landflow-data:/data
     networks: [landflow, code]

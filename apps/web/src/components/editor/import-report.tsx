@@ -3,7 +3,7 @@
  * What an import did: nodes converted to Landflow types, placeholders for
  * node types Landflow doesn't have, notes, connections, and warnings
  * (dropped credentials, simplified schedules…). Shown after importing a file
- * or JSON (editor and workflows list) and after pasting n8n nodes.
+ * or JSON (editor and workflows list; Landflow, n8n or Flowise) and after pasting n8n nodes.
  */
 import type { ReactNode } from 'react';
 import { create } from 'zustand';
@@ -33,7 +33,7 @@ export function ImportReportDialog() {
   return (
     <Dialog
       title={title ?? 'Import report'}
-      subtitle={report.format === 'n8n' ? 'Converted from n8n' : 'Landflow workflow JSON'}
+      subtitle={report.format === 'n8n' ? 'Converted from n8n' : report.format === 'flowise' ? 'Converted from Flowise' : 'Landflow workflow JSON'}
       icon={<FileJson className="size-5 text-t2" />}
       onClose={close}
       width={620}
@@ -84,11 +84,11 @@ function Group({ icon, title, children }: { icon: ReactNode; title: string; chil
 
 /** The report's body, also used inline in the import dialog. */
 export function ImportReportView({ report }: { report: ImportReport }) {
-  const mapped = report.format === 'n8n' ? report.mapped : [];
+  const mapped = report.format === 'landflow' ? [] : report.mapped;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-4 gap-2">
-        <Stat value={report.mapped.length} label={report.format === 'n8n' ? 'nodes mapped' : 'nodes'} />
+        <Stat value={report.mapped.length} label={report.format === 'landflow' ? 'nodes' : 'nodes mapped'} />
         <Stat value={report.placeholders.length} label="placeholders" tone="warn" />
         <Stat value={report.connections} label="connections" />
         <Stat value={report.stickyNotes} label="sticky notes" />

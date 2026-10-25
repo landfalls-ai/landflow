@@ -37,6 +37,7 @@ import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
 import { CapabilitiesCard } from './capabilities-card';
 import { Dialog, Field } from './dialog';
 import { ModelCard } from './model-card';
+import { EvaluationsTab } from './evaluations-tab';
 import { SessionsTab } from './sessions-tab';
 import { SettingsTab } from './settings-tab';
 import { SkillsCard } from './skills-card';
@@ -46,7 +47,7 @@ import { TriggersCard } from './triggers-card';
 import { useAgentData, useAgentList } from './use-agent-data';
 import { canTest, configOf, downloadJson, parseAgentFile, sameConfig, setupSteps, slug, type UpdateConfig } from './util';
 
-export type BuilderTab = 'build' | 'sessions' | 'settings';
+export type BuilderTab = 'build' | 'sessions' | 'settings' | 'evaluations';
 type SaveState = 'saved' | 'pending' | 'saving' | 'error';
 
 const ICONS = [
@@ -572,7 +573,7 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
           </div>
 
           <div className="mt-5 flex gap-5 border-b border-hair" role="tablist" aria-label="Agent">
-            {(['build', 'sessions', 'settings'] as const).map((key) => (
+            {(['build', 'sessions', 'evaluations', 'settings'] as const).map((key) => (
               <button
                 key={key}
                 role="tab"
@@ -595,14 +596,15 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
                   <ModelCard config={draft} update={update} />
                 </div>
                 <SkillsCard config={draft} update={update} />
-                <TriggersCard config={draft} update={update} published={Boolean(published)} />
+                <TriggersCard config={draft} update={update} published={Boolean(published)} agentId={agentId} />
                 <div id="section-capabilities" className="scroll-mt-20 space-y-4">
                   <CapabilitiesCard agentId={agentId} config={draft} update={update} />
                 </div>
               </div>
             )}
             {tab === 'sessions' && <SessionsTab agentId={agentId} sessionId={sessionId} onOpen={(id) => go('sessions', id)} childHref={childHref} />}
-            {tab === 'settings' && <SettingsTab config={draft} update={update} />}
+            {tab === 'settings' && <SettingsTab config={draft} update={update} agentId={agentId} />}
+            {tab === 'evaluations' && <EvaluationsTab agentId={agentId} />}
           </div>
         </div>
       </div>

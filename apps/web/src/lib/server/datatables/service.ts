@@ -152,15 +152,17 @@ export class DataTablesService {
     return this.storage.getTable(key) ?? this.storage.listTables().find((t) => t.name.toLowerCase() === key.toLowerCase());
   }
 
-  createTable(input: { name: string; columns?: Array<{ name: string; type: string }> }): DataTable {
+  /** `id`: keep a given id (Git sync creates tables under the ids in its files, so Data Table nodes keep pointing at them). */
+  createTable(input: { name: string; columns?: Array<{ name: string; type: string }>; id?: string }): DataTable {
     const tables = this.storage.listTables();
     if (tables.length >= MAX_TABLES) throw new DataTableError(`At most ${MAX_TABLES} data tables`);
+    if (input.id !== undefined && (!/^[\w-]+$/.test(input.id) || this.storage.getTable(input.id))) throw new DataTableError(`Data table id "${input.id}" is invalid or taken`, 409);
     const name = this.checkTableName(input.name, tables);
     const columns: DataTableColumn[] = [];
     for (const column of input.columns ?? []) columns.push(this.checkColumn(columns, column));
     if (columns.length > MAX_COLUMNS) throw new DataTableError(`At most ${MAX_COLUMNS} columns`);
     const stamp = now();
-    const table: DataTable = { id: `dt_${nanoid(12)}`, name, columns, createdAt: stamp, updatedAt: stamp };
+    const table: DataTable = { id: input.id ?? `dt_${nanoid(12)}`, name, columns, createdAt: stamp, updatedAt: stamp };
     this.storage.createTable(table);
     return table;
   }

@@ -25,6 +25,8 @@ function create(provider: MeterProvider) {
     aiRequests: meter.createCounter('landflow.ai.requests', { description: 'Model requests (chat and embeddings)' }),
     aiDuration: meter.createHistogram('landflow.ai.duration', { description: 'Model request duration (chat and embeddings)', unit: 'ms', advice }),
     aiTokens: meter.createCounter('landflow.ai.tokens', { description: 'Model tokens (embeddings count input tokens only)' }),
+    aiCost: meter.createCounter('landflow.ai.cost', { description: 'Estimated cost of model calls by the price table', unit: 'USD' }),
+    aiCapsReached: meter.createCounter('landflow.ai.caps_reached', { description: 'Model calls refused or runs stopped by an AI usage cap' }),
     agentRuns: meter.createCounter('landflow.agent.runs', { description: 'Agent runs (one per user message, schedule fire or resumed approval)' }),
     agentRunDuration: meter.createHistogram('landflow.agent.run.duration', { description: 'Duration of an agent run', unit: 'ms', advice }),
     agentToolCalls: meter.createCounter('landflow.agent.tool.calls', { description: 'Tool calls made by agents' }),

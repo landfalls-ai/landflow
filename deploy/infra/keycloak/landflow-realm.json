@@ -28,7 +28,7 @@
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": true,
-      "serviceAccountsEnabled": false,
+      "serviceAccountsEnabled": true,
       "frontchannelLogout": true,
       "rootUrl": "http://localhost:3000",
       "baseUrl": "/",
@@ -36,7 +36,11 @@
         "http://localhost:3000/api/auth/oidc/callback",
         "http://127.0.0.1:3000/api/auth/oidc/callback",
         "http://localhost:53000/api/auth/oidc/callback",
-        "http://127.0.0.1:53000/api/auth/oidc/callback"
+        "http://127.0.0.1:53000/api/auth/oidc/callback",
+        "http://localhost:3000/api/oauth2/callback",
+        "http://127.0.0.1:3000/api/oauth2/callback",
+        "http://localhost:53000/api/oauth2/callback",
+        "http://127.0.0.1:53000/api/oauth2/callback"
       ],
       "webOrigins": [
         "http://localhost:3000",

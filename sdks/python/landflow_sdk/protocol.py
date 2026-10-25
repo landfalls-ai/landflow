@@ -22,6 +22,8 @@ HTTP_PATHS = {
     "loadOptions": "/landflow/v1/load-options",
     "testCredentials": "/landflow/v1/test-credentials",
     "health": "/landflow/v1/health",
+    "webhookMethod": "/landflow/v1/webhook-method",  # app webhook triggers (docs/protocol.md §12)
+    "webhook": "/landflow/v1/webhook",
 }
 
 METRICS_PATH = "/metrics"  # Prometheus text (docs/observability.md)
@@ -33,7 +35,7 @@ DEFAULT_ANNOUNCE_TTL_SECONDS = 30
 DEFAULT_HEARTBEAT_SECONDS = 10
 
 NODE_KINDS = ("trigger", "action", "subnode")
-TRIGGER_SOURCES = ("manual", "webhook", "schedule", "chat", "poll")
+TRIGGER_SOURCES = ("manual", "webhook", "schedule", "chat", "poll", "appWebhook")
 CONNECTION_TYPES = ("main", "ai_languageModel", "ai_tool", "ai_memory")
 PROPERTY_TYPES = (
     "string",

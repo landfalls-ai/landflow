@@ -23,7 +23,13 @@ log = logging.getLogger("landflow_sdk.http")
 
 MAX_BODY_BYTES = 64 * 1024 * 1024
 _GET_PATHS = {HTTP_PATHS["wellKnown"], HTTP_PATHS["manifest"], HTTP_PATHS["health"], METRICS_PATH}
-_POST_PATHS = {HTTP_PATHS["execute"], HTTP_PATHS["loadOptions"], HTTP_PATHS["testCredentials"]}
+_POST_PATHS = {
+    HTTP_PATHS["execute"],
+    HTTP_PATHS["loadOptions"],
+    HTTP_PATHS["testCredentials"],
+    HTTP_PATHS["webhookMethod"],
+    HTTP_PATHS["webhook"],
+}
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
 
@@ -89,6 +95,10 @@ class _Handler(BaseHTTPRequestHandler):
                 response: Any = plugin.execute(request, self.headers)
             elif path == HTTP_PATHS["testCredentials"]:
                 response = plugin.test_credentials_request(request, self.headers)
+            elif path == HTTP_PATHS["webhookMethod"]:
+                response = plugin.webhook_method(request, self.headers)
+            elif path == HTTP_PATHS["webhook"]:
+                response = plugin.receive_webhook(request, self.headers)
             else:
                 response = plugin.load_options_request(request, self.headers)
         except ProtocolError as exc:

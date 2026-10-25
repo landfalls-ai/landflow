@@ -73,12 +73,13 @@ const send = async (agent: Agent, channel: AgentChannel, chatId: string, text: s
   }
 };
 
-/** Private channels answer only the listed Telegram user ids or @usernames. */
+/** Private channels answer only the listed Telegram user ids or @usernames, or Slack member ids. */
 export function allowed(channel: Pick<AgentChannel, 'access' | 'allowedUsers'>, from: { id?: number | string; username?: string } | null): boolean {
   if (channel.access === 'public') return true;
   if (!from) return false;
   const users = channel.allowedUsers.map((u) => u.trim().replace(/^@/, '').toLowerCase()).filter(Boolean);
-  return users.includes(String(from.id)) || (from.username !== undefined && users.includes(from.username.toLowerCase()));
+  // Slack member ids are upper case (U0123ABC); the list is compared in lower case.
+  return users.includes(String(from.id).toLowerCase()) || (from.username !== undefined && users.includes(from.username.toLowerCase()));
 }
 
 async function handleUpdate(agent: Agent, version: number, channel: AgentChannel, item: NodeItem) {

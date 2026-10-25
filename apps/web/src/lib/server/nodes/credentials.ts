@@ -94,6 +94,52 @@ export const httpBearerAuthCredential = defineCredentialType({
   properties: [{ name: 'token', displayName: 'Bearer Token', type: 'string', required: true, typeOptions: { password: true } }],
 });
 
+/** n8n's Basic Auth: a user name and password (expected from callers of a Webhook or Form Trigger). */
+export const httpBasicAuthCredential = defineCredentialType({
+  name: 'httpBasicAuth',
+  displayName: 'Basic Auth',
+  description: 'A user name and password that callers of a Webhook or Form Trigger must send (browsers ask for them)',
+  icon: 'lucide:user-lock',
+  properties: [
+    { name: 'user', displayName: 'User', type: 'string', required: true },
+    { name: 'password', displayName: 'Password', type: 'string', required: true, typeOptions: { password: true } },
+  ],
+});
+
+/** n8n's JWT Auth: how a Webhook or Form Trigger verifies the JWT callers send as a Bearer token. */
+export const jwtAuthCredential = defineCredentialType({
+  name: 'jwtAuth',
+  displayName: 'JWT Auth',
+  description: 'Verifies the JWT callers of a Webhook or Form Trigger send: a shared secret (HS256), a public key or a JWKS URL',
+  icon: 'lucide:file-key',
+  properties: [
+    {
+      name: 'keyType',
+      displayName: 'Key Type',
+      type: 'options',
+      default: 'passphrase',
+      options: [
+        { name: 'Passphrase (HMAC secret)', value: 'passphrase' },
+        { name: 'PEM Public Key', value: 'pemKey' },
+        { name: 'JWKS URL', value: 'jwks', description: 'The issuer’s key set, e.g. https://example.auth0.com/.well-known/jwks.json' },
+      ],
+    },
+    { name: 'secret', displayName: 'Secret', type: 'string', default: '', typeOptions: { password: true }, displayOptions: { show: { keyType: ['passphrase'] } } },
+    { name: 'publicKey', displayName: 'Public Key', type: 'string', default: '', typeOptions: { rows: 4 }, placeholder: '-----BEGIN PUBLIC KEY-----', displayOptions: { show: { keyType: ['pemKey'] } } },
+    { name: 'jwksUrl', displayName: 'JWKS URL', type: 'string', default: '', displayOptions: { show: { keyType: ['jwks'] } } },
+    {
+      name: 'algorithm',
+      displayName: 'Algorithm',
+      type: 'options',
+      default: 'HS256',
+      options: ['HS256', 'HS384', 'HS512', 'RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512', 'PS256'].map((value) => ({ name: value, value })),
+      description: 'HS* for a passphrase; RS*, ES* or PS* for a public key or JWKS',
+    },
+    { name: 'issuer', displayName: 'Issuer', type: 'string', default: '', description: 'Require this `iss` claim (optional)' },
+    { name: 'audience', displayName: 'Audience', type: 'string', default: '', description: 'Require this `aud` claim (optional)' },
+  ],
+});
+
 /** n8n's Header Auth: one header name and value. */
 export const httpHeaderAuthCredential = defineCredentialType({
   name: 'httpHeaderAuth',

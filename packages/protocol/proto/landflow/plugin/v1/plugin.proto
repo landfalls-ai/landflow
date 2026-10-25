@@ -27,6 +27,12 @@ service PluginService {
   rpc Health(HealthRequest) returns (HealthResponse);
   // Check credential values against the service ("Test connection").
   rpc TestCredentials(TestCredentialsRequest) returns (TestCredentialsResponse);
+  // App webhook triggers (triggerSource "appWebhook"): check, register or remove
+  // the node's webhook at its service (docs/protocol.md §12).
+  rpc WebhookMethod(WebhookMethodRequest) returns (WebhookMethodResponse);
+  // App webhook triggers: turn a call the service made to the node's webhook URL
+  // into items for a run, and the answer the service gets.
+  rpc ReceiveWebhook(ReceiveWebhookRequest) returns (ReceiveWebhookResponse);
 }
 
 // Trace context: the host sends W3C traceparent / tracestate / baggage as gRPC
@@ -160,6 +166,60 @@ message TestCredentialsRequest {
 message TestCredentialsResponse {
   bool ok = 1;
   string message = 2;
+}
+
+// ---- App webhook triggers --------------------------------------------
+
+message WebhookMethodRequest {
+  string protocol = 1;
+  string method = 2;               // "checkExists" | "create" | "delete"
+  string workflow_id = 3;
+  NodeRef node = 4;
+  DynamicValue parameters = 5;     // resolved without items
+  DynamicValue credentials = 6;    // optional, same shape as ExecuteRequest.credentials
+  string webhook_url = 7;          // where the service must call: {publicUrl}/api/webhook/app/<workflowId>/<nodeId>
+  DynamicValue static_data = 8;    // what the node stored so far ({} at first)
+}
+
+message WebhookMethodResponse {
+  bool exists = 1;                 // checkExists: the webhook is registered
+  DynamicValue static_data = 2;    // the node's static data after the call; absent = unchanged
+  repeated LogEntry logs = 3;
+  NodeError error = 4;
+}
+
+message IncomingWebhookRequest {
+  string method = 1;
+  string path = 2;
+  map<string, string> headers = 3; // lower-case names
+  map<string, string> query = 4;
+  bytes body = 5;                  // raw, exactly as sent (signatures cover these bytes)
+}
+
+message ReceiveWebhookRequest {
+  string protocol = 1;
+  string workflow_id = 2;
+  NodeRef node = 3;
+  DynamicValue parameters = 4;
+  DynamicValue credentials = 5;
+  string webhook_url = 6;
+  DynamicValue static_data = 7;
+  IncomingWebhookRequest request = 8;
+}
+
+message WebhookReply {
+  int32 status = 1;                // 0 = 200
+  map<string, string> headers = 2;
+  bytes body = 3;
+}
+
+message ReceiveWebhookResponse {
+  repeated Item items = 1;         // the trigger's output for a new run; none = no run
+  WebhookReply response = 2;       // absent: 200 with the run's id
+  DynamicValue static_data = 3;    // absent = unchanged
+  string idempotency_key = 4;      // identifies the event: a redelivery starts no second run
+  repeated LogEntry logs = 5;
+  NodeError error = 6;
 }
 
 // ---- Health -----------------------------------------------------------

@@ -33,12 +33,12 @@ import type { DebugCommand, ExecutionEvent, ExecutionRecord, ImportReport, NodeT
 import { Badge, executionTone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
-import { Kbd, Switch } from '../ui/inputs';
+import { Kbd } from '../ui/inputs';
 import { WorkflowTabs } from '../shell/workflow-tabs';
 import { AiBuilder, AiBuilderPopover } from './ai-builder';
 import { prefetchFailure, useAssistant } from './assistant';
 import { AssistantPanel } from './assistant-panel';
-import { ChatPanel } from './chat-panel';
+import { ChatPanel, type ChatApproval, type ChatChunk, type ChatFile, type ChatOutcome } from './chat-panel';
 import { parseClipboard, type ClipboardData } from './clipboard';
 import { FlowEdgeView } from './flow-edge';
 import { FlowNodeView } from './flow-node';
@@ -52,11 +52,21 @@ import { useEditor, type CanvasNode, type FlowEdge, type RunCommand } from './st
 import { TagsEditor } from './tags-editor';
 import { VersionHistory, useVersionHistory } from './version-history';
 import { WorkflowMenu } from './workflow-menu';
+import { PublishControl } from './publish-control';
+import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from './edit-lock';
 
 const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView };
 const edgeTypesMap = { lf: FlowEdgeView };
 
-type RunResult = { executionId?: string; status: string; lastNodeId?: string; error?: { message: string } };
+type RunResult = { executionId?: string; status: string; lastNodeId?: string; error?: { message: string }; approval?: ChatApproval };
+
+/** The reply text of a finished chat run: the last node's reply / output / text (or its JSON). */
+function replyOf(result: RunResult): string | undefined {
+  const last = result.lastNodeId ? useEditor.getState().runs[result.lastNodeId]?.at(-1) : undefined;
+  const json = last?.outputs[0]?.[0]?.json as Record<string, unknown> | undefined;
+  const reply = json?.reply ?? json?.output ?? json?.text;
+  return reply === undefined ? (json ? JSON.stringify(json, null, 2) : undefined) : String(reply);
+}
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
@@ -91,6 +101,8 @@ function Canvas({ onSave }: { onSave: () => void }) {
   const canUndo = useEditor((s) => s.history.past > 0);
   const canRedo = useEditor((s) => s.history.future > 0);
   const nodes = useMemo<CanvasNode[]>(() => [...stickies, ...flowNodes], [stickies, flowNodes]);
+  // Read-only (someone else holds the edit lock) swaps the store's editing actions, so re-read them.
+  const readOnly = useEditLock((s) => s.readOnly);
   const { onNodesChange, onEdgesChange, onConnect, openNode, openPalette } = useEditor.getState();
   const { screenToFlowPosition, fitView } = useReactFlow();
   const fitted = useRef(false);
@@ -238,7 +250,9 @@ function Canvas({ onSave }: { onSave: () => void }) {
       onNodeDoubleClick={(_e, node) => node.type === 'lf' && openNode(node.id)}
       onPaneClick={() => useEditor.getState().palette && openPalette(undefined)}
       isValidConnection={(c) => (c.sourceHandle ?? 'main').split(':')[0] === (c.targetHandle ?? 'main').split(':')[0] && c.source !== c.target}
-      deleteKeyCode={['Backspace', 'Delete']}
+      deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
+      nodesDraggable={!readOnly}
+      nodesConnectable={!readOnly}
       minZoom={0.2}
       maxZoom={2}
       proOptions={{ hideAttribution: true }}
@@ -472,14 +486,14 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const [chatOpen, setChatOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const name = useEditor((s) => s.name);
-  const active = useEditor((s) => s.active);
   const dirty = useEditor((s) => s.dirty);
   const running = useEditor((s) => s.running);
   const debugging = useEditor((s) => s.debugging);
   const breakpoints = useEditor((s) => s.breakpoints);
   const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.wf.type === 'core.chatTrigger'));
-  const hasActivatable = useEditor((s) => s.nodes.some((n) => ['core.webhook', 'core.schedule', 'core.formTrigger', 'core.mcpTrigger'].includes(n.data.wf.type)));
   const assistantOpen = useAssistant((s) => s.open);
+  const readOnly = useEditLock((s) => s.readOnly);
+  const { takeOver } = useEditLockSync(workflowId, loaded);
 
   // The assistant's conversation lasts while this workflow is open.
   useEffect(() => useAssistant.getState().bind(workflowId), [workflowId]);
@@ -527,9 +541,15 @@ export function Editor({ workflowId }: { workflowId: string }) {
   }, [breakpoints, running, debugging]);
 
   const save = useCallback(async (): Promise<boolean> => {
+    if (useEditLock.getState().readOnly) {
+      toast.error('Someone else is editing this workflow: it’s read-only here');
+      return false;
+    }
     setSaving(true);
     try {
-      const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`, { method: 'PUT', json: useEditor.getState().toWorkflow() });
+      // `active` stays out: a save is a draft, and Publish / Unpublish (PublishControl) change what is live.
+      const { active: _active, ...draft } = useEditor.getState().toWorkflow();
+      const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`, { method: 'PUT', json: draft, headers: editorTabHeaders() });
       useEditor.getState().markSaved();
       toast.success(`Saved “${workflow.name}”`);
       return true;
@@ -542,7 +562,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
   }, [workflowId]);
 
   const execute = useCallback(
-    async (extra: Record<string, unknown> = {}, debug = false): Promise<RunResult | undefined> => {
+    async (extra: Record<string, unknown> = {}, debug = false, onChunk?: (chunk: ChatChunk) => void): Promise<RunResult | undefined> => {
       const state = useEditor.getState();
       if (state.running) return undefined;
       state.startRun(debug);
@@ -560,7 +580,12 @@ export function Editor({ workflowId }: { workflowId: string }) {
           },
           (event, data) => {
             if (event === 'started') useEditor.setState({ executionId: (data as { executionId: string }).executionId });
-            if (event === 'execution') useEditor.getState().applyEvent(data as ExecutionEvent);
+            if (event === 'execution') {
+              const update = data as ExecutionEvent;
+              // Streamed text and tool calls go to the chat panel; everything else to the canvas and the log.
+              if (update.type === 'node.chunk') onChunk?.(update.chunk);
+              else useEditor.getState().applyEvent(update);
+            }
             if (event === 'result') result = data as RunResult;
           },
           controller.signal,
@@ -618,16 +643,48 @@ export function Editor({ workflowId }: { workflowId: string }) {
   };
 
   const sendChat = useCallback(
-    async (message: string, sessionId: string) => {
-      const result = await execute({ chat: { message, sessionId } });
+    async (message: string, sessionId: string, files: ChatFile[], onChunk: (chunk: ChatChunk) => void): Promise<ChatOutcome> => {
+      const attached = files.map(({ fileName, mimeType, data }) => ({ fileName, mimeType, data }));
+      const result = await execute({ chat: { message, sessionId, ...(attached.length && { files: attached }) } }, false, onChunk);
+      // An AI Agent waiting for a tool approval: the panel shows Approve / Reject.
+      if (result?.status === 'waiting' && result.approval) return { executionId: result.executionId, approval: result.approval };
+      if (result?.status === 'waiting') return { reply: 'The workflow is waiting (a Wait or form node); it continues in the background.', executionId: result.executionId };
       if (!result || result.status !== 'success') throw new Error(result?.error?.message ?? 'Execution failed');
-      const last = result.lastNodeId ? useEditor.getState().runs[result.lastNodeId]?.at(-1) : undefined;
-      const json = last?.outputs[0]?.[0]?.json as Record<string, unknown> | undefined;
-      const reply = json?.reply ?? json?.output ?? json?.text;
-      return reply === undefined ? (json ? JSON.stringify(json, null, 2) : undefined) : String(reply);
+      return { reply: replyOf(result), executionId: result.executionId };
     },
     [execute],
   );
+
+  /** Approve or reject one waiting tool call; the resumed run streams like a chat run (POST /api/executions/:id/approvals). */
+  const decideChat = useCallback(async (executionId: string, callId: string, approved: boolean, onChunk: (chunk: ChatChunk) => void): Promise<ChatOutcome> => {
+    let result: RunResult | undefined;
+    let resumed = false;
+    let stillWaiting = false;
+    try {
+      await streamEvents(`/api/executions/${executionId}/approvals`, { callId, approved }, (event, data) => {
+        if (event === 'decision') {
+          const decision = data as { status: 'waiting' | 'resumed' };
+          if (decision.status === 'waiting') stillWaiting = true;
+          else if (!resumed) {
+            resumed = true;
+            useEditor.setState({ running: true, runStatus: 'running', executionId });
+          }
+        }
+        if (event === 'execution') {
+          const update = data as ExecutionEvent;
+          if (update.type === 'node.chunk') onChunk(update.chunk);
+          else useEditor.getState().applyEvent(update);
+        }
+        if (event === 'result') result = data as RunResult;
+      });
+    } finally {
+      if (resumed) useEditor.getState().finishRun();
+    }
+    if (stillWaiting) return { stillWaiting: true };
+    if (result?.status === 'waiting' && result.approval) return { executionId: result.executionId ?? executionId, approval: result.approval };
+    if (!result || result.status !== 'success') throw new Error(result?.error?.message ?? 'Execution failed');
+    return { reply: replyOf(result), executionId };
+  }, []);
 
   if (!loaded) {
     return (
@@ -667,12 +724,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
           />
 
           <div className="ml-auto flex items-center gap-2">
-            {hasActivatable && (
-              <label className="flex items-center gap-2 pr-1 text-[13px] text-t2" title="Active workflows respond to webhooks, forms and schedules">
-                <Switch checked={active} onChange={(v) => useEditor.getState().setMeta({ active: v })} label="Active" />
-                <span className={cn(active && 'font-semibold text-gn')}>{active ? 'Active' : 'Inactive'}</span>
-              </label>
-            )}
+            <PublishControl workflowId={workflowId} onSave={save} />
             <Button
               variant={assistantOpen ? 'outline' : 'ghost'}
               onClick={() => useAssistant.getState().setOpen(!assistantOpen)}
@@ -690,7 +742,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
             >
               <History className="size-4" />
             </Button>
-            <Button onClick={() => void save()} loading={saving} title="Save (⌘S)" variant={dirty ? 'primary' : 'outline'}>
+            <Button onClick={() => void save()} loading={saving} disabled={readOnly} title="Save (⌘S)" variant={dirty ? 'primary' : 'outline'}>
               Save
             </Button>
             <WorkflowMenu onSave={save} />
@@ -698,6 +750,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
           {running && <span className="lf-shimmer absolute inset-x-0 bottom-[-1px] h-[2px]" />}
         </header>
 
+        <EditLockBanner onTakeOver={() => void takeOver()} />
         <StatusStrip />
 
         <div className="relative flex min-h-0 flex-1">
@@ -719,7 +772,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
             </div>
             <EditorLogs />
           </div>
-          <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} onSend={sendChat} />
+          <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} onSend={sendChat} onDecide={decideChat} />
           <AssistantPanel />
           <NodeCreator />
         </div>

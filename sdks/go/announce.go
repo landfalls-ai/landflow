@@ -9,15 +9,28 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	pb "github.com/landflow/landflow/sdks/go/landflowpb"
 )
+
+// registrySecretHeader carries LANDFLOW_REGISTRY_SECRET (when the host requires one) on every registry call.
+const registrySecretHeader = "X-Landflow-Registry-Secret"
+
+// withRegistrySecret adds LANDFLOW_REGISTRY_SECRET to a gRPC call's metadata.
+func withRegistrySecret(ctx context.Context) context.Context {
+	if secret := os.Getenv("LANDFLOW_REGISTRY_SECRET"); secret != "" {
+		return metadata.AppendToOutgoingContext(ctx, strings.ToLower(registrySecretHeader), secret)
+	}
+	return ctx
+}
 
 // registryClient talks to the host registry over HTTP or gRPC.
 type registryClient interface {
@@ -86,6 +99,9 @@ func (r *httpRegistry) do(ctx context.Context, method string, payload any) ([]by
 	}
 	httpReq.Header.Set("Content-Type", "application/json; charset=utf-8")
 	httpReq.Header.Set("Accept", "application/json")
+	if secret := os.Getenv("LANDFLOW_REGISTRY_SECRET"); secret != "" {
+		httpReq.Header.Set(registrySecretHeader, secret)
+	}
 	resp, err := r.client.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -112,7 +128,7 @@ func (r *grpcRegistry) String() string { return r.target }
 func (r *grpcRegistry) Close() error   { return r.conn.Close() }
 
 func (r *grpcRegistry) Announce(ctx context.Context, req AnnounceRequest) (AnnounceResponse, error) {
-	resp, err := r.client.Announce(ctx, &pb.AnnounceRequest{
+	resp, err := r.client.Announce(withRegistrySecret(ctx), &pb.AnnounceRequest{
 		Protocol: req.Protocol, Endpoint: req.Endpoint, PluginId: req.PluginID,
 		Version: req.Version, TtlSeconds: int32(req.TTLSeconds),
 	})
@@ -127,7 +143,7 @@ func (r *grpcRegistry) Announce(ctx context.Context, req AnnounceRequest) (Annou
 }
 
 func (r *grpcRegistry) Withdraw(ctx context.Context, req WithdrawRequest) error {
-	_, err := r.client.Withdraw(ctx, &pb.WithdrawRequest{Endpoint: req.Endpoint, PluginId: req.PluginID})
+	_, err := r.client.Withdraw(withRegistrySecret(ctx), &pb.WithdrawRequest{Endpoint: req.Endpoint, PluginId: req.PluginID})
 	return err
 }
 

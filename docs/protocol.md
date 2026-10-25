@@ -50,6 +50,8 @@ An endpoint is a URL: `http://host:port` (or `https://`) or `grpc://host:port`.
 | `POST /landflow/v1/load-options` | `LoadOptionsRequest` | `LoadOptionsResponse` |
 | `POST /landflow/v1/test-credentials` | `TestCredentialsRequest` | `TestCredentialsResponse` |
 | `GET /landflow/v1/health` | – | `HealthResponse` |
+| `POST /landflow/v1/webhook-method` | `WebhookMethodRequest` | `WebhookMethodResponse` (app webhook triggers, §12) |
+| `POST /landflow/v1/webhook` | `WebhookRequest` | `WebhookResponse` (app webhook triggers, §12) |
 | `GET /metrics` | – | Prometheus text exposition (optional, see [observability.md](observability.md)) |
 
 All bodies are `application/json; charset=utf-8`. A node failure is **not** an HTTP error: return
@@ -58,7 +60,8 @@ unknown node type, `500` only for bugs in the plugin server itself.
 
 ### gRPC binding
 
-`landflow.plugin.v1.PluginService` with `GetManifest`, `Execute`, `LoadOptions`, `TestCredentials`, `Health`.
+`landflow.plugin.v1.PluginService` with `GetManifest`, `Execute`, `LoadOptions`, `TestCredentials`, `Health`,
+and `WebhookMethod` / `ReceiveWebhook` for app webhook triggers (§12).
 Recursive / open-ended values travel as `DynamicValue { bytes json }` — UTF-8 JSON that follows
 the same JSON Schema as the HTTP binding (the Terraform `tfplugin` approach). Conventions:
 
@@ -247,6 +250,40 @@ node lists the ones it can use in `NodeDescriptor.credentials`:
   at a self-hosted instance, a proxy or a test double.
 - Never log credential values. SDKs redact them from logs and span attributes.
 
+### OAuth2 credentials (`extends`)
+
+The host ships a generic OAuth2 type, `core.oAuth2Api` (fields `grantType` — `pkce`, `authorizationCode` or
+`clientCredentials` —, `authUrl`, `accessTokenUrl`, `clientId`, `clientSecret`, `scope`, `authQueryParameters`,
+`authentication` — `header` (HTTP Basic) or `body` —, `userInfoUrl`). A plugin type that lists it in `extends`
+(n8n's `extends: ['oAuth2Api']`) becomes an OAuth2 type: the host merges the parent's properties first, a child
+property with the same name replaces the parent's in place (pin a provider's URLs with `hidden` properties and
+defaults), and the credential dialog shows **Connect**:
+
+```jsonc
+{ "name": "googleOAuth2Api", "displayName": "Google OAuth2", "extends": ["oAuth2Api"], "properties": [
+  { "name": "authUrl", "displayName": "Authorization URL", "type": "hidden", "default": "https://accounts.google.com/o/oauth2/v2/auth" },
+  { "name": "accessTokenUrl", "displayName": "Access Token URL", "type": "hidden", "default": "https://oauth2.googleapis.com/token" },
+  { "name": "scope", "displayName": "Scope", "type": "string", "default": "openid email https://www.googleapis.com/auth/drive" }
+]}
+```
+
+- A local name in `extends` means a type of the same plugin when it has one, else the core plugin's; `plugin.name`
+  is used as is. Unknown parents and cycles are ignored (the type keeps its own properties).
+- **Connect** runs the authorization code flow (with PKCE for `pkce`) in a popup: `GET
+  /api/credentials/{id}/oauth2/authorize` redirects to the provider with a signed, expiring `state` and a
+  per-flow cookie; the provider calls back `GET /api/oauth2/callback` (the redirect URL to register:
+  `LANDFLOW_OAUTH2_REDIRECT_URL`, else `LANDFLOW_PUBLIC_URL` + `/api/oauth2/callback`, else the request's origin).
+  The client credentials grant needs no popup: the host fetches a token at first use or with **Get token**.
+- The host keeps the token (and refresh token) encrypted with the credential; the API never returns it. On
+  `Execute`, `LoadOptions` and `TestCredentials` the plugin gets the saved fields plus `accessToken`,
+  `tokenType`, `expiresAt` (ISO, when known) and `oauthTokenData: { access_token }` — never the refresh token.
+- **Refresh:** before each call the host renews a token that expires within a minute (refresh token, or the
+  client credentials grant) and saves it. When a node fails with an error that reads like a 401 (`401`,
+  `Unauthorized`, `invalid_token`, `token expired`), the host renews the token once more and runs the node again,
+  **once**; the whole call is repeated. So a plugin should use `accessToken` as is and, when the API answers 401,
+  fail with a message that says so (e.g. `Gmail API error 401: …`) rather than retrying with the same token.
+  When renewing fails, the node fails with "… could not be renewed — reconnect it in Credentials".
+
 ## 8. Polling triggers
 
 A trigger with `triggerSource: "poll"` checks a service for new events on a schedule (n8n's
@@ -376,3 +413,73 @@ plugin where the host's binary API is for this call:
 
 `prepare…` returns an inline ref for small files and uploads the rest; the MIME type defaults to
 one guessed from the file name.
+
+## 12. App webhook triggers
+
+A trigger with `triggerSource: "appWebhook"` registers **its own** webhook with an external service (a GitHub
+repository hook, a Stripe endpoint, a Slack event subscription) when the workflow is **published**, and removes it
+when the workflow is unpublished, the trigger changes or the workflow is deleted: n8n's `webhookMethods`. The service
+then calls the host, the host hands each call to the node, and the node decides whether it starts a run.
+
+```
+ publish ──▶ host: WebhookMethod checkExists ──▶ exists? done : WebhookMethod create (node registers webhookUrl)
+ service ──▶ POST {publicUrl}/api/webhook/app/<workflowId>/<nodeId> ──▶ host: ReceiveWebhook ──▶ items? run : reply only
+ unpublish / node changed / workflow deleted ──▶ host: WebhookMethod delete
+```
+
+- **Endpoints.** HTTP `POST /landflow/v1/webhook-method` and `POST /landflow/v1/webhook`; gRPC `WebhookMethod` and
+  `ReceiveWebhook`. `GET /.well-known/landflow` lists `endpoints.webhookMethod` and `endpoints.webhook` when a node is
+  an app webhook trigger. Node failures are `200` with `error`, as for `Execute`.
+- **`WebhookMethodRequest`** `{protocol, method: "checkExists" | "create" | "delete", workflowId, node, parameters,
+  credentials?, webhookUrl, staticData}`. Parameters are resolved without items. `webhookUrl` is
+  `{LANDFLOW_PUBLIC_URL}/api/webhook/app/<workflowId>/<nodeId>`: that path is reserved for app webhooks and is public
+  (no sign-in; the node verifies the caller).
+- **Static data.** A JSON object the host keeps per workflow and node (the hook id, a signing secret). It arrives as
+  `staticData` (`{}` at first); a response carries `staticData` only when the node changed it (absent = unchanged).
+  `create` stores what `delete` and `webhook` need; `delete` usually clears it.
+- **`WebhookMethodResponse`** `{exists?, staticData?, logs?, error?}`. `checkExists` answers whether the hook in the
+  static data is still registered (with the current URL); a node without `checkExists` always gets `create`. Over
+  gRPC proto3 cannot tell `exists: false` from absent: hosts treat anything but `true` as *not registered*. `create`
+  and `delete` report failures in `error` (a hook that is already gone is not an error for `delete`).
+- **`WebhookRequest`** `{protocol, workflowId, node, parameters, credentials?, webhookUrl, staticData, request}` where
+  `request` = `{method, path, headers (lower-case names), query, body}`. `body` is the raw body **base64** over HTTP and
+  `bytes` over gRPC, exactly as sent, because signatures are computed over these bytes.
+- **`WebhookResponse`** `{items?, response?, staticData?, idempotencyKey?, logs?, error?}`. `items` start a run of the
+  **published** version with them as the trigger's output; no items start nothing (a ping, a rejected signature, an
+  event the node ignores). `response` `{status?, headers?, body?}` is what the service gets back (default `200`
+  `{"status": "started", "executionId": …}`, or `{"status": "ignored"}` without items). `idempotencyKey` identifies the
+  event (GitHub's `X-GitHub-Delivery`): a redelivery within the retention window starts no second run (`{"status":
+  "duplicate"}`).
+- **Host behaviour.** Registration is reconciled per workflow on publish, unpublish, rollback and delete, and at boot
+  (after plugins had a moment to announce). A changed trigger (parameters, credentials, URL) is deleted and created
+  again. A failed `create` is shown in the editor's Publish menu and retried with backoff (1 minute doubling to an hour,
+  `LANDFLOW_APP_WEBHOOK_RETRY_MS`); a trigger whose plugin is offline is retried when it comes back. Calls for a workflow
+  that is not published (or whose published version has no such trigger) get `404`, a trigger whose plugin is offline
+  `503`, bodies over the limit `413`, and a run the workflow's concurrency limit skips `429`.
+- **Manual runs.** An app webhook trigger has no event in an editor run: `Execute` may return no items (pin data from a
+  past execution to build the rest of the flow).
+
+### Signature helpers
+
+All three SDKs verify the common HMAC-SHA256 schemes over the raw body, with constant-time comparison and, for the
+timestamped schemes, a tolerance (default 300 s) against replays:
+
+| Scheme | TypeScript (`@landflow/sdk`) | Go | Python (`landflow_sdk.signatures`) |
+|---|---|---|---|
+| GitHub `X-Hub-Signature-256: sha256=<hex>` | `verifyGitHubSignature(secret, rawBody, header)`, `githubSignature` | `VerifyGitHubSignature`, `GitHubSignature` | `verify_github_signature`, `github_signature` |
+| Stripe `Stripe-Signature: t=<ts>,v1=<hex>` | `verifyStripeSignature(secret, rawBody, header, { toleranceSeconds, now })`, `stripeSignature` | `VerifyStripeSignature(…, SignatureOptions{})`, `StripeSignature` | `verify_stripe_signature(…, tolerance_seconds=, now=)`, `stripe_signature` |
+| Slack `X-Slack-Signature: v0=<hex>` + `X-Slack-Request-Timestamp` | `verifySlackSignature(secret, rawBody, timestamp, signature)`, `slackSignature` | `VerifySlackSignature`, `SlackSignature` | `verify_slack_signature`, `slack_signature` |
+| plain HMAC (hex or base64) | `hmacSha256`, `verifyHmacSha256({ secret, payload, signature, encoding, prefix })`, `safeEqual` | `HMACSHA256Hex` / `HMACSHA256Base64`, `VerifyHMACSHA256`, `VerifyHMACSHA256Base64`, `SafeEqual` | `hmac_sha256`, `verify_hmac_sha256`, `safe_equal` |
+
+### SDK shapes
+
+| | TypeScript | Go | Python |
+|---|---|---|---|
+| lifecycle | `webhookMethods: { checkExists?, create, delete }` | `WebhookNode` (`WebhookCreate`, `WebhookDelete`, `Webhook`) + optional `WebhookChecker` | `webhook_check_exists`, `webhook_create`, `webhook_delete` on `Node` |
+| incoming call | `webhook(ctx)` → `{ items, response, idempotencyKey }` or items | `Webhook(ctx) (*WebhookResult, error)` | `webhook(ctx)` → `{"items", "response", "idempotencyKey"}` or a list |
+| context | `getWebhookUrl()`, `getStaticData()` / `setStaticData()`, `getNodeParameter`, `getCredentials`, `getHeader`, `getRawBody()`, `getBody()` | `WebhookURL()`, `StaticData()` / `SetStaticData`, `Param`, `Credentials`, `Header`, `RawBody()`, `Body()` / `BodyObject()` | `get_webhook_url()`, `get_static_data()` / `set_static_data()`, `get_node_parameter`, `get_credentials`, `get_header`, `get_raw_body()`, `get_body()` |
+
+A JSON `response` is written as `{ status, json }` in TypeScript and Python (`JSONReply(status, v)` in Go): the SDK
+serializes it and sets `content-type`. The GitHub Webhook Trigger in `plugins/productivity` (Python) is a complete
+example: it registers a repository hook with a random secret, verifies `X-Hub-Signature-256`, answers GitHub's
+`ping`, and deduplicates redeliveries by `X-GitHub-Delivery`.

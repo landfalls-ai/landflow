@@ -19,7 +19,7 @@ pnpm install
 pnpm dev:all                              # host :3000 + the example and integration plugins
 ```
 
-Open http://localhost:3000. The plugins announce themselves within a second and their nodes appear in the editor. Three example workflows are seeded on first boot:
+Open http://localhost:3000 and create the owner account on the setup page (or start with `LANDFLOW_OWNER_EMAIL` and `LANDFLOW_OWNER_PASSWORD` set; see [Authentication](#authentication)). The plugins announce themselves within a second and their nodes appear in the editor. Three example workflows are seeded on first boot:
 
 | Workflow | Shows |
 |---|---|
@@ -56,15 +56,24 @@ The editor follows n8n's layout, in Landfall's monochrome style. Colour comes fr
 - **Debug**: breakpoints (`F9`), Step (`F10`), Continue (`F8`) and Stop. While paused, the node glows amber and its waiting input can be inspected.
 - **Assistant** ([docs/assistant.md](docs/assistant.md)): after a node runs, its panel shows **✨ Suggestions** from the local model: fixes for the error, parameter tweaks, data problems and the next node to add, each with Apply / Dismiss. **✨ Assistant** (`⌘I`) opens a builder chat. It searches the node catalog, reads node docs, the workflow and the last run, then proposes changes as diffs you apply, with an undo. Changes are validated against the registry before you see them.
 - **Executions tab** (Editor | Executions): n8n's list of runs with a read-only canvas, an error banner, the Logs panel, Debug in editor, and Retry/Re-run with the saved or the original workflow. The global **Executions** page is a filterable table of every run.
+- **Evaluations tab** (Editor | Executions | Evaluations): run the workflow over its test cases, see each run's metric averages and per-case results (each linking its execution), and compare two runs. See [Evaluations](#evaluations).
 
 **Edit and organise**
 - **Sticky notes** (`⇧S` or the note button on the canvas): Markdown notes behind the nodes. Double-click to edit, drag the corners to resize, and pick one of seven colours from the toolbar above a selected note. They are saved in `workflow.stickyNotes` (never as nodes) and show read-only in the Executions tab.
 - **Copy, cut, paste, duplicate** (`⌘C` `⌘X` `⌘V` `⌘D`): selections, with the connections between them, sticky notes and pinned data, go through the system clipboard as JSON, so they move between workflows and browser tabs. Pasted nodes get new ids and n8n-style names when a name is taken (`HTTP Request` → `HTTP Request1`). `$('Name')` references between pasted nodes follow the rename; references to nodes outside the selection keep pointing at the original. Pasting **n8n clipboard JSON** converts it with the importer and reports nodes that became placeholders.
 - **Undo / redo** (`⌘Z`, `⇧⌘Z`): canvas edits, parameter typing (coalesced per node), pasting, deleting and tidying up. `?` lists every shortcut.
 - **Expressions**: inside `{{ }}` the parameter field highlights the expression and suggests `$json` fields from the node's input, upstream nodes (`$('Node').item.json.…`), `$input`, `$now`, `$today`, `$workflow`, `$execution`, `$itemIndex`, `$vars` and methods for the value's type (↑↓, Enter or Tab, Esc; `⌃Space` opens the list). Typing `{{` closes the braces.
-- **Workflow menu** (`…` in the top bar): **Settings** (error workflow, time zone, timeout, which workflows may call this one, which executions to save), **Version history**, **Download** as JSON, and **Import** from a file or pasted JSON into the open workflow (Landflow or n8n).
+- **Workflow menu** (`…` in the top bar): **Settings** (error workflow, **Notify on failure** (see Failure alerts), time zone, timeout, which workflows may call this one, which executions to save), **Version history**, **Download** as JSON, and **Import** from a file or pasted JSON into the open workflow (Landflow, n8n or Flowise).
 - **Version history**: every save that changes the workflow records a version (the last 50 per workflow, identical saves are skipped) in the database. The panel lists them with a summary of what changed, previews a version read-only on the canvas, and restores it (the restore is a new version, so it can be undone the same way).
-- **Tags** in the top bar, and **folders** on the Workflows page: nested folders with a breadcrumb, create / rename / delete (only when empty), move a workflow from its menu or by dragging it onto a folder or breadcrumb step, search by name, filter by tag and sort by last updated, name or created. **Import** on the Workflows page creates a workflow from a Landflow or n8n JSON file and shows what was mapped, what became a placeholder and any warnings.
+- **Draft and publish**: saving keeps a draft; **Publish** (top bar, with an optional note) puts a saved version live. Production starts (webhooks, forms, schedules, polls, app webhooks, IMAP, MCP Server Triggers, error workflows and Execute Workflow from production runs) run the published version, while the editor runs the draft. The top bar shows "Unpublished changes" when the draft moved on, the version history marks the published version and can publish an older one (a rollback), **Unpublish** stops production triggers, and an execution says which version ran ("ran version 7 (published)"). `active` means "has a published version": workflows that were active before draft and publish were published on their newest version at the upgrade (migration 200), and an API client that still saves with `active: true` publishes what it saved. The API, the CLI (`workflows publish/unpublish`) and Git sync go through the same publish functions (`apps/web/src/lib/server/publish.ts`).
+- **Tags** in the top bar, and **folders** on the Workflows page: nested folders with a breadcrumb, create / rename / delete (only when empty), move a workflow from its menu or by dragging it onto a folder or breadcrumb step, search by name, filter by tag and sort by last updated, name or created. **Import** on the Workflows page creates a workflow from a Landflow, n8n or Flowise JSON file and shows what was mapped, what became a placeholder and any warnings.
+
+### Importing from n8n and Flowise
+
+Import (Workflows page, the workflow menu, `POST /api/workflows/import`, `landflow import`) tells the format apart by its shape and returns the same report: nodes mapped, placeholders (disabled No Operation nodes keeping the original type and parameters in their notes), connections, sticky notes and warnings.
+
+- **n8n**: triggers, flow and core nodes, the Code node in JavaScript and **Python**, Schedule Trigger **cron** expressions as trigger rules, AI Agent, chains and chat models, the **RAG** nodes (vector stores in every mode, Ollama / OpenAI embeddings, the Default Data Loader, the Recursive Character / Character / Token splitters, the Question and Answer Chain, `toolVectorStore` / `retrieverVectorStore` wrappers folded into their store), **Guardrails**, **Call n8n Workflow Tool** and the **Evaluation Trigger** / **Evaluation** nodes.
+- **Flowise** chatflows and agentflows (v2): chat models, memory, tools, prompt templates folded into their chain, conversation and LLM chains, the Tool Agent, document loaders, splitters, embeddings and vector stores (split into an upsert branch with its own manual trigger and a retrieval branch, as a retriever or an agent tool), and agentflow Start / Agent / LLM nodes. The chat input becomes a Chat Trigger. The Flowise test fixtures (`apps/web/test/fixtures/flowise`) are synthetic, written from Flowise's node definitions.
 
 ## Architecture
 
@@ -155,16 +164,27 @@ Every manifest is validated against the zod/JSON Schema before its nodes become 
 - **Concurrency**: `concurrencyLimit` caps a workflow's production runs (webhook, form, schedule, poll, error-workflow and agent-tool runs) at once, and `singleton` allows one, waiting runs included. A trigger run with no free slot waits in the workflow's FIFO queue (status **Queued**, at most `concurrencyQueueSize`, default 100; it survives a restart) or, with `concurrencyOverflow: 'skip'`, is skipped (webhooks and forms answer 429). Manual and chat runs from the editor, debug runs, sub-executions, re-runs and retries are never held back.
 - **Retries**: with `retryMaxAttempts` of 2 or more, a failed production run is retried automatically after `retryBaseDelaySeconds` (default 30), doubling per attempt up to 6 hours; retries survive a restart. Each retry is a new execution linked to the failed one (`retryOf`, `retryAttempt`, and `retriedBy` on the failed run) that continues from the failed node, reusing what ran before it. **Retry** on a failed execution (`POST /api/executions/:id/retry`) does the same by hand, or from the start.
 - **Stop all**: the Executions page's **Stop all** (`POST /api/executions/stop-all`) aborts running executions, cancels waiting and queued ones and drops pending automatic retries.
+- **Failure alerts** (Settings → Alerts): hear about failed runs without an error workflow. **Channels** are where alerts go: email (through the host's `LANDFLOW_SMTP_*` settings, one message per address), a Slack incoming webhook, a webhook (a JSON POST signed with `X-Landflow-Signature: sha256=<HMAC-SHA256 of "<X-Landflow-Timestamp>.<body>">` when it has a secret) or a Telegram chat through a saved Telegram API credential; each has **Test**, and shows its last delivery. Slack URLs and webhook secrets are encrypted with the vault key and never returned. **Rules** pick workflows (all, selected, or by tag), events (**failed** after the last automatic retry, **timed out**, **retries exhausted**, **waiting too long** past N minutes; a Wait timer that isn't due doesn't count) and channels; editor runs only with **Include editor runs**, sub-executions are left to their parent. A rule's throttle allows one alert per workflow per window (default 10 min); what it holds back goes out as one digest ("Orders sync: 4 more failures in the last 10 min") when the window ends. Every alert names the workflow, the failing node and the error, and links to the execution (`LANDFLOW_PUBLIC_URL`). A workflow's **Settings → Notify on failure** makes such a rule for that workflow in one click (members may use it; channels are set up by admins). API: `/api/settings/alerts` (channels, rules, `channels/:id/test`) and `/api/workflows/:id/alert`.
 
 ### Triggers and flow nodes
 
 - **Webhook** (`/api/webhook/<path>`): **Respond** immediately (202 with the execution id), when the last node finishes (its output as JSON), or using a **Respond to Webhook** node (first item, all items, JSON, text, no data or a redirect, with status code and headers; sent when that node runs while the run goes on). A run that starts waiting before it answers returns `{ status: "waiting", executionId }`. An `Idempotency-Key` header makes retried calls safe (see Durable runtime); a workflow at its concurrency limit queues the call's run (`status: "queued"`) or answers 429.
 - **On Form Submission** (`core.formTrigger`) and **Form** (`core.form`): server-rendered forms (text, textarea, number, email, password, date, dropdown, checkboxes, radio buttons; required fields, placeholders, button label) at `/form/<path>` while the workflow is active. A submission becomes `{ <field>: value, submittedAt, formMode }`. The trigger answers on submit or when the workflow finishes; each Form page makes the run wait at `/form/waiting/<executionId>`, and a Form ending shows a message or redirects.
+- **Webhook and form authentication** (n8n's **Authentication** on the Webhook and Form triggers): **Basic Auth** (a Basic Auth credential), **Header Auth** (a header name and value) or **JWT Auth** (an HS256/384/512 secret, a PEM public key or a JWKS URL, with optional issuer and audience checks; the verified claims reach the run as `jwtPayload`), plus **IP(s) Allowlist** (addresses and CIDR ranges, IPv4 and IPv6). A caller that fails gets 401 (with `WWW-Authenticate`) or 403 before the body is read and starts no run; secrets are compared in constant time and the headers that carried them are left out of the item. The caller's address is the first `X-Forwarded-For` entry, else `X-Real-IP`, so put a proxy that overwrites those headers in front of a public install.
+- **App webhook triggers** (`triggerSource: "appWebhook"`, e.g. the productivity plugin's **GitHub Webhook Trigger**): publishing asks the plugin to register a hook at the service for `/api/webhook/app/<workflowId>/<nodeId>` (`checkExists`, then `create`), unpublishing or deleting the workflow removes it (`delete`), and each delivery goes to the plugin (`ReceiveWebhook`) to verify its signature and turn it into items, a reply and an idempotency key. What the plugin keeps (hook id, secret) is the node's static data, stored per workflow and node. Registrations that fail are retried every minute (`LANDFLOW_APP_WEBHOOK_RETRY_MS`) and shown in the publish menu. See [docs/protocol.md §12](docs/protocol.md#12-app-webhook-triggers).
+- **Email Trigger (IMAP)** (`core.emailReadImap`, an **IMAP** credential): polls a mailbox every **Poll Interval** seconds or, with **Listen: IDLE**, keeps a connection open and runs as soon as mail arrives (the poll stays as the fallback). Each new message (unread only, by default) becomes an item with from, to, cc, subject, date, text, HTML, message id and headers; attachments become binary files of the run (**Download Attachments**). Afterwards it marks messages read, moves them to a folder or leaves them. The first poll records a baseline, so old mail doesn't start runs; **Execute** in the editor shows the latest five messages without changing them.
 - **Schedule**: n8n's Trigger Rules (every N seconds, minutes, hours at a minute, days, weeks on weekdays or months on a day, at a time of day, or a five- or six-field cron), in the workflow's time zone, else the server's. Older "every N seconds / minutes / hours" schedules keep counting from activation.
 - **Error Trigger**: the start of an error workflow; it receives n8n's `{ execution: { id, url, error, lastNodeExecuted, mode, retryOf? }, workflow: { id, name } }`.
 - **When Called by a Workflow or Agent** (`core.workflowTrigger`): defined arguments or "accept all data"; called by an agent tool or by **Execute Workflow**, which runs the workflow once or once per item, maps arguments or passes items through, waits for it (or not) and returns its last node's output. The child is its own execution linked to the parent (`parentExecutionId`), at most 10 levels deep; if it starts waiting, the parent waits too and resumes with its output.
 - **Wait**: a time interval, a date and time, a webhook call (`$execution.resumeUrl`) or a form (`$execution.resumeFormUrl`), with an optional time limit. Waits up to ~65 s stay in memory; longer ones suspend the run.
 - **Loop Over Items** (Split in Batches v3): batches on its "loop" output, everything that came back on "done".
+
+### Debounce, batching and rate limits
+
+- **Debounce** (a trigger node's Settings, as Inngest's `debounce`): events with the same key (an expression over the event, e.g. `{{ $json.body.userId }}`; empty = one key) within the window collapse into one run, started once the key has been quiet for **Window** seconds, or at the latest **Max Wait** seconds after its first event. The run gets the last event, or all of them (**Mode: All**).
+- **Batch** (Inngest's `batchEvents`): events are collected until **Size** of them arrived or **Timeout** seconds after the first, then one run gets them all as items.
+- Production starts only (webhooks, schedules, polls, app webhooks, public chats); manual and chat-panel runs are never held. A held webhook call answers **202** `{ status: 'debounced' | 'batched', count, runsAt }`; held events live in SQLite (`trigger_buffers`) and their timers are re-armed at boot. The execution records how many events it took (`buffered`).
+- **Rate limit** (every node's Settings, next to Retry on Fail): at most **Limit** calls per **Interval** seconds, a sliding window shared by every run in the process; calls over it wait their turn in a queue (logged on the node run) instead of failing.
 
 ### Code node
 
@@ -184,7 +204,25 @@ The **AI Agent** is a root node with typed sub-node ports (`ai_languageModel` re
 
 **Any `usableAsTool` node becomes a tool, including remote plugins in any language.** The tool schema comes from the plugin's `toolInputSchema`, from n8n-style `{{ $fromAI('key', 'description', 'type') }}` placeholders, or from a heuristic. Tool calls in a turn run concurrently, and each call is recorded as its own sub-node run, so tool nodes light up on the canvas and the timeline shows model, tool and memory calls.
 
+**Streamed replies**: the Anthropic, OpenAI-compatible and Ollama adapters stream tokens, and the AI Agent and the Basic LLM Chain send them as `node.chunk` events (text, plus the agent's tool calls as they start and finish). The editor's chat panel shows them live; the Chat trigger and the Webhook trigger's **Respond: Streaming** answer with them as SSE (`Accept: text/event-stream`) or NDJSON, n8n's chunk format (`{ type: 'begin' | 'item' | 'end' | 'tool', content, metadata: { nodeId, nodeName, itemIndex } }`), ending with `{ type: 'done', executionId, status, output }`.
+
+**Files and images as model inputs**: **Include Binary as Input** (Options of the AI Agent, the chains and the OpenAI node) sends the item's images, PDFs and text files with the prompt: Anthropic image and document blocks, OpenAI `image_url` and `file` parts, Ollama `images` (PDFs and text files are read into the prompt; use a vision model such as `qwen3.8`). **Binary Fields** picks which ones. The editor's chat panel and the hosted chat attach files to a message (`data0`, `data1`… on the Chat trigger's item).
+
+**Tool approvals**: the AI Agent's **Tools Requiring Approval** (all tools or selected ones) pauses the execution before a tool runs (status *Waiting*); the person approves or rejects each call in the editor's chat panel or the execution view (`POST /api/executions/:id/approvals`), or with buttons in a Slack channel (**Ask In: Slack**, optional approvers and timeout). Approved calls run, rejected ones are reported to the model, and the agent continues where it stopped.
+
+**Token and cost tracking with caps**: every model call is priced and recorded ([docs/observability.md](docs/observability.md#token-and-cost-tracking)); Workflow settings → **AI usage limits** caps tokens or dollars per execution and per workflow per day, and agents have daily and monthly limits. A run that goes over stops with *AI usage cap reached: … used X of its Y limit (where to change it)*.
+
 **Model fallback**: the AI Agent, Basic LLM Chain, Text Classifier, Information Extractor and Question and Answer Chain have n8n's **Enable Fallback Model** switch. It shows a second chat-model slot (`ai_languageModel` port 1); when a call to the first model throws, the same call is retried on the fallback, logged as a warning and marked with a `landflow.ai.fallback` span event. The agent's output says which model answered (`model`, `fallbackUsed`).
+
+### Hosted chat and widget
+
+Turn on **Make Chat Publicly Available** on a Chat Message trigger and publish the workflow: the chat answers at `/chat/<path>` (the trigger's **Path**, else the workflow id) with the trigger's title, subtitle, initial messages and input placeholder, optional **Basic Auth**, **Load Previous Session** (transcripts per session id, kept in SQLite) and **Allow File Uploads** (MIME types such as `image/*,application/pdf`, up to 10 files of 20 MB). **Response Mode: Streaming** streams the reply; *When Last Node Finishes* answers once. To put the chat on another site:
+
+```html
+<script src="https://landflow.example.com/chat/widget.js" data-workflow="support"></script>
+```
+
+The widget renders a chat bubble in a shadow root (no style clashes) and talks to `/chat/<path>` with CORS: only the trigger's **Allowed Origins (CORS)** (comma-separated, `*` for any) may call it. Basic Auth works on the hosted page only, since the widget can't send it. Public chat runs are production runs (webhook mode: counted in Insights, held by concurrency limits, debounce and batching).
 
 ### Retrieval (RAG)
 
@@ -202,6 +240,18 @@ A vector store dropped on an agent's Tool slot switches itself to "As Tool". Age
 
 The **Guardrails** node (`core.guardrails`) follows n8n's: **Check Text for Violations** sends each item to **Pass** or **Fail**, **Sanitize Text** replaces what it finds and sends every item on. Checks: PII (email, phone, Luhn-checked card numbers, checksum-verified IBANs, IPv4/IPv6, US SSN, crypto wallets), secret keys (known key formats, assignments, high-entropy strings, at three strictness levels), keywords, URLs outside an allow-list (schemes, subdomains, credentials in URLs), custom regex, jailbreak / prompt-injection heuristics, and checks the optional chat model judges (jailbreak, topical alignment, NSFW, custom rules) with a threshold. Sanitizing redacts (`<EMAIL_ADDRESS>`) or masks (`j***@example.com`, `****-****-****-4242`). Reports carry masked matches only, and a model check that can't run counts as a violation.
 
+### Evaluations
+
+**Offline**, after n8n's evaluations: the **Evaluation Trigger** (`core.evaluationTrigger`) reads test cases from a Data Table and the workflow runs once per row (sequentially, each an execution marked with the run and the case). The **Evaluation** node (`core.evaluation`) has three operations:
+
+- **Set Outputs**: records what the workflow answered (to the run, or written back to the row);
+- **Set Metrics**: scores the answer: Exact Match, Contains, Regex, JSON Equality, Numeric Closeness (absolute / relative tolerance), String Similarity (edit distance), Tools Used (which tools an AI Agent called), the LLM judge's **Correctness**, **Helpfulness** and **Faithfulness** (1–5, with its reasoning, on a Chat Model slot), and **Custom** metrics from expressions;
+- **Check If Evaluating**: sends items to an Evaluation or a Normal output, so the same workflow serves production and tests.
+
+The workflow's **Evaluations** tab starts a run, lists runs with per-metric averages, shows each case's inputs, expected answer, outputs and metrics (with the judge's reasoning) linked to its execution, and **compares two runs**: metric deltas and the cases that improved or regressed. Runs and cases are stored in the database (`evaluation_runs`, `evaluation_cases`). Evaluation executions are left out of Insights and the production run counts.
+
+**Online**: an LLM judge grades a sample of finished conversations of a standalone agent (the agent's **Evaluations** tab) or of a workflow's AI Agent node (**AI Agent grading** on the workflow's Evaluations tab). Per agent: on/off, sample rate, rubric, judge model (default: the agent's own model, or the node's chat model) and the score at or below which a reply is flagged. Scores (1–5, reasoning, the tools called) are stored with a 30-day trend; evaluation and debug runs are never graded. "Grade a session" scores one now.
+
 ### Agents (Preview)
 
 **Agents** (sidebar) are standalone assistants modelled on n8n's Agents tab ([docs/agents.md](docs/agents.md)). An agent has:
@@ -210,7 +260,7 @@ The **Guardrails** node (`core.guardrails`) follows n8n's: **Check Text for Viol
 - capabilities: any plugin action node, workflows that start with **When Called by an Agent**, other agents as sub-agents, MCP servers (each tool the server lists), and knowledge bases (a vector store collection searched with a tool). Each capability can require a person's approval.
 - session memory, plus optional cross-session memory per user.
 
-You test it in a chat that streams tool calls and approval cards, then publish it as a version. The published version runs on schedules (cron, in a time zone), answers in Telegram, and is callable from workflows through the **Message an Agent** node. Every run is an `invoke_agent` trace with `execute_tool` and `gen_ai.chat` children.
+You test it in a chat that streams tool calls and approval cards, then publish it as a version. The published version runs on schedules (cron, in a time zone), answers in Telegram and Slack (mentions and DMs through the Events API, replies in threads, approval buttons; see [docs/agents.md](docs/agents.md#slack)), and is callable from workflows through the **Message an Agent** node. Every run is an `invoke_agent` trace with `execute_tool` and `gen_ai.chat` children.
 
 ### MCP
 
@@ -234,17 +284,36 @@ The integrations people use most in n8n, chosen from its catalogue and public us
 
 | Plugin | Language, ports | Nodes | Credentials |
 |---|---|---|---|
-| `core` (in the host) | TypeScript, in-process | Switch, Split Out, Aggregate, Remove Duplicates, Summarize, Rename Keys, Date & Time, Record Metric, Read/Write Files from Disk, Extract from File, Convert to File; OpenAI Chat Model (any OpenAI-compatible API, Ollama's `/v1` included), OpenAI (message a model, embeddings), Basic LLM Chain, Text Classifier, Information Extractor; RAG (vector stores, embeddings, data loader, text splitters, reranker, Question and Answer Chain), Guardrails | OpenAI API, Anthropic API, Postgres |
+| `core` (in the host) | TypeScript, in-process | Switch, Split Out, Aggregate, Remove Duplicates, Summarize, Rename Keys, Date & Time, Record Metric, Read/Write Files from Disk, Extract from File, Convert to File; OpenAI Chat Model (any OpenAI-compatible API, Ollama's `/v1` included), OpenAI (message a model, embeddings), Basic LLM Chain, Text Classifier, Information Extractor; RAG (vector stores, embeddings, data loader, text splitters, reranker, Question and Answer Chain), Guardrails, **Email Trigger (IMAP)** | OpenAI API, Anthropic API, Postgres, IMAP, Basic Auth, Header Auth, JWT Auth |
 | [`messaging`](plugins/messaging) | TypeScript, 7104/7204 | Telegram, **Telegram Trigger**, Slack, Discord, WhatsApp Business Cloud, Send Email (SMTP) | Telegram, Slack, Discord bot and webhook, WhatsApp, SMTP |
-| [`productivity`](plugins/productivity) | Python, 7105/7205 | Notion, Airtable, GitHub, **GitHub Trigger**, Jira Software, HubSpot, RSS Read, **RSS Feed Trigger** | Notion, Airtable, GitHub, Jira Cloud and Server (PAT), HubSpot |
-| [`google`](plugins/google-workspace) | Go, 7106/7206 | Google Sheets, **Sheets Trigger**, Gmail, **Gmail Trigger**, Google Drive, Google Calendar, Google Docs | Service account (JWT, optional impersonation), OAuth2 refresh token |
+| [`productivity`](plugins/productivity) | Python, 7105/7205 | Notion, Airtable, GitHub, **GitHub Trigger**, **GitHub Webhook Trigger**, Jira Software, HubSpot, RSS Read, **RSS Feed Trigger** | Notion, Airtable, GitHub, Jira Cloud and Server (PAT), HubSpot |
+| [`google`](plugins/google-workspace) | Go, 7106/7206 | Google Sheets, **Sheets Trigger**, Gmail, **Gmail Trigger**, Google Drive, Google Calendar, Google Docs | Service account (JWT, optional impersonation), Google OAuth2 (**Connect**, or a refresh token) |
 | [`databases`](plugins/databases) | Go, 7107/7207 | Postgres, MySQL, SQLite, Redis, **Postgres Trigger**, **SQLite Trigger** | Postgres, MySQL, Redis, SQLite |
 
 Run them with `pnpm plugin:messaging`, `plugin:productivity`, `plugin:google` and `plugin:databases` (all included in `pnpm dev:all`). Every credential has an overridable base URL or host, so each plugin's tests run against local fakes of the service; no test needs a real account.
 
 **Credentials.** Plugins declare credential types (fields, secrets, a connection test) in their manifest. The host keeps saved credentials in an AES-256-GCM vault (`.data/credentials.json`, key from `LANDFLOW_ENCRYPTION_KEY` or a generated `.data/encryption.key`). Workflows only reference them by id, the API never returns secrets, and each Execute call carries just the decrypted credentials that node declared. The **Credentials** page and the picker at the top of a node's parameters create, edit and test them ("Authenticated as @landflow_bot"). The SDKs mask credential values in logs, span attributes and error messages.
 
+**OAuth2 (Connect).** The host's **OAuth2 API** credential (`core.oAuth2Api`) and every plugin type that `extends` it (Google OAuth2 does) have a **Connect** button: it runs the provider's consent page in a popup (authorization code with PKCE, or plain authorization code; signed `state` and a per-flow cookie), stores the tokens encrypted, and shows "Connected as alice@example.com" with the expiry. The client credentials grant gets its token with **Get token** (or at first use). Presets fill in Google, GitHub, Slack, Microsoft, Notion and Discord. Register the **Redirect URL** the dialog shows with the provider: `<LANDFLOW_PUBLIC_URL>/api/oauth2/callback` (override with `LANDFLOW_OAUTH2_REDIRECT_URL`). Nodes get a fresh `accessToken` on every call: the host renews tokens that expire within a minute, and when a node fails with a 401 it renews the token and runs the node once more; a token that can't be renewed fails the node with "reconnect it in Credentials". **Refresh now**, **Reconnect** and **Disconnect** are in the dialog; the Credentials list shows connected / not connected / expired. The **HTTP Request** node's **Authentication** (Generic credential type: OAuth2, Bearer token or header auth) uses them. Protocol details: [docs/protocol.md](docs/protocol.md#oauth2-credentials-extends).
+
 **Polling triggers.** A node with `triggerSource: "poll"` is called by the host every `pollInterval` seconds with the state it returned last time, and a run starts only when it returns new items. The first poll records a baseline, so activating a workflow never replays history; **Execute** in the editor shows the latest few items. The node panel shows the poll status (last poll, new items, errors) with **Poll now**.
+
+**App webhook triggers.** A node with `triggerSource: "appWebhook"` registers a webhook at the service when its workflow is published and removes it when it is unpublished, so events arrive as they happen instead of on a poll. The TypeScript, Go and Python SDKs check GitHub (`X-Hub-Signature-256`), Stripe (`Stripe-Signature`, with a timestamp tolerance) and Slack (`X-Slack-Signature`) signatures in constant time ([docs/protocol.md §12](docs/protocol.md#12-app-webhook-triggers)).
+
+## Authentication
+
+Everything except the public routes below needs a signed-in user or an API key.
+
+- **Owner**: a fresh instance opens on **/setup**, which creates the owner. For Docker and CI, set `LANDFLOW_OWNER_EMAIL` and `LANDFLOW_OWNER_PASSWORD` (and optionally `LANDFLOW_OWNER_NAME`) and boot creates the owner instead, if no user exists yet. Once anyone exists the variables are ignored.
+- **Passwords and sessions**: passwords are hashed with scrypt (N=16384, r=8, p=1, a random salt per user). Signing in starts a session: a random token in the `landflow_session` cookie (HttpOnly, SameSite=Lax, and Secure over https or behind a proxy that sends `X-Forwarded-Proto: https`), kept only as its SHA-256 hash with an expiry (14 days, `LANDFLOW_SESSION_TTL_HOURS`). **Sign out** (user menu, bottom of the sidebar) deletes it. Failed sign-ins are limited to 10 per email and 30 per IP address (`X-Forwarded-For`) in 15 minutes (`LANDFLOW_LOGIN_MAX_ATTEMPTS`); setup, invite, reset and forgot-password forms to 30 per IP. Cookie-authenticated changes from another origin are refused.
+- **Roles**: one **owner**, **admins** and **members**. Owners and admins manage users, settings, credential sharing, plugins, variables and the instance MCP server, and can take over a workflow someone else is editing; members build and run workflows. Only the owner manages admins, and nobody changes or removes the owner. The rules live in one place, `can(user, action)` in `apps/web/src/lib/shared/auth.ts`, and the server checks them on every route.
+- **Users** (Settings → Users): invite by email with a role; the invitee picks a name and password at `/invite/<token>` (7 days, used once). With `LANDFLOW_SMTP_HOST` set the link is emailed; without it Settings shows the link to copy. Admins change roles, remove users (signing them out and deleting their API keys; what they built stays) and make password reset links (1 hour). With SMTP, **Forgot password?** on the sign-in page emails a reset link; resetting signs you out everywhere else.
+- **Single sign-on (OIDC)**: set `LANDFLOW_OIDC_ISSUER`, `LANDFLOW_OIDC_CLIENT_ID` and `LANDFLOW_OIDC_CLIENT_SECRET` and the sign-in page gets a **Sign in with SSO** button (authorization code flow with PKCE; register `<public URL>/api/auth/oidc/callback` as the redirect URI). First-time users get an account (just in time); an existing account with the same verified email is linked. `LANDFLOW_OIDC_ROLE_MAP` maps values of the role claim (`LANDFLOW_OIDC_ROLE_CLAIM`, default `roles`, dotted paths like `realm_access.roles` work) to Landflow roles, e.g. `landflow-admin=admin,landflow-editor=member`; the mapping is applied at every sign-in (never to the owner). Users without a mapped role get `LANDFLOW_OIDC_DEFAULT_ROLE` (`member`; `none` refuses them). Settings → Security shows the configuration and checks discovery. The infra stack's Keycloak is set up for this ([deploy/README.md](deploy/README.md#sign-in-email-and-sso)).
+- **API keys** (Settings → API keys, or the user menu): keys for scripts, CI and the CLI, sent as `Authorization: Bearer lf_…` or `X-Landflow-API-Key: lf_…`. A key acts as its user, limited to its scopes: `workflows:read`, `workflows:write`, `executions:read`, `executions:write`, `run` and `admin` (everything; only owners and admins can create one, and admin-only routes still need an admin user). Keys have a label and an optional expiry, are shown once and stored as a SHA-256 hash, and can't manage API keys. **Settings → API docs** lists the endpoints with the scope each needs; the OpenAPI 3.1 document is at `GET /api/openapi.json`.
+- **Editing together**: one editor tab at a time edits a workflow. Others see "<name> is editing" and a read-only canvas, which follows the editor's saves; the workflow becomes editable when that tab closes (or 30 s after it stops heartbeating). Owners and admins can **Take over**, and you can move editing to another tab of your own. A save from a tab that lost the lock is refused (423). Workflows record `createdBy` and `updatedBy`, and manual and chat executions `startedBy`.
+- **Plugins** keep registering at `/api/plugins/announce` and the gRPC registry without a user. Set `LANDFLOW_REGISTRY_SECRET` on the host to require a shared secret there; set the same variable on the plugins (the TypeScript, Go and Python SDKs send it as `X-Landflow-Registry-Secret` or gRPC metadata, and host-managed node plugins get it automatically).
+
+Public without credentials: `/api/health`; the sign-in pages (`/login`, `/setup`, `/invite/*`, `/forgot-password`, `/reset-password/*`) and `/api/auth/*` except `/api/auth/me`; triggers with their own auth: `/api/webhook/*`, `/form/*`, `/api/waiting/*`, `/mcp/*` (MCP Server Triggers) and `/api/mcp` (the instance MCP server's token); `/api/oauth2/callback`; `/api/slack/*` (verified with Slack's signing secret); hosted chat pages (`/chat/*`); `/api/binary/*` with a plugin's per-call token; `/api/plugins/announce` (with the registry secret when set); Next.js static files. `/api/metrics` needs a session or an API key with `executions:read` unless `LANDFLOW_METRICS_PUBLIC=true`. The list is `PUBLIC_ROUTES` in `apps/web/src/lib/shared/auth-paths.ts`; the Next.js proxy (`apps/web/src/proxy.ts`) redirects pages to `/login` and answers 401 for API routes, and the route guard in every handler checks sessions, keys, scopes and roles.
 
 ## Settings, variables, data tables and insights
 
@@ -269,20 +338,68 @@ The host and every plugin are instrumented with OpenTelemetry ([docs/observabili
 - **Logs**: JSON lines with `trace_id`/`span_id`, plus a `span.end` line per finished span (`LANDFLOW_LOG_FORMAT=pretty` for humans).
 - **Metrics**: Prometheus text at `GET /api/metrics` (executions, node runs, triggers, polls, schedule lag, webhooks, plugin RPCs, heartbeats, plugins online, AI requests and tokens, HTTP durations). The **Record Metric** node (`core.metric`) lets a workflow record its own counters, histograms and gauges as `landflow.flow.<name>`. Each plugin serves its own `/metrics` with execution metrics plus integration metrics such as `landflow.messaging.messages_sent`, `landflow.productivity.records_written`, `landflow.google.sheets.rows_appended` and `landflow.db.query.duration`.
 - **Integrations**: every API call or query is a client span under the plugin's `plugin.execute` (`HTTP POST`, `INSERT issues`, `google.oauth.token`), so one run of "GitHub → SQLite → Telegram" is a single trace across the host and three plugins in three languages. Query strings and credential values never reach spans or logs; SQL spans carry the parameterised statement only.
+- **AI usage and cost**: every model call's tokens and estimated cost (a price table with Anthropic and OpenAI list prices, Ollama free, overrides in Settings → AI prices) are stored per execution, workflow and agent; the execution view shows them per model, Insights adds a cost column and total, and caps stop runs that go over ([docs/observability.md](docs/observability.md#token-and-cost-tracking)).
 - **Export**: set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` (OTLP/HTTP JSON) to send traces and metrics to Jaeger, Tempo or the Collector ([docs/otel-collector.yaml](docs/otel-collector.yaml)). With `LANDFLOW_TRACE_URL`, the execution view links each run's trace id to your trace UI.
+
+## CLI
+
+`packages/cli` is the `landflow` command line: workflows, runs, executions, data tables, variables and Git sync from a terminal or CI, with a stable JSON output for scripts ([packages/cli/README.md](packages/cli/README.md) has every command and the JSON contract).
+
+```bash
+pnpm --filter @landflow/cli build                  # → packages/cli/dist/main.js (one file, Node 22, no dependencies)
+node packages/cli/dist/main.js login --url http://localhost:3000 --api-key lf_…   # or: pnpm landflow login …
+landflow workflows list
+landflow run "Daily report" --input input.json --wait --json | jq .execution.output
+landflow executions list --status error
+landflow import n8n-export.json                     # Landflow or n8n workflow JSON
+landflow export --all --dir ./flows
+landflow sync pull --dir ./flows && landflow sync push --dir ./flows --dry-run
+```
+
+- **Connection**: `--url`/`--api-key`, else `LANDFLOW_URL`/`LANDFLOW_API_KEY`, else what `landflow login` saved in `~/.config/landflow/config.json` (mode 0600; `$XDG_CONFIG_HOME` or `LANDFLOW_CONFIG` move it), else `http://localhost:3000` without a key. The key goes out as `Authorization: Bearer lf_…` (Settings → API keys).
+- **Commands**: `login`, `logout`, `whoami`; `workflows list/get/create/update/delete/activate/deactivate/publish/unpublish` (by id or exact name); `run <workflow> [--input file|-] [--wait]`; `executions list/get/retry/stop`; `import <file>…`; `export <workflow>… | --all [--dir]`; `data-tables list/rows`; `variables list/set/delete`; `sync pull/push/status/diff`; `source-control status/push/pull`.
+- **Output**: tables and text for people; with `--json` exactly one JSON document on stdout, `{ "ok": true, … }` or `{ "ok": false, "error": { "code", "message", "status"?, "details"? } }`. Exit codes: 0 ok, 1 error (also a failed execution under `run --wait`), 2 usage, 3 not found, 4 auth (401/403), 5 conflict, 6 host unreachable, 7 `--wait` timed out.
+- Tests run the CLI against the web app's real route handlers behind a small HTTP server (`packages/cli/test/host.ts`), and the built binary as a child process.
+
+## Git sync
+
+Workflows as files you review and version in Git, like Windmill's `wmill sync` and n8n's source control. One layout (`landflow-sync/v1`, `apps/web/src/lib/server/sync/format.ts`) serves the CLI and the server's own Git:
+
+```
+landflow-sync.json                    { "format": "landflow-sync/v1" }
+variables.json                        { "variables": [{ "key": "API_BASE" }] }   (values only when asked for)
+credentials.json                      { "credentials": [{ "name", "type" }] }   what the workflows reference, never data
+data-tables/<slug>.schema.json        a table's id, name and columns (no rows)
+workflows/<slug>.workflow.json        a workflow at the top level
+workflows/<folder>/.folder.json       { "id", "name" }: one directory per folder, nested
+workflows/<folder>/<slug>.workflow.json
+```
+
+- **Files**: pretty-printed with a fixed key order (`id`, `name`, `description`, `active`, `tags`, `settings`, `nodes`, `connections`, …; node parameters keep their order) and a final newline, so the same state always writes the same bytes and diffs stay small. Timestamps and the folder id are left out (the directory is the folder). Nodes reference credentials as `{ "name", "type" }`; on the way in they are matched to the instance's credentials by name and type (a missing one is a warning, and the node shows it unset).
+- **CLI** (`landflow sync … --dir <path>`): `pull` writes the instance into the directory (managed files only; a README or `.git` is left alone) and refuses to overwrite files edited since the last pull without `--force`; `push` creates and updates by stable id (a file without an `id` gets one from its path), deletes only with `--prune`, and refuses changes the instance made since the directory last synced with it (409, exit 5) unless `--force`; `status` is a dry-run push plus the locally edited files; `diff` is a unified diff from the instance (`a/`) to the files (`b/`). Each directory remembers per instance URL what it last synced in `.landflow/state.json` (git-ignored by its own `.gitignore`). Files that don't validate stop a push before anything changes. An active workflow is published when its file says `active: true` and unpublished when it turns false.
+- **Server-side Git** (Settings → Source control, owners and admins): a repository (absolute path, `file://`, `https://`, `ssh://` or `user@host:path`), a branch and optionally a sub-directory. **Push** exports the instance into a working copy under the data directory (`source-control/repo`), commits with your message and pushes the branch; **Pull** fetches and applies the branch (preview first; conflicts with edits made on the instance since the last push or pull, overridable; **Delete missing** prunes). Git runs as the `git` CLI without a shell, with the host account's git configuration, hooks, credential helpers and the `ext::` transport turned off; repository strings starting with `-`, remote helpers and URLs with user info are refused. An HTTPS token comes from a saved credential (its `token`, `accessToken`, `password`, `apiKey`, `value` or `key` field) or `LANDFLOW_GIT_TOKEN` and reaches git only through `GIT_ASKPASS` and the child's environment, never the URL, the command line or the repository config. SSH uses the host account's keys (batch mode).
+- **Endpoints**: `GET /api/sync/export` and `POST /api/sync/apply` (dry run, prune, force, base hashes) do the work for both; see the API table.
 
 ## API
 
 | Route | |
 |---|---|
-| `GET/POST /api/workflows`, `GET/PUT/DELETE /api/workflows/:id` | CRUD (`active: true` turns on webhooks, schedules and polling triggers) |
+| `GET/POST /api/workflows`, `GET/PUT/DELETE /api/workflows/:id` | CRUD; saves are drafts (`active: true` on an active workflow publishes the saved version, as older clients expect) |
 | `POST /api/workflows/:id/run` | run (optionally with unsaved `workflow`, `chat`, `items`, and an `idempotencyKey` or `Idempotency-Key` header) and stream SSE events |
-| `POST /api/workflows/import` | `{ data, name?, folderId?, create? }` → `{ workflow, report }`: converts Landflow or n8n workflow JSON (placeholders for unknown n8n nodes); `create: false` converts without saving |
+| `POST /api/workflows/import` | `{ data, name?, folderId?, create? }` → `{ workflow, report }`: converts Landflow, n8n or Flowise (chatflow / agentflow) workflow JSON (placeholders for unknown nodes); `create: false` converts without saving |
+| `GET/POST /api/workflows/:id/evaluations`, `GET/DELETE …/evaluations/:runId`, `POST …/:runId/cancel`, `GET …/evaluations/compare?a=&b=` | offline evaluation runs: overview, start (`{ maxRows? }`), a run with its cases, stop, delete, compare two runs |
+| `GET/PUT /api/workflows/:id/online-evaluations`, `GET/PUT/POST /api/agents/:id/evaluations` | online grading of AI Agent nodes (`PUT { nodeId, … }`) and standalone agents: settings, scores and trend; `POST { sessionId }` grades a session now |
 | `GET /api/workflows/:id/versions`, `GET /api/workflows/:id/versions/:versionId` | version history (summaries, newest first) and one version with its workflow |
 | `POST /api/workflows/:id/versions/:versionId/restore` | restore a version (keeps the current name, tags, folder and active state) and record it as a new version |
+| `POST /api/workflows/:id/publish`, `POST /api/workflows/:id/unpublish`, `GET /api/workflows/:id/publication` | publish `{ versionId?, note? }` (default: the saved draft; an older version is a rollback) and unpublish `{ note? }`, each answering the publication; the publication: the published version, the draft, `hasUnpublishedChanges`, the publish timeline and each app webhook trigger's registration |
 | `POST /api/workflows/:id/move` | `{ folderId }` (`null` = top level) |
 | `GET/POST /api/folders`, `PATCH/DELETE /api/folders/:id` | folders (`{ name, parentId? }`); deleting a folder that isn't empty answers 409 |
 | `GET /api/executions[?workflowId]`, `GET /api/executions/:id` | history |
+| `POST /api/workflows/:id/execute` | start a manual run in the background `{ input?, startNode?, idempotencyKey? }` → 202 `{ executionId, workflowId, status }` (the CLI's `run`; follow it with `GET /api/executions/:id`) |
+| `POST /api/executions/:id/stop` | stop a running, waiting or queued execution → `{ executionId, stopped, status }` (409 once it ended) |
+| `GET /api/sync/export[?values=true&workflow=<id>…]` | the instance as Git sync files `{ format, files: [{ path, content, hash }], hashes, summary }` |
+| `POST /api/sync/apply` | `{ files, prune?, dryRun?, force?, base? }` → the plan and whether it was applied; 400 when files don't validate, 409 on conflicts with `base` (admins) |
+| `GET/PUT/DELETE /api/source-control`, `POST /api/source-control/push`, `POST /api/source-control/pull` | Settings → Source control: settings `{ repository, branch?, directory?, credentialId?, … }`; push `{ message?, dryRun? }` → `{ committed, commit, files }`; pull `{ dryRun?, prune?, force? }` (admins) |
 | `DELETE /api/executions/:id` | cancel a live, waiting or queued run, or delete a finished one |
 | `POST /api/executions/:id/rerun` | re-run in the background: the whole run, from a node, or one node |
 | `POST /api/executions/:id/retry` | retry a failed (or canceled) run in the background, linked to it: `{ from: 'failed' \| 'start', version: 'original' \| 'current' }` (defaults: from the failed node, original version) → 202 `{ executionId }` |
@@ -309,15 +426,31 @@ The host and every plugin are instrumented with OpenTelemetry ([docs/observabili
 | `PATCH/DELETE /api/data-tables/:id/rows/:rowId`, `POST /api/data-tables/:id/rows/upsert` | change (`{ values }`) or delete one row; upsert `{ matchColumns, rows }` → `{ rows, inserted, updated }` |
 | `POST /api/data-tables/:id/import`, `GET /api/data-tables/:id/export` | append rows from CSV (`text/csv` body, header row names the columns, missing ones are added unless `?createColumns=false`); download the table as CSV |
 | `GET /api/insights?period=24h\|7d\|30d&includeManual=true`, `PATCH /api/insights/workflows/:id` | the Insights report; set `{ timeSavedMinutes }` (`null` clears) for a workflow |
+| `GET /api/insights/ai-usage?executionId=&workflowId=&agentId=&days=30&from=&to=&group=workflow\|agent` | AI usage: tokens, estimated cost and calls in total, per model and per day (and per workflow or agent when grouped; `today`/`month` against the caps) |
+| `GET/PUT /api/settings/ai-prices` | the price table: built-in `defaults` and the instance's `overrides` (`PUT { overrides: [{ provider, model, input, output }] }`, USD per million tokens) |
+| `GET/POST /api/executions/:id/approvals` | an AI Agent's tool calls waiting for approval; `POST { callId, approved }` → SSE `decision`, then the resumed run's `execution` events and `result` once every call is decided |
+| `POST /api/slack/events/:agentId/:channelId`, `POST /api/slack/interactions` | Slack Events API for an agent's Slack channel and Slack interactivity (approval buttons); public, verified with the Slack credential's signing secret |
+| `GET /chat/widget.js`, `GET/POST /chat/:path`, `GET /chat/:path/config`, `GET /chat/:path/session?sessionId=` | public chats of Chat triggers: the widget script, the hosted page and messages (JSON or multipart with `files`; SSE / NDJSON when streaming), its settings and a session's earlier messages; CORS from the trigger's allowed origins |
 | `GET /api/events` | SSE feed of registry, execution and agent events |
-| `GET /api/metrics` | Prometheus metrics (see Observability) |
-| `ANY /api/webhook/:path` | production webhooks (active workflows); `Idempotency-Key` header supported |
+| `GET /api/metrics` | Prometheus metrics (see Observability); needs `executions:read` unless `LANDFLOW_METRICS_PUBLIC=true` |
+| `ANY /api/webhook/:path` | production webhooks (active workflows); `Idempotency-Key` header supported; **Respond: Streaming** answers SSE or NDJSON chunks; a debounced or batched trigger answers 202 |
+| `ANY /api/webhook/app/:workflowId/:nodeId` | app webhook triggers' deliveries, verified by the plugin (404 when the trigger isn't published, 503 while its plugin is offline) |
 | `GET/HEAD /api/binary/:id`, `POST /api/binary` | a stored file (`?download=1` for an attachment); plugins upload with `Authorization: Bearer <binaryAccess.token>` and `X-Landflow-File-Name` → 201 with the ref (docs/protocol.md §11) |
 | `ANY /api/waiting/:executionId` | resume a run waiting on a Wait node's webhook (`$execution.resumeUrl`); answers like the Wait node's Respond setting |
 | `GET/POST /form/:path`, `GET/POST /form/waiting/:executionId` | hosted forms: a Form Trigger's form (active workflows), and the next Form page of a waiting run (HTML) |
 | `POST /mcp/:path` | an MCP Server Trigger's tools over Streamable HTTP (active workflows; 404 otherwise, 401 when its auth fails) |
 | `POST /api/mcp` | the instance MCP server (403 while off, 401 without `Authorization: Bearer <token>`) |
 | `GET/PATCH/POST /api/settings/mcp` | Settings → MCP: state; `PATCH { enabled }`; `POST` replaces the token. A response that created a token carries it as `token`, once |
+| `GET /api/auth/status`, `POST /api/auth/setup`, `POST /api/auth/login`, `POST /api/auth/logout` | sign-in: whether setup is needed (and SSO, email); create the owner `{ name, email, password }`; sign in `{ email, password }` (sets the session cookie; 429 with `retryAfter` when rate limited); sign out |
+| `GET/PATCH /api/auth/me` | the signed-in user (and `via: session \| api-key`); `PATCH { name?, currentPassword?, newPassword? }` |
+| `GET/POST /api/auth/invites/:token`, `POST /api/auth/password/forgot`, `GET/POST /api/auth/password/reset` | accept an invite `{ name, password }`; email a reset link `{ email }` (503 without SMTP); choose a new password `{ token, password }` |
+| `GET /api/auth/oidc/login?next=`, `GET /api/auth/oidc/callback` | single sign-on: redirect to the provider; the provider's redirect back |
+| `GET /api/users`, `POST /api/users/invites`, `DELETE /api/users/invites/:id` | users (and pending invites, for owners and admins); invite `{ email, role }` → `{ invite, link, emailed }`; revoke |
+| `PATCH/DELETE /api/users/:id`, `POST /api/users/:id/password-reset` | change a role `{ role }`, remove a user; make a reset link → `{ link, emailed }` |
+| `GET/POST /api/api-keys`, `DELETE /api/api-keys/:id` | your API keys (sessions only); `POST { label, scopes, expiresInDays? }` → `{ key, token }` (the token once) |
+| `GET/POST/DELETE /api/workflows/:id/lock` | the editor's edit lock: who holds it; `POST { tabId, takeover? }` takes or renews it → `{ mine, lock }`; `DELETE ?tabId=` releases it |
+| `GET /api/settings/security` | Settings → Security: SSO, email, session and registry configuration (owners and admins) |
+| `GET /api/openapi.json` | the OpenAPI 3.1 document for workflows, executions, runs, data tables and variables |
 
 ## Configuration
 
@@ -327,7 +460,9 @@ The host and every plugin are instrumented with OpenTelemetry ([docs/observabili
 | `LANDFLOW_DB` | `sqlite` | `postgres` keeps the store in Postgres (`DATABASE_URL`); one host per database |
 | `DATABASE_URL` | – | Postgres connection string for `LANDFLOW_DB=postgres`, e.g. the infra stack's `postgres://landflow:landflow-dev-only@127.0.0.1:55432/landflow` |
 | `LANDFLOW_IDEMPOTENCY_TTL_HOURS` | `24` | how long trigger idempotency keys are remembered |
-| `LANDFLOW_PUBLIC_URL` | `http://localhost:$PORT` | public base URL in the links the host hands out: resume URLs (`$execution.resumeUrl`, `resumeFormUrl`) and error workflow execution links |
+| `LANDFLOW_APP_WEBHOOK_RETRY_MS` | `60000` | how often app webhook registrations that failed at publish are retried |
+| `LANDFLOW_PUBLIC_URL` | `http://localhost:$PORT` | public base URL in the links the host hands out: resume URLs (`$execution.resumeUrl`, `resumeFormUrl`), error workflow and failure alert execution links, the OAuth2 redirect URL, and the URL app webhook triggers register (`<public URL>/api/webhook/app/…`, so it must be reachable by the service) |
+| `LANDFLOW_OAUTH2_REDIRECT_URL` | `<public URL>/api/oauth2/callback` | the redirect URL OAuth2 Connect sends to providers (register it there); without either variable, the request's origin |
 | `GENERIC_TIMEZONE` | the host's zone | the instance's default time zone until one is chosen in Settings → General |
 | `LANDFLOW_ENCRYPTION_KEY` | generated into `.data/encryption.key` | key for the credentials vault: 64 hex characters, or a passphrase (hashed with SHA-256) |
 | `LANDFLOW_REGISTRY_GRPC_PORT` | `7070` | gRPC RegistryService (`off` to disable) |
@@ -341,6 +476,7 @@ The host and every plugin are instrumented with OpenTelemetry ([docs/observabili
 | `ANTHROPIC_API_KEY` | – | for the Anthropic Chat Model |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | the Ollama used by the AI flow builder and the editor assistant, and the default of the Ollama chat and embeddings nodes |
 | `LANDFLOW_BUILDER_MODEL` | `qwen3-coder:30b` | model the AI flow builder and the editor assistant use |
+| `AI_USAGE_RETENTION_DAYS` | `400` | how long per-call AI usage rows (tokens, cost) are kept |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | – | OTLP/HTTP endpoint for traces and metrics, e.g. `http://localhost:4318`; unset: nothing is exported |
 | `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER[_ARG]`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_SDK_DISABLED` | standard | see docs/observability.md |
 | `LANDFLOW_LOG_LEVEL` / `LANDFLOW_LOG_FORMAT` / `LANDFLOW_LOG_SPANS` | `info` / `json` / `true` | log level, `json` or `pretty`, one log line per finished span |
@@ -354,22 +490,35 @@ The host and every plugin are instrumented with OpenTelemetry ([docs/observabili
 | `LANDFLOW_BINARY_SECRET` | random per process | key that signs plugins' binary tokens; set it when several host processes serve one store |
 | `LANDFLOW_INTERNAL_URL` | `http://127.0.0.1:$PORT` | the host URL plugins use for `/api/binary` (e.g. `http://web:3000` in Docker) |
 | `LANDFLOW_FILES_DIR` | `<data dir>/files` | the only directory Read/Write Files from Disk may use |
-| plugin side: `LANDFLOW_REGISTRY_URL`, `LANDFLOW_ADVERTISE_HOST`, `LANDFLOW_HTTP_PORT`, `LANDFLOW_GRPC_PORT` | | see docs/protocol.md |
+| `LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD` / `LANDFLOW_OWNER_NAME` | – / – / `Owner` | create the owner at boot when no user exists (Docker, CI); ignored afterwards |
+| `LANDFLOW_SESSION_TTL_HOURS` | `336` (14 days) | how long a sign-in lasts |
+| `LANDFLOW_SECURE_COOKIES` | auto | `true` / `false` forces the session cookie's Secure flag (default: Secure over https or with `X-Forwarded-Proto: https`) |
+| `LANDFLOW_LOGIN_MAX_ATTEMPTS` | `10` | failed sign-ins per email in 15 minutes (3× that per IP address) |
+| `LANDFLOW_SMTP_HOST`, `LANDFLOW_SMTP_PORT`, `LANDFLOW_SMTP_USER`, `LANDFLOW_SMTP_PASS`, `LANDFLOW_SMTP_FROM` | – / `587` / – / – / `Landflow <landflow@host>` | email for invites, password resets and failure alerts (unset: Settings shows links to copy; email alert channels fail). `LANDFLOW_SMTP_SECURE=true` for implicit TLS (default on port 465; otherwise STARTTLS when offered), `LANDFLOW_SMTP_IGNORE_TLS=true` to skip STARTTLS |
+| `LANDFLOW_OIDC_ISSUER`, `LANDFLOW_OIDC_CLIENT_ID`, `LANDFLOW_OIDC_CLIENT_SECRET` | – | single sign-on (OIDC); all three turn on the SSO button |
+| `LANDFLOW_OIDC_ROLE_CLAIM` / `LANDFLOW_OIDC_ROLE_MAP` / `LANDFLOW_OIDC_DEFAULT_ROLE` | `roles` / – / `member` | the claim holding roles, `value=role` pairs (`landflow-admin=admin,landflow-editor=member`), the role of users without a mapped one (`none` refuses them) |
+| `LANDFLOW_OIDC_SCOPES` / `LANDFLOW_OIDC_LABEL` / `LANDFLOW_OIDC_REDIRECT_URL` / `LANDFLOW_OIDC_DISCOVERY_URL` | `openid email profile` / `Sign in with SSO` / `<public URL>/api/auth/oidc/callback` / `<issuer>/.well-known/openid-configuration` | requested scopes, the button's label, the redirect URI override, where the host fetches discovery when the issuer URL isn't reachable from it (Docker) |
+| `LANDFLOW_REGISTRY_SECRET` | – | shared secret plugins must send to `/api/plugins/announce` and the gRPC registry (set it on the plugins too) |
+| `LANDFLOW_GIT_TOKEN` | – | HTTPS token for Settings → Source control when no credential is picked (sent through `GIT_ASKPASS`, never stored) |
+| `LANDFLOW_GIT_TIMEOUT_MS` | `120000` | per git command of Settings → Source control |
+| `LANDFLOW_METRICS_PUBLIC` | `false` | `true` lets Prometheus scrape `/api/metrics` without an API key |
+| plugin side: `LANDFLOW_REGISTRY_URL`, `LANDFLOW_ADVERTISE_HOST`, `LANDFLOW_HTTP_PORT`, `LANDFLOW_GRPC_PORT`, `LANDFLOW_REGISTRY_SECRET` | | see docs/protocol.md |
 
 ## Tests
 
 ```bash
 pnpm test                                          # protocol/sdk/engine/plugin/code-runner (vitest)
 pnpm typecheck
+pnpm --filter @landflow/cli test                   # the CLI against the web app's real route handlers, and the built binary
 deploy/scripts/smoke.sh code                       # the dockerised code runner: health + network/file-system isolation
 for m in sdks/go plugins/go-crypto plugins/google-workspace plugins/databases; do (cd $m && go test ./...); done
 plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests
 (cd plugins/productivity && .venv/bin/python -m unittest discover -s tests)
 pnpm gen:proto                                     # after editing plugin.proto (re-embeds + JSON Schema)
-(cd apps/web && LANDFLOW_INTEGRATION=postgres,ollama npx vitest run test/pgvector.test.ts test/postgres.test.ts test/rag-live.test.ts)
+(cd apps/web && LANDFLOW_INTEGRATION=postgres,ollama npx vitest run test/pgvector.test.ts test/postgres.test.ts test/rag-live.test.ts test/evaluations-live.test.ts)
 ```
 
-`LANDFLOW_INTEGRATION` turns on tests against real services: `postgres` (PGVector against the infra stack's `landflow_test` database, or `LANDFLOW_PG_URL`; the Postgres store in that database's `landflow_runtime_test` schema, or `LANDFLOW_TEST_DATABASE_URL`) and `ollama` (nomic-embed-text and qwen3-coder:30b at `OLLAMA_URL`).
+`LANDFLOW_INTEGRATION` turns on tests against real services: `postgres` (PGVector against the infra stack's `landflow_test` database, or `LANDFLOW_PG_URL`; the Postgres store in that database's `landflow_runtime_test` schema, or `LANDFLOW_TEST_DATABASE_URL`), `ollama` (nomic-embed-text and qwen3-coder:30b at `OLLAMA_URL`; `test/evaluations-live.test.ts` runs an evaluation with qwen3-coder as the judge), `oidc` (single sign-on through the infra stack's Keycloak, filling in its login form as alice and bob: `test/oidc.integration.test.ts`) `oauth2` (OAuth2 Connect through the infra stack's Keycloak: its login form as alice and bob, refresh, a revoked token's 401 and the client credentials grant: `test/oauth2-keycloak.test.ts`) and `smtp` (invites and password resets through Mailpit, read back from its API: `test/smtp.integration.test.ts`; failure alert emails: `test/alerts-smtp.test.ts`), and `imap` (the Email Trigger against the infra stack's GreenMail, `mail` profile: `test/email-imap.test.ts` and `test/email-imap-host.test.ts`). Route tests call handlers directly and run as a synthetic owner (`test/setup.ts`); the auth tests turn that off.
 
 ## Research
 
@@ -384,5 +533,6 @@ Agents read the source of the running n8n 2.44 container, its node catalogue and
 
 - **Isolation**: expressions and in-process Code nodes run in `node:vm` with timeouts. That is not a security boundary. Code you don't trust belongs in the code runner's container (see [deploy/README.md](deploy/README.md#code-runner)); started with pnpm, the runner only has OS limits.
 - **Single host**: the store runs on SQLite or Postgres, but the scheduler, waits, retries, the concurrency queue and crash recovery run in one process, and Postgres mode keeps the whole database in memory and takes an advisory lock so a second host refuses to start. Leader election and a queue (Wave 4) are the path to multi-instance. Checkpoints add a write per node run (Postgres mode also appends it to the spool). The SQL Data Tables storage still caches a table's rows in memory when it is used (50,000 rows per table).
+- **Sign-in**: rate limits, edit locks and pending SSO sign-ins live in the host's memory (one process; a restart clears them). The per-IP limits trust `X-Forwarded-For`, so a public install belongs behind a proxy that sets it. There are no projects or per-workflow sharing yet (Wave 4): every member sees and runs every workflow.
 - **Integrations are tested against fakes**: every plugin's tests use local fakes of the service. Postgres has been checked against mocked SQL only, and MySQL against an in-process MySQL-compatible server, not real database servers. Switch and Text Classifier have a fixed set of outputs (4 plus a fallback): ports can be shown or hidden by parameters, but not repeated per rule. Google Drive transfers still travel inside the item JSON (capped at 10 MB down, 5 MB up); the protocol carries binary data now, but the Drive node hasn't moved to it yet.
-- **Not yet built**: OAuth2 consent flows (credentials take tokens directly), webhook-based app triggers (app triggers poll), remote model/memory providers over the protocol (tools already work remotely), mDNS/Kubernetes discovery providers, n8n v3-style engine-driven agent steps with human-in-the-loop approval, and streaming partial outputs.
+- **Not yet built**: OAuth2 Connect for the remaining plugin credential types (only Google OAuth2 extends `oAuth2Api` so far; the others take tokens directly), webhook-based triggers for apps other than GitHub (the others poll; the protocol and SDK signature helpers are ready, docs/protocol.md §12), remote model/memory providers over the protocol (tools already work remotely), mDNS/Kubernetes discovery providers, n8n v3-style engine-driven agent steps with human-in-the-loop approval, and streaming partial outputs.

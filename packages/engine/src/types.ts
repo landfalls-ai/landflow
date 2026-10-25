@@ -7,8 +7,12 @@ import type {
   JsonObject,
   NodeDescriptor,
   NodeItem,
+  WebhookMethodRequest,
+  WebhookMethodResponse,
+  WebhookRequest,
+  WebhookResponse,
 } from '@landflow/protocol';
-import type { ContextExtras, WaitRequest } from '@landflow/sdk';
+import type { ContextExtras, StreamChunk, WaitRequest } from '@landflow/sdk';
 import type { Attributes } from '@opentelemetry/api';
 
 // ---------------------------------------------------------------------------
@@ -38,6 +42,36 @@ export interface WorkflowNode {
   executeOnce?: boolean;
   /** Saved credentials this node uses, by credential type local name. Secrets live in the host's credential store. */
   credentials?: Record<string, { id: string; name: string }>;
+  /** At most `limit` calls of this node per `intervalSeconds` (main-flow runs and uses as a sub-node); extra calls wait their turn. */
+  rateLimit?: NodeRateLimit;
+  /** Trigger nodes: collapse events with the same key that arrive within a window into one run. */
+  debounce?: TriggerDebounce;
+  /** Trigger nodes: collect events and start one run with all of them. */
+  batch?: TriggerBatch;
+}
+
+export interface NodeRateLimit {
+  limit: number;
+  intervalSeconds: number;
+}
+
+/**
+ * Debounce (Inngest's `debounce`, Trigger.dev's trailing mode): each event with the same key restarts a quiet window
+ * of `windowSeconds`; when it ends, one run starts with the last event (`last`) or with every event (`all`).
+ * `maxWaitSeconds` caps how long a steady stream of events can hold the run back.
+ */
+export interface TriggerDebounce {
+  windowSeconds: number;
+  /** Expression evaluated on the event item, e.g. `{{ $json.body.userId }}`. Empty: one key for every event. */
+  key?: string;
+  mode?: 'last' | 'all';
+  maxWaitSeconds?: number;
+}
+
+/** Batching (Inngest's `batchEvents`): start one run with up to `size` events, or with what arrived `timeoutSeconds` after the first. */
+export interface TriggerBatch {
+  size: number;
+  timeoutSeconds: number;
 }
 
 /**
@@ -81,6 +115,12 @@ export interface WorkflowSettings {
   retryMaxAttempts?: number;
   /** Seconds before the first automatic retry (default 30); each further retry waits twice as long. */
   retryBaseDelaySeconds?: number;
+  /** AI caps (input + output tokens, or estimated US dollars): a run that goes over stops with an error. 0/absent = no cap. */
+  aiMaxTokensPerExecution?: number;
+  aiMaxCostPerExecution?: number;
+  /** The same over all runs of the workflow in a day (the instance time zone). */
+  aiMaxTokensPerDay?: number;
+  aiMaxCostPerDay?: number;
 }
 
 /** A canvas note. It never runs; the engine ignores it. */
@@ -111,6 +151,9 @@ export interface Workflow {
   folderId?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** The user (id) who created it and who saved it last, when a signed-in user did (the host's sign-in). */
+  createdBy?: string;
+  updatedBy?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +170,10 @@ export interface ResolvedNodeType {
   execute(request: ExecuteRequest, extras?: ContextExtras): Promise<ExecuteResponse>;
   /** In-process sub-nodes only. `extras.getInputConnectionData` supplies the sub-node's own sub-nodes. */
   supplyData?(request: ExecuteRequest, extras?: ContextExtras): Promise<unknown>;
+  /** App webhook triggers (`triggerSource: 'appWebhook'`, docs/protocol.md §12): checkExists / create / delete of the node's webhook. */
+  webhookMethod?(request: WebhookMethodRequest): Promise<WebhookMethodResponse>;
+  /** App webhook triggers: one call to the node's webhook URL. */
+  webhook?(request: WebhookRequest): Promise<WebhookResponse>;
 }
 
 export interface NodeTypeResolver {
@@ -229,6 +276,8 @@ export type ExecutionEvent =
       at: string;
     }
   | { type: 'node.log'; executionId: string; nodeId: string; level: LogEntry['level']; message: string; at: string }
+  /** Part of a streamed answer (ctx.sendChunk), only with `ExecuteWorkflowOptions.streaming`. */
+  | { type: 'node.chunk'; executionId: string; nodeId: string; nodeName: string; chunk: StreamChunk; at: string }
   | ({ type: 'execution.paused'; executionId: string; at: string } & PauseInfo)
   | { type: 'execution.resumed'; executionId: string; command: DebugCommand; at: string }
   | {
@@ -304,8 +353,8 @@ export interface ResumeState {
   /** Per-run node state (ctx.getNodeState), by node id. */
   nodeState: Record<string, JsonObject>;
   lastNodeId?: string;
-  /** The waiting node: its input, what `execute` returned when it asked to wait, and its logs. */
-  waiting: { nodeId: string; inputs: NodeItem[][]; outputs: NodeItem[][]; startedAt: string; logs?: LogEntry[] };
+  /** The waiting node: its input, what `execute` returned when it asked to wait, and its logs. `rerun`: it runs again on resume (WaitRequest.rerun). */
+  waiting: { nodeId: string; inputs: NodeItem[][]; outputs: NodeItem[][]; startedAt: string; logs?: LogEntry[]; rerun?: boolean };
   /** Destination / `only` runs: the nodes allowed to run, and the node after which nothing is scheduled. */
   allowed?: string[];
   destination?: string;
@@ -316,9 +365,9 @@ export interface ResumeState {
 
 /**
  * How a wait ended. `timeout`: a webhook or form wait reached its time limit; `subworkflow`: the awaited sub-execution
- * finished. `restart`: not a wait: the run continues from a checkpoint (after a crash, or a retry of a failed run).
+ * finished; `approval`: a person decided on the tool calls an AI Agent waits for. `restart`: not a wait: the run continues from a checkpoint (after a crash, or a retry of a failed run).
  */
-export type ResumeKind = 'time' | 'webhook' | 'form' | 'timeout' | 'subworkflow' | 'restart';
+export type ResumeKind = 'time' | 'webhook' | 'form' | 'timeout' | 'subworkflow' | 'restart' | 'approval';
 
 /** A ResumeState without a waiting node: the run's state between two nodes. */
 export type CheckpointState = Omit<ResumeState, 'waiting'> & { waiting?: undefined };
@@ -381,4 +430,13 @@ export interface ExecuteWorkflowOptions {
   resumeUrls?: { webhook: string; form: string };
   /** Called before the first node and after every main-flow node that finished: the state to continue from after a crash. */
   onCheckpoint?: (checkpoint: RunCheckpoint) => void;
+  /** Someone listens for streamed answers: in-process nodes get `ctx.sendChunk`, and their chunks become `node.chunk` events. */
+  streaming?: boolean;
+  /** Enforces `node.rateLimit` (default: one limiter shared by every run in the process). */
+  rateLimiter?: RateLimiterLike;
+}
+
+/** What the executor needs from a rate limiter: wait for a turn under `key`; resolves with the milliseconds waited. */
+export interface RateLimiterLike {
+  acquire(key: string, limit: NodeRateLimit, signal?: AbortSignal): Promise<number>;
 }

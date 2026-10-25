@@ -13,6 +13,7 @@ from landflow_sdk.http_server import HttpPluginServer
 
 ACTIONS = {"notion", "airtable", "github", "jira", "hubspot", "rssFeedRead"}
 TRIGGERS = {"githubTrigger", "rssFeedReadTrigger"}
+APP_WEBHOOKS = {"githubWebhookTrigger"}
 
 
 def visible(prop: dict, params: dict) -> bool:
@@ -29,7 +30,7 @@ class ManifestTests(unittest.TestCase):
         info = self.manifest["plugin"]
         self.assertEqual((info["id"], info["name"], info["language"]), ("productivity", "Productivity", "python"))
         self.assertTrue(info["icon"].startswith("data:image/svg+xml;base64,"))
-        self.assertEqual(set(self.nodes), ACTIONS | TRIGGERS)
+        self.assertEqual(set(self.nodes), ACTIONS | TRIGGERS | APP_WEBHOOKS)
         colors = {"notion": "#000000", "airtable": "#18BFFF", "github": "#24292F", "jira": "#0052CC", "hubspot": "#FF7A59", "rssFeedRead": "#F26522"}
         for name, node in self.nodes.items():
             self.assertTrue(node["icon"].startswith("data:image/svg+xml;base64,"), name)
@@ -37,6 +38,8 @@ class ManifestTests(unittest.TestCase):
             if name in ACTIONS:
                 self.assertTrue(node["usableAsTool"] and node["toolDescription"], name)
                 self.assertEqual(node["color"], colors[name])
+            elif name in APP_WEBHOOKS:
+                self.assertEqual((node["kind"], node["triggerSource"]), ("trigger", "appWebhook"))
             else:
                 self.assertEqual((node["kind"], node["triggerSource"], node["properties"][0]["name"]), ("trigger", "poll", "pollInterval"))
         self.assertEqual(self.nodes["githubTrigger"]["properties"][0]["default"], 60)

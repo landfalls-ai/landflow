@@ -10,13 +10,15 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import {
   executeRequestSchema,
+  webhookMethodRequestSchema,
+  webhookRequestSchema,
   HTTP_PATHS,
   PROTOCOL_VERSION,
   type HealthResponse,
   type JsonObject,
   type WellKnownDocument,
 } from '@landflow/protocol';
-import { findCredentialType, serveExecute, serveLoadOptions, serveTestCredentials } from './handlers';
+import { findCredentialType, serveExecute, serveLoadOptions, serveTestCredentials, serveWebhook, serveWebhookMethod } from './handlers';
 import { buildManifest, type IPlugin } from './node';
 import { contextFromHeaders, getTelemetry, type Telemetry } from './otel';
 import { findNode, toErrorPayload } from './runtime';
@@ -50,6 +52,7 @@ export function createFetchHandler(plugin: IPlugin, options: FetchHandlerOptions
   const manifest = buildManifest(plugin);
   const base = options.basePath ?? '';
   const testable = (plugin.credentialTypes ?? []).some((type) => type.test);
+  const appWebhooks = plugin.nodes.some((node) => node.description.triggerSource === 'appWebhook');
 
   return async function handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname.slice(base.length) || '/';
@@ -70,6 +73,7 @@ export function createFetchHandler(plugin: IPlugin, options: FetchHandlerOptions
           loadOptions: HTTP_PATHS.loadOptions,
           health: HTTP_PATHS.health,
           ...(testable && { testCredentials: HTTP_PATHS.testCredentials }),
+          ...(appWebhooks && { webhookMethod: HTTP_PATHS.webhookMethod, webhook: HTTP_PATHS.webhook }),
         },
       };
       return json(200, doc);
@@ -141,6 +145,18 @@ export function createFetchHandler(plugin: IPlugin, options: FetchHandlerOptions
       const parent = contextFromHeaders(telemetry, request.headers);
       const data = isObject(body.data) ? body.data : {};
       return json(200, await serveTestCredentials(plugin, { credentialType: body.credentialType, data }, telemetry, parent, 'http'));
+    }
+
+    if (request.method === 'POST' && (path === HTTP_PATHS.webhookMethod || path === HTTP_PATHS.webhook)) {
+      const read = await readJson(request);
+      if (!read.ok) return read.response;
+      const parsed = (path === HTTP_PATHS.webhook ? webhookRequestSchema : webhookMethodRequestSchema).safeParse(read.body);
+      if (!parsed.success) return json(400, { error: path === HTTP_PATHS.webhook ? 'Invalid WebhookRequest' : 'Invalid WebhookMethodRequest', issues: parsed.error.issues });
+      const node = findNode(plugin.nodes, plugin.info.id, parsed.data.node.type);
+      if (!node) return json(404, { error: `Unknown node type "${parsed.data.node.type}"` });
+      const parent = contextFromHeaders(telemetry, request.headers);
+      if (path === HTTP_PATHS.webhook) return json(200, await serveWebhook(plugin, node, parsed.data as never, telemetry, parent, 'http'));
+      return json(200, await serveWebhookMethod(plugin, node, parsed.data as never, telemetry, parent, 'http'));
     }
 
     return json(404, { error: `No route for ${request.method} ${path}` });

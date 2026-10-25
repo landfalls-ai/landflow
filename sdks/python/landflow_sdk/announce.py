@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import os
 import threading
 import urllib.error
 import urllib.parse
@@ -64,6 +65,12 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+def registry_secret_headers() -> dict[str, str]:
+    """``LANDFLOW_REGISTRY_SECRET`` (when the host requires one), sent with every announce and withdraw."""
+    secret = os.environ.get("LANDFLOW_REGISTRY_SECRET")
+    return {"X-Landflow-Registry-Secret": secret} if secret else {}
+
+
 class HttpRegistryClient:
     """POST / DELETE ``{base}/api/plugins/announce`` with stdlib urllib."""
 
@@ -81,7 +88,7 @@ class HttpRegistryClient:
             self.url,
             data=dumps(payload),
             method=method,
-            headers={"Content-Type": "application/json; charset=utf-8", "Accept": "application/json"},
+            headers={"Content-Type": "application/json; charset=utf-8", "Accept": "application/json", **registry_secret_headers()},
         )
         try:
             with self._opener.open(request, timeout=timeout) as response:

@@ -101,7 +101,7 @@ conventions.
 | `workflow.execute` | internal | `landflow.workflow.id`, `landflow.workflow.name`, `landflow.execution.id`, `landflow.execution.mode`, `landflow.execution.status` (also `waiting`), `landflow.execution.debug`, `landflow.execution.rerun_of`, `landflow.execution.rerun_scope` · a run that stops to wait: `landflow.wait.node`, `landflow.wait.resume` (`time`/`webhook`/`form`/`subworkflow`), `landflow.wait.until` · a resumed run (one more `workflow.execute` span per resume, see below): `landflow.execution.resume_of` (the execution id it continues), `landflow.execution.resume_kind` (`time`/`webhook`/`form`/`timeout`/`subworkflow`, or `restart` for a run continued from its checkpoint after a restart, which also sets `landflow.execution.resumed_after_restart=true` and `landflow.checkpoint.step`, the step id it continued after) · events `debugger.paused` (`landflow.node.name`, `landflow.debugger.reason`) / `debugger.resumed` (`landflow.debugger.command`) · error status on a failed run |
 | `node.execute {node type}` | internal | `landflow.node.id`, `landflow.node.name`, `landflow.node.type`, `landflow.plugin.id`, `landflow.transport` (`in-process`/`http`/`grpc`), `landflow.node.source` (`main`/`ai_tool`/`ai_languageModel`/`ai_memory`/`ai_embedding`/`ai_document`/`ai_textSplitter`/`ai_retriever`/`ai_reranker`), `landflow.execution.id`, `landflow.items.in`, `landflow.items.out`, `landflow.node.status` (`success`/`error`/`canceled`/`waiting`), `landflow.node.reused`, `landflow.node.pinned`, `landflow.node.disabled` · the node that suspends the run: `landflow.node.status=waiting`, `landflow.wait.resume`, `landflow.wait.until`; when the run resumes, that node's result is a short `node.execute` span with `landflow.node.resumed=true` and `landflow.wait.resume_kind` · an `exception` event per failed attempt (with `retryOnFail`), error status when the node fails |
 | `plugin.rpc {Method}` (`Execute`, `LoadOptions`, `TestCredentials`, `GetManifest`) | client | `rpc.system` (`grpc`/`http`), `rpc.service=landflow.plugin.v1.PluginService`, `rpc.method`, `server.address`, `server.port`, `landflow.plugin.id` |
-| `gen_ai.chat {model}` | client | OTel GenAI conventions: `gen_ai.system` (`anthropic`/`ollama`/`openai`), `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons` |
+| `gen_ai.chat {model}` | client | OTel GenAI conventions: `gen_ai.system` (`anthropic`/`ollama`/`openai`), `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons`, `landflow.ai.cost_usd` (estimated, when the call ran in an execution or agent run; [§8](#token-and-cost-tracking)) |
 | `gen_ai.embeddings {model}` | client | same conventions with `gen_ai.operation.name=embeddings`: `gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.embeddings.dimension.count`. Counts in the `landflow.ai.*` metrics like chat (input tokens only) |
 | `vector_store.insert {store}`, `vector_store.query {store}` | client (child of the vector store's `node.execute`, or of `execute_tool` for an agent knowledge base) | RAG ([README](../README.md#retrieval-rag)): `landflow.vector_store` (`memory`/`sqlite`/`pgvector`), `db.system.name` (`landflow.memory`/`sqlite`/`postgresql`), `db.collection.name` (the collection), `db.operation.name` (`insert`/`query`), `landflow.retrieval.documents` (written or returned); query: `landflow.retrieval.mode` (`vector`/`hybrid`), `landflow.retrieval.top_k`, `landflow.retrieval.filtered`. The query is embedded just before, by the embeddings sub-node (`node.execute`, `landflow.node.source=ai_embedding`, with its `gen_ai.embeddings` child; a knowledge base embeds directly). Document text never reaches span attributes |
 | `retrieval.rerank` | internal | `landflow.rerank.method` (`llm`), `gen_ai.request.model`, `landflow.rerank.documents` (candidates), `landflow.retrieval.top_k`; the judge's call is a `gen_ai.chat` child |
@@ -110,7 +110,7 @@ conventions.
 | `trigger.poll {node type}` | internal (root) | `landflow.workflow.id`, `landflow.node.name`, `landflow.node.type`, `landflow.poll.items`, `landflow.poll.first` |
 | `registry.scan`, `registry.register` | internal | `landflow.plugin.id`, `landflow.plugin.endpoint`, `landflow.discovery.source` (register); `landflow.scan.targets`, `landflow.scan.found` (scan) |
 
-| `invoke_agent {agent name}` | internal (root for schedule and Telegram runs; child of the HTTP span for the test chat; child of `execute_tool` for a sub-agent) | OTel GenAI agent conventions: `gen_ai.operation.name=invoke_agent`, `gen_ai.agent.id`, `gen_ai.agent.name`, `gen_ai.conversation.id` (the session), `gen_ai.system`, `gen_ai.request.model`, `landflow.agent.source` (`test`/`schedule`/`telegram`/`workflow`/`agent`), `landflow.agent.version` (`draft` or N), `landflow.agent.end_reason` |
+| `invoke_agent {agent name}` | internal (root for schedule, Telegram and Slack runs; child of the HTTP span for the test chat; child of `execute_tool` for a sub-agent) | OTel GenAI agent conventions: `gen_ai.operation.name=invoke_agent`, `gen_ai.agent.id`, `gen_ai.agent.name`, `gen_ai.conversation.id` (the session), `gen_ai.system`, `gen_ai.request.model`, `landflow.agent.source` (`test`/`schedule`/`telegram`/`slack`/`workflow`/`agent`), `landflow.agent.version` (`draft` or N), `landflow.agent.end_reason` |
 | `execute_tool {tool name}` | internal (child of `invoke_agent`) | `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type=function`, `landflow.agent.tool.kind` (`node`/`workflow`/`agent`/`skill`/`memory`), plus the agent attributes; contains the node's spans, a workflow's `workflow.execute` or a sub-agent's `invoke_agent` |
 | `assistant.suggest {node type}`, `assistant.chat` | internal (child of the request span) | The editor assistant ([assistant.md](assistant.md)). `landflow.assistant.request` (`suggest`/`chat`), `landflow.workflow.id`, `gen_ai.request.model`; suggest: `landflow.node.type`, `landflow.assistant.suggestions`, `landflow.outcome=skipped` for a node not worth a model call; chat: `landflow.assistant.turns`, `landflow.assistant.steps` and an `assistant.tool` event per tool call (`gen_ai.tool.name`, `landflow.outcome`). The model calls are `gen_ai.chat` children |
 
@@ -189,6 +189,8 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.ai.requests` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.outcome` |
 | `landflow.ai.duration` | histogram (ms) | `gen_ai.system`, `gen_ai.request.model` |
 | `landflow.ai.tokens` | counter | `gen_ai.system`, `gen_ai.request.model`, `gen_ai.token.type` (`input`/`output`) |
+| `landflow.ai.cost` | counter (USD) | `gen_ai.system`, `gen_ai.request.model`: estimated cost by the price table ([§8](#token-and-cost-tracking)) |
+| `landflow.ai.caps_reached` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.ai.cap.when` (`before`: a call refused, `after`: a call that went over) |
 | `landflow.retrieval.requests` | counter | `landflow.vector_store`, `db.operation.name` (`insert`/`query`), `landflow.outcome` |
 | `landflow.retrieval.duration` | histogram (ms) | `landflow.vector_store`, `db.operation.name` |
 | `landflow.retrieval.documents` | counter | `landflow.vector_store`, `db.operation.name`: documents written or returned |
@@ -327,3 +329,43 @@ Every process writes JSON logs with `trace_id`. To browse traces, run any OTLP b
   writes `.otel/{traces,metrics,logs}.jsonl` and serves every process's metrics at
   `http://localhost:9464/metrics`.
 - Prometheus scraping `http://localhost:3000/api/metrics` and each plugin's `http://host:port/metrics`.
+
+<a id="token-and-cost-tracking"></a>
+
+## 8. Token and cost tracking
+
+Every model call made in an execution or an agent run (chat and embeddings, from AI Agent and chain
+nodes, the OpenAI node, RAG embeddings and rerankers, agents and their sub-agents) goes through the
+same `gen_ai.*` wrapper (`lib/server/telemetry/ai.ts`), which asks the current **usage scope**
+(`lib/server/ai-usage/scope.ts`, an AsyncLocalStorage per execution segment and agent run) whether
+the call may start, then prices and records what it used.
+
+- **Prices** (`lib/server/ai-usage/prices.ts`): USD per million input and output tokens. Built-in
+  defaults are the Anthropic and OpenAI list prices; Ollama and other local models cost $0.
+  **Settings → AI prices** (`GET/PUT /api/settings/ai-prices`) overrides any model, Ollama
+  included. A model id matches exactly, else by the longest prefix (`claude-sonnet-4-6` prices
+  `claude-sonnet-4-6-20260101`); a `vendor/` prefix (OpenRouter style) is ignored, and an
+  OpenAI-compatible server's model falls back to the other providers' prices. Unknown models cost
+  $0. Costs are estimates: cached-token discounts and batch prices aren't modelled.
+- **Storage**: one row per call in `ai_usage` (migration 400: time, day in the instance time zone,
+  execution, workflow, agent, session, provider, model, operation, tokens, cost), kept
+  `AI_USAGE_RETENTION_DAYS` (default 400). An execution record carries its own totals per model
+  (`aiUsage`), earlier segments included when it resumed after a wait; sub-executions keep their
+  own. Calls outside executions and agents (the editor assistant, the AI builder) aren't counted.
+- **Where it shows**: the execution view (tokens, cost and calls per model), Insights (a cost
+  column and the period's total), an agent's Settings tab (today and this month), and
+  `GET /api/insights/ai-usage` (totals, per model, per day; `group=workflow|agent`).
+- **Caps** stop spending:
+
+  | Cap | Set in | Counts |
+  |---|---|---|
+  | Max tokens / max cost per execution | Workflow settings → AI usage limits | the execution, its earlier segments and its sub-workflows |
+  | Max tokens / max cost per day | Workflow settings → AI usage limits | every execution of the workflow today |
+  | Daily token limit, daily and monthly cost limit | Agent → Settings | every run of the agent (sessions, schedules, channels, Message an Agent) |
+
+  A call is refused before it starts once a cap is reached, and a call that takes the total over a
+  cap is counted and then stops the run with `UsageCapError`: *AI usage cap reached: this workflow
+  today used 40,210 tokens of its 40,000 tokens limit (Workflow settings → AI usage limits)*. The
+  workflow run fails on the node that made the call (Model fallbacks don't retry it); an agent run
+  ends with the reason `budget` and that notice. Each refusal or stop counts in
+  `landflow.ai.caps_reached`.

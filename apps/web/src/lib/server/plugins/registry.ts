@@ -19,11 +19,15 @@ import {
   type PluginManifest,
   type PropertyOption,
   type TestCredentialsResponse,
+  type WebhookMethodRequest,
+  type WebhookRequest,
 } from '@landflow/protocol';
 import { buildManifest, runLoadOptions, runTestCredentials, type IPlugin } from '@landflow/sdk';
 import { inProcessNodeType, type NodeTypeResolver, type ResolvedNodeType, type Transport } from '@landflow/engine';
 import type { CredentialTypeInfo, DiscoverySource, NodeTypeInfo, PluginStatus, PluginSummary, RegistryEvent } from '../../shared/types';
 import { withBinaryData } from '../binary/access';
+import { withExtends } from '../credentials/extends';
+import { freshCredentials, withFreshTokens } from '../credentials/oauth2-runtime';
 import { bus } from '../bus';
 import { singleton } from '../singleton';
 import { withSpan } from '../telemetry';
@@ -436,10 +440,10 @@ class PluginRegistry implements NodeTypeResolver {
     });
   }
 
-  /** A node type to execute; binary data is wired in (lib/server/binary/access.ts). */
+  /** A node type to execute; binary data (lib/server/binary/access.ts) and fresh OAuth2 tokens (lib/server/credentials/oauth2-runtime.ts) are wired in. */
   resolve(type: string): ResolvedNodeType | { error: string } {
     const resolved = this.resolveType(type);
-    return 'error' in resolved ? resolved : withBinaryData(resolved);
+    return 'error' in resolved ? resolved : withBinaryData(withFreshTokens(resolved));
   }
 
   private resolveType(type: string): ResolvedNodeType | { error: string } {
@@ -475,10 +479,16 @@ class PluginRegistry implements NodeTypeResolver {
           throw new Error(`${entry.manifest.plugin.name} via ${state.transport.toUpperCase()} ${state.endpoint}: ${(error as Error).message}`);
         }
       },
+      // App webhook triggers (lib/server/app-webhooks.ts).
+      ...(descriptor.triggerSource === 'appWebhook' && {
+        webhookMethod: (request: WebhookMethodRequest) => state.client.webhookMethod(request),
+        webhook: (request: WebhookRequest) => state.client.receiveWebhook(request),
+      }),
     };
   }
 
   async loadOptions(type: string, method: string, parameters: JsonObject, credentials?: Record<string, JsonObject>): Promise<PropertyOption[]> {
+    credentials = await freshCredentials(credentials);
     const { pluginId, nodeName } = splitType(type);
     const entry = this.plugins.get(pluginId);
     if (!entry) throw new Error(`Unknown plugin "${pluginId}"`);
@@ -496,7 +506,12 @@ class PluginRegistry implements NodeTypeResolver {
   // Credential types
   // -------------------------------------------------------------------------
 
+  /** Every plugin's credential types, with the properties of the types they extend merged in (lib/server/credentials/extends.ts). */
   credentialTypes(): CredentialTypeInfo[] {
+    return withExtends(this.listCredentialTypes());
+  }
+
+  private listCredentialTypes(): CredentialTypeInfo[] {
     return [...this.plugins.values()].flatMap((entry) => {
       const { plugin } = entry.manifest;
       return (entry.manifest.credentialTypes ?? []).map((descriptor) => ({

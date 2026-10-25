@@ -13,12 +13,14 @@ import type { JsonObject } from '@landflow/protocol';
 import type { NodeItem } from '@landflow/protocol';
 import type { CheckpointState, NodeRun, Workflow } from '@landflow/engine';
 import type { ExecutionRecord, ExecutionState, ExecutionSummary, WorkflowSummary } from '../shared/types';
+import { currentActorId } from './auth/context';
 import { database, dataDir, type Database } from './db';
 import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } from './db/rows';
 import { recordExecutionInsights } from './insights';
 import { pruneExecutions } from './settings';
 import { singleton } from './singleton';
-import { recordVersion } from './versions';
+import { syncPublication } from './publications';
+import { recordVersion, versionFor } from './versions';
 
 /** Write JSON through a temp file and a rename, so readers never see half a file. */
 export function atomicWrite(path: string, data: unknown) {
@@ -118,14 +120,22 @@ class Store {
 
   saveWorkflow(workflow: Workflow): Workflow {
     const now = new Date().toISOString();
+    // Who: the signed-in user of the request saving it (none for system saves, which keep the last one).
+    const actor = currentActorId();
+    const existing = this.cache.get(workflow.id);
+    const createdBy = existing ? existing.createdBy : (workflow.createdBy ?? actor);
+    const updatedBy = actor ?? workflow.updatedBy;
     const saved: Workflow = {
       ...workflow,
-      createdAt: this.cache.get(workflow.id)?.createdAt ?? workflow.createdAt ?? now,
+      createdAt: existing?.createdAt ?? workflow.createdAt ?? now,
       updatedAt: now,
+      ...(createdBy && { createdBy }),
+      ...(updatedBy && { updatedBy }),
     };
     this.db.transaction(() => {
       this.db.upsert('workflows', workflowRow(saved));
-      recordVersion(saved);
+      // A save is a draft; turning `active` on or off (older clients) publishes it or unpublishes.
+      syncPublication(saved, (recordVersion(saved) ?? versionFor(saved))?.id);
     });
     this.cache.set(saved.id, saved);
     this.listeners.forEach((listener) => listener());
@@ -279,7 +289,7 @@ class Store {
   stats() {
     const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const recent = this.db.get<{ n: number; failed: number | null; total: number | null }>(
-      `SELECT COUNT(*) AS n, SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS failed, SUM(duration_ms) AS total FROM executions WHERE started_at > ? AND status NOT IN (${[...IN_FLIGHT].map(() => '?').join(', ')})`,
+      `SELECT COUNT(*) AS n, SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS failed, SUM(duration_ms) AS total FROM executions WHERE started_at > ? AND evaluation_run_id IS NULL AND status NOT IN (${[...IN_FLIGHT].map(() => '?').join(', ')})`,
       since,
       ...IN_FLIGHT,
     );

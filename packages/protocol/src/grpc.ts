@@ -24,6 +24,10 @@ import {
   type PropertyOption,
   type TestCredentialsRequest,
   type TestCredentialsResponse,
+  type WebhookMethodRequest,
+  type WebhookMethodResponse,
+  type WebhookRequest,
+  type WebhookResponse,
   type WithdrawRequest,
 } from './types';
 
@@ -311,6 +315,180 @@ export function optionsToMsg(options: PropertyOption[]) {
 
 export function optionsFromMsg(msg: { options: DynamicValueMsg | null }): PropertyOption[] {
   return fromDynamic(msg.options, []);
+}
+
+// ---------------------------------------------------------------------------
+// App webhook triggers (WebhookMethod, ReceiveWebhook)
+// ---------------------------------------------------------------------------
+
+type NodeRefMsg = { id: string; name: string; type: string; typeVersion: number } | null;
+type LogMsg = { level: string; message: string };
+type NodeErrorMsg = { message: string; description: string; itemIndex: number } | null;
+
+export interface WebhookMethodRequestMsg {
+  protocol: string;
+  method: string;
+  workflowId: string;
+  node: NodeRefMsg;
+  parameters: DynamicValueMsg | null;
+  credentials: DynamicValueMsg | null;
+  webhookUrl: string;
+  staticData: DynamicValueMsg | null;
+}
+export interface WebhookMethodResponseMsg {
+  exists: boolean;
+  staticData: DynamicValueMsg | null;
+  logs: LogMsg[];
+  error: NodeErrorMsg;
+}
+export interface ReceiveWebhookRequestMsg {
+  protocol: string;
+  workflowId: string;
+  node: NodeRefMsg;
+  parameters: DynamicValueMsg | null;
+  credentials: DynamicValueMsg | null;
+  webhookUrl: string;
+  staticData: DynamicValueMsg | null;
+  request: { method: string; path: string; headers: Record<string, string>; query: Record<string, string>; body: Uint8Array | Buffer } | null;
+}
+export interface ReceiveWebhookResponseMsg {
+  items: ItemMsg[];
+  response: { status: number; headers: Record<string, string>; body: Uint8Array | Buffer } | null;
+  staticData: DynamicValueMsg | null;
+  idempotencyKey: string;
+  logs: LogMsg[];
+  error: NodeErrorMsg;
+}
+
+const nodeRefFromMsg = (node: NodeRefMsg) => node ?? { id: '', name: '', type: '', typeVersion: 1 };
+const logsToMsg = (logs: WebhookResponse['logs']): LogMsg[] => (logs ?? []).map((log) => ({ level: log.level, message: log.message }));
+const errorToMsg = (error: WebhookResponse['error']): NodeErrorMsg =>
+  error ? { message: error.message, description: error.description ?? '', itemIndex: error.itemIndex ?? -1 } : null;
+
+function logsAndErrorFromMsg(msg: { logs: LogMsg[]; error: NodeErrorMsg }): Pick<WebhookResponse, 'logs' | 'error'> {
+  const out: Pick<WebhookResponse, 'logs' | 'error'> = {};
+  if (msg.logs?.length) out.logs = msg.logs.map((log) => ({ level: (log.level || 'info') as 'info', message: log.message }));
+  if (msg.error?.message) {
+    out.error = { message: msg.error.message, ...(msg.error.description && { description: msg.error.description }), ...(msg.error.itemIndex >= 0 && { itemIndex: msg.error.itemIndex }) };
+  }
+  return out;
+}
+
+export function webhookMethodRequestToMsg(request: WebhookMethodRequest): WebhookMethodRequestMsg {
+  return {
+    protocol: request.protocol,
+    method: request.method,
+    workflowId: request.workflowId,
+    node: request.node,
+    parameters: toDynamic(request.parameters),
+    credentials: request.credentials ? toDynamic(request.credentials) : null,
+    webhookUrl: request.webhookUrl,
+    staticData: toDynamic(request.staticData ?? {}),
+  };
+}
+
+export function webhookMethodRequestFromMsg(msg: WebhookMethodRequestMsg): WebhookMethodRequest {
+  const request: WebhookMethodRequest = {
+    protocol: PROTOCOL_VERSION,
+    method: msg.method as WebhookMethodRequest['method'],
+    workflowId: msg.workflowId,
+    node: nodeRefFromMsg(msg.node),
+    parameters: fromDynamic(msg.parameters, {}),
+    webhookUrl: msg.webhookUrl,
+    staticData: fromDynamic(msg.staticData, {}) ?? {},
+  };
+  const credentials = fromDynamic<WebhookMethodRequest['credentials'] | null>(msg.credentials, null);
+  if (credentials) request.credentials = credentials;
+  return request;
+}
+
+export function webhookMethodResponseToMsg(response: WebhookMethodResponse): WebhookMethodResponseMsg {
+  return {
+    exists: response.exists === true,
+    staticData: response.staticData ? toDynamic(response.staticData) : null,
+    logs: logsToMsg(response.logs),
+    error: errorToMsg(response.error),
+  };
+}
+
+export function webhookMethodResponseFromMsg(msg: WebhookMethodResponseMsg): WebhookMethodResponse {
+  const response: WebhookMethodResponse = { ...logsAndErrorFromMsg(msg) };
+  if (msg.exists) response.exists = true;
+  const staticData = fromDynamic<WebhookMethodResponse['staticData'] | null>(msg.staticData, null);
+  if (staticData) response.staticData = staticData;
+  return response;
+}
+
+export function webhookRequestToMsg(request: WebhookRequest): ReceiveWebhookRequestMsg {
+  return {
+    protocol: request.protocol,
+    workflowId: request.workflowId,
+    node: request.node,
+    parameters: toDynamic(request.parameters),
+    credentials: request.credentials ? toDynamic(request.credentials) : null,
+    webhookUrl: request.webhookUrl,
+    staticData: toDynamic(request.staticData ?? {}),
+    request: {
+      method: request.request.method,
+      path: request.request.path,
+      headers: request.request.headers,
+      query: request.request.query,
+      body: Buffer.from(request.request.body ?? '', 'base64'),
+    },
+  };
+}
+
+export function webhookRequestFromMsg(msg: ReceiveWebhookRequestMsg): WebhookRequest {
+  const incoming = msg.request;
+  const request: WebhookRequest = {
+    protocol: PROTOCOL_VERSION,
+    workflowId: msg.workflowId,
+    node: nodeRefFromMsg(msg.node),
+    parameters: fromDynamic(msg.parameters, {}),
+    webhookUrl: msg.webhookUrl,
+    staticData: fromDynamic(msg.staticData, {}) ?? {},
+    request: {
+      method: incoming?.method ?? 'POST',
+      path: incoming?.path ?? '',
+      headers: { ...(incoming?.headers ?? {}) },
+      query: { ...(incoming?.query ?? {}) },
+      body: incoming?.body ? Buffer.from(incoming.body).toString('base64') : '',
+    },
+  };
+  const credentials = fromDynamic<WebhookRequest['credentials'] | null>(msg.credentials, null);
+  if (credentials) request.credentials = credentials;
+  return request;
+}
+
+export function webhookResponseToMsg(response: WebhookResponse): ReceiveWebhookResponseMsg {
+  return {
+    items: response.items?.length ? itemsToBranch(response.items).items : [],
+    response: response.response
+      ? { status: response.response.status ?? 0, headers: response.response.headers ?? {}, body: Buffer.from(response.response.body ?? '', 'utf8') }
+      : null,
+    staticData: response.staticData ? toDynamic(response.staticData) : null,
+    idempotencyKey: response.idempotencyKey ?? '',
+    logs: logsToMsg(response.logs),
+    error: errorToMsg(response.error),
+  };
+}
+
+export function webhookResponseFromMsg(msg: ReceiveWebhookResponseMsg): WebhookResponse {
+  const response: WebhookResponse = { ...logsAndErrorFromMsg(msg) };
+  const items = branchToItems({ items: msg.items ?? [] });
+  if (items.length) response.items = items;
+  if (msg.response) {
+    const body = msg.response.body?.length ? Buffer.from(msg.response.body).toString('utf8') : undefined;
+    response.response = {
+      ...(msg.response.status && { status: msg.response.status }),
+      ...(Object.keys(msg.response.headers ?? {}).length && { headers: { ...msg.response.headers } }),
+      ...(body !== undefined && { body }),
+    };
+  }
+  const staticData = fromDynamic<WebhookResponse['staticData'] | null>(msg.staticData, null);
+  if (staticData) response.staticData = staticData;
+  if (msg.idempotencyKey) response.idempotencyKey = msg.idempotencyKey;
+  return response;
 }
 
 export function healthFromMsg(msg: { status: string; uptimeMs: number; pluginId: string; version: string }): HealthResponse {

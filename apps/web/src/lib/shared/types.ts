@@ -1,6 +1,9 @@
 /** Types shared by the API routes and the React client. No runtime imports. */
 import type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, NodeRun, PauseReason, Transport, Workflow } from '@landflow/engine';
 import type { CredentialTypeDescriptor, NodeDescriptor, NodeItem, PluginInfo } from '@landflow/protocol';
+import type { EditLockView } from './auth';
+import type { EvaluationRef } from './evaluations';
+import type { ExecutionAiUsage } from './ai-usage';
 
 export type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, NodeRun, PauseReason, Transport, Workflow };
 export type { StickyNote, WorkflowConnection, WorkflowNode, WorkflowSettings } from '@landflow/engine';
@@ -62,6 +65,10 @@ export interface CredentialTypeInfo {
   descriptor: CredentialTypeDescriptor;
   /** Node types that can use it. */
   nodeTypes: string[];
+  /** The types it extends, qualified and transitively (`descriptor.properties` already has theirs merged in). */
+  extendsTypes?: string[];
+  /** An OAuth2 type (core.oAuth2Api or one extending it): the credential dialog shows a Connect button. */
+  oauth2?: boolean;
 }
 
 export interface CredentialSummary {
@@ -73,6 +80,8 @@ export interface CredentialSummary {
   updatedAt: string;
   /** Workflows with a node that references this credential. */
   usedBy: Array<{ workflowId: string; workflowName: string }>;
+  /** OAuth2 credentials: whether they are connected, as whom, and until when (lib/shared/oauth2.ts). */
+  oauth2?: import('./oauth2').OAuth2Status;
 }
 
 export interface CredentialDetail extends CredentialSummary {
@@ -159,6 +168,9 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   formCompletion?: FormCompletion;
   /** The workflow version the execution started on (absent: an unsaved editor draft, kept in `workflow`). */
   versionId?: string;
+  /** That version's number, and whether it was the published version when the run started ("ran version 7 (published)"). */
+  versionNumber?: number;
+  versionPublished?: boolean;
   /** The failed execution this one retries, and which retry it is (1 = the first). */
   retryOf?: string;
   retryAttempt?: number;
@@ -170,8 +182,16 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   resumedAfterRestart?: { at: string; stepId: string };
   /** The trigger call's Idempotency-Key. */
   idempotencyKey?: string;
+  /** A manual run: the user (id) who started it. */
+  startedBy?: string;
   /** Status `queued`: how it starts once a slot frees. */
   queued?: QueuedStart;
+  /** A run of an offline evaluation (one test case): left out of Insights and production counts. */
+  evaluation?: EvaluationRef;
+  /** Tokens and estimated cost of the model calls this execution made (lib/server/ai-usage). */
+  aiUsage?: ExecutionAiUsage;
+  /** Started by the trigger's debounce or batching: how many held events the run took. */
+  buffered?: { kind: 'debounce' | 'batch'; count: number };
 }
 
 export interface SubExecutionRef {
@@ -206,12 +226,16 @@ export interface ExecutionSummary {
   wait?: Pick<ExecutionWait, 'nodeName' | 'resume' | 'until'>;
   parentExecutionId?: string;
   versionId?: string;
+  versionNumber?: number;
+  versionPublished?: boolean;
   retryOf?: string;
   retryAttempt?: number;
   retriedBy?: string;
   retryAt?: string;
   /** Shown as "resumed after restart". */
   resumedAfterRestart?: boolean;
+  /** An evaluation case's execution. */
+  evaluation?: Pick<EvaluationRef, 'runId'>;
 }
 
 /** Where a poll trigger of an active workflow stands (GET /api/workflows/:id/polls). */
@@ -233,7 +257,8 @@ export interface PollStatus {
 /** SSE payload of /api/events. */
 export type StreamEvent =
   | { channel: 'registry'; event: RegistryEvent; seq: number; at: string }
-  | { channel: 'execution'; workflowId: string; event: ExecutionEvent; seq: number; at: string };
+  | { channel: 'execution'; workflowId: string; event: ExecutionEvent; seq: number; at: string }
+  | { channel: 'lock'; workflowId: string; lock: EditLockView | null; seq: number; at: string };
 
 /** A folder in the workflows list (GET /api/folders). Folders nest through `parentId`. */
 export interface Folder {
@@ -285,7 +310,7 @@ export interface WorkflowVersion extends WorkflowVersionSummary {
 
 /** What POST /api/workflows/import did with each node of the file. */
 export interface ImportReport {
-  format: 'n8n' | 'landflow';
+  format: 'n8n' | 'flowise' | 'landflow';
   /** Nodes converted to a Landflow type. */
   mapped: Array<{ name: string; from: string; to: string }>;
   /** Nodes with no Landflow equivalent: added as disabled No Operation nodes. */

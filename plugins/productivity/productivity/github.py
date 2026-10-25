@@ -1,17 +1,20 @@
-"""GitHub: issues, repositories, releases and files, plus the GitHub Trigger (polls new issues, PRs or releases)."""
+"""GitHub: issues, repositories, releases and files, the GitHub Trigger (polls new issues, PRs or releases) and the
+GitHub Webhook Trigger (a repository webhook registered when the workflow is published)."""
 
 from __future__ import annotations
 
 import base64
 import binascii
 import re
+import secrets
 from typing import Any
 from urllib.parse import quote
 
-from landflow_sdk import CredentialType, Node, NodeOperationError, poll_interval_property
+from landflow_sdk import CredentialType, Node, NodeOperationError, poll_interval_property, verify_github_signature
 
 from .common import (
     Api,
+    api_error,
     collection,
     count_new_items,
     count_written,
@@ -421,3 +424,182 @@ class GitHubTrigger(RepositoryPicker, Node):
         if fresh:
             ctx.logger.info(f"{len(fresh)} new {endpoint}", event=event)
         return [{"json": e} for e in fresh]
+
+
+# --------------------------------------------------------- webhook trigger
+
+WEBHOOK_EVENTS = [
+    ("Any Event", "*", "Every event GitHub sends for the repository"),
+    ("Check Run", "check_run", None),
+    ("Check Suite", "check_suite", None),
+    ("Commit Comment", "commit_comment", None),
+    ("Create", "create", "A branch or tag was created"),
+    ("Delete", "delete", "A branch or tag was deleted"),
+    ("Deployment", "deployment", None),
+    ("Deployment Status", "deployment_status", None),
+    ("Discussion", "discussion", None),
+    ("Discussion Comment", "discussion_comment", None),
+    ("Fork", "fork", None),
+    ("Issue Comment", "issue_comment", "A comment on an issue or pull request"),
+    ("Issues", "issues", "An issue was opened, edited, closed, labeled, …"),
+    ("Label", "label", None),
+    ("Member", "member", None),
+    ("Milestone", "milestone", None),
+    ("Public", "public", None),
+    ("Pull Request", "pull_request", "A pull request was opened, synchronized, closed, …"),
+    ("Pull Request Review", "pull_request_review", None),
+    ("Pull Request Review Comment", "pull_request_review_comment", None),
+    ("Push", "push", "Commits were pushed to a branch or tag"),
+    ("Release", "release", None),
+    ("Repository", "repository", None),
+    ("Star", "star", None),
+    ("Status", "status", "A commit status changed"),
+    ("Watch", "watch", None),
+    ("Wiki Page", "gollum", None),
+    ("Workflow Job", "workflow_job", None),
+    ("Workflow Run", "workflow_run", None),
+]
+#: Delivery headers copied into each item (the signature is checked, not passed on).
+DELIVERY_HEADERS = ("x-github-event", "x-github-delivery", "x-github-hook-id", "x-github-hook-installation-target-id",
+                    "x-github-hook-installation-target-type", "user-agent", "content-type")
+HOOK_PERMISSION_HINT = "The token needs admin:repo_hook (classic) or Webhooks read and write (fine-grained), and admin access to the repository."
+
+
+class GitHubWebhookTrigger(RepositoryPicker, Node):
+    """Registers a repository webhook (with a random secret) when the workflow is published; verifies every delivery's
+    ``X-Hub-Signature-256`` and starts a run per event. Redeliveries (same ``X-GitHub-Delivery``) start no second run."""
+
+    description = {
+        "name": "githubWebhookTrigger",
+        "displayName": "GitHub Webhook Trigger",
+        "description": "Starts the workflow on repository events as GitHub sends them: pushes, pull requests, issues, releases, …",
+        "version": 1,
+        "kind": "trigger",
+        "triggerSource": "appWebhook",
+        "categories": ["Development"],
+        "icon": "file:icons/github.svg",
+        "color": "#24292F",
+        "subtitle": "{{events}}",
+        "documentationUrl": "https://docs.github.com/en/webhooks/webhook-events-and-payloads",
+        "inputs": [],
+        "outputs": [{"type": "main"}],
+        "credentials": [{"name": "githubApi", "required": True}],
+        "keywords": ["github", "webhook", "push", "pull request", "issues", "release", "event"],
+        "properties": [
+            {
+                "name": "webhookNotice", "type": "notice", "default": "",
+                "displayName": "Landflow creates the repository webhook when you publish the workflow and deletes it when you unpublish. "
+                               + HOOK_PERMISSION_HINT,
+            },
+            *REPO_PROPERTIES,
+            {
+                "name": "events", "displayName": "Events", "type": "multiOptions", "default": ["push"], "required": True,
+                "noDataExpression": True,
+                "options": [{"name": name, "value": value, **({"description": text} if text else {})} for name, value, text in WEBHOOK_EVENTS],
+                "description": "The events GitHub delivers; each starts one run",
+            },
+            {
+                "name": "options", "displayName": "Options", "type": "collection", "default": {}, "placeholder": "Add option",
+                "values": [
+                    {"name": "insecureSsl", "displayName": "Insecure SSL", "type": "boolean", "default": False,
+                     "description": "Let GitHub deliver to a URL whose TLS certificate it cannot verify (self-signed); not recommended"},
+                ],
+            },
+        ],
+    }
+
+    def execute(self, ctx):
+        # A manual run has no delivery: the trigger outputs nothing (pin data from a past execution to test downstream nodes).
+        ctx.logger.info("GitHub sends events to the published workflow; a manual run has no event to output")
+        return []
+
+    # -- lifecycle (docs/protocol.md §12)
+
+    @staticmethod
+    def _events(ctx) -> list[str]:
+        raw = ctx.get_node_parameter("events") or ["push"]
+        events = [str(e) for e in (raw if isinstance(raw, list) else split_list(raw)) if str(e).strip()]
+        return ["*"] if "*" in events else sorted(set(events)) or ["push"]
+
+    def webhook_check_exists(self, ctx):
+        hook_id = ctx.get_static_data().get("webhookId")
+        if not hook_id:
+            return False
+        api = github_api(ctx, ctx.get_credentials("githubApi"))
+        resp = api.request("GET", f"{self.repo_path(ctx, 0)}/hooks/{hook_id}", expect=(404,))
+        if resp.status == 404:
+            return False
+        hook = resp.json if isinstance(resp.json, dict) else {}
+        return (hook.get("config") or {}).get("url") == ctx.get_webhook_url() and bool(hook.get("active", True))
+
+    def webhook_create(self, ctx):
+        api = github_api(ctx, ctx.get_credentials("githubApi"))
+        repo = self.repo_path(ctx, 0)
+        secret = secrets.token_hex(32)
+        events = self._events(ctx)
+        insecure = bool(collection(ctx, "options", 0).get("insecureSsl"))
+        body = {
+            "name": "web",
+            "active": True,
+            "events": events,
+            "config": {"url": ctx.get_webhook_url(), "content_type": "json", "secret": secret, "insecure_ssl": "1" if insecure else "0"},
+        }
+        with ctx.span("github.webhook.create", {"github.events": ",".join(events)}):
+            resp = api.request("POST", f"{repo}/hooks", json=body, expect=(404, 422))
+            if resp.status == 422 and self._delete_hooks_for(api, repo, ctx.get_webhook_url()):
+                # A hook for this URL already exists (left over, its secret unknown): replace it.
+                ctx.logger.info("replaced an existing GitHub webhook for this URL")
+                resp = api.request("POST", f"{repo}/hooks", json=body, expect=(404,))
+        if resp.status == 404:
+            raise NodeOperationError("GitHub API error (HTTP 404): the repository was not found or the token cannot manage its webhooks",
+                                     description=HOOK_PERMISSION_HINT)
+        if resp.status >= 400:
+            raise api_error("github", resp)
+        hook = resp.json if isinstance(resp.json, dict) else {}
+        ctx.set_static_data({"webhookId": hook.get("id"), "webhookSecret": secret, "webhookEvents": events})
+        count_written(ctx, "github", "webhook.create")
+        ctx.logger.info(f"GitHub webhook {hook.get('id')} created", events=",".join(events))
+        return True
+
+    @staticmethod
+    def _delete_hooks_for(api: Api, repo: str, url: str) -> bool:
+        hooks, _ = paginate(api, f"{repo}/hooks", {}, None, max_pages=5)
+        doomed = [h for h in hooks if isinstance(h, dict) and (h.get("config") or {}).get("url") == url]
+        for hook in doomed:
+            api.request("DELETE", f"{repo}/hooks/{hook['id']}", expect=(404,))
+        return bool(doomed)
+
+    def webhook_delete(self, ctx):
+        hook_id = ctx.get_static_data().get("webhookId")
+        if hook_id:
+            api = github_api(ctx, ctx.get_credentials("githubApi"))
+            resp = api.request("DELETE", f"{self.repo_path(ctx, 0)}/hooks/{hook_id}", expect=(404,))
+            if resp.status != 404:
+                count_written(ctx, "github", "webhook.delete")
+        ctx.set_static_data({})
+        return True
+
+    def webhook(self, ctx):
+        static = ctx.get_static_data()
+        secret = str(static.get("webhookSecret") or "")
+        if not verify_github_signature(secret, ctx.get_raw_body(), ctx.get_header("X-Hub-Signature-256")):
+            ctx.logger.warn("rejected a delivery with a missing or invalid X-Hub-Signature-256")
+            return {"response": {"status": 401, "json": {"error": "invalid signature"}}}
+        event = ctx.get_header("X-GitHub-Event") or "unknown"
+        delivery = ctx.get_header("X-GitHub-Delivery")
+        body = ctx.get_body()
+        if event == "ping":  # sent once when the hook is created
+            return {"response": {"status": 200, "json": {"ok": True, "hookId": (body or {}).get("hook_id") if isinstance(body, dict) else None}}}
+        events = static.get("webhookEvents") or ["*"]
+        if "*" not in events and event not in events:
+            return {"response": {"status": 202, "json": {"ignored": event}}}
+        headers = {name: ctx.get_header(name) for name in DELIVERY_HEADERS if ctx.get_header(name) is not None}
+        item = {
+            "event": event,
+            "action": body.get("action") if isinstance(body, dict) else None,
+            "deliveryId": delivery,
+            "body": body,
+            "headers": headers,
+        }
+        count_new_items(ctx, "githubWebhook", 1)
+        return {"items": [item], **({"idempotencyKey": delivery} if delivery else {})}

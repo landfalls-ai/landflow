@@ -8,6 +8,7 @@
  * the first one fails (see fallback.ts).
  */
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
+import { BINARY_INPUT_OPTIONS, optionalAttachments } from './attachments';
 import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY } from './fallback';
 import type { GenerateInput } from './models';
 import { formatInstructions, generateStructured, readSchema, type JsonSchema } from './structured';
@@ -82,6 +83,7 @@ export const chainLlmNode = defineNode({
         displayOptions: { show: { hasOutputParser: [true] } },
       },
       FALLBACK_PROPERTY,
+      { name: 'options', displayName: 'Options', type: 'collection', default: {}, placeholder: 'Add option', values: [...BINARY_INPUT_OPTIONS] },
     ],
   },
   async execute(ctx) {
@@ -89,18 +91,29 @@ export const chainLlmNode = defineNode({
     const out = await perItem(ctx, async (_item, i): Promise<NodeItem> => {
       const prompt = requireText(ctx.getNodeParameter('prompt', i), 'Prompt');
       const system = String(ctx.getNodeParameter('systemMessage', i) ?? '').trim();
+      const attachments = await optionalAttachments(ctx, i, ctx.getNodeParameter<JsonObject>('options', i, {}) ?? {});
       if (ctx.getNodeParameter<boolean>('hasOutputParser', i)) {
         const schema = readSchema(ctx.getNodeParameter('jsonSchema', i));
         const { value, attempts } = await generateStructured(model, {
           system: [system, formatInstructions(schema)].filter(Boolean).join('\n\n'),
           prompt,
           schema,
+          ...(attachments && { attachments }),
         });
         if (attempts > 1) ctx.logger.info(`item ${i}: valid JSON after a retry`);
         return { json: asItemJson(value), pairedItem: { item: i } };
       }
-      const request: GenerateInput = { ...(system && { system }), messages: [{ role: 'user', content: prompt }], tools: [] };
+      // Streamed to a chat or streaming webhook when someone listens (ctx.sendChunk).
+      const send = ctx.sendChunk;
+      const request: GenerateInput = {
+        ...(system && { system }),
+        messages: [{ role: 'user', content: prompt, ...(attachments && { attachments }) }],
+        tools: [],
+        ...(send && { onToken: (delta: string) => send({ type: 'item', itemIndex: i, content: delta }) }),
+      };
+      send?.({ type: 'begin', itemIndex: i });
       const turn = await model.generate(request);
+      send?.({ type: 'end', itemIndex: i });
       return { json: { text: turn.text }, pairedItem: { item: i } };
     });
     return [out];
@@ -190,6 +203,7 @@ export const textClassifierNode = defineNode({
             typeOptions: { rows: 4 },
             description: '{categories} is replaced by the category names',
           },
+          ...BINARY_INPUT_OPTIONS,
         ],
       },
     ],
@@ -210,7 +224,8 @@ export const textClassifierNode = defineNode({
       const names = categories.map((entry) => entry.name);
       const duplicate = names.find((name, index) => names.indexOf(name) !== index);
       if (duplicate) throw new NodeOperationError(`Category “${duplicate}” is listed twice`);
-      const options = ctx.getNodeParameter<{ multiClass?: boolean; fallback?: string; systemPromptTemplate?: string }>('options', i) ?? {};
+      const options = ctx.getNodeParameter<{ multiClass?: boolean; fallback?: string; systemPromptTemplate?: string; passthroughBinaryImages?: boolean; binaryPropertyNames?: string }>('options', i) ?? {};
+      const attachments = await optionalAttachments(ctx, i, options);
       const text = requireText(ctx.getNodeParameter('inputText', i), 'Text to Classify');
 
       const schema: JsonSchema = {
@@ -237,6 +252,7 @@ export const textClassifierNode = defineNode({
         system,
         prompt: text,
         schema,
+        ...(attachments && { attachments }),
         soft: (reply) => (!options.multiClass && chosen(reply).length > 1 ? [`only one category may be true, got ${chosen(reply).join(', ')}`] : []),
       });
 
@@ -361,6 +377,7 @@ export const informationExtractorNode = defineNode({
         placeholder: 'Add option',
         values: [
           { name: 'systemPromptTemplate', displayName: 'System Prompt Template', type: 'string', default: DEFAULT_EXTRACTOR_PROMPT, typeOptions: { rows: 4 } },
+          ...BINARY_INPUT_OPTIONS,
         ],
       },
     ],
@@ -373,11 +390,13 @@ export const informationExtractorNode = defineNode({
         ctx.getNodeParameter('schemaType', i) === 'manual'
           ? readSchema(ctx.getNodeParameter('inputSchema', i))
           : attributesSchema(ctx.getNodeParameter<{ attributes?: Attribute[] }>('attributes', i)?.attributes ?? []);
-      const options = ctx.getNodeParameter<{ systemPromptTemplate?: string }>('options', i) ?? {};
+      const options = ctx.getNodeParameter<{ systemPromptTemplate?: string; passthroughBinaryImages?: boolean; binaryPropertyNames?: string }>('options', i) ?? {};
+      const attachments = await optionalAttachments(ctx, i, options);
       const { value, attempts } = await generateStructured(model, {
         system: [options.systemPromptTemplate || DEFAULT_EXTRACTOR_PROMPT, formatInstructions(schema)].join('\n\n'),
         prompt: text,
         schema,
+        ...(attachments && { attachments }),
       });
       if (attempts > 1) ctx.logger.info(`item ${i}: valid JSON after a retry`);
       return { json: asItemJson(value), pairedItem: { item: i } };

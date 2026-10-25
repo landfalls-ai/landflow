@@ -10,7 +10,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync, SQLInputValue, StatementSync } from 'node:sqlite';
-import { LATEST_VERSION, MIGRATIONS, SCHEMA_VERSION_TABLE, TABLES, type Migration, type TableName } from './schema';
+import { MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type Migration, type TableName } from './schema';
 
 export type DbKind = 'sqlite' | 'postgres';
 export type SqlValue = string | number | bigint | null;
@@ -177,15 +177,13 @@ function loadSqlite(): typeof import('node:sqlite') {
 
 /** Apply the migrations this SQLite database lacks, in one transaction. Returns the versions applied. */
 export function migrateSqlite(sqlite: DatabaseSync, migrations: Migration[] = MIGRATIONS): number[] {
-  const latest = migrations.at(-1)?.version ?? LATEST_VERSION;
   sqlite.exec('BEGIN IMMEDIATE');
   try {
     sqlite.exec(SCHEMA_VERSION_TABLE);
-    const current = Number((sqlite.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number | null }).version ?? 0);
-    if (current > latest) throw new Error(`The database has schema version ${current}, newer than this Landflow build knows (${latest})`);
+    const done = (sqlite.prepare('SELECT version FROM schema_version').all() as Array<{ version: number }>).map((row) => Number(row.version));
+    const pending = pendingMigrations(migrations, done);
     const applied: number[] = [];
-    for (const migration of migrations) {
-      if (migration.version <= current) continue;
+    for (const migration of pending) {
       for (const statement of migration.statements) sqlite.exec(statement);
       sqlite.prepare('INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)').run(migration.version, migration.name, new Date().toISOString());
       applied.push(migration.version);

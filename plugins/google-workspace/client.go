@@ -122,7 +122,8 @@ func (c *client) do(ctx context.Context, a api, method, path string, query url.V
 
 // send adds the bearer token, sends the request built by build (called again
 // for the retry), maps error responses and passes 2xx responses to handle.
-// A 401 drops the cached token and retries once with a fresh one.
+// A 401 drops the cached token and retries once with a fresh one (a host
+// token without a refresh token: the 401 goes back, and the host retries).
 func (c *client) send(ctx context.Context, a api, build func() (*http.Request, error), handle func(*http.Response) error) error {
 	for attempt := 1; ; attempt++ {
 		token, _, err := c.ts.Token(ctx, c.metrics, false)
@@ -142,7 +143,7 @@ func (c *client) send(ctx context.Context, a api, build func() (*http.Request, e
 			c.countError(a, "network")
 			return fmt.Errorf("%s request failed: %v", a.title, transportError(err))
 		}
-		if resp.StatusCode == http.StatusUnauthorized && attempt == 1 {
+		if resp.StatusCode == http.StatusUnauthorized && attempt == 1 && c.ts.renewable() {
 			drain(resp)
 			c.ts.Invalidate(token)
 			continue

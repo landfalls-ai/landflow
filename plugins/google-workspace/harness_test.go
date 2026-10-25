@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -76,6 +78,30 @@ func (h *harness) oauth() map[string]any {
 	return map[string]any{
 		"clientId": "client-1.apps.googleusercontent.com", "clientSecret": "oauth-client-secret-1",
 		"refreshToken": "oauth-refresh-token-1", "tokenUrl": h.url + "/token", "baseUrl": h.url,
+	}
+}
+
+// connected is a Connected OAuth2 credential as the host sends it: the
+// client, and an access token the host got (here: straight from the fake).
+func (h *harness) connected() map[string]any {
+	h.t.Helper()
+	resp, err := http.PostForm(h.url+"/token", url.Values{
+		"grant_type": {"refresh_token"}, "client_id": {"client-1.apps.googleusercontent.com"},
+		"client_secret": {"oauth-client-secret-1"}, "refresh_token": {"oauth-refresh-token-1"},
+	})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var token struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil || token.AccessToken == "" {
+		h.t.Fatalf("host token: %v %+v", err, token)
+	}
+	return map[string]any{
+		"clientId": "client-1.apps.googleusercontent.com", "clientSecret": "oauth-client-secret-1", "accessTokenUrl": h.url + "/token",
+		"accessToken": token.AccessToken, "tokenType": "Bearer", "oauthTokenData": map[string]any{"access_token": token.AccessToken}, "baseUrl": h.url,
 	}
 }
 

@@ -38,6 +38,15 @@
  * is recorded as its own NodeRun and streamed as events, so the editor can
  * light up the model and tool nodes while an agent thinks.
  *
+ * Streaming: with `streaming` set, main-flow in-process nodes get `ctx.sendChunk`, and every chunk becomes a
+ * `node.chunk` event (the Chat and Webhook triggers' "Streaming" response mode turns them into SSE or JSON lines).
+ *
+ * Rate limits: a node with `rateLimit` waits for a turn (a FIFO queue in a process-wide sliding window) before each
+ * main-flow attempt and each use as a sub-node, so `limit` calls per `intervalSeconds` across all runs.
+ *
+ * A node that waits with `rerun` runs again on resume (same input) and finds the resume payload in its node state
+ * under `$resume`: the AI Agent waits for tool approvals this way and continues its loop afterwards.
+ *
  * Telemetry: the run is a `workflow.execute` span; every NodeRun (main flow,
  * sub-node use or reused copy) is a `node.execute {type}` child span, and sub-node
  * uses are children of their root node's span. Node code runs with its span
@@ -67,6 +76,7 @@ import {
   type TextSplitter,
 } from './ai';
 import { ExpressionError, ExpressionResolver } from './expression';
+import { sharedRateLimiter } from './rate-limit';
 import { engineMetrics, failSpan, recordedIds, SOURCE_ATTRIBUTE, startChild } from './telemetry';
 import { deriveToolSchema } from './tool-schema';
 import type {
@@ -128,6 +138,7 @@ const RESUMED: Record<ResumeKind, string> = {
   timeout: 'Stopped waiting: the time limit was reached',
   subworkflow: 'Resumed: the sub-workflow finished',
   restart: 'Continued after a restart',
+  approval: 'Resumed: the approval was decided',
 };
 
 /** A per-node time limit on one attempt: its signal, and the error the attempt fails with. */
@@ -318,6 +329,24 @@ class WorkflowRun {
     const next = Math.max(index, this.subCalls.get(key) ?? 0);
     this.subCalls.set(key, next + 1);
     return `${this.options.executionId}:${node.id}:${next}`;
+  }
+
+  /** `node.rateLimit`: wait for a turn (logged when it had to wait: the entry is returned for the NodeRun). Aborts with the run. */
+  private async throttle(node: WorkflowNode): Promise<LogEntry | undefined> {
+    const limit = node.rateLimit;
+    if (!limit || !(Number(limit.limit) > 0) || !(Number(limit.intervalSeconds) > 0)) return undefined;
+    const limiter = this.options.rateLimiter ?? sharedRateLimiter();
+    let waited: number;
+    try {
+      waited = await limiter.acquire(`${this.options.workflow.id}:${node.id}`, limit, this.signal);
+    } catch (error) {
+      if (this.signal?.aborted) throw this.abortError();
+      throw error;
+    }
+    if (waited < 50) return undefined;
+    const entry: LogEntry = { level: 'info', message: `Rate limit (${limit.limit} per ${limit.intervalSeconds} s): waited ${(waited / 1000).toFixed(1)} s` };
+    this.emit({ type: 'node.log', executionId: this.options.executionId, nodeId: node.id, level: entry.level, message: entry.message, at: now() });
+    return entry;
   }
 
   private resolveType(node: WorkflowNode): ResolvedNodeType {
@@ -659,7 +688,14 @@ class WorkflowRun {
     const pending = this.pendingWait!;
     const since = new Date(pending.startedAt).toISOString();
     const wait: ExecutionWait = { ...pending.request, nodeId: pending.node.id, nodeName: pending.node.name, since };
-    const waiting = { nodeId: pending.node.id, inputs: pending.inputs, outputs: pending.outputs, startedAt: since, ...(pending.logs?.length && { logs: pending.logs }) };
+    const waiting = {
+      nodeId: pending.node.id,
+      inputs: pending.inputs,
+      outputs: pending.outputs,
+      startedAt: since,
+      ...(pending.logs?.length && { logs: pending.logs }),
+      ...(pending.request.rerun && { rerun: true }),
+    };
     return { wait, state: { ...this.snapshot(stack, parked), waiting } };
   }
 
@@ -697,6 +733,13 @@ class WorkflowRun {
     }
     const node = this.nodes.get(waiting.nodeId);
     if (!node) throw new Error(`The waiting node ${waiting.nodeId} is not in the workflow`);
+    if (waiting.rerun) {
+      // The node runs again with the same input; the resume payload waits for it in its state.
+      const payload = resume.outputs?.[0]?.[0]?.json;
+      this.nodeState[node.id] = { ...this.nodeState[node.id], $resume: { kind: resume.kind, ...(payload && { data: payload }), ...(resume.error && { error: resume.error }) } };
+      stack.push({ nodeId: node.id, inputs: waiting.inputs });
+      return;
+    }
     const telemetry = this.startNodeSpan(node, 'main', this.rootContext);
     telemetry.span.setAttributes({ 'landflow.node.resumed': true, 'landflow.wait.resume_kind': resume.kind });
     const ids = recordedIds(telemetry.span);
@@ -803,6 +846,7 @@ class WorkflowRun {
       this.checkCanceled();
       const limit = this.nodeLimit(node);
       try {
+        const throttled = await this.throttle(node);
         const resolved = this.resolveType(node);
         telemetry.transport = resolved.transport;
         telemetry.span.setAttribute('landflow.transport', resolved.transport);
@@ -819,7 +863,8 @@ class WorkflowRun {
           this.pendingWait = { request: wait, node, inputs: effectiveInputs, outputs: response.outputs, ...(response.logs && { logs: response.logs }), startedAt: started };
           return response.outputs;
         }
-        finish({ status: 'success', inputs: effectiveInputs, outputs: response.outputs, ...(response.logs && { logs: response.logs }) });
+        const logs = throttled ? [throttled, ...(response.logs ?? [])] : response.logs;
+        finish({ status: 'success', inputs: effectiveInputs, outputs: response.outputs, ...(logs && { logs }) });
         return response.outputs;
       } catch (caught) {
         if (caught instanceof CanceledError || caught instanceof TimeoutError) throw caught;
@@ -1012,6 +1057,9 @@ class WorkflowRun {
         else this.nodeState[node.id] = structuredClone(state);
       },
       getNodeOutputs: () => this.expressionOutputs(node),
+      ...(this.options.streaming && {
+        sendChunk: (chunk) => this.emit({ type: 'node.chunk', executionId: this.options.executionId, nodeId: node.id, nodeName: node.name, chunk: structuredClone(chunk), at: now() }),
+      }),
       onLog: (entry) =>
         this.emit({
           type: 'node.log',
@@ -1207,6 +1255,7 @@ class WorkflowRun {
     work: () => Promise<{ result: T; output: NodeItem }>,
   ): Promise<T> {
     this.checkCanceled();
+    await this.throttle(subNode);
     const { executionId } = this.options;
     const started = Date.now();
     // A child of the root node's span, whatever context the root node's code calls from.

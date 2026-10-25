@@ -2,6 +2,9 @@
 
     from landflow_sdk import CredentialType, Node, Plugin, poll_interval_property, serve
 
+App webhook triggers (``triggerSource: "appWebhook"``) get a ``WebhookContext``; ``landflow_sdk.signatures``
+verifies GitHub, Stripe and Slack webhook signatures.
+
 See README.md for a quickstart, docs/protocol.md for the wire protocol and
 docs/observability.md for spans, metrics and logs. The gRPC transport lives in
 ``landflow_sdk.grpc_server`` and needs the ``grpc`` extra; OTLP export needs
@@ -33,7 +36,20 @@ from .protocol import (
     PROTOCOL_VERSION,
 )
 from .serve import PluginServer, serve
+from .signatures import (
+    DEFAULT_SIGNATURE_TOLERANCE_SECONDS,
+    github_signature,
+    hmac_sha256,
+    safe_equal,
+    slack_signature,
+    stripe_signature,
+    verify_github_signature,
+    verify_hmac_sha256,
+    verify_slack_signature,
+    verify_stripe_signature,
+)
 from .telemetry import Span, SpanContext, Telemetry, current_span
+from .webhooks import WebhookContext
 
 __all__ = [
     "BinaryClient",
@@ -41,6 +57,7 @@ __all__ = [
     "CredentialType",
     "DEFAULT_ANNOUNCE_TTL_SECONDS",
     "DEFAULT_HEARTBEAT_SECONDS",
+    "DEFAULT_SIGNATURE_TOLERANCE_SECONDS",
     "DescriptorError",
     "ExecuteContext",
     "HTTP_PATHS",
@@ -67,12 +84,22 @@ __all__ = [
     "UnknownCredentialTypeError",
     "UnknownMethodError",
     "UnknownNodeError",
+    "WebhookContext",
     "__version__",
     "configure_logging",
     "current_span",
     "file_type_of",
+    "github_signature",
+    "hmac_sha256",
     "icon_file",
     "mime_type_from_file_name",
     "poll_interval_property",
+    "safe_equal",
     "serve",
+    "slack_signature",
+    "stripe_signature",
+    "verify_github_signature",
+    "verify_hmac_sha256",
+    "verify_slack_signature",
+    "verify_stripe_signature",
 ]

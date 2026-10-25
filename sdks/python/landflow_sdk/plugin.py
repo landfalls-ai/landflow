@@ -48,6 +48,7 @@ from .protocol import (
 )
 from .redact import redact_text, secret_scope
 from .telemetry import Telemetry
+from .webhooks import WEBHOOK_METHODS, WebhookContext, decode_body, normalize_webhook_result
 
 SDK_NAME = "landflow-sdk-python"
 LANGUAGE = "python"
@@ -182,16 +183,19 @@ class Plugin:
 
     def well_known(self) -> dict[str, Any]:
         """``WellKnownDocument`` (the cheap discovery probe)."""
+        endpoints = {
+            "manifest": HTTP_PATHS["manifest"],
+            "execute": HTTP_PATHS["execute"],
+            "loadOptions": HTTP_PATHS["loadOptions"],
+            "health": HTTP_PATHS["health"],
+            "testCredentials": HTTP_PATHS["testCredentials"],
+        }
+        if any(descriptor.get("triggerSource") == "appWebhook" for _, descriptor in self._nodes.values()):
+            endpoints.update(webhookMethod=HTTP_PATHS["webhookMethod"], webhook=HTTP_PATHS["webhook"])
         return {
             "protocol": PROTOCOL_VERSION,
             "plugin": {"id": self.id, "name": self.name, "version": self.version, "language": LANGUAGE},
-            "endpoints": {
-                "manifest": HTTP_PATHS["manifest"],
-                "execute": HTTP_PATHS["execute"],
-                "loadOptions": HTTP_PATHS["loadOptions"],
-                "health": HTTP_PATHS["health"],
-                "testCredentials": HTTP_PATHS["testCredentials"],
-            },
+            "endpoints": endpoints,
         }
 
     def health(self) -> dict[str, Any]:
@@ -431,6 +435,112 @@ class Plugin:
             raise ProtocolError("request body must be a JSON object")
         return self.test_credentials(request.get("credentialType"), request.get("data"), headers)
 
+    # ------------------------------------------------- app webhook triggers
+
+    def webhook_method(self, request: Any, headers: Any = None) -> dict[str, Any]:
+        """Run a ``WebhookMethodRequest`` (``checkExists`` / ``create`` / ``delete``) -> ``WebhookMethodResponse``.
+
+        Raises ``ProtocolError`` / ``UnknownNodeError`` for malformed requests; node failures come back in ``error``.
+        """
+        request = _validate_webhook_request(request, with_method=True)
+        node, descriptor = self.resolve_node(request["node"]["type"])
+        method = request["method"]
+        with secret_scope(secret_values(request.get("credentials") or {}, self._credential_types)):
+            span, ctx = self._webhook_span(f"plugin.webhook_method {method}", request, descriptor, headers, {"landflow.webhook.method": method})
+            try:
+                with self.telemetry.use_span(span):
+                    return self._run_webhook_method(node, descriptor, ctx, method, span)
+            finally:
+                span.end()
+
+    def _run_webhook_method(self, node: Node, descriptor: dict[str, Any], ctx: WebhookContext, method: str, span: Any) -> dict[str, Any]:
+        if descriptor.get("triggerSource") != "appWebhook":
+            return {"error": {"message": f'Node "{descriptor["name"]}" is not an app webhook trigger'}}
+        response: dict[str, Any] = {}
+        try:
+            if method == "checkExists":
+                response["exists"] = _resolve(node.webhook_check_exists(ctx)) is True
+                span.set_attribute("landflow.webhook.exists", response["exists"])
+            else:
+                outcome = _resolve(node.webhook_create(ctx) if method == "create" else node.webhook_delete(ctx))
+                if outcome is False:
+                    message = "The webhook could not be registered" if method == "create" else "The webhook could not be removed"
+                    response["error"] = {"message": message}
+        except Exception as exc:  # noqa: BLE001 - every node failure is reported, never raised
+            response["error"] = self._node_failure(descriptor, span, exc)
+        if "error" in response:
+            span.set_status("error", response["error"]["message"])
+        return self._finish_webhook(ctx, response)
+
+    def receive_webhook(self, request: Any, headers: Any = None) -> dict[str, Any]:
+        """Run a ``WebhookRequest`` (a call to the node's webhook URL) -> ``WebhookResponse``.
+
+        ``request.request.body`` is base64 (HTTP) or bytes (gRPC). Raises ``ProtocolError`` / ``UnknownNodeError`` for
+        malformed requests; node failures come back in ``error``.
+        """
+        request = _validate_webhook_request(request, with_method=False)
+        node, descriptor = self.resolve_node(request["node"]["type"])
+        node_type = f"{self.id}.{descriptor['name']}"
+        with secret_scope(secret_values(request.get("credentials") or {}, self._credential_types)):
+            span, ctx = self._webhook_span(f"plugin.webhook {node_type}", request, descriptor, headers, {})
+            try:
+                with self.telemetry.use_span(span):
+                    response: dict[str, Any] = {}
+                    if descriptor.get("triggerSource") != "appWebhook":
+                        response["error"] = {"message": f'Node "{descriptor["name"]}" is not an app webhook trigger'}
+                    else:
+                        try:
+                            response = normalize_webhook_result(_resolve(node.webhook(ctx)))
+                        except Exception as exc:  # noqa: BLE001 - every node failure is reported, never raised
+                            response = {"error": self._node_failure(descriptor, span, exc)}
+                    span.set_attribute("landflow.items.out", len(response.get("items") or []))
+                    status = (response.get("response") or {}).get("status")
+                    if status:
+                        span.set_attribute("http.response.status_code", status)
+                    if "error" in response:
+                        span.set_status("error", response["error"]["message"])
+                    return self._finish_webhook(ctx, response)
+            finally:
+                span.end()
+
+    def _webhook_span(
+        self, name: str, request: dict[str, Any], descriptor: dict[str, Any], headers: Any, extra: dict[str, Any]
+    ) -> tuple[Any, WebhookContext]:
+        """The server span and the node's context for a webhook call (inside the caller's ``secret_scope``)."""
+        span = self.telemetry.start_span(
+            name,
+            kind="server",
+            parent=self.telemetry.extract(headers),
+            attributes={
+                "landflow.plugin.id": self.id,
+                "landflow.node.type": f"{self.id}.{descriptor['name']}",
+                "landflow.node.name": request["node"].get("name") or None,
+                "landflow.workflow.id": request.get("workflowId") or None,
+                **extra,
+            },
+        )
+        credentials = self._with_defaults(request.get("credentials") or {})
+        return span, WebhookContext(request, descriptor, plugin_id=self.id, telemetry=self.telemetry, credentials=credentials, span=span)
+
+    @staticmethod
+    def _node_failure(descriptor: dict[str, Any], span: Any, exc: Exception) -> dict[str, Any]:
+        span.record_exception(exc)
+        if isinstance(exc, NodeOperationError):
+            error = exc.to_payload()
+        else:
+            log.warning("node %s raised %s: %s", descriptor["name"], type(exc).__name__, redact_text(str(exc)), exc_info=log.isEnabledFor(logging.DEBUG))
+            error = {"message": str(exc) or type(exc).__name__}
+        return {k: redact_text(v) if isinstance(v, str) else v for k, v in error.items()}
+
+    @staticmethod
+    def _finish_webhook(ctx: WebhookContext, response: dict[str, Any]) -> dict[str, Any]:
+        static_data = ctx._changed_static_data()
+        if static_data is not None:
+            response["staticData"] = static_data
+        if ctx.logger.entries:
+            response["logs"] = ctx.logger.entries
+        return response
+
 
 # ---------------------------------------------------------------------------
 # Validation & normalization
@@ -503,6 +613,7 @@ def _validate_credential_type(entry: Any, icon_base: Any) -> CredentialType:
             description=entry.get("description"),
             icon=entry.get("icon"),
             test=entry.get("test"),
+            extends=entry.get("extends"),
         )
     if not isinstance(entry, CredentialType):
         raise DescriptorError(f"credential_types entries must be CredentialType or a descriptor dict, got {entry!r}")
@@ -566,6 +677,12 @@ def _validate_descriptor(node: Node, credential_types: set[str] | frozenset[str]
         raise DescriptorError(f"{where}: triggerSource must be one of {TRIGGER_SOURCES}, got {trigger_source!r}")
     if trigger_source == "poll" and not any(p["name"] == "pollInterval" for p in properties):
         log.warning("%s: poll trigger without a 'pollInterval' property; add poll_interval_property()", where)
+    if trigger_source == "appWebhook":
+        if descriptor["kind"] != "trigger":
+            raise DescriptorError(f"{where}: triggerSource 'appWebhook' needs kind 'trigger', got {descriptor['kind']!r}")
+        missing = [m for m in ("webhook_create", "webhook_delete", "webhook") if getattr(type(node), m) is getattr(Node, m)]
+        if missing:
+            raise DescriptorError(f"{where}: an app webhook trigger must implement {', '.join(missing)}()")
     requirements = descriptor.get("credentials")
     if requirements is not None:
         if not isinstance(requirements, list):
@@ -590,6 +707,52 @@ def _validate_credentials(credentials: Any) -> dict[str, Any]:
     if not isinstance(credentials, dict) or not all(isinstance(v, dict) for v in credentials.values()):
         raise ProtocolError("credentials must be an object of objects ({<credentialType>: {...}})")
     return credentials
+
+
+def _validate_webhook_request(request: Any, *, with_method: bool) -> dict[str, Any]:
+    """``WebhookMethodRequest`` (``with_method``) or ``WebhookRequest`` -> a normalized dict (body decoded to ``rawBody``)."""
+    if not isinstance(request, dict):
+        raise ProtocolError("request body must be a JSON object")
+    protocol = request.get("protocol")
+    if protocol not in (None, "", PROTOCOL_VERSION):
+        raise ProtocolError(f"unsupported protocol {protocol!r} (expected {PROTOCOL_VERSION!r})")
+    node = request.get("node")
+    if not isinstance(node, dict) or not isinstance(node.get("type"), str) or not node["type"]:
+        raise ProtocolError("node.type is required")
+    for key in ("parameters", "staticData"):
+        if request.get(key) is not None and not isinstance(request[key], dict):
+            raise ProtocolError(f"{key} must be an object")
+    if not isinstance(request.get("webhookUrl", ""), str):
+        raise ProtocolError("webhookUrl must be a string")
+    normalized = dict(request)
+    normalized.update(
+        protocol=PROTOCOL_VERSION,
+        node=dict(node),
+        parameters=request.get("parameters") or {},
+        staticData=request.get("staticData") or {},
+        workflowId=request.get("workflowId") or "",
+        webhookUrl=request.get("webhookUrl") or "",
+    )
+    credentials = _validate_credentials(request.get("credentials"))
+    if credentials:
+        normalized["credentials"] = credentials
+    if with_method:
+        if request.get("method") not in WEBHOOK_METHODS:
+            raise ProtocolError(f"method must be one of {WEBHOOK_METHODS}, got {request.get('method')!r}")
+        normalized.pop("request", None)
+        return normalized
+    incoming = request.get("request")
+    if not isinstance(incoming, dict):
+        raise ProtocolError("request is required (the incoming call: method, path, headers, query, body)")
+    for key in ("headers", "query"):
+        if incoming.get(key) is not None and not isinstance(incoming[key], dict):
+            raise ProtocolError(f"request.{key} must be an object of strings")
+    try:
+        raw_body = decode_body(incoming.get("body"))
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from None
+    normalized["request"] = {**incoming, "rawBody": raw_body}
+    return normalized
 
 
 def _validate_execute_request(request: Any) -> dict[str, Any]:

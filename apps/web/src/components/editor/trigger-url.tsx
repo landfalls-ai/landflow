@@ -1,7 +1,7 @@
 'use client';
 /**
  * The production URL of a trigger that listens on this host (Webhook, Form Trigger, MCP Server
- * Trigger), with a copy button. Landflow has no test URLs: the URL answers once the workflow is active.
+ * Trigger), with a copy button. Landflow has no test URLs: the URL answers once the workflow is published (it runs the published version).
  */
 import { useEffect, useState } from 'react';
 import { Link2 } from 'lucide-react';
@@ -37,7 +37,7 @@ export function TriggerUrl({ type, parameters, active, dirty }: { type: string; 
       <div className="mb-1.5 flex items-center gap-2">
         <Link2 className="size-3.5 text-t3" />
         <SectionLabel>{trigger.label}</SectionLabel>
-        <span className={cn('ml-auto text-[11px]', active ? 'text-gn' : 'text-t3')}>{active ? (dirty ? 'Active · save to apply changes' : 'Active') : 'Inactive'}</span>
+        <span className={cn('ml-auto text-[11px]', active ? 'text-gn' : 'text-t3')}>{active ? (dirty ? 'Published · save and publish to apply changes' : 'Published') : 'Not published'}</span>
       </div>
       <div className="flex items-center gap-1.5">
         {method && <span className="shrink-0 rounded-md border border-hair bg-sf px-1.5 py-px font-mono text-[10px] font-semibold text-t2">{method}</span>}
@@ -46,7 +46,7 @@ export function TriggerUrl({ type, parameters, active, dirty }: { type: string; 
         </code>
         {path && <CopyButton text={url} label={`Copy ${trigger.label.toLowerCase()}`} />}
       </div>
-      <p className="mt-1 text-[11px] leading-snug text-t3">{active ? trigger.hint : `${trigger.hint} once the workflow is active.`}</p>
+      <p className="mt-1 text-[11px] leading-snug text-t3">{active ? `${trigger.hint} (the published version).` : `${trigger.hint} once the workflow is published.`}</p>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 /**
- * POST /api/workflows/import — Landflow or n8n workflow JSON (also n8n's
- * clipboard JSON) → a new workflow, or with `create: false` just the converted
+ * POST /api/workflows/import — Landflow, n8n or Flowise (chatflow / agentflow)
+ * workflow JSON (also n8n's clipboard JSON) → a new workflow, or with `create: false` just the converted
  * document, for importing into the open workflow or pasting n8n nodes.
  */
 import { nanoid } from 'nanoid';

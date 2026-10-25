@@ -11,6 +11,8 @@ export const POST = handler(async (request: Request) => {
   if (!body.ok) return body.response;
   try {
     const started = Date.now();
+    // An OAuth2 credential is tested with a token that hasn't expired.
+    if (body.data.id) await credentials.refreshOAuth2(body.data.id);
     const result = await registry.testCredentials(body.data.type, credentials.testData(body.data.type, body.data.data, body.data.id));
     return json({ ...result, durationMs: Date.now() - started });
   } catch (caught) {

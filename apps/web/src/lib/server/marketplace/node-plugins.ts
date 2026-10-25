@@ -135,6 +135,8 @@ function pluginEnv(manifest: NodePluginManifest, ports: { http: number; grpc?: n
     LANDFLOW_GRPC_PORT: ports.grpc ? String(ports.grpc) : 'off',
     LANDFLOW_ADVERTISE_HOST: '127.0.0.1',
     LANDFLOW_REGISTRY_URL: registryUrl(),
+    // The host's registry secret, so the plugin can announce itself when one is required.
+    ...(process.env.LANDFLOW_REGISTRY_SECRET && { LANDFLOW_REGISTRY_SECRET: process.env.LANDFLOW_REGISTRY_SECRET }),
   };
 }
 

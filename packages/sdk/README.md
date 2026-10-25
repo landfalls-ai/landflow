@@ -165,6 +165,44 @@ with `mode: 'poll'`, no inputs and the previous `pollState`:
 | `mode: 'manual'` (Execute in the editor) | return the most recent few events, ignore state | never returns `pollState` |
 | node throws | – | no `pollState` in the response, so the host keeps the old one |
 
+## App webhook triggers
+
+A node with `kind: 'trigger', triggerSource: 'appWebhook'` registers a webhook at the service when its workflow is
+published and removes it when it is unpublished ([protocol §12](../../docs/protocol.md#12-app-webhook-triggers)).
+It needs `webhookMethods.create`, `webhookMethods.delete` and `webhook()` (`definePlugin` checks):
+
+```ts
+import { verifyGitHubSignature, type INodeType } from '@landflow/sdk';
+
+const repoEvents: INodeType = {
+  description: { name: 'repoEvents', displayName: 'Repo Events', kind: 'trigger', triggerSource: 'appWebhook', /* … */ },
+  webhookMethods: {
+    async checkExists(ctx) { return Boolean(await getHook(ctx, ctx.getStaticData().webhookId)) },
+    async create(ctx) {
+      const secret = randomBytes(32).toString('hex');
+      const hook = await createHook(ctx, ctx.getWebhookUrl(), secret);
+      ctx.setStaticData({ webhookId: hook.id, webhookSecret: secret });
+    },
+    async delete(ctx) { await deleteHook(ctx, ctx.getStaticData().webhookId); ctx.setStaticData({}) },
+  },
+  async webhook(ctx) {
+    const { webhookSecret } = ctx.getStaticData<{ webhookSecret: string }>();
+    if (!verifyGitHubSignature(webhookSecret, ctx.getRawBody(), ctx.getHeader('x-hub-signature-256'))) return { response: { status: 401 } };
+    return { items: [{ json: ctx.getBody() }], idempotencyKey: ctx.getHeader('x-github-delivery') };
+  },
+  async execute() { return [[]] }, // a manual run has no event to show
+};
+```
+
+- `getStaticData()` is what the host keeps for this workflow and node (change it in place or `setStaticData()`); it
+  goes back with the response only when it changed.
+- `webhook()` returns `items` (none: no run), a `response` (`status`, `headers`, `body` or `json`; default 200) and
+  an `idempotencyKey` so a redelivery starts no second run. Thrown errors come back as `error`, never as a crash.
+- Signature helpers: `verifyGitHubSignature`, `verifyStripeSignature(secret, body, header, { toleranceSeconds })`,
+  `verifySlackSignature(secret, body, timestamp, signature)`, `verifyHmacSha256({ secret, payload, signature, prefix,
+  encoding })`, the matching `githubSignature` / `stripeSignature` / `slackSignature` for tests, and `safeEqual`. All
+  compare in constant time; Stripe and Slack refuse timestamps older than 5 minutes.
+
 ## Observability
 
 `serve()` calls `createTelemetry()` and installs the result as the process default and the OpenTelemetry

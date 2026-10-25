@@ -18,8 +18,20 @@ export interface ToolResult {
   isError?: boolean;
 }
 
+/**
+ * A file sent to the model with a user message (an image or a PDF from an item's binary data, a chat upload). Each
+ * adapter maps it to its provider's blocks: Anthropic image/document blocks, OpenAI `image_url`/`file` parts, Ollama
+ * `images`. `data` is base64 without a `data:` prefix.
+ */
+export interface ModelAttachment {
+  kind: 'image' | 'document';
+  mimeType: string;
+  data: string;
+  fileName?: string;
+}
+
 export type AgentMessage =
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: string; attachments?: ModelAttachment[] }
   | {
       role: 'assistant';
       text: string;
@@ -53,6 +65,11 @@ export interface LanguageModel {
     signal?: AbortSignal;
     /** Ask for a JSON reply where the provider supports it (OpenAI `response_format`, Ollama `format`). */
     responseFormat?: 'text' | 'json';
+    /**
+     * Stream the reply: the adapter asks its provider for a stream and calls this with each text delta as it
+     * arrives. The returned turn is the same as without it (full text, tool calls, usage).
+     */
+    onToken?: (delta: string) => void;
   }): Promise<ModelTurn>;
 }
 

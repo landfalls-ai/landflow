@@ -137,14 +137,18 @@ export interface AgentSchedule {
 /** A chat app the published agent answers in. */
 export interface AgentChannel {
   id: string;
-  type: 'telegram';
+  /** telegram: polled through the messaging plugin; slack: Events API at /api/slack/events/<agentId>/<channelId>. */
+  type: 'telegram' | 'slack';
+  /** telegram: messaging.telegramApi; slack: messaging.slackApi (bot token, and the signing secret that verifies events). */
   credential: CredentialRef;
   access: 'private' | 'public';
-  /** Private: Telegram user ids or usernames allowed to talk to the agent. */
+  /** Private: Telegram user ids or usernames, or Slack member ids (U…), allowed to talk to the agent. */
   allowedUsers: string[];
-  /** Start a new session after this many idle minutes (0 = never). */
+  /** Start a new session after this many idle minutes (0 = never). Slack threads are sessions of their own. */
   newSessionAfterMinutes: number;
   enabled: boolean;
+  /** Slack: answer in a thread under the message (default), else in the channel. */
+  threadReplies?: boolean;
 }
 
 export interface AgentSettings {
@@ -156,6 +160,10 @@ export interface AgentSettings {
   sessionTokenBudget: number;
   /** How deep sub-agents may delegate further (1–5). */
   maxDelegationDepth: number;
+  /** Usage limits across all sessions (0 or absent = none): tokens per day, USD per day, USD per calendar month (instance time zone). */
+  dailyTokenLimit?: number;
+  dailyCostLimit?: number;
+  monthlyCostLimit?: number;
 }
 
 /** Everything that decides how the agent behaves: the draft, and each published version. */
@@ -212,7 +220,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = { maxIterations: 12, toolCo
 // Sessions
 // ---------------------------------------------------------------------------
 
-export type SessionSource = 'test' | 'schedule' | 'telegram' | 'workflow' | 'agent' | 'api';
+export type SessionSource = 'test' | 'schedule' | 'telegram' | 'slack' | 'workflow' | 'agent' | 'api';
 export type SessionStatus = 'idle' | 'running' | 'awaiting_approval' | 'error';
 export type ToolKind = 'node' | 'workflow' | 'agent' | 'skill' | 'memory';
 
@@ -256,6 +264,8 @@ export interface PendingCall {
   tool: string;
   input: Record<string, unknown>;
   decision?: 'approved' | 'denied';
+  /** Who decided (a Slack member id, "you" in the test chat). */
+  decidedBy?: string;
 }
 
 export interface AgentSession {

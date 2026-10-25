@@ -12,10 +12,16 @@ import {
   manifestToMsg,
   optionsToMsg,
   testCredentialsRequestFromMsg,
+  webhookMethodRequestFromMsg,
+  webhookMethodResponseToMsg,
+  webhookRequestFromMsg,
+  webhookResponseToMsg,
   type DynamicValueMsg,
   type ExecuteRequestMsg,
+  type ReceiveWebhookRequestMsg,
+  type WebhookMethodRequestMsg,
 } from '@landflow/protocol/grpc';
-import { findCredentialType, serveExecute, serveLoadOptions, serveTestCredentials } from './handlers';
+import { findCredentialType, serveExecute, serveLoadOptions, serveTestCredentials, serveWebhook, serveWebhookMethod } from './handlers';
 import { buildManifest, type IPlugin } from './node';
 import { contextFromMetadata, getTelemetry, type Telemetry } from './otel';
 import { findNode, toErrorPayload } from './runtime';
@@ -77,6 +83,36 @@ export function createPluginService(plugin: IPlugin, options: PluginServiceOptio
         const telemetry = telemetryFor();
         const response = await serveTestCredentials(plugin, request, telemetry, contextFromMetadata(telemetry, call.metadata), 'grpc');
         callback(null, { ok: response.ok, message: response.message ?? '' });
+      } catch (error) {
+        callback({ code: grpc.status.INVALID_ARGUMENT, message: toErrorPayload(error).message });
+      }
+    },
+    async WebhookMethod(call: Call<WebhookMethodRequestMsg>, callback: Callback) {
+      try {
+        const request = webhookMethodRequestFromMsg(call.request);
+        const node = findNode(plugin.nodes, plugin.info.id, request.node.type);
+        if (!node) {
+          callback({ code: grpc.status.NOT_FOUND, message: `Unknown node type "${request.node.type}"` });
+          return;
+        }
+        const telemetry = telemetryFor();
+        const response = await serveWebhookMethod(plugin, node, request, telemetry, contextFromMetadata(telemetry, call.metadata), 'grpc');
+        callback(null, webhookMethodResponseToMsg(response));
+      } catch (error) {
+        callback({ code: grpc.status.INVALID_ARGUMENT, message: toErrorPayload(error).message });
+      }
+    },
+    async ReceiveWebhook(call: Call<ReceiveWebhookRequestMsg>, callback: Callback) {
+      try {
+        const request = webhookRequestFromMsg(call.request);
+        const node = findNode(plugin.nodes, plugin.info.id, request.node.type);
+        if (!node) {
+          callback({ code: grpc.status.NOT_FOUND, message: `Unknown node type "${request.node.type}"` });
+          return;
+        }
+        const telemetry = telemetryFor();
+        const response = await serveWebhook(plugin, node, request, telemetry, contextFromMetadata(telemetry, call.metadata), 'grpc');
+        callback(null, webhookResponseToMsg(response));
       } catch (error) {
         callback({ code: grpc.status.INVALID_ARGUMENT, message: toErrorPayload(error).message });
       }

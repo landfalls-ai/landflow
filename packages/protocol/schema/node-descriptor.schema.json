@@ -51,7 +51,8 @@
         "webhook",
         "schedule",
         "chat",
-        "poll"
+        "poll",
+        "appWebhook"
       ]
     },
     "categories": {

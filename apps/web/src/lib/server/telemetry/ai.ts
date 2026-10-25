@@ -1,5 +1,6 @@
 /** `gen_ai.chat {model}` / `gen_ai.embeddings {model}` client spans (OTel GenAI conventions) and the `landflow.ai.*` metrics. */
 import type { Attributes } from '@opentelemetry/api';
+import { afterModelCall, beforeModelCall, isUsageCapError } from '../ai-usage/scope';
 import { hostMetrics, outcomeOf, type Outcome } from './metrics';
 import { SpanKind, withSpan } from './spans';
 
@@ -46,6 +47,13 @@ async function traceGenAi<T>(
 ): Promise<T> {
   const instruments = hostMetrics();
   const base = { 'gen_ai.system': request.system, 'gen_ai.request.model': request.model };
+  // AI usage caps (lib/server/ai-usage): a reached cap refuses the call before it is made.
+  try {
+    beforeModelCall({ provider: request.system, model: request.model, operation });
+  } catch (error) {
+    if (isUsageCapError(error)) instruments.aiCapsReached.add(1, { ...base, 'landflow.ai.cap.when': 'before' });
+    throw error;
+  }
   const started = performance.now();
   let outcome: Outcome = 'ok';
   try {
@@ -65,6 +73,17 @@ async function traceGenAi<T>(
           });
           if (response.inputTokens) instruments.aiTokens.add(response.inputTokens, { ...base, 'gen_ai.token.type': 'input' });
           if (response.outputTokens) instruments.aiTokens.add(response.outputTokens, { ...base, 'gen_ai.token.type': 'output' });
+          // Token & cost tracking: priced, stored, and stopped here when it went over a cap.
+          const usage = { provider: request.system, model: response.responseModel || request.model, operation, inputTokens: response.inputTokens, outputTokens: response.outputTokens };
+          let cost: number | undefined;
+          try {
+            cost = afterModelCall(usage);
+          } catch (error) {
+            if (isUsageCapError(error)) instruments.aiCapsReached.add(1, { ...base, 'landflow.ai.cap.when': 'after' });
+            throw error;
+          }
+          if (cost !== undefined) span.setAttribute('landflow.ai.cost_usd', cost);
+          if (cost) instruments.aiCost.add(cost, base);
           return result;
         } catch (error) {
           span.setAttribute('error.type', (error as Error)?.name ?? 'Error');

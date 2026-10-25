@@ -2,6 +2,8 @@
  * Self-announcement: tell the Landflow host "I'm here, at this endpoint" and
  * keep the lease alive with heartbeats. Works against the host's HTTP registry
  * (POST /api/plugins/announce) or its gRPC RegistryService (grpc://host:7070).
+ * When the host requires a registry secret, set LANDFLOW_REGISTRY_SECRET here too:
+ * it goes out as the `x-landflow-registry-secret` header (or gRPC metadata).
  */
 import {
   DEFAULT_ANNOUNCE_TTL_SECONDS,
@@ -30,13 +32,19 @@ interface RegistryClient {
   close(): void;
 }
 
+/** The host's registry secret, sent with every announce and withdraw when set. */
+const secretHeaders = (): Record<string, string> => {
+  const secret = process.env.LANDFLOW_REGISTRY_SECRET;
+  return secret ? { 'x-landflow-registry-secret': secret } : {};
+};
+
 function httpRegistry(base: string): RegistryClient {
   const url = new URL('/api/plugins/announce', base).toString();
   return {
     async announce(request) {
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...secretHeaders() },
         body: JSON.stringify(request),
         signal: AbortSignal.timeout(5_000),
       });
@@ -46,7 +54,7 @@ function httpRegistry(base: string): RegistryClient {
     async withdraw(endpoint, pluginId) {
       await fetch(url, {
         method: 'DELETE',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...secretHeaders() },
         body: JSON.stringify({ endpoint, pluginId }),
         signal: AbortSignal.timeout(3_000),
       });
@@ -66,11 +74,12 @@ async function grpcRegistry(address: string): Promise<RegistryClient> {
         'Announce',
         { ...request, ttlSeconds: request.ttlSeconds ?? 0 },
         5_000,
+        secretHeaders(),
       );
       return response;
     },
     async withdraw(endpoint, pluginId) {
-      await unary(client, 'Withdraw', { endpoint, pluginId }, 3_000);
+      await unary(client, 'Withdraw', { endpoint, pluginId }, 3_000, secretHeaders());
     },
     close: () => client.close(),
   };

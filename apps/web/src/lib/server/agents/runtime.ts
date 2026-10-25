@@ -18,6 +18,7 @@ import type {
   TimelineEntry,
   TokenUsage,
 } from '../../shared/agents';
+import { agentScope, isUsageCapError, runInUsageScope } from '../ai-usage';
 import { bus } from '../bus';
 import { singleton } from '../singleton';
 import { activeTraceIds, logger, recordAgentTokens, recordApproval, traceAgentRun, traceToolCall, traceUrl } from '../telemetry';
@@ -169,8 +170,10 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     emit({ type: 'entry', sessionId: session.id, entry });
   };
 
+  // Token & cost tracking: the run's model calls count for this agent, under its usage limits (and any caller's caps).
+  const usage = agentScope({ agentId: agent.id, agentName: config.name, sessionId: session.id, settings: config.settings });
   try {
-    return await traceAgentRun(
+    return await runInUsageScope(usage, () => traceAgentRun(
       {
         agentId: agent.id,
         agentName: config.name,
@@ -206,7 +209,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         emit({ type: 'run.finished', sessionId: session.id, status: session.status, reason: result.reason, usage: session.usage, ...(result.reply !== undefined && { reply: result.reply }) });
         return { session, reason: result.reason, usage: session.usage, ...(result.reply !== undefined && { reply: result.reply }) };
       },
-    );
+    ));
   } finally {
     running.delete(session.id);
   }
@@ -261,6 +264,10 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       try {
         turn = await model.generate({ system: systemPrompt(agent, config, session), messages: contextWindow(session.messages), tools: specs, signal: request.signal });
       } catch (error) {
+        if (isUsageCapError(error)) {
+          upsert({ id: entryId(), type: 'notice', message: `Stopped: ${error.message}.`, at: now() });
+          return { reason: 'budget' };
+        }
         upsert({ id: entryId(), type: 'error', message: `${model.provider}/${model.model}: ${(error as Error).message}`, at: now() });
         return { reason: 'error' };
       }
@@ -389,7 +396,7 @@ export async function decide(
   sessionId: string,
   callId: string,
   approved: boolean,
-  options: { onEvent?: (event: AgentStreamEvent) => void; signal?: AbortSignal } = {},
+  options: { onEvent?: (event: AgentStreamEvent) => void; signal?: AbortSignal; by?: string } = {},
 ): Promise<DecisionResult> {
   const session = agentStore.getSession(sessionId);
   if (!session || session.agentId !== agent.id) throw new DecisionError('Session not found', 404);
@@ -397,6 +404,7 @@ export async function decide(
   if (!session.pending || !call) throw new DecisionError('That tool call is not waiting for approval', 409);
   if (call.decision) throw new DecisionError(`Already ${call.decision}`, 409);
   call.decision = approved ? 'approved' : 'denied';
+  if (options.by) call.decidedBy = options.by;
   recordApproval({ agentId: agent.id, agentName: agent.name, tool: call.tool }, call.decision);
   if (session.pending.calls.some((c) => !c.decision)) {
     const entry = session.timeline.find((e) => e.type === 'tool' && e.callId === callId);
@@ -406,7 +414,8 @@ export async function decide(
     options.onEvent?.({ type: 'run.finished', sessionId, status: 'awaiting_approval', reason: 'awaiting_approval', usage: saved.usage });
     return { status: 'waiting', session: saved };
   }
-  const result = await runAgent({ agent, session, approvals: 'ask', ...options });
+  const { by: _by, ...runOptions } = options;
+  const result = await runAgent({ agent, session, approvals: 'ask', ...runOptions });
   return { status: 'resumed', ...result };
 }
 

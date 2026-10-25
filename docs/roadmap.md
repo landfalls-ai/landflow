@@ -94,14 +94,25 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
 ## Wave 2a: what a network-reachable install needs
 
 - Sign-in: owner setup, users, roles (owner, admin, member), invites (Mailhog), and a lock so
-  two people don't edit the same workflow at once.
-- Scoped API keys and a documented public API.
-- Free OIDC login (Keycloak in Docker). n8n charges for it.
+  two people don't edit the same workflow at once. ✅ Done: setup page or `LANDFLOW_OWNER_*`,
+  scrypt passwords, hashed expiring sessions, sign-in rate limits, one `can()` role check, invites
+  and password resets by email (Mailpit) or as links to copy, an edit lock with take-over, and
+  `createdBy` / `updatedBy` / `startedBy`; see the README, "Authentication".
+- Scoped API keys and a documented public API. ✅ Done: `lf_…` keys with scopes and expiry,
+  stored hashed; OpenAPI 3.1 at `/api/openapi.json` and Settings → API docs.
+- Free OIDC login (Keycloak in Docker). n8n charges for it. ✅ Done: authorization code + PKCE,
+  just-in-time users, role mapping from a claim, tested against the infra stack's Keycloak.
 - A sandboxed Code node running out of process in a locked-down container, with JavaScript and
   Python. ✅ Done: the code runner service, one fresh child process per run with n8n's globals,
   on an internal Docker network with a read-only root; see [deploy/README.md](../deploy/README.md),
   "Code runner". Not yet: syntax highlighting in the code editor, `$('Node')` in in-process code.
-- OAuth2 *Connect* buttons for credentials.
+- OAuth2 *Connect* buttons for credentials. ✅ Done: a generic OAuth2 API credential with
+  presets (Google, GitHub, Slack, Microsoft, Notion, Discord) and plugin types that `extends` it
+  (n8n's `extends: ['oAuth2Api']`, in the protocol and the three SDKs; Google OAuth2 uses it);
+  authorization code with PKCE in a popup, client credentials, tokens encrypted on the host,
+  "Connected as …" and expiry in the dialog, refresh before expiry and a renew-and-rerun on a 401,
+  and the HTTP Request node's Authentication; tested against a fake provider and the infra
+  stack's Keycloak. Not yet: the other plugins' credential types still take tokens directly.
 - **Binary data** across the protocol and the three SDKs, stored on disk or in S3 (MinIO):
   - file nodes: Read/Write Files, Extract from File, Convert to File;
   - HTTP downloads;
@@ -115,15 +126,43 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   attachments, Telegram uploads and downloads, and a Binary tab in the run view; see the README's
   "Files and binary data". Not yet: Google Drive, Slack and the other integrations' files, binary
   in the Code node, range requests for video, XLSX/ODS writing.
-- Failure alerts by email or chat, without writing an error workflow.
+- Failure alerts by email or chat, without writing an error workflow. ✅ Done: Settings → Alerts
+  with email (the host's SMTP settings), Slack, signed webhook and Telegram channels with a test
+  send; rules by workflow, tag and event (failed, timed out, retries exhausted, waiting too long);
+  one alert per workflow per window with a digest of the rest; and a "Notify on failure" switch in
+  a workflow's settings; see the README's Durable runtime section. Not yet: Microsoft Teams and
+  Discord channels, alerts on a workflow's failure rate or on plugins going offline.
 
 ## Wave 2b: safe deploys and outside agents
 
-- Draft and publish on pinned versions.
+- Draft and publish on pinned versions. ✅ Done: saves are drafts; Publish (with a note) puts a
+  saved version live for webhooks, forms, schedules, polls, app webhooks, MCP triggers, error
+  workflows and sub-workflow calls, while editor runs use the draft. The editor shows "Unpublished
+  changes", the version history marks the published version and publishes older ones (rollback),
+  Unpublish turns production triggers off, and executions say which version ran ("ran version 7
+  (published)"). Workflows that were active before were published on their newest version
+  (migration 200); `active` still reads as "has a published version". The API, the CLI and Git
+  sync publish through `lib/server/publish.ts`. Not yet: four-eyes approval of a publish, scheduled publishes.
 - App webhook triggers (a register/unregister lifecycle in the protocol) with signature checks;
-  webhook authentication.
-- An inbound-email trigger.
-- A CLI with stable JSON output, and Git sync of workflows as files.
+  webhook authentication. ✅ Done: `triggerSource: "appWebhook"` with `WebhookMethod`
+  (checkExists/create/delete) and `ReceiveWebhook` over HTTP and gRPC, static data per workflow
+  and node, retries with backoff, and `/api/webhook/app/<workflowId>/<nodeId>`; GitHub, Stripe and
+  Slack signature helpers in the TypeScript, Go and Python SDKs; a GitHub Webhook Trigger in the
+  productivity plugin (docs/protocol.md §12). The Webhook and Form triggers authenticate callers
+  with Basic Auth, a header (`httpHeaderAuth`) or a JWT (HS256 secret, PEM key or JWKS URL, issuer
+  and audience checks), plus an IP allow-list. Not yet: Stripe and Slack triggers, OAuth app
+  installs for app webhooks.
+- An inbound-email trigger. ✅ Done: Email Trigger (IMAP) in the core plugin, polling or IMAP IDLE,
+  then mark read, move to a folder or leave the message; from, to, subject, text, HTML and headers,
+  attachments as binary files; GreenMail in `deploy/compose.infra.yml` (`mail` profile) for tests.
+  Not yet: custom IMAP search rules, a raw-message output format.
+- A CLI with stable JSON output, and Git sync of workflows as files. ✅ Done: `packages/cli`
+  (`landflow`: workflows, publish, runs with `--wait`, executions, n8n import, export, data tables,
+  variables) with one JSON document per command and fixed exit codes; `landflow sync pull/push/
+  status/diff` over a `landflow-sync/v1` directory (one directory per folder, stable key order,
+  credentials by name and type), with conflict checks both ways; and Settings → Source control,
+  which commits and pushes or pulls and applies a branch; see the README's "CLI" and "Git sync".
+  Not yet: per-workflow commits, a Git history view, SSH keys from a credential.
 - **MCP Server Trigger** (a workflow serves tools over MCP), **MCP Client Tool** (an agent uses
   an MCP server), and an instance-level MCP server so coding agents can build and run workflows.
   ✅ Done, with an MCP Client node and MCP servers as an agent capability; see the README's MCP
@@ -141,18 +180,54 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   ✅ Done, with OpenAI-compatible embeddings, a token splitter, an LLM reranker and a Question and
   Answer Chain; see the README's RAG section. Not yet: files (PDF, DOCX) in the data loader, a
   Cohere reranker, uploading documents from the agent builder.
-- Streamed replies, a hosted chat page and an embeddable widget for the Chat trigger.
+- Streamed replies, a hosted chat page and an embeddable widget for the Chat trigger. ✅ Done:
+  the Anthropic, OpenAI-compatible and Ollama adapters stream tokens, the AI Agent and the chains
+  send them as `node.chunk` events (text and tool calls) to the editor's chat panel, and the Chat
+  and Webhook triggers have a "Streaming" response mode (SSE or NDJSON, n8n's chunk format). A
+  public Chat trigger serves `/chat/<path>` (title, initial messages, Basic Auth, previous
+  sessions, file uploads) and `<script src="/chat/widget.js" data-workflow="…">` on other sites,
+  with allowed origins checked; see the README's "Hosted chat and widget". Not yet: Basic Auth
+  from the widget, chat feedback (thumbs up/down), custom CSS beyond the theme colours.
 - Guardrails node (PII, prompt injection, moderation). ✅ Done, after n8n's: check (Pass/Fail) or
   sanitize, plus secret keys, keywords, URL allow-lists, topical alignment and custom checks. Not
   yet: guardrails as a setting of standalone agents.
 - Model fallbacks. ✅ Done: "Enable Fallback Model" on the AI Agent and the chains.
-- Token and cost tracking with per-agent and per-workflow caps.
+- Token and cost tracking with per-agent and per-workflow caps. ✅ Done: every model call is
+  priced (Anthropic and OpenAI list prices, Ollama free, overrides in Settings → AI prices) and
+  stored; totals per model in the execution view, a cost column and total in Insights, usage on
+  agent pages; caps per execution and per workflow per day (tokens or dollars, Workflow settings)
+  and per agent per day or month, which stop the run with a clear error; see
+  [observability.md](observability.md#token-and-cost-tracking). Not yet: caps per credential or
+  per user, cost alerts before a cap is reached, cached-token prices.
 - Evaluations, both offline (test datasets from Data Tables) and online (grading agent
-  conversations).
-- A Slack agent channel with approval buttons.
-- Files and images as model inputs.
-- Debounce, batching and rate limits.
-- A Flowise importer, since Flowise has shut down.
+  conversations). ✅ Done, after n8n's: an Evaluation Trigger runs the workflow once per Data Table
+  row, and the Evaluation node sets outputs, sets metrics (exact match, contains, regex, JSON
+  equality, numeric closeness, string similarity, tools used, LLM-judge correctness, helpfulness
+  and faithfulness, custom expressions) or checks whether it is evaluating. The Evaluations tab
+  runs them, lists runs with metric averages, links each case to its execution and compares two
+  runs; evaluation runs stay out of Insights and production counts. Online grading samples
+  finished agent sessions and AI Agent node runs, scores them 1–5 against a rubric and flags low
+  scores, shown with a trend on the agent's Evaluations tab. Not yet: a dataset other than a Data
+  Table, scheduled evaluation runs, alerts on a falling score.
+- A Slack agent channel with approval buttons. ✅ Done: agents answer mentions and DMs through
+  the Events API (signing-secret checks, replies in threads, one session per thread), and tools
+  that need approval post Approve / Reject buttons; the AI Agent node can ask for tool approvals
+  in the editor's chat panel or in a Slack channel (with named approvers), resuming the waiting
+  execution; tested against a fake Slack server; see [agents.md](agents.md#slack). Not yet: Slack
+  slash commands, Microsoft Teams, approvals by email.
+- Files and images as model inputs. ✅ Done: "Include Binary as Input" on the AI Agent, the
+  chains and the OpenAI node sends images, PDFs and text files as Anthropic image/document blocks,
+  OpenAI `image_url`/`file` parts or Ollama `images` (PDFs read into the prompt); the hosted chat
+  and the editor's chat panel attach files. Not yet: audio and video inputs, files from memory
+  in later turns (memory keeps the file names only).
+- Debounce, batching and rate limits. ✅ Done: a trigger's Debounce (per-key quiet window, last
+  or all events, max wait) and Batch (size or timeout) hold production events in SQLite and start
+  one run for them (re-armed after a restart; webhooks answer 202), and every node has a Rate
+  limit next to its retry settings (calls per interval, queued across runs); see the README's
+  "Debounce, batching and rate limits". Not yet: rate limits per credential, priorities.
+- A Flowise importer, since Flowise has shut down. ✅ Done: chatflows and agentflows (v2) through
+  the same import dialog and report as n8n, detected by shape; see the README's "Importing from
+  n8n and Flowise". Not yet: Flowise credentials, custom JS functions as Code nodes, document stores.
 
 ## Wave 4: operations and teams
 

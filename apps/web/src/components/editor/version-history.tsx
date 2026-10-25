@@ -3,11 +3,12 @@
  * Version history: every save is a version (lib/server/versions.ts). The list
  * shows when, how many nodes and what changed against the version before; the
  * selected version is previewed on a read-only canvas, and Restore saves it as
- * a new version (the current state stays in the history).
+ * a new version (the current state stays in the history). The published version
+ * (what production triggers run) is marked; publishing an older one rolls back.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { create } from 'zustand';
-import { History, Loader2, RotateCcw, X } from 'lucide-react';
+import { History, Loader2, Rocket, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -18,6 +19,7 @@ import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { SectionLabel } from '../ui/inputs';
+import { publishVersion } from './publish-control';
 import { useEditor } from './store';
 
 export const useVersionHistory = create<{ open: boolean; setOpen: (open: boolean) => void }>((set) => ({ open: false, setOpen: (open) => set({ open }) }));
@@ -65,13 +67,16 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
   const [version, setVersion] = useState<WorkflowVersion>();
   const [confirming, setConfirming] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [publishedId, setPublishedId] = useState<string>();
+  const [publishing, setPublishing] = useState<'confirm' | 'busy'>();
   const [error, setError] = useState<string>();
   const close = useCallback(() => useVersionHistory.getState().setOpen(false), []);
 
   const loadList = useCallback(async () => {
     try {
-      const { versions: list } = await api<{ versions: WorkflowVersionSummary[] }>(`/api/workflows/${workflowId}/versions`);
+      const { versions: list, publishedVersionId } = await api<{ versions: WorkflowVersionSummary[]; publishedVersionId?: string }>(`/api/workflows/${workflowId}/versions`);
       setVersions(list);
+      setPublishedId(publishedVersionId);
       setError(undefined);
       return list;
     } catch (e) {
@@ -91,6 +96,7 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
     if (!open || !selectedId) return setVersion(undefined);
     let cancelled = false;
     setConfirming(false);
+    setPublishing(undefined);
     api<{ version: WorkflowVersion }>(`/api/workflows/${workflowId}/versions/${selectedId}`)
       .then(({ version: v }) => !cancelled && setVersion(v))
       .catch((e: Error) => !cancelled && toast.error(`Could not load the version: ${e.message}`));
@@ -126,6 +132,21 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
       toast.error(`Restore failed: ${(e as Error).message}`);
     } finally {
       setRestoring(false);
+    }
+  };
+
+  /** Publish the selected version: production triggers run it from now on (a rollback when it is older). */
+  const publishSelected = async () => {
+    if (!version) return;
+    setPublishing('busy');
+    try {
+      const result = await publishVersion(workflowId, { versionId: version.id, note: version.id === newestId ? undefined : `Rolled back to version ${version.number}` });
+      setPublishedId(result.published?.versionId);
+      toast.success(`Published version ${version.number}`, { description: 'Production triggers run this version now' });
+    } catch (e) {
+      toast.error(`Publish failed: ${(e as Error).message}`);
+    } finally {
+      setPublishing(undefined);
     }
   };
 
@@ -171,6 +192,11 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
                   <span className="text-[13px] font-semibold text-t1">Version {v.number}</span>
                   {i === 0 && <Badge tone={dirty ? 'muted' : 'success'}>{dirty ? 'last saved' : 'current'}</Badge>}
                   {v.restoredFrom && <Badge tone="neutral">restored</Badge>}
+                  {v.id === publishedId && (
+                    <Badge tone="accent" title="Production triggers run this version">
+                      published
+                    </Badge>
+                  )}
                   <span className="ml-auto shrink-0 text-[11px] text-t3" title={new Date(v.createdAt).toLocaleString()}>
                     {timeAgo(v.createdAt)}
                   </span>
@@ -202,6 +228,30 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
               <div className="flex-1 text-[13px] text-t3">{versions?.length ? 'Loading…' : ''}</div>
             )}
             {version &&
+              !confirming &&
+              (publishing === 'confirm' || publishing === 'busy' ? (
+                <div className="flex shrink-0 animate-in items-center gap-2 rounded-full border border-acbd bg-acdim py-1 pl-3 pr-1">
+                  <span className="text-[12px] text-t1">Publish version {version.number}? Production triggers switch to it.</span>
+                  <Button size="sm" variant="ghost" onClick={() => setPublishing(undefined)}>
+                    Cancel
+                  </Button>
+                  <Button size="sm" variant="primary" onClick={() => void publishSelected()} loading={publishing === 'busy'}>
+                    <Rocket className="size-3.5" /> Publish
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPublishing('confirm')}
+                  disabled={version.id === publishedId}
+                  title={version.id === publishedId ? 'This version is published' : 'Production triggers run this version (a rollback for an older one)'}
+                >
+                  <Rocket className="size-3.5" /> {version.id === publishedId ? 'Published' : 'Publish this version'}
+                </Button>
+              ))}
+            {version &&
+              !publishing &&
               (confirming ? (
                 <div className="flex shrink-0 animate-in items-center gap-2 rounded-full border border-warnbd bg-warndim py-1 pl-3 pr-1">
                   <span className="text-[12px] text-t1">

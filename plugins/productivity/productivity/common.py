@@ -122,7 +122,9 @@ class Api:
         json: Any = None,
         headers: dict[str, str] | None = None,
         timeout: float = 30,
+        expect: tuple[int, ...] = (),
     ) -> HttpResponse:
+        """``expect``: error statuses returned instead of raised (a 404 that means "already gone")."""
         if not self.base_url and not path.startswith(("http://", "https://")):
             raise NodeOperationError(f"{SERVICES[self.service]}: the credential has no base URL / domain", item_index=self.item_index)
         try:
@@ -137,7 +139,7 @@ class Api:
             ) from None
         except ValueError as exc:  # not an absolute http(s) URL
             raise NodeOperationError(f"{SERVICES[self.service]}: {exc}", item_index=self.item_index) from None
-        if resp.status >= 400:
+        if resp.status >= 400 and resp.status not in expect:
             count_api_error(self.ctx, self.service, resp.status)
             raise api_error(self.service, resp, self.item_index)
         return resp

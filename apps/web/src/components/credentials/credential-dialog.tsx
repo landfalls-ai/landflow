@@ -3,7 +3,8 @@
  * Create or edit a saved credential: pick one of the types plugins publish,
  * fill in the form rendered from its properties, test the connection through
  * the plugin, save. Secret fields are never sent back by the API; leaving one
- * empty while editing keeps the saved value.
+ * empty while editing keeps the saved value. OAuth2 types add provider presets
+ * and a Connect panel (./oauth2-connect), which save the form first.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -12,12 +13,14 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { duration } from '@/lib/client/format';
+import { OAUTH2_CREDENTIAL } from '@/lib/shared/oauth2';
 import type { CredentialDetail, CredentialTypeInfo, PropertyDescriptor } from '@/lib/shared/types';
 import { ParamForm } from '../editor/param-form';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { AppIcon } from '../ui/icon';
 import { FieldLabel, Input } from '../ui/inputs';
+import { OAuth2Connection, OAuth2Presets } from './oauth2-connect';
 import { useCredentialStore } from './use-credentials';
 
 type TestResult = { ok: boolean; message?: string; durationMs?: number };
@@ -171,23 +174,40 @@ export function CredentialDialog({
     }
   };
 
-  const save = async () => {
-    if (!type) return;
-    setSaving(true);
+  /** Save the form (PATCH, or create the credential): the saved credential, or undefined with the error shown. */
+  const persist = async (): Promise<CredentialDetail | undefined> => {
+    if (!type) return undefined;
     setError(undefined);
     try {
       const { credential } = existing
         ? await api<{ credential: CredentialDetail }>(`/api/credentials/${existing.id}`, { method: 'PATCH', json: { name, data: values } })
         : await api<{ credential: CredentialDetail }>('/api/credentials', { method: 'POST', json: { name, type, data: values } });
       await useCredentialStore.getState().refresh();
-      toast.success(existing ? `Saved ${credential.name}` : `Created ${credential.name}`);
-      onSaved?.(credential);
-      onClose();
+      return credential;
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      setSaving(false);
+      return undefined;
     }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    const credential = await persist();
+    setSaving(false);
+    if (!credential) return;
+    toast.success(existing ? `Saved ${credential.name}` : `Created ${credential.name}`);
+    onSaved?.(credential);
+    onClose();
+  };
+
+  /** OAuth2 Connect / Get token save first; a credential created that way is the one this dialog edits from then on. */
+  const ensureSaved = async () => {
+    const credential = await persist();
+    if (credential && !existing) {
+      setExisting(credential);
+      onSaved?.(credential);
+    }
+    return credential;
   };
 
   const remove = async () => {
@@ -244,7 +264,11 @@ export function CredentialDialog({
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="My account" />
               </div>
               {info ? (
-                <ParamForm nodeType="" properties={properties} values={values} onChange={setValues} />
+                <>
+                  {info.type === OAUTH2_CREDENTIAL && <OAuth2Presets values={values} onChange={setValues} />}
+                  <ParamForm nodeType="" properties={properties} values={values} onChange={setValues} />
+                  {info.oauth2 && <OAuth2Connection credential={existing} grantType={String(values.grantType ?? 'pkce')} ensureSaved={ensureSaved} onChange={setExisting} />}
+                </>
               ) : (
                 existing && (
                   <div className="rounded-[10px] border border-dashed border-bd p-4 text-[13px] text-t2">

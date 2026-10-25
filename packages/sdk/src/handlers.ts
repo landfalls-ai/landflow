@@ -5,12 +5,13 @@
  * metrics (docs/observability.md §4–5). Health and manifest get no spans.
  */
 import { context, SpanKind, SpanStatusCode, trace, type Attributes, type Context, type Span } from '@opentelemetry/api';
-import type { ExecuteRequest, ExecuteResponse, LoadOptionsRequest, PropertyOption, TestCredentialsRequest, TestCredentialsResponse } from '@landflow/protocol';
+import type { ExecuteRequest, ExecuteResponse, LoadOptionsRequest, PropertyOption, TestCredentialsRequest, TestCredentialsResponse, WebhookMethodRequest, WebhookMethodResponse, WebhookRequest, WebhookResponse } from '@landflow/protocol';
 import { localCredentialName, requestSecrets, type CredentialTypeDefinition } from './credentials';
 import type { INodeType, IPlugin } from './node';
 import type { Telemetry } from './otel';
 import { registerSecrets, scrub, secretValues } from './redact';
 import { executeNode, executeTestCredentials, runLoadOptions, toErrorPayload } from './runtime';
+import { runWebhook, runWebhookMethod } from './webhooks';
 
 export type RpcSystem = 'http' | 'grpc';
 
@@ -156,5 +157,63 @@ export async function serveTestCredentials(
   } finally {
     span.end();
     release();
+  }
+}
+
+/** WebhookMethod (checkExists / create / delete of an app webhook trigger), in a `plugin.webhook_method {method}` server span. */
+export async function serveWebhookMethod(plugin: IPlugin, node: INodeType, request: WebhookMethodRequest, telemetry: Telemetry, parent: Context, system: RpcSystem): Promise<WebhookMethodResponse> {
+  const type = `${plugin.info.id}.${node.description.name}`;
+  const span = telemetry.tracer.startSpan(
+    `plugin.webhook_method ${request.method}`,
+    {
+      kind: SpanKind.SERVER,
+      attributes: {
+        'landflow.plugin.id': plugin.info.id,
+        'landflow.node.type': type,
+        'landflow.node.name': request.node.name,
+        'landflow.workflow.id': request.workflowId,
+        'landflow.webhook.method': request.method,
+        ...rpcAttributes(system, 'WebhookMethod'),
+      },
+    },
+    parent,
+  );
+  try {
+    const response = await context.with(trace.setSpan(parent, span), () =>
+      runWebhookMethod(node, request, { telemetry, credentialTypes: plugin.credentialTypes, pluginId: plugin.info.id }),
+    );
+    if (response.error) fail(span, new Error(response.error.message), response.error.message);
+    else if (request.method === 'checkExists') span.setAttribute('landflow.webhook.exists', response.exists === true);
+    return response;
+  } finally {
+    span.end();
+  }
+}
+
+/** ReceiveWebhook (a call to an app webhook trigger's URL), in a `plugin.webhook {type}` server span. */
+export async function serveWebhook(plugin: IPlugin, node: INodeType, request: WebhookRequest, telemetry: Telemetry, parent: Context, system: RpcSystem): Promise<WebhookResponse> {
+  const type = `${plugin.info.id}.${node.description.name}`;
+  const span = telemetry.tracer.startSpan(
+    `plugin.webhook ${type}`,
+    {
+      kind: SpanKind.SERVER,
+      attributes: {
+        'landflow.plugin.id': plugin.info.id,
+        'landflow.node.type': type,
+        'landflow.node.name': request.node.name,
+        'landflow.workflow.id': request.workflowId,
+        ...rpcAttributes(system, 'ReceiveWebhook'),
+      },
+    },
+    parent,
+  );
+  try {
+    const response = await context.with(trace.setSpan(parent, span), () => runWebhook(node, request, { telemetry, credentialTypes: plugin.credentialTypes, pluginId: plugin.info.id }));
+    span.setAttribute('landflow.items.out', response.items?.length ?? 0);
+    if (response.response?.status) span.setAttribute('http.response.status_code', response.response.status);
+    if (response.error) fail(span, new Error(response.error.message), response.error.message);
+    return response;
+  } finally {
+    span.end();
   }
 }

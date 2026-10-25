@@ -1,9 +1,18 @@
 'use client';
+import { isChromelessPage } from '../shared/auth-paths';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly body?: unknown) {
     super(message);
   }
+}
+
+/** A 401 from the API means the session ended: go to the sign-in page, then back here. */
+function signInAgain(status: number) {
+  if (status !== 401 || typeof window === 'undefined') return;
+  const here = `${window.location.pathname}${window.location.search}`;
+  if (isChromelessPage(window.location.pathname)) return;
+  window.location.assign(`/login?next=${encodeURIComponent(here)}`);
 }
 
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
@@ -16,7 +25,10 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   });
   const text = await response.text();
   const body = text ? JSON.parse(text) : undefined;
-  if (!response.ok) throw new ApiError((body as { error?: string })?.error ?? `${response.status} ${response.statusText}`, response.status, body);
+  if (!response.ok) {
+    signInAgain(response.status);
+    throw new ApiError((body as { error?: string })?.error ?? `${response.status} ${response.statusText}`, response.status, body);
+  }
   return body as T;
 }
 
@@ -34,6 +46,7 @@ export async function streamEvents(
     signal,
   });
   if (!response.ok || !response.body) {
+    signInAgain(response.status);
     const text = await response.text();
     let message = text;
     try {

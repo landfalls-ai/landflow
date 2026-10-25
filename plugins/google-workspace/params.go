@@ -17,7 +17,7 @@ func authProperty() landflow.PropertyDescriptor {
 		Default: "serviceAccount", NoDataExpression: true,
 		Options: []landflow.PropertyOption{
 			{Name: "Service Account", Value: "serviceAccount", Description: "A service account key; share files with its email"},
-			{Name: "OAuth2 (Refresh Token)", Value: "oAuth2", Description: "A user's OAuth2 client and refresh token"},
+			{Name: "OAuth2", Value: "oAuth2", Description: "Act as a Google user: Connect the credential, or give it a refresh token"},
 		},
 	}
 }

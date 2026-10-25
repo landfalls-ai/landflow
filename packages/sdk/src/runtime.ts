@@ -43,6 +43,8 @@ export interface ContextExtras {
   setNodeState?: IExecuteContext['setNodeState'];
   /** In-process only: the node outputs `$('Node')` sees. */
   getNodeOutputs?: IExecuteContext['getNodeOutputs'];
+  /** In-process only: streamed answer chunks (set while a streaming response listens). */
+  sendChunk?: IExecuteContext['sendChunk'];
   /** Extra log sink (the host streams logs live). */
   onLog?: (entry: LogEntry) => void;
   signal?: AbortSignal;
@@ -60,7 +62,7 @@ export interface ContextExtras {
 const isRawBody = (body: unknown): body is BodyInit =>
   body instanceof Uint8Array || body instanceof ArrayBuffer || body instanceof URLSearchParams || body instanceof ReadableStream || (typeof Blob !== 'undefined' && body instanceof Blob) || (typeof FormData !== 'undefined' && body instanceof FormData);
 
-async function httpRequest(fetcher: TracedFetch, options: HttpRequestOptions): Promise<HttpResponse> {
+export async function httpRequest(fetcher: TracedFetch, options: HttpRequestOptions): Promise<HttpResponse> {
   const url = new URL(options.url);
   for (const [key, value] of Object.entries(options.query ?? {})) url.searchParams.set(key, String(value));
   const headers: Record<string, string> = { ...(options.headers ?? {}) };
@@ -102,7 +104,7 @@ export function qualifiedType(type: string, pluginId?: string): string {
 }
 
 /** A node logger: collects LogEntry (returned to the host), forwards to onLog and writes the process log. */
-function nodeLogger(sink: LogEntry[], processLog: ProcessLogger, onLog?: (entry: LogEntry) => void): ILogger {
+export function nodeLogger(sink: LogEntry[], processLog: ProcessLogger, onLog?: (entry: LogEntry) => void): ILogger {
   const write = (level: LogLevel) => (message: string, attributes?: LogAttributes) => {
     const entry: LogEntry = { level, message: scrub(String(message)) };
     sink.push(entry);
@@ -190,6 +192,7 @@ function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[]
   if (extras.getNodeState) context.getNodeState = extras.getNodeState;
   if (extras.setNodeState) context.setNodeState = extras.setNodeState;
   if (extras.getNodeOutputs) context.getNodeOutputs = extras.getNodeOutputs;
+  if (extras.sendChunk) context.sendChunk = extras.sendChunk;
   return { context, poll, logger };
 }
 

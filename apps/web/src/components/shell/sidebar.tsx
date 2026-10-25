@@ -6,7 +6,10 @@ import { Activity, BookOpenText, Bot, ChartColumn, House, KeyRound, Puzzle, Sett
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveConnected, useLiveEvents } from '@/lib/client/live';
+import { isChromelessPage } from '@/lib/shared/auth-paths';
 import type { PluginSummary } from '@/lib/shared/types';
+import { UserMenu } from '../auth/user-menu';
+import { useViewer } from '../auth/viewer';
 import { StatusDot } from '../ui/badge';
 import { ThemeToggle } from './theme-toggle';
 
@@ -33,9 +36,15 @@ const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string;
   },
 ];
 
-/** The left rail: product mark, grouped navigation, live status. */
+/** The left rail: product mark, grouped navigation, live status, the user menu. Not on sign-in and public pages. */
 export function Sidebar() {
   const pathname = usePathname();
+  const viewer = useViewer();
+  if (!viewer || isChromelessPage(pathname)) return null;
+  return <Rail pathname={pathname} />;
+}
+
+function Rail({ pathname }: { pathname: string }) {
   const connected = useLiveConnected();
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
 
@@ -97,6 +106,9 @@ export function Sidebar() {
           {connected ? 'Live' : 'Reconnecting…'}
         </div>
         <ThemeToggle />
+      </div>
+      <div className="mt-2 border-t border-hair pt-2">
+        <UserMenu />
       </div>
     </aside>
   );

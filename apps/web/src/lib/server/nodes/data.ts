@@ -1,5 +1,5 @@
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { BODY_METHODS, executeHttpRequest } from './http-request';
+import { BODY_METHODS, executeHttpRequest, httpAuthCredentials, httpAuthProperties } from './http-request';
 
 const main = [{ type: 'main' as const }];
 
@@ -168,6 +168,7 @@ export const httpRequestNode = defineNode({
     toolDescription: 'Make an HTTP request. Arguments: `url` (required), `method`, and optionally `body` (JSON).',
     inputs: main,
     outputs: main,
+    credentials: httpAuthCredentials,
     properties: [
       {
         name: 'method',
@@ -177,6 +178,7 @@ export const httpRequestNode = defineNode({
         options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].map((m) => ({ name: m, value: m })),
       },
       { name: 'url', displayName: 'URL', type: 'string', default: 'http://127.0.0.1:3000/api/health', required: true },
+      ...httpAuthProperties,
       {
         name: 'query',
         displayName: 'Query Parameters',

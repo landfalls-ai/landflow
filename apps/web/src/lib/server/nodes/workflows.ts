@@ -9,6 +9,7 @@ import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, 
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { ExecutionRecord } from '../../shared/types';
 import { shareBinaryScope } from '../binary/access';
+import { workflowForCall } from '../publish';
 import { store } from '../store';
 
 const main = [{ type: 'main' as const }];
@@ -42,7 +43,8 @@ export function callerAllowed(target: Workflow, callerId: string | undefined): b
 function loadTarget(ctx: IExecuteContext): { workflow: Workflow; trigger: WorkflowNode } {
   const id = workflowIdOf(ctx.getNodeParameter('workflowId', 0));
   if (!id) throw new NodeOperationError('Choose the workflow to run');
-  const workflow = store.getWorkflow(id);
+  // A manual run calls the child's draft; production runs call its published version (draft and publish).
+  const workflow = workflowForCall(id, ctx.mode);
   if (!workflow) throw new NodeOperationError(`Workflow ${id} not found`, { description: 'It may have been deleted. Choose the workflow again.' });
   const trigger = triggerOf(workflow);
   if (!trigger) throw new NodeOperationError(`“${workflow.name}” has no “${TRIGGER_NAME}” trigger`, { description: 'Add that trigger to the workflow so other workflows can run it.' });

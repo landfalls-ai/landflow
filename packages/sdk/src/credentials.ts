@@ -63,7 +63,8 @@ export function credentialAccessor(credentials: Record<string, JsonObject> | und
         description: 'Call ctx.getCredentials(name) with the credential type you need.',
       });
     }
-    const data = all[localCredentialName(name)];
+    // A credential of another plugin ("messaging.slackApi") arrives under its qualified name.
+    const data = all[name] ?? all[localCredentialName(name)];
     if (data === undefined && !options?.optional) {
       throw new NodeOperationError(`No "${localCredentialName(name)}" credentials were provided`, {
         description: "Select a credential in the node's Credentials setting.",

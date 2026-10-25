@@ -1,57 +1,230 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Loader2, RotateCcw, SendHorizontal, User, Wrench, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, FileText, Loader2, Paperclip, RotateCcw, SendHorizontal, ShieldAlert, User, Wrench, X } from 'lucide-react';
 import { nanoid } from 'nanoid';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import type { ExecutionEvent } from '@/lib/shared/types';
 import { NodeIcon } from '../ui/icon';
 import { useEditor } from './store';
+
+/** What AI Agent and chain nodes stream while the run goes on (node.chunk events of the run route SSE). */
+export type ChatChunk = Extract<ExecutionEvent, { type: 'node.chunk' }>['chunk'];
+
+/** A tool call the agent made, as streamed: running, done, failed, or waiting for a person. */
+export interface ChatTool {
+  id: string;
+  name: string;
+  status: 'started' | 'finished' | 'failed' | 'approval';
+  input?: unknown;
+  output?: string;
+}
+
+/** `result.approval` of a run waiting for tool approvals (AI Agent → Require Approval). */
+export interface ChatApproval {
+  nodeName: string;
+  channel: 'chat' | 'slack';
+  calls: Array<{ id: string; tool: string; input?: unknown }>;
+  decisions?: Record<string, { approved: boolean; by?: string }>;
+}
+
+/** A file attached in the panel, sent base64 with the message (the trigger item's binary data0, data1…). */
+export interface ChatFile {
+  fileName: string;
+  mimeType: string;
+  data: string;
+  size: number;
+}
+
+/** What a send or a decision ends with: the reply when nothing streamed, the approval the run now waits for. */
+export interface ChatOutcome {
+  reply?: string;
+  executionId?: string;
+  approval?: ChatApproval;
+  /** A decision on one call of several: the run goes on once every call has one. */
+  stillWaiting?: boolean;
+}
 
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'error';
   text: string;
   tools?: Array<{ nodeId: string; name: string; ok: boolean }>;
+  /** Streamed tool calls (with input and output). */
+  calls?: ChatTool[];
+  files?: Array<{ fileName: string; mimeType: string; size: number }>;
+  approval?: ChatApproval & { executionId: string; decided: Record<string, boolean | 'busy'> };
 }
 
-export function ChatPanel({ open, onClose, onSend }: { open: boolean; onClose: () => void; onSend: (message: string, sessionId: string) => Promise<string | undefined> }) {
+const MAX_FILES = 10;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
+
+const readBase64 = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));
+    reader.onerror = () => reject(reader.error ?? new Error(`Could not read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+
+const size = (bytes: number) => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
+const pretty = (value: unknown) => {
+  if (value === undefined) return '';
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  return JSON.stringify(value, null, 2);
+};
+
+/** Fold one streamed chunk into the reply being built. */
+function applyChunk(current: { text: string; calls: ChatTool[]; error?: string }, chunk: ChatChunk) {
+  if (chunk.type === 'item' && chunk.content) return { ...current, text: current.text + chunk.content };
+  if (chunk.type === 'error') return { ...current, error: chunk.content ?? 'The model stream failed' };
+  if (chunk.type === 'tool' && chunk.tool) {
+    const tool = chunk.tool;
+    const known = current.calls.find((c) => c.id === tool.id);
+    const next: ChatTool = { ...known, id: tool.id, name: tool.name, status: tool.status, ...(tool.input !== undefined && { input: tool.input }), ...(tool.output !== undefined && { output: tool.output }) };
+    return { ...current, calls: known ? current.calls.map((c) => (c.id === tool.id ? next : c)) : [...current.calls, next] };
+  }
+  return current;
+}
+
+const EMPTY_REPLY = { text: '', calls: [] as ChatTool[] };
+
+export function ChatPanel({
+  open,
+  onClose,
+  onSend,
+  onDecide,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSend: (message: string, sessionId: string, files: ChatFile[], onChunk: (chunk: ChatChunk) => void) => Promise<ChatOutcome>;
+  onDecide?: (executionId: string, callId: string, approved: boolean, onChunk: (chunk: ChatChunk) => void) => Promise<ChatOutcome>;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
+  const [files, setFiles] = useState<ChatFile[]>([]);
   const [sessionId, setSessionId] = useState(() => `chat_${nanoid(6)}`);
   const [pending, setPending] = useState(false);
+  const [live, setLive] = useState<{ text: string; calls: ChatTool[]; error?: string }>(EMPTY_REPLY);
   const log = useEditor((s) => s.log);
   const nodes = useEditor((s) => s.nodes);
   const nodeTypes = useEditor((s) => s.nodeTypes);
   const scroller = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const runStart = useRef(0);
+  const reply = useRef(EMPTY_REPLY as { text: string; calls: ChatTool[]; error?: string });
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, log.length]);
+  }, [messages, log.length, live]);
 
-  // Live tool activity of the current run.
+  // Live tool activity of the current run (sub-node calls on the canvas), when the agent streams nothing itself.
   const activity = pending ? log.slice(runStart.current).filter((l) => l.kind !== 'log' && (l.source === 'tool' || l.source === 'model')) : [];
   const liveTools = activity.filter((l) => l.source === 'tool' && l.kind !== 'start');
   const thinking = activity.length > 0 && activity[activity.length - 1].kind === 'start';
 
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || pending) return;
-    setDraft('');
-    setMessages((m) => [...m, { id: nanoid(), role: 'user', text }]);
+  const onChunk = (chunk: ChatChunk) => {
+    reply.current = applyChunk(reply.current, chunk);
+    setLive(reply.current);
+  };
+
+  /** Run `work` (a send or a decision) with the reply streaming in, then add the assistant's message. */
+  const converse = async (work: () => Promise<ChatOutcome>) => {
     setPending(true);
+    reply.current = EMPTY_REPLY;
+    setLive(EMPTY_REPLY);
     runStart.current = useEditor.getState().log.length;
     try {
-      const reply = await onSend(text, sessionId);
+      const outcome = await work();
+      if (outcome.stillWaiting) return;
+      const streamed = reply.current;
       const tools = useEditor
         .getState()
         .log.slice(runStart.current)
         .filter((l) => l.source === 'tool' && (l.kind === 'finish' || l.kind === 'error'))
         .map((l) => ({ nodeId: l.nodeId!, name: l.nodeName ?? 'tool', ok: l.kind === 'finish' }));
-      setMessages((m) => [...m, { id: nanoid(), role: reply === undefined ? 'error' : 'assistant', text: reply ?? 'The workflow did not produce a reply — check the execution log.', tools }]);
+      const text = streamed.text.trim() ? streamed.text : outcome.approval ? '' : outcome.reply;
+      const approval =
+        outcome.approval && outcome.executionId ? { ...outcome.approval, executionId: outcome.executionId, decided: Object.fromEntries(Object.entries(outcome.approval.decisions ?? {}).map(([id, d]) => [id, d.approved])) } : undefined;
+      setMessages((m) => [
+        ...m,
+        {
+          id: nanoid(),
+          role: text === undefined && !approval ? 'error' : 'assistant',
+          text: text ?? (approval ? '' : 'The workflow did not produce a reply — check the execution log.'),
+          // Streamed calls carry their input and output; otherwise the tool nodes that ran.
+          ...(streamed.calls.length ? { calls: streamed.calls } : { tools }),
+          ...(approval && { approval }),
+        },
+      ]);
+      if (streamed.error) setMessages((m) => [...m, { id: nanoid(), role: 'error', text: streamed.error! }]);
     } catch (error) {
+      // What streamed before the failure stays visible.
+      const streamed = reply.current;
+      if (streamed.text.trim() || streamed.calls.length) setMessages((m) => [...m, { id: nanoid(), role: 'assistant', text: streamed.text, calls: streamed.calls }]);
       setMessages((m) => [...m, { id: nanoid(), role: 'error', text: (error as Error).message }]);
     } finally {
+      reply.current = EMPTY_REPLY;
+      setLive(EMPTY_REPLY);
       setPending(false);
+    }
+  };
+
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || pending) return;
+    const attached = files;
+    setDraft('');
+    setFiles([]);
+    setMessages((m) => [...m, { id: nanoid(), role: 'user', text, ...(attached.length && { files: attached.map(({ fileName, mimeType, size: bytes }) => ({ fileName, mimeType, size: bytes })) }) }]);
+    await converse(() => onSend(text, sessionId, attached, onChunk));
+  };
+
+  const decide = async (messageId: string, executionId: string, callId: string, approved: boolean) => {
+    if (!onDecide || pending) return;
+    const mark = (value: boolean | 'busy' | undefined) =>
+      setMessages((m) =>
+        m.map((msg) => {
+          if (msg.id !== messageId || !msg.approval) return msg;
+          const decided = { ...msg.approval.decided };
+          if (value === undefined) delete decided[callId];
+          else decided[callId] = value;
+          return { ...msg, approval: { ...msg.approval, decided } };
+        }),
+      );
+    mark('busy');
+    let failed = false;
+    await converse(async () => {
+      try {
+        const outcome = await onDecide(executionId, callId, approved, onChunk);
+        mark(approved);
+        return outcome;
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    });
+    if (failed) mark(undefined);
+  };
+
+  const attach = async (list: FileList | null) => {
+    const picked = Array.from(list ?? []);
+    if (fileInput.current) fileInput.current.value = '';
+    if (!picked.length) return;
+    if (files.length + picked.length > MAX_FILES) return void toast.error(`At most ${MAX_FILES} files per message`);
+    const tooBig = picked.find((f) => f.size > MAX_FILE_BYTES);
+    if (tooBig) return void toast.error(`${tooBig.name} is larger than 20 MB`);
+    try {
+      const read = await Promise.all(picked.map(async (f) => ({ fileName: f.name, mimeType: f.type || 'application/octet-stream', size: f.size, data: await readBase64(f) })));
+      setFiles((current) => [...current, ...read].slice(0, MAX_FILES));
+    } catch (error) {
+      toast.error((error as Error).message);
     }
   };
 
@@ -66,7 +239,15 @@ export function ChatPanel({ open, onClose, onSend }: { open: boolean; onClose: (
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-hair px-3">
         <span className="text-[13px] font-semibold text-t1">Chat</span>
         <span className="font-mono text-[11px] text-t3">{sessionId}</span>
-        <button title="New session" aria-label="New session" onClick={() => { setMessages([]); setSessionId(`chat_${nanoid(6)}`); }} className="ml-auto grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1">
+        <button
+          title="New session"
+          aria-label="New session"
+          onClick={() => {
+            setMessages([]);
+            setSessionId(`chat_${nanoid(6)}`);
+          }}
+          className="ml-auto grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1"
+        >
           <RotateCcw className="size-3.5" />
         </button>
         <button onClick={onClose} aria-label="Close chat" className="grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1">
@@ -81,7 +262,7 @@ export function ChatPanel({ open, onClose, onSend }: { open: boolean; onClose: (
               <Bot className="size-5 text-ac" strokeWidth={1.6} />
             </div>
             <div className="text-[15px] font-semibold text-t1">Talk to your workflow</div>
-            <div className="mx-auto mt-1 max-w-[260px] text-[13px] text-t2">Messages enter through the Chat Message trigger. Tool nodes light up on the canvas as the agent works.</div>
+            <div className="mx-auto mt-1 max-w-[260px] text-[13px] text-t2">Messages enter through the Chat Message trigger. Replies stream in as the agent writes them; tool calls show up live.</div>
             <div className="mt-5 space-y-1.5">
               {['Hash the word "landflow" with sha256', 'What is the sentiment of "I love polyglot plugins"?', 'Slugify "Hello Plugin World" and compute 42 * 17'].map((s) => (
                 <button key={s} onClick={() => setDraft(s)} className="block w-full rounded-[10px] border border-hair bg-wl px-3 py-2 text-left text-[12px] text-t2 transition-colors hover:border-acbd hover:text-t1">
@@ -96,7 +277,7 @@ export function ChatPanel({ open, onClose, onSend }: { open: boolean; onClose: (
             <div className={cn('grid size-[26px] shrink-0 place-items-center rounded-full border', m.role === 'user' ? 'border-hair bg-wl text-t2' : m.role === 'error' ? 'border-rdbd bg-rddim text-rd' : 'border-acbd bg-acdim text-ac')}>
               {m.role === 'user' ? <User className="size-3.5" /> : <Bot className="size-3.5" />}
             </div>
-            <div className="max-w-[290px] space-y-1.5">
+            <div className={cn('max-w-[290px] min-w-0 space-y-1.5', m.role === 'user' && 'flex flex-col items-end')}>
               {m.tools && m.tools.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {m.tools.map((t, i) => (
@@ -106,9 +287,14 @@ export function ChatPanel({ open, onClose, onSend }: { open: boolean; onClose: (
                   ))}
                 </div>
               )}
-              <div className={cn('whitespace-pre-wrap [overflow-wrap:anywhere] rounded-xl px-3 py-2 text-[13px] leading-relaxed', m.role === 'user' ? 'bg-ac2 text-on-ac' : m.role === 'error' ? 'border border-rdbd bg-rddim text-rd' : 'border border-hair bg-wl text-t1')}>
-                {m.text}
-              </div>
+              {m.calls && m.calls.length > 0 && <ToolCalls calls={m.calls} />}
+              {m.files && m.files.length > 0 && <FileChips files={m.files} />}
+              {(m.text || !m.approval) && (
+                <div className={cn('whitespace-pre-wrap [overflow-wrap:anywhere] rounded-xl px-3 py-2 text-[13px] leading-relaxed', m.role === 'user' ? 'bg-ac2 text-on-ac' : m.role === 'error' ? 'border border-rdbd bg-rddim text-rd' : 'border border-hair bg-wl text-t1')}>
+                  {m.text}
+                </div>
+              )}
+              {m.approval && <ApprovalCard approval={m.approval} disabled={pending || !onDecide} onDecide={(callId, approved) => void decide(m.id, m.approval!.executionId, callId, approved)} />}
             </div>
           </div>
         ))}
@@ -117,22 +303,56 @@ export function ChatPanel({ open, onClose, onSend }: { open: boolean; onClose: (
             <div className="grid size-[26px] shrink-0 place-items-center rounded-full border border-acbd bg-acdim text-ac">
               <Loader2 className="size-3.5 animate-spin" />
             </div>
-            <div className="space-y-1.5">
-              <div className="animate-pulse-soft text-[13px] text-t2">{thinking ? 'Thinking…' : liveTools.length ? 'Using tools…' : 'Working…'}</div>
-              <div className="flex flex-wrap gap-1">
-                {liveTools.map((t) => (
-                  <span key={t.id} className="flex animate-in items-center gap-1 rounded-full border border-hair px-2 py-px text-[11px] text-t2">
-                    <Wrench className="size-2.5" /> {t.nodeName}
-                  </span>
-                ))}
-              </div>
+            <div className="min-w-0 max-w-[290px] space-y-1.5">
+              {live.calls.length > 0 && <ToolCalls calls={live.calls} />}
+              {live.text ? (
+                <div className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-xl border border-hair bg-wl px-3 py-2 text-[13px] leading-relaxed text-t1">
+                  {live.text}
+                  <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse-soft bg-ac align-middle" />
+                </div>
+              ) : (
+                <div className="animate-pulse-soft text-[13px] text-t2">{thinking ? 'Thinking…' : liveTools.length || live.calls.length ? 'Using tools…' : 'Working…'}</div>
+              )}
+              {!live.calls.length && (
+                <div className="flex flex-wrap gap-1">
+                  {liveTools.map((t) => (
+                    <span key={t.id} className="flex animate-in items-center gap-1 rounded-full border border-hair px-2 py-px text-[11px] text-t2">
+                      <Wrench className="size-2.5" /> {t.nodeName}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
       </div>
 
       <div className="border-t border-hair p-3">
+        {files.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {files.map((f, i) => (
+              <span key={`${f.fileName}-${i}`} className="flex max-w-[170px] items-center gap-1 rounded-full border border-hair bg-wl py-px pl-2 pr-1 text-[11px] text-t2">
+                <FileText className="size-3 shrink-0" />
+                <span className="truncate">{f.fileName}</span>
+                <span className="shrink-0 text-t3">{size(f.size)}</span>
+                <button aria-label={`Remove ${f.fileName}`} onClick={() => setFiles((list) => list.filter((_, j) => j !== i))} className="grid size-4 shrink-0 place-items-center rounded-full text-t3 hover:text-t1">
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2 rounded-[10px] border border-hair bg-wl p-1.5 focus-within:border-ac">
+          <input ref={fileInput} type="file" multiple hidden onChange={(e) => void attach(e.target.files)} />
+          <button
+            onClick={() => fileInput.current?.click()}
+            disabled={pending || files.length >= MAX_FILES}
+            title="Attach files (images, PDFs, text — the AI Agent sends them with “Include Binary as Input”)"
+            aria-label="Attach files"
+            className="grid size-8 place-items-center rounded-full text-t3 transition-colors hover:bg-acdim hover:text-t1 disabled:opacity-40"
+          >
+            <Paperclip className="size-3.5" />
+          </button>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -153,5 +373,97 @@ export function ChatPanel({ open, onClose, onSend }: { open: boolean; onClose: (
         </div>
       </div>
     </aside>
+  );
+}
+
+const STATUS: Record<ChatTool['status'], { label: string; tone: string }> = {
+  started: { label: 'running', tone: 'text-t3' },
+  finished: { label: 'done', tone: 'text-gn' },
+  failed: { label: 'failed', tone: 'text-rd' },
+  approval: { label: 'needs approval', tone: 'text-warn' },
+};
+
+/** Streamed tool calls: name and status, input and output on demand. */
+function ToolCalls({ calls }: { calls: ChatTool[] }) {
+  return (
+    <div className="space-y-1">
+      {calls.map((call) => (
+        <details key={call.id} className="group animate-in rounded-[8px] border border-hair bg-wl text-[11px]">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2 py-1 text-t2 [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="size-3 shrink-0 text-t3 transition-transform group-open:rotate-90" />
+            {call.status === 'started' ? <Loader2 className="size-3 shrink-0 animate-spin text-t3" /> : <Wrench className="size-3 shrink-0 text-t3" />}
+            <span className="truncate font-medium text-t1">{call.name}</span>
+            <span className={cn('ml-auto shrink-0', STATUS[call.status].tone)}>{STATUS[call.status].label}</span>
+          </summary>
+          <div className="space-y-1 border-t border-hair px-2 py-1.5">
+            {call.input !== undefined && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-t3">Input</div>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] text-t2">{pretty(call.input)}</pre>
+              </div>
+            )}
+            {call.output !== undefined && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-t3">Output</div>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] text-t2">{pretty(call.output)}</pre>
+              </div>
+            )}
+            {call.input === undefined && call.output === undefined && <div className="text-t3">No details yet</div>}
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function FileChips({ files }: { files: Array<{ fileName: string; mimeType: string; size: number }> }) {
+  return (
+    <div className="flex flex-wrap justify-end gap-1">
+      {files.map((f, i) => (
+        <span key={i} title={f.mimeType} className="flex max-w-[200px] items-center gap-1 rounded-full border border-hair bg-wl px-2 py-px text-[11px] text-t2">
+          <FileText className="size-3 shrink-0" />
+          <span className="truncate">{f.fileName}</span>
+          <span className="shrink-0 text-t3">{size(f.size)}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Approve / Reject per waiting tool call (chat channel); Slack approvals are decided in Slack. */
+function ApprovalCard({ approval, disabled, onDecide }: { approval: NonNullable<ChatMessage['approval']>; disabled: boolean; onDecide: (callId: string, approved: boolean) => void }) {
+  return (
+    <div className="space-y-1.5 rounded-xl border border-warnbd bg-warndim px-3 py-2 text-[12px] text-t1">
+      <div className="flex items-center gap-1.5 font-medium">
+        <ShieldAlert className="size-3.5 text-warn" />
+        {approval.nodeName} wants to run {approval.calls.length === 1 ? 'a tool' : `${approval.calls.length} tools`}
+      </div>
+      {approval.channel === 'slack' && <div className="text-t2">Waiting for an approval in Slack — the run continues once someone decides there.</div>}
+      {approval.calls.map((call) => {
+        const decided = approval.decided[call.id];
+        return (
+          <div key={call.id} className="rounded-[8px] border border-hair bg-wl px-2 py-1.5">
+            <div className="flex items-center gap-1.5">
+              <Wrench className="size-3 text-t3" />
+              <span className="font-medium">{call.tool}</span>
+              {decided === true && <span className="ml-auto flex items-center gap-0.5 text-gn"><Check className="size-3" /> approved</span>}
+              {decided === false && <span className="ml-auto flex items-center gap-0.5 text-rd"><X className="size-3" /> rejected</span>}
+              {decided === 'busy' && <Loader2 className="ml-auto size-3 animate-spin text-t3" />}
+            </div>
+            {call.input !== undefined && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] text-t2">{pretty(call.input)}</pre>}
+            {approval.channel === 'chat' && decided === undefined && (
+              <div className="mt-1.5 flex gap-1.5">
+                <button disabled={disabled} onClick={() => onDecide(call.id, true)} className="flex items-center gap-1 rounded-full bg-ac2 px-2.5 py-0.5 text-[11px] font-medium text-on-ac hover:bg-ac2-hover disabled:opacity-40">
+                  <Check className="size-3" /> Approve
+                </button>
+                <button disabled={disabled} onClick={() => onDecide(call.id, false)} className="flex items-center gap-1 rounded-full border border-rdbd px-2.5 py-0.5 text-[11px] font-medium text-rd hover:bg-rddim disabled:opacity-40">
+                  <X className="size-3" /> Reject
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }

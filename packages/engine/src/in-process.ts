@@ -1,4 +1,4 @@
-import { runNode, type INodeType, createExecuteContext } from '@landflow/sdk';
+import { runNode, runWebhook, runWebhookMethod, type INodeType, createExecuteContext } from '@landflow/sdk';
 import { qualifyType } from '@landflow/protocol';
 import type { ResolvedNodeType } from './types';
 
@@ -14,5 +14,7 @@ export function inProcessNodeType(pluginId: string, node: INodeType): ResolvedNo
   if (node.supplyData) {
     resolved.supplyData = async (request, extras) => node.supplyData!(createExecuteContext(node, request, [], extras));
   }
+  if (node.webhookMethods) resolved.webhookMethod = (request) => runWebhookMethod(node, request, { pluginId });
+  if (node.webhook) resolved.webhook = (request) => runWebhook(node, request, { pluginId });
   return resolved;
 }

@@ -1,7 +1,9 @@
 /**
  * gRPC face of the registry (landflow.plugin.v1.RegistryService), so plugins
  * can announce themselves without speaking HTTP. Listens on
- * LANDFLOW_REGISTRY_GRPC_PORT (default 7070; "off" disables).
+ * LANDFLOW_REGISTRY_GRPC_PORT (default 7070; "off" disables). With
+ * LANDFLOW_REGISTRY_SECRET set, calls must carry it as the
+ * `x-landflow-registry-secret` metadata (like the HTTP registry's header).
  */
 import {
   announceFromMsg,
@@ -11,8 +13,19 @@ import {
   withdrawFromMsg,
 } from '@landflow/protocol/grpc';
 import { announceRequestSchema } from '@landflow/protocol';
+import { sameSecret } from '../auth/passwords';
 import { logger, recordHeartbeat } from '../telemetry';
 import { registry } from './registry';
+
+/** LANDFLOW_REGISTRY_SECRET, when set, must come with every registry call. */
+function secretOk(metadata: grpc.Metadata): boolean {
+  const secret = process.env.LANDFLOW_REGISTRY_SECRET;
+  if (!secret) return true;
+  const given = metadata.get('x-landflow-registry-secret')[0];
+  return sameSecret(typeof given === 'string' ? given : given?.toString(), secret);
+}
+
+const UNAUTHENTICATED = { code: grpc.status.UNAUTHENTICATED, message: 'Send the registry secret (LANDFLOW_REGISTRY_SECRET) as x-landflow-registry-secret metadata' };
 
 export async function startRegistryGrpcServer(): Promise<grpc.Server | undefined> {
   const setting = process.env.LANDFLOW_REGISTRY_GRPC_PORT ?? '7070';
@@ -21,6 +34,7 @@ export async function startRegistryGrpcServer(): Promise<grpc.Server | undefined
   const server = new grpc.Server();
   server.addService(proto.RegistryService.service, {
     async Announce(call: grpc.ServerUnaryCall<Parameters<typeof announceFromMsg>[0], unknown>, callback: grpc.sendUnaryData<unknown>) {
+      if (!secretOk(call.metadata)) return callback(UNAUTHENTICATED);
       const parsed = announceRequestSchema.safeParse(announceFromMsg(call.request));
       if (!parsed.success) {
         callback({ code: grpc.status.INVALID_ARGUMENT, message: parsed.error.issues.map((i) => i.message).join('; ') });
@@ -34,6 +48,7 @@ export async function startRegistryGrpcServer(): Promise<grpc.Server | undefined
       }
     },
     Withdraw(call: grpc.ServerUnaryCall<Parameters<typeof withdrawFromMsg>[0], unknown>, callback: grpc.sendUnaryData<unknown>) {
+      if (!secretOk(call.metadata)) return callback(UNAUTHENTICATED);
       callback(null, { ok: registry.withdraw(withdrawFromMsg(call.request).endpoint) });
     },
   });

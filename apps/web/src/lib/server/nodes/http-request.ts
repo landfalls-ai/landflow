@@ -3,12 +3,71 @@
  * default), multipart form data with text fields and item files, or one item file as the raw body. Responses:
  * JSON or text as before, or a file (`binary.data`) when "Response Format" is File, or when autodetect sees a
  * non-text Content-Type (a PDF, an image, octet-stream).
+ *
+ * Authentication, n8n's "Generic Credential Type": OAuth2 (an Authorization: Bearer header with the access token the
+ * host keeps fresh; a 401 makes the host renew the token and run the node again), Bearer Auth or Header Auth.
  */
-import { baseMimeType, extensionFromMimeType, type JsonObject, type NodeItem } from '@landflow/protocol';
+import { baseMimeType, extensionFromMimeType, type DisplayOptions, type JsonObject, type NodeCredentialRequirement, type NodeItem, type PropertyDescriptor } from '@landflow/protocol';
 import { NodeOperationError, type IExecuteContext } from '@landflow/sdk';
 import { dispositionFileName, isTextual, safeFileName } from '../binary/http';
 
 export const BODY_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+
+const generic = (type: string): DisplayOptions => ({ show: { authentication: ['genericCredentialType'], genericAuthType: [type] } });
+
+/** The Authentication parameters (n8n's names), after the URL. */
+export const httpAuthProperties: PropertyDescriptor[] = [
+  {
+    name: 'authentication',
+    displayName: 'Authentication',
+    type: 'options',
+    default: 'none',
+    noDataExpression: true,
+    options: [
+      { name: 'None', value: 'none' },
+      { name: 'Generic Credential Type', value: 'genericCredentialType', description: 'OAuth2, a bearer token or a header' },
+    ],
+  },
+  {
+    name: 'genericAuthType',
+    displayName: 'Generic Auth Type',
+    type: 'options',
+    default: 'oAuth2Api',
+    noDataExpression: true,
+    displayOptions: { show: { authentication: ['genericCredentialType'] } },
+    options: [
+      { name: 'OAuth2 API', value: 'oAuth2Api', description: 'Connect once; the token is refreshed for you' },
+      { name: 'Bearer Auth', value: 'httpBearerAuth' },
+      { name: 'Header Auth', value: 'httpHeaderAuth' },
+    ],
+  },
+];
+
+export const httpAuthCredentials: NodeCredentialRequirement[] = [
+  { name: 'oAuth2Api', required: true, displayOptions: generic('oAuth2Api') },
+  { name: 'httpBearerAuth', required: true, displayOptions: generic('httpBearerAuth') },
+  { name: 'httpHeaderAuth', required: true, displayOptions: generic('httpHeaderAuth') },
+];
+
+/** Sets the auth header of item `i` (a header the user set by hand wins). */
+function authenticate(ctx: IExecuteContext, i: number, headers: Record<string, string>) {
+  if (ctx.getNodeParameter<string>('authentication', i, 'none') !== 'genericCredentialType') return;
+  const type = String(ctx.getNodeParameter('genericAuthType', i, 'oAuth2Api'));
+  if (type === 'httpHeaderAuth') {
+    const credential = ctx.getCredentials('httpHeaderAuth');
+    const name = String(credential.name ?? '').trim();
+    if (name && !hasHeader(headers, name.toLowerCase())) headers[name] = String(credential.value ?? '');
+    return;
+  }
+  if (hasHeader(headers, 'authorization')) return;
+  if (type === 'httpBearerAuth') {
+    headers.authorization = `Bearer ${String(ctx.getCredentials('httpBearerAuth').token ?? '')}`;
+    return;
+  }
+  const credential = ctx.getCredentials('oAuth2Api');
+  if (!credential.accessToken) throw new NodeOperationError('The OAuth2 credential is not connected', { itemIndex: i, description: 'Open it in Credentials and click Connect (or Get token).' });
+  headers.authorization = `Bearer ${String(credential.accessToken)}`;
+}
 
 export interface HttpRequestOptions {
   timeoutMs?: number;
@@ -98,6 +157,7 @@ export async function executeHttpRequest(ctx: IExecuteContext): Promise<NodeItem
     const url = new URL(String(ctx.getNodeParameter('url', i)));
     for (const [key, value] of Object.entries(pairs('query', 'parameter'))) url.searchParams.set(key, value);
     const headers = pairs('headers', 'header');
+    authenticate(ctx, i, headers);
     const body = BODY_METHODS.includes(method) ? await requestBody(ctx, i, headers) : undefined;
     const response = await ctx.http(url, {
       method,

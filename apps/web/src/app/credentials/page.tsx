@@ -61,6 +61,14 @@ export default function CredentialsPage() {
                   </span>
                   {!info && <Badge tone="warning" title="The plugin that publishes this type is not registered">plugin missing</Badge>}
                   {info && !info.available && <Badge tone="warning">plugin offline</Badge>}
+                  {credential.oauth2 && (
+                    <Badge
+                      tone={credential.oauth2.error || (credential.oauth2.expired && !credential.oauth2.refreshable) ? 'warning' : credential.oauth2.connected ? 'success' : 'muted'}
+                      title={credential.oauth2.error ?? (credential.oauth2.account ? `Connected as ${credential.oauth2.account}` : undefined)}
+                    >
+                      {credential.oauth2.connected ? (credential.oauth2.expired && !credential.oauth2.refreshable ? 'expired' : 'connected') : 'not connected'}
+                    </Badge>
+                  )}
                   <span className="w-40 shrink-0 truncate text-right text-[12px] text-t2" title={credential.usedBy.map((u) => u.workflowName).join(', ')}>
                     {credential.usedBy.length ? `Used by ${credential.usedBy.length} workflow${credential.usedBy.length === 1 ? '' : 's'}` : 'Not used yet'}
                   </span>

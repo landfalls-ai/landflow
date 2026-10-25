@@ -1,6 +1,6 @@
 'use client';
 /**
- * Import a workflow file or pasted JSON (Landflow or n8n) into the open
+ * Import a workflow file or pasted JSON (Landflow, n8n or Flowise) into the open
  * workflow. The server converts it (POST /api/workflows/import with
  * `create: false`); the nodes are added next to what is on the canvas, with
  * fresh ids and unique names, and the import report is shown.
@@ -87,7 +87,7 @@ export function ImportDialog({ mode, onClose }: { mode: 'file' | 'paste'; onClos
   return (
     <Dialog
       title="Import into this workflow"
-      subtitle="Landflow or n8n workflow JSON. The nodes are added next to the ones already here."
+      subtitle="Landflow, n8n or Flowise workflow JSON. The nodes are added next to the ones already here."
       icon={<FileUp className="size-5 text-t2" />}
       onClose={onClose}
       width={600}
@@ -141,7 +141,7 @@ export function ImportDialog({ mode, onClose }: { mode: 'file' | 'paste'; onClos
           >
             <Upload className="size-6 text-t3" strokeWidth={1.6} />
             <span className="text-[13px] font-semibold text-t1">{busy ? 'Importing…' : (fileName ?? 'Choose a .json file or drop it here')}</span>
-            <span className="text-[12px] text-t3">A workflow downloaded from Landflow or exported from n8n</span>
+            <span className="text-[12px] text-t3">A workflow downloaded from Landflow, exported from n8n, or a Flowise chatflow or agentflow</span>
           </button>
         ) : (
           <Textarea

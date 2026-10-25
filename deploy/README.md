@@ -4,7 +4,7 @@ Two independent Compose projects:
 
 | Project | File | What |
 |---|---|---|
-| `landflow-infra` | [`compose.infra.yml`](compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`) |
+| `landflow-infra` | [`compose.infra.yml`](compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`) |
 | `landflow` | [`compose.yml`](compose.yml) | Landflow itself as images: the host (Next.js standalone), the seven plugins, which announce themselves to the host, and the sandboxed [code runner](#code-runner) for the Code node |
 
 Both use their own networks (`landflow-infra`, `landflow-app`), named volumes (`landflow-infra_*`, `landflow_landflow-data`) and host ports in the 5xxxx range, bound to `127.0.0.1`. The dev server on `:3000` keeps running next to them.
@@ -22,6 +22,9 @@ docker compose -f deploy/compose.infra.yml up -d --wait
 # ... plus Keycloak and Jaeger (and MySQL)
 docker compose -f deploy/compose.infra.yml --profile auth --profile observability up -d --wait
 docker compose -f deploy/compose.infra.yml --profile mysql up -d --wait mysql
+
+# ... GreenMail, an IMAP + SMTP test server for the Email Trigger (IMAP)
+docker compose -f deploy/compose.infra.yml --profile mail up -d --wait greenmail
 
 # App: build the images and start the host + 7 plugins + code runner on http://localhost:53000
 COMPOSE_BAKE=false docker compose -f deploy/compose.yml up -d --build --wait
@@ -57,13 +60,15 @@ All credentials are **for local development and tests only**.
 | Jaeger 2 UI (`observability`) | http://localhost:56686 | `jaeger:16686` | none |
 | Jaeger OTLP | HTTP `localhost:54318`, gRPC `localhost:54317` | `jaeger:4318`, `jaeger:4317` | none |
 | MySQL 8.4 (`mysql`) | `localhost:53306` | `mysql:3306` | `landflow` / `landflow-dev-only` (database `landflow_test`), root / `landflow-root-dev-only` |
-| **Landflow host** (app) | http://localhost:53000 | `web:3000`, gRPC registry `web:7070` | none (no auth yet) |
+| GreenMail 2.1 IMAP (`mail`) | `localhost:53143` | `greenmail:3143` | any user and password (the mailbox is created at first login), no TLS |
+| GreenMail 2.1 SMTP (`mail`) | `localhost:53025` | `greenmail:3025` | none; delivers to GreenMail's own mailboxes |
+| **Landflow host** (app) | http://localhost:53000 | `web:3000`, gRPC registry `web:7070` | owner `owner@landflow.test` / `landflow-dev-only` (`LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`) |
 | Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207` (HTTP/gRPC) | |
 | Code runner (app) | http://127.0.0.1:53300 (through `code-runner-port`) | `code-runner:7300`, on the internal `landflow-code` network only | header `x-landflow-runner-secret: landflow-code-runner-dev-only` |
 
 "In-network" addresses work from containers on the `landflow-infra` network (the app stack with `compose.infra-link.yml`). Containers without it reach the infra through the Mac: `host.docker.internal:<Mac port>`.
 
-Keycloak details: redirect URIs `http://localhost:3000/api/auth/oidc/callback` and `http://localhost:53000/api/auth/oidc/callback` (and their `127.0.0.1` forms); the ID and access tokens carry the realm roles in a `roles` claim. The issuer is always `http://localhost:58080/realms/landflow` (`KC_HOSTNAME`), while the backchannel endpoints follow the request host, so a container can fetch tokens and JWKS from `http://keycloak:8080`. Direct access grants are on so scripts can log in a test user:
+Keycloak details: redirect URIs `http://localhost:3000/api/auth/oidc/callback` and `http://localhost:53000/api/auth/oidc/callback` (and their `127.0.0.1` forms), plus the same hosts' `/api/oauth2/callback` for OAuth2 Connect (the client also has service accounts on, for the client credentials grant: `service-account-landflow`); the ID and access tokens carry the realm roles in a `roles` claim. The issuer is always `http://localhost:58080/realms/landflow` (`KC_HOSTNAME`), while the backchannel endpoints follow the request host, so a container can fetch tokens and JWKS from `http://keycloak:8080`. Direct access grants are on so scripts can log in a test user:
 
 ```bash
 curl -s -d grant_type=password -d client_id=landflow -d client_secret=landflow-dev-client-secret \
@@ -73,7 +78,7 @@ curl -s -d grant_type=password -d client_id=landflow -d client_secret=landflow-d
 
 ## Using the infra from the dev server on the host
 
-Landflow reads only the observability variables today; set them before `pnpm dev` / `pnpm dev:all`:
+Set these before `pnpm dev` / `pnpm dev:all` for traces (sign-in, email and SSO are in the next section):
 
 ```bash
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:54318            # Jaeger (profile observability)
@@ -88,18 +93,45 @@ Databases, Redis and email are used through **credentials** in the UI (Credentia
 | Redis | host `localhost`, port `56379` |
 | MySQL | host `localhost`, port `53306`, database `landflow_test`, user `landflow`, password `landflow-dev-only`, SSL Off |
 | SMTP | host `localhost`, port `51025`, SSL/TLS off, Disable STARTTLS on, any user/password; mail shows up at http://localhost:58025 |
+| IMAP (profile `mail`) | host `localhost`, port `53143`, SSL/TLS off, user e.g. `inbox@landflow.test`, any password; send it mail over SMTP at `localhost:53025` |
 
 From the dockerised host use `postgres` / `5432`, `valkey` / `6379`, `mysql` / `3306`, `mailpit` / `1025` with `compose.infra-link.yml`, or `host.docker.internal` with the Mac ports without it.
 
-The host's store uses Postgres with `LANDFLOW_DB=postgres` and `DATABASE_URL` (one host per database; see the README's Durable runtime section). For queue mode, object storage, secrets and SSO work (Landflow does not read these yet), the conventional settings are:
+The host's store uses Postgres with `LANDFLOW_DB=postgres` and `DATABASE_URL` (one host per database; see the README's Durable runtime section). For queue mode and secrets (Landflow does not read these yet), the conventional settings are:
 
 ```bash
 LANDFLOW_DB=postgres DATABASE_URL=postgres://landflow:landflow-dev-only@localhost:55432/landflow
 REDIS_URL=redis://localhost:56379/0
 S3_ENDPOINT=http://localhost:59000 S3_BUCKET=landflow AWS_ACCESS_KEY_ID=landflow AWS_SECRET_ACCESS_KEY=landflow-dev-only AWS_REGION=us-east-1
 BAO_ADDR=http://localhost:58200 BAO_TOKEN=landflow-dev-root-token   # also VAULT_ADDR / VAULT_TOKEN
-OIDC_ISSUER=http://localhost:58080/realms/landflow OIDC_CLIENT_ID=landflow OIDC_CLIENT_SECRET=landflow-dev-client-secret
 ```
+
+## Sign-in, email and SSO
+
+Landflow needs a signed-in user (README "Authentication"). A fresh data directory opens on `/setup`; to skip it, start the host with an owner:
+
+```bash
+LANDFLOW_OWNER_EMAIL=owner@landflow.test LANDFLOW_OWNER_PASSWORD=landflow-dev-only pnpm dev:all
+```
+
+The app stack does this by default (`compose.yml`, values in `.env.example`); blank both variables to use the setup page. They only matter while there is no user.
+
+**Email** for invites and password resets, through Mailpit (messages at http://localhost:58025):
+
+```bash
+LANDFLOW_SMTP_HOST=127.0.0.1 LANDFLOW_SMTP_PORT=51025 LANDFLOW_SMTP_FROM='Landflow <landflow@landflow.test>'
+```
+
+**Single sign-on** through Keycloak (profile `auth`): users `alice` / `alice-test-only` (realm role `landflow-admin`, becomes an admin) and `bob` / `bob-test-only` (`landflow-editor`, a member):
+
+```bash
+LANDFLOW_OIDC_ISSUER=http://localhost:58080/realms/landflow LANDFLOW_OIDC_CLIENT_ID=landflow \
+  LANDFLOW_OIDC_CLIENT_SECRET=landflow-dev-client-secret LANDFLOW_OIDC_ROLE_MAP=landflow-admin=admin,landflow-editor=member
+```
+
+The dockerised host can't reach `localhost:58080`, so `compose.yml` (commented) adds `LANDFLOW_OIDC_DISCOVERY_URL` pointing at `host.docker.internal:58080` (or `keycloak:8080` with `compose.infra-link.yml`); Keycloak then hands out backchannel endpoints the container can reach, while browsers still go to `localhost:58080`. The realm already allows the `:3000` and `:53000` callback URLs.
+
+Tests: `(cd apps/web && LANDFLOW_INTEGRATION=oidc,smtp npx vitest run test/oidc.integration.test.ts test/smtp.integration.test.ts)` signs in as alice and bob through Keycloak's own login form and sends invites and resets through Mailpit. Mailpit can take about 8 s to greet each new SMTP connection under Docker Desktop, so an invite takes that long to send here.
 
 ## The app stack
 
@@ -120,7 +152,7 @@ docker build -f deploy/docker/go-plugin.Dockerfile --build-arg PLUGIN=databases 
 
 **Host.** `apps/web/next.config.ts` switches to `output: 'standalone'` when `LANDFLOW_NEXT_OUTPUT=standalone`, which only the image build sets. Workflows, executions, agents and the credentials vault live in the `landflow_landflow-data` volume (`LANDFLOW_DATA_DIR=/data`). `LANDFLOW_ENCRYPTION_KEY` (64 hex characters or a passphrase) comes from the environment; left empty, the vault generates `/data/encryption.key` on first use. Changing the key later makes saved credentials unreadable. `LANDFLOW_PUBLIC_URL` is `http://localhost:53000` so links the host hands out point at the published port. `OLLAMA_URL` points at Ollama on the Mac (`host.docker.internal:11434`).
 
-**Plugins.** Each container sets `LANDFLOW_REGISTRY_URL=http://web:3000` and `LANDFLOW_ADVERTISE_HOST=<service name>`, so it announces `http://<service>:<port>` and `grpc://<service>:<port>` and heartbeats every 10 s. Stopping a container withdraws it at once; restarting the host is picked up on the next heartbeat. The host's scan (`LANDFLOW_SCAN_HOSTS`, `LANDFLOW_SCAN_PORTS`) probes the plugin services too, so the Plugins page's "Scan network" works in Docker.
+**Plugins.** Each container sets `LANDFLOW_REGISTRY_URL=http://web:3000` and `LANDFLOW_ADVERTISE_HOST=<service name>`, so it announces `http://<service>:<port>` and `grpc://<service>:<port>` and heartbeats every 10 s. With `LANDFLOW_REGISTRY_SECRET` set on the host, add the same value to `x-plugin-env` so they may register. Stopping a container withdraws it at once; restarting the host is picked up on the next heartbeat. The host's scan (`LANDFLOW_SCAN_HOSTS`, `LANDFLOW_SCAN_PORTS`) probes the plugin services too, so the Plugins page's "Scan network" works in Docker.
 
 **Mixing Docker and the Mac.** A plugin running on the Mac can join the dockerised host if it advertises an address the container can reach:
 
@@ -217,6 +249,17 @@ LANDFLOW_INTEGRATION=all go test -count=1 -run Integration -v .               # 
 
 Connections default to the ports and credentials above (database `landflow_test`); override them with `LANDFLOW_IT_PG_HOST`, `LANDFLOW_IT_PG_PORT`, `..._USER`, `..._PASSWORD`, `..._DATABASE`, and the same for `REDIS` and `MYSQL`. Each test works in its own schema, table or key prefix and drops it afterwards.
 
+## Integration tests (Email Trigger, IMAP)
+
+`apps/web/test/email-imap.test.ts` (the node: baseline, mark read, move, manual runs, IDLE) and `test/email-imap-host.test.ts` (a published workflow polled by the host, attachments in the run's binary scope, IDLE starting a run) run against GreenMail. They are skipped unless `LANDFLOW_INTEGRATION` includes `imap`.
+
+```bash
+docker compose -f deploy/compose.infra.yml --profile mail up -d --wait greenmail
+(cd apps/web && LANDFLOW_INTEGRATION=imap npx vitest run test/email-imap.test.ts test/email-imap-host.test.ts)
+```
+
+Each test file uses a fresh mailbox (`<name>-<time>@landflow.test`), delivered over GreenMail's SMTP port. `LANDFLOW_GREENMAIL_HOST`, `LANDFLOW_GREENMAIL_IMAP_PORT` and `LANDFLOW_GREENMAIL_SMTP_PORT` point the tests (and the compose ports) elsewhere. GreenMail keeps mail in memory, so a restart empties it.
+
 ## Stop and reset
 
 These commands only touch the `landflow` and `landflow-infra` projects. Don't use `docker system prune` or the other prune commands on this machine: other projects' containers and volumes live here too.
@@ -244,4 +287,5 @@ If you joined the networks with `compose.infra-link.yml`, pass it to `down` as w
 - **OpenBao** runs in dev mode: in memory and unsealed. Secrets are gone after a restart; `infra/openbao/dev.sh` re-creates the `landflow/` mount and the sample secret each time.
 - **Jaeger** stores traces in memory.
 - **Mailpit** stands in for MailHog: same SMTP and web UI roles, native arm64, and its store survives restarts.
+- **GreenMail** is there because Mailpit has no IMAP: it is the mailbox the Email Trigger (IMAP) reads. Mail sent to its SMTP port lands in its own mailboxes, not in Mailpit.
 - Keycloak's realm is imported only when the realm doesn't exist yet. After editing `infra/keycloak/landflow-realm.json`, run `down -v` on the infra stack (or delete the realm in the admin console) and start it again.

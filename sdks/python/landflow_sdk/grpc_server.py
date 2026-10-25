@@ -18,10 +18,11 @@ import grpc
 
 from ._pb import plugin_pb2 as pb
 from ._pb import plugin_pb2_grpc as pb_grpc
-from .announce import RegistryRejected, RegistryUnreachable
+from .announce import RegistryRejected, RegistryUnreachable, registry_secret_headers
 from .errors import ProtocolError, UnknownCredentialTypeError, UnknownMethodError, UnknownNodeError
 from .plugin import Plugin
 from .protocol import PROTOCOL_VERSION, dumps
+from .webhooks import decode_body
 
 log = logging.getLogger("landflow_sdk.grpc")
 
@@ -178,6 +179,158 @@ def execute_response_from_proto(msg: pb.ExecuteResponse) -> dict[str, Any]:
     return response
 
 
+def _node_ref(node: pb.NodeRef) -> dict[str, Any]:
+    return {"id": node.id, "name": node.name, "type": node.type, "typeVersion": node.type_version or 1}
+
+
+def _node_ref_to_proto(node: dict[str, Any]) -> pb.NodeRef:
+    return pb.NodeRef(id=node.get("id", ""), name=node.get("name", ""), type=node.get("type", ""), type_version=int(node.get("typeVersion", 1)))
+
+
+def _webhook_base(msg: Any) -> dict[str, Any]:
+    request: dict[str, Any] = {
+        "protocol": msg.protocol or PROTOCOL_VERSION,
+        "workflowId": msg.workflow_id,
+        "node": _node_ref(msg.node),
+        "parameters": from_dynamic(_optional(msg, "parameters"), {}, "parameters"),
+        "webhookUrl": msg.webhook_url,
+        "staticData": from_dynamic(_optional(msg, "static_data"), {}, "static_data"),
+    }
+    credentials = from_dynamic(_optional(msg, "credentials"), None, "credentials")
+    if credentials:
+        request["credentials"] = credentials
+    return request
+
+
+def _logs_and_error_to_proto(response: dict[str, Any], msg: Any) -> None:
+    for entry in response.get("logs") or []:
+        msg.logs.add(level=entry["level"], message=entry["message"])
+    error = response.get("error")
+    if error:
+        msg.error.message = error["message"]
+        msg.error.description = error.get("description") or ""
+        item_index = error.get("itemIndex")
+        msg.error.item_index = -1 if item_index is None else int(item_index)
+    if response.get("staticData") is not None:
+        msg.static_data.CopyFrom(to_dynamic(response["staticData"]))
+
+
+def _logs_and_error_from_proto(msg: Any, response: dict[str, Any]) -> None:
+    if msg.logs:
+        response["logs"] = [{"level": entry.level, "message": entry.message} for entry in msg.logs]
+    if msg.HasField("error") and msg.error.message:
+        error: dict[str, Any] = {"message": msg.error.message}
+        if msg.error.description:
+            error["description"] = msg.error.description
+        response["error"] = error
+    static_data = from_dynamic(_optional(msg, "static_data"), None, "static_data")
+    if static_data is not None:
+        response["staticData"] = static_data
+
+
+def webhook_method_request_from_proto(msg: pb.WebhookMethodRequest) -> dict[str, Any]:
+    return {**_webhook_base(msg), "method": msg.method}
+
+
+def webhook_method_request_to_proto(request: dict[str, Any]) -> pb.WebhookMethodRequest:
+    """Client-side helper (tests, tools): WebhookMethodRequest dict -> proto."""
+    msg = pb.WebhookMethodRequest(
+        protocol=request.get("protocol", PROTOCOL_VERSION),
+        method=request.get("method", ""),
+        workflow_id=request.get("workflowId", ""),
+        node=_node_ref_to_proto(request.get("node") or {}),
+        parameters=to_dynamic(request.get("parameters") or {}),
+        webhook_url=request.get("webhookUrl", ""),
+        static_data=to_dynamic(request.get("staticData") or {}),
+    )
+    if request.get("credentials"):
+        msg.credentials.CopyFrom(to_dynamic(request["credentials"]))
+    return msg
+
+
+def webhook_method_response_to_proto(response: dict[str, Any]) -> pb.WebhookMethodResponse:
+    msg = pb.WebhookMethodResponse(exists=response.get("exists") is True)
+    _logs_and_error_to_proto(response, msg)
+    return msg
+
+
+def webhook_method_response_from_proto(msg: pb.WebhookMethodResponse) -> dict[str, Any]:
+    """Client-side helper. proto3 cannot tell ``exists: false`` from absent: hosts treat anything but ``True`` as not registered."""
+    response: dict[str, Any] = {"exists": True} if msg.exists else {}
+    _logs_and_error_from_proto(msg, response)
+    return response
+
+
+def webhook_request_from_proto(msg: pb.ReceiveWebhookRequest) -> dict[str, Any]:
+    incoming = msg.request
+    return {
+        **_webhook_base(msg),
+        "request": {
+            "method": incoming.method or "POST",
+            "path": incoming.path,
+            "headers": dict(incoming.headers),
+            "query": dict(incoming.query),
+            "body": bytes(incoming.body),
+        },
+    }
+
+
+def webhook_request_to_proto(request: dict[str, Any]) -> pb.ReceiveWebhookRequest:
+    """Client-side helper: WebhookRequest dict (``request.body`` base64 or bytes) -> proto."""
+    incoming = request.get("request") or {}
+    msg = pb.ReceiveWebhookRequest(
+        protocol=request.get("protocol", PROTOCOL_VERSION),
+        workflow_id=request.get("workflowId", ""),
+        node=_node_ref_to_proto(request.get("node") or {}),
+        parameters=to_dynamic(request.get("parameters") or {}),
+        webhook_url=request.get("webhookUrl", ""),
+        static_data=to_dynamic(request.get("staticData") or {}),
+        request=pb.IncomingWebhookRequest(
+            method=incoming.get("method", "POST"),
+            path=incoming.get("path", ""),
+            headers={str(k): str(v) for k, v in (incoming.get("headers") or {}).items()},
+            query={str(k): str(v) for k, v in (incoming.get("query") or {}).items()},
+            body=decode_body(incoming.get("body")),
+        ),
+    )
+    if request.get("credentials"):
+        msg.credentials.CopyFrom(to_dynamic(request["credentials"]))
+    return msg
+
+
+def webhook_response_to_proto(response: dict[str, Any]) -> pb.ReceiveWebhookResponse:
+    msg = pb.ReceiveWebhookResponse(idempotency_key=response.get("idempotencyKey") or "")
+    _items_to_branch(response.get("items") or [], msg)  # ReceiveWebhookResponse.items has Branch's shape
+    reply = response.get("response")
+    if reply:
+        msg.response.status = int(reply.get("status") or 0)
+        msg.response.headers.update({str(k): str(v) for k, v in (reply.get("headers") or {}).items()})
+        msg.response.body = str(reply.get("body") or "").encode("utf-8")
+    _logs_and_error_to_proto(response, msg)
+    return msg
+
+
+def webhook_response_from_proto(msg: pb.ReceiveWebhookResponse) -> dict[str, Any]:
+    """Client-side helper: proto -> WebhookResponse dict."""
+    response: dict[str, Any] = {}
+    items = [_item_from_proto(item, f"items[{i}].json") for i, item in enumerate(msg.items)]
+    if items:
+        response["items"] = items
+    if msg.HasField("response"):
+        reply: dict[str, Any] = {}
+        if msg.response.status:
+            reply["status"] = msg.response.status
+        if msg.response.headers:
+            reply["headers"] = dict(msg.response.headers)
+        if msg.response.body:
+            reply["body"] = msg.response.body.decode("utf-8", errors="replace")
+        response["response"] = reply
+    if msg.idempotency_key:
+        response["idempotencyKey"] = msg.idempotency_key
+    _logs_and_error_from_proto(msg, response)
+    return response
+
+
 def manifest_to_proto(manifest: dict[str, Any]) -> pb.GetManifestResponse:
     info = manifest["plugin"]
     sdk = info.get("sdk") or {}
@@ -272,6 +425,26 @@ class PluginServicer(pb_grpc.PluginServiceServicer):
     def Health(self, request: pb.HealthRequest, context: grpc.ServicerContext) -> pb.HealthResponse:  # noqa: N802
         return self._guard(context, "Health", lambda: health_to_proto(self.plugin.health()))
 
+    def WebhookMethod(  # noqa: N802
+        self, request: pb.WebhookMethodRequest, context: grpc.ServicerContext
+    ) -> pb.WebhookMethodResponse:
+        return self._guard(
+            context,
+            "WebhookMethod",
+            lambda: webhook_method_response_to_proto(
+                self.plugin.webhook_method(webhook_method_request_from_proto(request), metadata_dict(context))
+            ),
+        )
+
+    def ReceiveWebhook(  # noqa: N802
+        self, request: pb.ReceiveWebhookRequest, context: grpc.ServicerContext
+    ) -> pb.ReceiveWebhookResponse:
+        return self._guard(
+            context,
+            "ReceiveWebhook",
+            lambda: webhook_response_to_proto(self.plugin.receive_webhook(webhook_request_from_proto(request), metadata_dict(context))),
+        )
+
 
 def _address(host: str, port: int) -> str:
     return f"[{host}]:{port}" if ":" in host and not host.startswith("[") else f"{host}:{port}"
@@ -321,8 +494,9 @@ class GrpcRegistryClient:
         self.stub = pb_grpc.RegistryServiceStub(self.channel)
 
     def _call(self, fn: Any, request: Any, timeout: float) -> Any:
+        metadata = [(key.lower(), value) for key, value in registry_secret_headers().items()]
         try:
-            return fn(request, timeout=timeout)
+            return fn(request, timeout=timeout, metadata=metadata or None)
         except grpc.RpcError as exc:
             code = exc.code() if hasattr(exc, "code") else None
             detail = exc.details() if hasattr(exc, "details") else str(exc)

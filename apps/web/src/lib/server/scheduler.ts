@@ -11,10 +11,10 @@ import type { Workflow, WorkflowNode } from '@landflow/engine';
 import { parseCron, timeParts, type TimeParts } from './agents/cron';
 import { registry } from './plugins/registry';
 import { poller } from './poller';
+import { productionWorkflows } from './publish';
 import { runWorkflow } from './runner';
 import { instanceTimezone } from './settings';
 import { singleton } from './singleton';
-import { store } from './store';
 import { fireTrigger, logger, recordScheduleLag } from './telemetry';
 
 const UNIT_MS = { seconds: 1_000, minutes: 60_000, hours: 3_600_000 } as const;
@@ -192,8 +192,8 @@ export const scheduler = singleton('scheduler', () => {
   /** One check of every active Schedule node (`now` for tests). */
   function tick(now = Date.now()) {
     const seen = new Set<string>();
-    for (const workflow of store.listWorkflows()) {
-      if (!workflow.active) continue;
+    // The published version of each active workflow (draft and publish, lib/server/publish.ts).
+    for (const workflow of productionWorkflows()) {
       for (const node of workflow.nodes) {
         if (node.disabled || node.type !== 'core.schedule') continue;
         const key = `${workflow.id}:${node.id}`;

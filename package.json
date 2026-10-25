@@ -12,6 +12,7 @@
     "start": "pnpm --filter @landflow/web start",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
+    "landflow": "node packages/cli/dist/main.js",
     "gen:proto": "pnpm --filter @landflow/protocol gen:proto && pnpm --filter @landflow/protocol gen:schema",
     "plugin:ts": "pnpm --filter @landflow/plugin-text-toolkit start",
     "plugin:py": "cd plugins/py-insights && (test -x .venv/bin/python && .venv/bin/python main.py || python3 main.py)",

@@ -9,6 +9,8 @@ import {
   executeResponseSchema,
   manifestSchema,
   nodeDescriptorSchema,
+  webhookMethodRequestSchema,
+  webhookRequestSchema,
 } from '../src/schema';
 
 const outDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'schema');
@@ -20,6 +22,8 @@ const schemas = {
   'execute-request.schema.json': executeRequestSchema,
   'execute-response.schema.json': executeResponseSchema,
   'announce-request.schema.json': announceRequestSchema,
+  'webhook-method-request.schema.json': webhookMethodRequestSchema,
+  'webhook-request.schema.json': webhookRequestSchema,
 };
 
 for (const [file, schema] of Object.entries(schemas)) {

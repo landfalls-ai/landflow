@@ -60,6 +60,16 @@ class PluginServiceStub:
                 request_serializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.TestCredentialsRequest.SerializeToString,
                 response_deserializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.TestCredentialsResponse.FromString,
                 _registered_method=True)
+        self.WebhookMethod = channel.unary_unary(
+                '/landflow.plugin.v1.PluginService/WebhookMethod',
+                request_serializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.WebhookMethodRequest.SerializeToString,
+                response_deserializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.WebhookMethodResponse.FromString,
+                _registered_method=True)
+        self.ReceiveWebhook = channel.unary_unary(
+                '/landflow.plugin.v1.PluginService/ReceiveWebhook',
+                request_serializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.ReceiveWebhookRequest.SerializeToString,
+                response_deserializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.ReceiveWebhookResponse.FromString,
+                _registered_method=True)
 
 
 class PluginServiceServicer:
@@ -101,6 +111,22 @@ class PluginServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def WebhookMethod(self, request, context):
+        """App webhook triggers (triggerSource "appWebhook"): check, register or remove
+        the node's webhook at its service (docs/protocol.md §12).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReceiveWebhook(self, request, context):
+        """App webhook triggers: turn a call the service made to the node's webhook URL
+        into items for a run, and the answer the service gets.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_PluginServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -128,6 +154,16 @@ def add_PluginServiceServicer_to_server(servicer, server):
                     servicer.TestCredentials,
                     request_deserializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.TestCredentialsRequest.FromString,
                     response_serializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.TestCredentialsResponse.SerializeToString,
+            ),
+            'WebhookMethod': grpc.unary_unary_rpc_method_handler(
+                    servicer.WebhookMethod,
+                    request_deserializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.WebhookMethodRequest.FromString,
+                    response_serializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.WebhookMethodResponse.SerializeToString,
+            ),
+            'ReceiveWebhook': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReceiveWebhook,
+                    request_deserializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.ReceiveWebhookRequest.FromString,
+                    response_serializer=landflow_dot_plugin_dot_v1_dot_plugin__pb2.ReceiveWebhookResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -266,6 +302,60 @@ class PluginService:
             '/landflow.plugin.v1.PluginService/TestCredentials',
             landflow_dot_plugin_dot_v1_dot_plugin__pb2.TestCredentialsRequest.SerializeToString,
             landflow_dot_plugin_dot_v1_dot_plugin__pb2.TestCredentialsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WebhookMethod(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/landflow.plugin.v1.PluginService/WebhookMethod',
+            landflow_dot_plugin_dot_v1_dot_plugin__pb2.WebhookMethodRequest.SerializeToString,
+            landflow_dot_plugin_dot_v1_dot_plugin__pb2.WebhookMethodResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReceiveWebhook(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/landflow.plugin.v1.PluginService/ReceiveWebhook',
+            landflow_dot_plugin_dot_v1_dot_plugin__pb2.ReceiveWebhookRequest.SerializeToString,
+            landflow_dot_plugin_dot_v1_dot_plugin__pb2.ReceiveWebhookResponse.FromString,
             options,
             channel_credentials,
             insecure,

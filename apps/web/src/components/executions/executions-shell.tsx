@@ -301,7 +301,7 @@ export function ExecutionsShell({ workflowId, children }: { workflowId: string; 
             <ArrowLeft className="size-4" />
           </Link>
           <span className="max-w-[30%] truncate text-[15px] font-semibold text-t1">{workflow?.name ?? (workflowMissing ? 'Deleted workflow' : ' ')}</span>
-          {workflow?.active && <Badge tone="success">Active</Badge>}
+          {workflow?.active && <Badge tone="success">Published</Badge>}
           <WorkflowTabs workflowId={workflowId} active="executions" className="absolute left-1/2 -translate-x-1/2" />
           <Link href={`/executions?workflowId=${workflowId}`} className="ml-auto text-[12px] text-t2 transition-colors hover:text-t1">
             All executions

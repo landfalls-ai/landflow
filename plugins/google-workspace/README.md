@@ -81,13 +81,14 @@ Both types have **Test connection**, and the failure message is Google's own rea
 `Google rejected the service account credential (HTTP 400 invalid_grant): Invalid JWT Signature. Check that the private
 key belongs to this service account…`. Private keys, client secrets and refresh tokens are `password` fields: masked
 in the UI and never logged. Access tokens are cached per credential until 60 s before they expire, and a 401 drops the
-cached token and retries once. Both have **Token URL** (default `https://oauth2.googleapis.com/token`) and **API Base
-URL**. A base URL replaces the host of every Google API and keeps the paths, for a proxy or a test double.
+cached token and retries once. Both have a token URL (**Token URL** / **Access Token URL**, default
+`https://oauth2.googleapis.com/token`) and **API Base URL**. A base URL replaces the host of every Google API and keeps
+the paths, for a proxy or a test double.
 
 | Type | Fields | Test |
 |---|---|---|
 | `googleApi` (service account) | Service Account Email, Private Key, Impersonate a User (optional) | signs a JWT (RS256) and exchanges it: "Token issued for robot@… with 5 scopes[, impersonating …]" |
-| `googleOAuth2Api` (refresh token) | Client ID, Client Secret, Refresh Token | refreshes, then asks `userinfo`: "Authenticated as you@… (N scopes granted)" ("Refresh token works" without the email scope) |
+| `googleOAuth2Api` (extends the host's `oAuth2Api`) | Client ID, Client Secret, Scope, then **Connect**; or Refresh Token instead of Connect | Connected: asks `userinfo` with the host's token, "Connected as you@…". Refresh token: refreshes, then "Authenticated as you@… (N scopes granted)" ("Refresh token works" without the email scope) |
 
 Service-account tokens request these scopes: `spreadsheets`, `drive`, `gmail.modify`, `calendar` and `documents`
 (all under `https://www.googleapis.com/auth/`).
@@ -113,9 +114,25 @@ mailboxes, so use OAuth2 there):
 3. Set **Impersonate a User** on the credential to the mailbox's address. The plugin then acts as that user for every
    API (Sheets and Drive included), so sharing with the service account is no longer needed.
 
+### OAuth2 with Connect
+
+`googleOAuth2Api` declares `extends: ["oAuth2Api"]`, so the credential dialog shows Landflow's **Connect** button: the
+host runs Google's consent screen (authorization code + PKCE, `access_type=offline&prompt=consent`), keeps the refresh
+token encrypted on the host and sends the node only a fresh `accessToken`. The plugin uses that token as is; when Google
+answers 401 to it, the node fails with `… API error 401 …` and the host renews the token and runs the node once more.
+
+1. Cloud console → APIs & Services → **OAuth consent screen**: configure it (External + yourself as a test user is enough;
+   test-mode refresh tokens expire after 7 days, publish the app to avoid that). Enable the five APIs as above.
+2. Credentials → Create credentials → **OAuth client ID** → *Web application*. Under *Authorized redirect URIs* add the
+   **Redirect URL** the credential dialog shows (`<your Landflow URL>/api/oauth2/callback`, e.g.
+   `http://localhost:3000/api/oauth2/callback`). Copy the client ID and secret into the credential.
+3. Trim **Scope** to the APIs you use (the default asks for Sheets, Drive, Gmail, Calendar, Docs, `openid` and `email`),
+   then **Connect** and sign in. The dialog then says "Connected as you@…".
+
 ### OAuth2 with a refresh token
 
-Landflow has no in-app consent screen yet, so you mint a refresh token once and paste it:
+Without Connect (a headless host, or a token minted elsewhere), mint a refresh token once and paste it into **Refresh
+Token (without Connect)**; the plugin then refreshes access tokens itself:
 
 1. Cloud console → APIs & Services → **OAuth consent screen**: configure it (External + yourself as a test user is enough;
    test-mode refresh tokens expire after 7 days, publish the app to avoid that). Enable the five APIs as above.

@@ -1,0 +1,63 @@
+{
+  "_synthetic": "Handwritten for Landflow's importer tests in the shape of a Flowise chatflow export; not exported from a Flowise instance.",
+  "nodes": [
+    {
+      "id": "chatOpenAI_0",
+      "position": { "x": 400, "y": 120 },
+      "type": "customNode",
+      "data": {
+        "id": "chatOpenAI_0",
+        "label": "ChatOpenAI",
+        "name": "chatOpenAI",
+        "version": 8,
+        "type": "ChatOpenAI",
+        "category": "Chat Models",
+        "credential": "cred-openai-1",
+        "inputs": { "cache": "", "modelName": "gpt-4o-mini", "temperature": "0.4", "maxTokens": "800", "streaming": true, "basepath": "" }
+      }
+    },
+    {
+      "id": "bufferMemory_0",
+      "position": { "x": 400, "y": 640 },
+      "type": "customNode",
+      "data": { "id": "bufferMemory_0", "label": "Buffer Memory", "name": "bufferMemory", "version": 2, "type": "BufferMemory", "category": "Memory", "inputs": { "sessionId": "", "memoryKey": "chat_history" } }
+    },
+    {
+      "id": "conversationChain_0",
+      "position": { "x": 820, "y": 300 },
+      "type": "customNode",
+      "data": {
+        "id": "conversationChain_0",
+        "label": "Conversation Chain",
+        "name": "conversationChain",
+        "version": 3,
+        "type": "ConversationChain",
+        "category": "Chains",
+        "inputs": {
+          "model": "{{chatOpenAI_0.data.instance}}",
+          "memory": "{{bufferMemory_0.data.instance}}",
+          "chatPromptTemplate": "",
+          "systemMessagePrompt": "You are a friendly assistant for a bike shop. Answer in two sentences."
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "chatOpenAI_0",
+      "sourceHandle": "chatOpenAI_0-output-chatOpenAI-ChatOpenAI|BaseChatModel|BaseLanguageModel|Runnable",
+      "target": "conversationChain_0",
+      "targetHandle": "conversationChain_0-input-model-BaseChatModel",
+      "type": "buttonedge",
+      "id": "chatOpenAI_0-conversationChain_0"
+    },
+    {
+      "source": "bufferMemory_0",
+      "sourceHandle": "bufferMemory_0-output-bufferMemory-BufferMemory|BaseChatMemory|BaseMemory",
+      "target": "conversationChain_0",
+      "targetHandle": "conversationChain_0-input-memory-BaseMemory",
+      "type": "buttonedge",
+      "id": "bufferMemory_0-conversationChain_0"
+    }
+  ]
+}

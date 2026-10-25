@@ -3,19 +3,21 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 /**
- * n8n's "Editor | Executions" switch, centred in a workflow's top bar.
+ * n8n's "Editor | Executions | Evaluations" switch, centred in a workflow's top bar.
  * `beforeLeave` lets the editor save unsaved changes before switching.
  */
-export function WorkflowTabs({ workflowId, active, beforeLeave, className }: { workflowId: string; active: 'editor' | 'executions'; beforeLeave?: () => Promise<unknown>; className?: string }) {
+export type WorkflowTab = 'editor' | 'executions' | 'evaluations';
+
+export function WorkflowTabs({ workflowId, active, beforeLeave, className }: { workflowId: string; active: WorkflowTab; beforeLeave?: () => Promise<unknown>; className?: string }) {
   const router = useRouter();
-  const go = async (tab: 'editor' | 'executions') => {
+  const go = async (tab: WorkflowTab) => {
     if (tab === active) return;
     await beforeLeave?.();
-    router.push(tab === 'editor' ? `/workflows/${workflowId}` : `/workflows/${workflowId}/executions`);
+    router.push(tab === 'editor' ? `/workflows/${workflowId}` : `/workflows/${workflowId}/${tab}`);
   };
   return (
     <div role="tablist" className={cn('flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5', className)}>
-      {(['editor', 'executions'] as const).map((tab) => (
+      {(['editor', 'executions', 'evaluations'] as const).map((tab) => (
         <button
           key={tab}
           role="tab"

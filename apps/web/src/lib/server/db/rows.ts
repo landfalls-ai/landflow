@@ -64,10 +64,12 @@ export function summarize(record: ExecutionRecord): ExecutionSummary {
     ...(record.status === 'waiting' && record.wait && { wait: { nodeName: record.wait.nodeName, resume: record.wait.resume, ...(record.wait.until && { until: record.wait.until }) } }),
     ...(record.parentExecutionId && { parentExecutionId: record.parentExecutionId }),
     ...(record.versionId && { versionId: record.versionId }),
+    ...(record.versionNumber !== undefined && { versionNumber: record.versionNumber, versionPublished: record.versionPublished === true }),
     ...(record.retryOf && { retryOf: record.retryOf, retryAttempt: record.retryAttempt ?? 1 }),
     ...(record.retriedBy && { retriedBy: record.retriedBy }),
     ...(record.retryAt && { retryAt: record.retryAt }),
     ...(record.resumedAfterRestart && { resumedAfterRestart: true }),
+    ...(record.evaluation && { evaluation: { runId: record.evaluation.runId } }),
   };
 }
 
@@ -85,6 +87,7 @@ export function executionRow(record: ExecutionRecord): Row {
     parent_id: record.parentExecutionId,
     retry_of: record.retryOf,
     wait_until: record.status === 'waiting' ? record.wait?.until : undefined,
+    evaluation_run_id: record.evaluation?.runId,
     summary: JSON.stringify(summarize(record)),
     data: JSON.stringify(record),
   };

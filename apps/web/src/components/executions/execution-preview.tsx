@@ -43,6 +43,7 @@ import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
 import { ExecutionCanvas } from './execution-canvas';
 import { useExecutions } from './executions-shell';
 import { MODE_META, RERUN_LABEL, canRetry, deleteExecution, startRerun, startRetry, type RerunBody, type RetryBody } from './meta';
+import { AiUsageChip, BufferedChip } from './run-extras';
 
 const HEIGHT_KEY = 'landflow-logs-height';
 const COLLAPSED_KEY = 'landflow-logs-collapsed';
@@ -434,6 +435,14 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
               <span className="flex items-center gap-1 rounded-full border border-hair px-2 text-[12px] text-t2" title={mode.label}>
                 <ModeIcon className="size-3" /> {record.mode}
               </span>
+              {record.versionNumber !== undefined && (
+                <span
+                  className={cn('flex items-center gap-1 rounded-full border px-2 text-[12px]', record.versionPublished ? 'border-acbd text-ac' : 'border-hair text-t2')}
+                  title={record.versionPublished ? 'The published version when the run started (draft and publish)' : 'A draft: not the published version when the run started'}
+                >
+                  Ran version {record.versionNumber} ({record.versionPublished ? 'published' : 'draft'})
+                </span>
+              )}
               {record.debug && (
                 <span className="flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--viz-2)_14%,transparent)] px-2 text-[12px] text-viz-2">
                   <Bug className="size-3" /> debug run
@@ -483,6 +492,8 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                   <Power className="size-3" /> Resumed after restart
                 </span>
               )}
+              <BufferedChip buffered={record.buffered} />
+              <AiUsageChip usage={record.aiUsage} />
             </div>
           </div>
 

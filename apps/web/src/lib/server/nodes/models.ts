@@ -2,13 +2,19 @@
  * LanguageModel adapters supplied by the chat-model sub-nodes. Each adapter
  * maps the provider-neutral AgentMessage list onto its provider's wire format.
  * Every call is a `gen_ai.chat {model}` span (a child of the model sub-node's
- * span) and counts in the `landflow.ai.*` metrics.
+ * span) and counts in the `landflow.ai.*` metrics and the AI usage caps.
+ *
+ * Streaming: when generate() gets `onToken`, the adapter streams (Anthropic's
+ * messages stream, Ollama's NDJSON, OpenAI-compatible SSE with usage) and hands
+ * over each text delta as it arrives; the returned turn is the same either way.
+ * Files: user messages may carry attachments (./attachments), mapped per provider.
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { NodeOperationError, type JsonObject } from '@landflow/sdk';
-import type { AgentMessage, LanguageModel, ModelTurn, ToolCall, ToolSpec } from '@landflow/engine';
+import type { AgentMessage, LanguageModel, ModelAttachment, ModelTurn, ToolCall, ToolSpec } from '@landflow/engine';
 import type { Attributes } from '@opentelemetry/api';
 import { traceChat, traceEmbeddings } from '../telemetry';
+import { attachmentText, pdfAttachmentText } from './attachments';
 
 /**
  * The engine's generate() input. Root nodes that need structured output (chains,
@@ -50,9 +56,26 @@ function echoable(content: Anthropic.Beta.BetaContentBlock[]): Anthropic.Beta.Be
   }) as Anthropic.Beta.BetaContentBlockParam[];
 }
 
-function toAnthropicMessages(messages: AgentMessage[]): Anthropic.Beta.BetaMessageParam[] {
+/** A user message's files as Anthropic content blocks: images, PDFs (base64 documents) and text documents. */
+function anthropicAttachments(attachments: ModelAttachment[]): Anthropic.Beta.BetaContentBlockParam[] {
+  return attachments.map((file): Anthropic.Beta.BetaContentBlockParam => {
+    if (file.kind === 'image') {
+      return { type: 'image', source: { type: 'base64', media_type: file.mimeType as 'image/png', data: file.data } };
+    }
+    if (file.mimeType === 'application/pdf') {
+      return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: file.data }, ...(file.fileName && { title: file.fileName }) };
+    }
+    return { type: 'document', source: { type: 'text', media_type: 'text/plain', data: attachmentText(file) }, ...(file.fileName && { title: file.fileName }) };
+  });
+}
+
+export function toAnthropicMessages(messages: AgentMessage[]): Anthropic.Beta.BetaMessageParam[] {
   return messages.map((message): Anthropic.Beta.BetaMessageParam => {
-    if (message.role === 'user') return { role: 'user', content: message.content };
+    if (message.role === 'user') {
+      if (!message.attachments?.length) return { role: 'user', content: message.content };
+      // Files first, then the question (Anthropic's recommendation for documents).
+      return { role: 'user', content: [...anthropicAttachments(message.attachments), ...(message.content ? [{ type: 'text' as const, text: message.content }] : [])] };
+    }
     if (message.role === 'tool') {
       return {
         role: 'user',
@@ -102,27 +125,32 @@ export function anthropicModel(options: { model: string; effort: Effort; maxToke
     },
   };
 
-  async function call({ system, messages, tools, signal }: Parameters<LanguageModel['generate']>[0]): Promise<ProviderReply> {
+  async function call({ system, messages, tools, signal, onToken }: Parameters<LanguageModel['generate']>[0]): Promise<ProviderReply> {
     let response: Anthropic.Beta.BetaMessage;
+    const params = {
+      model: options.model,
+      max_tokens: options.maxTokens,
+      ...(system && { system }),
+      messages: toAnthropicMessages(messages),
+      ...(tools.length && {
+        tools: tools.map((tool: ToolSpec) => ({
+          name: tool.name,
+          description: tool.description,
+          input_schema: tool.inputSchema as Anthropic.Beta.BetaTool.InputSchema,
+        })),
+      }),
+      output_config: { effort: options.effort },
+      ...(useFallback && { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }),
+    };
     try {
-      response = await client.beta.messages.create(
-        {
-          model: options.model,
-          max_tokens: options.maxTokens,
-          ...(system && { system }),
-          messages: toAnthropicMessages(messages),
-          ...(tools.length && {
-            tools: tools.map((tool: ToolSpec) => ({
-              name: tool.name,
-              description: tool.description,
-              input_schema: tool.inputSchema as Anthropic.Beta.BetaTool.InputSchema,
-            })),
-          }),
-          output_config: { effort: options.effort },
-          ...(useFallback && { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }),
-        },
-        { signal },
-      );
+      if (onToken) {
+        // Streamed: text deltas go out as they arrive; finalMessage() is the same message create() returns.
+        const stream = client.beta.messages.stream(params as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming, { signal });
+        stream.on('text', (delta) => onToken(delta));
+        response = await stream.finalMessage();
+      } else {
+        response = await client.beta.messages.create(params as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming, { signal });
+      }
     } catch (error) {
       if (error instanceof Anthropic.AuthenticationError) {
         throw new NodeOperationError('Anthropic rejected the credentials', {
@@ -172,8 +200,83 @@ export function anthropicModel(options: { model: string; effort: Effort; maxToke
 interface OllamaMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** Base64 images for vision models (qwen3.8, llava, gemma3…). */
+  images?: string[];
   tool_calls?: Array<{ function: { name: string; arguments: Record<string, unknown> } }>;
   tool_name?: string;
+}
+
+interface OllamaReply {
+  model?: string;
+  message?: { content?: string; tool_calls?: Array<{ function: { name: string; arguments: Record<string, unknown> | string } }> };
+  done?: boolean;
+  done_reason?: string;
+  prompt_eval_count?: number;
+  eval_count?: number;
+  error?: string;
+}
+
+/** A user message for Ollama: images go in `images`; PDFs and text files are read and added to the text (Ollama has no document input). */
+export async function toOllamaUser(message: Extract<AgentMessage, { role: 'user' }>): Promise<OllamaMessage> {
+  const files = message.attachments ?? [];
+  const images = files.filter((file) => file.kind === 'image').map((file) => file.data);
+  const documents: string[] = [];
+  for (const file of files) {
+    if (file.kind !== 'document') continue;
+    const text = file.mimeType === 'application/pdf' ? await pdfAttachmentText(file) : attachmentText(file);
+    documents.push(`<document${file.fileName ? ` name="${file.fileName.replace(/"/g, "'")}"` : ''}>\n${text}\n</document>`);
+  }
+  return { role: 'user', content: [...documents, message.content].filter(Boolean).join('\n\n'), ...(images.length && { images }) };
+}
+
+/** Hides `<think>…</think>` from streamed text, even when a tag is split across deltas. */
+export function thinkFilter(): (delta: string) => string {
+  let inside = false;
+  let pending = '';
+  return (delta) => {
+    let text = pending + delta;
+    pending = '';
+    let out = '';
+    while (text) {
+      const tag = inside ? '</think>' : '<think>';
+      const at = text.indexOf(tag);
+      if (at >= 0) {
+        if (!inside) out += text.slice(0, at);
+        text = text.slice(at + tag.length);
+        inside = !inside;
+        continue;
+      }
+      // Hold back a tail that may be the start of the tag.
+      let keep = 0;
+      for (let n = Math.min(tag.length - 1, text.length); n > 0; n--) {
+        if (tag.startsWith(text.slice(-n))) {
+          keep = n;
+          break;
+        }
+      }
+      if (!inside) out += text.slice(0, text.length - keep);
+      pending = text.slice(text.length - keep);
+      text = '';
+    }
+    return out;
+  };
+}
+
+/** Lines of an NDJSON or SSE body, as they arrive. */
+export async function* readLines(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
+    buffer += decoder.decode(chunk, { stream: true });
+    let newline: number;
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline).replace(/\r$/, '');
+      buffer = buffer.slice(newline + 1);
+      yield line;
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer) yield buffer;
 }
 
 export function ollamaModel(options: { baseUrl: string; model: string; temperature?: number }): LanguageModel {
@@ -194,11 +297,11 @@ export function ollamaModel(options: { baseUrl: string; model: string; temperatu
     },
   };
 
-  async function call({ system, messages, tools, signal, responseFormat }: GenerateInput): Promise<ProviderReply> {
+  async function call({ system, messages, tools, signal, responseFormat, onToken }: GenerateInput): Promise<ProviderReply> {
     const wire: OllamaMessage[] = [];
     if (system) wire.push({ role: 'system', content: system });
     for (const message of messages) {
-      if (message.role === 'user') wire.push({ role: 'user', content: message.content });
+      if (message.role === 'user') wire.push(message.attachments?.length ? await toOllamaUser(message) : { role: 'user', content: message.content });
       else if (message.role === 'assistant') {
         wire.push({
           role: 'assistant',
@@ -219,7 +322,7 @@ export function ollamaModel(options: { baseUrl: string; model: string; temperatu
         body: JSON.stringify({
           model: options.model,
           messages: wire,
-          stream: false,
+          stream: Boolean(onToken),
           ...(tools.length && {
             tools: tools.map((tool) => ({
               type: 'function',
@@ -235,13 +338,30 @@ export function ollamaModel(options: { baseUrl: string; model: string; temperatu
       throw new NodeOperationError(`Cannot reach Ollama at ${base}`, { description: (error as Error).message });
     }
     if (!response.ok) throw new NodeOperationError(`Ollama error ${response.status}`, { description: await response.text() });
-    const data = (await response.json()) as {
-      model?: string;
-      message: { content?: string; tool_calls?: Array<{ function: { name: string; arguments: Record<string, unknown> | string } }> };
-      done_reason?: string;
-      prompt_eval_count?: number;
-      eval_count?: number;
-    };
+    let data: OllamaReply & { message: NonNullable<OllamaReply['message']> };
+    if (onToken && response.body) {
+      // NDJSON: one object per line with a content delta (and tool calls, in one of them); the last has done, the counts and the reason.
+      const visible = thinkFilter();
+      let content = '';
+      const toolCalls: NonNullable<OllamaReply['message']>['tool_calls'] = [];
+      let last: OllamaReply = {};
+      for await (const line of readLines(response.body)) {
+        if (!line.trim()) continue;
+        const part = JSON.parse(line) as OllamaReply;
+        if (part.error) throw new NodeOperationError('Ollama error', { description: part.error });
+        const delta = part.message?.content ?? '';
+        if (delta) {
+          content += delta;
+          const shown = visible(delta);
+          if (shown) onToken(shown);
+        }
+        if (part.message?.tool_calls?.length) toolCalls.push(...part.message.tool_calls);
+        last = part;
+      }
+      data = { ...last, message: { content, tool_calls: toolCalls } };
+    } else {
+      data = (await response.json()) as typeof data;
+    }
     const text = stripThinking(data.message.content ?? '');
     const toolCalls = (data.message.tool_calls ?? []).map((call, index) => ({
       id: `call_${Date.now().toString(36)}_${index}`,
@@ -393,8 +513,15 @@ export async function openAiModels(connection: OpenAiConnection, fetcher?: Fetch
   return (reply.data ?? []).filter((model) => typeof model?.id === 'string');
 }
 
+/** Parts of a user message with files: text, images (data URLs) and PDFs (`file` parts). */
+export type OpenAiContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+  | { type: 'file'; file: { filename: string; file_data: string } };
+
 export type OpenAiMessage =
-  | { role: 'system' | 'user'; content: string }
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string | OpenAiContentPart[] }
   | { role: 'assistant'; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> }
   | { role: 'tool'; tool_call_id: string; content: string };
 
@@ -428,10 +555,22 @@ export interface OpenAiChatResult {
   usage: { inputTokens: number; outputTokens: number };
 }
 
+/** A user message's files as OpenAI content parts. */
+export function openAiParts(text: string, attachments: ModelAttachment[]): OpenAiContentPart[] {
+  const parts: OpenAiContentPart[] = [];
+  for (const file of attachments) {
+    if (file.kind === 'image') parts.push({ type: 'image_url', image_url: { url: `data:${file.mimeType};base64,${file.data}` } });
+    else if (file.mimeType === 'application/pdf') parts.push({ type: 'file', file: { filename: file.fileName ?? 'document.pdf', file_data: `data:application/pdf;base64,${file.data}` } });
+    else parts.push({ type: 'text', text: `<document${file.fileName ? ` name="${file.fileName.replace(/"/g, "'")}"` : ''}>\n${attachmentText(file)}\n</document>` });
+  }
+  if (text) parts.push({ type: 'text', text });
+  return parts;
+}
+
 export function toOpenAiMessages(system: string | undefined, messages: AgentMessage[]): OpenAiMessage[] {
   const wire: OpenAiMessage[] = system ? [{ role: 'system', content: system }] : [];
   for (const message of messages) {
-    if (message.role === 'user') wire.push({ role: 'user', content: message.content });
+    if (message.role === 'user') wire.push({ role: 'user', content: message.attachments?.length ? openAiParts(message.content, message.attachments) : message.content });
     else if (message.role === 'tool') for (const result of message.results) wire.push({ role: 'tool', tool_call_id: result.id, content: result.content });
     else {
       wire.push({
@@ -451,7 +590,7 @@ export async function openAiChat(
   connection: OpenAiConnection,
   options: OpenAiChatOptions,
   messages: OpenAiMessage[],
-  extra: { tools?: ToolSpec[]; json?: boolean; signal?: AbortSignal } = {},
+  extra: { tools?: ToolSpec[]; json?: boolean; signal?: AbortSignal; onToken?: (delta: string) => void; fetcher?: Fetcher } = {},
 ): Promise<OpenAiChatResult> {
   const json = options.responseFormat === 'json_object' || extra.json;
   const maxTokens = options.maxTokens && options.maxTokens > 0 ? Math.round(options.maxTokens) : undefined;
@@ -470,11 +609,107 @@ export async function openAiChat(
     ...(options.temperature !== undefined && { 'gen_ai.request.temperature': options.temperature }),
     ...(maxTokens && { 'gen_ai.request.max_tokens': maxTokens }),
   };
+  const request = extra.onToken
+    ? () => openAiStream(connection, body, extra.onToken!, extra.signal, extra.fetcher)
+    : () => openAiRequest<ChatCompletion>(connection, '/chat/completions', { body, ...(extra.signal && { signal: extra.signal }), ...(extra.fetcher && { fetcher: extra.fetcher }) });
   return traceChat(
     { system: connection.system, model: options.model, attributes },
-    async () => parseCompletion(connection, await openAiRequest<ChatCompletion>(connection, '/chat/completions', { body, ...(extra.signal && { signal: extra.signal }) })),
+    async () => parseCompletion(connection, await request()),
     (result) => ({ responseModel: result.model, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, finishReasons: [result.finishReason] }),
   );
+}
+
+interface CompletionChunk {
+  model?: string;
+  choices?: Array<{
+    delta?: { content?: string | null; refusal?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> };
+    finish_reason?: string | null;
+  }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+  error?: { message?: string };
+}
+
+/**
+ * A streamed chat completion (`stream: true`, SSE), put back together as the completion create() returns:
+ * content deltas go to `onToken` as they arrive, tool call fragments are joined by index, and the usage
+ * comes from the last chunk (`stream_options.include_usage`; a server that rejects the option is asked again without it).
+ */
+async function openAiStream(connection: OpenAiConnection, body: Record<string, unknown>, onToken: (delta: string) => void, signal?: AbortSignal, fetcher: Fetcher = fetch): Promise<ChatCompletion> {
+  const timeout = AbortSignal.timeout(300_000);
+  const send = async (withUsage: boolean): Promise<Response> => {
+    let response: Response;
+    try {
+      response = await fetcher(`${connection.base}/chat/completions`, {
+        method: 'POST',
+        headers: { ...connection.headers, accept: 'text/event-stream' },
+        body: JSON.stringify({ ...body, stream: true, ...(withUsage && { stream_options: { include_usage: true } }) }),
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+      throw new NodeOperationError(`Cannot reach ${connection.label} at ${connection.base}`, { description: cause?.code ?? cause?.message ?? (error as Error).message });
+    }
+    if (response.ok) return response;
+    const text = await response.text();
+    if (withUsage && response.status === 400 && /stream_options|include_usage/i.test(text)) return send(false);
+    throw openAiError(connection, response.status, text);
+  };
+  const response = await send(true);
+  if (!response.body) throw new NodeOperationError(`${connection.label} sent an empty stream`);
+  const visible = thinkFilter();
+  let content = '';
+  let refusal = '';
+  let model: string | undefined;
+  let finish: string | null | undefined;
+  let usage: ChatCompletion['usage'];
+  const calls = new Map<number, { id?: string; name: string; arguments: string }>();
+  for await (const line of readLines(response.body)) {
+    if (!line.startsWith('data:')) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === '[DONE]') continue;
+    let chunk: CompletionChunk;
+    try {
+      chunk = JSON.parse(data) as CompletionChunk;
+    } catch {
+      continue;
+    }
+    if (chunk.error) throw new OpenAiApiError(`${connection.label}: ${chunk.error.message ?? 'stream error'}`, 500);
+    model ??= chunk.model;
+    if (chunk.usage) usage = { prompt_tokens: chunk.usage.prompt_tokens, completion_tokens: chunk.usage.completion_tokens };
+    const choice = chunk.choices?.[0];
+    if (!choice) continue;
+    const delta = choice.delta ?? {};
+    if (delta.content) {
+      content += delta.content;
+      const shown = visible(delta.content);
+      if (shown) onToken(shown);
+    }
+    if (delta.refusal) refusal += delta.refusal;
+    for (const fragment of delta.tool_calls ?? []) {
+      const index = fragment.index ?? 0;
+      const call = calls.get(index) ?? { name: '', arguments: '' };
+      if (fragment.id) call.id = fragment.id;
+      if (fragment.function?.name) call.name += fragment.function.name;
+      if (fragment.function?.arguments) call.arguments += fragment.function.arguments;
+      calls.set(index, call);
+    }
+    if (choice.finish_reason) finish = choice.finish_reason;
+  }
+  return {
+    ...(model && { model }),
+    choices: [
+      {
+        message: {
+          content,
+          ...(refusal && { refusal }),
+          ...(calls.size && { tool_calls: [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => ({ ...(call.id && { id: call.id }), function: { name: call.name, arguments: call.arguments } })) }),
+        },
+        finish_reason: finish ?? null,
+      },
+    ],
+    ...(usage && { usage }),
+  };
 }
 
 function parseCompletion(connection: OpenAiConnection, completion: ChatCompletion): OpenAiChatResult {
@@ -507,8 +742,8 @@ export function openAiModel(connection: OpenAiConnection, options: OpenAiChatOpt
   return {
     provider: connection.system,
     model: options.model,
-    async generate({ system, messages, tools, signal, responseFormat }: GenerateInput): Promise<ModelTurn> {
-      const result = await openAiChat(connection, options, toOpenAiMessages(system, messages), { tools, json: responseFormat === 'json', ...(signal && { signal }) });
+    async generate({ system, messages, tools, signal, responseFormat, onToken }: GenerateInput): Promise<ModelTurn> {
+      const result = await openAiChat(connection, options, toOpenAiMessages(system, messages), { tools, json: responseFormat === 'json', ...(signal && { signal }), ...(onToken && { onToken }) });
       if (result.refusal) return { text: result.refusal, toolCalls: [], stopReason: 'refusal', usage: result.usage };
       return { text: result.text, toolCalls: result.toolCalls, stopReason: result.finishReason, usage: result.usage };
     },

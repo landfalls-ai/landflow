@@ -196,6 +196,45 @@ class NewIssues(Node):
   is passed back unchanged; a failed poll returns no state, so the host retries from the same point.
 - `poll_interval_property(default_seconds=60)` is the `pollInterval` number property (minimum 10 s).
 
+## App webhook triggers
+
+A node with `"triggerSource": "appWebhook"` registers a webhook at the service when its workflow is published and
+removes it when it is unpublished ([protocol §12](../../docs/protocol.md#12-app-webhook-triggers)). It implements
+`webhook_create`, `webhook_delete` and `webhook`, and optionally `webhook_check_exists` (without it the host always
+calls `webhook_create`). The productivity plugin's GitHub Webhook Trigger is a complete example.
+
+```python
+from landflow_sdk import Node, verify_github_signature
+
+class RepoEvents(Node):
+    description = {"name": "repoEvents", "displayName": "Repo Events", "version": 1, "kind": "trigger",
+                   "triggerSource": "appWebhook", "inputs": [], "outputs": [{"type": "main"}], "properties": []}
+
+    def webhook_create(self, ctx):
+        secret = secrets.token_hex(32)
+        hook = create_hook(ctx, ctx.get_webhook_url(), secret)
+        ctx.set_static_data({"webhookId": hook["id"], "webhookSecret": secret})
+
+    def webhook_delete(self, ctx):
+        delete_hook(ctx, ctx.get_static_data().get("webhookId"))  # a hook that is already gone is fine
+        ctx.set_static_data({})
+
+    def webhook(self, ctx):
+        secret = ctx.get_static_data().get("webhookSecret", "")
+        if not verify_github_signature(secret, ctx.get_raw_body(), ctx.get_header("x-hub-signature-256")):
+            return {"response": {"status": 401}}
+        return {"items": [{"json": ctx.get_body()}], "idempotencyKey": ctx.get_header("x-github-delivery")}
+
+    def execute(self, ctx):
+        return [[]]  # a manual run has no event to show
+```
+
+`ctx.get_static_data()` is what the host keeps for this workflow and node (change it in place or call
+`set_static_data`); it is sent back only when it changed. A result without `items` starts no run. Signature helpers,
+all constant-time: `verify_github_signature`, `verify_stripe_signature(secret, body, header, tolerance_seconds=300)`,
+`verify_slack_signature(secret, body, timestamp, signature)`, `verify_hmac_sha256(secret, payload, signature,
+prefix=..., encoding=...)`, `safe_equal`, and `github_signature` / `stripe_signature` / `slack_signature` for tests.
+
 ## Observability
 
 Spans, metrics and logs follow [docs/observability.md](../../docs/observability.md); the same names

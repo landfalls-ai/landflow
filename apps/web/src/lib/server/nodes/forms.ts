@@ -7,6 +7,7 @@
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem, type PropertyDescriptor } from '@landflow/sdk';
 import type { FormCompletion } from '../../shared/types';
 import { formFieldsOf, normalizePath, type FormPage } from '../forms';
+import { authenticationProperty, ipWhitelistOption, webhookAuthCredentials } from './webhook-auth';
 
 const main = [{ type: 'main' as const }];
 
@@ -79,10 +80,12 @@ export const formTrigger = defineNode({
     color: '#f97316',
     subtitle: '/form/{{path}}',
     keywords: ['form', 'survey', 'submission', 'page'],
+    credentials: webhookAuthCredentials,
     inputs: [],
     outputs: main,
     properties: [
       { name: 'path', displayName: 'Form Path', type: 'string', default: 'my-form', required: true, noDataExpression: true, description: 'The form is served at /form/<path>' },
+      authenticationProperty(),
       { name: 'formTitle', displayName: 'Form Title', type: 'string', default: 'Contact us', required: true, noDataExpression: true },
       { name: 'formDescription', displayName: 'Form Description', type: 'string', default: '', typeOptions: { rows: 2 }, noDataExpression: true, description: 'Shown under the title' },
       formFieldsProperty,
@@ -106,11 +109,12 @@ export const formTrigger = defineNode({
         values: [
           { name: 'buttonLabel', displayName: 'Button Label', type: 'string', default: 'Submit' },
           { name: 'formSubmittedText', displayName: 'Form Submitted Text', type: 'string', default: 'Your response has been recorded', description: 'The end screen, unless a Form node sets one' },
+          ipWhitelistOption,
         ],
       },
       {
         name: 'notice',
-        displayName: 'Activate the workflow to serve the form. Each submission is an item { <field>: value, submittedAt, formMode }; add Form nodes for more pages.',
+        displayName: 'Publish the workflow to serve the form (it serves the published version). Each submission is an item { <field>: value, submittedAt, formMode }; add Form nodes for more pages.',
         type: 'notice',
       },
     ],

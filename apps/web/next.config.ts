@@ -21,6 +21,9 @@ const nextConfig: NextConfig = {
     // Binary data: pdf.js (PDF text) loads its worker code dynamically; the S3 client is only loaded when configured.
     'unpdf',
     '@aws-sdk/client-s3',
+    // Email Trigger (IMAP): socket clients with lazily required codecs.
+    'imapflow',
+    'mailparser',
   ],
   devIndicators: false,
   // Docker image (deploy/docker/host.Dockerfile): a self-contained server in .next/standalone.

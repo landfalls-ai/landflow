@@ -1,6 +1,7 @@
 /**
- * Hosted forms of Form Triggers: GET /form/<path> shows the form of the active workflow whose
- * On Form Submission trigger has that path; POST submits it and starts a run with
+ * Hosted forms of Form Triggers: GET /form/<path> shows the form of the published workflow (its published version,
+ * lib/server/publish.ts) whose On Form Submission trigger has that path, once the trigger's Authentication (Basic
+ * Auth prompts the browser; Header and JWT Auth suit API clients) and IP allow-list let the caller in; POST submits it and starts a run with
  * `{ <field>: value, submittedAt, formMode }`. The answer follows the trigger's "Respond When":
  * the end screen right away, or once the run finishes, shows a Form node's ending, or waits on its
  * next page (a redirect to /form/waiting/<executionId>). File fields arrive as `item.binary.<field>` (413 past
@@ -11,6 +12,7 @@
  */
 import { context } from '@opentelemetry/api';
 import type { BinaryRef } from '@landflow/protocol';
+import type { WorkflowNode } from '@landflow/engine';
 import { binaryLimits, deleteExecutionBinary } from '@/lib/server/binary/access';
 import { BinaryTooLargeError } from '@/lib/server/binary/store';
 import {
@@ -30,6 +32,7 @@ import { handler } from '@/lib/server/http';
 import { findIdempotent, idempotencyKeyOf } from '@/lib/server/idempotency';
 import { DuplicateRunError, newExecutionId, runWorkflow, RunSkippedError, type RunReply } from '@/lib/server/runner';
 import { startTrigger } from '@/lib/server/telemetry';
+import { checkWebhookAuth } from '@/lib/server/webhook-auth';
 import { deferred } from '@/lib/server/webhooks';
 
 export const dynamic = 'force-dynamic';
@@ -38,12 +41,26 @@ type Ctx = { params: Promise<{ path: string[] }> };
 const tooLarge = (limit: number) =>
   messagePage({ title: 'File too large', message: `Uploads can be up to ${Math.floor(limit / (1024 * 1024))} MiB.`, status: 413 });
 
-const notFound = () => messagePage({ title: 'Form not found', message: 'This form doesn’t exist, or its workflow isn’t active.', status: 404 });
+const notFound = () => messagePage({ title: 'Form not found', message: 'This form doesn’t exist, or its workflow isn’t published.', status: 404 });
 
-export const GET = handler(async (_request: Request, { params }: Ctx) => {
+/** The trigger's authentication and IP allow-list (lib/server/webhook-auth.ts), refused calls as an HTML page. */
+async function refused(request: Request, node: WorkflowNode): Promise<Response | undefined> {
+  const auth = await checkWebhookAuth(request, node, 'Form Trigger', 'Form');
+  if (auth.ok) return undefined;
+  const { status } = auth.response;
+  const message = status === 403 ? 'You are not allowed to open this form.' : status === 401 ? 'Sign in to open this form.' : 'This form is not set up correctly.';
+  const page = messagePage({ title: status === 403 ? 'Access denied' : status === 401 ? 'Sign-in required' : 'Form unavailable', message, status });
+  const challenge = auth.response.headers.get('www-authenticate');
+  if (challenge) page.headers.set('www-authenticate', challenge);
+  return page;
+}
+
+export const GET = handler(async (request: Request, { params }: Ctx) => {
   const path = normalizePath((await params).path.join('/'));
   const found = findFormTrigger(path);
   if (!found) return notFound();
+  const denied = await refused(request, found.node);
+  if (denied) return denied;
   return formPage(triggerPage(found.node), { action: `/form/${path}` });
 });
 
@@ -52,6 +69,8 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const found = findFormTrigger(path);
   if (!found) return notFound();
   const { workflow, node } = found;
+  const denied = await refused(request, node);
+  if (denied) return denied;
   const page = triggerPage(node);
   const { maxBytes } = binaryLimits();
   if (Number(request.headers.get('content-length')) > maxBytes) return tooLarge(maxBytes);

@@ -4,12 +4,15 @@
  * days — runs, failures, failure rate, time saved and run time against the
  * period before, runs per hour or day, and a row per workflow. Manual runs
  * (editor and chat tests) are left out unless "Include manual runs" is on.
+ * The estimated AI cost of the workflows' model calls (/api/insights/ai-usage)
+ * comes alongside, test runs included.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { InsightsPeriod, InsightsReport, InsightsTotals } from '@/lib/shared/platform';
+import { EMPTY_USAGE, formatCost, formatTokens, type AiUsageReport, type AiUsageTotals } from '@/lib/shared/ai-usage';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SectionLabel, Switch } from '@/components/ui/inputs';
@@ -17,11 +20,42 @@ import { change, formatMinutes, formatRate, formatRunTime } from '@/components/i
 import { FAILED_COLOR, RunsChart, SUCCEEDED_COLOR } from '@/components/insights/runs-chart';
 import { WorkflowTable } from '@/components/insights/workflow-table';
 
-const PERIODS: { value: InsightsPeriod; label: string; previous: string }[] = [
-  { value: '24h', label: '24 hours', previous: 'previous 24 hours' },
-  { value: '7d', label: '7 days', previous: 'previous 7 days' },
-  { value: '30d', label: '30 days', previous: 'previous 30 days' },
+const PERIODS: { value: InsightsPeriod; label: string; previous: string; days: number }[] = [
+  { value: '24h', label: '24 hours', previous: 'previous 24 hours', days: 1 },
+  { value: '7d', label: '7 days', previous: 'previous 7 days', days: 7 },
+  { value: '30d', label: '30 days', previous: 'previous 30 days', days: 30 },
 ];
+
+/** The workflows' AI usage in the period: per workflow, and summed. */
+interface PeriodUsage {
+  period: InsightsPeriod;
+  byWorkflow: Record<string, AiUsageTotals>;
+  total: AiUsageTotals;
+}
+
+function CostKpi({ usage, index }: { usage?: PeriodUsage; index: number }) {
+  if (!usage) {
+    return (
+      <Card>
+        <SectionLabel>AI cost (est.)</SectionLabel>
+        <div className="mt-2 h-[26px] w-20 rounded bg-acdim animate-pulse-soft" />
+        <div className="mt-2 h-3 w-28 rounded bg-acdim animate-pulse-soft" />
+      </Card>
+    );
+  }
+  const { total } = usage;
+  return (
+    <Card className="animate-fade-up" style={{ animationDelay: `${index * 50}ms` }}>
+      <SectionLabel>AI cost (est.)</SectionLabel>
+      <div className="mt-1.5 text-[26px] font-semibold leading-none tabular-nums text-t1" title="Estimated from the price table in Settings → AI prices; test runs included">
+        {formatCost(total.cost)}
+      </div>
+      <div className="mt-2 truncate text-[12px] text-t3" title={`${total.inputTokens.toLocaleString()} input + ${total.outputTokens.toLocaleString()} output tokens`}>
+        {formatTokens(total.inputTokens + total.outputTokens)} tokens · {total.calls.toLocaleString()} model call{total.calls === 1 ? '' : 's'}
+      </div>
+    </Card>
+  );
+}
 
 type Metric = 'runs' | 'failed' | 'failureRate' | 'timeSavedMinutes' | 'avgDurationMs';
 
@@ -57,6 +91,7 @@ export default function InsightsPage() {
   const [includeManual, setIncludeManual] = useState(false);
   const [report, setReport] = useState<InsightsReport>();
   const [error, setError] = useState<string>();
+  const [usage, setUsage] = useState<PeriodUsage>();
 
   const load = useCallback(() => {
     api<InsightsReport>(`/api/insights?period=${period}&includeManual=${includeManual}`)
@@ -71,8 +106,28 @@ export default function InsightsPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const days = PERIODS.find((p) => p.value === period)!.days;
+    api<AiUsageReport>(`/api/insights/ai-usage?group=workflow&days=${days}`)
+      .then((r) => {
+        const byWorkflow: Record<string, AiUsageTotals> = {};
+        const total = { ...EMPTY_USAGE };
+        for (const { workflowId, ...totals } of r.workflows ?? []) {
+          byWorkflow[workflowId] = totals;
+          total.inputTokens += totals.inputTokens;
+          total.outputTokens += totals.outputTokens;
+          total.cost += totals.cost;
+          total.calls += totals.calls;
+        }
+        setUsage({ period, byWorkflow, total });
+      })
+      // Usage is extra: the page works without it.
+      .catch(() => setUsage({ period, byWorkflow: {}, total: { ...EMPTY_USAGE } }));
+  }, [period]);
+
   const meta = PERIODS.find((p) => p.value === period)!;
   const shown = report?.period === period && report.includeManual === includeManual ? report : undefined;
+  const shownUsage = usage?.period === period ? usage : undefined;
   const noTimeSaved = shown && shown.workflows.length > 0 && shown.workflows.every((w) => w.minutesSavedPerRun === undefined);
 
   return (
@@ -108,7 +163,7 @@ export default function InsightsPage() {
       <PageBody className="flex max-w-[1240px] flex-col gap-4">
         {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
 
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           {KPIS.map((kpi, index) =>
             shown ? (
               <Kpi key={`${kpi.metric}-${period}-${includeManual}`} label={kpi.label} value={kpi.format(shown.current)} metric={kpi.metric} report={shown} index={index} previousLabel={meta.previous} />
@@ -120,6 +175,7 @@ export default function InsightsPage() {
               </Card>
             ),
           )}
+          <CostKpi key={`cost-${period}`} usage={shownUsage} index={KPIS.length} />
         </div>
 
         <Card className="px-4 pb-3 pt-3.5">
@@ -142,7 +198,7 @@ export default function InsightsPage() {
             <SectionLabel>By workflow</SectionLabel>
             {noTimeSaved && <span className="truncate text-[12px] text-t3">Set how many minutes a run saves to see time saved.</span>}
           </div>
-          {shown && shown.workflows.length > 0 && <WorkflowTable rows={shown.workflows} onChanged={load} />}
+          {shown && shown.workflows.length > 0 && <WorkflowTable rows={shown.workflows} usage={shownUsage?.byWorkflow} onChanged={load} />}
           {shown && !shown.workflows.length && (
             <EmptyState
               compact
@@ -155,7 +211,8 @@ export default function InsightsPage() {
 
         <p className="text-[12px] leading-relaxed text-t3">
           Insights are counted as runs finish and kept for 400 days, apart from execution history, so pruning executions doesn’t change them. Time saved is the
-          successful runs times the minutes a run saves, which you set per workflow above.
+          successful runs times the minutes a run saves, which you set per workflow above. AI cost is estimated per model call from the price table in Settings → AI
+          prices (local models such as Ollama cost nothing unless priced there) and includes test runs.
         </p>
       </PageBody>
     </>

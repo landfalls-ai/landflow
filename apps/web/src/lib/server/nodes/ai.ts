@@ -1,6 +1,8 @@
 import vm from 'node:vm';
-import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { toToolName, type AgentMemory, type AgentMessage, type AgentTool, type ToolResult } from '@landflow/engine';
+import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
+import { toToolName, type AgentMemory, type AgentMessage, type AgentTool, type ToolCall, type ToolResult } from '@landflow/engine';
+import { approvalBlocks, postMessage, SLACK_CREDENTIAL, slackCredential } from '../slack';
+import { BINARY_INPUT_OPTIONS, optionalAttachments, withoutAttachmentData } from './attachments';
 import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY, isFallbackModel } from './fallback';
 import { anthropicModel, ollamaModel } from './models';
 
@@ -31,6 +33,8 @@ export const aiAgentNode = defineNode({
       { type: 'ai_tool', displayName: 'Tool' },
     ],
     outputs: main,
+    // Posting approval requests to Slack (the messaging plugin's credential).
+    credentials: [{ name: SLACK_CREDENTIAL, required: true, displayOptions: { show: { approvalChannel: ['slack'] } } }],
     properties: [
       {
         name: 'prompt',
@@ -49,6 +53,68 @@ export const aiAgentNode = defineNode({
       },
       FALLBACK_PROPERTY,
       {
+        name: 'requireApproval',
+        displayName: 'Tools Requiring Approval',
+        type: 'options',
+        default: 'none',
+        noDataExpression: true,
+        options: [
+          { name: 'None', value: 'none' },
+          { name: 'All Tools', value: 'all', description: 'Every tool call waits for a person' },
+          { name: 'Selected Tools', value: 'selected' },
+        ],
+        description: 'The execution waits until a person approves or rejects the call, in the chat panel or in Slack',
+      },
+      {
+        name: 'approvalTools',
+        displayName: 'Tool Names',
+        type: 'string',
+        default: '',
+        placeholder: 'e.g. Send Email, Delete Row',
+        description: 'Names of the tool nodes that need approval, comma-separated',
+        displayOptions: { show: { requireApproval: ['selected'] } },
+      },
+      {
+        name: 'approvalChannel',
+        displayName: 'Ask In',
+        type: 'options',
+        default: 'chat',
+        noDataExpression: true,
+        options: [
+          { name: 'Chat / Execution View', value: 'chat', description: 'Approve or Reject buttons in the editor’s chat panel and the waiting execution' },
+          { name: 'Slack', value: 'slack', description: 'A message with Approve and Reject buttons (needs the app’s Interactivity URL)' },
+        ],
+        displayOptions: { hide: { requireApproval: ['none'] } },
+      },
+      {
+        name: 'slackChannel',
+        displayName: 'Slack Channel',
+        type: 'string',
+        default: '',
+        required: true,
+        placeholder: 'C0123456789',
+        description: 'Channel ID (or a member ID for a DM) to post approval requests in',
+        displayOptions: { show: { approvalChannel: ['slack'] }, hide: { requireApproval: ['none'] } },
+      },
+      {
+        name: 'slackApprovers',
+        displayName: 'Approvers',
+        type: 'string',
+        default: '',
+        placeholder: 'U0123ABCD, U0456EFGH',
+        description: 'Slack member IDs allowed to decide, comma-separated. Empty: anyone who can see the message.',
+        displayOptions: { show: { approvalChannel: ['slack'] }, hide: { requireApproval: ['none'] } },
+      },
+      {
+        name: 'approvalTimeoutMinutes',
+        displayName: 'Approval Timeout (Minutes)',
+        type: 'number',
+        default: 0,
+        typeOptions: { minValue: 0 },
+        description: 'Reject the waiting calls after this long. 0: wait until someone decides.',
+        displayOptions: { hide: { requireApproval: ['none'] } },
+      },
+      {
         name: 'options',
         displayName: 'Options',
         type: 'collection',
@@ -58,6 +124,7 @@ export const aiAgentNode = defineNode({
           { name: 'maxIterations', displayName: 'Max Iterations', type: 'number', default: 8, typeOptions: { minValue: 1, maxValue: 30 } },
           { name: 'sessionId', displayName: 'Session Key', type: 'string', default: '{{ $json.sessionId }}', description: 'Memory is kept per session key' },
           { name: 'returnIntermediateSteps', displayName: 'Return Intermediate Steps', type: 'boolean', default: true },
+          ...BINARY_INPUT_OPTIONS,
         ],
       },
     ],
@@ -70,65 +137,134 @@ export const aiAgentNode = defineNode({
     const tools = dedupe(await connection<AgentTool>('ai_tool'));
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
-    const out: NodeItem[] = [];
-    for (const [i] of ctx.getInputData().entries()) {
+    // Back after a tool approval (WaitRequest.rerun): the loop continues where it stopped.
+    const saved = ctx.getNodeState?.() as AgentNodeState | undefined;
+    ctx.setNodeState?.(undefined);
+    const progress = saved?.progress;
+    const resume = saved?.$resume;
+    const out: NodeItem[] = progress?.out ?? [];
+    const send = ctx.sendChunk;
+
+    for (let i = progress?.item ?? 0; i < ctx.getInputData().length; i++) {
       const prompt = String(ctx.getNodeParameter('prompt', i) ?? '').trim();
-      if (!prompt) throw new NodeOperationError('The prompt is empty', { itemIndex: i, description: 'Send a chat message or set “Prompt”.' });
-      const options = ctx.getNodeParameter<{ maxIterations?: number; sessionId?: string; returnIntermediateSteps?: boolean }>('options', i) ?? {};
-      const sessionId = options.sessionId || 'default';
+      const options = ctx.getNodeParameter<AgentOptions>('options', i) ?? {};
       const maxIterations = Math.min(30, Math.max(1, Number(options.maxIterations ?? 8)));
       const system = String(ctx.getNodeParameter('systemMessage', i) ?? '');
+      const approval = approvalSettings(ctx, i);
+      const continuing = progress && progress.item === i ? progress : undefined;
 
-      const history = memory ? await memory.load(sessionId) : [];
-      const messages: AgentMessage[] = [...history, { role: 'user', content: prompt }];
-      const steps: Array<{ tool: string; input: unknown; output: unknown; isError?: boolean }> = [];
+      let run: ItemRun;
+      if (continuing) {
+        run = { messages: continuing.messages, steps: continuing.steps, iterations: continuing.iterations, usage: continuing.usage, sessionId: continuing.sessionId, historyLength: continuing.historyLength };
+      } else {
+        if (!prompt) throw new NodeOperationError('The prompt is empty', { itemIndex: i, description: 'Send a chat message or set “Prompt”.' });
+        const sessionId = options.sessionId || 'default';
+        const history = memory ? await memory.load(sessionId) : [];
+        const attachments = await optionalAttachments(ctx, i, options);
+        run = {
+          messages: [...history, { role: 'user', content: prompt, ...(attachments && { attachments }) }],
+          steps: [],
+          iterations: 0,
+          usage: { inputTokens: 0, outputTokens: 0 },
+          sessionId,
+          historyLength: history.length,
+        };
+      }
+      send?.({ type: 'begin', itemIndex: i });
+      /** Some text went out; after tool calls, the next turn's text starts a new paragraph. */
+      let streamedText = false;
+      let newParagraph = false;
+
+      const invoke = async (call: ToolCall): Promise<ToolResult> => {
+        const tool = byName.get(call.name);
+        if (!tool) return { id: call.id, name: call.name, content: `Unknown tool "${call.name}"`, isError: true };
+        send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'started', input: call.input as JsonObject } });
+        try {
+          const output = await tool.invoke(call.input);
+          run.steps.push({ tool: call.name, input: call.input, output });
+          const content = typeof output === 'string' ? output : JSON.stringify(output);
+          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'finished', output: content.slice(0, 2_000) } });
+          return { id: call.id, name: call.name, content };
+        } catch (error) {
+          const message = (error as Error).message;
+          run.steps.push({ tool: call.name, input: call.input, output: message, isError: true });
+          ctx.logger.warn(`tool ${call.name} failed: ${message}`);
+          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'failed', output: message.slice(0, 2_000) } });
+          return { id: call.id, name: call.name, content: `Error: ${message}`, isError: true };
+        }
+      };
+
+      // Settle the calls that waited: run what was approved, refuse the rest, hand the whole turn's results back.
+      if (continuing) {
+        const decisions = decisionsOf(resume);
+        const settled = await Promise.all(
+          continuing.pending.calls.map(async (call): Promise<ToolResult> => {
+            const decision = decisions[call.id];
+            if (decision?.approved) return invoke(call);
+            const reason = decision ? `rejected${decision.by ? ` by ${decision.by}` : ''}` : resume?.kind === 'timeout' ? 'not approved in time' : 'not approved';
+            run.steps.push({ tool: call.name, input: call.input, output: `Not run: ${reason}`, isError: true });
+            send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'failed', output: `Not run: ${reason}` } });
+            const content = decision ? `A person rejected this call to ${call.name}; it did not run.` : `This call to ${call.name} was ${reason}; it did not run.`;
+            return { id: call.id, name: call.name, content: `${content} Don't retry it now: tell the user.`, isError: true };
+          }),
+        );
+        const order = continuing.pending.calls.map((c) => c.id);
+        const results = [...continuing.pending.results, ...settled];
+        const turnOrder = lastToolCallIds(run.messages);
+        run.messages.push({ role: 'tool', results: results.sort((a, b) => (turnOrder.indexOf(a.id) >= 0 ? turnOrder.indexOf(a.id) : order.indexOf(a.id)) - (turnOrder.indexOf(b.id) >= 0 ? turnOrder.indexOf(b.id) : order.indexOf(b.id))) });
+      }
+
       let answer: string | undefined;
-      let iterations = 0;
-      const usage = { inputTokens: 0, outputTokens: 0 };
-
-      while (iterations < maxIterations) {
-        iterations++;
-        const turn = await model.generate({ system, messages, tools });
-        usage.inputTokens += turn.usage?.inputTokens ?? 0;
-        usage.outputTokens += turn.usage?.outputTokens ?? 0;
-        messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls, ...(turn.raw && { raw: turn.raw }) });
+      while (run.iterations < maxIterations) {
+        run.iterations++;
+        const onToken = send
+          ? (delta: string) => {
+              if (newParagraph) send({ type: 'item', itemIndex: i, content: '\n\n' });
+              newParagraph = false;
+              streamedText = true;
+              send({ type: 'item', itemIndex: i, content: delta });
+            }
+          : undefined;
+        const turn = await model.generate({ system, messages: run.messages, tools, ...(onToken && { onToken }) });
+        run.usage.inputTokens += turn.usage?.inputTokens ?? 0;
+        run.usage.outputTokens += turn.usage?.outputTokens ?? 0;
+        run.messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls, ...(turn.raw && { raw: turn.raw }) });
         if (!turn.toolCalls.length) {
           answer = turn.text;
           break;
         }
+        const waiting = turn.toolCalls.filter((call) => byName.has(call.name) && approval.needs(call.name));
+        const runnable = turn.toolCalls.filter((call) => !waiting.includes(call));
         // Run the turn's tool calls concurrently; all results go back in one message.
-        const results = await Promise.all(
-          turn.toolCalls.map(async (call): Promise<ToolResult> => {
-            const tool = byName.get(call.name);
-            if (!tool) return { id: call.id, name: call.name, content: `Unknown tool "${call.name}"`, isError: true };
-            try {
-              const output = await tool.invoke(call.input);
-              steps.push({ tool: call.name, input: call.input, output });
-              return { id: call.id, name: call.name, content: typeof output === 'string' ? output : JSON.stringify(output) };
-            } catch (error) {
-              const message = (error as Error).message;
-              steps.push({ tool: call.name, input: call.input, output: message, isError: true });
-              ctx.logger.warn(`tool ${call.name} failed: ${message}`);
-              return { id: call.id, name: call.name, content: `Error: ${message}`, isError: true };
-            }
-          }),
-        );
-        messages.push({ role: 'tool', results });
+        const results = await Promise.all(runnable.map(invoke));
+        if (waiting.length) {
+          await askForApproval(ctx, i, approval, waiting);
+          for (const call of waiting) send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'approval', input: call.input as JsonObject } });
+          send?.({ type: 'end', itemIndex: i });
+          ctx.setNodeState?.({
+            progress: { item: i, out, ...run, pending: { calls: waiting, results } },
+          } as unknown as JsonObject);
+          return [[]];
+        }
+        messagesPushTool(run.messages, results, turn.toolCalls);
+        newParagraph = streamedText;
       }
 
       if (answer === undefined) answer = `Stopped after ${maxIterations} iterations without a final answer.`;
-      if (memory) await memory.save(sessionId, messages);
+      send?.({ type: 'end', itemIndex: i });
+      // Memory keeps the files' names, not their bytes.
+      if (memory) await memory.save(run.sessionId, run.messages.map((m, index) => (index >= run.historyLength && m.role === 'user' ? withoutAttachmentData(m) : m)));
       const used = isFallbackModel(model) ? model.lastModel : `${model.provider}/${model.model}`;
-      ctx.logger.info(`${used}: ${iterations} iteration(s), ${steps.length} tool call(s)`);
+      ctx.logger.info(`${used}: ${run.iterations} iteration(s), ${run.steps.length} tool call(s)`);
       out.push({
         json: {
           output: answer,
-          sessionId,
+          sessionId: run.sessionId,
           model: used,
           ...(isFallbackModel(model) && model.fallbacks > 0 && { fallbackUsed: true }),
-          iterations,
-          usage,
-          ...(options.returnIntermediateSteps !== false ? { steps: steps as never } : {}),
+          iterations: run.iterations,
+          usage: run.usage,
+          ...(options.returnIntermediateSteps !== false ? { steps: run.steps as never } : {}),
         } as unknown as JsonObject,
         pairedItem: { item: i },
       });
@@ -136,6 +272,128 @@ export const aiAgentNode = defineNode({
     return [out];
   },
 });
+
+interface AgentOptions {
+  maxIterations?: number;
+  sessionId?: string;
+  returnIntermediateSteps?: boolean;
+  passthroughBinaryImages?: boolean;
+  binaryPropertyNames?: string;
+}
+
+type Step = { tool: string; input: unknown; output: unknown; isError?: boolean };
+
+interface ItemRun {
+  messages: AgentMessage[];
+  steps: Step[];
+  iterations: number;
+  usage: { inputTokens: number; outputTokens: number };
+  sessionId: string;
+  /** Messages before this run's prompt (loaded from memory). */
+  historyLength: number;
+}
+
+/** Kept in node state while the execution waits for an approval. */
+interface AgentNodeState {
+  progress?: ItemRun & { item: number; out: NodeItem[]; pending: { calls: ToolCall[]; results: ToolResult[] } };
+  $resume?: { kind: string; data?: JsonObject; error?: string };
+}
+
+/** A person's decisions, from the approval route (`{ decisions: { [callId]: { approved, by } } }`). */
+function decisionsOf(resume: AgentNodeState['$resume']): Record<string, { approved: boolean; by?: string }> {
+  const data = resume?.data as { decisions?: unknown; body?: { decisions?: unknown } } | undefined;
+  const raw = (data?.decisions ?? data?.body?.decisions) as Record<string, unknown> | undefined;
+  const decisions: Record<string, { approved: boolean; by?: string }> = {};
+  for (const [id, value] of Object.entries(raw ?? {})) {
+    if (typeof value === 'boolean') decisions[id] = { approved: value };
+    else if (value && typeof value === 'object') decisions[id] = { approved: Boolean((value as { approved?: unknown }).approved), ...(typeof (value as { by?: unknown }).by === 'string' && { by: (value as { by: string }).by }) };
+  }
+  return decisions;
+}
+
+const lastToolCallIds = (messages: AgentMessage[]) => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role === 'assistant') return message.toolCalls.map((c) => c.id);
+  }
+  return [];
+};
+
+function messagesPushTool(messages: AgentMessage[], results: ToolResult[], calls: ToolCall[]) {
+  const order = calls.map((c) => c.id);
+  messages.push({ role: 'tool', results: results.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)) });
+}
+
+interface ApprovalSettings {
+  needs: (toolName: string) => boolean;
+  channel: 'chat' | 'slack';
+  slackChannel: string;
+  approvers: string[];
+  timeoutMinutes: number;
+}
+
+function approvalSettings(ctx: IExecuteContext, itemIndex: number): ApprovalSettings {
+  const mode = String(ctx.getNodeParameter('requireApproval', itemIndex, 'none'));
+  const names = new Set(
+    String(ctx.getNodeParameter('approvalTools', itemIndex, '') ?? '')
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean)
+      .flatMap((name) => [name, toToolName(name)]),
+  );
+  const list = (value: unknown) =>
+    String(value ?? '')
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+  return {
+    needs: (tool) => mode === 'all' || (mode === 'selected' && (names.has(tool) || names.has(tool.replace(/_\d+$/, '')))),
+    channel: mode !== 'none' && String(ctx.getNodeParameter('approvalChannel', itemIndex, 'chat')) === 'slack' ? 'slack' : 'chat',
+    slackChannel: String(ctx.getNodeParameter('slackChannel', itemIndex, '') ?? '').trim(),
+    approvers: list(ctx.getNodeParameter('slackApprovers', itemIndex, '')),
+    timeoutMinutes: Math.max(0, Number(ctx.getNodeParameter('approvalTimeoutMinutes', itemIndex, 0)) || 0),
+  };
+}
+
+/**
+ * Put the execution to wait for a person (WaitRequest.rerun: this node runs again on resume). The wait's
+ * `data.approval` is what the chat panel, the execution view and POST /api/executions/:id/approvals read;
+ * with Slack, each call is posted as a message with Approve / Reject buttons first.
+ */
+async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings: ApprovalSettings, calls: ToolCall[]) {
+  if (!ctx.putExecutionToWait) throw new NodeOperationError('Tool approvals need a host that can pause executions');
+  const node = ctx.getNode();
+  const approval: JsonObject = {
+    nodeName: node.name,
+    nodeId: node.id,
+    itemIndex,
+    channel: settings.channel,
+    calls: calls.map((call) => ({ id: call.id, tool: call.name, input: call.input as JsonObject })),
+    requestedAt: new Date().toISOString(),
+  };
+  if (settings.channel === 'slack') {
+    if (!settings.slackChannel) throw new NodeOperationError('Set the Slack channel to post approval requests in', { itemIndex });
+    const credential = slackCredential(ctx.getCredentials<JsonObject>(SLACK_CREDENTIAL));
+    const messages: JsonObject = {};
+    for (const call of calls) {
+      const target = { t: 'wf' as const, e: ctx.getExecutionId(), c: call.id };
+      const ts = await postMessage(credential, {
+        channel: settings.slackChannel,
+        text: `${node.name}: approve ${call.name}?`,
+        blocks: approvalBlocks({ title: `${node.name} wants to run a tool`, tool: call.name, input: call.input, target }),
+      });
+      if (ts) messages[call.id] = ts;
+    }
+    approval.slack = { channel: settings.slackChannel, messages, ...(settings.approvers.length && { approvers: settings.approvers }) };
+  }
+  ctx.logger.info(`waiting for approval of ${calls.map((c) => c.name).join(', ')}${settings.channel === 'slack' ? ` in Slack ${settings.slackChannel}` : ''}`);
+  ctx.putExecutionToWait({
+    resume: 'webhook',
+    rerun: true,
+    ...(settings.timeoutMinutes > 0 && { until: new Date(Date.now() + settings.timeoutMinutes * 60_000).toISOString() }),
+    data: { approval },
+  });
+}
 
 function dedupe(tools: AgentTool[]): AgentTool[] {
   const seen = new Map<string, number>();

@@ -1,0 +1,75 @@
+{
+  "_synthetic": "Handwritten for Landflow's importer tests in the shape of a Flowise Agentflow v2 export; not exported from a Flowise instance.",
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "position": { "x": 0, "y": 100 },
+      "data": { "id": "startAgentflow_0", "label": "Start", "name": "startAgentflow", "version": 1.1, "category": "Agent Flows", "inputs": { "startInputType": "chatInput", "startEphemeralMemory": false } }
+    },
+    {
+      "id": "agentAgentflow_0",
+      "type": "agentFlow",
+      "position": { "x": 300, "y": 100 },
+      "data": {
+        "id": "agentAgentflow_0",
+        "label": "Support Agent",
+        "name": "agentAgentflow",
+        "version": 2,
+        "category": "Agent Flows",
+        "inputs": {
+          "agentModel": "chatOllama",
+          "agentModelConfig": { "baseUrl": "http://127.0.0.1:11434", "modelName": "qwen3-coder:30b", "temperature": 0.3, "agentModel": "chatOllama" },
+          "agentMessages": [
+            { "role": "system", "content": "You are the support agent. Keep answers short." },
+            { "role": "assistant", "content": "Hi! How can I help?" }
+          ],
+          "agentTools": [
+            { "agentSelectedTool": "calculator", "agentSelectedToolConfig": { "agentSelectedTool": "calculator" } },
+            { "agentSelectedTool": "googleCustomSearch", "agentSelectedToolConfig": {} }
+          ],
+          "agentEnableMemory": true,
+          "agentMemoryType": "windowSize",
+          "agentMemoryWindowSize": "8",
+          "agentUserMessage": "",
+          "agentReturnResponseAs": "userMessage"
+        }
+      }
+    },
+    {
+      "id": "conditionAgentflow_0",
+      "type": "agentFlow",
+      "position": { "x": 600, "y": 100 },
+      "data": { "id": "conditionAgentflow_0", "label": "Needs follow-up?", "name": "conditionAgentflow", "version": 1, "category": "Agent Flows", "inputs": { "conditions": [{ "type": "string", "value1": "{{ output }}", "operation": "contains", "value2": "ticket" }] } }
+    },
+    {
+      "id": "llmAgentflow_0",
+      "type": "agentFlow",
+      "position": { "x": 900, "y": 0 },
+      "data": {
+        "id": "llmAgentflow_0",
+        "label": "Summarize",
+        "name": "llmAgentflow",
+        "version": 1,
+        "category": "Agent Flows",
+        "inputs": {
+          "llmModel": "chatOpenAI",
+          "llmModelConfig": { "modelName": "gpt-4o-mini", "temperature": 0.2 },
+          "llmMessages": [{ "role": "system", "content": "Summarize the conversation for a ticket." }],
+          "llmUserMessage": "Summarize: {{ question }}"
+        }
+      }
+    },
+    {
+      "id": "stickyNoteAgentflow_0",
+      "type": "stickyNote",
+      "position": { "x": 0, "y": -200 },
+      "data": { "id": "stickyNoteAgentflow_0", "label": "Sticky Note", "name": "stickyNoteAgentflow", "version": 1, "category": "Agent Flows", "inputs": { "note": "Support flow" } }
+    }
+  ],
+  "edges": [
+    { "source": "startAgentflow_0", "sourceHandle": "startAgentflow_0-output-startAgentflow", "target": "agentAgentflow_0", "targetHandle": "agentAgentflow_0", "type": "agentFlow", "id": "f1" },
+    { "source": "agentAgentflow_0", "sourceHandle": "agentAgentflow_0-output-agentAgentflow", "target": "conditionAgentflow_0", "targetHandle": "conditionAgentflow_0", "type": "agentFlow", "id": "f2" },
+    { "source": "conditionAgentflow_0", "sourceHandle": "conditionAgentflow_0-output-0", "target": "llmAgentflow_0", "targetHandle": "llmAgentflow_0", "type": "agentFlow", "id": "f3" }
+  ]
+}

@@ -136,6 +136,9 @@ func BuildPlugin(info PluginInfo, nodes ...Node) (*Plugin, error) {
 		for _, msg := range validateDescriptor(d, loader != nil || ctxLoader != nil) {
 			problems = append(problems, label+": "+msg)
 		}
+		if _, ok := n.(WebhookNode); d.TriggerSource == TriggerAppWebhook && !ok {
+			problems = append(problems, label+": an app webhook trigger must implement landflow.WebhookNode (WebhookCreate, WebhookDelete, Webhook)")
+		}
 		for j, req := range d.Credentials {
 			if _, ok := p.credTypes[req.Name]; !ok && req.Name != "" {
 				problems = append(problems, fmt.Sprintf("%s: credentials[%d] %q is not one of the plugin's credential types (PluginInfo.CredentialTypes)", label, j, req.Name))
@@ -177,7 +180,7 @@ func (p *Plugin) Manifest() PluginManifest {
 
 // WellKnown returns the discovery document.
 func (p *Plugin) WellKnown() WellKnownDocument {
-	return WellKnownDocument{
+	doc := WellKnownDocument{
 		Protocol: ProtocolVersion,
 		Plugin:   WellKnownPlugin{ID: p.info.ID, Name: p.info.Name, Version: p.info.Version, Language: p.info.Language},
 		Endpoints: WellKnownEndpoints{
@@ -185,6 +188,13 @@ func (p *Plugin) WellKnown() WellKnownDocument {
 			TestCredentials: PathTestCredentials,
 		},
 	}
+	for _, name := range p.order {
+		if p.nodes[name].descriptor.TriggerSource == TriggerAppWebhook {
+			doc.Endpoints.WebhookMethod, doc.Endpoints.Webhook = PathWebhookMethod, PathWebhook
+			break
+		}
+	}
+	return doc
 }
 
 // Health returns the liveness document.
@@ -620,7 +630,7 @@ func validateDescriptor(d NodeDescriptor, hasLoader bool) []string {
 		add("kind %q must be trigger, action or subnode", d.Kind)
 	}
 	switch d.TriggerSource {
-	case "", TriggerManual, TriggerWebhook, TriggerSchedule, TriggerChat, TriggerPoll:
+	case "", TriggerManual, TriggerWebhook, TriggerSchedule, TriggerChat, TriggerPoll, TriggerAppWebhook:
 	default:
 		add("triggerSource %q is invalid", d.TriggerSource)
 	}

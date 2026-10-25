@@ -3,7 +3,7 @@ import { context, propagation } from '@opentelemetry/api';
 import { hostMetrics, outcomeOf } from './metrics';
 import { failSpan, SpanKind, startSpan } from './spans';
 
-export type RpcMethod = 'Execute' | 'LoadOptions' | 'TestCredentials' | 'GetManifest';
+export type RpcMethod = 'Execute' | 'LoadOptions' | 'TestCredentials' | 'GetManifest' | 'WebhookMethod' | 'ReceiveWebhook';
 
 export const RPC_SERVICE = 'landflow.plugin.v1.PluginService';
 

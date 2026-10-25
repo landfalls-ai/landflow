@@ -107,11 +107,13 @@ export class FolderStore {
     return chain;
   }
 
-  create(input: { name: string; parentId?: string }): Folder {
+  /** `id`: keep a given id (Git sync creates folders under the ids in its files). */
+  create(input: { name: string; parentId?: string; id?: string }): Folder {
     const name = cleanName(input.name);
     if (input.parentId && !this.get(input.parentId)) throw new FolderError('Parent folder not found', 404);
+    if (input.id !== undefined && (!/^[\w-]+$/.test(input.id) || this.get(input.id))) throw new FolderError(`Folder id "${input.id}" is invalid or taken`, 409);
     const now = new Date().toISOString();
-    const folder: Folder = { id: `fd_${nanoid(8)}`, name, ...(input.parentId && { parentId: input.parentId }), createdAt: now, updatedAt: now };
+    const folder: Folder = { id: input.id ?? `fd_${nanoid(8)}`, name, ...(input.parentId && { parentId: input.parentId }), createdAt: now, updatedAt: now };
     this.folders = [...this.folders, folder];
     this.persist({ saved: folder });
     return folder;

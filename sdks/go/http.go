@@ -32,6 +32,8 @@ func (p *Plugin) Handler() http.Handler {
 	mux.HandleFunc(PathExecute, p.only(http.MethodPost, p.handleExecute))
 	mux.HandleFunc(PathLoadOptions, p.only(http.MethodPost, p.handleLoadOptions))
 	mux.HandleFunc(PathTestCredentials, p.only(http.MethodPost, p.handleTestCredentials))
+	mux.HandleFunc(PathWebhookMethod, p.only(http.MethodPost, p.handleWebhookMethod))
+	mux.HandleFunc(PathWebhook, p.only(http.MethodPost, p.handleWebhook))
 	mux.HandleFunc(PathMetrics, p.only(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
 		h := p.tel().MetricsHandler()
 		if h == nil {
@@ -99,6 +101,32 @@ func (p *Plugin) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := p.TestCredentials(p.tel().extractHTTP(r), &req)
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (p *Plugin) handleWebhookMethod(w http.ResponseWriter, r *http.Request) {
+	var req WebhookMethodRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	resp, err := p.WebhookMethod(p.tel().extractHTTP(r), &req)
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (p *Plugin) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	var req WebhookRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	resp, err := p.ReceiveWebhook(p.tel().extractHTTP(r), &req)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return

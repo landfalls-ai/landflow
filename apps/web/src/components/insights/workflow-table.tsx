@@ -2,7 +2,8 @@
 /**
  * Insights per workflow: sortable by any column, with the minutes a workflow
  * saves per successful run editable in place (it is the workflow's
- * `settings.timeSavedMinutes`).
+ * `settings.timeSavedMinutes`), and the estimated AI cost of its model calls
+ * in the period (`usage`, from /api/insights/ai-usage).
  */
 import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -11,9 +12,10 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { InsightsWorkflowRow } from '@/lib/shared/platform';
+import { formatCost, formatTokens, type AiUsageTotals } from '@/lib/shared/ai-usage';
 import { formatMinutes, formatRate, formatRunTime } from './format';
 
-type SortKey = 'name' | 'runs' | 'failed' | 'failureRate' | 'avgDurationMs' | 'timeSavedMinutes' | 'minutesSavedPerRun';
+type SortKey = 'name' | 'runs' | 'failed' | 'failureRate' | 'avgDurationMs' | 'cost' | 'timeSavedMinutes' | 'minutesSavedPerRun';
 
 const COLUMNS: { key: SortKey; label: string; numeric?: boolean; title?: string }[] = [
   { key: 'name', label: 'Workflow' },
@@ -21,6 +23,7 @@ const COLUMNS: { key: SortKey; label: string; numeric?: boolean; title?: string 
   { key: 'failed', label: 'Failed', numeric: true },
   { key: 'failureRate', label: 'Failure rate', numeric: true },
   { key: 'avgDurationMs', label: 'Avg run time', numeric: true },
+  { key: 'cost', label: 'AI cost', numeric: true, title: 'Estimated cost of the model calls in the period (Settings → AI prices), test runs included' },
   { key: 'timeSavedMinutes', label: 'Time saved', numeric: true },
   { key: 'minutesSavedPerRun', label: 'Saves per run', numeric: true, title: 'Minutes of manual work one successful run saves' },
 ];
@@ -84,24 +87,37 @@ function MinutesEditor({ row, onSaved }: { row: InsightsWorkflowRow; onSaved: ()
   );
 }
 
-export function WorkflowTable({ rows, onChanged }: { rows: InsightsWorkflowRow[]; onChanged: () => void }) {
+/** Estimated AI cost, tokens and calls in the title. */
+function CostCell({ usage }: { usage?: AiUsageTotals }) {
+  if (!usage?.calls) return <td className="px-4 py-2.5 text-right font-mono tabular-nums text-t3">—</td>;
+  const title = `${formatTokens(usage.inputTokens)} input + ${formatTokens(usage.outputTokens)} output tokens in ${usage.calls.toLocaleString()} model call${usage.calls === 1 ? '' : 's'}`;
+  return (
+    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-t1" title={title}>
+      {formatCost(usage.cost)}
+      <div className="text-[11px] text-t3">{formatTokens(usage.inputTokens + usage.outputTokens)} tok</div>
+    </td>
+  );
+}
+
+export function WorkflowTable({ rows, usage = {}, onChanged }: { rows: InsightsWorkflowRow[]; usage?: Record<string, AiUsageTotals>; onChanged: () => void }) {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'runs', desc: true });
 
   const sorted = useMemo(() => {
-    const value = (row: InsightsWorkflowRow) => (sort.key === 'minutesSavedPerRun' ? (row.minutesSavedPerRun ?? -1) : row[sort.key]);
+    const value = (row: InsightsWorkflowRow) =>
+      sort.key === 'minutesSavedPerRun' ? (row.minutesSavedPerRun ?? -1) : sort.key === 'cost' ? (usage[row.workflowId]?.cost ?? -1) : row[sort.key];
     return [...rows].sort((a, b) => {
       const x = value(a);
       const y = value(b);
       const order = typeof x === 'string' ? x.localeCompare(String(y)) : (x as number) - (y as number);
       return (sort.desc ? -order : order) || a.name.localeCompare(b.name);
     });
-  }, [rows, sort]);
+  }, [rows, sort, usage]);
 
   const toggle = (key: SortKey) => setSort((s) => (s.key === key ? { key, desc: !s.desc } : { key, desc: key !== 'name' }));
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] border-collapse text-[13px]">
+      <table className="w-full min-w-[860px] border-collapse text-[13px]">
         <thead>
           <tr className="border-b border-hair">
             {COLUMNS.map((column) => (
@@ -141,6 +157,7 @@ export function WorkflowTable({ rows, onChanged }: { rows: InsightsWorkflowRow[]
               <td className={cn('px-4 py-2.5 text-right font-mono tabular-nums', row.failed ? 'text-rd' : 'text-t3')}>{row.failed.toLocaleString()}</td>
               <td className="px-4 py-2.5 text-right font-mono tabular-nums text-t2">{formatRate(row.failureRate)}</td>
               <td className="px-4 py-2.5 text-right font-mono tabular-nums text-t2">{formatRunTime(row.avgDurationMs)}</td>
+              <CostCell usage={usage[row.workflowId]} />
               <td className={cn('px-4 py-2.5 text-right font-mono tabular-nums', row.timeSavedMinutes ? 'text-t1' : 'text-t3')}>
                 {row.minutesSavedPerRun === undefined ? '—' : formatMinutes(row.timeSavedMinutes)}
               </td>

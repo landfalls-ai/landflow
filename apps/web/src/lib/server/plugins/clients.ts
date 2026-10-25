@@ -2,8 +2,8 @@
  * Transport clients for remote plugins. Both speak the same logical protocol;
  * callers never care which one is behind an endpoint.
  *
- * Execute, LoadOptions, TestCredentials and GetManifest each run in a
- * `plugin.rpc {Method}` client span whose W3C trace context travels as HTTP
+ * Execute, LoadOptions, TestCredentials, GetManifest, WebhookMethod and
+ * ReceiveWebhook each run in a `plugin.rpc {Method}` client span whose W3C trace context travels as HTTP
  * headers or gRPC metadata, so the plugin's spans join the workflow's trace.
  * Health probes and discovery stay untraced.
  */
@@ -18,6 +18,10 @@ import {
   type PropertyOption,
   type TestCredentialsRequest,
   type TestCredentialsResponse,
+  type WebhookMethodRequest,
+  type WebhookMethodResponse,
+  type WebhookRequest,
+  type WebhookResponse,
   type WellKnownDocument,
 } from '@landflow/protocol';
 import {
@@ -32,8 +36,14 @@ import {
   testCredentialsRequestToMsg,
   testCredentialsResponseFromMsg,
   unary,
+  webhookMethodRequestToMsg,
+  webhookMethodResponseFromMsg,
+  webhookRequestToMsg,
+  webhookResponseFromMsg,
   type ExecuteResponseMsg,
   type ManifestMsg,
+  type ReceiveWebhookResponseMsg,
+  type WebhookMethodResponseMsg,
 } from '@landflow/protocol/grpc';
 import type { Transport } from '@landflow/engine';
 import { tracePluginRpc, type RpcMethod } from '../telemetry';
@@ -51,6 +61,10 @@ export interface PluginClient {
   loadOptions(request: LoadOptionsRequest): Promise<PropertyOption[]>;
   /** "Test connection" for a credential type the plugin declares `testable`. */
   testCredentials(request: TestCredentialsRequest): Promise<TestCredentialsResponse>;
+  /** App webhook triggers (docs/protocol.md §12): checkExists / create / delete of a node's webhook at its service. */
+  webhookMethod(request: WebhookMethodRequest): Promise<WebhookMethodResponse>;
+  /** App webhook triggers: hand one incoming call to the node. */
+  receiveWebhook(request: WebhookRequest): Promise<WebhookResponse>;
   health(timeoutMs?: number): Promise<HealthResponse>;
   close(): void;
 }
@@ -143,6 +157,18 @@ export class HttpPluginClient extends TracedClient implements PluginClient {
     });
   }
 
+  webhookMethod(request: WebhookMethodRequest) {
+    return this.traced('WebhookMethod', (headers) =>
+      this.request<WebhookMethodResponse>(HTTP_PATHS.webhookMethod, { method: 'POST', body: JSON.stringify(request), headers, timeoutMs: 30_000 }),
+    );
+  }
+
+  receiveWebhook(request: WebhookRequest) {
+    return this.traced('ReceiveWebhook', (headers) =>
+      this.request<WebhookResponse>(HTTP_PATHS.webhook, { method: 'POST', body: JSON.stringify(request), headers, timeoutMs: 30_000 }),
+    );
+  }
+
   health(timeoutMs = 2_000) {
     return this.request<HealthResponse>(HTTP_PATHS.health, { timeoutMs });
   }
@@ -191,6 +217,18 @@ export class GrpcPluginClient extends TracedClient implements PluginClient {
   testCredentials(request: TestCredentialsRequest) {
     return this.traced('TestCredentials', async (metadata) =>
       testCredentialsResponseFromMsg(await unary(this.client, 'TestCredentials', testCredentialsRequestToMsg(request), 30_000, metadata)),
+    );
+  }
+
+  webhookMethod(request: WebhookMethodRequest) {
+    return this.traced('WebhookMethod', async (metadata) =>
+      webhookMethodResponseFromMsg(await unary<object, WebhookMethodResponseMsg>(this.client, 'WebhookMethod', webhookMethodRequestToMsg(request), 30_000, metadata)),
+    );
+  }
+
+  receiveWebhook(request: WebhookRequest) {
+    return this.traced('ReceiveWebhook', async (metadata) =>
+      webhookResponseFromMsg(await unary<object, ReceiveWebhookResponseMsg>(this.client, 'ReceiveWebhook', webhookRequestToMsg(request), 30_000, metadata)),
     );
   }
 

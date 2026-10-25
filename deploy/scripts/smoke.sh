@@ -2,7 +2,7 @@
 # Smoke-test the Landflow Docker stacks against their published ports.
 #
 #   deploy/scripts/smoke.sh infra   # Postgres+pgvector, Valkey, Mailpit, MinIO, OpenBao (+ Keycloak, Jaeger, MySQL if running)
-#   deploy/scripts/smoke.sh app     # dockerised host: health, plugins online, demo pipeline run, webhook
+#   deploy/scripts/smoke.sh app     # dockerised host: health, sign-in, plugins online, demo pipeline run, webhook
 #   deploy/scripts/smoke.sh code    # code runner: health, and its isolation checked from inside snippets
 #   deploy/scripts/smoke.sh         # all three
 #
@@ -45,15 +45,18 @@ infra() {
 
 app() {
   local base="http://127.0.0.1:${LANDFLOW_HOST_PORT:-53000}"
+  local jar; jar=$(mktemp)
   echo "app (project landflow, $base)"
   check "host: /api/health" bash -c "curl -fsS $base/api/health | json 'print(\"online\", d[\"online\"], \"of\", d[\"plugins\"], \"plugins,\", d[\"nodeTypes\"], \"node types\")'"
-  check "host: all 7 plugins online" bash -c "curl -fsS $base/api/plugins | json '
+  # The owner from LANDFLOW_OWNER_EMAIL / LANDFLOW_OWNER_PASSWORD (compose.yml); the session cookie goes in $jar.
+  check "host: owner signs in" bash -c "curl -fsS -c $jar -H 'content-type: application/json' -d '{\"email\":\"${LANDFLOW_OWNER_EMAIL:-owner@landflow.test}\",\"password\":\"${LANDFLOW_OWNER_PASSWORD:-landflow-dev-only}\"}' $base/api/auth/login | json 'print(d[\"user\"][\"email\"], d[\"user\"][\"role\"])'"
+  check "host: all 7 plugins online" bash -c "curl -fsS -b $jar $base/api/plugins | json '
 want = {\"text-toolkit\", \"py-insights\", \"go-crypto\", \"messaging\", \"productivity\", \"google\", \"databases\"}
 online = {p[\"id\"] for p in d[\"plugins\"] if p[\"status\"] == \"online\"}
 missing = want - online
 print(\", \".join(sorted(p[\"id\"] + \"@\" + p[\"transport\"] for p in d[\"plugins\"] if p[\"id\"] in want)))
 sys.exit(1 if missing else 0)'"
-  check "run: Polyglot review pipeline" bash -c "curl -fsS -N -XPOST -H 'content-type: application/json' -d '{}' $base/api/workflows/wf_polyglot_pipeline/run | python3 -c '
+  check "run: Polyglot review pipeline" bash -c "curl -fsS -N -b $jar -XPOST -H 'content-type: application/json' -d '{}' $base/api/workflows/wf_polyglot_pipeline/run | python3 -c '
 import json, sys
 events = [json.loads(l[5:]) for l in sys.stdin.read().splitlines() if l.startswith(\"data:\")]
 done = [e for e in events if e.get(\"type\") == \"execution.finished\"]
@@ -63,6 +66,7 @@ e = done[-1]; status = e.get(\"status\") or e.get(\"execution\", {}).get(\"statu
 print(status, len(nodes), \"node runs,\", e.get(\"executionId\") or e.get(\"execution\", {}).get(\"id\"))
 sys.exit(0 if status == \"success\" else 1)'"
   check "webhook: POST /api/webhook/enrich" bash -c "curl -fsS -XPOST -H 'content-type: application/json' -d '{\"text\":\"Docker makes Landflow plugins easy and great\"}' $base/api/webhook/enrich"
+  rm -f "$jar"
 }
 
 code() {
