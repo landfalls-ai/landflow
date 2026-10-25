@@ -254,3 +254,33 @@ HTTP headers or gRPC metadata. Plugins continue the trace: a server span per cal
 for outbound API calls, and trace/span ids in every log line. Plugins expose metrics through
 OTLP and optionally `GET /metrics`. Span names, attributes, metric names and the log format are
 specified in **[observability.md](observability.md)**.
+
+## 10. In-process nodes: waits, node state and cancellation
+
+These SDK context members exist only for nodes that run inside the host (the built-in `core`
+plugin and `inProcessNodeType`); remote plugins never see them, and nothing about them goes
+over the wire. Check for them before use (`ctx.putExecutionToWait?.(…)`).
+
+- **`ctx.signal`** (`AbortSignal`): aborted when the execution is canceled or hits the workflow's
+  `timeoutSeconds`. Long-running nodes should pass it on (`fetch`, timers). The engine also
+  stops waiting for a node that ignores it.
+- **`ctx.putExecutionToWait(request: WaitRequest)`**: suspend the execution once `execute`
+  returns. The engine finishes with status `waiting` and a JSON `ResumeState`; the host saves the
+  run under the same id and later continues it on the same workflow version.
+
+  ```ts
+  interface WaitRequest {
+    resume: 'time' | 'webhook' | 'form' | 'subworkflow';
+    until?: string;   // ISO: when a time wait resumes, or when a webhook/form wait gives up
+    method?: string;  // webhook: the method /api/waiting/<executionId> accepts (default any)
+    data?: JsonObject; // kept with the wait, e.g. a form page or a webhook's response mode
+  }
+  ```
+
+  On resume, the node does not run again: its output is the resume payload (the webhook request
+  `{ method, path, headers, query, body }`, the form submission, a sub-execution's last items), or
+  what `execute` returned for a `time` wait and a wait that ran out of time. A resume can also
+  fail the node (a failed sub-execution), which follows its `onError` setting.
+- **`ctx.getNodeState<T>()` / `ctx.setNodeState(state | undefined)`**: JSON state a node keeps
+  for the length of one execution, also across waits (Loop Over Items keeps its remaining items
+  here). `undefined` clears it.

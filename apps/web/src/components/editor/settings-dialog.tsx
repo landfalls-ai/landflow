@@ -29,6 +29,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
   const workflowId = useEditor((s) => s.workflowId);
   const [draft, setDraft] = useState<WorkflowSettings>(() => structuredClone(useEditor.getState().settings));
   const [timeout, setTimeoutText] = useState(() => (draft.timeoutSeconds ? String(draft.timeoutSeconds) : ''));
+  const [minutes, setMinutesText] = useState(() => (draft.timeSavedMinutes ? String(draft.timeSavedMinutes) : ''));
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>();
   const [saving, setSaving] = useState(false);
   const zones = useMemo(timeZones, []);
@@ -48,13 +49,15 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
   const selectedError = workflows?.find((w) => w.id === draft.errorWorkflowId);
   const timeoutValue = timeout.trim() === '' ? undefined : Number(timeout);
   const timeoutInvalid = timeoutValue !== undefined && (!Number.isInteger(timeoutValue) || timeoutValue < 1 || timeoutValue > 86_400);
+  const minutesValue = minutes.trim() === '' ? undefined : Number(minutes);
+  const minutesInvalid = minutesValue !== undefined && (!Number.isFinite(minutesValue) || minutesValue < 0 || minutesValue > 100_000);
   const patch = (next: Partial<WorkflowSettings>) => setDraft((d) => ({ ...d, ...next }));
   const policy = draft.callerPolicy ?? 'any';
   const callers = new Set(draft.callerIds ?? []);
 
   const save = async () => {
-    if (timeoutInvalid) return;
-    const settings: WorkflowSettings = { ...draft, timeoutSeconds: timeoutValue };
+    if (timeoutInvalid || minutesInvalid) return;
+    const settings: WorkflowSettings = { ...draft, timeoutSeconds: timeoutValue, timeSavedMinutes: minutesValue || undefined };
     // Leave out what is at its default, so the saved document stays small and defaults can change.
     for (const key of Object.keys(settings) as Array<keyof WorkflowSettings>) if (settings[key] === undefined || settings[key] === '') delete settings[key];
     if (settings.callerPolicy !== 'list') delete settings.callerIds;
@@ -79,7 +82,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={() => void save()} loading={saving} disabled={timeoutInvalid}>
+          <Button variant="primary" onClick={() => void save()} loading={saving} disabled={timeoutInvalid || minutesInvalid}>
             Save
           </Button>
         </>
@@ -112,7 +115,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
         <div className="grid grid-cols-2 gap-3">
           <Field id="wf-timezone" label="Time zone" hint="For schedules and $now in this workflow.">
             <Select id="wf-timezone" value={draft.timezone ?? ''} onChange={(e) => patch({ timezone: e.target.value || undefined })}>
-              <option value="">Host default</option>
+              <option value="">Instance default (Settings)</option>
               {draft.timezone && !zones.includes(draft.timezone) && <option value={draft.timezone}>{draft.timezone}</option>}
               {zones.map((zone) => (
                 <option key={zone} value={zone}>
@@ -140,6 +143,30 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
             </div>
           </Field>
         </div>
+
+        <Field
+          id="wf-time-saved"
+          label="Time saved per run"
+          hint={
+            minutesInvalid ? (
+              <span className="text-rd">A number of minutes from 0 to 100000.</span>
+            ) : (
+              'Manual work one successful run replaces. Insights adds it up as time saved.'
+            )
+          }
+        >
+          <div className="relative w-1/2 pr-1.5">
+            <Input
+              id="wf-time-saved"
+              inputMode="decimal"
+              value={minutes}
+              onChange={(e) => setMinutesText(e.target.value.replace(/[^\d.]/g, ''))}
+              placeholder="Not set"
+              className={cn('pr-16', minutesInvalid && 'border-rd')}
+            />
+            <span className="pointer-events-none absolute right-4.5 top-1/2 -translate-y-1/2 text-[12px] text-t3">minutes</span>
+          </div>
+        </Field>
 
         <Field label="Can be called by" hint="Other workflows that may run this one with Execute Workflow.">
           <div className="flex gap-0.5 rounded-[10px] border border-hair bg-wl p-0.5" role="radiogroup" aria-label="Can be called by">

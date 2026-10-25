@@ -106,7 +106,7 @@ export default function PluginsPage() {
         actions={
           <Button variant="primary" size="sm" onClick={() => void scan()} loading={scanning}>
             {!scanning && <ScanSearch className="size-3.5" strokeWidth={1.7} />}
-            {scanning ? 'Scanning 127.0.0.1:7100-7299…' : 'Scan network'}
+            {scanning ? 'Scanning…' : 'Scan network'}
           </Button>
         }
       />

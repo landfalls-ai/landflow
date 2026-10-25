@@ -1,0 +1,26 @@
+# Overlay: also attach the app stack to the infra stack's network (landflow-infra), so the host
+# and plugins reach the infra services by name: postgres:5432, valkey:6379, mailpit:1025,
+# minio:9000, openbao:8200, keycloak:8080, jaeger:4318, mysql:3306.
+#
+#   docker compose -f deploy/compose.infra.yml up -d      # creates the network
+#   docker compose -f deploy/compose.yml -f deploy/compose.infra-link.yml up -d
+#
+# Without this overlay the containers can still use the infra through the ports published on
+# the Mac: host.docker.internal:55432, :56379, :51025, ... (see deploy/README.md).
+
+x-infra: &infra
+  networks: [landflow, landflow-infra]
+
+services:
+  web: *infra
+  text-toolkit: *infra
+  py-insights: *infra
+  go-crypto: *infra
+  messaging: *infra
+  productivity: *infra
+  google-workspace: *infra
+  databases: *infra
+
+networks:
+  landflow-infra:
+    external: true

@@ -1,10 +1,13 @@
 /**
  * Agent schedules: hourly / daily / weekly / monthly map onto a five-field cron
  * (minute hour day-of-month month day-of-week), checked once per minute in the
- * schedule's time zone. Supports `*`, lists, ranges and steps.
+ * schedule's time zone. Supports `*`, lists, ranges, steps and month / weekday
+ * names. The Schedule trigger (lib/server/scheduler.ts) also uses six fields,
+ * with seconds first, and checks every second.
  */
 import type { AgentSchedule } from '../../shared/agents';
 
+const SECONDS = { min: 0, max: 59 };
 const FIELDS = [
   { min: 0, max: 59 }, // minute
   { min: 0, max: 23 }, // hour
@@ -34,17 +37,40 @@ function parseField(field: string, { min, max }: { min: number; max: number }): 
 }
 
 export interface CronMatcher {
+  /** Five fields: any second of a matching minute; six: only the matching seconds. */
   matches(parts: TimeParts): boolean;
+  /** Whether the expression has a seconds field. */
+  readonly seconds: boolean;
 }
 
+const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/** "jan-mar" → "1-3", "mon,fri" → "1,5". */
+const replaceNames = (field: string, names: string[], offset: number) =>
+  field.replace(/[a-z]{3}/gi, (name) => {
+    const index = names.indexOf(name.toLowerCase());
+    if (index < 0) throw new Error(`Unknown name "${name}"`);
+    return String(index + offset);
+  });
+
 export function parseCron(expression: string): CronMatcher {
-  const fields = expression.trim().split(/\s+/);
-  if (fields.length !== 5) throw new Error('A cron expression has five fields: minute hour day-of-month month day-of-week');
+  let fields = expression.trim().split(/\s+/);
+  if (fields.length !== 5 && fields.length !== 6) throw new Error('A cron expression has five fields: minute hour day-of-month month day-of-week (or six, with seconds first)');
+  const secondField = fields.length === 6 ? fields[0] : undefined;
+  if (secondField !== undefined) fields = fields.slice(1);
+  // Quartz-style "?" (no specific value) in the day fields means "*".
+  fields = fields.map((field, i) => (field === '?' && (i === 2 || i === 4) ? '*' : field));
+  fields[3] = replaceNames(fields[3], MONTH_NAMES, 1);
+  fields[4] = replaceNames(fields[4], DAY_NAMES, 0);
+  const seconds = secondField === undefined ? undefined : parseField(secondField, SECONDS);
   const [minutes, hours, days, months, weekdays] = fields.map((field, i) => parseField(field, FIELDS[i]));
   const anyDay = fields[2] === '*';
   const anyWeekday = fields[4] === '*';
   return {
+    seconds: seconds !== undefined,
     matches: (t) =>
+      (seconds === undefined || seconds.has(t.second ?? 0)) &&
       minutes.has(t.minute) &&
       hours.has(t.hour) &&
       months.has(t.month) &&
@@ -78,28 +104,50 @@ export function scheduleCron(schedule: Pick<AgentSchedule, 'frequency' | 'time' 
 }
 
 export interface TimeParts {
+  /** Set by timeParts(); the Schedule trigger's rules and six-field crons use it. */
+  second?: number;
   minute: number;
   hour: number;
   day: number;
   month: number;
   weekday: number;
+  year?: number;
 }
 
 const WEEKDAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-/** Wall-clock fields of an instant in a time zone (UTC when the zone is unknown). */
-export function timeParts(at: Date, timeZone: string): TimeParts {
-  let format: Intl.DateTimeFormat;
-  try {
-    format = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' });
-  } catch {
-    format = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', hourCycle: 'h23', weekday: 'short', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+const formats = new Map<string, Intl.DateTimeFormat>();
+
+/** A cached formatter per zone (the Schedule trigger asks every second). */
+function formatFor(timeZone: string): Intl.DateTimeFormat {
+  let format = formats.get(timeZone);
+  if (!format) {
+    const options: Intl.DateTimeFormatOptions = { hourCycle: 'h23', weekday: 'short', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' };
+    try {
+      format = new Intl.DateTimeFormat('en-US', { ...options, timeZone });
+    } catch {
+      format = new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' });
+    }
+    formats.set(timeZone, format);
   }
-  const parts = Object.fromEntries(format.formatToParts(at).map((p) => [p.type, p.value]));
-  return { minute: Number(parts.minute), hour: Number(parts.hour) % 24, day: Number(parts.day), month: Number(parts.month), weekday: WEEKDAYS[parts.weekday] ?? 0 };
+  return format;
 }
 
-/** Whether a schedule fires in the minute of `at`. */
+/** Wall-clock fields of an instant in a time zone (UTC when the zone is unknown). */
+export function timeParts(at: Date, timeZone: string): TimeParts {
+  const parts = Object.fromEntries(formatFor(timeZone).formatToParts(at).map((p) => [p.type, p.value]));
+  return {
+    second: Number(parts.second) % 60,
+    minute: Number(parts.minute),
+    hour: Number(parts.hour) % 24,
+    day: Number(parts.day),
+    month: Number(parts.month),
+    weekday: WEEKDAYS[parts.weekday] ?? 0,
+    year: Number(parts.year),
+  };
+}
+
+/** Whether a schedule fires in the minute of `at` (checked once a minute, so a seconds field counts as second 0). */
 export function isDue(schedule: AgentSchedule, at: Date): boolean {
-  return parseCron(scheduleCron(schedule)).matches(timeParts(at, schedule.timezone || 'UTC'));
+  return parseCron(scheduleCron(schedule)).matches({ ...timeParts(at, schedule.timezone || 'UTC'), second: 0 });
 }

@@ -17,7 +17,7 @@ func TestConvertValue(t *testing.T) {
 		want   any
 	}{
 		{nil, "TEXT", systemPostgres, nil},
-		{ts, "TIMESTAMPTZ", systemPostgres, "2026-10-25T08:00:00+02:00"},
+		{ts, "TIMESTAMPTZ", systemPostgres, "2026-10-25T06:00:00Z"},
 		{int64(42), "INT4", systemPostgres, int64(42)},
 		{int64(1 << 60), "INT8", systemPostgres, "1152921504606846976"},
 		{int64(-(1 << 60)), "INT8", systemPostgres, "-1152921504606846976"},

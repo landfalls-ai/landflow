@@ -889,7 +889,16 @@ export const useEditor = create<EditorState>((set, get) => {
           runDurationMs: event.durationMs,
           log: [
             ...s.log,
-            line({ kind: event.status === 'success' ? 'info' : 'error', durationMs: event.durationMs, message: event.status === 'success' ? `Finished successfully` : `Finished with ${event.status}: ${event.error?.message ?? ''}` }),
+            line({
+              kind: event.status === 'success' || event.status === 'waiting' ? 'info' : 'error',
+              durationMs: event.durationMs,
+              message:
+                event.status === 'success'
+                  ? `Finished successfully`
+                  : event.status === 'waiting'
+                    ? `Waiting at ${event.wait?.nodeName ?? 'a node'}${event.wait?.until ? ` until ${new Date(event.wait.until).toLocaleString()}` : ''}; it continues in the background`
+                    : `Finished with ${event.status}: ${event.error?.message ?? ''}`,
+            }),
           ],
         }));
         break;

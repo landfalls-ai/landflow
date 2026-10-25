@@ -98,12 +98,12 @@ conventions.
 | Span | Kind | Attributes |
 |---|---|---|
 | `{METHOD} {route}` (e.g. `POST /api/workflows/[id]/run`) | server | `http.request.method`, `url.path` (no query string), `http.route`, `http.response.status_code` (Next.js also sets the older `http.method`, `http.target`, `http.status_code`). Created by Next.js' built-in OpenTelemetry support, which adds one child, `executing api route (app) {route}`; its other internal spans are dropped |
-| `workflow.execute` | internal | `landflow.workflow.id`, `landflow.workflow.name`, `landflow.execution.id`, `landflow.execution.mode`, `landflow.execution.status`, `landflow.execution.debug`, `landflow.execution.rerun_of`, `landflow.execution.rerun_scope` · events `debugger.paused` (`landflow.node.name`, `landflow.debugger.reason`) / `debugger.resumed` (`landflow.debugger.command`) · error status on a failed run |
-| `node.execute {node type}` | internal | `landflow.node.id`, `landflow.node.name`, `landflow.node.type`, `landflow.plugin.id`, `landflow.transport` (`in-process`/`http`/`grpc`), `landflow.node.source` (`main`/`ai_tool`/`ai_languageModel`/`ai_memory`), `landflow.execution.id`, `landflow.items.in`, `landflow.items.out`, `landflow.node.status` (`success`/`error`/`canceled`), `landflow.node.reused`, `landflow.node.pinned`, `landflow.node.disabled` · an `exception` event per failed attempt (with `retryOnFail`), error status when the node fails |
+| `workflow.execute` | internal | `landflow.workflow.id`, `landflow.workflow.name`, `landflow.execution.id`, `landflow.execution.mode`, `landflow.execution.status` (also `waiting`), `landflow.execution.debug`, `landflow.execution.rerun_of`, `landflow.execution.rerun_scope` · a run that stops to wait: `landflow.wait.node`, `landflow.wait.resume` (`time`/`webhook`/`form`/`subworkflow`), `landflow.wait.until` · a resumed run (one more `workflow.execute` span per resume, see below): `landflow.execution.resume_of` (the execution id it continues), `landflow.execution.resume_kind` (`time`/`webhook`/`form`/`timeout`/`subworkflow`) · events `debugger.paused` (`landflow.node.name`, `landflow.debugger.reason`) / `debugger.resumed` (`landflow.debugger.command`) · error status on a failed run |
+| `node.execute {node type}` | internal | `landflow.node.id`, `landflow.node.name`, `landflow.node.type`, `landflow.plugin.id`, `landflow.transport` (`in-process`/`http`/`grpc`), `landflow.node.source` (`main`/`ai_tool`/`ai_languageModel`/`ai_memory`), `landflow.execution.id`, `landflow.items.in`, `landflow.items.out`, `landflow.node.status` (`success`/`error`/`canceled`/`waiting`), `landflow.node.reused`, `landflow.node.pinned`, `landflow.node.disabled` · the node that suspends the run: `landflow.node.status=waiting`, `landflow.wait.resume`, `landflow.wait.until`; when the run resumes, that node's result is a short `node.execute` span with `landflow.node.resumed=true` and `landflow.wait.resume_kind` · an `exception` event per failed attempt (with `retryOnFail`), error status when the node fails |
 | `plugin.rpc {Method}` (`Execute`, `LoadOptions`, `TestCredentials`, `GetManifest`) | client | `rpc.system` (`grpc`/`http`), `rpc.service=landflow.plugin.v1.PluginService`, `rpc.method`, `server.address`, `server.port`, `landflow.plugin.id` |
 | `gen_ai.chat {model}` | client | OTel GenAI conventions: `gen_ai.system` (`anthropic`/`ollama`/`openai`), `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons` |
 | `gen_ai.embeddings {model}` | client | same conventions with `gen_ai.operation.name=embeddings`: `gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.embeddings.dimension.count`. Counts in the `landflow.ai.*` metrics like chat (input tokens only) |
-| `trigger.fire` | internal (root for schedule/poll; child of the HTTP span for manual runs, webhooks and chat) | `landflow.trigger.source` (`manual`/`webhook`/`schedule`/`poll`/`chat`), `landflow.workflow.id`, `landflow.node.name` |
+| `trigger.fire` | internal (root for schedule/poll/error; child of the HTTP span for manual runs, webhooks, forms and chat) | `landflow.trigger.source` (`manual`/`webhook`/`form`/`schedule`/`poll`/`chat`/`error`), `landflow.workflow.id`, `landflow.node.name`. `error`: an error workflow started for a failed execution, as its own trace |
 | `trigger.poll {node type}` | internal (root) | `landflow.workflow.id`, `landflow.node.name`, `landflow.node.type`, `landflow.poll.items`, `landflow.poll.first` |
 | `registry.scan`, `registry.register` | internal | `landflow.plugin.id`, `landflow.plugin.endpoint`, `landflow.discovery.source` (register); `landflow.scan.targets`, `landflow.scan.found` (scan) |
 
@@ -113,6 +113,15 @@ conventions.
 
 A tool call by an AI agent is a `node.execute` span with `landflow.node.source=ai_tool`, a child
 of the agent's span, so the trace shows agent → model → tool → plugin → external API.
+
+**Waiting executions.** An execution that waits (Wait node, Form page, a sub-workflow that waits)
+ends its `workflow.execute` span with `landflow.execution.status=waiting`. Each resume is a new
+`workflow.execute` span for the same `landflow.execution.id`, with `landflow.execution.resume_of`
+set to that id and `landflow.execution.resume_kind` saying what resumed it. A resume by a webhook
+call or form submission is a child of that request's HTTP span; a timer (`time`, `timeout`) or a
+finished sub-execution (`subworkflow`) starts a new root trace. **Execute Workflow** runs the child
+execution inside the calling node's span, so parent and child share a trace until a wait splits it.
+The execution's `traceId` is the trace of its latest part.
 
 ### Plugins (every SDK)
 
@@ -138,8 +147,8 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 
 | Metric | Type | Attributes |
 |---|---|---|
-| `landflow.executions` | counter | `landflow.workflow.id`, `landflow.workflow.name`, `landflow.execution.mode`, `landflow.execution.status` |
-| `landflow.execution.duration` | histogram (ms) | same |
+| `landflow.executions` | counter | `landflow.workflow.id`, `landflow.workflow.name`, `landflow.execution.mode`, `landflow.execution.status` (a run that waits counts once per part: `waiting`, then its final status) |
+| `landflow.execution.duration` | histogram (ms) | same; for a run that waits, each part (start → wait, resume → end) is recorded separately, without the time spent waiting |
 | `landflow.executions.active` | up-down counter | `landflow.execution.mode` |
 | `landflow.node.runs` | counter | `landflow.node.type`, `landflow.plugin.id`, `landflow.transport`, `landflow.node.status` (`success`/`error`), `landflow.node.source` |
 | `landflow.node.duration` | histogram (ms) | same |

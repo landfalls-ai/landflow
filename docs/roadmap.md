@@ -49,15 +49,16 @@ Three streams in parallel, split by the files they own.
 - Execution retention by count and by age.
 - **Insights**: runs, failure rate and duration per workflow over time.
 
-**D. Docker (OrbStack)**, running alongside streams A–C
+**D. Docker (OrbStack)**, running alongside streams A–C. ✅ Done; see [deploy/README.md](../deploy/README.md).
 - `deploy/compose.infra.yml` holds the infrastructure the later waves build and test against:
   - Postgres with pgvector;
   - Valkey;
-  - Mailhog;
-  - MinIO;
+  - Mailpit (MailHog has no arm64 image);
+  - MinIO (the community `pgsty/minio` build, since the official images are gone);
   - OpenBao;
   - Keycloak, under the `auth` profile;
-  - Jaeger, under the `observability` profile.
+  - Jaeger, under the `observability` profile;
+  - MySQL, under the `mysql` profile.
 
   It uses its own project name and ports, and leaves other projects' containers alone.
 - `deploy/compose.yml` runs Landflow itself from images: the host plus every plugin, with the

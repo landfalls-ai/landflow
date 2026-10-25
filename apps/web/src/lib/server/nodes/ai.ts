@@ -4,6 +4,8 @@ import { toToolName, type AgentMemory, type AgentMessage, type AgentTool, type L
 import { anthropicModel, ollamaModel } from './models';
 
 const main = [{ type: 'main' as const }];
+/** Default Ollama address for new model nodes (OLLAMA_URL, e.g. host.docker.internal in a container). */
+const DEFAULT_OLLAMA_URL = (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
 
 // ---------------------------------------------------------------------------
 // AI Agent (root node)
@@ -224,7 +226,7 @@ export const ollamaChatModelNode = defineNode({
     inputs: [],
     outputs: modelOutput,
     properties: [
-      { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: 'http://127.0.0.1:11434' },
+      { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: DEFAULT_OLLAMA_URL },
       {
         name: 'model',
         displayName: 'Model',
@@ -245,7 +247,7 @@ export const ollamaChatModelNode = defineNode({
   methods: {
     loadOptions: {
       async models(ctx) {
-        const base = String(ctx.getCurrentParameters().baseUrl ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
+        const base = String(ctx.getCurrentParameters().baseUrl || DEFAULT_OLLAMA_URL).replace(/\/+$/, '');
         const response = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3_000) });
         const data = (await response.json()) as { models: Array<{ name: string; details?: { parameter_size?: string }; capabilities?: string[] }> };
         return data.models

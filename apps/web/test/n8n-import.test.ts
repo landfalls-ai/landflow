@@ -418,7 +418,8 @@ describe('n8n import: Switch, ports and registered-only types', () => {
 
   it('maps registered-only types only when they are registered', () => {
     const doc = { nodes: [{ parameters: {}, name: 'On error', type: 'n8n-nodes-base.errorTrigger', typeVersion: 1, position: [0, 0] }], connections: {} };
-    expect(importWorkflowJson(doc, { resolveType }).workflow.nodes[0]).toMatchObject({ type: 'core.noOp', disabled: true });
+    const withoutErrorTrigger = (type: string) => (type === 'core.errorTrigger' ? undefined : resolveType(type));
+    expect(importWorkflowJson(doc, { resolveType: withoutErrorTrigger }).workflow.nodes[0]).toMatchObject({ type: 'core.noOp', disabled: true });
     const withErrorTrigger = (type: string) => (type === 'core.errorTrigger' ? ({ ...core.get('core.manualTrigger')!, name: 'errorTrigger' } as NodeDescriptor) : resolveType(type));
     const mapped = importWorkflowJson(doc, { resolveType: withErrorTrigger });
     expect(mapped.workflow.nodes[0].type).toBe('core.errorTrigger');

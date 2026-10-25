@@ -15,7 +15,8 @@ import (
 // Result conversion: driver values → JSON-friendly values. The rules are the
 // same for every database:
 //
-//   - times → RFC 3339 strings (with fractional seconds when present);
+//   - times → RFC 3339 strings in UTC (with fractional seconds when present), so the
+//     output doesn't depend on the plugin's time zone;
 //   - DECIMAL / NUMERIC → strings, so no precision is lost;
 //   - integers and floats → numbers, except integers outside ±2^53 (which a
 //     JavaScript host cannot represent) and NaN/Inf → strings;
@@ -68,7 +69,7 @@ func convertValue(v any, dbType, system string) any {
 	case nil:
 		return nil
 	case time.Time:
-		return t.Format(time.RFC3339Nano)
+		return t.UTC().Format(time.RFC3339Nano)
 	case []byte:
 		switch {
 		case kind == kindJSON:

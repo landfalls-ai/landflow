@@ -1,7 +1,7 @@
 /**
  * What an agent can call. Every capability in the config becomes a tool the model sees:
  * plugin nodes run on their own (`$fromAI` fills what the model decides), workflows run
- * from their "When Called by an Agent" trigger, sub-agents get a task, plus built-in
+ * from their "When Called by a Workflow or Agent" trigger, sub-agents get a task, plus built-in
  * tools for skills and cross-session memory.
  */
 import { defaultVersionOf, PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
@@ -142,8 +142,10 @@ export function workflowToolInfo(workflowId: string) {
   const workflow = store.getWorkflow(workflowId);
   if (!workflow) return { eligible: false as const, reason: 'The workflow was deleted' };
   const trigger = workflow.nodes.find((n) => n.type === WORKFLOW_TRIGGER && !n.disabled);
-  if (!trigger) return { eligible: false as const, workflow, reason: 'Needs a “When Called by an Agent” trigger' };
-  const fields = ((trigger.parameters.inputs as { fields?: TriggerField[] } | undefined)?.fields ?? []).filter((f) => f.name?.trim());
+  if (!trigger) return { eligible: false as const, workflow, reason: 'Needs a “When Called by a Workflow or Agent” trigger' };
+  // "Accept All Data": any arguments.
+  const passthrough = trigger.parameters.inputSource === 'passthrough';
+  const fields = passthrough ? [] : ((trigger.parameters.inputs as { fields?: TriggerField[] } | undefined)?.fields ?? []).filter((f) => f.name?.trim());
   const inputSchema: JsonObject = fields.length
     ? {
         type: 'object',
@@ -184,6 +186,14 @@ function workflowTool(config: WorkflowToolConfig): BuiltTool | { error: string }
       if (!current.eligible) throw new Error(current.reason);
       const record = await runWorkflow({ workflow: current.workflow, mode: 'tool', startNodeId: current.trigger.id, triggerItems: [{ json: input as JsonObject }], signal: ctx.signal });
       if (record.status === 'error') throw new Error(`Workflow failed: ${record.error?.message ?? 'unknown error'} (execution ${record.executionId})`);
+      // A Wait (or form page) in the workflow: it goes on in the background; the tool can't wait for it.
+      if (record.status === 'waiting') {
+        return {
+          output: { status: 'waiting', executionId: record.executionId, message: 'The workflow is waiting (for a time, a webhook call or a form) and continues in the background' },
+          workflowId: current.workflow.id,
+          executionId: record.executionId,
+        };
+      }
       return { output: lastOutput(record), workflowId: current.workflow.id, executionId: record.executionId };
     },
   };

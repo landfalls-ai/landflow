@@ -119,7 +119,7 @@ rejected, so a typo does not create an empty database). Read-only credentials op
 | larger integers (`BIGINT`, `INT8`) | string, so no precision is lost |
 | `NUMERIC` / `DECIMAL` | string (exact) |
 | floats | number (`NaN` / `Infinity` as strings) |
-| timestamps, dates | RFC 3339 string (`TIMESTAMP` without zone as UTC) |
+| timestamps, dates | RFC 3339 string in UTC (`TIMESTAMP` without zone is read as UTC) |
 | `JSON` / `JSONB` | parsed object or array |
 | `BYTEA`, `BLOB`, binary | base64 string |
 | booleans | boolean |

@@ -1,5 +1,11 @@
-import { defineNode, NodeOperationError, type NodeItem } from '@landflow/sdk';
+/**
+ * Flow control: If, Switch, Filter, Merge, Wait, Loop Over Items, Respond to Webhook, Limit, Sort,
+ * No Operation and Stop and Error.
+ */
+import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
+import type { RunReply } from '../runner';
 import { conditionProperties, matches, type Condition } from './conditions';
+import { formFieldsProperty, formModeOf, pageOf } from './forms';
 
 const main = [{ type: 'main' as const }];
 
@@ -216,25 +222,437 @@ export const mergeNode = defineNode({
   },
 });
 
+/** Waits up to this long stay in memory; longer ones suspend the execution (it is saved and resumed later). */
+export const IN_MEMORY_WAIT_MS = 65_000;
+
+const UNIT_MS: Record<string, number> = { seconds: 1_000, minutes: 60_000, hours: 3_600_000, days: 86_400_000 };
+const WAIT_MODES = ['timeInterval', 'specificTime', 'webhook', 'form'];
+const timeUnits = [
+  { name: 'Seconds', value: 'seconds' },
+  { name: 'Minutes', value: 'minutes' },
+  { name: 'Hours', value: 'hours' },
+  { name: 'Days', value: 'days' },
+];
+
+/** Sleep that ends early (rejecting) when the execution is canceled or times out. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/** A date parameter as epoch ms (ISO strings, Date-like values, epoch numbers). */
+function timeOf(value: unknown, label: string): number {
+  const at = typeof value === 'number' ? value : Date.parse(String(value ?? ''));
+  if (!Number.isFinite(at)) throw new NodeOperationError(`${label} isn’t a valid date and time`, { description: `Got ${JSON.stringify(value)}.` });
+  return at;
+}
+
+function intervalMs(amount: unknown, unit: unknown, label: string): number {
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value < 0) throw new NodeOperationError(`${label} must be a number of zero or more`, { description: `Got ${JSON.stringify(amount)}.` });
+  return value * (UNIT_MS[String(unit)] ?? UNIT_MS.hours);
+}
+
+/**
+ * n8n's Wait node. A time interval or a specific time up to ~65 s away is waited in memory; longer
+ * waits, and waits for a webhook call (/api/waiting/<executionId>, `$execution.resumeUrl`) or a form
+ * submission (/form/waiting/<executionId>), suspend the execution: it is saved as "waiting" and
+ * resumed, even after a restart. Version 1 nodes with only `seconds` keep the old behaviour.
+ */
 export const waitNode = defineNode({
   description: {
     name: 'wait',
     displayName: 'Wait',
-    description: 'Pause before continuing',
-    version: 1,
+    description: 'Pause for a while, until a time, or until a webhook call or form submission',
+    version: [1, 2],
+    defaultVersion: 2,
     kind: 'action',
     categories: ['Flow'],
     icon: 'lucide:hourglass',
     color: '#22c55e',
-    subtitle: '{{seconds}}s',
+    subtitle: '{{resume}}',
+    keywords: ['wait', 'sleep', 'delay', 'pause', 'resume', 'webhook', 'approval', 'human in the loop'],
     inputs: main,
     outputs: main,
-    properties: [{ name: 'seconds', displayName: 'Seconds', type: 'number', default: 1, typeOptions: { minValue: 0, maxValue: 300 } }],
+    properties: [
+      {
+        name: 'resume',
+        displayName: 'Resume',
+        type: 'options',
+        default: 'timeInterval',
+        noDataExpression: true,
+        options: [
+          { name: 'After Time Interval', value: 'timeInterval', description: 'Wait for a certain amount of time' },
+          { name: 'At Specified Time', value: 'specificTime', description: 'Wait until a date and time' },
+          { name: 'On Webhook Call', value: 'webhook', description: 'Wait for a call to the execution’s resume URL' },
+          { name: 'On Form Submitted', value: 'form', description: 'Wait for someone to submit a form page' },
+        ],
+      },
+      { name: 'amount', displayName: 'Wait Amount', type: 'number', default: 1, typeOptions: { minValue: 0 }, displayOptions: { show: { resume: ['timeInterval'] } } },
+      { name: 'unit', displayName: 'Wait Unit', type: 'options', default: 'hours', options: timeUnits, displayOptions: { show: { resume: ['timeInterval'] } } },
+      { name: 'dateTime', displayName: 'Date and Time', type: 'dateTime', default: '', required: true, displayOptions: { show: { resume: ['specificTime'] } } },
+      {
+        name: 'httpMethod',
+        displayName: 'HTTP Method',
+        type: 'options',
+        default: 'GET',
+        noDataExpression: true,
+        displayOptions: { show: { resume: ['webhook'] } },
+        options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].map((m) => ({ name: m, value: m })),
+      },
+      {
+        name: 'responseMode',
+        displayName: 'Respond',
+        type: 'options',
+        default: 'onReceived',
+        noDataExpression: true,
+        displayOptions: { show: { resume: ['webhook'] } },
+        options: [
+          { name: 'Immediately', value: 'onReceived', description: 'As soon as the call arrives (202 with the execution id)' },
+          { name: 'When Last Node Finishes', value: 'lastNode', description: 'The last node’s output as JSON' },
+          { name: 'Using ‘Respond to Webhook’ Node', value: 'responseNode', description: 'Whatever a Respond to Webhook node sends' },
+        ],
+      },
+      { name: 'formTitle', displayName: 'Form Title', type: 'string', default: '', displayOptions: { show: { resume: ['form'] } } },
+      { name: 'formDescription', displayName: 'Form Description', type: 'string', default: '', typeOptions: { rows: 2 }, displayOptions: { show: { resume: ['form'] } } },
+      { ...formFieldsProperty, displayOptions: { show: { resume: ['form'] } } },
+      { name: 'buttonLabel', displayName: 'Button Label', type: 'string', default: 'Submit', displayOptions: { show: { resume: ['form'] } } },
+      {
+        name: 'limitWaitTime',
+        displayName: 'Limit Wait Time',
+        type: 'boolean',
+        default: false,
+        description: 'Stop waiting at some point and continue with the input items',
+        displayOptions: { show: { resume: ['webhook', 'form'] } },
+      },
+      {
+        name: 'limitType',
+        displayName: 'Limit Type',
+        type: 'options',
+        default: 'afterTimeInterval',
+        displayOptions: { show: { resume: ['webhook', 'form'], limitWaitTime: [true] } },
+        options: [
+          { name: 'After Time Interval', value: 'afterTimeInterval' },
+          { name: 'At Specified Time', value: 'atSpecifiedTime' },
+        ],
+      },
+      {
+        name: 'resumeAmount',
+        displayName: 'Amount',
+        type: 'number',
+        default: 1,
+        typeOptions: { minValue: 0 },
+        displayOptions: { show: { resume: ['webhook', 'form'], limitWaitTime: [true], limitType: ['afterTimeInterval'] } },
+      },
+      {
+        name: 'resumeUnit',
+        displayName: 'Unit',
+        type: 'options',
+        default: 'hours',
+        options: timeUnits,
+        displayOptions: { show: { resume: ['webhook', 'form'], limitWaitTime: [true], limitType: ['afterTimeInterval'] } },
+      },
+      {
+        name: 'maxDateAndTime',
+        displayName: 'Max Date and Time',
+        type: 'dateTime',
+        default: '',
+        displayOptions: { show: { resume: ['webhook', 'form'], limitWaitTime: [true], limitType: ['atSpecifiedTime'] } },
+      },
+      // Version 1 stored only `seconds`; choosing a Resume option drops it.
+      {
+        name: 'seconds',
+        displayName: 'Seconds',
+        type: 'number',
+        typeOptions: { minValue: 0, maxValue: 300 },
+        displayOptions: { hide: { resume: WAIT_MODES } },
+      },
+      {
+        name: 'legacyNotice',
+        displayName: 'This Wait uses the old “Seconds” setting (at most 300 s). Choose a Resume option to switch to the new settings.',
+        type: 'notice',
+        displayOptions: { hide: { resume: WAIT_MODES } },
+      },
+      {
+        name: 'notice',
+        displayName:
+          'Waits over 65 s, and webhook or form waits, save the execution as “Waiting” and resume it later, also after a restart. The resume URL is {{ $execution.resumeUrl }} (webhook) or {{ $execution.resumeFormUrl }} (form).',
+        type: 'notice',
+        displayOptions: { show: { resume: WAIT_MODES } },
+      },
+    ],
   },
   async execute(ctx) {
-    const seconds = Math.min(300, Math.max(0, Number(ctx.getNodeParameter('seconds'))));
-    await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
-    return [ctx.getInputData()];
+    const items = ctx.getInputData();
+    const legacy = ctx.getNode().typeVersion < 2 ? ctx.getNodeParameter<unknown>('seconds', 0, undefined) : undefined;
+    if (legacy !== undefined && legacy !== null && legacy !== '') {
+      await sleep(Math.min(300, Math.max(0, Number(legacy) || 0)) * 1000, ctx.signal);
+      return [items];
+    }
+
+    const resume = ctx.getNodeParameter<string>('resume', 0);
+    const suspend = (request: Parameters<NonNullable<typeof ctx.putExecutionToWait>>[0]) => {
+      if (!ctx.putExecutionToWait) throw new NodeOperationError('This wait needs a workflow execution', { description: 'Here (e.g. as an agent tool) only time waits up to 65 seconds work.' });
+      ctx.putExecutionToWait(request);
+    };
+
+    if (resume === 'timeInterval' || resume === 'specificTime') {
+      const until =
+        resume === 'timeInterval' ? Date.now() + intervalMs(ctx.getNodeParameter('amount', 0), ctx.getNodeParameter('unit', 0), 'Wait Amount') : timeOf(ctx.getNodeParameter('dateTime', 0), 'Date and Time');
+      const delay = until - Date.now();
+      if (delay <= IN_MEMORY_WAIT_MS) {
+        await sleep(Math.max(0, delay), ctx.signal);
+        return [items];
+      }
+      suspend({ resume: 'time', until: new Date(until).toISOString() });
+      ctx.logger.info(`Waiting until ${new Date(until).toISOString()}`);
+      return [items];
+    }
+
+    let limit: string | undefined;
+    if (ctx.getNodeParameter('limitWaitTime', 0)) {
+      const at =
+        ctx.getNodeParameter('limitType', 0) === 'atSpecifiedTime'
+          ? timeOf(ctx.getNodeParameter('maxDateAndTime', 0), 'Max Date and Time')
+          : Date.now() + intervalMs(ctx.getNodeParameter('resumeAmount', 0), ctx.getNodeParameter('resumeUnit', 0), 'Amount');
+      limit = new Date(at).toISOString();
+    }
+    // Loaded lazily: the runner needs the registry this plugin is part of.
+    const { resumeUrls } = await import('../runner');
+    const urls = resumeUrls(ctx.getExecutionId());
+    if (resume === 'form') {
+      const form = pageOf(ctx.getNodeParameter('formTitle', 0), ctx.getNodeParameter('formDescription', 0), ctx.getNodeParameter('formFields', 0), ctx.getNodeParameter('buttonLabel', 0));
+      suspend({ resume: 'form', ...(limit && { until: limit }), data: { form: form as unknown as JsonObject, formMode: formModeOf(ctx.mode) } });
+      ctx.logger.info(`Waiting for the form at ${urls.form}${limit ? ` until ${limit}` : ''}`);
+      return [items];
+    }
+    if (resume !== 'webhook') throw new NodeOperationError(`Unknown resume option "${resume}"`);
+    const method = String(ctx.getNodeParameter('httpMethod', 0) || 'GET').toUpperCase();
+    const mode = ctx.getNodeParameter<string>('responseMode', 0);
+    const respond = mode === 'lastNode' || mode === 'responseNode' ? mode : 'immediately';
+    suspend({ resume: 'webhook', method, ...(limit && { until: limit }), data: { respond } });
+    ctx.logger.info(`Waiting for ${method} ${urls.webhook}${limit ? ` until ${limit}` : ''}`);
+    return [items];
+  },
+});
+
+interface BatchState {
+  /** Items still to hand out. */
+  items: NodeItem[];
+  /** Items that came back through the loop. */
+  processed: NodeItem[];
+  runIndex: number;
+}
+
+/**
+ * n8n's Loop Over Items (Split in Batches v3): hands out `batchSize` items at a time on "loop" and,
+ * once every batch has come back, all the returned items on "done". Connect the end of the loop
+ * back to this node. Its state lasts for the execution (also across waits) and is cleared when done.
+ */
+export const splitInBatchesNode = defineNode({
+  description: {
+    name: 'splitInBatches',
+    displayName: 'Loop Over Items',
+    description: 'Split the items into batches and loop over them',
+    version: 3,
+    kind: 'action',
+    categories: ['Flow'],
+    icon: 'lucide:repeat',
+    color: '#22c55e',
+    subtitle: 'batches of {{batchSize}}',
+    keywords: ['loop', 'batch', 'split in batches', 'iterate', 'for each', 'chunk'],
+    inputs: main,
+    outputs: [
+      { type: 'main', displayName: 'done' },
+      { type: 'main', displayName: 'loop' },
+    ],
+    properties: [
+      { name: 'batchSize', displayName: 'Batch Size', type: 'number', default: 1, typeOptions: { minValue: 1, numberPrecision: 0 }, description: 'Items per loop' },
+      {
+        name: 'options',
+        displayName: 'Options',
+        type: 'collection',
+        default: {},
+        placeholder: 'Add option',
+        values: [{ name: 'reset', displayName: 'Reset', type: 'boolean', default: false, description: 'Start over with the incoming items instead of continuing the loop' }],
+      },
+      {
+        name: 'notice',
+        displayName: 'Connect the last node of the loop back to this node. “loop” gets each batch; “done” gets every item that came back, once all batches have run.',
+        type: 'notice',
+      },
+    ],
+  },
+  execute(ctx) {
+    if (!ctx.getNodeState || !ctx.setNodeState) throw new NodeOperationError('Loop Over Items can only run inside a workflow execution');
+    const items = ctx.getInputData();
+    const batchSize = Math.max(1, Math.floor(Number(ctx.getNodeParameter('batchSize', 0)) || 1));
+    const reset = Boolean(ctx.getNodeParameter<{ reset?: boolean }>('options', 0)?.reset);
+    const saved = ctx.getNodeState<BatchState & JsonObject>();
+    let state: BatchState;
+    let batch: NodeItem[];
+    if (!saved || reset) {
+      // First run: the incoming items are the ones to loop over.
+      const all = items.map((item, index) => ({ json: item.json, pairedItem: { item: index } }));
+      batch = all.slice(0, batchSize);
+      state = { items: all.slice(batchSize), processed: [], runIndex: 0 };
+    } else {
+      // Back from the loop: keep what came back and hand out the next batch.
+      state = { items: [...saved.items], processed: [...saved.processed, ...items.map((item) => ({ json: item.json }))], runIndex: saved.runIndex + 1 };
+      batch = state.items.splice(0, batchSize);
+    }
+    if (!batch.length) {
+      ctx.setNodeState(undefined);
+      return [state.processed, []];
+    }
+    ctx.setNodeState(state as unknown as JsonObject);
+    return [[], batch];
+  },
+});
+
+/** The webhook response options of Respond to Webhook. */
+interface RespondOptions {
+  responseCode?: number;
+  responseHeaders?: { entries?: Array<{ name?: string; value?: string }> };
+  responseKey?: string;
+}
+
+/**
+ * n8n's Respond to Webhook: answers the request that started the run (a Webhook trigger set to
+ * "Using ‘Respond to Webhook’ Node", or a Wait node's resume call) while the run goes on. Only the
+ * first response counts; the items pass through.
+ */
+export const respondToWebhookNode = defineNode({
+  description: {
+    name: 'respondToWebhook',
+    displayName: 'Respond to Webhook',
+    description: 'Send the response to the webhook call that started the workflow',
+    version: 1,
+    kind: 'action',
+    categories: ['Flow'],
+    icon: 'lucide:reply',
+    color: '#22c55e',
+    subtitle: '{{respondWith}}',
+    keywords: ['respond', 'response', 'webhook', 'http', 'reply', 'return'],
+    inputs: main,
+    outputs: main,
+    properties: [
+      {
+        name: 'respondWith',
+        displayName: 'Respond With',
+        type: 'options',
+        default: 'firstIncomingItem',
+        noDataExpression: true,
+        options: [
+          { name: 'First Incoming Item', value: 'firstIncomingItem', description: 'Its JSON' },
+          { name: 'All Incoming Items', value: 'allIncomingItems', description: 'A JSON array' },
+          { name: 'JSON', value: 'json', description: 'A JSON body you write' },
+          { name: 'Text', value: 'text' },
+          { name: 'No Data', value: 'noData', description: 'An empty body' },
+          { name: 'Redirect', value: 'redirect' },
+        ],
+      },
+      {
+        name: 'responseBody',
+        displayName: 'Response Body',
+        type: 'json',
+        default: '{\n  "myField": "value"\n}',
+        typeOptions: { language: 'json' },
+        displayOptions: { show: { respondWith: ['json'] } },
+      },
+      { name: 'responseBody', displayName: 'Response Body', type: 'string', default: '', typeOptions: { rows: 3 }, displayOptions: { show: { respondWith: ['text'] } } },
+      { name: 'redirectURL', displayName: 'Redirect URL', type: 'string', default: '', required: true, placeholder: 'https://example.com', displayOptions: { show: { respondWith: ['redirect'] } } },
+      {
+        name: 'options',
+        displayName: 'Options',
+        type: 'collection',
+        default: {},
+        placeholder: 'Add option',
+        values: [
+          { name: 'responseCode', displayName: 'Response Code', type: 'number', default: 200, typeOptions: { minValue: 100, maxValue: 599 } },
+          {
+            name: 'responseHeaders',
+            displayName: 'Response Headers',
+            type: 'fixedCollection',
+            typeOptions: { multipleValues: true },
+            default: {},
+            groups: [
+              {
+                name: 'entries',
+                displayName: 'Header',
+                values: [
+                  { name: 'name', displayName: 'Name', type: 'string', default: '' },
+                  { name: 'value', displayName: 'Value', type: 'string', default: '' },
+                ],
+              },
+            ],
+          },
+          { name: 'responseKey', displayName: 'Put Response in Field', type: 'string', default: '', description: 'First / all incoming items: wrap the JSON in this field' },
+        ],
+      },
+      {
+        name: 'notice',
+        displayName: 'Set the Webhook trigger’s Respond option to “Using ‘Respond to Webhook’ Node”. The first response is sent; the workflow continues.',
+        type: 'notice',
+      },
+    ],
+  },
+  async execute(ctx) {
+    const items = ctx.getInputData();
+    const respondWith = ctx.getNodeParameter<string>('respondWith', 0);
+    const options = ctx.getNodeParameter<RespondOptions>('options', 0) ?? {};
+    const headers: Record<string, string> = {};
+    for (const entry of options.responseHeaders?.entries ?? []) if (entry.name?.trim()) headers[entry.name.trim().toLowerCase()] = String(entry.value ?? '');
+    const status = Math.round(Number(options.responseCode ?? 200)) || 200;
+    if (status < 100 || status > 599) throw new NodeOperationError(`Response code ${status} isn’t a valid HTTP status`);
+    const reply: Extract<RunReply, { type: 'webhook' }> = { type: 'webhook', status, headers };
+    const wrap = (value: unknown) => (options.responseKey?.trim() ? { [options.responseKey.trim()]: value } : value);
+    switch (respondWith) {
+      case 'allIncomingItems':
+        reply.json = wrap(items.map((item) => item.json));
+        break;
+      case 'json': {
+        const body = ctx.getNodeParameter<unknown>('responseBody', 0);
+        if (typeof body === 'string') {
+          try {
+            reply.json = body.trim() ? JSON.parse(body) : {};
+          } catch (error) {
+            throw new NodeOperationError('The response body isn’t valid JSON', { description: (error as Error).message });
+          }
+        } else reply.json = body ?? {};
+        break;
+      }
+      case 'text':
+        reply.body = String(ctx.getNodeParameter('responseBody', 0) ?? '');
+        break;
+      case 'noData':
+        break;
+      case 'redirect': {
+        const url = String(ctx.getNodeParameter('redirectURL', 0) ?? '').trim();
+        if (!url) throw new NodeOperationError('Set the URL to redirect to');
+        reply.redirect = url;
+        if (!options.responseCode) reply.status = 307;
+        break;
+      }
+      default:
+        reply.json = wrap(items[0]?.json ?? {});
+    }
+    // Loaded lazily: the runner needs the registry this plugin is part of.
+    const { deliverReply } = await import('../runner');
+    if (!deliverReply(ctx.getExecutionId(), reply)) {
+      ctx.logger.warn('No webhook call is waiting for a response (the trigger isn’t set to “Using ‘Respond to Webhook’ Node”, or a response was already sent)');
+    }
+    return [items];
   },
 });
 

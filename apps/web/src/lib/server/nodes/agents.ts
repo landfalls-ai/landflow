@@ -1,6 +1,7 @@
 /**
  * Nodes that connect workflows and Agents (docs/agents.md): a trigger that makes a workflow
- * callable as an agent tool, and an action that sends a message to a published agent.
+ * callable by an agent (as a tool) or by another workflow (Execute Workflow, in workflows.ts),
+ * and an action that sends a message to a published agent.
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
 
@@ -37,8 +38,8 @@ function coerce(value: unknown, type: InputField['type']): JsonObject[string] {
 export const workflowTrigger = defineNode({
   description: {
     name: 'workflowTrigger',
-    displayName: 'When Called by an Agent',
-    description: 'Start the workflow when an agent uses it as a tool; the arguments become the item',
+    displayName: 'When Called by a Workflow or Agent',
+    description: 'Start the workflow when an agent uses it as a tool or another workflow runs it; the arguments become the item',
     version: 1,
     kind: 'trigger',
     // "Run" in the editor starts here too, with empty example values.
@@ -46,17 +47,29 @@ export const workflowTrigger = defineNode({
     categories: ['Triggers', 'AI'],
     icon: 'lucide:bot',
     color: '#a855f7',
-    keywords: ['agent', 'tool', 'sub-workflow', 'execute workflow trigger'],
+    keywords: ['agent', 'tool', 'sub-workflow', 'execute workflow trigger', 'called by workflow'],
     inputs: [],
     outputs: main,
     properties: [
+      {
+        name: 'inputSource',
+        displayName: 'Input Data Mode',
+        type: 'options',
+        default: 'workflowInputs',
+        noDataExpression: true,
+        options: [
+          { name: 'Define Arguments', value: 'workflowInputs', description: 'Named, typed arguments (an agent sees them as the tool’s parameters)' },
+          { name: 'Accept All Data', value: 'passthrough', description: 'Take whatever items the caller sends' },
+        ],
+      },
       {
         name: 'inputs',
         displayName: 'Arguments',
         type: 'fixedCollection',
         typeOptions: { multipleValues: true },
-        description: 'What the agent must pass. Each one is shown to the model as a tool argument.',
+        description: 'What the caller must pass. An agent sees each one as a tool argument; Execute Workflow maps them.',
         default: { fields: [{ name: 'query', type: 'string', description: 'What to look up', required: true }] },
+        displayOptions: { hide: { inputSource: ['passthrough'] } },
         groups: [
           {
             name: 'fields',
@@ -84,14 +97,16 @@ export const workflowTrigger = defineNode({
       },
       {
         name: 'notice',
-        displayName: 'Add this workflow to an agent under Capabilities → Add workflow. The output of the last node that runs is the tool result.',
+        displayName:
+          'Add this workflow to an agent under Capabilities → Add workflow, or run it from another workflow with Execute Workflow. The output of the last node that runs is the result.',
         type: 'notice',
       },
     ],
   },
   execute(ctx) {
-    const fields = (ctx.getNodeParameter<{ fields?: InputField[] }>('inputs', 0)?.fields ?? []).filter((f) => f.name?.trim());
     const items = ctx.getInputData();
+    if (ctx.getNodeParameter('inputSource', 0) === 'passthrough') return [items.map((item, index) => ({ json: item.json, pairedItem: { item: index } }))];
+    const fields = (ctx.getNodeParameter<{ fields?: InputField[] }>('inputs', 0)?.fields ?? []).filter((f) => f.name?.trim());
     return [
       (items.length ? items : [{ json: {} }]).map((item, index): NodeItem => {
         const json: JsonObject = { ...item.json };

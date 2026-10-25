@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Activity, BookOpenText, Bot, House, KeyRound, Puzzle, Store, Workflow } from 'lucide-react';
+import { Activity, BookOpenText, Bot, ChartColumn, House, KeyRound, Puzzle, Settings, Store, Table2, Workflow } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveConnected, useLiveEvents } from '@/lib/client/live';
@@ -18,6 +18,8 @@ const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string;
       { href: '/workflows', label: 'Workflows', icon: Workflow },
       { href: '/agents', label: 'Agents', icon: Bot, preview: true },
       { href: '/executions', label: 'Executions', icon: Activity },
+      { href: '/insights', label: 'Insights', icon: ChartColumn },
+      { href: '/data-tables', label: 'Data tables', icon: Table2 },
       { href: '/credentials', label: 'Credentials', icon: KeyRound },
     ],
   },
@@ -78,7 +80,18 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="mt-auto flex flex-col gap-2.5 px-2.5 pb-1">
+      <Link
+        href="/settings"
+        aria-current={pathname.startsWith('/settings') ? 'page' : undefined}
+        className={cn(
+          'mb-2 mt-auto flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13px] transition-colors duration-[120ms]',
+          pathname.startsWith('/settings') ? 'bg-acdim font-semibold text-t1' : 'text-t2 hover:bg-acdim hover:text-t1',
+        )}
+      >
+        <Settings className="size-[18px] shrink-0" strokeWidth={1.7} />
+        <span className="truncate">Settings</span>
+      </Link>
+      <div className="flex flex-col gap-2.5 px-2.5 pb-1">
         <div className="flex items-center gap-2 text-[12px] text-t3" title={connected ? 'Receiving live events' : 'Reconnecting to the event stream'}>
           <StatusDot status={connected ? 'online' : 'offline'} />
           {connected ? 'Live' : 'Reconnecting…'}

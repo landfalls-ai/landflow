@@ -1,0 +1,143 @@
+# Landflow packaged as images: the host plus the seven plugins, each announcing itself to the
+# host's registry by its service name.
+#
+#   docker compose -f deploy/compose.yml up -d --build --wait     # http://localhost:53000
+#   docker compose -f deploy/compose.yml -f deploy/compose.infra-link.yml up -d   # + join the infra network
+#
+# Builds use the repository root as context (see deploy/docker/*.Dockerfile and /.dockerignore).
+# Settings: deploy/.env (see .env.example). Details: deploy/README.md.
+
+name: landflow
+
+x-plugin: &plugin
+  restart: unless-stopped
+  init: true
+  depends_on:
+    web:
+      condition: service_started
+  networks: [landflow]
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+x-plugin-env: &plugin-env
+  LANDFLOW_REGISTRY_URL: http://web:3000
+  LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${LANDFLOW_OTLP_ENDPOINT:-}
+
+services:
+  web:
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/host:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/host.Dockerfile
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_HOST_PORT:-53000}:3000"
+    environment:
+      LANDFLOW_DATA_DIR: /data
+      # Empty: the vault generates a key into the data volume (/data/encryption.key) on first use.
+      LANDFLOW_ENCRYPTION_KEY: ${LANDFLOW_ENCRYPTION_KEY:-}
+      LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
+      # Plugins announce themselves; the scan (at boot and the Plugins page's "Scan network")
+      # probes the plugin services instead of the container's own 127.0.0.1.
+      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases
+      LANDFLOW_SCAN_PORTS: 7101-7107,7201-7207
+      # Base of links the host hands out (resume URLs, error-workflow links): the published port.
+      LANDFLOW_PUBLIC_URL: http://localhost:${LANDFLOW_HOST_PORT:-53000}
+      # Marketplace node plugins run as child processes inside this container.
+      LANDFLOW_MARKETPLACE_REGISTRY_URL: http://127.0.0.1:3000
+      OLLAMA_URL: ${LANDFLOW_OLLAMA_URL:-http://host.docker.internal:11434}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${LANDFLOW_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: landflow-host
+      LANDFLOW_TRACE_URL: ${LANDFLOW_TRACE_URL:-http://localhost:56686/trace/{traceId}}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - landflow-data:/data
+    networks: [landflow]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  text-toolkit:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-text-toolkit:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: text-toolkit, HTTP_PORT: "7101", GRPC_PORT: "7201" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: text-toolkit
+
+  py-insights:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-py-insights:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/python-plugin.Dockerfile
+      args: { PLUGIN: py-insights, HTTP_PORT: "7102", GRPC_PORT: "7202" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: py-insights
+
+  go-crypto:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-go-crypto:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/go-plugin.Dockerfile
+      args: { PLUGIN: go-crypto, HTTP_PORT: "7103", GRPC_PORT: "7203" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: go-crypto
+
+  messaging:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-messaging:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: messaging, HTTP_PORT: "7104", GRPC_PORT: "7204" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: messaging
+
+  productivity:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-productivity:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/python-plugin.Dockerfile
+      args: { PLUGIN: productivity, HTTP_PORT: "7105", GRPC_PORT: "7205" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: productivity
+
+  google-workspace:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-google-workspace:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/go-plugin.Dockerfile
+      args: { PLUGIN: google-workspace, HTTP_PORT: "7106", GRPC_PORT: "7206" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: google-workspace
+
+  databases:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-databases:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/go-plugin.Dockerfile
+      args: { PLUGIN: databases, HTTP_PORT: "7107", GRPC_PORT: "7207" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: databases
+
+networks:
+  landflow:
+    name: landflow-app
+
+volumes:
+  landflow-data:

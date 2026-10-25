@@ -11,7 +11,7 @@ export interface RetentionSettings {
 }
 
 export interface InstanceSettings {
-  /** IANA time zone used when a workflow doesn't set one (schedules, Date & Time, Insights days). */
+  /** IANA time zone used when a workflow doesn't set one (Date & Time nodes, Insights days; schedules once the scheduler reads it). */
   timezone: string;
   executions: RetentionSettings;
 }

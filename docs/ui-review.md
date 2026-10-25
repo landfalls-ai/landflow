@@ -11,7 +11,7 @@ Legend: ✅ on par with n8n · ➕ beyond n8n · ◐ partial · ✗ missing
 | Left sidebar | Overview, Templates, Variables, Insights, Help | Home, Workflows, Executions, Credentials, Plugins, Build a plugin; live dot; theme switch | ✅ |
 | Credentials | Credentials tab: list, create from a type picker, form per type, "Connection tested successfully" | Credentials page: list with type icon, plugin and "used by N workflows"; create from a searchable type picker (types come from plugin manifests); form rendered from the type's properties; **Test connection** runs the plugin's test; stored AES-256-GCM encrypted, secrets never sent back to the browser | ✅ |
 | Overview | Workflows / Credentials / Executions tabs, insight KPIs | Home: four KPI cards with coloured top bars, count-up numbers, recent executions, plugin list with brand icons | ✅ |
-| Workflows list | Cards with name, last updated, owner | Rows with node icons tinted by node colour, description, tags, active badge, node count | ✅ |
+| Workflows list | Cards with name, last updated, owner; folders, search, tag filter, sort, import | Rows with node icons tinted by node colour, description, tags, active badge, node count; nested folders with a breadcrumb (drag a workflow onto a folder or a breadcrumb step, or Move to folder), search across folders, tag filter, sort by updated / name / created, Import from a Landflow or n8n file with a report | ✅ |
 | Theme | Light, dark, system | Light, dark, system (Landfall tokens) | ✅ |
 
 ## Canvas
@@ -25,8 +25,10 @@ Legend: ✅ on par with n8n · ➕ beyond n8n · ◐ partial · ✗ missing
 | Edges after a run | Green, "N items" label | Green with an "N items" pill that pops in, dots travelling along the edge while items flow; AI edges violet with "N calls" | ➕ |
 | Toolbar | Zoom, fit, tidy up, add | "+", AI builder, Tidy up (⇧⌥T), Fit view; zoom controls; minimap | ✅ |
 | Execute button | Bottom centre "Execute workflow" | Bottom centre "Execute workflow" plus "Debug" with a breakpoint count, Stop, Open chat | ➕ |
-| Sticky notes | Yes | No | ✗ |
-| Copy/paste between workflows | JSON on the clipboard | Duplicate (⌘D) only | ◐ |
+| Sticky notes | Yes | Markdown notes behind the nodes (`⇧S` or the toolbar): double-click to edit, resize from the corners, seven colours that follow the theme; read-only in the Executions tab | ✅ |
+| Copy/paste between workflows | JSON on the clipboard | ⌘C / ⌘X / ⌘V / ⌘D through the system clipboard with connections, notes and pinned data; taken names become `Name1`, `$('Name')` between pasted nodes follows the rename; n8n clipboard JSON is converted on paste | ✅ |
+| Undo / redo | ⌘Z / ⇧⌘Z | ⌘Z / ⇧⌘Z and canvas buttons; drags, deletes, pastes and parameter typing (coalesced) | ✅ |
+| Workflow menu | Settings, download, import, version history | `…` menu: Settings (error workflow, time zone, timeout, callers, saved executions), Version history (diff summary, read-only preview, restore), Download JSON, Import from file or pasted JSON (Landflow or n8n); tags in the top bar | ✅ |
 
 ## Node creator (the side menu)
 
@@ -47,6 +49,7 @@ Legend: ✅ on par with n8n · ➕ beyond n8n · ◐ partial · ✗ missing
 | Data modes | Schema, Table, JSON | Schema (typed field tree with sample values), Table, JSON; the mode is shared and remembered | ✅ |
 | Drag a field into a parameter | Yes; turns the field into an expression | Field names drag from Schema or Table and drop into any text or number parameter as `{{ $json.path }}`; the field highlights while you drag over it and switches to expression styling (fx) | ✅ |
 | Expression result | Result preview under the field | Each expression shows its resolved value for the first input item (green) or the error (red), updated as you type | ✅ |
+| Expression editor | Inline editor with highlighting and autocomplete | `{{ }}` highlighted in the field; autocomplete for `$json` fields from the input, `$('Node').item.json`, `$input`, `$now`, `$today`, `$workflow`, `$execution`, `$itemIndex`, `$vars` and methods for the value's type; `{{` closes itself | ✅ |
 | Pin data | Pin output; edit output | Pin, Unpin, "Set test data" on triggers, "Edit output" with a JSON editor (⌘↵ saves) | ✅ |
 | Run node | "Execute step" | Run node, Run from here, Breakpoint | ➕ |
 | Dependent parameters | Switching Resource resets Operation to its default; collection options follow displayOptions | Same: the default comes from the property shown for the current values, dependent values reset, nested displayOptions use n8n's sibling / `/root` scoping | ✅ |
@@ -84,10 +87,10 @@ The registry page shows each plugin with its published icon and colour, language
 ## Remaining gaps, most useful first
 
 1. **Webhook app triggers.** Plugins can publish polling triggers; triggers that register a webhook with the service (n8n's Telegram/GitHub/Slack event triggers) still need a lifecycle in the protocol.
-2. **Sticky notes** on the canvas.
+2. ~~**Sticky notes** on the canvas.~~ Done.
 3. **Form trigger and Execute Workflow (sub-workflow) trigger.**
-4. **Copy and paste nodes as JSON** across workflows.
+4. ~~**Copy and paste nodes as JSON** across workflows.~~ Done, including n8n clipboard JSON.
 5. **Evaluations tab** (n8n's test datasets for AI flows); the Editor | Executions switch leaves room for it.
 6. **OAuth2 connect buttons.** Credentials take tokens and keys directly; there is no in-app consent flow ("Connect with Google").
 7. **Debugger edits.** Parameter edits made while paused don't change the running debug session; they apply to the next run.
-8. **Expression editor.** Expressions are edited in a plain input; n8n has an inline editor with autocomplete for `$json` fields and functions.
+8. ~~**Expression editor.**~~ Done: highlighting and autocomplete for `$json` fields, other nodes' output, variables and methods. n8n's full-screen expression editor with a live result pane is still missing; the result shows under the field.

@@ -478,7 +478,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const debugging = useEditor((s) => s.debugging);
   const breakpoints = useEditor((s) => s.breakpoints);
   const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.wf.type === 'core.chatTrigger'));
-  const hasActivatable = useEditor((s) => s.nodes.some((n) => ['core.webhook', 'core.schedule'].includes(n.data.wf.type)));
+  const hasActivatable = useEditor((s) => s.nodes.some((n) => ['core.webhook', 'core.schedule', 'core.formTrigger'].includes(n.data.wf.type)));
   const assistantOpen = useAssistant((s) => s.open);
 
   // The assistant's conversation lasts while this workflow is open.
@@ -668,7 +668,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
 
           <div className="ml-auto flex items-center gap-2">
             {hasActivatable && (
-              <label className="flex items-center gap-2 pr-1 text-[13px] text-t2" title="Active workflows respond to webhooks and schedules">
+              <label className="flex items-center gap-2 pr-1 text-[13px] text-t2" title="Active workflows respond to webhooks, forms and schedules">
                 <Switch checked={active} onChange={(v) => useEditor.getState().setMeta({ active: v })} label="Active" />
                 <span className={cn(active && 'font-semibold text-gn')}>{active ? 'Active' : 'Inactive'}</span>
               </label>

@@ -1,8 +1,8 @@
 /**
  * Timers of waiting executions: a `time` wait resumes at its `until`, and a webhook or form wait
  * with a time limit stops waiting then (it continues with what the node returned). At boot,
- * `start()` reloads every waiting execution from the store and resumes the overdue ones right
- * away. Waits without a time (a webhook or form with no limit, a parent waiting for its
+ * `start()` reloads every waiting execution from the store and resumes the overdue ones after a
+ * short grace period. Waits without a time (a webhook or form with no limit, a parent waiting for its
  * sub-execution) have no timer. Single-process, like the scheduler.
  */
 import { context, ROOT_CONTEXT } from '@opentelemetry/api';
@@ -38,23 +38,23 @@ export const waits = singleton('waits', () => {
       .catch((error) => logger.warn('could not resume a waiting execution', { 'landflow.execution.id': executionId, error: (error as Error).message }));
   }
 
-  function arm(record: ExecutionRecord) {
+  function arm(record: ExecutionRecord, minDelay = 0) {
     clear(record.executionId);
     const until = record.wait?.until ? Date.parse(record.wait.until) : NaN;
     if (record.status !== 'waiting' || Number.isNaN(until)) return;
-    const delay = Math.min(MAX_DELAY_MS, Math.max(0, until - Date.now()));
+    const delay = Math.min(MAX_DELAY_MS, Math.max(minDelay, until - Date.now()));
     const timer = setTimeout(() => void fire(record.executionId), delay);
     timer.unref?.();
     timers.set(record.executionId, timer);
   }
 
   return {
-    /** Boot: arm the timers of every waiting execution in the store; overdue ones resume now. */
-    start() {
+    /** Boot: arm the timers of every waiting execution in the store; overdue ones resume after `graceMs`. */
+    start(graceMs = 2_000) {
       if (started) return;
       started = true;
       const waiting = store.waitingExecutions();
-      for (const record of waiting) arm(record);
+      for (const record of waiting) arm(record, graceMs);
       if (waiting.length) logger.info('waiting executions loaded', { 'landflow.executions.waiting': waiting.length, 'landflow.executions.timed': timers.size });
     },
 

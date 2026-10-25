@@ -33,10 +33,12 @@ separate from the **AI Agent** node, which runs inside a workflow.
   - **Nodes:** any action node from any plugin, configured as in the editor. A parameter set to
     `{{ $fromAI('key', 'description', 'type') }}` ("Let the model decide") becomes a tool argument.
     The model's arguments also override same-named parameters.
-  - **Workflows:** workflows that start with **When Called by an Agent**
+  - **Workflows:** workflows that start with **When Called by a Workflow or Agent**
     (`core.workflowTrigger`). The trigger's *Arguments* become the tool's JSON schema and are
-    coerced to the declared types. The output of the last node that runs is the tool result,
-    and the timeline links to the execution.
+    coerced to the declared types; with *Accept All Data* the tool takes any arguments. The
+    output of the last node that runs is the tool result, and the timeline links to the
+    execution. A workflow that starts waiting (a Wait node, a form page) goes on in the
+    background and the tool returns `{ status: "waiting", executionId }`.
   - **Sub-agents:** other agents, offered as `ask_<name>({ task })`. A sub-agent runs in its
     own child session (published version if it has one, else its draft) and doesn't see the
     conversation. Delegation stops at the calling agent's *max delegation depth*.
@@ -100,8 +102,11 @@ Only one run can be active per session.
 
 ## From workflows
 
-- **When Called by an Agent** (`core.workflowTrigger`) makes a workflow an agent tool. **Run**
-  in the editor starts from it too, with empty example values for each argument.
+- **When Called by a Workflow or Agent** (`core.workflowTrigger`, formerly "When Called by an
+  Agent"; the type is unchanged) makes a workflow an agent tool, and lets other workflows run it
+  with **Execute Workflow** (`core.executeWorkflow`, which maps the *Arguments* or passes its items
+  through and returns the last node's output). *Input Data Mode* is *Define Arguments* or *Accept
+  All Data*. **Run** in the editor starts from it too, with empty example values for each argument.
 - **Message an Agent** (`core.messageAgent`) sends `message` to a published agent and outputs
   `{ reply, sessionId, agentId, version, endReason, usage }`. *Continue by key* keeps one session
   per key (for example `{{ $json.sessionId }}`). The node is `usableAsTool`, so an AI Agent node

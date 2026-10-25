@@ -433,10 +433,17 @@ function afterRun(record: ExecutionRecord, workflow: Workflow | undefined) {
       finishedChildren.delete(childId);
       resumeParent(record.executionId, child);
     }
+    dropFinishedChildren(record.executionId);
     return;
   }
+  dropFinishedChildren(record.executionId);
   if (record.parentExecutionId) handOverToParent(record);
   if (record.status === 'error' && workflow) void runErrorWorkflow(record, workflow);
+}
+
+/** Children kept for a parent that didn't wait for them (Execute Workflow without "wait for completion"). */
+function dropFinishedChildren(parentId: string) {
+  for (const [id, child] of finishedChildren) if (child.parentExecutionId === parentId) finishedChildren.delete(id);
 }
 
 /** A sub-execution finished: resume the parent if it waits for it. */

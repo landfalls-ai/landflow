@@ -1,6 +1,6 @@
 /**
  * Idempotent server bootstrap: built-in plugin, static seeds, gRPC registry,
- * lease reaper, an initial network scan, the scheduler and agent triggers. Called from
+ * lease reaper, an initial network scan, the scheduler, waiting executions' timers and agent triggers. Called from
  * instrumentation.ts at startup and defensively from API routes.
  */
 import { agentTriggers } from './agents/triggers';
@@ -12,6 +12,7 @@ import { startRegistryGrpcServer } from './plugins/registry-grpc';
 import { scheduler } from './scheduler';
 import { seedWorkflows } from './seed';
 import { singleton } from './singleton';
+import { waits } from './waits';
 import { logger, observePluginsOnline } from './telemetry';
 
 export function ensureBootstrapped(): Promise<void> {
@@ -23,6 +24,8 @@ export function ensureBootstrapped(): Promise<void> {
     // Insights backfill (first boot) and execution retention, before anything can start a run.
     startDataMaintenance();
     scheduler.start();
+    // Waiting executions: re-arm their timers; overdue ones resume shortly (plugins get a moment to announce).
+    waits.start();
     agentTriggers.start();
     await startRegistryGrpcServer();
 

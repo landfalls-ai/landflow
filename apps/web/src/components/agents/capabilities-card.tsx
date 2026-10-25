@@ -409,7 +409,7 @@ function WorkflowToolDialog({ tool, onSave, onClose }: { tool?: WorkflowToolConf
   return (
     <Dialog
       title="Add workflow"
-      subtitle="Workflows that start with “When Called by an Agent” can be tools."
+      subtitle="Workflows that start with “When Called by a Workflow or Agent” can be tools."
       icon={<KindTile icon={<Workflow className="size-4" />} />}
       onClose={onClose}
       footer={
@@ -430,7 +430,7 @@ function WorkflowToolDialog({ tool, onSave, onClose }: { tool?: WorkflowToolConf
         </div>
       )}
       {workflows && !workflows.length && !error && (
-        <EmptyState compact title="No workflows yet" hint="Create one that starts with “When Called by an Agent”." />
+        <EmptyState compact title="No workflows yet" hint="Create one that starts with “When Called by a Workflow or Agent”." />
       )}
       <div className="space-y-1">
         {workflows?.map((wf) => (

@@ -11,11 +11,13 @@ import { anthropicApiCredential, openAiApiCredential } from './credentials';
 import { codeNode, httpRequestNode, setNode } from './data';
 import { dataTableNode } from './datatable';
 import { dateTimeNode } from './datetime';
-import { filterNode, ifNode, limitNode, mergeNode, noOpNode, sortNode, stopAndErrorNode, switchNode, waitNode } from './flow';
+import { filterNode, ifNode, limitNode, mergeNode, noOpNode, respondToWebhookNode, sortNode, splitInBatchesNode, stopAndErrorNode, switchNode, waitNode } from './flow';
+import { formNode, formTrigger } from './forms';
 import { recordMetricNode } from './metric';
 import { openAiChatModelNode, openAiNode } from './openai';
 import { aggregateNode, removeDuplicatesNode, renameKeysNode, splitOutNode, summarizeNode } from './transform';
-import { chatTrigger, manualTrigger, scheduleTrigger, webhookTrigger } from './triggers';
+import { chatTrigger, errorTrigger, manualTrigger, scheduleTrigger, webhookTrigger } from './triggers';
+import { executeWorkflowNode } from './workflows';
 
 export const corePlugin = definePlugin({
   info: {
@@ -33,6 +35,8 @@ export const corePlugin = definePlugin({
     chatTrigger,
     scheduleTrigger,
     workflowTrigger,
+    formTrigger,
+    errorTrigger,
     httpRequestNode,
     setNode,
     codeNode,
@@ -49,6 +53,10 @@ export const corePlugin = definePlugin({
     renameKeysNode,
     dateTimeNode,
     waitNode,
+    splitInBatchesNode,
+    executeWorkflowNode,
+    respondToWebhookNode,
+    formNode,
     noOpNode,
     stopAndErrorNode,
     recordMetricNode,

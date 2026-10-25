@@ -1,4 +1,4 @@
-/** Workflows an agent can call: those that start with "When Called by an Agent". */
+/** Workflows an agent can call: those that start with "When Called by a Workflow or Agent". */
 import { workflowToolInfo } from '@/lib/server/agents/tools';
 import { handler, json } from '@/lib/server/http';
 import { store } from '@/lib/server/store';

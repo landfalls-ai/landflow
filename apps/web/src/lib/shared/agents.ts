@@ -55,7 +55,7 @@ export interface NodeToolConfig extends ToolBase {
   credentials?: Record<string, CredentialRef>;
 }
 
-/** A workflow that starts with "When Called by an Agent" (core.workflowTrigger). */
+/** A workflow that starts with "When Called by a Workflow or Agent" (core.workflowTrigger). */
 export interface WorkflowToolConfig extends ToolBase {
   type: 'workflow';
   workflowId: string;

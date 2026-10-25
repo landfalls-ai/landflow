@@ -20,6 +20,8 @@ const nextConfig: NextConfig = {
     '@opentelemetry/sdk-trace',
   ],
   devIndicators: false,
+  // Docker image (deploy/docker/host.Dockerfile): a self-contained server in .next/standalone.
+  ...(process.env.LANDFLOW_NEXT_OUTPUT === 'standalone' && { output: 'standalone' as const }),
 };
 
 export default nextConfig;
