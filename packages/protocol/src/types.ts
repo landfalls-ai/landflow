@@ -525,6 +525,12 @@ export interface AnnounceRequest {
   pluginId: string;
   version: string;
   ttlSeconds?: number;
+  /**
+   * A random id the plugin picks once per process and sends with every announce. When it changes for an online
+   * endpoint (the plugin restarted, maybe with new nodes but the same version), the host pulls the manifest again.
+   * Opaque, 1–128 characters; the SDKs send 32 hex characters. Older plugins leave it out.
+   */
+  instanceId?: string;
 }
 
 export interface AnnounceResponse {

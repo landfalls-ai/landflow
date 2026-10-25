@@ -83,7 +83,7 @@ export const webhookTrigger = defineNode({
       {
         name: 'notice',
         displayName:
-          'Production webhooks run the published version: publish the workflow to serve them. Items contain { method, path, headers, query, body } (and jwtPayload with JWT Auth). Uploaded files (multipart parts, or a PDF, image or other non-text body) arrive as binary data. A run that starts waiting first answers { status: "waiting", executionId }.',
+          'The production URL runs the published version: publish the workflow to serve it. The test URL (/api/webhook-test/<path>) answers one call while you listen for a test event and runs the workflow as it is in the editor. Items contain { method, path, headers, query, body } (and jwtPayload with JWT Auth). Uploaded files (multipart parts, or a PDF, image or other non-text body) arrive as binary data. A run that starts waiting first answers { status: "waiting", executionId }.',
         type: 'notice',
       },
     ],

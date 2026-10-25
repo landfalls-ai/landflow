@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import os
+import secrets
 import threading
 import urllib.error
 import urllib.parse
@@ -25,6 +26,11 @@ log = logging.getLogger("landflow_sdk.announce")
 DEFAULT_REGISTRY_URL = "http://127.0.0.1:3000"
 REQUEST_TIMEOUT_SECONDS = 3.0
 _DISABLED = {"off", "false", "0", "no", "none", "disabled"}
+
+#: ``AnnounceRequest.instanceId``: random, picked once per process and sent with every announce. A restarted plugin
+#: announces a new one, so the host pulls its manifest again even when the version is the same (new nodes or
+#: parameters during development).
+INSTANCE_ID = secrets.token_hex(16)
 
 
 class RegistryUnreachable(Exception):
@@ -176,6 +182,7 @@ class Announcer:
                 "pluginId": self.plugin_id,
                 "version": self.version,
                 "ttlSeconds": self.ttl_seconds,
+                "instanceId": INSTANCE_ID,
             }
             try:
                 response = self.client.announce(payload, REQUEST_TIMEOUT_SECONDS)

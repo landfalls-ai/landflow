@@ -127,6 +127,14 @@ func TestServeAnnouncesOverHTTPAndWithdraws(t *testing.T) {
 	if first.Protocol != ProtocolVersion || first.PluginID != "test-plugin" || first.Version != "1.2.3" || first.TTLSeconds != 30 {
 		t.Errorf("announce = %+v", first)
 	}
+	// Every announce (both endpoints, every heartbeat) carries this process's instance id.
+	mu.Lock()
+	for _, a := range announces {
+		if a.InstanceID != InstanceID() {
+			t.Errorf("announce %s instanceId = %q, want %q", a.Endpoint, a.InstanceID, InstanceID())
+		}
+	}
+	mu.Unlock()
 	resp, err := http.Get(wantHTTP + PathHealth)
 	if err != nil || resp.StatusCode != 200 {
 		t.Fatalf("health over real listener: %v", err)
@@ -184,6 +192,7 @@ type fakeRegistry struct {
 	pb.UnimplementedRegistryServiceServer
 	mu        sync.Mutex
 	announced []string
+	instances []string
 	withdrawn []string
 }
 
@@ -191,6 +200,7 @@ func (f *fakeRegistry) Announce(_ context.Context, in *pb.AnnounceRequest) (*pb.
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.announced = append(f.announced, in.GetEndpoint())
+	f.instances = append(f.instances, in.GetInstanceId())
 	return &pb.AnnounceResponse{Accepted: true, HeartbeatIntervalSeconds: 10}, nil
 }
 
@@ -234,6 +244,64 @@ func TestServeAnnouncesOverGRPC(t *testing.T) {
 	defer reg.mu.Unlock()
 	if reg.announced[0] != want || len(reg.withdrawn) != 1 || reg.withdrawn[0] != want {
 		t.Errorf("announced=%v withdrawn=%v", reg.announced, reg.withdrawn)
+	}
+	if reg.instances[0] != InstanceID() {
+		t.Errorf("grpc announce instance_id = %q, want %q", reg.instances[0], InstanceID())
+	}
+}
+
+// captureRegistry records announces in memory.
+type captureRegistry struct {
+	mu   sync.Mutex
+	reqs []AnnounceRequest
+}
+
+func (c *captureRegistry) Announce(_ context.Context, req AnnounceRequest) (AnnounceResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reqs = append(c.reqs, req)
+	return AnnounceResponse{Accepted: true, HeartbeatIntervalSeconds: 1}, nil
+}
+func (c *captureRegistry) Withdraw(context.Context, WithdrawRequest) error { return nil }
+func (c *captureRegistry) Close() error                                    { return nil }
+func (c *captureRegistry) String() string                                  { return "capture" }
+
+func TestAnnounceInstanceIDIsPerProcess(t *testing.T) {
+	id := InstanceID()
+	if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" {
+		t.Fatalf("InstanceID() = %q, want 32 hex characters", id)
+	}
+	if InstanceID() != id {
+		t.Fatal("InstanceID() changed")
+	}
+	// Two announcers in one process (two plugins, or Serve run twice) announce the same id.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reg := &captureRegistry{}
+	for _, pluginID := range []string{"one", "two"} {
+		a := &announcer{client: reg, pluginID: pluginID, version: "1", ttlSeconds: 30, logger: log.New(io.Discard, "", 0), announced: map[string]bool{}}
+		a.start(ctx, []string{"http://127.0.0.1:1/" + pluginID})
+	}
+	waitFor(t, "two announces", func() bool {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		return len(reg.reqs) >= 2
+	})
+	reg.mu.Lock()
+	for _, req := range reg.reqs {
+		if req.InstanceID != id {
+			t.Errorf("%s announced instanceId %q, want %q", req.PluginID, req.InstanceID, id)
+		}
+	}
+	reg.mu.Unlock()
+	// Another process draws its own.
+	if newInstanceID() == id {
+		t.Error("a new instance id equals this process's")
+	}
+	// Older hosts (and the JSON schema) see no field when it is empty.
+	data, _ := json.Marshal(AnnounceRequest{Protocol: ProtocolVersion, Endpoint: "http://x:1", PluginID: "p", Version: "1"})
+	if strings.Contains(string(data), "instanceId") {
+		t.Errorf("empty instanceId marshalled: %s", data)
 	}
 }
 

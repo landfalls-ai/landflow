@@ -518,6 +518,7 @@ class GrpcRegistryClient:
                 plugin_id=payload["pluginId"],
                 version=payload["version"],
                 ttl_seconds=int(payload.get("ttlSeconds") or 0),
+                instance_id=payload.get("instanceId") or "",
             ),
             timeout,
         )

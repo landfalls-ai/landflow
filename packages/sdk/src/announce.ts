@@ -4,7 +4,9 @@
  * (POST /api/plugins/announce) or its gRPC RegistryService (grpc://host:7070).
  * When the host requires a registry secret, set LANDFLOW_REGISTRY_SECRET here too:
  * it goes out as the `x-landflow-registry-secret` header (or gRPC metadata).
+ * Every announce carries this process's `instanceId`, so the host notices a restart.
  */
+import { randomBytes } from 'node:crypto';
 import {
   DEFAULT_ANNOUNCE_TTL_SECONDS,
   DEFAULT_HEARTBEAT_SECONDS,
@@ -12,6 +14,12 @@ import {
   type AnnounceRequest,
   type AnnounceResponse,
 } from '@landflow/protocol';
+
+/**
+ * AnnounceRequest.instanceId: random, picked once per process. A restarted plugin announces a new one, and the host pulls
+ * its manifest again even when the version is the same (new nodes or parameters during development).
+ */
+export const INSTANCE_ID = randomBytes(16).toString('hex');
 
 export interface AnnouncerOptions {
   registryUrl: string;
@@ -105,6 +113,7 @@ export async function startAnnouncer(options: AnnouncerOptions): Promise<Announc
           pluginId: options.pluginId,
           version: options.version,
           ttlSeconds: options.ttlSeconds ?? DEFAULT_ANNOUNCE_TTL_SECONDS,
+          instanceId: INSTANCE_ID,
         });
         if (response.heartbeatIntervalSeconds > 0) interval = response.heartbeatIntervalSeconds;
       }

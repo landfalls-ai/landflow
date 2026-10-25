@@ -608,6 +608,9 @@ describe('route guard and public allow-list', () => {
     expect(run('/').headers.get('location')).toBe(`${BASE}/login`);
     expect(run('/api/workflows').status).toBe(401);
     for (const path of ['/login', '/api/health', '/api/webhook/x', '/chat/x', '/form/x']) expect(run(path).headers.get('x-middleware-next'), path).toBe('1');
+    // Pages get the requested path; API routes don't (it would land in webhook items' headers).
+    expect(run('/form/x?a=1').headers.get('x-middleware-request-x-landflow-path')).toBe('/form/x?a=1');
+    expect(run('/api/webhook/x', { 'x-landflow-path': '/spoofed' }).headers.get('x-middleware-request-x-landflow-path')).toBeNull();
     expect(run('/workflows', { cookie: 'landflow_session=abc' }).headers.get('x-middleware-next')).toBe('1');
     expect(run('/api/workflows', { authorization: 'Bearer lf_abc' }).headers.get('x-middleware-next')).toBe('1');
     expect(run('/api/workflows', { 'x-landflow-api-key': 'lf_abc' }).headers.get('x-middleware-next')).toBe('1');

@@ -20,7 +20,7 @@ that hosts one or more node types and speaks this protocol over **HTTP+JSON** an
  POST /api/plugins/announce  ──────────────────────▶  registry: lease(endpoint, ttl=30s)
    (or RegistryService.Announce on :7070)             GET manifest via the endpoint's transport
                              ◀──────────────────────  validate → node types appear in the editor
- every 10s: re-announce (heartbeat) ───────────────▶  lease renewed; manifest re-pulled if version changed
+ every 10s: re-announce (heartbeat) ───────────────▶  lease renewed; manifest re-pulled if version or instanceId changed
                              ◀──────────────────────  Execute(node, items) when a workflow runs
  SIGTERM: DELETE /api/plugins/announce ────────────▶  plugin marked offline
 ```
@@ -78,6 +78,19 @@ the same JSON Schema as the HTTP binding (the Terraform `tfplugin` approach). Co
 |---|---|---|
 | HTTP | `POST {host}/api/plugins/announce` body `AnnounceRequest` → `AnnounceResponse` | `DELETE {host}/api/plugins/announce` body `WithdrawRequest` |
 | gRPC | `RegistryService.Announce` on `:7070` | `RegistryService.Withdraw` |
+
+`AnnounceRequest` is `{ protocol, endpoint, pluginId, version, ttlSeconds?, instanceId? }`. An announce for an endpoint
+that is online with the same `version` is a heartbeat: the lease is renewed and the manifest is not pulled.
+
+**`instanceId`** (optional; gRPC `instance_id = 6`, empty when absent) is a random id the plugin picks once per process
+and sends with every announce: opaque, 1–128 characters; the SDKs send 32 hex characters (`INSTANCE_ID` in TypeScript
+and Python, `InstanceID()` in Go). The host keeps it per endpoint. An announce with another id than the stored one is a
+restarted process, usually within its lease and with the same version but new nodes or parameters (development): the
+host pulls the manifest again, with the registry proof when the endpoint needs one (§13), and emits the usual
+`plugin.updated` event, so the editor shows the new descriptors without **Refresh** on the Plugins page. An endpoint
+known without an id (found by a scan, or announced by an older SDK) is pulled once more on its first announce with one;
+a Refresh keeps the stored id. Announces without `instanceId` (older plugins) work as before: only a new version, or
+coming back after a withdraw or an expired lease, re-pulls the manifest. Older hosts ignore the field.
 
 SDK environment variables:
 
@@ -538,6 +551,9 @@ ignore challenges over 256). Test vector: secret `registry-s3cret`, plugin `test
   `verify…` counterparts). Without the variable, or without a challenge, they send no proof.
 - With the secret set, a discovered plugin that sends no proof ("did not prove the registry secret"), a wrong one, or
   a proof for another plugin id is not registered; the reason shows in the Plugins page's feed, and it is retried.
+- The re-pull after an announce with a new `instanceId` (§2) is a GetManifest like any other: a discovered endpoint is
+  challenged again and keeps its old manifest if the proof is missing or wrong (its next announce tries again); an
+  endpoint registered by announcing is not challenged.
 - Only Kubernetes-discovered endpoints are challenged. Announce keeps its header check; static seeds, scan and manual
   endpoints are configured on the host and are not challenged. Without the secret nothing changes.
 - **Additive.** Older plugins ignore the challenge (and are then refused only if the host has a secret); older hosts

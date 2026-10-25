@@ -1,6 +1,6 @@
 # Roadmap: closing the gaps with other workflow platforms
 
-Status: **in progress** (started 2026-10-25). The list comes from a pass over Landflow's code and
+Status: **all waves landed** (started and finished 2026-10-25; each item's "Not yet" list is what remains). The list comes from a pass over Landflow's code and
 from research on n8n, Zapier, Make, Power Automate, the developer-first engines (Temporal,
 Inngest, Trigger.dev, Windmill, Pipedream, Activepieces, Node-RED, Kestra), the AI-native
 builders (Dify, Langflow, Flowise, Gumloop, Lindy) and team and operations features. The
@@ -15,7 +15,7 @@ check in Chrome, and this file is updated as items land. The Claude Code harness
 
 Three streams in parallel, split by the files they own.
 
-**A. Engine and flow** ✅ Done. Not yet: waiting children in "each item" mode, a test URL for forms.
+**A. Engine and flow** ✅ Done.
 - Executions that pause and resume: a node can put the run in a `waiting` state. The run's
   state is saved to disk and resumed later, also after a restart, at a time, on a webhook call
   or on a form submission.
@@ -25,14 +25,19 @@ Three streams in parallel, split by the files they own.
   a completion page.
 - **Respond to Webhook** node, and the Webhook trigger's response modes: immediately, when the
   last node finishes, or from Respond to Webhook.
+- Test URLs for the Webhook and Form triggers (n8n's "Listen for test event"). ✅ Done:
+  `/api/webhook-test/<path>` and `/form-test/<path>` answer while the editor listens (120 s, with a
+  countdown and Stop; Execute listens when the workflow starts at such a trigger without pinned
+  data), run the editor's workflow as a manual run shown live on the canvas, and work across mains
+  in queue mode (listeners in Valkey).
 - **Loop Over Items** (batches), with node state kept for the length of a run.
 - **Execute Workflow** node (sub-workflows), and the workflow trigger called by workflows as well
-  as agents. Covers run once or per item, waiting or not, and the caller policy.
+  as agents. Covers run once or per item, waiting or not (waiting children in "each item" mode too ✅), and the caller policy.
 - **Error Trigger** and the workflow setting *Error workflow*.
 - **Schedule** trigger: cron expressions, times of day, weekdays, a time zone, and several rules.
 - Workflow timeout, and the settings for which executions to keep.
 
-**B. Editor and organisation** ✅ Done. Renaming a node updates `$('Old')` references. Not yet: undo doesn't cover settings, tags or the name.
+**B. Editor and organisation** ✅ Done. Renaming a node updates `$('Old')` references. Undo and redo cover the workflow's name, tags and settings too, in the same history as canvas edits.
 - Sticky notes on the canvas.
 - Copy, paste and duplicate nodes, using the clipboard JSON format n8n uses.
 - Import and export workflow JSON, including import from n8n workflows.

@@ -8,7 +8,7 @@ The wire contract is [docs/protocol.md](../../docs/protocol.md); telemetry names
 | Import | What |
 |---|---|
 | `@landflow/sdk` | `defineNode`, `definePlugin`, `defineCredentialType`, `pollIntervalProperty`, `NodeOperationError`, context types, `runNode` / `runLoadOptions` / `runTestCredentials` (in-process), `createLogger`, redaction helpers |
-| `@landflow/sdk/serve` | `serve(plugin, { http, grpc })`: telemetry + transports + announce |
+| `@landflow/sdk/serve` | `serve(plugin, { http, grpc })`: telemetry + transports + announce (each announce carries `INSTANCE_ID` from `@landflow/sdk/announce`, random per process, so a restart re-pulls the manifest) |
 | `@landflow/sdk/http` | `createFetchHandler(plugin, { telemetry? })`, `serveHttp` |
 | `@landflow/sdk/grpc` | `createPluginService(plugin, { telemetry? })`, `serveGrpc` |
 | `@landflow/sdk/telemetry` | `createTelemetry(options)` (tests, custom bootstraps) |

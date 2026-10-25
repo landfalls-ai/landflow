@@ -2,8 +2,9 @@
  * Runs workflows through the engine with the registry, streams their events on the bus and
  * saves them. Also: resuming waiting executions (lib/server/waits.ts keeps their timers),
  * replies to the HTTP request that started a run (Respond to Webhook, a Form's end screen),
- * sub-executions started by Execute Workflow (a parent waits while its child waits), error
- * workflows, and the workflow settings for which executions to keep.
+ * sub-executions started by Execute Workflow (a parent waits while its child waits; in "each item" mode
+ * for all of its waiting children, lib/server/sub-executions.ts), error workflows, and the workflow
+ * settings for which executions to keep.
  *
  * The durable runtime: every execution is saved when it starts (with the workflow version it
  * runs), its node runs and a checkpoint after each main-flow node as it goes, and at boot
@@ -52,6 +53,7 @@ import { store } from './store';
 import { fireTrigger, logger, recordRuntimeEvent } from './telemetry';
 import { variables } from './variables';
 import { waits } from './waits';
+import { cancelChildrenOf, cancelRerunChildren, eachWaitOf, openChildren, settleChildren } from './sub-executions';
 import {
   awaitRemote,
   broadcastStopAll,
@@ -283,6 +285,8 @@ export function cancelWaitingExecution(executionId: string): boolean {
     event: { type: 'execution.finished', executionId, status: 'canceled', durationMs, error: canceled.error, at: finishedAt.toISOString() },
   });
   afterRun(canceled, canceled.workflow);
+  // Nothing waits for its sub-executions any more.
+  cancelChildrenOf(stored);
   // A singleton's waiting run held its slot.
   drainQueueSafely(canceled.workflowId);
   return true;
@@ -689,6 +693,8 @@ function afterRun(record: ExecutionRecord, workflow: Workflow | undefined) {
       finishedChildren.delete(childId);
       resumeParent(record.executionId, child);
     }
+    // "Each item" mode: the children that finished on the way (kept here), and those whose word got lost (their saved records).
+    if (eachWaitOf(record)) void settleChildren(record.executionId, openChildren(record).flatMap((id) => finishedChildren.get(id) ?? []), { sweep: true });
     dropFinishedChildren(record.executionId);
     return;
   }
@@ -716,6 +722,8 @@ function handOverToParent(child: ExecutionRecord) {
   const parent = store.getExecution(parentId);
   if (parent?.status === 'waiting' && parent.wait?.resume === 'subworkflow' && parent.wait.data?.executionId === child.executionId) {
     resumeParent(parentId, child);
+  } else if (eachWaitOf(parent)) {
+    void settleChildren(parentId, [child]);
   } else if (live.has(parentId)) {
     finishedChildren.set(child.executionId, child);
   }
@@ -732,6 +740,7 @@ async function handOverAcross(child: ExecutionRecord, parentId: string) {
     const parent = store.getExecution(parentId);
     if (parent?.status === 'waiting') {
       if (parent.wait?.resume === 'subworkflow' && parent.wait.data?.executionId === child.executionId) resumeParent(parentId, child);
+      else if (eachWaitOf(parent)) await settleChildren(parentId, [child]);
       return;
     }
     if (parent?.status !== 'running') return;
@@ -1170,6 +1179,7 @@ export function recoverExecutions(): RecoveryReport {
     if (!plan.resume) continue;
     report.resumed.push(record.executionId);
     recordRuntimeEvent('recovered', record.workflowId);
+    cancelRerunChildren(record.executionId, plan.state.stack.map((entry) => entry.nodeId));
     logger.info('execution resumed after restart', { 'landflow.execution.id': record.executionId, 'landflow.workflow.id': record.workflowId, 'landflow.checkpoint.step': plan.stepId });
     // Its own trace (the one it started in has ended).
     void context
@@ -1343,6 +1353,7 @@ export function recoverExecution(record: ExecutionRecord, callbacks: Pick<Segmen
     return Promise.resolve(failInterrupted(record, plan.reason, plan.status));
   }
   recordRuntimeEvent('recovered', record.workflowId);
+  cancelRerunChildren(record.executionId, plan.state.stack.map((entry) => entry.nodeId));
   logger.info('execution taken over after its process stopped', { 'landflow.execution.id': record.executionId, 'landflow.workflow.id': record.workflowId, 'landflow.checkpoint.step': plan.stepId });
   return runSegment({
     record: plan.record,

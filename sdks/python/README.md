@@ -293,7 +293,9 @@ Prometheus names replace `.` with `_`, add the unit (`_milliseconds`, `_seconds`
 ## serve()
 
 `serve(plugin, http_port=None, grpc_port=None, announce=True)` starts the servers, announces every
-endpoint, heartbeats, and on SIGINT/SIGTERM withdraws, flushes telemetry and exits cleanly.
+endpoint, heartbeats, and on SIGINT/SIGTERM withdraws, flushes telemetry and exits cleanly. Every
+announce carries `landflow_sdk.announce.INSTANCE_ID`, random per process, so the host pulls the
+manifest again after a restart even when the version is unchanged.
 
 | Variable | Default | |
 |---|---|---|

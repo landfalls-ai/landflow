@@ -7,7 +7,9 @@
  * Sticky notes are React Flow nodes too, but they live in `stickies`, apart
  * from `nodes`: the engine never sees them and everything that reads
  * `node.data.wf` keeps working. Canvas edits go through `record()`, which keeps
- * an undo history (drags and typing coalesce into one step).
+ * an undo history (drags and typing coalesce into one step). The workflow's name,
+ * tags and settings share that history: one step per rename (committed on blur or
+ * Enter), per tag added or removed and per Save of the settings dialog.
  *
  * Canvas groups (`groups`, React Flow nodes of type `frame`, see ./groups.ts) work the same way: frames behind the
  * nodes, saved as `workflow.groups`. Moving a frame moves its nodes, and nodes dropped into or out of a frame join or
@@ -206,8 +208,12 @@ interface EditorState {
   updateGroup(id: string, patch: Partial<Pick<GroupData, 'name' | 'color' | 'collapsed'>>): void;
   undo(): void;
   redo(): void;
+  /** Rename (one undo step per rename: typing coalesces until commitName()), describe, or set the tags (one step per change). */
   setMeta(patch: Partial<Pick<EditorState, 'name' | 'description' | 'active' | 'tags'>>): void;
+  /** The settings dialog's Save: one undo step (none when nothing changed). */
   setSettings(settings: WorkflowSettings): void;
+  /** The title lost focus or got Enter: the rename is done, the next one is a new undo step (a name typed back to the old one leaves none). */
+  commitName(): void;
   openNode(id?: string): void;
   openPalette(request?: PaletteRequest): void;
   markSaved(): void;
@@ -307,9 +313,30 @@ interface Snapshot {
   stickies: StickyFlowNode[];
   groups: GroupFlowNode[];
   pinData: Record<string, NodeItem[]>;
+  name: string;
+  description?: string;
+  tags: string[];
+  settings: WorkflowSettings;
 }
 const HISTORY_LIMIT = 100;
-const history = { past: [] as Snapshot[], future: [] as Snapshot[], last: undefined as { key: string; at: number } | undefined, batch: 0, dragging: false, resizing: false };
+/** `saved`: savedContent() of the last save (or load), so undo / redo back to it is not "Unsaved". */
+const history = { past: [] as Snapshot[], future: [] as Snapshot[], last: undefined as { key: string; at: number } | undefined, batch: 0, dragging: false, resizing: false, saved: '' };
+
+const snapshotOf = (s: Snapshot): Snapshot => ({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, groups: s.groups, pinData: s.pinData, name: s.name, description: s.description, tags: s.tags, settings: s.settings });
+
+/** What saving a snapshot writes, without selection and measurements. */
+const savedContent = (s: Snapshot) =>
+  JSON.stringify([
+    s.name,
+    s.description ?? '',
+    s.tags,
+    s.settings,
+    s.pinData,
+    s.nodes.map((n) => [n.data.wf, Math.round(n.position.x), Math.round(n.position.y)]),
+    s.edges.map((e) => [e.id, e.source, e.sourceHandle, e.target, e.targetHandle]),
+    fromStickies(s.stickies),
+    fromFrames(s.groups, s.nodes),
+  ]);
 
 const unselect = <T extends { selected?: boolean }>(list: T[]) => list.map((item) => (item.selected ? { ...item, selected: false } : item));
 
@@ -343,8 +370,7 @@ export const useEditor = create<EditorState>((set, get) => {
       history.last.at = now;
       return;
     }
-    const s = get();
-    history.past.push({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, groups: s.groups, pinData: s.pinData });
+    history.past.push(snapshotOf(get()));
     if (history.past.length > HISTORY_LIMIT) history.past.shift();
     history.future = [];
     history.last = key ? { key, at: now } : undefined;
@@ -366,9 +392,14 @@ export const useEditor = create<EditorState>((set, get) => {
       stickies: unselect(snapshot.stickies),
       groups: unselect(snapshot.groups),
       pinData: snapshot.pinData,
+      name: snapshot.name,
+      description: snapshot.description,
+      tags: snapshot.tags,
+      settings: snapshot.settings,
       openNodeId: snapshot.nodes.some((n) => n.id === s.openNodeId) ? s.openNodeId : undefined,
       history: { past: history.past.length, future: history.future.length },
-      dirty: true,
+      // Back at what was saved: "Saved" again.
+      dirty: savedContent(snapshot) !== history.saved,
     }));
   };
   /** Add pasted / imported / duplicated elements, selected, with one undo step. */
@@ -408,7 +439,7 @@ export const useEditor = create<EditorState>((set, get) => {
   ...emptyRun,
 
   load(workflow, nodeTypes) {
-    Object.assign(history, { past: [], future: [], last: undefined, batch: 0, dragging: false, resizing: false });
+    Object.assign(history, { past: [], future: [], last: undefined, batch: 0, dragging: false, resizing: false, saved: '' });
     set({
       workflowId: workflow.id,
       name: workflow.name,
@@ -429,6 +460,7 @@ export const useEditor = create<EditorState>((set, get) => {
       breakpoints: readBreakpoints(workflow.id).filter((id) => workflow.nodes.some((n) => n.id === id)),
       ...emptyRun,
     });
+    history.saved = savedContent(get());
   },
 
   setNodeTypes(nodeTypes) {
@@ -881,8 +913,7 @@ export const useEditor = create<EditorState>((set, get) => {
   undo() {
     const previous = history.past.pop();
     if (!previous) return;
-    const s = get();
-    history.future.push({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, groups: s.groups, pinData: s.pinData });
+    history.future.push(snapshotOf(get()));
     history.last = undefined;
     restore(previous);
   },
@@ -890,18 +921,31 @@ export const useEditor = create<EditorState>((set, get) => {
   redo() {
     const next = history.future.pop();
     if (!next) return;
-    const s = get();
-    history.past.push({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, groups: s.groups, pinData: s.pinData });
+    history.past.push(snapshotOf(get()));
     history.last = undefined;
     restore(next);
   },
 
   setMeta(patch) {
+    // The title is typed a key at a time: one step from the first key to commitName().
+    if (patch.name !== undefined) record('meta:name', Infinity);
+    else if (patch.tags || patch.description !== undefined) record();
     set({ ...patch, dirty: true });
   },
 
   setSettings(settings) {
+    if (JSON.stringify(settings) === JSON.stringify(get().settings)) return;
+    record();
     set({ settings, dirty: true });
+  },
+
+  commitName() {
+    if (history.last?.key !== 'meta:name') return;
+    history.last = undefined;
+    // Typed back to the old name: drop the step.
+    if (history.past.at(-1)?.name !== get().name) return;
+    history.past.pop();
+    set((s) => ({ history: { past: history.past.length, future: history.future.length }, dirty: savedContent(s) !== history.saved }));
   },
 
   openNode(id) {
@@ -913,6 +957,7 @@ export const useEditor = create<EditorState>((set, get) => {
   },
 
   markSaved() {
+    history.saved = savedContent(get());
     set({ dirty: false });
   },
 

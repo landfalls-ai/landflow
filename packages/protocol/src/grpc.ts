@@ -506,6 +506,7 @@ export function announceFromMsg(msg: {
   pluginId: string;
   version: string;
   ttlSeconds: number;
+  instanceId?: string;
 }): AnnounceRequest {
   return {
     protocol: PROTOCOL_VERSION,
@@ -513,6 +514,8 @@ export function announceFromMsg(msg: {
     pluginId: msg.pluginId,
     version: msg.version,
     ...(msg.ttlSeconds > 0 && { ttlSeconds: msg.ttlSeconds }),
+    // Empty (proto3's default) from older plugins: left out.
+    ...(msg.instanceId && { instanceId: msg.instanceId }),
   };
 }
 

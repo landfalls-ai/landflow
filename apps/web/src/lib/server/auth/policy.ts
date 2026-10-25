@@ -32,7 +32,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (path === '/api/openapi.json') return { scope: 'any' };
 
   // Starting runs.
-  if (/^\/api\/workflows\/[^/]+\/(run|execute)$/.test(path)) return { scope: 'run' };
+  // Listening for a test event runs the editor's workflow too (lib/server/test-webhooks.ts).
+  if (/^\/api\/workflows\/[^/]+\/(run|execute|listen)$/.test(path)) return { scope: 'run' };
   if (/^\/api\/executions\/[^/]+\/(retry|rerun|debug)$/.test(path)) return { scope: 'run' };
   if (/^\/api\/agents\/[^/]+\/chat$/.test(path)) return { scope: 'run' };
 
@@ -108,7 +109,7 @@ function resourceAction(kind: ResourceRule['kind'], rest: string, method: string
   if (sub('shares')) return READ_METHODS.has(method) ? 'read' : 'share';
   if (sub('transfer')) return 'move';
   // Starting, retrying or stopping runs and chats; credentials' OAuth2 Connect writes the token.
-  if (kind === 'workflow' && (sub('run') || sub('execute') || (sub('evaluations') && method === 'POST'))) return 'run';
+  if (kind === 'workflow' && (sub('run') || sub('execute') || sub('listen') || (sub('evaluations') && method === 'POST'))) return 'run';
   if (kind === 'execution' && (sub('retry') || sub('rerun') || sub('debug') || sub('stop') || sub('approvals'))) return READ_METHODS.has(method) ? 'read' : 'run';
   if (kind === 'agent' && (sub('chat') || (sub('sessions') && !READ_METHODS.has(method)))) return 'run';
   if (kind === 'credential' && sub('oauth2')) return 'update';

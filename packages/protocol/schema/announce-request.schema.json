@@ -22,6 +22,11 @@
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 3600
+    },
+    "instanceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
     }
   },
   "required": [

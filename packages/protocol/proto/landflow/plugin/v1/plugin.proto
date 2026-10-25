@@ -241,6 +241,7 @@ message AnnounceRequest {
   string plugin_id = 3;
   string version = 4;
   int32 ttl_seconds = 5;   // lease; re-announce before it expires (default 30)
+  string instance_id = 6;  // random per plugin process; a new one re-pulls the manifest (empty from older plugins)
 }
 
 message AnnounceResponse {

@@ -236,6 +236,7 @@ export const announceRequestSchema = z.object({
   pluginId: z.string().min(1),
   version: z.string().min(1),
   ttlSeconds: z.number().int().positive().max(3600).optional(),
+  instanceId: z.string().min(1).max(128).optional(),
 });
 
 export const withdrawRequestSchema = z.object({

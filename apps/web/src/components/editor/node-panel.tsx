@@ -315,7 +315,7 @@ export function NodePanel() {
                   {descriptor?.triggerSource === 'poll' && (
                     <PollStatus workflowId={workflowId} nodeId={openNodeId} active={workflowActive} dirty={dirty} interval={Number(wf.parameters.pollInterval ?? 60)} />
                   )}
-                  <TriggerUrl type={wf.type} parameters={wf.parameters} active={workflowActive} dirty={dirty || unpublished} />
+                  <TriggerUrl type={wf.type} parameters={wf.parameters} active={workflowActive} dirty={dirty || unpublished} nodeId={openNodeId} />
                   {descriptor?.credentials?.some((c) => isPropertyVisible(c, wf.parameters)) ? (
                     <NodeCredentials
                       nodeType={wf.type}

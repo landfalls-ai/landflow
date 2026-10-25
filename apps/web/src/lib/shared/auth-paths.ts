@@ -35,6 +35,9 @@ export const PUBLIC_ROUTES = [
   // Triggers, each with its own auth: webhooks (webhook authentication), hosted forms, waits, MCP Server Triggers.
   '/api/webhook',
   '/form',
+  // Test URLs (lib/server/test-webhooks.ts): the trigger's own auth, and only while an editor listens.
+  '/api/webhook-test',
+  '/form-test',
   '/api/waiting',
   '/mcp',
   // The instance MCP server: its own token (Settings → MCP).

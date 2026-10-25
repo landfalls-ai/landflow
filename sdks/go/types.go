@@ -476,6 +476,9 @@ type AnnounceRequest struct {
 	PluginID   string `json:"pluginId"`
 	Version    string `json:"version"`
 	TTLSeconds int    `json:"ttlSeconds,omitempty"`
+	// InstanceID identifies the plugin process (random, see InstanceID): a new one tells the host to pull the
+	// manifest again, even when the version is the same. Older SDKs leave it out.
+	InstanceID string `json:"instanceId,omitempty"`
 }
 
 // AnnounceResponse is the registry's reply.

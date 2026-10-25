@@ -590,10 +590,16 @@ describe('Execute Workflow', () => {
     expect(stored(other.executionId)?.error?.message).toContain('canceled');
   });
 
-  it('refuses to wait for several waiting children, and stops at 10 levels', async () => {
-    const each = await trigger(caller('wf_parent_each_waits', { workflowId: 'wf_child_waits', mode: 'each' }), [{ n: 1 }]);
-    expect(each.status).toBe('error');
-    expect(each.error?.message).toBe('Sub-workflow is waiting; turn off ‘Wait for Sub-Workflow Completion’ or remove the Wait');
+  it('waits for every waiting child in "each" mode too (more in sub-workflow-waits.test.ts), and stops at 10 levels', async () => {
+    const each = await trigger(caller('wf_parent_each_waits', { workflowId: 'wf_child_waits', mode: 'each', ...mapped }), [{ n: 1 }, { n: 2 }]);
+    expect(each.status).toBe('waiting');
+    expect(each.wait).toMatchObject({ resume: 'subworkflow', nodeName: 'Run', data: { mode: 'each', workflowId: 'wf_child_waits' } });
+    const [first, second] = each.subExecutions!.map((sub) => sub.executionId);
+    await resumeExecution(second, { kind: 'time' });
+    expect(stored(each.executionId)?.status).toBe('waiting');
+    await resumeExecution(first, { kind: 'time' });
+    await vi.waitFor(() => expect(stored(each.executionId)?.status).toBe('success'));
+    expect(outputOf(stored(each.executionId), 'After')).toEqual([{ answer: 'yes 1' }, { answer: 'yes 2' }]);
 
     save('wf_recursive', [
       { name: 'Called', type: 'core.workflowTrigger', parameters: { inputSource: 'passthrough' } },

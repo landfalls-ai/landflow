@@ -387,7 +387,8 @@ following:
 1. Binds both listeners. A port clash fails fast, before anything is announced.
 2. POSTs an `AnnounceRequest` to `{LANDFLOW_REGISTRY_URL}/api/plugins/announce` for each endpoint,
    `http://{advertise}:{port}` and `grpc://{advertise}:{port}`. If the URL is `grpc://`, it calls
-   `RegistryService.Announce` instead.
+   `RegistryService.Announce` instead. Every announce carries `InstanceID()`, random per process, so
+   the host pulls the manifest again after a restart even when the version is unchanged.
 3. Re-announces every `heartbeatIntervalSeconds` from the response (10 by default). If the host is
    down, it logs once and keeps retrying quietly. It logs again when the host comes back.
 4. On SIGINT, SIGTERM or `ctx` cancellation, it withdraws every endpoint that was accepted, using

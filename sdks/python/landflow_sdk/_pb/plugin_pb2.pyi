@@ -324,18 +324,20 @@ class HealthResponse(_message.Message):
     def __init__(self, status: _Optional[str] = ..., uptime_ms: _Optional[int] = ..., plugin_id: _Optional[str] = ..., version: _Optional[str] = ...) -> None: ...
 
 class AnnounceRequest(_message.Message):
-    __slots__ = ("protocol", "endpoint", "plugin_id", "version", "ttl_seconds")
+    __slots__ = ("protocol", "endpoint", "plugin_id", "version", "ttl_seconds", "instance_id")
     PROTOCOL_FIELD_NUMBER: _ClassVar[int]
     ENDPOINT_FIELD_NUMBER: _ClassVar[int]
     PLUGIN_ID_FIELD_NUMBER: _ClassVar[int]
     VERSION_FIELD_NUMBER: _ClassVar[int]
     TTL_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     protocol: str
     endpoint: str
     plugin_id: str
     version: str
     ttl_seconds: int
-    def __init__(self, protocol: _Optional[str] = ..., endpoint: _Optional[str] = ..., plugin_id: _Optional[str] = ..., version: _Optional[str] = ..., ttl_seconds: _Optional[int] = ...) -> None: ...
+    instance_id: str
+    def __init__(self, protocol: _Optional[str] = ..., endpoint: _Optional[str] = ..., plugin_id: _Optional[str] = ..., version: _Optional[str] = ..., ttl_seconds: _Optional[int] = ..., instance_id: _Optional[str] = ...) -> None: ...
 
 class AnnounceResponse(_message.Message):
     __slots__ = ("accepted", "heartbeat_interval_seconds", "message")

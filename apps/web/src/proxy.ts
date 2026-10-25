@@ -12,7 +12,9 @@ import { API_KEY_HEADER, isPublicPath, PATH_HEADER, SESSION_COOKIE } from './lib
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const headers = new Headers(request.headers);
-  headers.set(PATH_HEADER, `${pathname}${search}`);
+  // Only pages read it; on API routes it would show up in webhook items' headers.
+  if (pathname.startsWith('/api/')) headers.delete(PATH_HEADER);
+  else headers.set(PATH_HEADER, `${pathname}${search}`);
   const pass = () => NextResponse.next({ request: { headers } });
 
   const bearer = /^Bearer\s+(\S+)$/i.exec(request.headers.get('authorization')?.trim() ?? '')?.[1];

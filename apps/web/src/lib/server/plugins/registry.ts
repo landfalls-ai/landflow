@@ -55,6 +55,8 @@ interface EndpointState {
   latencyMs?: number;
   lastError?: string;
   options?: EndpointOptions;
+  /** The plugin process that announced it (AnnounceRequest.instanceId): a new one is a restart, so the manifest is pulled again. */
+  instanceId?: string;
 }
 
 interface PluginEntry {
@@ -141,6 +143,8 @@ class PluginRegistry implements NodeTypeResolver {
       throw new Error(`Plugin id "${id}" is reserved by a built-in plugin`);
     }
 
+    // A re-pull (Refresh, a version change) keeps the announcing process until an announce names another one.
+    const instanceId = existing?.endpoints.get(endpoint)?.instanceId;
     const state: EndpointState = {
       endpoint,
       transport: client.transport,
@@ -151,6 +155,7 @@ class PluginRegistry implements NodeTypeResolver {
       latencyMs,
       ...(ttlSeconds && { leaseExpiresAt: Date.now() + ttlSeconds * 1000 }),
       ...(options && { options }),
+      ...(instanceId && { instanceId }),
     };
 
     if (existing) {
@@ -198,7 +203,10 @@ class PluginRegistry implements NodeTypeResolver {
 
     // A plugin coming back after a withdraw/lease expiry is usually a restarted process whose
     // manifest (icons, descriptors) may have changed without a version bump: re-pull it below.
-    if (entry && state && state.status === 'online' && entry.manifest.plugin.version === request.version) {
+    // So is one that announces another instanceId while still online (restarted within its lease, as in development).
+    // Older plugins send none and only heartbeat here.
+    const restarted = Boolean(request.instanceId) && request.instanceId !== state?.instanceId;
+    if (entry && state && state.status === 'online' && entry.manifest.plugin.version === request.version && !restarted) {
       // Heartbeat: renew the lease, no manifest round-trip.
       state.lastSeen = Date.now();
       state.leaseExpiresAt = Date.now() + ttl * 1000;
@@ -206,7 +214,8 @@ class PluginRegistry implements NodeTypeResolver {
       if (state.source !== 'announce' && state.source !== 'builtin') state.source = 'announce';
       this.emit({ type: 'plugin.heartbeat', pluginId: entry.id, endpoint, message: `heartbeat from ${endpoint}` });
     } else {
-      await this.addEndpoint(endpoint, 'announce', ttl);
+      const added = (await this.addEndpoint(endpoint, 'announce', ttl)).endpoints.get(endpoint);
+      if (added && request.instanceId) added.instanceId = request.instanceId;
     }
     return {
       accepted: true,

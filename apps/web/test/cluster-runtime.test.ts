@@ -5,7 +5,8 @@
  * editor runs stay in the main unless offloaded; load spreads over workers; cancel and stop-all from another process; a
  * job canceled before a worker takes it; a stalled job taken over from its checkpoint (and failed after too many
  * takeovers); runs nobody holds adopted by the leader; the concurrency FIFO and idempotency claims across processes;
- * timers handed to the leader; the bus relay; the Workers status; leader services moving with the leadership.
+ * timers handed to the leader; the bus relay; the Workers status; leader services moving with the leadership; an
+ * Execute Workflow parent waiting for several children ("each item" mode) that finish on different workers at once.
  *
  * The workers here share the main's instance id (one process, one store) and differ by their consumer name.
  */
@@ -49,7 +50,7 @@ const { store } = await import('@/lib/server/store');
 const { recordVersion, versionFor } = await import('@/lib/server/versions');
 const { bus, isRelayed } = await import('@/lib/server/bus');
 const { waits } = await import('@/lib/server/waits');
-const { runWorkflow, cancelQueuedExecution, stopAllExecutions, DuplicateRunError } = await import('@/lib/server/runner');
+const { runWorkflow, resumeExecution, cancelQueuedExecution, cancelWaitingExecution, stopAllExecutions, DuplicateRunError } = await import('@/lib/server/runner');
 type RunOptions = Parameters<typeof runWorkflow>[0];
 type RunReply = Parameters<NonNullable<RunOptions['onReply']>>[0];
 const { startCluster, stopCluster, adoptOrphans, clusterOverview, leaderService } = await import('@/lib/server/cluster');
@@ -487,6 +488,72 @@ describe('failures', () => {
     expect(stored('ex_q_orphan')?.resumedAfterRestart).toMatchObject({ stepId: 'Before#0' });
     await until(() => expect(stored('ex_q_lost')?.status).toBe('success'));
     expect(outputOf(stored('ex_q_lost'), 'Count')).toMatchObject([{ n: 7, b: '7' }]);
+  });
+});
+
+describe('sub-workflows in "each item" mode', () => {
+  /** The child waits `hours` (0: not at all) and answers "done <n>"; the parent runs it once per item and waits for it. */
+  const family = (id: string) => {
+    save(`${id}_kid`, [
+      { name: 'Called', type: 'core.workflowTrigger', parameters: { inputSource: 'passthrough' } },
+      { name: 'Wait', type: 'core.wait', parameters: { resume: 'timeInterval', amount: '{{ $json.hours }}', unit: 'hours' } },
+      setFields('Result', [{ name: 'answer', value: 'done {{ $json.n }}' }]),
+    ], [
+      ['Called', 'Wait'],
+      ['Wait', 'Result'],
+    ]);
+    return save(id, [start, { name: 'Run', type: 'core.executeWorkflow', parameters: { workflowId: `${id}_kid`, mode: 'each' } }, { name: 'After', type: 'core.noOp' }], [
+      ['Start', 'Run'],
+      ['Run', 'After'],
+    ]);
+  };
+  const items = (...hours: number[]) => hours.map((h, i) => ({ json: { n: i + 1, hours: h } }));
+  const kidsOf = (id: string) => (stored(id)?.subExecutions ?? []).map((sub) => sub.executionId);
+
+  it('resumes the parent once, with the outputs in item order, when its waiting children finish on different workers at once', async () => {
+    const workflow = family('wf_q_each');
+    worker('worker-a').start();
+    worker('worker-b').start();
+    const parent = await runWorkflow({ workflow, mode: 'webhook', startNodeId: 'Start', triggerItems: items(2, 0, 2, 2) });
+    expect(parent.status).toBe('waiting');
+    const kids = kidsOf(parent.executionId);
+    expect(kids.map((id) => stored(id)?.status)).toEqual(['waiting', 'success', 'waiting', 'waiting']);
+
+    // Resumed together: each goes to a worker as a job of its own, and the last one to finish resumes the parent (a job too).
+    const claims = vi.spyOn(valkey, 'setIfAbsent');
+    const resumed = await Promise.all([kids[3], kids[0], kids[2]].map((id) => resumeExecution(id, { kind: 'time' })));
+    expect(resumed.map((record) => record.status)).toEqual(['success', 'success', 'success']);
+    await until(() => expect(stored(parent.executionId)?.status).toBe('success'));
+    const done = stored(parent.executionId)!;
+    expect(outputOf(done, 'After')?.map((json) => json.answer)).toEqual(['done 1', 'done 2', 'done 3', 'done 4']);
+    expect(done.runData.Run[0].outputs[0].map((item) => item.pairedItem)).toEqual([{ item: 0 }, { item: 1 }, { item: 2 }, { item: 3 }]);
+    expect(done.executionOrder.filter((id) => id === 'Run')).toEqual(['Run']);
+    // Each child's result went in under the parent's lock, and the parent was resumed (claimed) once.
+    const keys = claims.mock.calls.map(([key]) => key);
+    expect(keys.filter((key) => key === `lock:subworkflows:${parent.executionId}`).length).toBeGreaterThanOrEqual(3);
+    expect(keys.filter((key) => key === `resume:${parent.executionId}`)).toHaveLength(1);
+    claims.mockRestore();
+    expect(hub.key(`lock:subworkflows:${parent.executionId}`)).toBeUndefined();
+    await until(() => expect(pendingJobs()).toBe(0));
+  });
+
+  it('settles children that finished unheard on the leader’s sweep, and cancels the open ones when the parent is stopped', async () => {
+    const workflow = family('wf_q_each_sweep');
+    worker('worker-a').start();
+    const parent = await runWorkflow({ workflow, mode: 'webhook', startNodeId: 'Start', triggerItems: items(2, 2) });
+    const kids = kidsOf(parent.executionId);
+    // The first child "finished" on a worker that stopped before it told the parent: only its record says so.
+    const at = new Date().toISOString();
+    const run: NodeRun = { startedAt: at, durationMs: 1, status: 'success', source: 'main', inputs: [[{ json: {} }]], outputs: [[{ json: { answer: 'unheard' } }]] };
+    waits.clear(kids[0]);
+    store.patchExecution(kids[0], { status: 'success', finishedAt: at, runData: { Result: [run] }, executionOrder: ['Result'], wait: undefined, resumeState: undefined });
+    await waits.sync();
+    await until(() => expect((stored(parent.executionId)?.wait?.data?.children as Array<{ status?: string }>)[0].status).toBe('success'));
+    expect(stored(parent.executionId)?.status).toBe('waiting');
+
+    expect(cancelWaitingExecution(parent.executionId)).toBe(true);
+    await until(() => expect(stored(kids[1])?.status).toBe('canceled'));
+    expect(stored(parent.executionId)?.status).toBe('canceled');
   });
 });
 

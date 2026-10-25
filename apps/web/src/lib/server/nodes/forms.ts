@@ -114,7 +114,7 @@ export const formTrigger = defineNode({
       },
       {
         name: 'notice',
-        displayName: 'Publish the workflow to serve the form (it serves the published version). Each submission is an item { <field>: value, submittedAt, formMode }; add Form nodes for more pages.',
+        displayName: 'Publish the workflow to serve the form at /form/<path> (it runs the published version); /form-test/<path> serves it while you listen for a test event and runs the workflow as it is in the editor. Each submission is an item { <field>: value, submittedAt, formMode }; add Form nodes for more pages.',
         type: 'notice',
       },
     ],

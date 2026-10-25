@@ -57,6 +57,7 @@ import { TagsEditor } from './tags-editor';
 import { VersionHistory, useVersionHistory } from './version-history';
 import { WorkflowMenu } from './workflow-menu';
 import { PublishControl } from './publish-control';
+import { ListeningBar, listenForTestEvent, stopListening, testTriggerFor, useTestListener } from './test-listener';
 import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from './edit-lock';
 
 const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView };
@@ -641,12 +642,17 @@ export function Editor({ workflowId }: { workflowId: string }) {
     if (result.status === 'error') prefetchFailure();
     if (result.status === 'success') toast.success(`${label} succeeded in ${duration(Date.now() - started)}`);
     else if (result.status === 'canceled') toast(`${label} stopped`);
+    else if (result.status === 'waiting') toast(`${label} is waiting; it continues in the background`);
     else toast.error(`${label} failed${result.error?.message ? `: ${result.error.message}` : ''}`);
   }, []);
 
   const runCommand = useCallback(
     async (command: RunCommand) => {
       const started = Date.now();
+      if (useTestListener.getState().listening) return;
+      // A Webhook or Form trigger without test data: listen for a test event instead, as n8n does.
+      const listenOn = testTriggerFor(command);
+      if (listenOn) return listenForTestEvent(listenOn);
       if (command.kind === 'run') return report(await execute(), started, 'Workflow');
       if (command.kind === 'debug') return report(await execute({}, true), started, 'Debug run');
 
@@ -672,6 +678,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
   }, [runCommand]);
 
   const stop = () => {
+    stopListening();
     const { debugging: inDebug, executionId } = useEditor.getState();
     if (inDebug && executionId) void sendDebug(executionId, 'stop');
     else abortRef.current?.abort();
@@ -740,6 +747,9 @@ export function Editor({ workflowId }: { workflowId: string }) {
             <input
               value={name}
               onChange={(e) => useEditor.getState().setMeta({ name: e.target.value })}
+              // One undo step per rename: it ends on blur or Enter.
+              onBlur={() => useEditor.getState().commitName()}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
               aria-label="Workflow name"
               size={Math.max(12, Math.min(name.length + 1, 40))}
               className="min-w-0 max-w-[300px] shrink bg-transparent text-[15px] font-semibold text-t1 outline-none"
@@ -833,12 +843,15 @@ function ExecuteBar(props: {
 }) {
   const empty = useEditor((s) => s.nodes.length === 0);
   const debugging = useEditor((s) => s.debugging);
+  const listening = useTestListener((s) => Boolean(s.listening));
   if (empty) return null;
   const { running, breakpoints, hasChat, chatOpen, onRun, onDebug, onStop, onChat } = props;
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center">
       <div className="pointer-events-auto flex animate-fade-up items-center gap-2 rounded-full border border-hair bg-sf/90 p-1.5 shadow-pop backdrop-blur">
-        {running ? (
+        {listening ? (
+          <ListeningBar />
+        ) : running ? (
           <Button variant="danger" onClick={onStop} className="min-w-[150px]">
             <Square className="size-3" fill="currentColor" /> {debugging ? 'Stop debugging' : 'Stop'}
           </Button>

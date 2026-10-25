@@ -2,15 +2,16 @@
  * n8n's Execute Workflow: runs another workflow from its "When Called by a Workflow or Agent"
  * trigger and returns the output of its last node. The child is saved as its own execution, linked
  * to the parent (`parentExecutionId`, the parent's `subExecutions`), at most 10 levels deep. A child
- * that starts waiting puts the parent into "waiting" too (in "once" mode); the runner resumes the
- * parent with the child's final output.
+ * that starts waiting puts the parent into "waiting" too; the runner resumes the parent with the
+ * child's final output. In "each" mode the parent waits for every child that waits, and resumes
+ * once the last one finished, with the outputs in item order (lib/server/sub-executions.ts).
  */
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
-import type { ExecutionRecord } from '../../shared/types';
 import { shareBinaryScope } from '../binary/access';
 import { workflowForCall } from '../publish';
 import { store } from '../store';
+import { cancelSubExecutions, childFailure, eachOutput, finishedEntry, type EachChild, type EachWait } from '../sub-executions';
 
 const main = [{ type: 'main' as const }];
 const WORKFLOW_TRIGGER = 'core.workflowTrigger';
@@ -72,9 +73,6 @@ function childItems(ctx: IExecuteContext, indexes: number[]): NodeItem[] {
     return { json };
   });
 }
-
-const failure = (child: ExecutionRecord) =>
-  child.status === 'canceled' ? `The sub-workflow was canceled (execution ${child.executionId})` : `Sub-workflow failed: ${child.error?.message ?? 'unknown error'} (execution ${child.executionId})`;
 
 export const executeWorkflowNode = defineNode({
   description: {
@@ -185,7 +183,7 @@ export const executeWorkflowNode = defineNode({
     const each = ctx.getNodeParameter('mode', 0) === 'each';
     const groups = each ? items.map((_, i) => [i]) : [items.map((_, i) => i)];
     // Loaded lazily: the runner needs the registry this plugin is part of.
-    const { runWorkflow } = await import('../runner');
+    const { runWorkflow, lastNodeItems } = await import('../runner');
     const parent = { executionId: ctx.getExecutionId(), nodeId: ctx.getNode().id };
     // A poll-started parent's children are ordinary trigger runs (only the trigger polls).
     const mode = ctx.mode === 'poll' ? 'trigger' : ctx.mode;
@@ -212,24 +210,53 @@ export const executeWorkflowNode = defineNode({
     }
 
     const output: NodeItem[] = [];
-    for (const indexes of groups) {
-      const child = await start(indexes);
-      ctx.logger.info(`Sub-execution ${child.executionId} of “${workflow.name}”: ${child.status}`);
-      if (child.status === 'waiting') {
-        if (each || !ctx.putExecutionToWait) {
-          throw new NodeOperationError('Sub-workflow is waiting; turn off ‘Wait for Sub-Workflow Completion’ or remove the Wait', {
-            description: `Execution ${child.executionId} waits (it goes on by itself). Only “Run Once with All Items”, in a workflow execution, can wait for it.`,
-          });
+    // "each": one entry per item; a waiting child's stays open until it finishes (lib/server/sub-executions.ts).
+    const children: EachChild[] = [];
+    const continueOnFail = each && ctx.continueOnFail();
+    const open = () => children.filter((child) => !child.status).map((child) => child.executionId);
+    const stopped = () => new NodeOperationError('Execution canceled');
+    try {
+      for (const indexes of groups) {
+        // Stopped or timed out between two children: the rest don't start.
+        if (ctx.signal?.aborted) throw stopped();
+        const child = await start(indexes);
+        ctx.logger.info(`Sub-execution ${child.executionId} of “${workflow.name}”: ${child.status}`);
+        if (child.status === 'waiting') {
+          if (!ctx.putExecutionToWait) {
+            throw new NodeOperationError('Sub-workflow is waiting; turn off ‘Wait for Sub-Workflow Completion’ or remove the Wait', {
+              description: `Execution ${child.executionId} waits (it goes on by itself). Only a workflow execution can wait for it, not a tool call.`,
+            });
+          }
+          if (!each) {
+            // The parent waits as well; the runner resumes it with the child's final output (or fails it).
+            ctx.putExecutionToWait({ resume: 'subworkflow', data: { executionId: child.executionId, workflowId: workflow.id } });
+            return [items];
+          }
+          children.push({ item: indexes[0], executionId: child.executionId });
+          continue;
         }
-        // The parent waits as well; the runner resumes it with the child's final output (or fails it).
-        ctx.putExecutionToWait({ resume: 'subworkflow', data: { executionId: child.executionId, workflowId: workflow.id } });
-        return [items];
+        shareBinaryScope(child.executionId, undefined);
+        if (child.status !== 'success' && !continueOnFail) throw new NodeOperationError(childFailure(child));
+        if (!each) {
+          for (const item of lastNodeItems(child)) output.push({ json: item.json, ...(item.binary && { binary: item.binary }), pairedItem: { item: indexes[0] ?? 0 } });
+          continue;
+        }
+        children.push({ item: indexes[0], executionId: child.executionId, ...finishedEntry(child, lastNodeItems(child)) });
       }
-      shareBinaryScope(child.executionId, undefined);
-      if (child.status !== 'success') throw new NodeOperationError(failure(child));
-      const { lastNodeItems } = await import('../runner');
-      for (const item of lastNodeItems(child)) output.push({ json: item.json, ...(item.binary && { binary: item.binary }), pairedItem: { item: indexes[0] ?? 0 } });
+      if (ctx.signal?.aborted) throw stopped();
+    } catch (error) {
+      // The node fails (or the run stopped): nothing waits for the children still waiting.
+      void cancelSubExecutions(open()).catch(() => {});
+      throw error;
     }
-    return [output];
+    if (!each) return [output];
+    if (open().length) {
+      // The parent waits for the children that wait; the last one to finish resumes it with every item's output.
+      const data: EachWait = { mode: 'each', workflowId: workflow.id, children, ...(continueOnFail && { continueOnFail: true }) };
+      ctx.putExecutionToWait!({ resume: 'subworkflow', data: data as unknown as JsonObject });
+      ctx.logger.info(`Waiting for ${open().length} of ${children.length} sub-executions of “${workflow.name}”`);
+      return [items];
+    }
+    return [eachOutput(children)];
   },
 });

@@ -5,6 +5,9 @@
  * short grace period. Waits without a time (a webhook or form with no limit, a parent waiting for its
  * sub-execution) have no timer. Queue mode: only the leader keeps the timers (another process hands a new wait to
  * it, and `sync()` re-arms them all when a main takes over the leadership).
+ *
+ * Parents waiting for sub-executions that finished while nobody listened (a process stopped in between) are settled
+ * after the same grace period at boot, and on every full `sync()` (lib/server/sub-executions.ts).
  */
 import { context, ROOT_CONTEXT } from '@opentelemetry/api';
 import type { ExecutionRecord } from '../shared/types';
@@ -41,6 +44,18 @@ export const waits = singleton('waits', () => {
       .catch((error) => logger.warn('could not resume a waiting execution', { 'landflow.execution.id': executionId, error: (error as Error).message }));
   }
 
+  let reconcileTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Parents of sub-executions that finished unheard (loaded lazily: it reaches the runner, which imports this module). */
+  async function reconcile(boot: boolean) {
+    try {
+      const { reconcileWaitingParents } = await import('./sub-executions');
+      await reconcileWaitingParents({ boot });
+    } catch (error) {
+      logger.warn('could not check the parents of finished sub-executions', { error: (error as Error).message });
+    }
+  }
+
   function arm(record: ExecutionRecord, minDelay = 0) {
     // Queue mode: the leader keeps the timers.
     if (delegated()) return forwardToLeader({ t: 'wait', id: record.executionId });
@@ -61,6 +76,8 @@ export const waits = singleton('waits', () => {
       const waiting = store.waitingExecutions();
       for (const record of waiting) arm(record, graceMs);
       if (waiting.length) logger.info('waiting executions loaded', { 'landflow.executions.waiting': waiting.length, 'landflow.executions.timed': timers.size });
+      reconcileTimer = setTimeout(() => void reconcile(true), graceMs);
+      reconcileTimer.unref?.();
     },
 
     /** After a run stops to wait (or finishes): arm or drop its timer. */
@@ -86,6 +103,7 @@ export const waits = singleton('waits', () => {
       const waiting = new Map(store.waitingExecutions().map((record) => [record.executionId, record]));
       for (const id of [...timers.keys()]) if (!waiting.has(id)) clear(id);
       for (const record of waiting.values()) if (!timers.has(record.executionId)) arm(record, 1_000);
+      await reconcile(false);
     },
 
     /** Executions with an armed timer. */
@@ -96,6 +114,7 @@ export const waits = singleton('waits', () => {
     /** Drop every timer and allow start() again (tests simulate a restart with it). */
     stop() {
       for (const id of [...timers.keys()]) clear(id);
+      clearTimeout(reconcileTimer);
       started = false;
     },
   };

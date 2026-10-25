@@ -43,7 +43,7 @@ import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
 import { ExecutionCanvas } from './execution-canvas';
 import { useExecutions } from './executions-shell';
 import { MODE_META, RERUN_LABEL, canRetry, deleteExecution, startRerun, startRetry, type RerunBody, type RetryBody } from './meta';
-import { AiUsageChip, BufferedChip } from './run-extras';
+import { AiUsageChip, BufferedChip, ParentChip, SubWorkflowWait, waitedChildren } from './run-extras';
 
 const HEIGHT_KEY = 'landflow-logs-height';
 const COLLAPSED_KEY = 'landflow-logs-collapsed';
@@ -172,6 +172,9 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
     if (event.channel !== 'execution') return;
     // A pending automatic retry started: show its link.
     if (record?.retryAt && event.event.type === 'execution.started' && event.workflowId === record.workflowId) reload();
+    // A sub-execution this run waits for finished: show the new count.
+    const finishedId = event.event.type === 'execution.finished' ? event.event.executionId : undefined;
+    if (finishedId && waitedChildren(record)?.some((child) => child.executionId === finishedId)) reload();
     if (event.event.executionId !== executionId) return;
     const e = event.event;
     if (e.type === 'node.started') setActive((a) => ({ ...a, [e.nodeId]: e.at }));
@@ -180,12 +183,13 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
       reload();
     } else if (e.type === 'execution.started' || e.type === 'execution.paused' || e.type === 'execution.resumed' || e.type === 'execution.finished') reload();
   });
-  // Resync now and then while live (the page may have opened mid-run) or queued (to see it start).
+  // Resync now and then while live (the page may have opened mid-run), queued (to see it start) or waiting for sub-workflows (their count).
+  const waitsForChildren = Boolean(waitedChildren(record));
   useEffect(() => {
-    if (!live && !queued) return;
+    if (!live && !queued && !waitsForChildren) return;
     const timer = setInterval(load, 4000);
     return () => clearInterval(timer);
-  }, [live, queued, load]);
+  }, [live, queued, waitsForChildren, load]);
 
   // A link with the wrong workflow in it still lands in the right place.
   useEffect(() => {
@@ -492,6 +496,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                   <Power className="size-3" /> Resumed after restart
                 </span>
               )}
+              <ParentChip parentId={record.parentExecutionId} onOpen={open} />
               <BufferedChip buffered={record.buffered} />
               <AiUsageChip usage={record.aiUsage} />
             </div>
@@ -584,6 +589,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
             <span className="text-[12px] opacity-80">({record.paused.reason === 'breakpoint' ? 'breakpoint' : 'stepping'})</span>
           </div>
         )}
+        <SubWorkflowWait record={record} onOpen={open} />
         {queued && (
           <div className="mt-3 flex items-center gap-2 rounded-xl border border-hair bg-nudim px-3 py-2 text-[13px] text-t2 animate-fade-up">
             <CircleDashed className="size-3.5 shrink-0" />

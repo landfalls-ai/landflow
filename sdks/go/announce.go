@@ -3,6 +3,8 @@ package landflow
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +25,20 @@ import (
 
 // registrySecretHeader carries LANDFLOW_REGISTRY_SECRET (when the host requires one) on every registry call.
 const registrySecretHeader = "X-Landflow-Registry-Secret"
+
+// processInstanceID is picked once per process and sent with every announce.
+var processInstanceID = newInstanceID()
+
+// newInstanceID returns 128 random bits as 32 hex characters.
+func newInstanceID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b) // never fails since Go 1.24
+	return hex.EncodeToString(b)
+}
+
+// InstanceID is this process's AnnounceRequest.InstanceID. A restarted plugin announces a new one, and the host pulls
+// its manifest again even when the version is the same (new nodes or parameters during development).
+func InstanceID() string { return processInstanceID }
 
 // withRegistrySecret adds LANDFLOW_REGISTRY_SECRET to a gRPC call's metadata.
 func withRegistrySecret(ctx context.Context) context.Context {
@@ -130,7 +146,7 @@ func (r *grpcRegistry) Close() error   { return r.conn.Close() }
 func (r *grpcRegistry) Announce(ctx context.Context, req AnnounceRequest) (AnnounceResponse, error) {
 	resp, err := r.client.Announce(withRegistrySecret(ctx), &pb.AnnounceRequest{
 		Protocol: req.Protocol, Endpoint: req.Endpoint, PluginId: req.PluginID,
-		Version: req.Version, TtlSeconds: int32(req.TTLSeconds),
+		Version: req.Version, TtlSeconds: int32(req.TTLSeconds), InstanceId: req.InstanceID,
 	})
 	if err != nil {
 		return AnnounceResponse{}, err
@@ -198,7 +214,7 @@ func (a *announcer) loop(ctx context.Context, endpoint string) {
 	state := stateUnknown
 	req := AnnounceRequest{
 		Protocol: ProtocolVersion, Endpoint: endpoint, PluginID: a.pluginID,
-		Version: a.version, TTLSeconds: a.ttlSeconds,
+		Version: a.version, TTLSeconds: a.ttlSeconds, InstanceID: processInstanceID,
 	}
 	for {
 		callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

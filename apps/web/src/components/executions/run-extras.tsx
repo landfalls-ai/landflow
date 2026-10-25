@@ -2,8 +2,10 @@
 /**
  * Header chips of an execution: what its model calls used (tokens and estimated cost, per model on click —
  * lib/server/ai-usage) and, for a run started by a trigger's debounce or batching, how many held events it took.
+ * Also the links between Execute Workflow parents and their sub-executions: "Sub-execution of …" on a child, and
+ * "Waiting on N of M sub-workflows" with a link to each child on a parent that waits for them.
  */
-import { Layers, Sparkles } from 'lucide-react';
+import { Ban, Check, CornerLeftUp, Hourglass, Layers, Sparkles, X } from 'lucide-react';
 import { formatCost, formatTokens, type ExecutionAiUsage } from '@/lib/shared/ai-usage';
 import type { ExecutionRecord } from '@/lib/shared/types';
 import { Popover } from '../ui/popover';
@@ -84,5 +86,73 @@ export function BufferedChip({ buffered }: { buffered: ExecutionRecord['buffered
     >
       <Layers className="size-3" /> {buffered.kind === 'debounce' ? `Debounced: ${events}` : `Batch of ${events}`}
     </span>
+  );
+}
+
+/** A child of a parent waiting for its sub-workflows: the item it ran for and, once it finished, how it ended. */
+interface WaitedChild {
+  item: number;
+  executionId: string;
+  status?: 'success' | 'error' | 'canceled';
+}
+
+/** The sub-executions a waiting parent waits for (`wait.data`: one per item in "each" mode, else the one child). */
+export function waitedChildren(record: Pick<ExecutionRecord, 'status' | 'wait'> | undefined): WaitedChild[] | undefined {
+  if (record?.status !== 'waiting' || record.wait?.resume !== 'subworkflow') return undefined;
+  const data = record.wait.data ?? {};
+  if (data.mode === 'each' && Array.isArray(data.children)) return data.children as unknown as WaitedChild[];
+  return typeof data.executionId === 'string' ? [{ item: 0, executionId: data.executionId }] : undefined;
+}
+
+/** "Sub-execution of ex_…": back to the execution whose Execute Workflow node started this one. */
+export function ParentChip({ parentId, onOpen }: { parentId: string | undefined; onOpen: (executionId: string) => void }) {
+  if (!parentId) return null;
+  return (
+    <button
+      onClick={() => onOpen(parentId)}
+      title="Open the execution whose Execute Workflow node started this one"
+      className="flex items-center gap-1 rounded-full border border-hair px-2 text-[12px] text-t2 transition-colors hover:text-t1"
+    >
+      <CornerLeftUp className="size-3" /> Sub-execution of <span className="font-mono">{parentId}</span>
+    </button>
+  );
+}
+
+const CHILD_STATE = {
+  success: { icon: Check, label: 'finished', className: 'text-gn' },
+  error: { icon: X, label: 'failed', className: 'text-rd' },
+  canceled: { icon: Ban, label: 'canceled', className: 'text-t3' },
+  waiting: { icon: Hourglass, label: 'waiting', className: 'text-viz-1' },
+} as const;
+
+/** A parent waiting for its sub-workflows: "Waiting on 2 of 3 sub-workflows", and a link to each child. */
+export function SubWorkflowWait({ record, onOpen }: { record: ExecutionRecord; onOpen: (executionId: string) => void }) {
+  const children = waitedChildren(record);
+  if (!children?.length) return null;
+  const open = children.filter((child) => !child.status).length;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-xl border border-hair bg-[color-mix(in_oklab,var(--viz-1)_8%,transparent)] px-3 py-2 text-[13px] text-t2 animate-fade-up">
+      <Hourglass className="size-3.5 shrink-0 text-viz-1" />
+      <span>
+        Waiting on <b className="font-semibold tabular-nums text-t1">{open} of {children.length}</b> sub-workflow{children.length === 1 ? '' : 's'}
+        {record.wait?.nodeName && <> at “{record.wait.nodeName}”</>}; it goes on when {children.length === 1 ? 'it finishes' : 'the last one finishes'}.
+      </span>
+      {children.map((child) => {
+        const state = CHILD_STATE[child.status ?? 'waiting'];
+        const Icon = state.icon;
+        return (
+          <button
+            key={child.executionId}
+            onClick={() => onOpen(child.executionId)}
+            title={`Item ${child.item + 1}: ${state.label} · open the sub-execution`}
+            className="flex items-center gap-1 rounded-full border border-hair bg-sf px-2 text-[12px] text-t2 transition-colors hover:text-t1"
+          >
+            <Icon className={`size-3 ${state.className}`} />
+            {children.length > 1 && <span className="tabular-nums text-t3">#{child.item + 1}</span>}
+            <span className="font-mono">{child.executionId}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }

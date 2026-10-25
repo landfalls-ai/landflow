@@ -1727,6 +1727,7 @@ type AnnounceRequest struct {
 	PluginId      string                 `protobuf:"bytes,3,opt,name=plugin_id,json=pluginId,proto3" json:"plugin_id,omitempty"`
 	Version       string                 `protobuf:"bytes,4,opt,name=version,proto3" json:"version,omitempty"`
 	TtlSeconds    int32                  `protobuf:"varint,5,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"` // lease; re-announce before it expires (default 30)
+	InstanceId    string                 `protobuf:"bytes,6,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`  // random per plugin process; a new one re-pulls the manifest (empty from older plugins)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1794,6 +1795,13 @@ func (x *AnnounceRequest) GetTtlSeconds() int32 {
 		return x.TtlSeconds
 	}
 	return 0
+}
+
+func (x *AnnounceRequest) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
 }
 
 type AnnounceResponse struct {
@@ -2115,14 +2123,16 @@ const file_landflow_plugin_v1_plugin_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x1b\n" +
 	"\tuptime_ms\x18\x02 \x01(\x03R\buptimeMs\x12\x1b\n" +
 	"\tplugin_id\x18\x03 \x01(\tR\bpluginId\x12\x18\n" +
-	"\aversion\x18\x04 \x01(\tR\aversion\"\xa1\x01\n" +
+	"\aversion\x18\x04 \x01(\tR\aversion\"\xc2\x01\n" +
 	"\x0fAnnounceRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\tR\bprotocol\x12\x1a\n" +
 	"\bendpoint\x18\x02 \x01(\tR\bendpoint\x12\x1b\n" +
 	"\tplugin_id\x18\x03 \x01(\tR\bpluginId\x12\x18\n" +
 	"\aversion\x18\x04 \x01(\tR\aversion\x12\x1f\n" +
 	"\vttl_seconds\x18\x05 \x01(\x05R\n" +
-	"ttlSeconds\"\x86\x01\n" +
+	"ttlSeconds\x12\x1f\n" +
+	"\vinstance_id\x18\x06 \x01(\tR\n" +
+	"instanceId\"\x86\x01\n" +
 	"\x10AnnounceResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12<\n" +
 	"\x1aheartbeat_interval_seconds\x18\x02 \x01(\x05R\x18heartbeatIntervalSeconds\x12\x18\n" +
