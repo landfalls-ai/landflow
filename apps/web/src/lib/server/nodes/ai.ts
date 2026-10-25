@@ -1,6 +1,7 @@
 import vm from 'node:vm';
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { toToolName, type AgentMemory, type AgentMessage, type AgentTool, type LanguageModel, type ToolResult } from '@landflow/engine';
+import { toToolName, type AgentMemory, type AgentMessage, type AgentTool, type ToolResult } from '@landflow/engine';
+import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY, isFallbackModel } from './fallback';
 import { anthropicModel, ollamaModel } from './models';
 
 const main = [{ type: 'main' as const }];
@@ -25,6 +26,7 @@ export const aiAgentNode = defineNode({
     inputs: [
       { type: 'main' },
       { type: 'ai_languageModel', displayName: 'Chat Model', required: true, maxConnections: 1 },
+      FALLBACK_PORT,
       { type: 'ai_memory', displayName: 'Memory', maxConnections: 1 },
       { type: 'ai_tool', displayName: 'Tool' },
     ],
@@ -45,6 +47,7 @@ export const aiAgentNode = defineNode({
         default: 'You are a helpful assistant inside a Landflow workflow. Use the available tools when they help, and answer concisely.',
         typeOptions: { rows: 4 },
       },
+      FALLBACK_PROPERTY,
       {
         name: 'options',
         displayName: 'Options',
@@ -62,10 +65,7 @@ export const aiAgentNode = defineNode({
   async execute(ctx) {
     const connection = ctx.getInputConnectionData;
     if (!connection) throw new NodeOperationError('The AI Agent must run in-process');
-    const [model] = await connection<LanguageModel>('ai_languageModel');
-    if (!model) {
-      throw new NodeOperationError('No chat model connected', { description: 'Attach a chat model (Anthropic, Ollama or OpenAI) to the “Chat Model” slot.' });
-    }
+    const model = await connectedModel(ctx, 'AI Agent');
     const [memory] = await connection<AgentMemory>('ai_memory');
     const tools = dedupe(await connection<AgentTool>('ai_tool'));
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
@@ -118,12 +118,14 @@ export const aiAgentNode = defineNode({
 
       if (answer === undefined) answer = `Stopped after ${maxIterations} iterations without a final answer.`;
       if (memory) await memory.save(sessionId, messages);
-      ctx.logger.info(`${model.provider}/${model.model}: ${iterations} iteration(s), ${steps.length} tool call(s)`);
+      const used = isFallbackModel(model) ? model.lastModel : `${model.provider}/${model.model}`;
+      ctx.logger.info(`${used}: ${iterations} iteration(s), ${steps.length} tool call(s)`);
       out.push({
         json: {
           output: answer,
           sessionId,
-          model: `${model.provider}/${model.model}`,
+          model: used,
+          ...(isFallbackModel(model) && model.fallbacks > 0 && { fallbackUsed: true }),
           iterations,
           usage,
           ...(options.returnIntermediateSteps !== false ? { steps: steps as never } : {}),

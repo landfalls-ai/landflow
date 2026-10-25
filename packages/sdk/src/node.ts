@@ -15,6 +15,7 @@
  */
 import { HEX_COLOR } from '@landflow/protocol';
 import type {
+  ConnectionType,
   CredentialTypeDescriptor,
   ExecutionMode,
   JsonObject,
@@ -27,6 +28,7 @@ import type {
   PropertyDescriptor,
   PropertyOption,
 } from '@landflow/protocol';
+import type { IBinaryHelpers } from './binary';
 import type { CredentialTypeDefinition, GetCredentials } from './credentials';
 import type { NodeMetrics, SpanFunction, TracedFetch } from './instrumentation';
 import { resolveIcon, toPath } from './icons';
@@ -44,9 +46,12 @@ export interface HttpRequestOptions {
   method?: string;
   headers?: Record<string, string>;
   query?: Record<string, string | number | boolean>;
+  /** Plain objects are sent as JSON; strings, bytes, `FormData`, `Blob`, `URLSearchParams` and streams as they are. */
   body?: unknown;
   /** Parse the body as JSON (default: by content-type). */
   json?: boolean;
+  /** `'buffer'`: return the body as a Buffer (files), not decoded text. */
+  encoding?: 'buffer';
   timeoutMs?: number;
 }
 
@@ -63,6 +68,11 @@ export interface IBaseContext {
   readonly mode: ExecutionMode;
   getExecutionId(): string;
   getWorkflowId(): string | undefined;
+  /**
+   * `<executionId>:<nodeId>:<runIndex>`: the same for every retry of this step (retry on fail, re-run after a host crash).
+   * Forward it to APIs that accept an idempotency key (Stripe's `Idempotency-Key`). Undefined from older hosts.
+   */
+  getIdempotencyKey(): string | undefined;
   /**
    * The node continues on error (n8n's `continueOnFail()`): catch a failing item, push
    * `{ json: { error: message }, pairedItem: { item: i } }` and go on with the next item.
@@ -86,7 +96,8 @@ export interface IBaseContext {
   readonly metrics: NodeMetrics;
   /** A fetch that opens an `HTTP {METHOD}` client span and sends `traceparent`. */
   readonly http: TracedFetch;
-  readonly helpers: {
+  /** HTTP and items, plus binary data: read input files and store new ones (docs/protocol.md §11). */
+  readonly helpers: IBinaryHelpers & {
     /** Traced like `ctx.http`. */
     httpRequest(options: HttpRequestOptions): Promise<HttpResponse>;
     /** Wrap plain objects as items. */
@@ -117,9 +128,11 @@ export interface IExecuteContext extends IBaseContext {
   getInputCount(): number;
   /**
    * In-process only: capabilities supplied by sub-nodes attached to this node's
-   * `ai_*` ports (models, tools, memory). Remote plugins never see sub-nodes.
+   * `ai_*` ports (models, tools, memory, embeddings, retrievers…), in port order.
+   * `index` keeps only the n-th port of that type (an agent's fallback model is
+   * `ai_languageModel` 1). Remote plugins never see sub-nodes.
    */
-  getInputConnectionData?<T = unknown>(type: 'ai_languageModel' | 'ai_tool' | 'ai_memory'): Promise<T[]>;
+  getInputConnectionData?<T = unknown>(type: Exclude<ConnectionType, 'main'>, index?: number): Promise<T[]>;
   /** Poll triggers: the state the previous poll returned (undefined on the first poll). */
   getPollState<T extends JsonObject = JsonObject>(): T | undefined;
   /** Poll triggers: state handed to the next poll (returned as ExecuteResponse.pollState; ignored in manual mode). */
@@ -138,9 +151,12 @@ export interface IExecuteContext extends IBaseContext {
   getNodeState?<T extends JsonObject = JsonObject>(): T | undefined;
   /** In-process only: replace (or, with `undefined`, clear) this node's state. */
   setNodeState?(state: JsonObject | undefined): void;
+  /** In-process only: what `$('Node')` reads for this node (each node's latest output, by name). The Code node forwards it to its sandbox. */
+  getNodeOutputs?(): Record<string, NodeItem[]>;
 }
 
-export type ISupplyDataContext = IBaseContext;
+/** A sub-node's context. In-process sub-nodes can pull their own sub-nodes too (a document loader its text splitter). */
+export type ISupplyDataContext = IBaseContext & Pick<IExecuteContext, 'getInputConnectionData'>;
 
 export interface ILoadOptionsContext {
   getCurrentParameters(): JsonObject;

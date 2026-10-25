@@ -16,6 +16,55 @@
               },
               "additionalProperties": {}
             },
+            "binary": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[\\w-]{1,64}\\.[\\w-]{8,64}$"
+                  },
+                  "mimeType": {
+                    "type": "string"
+                  },
+                  "fileName": {
+                    "type": "string"
+                  },
+                  "fileExtension": {
+                    "type": "string"
+                  },
+                  "fileSize": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "fileType": {
+                    "type": "string",
+                    "enum": [
+                      "image",
+                      "text",
+                      "json",
+                      "html",
+                      "pdf",
+                      "audio",
+                      "video",
+                      "other"
+                    ]
+                  },
+                  "data": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mimeType"
+                ],
+                "additionalProperties": false
+              }
+            },
             "pairedItem": {
               "type": "object",
               "properties": {

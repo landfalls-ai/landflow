@@ -200,6 +200,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.gmail(w, r, segs[4:], body)
 	case hasPrefix(segs, "drive", "v3", "files"):
 		s.drive(w, r, segs[3:], body)
+	case hasPrefix(segs, "upload", "gmail", "v1", "users", "me", "messages", "send"):
+		if info.serviceAccount && info.subject == "" {
+			writeError(w, http.StatusBadRequest, "Precondition check failed.")
+			return
+		}
+		s.uploadMessage(w, r, body)
 	case hasPrefix(segs, "upload", "drive", "v3", "files"):
 		s.upload(w, r, body)
 	case hasPrefix(segs, "calendar", "v3"):

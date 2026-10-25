@@ -77,12 +77,22 @@ class PairedItem(_message.Message):
     def __init__(self, item: _Optional[int] = ..., input: _Optional[int] = ...) -> None: ...
 
 class Item(_message.Message):
-    __slots__ = ("json", "paired_item")
+    __slots__ = ("json", "paired_item", "binary")
     JSON_FIELD_NUMBER: _ClassVar[int]
     PAIRED_ITEM_FIELD_NUMBER: _ClassVar[int]
+    BINARY_FIELD_NUMBER: _ClassVar[int]
     json: DynamicValue
     paired_item: PairedItem
-    def __init__(self, json: _Optional[_Union[DynamicValue, _Mapping]] = ..., paired_item: _Optional[_Union[PairedItem, _Mapping]] = ...) -> None: ...
+    binary: DynamicValue
+    def __init__(self, json: _Optional[_Union[DynamicValue, _Mapping]] = ..., paired_item: _Optional[_Union[PairedItem, _Mapping]] = ..., binary: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+
+class BinaryAccess(_message.Message):
+    __slots__ = ("url", "token")
+    URL_FIELD_NUMBER: _ClassVar[int]
+    TOKEN_FIELD_NUMBER: _ClassVar[int]
+    url: str
+    token: str
+    def __init__(self, url: _Optional[str] = ..., token: _Optional[str] = ...) -> None: ...
 
 class Branch(_message.Message):
     __slots__ = ("items",)
@@ -91,7 +101,7 @@ class Branch(_message.Message):
     def __init__(self, items: _Optional[_Iterable[_Union[Item, _Mapping]]] = ...) -> None: ...
 
 class ExecuteRequest(_message.Message):
-    __slots__ = ("protocol", "execution_id", "workflow_id", "mode", "node", "parameters", "item_parameters", "inputs", "credentials", "poll_state", "continue_on_fail")
+    __slots__ = ("protocol", "execution_id", "workflow_id", "mode", "node", "parameters", "item_parameters", "inputs", "credentials", "poll_state", "continue_on_fail", "binary_access", "idempotency_key")
     PROTOCOL_FIELD_NUMBER: _ClassVar[int]
     EXECUTION_ID_FIELD_NUMBER: _ClassVar[int]
     WORKFLOW_ID_FIELD_NUMBER: _ClassVar[int]
@@ -103,6 +113,8 @@ class ExecuteRequest(_message.Message):
     CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
     POLL_STATE_FIELD_NUMBER: _ClassVar[int]
     CONTINUE_ON_FAIL_FIELD_NUMBER: _ClassVar[int]
+    BINARY_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
     protocol: str
     execution_id: str
     workflow_id: str
@@ -114,7 +126,9 @@ class ExecuteRequest(_message.Message):
     credentials: DynamicValue
     poll_state: DynamicValue
     continue_on_fail: bool
-    def __init__(self, protocol: _Optional[str] = ..., execution_id: _Optional[str] = ..., workflow_id: _Optional[str] = ..., mode: _Optional[str] = ..., node: _Optional[_Union[NodeRef, _Mapping]] = ..., parameters: _Optional[_Union[DynamicValue, _Mapping]] = ..., item_parameters: _Optional[_Iterable[_Union[DynamicValue, _Mapping]]] = ..., inputs: _Optional[_Iterable[_Union[Branch, _Mapping]]] = ..., credentials: _Optional[_Union[DynamicValue, _Mapping]] = ..., poll_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., continue_on_fail: _Optional[bool] = ...) -> None: ...
+    binary_access: BinaryAccess
+    idempotency_key: str
+    def __init__(self, protocol: _Optional[str] = ..., execution_id: _Optional[str] = ..., workflow_id: _Optional[str] = ..., mode: _Optional[str] = ..., node: _Optional[_Union[NodeRef, _Mapping]] = ..., parameters: _Optional[_Union[DynamicValue, _Mapping]] = ..., item_parameters: _Optional[_Iterable[_Union[DynamicValue, _Mapping]]] = ..., inputs: _Optional[_Iterable[_Union[Branch, _Mapping]]] = ..., credentials: _Optional[_Union[DynamicValue, _Mapping]] = ..., poll_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., continue_on_fail: _Optional[bool] = ..., binary_access: _Optional[_Union[BinaryAccess, _Mapping]] = ..., idempotency_key: _Optional[str] = ...) -> None: ...
 
 class LogEntry(_message.Message):
     __slots__ = ("level", "message")

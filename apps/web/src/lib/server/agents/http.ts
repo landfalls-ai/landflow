@@ -25,7 +25,7 @@ export const agentConfigSchema = z
       .nullable(),
     instructions: z.string().max(100_000).optional(),
     skills: z.array(z.object({ id: z.string(), name: z.string(), whenToUse: z.string(), instructions: z.string().max(65_536) }).passthrough()).optional(),
-    tools: z.array(z.object({ id: z.string(), type: z.enum(['node', 'workflow', 'agent']) }).passthrough()).optional(),
+    tools: z.array(z.object({ id: z.string(), type: z.enum(['node', 'workflow', 'agent', 'mcp', 'knowledge']) }).passthrough()).optional(),
     schedules: z.array(z.object({ id: z.string(), prompt: z.string(), frequency: z.enum(['hourly', 'daily', 'weekly', 'monthly', 'cron']) }).passthrough()).optional(),
     channels: z.array(z.object({ id: z.string(), type: z.literal('telegram'), credential: ref }).passthrough()).optional(),
     memory: z.object({ crossSession: z.boolean() }).optional(),

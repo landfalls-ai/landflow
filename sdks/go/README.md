@@ -145,6 +145,8 @@ not implement `OptionsLoader`. On failure `NewPlugin` panics and lists every pro
 | `Credentials(name)`, `CredentialString/Int/Bool(name, field, …)`, `HasCredentials`, `RequireCredentials` | see [Credentials](#credentials) |
 | `PollState()`, `SetPollState(map)`, `IsFirstPoll()` | see [Polling triggers](#polling-triggers) |
 | `ContinueOnFail()`, `ErrorItem(i, err)` | the node is set to continue on error: append `ctx.ErrorItem(i, err)` for a failing item and go on |
+| `BinaryRef(i, name)`, `BinaryBytes(i, name)`, `BinaryReader(i, name)`, `ReadBinary(ref)`, `PrepareBinary(…)` | see [Binary data](#binary-data) |
+| `IdempotencyKey()` | `<executionId>:<nodeId>:<runIndex>`, the same across retries of this step; pass it to APIs that take an idempotency key (`""` from older hosts) |
 | `Span(name, attrs, fn)`, `StartSpan`, `DBSpan(info, fn)`, `Metrics()` | see [Observability](#observability) |
 | `Context()` | request context carrying the server span, cancelled if the caller disconnects |
 | `Logger.Debug/Info/Warn/Error(fmt, args...)`, `Logger.With(k, v, …)` | lines collected into the response `logs` and written to the process log with trace ids |
@@ -228,6 +230,44 @@ func (SendMessage) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, err
   they appear in node logs (returned and process), span attributes, span errors and `url.full`.
   `landflow.RedactString(ctx, s)` applies the same masking to your own strings. The error message
   returned to the host is not changed.
+
+## Binary data
+
+Items carry files under `Item.Binary`, keyed by a property name (`"data"` for a single file), as
+references to bytes in the host's binary store ([protocol §11](../../docs/protocol.md#11-binary-data)).
+The helpers read and write those bytes through the host's binary API, using the URL and token the
+host sends with each call (`ExecuteRequest.BinaryAccess`).
+
+```go
+func (attachInvoice) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, error) {
+	var out []landflow.Item
+	for i, item := range ctx.InputData(0) {
+		data, err := ctx.BinaryBytes(i, "data") // error `item 0 has no binary file "data"` when missing
+		if err != nil {
+			return nil, landflow.ItemError(i, "%v", err)
+		}
+		pdf, err := ctx.PrepareBinary(render(data), "invoice.pdf", "") // MIME type guessed from the name
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, landflow.Item{JSON: item.JSON, Binary: map[string]landflow.BinaryRef{"data": item.Binary["data"], "invoice": pdf}})
+	}
+	return [][]landflow.Item{out}, nil
+}
+```
+
+| Method | Meaning |
+|---|---|
+| `BinaryRef(i, name)` | the ref of input item `i` (`""` = `"data"`); an error when there is none |
+| `BinaryBytes(i, name)`, `BinaryReader(i, name)` | its bytes, or an `io.ReadCloser` for big files (close it) |
+| `ReadBinary(ref)`, `OpenBinary(ref)` | the same for any ref, e.g. one a sub-workflow returned |
+| `PrepareBinary(data, fileName, mimeType)` | a ref to put under `Item.Binary[name]`: inline (base64 `Data`) up to `MaxInlineBinaryBytes` (64 KiB), uploaded above; `mimeType` `""` is guessed from the file name |
+| `PrepareBinaryStream(r, fileName, mimeType)` | upload from an `io.Reader` (always uploaded) |
+| `MimeTypeFromFileName`, `FileExtensionOf`, `FileTypeOf` | the MIME tables the helpers use |
+
+Stored refs are fetched with `GET {url}/{id}` and uploads go to `POST {url}`, both with the call's
+bearer token and through `landflow.HTTPClient(ctx)`, so they show up as client spans. Without
+`BinaryAccess` (an older host) only small files can be returned, inline.
 
 ## Polling triggers
 

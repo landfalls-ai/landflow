@@ -3,11 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  BookOpen,
   Bot,
   Brain,
   ExternalLink,
   Loader2,
   Pencil,
+  Plug,
   Plus,
   RefreshCw,
   Search,
@@ -24,7 +26,7 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { languageMeta } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
-import type { AgentConfig, AgentToolConfig, NodeToolConfig, SubAgentConfig, WorkflowToolConfig } from '@/lib/shared/agents';
+import type { AgentConfig, AgentToolConfig, KnowledgeBaseToolConfig, McpServerToolConfig, NodeToolConfig, SubAgentConfig, WorkflowToolConfig } from '@/lib/shared/agents';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { ParamForm } from '../editor/param-form';
@@ -35,6 +37,8 @@ import { EmptyState } from '../ui/empty-state';
 import { AppIcon, NodeIcon } from '../ui/icon';
 import { Input, Textarea } from '../ui/inputs';
 import { Dialog, Field, ItemRow, Section, ToggleRow } from './dialog';
+import { KnowledgeDialog, KnowledgeTile, STORE_LABEL } from './knowledge-dialog';
+import { MCP_CLIENT_TOOL, McpServerDialog, McpTile } from './mcp-server-dialog';
 import { useAgentList, useNodeTypes } from './use-agent-data';
 import { newId, type UpdateConfig } from './util';
 
@@ -608,7 +612,9 @@ type DialogState =
   | { kind: 'pick-node' }
   | { kind: 'node'; tool: NodeToolConfig; isNew?: boolean }
   | { kind: 'workflow'; tool?: WorkflowToolConfig }
-  | { kind: 'agent'; tool?: SubAgentConfig };
+  | { kind: 'agent'; tool?: SubAgentConfig }
+  | { kind: 'mcp'; tool?: McpServerToolConfig }
+  | { kind: 'knowledge'; tool?: KnowledgeBaseToolConfig };
 
 export function CapabilitiesCard({ agentId, config, update }: { agentId: string; config: AgentConfig; update: UpdateConfig }) {
   const nodeTypes = useNodeTypes();
@@ -626,7 +632,17 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
   };
 
   const edit = (tool: AgentToolConfig) =>
-    setDialog(tool.type === 'node' ? { kind: 'node', tool } : tool.type === 'workflow' ? { kind: 'workflow', tool } : { kind: 'agent', tool });
+    setDialog(
+      tool.type === 'node'
+        ? { kind: 'node', tool }
+        : tool.type === 'workflow'
+          ? { kind: 'workflow', tool }
+          : tool.type === 'mcp'
+            ? { kind: 'mcp', tool }
+            : tool.type === 'knowledge'
+              ? { kind: 'knowledge', tool }
+              : { kind: 'agent', tool },
+    );
 
   const pickNode = (info: NodeTypeInfo) =>
     setDialog({
@@ -655,6 +671,14 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       icon = <KindTile icon={<Workflow className="size-3.5" />} />;
       title = tool.name;
       subtitle = `Workflow · ${tool.description || 'No description'}`;
+    } else if (tool.type === 'mcp') {
+      icon = <McpTile />;
+      title = tool.name;
+      subtitle = `MCP server · ${String(tool.parameters.endpointUrl ?? '') || 'No URL'}`;
+    } else if (tool.type === 'knowledge') {
+      icon = <KnowledgeTile />;
+      title = tool.name;
+      subtitle = `Knowledge base · ${STORE_LABEL[tool.store]} “${tool.collection}” · ${tool.embeddings.model}`;
     } else {
       const agent = agents?.find((a) => a.id === tool.agentId);
       icon = <AppIcon icon={agent?.icon ?? 'bot'} color={agent?.color} size={32} />;
@@ -706,7 +730,7 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       <Section
         icon={<Wrench className="size-4" />}
         title="Capabilities"
-        description="What the agent can do: nodes as tools, workflows and other agents."
+        description="What the agent can do: nodes as tools, workflows, other agents, MCP servers and knowledge bases."
         actions={
           <>
             <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'pick-node' })}>
@@ -717,6 +741,12 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
             </Button>
             <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'agent' })}>
               <Bot className="size-3.5" /> Add sub-agent
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'mcp' })}>
+              <Plug className="size-3.5" /> Add MCP server
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'knowledge' })}>
+              <BookOpen className="size-3.5" /> Add knowledge base
             </Button>
           </>
         }
@@ -767,6 +797,10 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
           onClose={() => setDialog(null)}
         />
       )}
+      {dialog?.kind === 'mcp' && (
+        <McpServerDialog key={dialog.tool?.id ?? 'new'} tool={dialog.tool} info={nodeTypes?.[MCP_CLIENT_TOOL]} onSave={save} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === 'knowledge' && <KnowledgeDialog key={dialog.tool?.id ?? 'new'} tool={dialog.tool} onSave={save} onClose={() => setDialog(null)} />}
     </>
   );
 }

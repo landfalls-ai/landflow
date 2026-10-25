@@ -17,15 +17,32 @@ export type ProtocolVersion = typeof PROTOCOL_VERSION;
 /**
  * `main` carries items between nodes. The `ai_*` types connect sub-nodes to a
  * root node (n8n "cluster nodes"): the sub-node *supplies* a capability (a
- * model, a tool, a memory) instead of producing items.
+ * model, a tool, a memory) instead of producing items. The retrieval types
+ * (RAG) follow n8n: `ai_embedding` (an embeddings model), `ai_document` (a
+ * document loader), `ai_textSplitter`, `ai_retriever` and `ai_reranker`.
+ * Sub-nodes can have sub-node inputs of their own (a loader takes a splitter).
  */
-export type ConnectionType = 'main' | 'ai_languageModel' | 'ai_tool' | 'ai_memory';
+export type ConnectionType =
+  | 'main'
+  | 'ai_languageModel'
+  | 'ai_tool'
+  | 'ai_memory'
+  | 'ai_embedding'
+  | 'ai_document'
+  | 'ai_textSplitter'
+  | 'ai_retriever'
+  | 'ai_reranker';
 
 export const CONNECTION_TYPES: readonly ConnectionType[] = [
   'main',
   'ai_languageModel',
   'ai_tool',
   'ai_memory',
+  'ai_embedding',
+  'ai_document',
+  'ai_textSplitter',
+  'ai_retriever',
+  'ai_reranker',
 ];
 
 export interface PortDescriptor {
@@ -36,6 +53,12 @@ export interface PortDescriptor {
   required?: boolean;
   /** Upper bound of incoming connections (e.g. exactly one chat model). */
   maxConnections?: number;
+  /**
+   * Show the port only for some parameter values, evaluated like a property's
+   * (n8n's parameter-dependent ports: a vector store's Operation Mode, "Enable
+   * Fallback Model"). Hidden ports keep their index, so handle ids stay stable.
+   */
+  displayOptions?: DisplayOptions;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,14 +285,52 @@ export interface PairedItem {
   input?: number;
 }
 
+/**
+ * A file attached to an item (n8n's IBinaryData). The bytes live in the host's binary store, not in the item: a ref
+ * the host sends always has an `id`, and `GET {binaryAccess.url}/{id}` returns the bytes. A node may instead return
+ * a small file inline as base64 `data` (no `id`); the host stores it and swaps in a stored ref before the next node.
+ */
+export interface BinaryRef {
+  /** Store id (`<scope>.<random>`). Absent only on an inline ref a node returns. */
+  id?: string;
+  mimeType: string;
+  fileName?: string;
+  /** Without the dot: "pdf". */
+  fileExtension?: string;
+  /** Size in bytes. */
+  fileSize: number;
+  /** Coarse kind for previews, derived from `mimeType`. */
+  fileType?: BinaryFileType;
+  /** Inline bytes, base64 (only on refs a node returns; the SDKs inline files up to MAX_INLINE_BINARY_BYTES). */
+  data?: string;
+}
+
+export type BinaryFileType = 'image' | 'text' | 'json' | 'html' | 'pdf' | 'audio' | 'video' | 'other';
+
+/**
+ * Where a plugin reads and writes the bytes of binary data during one Execute call (docs/protocol.md §11):
+ * `GET {url}/{id}` and `POST {url}`, each with `Authorization: Bearer {token}`.
+ */
+export interface BinaryAccess {
+  /** The host's binary API, e.g. "http://127.0.0.1:3000/api/binary". */
+  url: string;
+  /** Scoped to this execution (it writes there, and reads that plus the files of its input items); expires. */
+  token: string;
+}
+
 /** The unit of data that flows between nodes (n8n's INodeExecutionData). */
 export interface NodeItem {
   json: JsonObject;
+  /** Files by property name (n8n's `item.binary`); `data` is the usual name of a single file. */
+  binary?: Record<string, BinaryRef>;
   pairedItem?: PairedItem;
 }
 
-/** `poll`: a scheduled poll of a `triggerSource: "poll"` node (see ExecuteRequest.pollState). */
-export type ExecutionMode = 'manual' | 'trigger' | 'webhook' | 'tool' | 'chat' | 'poll';
+/**
+ * `poll`: a scheduled poll of a `triggerSource: "poll"` node (see ExecuteRequest.pollState).
+ * `mcp`: started by an MCP client (an MCP Server Trigger's tool call, or the host's MCP server).
+ */
+export type ExecutionMode = 'manual' | 'trigger' | 'webhook' | 'tool' | 'chat' | 'poll' | 'mcp';
 
 export interface NodeRef {
   id: string;
@@ -299,6 +360,14 @@ export interface ExecuteRequest {
    * `{ json: { error }, pairedItem }` for an item that fails and go on with the next one.
    */
   continueOnFail?: boolean;
+  /**
+   * `<executionId>:<nodeId>:<runIndex>` (runIndex = 0-based run of this node in the execution): the same for every retry of
+   * this step (retry on fail, re-run after a host crash), new for a new execution. Forward it to APIs that accept an
+   * idempotency key (Stripe's `Idempotency-Key`) so a repeated step does not repeat side effects. Absent from older hosts.
+   */
+  idempotencyKey?: string;
+  /** Read and write the bytes of `item.binary` files (absent when the host has no binary store, e.g. older hosts). */
+  binaryAccess?: BinaryAccess;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -396,6 +465,9 @@ export const HTTP_PATHS = {
  * workflow's trace.
  */
 export const TRACE_HEADERS = ['traceparent', 'tracestate', 'baggage'] as const;
+
+/** The SDKs return files up to this size inline (`BinaryRef.data`) instead of uploading them. */
+export const MAX_INLINE_BINARY_BYTES = 64 * 1024;
 
 export const DEFAULT_ANNOUNCE_TTL_SECONDS = 30;
 export const DEFAULT_HEARTBEAT_SECONDS = 10;

@@ -185,6 +185,10 @@ func executeRequestFromProto(in *pb.ExecuteRequest) (*ExecuteRequest, error) {
 		return nil, err
 	}
 	req.ContinueOnFail = in.GetContinueOnFail()
+	req.IdempotencyKey = in.GetIdempotencyKey()
+	if ba := in.GetBinaryAccess(); ba != nil && ba.GetUrl() != "" {
+		req.BinaryAccess = &BinaryAccess{URL: ba.GetUrl(), Token: ba.GetToken()}
+	}
 	return req, nil
 }
 
@@ -196,6 +200,15 @@ func itemsFromProto(items []*pb.Item, path string) ([]Item, error) {
 			return nil, err
 		}
 		out[i].JSON = obj
+		if bin := it.GetBinary(); bin != nil && len(bin.GetJson()) > 0 {
+			var files map[string]BinaryRef
+			if err := json.Unmarshal(bin.GetJson(), &files); err != nil {
+				return nil, fmt.Errorf("%s[%d].binary: DynamicValue must hold an object of binary refs: %v", path, i, err)
+			}
+			if len(files) > 0 {
+				out[i].Binary = files
+			}
+		}
 		if pi := it.GetPairedItem(); pi != nil {
 			out[i].PairedItem = &PairedItem{Item: int(pi.GetItem()), Input: int(pi.GetInput())}
 		}
@@ -215,6 +228,11 @@ func itemsToProto(items []Item) ([]*pb.Item, error) {
 			return nil, fmt.Errorf("item %d: %w", i, err)
 		}
 		out[i] = &pb.Item{Json: dv}
+		if len(it.Binary) > 0 {
+			if out[i].Binary, err = toDynamic(it.Binary); err != nil {
+				return nil, fmt.Errorf("item %d binary: %w", i, err)
+			}
+		}
 		if it.PairedItem != nil {
 			out[i].PairedItem = &pb.PairedItem{Item: int32(it.PairedItem.Item), Input: int32(it.PairedItem.Input)}
 		}
@@ -321,6 +339,10 @@ func ExecuteRequestToProto(req *ExecuteRequest) (*pb.ExecuteRequest, error) {
 		}
 	}
 	out.ContinueOnFail = req.ContinueOnFail
+	out.IdempotencyKey = req.IdempotencyKey // empty is not sent (proto3 default)
+	if req.BinaryAccess != nil {
+		out.BinaryAccess = &pb.BinaryAccess{Url: req.BinaryAccess.URL, Token: req.BinaryAccess.Token}
+	}
 	return out, nil
 }
 

@@ -323,6 +323,7 @@ function Field({ nodeType, property, value, onChange, parameters }: { nodeType: 
             className="code-area min-h-[120px]"
             spellCheck={false}
             rows={property.typeOptions?.rows ?? 8}
+            data-language={property.typeOptions?.language}
             value={typeof value === 'string' ? value : JSON.stringify(value ?? property.default ?? '', null, 2)}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={(e) => {
@@ -330,7 +331,8 @@ function Field({ nodeType, property, value, onChange, parameters }: { nodeType: 
                 e.preventDefault();
                 const el = e.currentTarget;
                 const { selectionStart, selectionEnd } = el;
-                el.setRangeText('  ', selectionStart, selectionEnd, 'end');
+                // Python's convention is four spaces; everything else here uses two.
+                el.setRangeText(property.typeOptions?.language === 'python' ? '    ' : '  ', selectionStart, selectionEnd, 'end');
                 onChange(el.value);
               }
             }}

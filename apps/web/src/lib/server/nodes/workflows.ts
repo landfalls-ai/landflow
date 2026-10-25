@@ -8,6 +8,7 @@
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { ExecutionRecord } from '../../shared/types';
+import { shareBinaryScope } from '../binary/access';
 import { store } from '../store';
 
 const main = [{ type: 'main' as const }];
@@ -59,7 +60,7 @@ interface MappedInput {
 /** The items the child starts with: the input as it is, or the mapped arguments per item. */
 function childItems(ctx: IExecuteContext, indexes: number[]): NodeItem[] {
   const items = ctx.getInputData();
-  if (ctx.getNodeParameter('inputSource', 0) !== 'map') return indexes.map((i) => ({ json: items[i].json }));
+  if (ctx.getNodeParameter('inputSource', 0) !== 'map') return indexes.map((i) => ({ json: items[i].json, ...(items[i].binary && { binary: items[i].binary }) }));
   return indexes.map((i) => {
     const json: JsonObject = {};
     for (const input of ctx.getNodeParameter<{ values?: MappedInput[] }>('workflowInputs', i)?.values ?? []) {
@@ -186,8 +187,13 @@ export const executeWorkflowNode = defineNode({
     const parent = { executionId: ctx.getExecutionId(), nodeId: ctx.getNode().id };
     // A poll-started parent's children are ordinary trigger runs (only the trigger polls).
     const mode = ctx.mode === 'poll' ? 'trigger' : ctx.mode;
+    // A child this run waits for writes its files into this run's scope, so the files it returns outlive it.
+    const onChildStart = (id: string, onStart?: (id: string) => void) => {
+      if (wait) shareBinaryScope(id, parent.executionId);
+      onStart?.(id);
+    };
     const start = (indexes: number[], onStart?: (id: string) => void) =>
-      runWorkflow({ workflow, mode, startNodeId: trigger.id, triggerItems: childItems(ctx, indexes), parent, ...(wait && ctx.signal && { signal: ctx.signal }), onStart }).catch(
+      runWorkflow({ workflow, mode, startNodeId: trigger.id, triggerItems: childItems(ctx, indexes), parent, ...(wait && ctx.signal && { signal: ctx.signal }), onStart: (id) => onChildStart(id, onStart) }).catch(
         (error: Error) => {
           throw new NodeOperationError(error.message);
         },
@@ -217,9 +223,10 @@ export const executeWorkflowNode = defineNode({
         ctx.putExecutionToWait({ resume: 'subworkflow', data: { executionId: child.executionId, workflowId: workflow.id } });
         return [items];
       }
+      shareBinaryScope(child.executionId, undefined);
       if (child.status !== 'success') throw new NodeOperationError(failure(child));
       const { lastNodeItems } = await import('../runner');
-      for (const item of lastNodeItems(child)) output.push({ json: item.json, pairedItem: { item: indexes[0] ?? 0 } });
+      for (const item of lastNodeItems(child)) output.push({ json: item.json, ...(item.binary && { binary: item.binary }), pairedItem: { item: indexes[0] ?? 0 } });
     }
     return [output];
   },

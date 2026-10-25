@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/mail"
+	"net/textproto"
 	"net/url"
 	"slices"
 	"sort"
@@ -25,7 +31,18 @@ const (
 	gmailMessages = "/gmail/v1/users/me/messages"
 	// gmailFetchWorkers bounds parallel messages.get calls.
 	gmailFetchWorkers = 5
+	// gmailRawLimit: bigger messages go to the upload endpoint instead of
+	// messages.send's JSON "raw" field.
+	gmailRawLimit = 5 << 20
+	// gmailMaxMessage is Gmail's limit for an uploaded message.
+	gmailMaxMessage = 35 << 20
 )
+
+// attachmentsProperty names the input item's binary files to attach.
+var attachmentsProperty = landflow.PropertyDescriptor{
+	Name: "attachments", DisplayName: "Attachments", Type: landflow.PropString, Default: "", Placeholder: "data, invoice",
+	Description: "Binary properties of the input item to attach, separated by commas (a file from Read Files, HTTP Request, a form upload…)",
+}
 
 // systemLabels are offered statically (the editor's multi-select does not
 // load options yet); the labels loader adds the user's own labels.
@@ -127,6 +144,7 @@ func (GmailNode) Description() landflow.NodeDescriptor {
 			{Name: "options", DisplayName: "Options", Type: landflow.PropCollection, Default: map[string]any{},
 				Placeholder: "Add Option", DisplayOptions: show("message", "send"),
 				Values: []landflow.PropertyDescriptor{
+					attachmentsProperty,
 					{Name: "bccList", DisplayName: "BCC", Type: landflow.PropString, Default: "", Description: "Addresses separated by commas"},
 					{Name: "ccList", DisplayName: "CC", Type: landflow.PropString, Default: "", Description: "Addresses separated by commas"},
 					{Name: "replyTo", DisplayName: "Reply To", Type: landflow.PropString, Default: ""},
@@ -135,6 +153,7 @@ func (GmailNode) Description() landflow.NodeDescriptor {
 			{Name: "options", DisplayName: "Options", Type: landflow.PropCollection, Default: map[string]any{},
 				Placeholder: "Add Option", DisplayOptions: show("message", "reply"),
 				Values: []landflow.PropertyDescriptor{
+					attachmentsProperty,
 					{Name: "bccList", DisplayName: "BCC", Type: landflow.PropString, Default: ""},
 					{Name: "ccList", DisplayName: "CC", Type: landflow.PropString, Default: ""},
 					{Name: "senderName", DisplayName: "Sender Name", Type: landflow.PropString, Default: ""},
@@ -234,15 +253,20 @@ func (g *gmailRun) send(i int) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	attachments, err := g.attachments(i, opts)
+	if err != nil {
+		return nil, err
+	}
 	m := outgoingMail{
-		From:    from,
-		To:      to,
-		Cc:      getString(opts, "ccList", ""),
-		Bcc:     getString(opts, "bccList", ""),
-		ReplyTo: getString(opts, "replyTo", ""),
-		Subject: g.ctx.ParamString("subject", i, ""),
-		HTML:    g.ctx.ParamString("emailType", i, "text") == "html",
-		Body:    g.ctx.ParamString("message", i, ""),
+		Attachments: attachments,
+		From:        from,
+		To:          to,
+		Cc:          getString(opts, "ccList", ""),
+		Bcc:         getString(opts, "bccList", ""),
+		ReplyTo:     getString(opts, "replyTo", ""),
+		Subject:     g.ctx.ParamString("subject", i, ""),
+		HTML:        g.ctx.ParamString("emailType", i, "text") == "html",
+		Body:        g.ctx.ParamString("message", i, ""),
 	}
 	return g.deliver(m, "", "send")
 }
@@ -297,16 +321,21 @@ func (g *gmailRun) reply(i int) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	attachments, err := g.attachments(i, opts)
+	if err != nil {
+		return nil, err
+	}
 	m := outgoingMail{
-		From:       from,
-		To:         to,
-		Cc:         cc,
-		Bcc:        getString(opts, "bccList", ""),
-		Subject:    subject,
-		InReplyTo:  messageID,
-		References: strings.TrimSpace(orig.header("References") + " " + messageID),
-		HTML:       g.ctx.ParamString("emailType", i, "text") == "html",
-		Body:       g.ctx.ParamString("message", i, ""),
+		Attachments: attachments,
+		From:        from,
+		To:          to,
+		Cc:          cc,
+		Bcc:         getString(opts, "bccList", ""),
+		Subject:     subject,
+		InReplyTo:   messageID,
+		References:  strings.TrimSpace(orig.header("References") + " " + messageID),
+		HTML:        g.ctx.ParamString("emailType", i, "text") == "html",
+		Body:        g.ctx.ParamString("message", i, ""),
 	}
 	return g.deliver(m, orig.ThreadID, "reply")
 }
@@ -315,19 +344,108 @@ func joinNonEmpty(parts []string) string {
 	return strings.Join(slices.DeleteFunc(parts, func(s string) bool { return strings.TrimSpace(s) == "" }), ", ")
 }
 
-// deliver sends m (in threadID when set) and counts it.
+// attachmentNames reads the Attachments option ("data, invoice"), also in
+// n8n's shape {attachmentsBinary: [{property: "data"}]} (attachmentsUi).
+func attachmentNames(opts map[string]any) []string {
+	var names []string
+	add := func(list string) {
+		for _, name := range strings.Split(list, ",") {
+			if name = strings.TrimSpace(name); name != "" && !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	add(getString(opts, "attachments", ""))
+	if ui := asMap(opts["attachmentsUi"]); ui != nil {
+		if list, ok := ui["attachmentsBinary"].([]any); ok {
+			for _, entry := range list {
+				add(getString(asMap(entry), "property", ""))
+			}
+		}
+	}
+	return names
+}
+
+// attachments loads the bytes of the binary files the Attachments option names.
+func (g *gmailRun) attachments(i int, opts map[string]any) ([]mailAttachment, error) {
+	var out []mailAttachment
+	for _, name := range attachmentNames(opts) {
+		ref, err := g.ctx.BinaryRef(i, name)
+		if err != nil {
+			return nil, userError("Attachments lists binary properties of the input item; check the previous node's Binary output.", "%v", err)
+		}
+		data, err := g.ctx.ReadBinary(ref)
+		if err != nil {
+			return nil, userError("The host's binary store could not be read.", "Attachment %q: %v", name, err)
+		}
+		fileName := ref.FileName
+		if fileName == "" {
+			fileName = name
+			if ref.FileExtension != "" {
+				fileName += "." + ref.FileExtension
+			}
+		}
+		out = append(out, mailAttachment{FileName: fileName, MimeType: ref.MimeType, Data: data})
+	}
+	return out, nil
+}
+
+// deliver sends m (in threadID when set) and counts it. Messages over
+// gmailRawLimit go to the media upload endpoint.
 func (g *gmailRun) deliver(m outgoingMail, threadID, operation string) (map[string]any, error) {
-	body := map[string]any{"raw": m.raw()}
-	if threadID != "" {
-		body["threadId"] = threadID
+	raw := m.bytes()
+	if len(raw) > gmailMaxMessage {
+		return nil, userError("Gmail accepts messages up to 35 MB, attachments included; send big files as Drive links.",
+			"The message is %.1f MB", float64(len(raw))/(1<<20))
 	}
 	var resp map[string]any
-	if err := g.c.do(g.ctx, apiGmail, http.MethodPost, gmailMessages+"/send", nil, body, &resp); err != nil {
-		return nil, err
+	if len(raw) > gmailRawLimit {
+		if err := g.upload(raw, threadID, &resp); err != nil {
+			return nil, err
+		}
+	} else {
+		body := map[string]any{"raw": base64.RawURLEncoding.EncodeToString(raw)}
+		if threadID != "" {
+			body["threadId"] = threadID
+		}
+		if err := g.c.do(g.ctx, apiGmail, http.MethodPost, gmailMessages+"/send", nil, body, &resp); err != nil {
+			return nil, err
+		}
 	}
 	g.ctx.Metrics().Counter("landflow.google.gmail.messages_sent", landflow.WithDescription("Messages sent through Gmail")).
 		Add(1, landflow.Attrs{"operation": operation})
 	return resp, nil
+}
+
+// upload sends a raw message through /upload/gmail/v1/users/me/messages/send:
+// uploadType=media, or multipart (JSON metadata, then the message) to keep a
+// reply in its thread.
+func (g *gmailRun) upload(raw []byte, threadID string, out any) error {
+	query := url.Values{"uploadType": {"media"}}
+	contentType, payload := "message/rfc822", raw
+	if threadID != "" {
+		query.Set("uploadType", "multipart")
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		meta, _ := mw.CreatePart(textproto.MIMEHeader{"Content-Type": {"application/json; charset=UTF-8"}})
+		_ = json.NewEncoder(meta).Encode(map[string]any{"threadId": threadID})
+		msg, _ := mw.CreatePart(textproto.MIMEHeader{"Content-Type": {"message/rfc822"}})
+		_, _ = msg.Write(raw)
+		_ = mw.Close()
+		contentType, payload = "multipart/related; boundary="+mw.Boundary(), buf.Bytes()
+	}
+	return g.c.send(g.ctx, apiGmail, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(g.ctx, http.MethodPost, g.c.url(apiGmail, "/upload"+gmailMessages+"/send", query), bytes.NewReader(payload))
+		if err == nil {
+			req.Header.Set("Content-Type", contentType)
+		}
+		return req, err
+	}, func(resp *http.Response) error {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("%s returned a response that is not JSON: %v", apiGmail.title, err)
+		}
+		return nil
+	})
 }
 
 func (g *gmailRun) get(i int) (map[string]any, error) {

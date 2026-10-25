@@ -64,7 +64,10 @@ describe('boot', () => {
     await ensureBootstrapped();
     // Retention kept the newest three finished runs…
     expect(store.listExecutions({ limit: Infinity }).map((e) => e.id)).toEqual(['ex_boot_5', 'ex_boot_4', 'ex_boot_3']);
-    expect(readdirSync(join(dataDir, 'executions')).filter((f) => f.startsWith('ex_boot_')).sort()).toEqual(['ex_boot_3.json', 'ex_boot_4.json', 'ex_boot_5.json']);
+    // The JSON files were imported into the database once; their directory was renamed, every file kept.
+    const imported = readdirSync(dataDir).find((name) => name.startsWith('executions.imported-'));
+    expect(existsSync(join(dataDir, 'executions'))).toBe(false);
+    expect(readdirSync(join(dataDir, imported!)).filter((f) => f.startsWith('ex_boot_')).sort()).toEqual(['ex_boot_1.json', 'ex_boot_2.json', 'ex_boot_3.json', 'ex_boot_4.json', 'ex_boot_5.json']);
     // …but the rollup was filled first, so all five count.
     const report = insightsReport('24h', true);
     expect(report.current).toMatchObject({ runs: 5, succeeded: 4, failed: 1 });

@@ -772,7 +772,7 @@ export const renameKeysNode = defineNode({
           }
           json = renameByRegex(json, regex, replacement.replaceRegex ?? '', Number(replacement.depth ?? -1)) as Record<string, unknown>;
         }
-        return { json: plain(json), pairedItem: { item: i } };
+        return { json: plain(json), ...(item.binary && { binary: item.binary }), pairedItem: { item: i } };
       }),
     ];
   },

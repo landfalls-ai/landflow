@@ -3,13 +3,17 @@
  * the editor's unsaved workflow so "Run" works before "Save", debugger
  * settings, and a `rerun` of an earlier execution (from or only one node).
  * The response's `traceparent` header names the run's trace.
+ *
+ * `idempotencyKey` (or an `Idempotency-Key` header): a key already used for this workflow within the
+ * retention window starts no new run; the stream names the existing execution (`duplicate: true`).
  */
 import { context } from '@opentelemetry/api';
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
 import type { NodeItem } from '@landflow/protocol';
 import { error, handler, parseBody, sseHeaders } from '@/lib/server/http';
-import { findTrigger, planRerun, RerunError, runWorkflow, type RunOptions } from '@/lib/server/runner';
+import { idempotencyKeyOf, MAX_KEY_LENGTH } from '@/lib/server/idempotency';
+import { DuplicateRunError, findTrigger, liveExecution, planRerun, RerunError, runWorkflow, type RunOptions } from '@/lib/server/runner';
 import { workflowSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
 import { startTrigger, traceparentHeader, type TriggerFire } from '@/lib/server/telemetry';
@@ -42,6 +46,8 @@ const runSchema = z.object({
       step: z.boolean().default(false),
     })
     .optional(),
+  /** Run at most once per key (within LANDFLOW_IDEMPOTENCY_TTL_HOURS): a repeat names the first execution. */
+  idempotencyKey: z.string().trim().min(1).max(MAX_KEY_LENGTH).optional(),
 });
 
 export const POST = handler(async (request: Request, { params }: Ctx) => {
@@ -93,6 +99,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   }
   // The run happens inside trigger.fire (or, for re-runs, directly under this request's span).
   const runContext = trigger?.context ?? context.active();
+  const idempotencyKey = body.data.idempotencyKey ?? idempotencyKeyOf(request);
 
   const encoder = new TextEncoder();
   const abort = new AbortController();
@@ -112,6 +119,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
           runWorkflow({
             ...plan,
             ...(body.data.debug && { debug: body.data.debug }),
+            ...(idempotencyKey && { idempotencyKey }),
             signal: abort.signal,
             onStart: (executionId) => send('started', { executionId }),
             onEvent: (event) => send('execution', event),
@@ -126,6 +134,13 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
         });
       } catch (caught) {
         trigger?.end(caught);
+        if (caught instanceof DuplicateRunError) {
+          // The key ran before: name that execution instead of starting another.
+          const existing = liveExecution(caught.executionId) ?? store.getExecution(caught.executionId);
+          send('started', { executionId: caught.executionId, duplicate: true });
+          send('result', { executionId: caught.executionId, status: existing?.status ?? 'running', error: existing?.error, lastNodeId: existing?.lastNodeId, duplicate: true });
+          return;
+        }
         send('result', {
           status: 'error',
           error: { message: (caught as Error).message },

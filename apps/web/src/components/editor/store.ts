@@ -12,7 +12,7 @@
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange } from '@xyflow/react';
 import { nanoid } from 'nanoid';
 import { create } from 'zustand';
-import { defaultParameters, defaultVersionOf } from '@landflow/protocol';
+import { defaultParameters, defaultVersionOf, portParameters, withPropertyDefaults } from '@landflow/protocol';
 import { edgeCountsOf, statusesOf, type NodeStatus } from '@/lib/client/run-data';
 import type { FlowTemplate } from '@/lib/client/templates';
 import type {
@@ -30,7 +30,7 @@ import type {
   WorkflowSettings,
 } from '@/lib/shared/types';
 import { STICKY_DEFAULT_CONTENT, STICKY_DEFAULT_SIZE } from '../canvas/sticky-note';
-import { preparePaste, selectionOrigin, serializeSelection, type ClipboardData } from './clipboard';
+import { preparePaste, remapReferences, selectionOrigin, serializeSelection, type ClipboardData } from './clipboard';
 
 export type { NodeRunState, NodeStatus } from '@/lib/client/run-data';
 
@@ -160,6 +160,8 @@ interface EditorState {
   /** Lay the graph out left to right in columns, sub-nodes under their parents. */
   tidyUp(): void;
   updateNode(id: string, patch: Partial<Omit<WorkflowNode, 'id' | 'position'>>): void;
+  /** Rename a node and point `$('Old')` references in every node at the new name. False when the name is empty or taken. */
+  renameNode(id: string, name: string): boolean;
   /** Remove nodes and/or sticky notes by id. */
   removeNodes(ids: string[]): void;
   duplicateNode(id: string): void;
@@ -241,7 +243,8 @@ function toFlow(workflow: Pick<Workflow, 'nodes' | 'connections'>): { nodes: Flo
     source: c.source,
     target: c.target,
     sourceHandle: handleId(c.type, c.type === 'main' ? c.sourceIndex : 0),
-    targetHandle: handleId(c.type, c.type === 'main' ? c.targetIndex : 0),
+    // Sub-node slots are indexed too (an agent's Fallback Model is ai_languageModel 1).
+    targetHandle: handleId(c.type, c.targetIndex ?? 0),
     data: { connectionType: c.type },
   }));
   return { nodes, edges };
@@ -452,6 +455,9 @@ export const useEditor = create<EditorState>((set, get) => {
     if (!info) return undefined;
     return batch(() => {
     const id = `n_${nanoid(8)}`;
+    // Added from a sub-node slot: switch to the mode that shows the matching output (a vector store on a Tool slot → “As Tool”).
+    const slotType = connectFrom?.handleType === 'target' ? parseHandle(connectFrom.handleId).type : undefined;
+    const slotPort = slotType && slotType !== 'main' ? info.descriptor.outputs.find((p) => p.type === slotType) : undefined;
     const node: FlowNode = {
       id,
       type: 'lf',
@@ -462,7 +468,7 @@ export const useEditor = create<EditorState>((set, get) => {
           name: uniqueName(info.descriptor.displayName, get().nodes),
           type,
           typeVersion: defaultVersionOf(info.descriptor),
-          parameters: defaultParameters(info.descriptor),
+          parameters: slotPort?.displayOptions ? withPropertyDefaults(info.descriptor.properties, portParameters(slotPort)) : defaultParameters(info.descriptor),
         },
       },
       selected: true,
@@ -662,6 +668,23 @@ export const useEditor = create<EditorState>((set, get) => {
       nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { wf: { ...n.data.wf, ...patch } } } : n)),
       dirty: true,
     }));
+  },
+
+  renameNode(id, name) {
+    const next = name.trim();
+    const old = get().nodes.find((n) => n.id === id)?.data.wf.name;
+    if (old === undefined || !next) return false;
+    if (next === old) return true;
+    if (get().nodes.some((n) => n.id !== id && n.data.wf.name === next)) return false;
+    record();
+    set((s) => ({
+      nodes: s.nodes.map((n) => {
+        const wf = n.id === id ? { ...n.data.wf, name: next } : n.data.wf;
+        return { ...n, data: { wf: { ...wf, parameters: remapReferences(wf.parameters, { [old]: next }) } } };
+      }),
+      dirty: true,
+    }));
+    return true;
   },
 
   removeNodes(ids) {

@@ -28,7 +28,17 @@ export const DURATION_BUCKETS_MS = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500,
 export const engineTracer = () => trace.getTracer(ENGINE_SCOPE, ENGINE_VERSION);
 
 /** `landflow.node.source` values: the port a sub-node was used through. */
-export const SOURCE_ATTRIBUTE: Record<RunSource, string> = { main: 'main', tool: 'ai_tool', model: 'ai_languageModel', memory: 'ai_memory' };
+export const SOURCE_ATTRIBUTE: Record<RunSource, string> = {
+  main: 'main',
+  tool: 'ai_tool',
+  model: 'ai_languageModel',
+  memory: 'ai_memory',
+  embedding: 'ai_embedding',
+  document: 'ai_document',
+  textSplitter: 'ai_textSplitter',
+  retriever: 'ai_retriever',
+  reranker: 'ai_reranker',
+};
 
 interface Instruments {
   executions: Counter;

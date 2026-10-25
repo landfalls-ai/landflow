@@ -65,8 +65,20 @@ export const webhookTrigger = defineNode({
         ],
       },
       {
+        name: 'options',
+        displayName: 'Options',
+        type: 'collection',
+        default: {},
+        placeholder: 'Add option',
+        values: [
+          { name: 'binaryPropertyName', displayName: 'Binary Property', type: 'string', default: 'data', description: 'Where a file sent as the whole body goes (item.binary.<name>)' },
+          { name: 'rawBody', displayName: 'Raw Body', type: 'boolean', default: false, description: 'Keep any body, also JSON or text, as a file instead of parsing it' },
+        ],
+      },
+      {
         name: 'notice',
-        displayName: 'The workflow must be Active for production webhooks. Items contain { method, path, headers, query, body }. A run that starts waiting first answers { status: "waiting", executionId }.',
+        displayName:
+          'The workflow must be Active for production webhooks. Items contain { method, path, headers, query, body }. Uploaded files (multipart parts, or a PDF, image or other non-text body) arrive as binary data. A run that starts waiting first answers { status: "waiting", executionId }.',
         type: 'notice',
       },
     ],

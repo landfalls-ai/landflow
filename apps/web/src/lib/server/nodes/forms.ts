@@ -39,10 +39,13 @@ export const formFieldsProperty: PropertyDescriptor = {
             { name: 'Dropdown List', value: 'dropdown' },
             { name: 'Checkboxes', value: 'checkbox', description: 'With options: pick any; without: one yes/no box' },
             { name: 'Radio Buttons', value: 'radio' },
+            { name: 'File', value: 'file', description: 'An upload: the file goes to item.binary.<field name>' },
           ],
         },
         { name: 'fieldOptions', displayName: 'Options', type: 'string', default: '', typeOptions: { rows: 3 }, description: 'Dropdown, checkboxes and radio buttons: one choice per line' },
         { name: 'multiselect', displayName: 'Multiple Choice', type: 'boolean', default: false, description: 'Dropdown: allow several choices' },
+        { name: 'multipleFiles', displayName: 'Multiple Files', type: 'boolean', default: false, description: 'File: allow several files (item.binary.<field>0, <field>1…)' },
+        { name: 'acceptFileTypes', displayName: 'Accepted File Types', type: 'string', default: '', placeholder: 'e.g. .pdf, image/*', description: 'File: what the file picker offers' },
         { name: 'requiredField', displayName: 'Required Field', type: 'boolean', default: false },
         { name: 'placeholder', displayName: 'Placeholder', type: 'string', default: '' },
         { name: 'fieldName', displayName: 'Field Name', type: 'string', default: '', description: 'Key in the output item (default: the label)' },
@@ -121,7 +124,9 @@ export const formTrigger = defineNode({
     return [
       items.map((item, index): NodeItem => {
         if (Object.keys(item.json).length) return { ...item, pairedItem: { item: index } };
-        const json: JsonObject = Object.fromEntries(fields.map((f) => [String(f.fieldName || f.fieldLabel).trim(), f.fieldType === 'number' ? 0 : f.fieldType === 'checkbox' ? false : '']));
+        const json: JsonObject = Object.fromEntries(
+          fields.map((f) => [String(f.fieldName || f.fieldLabel).trim(), f.fieldType === 'number' ? 0 : f.fieldType === 'checkbox' ? false : f.fieldType === 'file' && f.multipleFiles ? [] : '']),
+        );
         return { json: { ...json, submittedAt: new Date().toISOString(), formMode: 'test' }, pairedItem: { item: index } };
       }),
     ];

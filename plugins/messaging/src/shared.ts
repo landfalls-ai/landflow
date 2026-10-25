@@ -123,19 +123,29 @@ export function atItem(error: unknown, itemIndex: number): NodeOperationError {
   return new NodeOperationError((error as Error)?.message ?? String(error), { itemIndex });
 }
 
+/** A result item with files (`item.binary`) as well as JSON, for mapItems. */
+export class ItemWithFiles {
+  constructor(
+    readonly json: JsonObject,
+    readonly binary: NonNullable<NodeItem['binary']>,
+  ) {}
+}
+
 /**
  * Per-item processing: parameters are read per item index and every result is
  * paired with its input item. A failure stops the node with `itemIndex` set,
  * unless the node continues on fail: then the item becomes `{ error }` and the
  * next item runs.
  */
-export async function mapItems(ctx: IExecuteContext, fn: (itemIndex: number, item: NodeItem) => Promise<JsonObject | JsonObject[]>): Promise<NodeItem[]> {
+export async function mapItems(ctx: IExecuteContext, fn: (itemIndex: number, item: NodeItem) => Promise<JsonObject | ItemWithFiles | Array<JsonObject | ItemWithFiles>>): Promise<NodeItem[]> {
   const out: NodeItem[] = [];
   const items = ctx.getInputData();
   for (let i = 0; i < items.length; i++) {
     try {
       const result = await fn(i, items[i]);
-      for (const json of Array.isArray(result) ? result : [result]) out.push({ json, pairedItem: { item: i } });
+      for (const entry of Array.isArray(result) ? result : [result]) {
+        out.push(entry instanceof ItemWithFiles ? { json: entry.json, binary: entry.binary, pairedItem: { item: i } } : { json: entry, pairedItem: { item: i } });
+      }
     } catch (error) {
       const failure = atItem(error, i);
       if (!ctx.continueOnFail()) throw failure;

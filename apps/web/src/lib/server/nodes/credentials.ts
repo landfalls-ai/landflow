@@ -84,3 +84,24 @@ export const anthropicApiCredential = defineCredentialType({
     }
   },
 });
+
+/** n8n's Bearer Auth: `Authorization: Bearer <token>`. The MCP nodes use it; any HTTP node could. */
+export const httpBearerAuthCredential = defineCredentialType({
+  name: 'httpBearerAuth',
+  displayName: 'Bearer Auth',
+  description: 'A token sent as “Authorization: Bearer <token>” (MCP servers, HTTP APIs), or expected from callers (MCP Server Trigger)',
+  icon: 'lucide:key-round',
+  properties: [{ name: 'token', displayName: 'Bearer Token', type: 'string', required: true, typeOptions: { password: true } }],
+});
+
+/** n8n's Header Auth: one header name and value. */
+export const httpHeaderAuthCredential = defineCredentialType({
+  name: 'httpHeaderAuth',
+  displayName: 'Header Auth',
+  description: 'A custom header such as “X-API-Key”, sent with requests or expected from callers (MCP Server Trigger)',
+  icon: 'lucide:key-square',
+  properties: [
+    { name: 'name', displayName: 'Header Name', type: 'string', required: true, placeholder: 'X-API-Key' },
+    { name: 'value', displayName: 'Header Value', type: 'string', required: true, typeOptions: { password: true } },
+  ],
+});

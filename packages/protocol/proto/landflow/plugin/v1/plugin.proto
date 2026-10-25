@@ -89,6 +89,14 @@ message PairedItem {
 message Item {
   DynamicValue json = 1;   // the item payload (a JSON object)
   PairedItem paired_item = 2;
+  DynamicValue binary = 3; // optional: files by property name, { <name>: BinaryRef } (docs/protocol.md §11)
+}
+
+// Where a plugin reads and writes the bytes of item files during one Execute call:
+// GET {url}/{id} and POST {url}, each with `Authorization: Bearer {token}`.
+message BinaryAccess {
+  string url = 1;          // e.g. "http://127.0.0.1:3000/api/binary"
+  string token = 2;        // scoped to this execution; expires
 }
 
 message Branch {
@@ -99,7 +107,7 @@ message ExecuteRequest {
   string protocol = 1;
   string execution_id = 2;
   string workflow_id = 3;
-  string mode = 4;                               // "manual" | "trigger" | "webhook" | "tool" | "chat" | "poll"
+  string mode = 4;                               // "manual" | "trigger" | "webhook" | "tool" | "chat" | "poll" | "mcp"
   NodeRef node = 5;
   DynamicValue parameters = 6;                   // resolved against item 0 (or no item)
   repeated DynamicValue item_parameters = 7;     // resolved per item of input 0
@@ -107,6 +115,8 @@ message ExecuteRequest {
   DynamicValue credentials = 9;                  // optional: { <credentialType>: { ...decrypted fields } }
   DynamicValue poll_state = 10;                  // poll triggers: state returned by the previous poll
   bool continue_on_fail = 11;                    // emit { json: { error } } for a failing item and go on
+  BinaryAccess binary_access = 12;               // optional: the host's binary API for this call
+  string idempotency_key = 13;                   // "<executionId>:<nodeId>:<runIndex>", same across retries; empty from older hosts
 }
 
 message LogEntry {

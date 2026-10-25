@@ -1,23 +1,25 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Braces, SlidersHorizontal } from 'lucide-react';
+import { Braces, Plug, SlidersHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PageBody, PageHeader } from '@/components/shell/page-header';
 import { GeneralSettings } from '@/components/settings/general-settings';
+import { McpSettings } from '@/components/settings/mcp-settings';
 import { VariablesSettings } from '@/components/settings/variables-settings';
 
 const SECTIONS = [
   { id: 'general', label: 'General', icon: SlidersHorizontal, hint: 'Time zone and execution retention' },
   { id: 'variables', label: 'Variables', icon: Braces, hint: '$vars for expressions' },
+  { id: 'mcp', label: 'MCP', icon: Plug, hint: 'Let coding agents build workflows' },
 ] as const;
 type Section = (typeof SECTIONS)[number]['id'];
 
-/** /settings (#general, #variables): instance settings. */
+/** /settings (#general, #variables, #mcp): instance settings. */
 export default function SettingsPage() {
   const [section, setSection] = useState<Section>('general');
 
   useEffect(() => {
-    const fromHash = () => setSection(window.location.hash === '#variables' ? 'variables' : 'general');
+    const fromHash = () => setSection(SECTIONS.find((s) => `#${s.id}` === window.location.hash)?.id ?? 'general');
     fromHash();
     window.addEventListener('hashchange', fromHash);
     return () => window.removeEventListener('hashchange', fromHash);
@@ -54,7 +56,7 @@ export default function SettingsPage() {
         </nav>
         <section key={section} className="min-w-0 animate-fade-up">
           <h2 className="mb-3 text-[15px] font-semibold text-t1">{SECTIONS.find((s) => s.id === section)?.label}</h2>
-          {section === 'general' ? <GeneralSettings /> : <VariablesSettings />}
+          {section === 'general' ? <GeneralSettings /> : section === 'mcp' ? <McpSettings /> : <VariablesSettings />}
         </section>
       </PageBody>
     </>

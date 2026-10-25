@@ -1,10 +1,10 @@
 'use client';
 /**
  * Status vocabulary shared by the executions screens and the logs panel:
- * green success, red error, amber running/paused, blue waiting, grey canceled.
+ * green success, red error, amber running/paused, blue waiting, grey queued and canceled.
  */
 import { useEffect, useState } from 'react';
-import { Ban, CircleCheck, CircleX, Hourglass, Loader2, Pause, type LucideIcon } from 'lucide-react';
+import { Ban, CircleCheck, CircleDashed, CircleX, Hourglass, Loader2, Pause, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { duration } from '@/lib/client/format';
 import type { ExecutionState } from '@/lib/shared/types';
@@ -28,6 +28,7 @@ export const RUN_STATE: Record<RunState, StateMeta> = {
   paused: { label: 'Paused', icon: Pause, text: 'text-warn', border: 'border-l-warn', bar: 'bg-warn', soft: 'bg-warndim' },
   waiting: { label: 'Waiting', icon: Hourglass, text: 'text-viz-1', border: 'border-l-viz-1', bar: 'bg-viz-1', soft: 'bg-[color-mix(in_oklab,var(--viz-1)_12%,transparent)]' },
   canceled: { label: 'Canceled', icon: Ban, text: 'text-t3', border: 'border-l-t3', bar: 'bg-t3', soft: 'bg-nudim' },
+  queued: { label: 'Queued', icon: CircleDashed, text: 'text-t2', border: 'border-l-t3', bar: 'bg-t3', soft: 'bg-nudim' },
 };
 
 export function runStateOf(e: { status: ExecutionState; paused?: unknown }): RunState {
@@ -42,6 +43,7 @@ export function statusText(state: RunState, durationMs?: number): string {
   if (state === 'running') return `Running for ${d}`;
   if (state === 'paused') return `Paused after ${d}`;
   if (state === 'waiting') return 'Waiting';
+  if (state === 'queued') return 'Queued';
   return `Canceled after ${d}`;
 }
 

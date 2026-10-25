@@ -175,6 +175,12 @@ export const filterNode = defineNode({
   },
 });
 
+/** Files of two merged items; the second one's win on a name clash, like its JSON fields. */
+function mergedBinary(a: NodeItem | undefined, b: NodeItem | undefined): Pick<NodeItem, 'binary'> {
+  const binary = { ...a?.binary, ...b?.binary };
+  return Object.keys(binary).length ? { binary } : {};
+}
+
 export const mergeNode = defineNode({
   description: {
     name: 'merge',
@@ -211,12 +217,12 @@ export const mergeNode = defineNode({
     const b = ctx.getInputData(1);
     const mode = ctx.getNodeParameter<string>('mode');
     if (mode === 'position') {
-      return [Array.from({ length: Math.max(a.length, b.length) }, (_, i) => ({ json: { ...a[i]?.json, ...b[i]?.json } }))];
+      return [Array.from({ length: Math.max(a.length, b.length) }, (_, i) => ({ json: { ...a[i]?.json, ...b[i]?.json }, ...mergedBinary(a[i], b[i]) }))];
     }
     if (mode === 'field') {
       const field = ctx.getNodeParameter<string>('field');
       const index = new Map(b.map((item) => [String(item.json[field]), item]));
-      return [a.filter((item) => index.has(String(item.json[field]))).map((item) => ({ json: { ...item.json, ...index.get(String(item.json[field]))!.json } }))];
+      return [a.filter((item) => index.has(String(item.json[field]))).map((item) => ({ json: { ...item.json, ...index.get(String(item.json[field]))!.json }, ...mergedBinary(item, index.get(String(item.json[field]))) }))];
     }
     return [[...a, ...b]];
   },
@@ -503,12 +509,12 @@ export const splitInBatchesNode = defineNode({
     let batch: NodeItem[];
     if (!saved || reset) {
       // First run: the incoming items are the ones to loop over.
-      const all = items.map((item, index) => ({ json: item.json, pairedItem: { item: index } }));
+      const all = items.map((item, index) => ({ json: item.json, ...(item.binary && { binary: item.binary }), pairedItem: { item: index } }));
       batch = all.slice(0, batchSize);
       state = { items: all.slice(batchSize), processed: [], runIndex: 0 };
     } else {
       // Back from the loop: keep what came back and hand out the next batch.
-      state = { items: [...saved.items], processed: [...saved.processed, ...items.map((item) => ({ json: item.json }))], runIndex: saved.runIndex + 1 };
+      state = { items: [...saved.items], processed: [...saved.processed, ...items.map((item) => ({ json: item.json, ...(item.binary && { binary: item.binary }) }))], runIndex: saved.runIndex + 1 };
       batch = state.items.splice(0, batchSize);
     }
     if (!batch.length) {
@@ -558,9 +564,19 @@ export const respondToWebhookNode = defineNode({
           { name: 'All Incoming Items', value: 'allIncomingItems', description: 'A JSON array' },
           { name: 'JSON', value: 'json', description: 'A JSON body you write' },
           { name: 'Text', value: 'text' },
+          { name: 'Binary File', value: 'binary', description: 'A file of the first incoming item' },
           { name: 'No Data', value: 'noData', description: 'An empty body' },
           { name: 'Redirect', value: 'redirect' },
         ],
+      },
+      {
+        name: 'binaryPropertyName',
+        displayName: 'Binary Property',
+        type: 'string',
+        default: '',
+        placeholder: 'data',
+        description: 'The file to send (item.binary.<name>); empty: the item’s first file',
+        displayOptions: { show: { respondWith: ['binary'] } },
       },
       {
         name: 'responseBody',
@@ -635,6 +651,14 @@ export const respondToWebhookNode = defineNode({
       case 'text':
         reply.body = String(ctx.getNodeParameter('responseBody', 0) ?? '');
         break;
+      case 'binary': {
+        const files = Object.keys(items[0]?.binary ?? {});
+        const name = String(ctx.getNodeParameter('binaryPropertyName', 0) ?? '').trim() || files[0] || 'data';
+        const ref = ctx.helpers.assertBinaryData(0, name);
+        // Opened now, so the bytes are still there if the run finishes (and its files go) while the response streams.
+        reply.file = { stream: await ctx.helpers.getBinaryStream(0, name), mimeType: ref.mimeType, ...(ref.fileName && { fileName: ref.fileName }), fileSize: ref.fileSize };
+        break;
+      }
       case 'noData':
         break;
       case 'redirect': {
@@ -650,6 +674,7 @@ export const respondToWebhookNode = defineNode({
     // Loaded lazily: the runner needs the registry this plugin is part of.
     const { deliverReply } = await import('../runner');
     if (!deliverReply(ctx.getExecutionId(), reply)) {
+      await reply.file?.stream.cancel();
       ctx.logger.warn('No webhook call is waiting for a response (the trigger isn’t set to “Using ‘Respond to Webhook’ Node”, or a response was already sent)');
     }
     return [items];

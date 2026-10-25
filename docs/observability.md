@@ -98,12 +98,15 @@ conventions.
 | Span | Kind | Attributes |
 |---|---|---|
 | `{METHOD} {route}` (e.g. `POST /api/workflows/[id]/run`) | server | `http.request.method`, `url.path` (no query string), `http.route`, `http.response.status_code` (Next.js also sets the older `http.method`, `http.target`, `http.status_code`). Created by Next.js' built-in OpenTelemetry support, which adds one child, `executing api route (app) {route}`; its other internal spans are dropped |
-| `workflow.execute` | internal | `landflow.workflow.id`, `landflow.workflow.name`, `landflow.execution.id`, `landflow.execution.mode`, `landflow.execution.status` (also `waiting`), `landflow.execution.debug`, `landflow.execution.rerun_of`, `landflow.execution.rerun_scope` · a run that stops to wait: `landflow.wait.node`, `landflow.wait.resume` (`time`/`webhook`/`form`/`subworkflow`), `landflow.wait.until` · a resumed run (one more `workflow.execute` span per resume, see below): `landflow.execution.resume_of` (the execution id it continues), `landflow.execution.resume_kind` (`time`/`webhook`/`form`/`timeout`/`subworkflow`) · events `debugger.paused` (`landflow.node.name`, `landflow.debugger.reason`) / `debugger.resumed` (`landflow.debugger.command`) · error status on a failed run |
-| `node.execute {node type}` | internal | `landflow.node.id`, `landflow.node.name`, `landflow.node.type`, `landflow.plugin.id`, `landflow.transport` (`in-process`/`http`/`grpc`), `landflow.node.source` (`main`/`ai_tool`/`ai_languageModel`/`ai_memory`), `landflow.execution.id`, `landflow.items.in`, `landflow.items.out`, `landflow.node.status` (`success`/`error`/`canceled`/`waiting`), `landflow.node.reused`, `landflow.node.pinned`, `landflow.node.disabled` · the node that suspends the run: `landflow.node.status=waiting`, `landflow.wait.resume`, `landflow.wait.until`; when the run resumes, that node's result is a short `node.execute` span with `landflow.node.resumed=true` and `landflow.wait.resume_kind` · an `exception` event per failed attempt (with `retryOnFail`), error status when the node fails |
+| `workflow.execute` | internal | `landflow.workflow.id`, `landflow.workflow.name`, `landflow.execution.id`, `landflow.execution.mode`, `landflow.execution.status` (also `waiting`), `landflow.execution.debug`, `landflow.execution.rerun_of`, `landflow.execution.rerun_scope` · a run that stops to wait: `landflow.wait.node`, `landflow.wait.resume` (`time`/`webhook`/`form`/`subworkflow`), `landflow.wait.until` · a resumed run (one more `workflow.execute` span per resume, see below): `landflow.execution.resume_of` (the execution id it continues), `landflow.execution.resume_kind` (`time`/`webhook`/`form`/`timeout`/`subworkflow`, or `restart` for a run continued from its checkpoint after a restart, which also sets `landflow.execution.resumed_after_restart=true` and `landflow.checkpoint.step`, the step id it continued after) · events `debugger.paused` (`landflow.node.name`, `landflow.debugger.reason`) / `debugger.resumed` (`landflow.debugger.command`) · error status on a failed run |
+| `node.execute {node type}` | internal | `landflow.node.id`, `landflow.node.name`, `landflow.node.type`, `landflow.plugin.id`, `landflow.transport` (`in-process`/`http`/`grpc`), `landflow.node.source` (`main`/`ai_tool`/`ai_languageModel`/`ai_memory`/`ai_embedding`/`ai_document`/`ai_textSplitter`/`ai_retriever`/`ai_reranker`), `landflow.execution.id`, `landflow.items.in`, `landflow.items.out`, `landflow.node.status` (`success`/`error`/`canceled`/`waiting`), `landflow.node.reused`, `landflow.node.pinned`, `landflow.node.disabled` · the node that suspends the run: `landflow.node.status=waiting`, `landflow.wait.resume`, `landflow.wait.until`; when the run resumes, that node's result is a short `node.execute` span with `landflow.node.resumed=true` and `landflow.wait.resume_kind` · an `exception` event per failed attempt (with `retryOnFail`), error status when the node fails |
 | `plugin.rpc {Method}` (`Execute`, `LoadOptions`, `TestCredentials`, `GetManifest`) | client | `rpc.system` (`grpc`/`http`), `rpc.service=landflow.plugin.v1.PluginService`, `rpc.method`, `server.address`, `server.port`, `landflow.plugin.id` |
 | `gen_ai.chat {model}` | client | OTel GenAI conventions: `gen_ai.system` (`anthropic`/`ollama`/`openai`), `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons` |
 | `gen_ai.embeddings {model}` | client | same conventions with `gen_ai.operation.name=embeddings`: `gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.embeddings.dimension.count`. Counts in the `landflow.ai.*` metrics like chat (input tokens only) |
-| `trigger.fire` | internal (root for schedule/poll/error; child of the HTTP span for manual runs, webhooks, forms and chat) | `landflow.trigger.source` (`manual`/`webhook`/`form`/`schedule`/`poll`/`chat`/`error`), `landflow.workflow.id`, `landflow.node.name`. `error`: an error workflow started for a failed execution, as its own trace |
+| `vector_store.insert {store}`, `vector_store.query {store}` | client (child of the vector store's `node.execute`, or of `execute_tool` for an agent knowledge base) | RAG ([README](../README.md#retrieval-rag)): `landflow.vector_store` (`memory`/`sqlite`/`pgvector`), `db.system.name` (`landflow.memory`/`sqlite`/`postgresql`), `db.collection.name` (the collection), `db.operation.name` (`insert`/`query`), `landflow.retrieval.documents` (written or returned); query: `landflow.retrieval.mode` (`vector`/`hybrid`), `landflow.retrieval.top_k`, `landflow.retrieval.filtered`. The query is embedded just before, by the embeddings sub-node (`node.execute`, `landflow.node.source=ai_embedding`, with its `gen_ai.embeddings` child; a knowledge base embeds directly). Document text never reaches span attributes |
+| `retrieval.rerank` | internal | `landflow.rerank.method` (`llm`), `gen_ai.request.model`, `landflow.rerank.documents` (candidates), `landflow.retrieval.top_k`; the judge's call is a `gen_ai.chat` child |
+| `guardrails.check` | internal (child of the Guardrails node's `node.execute`, one per item) | `landflow.guardrails.mode` (`check`/`sanitize`), `landflow.guardrails.checks` (the checks that ran), `landflow.guardrails.passed`, `landflow.guardrails.violations` (count), `landflow.guardrails.failed` (the checks that found something); model checks are `gen_ai.chat` children. Matched values never reach spans |
+| `trigger.fire` | internal (root for schedule/poll/error/retry; child of the HTTP span for manual runs, webhooks, forms and chat) | `landflow.trigger.source` (`manual`/`webhook`/`form`/`schedule`/`poll`/`chat`/`error`/`retry`), `landflow.workflow.id`, `landflow.node.name`. `error`: an error workflow started for a failed execution, as its own trace; `retry`: an automatic retry of a failed execution (a manual Retry runs under its request's span) |
 | `trigger.poll {node type}` | internal (root) | `landflow.workflow.id`, `landflow.node.name`, `landflow.node.type`, `landflow.poll.items`, `landflow.poll.first` |
 | `registry.scan`, `registry.register` | internal | `landflow.plugin.id`, `landflow.plugin.endpoint`, `landflow.discovery.source` (register); `landflow.scan.targets`, `landflow.scan.found` (scan) |
 
@@ -112,7 +115,23 @@ conventions.
 | `assistant.suggest {node type}`, `assistant.chat` | internal (child of the request span) | The editor assistant ([assistant.md](assistant.md)). `landflow.assistant.request` (`suggest`/`chat`), `landflow.workflow.id`, `gen_ai.request.model`; suggest: `landflow.node.type`, `landflow.assistant.suggestions`, `landflow.outcome=skipped` for a node not worth a model call; chat: `landflow.assistant.turns`, `landflow.assistant.steps` and an `assistant.tool` event per tool call (`gen_ai.tool.name`, `landflow.outcome`). The model calls are `gen_ai.chat` children |
 
 A tool call by an AI agent is a `node.execute` span with `landflow.node.source=ai_tool`, a child
-of the agent's span, so the trace shows agent → model → tool → plugin → external API.
+of the agent's span, so the trace shows agent → model → tool → plugin → external API. Sub-nodes
+called by sub-nodes nest the same way: an agent's vector store tool → `node.execute` of the
+embeddings node (`landflow.node.source=ai_embedding`) with its `gen_ai.embeddings` child, then
+`vector_store.query`.
+
+**Model fallback.** When a root node with *Enable Fallback Model* retries a failed call on its
+fallback model, its `node.execute` span gets a `landflow.ai.fallback` event
+(`gen_ai.request.model` of the failed model, `landflow.ai.fallback.model`,
+`landflow.ai.fallback.provider`, `error.message`). The failed call stays an errored model run
+(`landflow.node.source=ai_languageModel`, error status) next to the fallback's successful one.
+
+**Durable runtime.** A run queued by its workflow's concurrency limit gets its `workflow.execute`
+span when it starts, inside the trace of the trigger call that queued it while that call still
+waits for it. A run continued after a restart is a new root trace (`resume_kind=restart`). A node
+that runs past its `timeoutSeconds` ends with error status and "Node timed out after N s" (an
+`exception` event per attempt with `retryOnFail`). The node's `ExecuteRequest` carries the step's
+`idempotencyKey`, which is not put on spans.
 
 **Waiting executions.** An execution that waits (Wait node, Form page, a sub-workflow that waits)
 ends its `workflow.execute` span with `landflow.execution.status=waiting`. Each resume is a new
@@ -158,6 +177,7 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.poll.duration` | histogram (ms) | `landflow.node.type` |
 | `landflow.schedule.lag` | histogram (ms) | `landflow.workflow.id`: how late a scheduled run started |
 | `landflow.webhook.requests` | counter | `landflow.workflow.id`, `http.response.status_code` |
+| `landflow.runtime.events` | counter | `landflow.runtime.event`: `deduplicated` (a trigger call repeated an idempotency key), `skipped` (no free concurrency slot, or a full queue), `queued`, `recovered` (continued after a restart), `recovery_failed`, `retry_scheduled`, `retried` (a retry started), `stopped` (by Stop all); `landflow.workflow.id` (not on `stopped`) |
 
 ### Services (host)
 
@@ -169,6 +189,10 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.ai.requests` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.outcome` |
 | `landflow.ai.duration` | histogram (ms) | `gen_ai.system`, `gen_ai.request.model` |
 | `landflow.ai.tokens` | counter | `gen_ai.system`, `gen_ai.request.model`, `gen_ai.token.type` (`input`/`output`) |
+| `landflow.retrieval.requests` | counter | `landflow.vector_store`, `db.operation.name` (`insert`/`query`), `landflow.outcome` |
+| `landflow.retrieval.duration` | histogram (ms) | `landflow.vector_store`, `db.operation.name` |
+| `landflow.retrieval.documents` | counter | `landflow.vector_store`, `db.operation.name`: documents written or returned |
+| `landflow.guardrails.checks` | counter | `landflow.guardrails.mode`, `landflow.guardrails.result` (`pass`/`fail`) |
 | `landflow.agent.runs` | counter | `gen_ai.agent.id`, `gen_ai.agent.name`, `landflow.agent.source`, `landflow.agent.end_reason` |
 | `landflow.agent.run.duration` | histogram (ms) | `gen_ai.agent.id`, `gen_ai.agent.name`, `landflow.agent.source` |
 | `landflow.agent.tool.calls` | counter | agent attributes, `gen_ai.tool.name`, `landflow.agent.tool.kind`, `landflow.outcome` |

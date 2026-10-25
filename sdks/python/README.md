@@ -48,6 +48,8 @@ serve(Plugin("my-plugin", "My Plugin", "0.1.0", nodes=[Upper()]), http_port=7150
 | `ctx.get_credentials(name=None)` / `ctx.credentials` | decrypted credential values ([Credentials](#credentials)) |
 | `ctx.get_poll_state()`, `ctx.set_poll_state(state)`, `ctx.is_first_poll()` | polling triggers ([Polling triggers](#polling-triggers)) |
 | `ctx.continue_on_fail()` | the node is set to continue on error: catch a failing item, append `{"json": {"error": msg}, "pairedItem": {"item": i}}`, go on |
+| `ctx.idempotency_key` | `<executionId>:<nodeId>:<runIndex>`, the same across retries of this step; pass it to APIs that take an idempotency key (`None` from older hosts) |
+| `ctx.get_binary_bytes(i, name="data")`, `ctx.prepare_binary_data(data, file_name)`, ... | files on items ([Binary data](#binary-data)) |
 | `ctx.logger.debug/info/warn/error(msg, *args, **attrs)` | collected into the response `logs` and written to the process log with trace ids |
 | `ctx.span(name, attrs)`, `ctx.metrics`, `ctx.http`, `ctx.trace_id` | [observability](#observability) |
 | `NodeOperationError(message, description=None, item_index=None)` | becomes the response `error`; any other exception becomes `{message: str(e)}` |
@@ -112,6 +114,44 @@ plugin = Plugin("github", "GitHub", "0.1.0", nodes=[ListRepos()], credential_typ
   a proxy or a local test double.
 - Credential values are **redacted** from log lines, span attributes, node logs and error messages
   (password fields, keys that look like secrets, and fields the type does not declare).
+
+## Binary data
+
+Items carry files under `item["binary"]`, keyed by a property name (`"data"` for a single file). A
+file is a ref dict, `{"id", "mimeType", "fileName", "fileExtension", "fileSize", "fileType"}`; the
+bytes stay in the host's binary store ([protocol §11](../../docs/protocol.md#11-binary-data)).
+
+```python
+class Gzip(Node):
+    def execute(self, ctx):
+        out = []
+        for i, item in enumerate(ctx.get_input_data()):
+            source = ctx.assert_binary_data(i, "data")           # the ref; NodeOperationError if missing
+            packed = gzip.compress(ctx.get_binary_bytes(i, "data"))
+            ref = ctx.prepare_binary_data(packed, f"{source.get('fileName', 'file')}.gz")
+            out.append({"json": {**item["json"], "packedSize": len(packed)}, "binary": {"data": ref}})
+        return out
+```
+
+| | |
+|---|---|
+| `ctx.assert_binary_data(i, name="data", input_index=0)` | the ref of input item `i`'s file `name`; raises `NodeOperationError('item 0 has no binary file "data"')` |
+| `ctx.get_binary_bytes(i, name="data", input_index=0)` | its bytes |
+| `ctx.open_binary_stream(i, name="data", input_index=0)` | a binary file-like object over it, for big files (`with ... as f:`) |
+| `ctx.read_binary(ref)` | the bytes of any ref |
+| `ctx.prepare_binary_data(data, file_name=None, mime_type=None)` | store `data` (bytes, `str` as UTF-8, or a binary file object) and return its ref; the MIME type defaults to a guess from `file_name` |
+| `ctx.binary_access` | the request's `binaryAccess` (`{"url", "token"}`), `None` from older hosts |
+
+- A ref with inline base64 `data` is decoded locally; one with an `id` is fetched with
+  `GET {binaryAccess.url}/{id}` and the per-execution bearer token, traced like `ctx.http`.
+- `prepare_binary_data` returns files up to `MAX_INLINE_BINARY_BYTES` (64 KiB) inline and uploads
+  bigger ones and file objects with `POST {binaryAccess.url}` (file objects are streamed: with a
+  `Content-Length` when seekable, chunked otherwise). Without `binaryAccess` only inline files work,
+  and a bigger file raises `NodeOperationError`.
+- Returned items keep their `binary`; a ref needs an `id` or `data` (bytes are base64-encoded for
+  you), and a missing `mimeType` is guessed from `fileName`. A node that builds new items without
+  `binary` drops the files, as in n8n.
+- `mime_type_from_file_name(name)` and `file_type_of(mime)` use the same table as the other SDKs.
 
 ## Polling triggers
 

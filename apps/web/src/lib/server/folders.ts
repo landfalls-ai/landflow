@@ -1,12 +1,15 @@
 /**
- * Folders for the workflows list, kept in `<dataDir>/folders.json`. Folders
- * nest through `parentId`; a workflow sits in one through `workflow.folderId`.
- * A folder can only be deleted when it holds no folders and no workflows.
+ * Folders for the workflows list, kept in the `folders` table (lib/server/db), or in a JSON file
+ * when a FolderStore is given one (the format older versions used; tests use it too). Folders nest
+ * through `parentId`; a workflow sits in one through `workflow.folderId`. A folder can only be
+ * deleted when it holds no folders and no workflows.
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { nanoid } from 'nanoid';
 import type { Folder } from '../shared/types';
+import { database } from './db';
+import { folderRow } from './db/rows';
 import { singleton } from './singleton';
 
 const MAX_NAME = 120;
@@ -42,18 +45,42 @@ function cleanName(name: string) {
 }
 
 export class FolderStore {
-  private folders: Folder[];
+  private cached?: Folder[];
 
-  constructor(private readonly file = join(process.env.LANDFLOW_DATA_DIR ?? join(process.cwd(), '.data'), 'folders.json')) {
+  /** `file`: keep the folders in that JSON file instead of the database. */
+  constructor(private readonly file?: string) {}
+
+  /** Loaded on first use (Postgres mode loads the database during bootstrap). */
+  private get folders(): Folder[] {
+    this.cached ??= this.load();
+    return this.cached;
+  }
+
+  private set folders(list: Folder[]) {
+    this.cached = list;
+  }
+
+  private load(): Folder[] {
+    if (!this.file) {
+      return database()
+        .all<{ id: string; name: string; parent_id: string | null; created_at: string; updated_at: string }>('SELECT id, name, parent_id, created_at, updated_at FROM folders')
+        .map((row) => ({ id: row.id, name: row.name, ...(row.parent_id && { parentId: row.parent_id }), createdAt: row.created_at, updatedAt: row.updated_at }));
+    }
     try {
-      const data = JSON.parse(readFileSync(file, 'utf8')) as { folders?: Folder[] };
-      this.folders = Array.isArray(data.folders) ? data.folders : [];
+      const data = JSON.parse(readFileSync(this.file, 'utf8')) as { folders?: Folder[] };
+      return Array.isArray(data.folders) ? data.folders : [];
     } catch {
-      this.folders = [];
+      return [];
     }
   }
 
-  private persist() {
+  /** Save a created or changed folder, or remove a deleted one. */
+  private persist(change: { saved: Folder } | { removed: string }) {
+    if (!this.file) {
+      if ('saved' in change) database().upsert('folders', folderRow(change.saved));
+      else database().delete('folders', { id: change.removed });
+      return;
+    }
     mkdirSync(dirname(this.file), { recursive: true });
     const tmp = `${this.file}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify({ folders: this.folders }, null, 2));
@@ -85,8 +112,8 @@ export class FolderStore {
     if (input.parentId && !this.get(input.parentId)) throw new FolderError('Parent folder not found', 404);
     const now = new Date().toISOString();
     const folder: Folder = { id: `fd_${nanoid(8)}`, name, ...(input.parentId && { parentId: input.parentId }), createdAt: now, updatedAt: now };
-    this.folders.push(folder);
-    this.persist();
+    this.folders = [...this.folders, folder];
+    this.persist({ saved: folder });
     return folder;
   }
 
@@ -104,7 +131,7 @@ export class FolderStore {
     }
     next.updatedAt = new Date().toISOString();
     this.folders = this.folders.map((f) => (f.id === id ? next : f));
-    this.persist();
+    this.persist({ saved: next });
     return next;
   }
 
@@ -115,7 +142,7 @@ export class FolderStore {
     const inside = workflows.filter((w) => w.folderId === id).length;
     if (children || inside) throw new FolderNotEmptyError(children, inside);
     this.folders = this.folders.filter((f) => f.id !== id);
-    this.persist();
+    this.persist({ removed: id });
     return true;
   }
 }

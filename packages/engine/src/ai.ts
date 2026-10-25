@@ -3,7 +3,7 @@
  * Provider-neutral on purpose: an Anthropic, Ollama or remote model sub-node
  * all implement LanguageModel; any node can become an AgentTool.
  */
-import type { JsonObject } from '@landflow/protocol';
+import type { JsonObject, NodeItem } from '@landflow/protocol';
 
 export interface ToolCall {
   id: string;
@@ -65,6 +65,55 @@ export interface AgentTool extends ToolSpec {
 export interface AgentMemory {
   load(sessionId: string): Promise<AgentMessage[]>;
   save(sessionId: string, messages: AgentMessage[]): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Retrieval (RAG): what the ai_embedding, ai_document, ai_textSplitter,
+// ai_retriever and ai_reranker sub-nodes supply
+// ---------------------------------------------------------------------------
+
+/** A piece of text with metadata (LangChain's Document): what loaders produce, splitters cut and vector stores keep. */
+export interface AiDocument {
+  pageContent: string;
+  metadata: JsonObject;
+  /** Set by vector stores. */
+  id?: string;
+  /** Set by retrieval: similarity, fused or reranked score; higher is better. */
+  score?: number;
+}
+
+/** An embeddings model (`ai_embedding`). */
+export interface Embeddings {
+  readonly provider: string;
+  readonly model: string;
+  embedDocuments(texts: string[], signal?: AbortSignal): Promise<number[][]>;
+  embedQuery(text: string, signal?: AbortSignal): Promise<number[]>;
+}
+
+/** Cuts text into chunks (`ai_textSplitter`). */
+export interface TextSplitter {
+  splitText(text: string): Promise<string[]>;
+}
+
+/** Turns the root node's input items into documents (`ai_document`), split by its text splitter. */
+export interface DocumentLoader {
+  load(items: NodeItem[]): Promise<AiDocument[]>;
+}
+
+export interface RetrieveOptions {
+  /** How many documents to return (the retriever's own setting when absent). */
+  topK?: number;
+  signal?: AbortSignal;
+}
+
+/** Finds the documents relevant to a query (`ai_retriever`): a vector store in retrieve mode. */
+export interface Retriever {
+  retrieve(query: string, options?: RetrieveOptions): Promise<AiDocument[]>;
+}
+
+/** Re-orders retrieved documents by relevance to the query (`ai_reranker`) and keeps the best `topK`. */
+export interface Reranker {
+  rerank(query: string, documents: AiDocument[], options?: RetrieveOptions): Promise<AiDocument[]>;
 }
 
 /** Tool names must match ^[a-zA-Z0-9_-]{1,64}$ for every major provider. */

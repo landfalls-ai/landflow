@@ -1,5 +1,5 @@
 import { error, handler, json } from '@/lib/server/http';
-import { cancelExecution, cancelWaitingExecution, liveExecution } from '@/lib/server/runner';
+import { cancelExecution, cancelQueuedExecution, cancelWaitingExecution, liveExecution } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
 import { traceUrl } from '@/lib/server/telemetry';
 
@@ -17,10 +17,12 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   return json({ execution, ...(link && { traceUrl: link }) });
 });
 
-/** DELETE cancels a running or waiting execution, or removes a finished one from history. */
+/** DELETE cancels a running, waiting or queued execution, or removes a finished one from history. */
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (liveExecution(id)) return json({ canceled: cancelExecution(id) });
-  if (store.getExecution(id)?.status === 'waiting') return json({ canceled: cancelWaitingExecution(id) });
+  const status = store.getExecution(id)?.status;
+  if (status === 'waiting') return json({ canceled: cancelWaitingExecution(id) });
+  if (status === 'queued') return json({ canceled: cancelQueuedExecution(id) });
   return store.deleteExecution(id) ? json({ deleted: true }) : error('Execution not found', 404);
 });

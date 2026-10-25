@@ -1,6 +1,6 @@
 /** Types shared by the API routes and the React client. No runtime imports. */
 import type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, NodeRun, PauseReason, Transport, Workflow } from '@landflow/engine';
-import type { CredentialTypeDescriptor, NodeDescriptor, PluginInfo } from '@landflow/protocol';
+import type { CredentialTypeDescriptor, NodeDescriptor, NodeItem, PluginInfo } from '@landflow/protocol';
 
 export type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, NodeRun, PauseReason, Transport, Workflow };
 export type { StickyNote, WorkflowConnection, WorkflowNode, WorkflowSettings } from '@landflow/engine';
@@ -123,7 +123,16 @@ export interface PausedState {
   since: string;
 }
 
-export type ExecutionState = ExecutionResult['status'] | 'running';
+/** `queued`: a trigger run waiting for a concurrency slot of its workflow (it starts by itself). */
+export type ExecutionState = ExecutionResult['status'] | 'running' | 'queued';
+
+/** A queued execution: how it starts once its workflow has a free slot. */
+export interface QueuedStart {
+  startNodeId?: string;
+  triggerItems?: NodeItem[];
+  triggerOutput?: { nodeId: string; items: NodeItem[] };
+  queuedAt: string;
+}
 
 export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   status: ExecutionState;
@@ -138,6 +147,8 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   paused?: PausedState;
   /** Started by an Execute Workflow node: the calling execution. */
   parentExecutionId?: string;
+  /** The Execute Workflow node of the parent that started it. */
+  parentNodeId?: string;
   /** Executions this one started through Execute Workflow nodes. */
   subExecutions?: SubExecutionRef[];
   /** Execute Workflow nesting level (absent: top level). */
@@ -146,6 +157,21 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   errorOf?: string;
   /** What a Form node's completion step showed (the form's last page). */
   formCompletion?: FormCompletion;
+  /** The workflow version the execution started on (absent: an unsaved editor draft, kept in `workflow`). */
+  versionId?: string;
+  /** The failed execution this one retries, and which retry it is (1 = the first). */
+  retryOf?: string;
+  retryAttempt?: number;
+  /** Set on a failed execution: the retry that followed it. */
+  retriedBy?: string;
+  /** Set on a failed execution: when its automatic retry starts. */
+  retryAt?: string;
+  /** The host restarted while the run was going: it continued from its last checkpoint. */
+  resumedAfterRestart?: { at: string; stepId: string };
+  /** The trigger call's Idempotency-Key. */
+  idempotencyKey?: string;
+  /** Status `queued`: how it starts once a slot frees. */
+  queued?: QueuedStart;
 }
 
 export interface SubExecutionRef {
@@ -179,6 +205,13 @@ export interface ExecutionSummary {
   /** Waiting runs: what they wait for. */
   wait?: Pick<ExecutionWait, 'nodeName' | 'resume' | 'until'>;
   parentExecutionId?: string;
+  versionId?: string;
+  retryOf?: string;
+  retryAttempt?: number;
+  retriedBy?: string;
+  retryAt?: string;
+  /** Shown as "resumed after restart". */
+  resumedAfterRestart?: boolean;
 }
 
 /** Where a poll trigger of an active workflow stands (GET /api/workflows/:id/polls). */

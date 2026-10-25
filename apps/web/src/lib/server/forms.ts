@@ -5,16 +5,17 @@
  * little CSS in Landflow's monochrome look and no client script; the browser's own validation
  * plus a server-side check. A submission becomes `{ <field>: value, submittedAt, formMode }`.
  */
-import type { JsonObject, NodeItem } from '@landflow/protocol';
+import type { BinaryRef, JsonObject, NodeItem } from '@landflow/protocol';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { ExecutionRecord, FormCompletion } from '../shared/types';
 import type { RunReply } from './runner';
+import { readMultipart } from './binary/http';
 import { store } from './store';
 
 export const FORM_TRIGGER = 'core.formTrigger';
 export const FORM_NODE = 'core.form';
 
-export type FormFieldType = 'text' | 'textarea' | 'number' | 'email' | 'password' | 'date' | 'dropdown' | 'checkbox' | 'radio';
+export type FormFieldType = 'text' | 'textarea' | 'number' | 'email' | 'password' | 'date' | 'dropdown' | 'checkbox' | 'radio' | 'file';
 
 /** One field, as the nodes' "Form Elements" store it (n8n's names). */
 export interface FormField {
@@ -28,6 +29,10 @@ export interface FormField {
   fieldOptions?: string | { values?: Array<{ option?: string }> };
   /** Dropdown: allow several choices. */
   multiselect?: boolean;
+  /** File: allow several files. */
+  multipleFiles?: boolean;
+  /** File: what the picker offers, e.g. ".pdf, image/*" (the browser's `accept`). */
+  acceptFileTypes?: string;
 }
 
 /** A page of a form, as stored with a waiting execution or built from a Form Trigger. */
@@ -64,6 +69,8 @@ export interface ParsedSubmission {
   errors: Record<number, string>;
   /** What was entered, to fill the form in again. */
   values: Record<number, string[]>;
+  /** Uploaded files by field key, stored once the submission is accepted (storeSubmissionFiles). */
+  files: Record<string, File[]>;
 }
 
 /** Read a submitted form (`f0`, `f1`… by field index) into an item, checking required fields and types. */
@@ -71,7 +78,17 @@ export function parseSubmission(page: FormPage, data: FormData, formMode: 'produ
   const json: JsonObject = {};
   const errors: Record<number, string> = {};
   const values: Record<number, string[]> = {};
+  const files: Record<string, File[]> = {};
   page.fields.forEach((field, index) => {
+    if (field.fieldType === 'file') {
+      // A file input sends an empty, nameless part when nothing was picked.
+      const picked = data.getAll(`f${index}`).filter((v): v is File => typeof v !== 'string' && (v.size > 0 || v.name !== ''));
+      if (field.requiredField && !picked.length) errors[index] = 'Choose a file';
+      const list = field.multipleFiles ? picked : picked.slice(0, 1);
+      if (list.length) files[keyOf(field)] = list;
+      json[keyOf(field)] = field.multipleFiles ? list.map((f) => f.name) : (list[0]?.name ?? '');
+      return;
+    }
     const entered = data.getAll(`f${index}`).map((v) => String(v).trim()).filter((v) => v !== '');
     values[index] = entered;
     const type = field.fieldType ?? 'text';
@@ -96,7 +113,7 @@ export function parseSubmission(page: FormPage, data: FormData, formMode: 'produ
   });
   json.submittedAt = new Date().toISOString();
   json.formMode = formMode;
-  return { json, errors, values };
+  return { json, errors, values, files };
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +213,7 @@ h1{margin:0 0 6px;font-size:22px;font-weight:650;letter-spacing:-.01em}
 label,.legend{display:block;margin:0 0 6px;font-weight:550}
 .req{color:var(--rd);margin-left:2px}
 input[type=text],input[type=email],input[type=password],input[type=number],input[type=date],select,textarea{width:100%;padding:9px 11px;border:1px solid var(--bd);border-radius:9px;background:var(--sf);color:var(--t1);font:inherit}
+input[type=file]{width:100%;padding:8px 0;color:var(--t2,inherit);font:inherit}
 textarea{min-height:96px;resize:vertical}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--ac);box-shadow:0 0 0 3px var(--focus)}
 .choice{display:flex;align-items:center;gap:8px;margin:4px 0;font-weight:400}
@@ -241,6 +259,10 @@ function fieldMarkup(field: FormField, index: number, entered: string[] = [], er
       .map((o, i) => `<label class="choice"><input type="${inputType}" name="${id}" value="${escapeHtml(o)}"${entered.includes(o) ? ' checked' : ''}${type === 'radio' && i === 0 ? required : ''}> ${escapeHtml(o)}</label>`)
       .join('');
     control = `<fieldset style="border:0;margin:0;padding:0"${described}><legend class="legend">${label}${star}</legend>${choices}</fieldset>`;
+  } else if (type === 'file') {
+    const multiple = field.multipleFiles ? ' multiple' : '';
+    const accept = field.acceptFileTypes?.trim() ? ` accept="${escapeHtml(field.acceptFileTypes.trim())}"` : '';
+    control = `<label for="${id}">${label}${star}</label><input id="${id}" name="${id}" type="file"${multiple}${accept}${required}${described}>`;
   } else {
     const value = entered[0] ? ` value="${escapeHtml(entered[0])}"` : '';
     const step = type === 'number' ? ' step="any"' : '';
@@ -253,7 +275,7 @@ function fieldMarkup(field: FormField, index: number, entered: string[] = [], er
 export function formPage(page: FormPage, options: { action: string; values?: Record<number, string[]>; errors?: Record<number, string>; status?: number }): Response {
   const fields = page.fields.map((field, index) => fieldMarkup(field, index, options.values?.[index], options.errors?.[index])).join('');
   const description = page.description ? `<p class="desc">${escapeHtml(page.description)}</p>` : '';
-  const body = `<h1>${escapeHtml(page.title)}</h1>${description}<form method="post" action="${escapeHtml(options.action)}" accept-charset="utf-8">${fields}<button type="submit">${escapeHtml(page.buttonLabel || 'Submit')}</button></form>`;
+  const body = `<h1>${escapeHtml(page.title)}</h1>${description}<form method="post" action="${escapeHtml(options.action)}" accept-charset="utf-8"${page.fields.some((f) => f.fieldType === 'file') ? ' enctype="multipart/form-data"' : ''}>${fields}<button type="submit">${escapeHtml(page.buttonLabel || 'Submit')}</button></form>`;
   return html(document(page.title, body), options.status);
 }
 
@@ -264,6 +286,16 @@ export function messagePage(options: { title: string; message: string; status?: 
 }
 
 /** The submission as the item a run receives. */
-export function submissionItem(json: JsonObject): NodeItem {
-  return { json };
+export function submissionItem(json: JsonObject, binary?: Record<string, BinaryRef>): NodeItem {
+  return { json, ...(binary && Object.keys(binary).length && { binary }) };
+}
+
+/**
+ * Store a submission's files in an execution's scope: `item.binary.<field>`, or `<field>0`, `<field>1`… for a
+ * field with several files (as the Webhook trigger names multipart files).
+ */
+export async function storeSubmissionFiles(files: Record<string, File[]>, executionId: string): Promise<Record<string, BinaryRef>> {
+  const form = new FormData();
+  for (const [key, list] of Object.entries(files)) for (const file of list) form.append(key, file);
+  return (await readMultipart(form, executionId)).binary;
 }

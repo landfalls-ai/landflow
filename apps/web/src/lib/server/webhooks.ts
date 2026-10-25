@@ -5,24 +5,21 @@
  */
 import type { JsonObject, NodeItem } from '@landflow/protocol';
 import type { ExecutionRecord } from '../shared/types';
+import { fileResponseHeaders, readRequestBody, type RequestBodyOptions } from './binary/http';
 import { error, json } from './http';
 import type { RunReply } from './runner';
 
 export type RespondMode = 'immediately' | 'lastNode' | 'responseNode';
 
-/** `{ method, path, headers, query, body }`; cookies and the Authorization header are left out. */
-export async function requestItem(request: Request, path: string): Promise<NodeItem> {
+/**
+ * `{ method, path, headers, query, body }`; cookies and the Authorization header are left out. Uploaded files
+ * (multipart parts, a non-text body, or any body with `rawBody`) are stored in the execution's scope and
+ * become `item.binary` (lib/server/binary/http.ts).
+ */
+export async function requestItem(request: Request, path: string, files: RequestBodyOptions): Promise<NodeItem> {
   const method = request.method.toUpperCase();
   const url = new URL(request.url);
-  const text = method === 'GET' || method === 'HEAD' ? '' : await request.text();
-  let body: unknown = text;
-  const type = request.headers.get('content-type') ?? '';
-  if (type.includes('application/x-www-form-urlencoded')) body = Object.fromEntries(new URLSearchParams(text));
-  else {
-    try {
-      body = text ? JSON.parse(text) : {};
-    } catch {}
-  }
+  const { body, binary } = await readRequestBody(request, files);
   return {
     json: {
       method,
@@ -31,6 +28,7 @@ export async function requestItem(request: Request, path: string): Promise<NodeI
       query: Object.fromEntries(url.searchParams),
       body: body as JsonObject[string],
     },
+    ...(binary && { binary }),
   };
 }
 
@@ -48,6 +46,11 @@ export function replyResponse(reply: Extract<RunReply, { type: 'webhook' }>, exe
   if (reply.redirect) {
     headers.set('location', reply.redirect);
     return new Response(null, { status: reply.status >= 300 && reply.status < 400 ? reply.status : 307, headers });
+  }
+  if (reply.file) {
+    const download = fileResponseHeaders(reply.file);
+    for (const key of ['content-type', 'content-length', 'content-disposition', 'x-content-type-options']) if (!headers.has(key)) headers.set(key, download.get(key)!);
+    return new Response(reply.file.stream, { status: reply.status, headers });
   }
   if (reply.json !== undefined) {
     if (!headers.has('content-type')) headers.set('content-type', 'application/json; charset=utf-8');
@@ -67,6 +70,19 @@ export function lastNodeResponse(record: ExecutionRecord): Response {
   const lastRuns = record.lastNodeId ? record.runData[record.lastNodeId] : undefined;
   const items = lastRuns?.at(-1)?.outputs[0] ?? [];
   return json(items.length === 1 ? items[0].json : items.map((i) => i.json), { headers: { 'x-landflow-execution': record.executionId } });
+}
+
+/**
+ * The answer to a webhook call that repeats an earlier one (same Idempotency-Key): the finished run's
+ * last-node output in "when the last node finishes" mode, else the run's status. Marked `Idempotent-Replayed: true`.
+ */
+export function replayedResponse(mode: RespondMode, executionId: string, workflowId: string, record: ExecutionRecord | undefined): Response {
+  const response =
+    mode === 'lastNode' && record?.status === 'success'
+      ? lastNodeResponse(record)
+      : json({ status: record?.status ?? 'started', workflowId, executionId }, { headers: { 'x-landflow-execution': executionId } });
+  response.headers.set('idempotent-replayed', 'true');
+  return response;
 }
 
 /**

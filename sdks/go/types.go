@@ -327,8 +327,11 @@ type PairedItem struct {
 
 // Item is the unit of data flowing between nodes (n8n's INodeExecutionData).
 type Item struct {
-	JSON       map[string]any `json:"json"`
-	PairedItem *PairedItem    `json:"pairedItem,omitempty"`
+	JSON map[string]any `json:"json"`
+	// Binary holds files by property name ("data" for a single file); see
+	// binary.go and docs/protocol.md §11.
+	Binary     map[string]BinaryRef `json:"binary,omitempty"`
+	PairedItem *PairedItem          `json:"pairedItem,omitempty"`
 }
 
 // ExecutionMode is why the node is running.
@@ -372,6 +375,13 @@ type ExecuteRequest struct {
 	// ContinueOnFail is set when the node continues on error: emit
 	// {"error": message} for a failing item instead of failing the call.
 	ContinueOnFail bool `json:"continueOnFail,omitempty"`
+	// IdempotencyKey is "<executionId>:<nodeId>:<runIndex>": the same for
+	// every retry of this step (retry on fail, re-run after a host crash).
+	// Empty from older hosts.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+	// BinaryAccess is where the node reads and writes the bytes of item files
+	// during this call (nil when the host has no binary store).
+	BinaryAccess *BinaryAccess `json:"binaryAccess,omitempty"`
 }
 
 // LogLevel is debug | info | warn | error.

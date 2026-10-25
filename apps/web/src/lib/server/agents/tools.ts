@@ -1,18 +1,21 @@
 /**
  * What an agent can call. Every capability in the config becomes a tool the model sees:
  * plugin nodes run on their own (`$fromAI` fills what the model decides), workflows run
- * from their "When Called by a Workflow or Agent" trigger, sub-agents get a task, plus built-in
- * tools for skills and cross-session memory.
+ * from their "When Called by a Workflow or Agent" trigger, sub-agents get a task, MCP servers
+ * offer their tools (buildToolset lists them first), knowledge bases a search tool (knowledge.ts),
+ * plus built-in tools for skills and cross-session memory.
  */
 import { defaultVersionOf, PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
 import { ExpressionResolver, deriveToolSchema, toToolName, type ToolSpec } from '@landflow/engine';
-import type { Agent, AgentConfig, AgentSession, NodeToolConfig, SubAgentConfig, ToolKind, WorkflowToolConfig } from '../../shared/agents';
+import type { Agent, AgentConfig, AgentSession, McpServerToolConfig, NodeToolConfig, SubAgentConfig, ToolKind, WorkflowToolConfig } from '../../shared/agents';
 import type { ExecutionRecord } from '../../shared/types';
 import { credentials } from '../credentials/vault';
+import { agentToolsFrom, endpointFrom, listMcpTools, selectTools } from '../mcp/client';
 import { registry } from '../plugins/registry';
 import { runWorkflow } from '../runner';
 import { store } from '../store';
 import { variables } from '../variables';
+import { knowledgeTool } from './knowledge';
 import { agentStore } from './store';
 
 export const WORKFLOW_TRIGGER = 'core.workflowTrigger';
@@ -53,11 +56,14 @@ export interface Toolset {
   unavailable: string[];
 }
 
-export function buildTools(agent: Agent, config: AgentConfig): Toolset {
-  const tools: BuiltTool[] = [];
-  const unavailable: string[] = [];
+/** The agent's tools. MCP servers' tools are listed over the network: pass them in from buildToolset. */
+export function buildTools(agent: Agent, config: AgentConfig, mcp: Toolset = { tools: [], unavailable: [] }): Toolset {
+  const tools: BuiltTool[] = [...mcp.tools];
+  const unavailable: string[] = [...mcp.unavailable];
   for (const tool of config.tools) {
-    const built = tool.type === 'node' ? nodeTool(tool) : tool.type === 'workflow' ? workflowTool(tool) : subAgentTool(tool, agent);
+    if (tool.type === 'mcp') continue;
+    const built =
+      tool.type === 'node' ? nodeTool(tool) : tool.type === 'workflow' ? workflowTool(tool) : tool.type === 'knowledge' ? knowledgeTool(tool) : subAgentTool(tool, agent);
     if ('error' in built) unavailable.push(built.error);
     else tools.push(built);
   }
@@ -73,6 +79,51 @@ function dedupe(tools: BuiltTool[]): BuiltTool[] {
     seen.set(tool.name, count + 1);
     return count ? { ...tool, name: `${tool.name.slice(0, 60)}_${count + 1}` } : tool;
   });
+}
+
+/** buildTools plus the tools of the agent's MCP servers, listed from each server (in parallel). */
+export async function buildToolset(agent: Agent, config: AgentConfig): Promise<Toolset> {
+  const servers = config.tools.filter((tool): tool is McpServerToolConfig => tool.type === 'mcp');
+  const listed = await Promise.all(servers.map((server) => mcpServerTools(server)));
+  const mcp: Toolset = { tools: [], unavailable: [] };
+  for (const result of listed) {
+    if ('error' in result) mcp.unavailable.push(result.error);
+    else mcp.tools.push(...result);
+  }
+  return buildTools(agent, config, mcp);
+}
+
+// ---------------------------------------------------------------------------
+// MCP servers
+// ---------------------------------------------------------------------------
+
+export const MCP_CLIENT_TOOL = 'core.mcpClientTool';
+
+/** Each tool an MCP server lists (after the include filter), with the server's schema. */
+async function mcpServerTools(config: McpServerToolConfig): Promise<BuiltTool[] | { error: string }> {
+  const resolved = registry.resolve(MCP_CLIENT_TOOL);
+  if ('error' in resolved) return { error: `${config.name}: ${resolved.error}` };
+  try {
+    const secrets = credentials.resolveFor({ type: MCP_CLIENT_TOOL, credentials: config.credentials, parameters: config.parameters }, resolved.descriptor);
+    const endpoint = endpointFrom(config.parameters, secrets);
+    const { include, includeTools, excludeTools } = config.parameters;
+    const tools = agentToolsFrom(endpoint, selectTools(await listMcpTools(endpoint), include, includeTools, excludeTools));
+    return tools.map((tool) => ({
+      // Shown with the MCP Client Tool's icon in the timeline.
+      kind: 'node' as const,
+      nodeType: MCP_CLIENT_TOOL,
+      name: tool.name,
+      label: `${config.name} · ${tool.name}`,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      requireApproval: Boolean(config.requireApproval),
+      async invoke(input, ctx) {
+        return { output: await tool.invoke(input, ctx.signal) };
+      },
+    }));
+  } catch (error) {
+    return { error: `${config.name}: ${(error as Error).message}` };
+  }
 }
 
 // ---------------------------------------------------------------------------

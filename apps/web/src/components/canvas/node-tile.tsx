@@ -7,6 +7,7 @@
  */
 import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { Handle, Position } from '@xyflow/react';
+import { indexedPorts } from '@landflow/protocol';
 import { Check, Pause, Pin, Plus, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
@@ -17,7 +18,16 @@ import { NodeIcon } from '../ui/icon';
 
 export const TILE = 88;
 export const WIDE_TILE = 240;
-const AI_LABEL: Record<string, string> = { ai_languageModel: 'Model', ai_memory: 'Memory', ai_tool: 'Tool' };
+const AI_LABEL: Record<string, string> = {
+  ai_languageModel: 'Model',
+  ai_memory: 'Memory',
+  ai_tool: 'Tool',
+  ai_embedding: 'Embedding',
+  ai_document: 'Document',
+  ai_textSplitter: 'Text Splitter',
+  ai_retriever: 'Retriever',
+  ai_reranker: 'Reranker',
+};
 
 export function handleId(type: ConnectionType, index: number) {
   return `${type}:${index}`;
@@ -29,13 +39,23 @@ function subtitleOf(template: string | undefined, parameters: Record<string, unk
     const value = parameters[key];
     return value === undefined || value === null ? '' : typeof value === 'object' ? '…' : String(value);
   });
-  return text.trim() || undefined;
+  // An empty value leaves its separator behind ("insert · "): drop separators at either end.
+  return text.replace(/^[\s·|]+|[\s·|]+$/g, '') || undefined;
 }
 
-/** Indexed by port type: [{ port, index }] so handle ids stay stable. */
-function indexPorts(ports: PortDescriptor[]) {
-  const counters: Record<string, number> = {};
-  return ports.map((port) => ({ port, index: (counters[port.type] = (counters[port.type] ?? -1) + 1) }));
+/**
+ * The ports `parameters` show, indexed by port type ([{ port, index }]) so handle ids stay stable: a port
+ * hidden by its displayOptions (a vector store's Tool output outside “As Tool” mode) keeps its index.
+ */
+function indexPorts(ports: PortDescriptor[], parameters: Record<string, unknown>) {
+  return indexedPorts(ports, parameters).filter((p) => p.visible);
+}
+
+/** Drawn round: sub-nodes, nodes attached as tools, and nodes whose shown outputs all go to root nodes (a vector store in a retrieve mode). */
+export function isCompact(descriptor: NodeTypeInfo['descriptor'] | undefined, parameters: Record<string, unknown>, asTool?: boolean) {
+  if (descriptor?.kind === 'subnode' || asTool) return true;
+  const outputs = indexPorts(descriptor?.outputs ?? [{ type: 'main' }], parameters);
+  return outputs.length > 0 && outputs.every((p) => p.port.type !== 'main');
 }
 
 export interface NodeTileProps {
@@ -124,13 +144,13 @@ export function NodeTile(props: NodeTileProps) {
   } = props;
   const descriptor = info?.descriptor;
   const kind = descriptor?.kind ?? 'action';
-  const inputs = useMemo(() => indexPorts(descriptor?.inputs ?? [{ type: 'main' }]), [descriptor]);
-  const outputs = useMemo(() => indexPorts(descriptor?.outputs ?? [{ type: 'main' }]), [descriptor]);
+  const inputs = useMemo(() => indexPorts(descriptor?.inputs ?? [{ type: 'main' }], parameters), [descriptor, parameters]);
+  const outputs = useMemo(() => indexPorts(descriptor?.outputs ?? [{ type: 'main' }], parameters), [descriptor, parameters]);
   const mainIn = inputs.filter((p) => p.port.type === 'main');
   const aiIn = inputs.filter((p) => p.port.type !== 'main');
   const mainOut = outputs.filter((p) => p.port.type === 'main');
   const aiOut = outputs.filter((p) => p.port.type !== 'main');
-  const compact = kind === 'subnode' || Boolean(asTool);
+  const compact = isCompact(descriptor, parameters, asTool);
   const wide = !compact && aiIn.length > 0;
   const isTrigger = kind === 'trigger';
   const unavailable = !info || !info.available;
@@ -183,7 +203,79 @@ export function NodeTile(props: NodeTileProps) {
     </div>
   );
 
+  /** Sub-node slots along the bottom (AI roots, and sub-nodes that take sub-nodes of their own). */
+  const aiInputs = aiIn.map(({ port, index }, i) => {
+    const hid = handleId(port.type, index);
+    const connected = subConnections.filter((h) => h === hid).length;
+    const missing = port.required && !connected;
+    const left = `${((i + 1) / (aiIn.length + 1)) * 100}%`;
+    return (
+      <div key={hid}>
+        <Handle
+          id={hid}
+          type="target"
+          position={Position.Bottom}
+          isConnectable={!readOnly}
+          style={{ left }}
+          className={cn('!size-2.5 !rotate-45 !rounded-[2px] !border-[1.5px] !bg-sf', missing ? '!border-rd' : '!border-t2')}
+        />
+        <div className="absolute top-full flex -translate-x-1/2 flex-col items-center pt-2.5" style={{ left }}>
+          <span className={cn('whitespace-nowrap text-[11px]', missing ? 'text-rd' : 'text-t3')}>
+            {port.displayName ?? AI_LABEL[port.type]}
+            {port.required && '*'}
+          </span>
+          {!readOnly && onAddSubnode && (!port.maxConnections || connected < port.maxConnections) && (
+            <button
+              title={`Add ${(port.displayName ?? AI_LABEL[port.type]).toLowerCase()}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddSubnode(hid, port.type);
+              }}
+              className="nodrag mt-1 grid size-5 place-items-center rounded-md border border-dashed border-bd bg-sf text-t3 transition-all hover:scale-110 hover:border-solid hover:border-ac hover:bg-ac hover:text-on-ac"
+            >
+              <Plus className="size-3" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  });
+
   // ---------------------------------------------------------------- sub-node
+  if (compact && aiIn.length > 0) {
+    // A sub-node with slots of its own (a vector store with its Embedding): a pill with the name inside.
+    const outType: ConnectionType = aiOut[0]?.port.type ?? 'ai_tool';
+    return (
+      <div className="group relative" style={{ ...style, width: Math.max(200, aiIn.length * 104), height: 64 }}>
+        {children}
+        <Handle
+          id={handleId(outType, 0)}
+          type="source"
+          position={Position.Top}
+          isConnectable={!readOnly}
+          className="!-top-1 !size-2.5 !rotate-45 !rounded-[2px] !border-[1.5px] !border-t2 !bg-sf"
+        />
+        <div
+          className={cn('relative flex size-full items-center gap-3 rounded-full bg-sf px-5', frameClasses(status, selected, unavailable), disabled && 'opacity-50', fresh && 'animate-node-in')}
+          style={{ background: tint(color, 8) }}
+        >
+          <NodeIcon icon={descriptor?.icon} size={isImage ? 30 : 24} style={{ color }} strokeWidth={1.7} className="shrink-0" />
+          <div className="min-w-0">
+            <div className={cn('truncate text-[13px] font-semibold text-t1', disabled && 'line-through')}>{name}</div>
+            <div className="truncate text-[11px] text-t3">{subtitle ?? descriptor?.displayName}</div>
+          </div>
+          <StatusMark status={status} compact />
+          {status?.uses && status.uses > 1 && (
+            <span className="absolute -bottom-1 -left-2 rounded-full border border-hair bg-sf px-1.5 font-mono text-[10px] text-t2 animate-pop">×{status.uses}</span>
+          )}
+          {pinMark}
+        </div>
+        {meta && <div className="pointer-events-none absolute -top-5 right-3">{meta}</div>}
+        {aiInputs}
+      </div>
+    );
+  }
+
   if (compact) {
     const outType: ConnectionType = aiOut[0]?.port.type ?? 'ai_tool';
     return (
@@ -334,42 +426,7 @@ export function NodeTile(props: NodeTileProps) {
         />
       )}
 
-      {aiIn.map(({ port, index }, i) => {
-        const hid = handleId(port.type, index);
-        const connected = subConnections.filter((h) => h === hid).length;
-        const missing = port.required && !connected;
-        const left = `${((i + 1) / (aiIn.length + 1)) * 100}%`;
-        return (
-          <div key={hid}>
-            <Handle
-              id={hid}
-              type="target"
-              position={Position.Bottom}
-              isConnectable={!readOnly}
-              style={{ left }}
-              className={cn('!size-2.5 !rotate-45 !rounded-[2px] !border-[1.5px] !bg-sf', missing ? '!border-rd' : '!border-t2')}
-            />
-            <div className="absolute top-full flex -translate-x-1/2 flex-col items-center pt-2.5" style={{ left }}>
-              <span className={cn('whitespace-nowrap text-[11px]', missing ? 'text-rd' : 'text-t3')}>
-                {port.displayName ?? AI_LABEL[port.type]}
-                {port.required && '*'}
-              </span>
-              {!readOnly && onAddSubnode && (!port.maxConnections || connected < port.maxConnections) && (
-                <button
-                  title={`Add ${(port.displayName ?? AI_LABEL[port.type]).toLowerCase()}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onAddSubnode(hid, port.type);
-                  }}
-                  className="nodrag mt-1 grid size-5 place-items-center rounded-md border border-dashed border-bd bg-sf text-t3 transition-all hover:scale-110 hover:border-solid hover:border-ac hover:bg-ac hover:text-on-ac"
-                >
-                  <Plus className="size-3" />
-                </button>
-              )}
-            </div>
-          </div>
-        );
-      })}
+      {aiInputs}
     </div>
   );
 }

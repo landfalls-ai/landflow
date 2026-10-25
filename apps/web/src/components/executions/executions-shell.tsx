@@ -9,7 +9,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Check, ListFilter, RefreshCw, X } from 'lucide-react';
+import { ArrowLeft, Check, ListFilter, RefreshCw, Timer, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveEvents } from '@/lib/client/live';
@@ -53,6 +53,7 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: 'running', label: 'Running' },
   { value: 'paused', label: 'Paused' },
   { value: 'waiting', label: 'Waiting' },
+  { value: 'queued', label: 'Queued' },
   { value: 'canceled', label: 'Canceled' },
 ];
 
@@ -91,6 +92,12 @@ function ExecutionCard({ execution, workflowId, selected, now, index, isNew }: {
         <span className="truncate tabular-nums">{state === 'paused' && execution.paused ? `Paused before ${execution.paused.nodeName}` : statusText(state, ms)}</span>
       </div>
       {execution.error && <div className="mt-0.5 truncate text-[11px] text-t3">{execution.error.nodeName ? `${execution.error.nodeName}: ` : ''}{execution.error.message}</div>}
+      {execution.retryAt && (
+        <div className="mt-0.5 flex items-center gap-1 text-[11px] text-viz-7">
+          <Timer className="size-3 shrink-0" />
+          <span className="truncate tabular-nums">Automatic retry at {formatStamp(execution.retryAt)}</span>
+        </div>
+      )}
       {live && <div className="lf-shimmer absolute inset-x-0 bottom-0 h-[2px]" />}
     </Link>
   );

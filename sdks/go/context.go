@@ -72,6 +72,12 @@ func (c *ExecuteContext) ExecutionID() string { return c.req.ExecutionID }
 // WorkflowID returns the workflow id (may be empty).
 func (c *ExecuteContext) WorkflowID() string { return c.req.WorkflowID }
 
+// IdempotencyKey returns "<executionId>:<nodeId>:<runIndex>", the same for
+// every retry of this step (retry on fail, re-run after a host crash). Pass
+// it to APIs that accept an idempotency key (Stripe's Idempotency-Key) so a
+// repeated step does not repeat side effects. Empty from older hosts.
+func (c *ExecuteContext) IdempotencyKey() string { return c.req.IdempotencyKey }
+
 // ---------------------------------------------------------------------------
 // Polling triggers (docs/protocol.md §8)
 // ---------------------------------------------------------------------------

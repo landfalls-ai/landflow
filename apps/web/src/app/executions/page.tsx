@@ -7,16 +7,17 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Bug, ExternalLink, Loader2, MoreHorizontal, RotateCcw, SkipForward, Square, Trash2 } from 'lucide-react';
+import { Bug, ExternalLink, ListRestart, Loader2, MoreHorizontal, OctagonX, RotateCcw, SkipForward, Square, Timer, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { duration, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
 import type { ExecutionRecord, ExecutionSummary } from '@/lib/shared/types';
-import { ExecutionMarks, RERUN_LABEL, deleteExecution, startRerun } from '@/components/executions/meta';
+import { ExecutionMarks, RERUN_LABEL, canRetry, deleteExecution, retryTitle, startRerun, startRetry, stopAllExecutions, stopAllSummary, type RetryBody } from '@/components/executions/meta';
 import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, useNow } from '@/components/run/run-status';
 import { PageHeader } from '@/components/shell/page-header';
+import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Select, Switch } from '@/components/ui/inputs';
 import { MenuItem, MenuSeparator, Popover } from '@/components/ui/popover';
@@ -39,6 +40,8 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
   const router = useRouter();
   const [confirm, setConfirm] = useState(false);
   const live = execution.status === 'running';
+  // A queued run hasn't started: it can only be canceled (DELETE takes it out of the queue).
+  const queued = execution.status === 'queued';
   const rerun = async (body: Parameters<typeof startRerun>[1], label: string) => {
     try {
       const id = await startRerun(execution.id, body);
@@ -48,10 +51,19 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
       toast.error((e as Error).message);
     }
   };
+  const retry = async (body: RetryBody, label: string) => {
+    try {
+      const id = await startRetry(execution.id, body);
+      toast.success(label);
+      router.push(`/workflows/${execution.workflowId}/executions/${id}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
   const remove = async () => {
     try {
       await deleteExecution(execution.id);
-      toast.success(live ? 'Canceling the run' : 'Execution deleted');
+      toast.success(live ? 'Canceling the run' : queued ? 'Queued run canceled' : 'Execution deleted');
       onChanged();
     } catch (e) {
       toast.error((e as Error).message);
@@ -99,23 +111,33 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
             <MenuItem onClick={() => router.push(hrefOf(execution))}>
               <ExternalLink /> Open
             </MenuItem>
-            {!live && (
+            {!live && !queued && (
               <MenuItem onClick={() => router.push(`/workflows/${execution.workflowId}?execution=${execution.id}`)}>
                 <Bug /> Debug in editor
               </MenuItem>
             )}
-            {!live && (
+            {!live && !queued && (
               <>
                 <MenuSeparator />
-                {execution.error?.nodeId && (
-                  <MenuItem
-                    onClick={() => {
-                      close();
-                      void rerun({ scope: 'from', nodeId: execution.error!.nodeId, version: 'current' }, `Retrying from “${execution.error!.nodeName}”`);
-                    }}
-                  >
-                    <SkipForward /> Retry from {execution.error.nodeName ?? 'the failed node'}
-                  </MenuItem>
+                {canRetry(execution) && (
+                  <>
+                    <MenuItem
+                      onClick={() => {
+                        close();
+                        void retry({}, execution.error?.nodeName ? `Retrying from “${execution.error.nodeName}”` : 'Retrying the run');
+                      }}
+                    >
+                      <SkipForward /> Retry from {execution.error?.nodeName ?? 'where it stopped'}
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() => {
+                        close();
+                        void retry({ from: 'start' }, 'Retrying from the start');
+                      }}
+                    >
+                      <ListRestart /> Retry from the start
+                    </MenuItem>
+                  </>
                 )}
                 <MenuItem
                   onClick={() => {
@@ -128,7 +150,7 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
               </>
             )}
             <MenuSeparator />
-            {live ? (
+            {live || queued ? (
               <MenuItem
                 danger
                 onClick={() => {
@@ -154,6 +176,7 @@ function Row({ execution, now, index, isNew, onChanged }: { execution: Execution
   const state = runStateOf(execution);
   const live = execution.status === 'running';
   const failed = execution.status === 'error';
+  const queued = execution.status === 'queued';
   const ms = live ? Math.max(0, now - Date.parse(execution.startedAt)) : execution.durationMs;
   return (
     <div
@@ -175,6 +198,24 @@ function Row({ execution, now, index, isNew, onChanged }: { execution: Execution
           <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--viz-1)_14%,transparent)] px-2 text-[11px] text-viz-1">{RERUN_LABEL[execution.rerunOf.scope].toLowerCase()}</span>
         )}
         {execution.debug && <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--viz-2)_14%,transparent)] px-2 text-[11px] text-viz-2">debug</span>}
+        {execution.retryOf && (
+          <span title={retryTitle(execution)} className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--viz-7)_14%,transparent)] px-2 text-[11px] text-viz-7">
+            retry #{execution.retryAttempt ?? 1}
+          </span>
+        )}
+        {execution.retriedBy && (
+          <span title={`Retried by ${execution.retriedBy}`} className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--viz-7)_14%,transparent)] px-2 text-[11px] text-viz-7">
+            retried
+          </span>
+        )}
+        {execution.resumedAfterRestart && (
+          <span
+            title="The host restarted during the run; it continued from its last checkpoint"
+            className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--viz-4)_14%,transparent)] px-2 text-[11px] text-viz-4"
+          >
+            resumed after restart
+          </span>
+        )}
       </div>
       <div role="cell" className={cn('flex min-w-0 items-center gap-1.5 font-semibold', RUN_STATE[state].text)}>
         <RunStateIcon state={state} />
@@ -185,7 +226,7 @@ function Row({ execution, now, index, isNew, onChanged }: { execution: Execution
         <div className="text-[11px] text-t3">{timeAgo(execution.startedAt)}</div>
       </div>
       <div role="cell" className={cn('font-mono text-[12px] tabular-nums', live ? 'text-warn' : 'text-t2')}>
-        {duration(ms)}
+        {queued ? '—' : duration(ms)}
       </div>
       <div role="cell" className="truncate font-mono text-[12px] text-t3">
         {execution.id}
@@ -197,13 +238,72 @@ function Row({ execution, now, index, isNew, onChanged }: { execution: Execution
         <RowMenu execution={execution} onChanged={onChanged} />
       </div>
       {failed && execution.error && (
-        <div className="col-span-full -mt-1 truncate text-[12px] text-rd">
-          {execution.error.nodeName && <span className="font-semibold">{execution.error.nodeName}: </span>}
-          {execution.error.message}
+        <div className="col-span-full -mt-1 flex min-w-0 items-center gap-3 text-[12px] text-rd">
+          <span className="truncate">
+            {execution.error.nodeName && <span className="font-semibold">{execution.error.nodeName}: </span>}
+            {execution.error.message}
+          </span>
+          {execution.retryAt && (
+            <span className="ml-auto flex shrink-0 items-center gap-1 text-viz-7">
+              <Timer className="size-3" /> Automatic retry at <span className="tabular-nums">{formatStamp(execution.retryAt)}</span>
+            </span>
+          )}
         </div>
       )}
       {live && <div className="lf-shimmer absolute inset-x-0 bottom-0 h-[2px]" />}
     </div>
+  );
+}
+
+/** Header action: stop every execution of every workflow, after a confirm. */
+function StopAllButton({ onStopped }: { onStopped: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const stop = async () => {
+    setBusy(true);
+    try {
+      const summary = stopAllSummary(await stopAllExecutions());
+      if (summary) toast.success(summary);
+      else toast('Nothing was running');
+      onStopped();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Popover
+      trigger={({ open, toggle }) => (
+        <Button size="sm" variant={open ? 'danger' : 'outline'} onClick={toggle} loading={busy} aria-expanded={open}>
+          {!busy && <OctagonX className="size-3.5" />} Stop all
+        </Button>
+      )}
+      className="w-[300px] p-3"
+    >
+      {(close) => (
+        <div role="alertdialog" aria-label="Stop all executions?">
+          <p className="text-[13px] font-semibold text-t1">Stop all executions?</p>
+          <p className="mt-1 text-[12px] leading-snug text-t2">
+            In every workflow: running executions are aborted, waiting and queued ones canceled, and pending automatic retries dropped.
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={close}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => {
+                close();
+                void stop();
+              }}
+            >
+              <OctagonX className="size-3" /> Stop all
+            </Button>
+          </div>
+        </div>
+      )}
+    </Popover>
   );
 }
 
@@ -304,11 +404,14 @@ function ExecutionsInner() {
         title="Executions"
         meta={executions && <span>{list.length} recent runs</span>}
         actions={
-          <label className="flex cursor-pointer items-center gap-2 text-[13px] text-t2">
-            <Switch checked={auto} onChange={toggleAuto} label="Auto refresh" />
-            Auto refresh
-            {auto && <span className="size-1.5 rounded-full bg-gn animate-pulse-soft" />}
-          </label>
+          <>
+            <label className="flex cursor-pointer items-center gap-2 text-[13px] text-t2">
+              <Switch checked={auto} onChange={toggleAuto} label="Auto refresh" />
+              Auto refresh
+              {auto && <span className="size-1.5 rounded-full bg-gn animate-pulse-soft" />}
+            </label>
+            <StopAllButton onStopped={refresh} />
+          </>
         }
       />
       <div className="flex flex-col gap-4 px-6 py-5">

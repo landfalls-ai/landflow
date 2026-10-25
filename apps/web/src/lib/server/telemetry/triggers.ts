@@ -7,7 +7,7 @@ import type { NodeItem } from '@landflow/protocol';
 import { hostMetrics } from './metrics';
 import { failSpan, startSpan, traceparentHeader, withSpan } from './spans';
 
-export type TriggerSource = 'manual' | 'webhook' | 'schedule' | 'poll' | 'chat' | 'form' | 'error';
+export type TriggerSource = 'manual' | 'webhook' | 'schedule' | 'poll' | 'chat' | 'form' | 'error' | 'mcp' | 'retry';
 
 export interface TriggerInfo {
   source: TriggerSource;
@@ -26,15 +26,15 @@ export interface TriggerFire {
 }
 
 /**
- * Start a `trigger.fire` span and count `landflow.trigger.fires`. Schedule, poll
- * and error-workflow triggers start a new trace (linked to the poll's span, if any);
+ * Start a `trigger.fire` span and count `landflow.trigger.fires`. Schedule, poll,
+ * error-workflow and automatic-retry triggers start a new trace (linked to the poll's span, if any);
  * the others are children of the active (HTTP request) span. Call `end()` when the
  * execution has finished or been handed off.
  */
 export function startTrigger(info: TriggerInfo): TriggerFire {
   hostMetrics().triggerFires.add(1, { 'landflow.workflow.id': info.workflowId, 'landflow.trigger.source': info.source });
   const { span, context: spanContext } = startSpan('trigger.fire', {
-    root: info.source === 'schedule' || info.source === 'poll' || info.source === 'error',
+    root: info.source === 'schedule' || info.source === 'poll' || info.source === 'error' || info.source === 'retry',
     attributes: {
       'landflow.trigger.source': info.source,
       'landflow.workflow.id': info.workflowId,

@@ -1,18 +1,21 @@
 'use client';
 /**
  * Items as n8n shows them: a Schema tree (fields, types, sample values), a
- * Table (one column per key) or raw JSON. The chosen mode is shared by every
- * DataView and remembered per browser. Fills its parent's height; only the
- * data area scrolls.
+ * Table (one column per key) or raw JSON, plus a Binary view of their files
+ * when any item carries one. The chosen mode is shared by every DataView and
+ * remembered per browser (Binary falls back to Schema where there are no
+ * files). Fills its parent's height; only the data area scrolls.
  */
 import { useMemo, useState, useSyncExternalStore, type DragEvent, type ReactNode } from 'react';
-import { Braces, Brackets, ChevronRight, CircleSlash, Hash, ListTree, PackageOpen, Table2, ToggleLeft, Type } from 'lucide-react';
+import { Braces, Brackets, ChevronRight, CircleSlash, Hash, ListTree, PackageOpen, Paperclip, Table2, ToggleLeft, Type } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { binaryEntriesOf } from '@/lib/client/binary';
 import { tint } from '@/lib/client/node-style';
 import type { NodeItem } from '@/lib/shared/types';
 import { JsonView } from '../ui/json-view';
+import { BinaryMode } from './binary-view';
 
-export type DataMode = 'schema' | 'table' | 'json';
+export type DataMode = 'schema' | 'table' | 'json' | 'binary';
 
 export interface DataViewProps {
   items: NodeItem[] | undefined;
@@ -40,7 +43,7 @@ function readMode(): DataMode {
   if (currentMode) return currentMode;
   try {
     const stored = localStorage.getItem(MODE_KEY);
-    currentMode = stored === 'table' || stored === 'json' ? stored : 'schema';
+    currentMode = stored === 'table' || stored === 'json' || stored === 'binary' ? stored : 'schema';
   } catch {
     currentMode = 'schema';
   }
@@ -276,20 +279,32 @@ const MODES: Array<{ mode: DataMode; label: string; icon: typeof Table2 }> = [
   { mode: 'schema', label: 'Schema', icon: ListTree },
   { mode: 'table', label: 'Table', icon: Table2 },
   { mode: 'json', label: 'JSON', icon: Braces },
+  { mode: 'binary', label: 'Binary', icon: Paperclip },
 ];
 
 export function DataView({ items, emptyLabel = 'No data', draggable, toolbar, notice, className }: DataViewProps) {
-  const mode = useDataMode();
+  const chosen = useDataMode();
   const list = items ?? [];
+  const files = useMemo(() => binaryEntriesOf(items).length, [items]);
+  // The Binary tab exists only while items carry files; elsewhere a stored Binary choice shows the Schema.
+  const mode = chosen === 'binary' && !files ? 'schema' : chosen;
   return (
     <div className={cn('@container flex min-h-0 flex-1 flex-col', className)}>
       <div className="flex shrink-0 flex-wrap items-center gap-2 px-3 py-2">
         {toolbar}
         <span className="font-mono text-[11px] text-t3">
           {list.length} item{list.length === 1 ? '' : 's'}
+          {files > 0 && (
+            <>
+              {' · '}
+              <button onClick={() => setMode('binary')} className="hover:text-t1" title="Show the files">
+                {files} file{files === 1 ? '' : 's'}
+              </button>
+            </>
+          )}
         </span>
         <div role="tablist" aria-label="Display mode" className="ml-auto flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-          {MODES.map(({ mode: m, label, icon: Icon }) => (
+          {MODES.filter(({ mode: m }) => m !== 'binary' || files > 0).map(({ mode: m, label, icon: Icon }) => (
             <button
               key={m}
               role="tab"
@@ -321,6 +336,8 @@ export function DataView({ items, emptyLabel = 'No data', draggable, toolbar, no
           <SchemaMode items={list} draggable={draggable} />
         ) : mode === 'table' ? (
           <TableMode items={list} draggable={draggable} />
+        ) : mode === 'binary' ? (
+          <BinaryMode items={list} />
         ) : (
           <div className="px-3 py-2">
             <JsonView value={list.map((i) => i.json)} />

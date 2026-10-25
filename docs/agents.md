@@ -10,7 +10,7 @@ separate from the **AI Agent** node, which runs inside a workflow.
 |---|---|---|
 | Lives in | a workflow (model, memory, tools wired as sub-nodes) | its own page under **Agents** |
 | Runs when | the workflow runs | test chat, schedules, Telegram, the **Message an Agent** node |
-| Tools | `usableAsTool` nodes on the canvas | any action node, workflows, other agents, skills |
+| Tools | `usableAsTool` nodes on the canvas, MCP Client Tool | any action node, workflows, other agents, MCP servers, skills |
 | Memory | the Simple Memory sub-node | sessions (always) and cross-session facts per user (optional) |
 | Versions | the workflow's | draft plus published versions, sessions pinned to a version |
 
@@ -42,6 +42,24 @@ separate from the **AI Agent** node, which runs inside a workflow.
   - **Sub-agents:** other agents, offered as `ask_<name>({ task })`. A sub-agent runs in its
     own child session (published version if it has one, else its draft) and doesn't see the
     conversation. Delegation stops at the calling agent's *max delegation depth*.
+  - **MCP servers** (**Add MCP server**): a name plus the MCP Client Tool's settings (endpoint
+    URL, Streamable HTTP or SSE, none / Bearer Auth / Header Auth credential, and all tools, the
+    selected ones or all except some). Each run lists the server's tools (all servers in
+    parallel) and offers each one with its own name, description and JSON schema; the timeline
+    shows calls as "<server> · <tool>" with the MCP Client Tool's icon. A server that can't be
+    reached is left out with a notice, like an offline plugin. Approval applies to all of a
+    server's tools.
+  - **Knowledge bases** (**Add knowledge base**): a vector store collection the agent searches
+    with one tool (`search_knowledge_base({ query })` by default, renameable), returning the best
+    passages with their metadata and scores. Settings: the store (SQLite in the data folder,
+    Postgres PGVector with a `core.postgres` credential and table, or in-memory), the
+    collection, the embeddings model (Ollama with an optional query prefix, or OpenAI-compatible
+    with a credential), passages per search and vector or hybrid search. The agent only reads:
+    fill the collection with a workflow, a vector store node in **Insert Documents** mode with
+    the same store, collection and embeddings model (Default Data Loader, optional text
+    splitter), triggered by hand, on a schedule or by a webhook. The timeline shows searches with
+    the vector store's icon. In the workflow editor the same collection is reachable from an AI
+    Agent with the vector store in **Retrieve Documents (As Tool)** mode.
   - **Require approval** on any capability pauses the run before that tool executes (below).
 - **Memory.** Session memory is always on: the session keeps the transcript, and the model
   sees its last 30 user turns. **Cross-session memory** adds a `remember` tool. The saved facts
@@ -157,8 +175,9 @@ in [`apps/web/src/lib/shared/agents.ts`](../apps/web/src/lib/shared/agents.ts).
 
 - **Channels.** Only Telegram, and text messages only. Slack, Discord and Linear channels
   would follow the same pattern with their plugins' triggers.
-- **Knowledge.** There's no knowledge base (vector store) yet, and no web search capability.
-  An HTTP Request or database node can stand in.
+- **Knowledge.** Knowledge bases are filled by workflows: the builder can't upload documents
+  yet, and the data loader reads item text, not files. No web search capability; an HTTP
+  Request node can stand in. Guardrails are a workflow node, not yet an agent setting.
 - **Cost and limits.** No monthly cost cap or per-model routing, both of which n8n has. The
   session token budget is the cost guard. Runs and schedules are single-process, like the
   workflow scheduler.

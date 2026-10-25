@@ -1,18 +1,20 @@
 /**
  * Instance settings (Settings → General): the default time zone and execution
- * retention, in <data dir>/settings.json. The file is small and read on every
- * call, so every module graph (and a hot reload) sees the same values; writes
- * are validated with zod and atomic.
+ * retention, in the `settings` table (lib/server/db). The row is small and read
+ * on every call, so every module graph (and a hot reload) sees the same values;
+ * writes are validated with zod. SettingsFile keeps the same document in a JSON
+ * file (the format older versions used; tests use it too).
  *
  * Retention: store.saveExecution prunes after every save, bootstrap prunes at
  * boot and hourly, and Settings has "Prune now". Only finished executions
  * (success, error, canceled) are ever removed; running and waiting ones stay.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { z } from 'zod';
 import type { InstanceSettings, RetentionSettings } from '../shared/platform';
 import type { ExecutionSummary } from '../shared/types';
+import { database, type Database } from './db';
+import { INSTANCE_SETTINGS } from './db/rows';
 import { atomicWrite, store } from './store';
 
 export type { InstanceSettings, RetentionSettings };
@@ -62,50 +64,75 @@ export function defaultSettings(): InstanceSettings {
   return { timezone: hostTimeZone(), executions: { maxCount: DEFAULT_MAX_EXECUTIONS, maxAgeDays: 0 } };
 }
 
-/** Settings backed by one JSON file. The default instance lives in the data directory; tests make their own. */
+/** Saved values over the defaults; a saved value that is no longer valid (an unknown zone) falls back to its default. */
+function withDefaults(saved: Partial<InstanceSettings>): InstanceSettings {
+  const defaults = defaultSettings();
+  const timezone = timezoneSchema.safeParse(saved.timezone);
+  const maxCount = retentionSchema.shape.maxCount.safeParse(saved.executions?.maxCount);
+  const maxAgeDays = retentionSchema.shape.maxAgeDays.safeParse(saved.executions?.maxAgeDays);
+  return {
+    timezone: timezone.success ? timezone.data : defaults.timezone,
+    executions: {
+      maxCount: maxCount.success ? maxCount.data : defaults.executions.maxCount,
+      maxAgeDays: maxAgeDays.success ? maxAgeDays.data : defaults.executions.maxAgeDays,
+    },
+  };
+}
+
+function merged(current: InstanceSettings, patch: SettingsPatch): InstanceSettings {
+  return instanceSettingsSchema.parse({ timezone: patch.timezone ?? current.timezone, executions: { ...current.executions, ...patch.executions } });
+}
+
+/** Settings backed by one JSON file. */
 export class SettingsFile {
   constructor(readonly path: string) {}
 
-  /** Saved values over the defaults; a saved value that is no longer valid (an unknown zone) falls back to its default. */
   get(): InstanceSettings {
-    const defaults = defaultSettings();
     let saved: Partial<InstanceSettings> = {};
     try {
       saved = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<InstanceSettings>;
     } catch {
       // No settings saved yet.
     }
-    const timezone = timezoneSchema.safeParse(saved.timezone);
-    const maxCount = retentionSchema.shape.maxCount.safeParse(saved.executions?.maxCount);
-    const maxAgeDays = retentionSchema.shape.maxAgeDays.safeParse(saved.executions?.maxAgeDays);
-    return {
-      timezone: timezone.success ? timezone.data : defaults.timezone,
-      executions: {
-        maxCount: maxCount.success ? maxCount.data : defaults.executions.maxCount,
-        maxAgeDays: maxAgeDays.success ? maxAgeDays.data : defaults.executions.maxAgeDays,
-      },
-    };
+    return withDefaults(saved ?? {});
   }
 
   update(patch: SettingsPatch): InstanceSettings {
-    const current = this.get();
-    const next = instanceSettingsSchema.parse({
-      timezone: patch.timezone ?? current.timezone,
-      executions: { ...current.executions, ...patch.executions },
-    });
+    const next = merged(this.get(), patch);
     atomicWrite(this.path, next);
     return next;
   }
 }
 
-const file = () => new SettingsFile(join(store.dir, 'settings.json'));
+/** Settings in the database's `settings` table: the instance's. */
+export class SettingsTable {
+  constructor(private readonly db: () => Database = database) {}
+
+  get(): InstanceSettings {
+    let saved: Partial<InstanceSettings> = {};
+    try {
+      saved = JSON.parse(this.db().get<{ value: string }>('SELECT value FROM settings WHERE key = ?', INSTANCE_SETTINGS)?.value ?? '{}') as Partial<InstanceSettings>;
+    } catch {
+      // Unreadable: the defaults.
+    }
+    return withDefaults(saved ?? {});
+  }
+
+  update(patch: SettingsPatch): InstanceSettings {
+    const next = merged(this.get(), patch);
+    this.db().upsert('settings', { key: INSTANCE_SETTINGS, value: JSON.stringify(next) });
+    return next;
+  }
+}
+
+const instance = new SettingsTable();
 
 export function getSettings(): InstanceSettings {
-  return file().get();
+  return instance.get();
 }
 
 export function updateSettings(patch: SettingsPatch): InstanceSettings {
-  return file().update(patch);
+  return instance.update(patch);
 }
 
 /** The instance's default time zone (Settings → General). */

@@ -16,6 +16,8 @@ export const workflowNodeSchema = z.object({
   retryOnFail: z.boolean().optional(),
   maxTries: z.number().int().min(1).max(10).optional(),
   waitBetweenTriesMs: z.number().int().min(0).max(60_000).optional(),
+  /** Fail an attempt of the node that takes longer (retries and "continue on error" apply). */
+  timeoutSeconds: z.number().min(0.1).max(86_400).optional(),
   alwaysOutputData: z.boolean().optional(),
   executeOnce: z.boolean().optional(),
 });
@@ -52,6 +54,14 @@ export const workflowSchema = z
         saveManualExecutions: z.boolean().optional(),
         /** Minutes one successful run saves (Insights). */
         timeSavedMinutes: z.number().min(0).max(100_000).optional(),
+        /** Durable runtime: production runs at once (0 = no limit), one at a time, and what happens to the extra ones. */
+        concurrencyLimit: z.number().int().min(0).max(1000).optional(),
+        singleton: z.boolean().optional(),
+        concurrencyOverflow: z.enum(['queue', 'skip']).optional(),
+        concurrencyQueueSize: z.number().int().min(1).max(10_000).optional(),
+        /** Automatic retries of failed production runs: attempts in all (2+ enables) and the first delay (doubling). */
+        retryMaxAttempts: z.number().int().min(1).max(10).optional(),
+        retryBaseDelaySeconds: z.number().int().min(0).max(86_400).optional(),
       })
       .optional(),
     stickyNotes: z

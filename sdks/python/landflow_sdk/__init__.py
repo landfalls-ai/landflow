@@ -9,6 +9,7 @@ the ``otel`` extra. Nothing here imports grpcio or opentelemetry.
 """
 
 from ._version import __version__
+from .binary import MAX_INLINE_BINARY_BYTES, BinaryClient, file_type_of, mime_type_from_file_name
 from .context import CredentialTestContext, ExecuteContext, LoadOptionsContext, NodeLogger
 from .credentials import CredentialType
 from .errors import (
@@ -35,6 +36,7 @@ from .serve import PluginServer, serve
 from .telemetry import Span, SpanContext, Telemetry, current_span
 
 __all__ = [
+    "BinaryClient",
     "CredentialTestContext",
     "CredentialType",
     "DEFAULT_ANNOUNCE_TTL_SECONDS",
@@ -48,6 +50,7 @@ __all__ = [
     "LoadOptionsContext",
     "LogFormatter",
     "MAX_ICON_BYTES",
+    "MAX_INLINE_BINARY_BYTES",
     "Metrics",
     "MetricsRegistry",
     "Node",
@@ -67,7 +70,9 @@ __all__ = [
     "__version__",
     "configure_logging",
     "current_span",
+    "file_type_of",
     "icon_file",
+    "mime_type_from_file_name",
     "poll_interval_property",
     "serve",
 ]

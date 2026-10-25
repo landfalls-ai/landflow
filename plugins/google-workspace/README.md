@@ -29,7 +29,7 @@ full URL instead.
 |---|---|---|
 | **Google Sheets** (`google.googleSheets`) | Sheet → Append Row, Append or Update Row, Clear, Get Row(s), Update Row · Spreadsheet → Create | See below |
 | **Google Sheets Trigger** (`google.googleSheetsTrigger`) | poll trigger, Row Added, default every 60 s | Document, Sheet (empty: the first) |
-| **Gmail** (`google.gmail`) | Message → Send, Reply, Get, Get Many, Add Labels, Remove Labels, Mark as Read, Mark as Unread | Send/Reply: To, Subject, Email Type (Text/HTML), Message; Options: CC, BCC, Reply To, Sender Name, Reply to Sender Only. Get Many: Return All / Limit, Simplify, Filters (Search, Read Status, Sender, labels, include spam and trash) |
+| **Gmail** (`google.gmail`) | Message → Send, Reply, Get, Get Many, Add Labels, Remove Labels, Mark as Read, Mark as Unread | Send/Reply: To, Subject, Email Type (Text/HTML), Message; Options: Attachments, CC, BCC, Reply To, Sender Name, Reply to Sender Only ([attachments](#gmail-attachments)). Get Many: Return All / Limit, Simplify, Filters (Search, Read Status, Sender, labels, include spam and trash) |
 | **Gmail Trigger** (`google.gmailTrigger`) | poll trigger, new emails, default every 60 s | Same Filters as Get Many, Simplify |
 | **Google Drive** (`google.googleDrive`) | File → Upload, Download, Delete · File/Folder → Search · Folder → Create | Upload: text or base64 content (≤ 5 MB, multipart upload), parent folder, MIME type. Download: ≤ 10 MB into the item as `content` (`encoding` `utf8` for text, else `base64`); Docs, Sheets, Slides and Drawings are exported as text, CSV, text and PNG. Delete trashes unless Delete Permanently. Search by name or with a raw Drive query, filtered by folder, files/folders, MIME types, trash |
 | **Google Calendar** (`google.googleCalendar`) | Event → Create, Delete, Get, Get Many, Update | Calendar picker (`calendarList`). Start/End as ISO 8601: with an offset as given, without one in the event's Time Zone or the calendar's. All Day uses dates (a same-day end becomes the next day, as the API's end date is exclusive). Additional/Update Fields: summary, description, location, attendees, time zone, send updates. Get Many: After/Before, order by start time or updated, search, single events, show deleted |
@@ -49,6 +49,19 @@ unformatted values (numbers stay numbers) and formatted dates.
 - **Get Row(s)**: every non-empty row, or the rows matching Filters (column = value, combined with AND or OR); the first
   match only unless Options → Return All Matches.
 - **Clear** empties the sheet, optionally keeping the header row. **Create** makes a spreadsheet with named sheets.
+
+### Gmail attachments
+
+Send and Reply → Options → **Attachments** lists binary properties of the input item, separated by commas
+(`data, invoice`): files from Read Files from Disk, HTTP Request (Response Format: File), a webhook or form upload, or
+any node that attaches binary data ([protocol §11](../../docs/protocol.md#11-binary-data)). n8n's
+`attachmentsUi.attachmentsBinary[].property` works too. The message becomes `multipart/mixed` with one base64 part per
+file, named by the file's name (RFC 2231 for non-ASCII names), or `<property>.<extension>` when it has none. A missing
+property fails the item (`item 0 has no binary file "invoice"`).
+
+Messages up to 5 MB go through `messages.send` with the message in `raw`; bigger ones through the upload endpoint
+(`/upload/gmail/v1/users/me/messages/send`, `uploadType=media`, or `multipart` with the `threadId` for a reply), which
+honours the credential's base URL. Gmail refuses messages over 35 MB, and so does the node, before sending.
 
 ### Polling triggers
 

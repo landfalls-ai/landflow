@@ -15,7 +15,7 @@ process.env.LANDFLOW_DATA_DIR = dataDir;
 
 const { store } = await import('@/lib/server/store');
 const settings = await import('@/lib/server/settings');
-const { DEFAULT_MAX_EXECUTIONS, SettingsFile, getSettings, hostTimeZone, pruneExecutions, settingsPatchSchema, staleExecutionIds, updateSettings } = settings;
+const { DEFAULT_MAX_EXECUTIONS, SettingsFile, SettingsTable, getSettings, hostTimeZone, pruneExecutions, settingsPatchSchema, staleExecutionIds, updateSettings } = settings;
 
 afterAll(() => {
   process.env.LANDFLOW_DATA_DIR = previousDir;
@@ -41,7 +41,7 @@ function execution(id: string, status: string, startedAt: string | number): Exec
 }
 
 const ids = () => store.listExecutions({ limit: Infinity }).map((e) => e.id);
-const fileOf = (id: string) => join(dataDir, 'executions', `${id}.json`);
+const saved = (id: string) => store.getExecution(id) !== undefined;
 
 function clearExecutions() {
   for (const id of ids()) store.deleteExecution(id);
@@ -82,7 +82,9 @@ describe('settings file', () => {
     expect(getSettings().executions.maxCount).toBe(300);
     updateSettings({ timezone: 'Asia/Tokyo' });
     expect(getSettings().timezone).toBe('Asia/Tokyo');
-    expect(existsSync(join(dataDir, 'settings.json'))).toBe(true);
+    // Kept in the data directory's database.
+    expect(existsSync(join(dataDir, 'landflow.db'))).toBe(true);
+    expect(new SettingsTable().get().timezone).toBe('Asia/Tokyo');
     updateSettings({ timezone: hostTimeZone() });
   });
 });
@@ -129,9 +131,9 @@ describe('retention in the store', () => {
     updateSettings({ executions: { maxCount: 3 } });
     for (let i = 1; i <= 5; i++) store.saveExecution(execution(`ex_count_${i}`, 'success', Date.now() - (10 - i) * 1000));
     expect(ids()).toEqual(['ex_count_5', 'ex_count_4', 'ex_count_3']);
-    expect(existsSync(fileOf('ex_count_1'))).toBe(false);
-    expect(existsSync(fileOf('ex_count_2'))).toBe(false);
-    expect(existsSync(fileOf('ex_count_5'))).toBe(true);
+    expect(saved('ex_count_1')).toBe(false);
+    expect(saved('ex_count_2')).toBe(false);
+    expect(saved('ex_count_5')).toBe(true);
   });
 
   it('saveExecution prunes by age', () => {
@@ -148,8 +150,10 @@ describe('retention in the store', () => {
     store.saveExecution(execution('ex_running', 'running', Date.now() - 30 * DAY));
     store.saveExecution(execution('ex_done_1', 'success', Date.now() - 2000));
     store.saveExecution(execution('ex_done_2', 'success', Date.now() - 1000));
-    expect(ids().sort()).toEqual(['ex_done_2', 'ex_running', 'ex_waiting']);
-    expect(existsSync(fileOf('ex_waiting'))).toBe(true);
+    // Running executions are listed by the runner (their saved rows are for crash recovery), so not here.
+    expect(ids().sort()).toEqual(['ex_done_2', 'ex_waiting']);
+    expect(saved('ex_waiting')).toBe(true);
+    expect(saved('ex_running')).toBe(true);
   });
 
   it('pruneExecutions applies changed settings and reports how many it removed ("Prune now")', () => {

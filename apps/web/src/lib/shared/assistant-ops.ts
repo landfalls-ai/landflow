@@ -8,7 +8,7 @@
  * the registry; the editor applies them with it against its own node types.
  */
 import { nanoid } from 'nanoid';
-import { changeParameter, defaultParameters, defaultVersionOf } from '@landflow/protocol';
+import { changeParameter, defaultParameters, defaultVersionOf, indexedPorts } from '@landflow/protocol';
 import type { ConnectionType, NodeDescriptor, NodeRun, Workflow, WorkflowConnection, WorkflowNode } from './types';
 
 /**
@@ -53,7 +53,7 @@ export interface OpsResult {
   added: string[];
 }
 
-const CONNECTION_TYPES: ConnectionType[] = ['main', 'ai_languageModel', 'ai_memory', 'ai_tool'];
+const CONNECTION_TYPES: ConnectionType[] = ['main', 'ai_languageModel', 'ai_memory', 'ai_tool', 'ai_embedding', 'ai_document', 'ai_textSplitter', 'ai_retriever', 'ai_reranker'];
 const COLUMN = 280;
 const ROW = 170;
 
@@ -202,7 +202,7 @@ function planConnection(
   }
 
   const fits = (from: NodeDescriptor, to: NodeDescriptor) =>
-    to.inputs.some((p) => p.type === type) && (from.supplies === type || (type === 'ai_tool' && Boolean(from.usableAsTool)));
+    to.inputs.some((p) => p.type === type) && (from.supplies === type || from.outputs.some((p) => p.type === type) || (type === 'ai_tool' && Boolean(from.usableAsTool)));
   if (fits(sd, td)) return { type, source, target, sourceIndex: 0, targetIndex: 0 };
   // Models often wire the agent to its sub-node; the edge runs sub-node → agent.
   if (fits(td, sd)) return { type, source: target, target: source, sourceIndex: 0, targetIndex: 0 };
@@ -566,8 +566,9 @@ export function structuralWarnings(before: Workflow, after: Workflow, lookup: De
       continue;
     }
     if (!fed(after, node.id)) warnings.push(`new node “${node.name}” has no input`);
-    for (const port of descriptor.inputs.filter((p) => p.type !== 'main' && p.required)) {
-      if (!after.connections.some((c) => c.target === node.id && c.type === port.type)) warnings.push(`new node “${node.name}” needs a ${port.displayName ?? port.type} attached`);
+    // Only the slots the node's parameters show (an agent's Fallback Model only with the switch on).
+    for (const { port, index } of indexedPorts(descriptor.inputs, node.parameters).filter((p) => p.visible && p.port.type !== 'main' && p.port.required)) {
+      if (!after.connections.some((c) => c.target === node.id && c.type === port.type && (c.targetIndex ?? 0) === index)) warnings.push(`new node “${node.name}” needs a ${port.displayName ?? port.type} attached`);
     }
   }
   return warnings;

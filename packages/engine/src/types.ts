@@ -32,6 +32,8 @@ export interface WorkflowNode {
   retryOnFail?: boolean;
   maxTries?: number;
   waitBetweenTriesMs?: number;
+  /** Fail an attempt that runs longer than this (its abort signal fires); retries and "continue on error" apply. */
+  timeoutSeconds?: number;
   alwaysOutputData?: boolean;
   executeOnce?: boolean;
   /** Saved credentials this node uses, by credential type local name. Secrets live in the host's credential store. */
@@ -67,6 +69,18 @@ export interface WorkflowSettings {
   saveManualExecutions?: boolean;
   /** Minutes of manual work one successful run saves (Insights' "time saved"). */
   timeSavedMinutes?: number;
+  /** Most production runs going at once (waiting runs don't count). Manual runs and sub-executions bypass it. */
+  concurrencyLimit?: number;
+  /** One run at a time, waiting runs included. */
+  singleton?: boolean;
+  /** A trigger run over the limit (or while the singleton runs): wait in a FIFO queue (default) or be skipped. */
+  concurrencyOverflow?: 'queue' | 'skip';
+  /** Longest queue (default 100); runs beyond it are skipped. */
+  concurrencyQueueSize?: number;
+  /** Retry a failed production run automatically: attempts in all, the first run included (2 or more turns it on). */
+  retryMaxAttempts?: number;
+  /** Seconds before the first automatic retry (default 30); each further retry waits twice as long. */
+  retryBaseDelaySeconds?: number;
 }
 
 /** A canvas note. It never runs; the engine ignores it. */
@@ -111,8 +125,8 @@ export interface ResolvedNodeType {
   transport: Transport;
   descriptor: NodeDescriptor;
   execute(request: ExecuteRequest, extras?: ContextExtras): Promise<ExecuteResponse>;
-  /** In-process sub-nodes only. */
-  supplyData?(request: ExecuteRequest): Promise<unknown>;
+  /** In-process sub-nodes only. `extras.getInputConnectionData` supplies the sub-node's own sub-nodes. */
+  supplyData?(request: ExecuteRequest, extras?: ContextExtras): Promise<unknown>;
 }
 
 export interface NodeTypeResolver {
@@ -123,7 +137,8 @@ export interface NodeTypeResolver {
 // Run data & events
 // ---------------------------------------------------------------------------
 
-export type RunSource = 'main' | 'tool' | 'model' | 'memory';
+/** `main`, or the port a sub-node was used through (`landflow.node.source` maps them to `ai_*`). */
+export type RunSource = 'main' | 'tool' | 'model' | 'memory' | 'embedding' | 'document' | 'textSplitter' | 'retriever' | 'reranker';
 export type RunStatus = 'success' | 'error';
 
 export interface NodeRun {
@@ -299,11 +314,37 @@ export interface ResumeState {
   reusedOutputs?: Record<string, NodeItem[][]>;
 }
 
-/** How a wait ended. `timeout`: a webhook or form wait reached its time limit; `subworkflow`: the awaited sub-execution finished. */
-export type ResumeKind = 'time' | 'webhook' | 'form' | 'timeout' | 'subworkflow';
+/**
+ * How a wait ended. `timeout`: a webhook or form wait reached its time limit; `subworkflow`: the awaited sub-execution
+ * finished. `restart`: not a wait: the run continues from a checkpoint (after a crash, or a retry of a failed run).
+ */
+export type ResumeKind = 'time' | 'webhook' | 'form' | 'timeout' | 'subworkflow' | 'restart';
+
+/** A ResumeState without a waiting node: the run's state between two nodes. */
+export type CheckpointState = Omit<ResumeState, 'waiting'> & { waiting?: undefined };
+
+/**
+ * The run's state between two main-flow nodes (ExecuteWorkflowOptions.onCheckpoint): continue from it with
+ * `resume: { state, kind: 'restart' }`, which runs what is still on the stack. A node that was running when the
+ * process died runs again, with the same per-step idempotency key.
+ */
+export interface RunCheckpoint {
+  /** `<nodeId>#<runIndex>` of the main-flow node that just finished, or `start` before the first node. */
+  stepId: string;
+  nodeId?: string;
+  /** How many entries of `executionOrder` the checkpoint covers. */
+  steps: number;
+  /**
+   * The state without a waiting node. It shares the run's live objects: serialize it during the call. Resuming
+   * from it needs `runData` and `executionOrder` as they were (the first `steps` entries) and `nodeOutputs`
+   * (rebuilt from the run data when left empty).
+   */
+  state: CheckpointState;
+}
 
 export interface ResumeOptions {
-  state: ResumeState;
+  /** A waiting run's state, or a checkpoint (kind `restart`). */
+  state: ResumeState | CheckpointState;
   /** The waiting node's output; default: what it returned when it asked to wait. */
   outputs?: NodeItem[][];
   kind: ResumeKind;
@@ -338,4 +379,6 @@ export interface ExecuteWorkflowOptions {
   resume?: ResumeOptions;
   /** `$execution.resumeUrl` / `$execution.resumeFormUrl`: where a webhook or form wait of this run is resumed. */
   resumeUrls?: { webhook: string; form: string };
+  /** Called before the first node and after every main-flow node that finished: the state to continue from after a crash. */
+  onCheckpoint?: (checkpoint: RunCheckpoint) => void;
 }

@@ -11,6 +11,8 @@ export interface FakeRequest {
   headers: IncomingHttpHeaders;
   /** Parsed JSON body (undefined when empty or not JSON). */
   body: any;
+  /** The body as sent (multipart uploads). */
+  raw: Buffer;
 }
 
 export interface FakeReply {
@@ -38,14 +40,15 @@ export async function startFakeApi(initial: Handler = () => ({ status: 404, body
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', async () => {
       const url = new URL(req.url ?? '/', 'http://fake');
-      const text = Buffer.concat(chunks).toString('utf8');
+      const raw = Buffer.concat(chunks);
+      const text = raw.toString('utf8');
       let body: unknown;
       try {
         body = text ? JSON.parse(text) : undefined;
       } catch {
         body = undefined;
       }
-      const request: FakeRequest = { method: req.method ?? 'GET', path: url.pathname, query: url.searchParams, headers: req.headers, body };
+      const request: FakeRequest = { method: req.method ?? 'GET', path: url.pathname, query: url.searchParams, headers: req.headers, body, raw };
       requests.push(request);
       try {
         const reply = await handler(request);

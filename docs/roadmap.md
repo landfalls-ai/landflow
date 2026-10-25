@@ -15,7 +15,7 @@ check in Chrome, and this file is updated as items land. The Claude Code harness
 
 Three streams in parallel, split by the files they own.
 
-**A. Engine and flow**
+**A. Engine and flow** ✅ Done. Not yet: waiting children in "each item" mode, a test URL for forms.
 - Executions that pause and resume: a node can put the run in a `waiting` state. The run's
   state is saved to disk and resumed later, also after a restart, at a time, on a webhook call
   or on a form submission.
@@ -32,7 +32,7 @@ Three streams in parallel, split by the files they own.
 - **Schedule** trigger: cron expressions, times of day, weekdays, a time zone, and several rules.
 - Workflow timeout, and the settings for which executions to keep.
 
-**B. Editor and organisation**
+**B. Editor and organisation** ✅ Done. Renaming a node updates `$('Old')` references. Not yet: undo doesn't cover settings, tags or the name.
 - Sticky notes on the canvas.
 - Copy, paste and duplicate nodes, using the clipboard JSON format n8n uses.
 - Import and export workflow JSON, including import from n8n workflows.
@@ -41,7 +41,7 @@ Three streams in parallel, split by the files they own.
 - Tags and folders, plus search and sort in the workflows list.
 - An expression editor with autocomplete for `$json`, `$('Node')`, `$vars` and functions.
 
-**C. Platform data**
+**C. Platform data** ✅ Done.
 - **Settings** page: general settings (default time zone, execution retention) and variables.
 - **Variables**, used in expressions as `$vars.NAME`.
 - **Data Tables**: built-in tables with a page to edit them, and a Data Table node (insert,
@@ -68,16 +68,28 @@ Three streams in parallel, split by the files they own.
 ## Wave 1.5: a durable runtime
 
 Wave 1 makes the store the system of record for waits and approvals, so the runtime comes
-before sign-in and AI.
+before sign-in and AI. ✅ Done; see the README's Durable runtime section.
 - A SQLite store, with Postgres as an option (Docker infra). The JSON files stay as an import
-  and export format.
+  and export format. ✅ Done: `<data dir>/landflow.db` in WAL mode with versioned migrations,
+  workflows, executions, poll state, versions, folders, settings, variables, waits and Data
+  Tables in it; a one-time import renames the old files to `<name>.imported-<date>`.
+  `LANDFLOW_DB=postgres` keeps an in-memory copy and writes to Postgres through a spooled
+  queue, one host per database until Wave 4. Credentials and the encryption key stay files.
 - Crash recovery: node outputs are saved as checkpoints under stable step ids. A run
   interrupted by a restart continues from its last finished node, the way Inngest and Hatchet
-  work.
-- Every execution records the workflow version it started on.
-- Idempotency keys for triggers, and per-step keys sent to plugins.
-- Per-workflow concurrency limits and singleton runs. n8n offers neither at any tier.
+  work. ✅ Done: node runs and a checkpoint per main-flow node (`<nodeId>#<runIndex>`); at boot a
+  `running` execution continues from its checkpoint ("Resumed after restart") or fails with the
+  reason.
+- Every execution records the workflow version it started on. ✅ Done (`versionId`).
+- Idempotency keys for triggers, and per-step keys sent to plugins. ✅ Done: `Idempotency-Key`
+  on webhooks and forms and `idempotencyKey` on the run API (24 h window); `ExecuteRequest`
+  carries `idempotencyKey` (`<executionId>:<nodeId>:<runIndex>`), exposed by the TS, Go and
+  Python SDKs.
+- Per-workflow concurrency limits and singleton runs. n8n offers neither at any tier. ✅ Done:
+  extra trigger runs wait in a bounded FIFO queue or are skipped; manual runs bypass it.
 - Automatic retry of failed runs with backoff, per-node timeouts, and a stop-all control.
+  ✅ Done: linked retries (`retryOf`) that continue from the failed node, a Retry action,
+  `timeoutSeconds` per node and Stop all on the Executions page.
 
 ## Wave 2a: what a network-reachable install needs
 
@@ -86,13 +98,23 @@ before sign-in and AI.
 - Scoped API keys and a documented public API.
 - Free OIDC login (Keycloak in Docker). n8n charges for it.
 - A sandboxed Code node running out of process in a locked-down container, with JavaScript and
-  Python.
+  Python. ✅ Done: the code runner service, one fresh child process per run with n8n's globals,
+  on an internal Docker network with a read-only root; see [deploy/README.md](../deploy/README.md),
+  "Code runner". Not yet: syntax highlighting in the code editor, `$('Node')` in in-process code.
 - OAuth2 *Connect* buttons for credentials.
 - **Binary data** across the protocol and the three SDKs, stored on disk or in S3 (MinIO):
   - file nodes: Read/Write Files, Extract from File, Convert to File;
   - HTTP downloads;
   - webhook and form uploads;
   - attachments in the integrations.
+
+  ✅ Done: `item.binary` refs in the protocol (JSON and gRPC), a filesystem or S3 store with files
+  deleted with their execution, `/api/binary` with per-call tokens for plugins, helpers in the
+  three SDKs, the file nodes (CSV, XLSX, HTML, JSON, text, PDF text, base64), HTTP Request file
+  responses and multipart bodies, webhook and form uploads, Respond to Webhook files, Gmail
+  attachments, Telegram uploads and downloads, and a Binary tab in the run view; see the README's
+  "Files and binary data". Not yet: Google Drive, Slack and the other integrations' files, binary
+  in the Code node, range requests for video, XLSX/ODS writing.
 - Failure alerts by email or chat, without writing an error workflow.
 
 ## Wave 2b: safe deploys and outside agents
@@ -104,6 +126,8 @@ before sign-in and AI.
 - A CLI with stable JSON output, and Git sync of workflows as files.
 - **MCP Server Trigger** (a workflow serves tools over MCP), **MCP Client Tool** (an agent uses
   an MCP server), and an instance-level MCP server so coding agents can build and run workflows.
+  ✅ Done, with an MCP Client node and MCP servers as an agent capability; see the README's MCP
+  section. Not yet: OAuth for MCP servers, a test URL for the trigger, resources and prompts.
 
 ## Wave 3: AI
 
@@ -113,9 +137,16 @@ before sign-in and AI.
   - hybrid search with a reranker;
   - a retriever usable as an agent tool;
   - knowledge bases for agents.
+
+  ✅ Done, with OpenAI-compatible embeddings, a token splitter, an LLM reranker and a Question and
+  Answer Chain; see the README's RAG section. Not yet: files (PDF, DOCX) in the data loader, a
+  Cohere reranker, uploading documents from the agent builder.
 - Streamed replies, a hosted chat page and an embeddable widget for the Chat trigger.
-- Guardrails node (PII, prompt injection, moderation).
-- Token and cost tracking with per-agent and per-workflow caps; model fallbacks.
+- Guardrails node (PII, prompt injection, moderation). ✅ Done, after n8n's: check (Pass/Fail) or
+  sanitize, plus secret keys, keywords, URL allow-lists, topical alignment and custom checks. Not
+  yet: guardrails as a setting of standalone agents.
+- Model fallbacks. ✅ Done: "Enable Fallback Model" on the AI Agent and the chains.
+- Token and cost tracking with per-agent and per-workflow caps.
 - Evaluations, both offline (test datasets from Data Tables) and online (grading agent
   conversations).
 - A Slack agent channel with approval buttons.

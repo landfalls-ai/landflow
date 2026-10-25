@@ -4,23 +4,17 @@
  * `informationExtractor`). Each takes any chat model sub-node on its
  * `ai_languageModel` port (Anthropic, Ollama, OpenAI…) through the provider-neutral
  * LanguageModel interface, and asks for strict JSON where it needs structure.
+ * “Enable Fallback Model” adds a second model that takes over when a call to
+ * the first one fails (see fallback.ts).
  */
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
-import type { LanguageModel } from '@landflow/engine';
+import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY } from './fallback';
 import type { GenerateInput } from './models';
 import { formatInstructions, generateStructured, readSchema, type JsonSchema } from './structured';
 
 const main = [{ type: 'main' as const }];
 const modelInput = { type: 'ai_languageModel' as const, displayName: 'Chat Model', required: true, maxConnections: 1 };
 const AI = { version: 1, kind: 'action' as const, categories: ['AI'], color: '#a855f7' };
-
-async function connectedModel(ctx: IExecuteContext, node: string): Promise<LanguageModel> {
-  if (!ctx.getInputConnectionData) throw new NodeOperationError(`The ${node} must run in-process`);
-  const [model] = await ctx.getInputConnectionData<LanguageModel>('ai_languageModel');
-  if (!model)
-    throw new NodeOperationError('No chat model connected', { description: 'Attach a chat model (Anthropic, Ollama or OpenAI) to the “Chat Model” slot.' });
-  return model;
-}
 
 /** Run `work` per item; a NodeOperationError without an item index gets this item's. */
 async function perItem<T>(ctx: IExecuteContext, work: (item: NodeItem, i: number) => Promise<T>): Promise<T[]> {
@@ -59,7 +53,7 @@ export const chainLlmNode = defineNode({
     description: 'Send a prompt to a chat model and return its answer, optionally as validated JSON',
     icon: 'lucide:link',
     keywords: ['llm', 'prompt', 'chain', 'completion', 'chat', 'json', 'structured output'],
-    inputs: [{ type: 'main' }, modelInput],
+    inputs: [{ type: 'main' }, modelInput, FALLBACK_PORT],
     outputs: main,
     properties: [
       { name: 'prompt', displayName: 'Prompt (User Message)', type: 'string', default: '{{ $json.chatInput }}', required: true, typeOptions: { rows: 4 } },
@@ -87,6 +81,7 @@ export const chainLlmNode = defineNode({
           '{\n  "type": "object",\n  "properties": {\n    "answer": { "type": "string" },\n    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }\n  },\n  "required": ["answer"]\n}',
         displayOptions: { show: { hasOutputParser: [true] } },
       },
+      FALLBACK_PROPERTY,
     ],
   },
   async execute(ctx) {
@@ -138,7 +133,7 @@ export const textClassifierNode = defineNode({
     description: 'Route items by the category a chat model assigns to their text',
     icon: 'lucide:tags',
     keywords: ['classify', 'categorize', 'label', 'route', 'sentiment', 'intent', 'llm'],
-    inputs: [{ type: 'main' }, modelInput],
+    inputs: [{ type: 'main' }, modelInput, FALLBACK_PORT],
     outputs: [
       ...Array.from({ length: CLASSIFIER_OUTPUTS }, (_, i) => ({ type: 'main' as const, displayName: String(i) })),
       { type: 'main', displayName: 'Other' },
@@ -168,6 +163,7 @@ export const textClassifierNode = defineNode({
           },
         ],
       },
+      FALLBACK_PROPERTY,
       {
         name: 'options',
         displayName: 'Options',
@@ -301,7 +297,7 @@ export const informationExtractorNode = defineNode({
     description: 'Pull structured fields out of text with a chat model',
     icon: 'lucide:scan-text',
     keywords: ['extract', 'parse', 'structured', 'entities', 'fields', 'json', 'llm'],
-    inputs: [{ type: 'main' }, modelInput],
+    inputs: [{ type: 'main' }, modelInput, FALLBACK_PORT],
     outputs: main,
     properties: [
       { name: 'text', displayName: 'Text', type: 'string', default: '{{ $json.text }}', required: true, typeOptions: { rows: 2 } },
@@ -356,6 +352,7 @@ export const informationExtractorNode = defineNode({
         default:
           '{\n  "type": "object",\n  "properties": {\n    "state": { "type": "string" },\n    "cities": { "type": "array", "items": { "type": "string" } }\n  },\n  "required": ["state"]\n}',
       },
+      FALLBACK_PROPERTY,
       {
         name: 'options',
         displayName: 'Options',

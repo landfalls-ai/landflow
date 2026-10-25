@@ -1,6 +1,5 @@
-import vm from 'node:vm';
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { variables } from '../variables';
+import { BODY_METHODS, executeHttpRequest } from './http-request';
 
 const main = [{ type: 'main' as const }];
 
@@ -144,91 +143,15 @@ export const setNode = defineNode({
           out.push({ json: (typeof entry === 'object' && entry !== null ? entry : { value: entry }) as JsonObject, pairedItem: { item: i } });
         }
       } else {
-        out.push({ json: base as JsonObject, pairedItem: { item: i } });
+        out.push({ json: base as JsonObject, ...(item.binary && { binary: item.binary }), pairedItem: { item: i } });
       }
     });
     return [out];
   },
 });
 
-export const codeNode = defineNode({
-  description: {
-    name: 'code',
-    displayName: 'Code',
-    description: 'Run JavaScript over the items',
-    version: 1,
-    kind: 'action',
-    categories: ['Data'],
-    icon: 'lucide:code-xml',
-    color: '#eab308',
-    subtitle: '{{mode}}',
-    inputs: main,
-    outputs: main,
-    properties: [
-      {
-        name: 'mode',
-        displayName: 'Mode',
-        type: 'options',
-        default: 'all',
-        options: [
-          { name: 'Run once for all items', value: 'all' },
-          { name: 'Run once for each item', value: 'each' },
-        ],
-      },
-      {
-        name: 'code',
-        displayName: 'JavaScript',
-        type: 'code',
-        typeOptions: { language: 'javascript', rows: 12 },
-        noDataExpression: true,
-        default:
-          '// `items` = input items, each { json }. Return an array of items or plain objects.\nreturn items.map((item, i) => ({\n  ...item.json,\n  index: i,\n  processedAt: new Date().toISOString(),\n}));',
-        displayOptions: { show: { mode: ['all'] } },
-      },
-      {
-        name: 'codeEach',
-        displayName: 'JavaScript',
-        type: 'code',
-        typeOptions: { language: 'javascript', rows: 12 },
-        noDataExpression: true,
-        default: '// `$json` = this item’s data. Return an object.\nreturn { ...$json, length: JSON.stringify($json).length };',
-        displayOptions: { show: { mode: ['each'] } },
-      },
-    ],
-  },
-  execute(ctx) {
-    const items = ctx.getInputData();
-    const $vars = Object.freeze(variables.record());
-    const logs: string[] = [];
-    const console = { log: (...args: unknown[]) => logs.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')) };
-    const run = (source: string, scope: Record<string, unknown>) => {
-      // $vars: the instance variables, read-only (Settings → Variables).
-      const context = vm.createContext({ ...scope, $vars, console });
-      try {
-        return new vm.Script(`(function () {\n${source}\n})()`, { filename: 'code-node.js' }).runInContext(context, { timeout: 2_000 });
-      } catch (error) {
-        throw new NodeOperationError(`Code error: ${(error as Error).message}`);
-      }
-    };
-    const toItems = (result: unknown): NodeItem[] => {
-      const list = Array.isArray(result) ? result : result === undefined ? [] : [result];
-      return list.map((entry) =>
-        entry && typeof entry === 'object' && 'json' in entry ? (entry as NodeItem) : { json: (typeof entry === 'object' && entry !== null ? entry : { value: entry }) as JsonObject },
-      );
-    };
-    let output: NodeItem[];
-    if (ctx.getNodeParameter('mode') === 'each') {
-      output = items.flatMap((item, i) =>
-        toItems(run(ctx.getNodeParameter<string>('codeEach'), { $json: structuredClone(item.json), $itemIndex: i, items })).map((o) => ({ ...o, pairedItem: { item: i } })),
-      );
-    } else {
-      output = toItems(run(ctx.getNodeParameter<string>('code'), { items: structuredClone(items), $input: { all: () => items, first: () => items[0] } }));
-    }
-    logs.forEach((line) => ctx.logger.info(line));
-    // Results cross the vm realm boundary; normalize to plain JSON.
-    return [JSON.parse(JSON.stringify(output)) as NodeItem[]];
-  },
-});
+/** The Code node lives in ./code (JavaScript or Python, in-process or in the sandboxed code runner). */
+export { codeNode } from './code';
 
 export const httpRequestNode = defineNode({
   description: {
@@ -271,11 +194,53 @@ export const httpRequestNode = defineNode({
         groups: [{ name: 'header', displayName: 'Header', values: [{ name: 'name', displayName: 'Name', type: 'string', default: '' }, { name: 'value', displayName: 'Value', type: 'string', default: '' }] }],
       },
       {
+        name: 'bodyType',
+        displayName: 'Body Content Type',
+        type: 'options',
+        default: 'json',
+        noDataExpression: true,
+        displayOptions: { show: { method: BODY_METHODS } },
+        options: [
+          { name: 'JSON', value: 'json' },
+          { name: 'Form-Data (Multipart)', value: 'multipart', description: 'Text fields and files' },
+          { name: 'Binary File', value: 'binary', description: 'A file of the item as the raw body' },
+        ],
+      },
+      {
         name: 'body',
         displayName: 'JSON Body',
         type: 'json',
         default: '',
-        displayOptions: { show: { method: ['POST', 'PUT', 'PATCH', 'DELETE'] } },
+        displayOptions: { show: { method: BODY_METHODS, bodyType: ['json'] } },
+      },
+      {
+        name: 'binaryPropertyName',
+        displayName: 'Input Binary Field',
+        type: 'string',
+        default: 'data',
+        description: 'The item file to send (item.binary.<name>); its MIME type becomes the Content-Type',
+        displayOptions: { show: { method: BODY_METHODS, bodyType: ['binary'] } },
+      },
+      {
+        name: 'formData',
+        displayName: 'Form Fields',
+        type: 'fixedCollection',
+        typeOptions: { multipleValues: true },
+        placeholder: 'Add field',
+        default: {},
+        displayOptions: { show: { method: BODY_METHODS, bodyType: ['multipart'] } },
+        groups: [
+          {
+            name: 'values',
+            displayName: 'Field',
+            values: [
+              { name: 'name', displayName: 'Name', type: 'string', default: '' },
+              { name: 'type', displayName: 'Type', type: 'options', default: 'text', options: [{ name: 'Text', value: 'text' }, { name: 'File', value: 'file' }] },
+              { name: 'value', displayName: 'Value', type: 'string', default: '', displayOptions: { show: { type: ['text'] } } },
+              { name: 'binaryPropertyName', displayName: 'Input Binary Field', type: 'string', default: 'data', displayOptions: { show: { type: ['file'] } } },
+            ],
+          },
+        ],
       },
       {
         name: 'options',
@@ -287,54 +252,23 @@ export const httpRequestNode = defineNode({
           { name: 'timeoutMs', displayName: 'Timeout (ms)', type: 'number', default: 30000 },
           { name: 'fullResponse', displayName: 'Include Status & Headers', type: 'boolean', default: false },
           { name: 'splitArray', displayName: 'Split Array Response Into Items', type: 'boolean', default: true },
+          {
+            name: 'responseFormat',
+            displayName: 'Response Format',
+            type: 'options',
+            default: 'autodetect',
+            options: [
+              { name: 'Autodetect', value: 'autodetect', description: 'JSON, text, or a file for other content types (PDF, images…)' },
+              { name: 'File', value: 'file', description: 'Store the response as a file (binary data)' },
+              { name: 'JSON', value: 'json' },
+              { name: 'Text', value: 'text' },
+            ],
+          },
+          { name: 'outputPropertyName', displayName: 'Put Output File in Field', type: 'string', default: 'data', description: 'A file response goes to item.binary.<name>' },
         ],
       },
     ],
   },
-  async execute(ctx) {
-    const out: NodeItem[] = [];
-    const items = ctx.getInputData();
-    for (let i = 0; i < Math.max(items.length, 1); i++) {
-      const pairs = (key: string, group: string) =>
-        Object.fromEntries(
-          (ctx.getNodeParameter<Record<string, Array<{ name: string; value: string }>>>(key, i)?.[group] ?? [])
-            .filter((p) => p.name)
-            .map((p) => [p.name, String(p.value ?? '')]),
-        );
-      const options = ctx.getNodeParameter<{ timeoutMs?: number; fullResponse?: boolean; splitArray?: boolean }>('options', i) ?? {};
-      let body = ctx.getNodeParameter<unknown>('body', i);
-      if (typeof body === 'string' && body.trim()) {
-        try {
-          body = JSON.parse(body);
-        } catch {
-          // send as raw text
-        }
-      } else if (typeof body === 'string') body = undefined;
-
-      const response = await ctx.helpers.httpRequest({
-        url: String(ctx.getNodeParameter('url', i)),
-        method: String(ctx.getNodeParameter('method', i)),
-        query: pairs('query', 'parameter'),
-        headers: pairs('headers', 'header'),
-        body,
-        timeoutMs: options.timeoutMs,
-      });
-      if (response.status >= 400) {
-        throw new NodeOperationError(`HTTP ${response.status}`, {
-          itemIndex: i,
-          description: typeof response.body === 'string' ? response.body.slice(0, 500) : JSON.stringify(response.body).slice(0, 500),
-        });
-      }
-      if (options.fullResponse) {
-        out.push({ json: { status: response.status, headers: response.headers, body: response.body as never }, pairedItem: { item: i } });
-      } else if (Array.isArray(response.body) && options.splitArray !== false) {
-        for (const entry of response.body) out.push({ json: (typeof entry === 'object' && entry ? entry : { value: entry }) as JsonObject, pairedItem: { item: i } });
-      } else if (response.body && typeof response.body === 'object') {
-        out.push({ json: response.body as JsonObject, pairedItem: { item: i } });
-      } else {
-        out.push({ json: { data: response.body as never }, pairedItem: { item: i } });
-      }
-    }
-    return [out];
-  },
+  // Bodies with files and file responses: ./http-request.ts.
+  execute: (ctx) => executeHttpRequest(ctx),
 });

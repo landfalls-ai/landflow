@@ -2,6 +2,7 @@ export * from './node';
 export { iconFile, MAX_ICON_BYTES } from './icons';
 export * from './runtime';
 export * from './credentials';
+export { createBinaryHelpers, httpBinaryClient, inlineBinary, type BinaryDataClient, type BinaryFileMeta, type BinaryInput, type IBinaryHelpers } from './binary';
 export {
   MAX_ATTRIBUTE_LENGTH,
   MAX_ATTRIBUTE_SETS,

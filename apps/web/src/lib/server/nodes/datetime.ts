@@ -784,7 +784,7 @@ export const dateTimeNode = defineNode({
       }
       const json = structuredClone(item.json) as Record<string, unknown>;
       setPath(json, String(ctx.getNodeParameter('outputFieldName', i) ?? '').trim() || DEFAULT_FIELD[operation], value);
-      out.push({ json: json as JsonObject, pairedItem: { item: i } });
+      out.push({ json: json as JsonObject, ...(item.binary && { binary: item.binary }), pairedItem: { item: i } });
     });
     return [out];
   },

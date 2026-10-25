@@ -23,7 +23,7 @@ import { singleton } from '../singleton';
 import { activeTraceIds, logger, recordAgentTokens, recordApproval, traceAgentRun, traceToolCall, traceUrl } from '../telemetry';
 import { agentModel } from './models';
 import { agentStore, configOf } from './store';
-import { buildTools, type BuiltTool, type ToolContext } from './tools';
+import { buildToolset, type BuiltTool, type ToolContext } from './tools';
 
 const MAX_RESULT_CHARS = 16_000;
 const MAX_USER_TURNS_IN_CONTEXT = 30;
@@ -216,7 +216,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     let toolset;
     try {
       model = agentModel(config.model);
-      toolset = buildTools(agent, config);
+      toolset = await buildToolset(agent, config);
     } catch (error) {
       upsert({ id: entryId(), type: 'error', message: (error as Error).message, at: now() });
       return { reason: 'error' };

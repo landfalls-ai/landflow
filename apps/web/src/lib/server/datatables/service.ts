@@ -4,7 +4,6 @@
  * types, enforces the row cap, and does CSV import and export. The API routes
  * and the Data Table node both go through it.
  */
-import { join } from 'node:path';
 import { nanoid } from 'nanoid';
 import {
   COLUMN_NAME,
@@ -24,9 +23,8 @@ import {
   type RowQuery,
 } from '../../shared/data-tables';
 import { singleton } from '../singleton';
-import { store } from '../store';
 import { parseCsv, toCsv } from './csv';
-import { JsonFileStorage } from './json-storage';
+import { SqlDataTableStorage } from './sql-storage';
 import { DataTableError, typeOf, type DataTableStorage, type RowValues } from './storage';
 
 export const MAX_ROWS = 50_000;
@@ -435,8 +433,8 @@ export class DataTablesService {
 
 let instance: DataTablesService | undefined;
 
-/** The instance's data tables (<data dir>/data-tables/). Documents are cached process-wide. */
+/** The instance's data tables (in the database). Rows are cached process-wide. */
 export function dataTables(): DataTablesService {
-  instance ??= new DataTablesService(new JsonFileStorage(join(store.dir, 'data-tables'), singleton('data-tables-cache', () => new Map())));
+  instance ??= new DataTablesService(new SqlDataTableStorage(undefined, singleton('data-tables-sql-cache', () => new Map())));
   return instance;
 }

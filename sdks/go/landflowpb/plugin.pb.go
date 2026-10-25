@@ -438,6 +438,7 @@ type Item struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Json          *DynamicValue          `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"` // the item payload (a JSON object)
 	PairedItem    *PairedItem            `protobuf:"bytes,2,opt,name=paired_item,json=pairedItem,proto3" json:"paired_item,omitempty"`
+	Binary        *DynamicValue          `protobuf:"bytes,3,opt,name=binary,proto3" json:"binary,omitempty"` // optional: files by property name, { <name>: BinaryRef } (docs/protocol.md §11)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -486,6 +487,67 @@ func (x *Item) GetPairedItem() *PairedItem {
 	return nil
 }
 
+func (x *Item) GetBinary() *DynamicValue {
+	if x != nil {
+		return x.Binary
+	}
+	return nil
+}
+
+// Where a plugin reads and writes the bytes of item files during one Execute call:
+// GET {url}/{id} and POST {url}, each with `Authorization: Bearer {token}`.
+type BinaryAccess struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`     // e.g. "http://127.0.0.1:3000/api/binary"
+	Token         string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"` // scoped to this execution; expires
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BinaryAccess) Reset() {
+	*x = BinaryAccess{}
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BinaryAccess) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BinaryAccess) ProtoMessage() {}
+
+func (x *BinaryAccess) ProtoReflect() protoreflect.Message {
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BinaryAccess.ProtoReflect.Descriptor instead.
+func (*BinaryAccess) Descriptor() ([]byte, []int) {
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *BinaryAccess) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *BinaryAccess) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
 type Branch struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Items         []*Item                `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
@@ -495,7 +557,7 @@ type Branch struct {
 
 func (x *Branch) Reset() {
 	*x = Branch{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[7]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -507,7 +569,7 @@ func (x *Branch) String() string {
 func (*Branch) ProtoMessage() {}
 
 func (x *Branch) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[7]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -520,7 +582,7 @@ func (x *Branch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Branch.ProtoReflect.Descriptor instead.
 func (*Branch) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{7}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Branch) GetItems() []*Item {
@@ -543,13 +605,15 @@ type ExecuteRequest struct {
 	Credentials    *DynamicValue          `protobuf:"bytes,9,opt,name=credentials,proto3" json:"credentials,omitempty"`                                 // optional: { <credentialType>: { ...decrypted fields } }
 	PollState      *DynamicValue          `protobuf:"bytes,10,opt,name=poll_state,json=pollState,proto3" json:"poll_state,omitempty"`                   // poll triggers: state returned by the previous poll
 	ContinueOnFail bool                   `protobuf:"varint,11,opt,name=continue_on_fail,json=continueOnFail,proto3" json:"continue_on_fail,omitempty"` // emit { json: { error } } for a failing item and go on
+	BinaryAccess   *BinaryAccess          `protobuf:"bytes,12,opt,name=binary_access,json=binaryAccess,proto3" json:"binary_access,omitempty"`          // optional: the host's binary API for this call
+	IdempotencyKey string                 `protobuf:"bytes,13,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`    // "<executionId>:<nodeId>:<runIndex>", same across retries; empty from older hosts
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ExecuteRequest) Reset() {
 	*x = ExecuteRequest{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[8]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -561,7 +625,7 @@ func (x *ExecuteRequest) String() string {
 func (*ExecuteRequest) ProtoMessage() {}
 
 func (x *ExecuteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[8]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -574,7 +638,7 @@ func (x *ExecuteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteRequest.ProtoReflect.Descriptor instead.
 func (*ExecuteRequest) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{8}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ExecuteRequest) GetProtocol() string {
@@ -654,6 +718,20 @@ func (x *ExecuteRequest) GetContinueOnFail() bool {
 	return false
 }
 
+func (x *ExecuteRequest) GetBinaryAccess() *BinaryAccess {
+	if x != nil {
+		return x.BinaryAccess
+	}
+	return nil
+}
+
+func (x *ExecuteRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
 type LogEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Level         string                 `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"` // "debug" | "info" | "warn" | "error"
@@ -664,7 +742,7 @@ type LogEntry struct {
 
 func (x *LogEntry) Reset() {
 	*x = LogEntry{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[9]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -676,7 +754,7 @@ func (x *LogEntry) String() string {
 func (*LogEntry) ProtoMessage() {}
 
 func (x *LogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[9]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -689,7 +767,7 @@ func (x *LogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
 func (*LogEntry) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{9}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *LogEntry) GetLevel() string {
@@ -717,7 +795,7 @@ type NodeError struct {
 
 func (x *NodeError) Reset() {
 	*x = NodeError{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[10]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -729,7 +807,7 @@ func (x *NodeError) String() string {
 func (*NodeError) ProtoMessage() {}
 
 func (x *NodeError) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[10]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -742,7 +820,7 @@ func (x *NodeError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeError.ProtoReflect.Descriptor instead.
 func (*NodeError) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{10}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *NodeError) GetMessage() string {
@@ -778,7 +856,7 @@ type ExecuteResponse struct {
 
 func (x *ExecuteResponse) Reset() {
 	*x = ExecuteResponse{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[11]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -790,7 +868,7 @@ func (x *ExecuteResponse) String() string {
 func (*ExecuteResponse) ProtoMessage() {}
 
 func (x *ExecuteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[11]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -803,7 +881,7 @@ func (x *ExecuteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteResponse.ProtoReflect.Descriptor instead.
 func (*ExecuteResponse) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{11}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ExecuteResponse) GetOutputs() []*Branch {
@@ -846,7 +924,7 @@ type LoadOptionsRequest struct {
 
 func (x *LoadOptionsRequest) Reset() {
 	*x = LoadOptionsRequest{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[12]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -858,7 +936,7 @@ func (x *LoadOptionsRequest) String() string {
 func (*LoadOptionsRequest) ProtoMessage() {}
 
 func (x *LoadOptionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[12]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -871,7 +949,7 @@ func (x *LoadOptionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoadOptionsRequest.ProtoReflect.Descriptor instead.
 func (*LoadOptionsRequest) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{12}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *LoadOptionsRequest) GetNodeType() string {
@@ -911,7 +989,7 @@ type LoadOptionsResponse struct {
 
 func (x *LoadOptionsResponse) Reset() {
 	*x = LoadOptionsResponse{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[13]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -923,7 +1001,7 @@ func (x *LoadOptionsResponse) String() string {
 func (*LoadOptionsResponse) ProtoMessage() {}
 
 func (x *LoadOptionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[13]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -936,7 +1014,7 @@ func (x *LoadOptionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoadOptionsResponse.ProtoReflect.Descriptor instead.
 func (*LoadOptionsResponse) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{13}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *LoadOptionsResponse) GetOptions() *DynamicValue {
@@ -956,7 +1034,7 @@ type TestCredentialsRequest struct {
 
 func (x *TestCredentialsRequest) Reset() {
 	*x = TestCredentialsRequest{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[14]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -968,7 +1046,7 @@ func (x *TestCredentialsRequest) String() string {
 func (*TestCredentialsRequest) ProtoMessage() {}
 
 func (x *TestCredentialsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[14]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -981,7 +1059,7 @@ func (x *TestCredentialsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestCredentialsRequest.ProtoReflect.Descriptor instead.
 func (*TestCredentialsRequest) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{14}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *TestCredentialsRequest) GetCredentialType() string {
@@ -1008,7 +1086,7 @@ type TestCredentialsResponse struct {
 
 func (x *TestCredentialsResponse) Reset() {
 	*x = TestCredentialsResponse{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[15]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1020,7 +1098,7 @@ func (x *TestCredentialsResponse) String() string {
 func (*TestCredentialsResponse) ProtoMessage() {}
 
 func (x *TestCredentialsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[15]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1033,7 +1111,7 @@ func (x *TestCredentialsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestCredentialsResponse.ProtoReflect.Descriptor instead.
 func (*TestCredentialsResponse) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{15}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *TestCredentialsResponse) GetOk() bool {
@@ -1058,7 +1136,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[16]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1070,7 +1148,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[16]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1083,7 +1161,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{16}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{17}
 }
 
 type HealthResponse struct {
@@ -1098,7 +1176,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[17]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1110,7 +1188,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[17]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1123,7 +1201,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{17}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *HealthResponse) GetStatus() string {
@@ -1167,7 +1245,7 @@ type AnnounceRequest struct {
 
 func (x *AnnounceRequest) Reset() {
 	*x = AnnounceRequest{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[18]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1179,7 +1257,7 @@ func (x *AnnounceRequest) String() string {
 func (*AnnounceRequest) ProtoMessage() {}
 
 func (x *AnnounceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[18]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1192,7 +1270,7 @@ func (x *AnnounceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnnounceRequest.ProtoReflect.Descriptor instead.
 func (*AnnounceRequest) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{18}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *AnnounceRequest) GetProtocol() string {
@@ -1241,7 +1319,7 @@ type AnnounceResponse struct {
 
 func (x *AnnounceResponse) Reset() {
 	*x = AnnounceResponse{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[19]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1253,7 +1331,7 @@ func (x *AnnounceResponse) String() string {
 func (*AnnounceResponse) ProtoMessage() {}
 
 func (x *AnnounceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[19]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1266,7 +1344,7 @@ func (x *AnnounceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnnounceResponse.ProtoReflect.Descriptor instead.
 func (*AnnounceResponse) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{19}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *AnnounceResponse) GetAccepted() bool {
@@ -1300,7 +1378,7 @@ type WithdrawRequest struct {
 
 func (x *WithdrawRequest) Reset() {
 	*x = WithdrawRequest{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[20]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1312,7 +1390,7 @@ func (x *WithdrawRequest) String() string {
 func (*WithdrawRequest) ProtoMessage() {}
 
 func (x *WithdrawRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[20]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1325,7 +1403,7 @@ func (x *WithdrawRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WithdrawRequest.ProtoReflect.Descriptor instead.
 func (*WithdrawRequest) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{20}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *WithdrawRequest) GetEndpoint() string {
@@ -1351,7 +1429,7 @@ type WithdrawResponse struct {
 
 func (x *WithdrawResponse) Reset() {
 	*x = WithdrawResponse{}
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[21]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1363,7 +1441,7 @@ func (x *WithdrawResponse) String() string {
 func (*WithdrawResponse) ProtoMessage() {}
 
 func (x *WithdrawResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[21]
+	mi := &file_landflow_plugin_v1_plugin_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1376,7 +1454,7 @@ func (x *WithdrawResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WithdrawResponse.ProtoReflect.Descriptor instead.
 func (*WithdrawResponse) Descriptor() ([]byte, []int) {
-	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{21}
+	return file_landflow_plugin_v1_plugin_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *WithdrawResponse) GetOk() bool {
@@ -1423,13 +1501,17 @@ const file_landflow_plugin_v1_plugin_proto_rawDesc = "" +
 	"\n" +
 	"PairedItem\x12\x12\n" +
 	"\x04item\x18\x01 \x01(\x05R\x04item\x12\x14\n" +
-	"\x05input\x18\x02 \x01(\x05R\x05input\"}\n" +
+	"\x05input\x18\x02 \x01(\x05R\x05input\"\xb7\x01\n" +
 	"\x04Item\x124\n" +
 	"\x04json\x18\x01 \x01(\v2 .landflow.plugin.v1.DynamicValueR\x04json\x12?\n" +
 	"\vpaired_item\x18\x02 \x01(\v2\x1e.landflow.plugin.v1.PairedItemR\n" +
-	"pairedItem\"8\n" +
+	"pairedItem\x128\n" +
+	"\x06binary\x18\x03 \x01(\v2 .landflow.plugin.v1.DynamicValueR\x06binary\"6\n" +
+	"\fBinaryAccess\x12\x10\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"8\n" +
 	"\x06Branch\x12.\n" +
-	"\x05items\x18\x01 \x03(\v2\x18.landflow.plugin.v1.ItemR\x05items\"\xa5\x04\n" +
+	"\x05items\x18\x01 \x03(\v2\x18.landflow.plugin.v1.ItemR\x05items\"\x95\x05\n" +
 	"\x0eExecuteRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\tR\bprotocol\x12!\n" +
 	"\fexecution_id\x18\x02 \x01(\tR\vexecutionId\x12\x1f\n" +
@@ -1446,7 +1528,9 @@ const file_landflow_plugin_v1_plugin_proto_rawDesc = "" +
 	"\n" +
 	"poll_state\x18\n" +
 	" \x01(\v2 .landflow.plugin.v1.DynamicValueR\tpollState\x12(\n" +
-	"\x10continue_on_fail\x18\v \x01(\bR\x0econtinueOnFail\":\n" +
+	"\x10continue_on_fail\x18\v \x01(\bR\x0econtinueOnFail\x12E\n" +
+	"\rbinary_access\x18\f \x01(\v2 .landflow.plugin.v1.BinaryAccessR\fbinaryAccess\x12'\n" +
+	"\x0fidempotency_key\x18\r \x01(\tR\x0eidempotencyKey\":\n" +
 	"\bLogEntry\x12\x14\n" +
 	"\x05level\x18\x01 \x01(\tR\x05level\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"f\n" +
@@ -1520,7 +1604,7 @@ func file_landflow_plugin_v1_plugin_proto_rawDescGZIP() []byte {
 	return file_landflow_plugin_v1_plugin_proto_rawDescData
 }
 
-var file_landflow_plugin_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_landflow_plugin_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_landflow_plugin_v1_plugin_proto_goTypes = []any{
 	(*DynamicValue)(nil),            // 0: landflow.plugin.v1.DynamicValue
 	(*PluginInfo)(nil),              // 1: landflow.plugin.v1.PluginInfo
@@ -1529,21 +1613,22 @@ var file_landflow_plugin_v1_plugin_proto_goTypes = []any{
 	(*NodeRef)(nil),                 // 4: landflow.plugin.v1.NodeRef
 	(*PairedItem)(nil),              // 5: landflow.plugin.v1.PairedItem
 	(*Item)(nil),                    // 6: landflow.plugin.v1.Item
-	(*Branch)(nil),                  // 7: landflow.plugin.v1.Branch
-	(*ExecuteRequest)(nil),          // 8: landflow.plugin.v1.ExecuteRequest
-	(*LogEntry)(nil),                // 9: landflow.plugin.v1.LogEntry
-	(*NodeError)(nil),               // 10: landflow.plugin.v1.NodeError
-	(*ExecuteResponse)(nil),         // 11: landflow.plugin.v1.ExecuteResponse
-	(*LoadOptionsRequest)(nil),      // 12: landflow.plugin.v1.LoadOptionsRequest
-	(*LoadOptionsResponse)(nil),     // 13: landflow.plugin.v1.LoadOptionsResponse
-	(*TestCredentialsRequest)(nil),  // 14: landflow.plugin.v1.TestCredentialsRequest
-	(*TestCredentialsResponse)(nil), // 15: landflow.plugin.v1.TestCredentialsResponse
-	(*HealthRequest)(nil),           // 16: landflow.plugin.v1.HealthRequest
-	(*HealthResponse)(nil),          // 17: landflow.plugin.v1.HealthResponse
-	(*AnnounceRequest)(nil),         // 18: landflow.plugin.v1.AnnounceRequest
-	(*AnnounceResponse)(nil),        // 19: landflow.plugin.v1.AnnounceResponse
-	(*WithdrawRequest)(nil),         // 20: landflow.plugin.v1.WithdrawRequest
-	(*WithdrawResponse)(nil),        // 21: landflow.plugin.v1.WithdrawResponse
+	(*BinaryAccess)(nil),            // 7: landflow.plugin.v1.BinaryAccess
+	(*Branch)(nil),                  // 8: landflow.plugin.v1.Branch
+	(*ExecuteRequest)(nil),          // 9: landflow.plugin.v1.ExecuteRequest
+	(*LogEntry)(nil),                // 10: landflow.plugin.v1.LogEntry
+	(*NodeError)(nil),               // 11: landflow.plugin.v1.NodeError
+	(*ExecuteResponse)(nil),         // 12: landflow.plugin.v1.ExecuteResponse
+	(*LoadOptionsRequest)(nil),      // 13: landflow.plugin.v1.LoadOptionsRequest
+	(*LoadOptionsResponse)(nil),     // 14: landflow.plugin.v1.LoadOptionsResponse
+	(*TestCredentialsRequest)(nil),  // 15: landflow.plugin.v1.TestCredentialsRequest
+	(*TestCredentialsResponse)(nil), // 16: landflow.plugin.v1.TestCredentialsResponse
+	(*HealthRequest)(nil),           // 17: landflow.plugin.v1.HealthRequest
+	(*HealthResponse)(nil),          // 18: landflow.plugin.v1.HealthResponse
+	(*AnnounceRequest)(nil),         // 19: landflow.plugin.v1.AnnounceRequest
+	(*AnnounceResponse)(nil),        // 20: landflow.plugin.v1.AnnounceResponse
+	(*WithdrawRequest)(nil),         // 21: landflow.plugin.v1.WithdrawRequest
+	(*WithdrawResponse)(nil),        // 22: landflow.plugin.v1.WithdrawResponse
 }
 var file_landflow_plugin_v1_plugin_proto_depIdxs = []int32{
 	1,  // 0: landflow.plugin.v1.GetManifestResponse.plugin:type_name -> landflow.plugin.v1.PluginInfo
@@ -1551,40 +1636,42 @@ var file_landflow_plugin_v1_plugin_proto_depIdxs = []int32{
 	0,  // 2: landflow.plugin.v1.GetManifestResponse.credential_types:type_name -> landflow.plugin.v1.DynamicValue
 	0,  // 3: landflow.plugin.v1.Item.json:type_name -> landflow.plugin.v1.DynamicValue
 	5,  // 4: landflow.plugin.v1.Item.paired_item:type_name -> landflow.plugin.v1.PairedItem
-	6,  // 5: landflow.plugin.v1.Branch.items:type_name -> landflow.plugin.v1.Item
-	4,  // 6: landflow.plugin.v1.ExecuteRequest.node:type_name -> landflow.plugin.v1.NodeRef
-	0,  // 7: landflow.plugin.v1.ExecuteRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 8: landflow.plugin.v1.ExecuteRequest.item_parameters:type_name -> landflow.plugin.v1.DynamicValue
-	7,  // 9: landflow.plugin.v1.ExecuteRequest.inputs:type_name -> landflow.plugin.v1.Branch
-	0,  // 10: landflow.plugin.v1.ExecuteRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 11: landflow.plugin.v1.ExecuteRequest.poll_state:type_name -> landflow.plugin.v1.DynamicValue
-	7,  // 12: landflow.plugin.v1.ExecuteResponse.outputs:type_name -> landflow.plugin.v1.Branch
-	9,  // 13: landflow.plugin.v1.ExecuteResponse.logs:type_name -> landflow.plugin.v1.LogEntry
-	10, // 14: landflow.plugin.v1.ExecuteResponse.error:type_name -> landflow.plugin.v1.NodeError
-	0,  // 15: landflow.plugin.v1.ExecuteResponse.poll_state:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 16: landflow.plugin.v1.LoadOptionsRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 17: landflow.plugin.v1.LoadOptionsRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 18: landflow.plugin.v1.LoadOptionsResponse.options:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 19: landflow.plugin.v1.TestCredentialsRequest.data:type_name -> landflow.plugin.v1.DynamicValue
-	2,  // 20: landflow.plugin.v1.PluginService.GetManifest:input_type -> landflow.plugin.v1.GetManifestRequest
-	8,  // 21: landflow.plugin.v1.PluginService.Execute:input_type -> landflow.plugin.v1.ExecuteRequest
-	12, // 22: landflow.plugin.v1.PluginService.LoadOptions:input_type -> landflow.plugin.v1.LoadOptionsRequest
-	16, // 23: landflow.plugin.v1.PluginService.Health:input_type -> landflow.plugin.v1.HealthRequest
-	14, // 24: landflow.plugin.v1.PluginService.TestCredentials:input_type -> landflow.plugin.v1.TestCredentialsRequest
-	18, // 25: landflow.plugin.v1.RegistryService.Announce:input_type -> landflow.plugin.v1.AnnounceRequest
-	20, // 26: landflow.plugin.v1.RegistryService.Withdraw:input_type -> landflow.plugin.v1.WithdrawRequest
-	3,  // 27: landflow.plugin.v1.PluginService.GetManifest:output_type -> landflow.plugin.v1.GetManifestResponse
-	11, // 28: landflow.plugin.v1.PluginService.Execute:output_type -> landflow.plugin.v1.ExecuteResponse
-	13, // 29: landflow.plugin.v1.PluginService.LoadOptions:output_type -> landflow.plugin.v1.LoadOptionsResponse
-	17, // 30: landflow.plugin.v1.PluginService.Health:output_type -> landflow.plugin.v1.HealthResponse
-	15, // 31: landflow.plugin.v1.PluginService.TestCredentials:output_type -> landflow.plugin.v1.TestCredentialsResponse
-	19, // 32: landflow.plugin.v1.RegistryService.Announce:output_type -> landflow.plugin.v1.AnnounceResponse
-	21, // 33: landflow.plugin.v1.RegistryService.Withdraw:output_type -> landflow.plugin.v1.WithdrawResponse
-	27, // [27:34] is the sub-list for method output_type
-	20, // [20:27] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	0,  // 5: landflow.plugin.v1.Item.binary:type_name -> landflow.plugin.v1.DynamicValue
+	6,  // 6: landflow.plugin.v1.Branch.items:type_name -> landflow.plugin.v1.Item
+	4,  // 7: landflow.plugin.v1.ExecuteRequest.node:type_name -> landflow.plugin.v1.NodeRef
+	0,  // 8: landflow.plugin.v1.ExecuteRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 9: landflow.plugin.v1.ExecuteRequest.item_parameters:type_name -> landflow.plugin.v1.DynamicValue
+	8,  // 10: landflow.plugin.v1.ExecuteRequest.inputs:type_name -> landflow.plugin.v1.Branch
+	0,  // 11: landflow.plugin.v1.ExecuteRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 12: landflow.plugin.v1.ExecuteRequest.poll_state:type_name -> landflow.plugin.v1.DynamicValue
+	7,  // 13: landflow.plugin.v1.ExecuteRequest.binary_access:type_name -> landflow.plugin.v1.BinaryAccess
+	8,  // 14: landflow.plugin.v1.ExecuteResponse.outputs:type_name -> landflow.plugin.v1.Branch
+	10, // 15: landflow.plugin.v1.ExecuteResponse.logs:type_name -> landflow.plugin.v1.LogEntry
+	11, // 16: landflow.plugin.v1.ExecuteResponse.error:type_name -> landflow.plugin.v1.NodeError
+	0,  // 17: landflow.plugin.v1.ExecuteResponse.poll_state:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 18: landflow.plugin.v1.LoadOptionsRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 19: landflow.plugin.v1.LoadOptionsRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 20: landflow.plugin.v1.LoadOptionsResponse.options:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 21: landflow.plugin.v1.TestCredentialsRequest.data:type_name -> landflow.plugin.v1.DynamicValue
+	2,  // 22: landflow.plugin.v1.PluginService.GetManifest:input_type -> landflow.plugin.v1.GetManifestRequest
+	9,  // 23: landflow.plugin.v1.PluginService.Execute:input_type -> landflow.plugin.v1.ExecuteRequest
+	13, // 24: landflow.plugin.v1.PluginService.LoadOptions:input_type -> landflow.plugin.v1.LoadOptionsRequest
+	17, // 25: landflow.plugin.v1.PluginService.Health:input_type -> landflow.plugin.v1.HealthRequest
+	15, // 26: landflow.plugin.v1.PluginService.TestCredentials:input_type -> landflow.plugin.v1.TestCredentialsRequest
+	19, // 27: landflow.plugin.v1.RegistryService.Announce:input_type -> landflow.plugin.v1.AnnounceRequest
+	21, // 28: landflow.plugin.v1.RegistryService.Withdraw:input_type -> landflow.plugin.v1.WithdrawRequest
+	3,  // 29: landflow.plugin.v1.PluginService.GetManifest:output_type -> landflow.plugin.v1.GetManifestResponse
+	12, // 30: landflow.plugin.v1.PluginService.Execute:output_type -> landflow.plugin.v1.ExecuteResponse
+	14, // 31: landflow.plugin.v1.PluginService.LoadOptions:output_type -> landflow.plugin.v1.LoadOptionsResponse
+	18, // 32: landflow.plugin.v1.PluginService.Health:output_type -> landflow.plugin.v1.HealthResponse
+	16, // 33: landflow.plugin.v1.PluginService.TestCredentials:output_type -> landflow.plugin.v1.TestCredentialsResponse
+	20, // 34: landflow.plugin.v1.RegistryService.Announce:output_type -> landflow.plugin.v1.AnnounceResponse
+	22, // 35: landflow.plugin.v1.RegistryService.Withdraw:output_type -> landflow.plugin.v1.WithdrawResponse
+	29, // [29:36] is the sub-list for method output_type
+	22, // [22:29] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_landflow_plugin_v1_plugin_proto_init() }
@@ -1598,7 +1685,7 @@ func file_landflow_plugin_v1_plugin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_landflow_plugin_v1_plugin_proto_rawDesc), len(file_landflow_plugin_v1_plugin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   22,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

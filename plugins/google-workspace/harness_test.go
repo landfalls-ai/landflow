@@ -85,7 +85,9 @@ type execOpts struct {
 	creds     map[string]any // credential type → data (default: service account)
 	pollState map[string]any
 	items     []map[string]any
-	perItem   []map[string]any // itemParameters overrides per item
+	perItem   []map[string]any                // itemParameters overrides per item
+	binary    []map[string]landflow.BinaryRef // item files, by item
+	access    *landflow.BinaryAccess          // the host's binary API
 }
 
 func (h *harness) exec(node string, params map[string]any, o execOpts) *landflow.ExecuteResponse {
@@ -104,7 +106,7 @@ func (h *harness) execCtx(ctx context.Context, node string, params map[string]an
 	req := &landflow.ExecuteRequest{
 		Protocol: landflow.ProtocolVersion, ExecutionID: "ex-1", WorkflowID: "wf-1", Mode: o.mode,
 		Node:       landflow.NodeRef{ID: "n1", Name: "Google", Type: "google." + node, TypeVersion: 1},
-		Parameters: params, Credentials: o.creds, PollState: viaJSON(h.t, o.pollState),
+		Parameters: params, Credentials: o.creds, PollState: viaJSON(h.t, o.pollState), BinaryAccess: o.access,
 	}
 	if o.mode == landflow.ModePoll {
 		req.Inputs = [][]landflow.Item{}
@@ -114,7 +116,11 @@ func (h *harness) execCtx(ctx context.Context, node string, params map[string]an
 		}
 		req.Inputs = [][]landflow.Item{{}}
 		for k, it := range o.items {
-			req.Inputs[0] = append(req.Inputs[0], landflow.Item{JSON: it})
+			item := landflow.Item{JSON: it}
+			if k < len(o.binary) {
+				item.Binary = o.binary[k]
+			}
+			req.Inputs[0] = append(req.Inputs[0], item)
 			p := cloneMap(params)
 			if k < len(o.perItem) {
 				for key, v := range o.perItem[k] {

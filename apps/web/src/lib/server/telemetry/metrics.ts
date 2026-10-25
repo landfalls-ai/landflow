@@ -31,6 +31,7 @@ function create(provider: MeterProvider) {
     agentToolDuration: meter.createHistogram('landflow.agent.tool.duration', { description: 'Duration of an agent tool call', unit: 'ms', advice }),
     agentApprovals: meter.createCounter('landflow.agent.approvals', { description: 'Tool calls a person approved or denied' }),
     agentTokens: meter.createCounter('landflow.agent.tokens', { description: 'Model tokens used by agents' }),
+    runtimeEvents: meter.createCounter('landflow.runtime.events', { description: 'Durable runtime events: deduplicated, skipped, queued, recovered and retried runs' }),
     httpDuration: meter.createHistogram('http.server.request.duration', {
       description: 'Duration of HTTP server requests',
       unit: 's',
@@ -67,6 +68,13 @@ export function recordScheduleLag(workflowId: string, lagMs: number) {
 
 export function recordWebhookRequest(status: number, workflowId?: string) {
   hostMetrics().webhookRequests.add(1, { ...(workflowId && { 'landflow.workflow.id': workflowId }), 'http.response.status_code': status });
+}
+
+/** What the durable runtime did with a run (docs/observability.md §5). */
+export type RuntimeEvent = 'deduplicated' | 'skipped' | 'queued' | 'recovered' | 'recovery_failed' | 'retry_scheduled' | 'retried' | 'stopped';
+
+export function recordRuntimeEvent(event: RuntimeEvent, workflowId?: string, count = 1) {
+  if (count > 0) hostMetrics().runtimeEvents.add(count, { 'landflow.runtime.event': event, ...(workflowId && { 'landflow.workflow.id': workflowId }) });
 }
 
 /** One announce or heartbeat from a plugin (HTTP route or gRPC RegistryService). */

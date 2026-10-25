@@ -2,18 +2,23 @@ package main
 
 import (
 	"encoding/base64"
+	"io"
 	"mime"
+	"mime/multipart"
 	"net/mail"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	landflow "github.com/landflow/landflow/sdks/go"
 )
 
 // MIME for Gmail: building RFC 2822 messages for messages.send (base64url in
 // "raw") and reading the decoded MIME tree of messages.get (format=full).
 
-// outgoingMail is a single-part text or HTML message.
+// outgoingMail is a text or HTML message, multipart/mixed when it has
+// attachments.
 type outgoingMail struct {
 	From, To, Cc, Bcc, ReplyTo string
 	Subject                    string
@@ -21,11 +26,21 @@ type outgoingMail struct {
 	HTML                       bool
 	Body                       string
 	Date                       time.Time
+	Attachments                []mailAttachment
+	// boundary is fixed by tests; empty picks a random one.
+	boundary string
+}
+
+// mailAttachment is a file attached to an outgoing message.
+type mailAttachment struct {
+	FileName, MimeType string
+	Data               []byte
 }
 
 // bytes renders the message with CRLF line endings: address headers
 // re-formatted (display names RFC 2047-encoded), an RFC 2047 subject and a
-// base64 UTF-8 body. CR and LF in header values are replaced, so a value
+// base64 UTF-8 body, then each attachment as a base64 part (file names
+// RFC 2231-encoded). CR and LF in header values are replaced, so a value
 // cannot inject headers.
 func (m outgoingMail) bytes() []byte {
 	var b strings.Builder
@@ -52,18 +67,55 @@ func (m outgoingMail) bytes() []byte {
 	if m.HTML {
 		ctype = "text/html"
 	}
+	body := strings.ReplaceAll(strings.ReplaceAll(m.Body, "\r\n", "\n"), "\n", "\r\n")
+	if len(m.Attachments) == 0 {
+		header("Content-Type", ctype+`; charset="UTF-8"`)
+		header("Content-Transfer-Encoding", "base64")
+		b.WriteString("\r\n")
+		writeBase64Lines(&b, []byte(body))
+		return []byte(b.String())
+	}
+
+	boundary := m.boundary
+	if boundary == "" {
+		boundary = multipart.NewWriter(io.Discard).Boundary()
+	}
+	header("Content-Type", mime.FormatMediaType("multipart/mixed", map[string]string{"boundary": boundary}))
+	b.WriteString("\r\n")
+	b.WriteString("--" + boundary + "\r\n")
 	header("Content-Type", ctype+`; charset="UTF-8"`)
 	header("Content-Transfer-Encoding", "base64")
 	b.WriteString("\r\n")
+	writeBase64Lines(&b, []byte(body))
+	for _, a := range m.Attachments {
+		name := cleanHeader(a.FileName)
+		if name == "" {
+			name = "attachment"
+		}
+		mt, params, err := mime.ParseMediaType(a.MimeType)
+		if err != nil {
+			mt, params = landflow.DefaultMimeType, map[string]string{}
+		}
+		params["name"] = name
+		b.WriteString("--" + boundary + "\r\n")
+		header("Content-Type", mime.FormatMediaType(mt, params))
+		header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+		header("Content-Transfer-Encoding", "base64")
+		b.WriteString("\r\n")
+		writeBase64Lines(&b, a.Data)
+	}
+	b.WriteString("--" + boundary + "--\r\n")
+	return []byte(b.String())
+}
 
-	body := strings.ReplaceAll(strings.ReplaceAll(m.Body, "\r\n", "\n"), "\n", "\r\n")
-	enc := base64.StdEncoding.EncodeToString([]byte(body))
+// writeBase64Lines writes data as base64 in 76-character lines.
+func writeBase64Lines(b *strings.Builder, data []byte) {
+	enc := base64.StdEncoding.EncodeToString(data)
 	for len(enc) > 76 {
 		b.WriteString(enc[:76] + "\r\n")
 		enc = enc[76:]
 	}
 	b.WriteString(enc + "\r\n")
-	return []byte(b.String())
 }
 
 // raw is the base64url form messages.send expects.

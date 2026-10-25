@@ -79,6 +79,7 @@ export function fromDynamic<T = unknown>(value: DynamicValueMsg | null | undefin
 interface ItemMsg {
   json: DynamicValueMsg | null;
   pairedItem: { item: number; input: number } | null;
+  binary?: DynamicValueMsg | null;
 }
 interface BranchMsg {
   items: ItemMsg[];
@@ -95,6 +96,9 @@ export interface ExecuteRequestMsg {
   credentials: DynamicValueMsg | null;
   pollState: DynamicValueMsg | null;
   continueOnFail: boolean;
+  /** Empty (or absent) when the host predates idempotency keys. */
+  idempotencyKey?: string;
+  binaryAccess?: { url: string; token: string } | null;
 }
 export interface ExecuteResponseMsg {
   outputs: BranchMsg[];
@@ -131,6 +135,7 @@ function itemsToBranch(items: NodeItem[]): BranchMsg {
     items: items.map((item) => ({
       json: toDynamic(item.json),
       pairedItem: item.pairedItem ? { item: item.pairedItem.item, input: item.pairedItem.input ?? 0 } : null,
+      binary: item.binary && Object.keys(item.binary).length ? toDynamic(item.binary) : null,
     })),
   };
 }
@@ -138,6 +143,8 @@ function itemsToBranch(items: NodeItem[]): BranchMsg {
 function branchToItems(branch: BranchMsg | null | undefined): NodeItem[] {
   return (branch?.items ?? []).map((item) => {
     const out: NodeItem = { json: fromDynamic(item.json, {}) };
+    const binary = fromDynamic<NodeItem['binary'] | null>(item.binary, null);
+    if (binary && Object.keys(binary).length) out.binary = binary;
     if (item.pairedItem) out.pairedItem = { item: item.pairedItem.item, input: item.pairedItem.input };
     return out;
   });
@@ -156,6 +163,8 @@ export function executeRequestToMsg(request: ExecuteRequest): ExecuteRequestMsg 
     credentials: request.credentials ? toDynamic(request.credentials) : null,
     pollState: request.pollState ? toDynamic(request.pollState) : null,
     continueOnFail: request.continueOnFail === true,
+    ...(request.idempotencyKey && { idempotencyKey: request.idempotencyKey }),
+    binaryAccess: request.binaryAccess ? { url: request.binaryAccess.url, token: request.binaryAccess.token } : null,
   };
 }
 
@@ -175,6 +184,8 @@ export function executeRequestFromMsg(msg: ExecuteRequestMsg): ExecuteRequest {
   const pollState = fromDynamic<ExecuteRequest['pollState'] | null>(msg.pollState, null);
   if (pollState) request.pollState = pollState;
   if (msg.continueOnFail) request.continueOnFail = true;
+  if (msg.idempotencyKey) request.idempotencyKey = msg.idempotencyKey;
+  if (msg.binaryAccess?.url) request.binaryAccess = { url: msg.binaryAccess.url, token: msg.binaryAccess.token };
   return request;
 }
 

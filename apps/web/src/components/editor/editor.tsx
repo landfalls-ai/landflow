@@ -478,7 +478,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const debugging = useEditor((s) => s.debugging);
   const breakpoints = useEditor((s) => s.breakpoints);
   const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.wf.type === 'core.chatTrigger'));
-  const hasActivatable = useEditor((s) => s.nodes.some((n) => ['core.webhook', 'core.schedule', 'core.formTrigger'].includes(n.data.wf.type)));
+  const hasActivatable = useEditor((s) => s.nodes.some((n) => ['core.webhook', 'core.schedule', 'core.formTrigger', 'core.mcpTrigger'].includes(n.data.wf.type)));
   const assistantOpen = useAssistant((s) => s.open);
 
   // The assistant's conversation lasts while this workflow is open.

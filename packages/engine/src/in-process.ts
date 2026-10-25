@@ -12,7 +12,7 @@ export function inProcessNodeType(pluginId: string, node: INodeType): ResolvedNo
     execute: (request, extras) => runNode(node, request, extras),
   };
   if (node.supplyData) {
-    resolved.supplyData = async (request) => node.supplyData!(createExecuteContext(node, request, []));
+    resolved.supplyData = async (request, extras) => node.supplyData!(createExecuteContext(node, request, [], extras));
   }
   return resolved;
 }

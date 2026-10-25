@@ -1,45 +1,23 @@
 /**
- * Workflow version history. Every save of a workflow is recorded as a
- * snapshot under `<dataDir>/workflow-versions/<workflowId>/`: an `index.json`
- * with the summaries (newest first) and one `<versionId>.json` per version.
- * A save that leaves nodes, connections, settings and sticky notes unchanged
- * (same hash) adds no version, and only the newest MAX_VERSIONS are kept.
+ * Workflow version history. Every save of a workflow is recorded as a snapshot in the
+ * `workflow_versions` table (lib/server/db): the version summary and the workflow as saved.
+ * A save that leaves nodes, connections, settings and sticky notes unchanged (same hash) adds no
+ * version, and only the newest MAX_VERSIONS are kept per workflow. Executions record the version
+ * they started on (`versionFor`), and resume on it after a restart.
  *
  * This module must not import the store: the store calls recordVersion().
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { Workflow, WorkflowConnection, WorkflowNode } from '@landflow/engine';
 import type { VersionDiff, WorkflowVersion, WorkflowVersionSummary } from '../shared/types';
+import { database } from './db';
+import { parse, versionRow } from './db/rows';
 import { logger } from './telemetry/logger';
 
 /** Versions kept per workflow; older ones are deleted. */
 export const MAX_VERSIONS = 50;
 
 const ID = /^[\w-]+$/;
-
-function dataDir() {
-  return process.env.LANDFLOW_DATA_DIR ?? join(process.cwd(), '.data');
-}
-
-function workflowDir(workflowId: string) {
-  return join(dataDir(), 'workflow-versions', workflowId);
-}
-
-function atomicWrite(path: string, data: unknown) {
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(data, null, 2));
-  renameSync(tmp, path);
-}
-
-function readJson<T>(path: string): T | undefined {
-  try {
-    return JSON.parse(readFileSync(path, 'utf8')) as T;
-  } catch {
-    return undefined;
-  }
-}
 
 /** JSON with object keys sorted, so equal documents hash the same. */
 function stableStringify(value: unknown): string {
@@ -119,7 +97,9 @@ export function summarizeDiff(diff: VersionDiff, first: boolean): string {
 
 function readIndex(workflowId: string): WorkflowVersionSummary[] {
   if (!ID.test(workflowId)) return [];
-  return readJson<WorkflowVersionSummary[]>(join(workflowDir(workflowId), 'index.json')) ?? [];
+  return database()
+    .all<{ summary: string }>('SELECT summary FROM workflow_versions WHERE workflow_id = ? ORDER BY number DESC', workflowId)
+    .flatMap((row) => parse<WorkflowVersionSummary>(row.summary) ?? []);
 }
 
 /** Versions of a workflow, newest first. */
@@ -130,7 +110,25 @@ export function listVersions(workflowId: string): WorkflowVersionSummary[] {
 /** One version with its workflow snapshot. */
 export function getVersion(workflowId: string, versionId: string): WorkflowVersion | undefined {
   if (!ID.test(workflowId) || !ID.test(versionId)) return undefined;
-  return readJson<WorkflowVersion>(join(workflowDir(workflowId), `${versionId}.json`));
+  const row = database().get<{ summary: string; workflow: string }>('SELECT summary, workflow FROM workflow_versions WHERE id = ? AND workflow_id = ?', versionId, workflowId);
+  const summary = parse<WorkflowVersionSummary>(row?.summary);
+  const workflow = parse<Workflow>(row?.workflow);
+  return summary && workflow ? { ...summary, workflow } : undefined;
+}
+
+/** The newest version whose graph is exactly `workflow`'s (what an execution of it records), if any. */
+export function versionFor(workflow: Workflow): WorkflowVersionSummary | undefined {
+  try {
+    if (!ID.test(workflow.id)) return undefined;
+    const row = database().get<{ summary: string }>(
+      'SELECT summary FROM workflow_versions WHERE workflow_id = ? AND hash = ? ORDER BY number DESC LIMIT 1',
+      workflow.id,
+      versionHash(workflow),
+    );
+    return parse<WorkflowVersionSummary>(row?.summary);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -140,9 +138,9 @@ export function getVersion(workflowId: string, versionId: string): WorkflowVersi
 export function recordVersion(workflow: Workflow): WorkflowVersionSummary | undefined {
   try {
     if (!ID.test(workflow.id)) return undefined;
-    const index = readIndex(workflow.id);
+    const db = database();
+    const newest = readIndex(workflow.id)[0];
     const hash = versionHash(workflow);
-    const newest = index[0];
     if (newest?.hash === hash) return undefined;
     const previous = newest ? getVersion(workflow.id, newest.id)?.workflow : undefined;
     const diff = diffWorkflows(previous, workflow);
@@ -157,12 +155,11 @@ export function recordVersion(workflow: Workflow): WorkflowVersionSummary | unde
       summary: summarizeDiff(diff, !newest),
       diff,
     };
-    const dir = workflowDir(workflow.id);
-    mkdirSync(dir, { recursive: true });
-    atomicWrite(join(dir, `${summary.id}.json`), { ...summary, workflow } satisfies WorkflowVersion);
-    const next = [summary, ...index];
-    for (const stale of next.splice(MAX_VERSIONS)) rmSync(join(dir, `${stale.id}.json`), { force: true });
-    atomicWrite(join(dir, 'index.json'), next);
+    db.transaction(() => {
+      db.upsert('workflow_versions', versionRow({ ...summary, workflow }));
+      const stale = db.all<{ id: string }>('SELECT id FROM workflow_versions WHERE workflow_id = ? ORDER BY number DESC LIMIT -1 OFFSET ?', workflow.id, MAX_VERSIONS);
+      for (const { id } of stale) db.delete('workflow_versions', { id });
+    });
     return summary;
   } catch (error) {
     logger.warn('could not record workflow version', { error, 'landflow.workflow.id': workflow.id });
@@ -190,23 +187,17 @@ export function applyVersion(current: Workflow, version: WorkflowVersion): Workf
 
 /** Mark a version as made by restoring an older one: sets `restoredFrom` and prefixes its summary. */
 export function markRestored(workflowId: string, versionId: string, from: { id: string; number: number }): WorkflowVersionSummary | undefined {
-  const index = readIndex(workflowId);
-  const entry = index.find((v) => v.id === versionId);
   const version = getVersion(workflowId, versionId);
-  if (!entry || !version) return undefined;
+  if (!version) return undefined;
+  const { workflow, ...entry } = version;
   const summary = `Restored version ${from.number}${entry.summary && entry.summary !== 'No changes' ? ` · ${entry.summary.charAt(0).toLowerCase()}${entry.summary.slice(1)}` : ''}`;
   const updated: WorkflowVersionSummary = { ...entry, summary, restoredFrom: from };
-  const dir = workflowDir(workflowId);
-  atomicWrite(join(dir, `${versionId}.json`), { ...version, summary, restoredFrom: from } satisfies WorkflowVersion);
-  atomicWrite(
-    join(dir, 'index.json'),
-    index.map((v) => (v.id === versionId ? updated : v)),
-  );
+  database().upsert('workflow_versions', versionRow({ ...updated, workflow }));
   return updated;
 }
 
 /** Remove a workflow's whole history (when the workflow is deleted). */
 export function deleteVersions(workflowId: string) {
   if (!ID.test(workflowId)) return;
-  rmSync(workflowDir(workflowId), { recursive: true, force: true });
+  database().delete('workflow_versions', { workflow_id: workflowId });
 }

@@ -1,19 +1,24 @@
 /**
- * File-backed persistence: one JSON document per workflow and per execution
- * under LANDFLOW_DATA_DIR (default apps/web/.data). Good enough for a single
- * host; swap this module for Postgres when you need multi-instance.
+ * The host's system of record for workflows, executions and poll trigger state, on the database
+ * (lib/server/db: SQLite at <data dir>/landflow.db, or Postgres). The API is synchronous. Workflows
+ * are cached in memory (this module is their only writer); executions are read from the database,
+ * their summaries from columns and the full record (run data included) on demand.
+ *
+ * Crash recovery: a run's node runs (`execution_steps`) and its scheduler state after each finished
+ * main-flow node (`execution_checkpoints`) are saved as it goes; the runner resumes executions left
+ * `running` from them at boot.
  */
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import type { JsonObject } from '@landflow/protocol';
-import type { Workflow } from '@landflow/engine';
-import type { ExecutionRecord, ExecutionSummary, WorkflowSummary } from '../shared/types';
+import type { NodeItem } from '@landflow/protocol';
+import type { CheckpointState, NodeRun, Workflow } from '@landflow/engine';
+import type { ExecutionRecord, ExecutionState, ExecutionSummary, WorkflowSummary } from '../shared/types';
+import { database, dataDir, type Database } from './db';
+import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } from './db/rows';
 import { recordExecutionInsights } from './insights';
 import { pruneExecutions } from './settings';
 import { singleton } from './singleton';
 import { recordVersion } from './versions';
-
-const MAX_ITEMS_PER_OUTPUT = 200;
 
 /** Write JSON through a temp file and a rename, so readers never see half a file. */
 export function atomicWrite(path: string, data: unknown) {
@@ -37,37 +42,48 @@ export interface PollRecord {
   polls: number;
 }
 
-function readJson<T>(path: string): T | undefined {
-  try {
-    return JSON.parse(readFileSync(path, 'utf8')) as T;
-  } catch {
-    return undefined;
-  }
+/** The scheduler state saved after a main-flow node finished (see the runner's crash recovery). */
+export interface StoredCheckpoint {
+  /** `<nodeId>#<runIndex>` of the node that finished, or `start`. */
+  stepId: string;
+  /** How many entries of the execution's `executionOrder` it covers. */
+  steps: number;
+  savedAt: string;
+  /** The engine's checkpoint state without run data, execution order and node outputs. */
+  state: CheckpointState;
+  /** Where the running segment started in `executionOrder` (a resumed wait starts after the runs before it). */
+  baseSteps: number;
+  /** `$('Node')` outputs when the running segment started (later ones come from the node runs). */
+  baseOutputs?: Record<string, NodeItem[][]>;
 }
 
+/** Statuses that were never shown in the history before they finished: left out of stats(). */
+const IN_FLIGHT = new Set<ExecutionState>(['running', 'queued']);
+
 class Store {
-  readonly dir = process.env.LANDFLOW_DATA_DIR ?? join(process.cwd(), '.data');
-  private readonly workflowsDir = join(this.dir, 'workflows');
-  private readonly executionsDir = join(this.dir, 'executions');
-  private workflows = new Map<string, Workflow>();
-  private executions: ExecutionSummary[] = [];
+  readonly dir = dataDir();
+  private workflows?: Map<string, Workflow>;
   private listeners = new Set<() => void>();
-  private readonly pollPath = join(this.dir, 'poll-state.json');
-  private polls: Record<string, PollRecord> = {};
 
   constructor() {
-    mkdirSync(this.workflowsDir, { recursive: true });
-    mkdirSync(this.executionsDir, { recursive: true });
-    for (const file of readdirSync(this.workflowsDir).filter((f) => f.endsWith('.json'))) {
-      const workflow = readJson<Workflow>(join(this.workflowsDir, file));
-      if (workflow) this.workflows.set(workflow.id, workflow);
+    mkdirSync(this.dir, { recursive: true });
+  }
+
+  private get db(): Database {
+    return database();
+  }
+
+  /** Workflows, loaded from the database on first use. */
+  private get cache(): Map<string, Workflow> {
+    if (!this.workflows) {
+      const loaded = new Map<string, Workflow>();
+      for (const row of this.db.all<{ data: string }>('SELECT data FROM workflows')) {
+        const workflow = parse<Workflow>(row.data);
+        if (workflow?.id) loaded.set(workflow.id, workflow);
+      }
+      this.workflows = loaded;
     }
-    for (const file of readdirSync(this.executionsDir).filter((f) => f.endsWith('.json'))) {
-      const record = readJson<ExecutionRecord>(join(this.executionsDir, file));
-      if (record) this.executions.push(summarize(record));
-    }
-    this.executions.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-    this.polls = readJson<Record<string, PollRecord>>(this.pollPath) ?? {};
+    return this.workflows;
   }
 
   onWorkflowsChanged(listener: () => void) {
@@ -78,7 +94,7 @@ class Store {
   // ---- workflows ----------------------------------------------------------
 
   listWorkflows(): Workflow[] {
-    return [...this.workflows.values()].sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+    return [...this.cache.values()].sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
   }
 
   workflowSummaries(): WorkflowSummary[] {
@@ -97,26 +113,29 @@ class Store {
   }
 
   getWorkflow(id: string): Workflow | undefined {
-    return this.workflows.get(id);
+    return this.cache.get(id);
   }
 
   saveWorkflow(workflow: Workflow): Workflow {
     const now = new Date().toISOString();
     const saved: Workflow = {
       ...workflow,
-      createdAt: this.workflows.get(workflow.id)?.createdAt ?? workflow.createdAt ?? now,
+      createdAt: this.cache.get(workflow.id)?.createdAt ?? workflow.createdAt ?? now,
       updatedAt: now,
     };
-    this.workflows.set(saved.id, saved);
-    atomicWrite(join(this.workflowsDir, `${saved.id}.json`), saved);
-    recordVersion(saved);
+    this.db.transaction(() => {
+      this.db.upsert('workflows', workflowRow(saved));
+      recordVersion(saved);
+    });
+    this.cache.set(saved.id, saved);
     this.listeners.forEach((listener) => listener());
     return saved;
   }
 
   deleteWorkflow(id: string): boolean {
-    if (!this.workflows.delete(id)) return false;
-    rmSync(join(this.workflowsDir, `${id}.json`), { force: true });
+    if (!this.cache.has(id)) return false;
+    this.db.delete('workflows', { id });
+    this.cache.delete(id);
     this.listeners.forEach((listener) => listener());
     return true;
   }
@@ -124,103 +143,169 @@ class Store {
   // ---- executions ---------------------------------------------------------
 
   saveExecution(record: ExecutionRecord) {
-    const trimmed: ExecutionRecord = {
-      ...record,
-      runData: Object.fromEntries(
-        Object.entries(record.runData).map(([nodeId, runs]) => [
-          nodeId,
-          runs.map((run) => ({
-            ...run,
-            inputs: run.inputs.map((branch) => branch.slice(0, MAX_ITEMS_PER_OUTPUT)),
-            outputs: run.outputs.map((branch) => branch.slice(0, MAX_ITEMS_PER_OUTPUT)),
-          })),
-        ]),
-      ),
-    };
-    atomicWrite(join(this.executionsDir, `${record.executionId}.json`), trimmed);
+    this.db.upsert('executions', executionRow(trimRunData(record)));
+    if (IN_FLIGHT.has(record.status)) return;
     const summary = summarize(record);
-    // A waiting execution is saved again when it finishes: replace its summary.
-    const previous = this.executions.findIndex((e) => e.id === record.executionId);
-    if (previous >= 0) this.executions.splice(previous, 1);
-    this.executions.unshift(summary);
-    // Insights first: its rollup keeps the run's counts after retention deletes the file.
+    // Insights first: its rollup keeps the run's counts after retention deletes the execution.
     recordExecutionInsights(summary);
     // Retention (Settings → General): count and age; running and waiting executions are never pruned.
     pruneExecutions();
   }
 
+  /** Change fields of a saved execution (links between retries, a scheduled retry) without counting it again. */
+  patchExecution(id: string, patch: Partial<ExecutionRecord>): ExecutionRecord | undefined {
+    const record = this.getExecution(id);
+    if (!record) return undefined;
+    const next = { ...record, ...patch };
+    for (const [key, value] of Object.entries(patch)) if (value === undefined) delete (next as Record<string, unknown>)[key];
+    this.db.upsert('executions', executionRow(next));
+    return next;
+  }
+
+  /** Saved executions, newest first. Running ones are left out: the runner lists them (their rows are for crash recovery). */
   listExecutions(filter: { workflowId?: string; limit?: number } = {}): ExecutionSummary[] {
-    const list = filter.workflowId ? this.executions.filter((e) => e.workflowId === filter.workflowId) : this.executions;
-    return list.slice(0, filter.limit ?? 100);
+    const limit = filter.limit ?? 100;
+    const bounded = Number.isFinite(limit);
+    const where = filter.workflowId ? "WHERE status <> 'running' AND workflow_id = ?" : "WHERE status <> 'running'";
+    const sql = `SELECT summary FROM executions ${where} ORDER BY started_at DESC, id DESC${bounded ? ' LIMIT ?' : ''}`;
+    const params = [...(filter.workflowId ? [filter.workflowId] : []), ...(bounded ? [Math.max(0, Math.floor(limit))] : [])];
+    return this.db.all<{ summary: string }>(sql, ...params).flatMap((row) => parse<ExecutionSummary>(row.summary) ?? []);
   }
 
   getExecution(id: string): ExecutionRecord | undefined {
     if (!/^[\w-]+$/.test(id)) return undefined;
-    return readJson<ExecutionRecord>(join(this.executionsDir, `${id}.json`));
+    return parse<ExecutionRecord>(this.db.get<{ data: string }>('SELECT data FROM executions WHERE id = ?', id)?.data);
+  }
+
+  /** Saved executions in one state, oldest first. */
+  executionsWithStatus(status: ExecutionState, workflowId?: string): ExecutionRecord[] {
+    const rows = workflowId
+      ? this.db.all<{ data: string }>('SELECT data FROM executions WHERE status = ? AND workflow_id = ? ORDER BY started_at, id', status, workflowId)
+      : this.db.all<{ data: string }>('SELECT data FROM executions WHERE status = ? ORDER BY started_at, id', status);
+    return rows.flatMap((row) => parse<ExecutionRecord>(row.data) ?? []);
+  }
+
+  /** How many saved executions of a workflow are in one of these states. */
+  countExecutions(workflowId: string, statuses: ExecutionState[]): number {
+    if (!statuses.length) return 0;
+    const sql = `SELECT COUNT(*) AS n FROM executions WHERE workflow_id = ? AND status IN (${statuses.map(() => '?').join(', ')})`;
+    return Number(this.db.get<{ n: number }>(sql, workflowId, ...statuses)?.n ?? 0);
   }
 
   /** Executions in the `waiting` state (lib/server/waits.ts resumes them). */
   waitingExecutions(): ExecutionRecord[] {
-    return this.executions
-      .filter((e) => e.status === 'waiting')
-      .map((e) => this.getExecution(e.id))
-      .filter((record): record is ExecutionRecord => record?.status === 'waiting');
+    return this.executionsWithStatus('waiting').reverse();
   }
 
   deleteExecution(id: string): boolean {
-    const index = this.executions.findIndex((e) => e.id === id);
-    if (index < 0) return false;
-    this.executions.splice(index, 1);
-    rmSync(join(this.executionsDir, `${id}.json`), { force: true });
-    return true;
+    const deleted = this.db.transaction(() => {
+      const deleted = this.db.delete('executions', { id }) > 0;
+      this.db.delete('execution_steps', { execution_id: id });
+      this.db.delete('execution_checkpoints', { execution_id: id });
+      this.db.delete('retries', { execution_id: id });
+      return deleted;
+    });
+    executionDeletedListeners.forEach((listener) => listener(id));
+    return deleted;
+  }
+
+  // ---- checkpoints (crash recovery) ---------------------------------------
+
+  /** One node run of a running execution, untrimmed, at its position in `executionOrder`. */
+  saveStep(executionId: string, seq: number, nodeId: string, run: NodeRun) {
+    this.db.upsert('execution_steps', { execution_id: executionId, seq, node_id: nodeId, run: JSON.stringify(run) });
+  }
+
+  /** The node runs saved for an execution's running segment, in order. */
+  steps(executionId: string): Array<{ seq: number; nodeId: string; run: NodeRun }> {
+    return this.db
+      .all<{ seq: number; node_id: string; run: string }>('SELECT seq, node_id, run FROM execution_steps WHERE execution_id = ? ORDER BY seq', executionId)
+      .flatMap((row) => {
+        const run = parse<NodeRun>(row.run);
+        return run ? [{ seq: Number(row.seq), nodeId: row.node_id, run }] : [];
+      });
+  }
+
+  /**
+   * Replace the checkpoint of a running execution. A segment's first checkpoint carries `baseSteps` and `baseOutputs`;
+   * later ones leave them as they are.
+   */
+  saveCheckpoint(executionId: string, checkpoint: Omit<StoredCheckpoint, 'savedAt' | 'baseSteps'> & { baseSteps?: number }) {
+    this.db.upsert('execution_checkpoints', {
+      execution_id: executionId,
+      step_id: checkpoint.stepId,
+      steps: checkpoint.steps,
+      saved_at: new Date().toISOString(),
+      state: JSON.stringify(checkpoint.state),
+      ...(checkpoint.baseSteps !== undefined && { base_steps: checkpoint.baseSteps }),
+      ...(checkpoint.baseOutputs && { base_outputs: JSON.stringify(checkpoint.baseOutputs) }),
+    });
+  }
+
+  getCheckpoint(executionId: string): StoredCheckpoint | undefined {
+    const row = this.db.get<{ step_id: string; steps: number; saved_at: string; state: string; base_steps: number; base_outputs: string | null }>(
+      'SELECT step_id, steps, saved_at, state, base_steps, base_outputs FROM execution_checkpoints WHERE execution_id = ?',
+      executionId,
+    );
+    const state = parse<CheckpointState>(row?.state);
+    if (!row || !state) return undefined;
+    const baseOutputs = parse<Record<string, NodeItem[][]>>(row.base_outputs);
+    return { stepId: row.step_id, steps: Number(row.steps), savedAt: row.saved_at, state, baseSteps: Number(row.base_steps) || 0, ...(baseOutputs && { baseOutputs }) };
+  }
+
+  /** Drop an execution's saved steps, and its checkpoint unless `keepCheckpoint` (a failed run keeps it for a retry). */
+  clearCheckpoint(executionId: string, keepCheckpoint = false) {
+    this.db.transaction(() => {
+      this.db.delete('execution_steps', { execution_id: executionId });
+      if (!keepCheckpoint) this.db.delete('execution_checkpoints', { execution_id: executionId });
+    });
   }
 
   // ---- poll trigger state -------------------------------------------------
 
   getPoll(key: string): PollRecord | undefined {
-    return this.polls[key];
+    return parse<PollRecord>(this.db.get<{ data: string }>('SELECT data FROM poll_state WHERE key = ?', key)?.data);
   }
 
   pollKeys(): string[] {
-    return Object.keys(this.polls);
+    return this.db.all<{ key: string }>('SELECT key FROM poll_state ORDER BY key').map((row) => row.key);
   }
 
   setPoll(key: string, record: PollRecord | undefined) {
-    if (record) this.polls[key] = record;
-    else if (key in this.polls) delete this.polls[key];
-    else return;
-    atomicWrite(this.pollPath, this.polls);
+    if (record) this.db.upsert('poll_state', pollRow(key, record));
+    else this.db.delete('poll_state', { key });
   }
 
   stats() {
-    const day = Date.now() - 24 * 3600 * 1000;
-    const recent = this.executions.filter((e) => Date.parse(e.startedAt) > day);
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const recent = this.db.get<{ n: number; failed: number | null; total: number | null }>(
+      `SELECT COUNT(*) AS n, SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS failed, SUM(duration_ms) AS total FROM executions WHERE started_at > ? AND status NOT IN (${[...IN_FLIGHT].map(() => '?').join(', ')})`,
+      since,
+      ...IN_FLIGHT,
+    );
+    const workflows = this.listWorkflows();
+    const count = Number(recent?.n ?? 0);
     return {
-      workflows: this.workflows.size,
-      activeWorkflows: [...this.workflows.values()].filter((w) => w.active).length,
-      executions24h: recent.length,
-      failed24h: recent.filter((e) => e.status === 'error').length,
-      avgDurationMs: recent.length ? Math.round(recent.reduce((s, e) => s + e.durationMs, 0) / recent.length) : 0,
+      workflows: workflows.length,
+      activeWorkflows: workflows.filter((w) => w.active).length,
+      executions24h: count,
+      failed24h: Number(recent?.failed ?? 0),
+      avgDurationMs: count ? Math.round(Number(recent?.total ?? 0) / count) : 0,
     };
+  }
+
+  /** Forget the workflow cache (tests that reopen the database). */
+  reload() {
+    this.workflows = undefined;
   }
 }
 
-function summarize(record: ExecutionRecord): ExecutionSummary {
-  return {
-    id: record.executionId,
-    workflowId: record.workflowId,
-    workflowName: record.workflowName,
-    mode: record.mode,
-    status: record.status,
-    startedAt: record.startedAt,
-    durationMs: record.durationMs,
-    nodesRun: record.executionOrder.filter((id) => !record.runData[id]?.at(-1)?.reused).length,
-    ...(record.error && { error: record.error }),
-    ...(record.rerunOf && { rerunOf: record.rerunOf }),
-    ...(record.debug && { debug: true }),
-    ...(record.status === 'waiting' && record.wait && { wait: { nodeName: record.wait.nodeName, resume: record.wait.resume, ...(record.wait.until && { until: record.wait.until }) } }),
-    ...(record.parentExecutionId && { parentExecutionId: record.parentExecutionId }),
-  };
+/** Called with the id of every deleted execution, also one that was never saved (its binary data goes with it). */
+const executionDeletedListeners = singleton('execution-deleted-listeners', () => new Set<(executionId: string) => void>());
+
+export function onExecutionDeleted(listener: (executionId: string) => void): () => void {
+  executionDeletedListeners.add(listener);
+  return () => executionDeletedListeners.delete(listener);
 }
 
 export const store = singleton('store', () => new Store());

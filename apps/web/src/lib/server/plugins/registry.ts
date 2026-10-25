@@ -23,6 +23,7 @@ import {
 import { buildManifest, runLoadOptions, runTestCredentials, type IPlugin } from '@landflow/sdk';
 import { inProcessNodeType, type NodeTypeResolver, type ResolvedNodeType, type Transport } from '@landflow/engine';
 import type { CredentialTypeInfo, DiscoverySource, NodeTypeInfo, PluginStatus, PluginSummary, RegistryEvent } from '../../shared/types';
+import { withBinaryData } from '../binary/access';
 import { bus } from '../bus';
 import { singleton } from '../singleton';
 import { withSpan } from '../telemetry';
@@ -435,7 +436,13 @@ class PluginRegistry implements NodeTypeResolver {
     });
   }
 
+  /** A node type to execute; binary data is wired in (lib/server/binary/access.ts). */
   resolve(type: string): ResolvedNodeType | { error: string } {
+    const resolved = this.resolveType(type);
+    return 'error' in resolved ? resolved : withBinaryData(resolved);
+  }
+
+  private resolveType(type: string): ResolvedNodeType | { error: string } {
     let pluginId: string;
     let nodeName: string;
     try {

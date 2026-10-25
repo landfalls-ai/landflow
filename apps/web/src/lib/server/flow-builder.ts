@@ -49,7 +49,7 @@ const SCHEMA = {
           from: { type: 'string' },
           to: { type: 'string' },
           output: { type: 'integer' },
-          type: { type: 'string', enum: ['main', 'ai_languageModel', 'ai_memory', 'ai_tool'] },
+          type: { type: 'string', enum: ['main', 'ai_languageModel', 'ai_memory', 'ai_tool', 'ai_embedding', 'ai_document', 'ai_textSplitter', 'ai_retriever', 'ai_reranker'] },
         },
         required: ['from', 'to'],
       },
@@ -76,7 +76,7 @@ Rules:
 - Each node gets a unique short key ("a", "b", …) and a short human name (2–4 words) describing what it does in this flow.
 - Parameters: only the parameter names listed for that node. Reference fields of the current item with expressions such as "{{ $json.title }}". Field parameters (like "field") take a plain field name such as "text", not an expression.
 - Nodes that write a result object into "outputField" (see the parameter notes, e.g. "receives {score, label}") nest it: compare "{{ $json.sentiment.label }}" or "{{ $json.sentiment.score }}", never the whole object.
-- connections: {"from": key, "to": key, "output": n}. "output" is the source's output index (If/Filter-like nodes: 0 = true, 1 = false). AI sub-nodes attach to an AI Agent with "type" ai_languageModel, ai_memory or ai_tool, from the sub-node to the agent.
+- connections: {"from": key, "to": key, "output": n}. "output" is the source's output index (If/Filter-like nodes: 0 = true, 1 = false). AI sub-nodes attach to an AI Agent with "type" ai_languageModel, ai_memory or ai_tool, from the sub-node to the agent. RAG: a vector store (mode retrieve-as-tool) attaches to an agent as ai_tool, or (mode retrieve) to a Question and Answer Chain as ai_retriever; embeddings attach to a vector store as ai_embedding, a data loader as ai_document, a text splitter to the loader as ai_textSplitter.
 - testData: 2–4 realistic sample items the flow can be tested with when run manually (objects with the fields the flow reads).
 
 ${PARAMETER_FORMATS}`;
@@ -170,7 +170,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL): Promise<
     const ok =
       type === 'main'
         ? output < source.outputs.filter((o) => o.type === 'main').length && target.inputs.some((i) => i.type === 'main')
-        : target.inputs.some((i) => i.type === type) && (source.supplies === type || (type === 'ai_tool' && Boolean(source.usableAsTool)));
+        : target.inputs.some((i) => i.type === type) && (source.supplies === type || source.outputs.some((o) => o.type === type) || (type === 'ai_tool' && Boolean(source.usableAsTool)));
     if (!ok || edges.some(([f, t, o, ty]) => f === c.from && t === c.to && o === output && ty === type)) {
       if (!ok) dropped.push(`connection ${c.from} → ${c.to} (${type})`);
       continue;

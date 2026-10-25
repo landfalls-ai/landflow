@@ -16,6 +16,7 @@ import logging
 from contextlib import AbstractContextManager
 from typing import Any, Mapping
 
+from .binary import BinaryClient
 from .errors import NodeOperationError
 from .http_client import HttpClient
 from .logs import NODE_LOGGER
@@ -153,6 +154,10 @@ class ExecuteContext(_TelemetryContext):
     ``execution_id``, ``workflow_id``, ``credentials`` (dict, possibly empty),
     ``type_version``, ``logger``, ``metrics``, ``http``, ``trace_id`` and
     ``request`` (the raw request dict).
+
+    ``idempotency_key`` is ``"<executionId>:<nodeId>:<runIndex>"``, the same for every
+    retry of this step (retry on fail, re-run after a host crash): pass it to APIs that
+    accept an idempotency key (Stripe's ``Idempotency-Key``). ``None`` from older hosts.
     """
 
     def __init__(
@@ -173,6 +178,8 @@ class ExecuteContext(_TelemetryContext):
         self.mode: str = request.get("mode") or "manual"
         self.execution_id: str = request.get("executionId") or ""
         self.workflow_id: str | None = request.get("workflowId") or None
+        key = request.get("idempotencyKey")
+        self.idempotency_key: str | None = key if isinstance(key, str) and key else None
         self.credentials: dict[str, Any] = credentials if credentials is not None else (request.get("credentials") or {})
         self.type_version: int = self.node.get("typeVersion") or 1
         self.parameters: dict[str, Any] = request.get("parameters") or {}
@@ -201,6 +208,7 @@ class ExecuteContext(_TelemetryContext):
         self._poll_state_out: Any = _UNSET
         self._properties = [prop for prop in descriptor.get("properties", []) if isinstance(prop, dict) and "name" in prop]
         self._item_defaults: dict[int, dict[str, Any]] = {}
+        self._binary: BinaryClient | None = None
 
     def get_input_data(self, input_index: int = 0) -> list[dict[str, Any]]:
         """Items that arrived on main input ``input_index`` (``[]`` if none)."""
@@ -266,6 +274,57 @@ class ExecuteContext(_TelemetryContext):
         """True when the node is set to continue on error: catch a failing item, append
         ``{"json": {"error": str(exc)}, "pairedItem": {"item": i}}`` and go on with the next item."""
         return self.request.get("continueOnFail") is True
+
+    # ---------------------------------------------------------- binary data
+
+    @property
+    def binary_access(self) -> dict[str, Any] | None:
+        """The request's ``binaryAccess`` (``{"url", "token"}``), ``None`` when the host sent none."""
+        access = self.request.get("binaryAccess")
+        return access if isinstance(access, dict) and access.get("url") else None
+
+    @property
+    def binary(self) -> BinaryClient:
+        """The client behind the binary helpers (``read``, ``open``, ``prepare``)."""
+        if self._binary is None:
+            self._binary = BinaryClient(self.binary_access, self.http)
+        return self._binary
+
+    def assert_binary_data(self, item_index: int = 0, name: str = "data", input_index: int = 0) -> dict[str, Any]:
+        """The ref of file ``name`` on input item ``item_index``; raises ``NodeOperationError`` when it has none."""
+        items = self.get_input_data(input_index)
+        if not 0 <= item_index < len(items):
+            raise NodeOperationError(f"There is no item {item_index} on input {input_index}", item_index=item_index)
+        files = items[item_index].get("binary")
+        ref = files.get(name) if isinstance(files, dict) else None
+        if not isinstance(ref, dict):
+            names = ", ".join(repr(key) for key in files) if isinstance(files, dict) and files else ""
+            raise NodeOperationError(
+                f'item {item_index} has no binary file "{name}"',
+                description=f"Its files: {names}" if names else "The item carries no files.",
+                item_index=item_index,
+            )
+        return ref
+
+    def get_binary_bytes(self, item_index: int = 0, name: str = "data", input_index: int = 0) -> bytes:
+        """The bytes of file ``name`` on input item ``item_index``."""
+        return self.binary.read(self.assert_binary_data(item_index, name, input_index))
+
+    def open_binary_stream(self, item_index: int = 0, name: str = "data", input_index: int = 0) -> Any:
+        """A binary file-like object over that file, for big files: ``with ctx.open_binary_stream(i) as f: ...``."""
+        return self.binary.open(self.assert_binary_data(item_index, name, input_index))
+
+    def read_binary(self, ref: Mapping[str, Any]) -> bytes:
+        """The bytes of any ref (inline ``data`` or a stored ``id``)."""
+        return self.binary.read(ref)
+
+    def prepare_binary_data(self, data: Any, file_name: str | None = None, mime_type: str | None = None) -> dict[str, Any]:
+        """Store ``data`` (bytes, str as UTF-8, or a binary file object) and return the ref to put under ``item["binary"]``.
+
+        Small files (up to 64 KiB) come back inline; bigger ones are uploaded to the host. ``mime_type`` defaults to
+        a guess from ``file_name``.
+        """
+        return self.binary.prepare(data, file_name, mime_type)
 
     # -------------------------------------------------------------- polling
 

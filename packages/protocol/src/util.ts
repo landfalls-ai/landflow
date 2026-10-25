@@ -24,6 +24,28 @@ export function mainPorts(ports: PortDescriptor[]): PortDescriptor[] {
   return ports.filter((port) => port.type === 'main');
 }
 
+/**
+ * Ports with their handle index (the n-th port of its type, counted over all ports so hidden
+ * ones keep their slot) and whether `parameters` show them (see PortDescriptor.displayOptions).
+ */
+export function indexedPorts(ports: PortDescriptor[], parameters: Record<string, unknown> = {}): Array<{ port: PortDescriptor; index: number; visible: boolean }> {
+  const counters: Record<string, number> = {};
+  return ports.map((port) => ({ port, index: (counters[port.type] = (counters[port.type] ?? -1) + 1), visible: isPropertyVisible(port, parameters) }));
+}
+
+/** The ports `parameters` show. */
+export function visiblePorts(ports: PortDescriptor[], parameters: Record<string, unknown> = {}): PortDescriptor[] {
+  return ports.filter((port) => isPropertyVisible(port, parameters));
+}
+
+/**
+ * Parameter values that show `port`: the first allowed value of each `show` condition. Used when a node is
+ * added from a sub-node slot (a vector store dropped on an agent's Tool slot switches to "As Tool").
+ */
+export function portParameters(port: PortDescriptor): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(port.displayOptions?.show ?? {}).flatMap(([key, values]) => (values.length ? [[key, values[0]]] : [])));
+}
+
 /** Initial parameter values for a fresh node, taken from property defaults. */
 export function defaultParameters(descriptor: Pick<NodeDescriptor, 'properties'>): Record<string, unknown> {
   return withPropertyDefaults(descriptor.properties);

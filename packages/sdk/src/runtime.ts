@@ -16,6 +16,7 @@ import type {
   TestCredentialsResponse,
 } from '@landflow/protocol';
 import { withPropertyDefaults } from '@landflow/protocol';
+import { createBinaryHelpers, httpBinaryClient, type BinaryDataClient } from './binary';
 import { credentialAccessor, localCredentialName, requestSecrets, type CredentialTypeDefinition, type ICredentialTestContext } from './credentials';
 import { createNodeMetrics, createSpanFunction, createTracedFetch, type TracedFetch } from './instrumentation';
 import type { LogAttributes, LogLevel, ProcessLogger } from './logger';
@@ -40,6 +41,8 @@ export interface ContextExtras {
   /** In-process only: the node's per-execution state. */
   getNodeState?: IExecuteContext['getNodeState'];
   setNodeState?: IExecuteContext['setNodeState'];
+  /** In-process only: the node outputs `$('Node')` sees. */
+  getNodeOutputs?: IExecuteContext['getNodeOutputs'];
   /** Extra log sink (the host streams logs live). */
   onLog?: (entry: LogEntry) => void;
   signal?: AbortSignal;
@@ -49,7 +52,13 @@ export interface ContextExtras {
   credentialTypes?: readonly CredentialTypeDefinition[];
   /** Qualifies local node types in telemetry attributes. */
   pluginId?: string;
+  /** In-process only: the host's binary store (remote plugins use the request's `binaryAccess` over HTTP). */
+  binary?: BinaryDataClient;
 }
+
+/** Bodies fetch sends as they are (files, forms, streams); anything else that isn't a string goes as JSON. */
+const isRawBody = (body: unknown): body is BodyInit =>
+  body instanceof Uint8Array || body instanceof ArrayBuffer || body instanceof URLSearchParams || body instanceof ReadableStream || (typeof Blob !== 'undefined' && body instanceof Blob) || (typeof FormData !== 'undefined' && body instanceof FormData);
 
 async function httpRequest(fetcher: TracedFetch, options: HttpRequestOptions): Promise<HttpResponse> {
   const url = new URL(options.url);
@@ -57,7 +66,7 @@ async function httpRequest(fetcher: TracedFetch, options: HttpRequestOptions): P
   const headers: Record<string, string> = { ...(options.headers ?? {}) };
   let body: BodyInit | undefined;
   if (options.body !== undefined && options.body !== null) {
-    if (typeof options.body === 'string') body = options.body;
+    if (typeof options.body === 'string' || isRawBody(options.body)) body = options.body;
     else {
       body = JSON.stringify(options.body);
       if (!Object.keys(headers).some((h) => h.toLowerCase() === 'content-type')) {
@@ -70,9 +79,11 @@ async function httpRequest(fetcher: TracedFetch, options: HttpRequestOptions): P
     headers,
     body,
     signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
-  });
+    ...(body instanceof ReadableStream && { duplex: 'half' }),
+  } as RequestInit);
   const responseHeaders: Record<string, string> = {};
   response.headers.forEach((value, key) => (responseHeaders[key] = value));
+  if (options.encoding === 'buffer') return { status: response.status, headers: responseHeaders, body: Buffer.from(await response.arrayBuffer()) };
   const text = await response.text();
   const wantsJson = options.json ?? (response.headers.get('content-type') ?? '').includes('json');
   let parsed: unknown = text;
@@ -139,6 +150,7 @@ function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[]
     mode: request.mode,
     getExecutionId: () => request.executionId,
     getWorkflowId: () => request.workflowId,
+    getIdempotencyKey: () => request.idempotencyKey || undefined,
     continueOnFail: () => request.continueOnFail === true,
     getInputData: (inputIndex = 0) => request.inputs[inputIndex] ?? [],
     getInputCount: () => request.inputs.length,
@@ -163,6 +175,7 @@ function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[]
     helpers: {
       httpRequest: (options) => httpRequest(http, options),
       returnJsonArray: (data) => (Array.isArray(data) ? data : [data]).map((json) => ({ json })),
+      ...createBinaryHelpers(request, extras.binary ?? (request.binaryAccess && httpBinaryClient(request.binaryAccess, http)), extras.signal),
     },
     getPollState: <T extends JsonObject>() => request.pollState as T | undefined,
     setPollState: (state: JsonObject) => {
@@ -176,6 +189,7 @@ function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[]
   if (extras.putExecutionToWait) context.putExecutionToWait = extras.putExecutionToWait;
   if (extras.getNodeState) context.getNodeState = extras.getNodeState;
   if (extras.setNodeState) context.setNodeState = extras.setNodeState;
+  if (extras.getNodeOutputs) context.getNodeOutputs = extras.getNodeOutputs;
   return { context, poll, logger };
 }
 

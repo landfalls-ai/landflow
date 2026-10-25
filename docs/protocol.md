@@ -120,11 +120,15 @@ SDK environment variables:
 {
   "protocol": "landflow.plugin/v1",
   "executionId": "ex_…", "workflowId": "wf_…",
+  "idempotencyKey": "ex_…:n3:0",          // "<executionId>:<nodeId>:<runIndex>", see below
   "mode": "manual",                       // "manual" | "trigger" | "webhook" | "tool" | "chat"
   "node": { "id": "n3", "name": "Hash", "type": "go-crypto.hash", "typeVersion": 1 },
   "parameters":     { "algorithm": "sha256", "field": "email" },     // resolved vs item 0
   "itemParameters": [ { "algorithm": "sha256", "field": "email" } ], // resolved per item of input 0
-  "inputs": [ [ { "json": { "email": "a@b.c" } } ] ]                  // inputs[i] = main input i
+  "inputs": [ [ { "json": { "email": "a@b.c" } } ] ],                 // inputs[i] = main input i
+  // Optional, only when files are involved (§11): items may carry "binary": { "<name>": BinaryRef },
+  // and the host adds where to read and write those files:
+  "binaryAccess": { "url": "http://127.0.0.1:3000/api/binary", "token": "lfb1.…" }
 }
 
 // ExecuteResponse
@@ -134,6 +138,10 @@ SDK environment variables:
   "error": null                            // or { "message", "description"?, "itemIndex"? }
 }
 ```
+
+**Files** ride next to an item's JSON as `"binary": { "data": { "id": "ex_….k3J…", "mimeType":
+"application/pdf", "fileName": "report.pdf", "fileSize": 48213, … } }`: references to the host's
+binary store, read and written over HTTP with `binaryAccess`. See §11.
 
 **Expressions are resolved by the host.** `{{ $json.email }}` in a parameter is evaluated per item
 before the request is sent; plugins only ever see concrete values. `getNodeParameter(name, i)`
@@ -153,6 +161,16 @@ it and go on with the next item, as n8n's `continueOnFail()` does. The SDKs expo
 `ctx.continueOnFail()`, `ctx.continue_on_fail()` and `ctx.ContinueOnFail()` (Go adds
 `ctx.ErrorItem(i, err)`). If the call still fails, the host falls back to node-level continue:
 every input item comes out with the error attached.
+
+**Idempotency key.** The host sends `idempotencyKey` (gRPC `idempotency_key`) with every node call:
+`"<executionId>:<nodeId>:<runIndex>"`, where `runIndex` is the 0-based index of this node's run in
+the execution. It is the same for every retry of that step (a retry-on-fail attempt, or the re-run of
+the interrupted node when an execution resumes after a host crash) and new for a new execution. A
+node with side effects should forward it to downstream APIs that accept an idempotency key (Stripe's
+`Idempotency-Key` header, …), so a repeated step does not repeat them; a node that makes one call
+per item can append the item index (`<key>:<i>`). Older hosts leave it out. The SDKs expose it as
+`ctx.getIdempotencyKey()` (`undefined` when absent), `ctx.idempotency_key` (`None`) and
+`ctx.IdempotencyKey()` (`""`).
 
 ## 4. Property types
 
@@ -284,3 +302,77 @@ over the wire. Check for them before use (`ctx.putExecutionToWait?.(…)`).
 - **`ctx.getNodeState<T>()` / `ctx.setNodeState(state | undefined)`**: JSON state a node keeps
   for the length of one execution, also across waits (Loop Over Items keeps its remaining items
   here). `undefined` clears it.
+
+## 11. Binary data
+
+Items carry files next to their JSON, under `binary`, keyed by a property name (`data` for a single
+file, as in n8n). A file is a **reference** to bytes in the host's binary store, never the bytes:
+
+```jsonc
+{
+  "json": { "invoice": 42 },
+  "binary": {
+    "data": {
+      "id": "ex_V1StGXR8Z5jd.k3J9vQ2mT0pX7aLc1RwYz",   // <scope>.<random>; the scope is the owning execution
+      "mimeType": "application/pdf",
+      "fileName": "invoice-42.pdf",
+      "fileExtension": "pdf",
+      "fileSize": 48213,                              // bytes
+      "fileType": "pdf"                               // image | text | json | html | pdf | audio | video | other
+    }
+  }
+}
+```
+
+- The engine passes `binary` through like `json`; a node that builds new items decides whether to
+  keep it (Edit Fields, Filter, If, Switch and the other pass-through nodes keep it).
+- **Every ref the host sends has an `id`.** Read the bytes over the host's binary API (below).
+- **A node may return a small file inline**: `{ "data": "<base64>", "mimeType": "text/csv", "fileName": "a.csv" }`
+  without `id` (and `fileSize` may be left out). The host stores it and replaces it with a stored ref
+  before the next node sees it. The SDKs inline files up to `MAX_INLINE_BINARY_BYTES` (64 KiB) and
+  upload bigger ones; the host accepts inline files up to `LANDFLOW_BINARY_MAX_INLINE_BYTES`
+  (default 16 MiB, decoded).
+- Bytes are deleted with their execution: by the executions API, by retention, and when a
+  workflow's settings don't keep that kind of run. A sub-workflow run with "wait for completion"
+  writes into its parent's scope, so the files it returns live as long as the parent run.
+
+### Reading and writing bytes
+
+`ExecuteRequest.binaryAccess` (gRPC: `ExecuteRequest.binary_access`, a `BinaryAccess` message) tells a
+plugin where the host's binary API is for this call:
+
+```jsonc
+"binaryAccess": { "url": "http://127.0.0.1:3000/api/binary", "token": "lfb1.eyJ3Ijoi….Q2xh…" }
+```
+
+| Method & path | Request | Response |
+|---|---|---|
+| `GET {url}/{id}` | `Authorization: Bearer {token}` | `200` with the bytes; `Content-Type`, `Content-Length`, `Content-Disposition` (`?download=1` makes it `attachment`) |
+| `POST {url}` | `Authorization: Bearer {token}`; body: the raw bytes (stream them); `Content-Type`: the file's MIME type; file name in `X-Landflow-File-Name` (percent-encoded) or `?fileName=` | `201` with the stored `BinaryRef` |
+
+- The **token** is scoped to the execution: it stores files there, and reads those plus the files
+  of the call's input items (which can belong to an earlier execution in a re-run, or to a parent
+  run). It expires after an hour. Missing or bad token → `401`; a file outside its scope → `403`;
+  unknown id → `404`; an upload over `LANDFLOW_BINARY_MAX_BYTES` (default 256 MiB) → `413`.
+- The host builds `url` from `LANDFLOW_INTERNAL_URL` (default `http://127.0.0.1:$PORT`). Set it when
+  plugins reach the host under another name (`http://web:3000` in `deploy/compose.yml`).
+- Without a token, `GET`/`HEAD {url}/{id}` serves the host's own UI (the run view's Binary tab), like the
+  rest of the API while Landflow has no sign-in; ids carry 128 random bits. HTML, SVG and other
+  active types are served with a sandboxing `Content-Security-Policy` and `nosniff`.
+- A plugin that gets no `binaryAccess` (an older host) can still return inline files.
+- **Backward compatible**: plugins built on an SDK without binary support ignore `binary` (their
+  output items simply don't carry files), and hosts without it never send `binaryAccess`.
+
+### SDK helpers
+
+| | TypeScript (`ctx.helpers`) | Go (`*ExecuteContext`) | Python (`ctx`) |
+|---|---|---|---|
+| the ref of input item `i` (error if missing) | `assertBinaryData(i, 'data')` | `BinaryRef(i, "data")` | `assert_binary_data(i, "data")` |
+| its bytes | `await getBinaryDataBuffer(i, 'data')` | `BinaryBytes(i, "data")` | `get_binary_bytes(i, "data")` |
+| a stream | `await getBinaryStream(i, 'data')` | `BinaryReader(i, "data")` (`io.ReadCloser`) | `open_binary_stream(i, "data")` (file-like) |
+| bytes of any ref | `await binaryToBuffer(ref)` | `ReadBinary(ref)` (`OpenBinary(ref)` streams) | `read_binary(ref)` |
+| store bytes, get a ref | `await prepareBinaryData(bytes, 'a.pdf', mime?)` | `PrepareBinary(bytes, "a.pdf", mime)` / `PrepareBinaryStream(r, "a.pdf", mime)` | `prepare_binary_data(bytes_or_file, "a.pdf", mime_type=None)` |
+| attach it | `{ json, binary: { data: ref } }` | `Item{JSON: …, Binary: map[string]BinaryRef{"data": ref}}` | `{"json": …, "binary": {"data": ref}}` |
+
+`prepare…` returns an inline ref for small files and uploads the rest; the MIME type defaults to
+one guessed from the file name.

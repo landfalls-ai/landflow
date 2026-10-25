@@ -1,13 +1,16 @@
 /**
  * Variables (Settings → Variables): instance-wide key/value strings that
- * expressions read as `$vars.NAME`, kept in <data dir>/variables.json. The
- * runner reads them fresh for every run; the Code node and agent node tools
- * see the same values. Read-only inside workflows.
+ * expressions read as `$vars.NAME`, kept in the `variables` table
+ * (lib/server/db). VariableFile keeps them in a JSON file instead (the format
+ * older versions used; tests use it too). The runner reads them fresh for every
+ * run; the Code node and agent node tools see the same values. Read-only inside
+ * workflows.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { Variable } from '../shared/platform';
-import { atomicWrite, store } from './store';
+import { database, type Database } from './db';
+import { variableRow } from './db/rows';
+import { atomicWrite } from './store';
 
 export type { Variable };
 
@@ -43,22 +46,16 @@ function checkValue(value: unknown): string {
   return value;
 }
 
-/** Variables backed by one JSON file, read on every call. The default instance lives in the data directory; tests make their own. */
-export class VariableFile {
-  constructor(readonly path: string) {}
+/** What changed in a write: the variable saved (under its new key) and the key that went away (a delete or a rename). */
+interface VariableChange {
+  saved?: StoredVariable;
+  removed?: string;
+}
 
-  private read(): StoredVariable[] {
-    try {
-      const saved = JSON.parse(readFileSync(this.path, 'utf8')) as { variables?: StoredVariable[] };
-      return (saved.variables ?? []).filter((v) => typeof v?.key === 'string' && typeof v.value === 'string');
-    } catch {
-      return [];
-    }
-  }
-
-  private write(list: StoredVariable[]) {
-    atomicWrite(this.path, { version: 1, variables: list.sort((a, b) => a.key.localeCompare(b.key)) });
-  }
+/** The variable rules over a storage that is read on every call (a JSON file or the database). */
+export abstract class VariableStore {
+  protected abstract read(): StoredVariable[];
+  protected abstract write(list: StoredVariable[], change: VariableChange): void;
 
   /** `[{ key, value }]`, sorted by key. */
   list(): Variable[] {
@@ -85,8 +82,9 @@ export class VariableFile {
     if (list.some((v) => v.key === key)) throw new VariableError(`A variable named ${key} already exists`, 409);
     if (list.length >= MAX_VARIABLES) throw new VariableError(`At most ${MAX_VARIABLES} variables`);
     const now = new Date().toISOString();
-    list.push({ key, value, createdAt: now, updatedAt: now });
-    this.write(list);
+    const saved = { key, value, createdAt: now, updatedAt: now };
+    list.push(saved);
+    this.write(list, { saved });
     return { key, value };
   }
 
@@ -102,7 +100,7 @@ export class VariableFile {
     }
     const value = patch.value === undefined ? list[index].value : checkValue(patch.value);
     list[index] = { ...list[index], key: nextKey, value, updatedAt: new Date().toISOString() };
-    this.write(list);
+    this.write(list, { saved: list[index], ...(nextKey !== key && { removed: key }) });
     return { key: nextKey, value };
   }
 
@@ -110,14 +108,57 @@ export class VariableFile {
     const list = this.read();
     const next = list.filter((v) => v.key !== key);
     if (next.length === list.length) return false;
-    this.write(next);
+    this.write(next, { removed: key });
     return true;
   }
 }
 
-/** The instance's variables (<data dir>/variables.json). */
+/** Variables backed by one JSON file. */
+export class VariableFile extends VariableStore {
+  constructor(readonly path: string) {
+    super();
+  }
+
+  protected read(): StoredVariable[] {
+    try {
+      const saved = JSON.parse(readFileSync(this.path, 'utf8')) as { variables?: StoredVariable[] };
+      return (saved.variables ?? []).filter((v) => typeof v?.key === 'string' && typeof v.value === 'string');
+    } catch {
+      return [];
+    }
+  }
+
+  protected write(list: StoredVariable[]) {
+    atomicWrite(this.path, { version: 1, variables: list.sort((a, b) => a.key.localeCompare(b.key)) });
+  }
+}
+
+/** Variables in the database's `variables` table: the instance's. */
+export class VariableTable extends VariableStore {
+  constructor(private readonly db: () => Database = database) {
+    super();
+  }
+
+  protected read(): StoredVariable[] {
+    return this.db()
+      .all<{ key: string; value: string; created_at: string; updated_at: string }>('SELECT key, value, created_at, updated_at FROM variables ORDER BY key')
+      .map((row) => ({ key: row.key, value: row.value, createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+
+  protected write(_list: StoredVariable[], change: VariableChange) {
+    const db = this.db();
+    db.transaction(() => {
+      if (change.removed) db.delete('variables', { key: change.removed });
+      if (change.saved) db.upsert('variables', variableRow(change.saved));
+    });
+  }
+}
+
+const table = new VariableTable();
+
+/** The instance's variables (the `variables` table). */
 export const variables = {
-  file: () => new VariableFile(join(store.dir, 'variables.json')),
+  file: (): VariableStore => table,
   list: () => variables.file().list(),
   record: () => variables.file().record(),
   get: (key: string) => variables.file().get(key),

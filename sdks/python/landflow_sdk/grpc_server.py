@@ -56,6 +56,9 @@ def _optional(msg: Any, field: str) -> Any:
 
 def _item_from_proto(item: pb.Item, where: str) -> dict[str, Any]:
     out: dict[str, Any] = {"json": from_dynamic(_optional(item, "json"), {}, where)}
+    files = from_dynamic(_optional(item, "binary"), None, where.replace(".json", ".binary"))
+    if isinstance(files, dict) and files:
+        out["binary"] = files
     if item.HasField("paired_item"):
         out["pairedItem"] = {"item": item.paired_item.item, "input": item.paired_item.input}
     return out
@@ -65,6 +68,8 @@ def _items_to_branch(items: list[dict[str, Any]], branch: pb.Branch) -> None:
     for item in items:
         msg = branch.items.add()
         msg.json.json = dumps(item["json"])
+        if item.get("binary"):
+            msg.binary.json = dumps(item["binary"])
         paired = item.get("pairedItem")
         if paired is not None:
             msg.paired_item.item = int(paired["item"])
@@ -95,6 +100,10 @@ def execute_request_from_proto(msg: pb.ExecuteRequest) -> dict[str, Any]:
         request["pollState"] = poll_state
     if msg.continue_on_fail:
         request["continueOnFail"] = True
+    if msg.HasField("binary_access") and msg.binary_access.url:
+        request["binaryAccess"] = {"url": msg.binary_access.url, "token": msg.binary_access.token}
+    if msg.idempotency_key:
+        request["idempotencyKey"] = msg.idempotency_key
     return request
 
 
@@ -121,6 +130,12 @@ def execute_request_to_proto(request: dict[str, Any]) -> pb.ExecuteRequest:
         msg.poll_state.CopyFrom(to_dynamic(request["pollState"]))
     if request.get("continueOnFail"):
         msg.continue_on_fail = True
+    access = request.get("binaryAccess")
+    if access:
+        msg.binary_access.url = access.get("url", "")
+        msg.binary_access.token = access.get("token", "")
+    if request.get("idempotencyKey"):
+        msg.idempotency_key = request["idempotencyKey"]
     return msg
 
 

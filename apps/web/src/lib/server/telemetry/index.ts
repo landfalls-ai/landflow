@@ -9,6 +9,7 @@ export { activeTraceIds, failSpan, SpanKind, SpanStatusCode, startSpan, traceHea
 export { fireTrigger, startTrigger, tracePoll, type PollInfo, type TriggerFire, type TriggerInfo, type TriggerSource } from './triggers';
 export { tracePluginRpc, type RpcMethod, type RpcTarget } from './rpc';
 export { traceChat, traceEmbeddings, type ChatRequest, type ChatResponse, type EmbeddingsResponse } from './ai';
+export { traceGuardrails, traceRerank, traceVectorStore, type VectorStoreCall, type VectorStoreOperation } from './rag';
 export { recordAgentTokens, recordApproval, traceAgentRun, traceToolCall, type AgentRunInfo, type ToolCallInfo } from './agents';
-export { observePluginsOnline, recordHeartbeat, recordScheduleLag, recordWebhookRequest } from './metrics';
+export { observePluginsOnline, recordHeartbeat, recordRuntimeEvent, recordScheduleLag, recordWebhookRequest, type RuntimeEvent } from './metrics';
 export { recordFlowMetric, type FlowMetricType } from './flow-metrics';

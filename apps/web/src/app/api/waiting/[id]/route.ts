@@ -4,6 +4,8 @@
  * (`{ method, path, headers, query, body }`) as the Wait node's output. The Wait
  * node's Respond setting picks the answer, as for the Webhook trigger.
  */
+import type { NodeItem } from '@landflow/protocol';
+import { BinaryTooLargeError } from '@/lib/server/binary/store';
 import { error, handler } from '@/lib/server/http';
 import { liveExecution, resumeExecution, ResumeError, type RunReply } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
@@ -31,7 +33,17 @@ async function handle(request: Request, { params }: Ctx) {
     return error(`This execution waits for a ${wait.method} request`, 405, { allow: wait.method });
   }
 
-  const item = await requestItem(request, `waiting/${id}`);
+  // Uploaded files go straight into the waiting execution's scope.
+  let item: NodeItem;
+  try {
+    item = await requestItem(request, `waiting/${id}`, { executionId: id });
+  } catch (caught) {
+    if (caught instanceof BinaryTooLargeError) {
+      recordWebhookRequest(413, record.workflowId);
+      return error(caught.message, 413);
+    }
+    throw caught;
+  }
   const mode = (['immediately', 'lastNode', 'responseNode'].includes(String(wait.data?.respond)) ? wait.data?.respond : 'immediately') as RespondMode;
   const reply = deferred<RunReply>();
   // The resumed part of the run is a child of this request's span (resumeExecution checks the state again, synchronously).

@@ -187,7 +187,7 @@ class HttpClient:
         timeout: float | None = None,
         verify: bool = True,
     ) -> HttpResponse:
-        """Send a request; ``json=`` sends a JSON body, ``data=`` bytes/str or a dict (form-encoded),
+        """Send a request; ``json=`` sends a JSON body, ``data=`` bytes/str, a binary file object or a dict (form-encoded),
         ``params=`` is appended to the query string. ``verify=False`` accepts any TLS certificate."""
         method = method.upper()
         if params:
@@ -202,7 +202,7 @@ class HttpClient:
                 del out_headers[existing]
             out_headers[key] = str(value)
         lower = {k.lower() for k in out_headers}
-        body: bytes | None = None
+        body: Any = None
         if json is not None:
             body = _json.dumps(json, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             if "content-type" not in lower:
@@ -210,6 +210,8 @@ class HttpClient:
         elif data is not None:
             if isinstance(data, (bytes, bytearray)):
                 body = bytes(data)
+            elif hasattr(data, "read"):  # a binary file object: streamed (chunked unless Content-Length is set)
+                body = data
             elif isinstance(data, str):
                 body = data.encode("utf-8")
             else:

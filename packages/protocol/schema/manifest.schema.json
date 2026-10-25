@@ -149,7 +149,12 @@
                     "main",
                     "ai_languageModel",
                     "ai_tool",
-                    "ai_memory"
+                    "ai_memory",
+                    "ai_embedding",
+                    "ai_document",
+                    "ai_textSplitter",
+                    "ai_retriever",
+                    "ai_reranker"
                   ]
                 },
                 "displayName": {
@@ -162,6 +167,44 @@
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991
+                },
+                "displayOptions": {
+                  "type": "object",
+                  "properties": {
+                    "show": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": [
+                            "string",
+                            "number",
+                            "boolean"
+                          ]
+                        }
+                      }
+                    },
+                    "hide": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": [
+                            "string",
+                            "number",
+                            "boolean"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -181,7 +224,12 @@
                     "main",
                     "ai_languageModel",
                     "ai_tool",
-                    "ai_memory"
+                    "ai_memory",
+                    "ai_embedding",
+                    "ai_document",
+                    "ai_textSplitter",
+                    "ai_retriever",
+                    "ai_reranker"
                   ]
                 },
                 "displayName": {
@@ -194,6 +242,44 @@
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991
+                },
+                "displayOptions": {
+                  "type": "object",
+                  "properties": {
+                    "show": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": [
+                            "string",
+                            "number",
+                            "boolean"
+                          ]
+                        }
+                      }
+                    },
+                    "hide": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": [
+                            "string",
+                            "number",
+                            "boolean"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -226,7 +312,12 @@
             "enum": [
               "ai_languageModel",
               "ai_tool",
-              "ai_memory"
+              "ai_memory",
+              "ai_embedding",
+              "ai_document",
+              "ai_textSplitter",
+              "ai_retriever",
+              "ai_reranker"
             ]
           },
           "documentationUrl": {

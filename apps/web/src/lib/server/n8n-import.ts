@@ -13,6 +13,7 @@ import { nanoid } from 'nanoid';
 import { defaultVersionOf, isPropertyVisible, withPropertyDefaults, type ConnectionType, type NodeDescriptor } from '@landflow/protocol';
 import type { StickyNote, Workflow, WorkflowConnection, WorkflowNode, WorkflowSettings } from '@landflow/engine';
 import type { ImportReport } from '../shared/types';
+import { parseCron } from './agents/cron';
 
 /** Rule outputs of core.switch (SWITCH_OUTPUTS in nodes/flow.ts); its fallback output comes after them. */
 const SWITCH_OUTPUTS = 4;
@@ -54,6 +55,8 @@ export interface N8nNode {
   waitBetweenTries?: number;
   alwaysOutputData?: boolean;
   executeOnce?: boolean;
+  /** Webhook-based nodes: n8n's id for the URL (a Form Trigger's default path). */
+  webhookId?: string;
 }
 
 interface Ctx {
@@ -96,6 +99,10 @@ const num = (value: unknown, fallback: number) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 };
+/** A whole number from `min` up to `max`. */
+const whole = (value: unknown, fallback: number, min: number, max = Number.MAX_SAFE_INTEGER) => clamp(Math.round(num(value, fallback)), [min, max]);
+/** A number parameter: an expression as it is, anything else as a number of at least `min`. */
+const numeric = (value: unknown, fallback: number, min: number) => (typeof value === 'string' && value.includes('{{') ? value : Math.max(min, num(value, fallback)));
 /** A value as a parameter string: strings as they are, everything else as JSON. */
 const text = (value: unknown) => (value === undefined || value === null ? '' : typeof value === 'string' ? value : JSON.stringify(value));
 
@@ -227,20 +234,74 @@ const conditionsNode: Converter = (p, ctx) => {
 
 const empty: Converter = () => ({ parameters: {} });
 
+/** n8n's response modes (Webhook, Wait "On Webhook Call") → the Landflow Webhook's `respond`. */
+const RESPOND_MODES: Record<string, string> = { onReceived: 'immediately', lastNode: 'lastNode', responseNode: 'responseNode' };
+
+/** One warning for the n8n options a Landflow node doesn't have. */
+function dropOptions(keys: string[], ctx: Ctx) {
+  if (keys.length === 1) ctx.warn(`${ctx.node.name}: the option “${keys[0]}” has no Landflow equivalent and was dropped.`);
+  else if (keys.length) ctx.warn(`${ctx.node.name}: the options ${keys.map((k) => `“${k}”`).join(', ')} have no Landflow equivalent and were dropped.`);
+}
+
+/**
+ * n8n webhook response settings that Landflow's Webhook and Wait nodes don't have: a response code and data (a
+ * Respond to Webhook node sets both), and the options (headers, raw body, IP allow list…), which are dropped.
+ */
+function webhookResponseWarnings(p: Params, respond: string, ctx: Ctx, kept: string[] = []) {
+  const options = isObject(p.options) ? p.options : {};
+  if (respond !== 'responseNode') {
+    // At the top in Webhook v1/v2; newer versions keep it in the options as `{ values: { responseCode, customCode } }`.
+    const nested = isObject(options.responseCode) && isObject(options.responseCode.values) ? options.responseCode.values : undefined;
+    const code = nested ? (nested.responseCode === 'customCode' ? nested.customCode : nested.responseCode) : (p.responseCode ?? options.responseCode);
+    if (code !== undefined && num(code, 200) !== 200) {
+      ctx.warn(`${ctx.node.name}: the response code ${text(code)} isn't available here; use a Respond to Webhook node to set it.`);
+    }
+    const data = str(p.responseData);
+    if (respond === 'lastNode' && data && data !== 'firstEntryJson') {
+      ctx.warn(`${ctx.node.name}: responding with “${data}” isn't available; the last node's output is sent as JSON (one item as an object, several as an array).`);
+    }
+  }
+  dropOptions(
+    Object.keys(options).filter((key) => key !== 'responseCode' && !kept.includes(key)),
+    ctx,
+  );
+}
+
+/**
+ * n8n's Webhook: one method, the path, and the response mode (immediately, when the last node finishes, or from a
+ * Respond to Webhook node). Response codes, data and options have no equivalent on Landflow's trigger.
+ */
 const webhook: Converter = (p, ctx) => {
-  let method = p.httpMethod ?? 'GET';
-  if (Array.isArray(method)) {
-    if (method.length > 1) ctx.warn(`${ctx.node.name}: Landflow webhooks take one HTTP method; ${method[0]} was kept.`);
-    method = method[0] ?? 'GET';
-  }
-  const respond = { onReceived: 'immediately', lastNode: 'lastNode', responseNode: 'responseNode' }[str(p.responseMode) ?? 'onReceived'] ?? 'immediately';
+  const name = ctx.node.name;
   const descriptor = ctx.descriptor('core.webhook');
-  const options = descriptor?.properties.find((d) => d.name === 'respond')?.options ?? [];
-  if (respond === 'responseNode' && descriptor && !options.some((o) => o.value === 'responseNode')) {
-    ctx.warn(`${ctx.node.name}: “Respond to Webhook” responses aren't available; the webhook now answers when the last node finishes.`);
-    return { parameters: { path: str(p.path) ?? 'webhook', method: String(method).toUpperCase(), respond: 'lastNode' } };
+  const offered = (property: string) => descriptor?.properties.find((d) => d.name === property)?.options;
+  const methods = Array.isArray(p.httpMethod) ? p.httpMethod : [p.httpMethod ?? 'GET'];
+  if (methods.length > 1) ctx.warn(`${name}: Landflow webhooks take one HTTP method; ${text(methods[0])} was kept.`);
+  let method = String(methods[0] ?? 'GET').toUpperCase();
+  if (offered('method') && !offered('method')!.some((o) => o.value === method)) {
+    ctx.warn(`${name}: Landflow webhooks don't take ${method} requests; it listens for GET.`);
+    method = 'GET';
   }
-  return { parameters: { path: str(p.path) ?? 'webhook', method: String(method).toUpperCase(), respond, ...(isObject(p.options) && { options: p.options }) } };
+  const mode = str(p.responseMode) ?? 'onReceived';
+  let respond = RESPOND_MODES[mode];
+  if (!respond) {
+    ctx.warn(`${name}: the response mode “${mode}” isn't available; the webhook answers when the last node finishes.`);
+    respond = 'lastNode';
+  }
+  // Without Respond to Webhook (on this host) the caller would only get an answer when the run ends.
+  if (respond === 'responseNode' && descriptor && (!offered('respond')?.some((o) => o.value === 'responseNode') || !ctx.descriptor('core.respondToWebhook'))) {
+    ctx.warn(`${name}: “Respond to Webhook” responses aren't available; the webhook now answers when the last node finishes.`);
+    respond = 'lastNode';
+  }
+  // Uploads: n8n's "Field Name for Binary Data" and "Raw Body" exist on Landflow's trigger too.
+  const options = isObject(p.options) ? p.options : {};
+  const kept = (['binaryPropertyName', 'rawBody'] as const).filter((key) => options[key] !== undefined);
+  webhookResponseWarnings(p, respond, ctx, kept);
+  const auth = str(p.authentication);
+  if (auth && auth !== 'none') ctx.warn(`${name}: Landflow webhooks have no ${auth} authentication; anyone with the URL can call it.`);
+  const path = str(p.path) ?? 'webhook';
+  if (/(^|\/):/.test(path)) ctx.warn(`${name}: path parameters (${path}) aren't supported; the request path has to match exactly.`);
+  return { parameters: { path, method, respond, ...(kept.length && { options: Object.fromEntries(kept.map((key) => [key, options[key]])) }) } };
 };
 
 const UNIT_SECONDS: Record<string, number> = { seconds: 1, minutes: 60, hours: 3600, days: 86_400, weeks: 604_800, months: 2_592_000 };
@@ -253,29 +314,55 @@ function everyUnit(seconds: number): { every: number; unit: 'seconds' | 'minutes
   return { every: s, unit: 'seconds' };
 }
 
-const scheduleTrigger: Converter = (p, ctx) => {
-  const rule = isObject(p.rule) ? p.rule : { interval: [{}] };
-  const rules = list(rule.interval);
-  const first = rules[0] ?? {};
-  const field = str(first.field) ?? 'days';
-  const n = (key: string, fallback: number) => Math.max(1, num(first[key], fallback));
-  const intervals: Record<string, () => number> = {
-    seconds: () => n('secondsInterval', 30),
-    minutes: () => n('minutesInterval', 5) * 60,
-    hours: () => n('hoursInterval', 1) * 3600,
-    days: () => n('daysInterval', 1) * 86_400,
-    weeks: () => n('weeksInterval', 1) * 604_800,
-    months: () => n('monthsInterval', 1) * 2_592_000,
-  };
-  let seconds = intervals[field]?.();
-  if (seconds === undefined) {
-    ctx.warn(`${ctx.node.name}: the cron rule (${text(first.expression)}) was simplified to every hour. Check the schedule.`);
-    seconds = 3600;
-  } else if (['days', 'weeks', 'months'].includes(field)) {
-    ctx.warn(`${ctx.node.name}: the “${field}” rule was simplified to a fixed interval from activation, without n8n's time of day. Check the schedule.`);
+/**
+ * One of n8n's Trigger Rules → Landflow's (the fields scheduler.ts reads). n8n exports leave defaults out, and they
+ * differ from the Landflow editor's, so they are written in: n8n triggers at midnight, and every weekday when none
+ * is picked. Undefined for an interval Landflow doesn't know.
+ */
+function triggerRule(rule: Params, ctx: Ctx): Params | undefined {
+  const field = str(rule.field) ?? 'days';
+  const minute = whole(rule.triggerAtMinute, 0, 0, 59);
+  const at = { triggerAtHour: whole(rule.triggerAtHour, 0, 0, 23), triggerAtMinute: minute };
+  switch (field) {
+    case 'seconds':
+      return { field, secondsInterval: whole(rule.secondsInterval, 30, 1, 59) };
+    case 'minutes':
+      return { field, minutesInterval: whole(rule.minutesInterval, 5, 1, 59) };
+    case 'hours':
+      return { field, hoursInterval: whole(rule.hoursInterval, 1, 1, 23), triggerAtMinute: minute };
+    case 'days':
+      return { field, daysInterval: whole(rule.daysInterval, 1, 1, 31), ...at };
+    case 'weeks': {
+      const picked = Array.isArray(rule.triggerAtDay) ? rule.triggerAtDay : rule.triggerAtDay === undefined ? [] : [rule.triggerAtDay];
+      const days = [...new Set(picked.map((d) => Math.round(num(d, -1))).filter((d) => d >= 0 && d <= 7).map((d) => d % 7))].sort((a, b) => a - b);
+      return { field, weeksInterval: whole(rule.weeksInterval, 1, 1), triggerAtDay: days.length ? days : [0, 1, 2, 3, 4, 5, 6], ...at };
+    }
+    case 'months':
+      return { field, monthsInterval: whole(rule.monthsInterval, 1, 1, 12), triggerAtDayOfMonth: whole(rule.triggerAtDayOfMonth, 1, 1, 31), ...at };
+    case 'cronExpression': {
+      const expression = text(rule.expression).trim();
+      if (!expression.includes('{{')) {
+        try {
+          parseCron(expression);
+        } catch (error) {
+          const reason = (error as Error).message;
+          ctx.warn(`${ctx.node.name}: the cron expression “${expression}” isn't valid in Landflow (${reason}); the schedule doesn't run until it is fixed.`);
+        }
+      }
+      return { field, expression };
+    }
+    default:
+      ctx.warn(`${ctx.node.name}: the trigger interval “${field}” isn't available; that rule was dropped.`);
+      return undefined;
   }
-  if (rules.length > 1) ctx.warn(`${ctx.node.name}: only the first of ${rules.length} schedule rules was converted.`);
-  return { parameters: { ...everyUnit(seconds), rule } };
+}
+
+/** n8n's Schedule Trigger → Landflow's Trigger Rules (`unit: 'rules'`), every rule of it, in the workflow's time zone. */
+const scheduleTrigger: Converter = (p, ctx) => {
+  const rules = isObject(p.rule) ? list(p.rule.interval) : [];
+  const interval = (rules.length ? rules : [{}]).map((rule) => triggerRule(rule, ctx)).filter((rule): rule is Params => rule !== undefined);
+  // Nothing left: n8n's default rule, every day at midnight.
+  return { parameters: { unit: 'rules', rule: { interval: interval.length ? interval : [triggerRule({}, ctx)] } } };
 };
 
 /** Legacy Cron node: `triggerTimes.item[]` with everyMinute / everyHour / everyX / everyDay… */
@@ -503,32 +590,264 @@ const sort: Converter = (p, ctx) => {
 
 const limit: Converter = (p) => ({ parameters: { maxItems: Math.max(1, num(p.maxItems, 1)), keep: p.keep === 'lastItems' ? 'last' : 'first' } });
 
+const WAIT_UNITS = ['seconds', 'minutes', 'hours', 'days'];
+const waitUnit = (value: unknown, fallback: string) => (WAIT_UNITS.includes(str(value) ?? '') ? String(value) : fallback);
+
+/** Wait's "Limit Wait Time" (webhook and form waits): n8n's fields and defaults. */
+function waitLimit(p: Params): Params {
+  if (!p.limitWaitTime) return {};
+  if (p.limitType === 'atSpecifiedTime') return { limitWaitTime: true, limitType: 'atSpecifiedTime', maxDateAndTime: p.maxDateAndTime ?? '' };
+  return { limitWaitTime: true, limitType: 'afterTimeInterval', resumeAmount: numeric(p.resumeAmount, 1, 0), resumeUnit: waitUnit(p.resumeUnit, 'hours') };
+}
+
+/**
+ * n8n's Wait → Landflow's Wait v2, which has n8n's resume modes and field names: a time interval, a date and time,
+ * a webhook call or a form, the last two with an optional time limit. Exports leave defaults out, and Wait 1.1
+ * waits 5 seconds by default where 1.0 (and Landflow) wait an hour.
+ */
 const wait: Converter = (p, ctx) => {
+  const name = ctx.node.name;
   const resume = str(p.resume) ?? 'timeInterval';
-  if (resume !== 'timeInterval') ctx.warn(`${ctx.node.name}: resuming on “${resume}” needs the new Wait node; check its settings.`);
-  let seconds = Math.max(0, num(p.amount, 1)) * (UNIT_SECONDS[str(p.unit) ?? 'hours'] ?? 3600);
-  if (seconds > 300) {
-    ctx.warn(`${ctx.node.name}: waits of more than 5 minutes need the new Wait node; it waits 300 seconds for now.`);
-    seconds = 300;
+  if (resume === 'specificTime') return { parameters: { resume, dateTime: p.dateTime ?? '' } };
+  if (resume === 'webhook') {
+    let responseMode = str(p.responseMode) ?? 'onReceived';
+    if (!RESPOND_MODES[responseMode]) {
+      ctx.warn(`${name}: the response mode “${responseMode}” isn't available; the resume call is answered right away.`);
+      responseMode = 'onReceived';
+    }
+    webhookResponseWarnings(p, RESPOND_MODES[responseMode], ctx);
+    const auth = str(p.incomingAuthentication);
+    if (auth && auth !== 'none') ctx.warn(`${name}: the resume URL has no ${auth} authentication in Landflow; anyone with the URL can resume the run.`);
+    return { parameters: { resume, httpMethod: String(p.httpMethod ?? 'GET').toUpperCase(), responseMode, ...waitLimit(p) } };
   }
-  // The original n8n fields stay for Wait v2, which uses n8n's names.
-  return { parameters: { ...p, seconds } };
+  if (resume === 'form') {
+    const options = isObject(p.options) ? p.options : {};
+    return {
+      parameters: {
+        resume,
+        formTitle: text(p.formTitle),
+        formDescription: text(p.formDescription),
+        formFields: formFields(p.formFields, ctx),
+        buttonLabel: text(options.buttonLabel ?? p.buttonLabel) || 'Submit',
+        ...waitLimit(p),
+      },
+    };
+  }
+  if (resume !== 'timeInterval') ctx.warn(`${name}: resuming on “${resume}” isn't available; it waits for a time interval. Check its settings.`);
+  const v1 = ctx.version < 1.1;
+  return { parameters: { resume: 'timeInterval', amount: numeric(p.amount, v1 ? 1 : 5, 0), unit: waitUnit(p.unit, v1 ? 'hours' : 'seconds') } };
 };
 
 const stopAndError: Converter = (p) => ({
   parameters: { message: p.errorType === 'errorObject' ? text(p.errorObject) : text(p.errorMessage) || 'Something went wrong' },
 });
 
+/** An argument of When Called by a Workflow or Agent; n8n's workflow inputs are optional. `any`, `array` and `object` are JSON. */
+const argument = (name: string, type: string) => ({ name, type: ['string', 'number', 'boolean'].includes(type) ? type : 'json', description: '', required: false });
+
+/**
+ * n8n's Execute Workflow Trigger ("When Executed by Another Workflow") → When Called by a Workflow or Agent. Both
+ * name the modes alike: "Accept all data" (`passthrough`, also what every v1 trigger did) or defined arguments,
+ * which n8n can also take from a JSON example.
+ */
 const workflowTrigger: Converter = (p, ctx) => {
-  const types: Record<string, string> = { string: 'string', number: 'number', boolean: 'boolean' };
-  const fields = (isObject(p.workflowInputs) ? list(p.workflowInputs.values) : []).map((v) => ({
-    name: text(v.name),
-    type: types[str(v.type) ?? 'string'] ?? 'json',
-    description: '',
-    required: false,
-  }));
-  if (p.inputSource === 'jsonExample') ctx.warn(`${ctx.node.name}: inputs defined by a JSON example weren't converted; add them as arguments.`);
-  return { parameters: { inputs: { fields } } };
+  const source = str(p.inputSource) ?? (ctx.version < 1.1 ? 'passthrough' : 'workflowInputs');
+  if (source === 'passthrough') return { parameters: { inputSource: 'passthrough' } };
+  let fields: Array<ReturnType<typeof argument>> = [];
+  if (source === 'jsonExample') {
+    let example: unknown;
+    try {
+      example = typeof p.jsonExample === 'string' ? JSON.parse(p.jsonExample) : p.jsonExample;
+    } catch {}
+    if (isObject(example)) fields = Object.entries(example).map(([name, value]) => argument(name, typeof value));
+    else ctx.warn(`${ctx.node.name}: the JSON example of the inputs couldn't be read; add them as arguments.`);
+  } else {
+    fields = (isObject(p.workflowInputs) ? list(p.workflowInputs.values) : []).filter((v) => text(v.name).trim()).map((v) => argument(text(v.name), str(v.type) ?? 'string'));
+  }
+  return { parameters: { inputSource: 'workflowInputs', inputs: { fields } } };
+};
+
+/**
+ * n8n's Execute Workflow. Mapped inputs (a resource mapper: `workflowInputs.value` by input name) become "Map
+ * Arguments"; without any, the items pass through. n8n workflow ids don't exist here, so the workflow is left
+ * empty for the user to choose.
+ */
+const executeWorkflow: Converter = (p, ctx) => {
+  const source = str(p.source) ?? 'database';
+  if (source === 'database') {
+    const locator = isObject(ctx.node.parameters?.workflowId) ? ctx.node.parameters.workflowId : {};
+    const id = text(p.workflowId).trim();
+    const label = str(locator.cachedResultName);
+    const was = label && id ? `“${label}” (${id})` : label ? `“${label}”` : id;
+    ctx.warn(`${ctx.node.name}: choose the workflow to run${was ? `; in n8n it ran ${was}, which has to be imported first` : ''}.`);
+  } else {
+    const where = { parameter: 'JSON in the node', localFile: 'a local file', url: 'a URL' }[source] ?? source;
+    ctx.warn(`${ctx.node.name}: the sub-workflow came from ${where} in n8n, and Landflow runs saved workflows; import it, then choose it in the node.`);
+  }
+  const mapped = isObject(p.workflowInputs) && isObject(p.workflowInputs.value) ? p.workflowInputs.value : {};
+  const values = Object.entries(mapped)
+    .filter(([key, value]) => key.trim() && value !== null && value !== undefined)
+    .map(([key, value]) => ({ name: key, value: text(value) }));
+  const options = isObject(p.options) ? p.options : {};
+  return {
+    parameters: {
+      workflowId: '',
+      inputSource: values.length ? 'map' : 'passthrough',
+      ...(values.length && { workflowInputs: { values } }),
+      mode: p.mode === 'each' ? 'each' : 'once',
+      ...(options.waitForSubWorkflow !== undefined && { options: { waitForSubWorkflow: options.waitForSubWorkflow } }),
+    },
+  };
+};
+
+const RESPOND_WITH = new Set(['firstIncomingItem', 'allIncomingItems', 'json', 'text', 'noData', 'redirect']);
+
+/** n8n's Respond to Webhook: the same fields and options (code, headers, "Put Response in Field"), without binary and JWT responses. */
+const respondToWebhook: Converter = (p, ctx) => {
+  const options = isObject(p.options) ? p.options : {};
+  let respondWith = str(p.respondWith) ?? 'firstIncomingItem';
+  let body = p.responseBody;
+  if (respondWith === 'jwt') {
+    ctx.warn(`${ctx.node.name}: JWT responses aren't available; it responds with the token's payload as plain JSON, unsigned.`);
+    respondWith = 'json';
+    body = p.payload ?? '{}';
+  } else if (!RESPOND_WITH.has(respondWith)) {
+    ctx.warn(`${ctx.node.name}: responding with “${respondWith}” isn't available; it responds with the first incoming item.`);
+    respondWith = 'firstIncomingItem';
+  }
+  const parameters: Params = { respondWith };
+  if ((respondWith === 'json' || respondWith === 'text') && body !== undefined) parameters.responseBody = typeof body === 'string' ? body : JSON.stringify(body, null, 2);
+  if (respondWith === 'redirect') parameters.redirectURL = text(p.redirectURL);
+  const kept = pick(options, ['responseCode', 'responseHeaders', 'responseKey']);
+  dropOptions(
+    Object.keys(options).filter((key) => !(key in kept)),
+    ctx,
+  );
+  return { parameters: { ...parameters, options: kept } };
+};
+
+/**
+ * n8n's Split in Batches → Loop Over Items, which is v3: "done" is output 0, "loop" output 1. v1 and v2 had one
+ * output and a "noItemsLeft" check to end the loop; their output becomes "loop".
+ */
+const splitInBatches: Converter = (p, ctx) => {
+  const options = isObject(p.options) ? p.options : {};
+  const parameters: Params = { batchSize: numeric(p.batchSize, ctx.version >= 3 ? 1 : 10, 1), ...(options.reset !== undefined && { options: { reset: options.reset } }) };
+  if (ctx.version >= 3) return { parameters };
+  ctx.warn(
+    `${ctx.node.name}: Split in Batches v${ctx.version} became Loop Over Items: each batch leaves on “loop” and, once all have come back, every item on “done”. Replace the “noItemsLeft” check with the “done” output.`,
+  );
+  return { parameters, outputMap: (i) => (i === 0 ? 1 : undefined) };
+};
+
+/** Element types Landflow's forms show (forms.ts). */
+const FORM_FIELD_TYPES = new Set(['text', 'textarea', 'number', 'email', 'password', 'date', 'dropdown', 'checkbox', 'radio', 'file']);
+
+/**
+ * n8n's Form Elements (Form Trigger, Form, Wait "On Form Submitted") → Landflow's, which keep n8n's names. Choices
+ * (`fieldOptions.values[].option`) become one per line; hidden and HTML elements are dropped.
+ */
+function formFields(value: unknown, ctx: Ctx): { values: Params[] } {
+  const dropped: string[] = [];
+  const values = (Array.isArray(value) ? list(value) : isObject(value) ? list(value.values) : []).flatMap((field): Params[] => {
+    const fieldType = str(field.fieldType) ?? 'text';
+    const label = text(field.fieldLabel);
+    if (!FORM_FIELD_TYPES.has(fieldType)) {
+      dropped.push(`“${label || text(field.fieldName) || fieldType}” (${fieldType})`);
+      return [];
+    }
+    const out: Params = { fieldLabel: label, fieldType, requiredField: Boolean(field.requiredField) };
+    const choices = isObject(field.fieldOptions) ? list(field.fieldOptions.values).map((o) => text(o.option).trim()).filter(Boolean) : [];
+    if (choices.some((c) => c.includes(','))) ctx.warn(`${ctx.node.name}: Landflow splits form choices at commas; check the choices of “${label}”.`);
+    if (choices.length) out.fieldOptions = choices.join('\n');
+    else if (typeof field.fieldOptions === 'string') out.fieldOptions = field.fieldOptions;
+    if (field.multiselect !== undefined) out.multiselect = Boolean(field.multiselect);
+    if (field.multipleFiles !== undefined) out.multipleFiles = Boolean(field.multipleFiles);
+    if (str(field.acceptFileTypes)) out.acceptFileTypes = str(field.acceptFileTypes);
+    for (const key of ['placeholder', 'fieldName']) if (str(field[key])) out[key] = str(field[key]);
+    return [out];
+  });
+  if (dropped.length) ctx.warn(`${ctx.node.name}: Landflow forms can't show ${dropped.join(', ')}; ${dropped.length > 1 ? 'they were' : 'it was'} dropped.`);
+  return { values };
+}
+
+/**
+ * n8n's Form Trigger → On Form Submission. The path moved into the options in n8n's v2.2 (default: the webhook
+ * id); the end screen's text comes from "Form Response" there, or from the options before.
+ */
+const formTrigger: Converter = (p, ctx) => {
+  const name = ctx.node.name;
+  const options = isObject(p.options) ? p.options : {};
+  const path = (str(options.path) ?? str(p.path) ?? str(ctx.node.webhookId) ?? '').trim().replace(/^\/+|\/+$/g, '') || 'my-form';
+  if (path === 'waiting' || path.startsWith('waiting/')) ctx.warn(`${name}: a form path can't start with “waiting” in Landflow (/form/waiting/… shows waiting runs); change it.`);
+  const mode = str(p.responseMode) ?? 'onReceived';
+  if (mode === 'responseNode') ctx.warn(`${name}: a Respond to Webhook node can't answer a form in Landflow; the end screen shows when the workflow finishes (a Form node can set it).`);
+  else if (mode !== 'onReceived' && mode !== 'lastNode') ctx.warn(`${name}: the response mode “${mode}” isn't available; the end screen shows when the form is submitted.`);
+  const response = isObject(options.respondWithOptions) && isObject(options.respondWithOptions.values) ? options.respondWithOptions.values : {};
+  if (response.respondWith === 'redirect') {
+    ctx.warn(`${name}: redirecting to ${text(response.redirectUrl)} after a submission isn't available on the trigger; end the workflow with a Form node set to “Form Ending” → “Redirect to URL”.`);
+  }
+  const auth = str(p.authentication);
+  if (auth && auth !== 'none') ctx.warn(`${name}: Landflow forms have no ${auth} authentication; anyone with the link can submit the form.`);
+  if (options.customCss !== undefined) ctx.warn(`${name}: custom form styling isn't available; the form uses Landflow's look.`);
+  const submitted = str(response.formSubmittedText) ?? str(options.formSubmittedText);
+  const button = str(options.buttonLabel);
+  return {
+    parameters: {
+      path,
+      formTitle: text(p.formTitle),
+      formDescription: text(p.formDescription),
+      formFields: formFields(p.formFields, ctx),
+      responseMode: mode === 'lastNode' || mode === 'responseNode' ? 'lastNode' : 'onReceived',
+      options: { ...(button && { buttonLabel: button }), ...(submitted !== undefined && { formSubmittedText: submitted }) },
+    },
+  };
+};
+
+/**
+ * n8n's Form node: a page (fields defined below or as JSON; its title, description and button label are options
+ * in n8n) or the form's ending (a completion screen or a redirect).
+ */
+const form: Converter = (p, ctx) => {
+  const name = ctx.node.name;
+  const options = isObject(p.options) ? p.options : {};
+  const operation = str(p.operation) ?? 'page';
+  if (operation === 'completion') {
+    const respondWith = str(p.respondWith) ?? 'text';
+    if (respondWith === 'redirect') return { parameters: { operation, respondWith, redirectUrl: text(p.redirectUrl) } };
+    if (respondWith === 'showText') {
+      ctx.warn(`${name}: “Show Text” became a completion screen with the text as its message. Check it.`);
+      return { parameters: { operation, respondWith: 'text', completionMessage: text(p.responseText) } };
+    }
+    if (respondWith !== 'text') ctx.warn(`${name}: the form ending “${respondWith}” isn't available; it shows a completion screen.`);
+    return {
+      parameters: {
+        operation,
+        respondWith: 'text',
+        ...(p.completionTitle !== undefined && { completionTitle: text(p.completionTitle) }),
+        ...(p.completionMessage !== undefined && { completionMessage: text(p.completionMessage) }),
+      },
+    };
+  }
+  if (operation !== 'page') ctx.warn(`${name}: the form operation “${operation}” isn't available; it shows a form page.`);
+  let fields: { values: Params[] } = { values: [] };
+  if (p.defineForm === 'json') {
+    let parsed: unknown;
+    try {
+      parsed = typeof p.jsonOutput === 'string' ? JSON.parse(p.jsonOutput) : p.jsonOutput;
+    } catch {}
+    if (Array.isArray(parsed)) fields = formFields(parsed, ctx);
+    else ctx.warn(`${name}: the form fields were defined by a JSON expression; add them again as form elements.`);
+  } else fields = formFields(p.formFields, ctx);
+  return {
+    parameters: {
+      operation: 'page',
+      formTitle: text(options.formTitle ?? p.formTitle),
+      formDescription: text(options.formDescription ?? p.formDescription),
+      formFields: fields,
+      buttonLabel: text(options.buttonLabel ?? p.buttonLabel) || 'Submit',
+    },
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -619,6 +938,17 @@ const simpleMemory: Converter = (p, ctx) => {
   return { parameters: { turns: clamp(num(p.contextWindowLength, 5), [1, 100]) } };
 };
 
+/** MCP nodes use n8n's parameter names; v1 of the client tool kept its URL in `sseEndpoint` and only spoke SSE. */
+const mcpClient: Converter = (p) => {
+  const { sseEndpoint, ...rest } = p;
+  return { parameters: sseEndpoint !== undefined && rest.endpointUrl === undefined ? { ...rest, endpointUrl: sseEndpoint, serverTransport: rest.serverTransport ?? 'sse' } : rest };
+};
+
+const mcpTrigger: Converter = (p) => {
+  const { path, authentication, instructions } = p;
+  return { parameters: { ...(path !== undefined && { path }), ...(authentication !== undefined && { authentication }), ...(instructions !== undefined && { instructions }) } };
+};
+
 const chatTrigger: Converter = (p, ctx) => {
   if (p.public) ctx.warn(`${ctx.node.name}: the public chat page isn't available yet; chat from the editor's chat panel.`);
   return { parameters: {} };
@@ -664,12 +994,15 @@ export const N8N_TYPE_MAP: Record<string, Mapping> = {
   [`${B}noOp`]: { to: 'core.noOp', convert: empty },
   [`${B}stopAndError`]: { to: 'core.stopAndError', convert: stopAndError },
   [`${B}executeWorkflowTrigger`]: { to: 'core.workflowTrigger', convert: workflowTrigger },
-  [`${B}errorTrigger`]: { to: 'core.errorTrigger', registered: true },
-  [`${B}executeWorkflow`]: { to: 'core.executeWorkflow', registered: true, warning: 'the sub-workflow id comes from n8n: select the workflow again' },
-  [`${B}respondToWebhook`]: { to: 'core.respondToWebhook', registered: true },
-  [`${B}splitInBatches`]: { to: ['core.splitInBatches', 'core.loopOverItems'], registered: true },
-  [`${B}formTrigger`]: { to: 'core.formTrigger', registered: true },
-  [`${B}form`]: { to: 'core.form', registered: true },
+  [`${B}errorTrigger`]: { to: 'core.errorTrigger', convert: empty, registered: true },
+  [`${B}executeWorkflow`]: { to: 'core.executeWorkflow', convert: executeWorkflow, registered: true },
+  [`${B}respondToWebhook`]: { to: 'core.respondToWebhook', convert: respondToWebhook, registered: true },
+  [`${B}splitInBatches`]: { to: ['core.splitInBatches', 'core.loopOverItems'], convert: splitInBatches, registered: true },
+  [`${B}formTrigger`]: { to: 'core.formTrigger', convert: formTrigger, registered: true },
+  [`${B}form`]: { to: 'core.form', convert: form, registered: true },
+  [`${B}readWriteFile`]: { to: 'core.readWriteFile' },
+  [`${B}extractFromFile`]: { to: 'core.extractFromFile' },
+  [`${B}convertToFile`]: { to: 'core.convertToFile' },
   ...plugin('messaging', ['telegram', 'telegramTrigger', 'slack', 'discord', 'whatsApp', 'emailSend'], { telegramTrigger: POLLS }),
   ...plugin('productivity', ['notion', 'airtable', 'github', 'githubTrigger', 'jira', 'hubspot', 'rssFeedRead', 'rssFeedReadTrigger'], { githubTrigger: POLLS }),
   ...plugin('google', ['googleSheets', 'googleSheetsTrigger', 'gmail', 'gmailTrigger', 'googleDrive', 'googleCalendar', 'googleDocs']),
@@ -693,6 +1026,9 @@ export const N8N_TYPE_MAP: Record<string, Mapping> = {
   [`${L}toolHttpRequest`]: { to: 'core.httpRequest', convert: toolHttpRequest },
   [`${L}chatTrigger`]: { to: 'core.chatTrigger', convert: chatTrigger },
   [`${L}manualChatTrigger`]: { to: 'core.chatTrigger', convert: chatTrigger },
+  [`${L}mcpClientTool`]: { to: 'core.mcpClientTool', convert: mcpClient, registered: true },
+  [`${L}mcpClient`]: { to: 'core.mcpClient', convert: mcpClient, registered: true },
+  [`${L}mcpTrigger`]: { to: 'core.mcpTrigger', convert: mcpTrigger, registered: true },
 };
 
 /** The mapping of an n8n type, including `<x>Tool` variants (the node used as an agent tool). */

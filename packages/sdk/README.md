@@ -116,6 +116,7 @@ Everything from before still works (`getNodeParameter`, `getInputData`, `helpers
 | `getInputData(i?)`, `getInputCount()`, `getNodeParameter(name, i?, fallback?)` | items and resolved parameters |
 | `getMode()` / ★ `mode` | `'manual' \| 'trigger' \| 'webhook' \| 'tool' \| 'chat' \| 'poll'` |
 | ★ `continueOnFail()` | the node is set to continue on error: catch a failing item, push `{ json: { error }, pairedItem: { item: i } }`, go on |
+| ★ `getIdempotencyKey()` | `<executionId>:<nodeId>:<runIndex>`, the same across retries of this step; pass it to APIs that take an idempotency key (`undefined` from older hosts) |
 | ★ `getCredentials<T>(name)` | that credential type's data; throws a `NodeOperationError` when the host sent none |
 | ★ `getCredentials<T>(name, { optional: true })` | same, `undefined` when absent (for `required: false`) |
 | `getCredentials<T>()` | the only credential sent (or `undefined`); throws if several were sent |

@@ -71,7 +71,49 @@ export interface SubAgentConfig extends ToolBase {
   useWhen?: string;
 }
 
-export type AgentToolConfig = NodeToolConfig | WorkflowToolConfig | SubAgentConfig;
+/** An MCP server: each tool it lists (all, selected, or all except some) becomes a tool with its JSON schema. */
+export interface McpServerToolConfig extends ToolBase {
+  type: 'mcp';
+  /** A label for the server in the builder and in notices. */
+  name: string;
+  /** The MCP Client Tool's parameters (core.mcpClientTool): endpointUrl, serverTransport, authentication, include, includeTools, excludeTools, options. */
+  parameters: Record<string, unknown>;
+  /** httpBearerAuth or httpHeaderAuth, by the node's credential names. */
+  credentials?: Record<string, CredentialRef>;
+}
+
+/**
+ * A knowledge base: a vector store collection the agent searches with a `search_…` tool. It is filled by a
+ * workflow with the same store and collection in “Insert Documents” mode, using the same embeddings model.
+ */
+export interface KnowledgeBaseToolConfig extends ToolBase {
+  type: 'knowledge';
+  /** The tool name the model sees (made provider-safe). */
+  name: string;
+  /** When to search it. */
+  description: string;
+  store: 'memory' | 'sqlite' | 'pgvector';
+  collection: string;
+  /** pgvector: a core.postgres credential and the table (default landflow_vectors). */
+  credential?: CredentialRef;
+  tableName?: string;
+  /** Must be the model the documents were inserted with. */
+  embeddings: {
+    provider: 'ollama' | 'openai';
+    model: string;
+    /** ollama: the server, default OLLAMA_URL or http://127.0.0.1:11434 */
+    baseUrl?: string;
+    /** openai: a core.openAiApi credential (any OpenAI-compatible base URL). */
+    credential?: CredentialRef;
+    /** Put before every query (nomic-embed-text: "search_query: "). */
+    queryPrefix?: string;
+    dimensions?: number;
+  };
+  topK?: number;
+  searchMode?: 'vector' | 'hybrid';
+}
+
+export type AgentToolConfig = NodeToolConfig | WorkflowToolConfig | SubAgentConfig | McpServerToolConfig | KnowledgeBaseToolConfig;
 
 export type ScheduleFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'cron';
 

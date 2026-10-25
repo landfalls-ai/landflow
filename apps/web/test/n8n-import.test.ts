@@ -281,7 +281,7 @@ describe('n8n import', () => {
   });
 
   it('fixes the parameters that differ from n8n', () => {
-    expect(node('Schedule Trigger').parameters).toMatchObject({ every: 15, unit: 'minutes', rule: { interval: [{ field: 'minutes', minutesInterval: 15 }] } });
+    expect(node('Schedule Trigger').parameters).toEqual({ unit: 'rules', rule: { interval: [{ field: 'minutes', minutesInterval: 15 }] } });
     expect(node('HTTP Request').parameters).toMatchObject({
       method: 'POST',
       url: 'https://api.example.com/leads',
@@ -432,6 +432,335 @@ describe('n8n import: Switch, ports and registered-only types', () => {
   });
 });
 
+describe('n8n import: triggers, waits, forms and sub-workflows', () => {
+  /** One n8n node imported on its own, checked against the save schema. */
+  const importNode = (type: string, parameters: Record<string, unknown>, extra: Record<string, unknown> = {}, resolve = resolveType) => {
+    const { workflow, report } = importWorkflowJson(
+      { nodes: [{ parameters, name: 'Node', type: `n8n-nodes-base.${type}`, typeVersion: 1, position: [0, 0], ...extra }], connections: {} },
+      { resolveType: resolve },
+    );
+    expect(workflowSchema.safeParse(workflow).success).toBe(true);
+    return { node: workflow.nodes[0], warnings: report.warnings, report };
+  };
+
+  it('maps every Schedule Trigger rule onto Trigger Rules, with n8n’s defaults', () => {
+    const { node, warnings } = importNode(
+      'scheduleTrigger',
+      {
+        rule: {
+          interval: [
+            { field: 'seconds', secondsInterval: 10 },
+            { field: 'hours', hoursInterval: 2, triggerAtMinute: 30 },
+            {},
+            { field: 'weeks', weeksInterval: 2, triggerAtDay: [5, 1], triggerAtHour: 8 },
+            { field: 'weeks' },
+            { field: 'months', triggerAtDayOfMonth: 15, triggerAtHour: 18, triggerAtMinute: 45 },
+            { field: 'cronExpression', expression: '0 15 * 1 sun' },
+          ],
+        },
+      },
+      { typeVersion: 1.2 },
+    );
+    expect(node.type).toBe('core.schedule');
+    expect(node.parameters).toEqual({
+      unit: 'rules',
+      rule: {
+        interval: [
+          { field: 'seconds', secondsInterval: 10 },
+          { field: 'hours', hoursInterval: 2, triggerAtMinute: 30 },
+          // n8n triggers at midnight, and on every weekday when none is picked.
+          { field: 'days', daysInterval: 1, triggerAtHour: 0, triggerAtMinute: 0 },
+          { field: 'weeks', weeksInterval: 2, triggerAtDay: [1, 5], triggerAtHour: 8, triggerAtMinute: 0 },
+          { field: 'weeks', weeksInterval: 1, triggerAtDay: [0, 1, 2, 3, 4, 5, 6], triggerAtHour: 0, triggerAtMinute: 0 },
+          { field: 'months', monthsInterval: 1, triggerAtDayOfMonth: 15, triggerAtHour: 18, triggerAtMinute: 45 },
+          { field: 'cronExpression', expression: '0 15 * 1 sun' },
+        ],
+      },
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  it('warns about cron expressions Landflow can’t run and drops unknown intervals', () => {
+    const { node, warnings } = importNode('scheduleTrigger', { rule: { interval: [{ field: 'cronExpression', expression: '0 0 * * * * *' }, { field: 'fortnights' }] } });
+    expect(node.parameters.rule).toEqual({ interval: [{ field: 'cronExpression', expression: '0 0 * * * * *' }] });
+    expect(warnings.some((w) => w.startsWith('Node: the cron expression “0 0 * * * * *” isn\'t valid in Landflow'))).toBe(true);
+    expect(warnings).toContain('Node: the trigger interval “fortnights” isn\'t available; that rule was dropped.');
+    expect(importNode('scheduleTrigger', {}).node.parameters).toEqual({ unit: 'rules', rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 0, triggerAtMinute: 0 }] } });
+  });
+
+  it('maps the Webhook’s response modes and warns about response settings it lacks', () => {
+    const responseNode = importNode('webhook', { httpMethod: 'POST', path: 'orders', responseMode: 'responseNode', options: {} }, { typeVersion: 2 });
+    expect(responseNode.node.parameters).toEqual({ path: 'orders', method: 'POST', respond: 'responseNode', options: {} });
+    expect(responseNode.warnings).toEqual([]);
+    expect(importNode('webhook', { path: 'ping' }).node.parameters).toEqual({ path: 'ping', method: 'GET', respond: 'immediately', options: {} });
+    const lastNode = importNode('webhook', {
+      path: 'report',
+      httpMethod: 'HEAD',
+      responseMode: 'lastNode',
+      responseCode: 201,
+      responseData: 'allEntries',
+      authentication: 'basicAuth',
+      options: { rawBody: true, ipWhitelist: '10.0.0.1' },
+    });
+    expect(lastNode.node.parameters).toEqual({ path: 'report', method: 'GET', respond: 'lastNode', options: { rawBody: true } });
+    expect(lastNode.warnings).toEqual([
+      'Node: Landflow webhooks don\'t take HEAD requests; it listens for GET.',
+      'Node: the response code 201 isn\'t available here; use a Respond to Webhook node to set it.',
+      'Node: responding with “allEntries” isn\'t available; the last node\'s output is sent as JSON (one item as an object, several as an array).',
+      'Node: the option “ipWhitelist” has no Landflow equivalent and was dropped.',
+      'Node: Landflow webhooks have no basicAuth authentication; anyone with the URL can call it.',
+    ]);
+    // Without Respond to Webhook the caller would wait for the whole run.
+    const withoutRespond = (type: string) => (type === 'core.respondToWebhook' ? undefined : resolveType(type));
+    expect(importNode('webhook', { path: 'x', responseMode: 'responseNode' }, {}, withoutRespond).node.parameters.respond).toBe('lastNode');
+  });
+
+  it('maps Respond to Webhook with its options, without binary and JWT responses', () => {
+    const json = importNode(
+      'respondToWebhook',
+      {
+        respondWith: 'json',
+        responseBody: '={{ { "id": $json.id } }}',
+        options: { responseCode: 201, responseHeaders: { entries: [{ name: 'X-Id', value: '={{ $json.id }}' }] }, enableStreaming: false },
+      },
+      { typeVersion: 1.4 },
+    );
+    expect(json.node).toMatchObject({
+      type: 'core.respondToWebhook',
+      parameters: { respondWith: 'json', responseBody: '{{ { "id": $json.id } }}', options: { responseCode: 201, responseHeaders: { entries: [{ name: 'X-Id', value: '{{ $json.id }}' }] } } },
+    });
+    expect(json.warnings).toEqual(['Node: the option “enableStreaming” has no Landflow equivalent and was dropped.']);
+    expect(importNode('respondToWebhook', { respondWith: 'redirect', redirectURL: 'https://example.com/done' }).node.parameters).toMatchObject({ respondWith: 'redirect', redirectURL: 'https://example.com/done' });
+    expect(importNode('respondToWebhook', { respondWith: 'allIncomingItems', options: { responseKey: 'data' } }).node.parameters).toEqual({ respondWith: 'allIncomingItems', options: { responseKey: 'data' } });
+    const jwt = importNode('respondToWebhook', { respondWith: 'jwt', payload: '{ "sub": "42" }' });
+    expect(jwt.node.parameters).toMatchObject({ respondWith: 'json', responseBody: '{ "sub": "42" }' });
+    expect(jwt.warnings[0]).toContain('JWT responses aren\'t available');
+    const binary = importNode('respondToWebhook', { respondWith: 'binary' });
+    expect(binary.node.parameters.respondWith).toBe('firstIncomingItem');
+    expect(binary.warnings).toEqual(['Node: responding with “binary” isn\'t available; it responds with the first incoming item.']);
+  });
+
+  it('maps the Execute Workflow Trigger’s input modes', () => {
+    expect(importNode('executeWorkflowTrigger', { inputSource: 'passthrough' }, { typeVersion: 1.1 }).node).toMatchObject({ type: 'core.workflowTrigger', parameters: { inputSource: 'passthrough' } });
+    // v1 triggers took whatever the caller sent.
+    expect(importNode('executeWorkflowTrigger', { events: 'worklfow_call' }).node.parameters).toEqual({ inputSource: 'passthrough' });
+    const defined = importNode(
+      'executeWorkflowTrigger',
+      { workflowInputs: { values: [{ name: 'email' }, { name: 'count', type: 'number' }, { name: 'payload', type: 'any' }, { name: 'tags', type: 'array' }] } },
+      { typeVersion: 1.1 },
+    );
+    expect(defined.node.parameters).toEqual({
+      inputSource: 'workflowInputs',
+      inputs: {
+        fields: [
+          { name: 'email', type: 'string', description: '', required: false },
+          { name: 'count', type: 'number', description: '', required: false },
+          { name: 'payload', type: 'json', description: '', required: false },
+          { name: 'tags', type: 'json', description: '', required: false },
+        ],
+      },
+    });
+    const example = importNode('executeWorkflowTrigger', { inputSource: 'jsonExample', jsonExample: '{ "name": "Ada", "age": 36, "vip": true, "address": {} }' }, { typeVersion: 1.1 });
+    expect((example.node.parameters.inputs as { fields: Array<{ name: string; type: string }> }).fields.map((f) => [f.name, f.type])).toEqual([
+      ['name', 'string'],
+      ['age', 'number'],
+      ['vip', 'boolean'],
+      ['address', 'json'],
+    ]);
+    expect(example.warnings).toEqual([]);
+  });
+
+  it('maps Execute Workflow’s inputs, mode and wait option, leaving the workflow to choose', () => {
+    const mapped = importNode(
+      'executeWorkflow',
+      {
+        workflowId: { __rl: true, value: 'aBc123', mode: 'list', cachedResultName: 'Enrich lead' },
+        workflowInputs: { mappingMode: 'defineBelow', value: { email: '={{ $json.email }}', limit: 5, unused: null }, matchingColumns: [], schema: [] },
+        mode: 'each',
+        options: { waitForSubWorkflow: false },
+      },
+      { typeVersion: 1.2 },
+    );
+    expect(mapped.node).toMatchObject({
+      type: 'core.executeWorkflow',
+      parameters: {
+        workflowId: '',
+        inputSource: 'map',
+        workflowInputs: {
+          values: [
+            { name: 'email', value: '{{ $json.email }}' },
+            { name: 'limit', value: '5' },
+          ],
+        },
+        mode: 'each',
+        options: { waitForSubWorkflow: false },
+      },
+    });
+    expect(mapped.warnings).toEqual(['Node: choose the workflow to run; in n8n it ran “Enrich lead” (aBc123), which has to be imported first.']);
+    const passthrough = importNode('executeWorkflow', { workflowId: 'xYz' });
+    expect(passthrough.node.parameters).toEqual({ workflowId: '', inputSource: 'passthrough', mode: 'once', options: {} });
+    expect(passthrough.warnings).toEqual(['Node: choose the workflow to run; in n8n it ran xYz, which has to be imported first.']);
+    expect(importNode('executeWorkflow', { source: 'parameter', workflowJson: '{}' }).warnings[0]).toContain('came from JSON in the node');
+  });
+
+  it('maps Wait onto Wait v2, with n8n’s resume modes and limits', () => {
+    // Exports leave defaults out: 5 seconds in Wait 1.1, 1 hour in 1.0.
+    const short = importNode('wait', {}, { typeVersion: 1.1 });
+    expect(short.node).toMatchObject({ type: 'core.wait', typeVersion: 2, parameters: { resume: 'timeInterval', amount: 5, unit: 'seconds' } });
+    expect(short.node.parameters).not.toHaveProperty('seconds');
+    expect(importNode('wait', { amount: 2 }).node.parameters).toEqual({ resume: 'timeInterval', amount: 2, unit: 'hours' });
+    const long = importNode('wait', { amount: 3, unit: 'days' }, { typeVersion: 1.1 });
+    expect(long.node.parameters).toEqual({ resume: 'timeInterval', amount: 3, unit: 'days' });
+    expect(long.warnings).toEqual([]);
+    expect(importNode('wait', { resume: 'specificTime', dateTime: '2026-12-24T18:00:00' }, { typeVersion: 1.1 }).node.parameters).toEqual({ resume: 'specificTime', dateTime: '2026-12-24T18:00:00' });
+    const webhook = importNode(
+      'wait',
+      { resume: 'webhook', httpMethod: 'POST', responseMode: 'responseNode', limitWaitTime: true, resumeAmount: 2, resumeUnit: 'days', options: { webhookSuffix: 'approve' } },
+      { typeVersion: 1.1 },
+    );
+    expect(webhook.node.parameters).toEqual({ resume: 'webhook', httpMethod: 'POST', responseMode: 'responseNode', limitWaitTime: true, limitType: 'afterTimeInterval', resumeAmount: 2, resumeUnit: 'days' });
+    expect(webhook.warnings).toEqual(['Node: the option “webhookSuffix” has no Landflow equivalent and was dropped.']);
+    const form = importNode(
+      'wait',
+      {
+        resume: 'form',
+        formTitle: 'Approve?',
+        formFields: { values: [{ fieldLabel: 'Decision', fieldType: 'radio', fieldOptions: { values: [{ option: 'Yes' }, { option: 'No' }] }, requiredField: true }] },
+        limitWaitTime: true,
+        limitType: 'atSpecifiedTime',
+        maxDateAndTime: '2026-12-31T00:00:00',
+        options: { buttonLabel: 'Send' },
+      },
+      { typeVersion: 1.1 },
+    );
+    expect(form.node.parameters).toEqual({
+      resume: 'form',
+      formTitle: 'Approve?',
+      formDescription: '',
+      formFields: { values: [{ fieldLabel: 'Decision', fieldType: 'radio', requiredField: true, fieldOptions: 'Yes\nNo' }] },
+      buttonLabel: 'Send',
+      limitWaitTime: true,
+      limitType: 'atSpecifiedTime',
+      maxDateAndTime: '2026-12-31T00:00:00',
+    });
+    expect(form.warnings).toEqual([]);
+  });
+
+  it('maps Loop Over Items, and Split in Batches v1/v2 onto its loop output', () => {
+    const doc = (typeVersion: number, parameters: Record<string, unknown>) => ({
+      nodes: [
+        { parameters: {}, name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0] },
+        { parameters, name: 'Loop', type: 'n8n-nodes-base.splitInBatches', typeVersion, position: [200, 0] },
+        { parameters: {}, name: 'Done', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [400, -100] },
+        { parameters: {}, name: 'Each', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [400, 100] },
+      ],
+      connections: {
+        Start: { main: [[{ node: 'Loop', type: 'main', index: 0 }]] },
+        Loop: { main: typeVersion >= 3 ? [[{ node: 'Done', type: 'main', index: 0 }], [{ node: 'Each', type: 'main', index: 0 }]] : [[{ node: 'Each', type: 'main', index: 0 }]] },
+        Each: { main: [[{ node: 'Loop', type: 'main', index: 0 }]] },
+      },
+    });
+    const outputs = ({ workflow }: ReturnType<typeof importWorkflowJson>) => {
+      const loop = workflow.nodes.find((n) => n.name === 'Loop')!;
+      return Object.fromEntries(workflow.connections.filter((c) => c.source === loop.id).map((c) => [workflow.nodes.find((n) => n.id === c.target)!.name, c.sourceIndex]));
+    };
+    const v3 = importWorkflowJson(doc(3, { batchSize: 5, options: { reset: false } }), { resolveType });
+    expect(v3.workflow.nodes[1]).toMatchObject({ type: 'core.splitInBatches', typeVersion: 3, parameters: { batchSize: 5, options: { reset: false } } });
+    expect(outputs(v3)).toEqual({ Done: 0, Each: 1 });
+    expect(v3.report.warnings).toEqual([]);
+    const v2 = importWorkflowJson(doc(2, {}), { resolveType });
+    expect(v2.workflow.nodes[1].parameters).toMatchObject({ batchSize: 10 });
+    expect(outputs(v2)).toEqual({ Each: 1 });
+    expect(v2.report.warnings.some((w) => w.startsWith('Loop: Split in Batches v2 became Loop Over Items'))).toBe(true);
+  });
+
+  it('maps the Error Trigger', () => {
+    const { node, report } = importNode('errorTrigger', {});
+    expect(node).toMatchObject({ type: 'core.errorTrigger', parameters: {} });
+    expect(report.placeholders).toEqual([]);
+  });
+
+  it('maps the Form Trigger: path, fields, button label, end screen and response mode', () => {
+    const v22 = importNode(
+      'formTrigger',
+      {
+        formTitle: 'Contact us',
+        formDescription: 'We answer within a day',
+        formFields: {
+          values: [
+            { fieldLabel: 'Name', requiredField: true, placeholder: 'Ada Lovelace' },
+            { fieldLabel: 'Email', fieldType: 'email', requiredField: true },
+            { fieldLabel: 'Topics', fieldType: 'dropdown', fieldOptions: { values: [{ option: 'Sales' }, { option: 'Support' }] }, multiselect: true },
+            { fieldLabel: 'Attachment', fieldType: 'file', multipleFiles: true, acceptFileTypes: '.pdf' },
+            { fieldName: 'utm', fieldType: 'hiddenField' },
+          ],
+        },
+        responseMode: 'lastNode',
+        options: { path: 'contact', buttonLabel: 'Send', respondWithOptions: { values: { respondWith: 'text', formSubmittedText: 'Thanks!' } }, appendAttribution: false },
+      },
+      { typeVersion: 2.2, webhookId: 'f6a2' },
+    );
+    expect(v22.node).toMatchObject({
+      type: 'core.formTrigger',
+      parameters: {
+        path: 'contact',
+        formTitle: 'Contact us',
+        formDescription: 'We answer within a day',
+        responseMode: 'lastNode',
+        formFields: {
+          values: [
+            { fieldLabel: 'Name', fieldType: 'text', requiredField: true, placeholder: 'Ada Lovelace' },
+            { fieldLabel: 'Email', fieldType: 'email', requiredField: true },
+            { fieldLabel: 'Topics', fieldType: 'dropdown', requiredField: false, fieldOptions: 'Sales\nSupport', multiselect: true },
+            { fieldLabel: 'Attachment', fieldType: 'file', requiredField: false, multipleFiles: true, acceptFileTypes: '.pdf' },
+          ],
+        },
+        options: { buttonLabel: 'Send', formSubmittedText: 'Thanks!' },
+      },
+    });
+    expect(v22.warnings).toEqual(['Node: Landflow forms can\'t show “utm” (hiddenField); it was dropped.']);
+    // From v2.2 a form without a path is served at its webhook id; before, the path was a parameter.
+    expect(importNode('formTrigger', { formTitle: 'T' }, { typeVersion: 2.2, webhookId: 'f6a2' }).node.parameters.path).toBe('f6a2');
+    const v1 = importNode('formTrigger', { path: '/signup', formTitle: 'Sign up', responseMode: 'responseNode', options: { formSubmittedText: 'Done' } });
+    expect(v1.node.parameters).toMatchObject({ path: 'signup', responseMode: 'lastNode', options: { formSubmittedText: 'Done' } });
+    expect(v1.warnings[0]).toContain('a Respond to Webhook node can\'t answer a form');
+  });
+
+  it('maps Form pages and endings', () => {
+    const page = importNode('form', {
+      formFields: { values: [{ fieldLabel: 'Rating', fieldType: 'number', requiredField: true }] },
+      options: { formTitle: 'Step 2', formDescription: 'Almost done', buttonLabel: 'Next' },
+    });
+    expect(page.node).toMatchObject({
+      type: 'core.form',
+      parameters: { operation: 'page', formTitle: 'Step 2', formDescription: 'Almost done', buttonLabel: 'Next', formFields: { values: [{ fieldLabel: 'Rating', fieldType: 'number', requiredField: true }] } },
+    });
+    const json = importNode('form', { defineForm: 'json', jsonOutput: '[{ "fieldLabel": "Color", "fieldType": "radio", "fieldOptions": { "values": [{ "option": "Red" }, { "option": "Blue" }] } }]' });
+    expect(json.node.parameters.formFields).toEqual({ values: [{ fieldLabel: 'Color', fieldType: 'radio', requiredField: false, fieldOptions: 'Red\nBlue' }] });
+    expect(importNode('form', { operation: 'completion', completionTitle: 'Thanks', completionMessage: 'We got it' }).node.parameters).toEqual({
+      operation: 'completion',
+      respondWith: 'text',
+      completionTitle: 'Thanks',
+      completionMessage: 'We got it',
+    });
+    expect(importNode('form', { operation: 'completion', respondWith: 'redirect', redirectUrl: 'https://example.com' }).node.parameters).toEqual({
+      operation: 'completion',
+      respondWith: 'redirect',
+      redirectUrl: 'https://example.com',
+    });
+  });
+
+  it('keeps the registered-only types as placeholders when they aren’t registered', () => {
+    const types = ['formTrigger', 'form', 'respondToWebhook', 'executeWorkflow', 'splitInBatches', 'errorTrigger'];
+    const resolve = (type: string) => (types.some((t) => type === `core.${t}`) ? undefined : resolveType(type));
+    for (const type of types) {
+      const { node, report } = importNode(type, {}, { typeVersion: 3 }, resolve);
+      expect(node).toMatchObject({ type: 'core.noOp', disabled: true });
+      expect(report.placeholders).toEqual([{ name: 'Node', type: `n8n-nodes-base.${type}` }]);
+    }
+  });
+});
+
 describe('Landflow JSON import', () => {
   const exported = {
     id: 'wf_old',
@@ -482,5 +811,23 @@ describe('invalid input', () => {
     expect(() => importWorkflowJson([{ nodes: [] }, { nodes: [] }])).toThrow(/2 workflows/);
     expect(() => importWorkflowJson({ nodes: [{ name: 'x' }], connections: [] })).toThrow(/needs a "type" and a "position"/);
     expect(() => importWorkflowJson({ nodes: [], connections: 'x' })).toThrow(/"connections" must be/);
+  });
+});
+
+describe('n8n import: MCP nodes', () => {
+  it('maps the MCP Client Tool, including v1 SSE endpoints', () => {
+    const doc = {
+      nodes: [
+        { parameters: { sseEndpoint: 'http://localhost:9000/sse', include: 'selected', includeTools: ['search'] }, name: 'MCP', type: '@n8n/n8n-nodes-langchain.mcpClientTool', typeVersion: 1, position: [0, 0] },
+        { parameters: { endpointUrl: 'http://localhost:9000/mcp', serverTransport: 'httpStreamable' }, name: 'MCP 2', type: '@n8n/n8n-nodes-langchain.mcpClientTool', typeVersion: 1.1, position: [0, 200] },
+        { parameters: { path: 'tools', authentication: 'bearerAuth' }, name: 'Serve', type: '@n8n/n8n-nodes-langchain.mcpTrigger', typeVersion: 2, position: [0, 400] },
+      ],
+      connections: {},
+    };
+    const [v1, v11, trigger] = importWorkflowJson(doc, { resolveType }).workflow.nodes;
+    expect(v1).toMatchObject({ type: 'core.mcpClientTool', parameters: { endpointUrl: 'http://localhost:9000/sse', serverTransport: 'sse', include: 'selected', includeTools: ['search'] } });
+    expect(v1.parameters).not.toHaveProperty('sseEndpoint');
+    expect(v11).toMatchObject({ type: 'core.mcpClientTool', parameters: { endpointUrl: 'http://localhost:9000/mcp', serverTransport: 'httpStreamable' } });
+    expect(trigger).toMatchObject({ type: 'core.mcpTrigger', parameters: { path: 'tools', authentication: 'bearerAuth' } });
   });
 });

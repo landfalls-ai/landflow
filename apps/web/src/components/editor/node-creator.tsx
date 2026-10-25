@@ -17,7 +17,7 @@ import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
 import { useEditor, type PaletteRequest } from './store';
 
-type Mode = 'trigger' | 'next' | 'ai_languageModel' | 'ai_memory' | 'ai_tool';
+type Mode = 'trigger' | 'next' | 'ai_languageModel' | 'ai_memory' | 'ai_tool' | 'ai_embedding' | 'ai_document' | 'ai_textSplitter' | 'ai_retriever' | 'ai_reranker';
 type View = { kind: 'root' } | { kind: 'triggers' } | { kind: 'category'; key: string } | { kind: 'plugin'; pluginId: string };
 
 interface Segment {
@@ -71,7 +71,16 @@ const TRIGGER_TITLES: Record<string, { title: string; description: string }> = {
   'core.chatTrigger': { title: 'On chat message', description: 'Runs the flow when someone sends a chat message. For AI agents' },
 };
 
-const SUBNODE_TITLES: Record<string, string> = { ai_languageModel: 'Choose a chat model', ai_memory: 'Choose a memory', ai_tool: 'Give the agent a tool' };
+const SUBNODE_TITLES: Record<string, string> = {
+  ai_languageModel: 'Choose a chat model',
+  ai_memory: 'Choose a memory',
+  ai_tool: 'Give the agent a tool',
+  ai_embedding: 'Choose an embeddings model',
+  ai_document: 'Choose a document loader',
+  ai_textSplitter: 'Choose a text splitter',
+  ai_retriever: 'Choose a retriever',
+  ai_reranker: 'Choose a reranker',
+};
 
 /** Every search token must prefix some word of the text ("go hash", "py sent"). */
 function score(text: string, query: string) {
@@ -90,9 +99,9 @@ function searchText(t: NodeTypeInfo) {
 function fits(t: NodeTypeInfo, mode: Mode) {
   const d = t.descriptor;
   if (mode === 'trigger') return d.kind === 'trigger';
-  if (mode === 'ai_languageModel' || mode === 'ai_memory') return d.supplies === mode;
-  if (mode === 'ai_tool') return d.supplies === 'ai_tool' || Boolean(d.usableAsTool);
-  return d.kind === 'action';
+  if (mode === 'next') return d.kind === 'action';
+  // A sub-node slot: sub-nodes of that type, nodes with such an output in some mode (vector stores), and nodes usable as tools.
+  return d.supplies === mode || d.outputs.some((p) => p.type === mode) || (mode === 'ai_tool' && Boolean(d.usableAsTool));
 }
 
 const isImage = (icon?: string) => Boolean(icon && /^(https?:|data:)/.test(icon));
@@ -411,10 +420,15 @@ export function NodeCreator() {
       if (cat.key === 'AI') {
         const core = types.filter((t) => t.pluginId === 'core');
         // Roots take sub-nodes (a model, memory, tools); the rest call a model directly.
-        const roots = core.filter((t) => t.descriptor.inputs.some((p) => p.type !== 'main'));
-        const actions = core.filter((t) => !roots.includes(t));
+        const inCategory = (t: NodeTypeInfo, category: string) => Boolean(t.descriptor.categories?.includes(category));
+        const stores = core.filter((t) => inCategory(t, 'Vector Stores'));
+        const guards = core.filter((t) => inCategory(t, 'Guardrails'));
+        const roots = core.filter((t) => t.descriptor.inputs.some((p) => p.type !== 'main') && !stores.includes(t) && !guards.includes(t));
+        const actions = core.filter((t) => !roots.includes(t) && !stores.includes(t) && !guards.includes(t));
         const plugins = types.filter((t) => t.pluginId !== 'core');
         if (roots.length) out.sections.push({ label: 'Agents and chains', rows: roots.map((t) => nodeRow(t)) });
+        if (stores.length) out.sections.push({ label: 'Retrieval (RAG): vector stores', rows: stores.map((t) => nodeRow(t)) });
+        if (guards.length) out.sections.push({ label: 'Guardrails', rows: guards.map((t) => nodeRow(t)) });
         if (actions.length) out.sections.push({ label: 'Model actions', rows: actions.map((t) => nodeRow(t)) });
         if (plugins.length) out.sections.push({ label: 'From plugins', rows: plugins.map((t) => nodeRow(t)) });
         out.sections.push({ label: 'Models, memory and tools', rows: [] });
@@ -560,7 +574,7 @@ export function NodeCreator() {
           <div key={si} className={cn(si > 0 && 'mt-2 border-t border-hair pt-2')}>
             {section.label && <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">{section.label}</div>}
             {section.label === 'Models, memory and tools' && section.rows.length === 0 && (
-              <p className="px-2.5 pb-2 text-[12px] leading-snug text-t3">Add these from an agent&apos;s ports: the + under Model, Memory or Tool.</p>
+              <p className="px-2.5 pb-2 text-[12px] leading-snug text-t3">Add these from an agent&apos;s ports: the + under Model, Memory or Tool. Embeddings, document loaders, text splitters and rerankers come from a vector store&apos;s ports.</p>
             )}
             {section.rows.map((row) => {
               index += 1;

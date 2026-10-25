@@ -12,13 +12,22 @@ const primitive = z.union([z.string(), z.number(), z.boolean()]);
 /** "#rgb", "#rgba", "#rrggbb" or "#rrggbbaa". */
 export const HEX_COLOR = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
-export const connectionTypeSchema = z.enum(['main', 'ai_languageModel', 'ai_tool', 'ai_memory']);
+/** Sub-node connection types: what a sub-node can supply. */
+const SUB_NODE_TYPES = ['ai_languageModel', 'ai_tool', 'ai_memory', 'ai_embedding', 'ai_document', 'ai_textSplitter', 'ai_retriever', 'ai_reranker'] as const;
+
+export const connectionTypeSchema = z.enum(['main', ...SUB_NODE_TYPES]);
+
+const displayOptionsSchema = z.object({
+  show: z.record(z.string(), z.array(primitive)).optional(),
+  hide: z.record(z.string(), z.array(primitive)).optional(),
+});
 
 export const portSchema = z.object({
   type: connectionTypeSchema,
   displayName: z.string().optional(),
   required: z.boolean().optional(),
   maxConnections: z.number().int().positive().optional(),
+  displayOptions: displayOptionsSchema.optional(),
 });
 
 export const propertyOptionSchema = z.object({
@@ -26,11 +35,6 @@ export const propertyOptionSchema = z.object({
   value: primitive,
   description: z.string().optional(),
   action: z.string().optional(),
-});
-
-const displayOptionsSchema = z.object({
-  show: z.record(z.string(), z.array(primitive)).optional(),
-  hide: z.record(z.string(), z.array(primitive)).optional(),
 });
 
 const typeOptionsSchema = z.object({
@@ -100,7 +104,7 @@ export const nodeDescriptorSchema: z.ZodType<NodeDescriptor> = z.object({
   usableAsTool: z.boolean().optional(),
   toolDescription: z.string().optional(),
   toolInputSchema: z.record(z.string(), z.any()).optional(),
-  supplies: z.enum(['ai_languageModel', 'ai_tool', 'ai_memory']).optional(),
+  supplies: z.enum(SUB_NODE_TYPES).optional(),
   documentationUrl: z.string().optional(),
   keywords: z.array(z.string()).optional(),
   credentials: z
@@ -140,8 +144,22 @@ export const manifestSchema: z.ZodType<PluginManifest> = z.object({
 
 const jsonObject = z.record(z.string(), z.unknown());
 
+/** A stored ref has an `id`; one a node returns may carry inline base64 `data` instead (the host stores it). */
+export const binaryRefSchema = z
+  .object({
+    id: z.string().regex(/^[\w-]{1,64}\.[\w-]{8,64}$/, 'binary id must look like <scope>.<random>').optional(),
+    mimeType: z.string(),
+    fileName: z.string().optional(),
+    fileExtension: z.string().optional(),
+    fileSize: z.number().int().nonnegative().optional(),
+    fileType: z.enum(['image', 'text', 'json', 'html', 'pdf', 'audio', 'video', 'other']).optional(),
+    data: z.string().optional(),
+  })
+  .refine((ref) => ref.id !== undefined || ref.data !== undefined, 'a binary ref needs an id or inline data');
+
 export const nodeItemSchema = z.object({
   json: jsonObject,
+  binary: z.record(z.string(), binaryRefSchema).optional(),
   pairedItem: z.object({ item: z.number().int(), input: z.number().int().optional() }).optional(),
 });
 
@@ -149,7 +167,7 @@ export const executeRequestSchema = z.object({
   protocol: z.literal('landflow.plugin/v1'),
   executionId: z.string(),
   workflowId: z.string().optional(),
-  mode: z.enum(['manual', 'trigger', 'webhook', 'tool', 'chat', 'poll']),
+  mode: z.enum(['manual', 'trigger', 'webhook', 'tool', 'chat', 'poll', 'mcp']),
   node: z.object({
     id: z.string(),
     name: z.string(),
@@ -162,6 +180,8 @@ export const executeRequestSchema = z.object({
   credentials: z.record(z.string(), jsonObject).optional(),
   pollState: jsonObject.optional(),
   continueOnFail: z.boolean().optional(),
+  idempotencyKey: z.string().optional(),
+  binaryAccess: z.object({ url: z.string(), token: z.string() }).optional(),
 });
 
 export const executeResponseSchema = z.object({

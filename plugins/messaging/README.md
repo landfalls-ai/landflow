@@ -21,7 +21,7 @@ keeps the flow going.
 
 | Node (type) | Resource → operations | Notes |
 |---|---|---|
-| **Telegram** (`messaging.telegram`) | Message → Send Message, Send Photo (URL or file_id + caption), Edit Message Text, Delete Chat Message, Send Chat Action (typing, upload_photo…) · Chat → Get | Additional Fields: parse mode, disable notification, disable link preview, reply to message ID |
+| **Telegram** (`messaging.telegram`) | Message → Send Message, Send Photo / Document / Audio / Video (URL or file_id, or **Binary File**: the item's file uploaded as multipart), Edit Message Text, Delete Chat Message, Send Chat Action (typing, upload_photo…) · Chat → Get · File → Get (downloads into `item.binary`) | Additional Fields: caption, file name, parse mode, disable notification, disable link preview, reply to message ID |
 | **Telegram Trigger** (`messaging.telegramTrigger`) | poll trigger, default every 30 s | "Trigger On": `*`, message, edited_message, channel_post, callback_query. See below |
 | **Slack** (`messaging.slack`) | Message → Send (`chat.postMessage`: text, optional Block Kit JSON, reply in thread), Update, Delete, Get Permalink · Channel → Get Many (Return All / Limit, cursor pagination, Simplify) · User → Get by Email (`users.lookupByEmail`, Simplify) · Reaction → Add | Channel picker loads `conversations.list` live |
 | **Discord** (`messaging.discord`) | Connection Type **Bot Token**: Message → Send (content, embeds JSON, TTS, reply), Get Many (Return All / Limit, paged with `before`, Simplify), Delete, React with Emoji · **Webhook**: Message → Send (content, username, avatar URL, embeds JSON) | Server and channel pickers (`/users/@me/guilds`, `/guilds/{id}/channels`). A 429 waits `retry_after` (up to 10 s) and retries once |
@@ -30,6 +30,12 @@ keeps the flow going.
 
 Where n8n's shape differs from a flat list, n8n wins: WhatsApp "Send Media by URL" is **Send** with a media Message Type,
 Telegram's Send Chat Action is a Message operation, and Send Email's CC / BCC / Reply To sit under **Options**.
+
+Telegram files (binary data, docs/protocol.md §11): with **Binary File** on, the send operations upload
+`item.binary.<Input Binary Field>` (default `data`). The cloud Bot API takes photos up to 10 MB and other files up to 50 MB;
+larger files are refused before upload unless the credential's Base URL points at a local Bot API server (2000 MB).
+**File → Get** calls getFile and downloads the bytes into `item.binary.data` (the cloud API serves files up to 20 MB);
+turn **Download** off for the details only. Feed it the `file_id` of a document from the Telegram Trigger.
 
 ### Telegram Trigger
 

@@ -1,5 +1,5 @@
 # Landflow packaged as images: the host plus the seven plugins, each announcing itself to the
-# host's registry by its service name.
+# host's registry by its service name, and the sandboxed code runner the Code node uses.
 #
 #   docker compose -f deploy/compose.yml up -d --build --wait     # http://localhost:53000
 #   docker compose -f deploy/compose.yml -f deploy/compose.infra-link.yml up -d   # + join the infra network
@@ -45,6 +45,10 @@ services:
       LANDFLOW_SCAN_PORTS: 7101-7107,7201-7207
       # Base of links the host hands out (resume URLs, error-workflow links): the published port.
       LANDFLOW_PUBLIC_URL: http://localhost:${LANDFLOW_HOST_PORT:-53000}
+      # Where plugins fetch and upload item files (/api/binary): the host on the compose network.
+      LANDFLOW_INTERNAL_URL: http://web:3000
+      # Files live under /data/binary; LANDFLOW_BINARY_STORE=s3 with LANDFLOW_S3_* moves them to S3 or MinIO.
+      LANDFLOW_BINARY_STORE: ${LANDFLOW_BINARY_STORE:-filesystem}
       # Marketplace node plugins run as child processes inside this container.
       LANDFLOW_MARKETPLACE_REGISTRY_URL: http://127.0.0.1:3000
       OLLAMA_URL: ${LANDFLOW_OLLAMA_URL:-http://host.docker.internal:11434}
@@ -52,9 +56,17 @@ services:
       OTEL_SERVICE_NAME: landflow-host
       LANDFLOW_TRACE_URL: ${LANDFLOW_TRACE_URL:-http://localhost:56686/trace/{traceId}}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Code node sandbox: the code-runner service below. In-process JavaScript (node:vm, not isolated) is off here
+      # unless LANDFLOW_CODE_IN_PROCESS=true.
+      LANDFLOW_CODE_RUNNER_URL: http://code-runner:7300
+      LANDFLOW_CODE_RUNNER_SECRET: ${LANDFLOW_CODE_RUNNER_SECRET:-landflow-code-runner-dev-only}
+      LANDFLOW_CODE_IN_PROCESS: ${LANDFLOW_CODE_IN_PROCESS:-false}
     volumes:
       - landflow-data:/data
-    networks: [landflow]
+    networks: [landflow, code]
+    depends_on:
+      code-runner:
+        condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -135,9 +147,67 @@ services:
       <<: *plugin-env
       LANDFLOW_ADVERTISE_HOST: databases
 
+  # Sandboxed Code node runner (services/code-runner): every JavaScript or Python snippet runs in a fresh child
+  # process. The container is the security boundary: it joins only the internal `code` network (no route out; the
+  # host reaches it as code-runner:7300), its root filesystem is read-only apart from a noexec /tmp, and it has no
+  # capabilities, no privilege escalation and capped processes, memory and CPU.
+  code-runner:
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/code-runner:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/code-runner.Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: ${LANDFLOW_CODE_RUNNER_MEM_LIMIT:-1g}
+    cpus: ${LANDFLOW_CODE_RUNNER_CPUS:-2}
+    environment:
+      CODE_RUNNER_SECRET: ${LANDFLOW_CODE_RUNNER_SECRET:-landflow-code-runner-dev-only}
+      CODE_RUNNER_TIMEOUT_MS: ${LANDFLOW_CODE_RUNNER_TIMEOUT_MS:-60000}
+      CODE_RUNNER_MEMORY_MB: ${LANDFLOW_CODE_RUNNER_MEMORY_MB:-256}
+      CODE_RUNNER_CONCURRENCY: ${LANDFLOW_CODE_RUNNER_CONCURRENCY:-2}
+    networks: [code]
+
+  # Publishes the runner on the Mac (127.0.0.1:53300) for a dev server outside Docker: Docker publishes no ports for
+  # a container that is only on an internal network. It forwards that one port to code-runner:7300 and nowhere else.
+  code-runner-port:
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/code-runner:${LANDFLOW_IMAGE_TAG:-dev}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    mem_limit: 64m
+    command: ["node", "dist/forward.mjs"]
+    environment:
+      CODE_RUNNER_FORWARD_TARGET: code-runner:7300
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_CODE_RUNNER_PORT:-53300}:7300"
+    depends_on:
+      code-runner:
+        condition: service_started
+    networks: [code, code-port]
+
 networks:
   landflow:
     name: landflow-app
+  # The code runner's network: the host and the runner only. `internal` takes away the route out; the isolated
+  # gateway mode (Docker Engine 28.2+) also gives the bridge no address on the Docker host, which an internal network
+  # otherwise keeps: without it a snippet could reach any port the host (or another project) publishes on 0.0.0.0.
+  code:
+    name: landflow-code
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  # Lets code-runner-port publish its port (published ports need a non-internal network).
+  code-port:
+    name: landflow-code-port
 
 volumes:
   landflow-data:

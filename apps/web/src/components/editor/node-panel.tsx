@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, ChevronLeft, ChevronRight, CircleDot, Pause, PencilLine, Pin, PinOff, Play, SkipForward, X } from 'lucide-react';
 import { isPropertyVisible } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
@@ -15,6 +15,7 @@ import { ParamForm } from './param-form';
 import { PollStatus } from './poll-status';
 import { parseHandle, useEditor } from './store';
 import { SuggestionsCard } from './suggestions-card';
+import { TriggerUrl } from './trigger-url';
 
 function Segmented<T extends string>({
   value,
@@ -208,12 +209,7 @@ export function NodePanel() {
             <NodeIcon icon={descriptor?.icon} size={17} className="text-t1" strokeWidth={1.6} />
           </div>
           <div className="min-w-0">
-            <input
-              value={wf.name}
-              onChange={(e) => update({ name: e.target.value })}
-              aria-label="Node name"
-              className="w-[320px] bg-transparent text-[15px] font-semibold text-t1 outline-none"
-            />
+            <NodeNameInput nodeId={openNodeId} name={wf.name} />
             <div className="flex items-center gap-2 text-[12px] text-t3">
               <span className="font-mono">{wf.type}</span>
               {info && info.pluginId !== 'core' && (
@@ -316,6 +312,7 @@ export function NodePanel() {
                   {descriptor?.triggerSource === 'poll' && (
                     <PollStatus workflowId={workflowId} nodeId={openNodeId} active={workflowActive} dirty={dirty} interval={Number(wf.parameters.pollInterval ?? 60)} />
                   )}
+                  <TriggerUrl type={wf.type} parameters={wf.parameters} active={workflowActive} dirty={dirty} />
                   {descriptor?.credentials?.some((c) => isPropertyVisible(c, wf.parameters)) ? (
                     <NodeCredentials
                       nodeType={wf.type}
@@ -365,6 +362,25 @@ export function NodePanel() {
                       />
                     </SettingRow>
                   )}
+                  <SettingRow label="Timeout (seconds)" hint="Fail a try that takes longer; retries and On error apply. Empty: no timeout">
+                    <Input
+                      type="number"
+                      min={0.1}
+                      max={86_400}
+                      step="any"
+                      value={wf.timeoutSeconds ?? ''}
+                      onChange={(e) => update({ timeoutSeconds: e.target.value === '' ? undefined : Number(e.target.value) })}
+                      // Out of range once typing is done: 0 or less is no timeout, the most is a day.
+                      onBlur={() => {
+                        const seconds = wf.timeoutSeconds;
+                        if (seconds !== undefined && !(seconds >= 0.1)) update({ timeoutSeconds: undefined });
+                        else if (seconds !== undefined && seconds > 86_400) update({ timeoutSeconds: 86_400 });
+                      }}
+                      placeholder="None"
+                      aria-label="Timeout (seconds)"
+                      className="w-24"
+                    />
+                  </SettingRow>
                   <SettingRow label="Always output data" hint="Continue down the branch even with zero items">
                     <Switch checked={Boolean(wf.alwaysOutputData)} onChange={(v) => update({ alwaysOutputData: v })} />
                   </SettingRow>
@@ -549,5 +565,35 @@ function SettingRow({ label, hint, children }: { label: string; hint?: string; c
       </div>
       {children}
     </div>
+  );
+}
+
+/** The node's name. It is renamed on Enter or blur, which also points `$('Old')` references at the new name; Esc cancels. */
+function NodeNameInput({ nodeId, name }: { nodeId: string; name: string }) {
+  const [draft, setDraft] = useState(name);
+  const cancelled = useRef(false);
+  useEffect(() => setDraft(name), [name]);
+  const taken = useEditor((s) => draft.trim() !== name && s.nodes.some((n) => n.id !== nodeId && n.data.wf.name === draft.trim()));
+  const commit = () => {
+    if (cancelled.current || !useEditor.getState().renameNode(nodeId, draft)) setDraft(name);
+    cancelled.current = false;
+  };
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') {
+          cancelled.current = true;
+          setDraft(name);
+        }
+      }}
+      aria-label="Node name"
+      aria-invalid={taken || undefined}
+      title={taken ? 'Another node already has this name' : undefined}
+      className={cn('w-[320px] bg-transparent text-[15px] font-semibold text-t1 outline-none', taken && 'text-rd')}
+    />
   );
 }

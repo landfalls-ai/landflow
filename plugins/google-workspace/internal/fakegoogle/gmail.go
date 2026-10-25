@@ -301,6 +301,56 @@ func (s *Server) sendMessage(w http.ResponseWriter, body []byte) {
 		writeError(w, http.StatusBadRequest, "Invalid value for ByteString: raw is not base64url")
 		return
 	}
+	s.storeSent(w, raw, req.ThreadID)
+}
+
+// uploadMessage is messages.send on the upload URL: uploadType=media (the
+// raw message as the body) or multipart (JSON metadata, then the message).
+func (s *Server) uploadMessage(w http.ResponseWriter, r *http.Request, body []byte) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	switch r.URL.Query().Get("uploadType") {
+	case "media":
+		if ct := r.Header.Get("Content-Type"); ct != "message/rfc822" {
+			writeError(w, http.StatusBadRequest, "Media type '"+ct+"' is not supported. Valid media types: [message/*]")
+			return
+		}
+		s.storeSent(w, body, "")
+	case "multipart":
+		mt, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || mt != "multipart/related" {
+			writeError(w, http.StatusBadRequest, "Content-Type must be multipart/related")
+			return
+		}
+		mr := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+		metaPart, err := mr.NextPart()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "missing metadata part")
+			return
+		}
+		var meta struct {
+			ThreadID string `json:"threadId"`
+		}
+		if err := json.NewDecoder(metaPart).Decode(&meta); err != nil {
+			writeError(w, http.StatusBadRequest, "metadata is not JSON")
+			return
+		}
+		msgPart, err := mr.NextPart()
+		if err != nil || msgPart.Header.Get("Content-Type") != "message/rfc822" {
+			writeError(w, http.StatusBadRequest, "missing message/rfc822 part")
+			return
+		}
+		raw, _ := io.ReadAll(msgPart)
+		s.storeSent(w, raw, meta.ThreadID)
+	default:
+		writeError(w, http.StatusBadRequest, "uploadType must be media or multipart")
+	}
+}
+
+// storeSent stores a sent raw message, parsing its MIME into a payload.
+func (s *Server) storeSent(w http.ResponseWriter, raw []byte, threadID string) {
 	payload, text, err := payloadFromRaw(raw)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid RFC 2822 message: "+err.Error())
@@ -311,7 +361,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, body []byte) {
 		return
 	}
 	id := s.id("sent")
-	thread := req.ThreadID
+	thread := threadID
 	if thread == "" {
 		thread = "thr-" + id
 	}

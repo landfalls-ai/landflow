@@ -2,9 +2,13 @@
  * The next page of a form: GET /form/waiting/<executionId> shows the page a waiting execution
  * waits on (a Form node, or a Wait node set to "On Form Submitted"); POST submits it and resumes
  * the run with the submission as that node's output. Once the run is done, the page shows the end
- * screen (a Form node's ending, or the trigger's "Form Submitted Text").
+ * screen (a Form node's ending, or the trigger's "Form Submitted Text"). File fields are stored with the execution
+ * (`item.binary.<field>`).
  */
 import type { Workflow } from '@landflow/engine';
+import type { BinaryRef } from '@landflow/protocol';
+import { binaryLimits } from '@/lib/server/binary/access';
+import { BinaryTooLargeError } from '@/lib/server/binary/store';
 import {
   answerSubmission,
   DEFAULT_SUBMITTED_TEXT,
@@ -13,6 +17,7 @@ import {
   formPage,
   messagePage,
   parseSubmission,
+  storeSubmissionFiles,
   submissionItem,
   waitingPage,
 } from '@/lib/server/forms';
@@ -26,6 +31,8 @@ export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
 
 const notFound = () => messagePage({ title: 'Form not found', message: 'This form doesn’t exist or has expired.', status: 404 });
+const tooLarge = (limit: number) =>
+  messagePage({ title: 'File too large', message: `Uploads can be up to ${Math.floor(limit / (1024 * 1024))} MiB.`, status: 413 });
 const processing = () => messagePage({ title: 'Just a moment…', message: 'Your response is being processed.', refresh: 2 });
 
 /** The end screen's texts when no Form node sets one: the Form Trigger's "Form Submitted Text". */
@@ -54,6 +61,8 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!record) return notFound();
   const page = waitingPage(record);
   if (!page) return record.status === 'waiting' ? messagePage({ title: 'Not a form', message: 'This execution isn’t waiting for a form submission.', status: 409 }) : finishedResponse(record, fallbackFor(record));
+  const { maxBytes } = binaryLimits();
+  if (Number(request.headers.get('content-length')) > maxBytes) return tooLarge(maxBytes);
   let data: FormData;
   try {
     data = await request.formData();
@@ -64,10 +73,20 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const submission = parseSubmission(page, data, formMode);
   if (Object.keys(submission.errors).length) return formPage(page, { action: `/form/waiting/${id}`, values: submission.values, errors: submission.errors, status: 400 });
 
+  // Files go into the execution's scope, so they're deleted with it.
+  let binary: Record<string, BinaryRef> | undefined;
+  if (Object.keys(submission.files).length) {
+    try {
+      binary = await storeSubmissionFiles(submission.files, id);
+    } catch (caught) {
+      if (caught instanceof BinaryTooLargeError) return tooLarge(caught.maxBytes);
+      throw caught;
+    }
+  }
   const reply = deferred<RunReply>();
   try {
     // resumeExecution claims the execution synchronously, so a double submit gets a ResumeError.
-    const run = resumeExecution(id, { kind: 'form', outputs: [[submissionItem(submission.json)]], onReply: (value) => reply.resolve(value) });
+    const run = resumeExecution(id, { kind: 'form', outputs: [[submissionItem(submission.json, binary)]], onReply: (value) => reply.resolve(value) });
     return await answerSubmission(run, reply.promise, fallbackFor(record));
   } catch (caught) {
     if (caught instanceof ResumeError) return caught.status === 409 ? processing() : messagePage({ title: 'Form not found', message: caught.message, status: caught.status });

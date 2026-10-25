@@ -7,13 +7,26 @@ import { definePlugin } from '@landflow/sdk';
 import { messageAgentNode, workflowTrigger } from './agents';
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
-import { anthropicApiCredential, openAiApiCredential } from './credentials';
+import { anthropicApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, openAiApiCredential } from './credentials';
 import { codeNode, httpRequestNode, setNode } from './data';
 import { dataTableNode } from './datatable';
 import { dateTimeNode } from './datetime';
+import { convertToFileNode, extractFromFileNode, readWriteFileNode } from './files';
 import { filterNode, ifNode, limitNode, mergeNode, noOpNode, respondToWebhookNode, sortNode, splitInBatchesNode, stopAndErrorNode, switchNode, waitNode } from './flow';
 import { formNode, formTrigger } from './forms';
+import { guardrailsNode } from './guardrails';
+import { mcpClientNode, mcpClientToolNode, mcpTrigger } from './mcp';
 import { recordMetricNode } from './metric';
+import {
+  defaultDataLoaderNode,
+  embeddingsOllamaNode,
+  embeddingsOpenAiNode,
+  llmRerankerNode,
+  recursiveCharacterTextSplitterNode,
+  retrievalQaChainNode,
+  tokenTextSplitterNode,
+} from './rag';
+import { inMemoryVectorStoreNode, pgVectorStoreNode, postgresCredential, sqliteVectorStoreNode } from './vector-stores';
 import { openAiChatModelNode, openAiNode } from './openai';
 import { aggregateNode, removeDuplicatesNode, renameKeysNode, splitOutNode, summarizeNode } from './transform';
 import { chatTrigger, errorTrigger, manualTrigger, scheduleTrigger, webhookTrigger } from './triggers';
@@ -37,6 +50,7 @@ export const corePlugin = definePlugin({
     workflowTrigger,
     formTrigger,
     errorTrigger,
+    mcpTrigger,
     httpRequestNode,
     setNode,
     codeNode,
@@ -61,6 +75,9 @@ export const corePlugin = definePlugin({
     stopAndErrorNode,
     recordMetricNode,
     dataTableNode,
+    readWriteFileNode,
+    extractFromFileNode,
+    convertToFileNode,
     aiAgentNode,
     messageAgentNode,
     chainLlmNode,
@@ -72,6 +89,19 @@ export const corePlugin = definePlugin({
     openAiChatModelNode,
     simpleMemoryNode,
     calculatorToolNode,
+    mcpClientToolNode,
+    mcpClientNode,
+    inMemoryVectorStoreNode,
+    sqliteVectorStoreNode,
+    pgVectorStoreNode,
+    embeddingsOllamaNode,
+    embeddingsOpenAiNode,
+    defaultDataLoaderNode,
+    recursiveCharacterTextSplitterNode,
+    tokenTextSplitterNode,
+    llmRerankerNode,
+    retrievalQaChainNode,
+    guardrailsNode,
   ],
-  credentialTypes: [openAiApiCredential, anthropicApiCredential],
+  credentialTypes: [openAiApiCredential, anthropicApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential],
 });

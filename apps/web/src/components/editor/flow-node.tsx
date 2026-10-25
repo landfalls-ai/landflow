@@ -4,7 +4,7 @@ import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
 import { CircleDot, Copy, Play, Power, Settings2, SkipForward, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { NodeTile } from '../canvas/node-tile';
+import { isCompact, NodeTile } from '../canvas/node-tile';
 import { useEditor, type FlowNode } from './store';
 
 function ToolbarButton({
@@ -54,7 +54,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   const subConnections = useEditor(useShallow((s) => s.edges.filter((e) => e.target === id && e.data?.connectionType !== 'main').map((e) => e.targetHandle)));
   const { openNode, openPalette, removeNodes, duplicateNode, updateNode, toggleBreakpoint } = useEditor.getState();
 
-  const compact = info?.descriptor.kind === 'subnode' || asTool;
+  const compact = isCompact(info?.descriptor, wf.parameters, asTool);
   const runNode = (scope: 'from' | 'only') => useEditor.getState().run?.({ kind: 'node', nodeId: id, scope });
 
   return (

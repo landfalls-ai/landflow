@@ -1,9 +1,9 @@
 /**
  * The storage port behind Data Tables. The service (./service) validates and
  * coerces everything first, so a backend receives typed cell values and typed
- * filters and only stores and queries them. ./json-storage keeps each table in
- * one JSON file; a SQLite or Postgres backend maps the same calls to tables,
- * WHERE clauses and transactions. The in-memory query helpers below define the
+ * filters and only stores and queries them. ./sql-storage (the default) keeps
+ * tables and rows in the database with row-level writes; ./json-storage keeps
+ * each table in one JSON file. The in-memory query helpers below define the
  * semantics such a backend has to match.
  */
 import type { CellValue, ColumnType, DataTable, DataTableColumn, DataTableRow, DataTableSummary, RowFilter, RowPage, RowQuery } from '../../shared/data-tables';

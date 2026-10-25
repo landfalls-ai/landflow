@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from ._version import __version__
+from .binary import complete_binary_ref
 from .context import CredentialTestContext, ExecuteContext, LoadOptionsContext
 from .credentials import CredentialType, normalize_test_result, secret_values
 from .errors import (
@@ -632,6 +633,9 @@ def _validate_execute_request(request: Any) -> dict[str, Any]:
     mode = request.get("mode")
     if mode is not None and not isinstance(mode, str):
         raise ProtocolError("mode must be a string")
+    access = request.get("binaryAccess")
+    if access is not None and (not isinstance(access, dict) or not isinstance(access.get("url"), str) or not isinstance(access.get("token", ""), str)):
+        raise ProtocolError("binaryAccess must be an object {url, token}")
 
     normalized = dict(request)
     normalized.update(
@@ -682,10 +686,12 @@ def _normalize_item(item: Any, output_index: int, item_index: int) -> dict[str, 
     if not isinstance(item, dict):
         raise TypeError(f"output {output_index} item {item_index} is a {type(item).__name__}, expected a dict")
     if isinstance(item.get("json"), dict) and _ITEM_KEYS.issuperset(item):
-        payload, paired = item["json"], item.get("pairedItem")
+        payload, paired, files = item["json"], item.get("pairedItem"), item.get("binary")
     else:
-        payload, paired = item, None
+        payload, paired, files = item, None, None
     out: dict[str, Any] = {"json": to_jsonable(payload)}
+    if files:
+        out["binary"] = _normalize_binary(files, output_index, item_index)
     if paired is not None:
         if isinstance(paired, int) and not isinstance(paired, bool):
             out["pairedItem"] = {"item": paired}
@@ -695,6 +701,22 @@ def _normalize_item(item: Any, output_index: int, item_index: int) -> dict[str, 
                 out["pairedItem"]["input"] = paired["input"]
         else:
             raise TypeError(f"output {output_index} item {item_index}: pairedItem must be {{'item': int}}")
+    return out
+
+
+def _normalize_binary(files: Any, output_index: int, item_index: int) -> dict[str, Any]:
+    """``item["binary"]``: refs with an ``id`` or inline ``data`` (bytes are base64-encoded); the MIME type is filled in."""
+    where = f"output {output_index} item {item_index}"
+    if not isinstance(files, dict):
+        raise TypeError(f"{where}: binary must be a dict of file refs ({{'data': ctx.prepare_binary_data(...)}})")
+    out: dict[str, Any] = {}
+    for name, ref in files.items():
+        if not isinstance(ref, dict):
+            raise TypeError(f"{where}: binary {name!r} must be a ref dict, got {type(ref).__name__}")
+        ref = to_jsonable(ref)
+        if not ref.get("id") and not isinstance(ref.get("data"), str):
+            raise TypeError(f"{where}: binary {name!r} needs an 'id' or inline 'data' (use ctx.prepare_binary_data())")
+        out[str(name)] = complete_binary_ref(ref) if not ref.get("mimeType") else ref
     return out
 
 

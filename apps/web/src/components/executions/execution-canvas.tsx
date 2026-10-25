@@ -49,7 +49,7 @@ export function toReadOnlyFlow(workflow: Workflow): { nodes: ExecNode[]; edges: 
       source: c.source,
       target: c.target,
       sourceHandle: handleId(c.type, c.type === 'main' ? c.sourceIndex : 0),
-      targetHandle: handleId(c.type, c.type === 'main' ? c.targetIndex : 0),
+      targetHandle: handleId(c.type, c.targetIndex ?? 0),
       data: { connectionType: c.type },
     })),
   };

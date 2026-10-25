@@ -3,7 +3,8 @@
 #
 #   deploy/scripts/smoke.sh infra   # Postgres+pgvector, Valkey, Mailpit, MinIO, OpenBao (+ Keycloak, Jaeger, MySQL if running)
 #   deploy/scripts/smoke.sh app     # dockerised host: health, plugins online, demo pipeline run, webhook
-#   deploy/scripts/smoke.sh         # both
+#   deploy/scripts/smoke.sh code    # code runner: health, and its isolation checked from inside snippets
+#   deploy/scripts/smoke.sh         # all three
 #
 # Reads deploy/.env if present; otherwise the defaults from deploy/.env.example.
 set -uo pipefail
@@ -64,10 +65,18 @@ sys.exit(0 if status == \"success\" else 1)'"
   check "webhook: POST /api/webhook/enrich" bash -c "curl -fsS -XPOST -H 'content-type: application/json' -d '{\"text\":\"Docker makes Landflow plugins easy and great\"}' $base/api/webhook/enrich"
 }
 
+code() {
+  local base="http://127.0.0.1:${LANDFLOW_CODE_RUNNER_PORT:-53300}"
+  echo "code runner (project landflow, $base via code-runner-port)"
+  check "code runner: /health" curl -fsS "$base/health"
+  check "code runner: snippets can't reach the network or write outside /tmp" bash -c "node scripts/code-runner-isolation.mjs $base >/dev/null && echo blocked"
+}
+
 case "${1:-all}" in
   infra) infra ;;
   app) app ;;
-  all) infra; app ;;
-  *) echo "usage: $0 [infra|app|all]" >&2; exit 2 ;;
+  code) code ;;
+  all) infra; app; code ;;
+  *) echo "usage: $0 [infra|app|code|all]" >&2; exit 2 ;;
 esac
 [ "$fails" -eq 0 ] && echo "all checks passed" || { echo "$fails check(s) failed"; exit 1; }

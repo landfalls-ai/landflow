@@ -22,7 +22,16 @@
  * and loops back to an earlier node are scheduled like any other edge.
  *
  * `settings.timeoutSeconds` fails the run with "Workflow timed out after N s";
- * the time spent waiting does not count.
+ * the time spent waiting does not count. A node's `timeoutSeconds` fails one
+ * attempt of it ("Node timed out after N s") through the abort signal it gets,
+ * so retries and "continue on error" apply.
+ *
+ * Checkpoints: before the first node and after every main-flow node, the run
+ * hands `onCheckpoint` its state (the same ResumeState waits use, without a
+ * waiting node). Resuming with kind `restart` continues from it: whatever was on
+ * the stack runs, so a node interrupted by a crash runs again. Every node call
+ * carries `idempotencyKey` = `<executionId>:<nodeId>:<runIndex>`, the same for a
+ * retry of that step and for its re-run after a restart.
  *
  * Sub-nodes (anything connected through an `ai_*` port) never run in the main
  * flow. A root node pulls them through `getInputConnectionData`, and each use
@@ -37,6 +46,7 @@
 import { context, SpanStatusCode, type Attributes, type Context, type Span } from '@opentelemetry/api';
 import {
   PROTOCOL_VERSION,
+  type ConnectionType,
   type ExecuteRequest,
   type ExecuteResponse,
   type JsonObject,
@@ -44,7 +54,18 @@ import {
   type NodeItem,
 } from '@landflow/protocol';
 import type { ContextExtras, WaitRequest } from '@landflow/sdk';
-import { toToolName, type AgentMemory, type AgentTool, type LanguageModel } from './ai';
+import {
+  toToolName,
+  type AgentMemory,
+  type AgentTool,
+  type AiDocument,
+  type DocumentLoader,
+  type Embeddings,
+  type LanguageModel,
+  type Reranker,
+  type Retriever,
+  type TextSplitter,
+} from './ai';
 import { ExpressionError, ExpressionResolver } from './expression';
 import { engineMetrics, failSpan, recordedIds, SOURCE_ATTRIBUTE, startChild } from './telemetry';
 import { deriveToolSchema } from './tool-schema';
@@ -58,8 +79,10 @@ import type {
   ResolvedNodeType,
   ResumeKind,
   ResumeOptions,
+  CheckpointState,
   ResumeStackEntry,
   ResumeState,
+  RunCheckpoint,
   RunSource,
   WorkflowConnection,
   WorkflowNode,
@@ -82,6 +105,9 @@ class TimeoutError extends Error {}
 
 type StackEntry = ResumeStackEntry;
 
+/** A sub-node port type: what `getInputConnectionData` asks for. */
+type SubNodeType = Exclude<ConnectionType, 'main'>;
+
 /** Multi-input nodes waiting for more inputs: one slot per input. */
 type Parked = Map<string, (NodeItem[] | undefined)[]>;
 
@@ -101,7 +127,15 @@ const RESUMED: Record<ResumeKind, string> = {
   form: 'Resumed by a form submission',
   timeout: 'Stopped waiting: the time limit was reached',
   subworkflow: 'Resumed: the sub-workflow finished',
+  restart: 'Continued after a restart',
 };
+
+/** A per-node time limit on one attempt: its signal, and the error the attempt fails with. */
+interface NodeLimit {
+  signal: AbortSignal;
+  error: () => Error;
+  clear: () => void;
+}
 
 /** A node run's span, with what its metrics are keyed by. */
 interface NodeTelemetry {
@@ -159,6 +193,8 @@ class WorkflowRun {
   private rootContext!: Context;
   /** Context of each main node while it runs, so its sub-node uses become its children. */
   private readonly nodeContexts = new Map<string, Context>();
+  /** Sub-node calls started per node and source (their idempotency keys). */
+  private readonly subCalls = new Map<string, number>();
 
   constructor(private readonly options: ExecuteWorkflowOptions) {
     const { workflow } = options;
@@ -235,25 +271,53 @@ class WorkflowRun {
     if (this.signal?.aborted) throw this.abortError();
   }
 
-  /** Settle as soon as the run is aborted, even if `promise` (a node that ignores the signal) keeps going. */
-  private raceAbort<T>(promise: Promise<T>): Promise<T> {
+  /** Settle as soon as the run is aborted (or `limit` runs out), even if `promise` (a node that ignores the signal) keeps going. */
+  private raceAbort<T>(promise: Promise<T>, limit?: NodeLimit): Promise<T> {
     const signal = this.signal;
-    if (!signal) return promise;
-    if (signal.aborted) return Promise.reject(this.abortError());
+    if (!signal && !limit) return promise;
+    if (signal?.aborted) return Promise.reject(this.abortError());
+    if (limit?.signal.aborted) return Promise.reject(limit.error());
     return new Promise<T>((resolve, reject) => {
       const onAbort = () => reject(this.abortError());
-      signal.addEventListener('abort', onAbort, { once: true });
+      const onLimit = () => reject(limit!.error());
+      const detach = () => {
+        signal?.removeEventListener('abort', onAbort);
+        limit?.signal.removeEventListener('abort', onLimit);
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      limit?.signal.addEventListener('abort', onLimit, { once: true });
       promise.then(
         (value) => {
-          signal.removeEventListener('abort', onAbort);
+          detach();
           resolve(value);
         },
         (error) => {
-          signal.removeEventListener('abort', onAbort);
+          detach();
           reject(error);
         },
       );
     });
+  }
+
+  /** `node.timeoutSeconds` for one attempt. */
+  private nodeLimit(node: WorkflowNode): NodeLimit | undefined {
+    const seconds = Number(node.timeoutSeconds);
+    if (!(seconds > 0)) return undefined;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.round(seconds * 1000));
+    timer.unref?.();
+    return { signal: controller.signal, error: () => new NodeExecutionError(`Node timed out after ${seconds} s`, node), clear: () => clearTimeout(timer) };
+  }
+
+  /** The per-step idempotency key of the next run of `node` from `source` (main-flow runs: its run index). */
+  private stepKey(node: WorkflowNode, source: RunSource): string {
+    const index = (this.runData[node.id] ?? []).filter((run) => run.source === source).length;
+    if (source === 'main') return `${this.options.executionId}:${node.id}:${index}`;
+    // Sub-node uses may overlap (an agent calling a tool twice at once): count the calls started, not the runs recorded.
+    const key = `${node.id}|${source}`;
+    const next = Math.max(index, this.subCalls.get(key) ?? 0);
+    this.subCalls.set(key, next + 1);
+    return `${this.options.executionId}:${node.id}:${next}`;
   }
 
   private resolveType(node: WorkflowNode): ResolvedNodeType {
@@ -430,6 +494,7 @@ class WorkflowRun {
       const parked: Parked = new Map();
       if (resume) this.restore(resume, stack, parked);
       else stack.push(...this.startNodes());
+      this.checkpoint('start', undefined, stack, parked);
 
       while (stack.length || parked.size) {
         this.checkCanceled();
@@ -452,6 +517,8 @@ class WorkflowRun {
           break;
         }
         this.enqueueChildren(node, outputs, stack, parked);
+        const runIndex = (this.runData[node.id] ?? []).filter((run) => run.source === 'main').length - 1;
+        this.checkpoint(`${node.id}#${Math.max(0, runIndex)}`, node.id, stack, parked);
       }
     } catch (caught) {
       if (caught instanceof CanceledError) {
@@ -556,12 +623,9 @@ class WorkflowRun {
   // Waiting and resuming
   // -------------------------------------------------------------------------
 
-  /** Stop scheduling: what the run waits for, and the state to continue from. */
-  private suspend(stack: StackEntry[], parked: Parked): { wait: ExecutionWait; state: ResumeState } {
-    const pending = this.pendingWait!;
-    const since = new Date(pending.startedAt).toISOString();
-    const wait: ExecutionWait = { ...pending.request, nodeId: pending.node.id, nodeName: pending.node.name, since };
-    const state: ResumeState = {
+  /** The scheduler state as plain JSON (no waiting node). It shares the run's live objects. */
+  private snapshot(stack: StackEntry[], parked: Parked): CheckpointState {
+    return {
       version: 1,
       startedAt: new Date(this.startedAt).toISOString(),
       activeMs: this.priorActiveMs + (Date.now() - this.segmentStartedAt),
@@ -572,12 +636,31 @@ class WorkflowRun {
       executionOrder: this.executionOrder,
       nodeState: this.nodeState,
       ...(this.lastNodeId && { lastNodeId: this.lastNodeId }),
-      waiting: { nodeId: pending.node.id, inputs: pending.inputs, outputs: pending.outputs, startedAt: since, ...(pending.logs?.length && { logs: pending.logs }) },
       ...(this.allowed && { allowed: [...this.allowed] }),
       ...(this.destination && { destination: this.destination }),
       ...(this.rerun && { rerun: [...this.rerun], reusedOutputs: Object.fromEntries(this.reusedOutputs) }),
     };
-    return { wait, state };
+  }
+
+  /** Hand the state between two nodes to `onCheckpoint`. A failing listener never breaks the run. */
+  private checkpoint(stepId: string, nodeId: string | undefined, stack: StackEntry[], parked: Parked) {
+    const listener = this.options.onCheckpoint;
+    if (!listener) return;
+    const checkpoint: RunCheckpoint = { stepId, ...(nodeId && { nodeId }), steps: this.executionOrder.length, state: this.snapshot(stack, parked) };
+    try {
+      listener(checkpoint);
+    } catch {
+      // The run goes on; it only loses the chance to continue from here after a crash.
+    }
+  }
+
+  /** Stop scheduling: what the run waits for, and the state to continue from. */
+  private suspend(stack: StackEntry[], parked: Parked): { wait: ExecutionWait; state: ResumeState } {
+    const pending = this.pendingWait!;
+    const since = new Date(pending.startedAt).toISOString();
+    const wait: ExecutionWait = { ...pending.request, nodeId: pending.node.id, nodeName: pending.node.name, since };
+    const waiting = { nodeId: pending.node.id, inputs: pending.inputs, outputs: pending.outputs, startedAt: since, ...(pending.logs?.length && { logs: pending.logs }) };
+    return { wait, state: { ...this.snapshot(stack, parked), waiting } };
   }
 
   /** Load a waiting run's state, record the waiting node's run with the resume payload, and queue what follows it. */
@@ -593,10 +676,27 @@ class WorkflowRun {
     this.lastNodeId = state.lastNodeId;
     stack.push(...state.stack);
     for (const entry of state.parked) parked.set(entry.nodeId, entry.slots.map((slot) => slot ?? undefined));
+    for (const entry of [...state.stack, ...state.parked]) {
+      if (!this.nodes.has(entry.nodeId)) throw new Error(`Node ${entry.nodeId} of the saved state is not in the workflow`);
+    }
 
-    const node = this.nodes.get(state.waiting.nodeId);
-    if (!node) throw new Error(`The waiting node ${state.waiting.nodeId} is not in the workflow`);
     const { waiting } = state;
+    if (resume.kind === 'restart' || !waiting) {
+      // A checkpoint: the stack holds what runs next. `$('Node')` outputs not saved with it come from the run data.
+      if (!Object.keys(state.nodeOutputs ?? {}).length) {
+        const counters = new Map<string, number>();
+        for (const nodeId of this.executionOrder) {
+          const index = counters.get(nodeId) ?? 0;
+          counters.set(nodeId, index + 1);
+          const run = this.runData[nodeId]?.[index];
+          const node = this.nodes.get(nodeId);
+          if (run && node && run.source === 'main' && run.status === 'success') this.latestOutputs[node.name] = run.outputs;
+        }
+      }
+      return;
+    }
+    const node = this.nodes.get(waiting.nodeId);
+    if (!node) throw new Error(`The waiting node ${waiting.nodeId} is not in the workflow`);
     const telemetry = this.startNodeSpan(node, 'main', this.rootContext);
     telemetry.span.setAttributes({ 'landflow.node.resumed': true, 'landflow.wait.resume_kind': resume.kind });
     const ids = recordedIds(telemetry.span);
@@ -611,7 +711,7 @@ class WorkflowRun {
     const logs: LogEntry[] = [...(waiting.logs ?? []), { level: resume.error ? 'error' : 'info', message: resume.error ?? RESUMED[resume.kind] }];
     if (resume.error) {
       if (node.onError === 'continue') {
-        const outputs = [(waiting.inputs[0] ?? [{ json: {} }]).map((item, index) => ({ json: { ...item.json, error: { message: resume.error! } }, pairedItem: { item: index } }))];
+        const outputs = [(waiting.inputs[0] ?? [{ json: {} }]).map((item: NodeItem, index) => ({ json: { ...item.json, error: { message: resume.error! } }, ...(item.binary && { binary: item.binary }), pairedItem: { item: index } }))];
         const run: NodeRun = { ...base, status: 'success', outputs, logs: [...logs, { level: 'warn', message: `Continued after error: ${resume.error}` }] };
         this.endNodeSpan(telemetry, run);
         this.record(node, run);
@@ -701,12 +801,13 @@ class WorkflowRun {
 
     for (let attempt = 1; attempt <= maxTries; attempt++) {
       this.checkCanceled();
+      const limit = this.nodeLimit(node);
       try {
         const resolved = this.resolveType(node);
         telemetry.transport = resolved.transport;
         telemetry.span.setAttribute('landflow.transport', resolved.transport);
-        const request = this.buildRequest(node, resolved, effectiveInputs, effectiveInputs[0] ?? []);
-        const { response, wait } = await this.callExecute(node, resolved, request, telemetry.context);
+        const request: ExecuteRequest = { ...this.buildRequest(node, resolved, effectiveInputs, effectiveInputs[0] ?? []), idempotencyKey: this.stepKey(node, 'main') };
+        const { response, wait } = await this.callExecute(node, resolved, request, telemetry.context, limit);
         if (response.error) {
           throw new NodeExecutionError(response.error.message, node, response.error.description);
         }
@@ -728,14 +829,17 @@ class WorkflowRun {
             : new NodeExecutionError((caught as Error).message ?? String(caught), node);
         telemetry.span.recordException(lastError);
         if (attempt < maxTries) await sleep(node.waitBetweenTriesMs ?? 1000);
+      } finally {
+        limit?.clear();
       }
     }
 
     const error = lastError!;
     if (node.onError === 'continue') {
       // Keep the flow going: emit the input items annotated with the error.
-      const outputs = [(effectiveInputs[0] ?? [{ json: {} }]).map((item, index) => ({
+      const outputs = [(effectiveInputs[0] ?? [{ json: {} }]).map((item: NodeItem, index) => ({
         json: { ...item.json, error: { message: error.message } },
+        ...(item.binary && { binary: item.binary }),
         pairedItem: { item: index },
       }))];
       finish({
@@ -891,10 +995,11 @@ class WorkflowRun {
     resolved: ResolvedNodeType,
     request: ExecuteRequest,
     spanContext: Context,
+    limit?: NodeLimit,
   ): Promise<{ response: ExecuteResponse; wait?: WaitRequest }> {
     let wait: WaitRequest | undefined;
     const extras: ContextExtras = {
-      signal: this.signal,
+      signal: limit ? (this.signal ? AbortSignal.any([this.signal, limit.signal]) : limit.signal) : this.signal,
       putExecutionToWait: (requested) => {
         if (!['time', 'webhook', 'form', 'subworkflow'].includes(requested.resume)) throw new Error(`Unknown wait "${String(requested.resume)}"`);
         if (requested.until !== undefined && Number.isNaN(Date.parse(requested.until))) throw new Error(`Invalid wait time "${requested.until}"`);
@@ -906,6 +1011,7 @@ class WorkflowRun {
         if (state === undefined) delete this.nodeState[node.id];
         else this.nodeState[node.id] = structuredClone(state);
       },
+      getNodeOutputs: () => this.expressionOutputs(node),
       onLog: (entry) =>
         this.emit({
           type: 'node.log',
@@ -915,10 +1021,9 @@ class WorkflowRun {
           message: entry.message,
           at: now(),
         }),
-      getInputConnectionData: <T>(type: 'ai_languageModel' | 'ai_tool' | 'ai_memory') =>
-        this.supplySubNodes(node, type, request.inputs[0] ?? []) as Promise<T[]>,
+      getInputConnectionData: <T>(type: SubNodeType, index?: number) => this.supplySubNodes(node, type, request.inputs[0] ?? [], index) as Promise<T[]>,
     };
-    const response = await this.raceAbort(context.with(spanContext, () => resolved.execute(request, extras)));
+    const response = await this.raceAbort(context.with(spanContext, () => resolved.execute(request, extras)), limit);
     return { response, ...(wait && { wait }) };
   }
 
@@ -926,23 +1031,34 @@ class WorkflowRun {
   // Sub-nodes (ai_* ports)
   // -------------------------------------------------------------------------
 
-  private async supplySubNodes(
-    root: WorkflowNode,
-    type: 'ai_languageModel' | 'ai_tool' | 'ai_memory',
-    rootItems: NodeItem[],
-  ): Promise<unknown[]> {
-    const connections = (this.incomingSub.get(root.id) ?? []).filter((c) => c.type === type);
+  /**
+   * What the sub-nodes on `root`'s `type` ports supply (only the `index`-th port of that type when given), in port
+   * order. Their parameters resolve per root item, so a document loader's `{{ $json.text }}` follows the items it
+   * loads. A sub-node can have sub-nodes of its own (a loader's text splitter, a vector store's embeddings): they
+   * resolve the same way, and each use is recorded with the sub-node they serve as its parent.
+   */
+  private async supplySubNodes(root: WorkflowNode, type: SubNodeType, rootItems: NodeItem[], index?: number, chain: string[] = [root.id]): Promise<unknown[]> {
+    const connections = (this.incomingSub.get(root.id) ?? [])
+      .filter((c) => c.type === type && (index === undefined || c.targetIndex === index))
+      .sort((a, b) => a.targetIndex - b.targetIndex);
     const supplied: unknown[] = [];
     for (const connection of connections) {
       const subNode = this.nodes.get(connection.source)!;
       if (subNode.disabled) continue;
+      if (chain.includes(subNode.id)) throw new NodeExecutionError(`"${subNode.name}" is attached to itself through its sub-nodes`, root);
       const resolved = this.resolveType(subNode);
-      const expressionItems = rootItems.slice(0, 1);
 
       if (resolved.supplyData) {
-        const request = this.buildRequest(subNode, resolved, [expressionItems], expressionItems);
-        const capability = await resolved.supplyData(request);
-        supplied.push(this.instrument(root, subNode, type, capability));
+        const request = this.buildRequest(subNode, resolved, [rootItems], rootItems);
+        const extras: ContextExtras = {
+          ...(this.signal && { signal: this.signal }),
+          getInputConnectionData: <T>(subType: SubNodeType, subIndex?: number) =>
+            this.supplySubNodes(subNode, subType, rootItems, subIndex, [...chain, subNode.id]) as Promise<T[]>,
+        };
+        const capability = await resolved.supplyData(request, extras);
+        // A toolkit (the MCP Client Tool) supplies several tools at once: each is used and recorded on its own.
+        if (type === 'ai_tool' && Array.isArray(capability)) supplied.push(...capability.map((tool) => this.instrument(root, subNode, type, tool)));
+        else supplied.push(this.instrument(root, subNode, type, capability));
         continue;
       }
       if (type === 'ai_tool' && resolved.descriptor.usableAsTool) {
@@ -958,7 +1074,7 @@ class WorkflowRun {
   }
 
   /** Wrap a supplied capability so every use shows up as a sub-node run. */
-  private instrument(root: WorkflowNode, subNode: WorkflowNode, type: string, capability: unknown): unknown {
+  private instrument(root: WorkflowNode, subNode: WorkflowNode, type: SubNodeType, capability: unknown): unknown {
     if (type === 'ai_languageModel') {
       const model = capability as LanguageModel;
       return {
@@ -998,6 +1114,63 @@ class WorkflowRun {
           }),
       } satisfies AgentMemory;
     }
+    if (type === 'ai_embedding') {
+      const embeddings = capability as Embeddings;
+      return {
+        provider: embeddings.provider,
+        model: embeddings.model,
+        embedDocuments: (texts, signal) =>
+          this.trackSubRun(root, subNode, 'embedding', { json: { texts: texts.length } }, async () => {
+            const vectors = await embeddings.embedDocuments(texts, signal);
+            return { result: vectors, output: { json: { vectors: vectors.length, dimensions: vectors[0]?.length ?? 0 } } };
+          }),
+        embedQuery: (text, signal) =>
+          this.trackSubRun(root, subNode, 'embedding', { json: { query: text } }, async () => {
+            const vector = await embeddings.embedQuery(text, signal);
+            return { result: vector, output: { json: { dimensions: vector.length } } };
+          }),
+      } satisfies Embeddings;
+    }
+    if (type === 'ai_textSplitter') {
+      const splitter = capability as TextSplitter;
+      return {
+        splitText: (text) =>
+          this.trackSubRun(root, subNode, 'textSplitter', { json: { characters: text.length } }, async () => {
+            const chunks = await splitter.splitText(text);
+            return { result: chunks, output: { json: { count: chunks.length, chunks: chunks.slice(0, SUB_RUN_PREVIEW) } } };
+          }),
+      } satisfies TextSplitter;
+    }
+    if (type === 'ai_document') {
+      const loader = capability as DocumentLoader;
+      return {
+        load: (items) =>
+          this.trackSubRun(root, subNode, 'document', { json: { items: items.length } }, async () => {
+            const documents = await loader.load(items);
+            return { result: documents, output: { json: { count: documents.length, documents: previewDocuments(documents) } } };
+          }),
+      } satisfies DocumentLoader;
+    }
+    if (type === 'ai_retriever') {
+      const retriever = capability as Retriever;
+      return {
+        retrieve: (query, options) =>
+          this.trackSubRun(root, subNode, 'retriever', { json: { query, ...(options?.topK !== undefined && { topK: options.topK }) } }, async () => {
+            const documents = await retriever.retrieve(query, options);
+            return { result: documents, output: { json: { count: documents.length, documents: previewDocuments(documents) } } };
+          }),
+      } satisfies Retriever;
+    }
+    if (type === 'ai_reranker') {
+      const reranker = capability as Reranker;
+      return {
+        rerank: (query, documents, options) =>
+          this.trackSubRun(root, subNode, 'reranker', { json: { query, documents: documents.length } }, async () => {
+            const ranked = await reranker.rerank(query, documents, options);
+            return { result: ranked, output: { json: { count: ranked.length, documents: previewDocuments(ranked) } } };
+          }),
+      } satisfies Reranker;
+    }
     return capability;
   }
 
@@ -1016,7 +1189,7 @@ class WorkflowRun {
           const overrides = Object.fromEntries(
             Object.entries(input).filter(([key]) => descriptor.properties.some((p) => p.name === key)),
           );
-          const request = { ...this.buildRequest(subNode, resolved, [items], items, overrides, input), mode: 'tool' as const };
+          const request = { ...this.buildRequest(subNode, resolved, [items], items, overrides, input), mode: 'tool' as const, idempotencyKey: this.stepKey(subNode, 'tool') };
           const response = await resolved.execute(request, { signal: this.signal });
           if (response.error) throw new NodeExecutionError(response.error.message, subNode, response.error.description);
           const out = response.outputs[0] ?? [];
@@ -1077,6 +1250,18 @@ function positionY(node: WorkflowNode | undefined): number {
 
 function byPosition(nodes: WorkflowNode[]): WorkflowNode[] {
   return [...nodes].sort((a, b) => a.position[1] - b.position[1] || a.position[0] - b.position[0]);
+}
+
+/** How many chunks / documents a sub-node run keeps in its recorded output. */
+const SUB_RUN_PREVIEW = 50;
+
+function previewDocuments(documents: AiDocument[]): JsonObject[] {
+  return documents.slice(0, SUB_RUN_PREVIEW).map((doc) => ({
+    pageContent: doc.pageContent,
+    metadata: doc.metadata,
+    ...(doc.id !== undefined && { id: doc.id }),
+    ...(doc.score !== undefined && { score: doc.score }),
+  }));
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

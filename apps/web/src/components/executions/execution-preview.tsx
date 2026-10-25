@@ -6,7 +6,29 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bug, Check, ChevronDown, CircleX, Copy, ExternalLink, History, Pause, Play, RotateCcw, SkipForward, Square, StepForward, Trash2, Waypoints } from 'lucide-react';
+import {
+  Bug,
+  Check,
+  ChevronDown,
+  CircleDashed,
+  CircleX,
+  Copy,
+  ExternalLink,
+  History,
+  ListRestart,
+  Pause,
+  Play,
+  Power,
+  Redo2,
+  Repeat,
+  RotateCcw,
+  SkipForward,
+  Square,
+  StepForward,
+  Timer,
+  Trash2,
+  Waypoints,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -20,7 +42,7 @@ import { EmptyState } from '../ui/empty-state';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
 import { ExecutionCanvas } from './execution-canvas';
 import { useExecutions } from './executions-shell';
-import { MODE_META, RERUN_LABEL, deleteExecution, startRerun, type RerunBody } from './meta';
+import { MODE_META, RERUN_LABEL, canRetry, deleteExecution, startRerun, startRetry, type RerunBody, type RetryBody } from './meta';
 
 const HEIGHT_KEY = 'landflow-logs-height';
 const COLLAPSED_KEY = 'landflow-logs-collapsed';
@@ -144,21 +166,25 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
   useEffect(load, [load]);
 
   const live = record?.status === 'running';
+  const queued = record?.status === 'queued';
   useLiveEvents((event) => {
-    if (event.channel !== 'execution' || event.event.executionId !== executionId) return;
+    if (event.channel !== 'execution') return;
+    // A pending automatic retry started: show its link.
+    if (record?.retryAt && event.event.type === 'execution.started' && event.workflowId === record.workflowId) reload();
+    if (event.event.executionId !== executionId) return;
     const e = event.event;
     if (e.type === 'node.started') setActive((a) => ({ ...a, [e.nodeId]: e.at }));
     else if (e.type === 'node.finished') {
       setActive(({ [e.nodeId]: _, ...rest }) => rest);
       reload();
-    } else if (e.type === 'execution.paused' || e.type === 'execution.resumed' || e.type === 'execution.finished') reload();
+    } else if (e.type === 'execution.started' || e.type === 'execution.paused' || e.type === 'execution.resumed' || e.type === 'execution.finished') reload();
   });
-  // Resync now and then while live (the page may have opened mid-run).
+  // Resync now and then while live (the page may have opened mid-run) or queued (to see it start).
   useEffect(() => {
-    if (!live) return;
+    if (!live && !queued) return;
     const timer = setInterval(load, 4000);
     return () => clearInterval(timer);
-  }, [live, load]);
+  }, [live, queued, load]);
 
   // A link with the wrong workflow in it still lands in the right place.
   useEffect(() => {
@@ -250,11 +276,14 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
   const mode = MODE_META[record.mode] ?? MODE_META.manual;
   const ModeIcon = mode.icon;
   const errorNodeId = record.error?.nodeId;
+  // A checkpoint step is `<nodeId>#<runIndex>` of the last node that finished, or `start`.
+  const resumedStep = record.resumedAfterRestart?.stepId;
+  const resumedAfter = resumedStep && resumedStep !== 'start' ? `, after “${name(resumedStep.split('#')[0])}”` : '';
 
-  const act = async (key: string, body: RerunBody, label: string) => {
+  const launch = async (key: string, start: () => Promise<string>, label: string) => {
     setBusy(key);
     try {
-      const newId = await startRerun(record.executionId, body);
+      const newId = await start();
       toast.success(label);
       refresh();
       open(newId);
@@ -263,6 +292,8 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
       setBusy(undefined);
     }
   };
+  const act = (key: string, body: RerunBody, label: string) => launch(key, () => startRerun(record.executionId, body), label);
+  const retry = (body: RetryBody, label: string) => launch('retry', () => startRetry(record.executionId, body), label);
 
   const debug = async (command: DebugCommand) => {
     try {
@@ -277,7 +308,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
     setBusy('cancel');
     try {
       await deleteExecution(record.executionId);
-      toast.success('Canceling the run');
+      toast.success(queued ? 'Queued run canceled' : 'Canceling the run');
       reload();
     } catch (e) {
       toast.error((e as Error).message);
@@ -311,22 +342,37 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
   };
 
   const hasSnapshot = Boolean(record.workflow);
+  const retryable = canRetry(record);
   const retryMenu = (close: () => void) => {
     const run = (key: string, body: RerunBody, label: string) => {
       close();
       void act(key, body, label);
     };
+    const runRetry = (body: RetryBody, label: string) => {
+      close();
+      void retry(body, label);
+    };
     const original = !hasSnapshot ? 'no snapshot' : undefined;
+    // A retry's original workflow is the snapshot, else the saved version the run started on.
+    const retryOriginal = !hasSnapshot && !record.versionId ? 'no snapshot' : undefined;
+    const where = errorNodeId ? 'from node with error' : 'from where it stopped';
     return (
       <>
-        {errorNodeId && (
+        {retryable && (
           <>
-            <MenuLabel>Retry from “{name(errorNodeId)}”</MenuLabel>
-            <MenuItem onClick={() => run('retry', { scope: 'from', nodeId: errorNodeId, version: 'current' }, `Retrying from “${name(errorNodeId)}”`)}>
-              <SkipForward /> Retry with currently saved workflow (from node with error)
+            <MenuLabel>{errorNodeId ? <>Retry from “{name(errorNodeId)}”</> : 'Retry from where it stopped'}</MenuLabel>
+            <MenuItem onClick={() => runRetry({ version: 'current' }, errorNodeId ? `Retrying from “${name(errorNodeId)}”` : 'Retrying the run')}>
+              <SkipForward /> Retry with currently saved workflow ({where})
             </MenuItem>
-            <MenuItem disabled={!hasSnapshot} hint={original} onClick={() => run('retry', { scope: 'from', nodeId: errorNodeId, version: 'original' }, `Retrying “${name(errorNodeId)}” with the original workflow`)}>
-              <History /> Retry with original workflow (from node with error)
+            <MenuItem
+              disabled={Boolean(retryOriginal)}
+              hint={retryOriginal}
+              onClick={() => runRetry({ version: 'original' }, errorNodeId ? `Retrying “${name(errorNodeId)}” with the original workflow` : 'Retrying with the original workflow')}
+            >
+              <History /> Retry with original workflow ({where})
+            </MenuItem>
+            <MenuItem onClick={() => runRetry({ from: 'start' }, 'Retrying from the start')}>
+              <ListRestart /> Retry from the start (same input)
             </MenuItem>
             <MenuSeparator />
           </>
@@ -404,6 +450,39 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                   {record.rerunOf.nodeId && <> “{name(record.rerunOf.nodeId)}”</>} of <span className="font-mono">{record.rerunOf.executionId}</span>
                 </button>
               )}
+              {record.retryOf && (
+                <button
+                  onClick={() => open(record.retryOf!)}
+                  title="Open the execution this retried"
+                  className="flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--viz-7)_14%,transparent)] px-2 text-[12px] text-viz-7 transition-opacity hover:opacity-80"
+                >
+                  <Repeat className="size-3" />
+                  Retry #{record.retryAttempt ?? 1} of <span className="font-mono">{record.retryOf}</span>
+                </button>
+              )}
+              {record.retriedBy && (
+                <button
+                  onClick={() => open(record.retriedBy!)}
+                  title="Open the retry of this execution"
+                  className="flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--viz-7)_14%,transparent)] px-2 text-[12px] text-viz-7 transition-opacity hover:opacity-80"
+                >
+                  <Redo2 className="size-3" />
+                  Retried by <span className="font-mono">{record.retriedBy}</span>
+                </button>
+              )}
+              {record.retryAt && (
+                <span className="flex items-center gap-1 rounded-full border border-hair px-2 text-[12px] text-viz-7" title="Retrying it yourself replaces the automatic retry">
+                  <Timer className="size-3" /> Automatic retry at <span className="tabular-nums">{formatStamp(record.retryAt)}</span>
+                </span>
+              )}
+              {record.resumedAfterRestart && (
+                <span
+                  className="flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--viz-4)_14%,transparent)] px-2 text-[12px] text-viz-4"
+                  title={`The host restarted during the run. On ${formatStamp(record.resumedAfterRestart.at)} it continued from its last checkpoint${resumedAfter} (step ${resumedStep}).`}
+                >
+                  <Power className="size-3" /> Resumed after restart
+                </span>
+              )}
             </div>
           </div>
 
@@ -426,6 +505,10 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                   <Square className="size-3" fill="currentColor" /> Cancel
                 </Button>
               )
+            ) : queued ? (
+              <Button size="sm" variant="danger" loading={busy === 'cancel'} onClick={() => void cancel()} title="Take this run out of the queue">
+                <Square className="size-3" fill="currentColor" /> Cancel
+              </Button>
             ) : (
               <>
                 <Button onClick={() => router.push(`/workflows/${workflowId}?execution=${record.executionId}`)} title="Open the workflow in the editor with this execution's data loaded">
@@ -438,9 +521,9 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                       onClick={toggle}
                       loading={busy === 'retry' || busy === 'rerun'}
                       aria-expanded={isOpen}
-                      title={errorNodeId ? 'Retry from the failed node, or re-run everything' : 'Re-run this execution with the same input'}
+                      title={retryable ? 'Retry from where it stopped, or re-run everything' : 'Re-run this execution with the same input'}
                     >
-                      <RotateCcw className="size-3.5" /> {errorNodeId ? 'Retry' : 'Re-run'}
+                      <RotateCcw className="size-3.5" /> {retryable ? 'Retry' : 'Re-run'}
                       <ChevronDown className={cn('size-3.5 transition-transform duration-200', isOpen && 'rotate-180')} />
                     </Button>
                   )}
@@ -488,6 +571,15 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
             <Pause className="size-3.5 animate-pulse-soft" fill="currentColor" strokeWidth={0} />
             The debugger is holding this run before <b className="font-semibold">{record.paused.nodeName}</b>
             <span className="text-[12px] opacity-80">({record.paused.reason === 'breakpoint' ? 'breakpoint' : 'stepping'})</span>
+          </div>
+        )}
+        {queued && (
+          <div className="mt-3 flex items-center gap-2 rounded-xl border border-hair bg-nudim px-3 py-2 text-[13px] text-t2 animate-fade-up">
+            <CircleDashed className="size-3.5 shrink-0" />
+            <span>
+              Queued{record.queued?.queuedAt && <> since <span className="tabular-nums">{formatStamp(record.queued.queuedAt)}</span></>}: the workflow is busy at its
+              concurrency limit. It starts by itself when a slot frees up.
+            </span>
           </div>
         )}
         {record.error && !live && (
@@ -555,7 +647,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
             actions={runActions}
             collapsed={collapsed}
             onToggle={() => setCollapsedPersist(!collapsed)}
-            emptyHint={record.status === 'canceled' ? 'The run was canceled before any node finished.' : undefined}
+            emptyHint={record.status === 'canceled' ? 'The run was canceled before any node finished.' : queued ? 'Nothing has run yet: the execution is waiting in the queue.' : undefined}
           />
         </div>
       </div>
