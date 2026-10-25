@@ -1,0 +1,73 @@
+"""Landflow plugin SDK for Python.
+
+    from landflow_sdk import CredentialType, Node, Plugin, poll_interval_property, serve
+
+See README.md for a quickstart, docs/protocol.md for the wire protocol and
+docs/observability.md for spans, metrics and logs. The gRPC transport lives in
+``landflow_sdk.grpc_server`` and needs the ``grpc`` extra; OTLP export needs
+the ``otel`` extra. Nothing here imports grpcio or opentelemetry.
+"""
+
+from ._version import __version__
+from .context import CredentialTestContext, ExecuteContext, LoadOptionsContext, NodeLogger
+from .credentials import CredentialType
+from .errors import (
+    DescriptorError,
+    NodeOperationError,
+    ProtocolError,
+    UnknownCredentialTypeError,
+    UnknownMethodError,
+    UnknownNodeError,
+)
+from .http_client import HttpClient, HttpError, HttpResponse
+from .icons import MAX_ICON_BYTES, icon_file
+from .logs import LogFormatter, configure_logging
+from .metrics import Metrics, MetricsRegistry
+from .node import Node, poll_interval_property
+from .plugin import SDK_NAME, Plugin
+from .protocol import (
+    DEFAULT_ANNOUNCE_TTL_SECONDS,
+    DEFAULT_HEARTBEAT_SECONDS,
+    HTTP_PATHS,
+    PROTOCOL_VERSION,
+)
+from .serve import PluginServer, serve
+from .telemetry import Span, SpanContext, Telemetry, current_span
+
+__all__ = [
+    "CredentialTestContext",
+    "CredentialType",
+    "DEFAULT_ANNOUNCE_TTL_SECONDS",
+    "DEFAULT_HEARTBEAT_SECONDS",
+    "DescriptorError",
+    "ExecuteContext",
+    "HTTP_PATHS",
+    "HttpClient",
+    "HttpError",
+    "HttpResponse",
+    "LoadOptionsContext",
+    "LogFormatter",
+    "MAX_ICON_BYTES",
+    "Metrics",
+    "MetricsRegistry",
+    "Node",
+    "NodeLogger",
+    "NodeOperationError",
+    "PROTOCOL_VERSION",
+    "Plugin",
+    "PluginServer",
+    "ProtocolError",
+    "SDK_NAME",
+    "Span",
+    "SpanContext",
+    "Telemetry",
+    "UnknownCredentialTypeError",
+    "UnknownMethodError",
+    "UnknownNodeError",
+    "__version__",
+    "configure_logging",
+    "current_span",
+    "icon_file",
+    "poll_interval_property",
+    "serve",
+]

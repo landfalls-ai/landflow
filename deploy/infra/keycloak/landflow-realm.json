@@ -1,0 +1,90 @@
+{
+  "realm": "landflow",
+  "displayName": "Landflow (dev)",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "accessTokenLifespan": 900,
+  "roles": {
+    "realm": [
+      { "name": "landflow-admin", "description": "Landflow administrator (test realm)" },
+      { "name": "landflow-editor", "description": "Landflow workflow editor (test realm)" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "landflow",
+      "name": "Landflow",
+      "description": "Landflow host (dev server on :3000 and the dockerised host on :53000)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "landflow-dev-client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "rootUrl": "http://localhost:3000",
+      "baseUrl": "/",
+      "redirectUris": [
+        "http://localhost:3000/api/auth/oidc/callback",
+        "http://127.0.0.1:3000/api/auth/oidc/callback",
+        "http://localhost:53000/api/auth/oidc/callback",
+        "http://127.0.0.1:53000/api/auth/oidc/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:53000",
+        "http://127.0.0.1:53000"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:3000/*##http://127.0.0.1:3000/*##http://localhost:53000/*##http://127.0.0.1:53000/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "email": "alice@landflow.test",
+      "firstName": "Alice",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "alice-test-only", "temporary": false }],
+      "realmRoles": ["default-roles-landflow", "landflow-admin"]
+    },
+    {
+      "username": "bob",
+      "email": "bob@landflow.test",
+      "firstName": "Bob",
+      "lastName": "Editor",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "bob-test-only", "temporary": false }],
+      "realmRoles": ["default-roles-landflow", "landflow-editor"]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>Landflow Blog</title>
+    <link>https://blog.example.com/</link>
+    <atom:link href="https://blog.example.com/feed.xml" rel="self" type="application/rss+xml"/>
+    <description>Workflow news</description>
+    <item>
+      <title>Polling triggers are here</title>
+      <link>https://blog.example.com/polling</link>
+      <pubDate>Sun, 25 Oct 2026 10:00:00 +0200</pubDate>
+      <dc:creator>Ada Lovelace</dc:creator>
+      <guid isPermaLink="false">post-2</guid>
+      <category>release</category>
+      <category domain="tags">triggers</category>
+      <description><![CDATA[<p>Polls <b>every</b> N seconds.</p><script>alert(1)</script>]]></description>
+      <content:encoded><![CDATA[<h1>Polling</h1><p>Full &amp; complete text.</p>]]></content:encoded>
+      <enclosure url="https://cdn.example.com/ep2.mp3" length="12345" type="audio/mpeg"/>
+      <media:thumbnail url="https://cdn.example.com/ep2.jpg" width="120"/>
+      <comments>https://blog.example.com/polling#comments</comments>
+    </item>
+    <item>
+      <title>Hello &amp; welcome</title>
+      <link>https://blog.example.com/hello</link>
+      <pubDate>Sat, 24 Oct 2026 08:30:00 GMT</pubDate>
+      <author>team@example.com (Team)</author>
+      <guid>https://blog.example.com/hello</guid>
+      <description>First post</description>
+    </item>
+  </channel>
+</rss>

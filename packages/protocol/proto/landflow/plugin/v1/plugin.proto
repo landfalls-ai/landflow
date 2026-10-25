@@ -1,0 +1,189 @@
+// Landflow plugin protocol — v1
+//
+// A plugin is a process that hosts one or more node types. The Landflow host
+// discovers plugins, pulls their manifest, renders the node UI from the
+// descriptors and calls Execute when a workflow reaches one of their nodes.
+//
+// The same contract is exposed over HTTP+JSON (see docs/protocol.md). Anything
+// recursive or open-ended (node descriptors, parameters, item payloads) travels
+// as a JSON-encoded DynamicValue so both transports share one JSON Schema
+// (packages/protocol/schema/*.json). This mirrors Terraform's tfplugin
+// DynamicValue approach: a typed envelope, a dynamic payload.
+syntax = "proto3";
+
+package landflow.plugin.v1;
+
+option go_package = "github.com/landflow/landflow/sdks/go/landflowpb;landflowpb";
+
+// Implemented by every plugin.
+service PluginService {
+  // Describe the plugin and every node type it provides.
+  rpc GetManifest(GetManifestRequest) returns (GetManifestResponse);
+  // Run one node over a batch of input items.
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  // Resolve a dynamic dropdown (property.typeOptions.loadOptionsMethod).
+  rpc LoadOptions(LoadOptionsRequest) returns (LoadOptionsResponse);
+  // Liveness probe used by discovery and the registry heartbeat.
+  rpc Health(HealthRequest) returns (HealthResponse);
+  // Check credential values against the service ("Test connection").
+  rpc TestCredentials(TestCredentialsRequest) returns (TestCredentialsResponse);
+}
+
+// Trace context: the host sends W3C traceparent / tracestate / baggage as gRPC
+// metadata (HTTP headers on the HTTP binding) with every call, so plugin spans
+// join the workflow's trace. See docs/observability.md.
+
+// Implemented by the Landflow host (default :7070). Plugins announce
+// themselves here; the HTTP equivalent is POST /api/plugins/announce.
+service RegistryService {
+  rpc Announce(AnnounceRequest) returns (AnnounceResponse);
+  rpc Withdraw(WithdrawRequest) returns (WithdrawResponse);
+}
+
+// JSON-encoded value. `json` holds UTF-8 JSON bytes.
+message DynamicValue {
+  bytes json = 1;
+}
+
+message PluginInfo {
+  string id = 1;          // stable, url-safe: "go-crypto"
+  string name = 2;        // display name: "Crypto Toolkit"
+  string version = 3;     // semver of the plugin
+  string description = 4;
+  string language = 5;    // "typescript" | "python" | "go" | ...
+  string sdk_name = 6;    // "landflow-sdk-go"
+  string sdk_version = 7;
+  string icon = 8;        // "lucide:hash" | "emoji:🔐" | https/data URL (SDKs inline file: icons)
+  string author = 9;
+  string homepage = 10;
+  string color = 11;      // brand colour (hex): "#0d9488"
+}
+
+// ---- Manifest ---------------------------------------------------------
+
+message GetManifestRequest {
+  string host_version = 1;
+}
+
+message GetManifestResponse {
+  string protocol = 1;             // "landflow.plugin/v1"
+  PluginInfo plugin = 2;
+  repeated DynamicValue nodes = 3; // each: a NodeDescriptor JSON object
+  repeated DynamicValue credential_types = 4; // each: a CredentialTypeDescriptor JSON object
+}
+
+// ---- Execute ----------------------------------------------------------
+
+message NodeRef {
+  string id = 1;
+  string name = 2;         // unique display name inside the workflow
+  string type = 3;         // fully-qualified: "<pluginId>.<nodeName>"
+  int32 type_version = 4;
+}
+
+message PairedItem {
+  int32 item = 1;
+  int32 input = 2;
+}
+
+message Item {
+  DynamicValue json = 1;   // the item payload (a JSON object)
+  PairedItem paired_item = 2;
+}
+
+message Branch {
+  repeated Item items = 1;
+}
+
+message ExecuteRequest {
+  string protocol = 1;
+  string execution_id = 2;
+  string workflow_id = 3;
+  string mode = 4;                               // "manual" | "trigger" | "webhook" | "tool" | "chat" | "poll"
+  NodeRef node = 5;
+  DynamicValue parameters = 6;                   // resolved against item 0 (or no item)
+  repeated DynamicValue item_parameters = 7;     // resolved per item of input 0
+  repeated Branch inputs = 8;                    // inputs[i] = items arriving on main input i
+  DynamicValue credentials = 9;                  // optional: { <credentialType>: { ...decrypted fields } }
+  DynamicValue poll_state = 10;                  // poll triggers: state returned by the previous poll
+  bool continue_on_fail = 11;                    // emit { json: { error } } for a failing item and go on
+}
+
+message LogEntry {
+  string level = 1;        // "debug" | "info" | "warn" | "error"
+  string message = 2;
+}
+
+message NodeError {
+  string message = 1;
+  string description = 2;
+  int32 item_index = 3;    // -1 when not item-specific
+}
+
+message ExecuteResponse {
+  repeated Branch outputs = 1;   // outputs[i] = items emitted on main output i
+  repeated LogEntry logs = 2;
+  NodeError error = 3;           // set when the node failed as a whole
+  DynamicValue poll_state = 4;   // poll triggers: state for the next poll
+}
+
+// ---- Load options -----------------------------------------------------
+
+message LoadOptionsRequest {
+  string node_type = 1;            // local node name (without plugin prefix)
+  string method = 2;
+  DynamicValue parameters = 3;     // current (unresolved) parameter values
+  DynamicValue credentials = 4;    // optional, same shape as ExecuteRequest.credentials
+}
+
+message LoadOptionsResponse {
+  DynamicValue options = 1;        // JSON array of { name, value, description? }
+}
+
+// ---- Credentials ------------------------------------------------------
+
+message TestCredentialsRequest {
+  string credential_type = 1;      // local credential type name
+  DynamicValue data = 2;           // the credential values to test
+}
+
+message TestCredentialsResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+// ---- Health -----------------------------------------------------------
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;       // "ok" | "degraded"
+  int64 uptime_ms = 2;
+  string plugin_id = 3;
+  string version = 4;
+}
+
+// ---- Registry ---------------------------------------------------------
+
+message AnnounceRequest {
+  string protocol = 1;
+  string endpoint = 2;     // "http://127.0.0.1:7101" or "grpc://127.0.0.1:7203"
+  string plugin_id = 3;
+  string version = 4;
+  int32 ttl_seconds = 5;   // lease; re-announce before it expires (default 30)
+}
+
+message AnnounceResponse {
+  bool accepted = 1;
+  int32 heartbeat_interval_seconds = 2;
+  string message = 3;
+}
+
+message WithdrawRequest {
+  string endpoint = 1;
+  string plugin_id = 2;
+}
+
+message WithdrawResponse {
+  bool ok = 1;
+}

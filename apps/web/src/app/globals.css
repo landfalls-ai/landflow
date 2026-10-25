@@ -1,0 +1,436 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens, after the Landfall design system: a monochrome editorial
+ * palette (near-black accent on white), brick red for danger, forest green
+ * for good, amber for caution. Light by default; dark follows the OS unless
+ * <html data-theme="light|dark"> says otherwise. Text on an accent fill uses
+ * --on-ac, never a literal white (it would vanish in dark mode).
+ */
+:root {
+  --bg: #ffffff;
+  --sf: #ffffff;
+  --sf2: #fafafa;
+  --wl: #fafafa;
+  --hair: rgba(0, 0, 0, 0.08);
+  --bd: #e4e4e4;
+  --t1: #141414;
+  --t2: #5a5a5a;
+  --t3: #737373;
+  --ac: #141414;
+  --ac2: #141414;
+  --ac2-hover: #333333;
+  --on-ac: #ffffff;
+  --acdim: rgba(0, 0, 0, 0.05);
+  --acbd: rgba(0, 0, 0, 0.16);
+  --rd: #c0271e;
+  --rddim: rgba(192, 39, 30, 0.07);
+  --rdbd: rgba(192, 39, 30, 0.26);
+  --warn: #8a5700;
+  --warndim: rgba(245, 163, 0, 0.13);
+  --warnbd: rgba(138, 87, 0, 0.32);
+  --gn: #2e7d46;
+  --gndim: rgba(46, 125, 70, 0.09);
+  --gnbd: rgba(46, 125, 70, 0.28);
+  --nudim: rgba(0, 0, 0, 0.05);
+  --overlay: rgba(20, 20, 20, 0.45);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --canvas-dot: rgba(0, 0, 0, 0.13);
+  --shadow-pop: 0 24px 48px rgba(0, 0, 0, 0.16);
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-7: #4a3aa7;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0d0d0d;
+    --sf: #161616;
+    --sf2: #111111;
+    --wl: #111111;
+    --hair: rgba(255, 255, 255, 0.09);
+    --bd: rgba(255, 255, 255, 0.16);
+    --t1: #f2f2f2;
+    --t2: #a8a8a8;
+    --t3: #858585;
+    --ac: #fafafa;
+    --ac2: #fafafa;
+    --ac2-hover: #e0e0e0;
+    --on-ac: #0d0d0d;
+    --acdim: rgba(255, 255, 255, 0.08);
+    --acbd: rgba(255, 255, 255, 0.22);
+    --rd: #ff6157;
+    --rddim: rgba(255, 97, 87, 0.12);
+    --rdbd: rgba(255, 97, 87, 0.3);
+    --warn: #f5b84a;
+    --warndim: rgba(245, 184, 74, 0.14);
+    --warnbd: rgba(245, 184, 74, 0.32);
+    --gn: #5bb97e;
+    --gndim: rgba(91, 185, 126, 0.12);
+    --gnbd: rgba(91, 185, 126, 0.3);
+    --nudim: rgba(255, 255, 255, 0.08);
+    --overlay: rgba(0, 0, 0, 0.6);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+    --canvas-dot: rgba(255, 255, 255, 0.11);
+    --shadow-pop: 0 24px 48px rgba(0, 0, 0, 0.5);
+    --viz-1: #3987e5;
+    --viz-2: #d95926;
+    --viz-3: #199e70;
+    --viz-4: #c98500;
+    --viz-5: #d55181;
+    --viz-7: #9085e9;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0d0d0d;
+  --sf: #161616;
+  --sf2: #111111;
+  --wl: #111111;
+  --hair: rgba(255, 255, 255, 0.09);
+  --bd: rgba(255, 255, 255, 0.16);
+  --t1: #f2f2f2;
+  --t2: #a8a8a8;
+  --t3: #858585;
+  --ac: #fafafa;
+  --ac2: #fafafa;
+  --ac2-hover: #e0e0e0;
+  --on-ac: #0d0d0d;
+  --acdim: rgba(255, 255, 255, 0.08);
+  --acbd: rgba(255, 255, 255, 0.22);
+  --rd: #ff6157;
+  --rddim: rgba(255, 97, 87, 0.12);
+  --rdbd: rgba(255, 97, 87, 0.3);
+  --warn: #f5b84a;
+  --warndim: rgba(245, 184, 74, 0.14);
+  --warnbd: rgba(245, 184, 74, 0.32);
+  --gn: #5bb97e;
+  --gndim: rgba(91, 185, 126, 0.12);
+  --gnbd: rgba(91, 185, 126, 0.3);
+  --nudim: rgba(255, 255, 255, 0.08);
+  --overlay: rgba(0, 0, 0, 0.6);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --canvas-dot: rgba(255, 255, 255, 0.11);
+  --shadow-pop: 0 24px 48px rgba(0, 0, 0, 0.5);
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-7: #9085e9;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+
+  --color-bg: var(--bg);
+  --color-sf: var(--sf);
+  --color-sf2: var(--sf2);
+  --color-wl: var(--wl);
+  --color-hair: var(--hair);
+  --color-bd: var(--bd);
+  --color-t1: var(--t1);
+  --color-t2: var(--t2);
+  --color-t3: var(--t3);
+  --color-ac: var(--ac);
+  --color-ac2: var(--ac2);
+  --color-ac2-hover: var(--ac2-hover);
+  --color-on-ac: var(--on-ac);
+  --color-acdim: var(--acdim);
+  --color-acbd: var(--acbd);
+  --color-rd: var(--rd);
+  --color-rddim: var(--rddim);
+  --color-rdbd: var(--rdbd);
+  --color-warn: var(--warn);
+  --color-warndim: var(--warndim);
+  --color-warnbd: var(--warnbd);
+  --color-gn: var(--gn);
+  --color-gndim: var(--gndim);
+  --color-gnbd: var(--gnbd);
+  --color-nudim: var(--nudim);
+  --color-overlay: var(--overlay);
+  --color-viz-1: var(--viz-1);
+  --color-viz-2: var(--viz-2);
+  --color-viz-3: var(--viz-3);
+  --color-viz-4: var(--viz-4);
+  --color-viz-5: var(--viz-5);
+  --color-viz-7: var(--viz-7);
+
+  --shadow-pop: var(--shadow-pop);
+  --animate-in: wr-in 0.2s ease-out;
+  --animate-pulse-soft: wr-pulse 1.4s ease-in-out infinite;
+  --animate-pop: lf-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  --animate-shake: lf-shake 0.4s ease-in-out;
+  --animate-fade-up: lf-fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-slide-left: lf-slide-left 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-slide-right: lf-slide-right 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-panel: lf-panel 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-flash: lf-flash 1.2s ease-out;
+  --animate-node-in: lf-node-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes lf-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes lf-shake {
+  0%,
+  100% {
+    translate: 0;
+  }
+  20%,
+  60% {
+    translate: -3px;
+  }
+  40%,
+  80% {
+    translate: 3px;
+  }
+}
+@keyframes lf-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes lf-slide-left {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes lf-slide-right {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes lf-panel {
+  from {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes lf-flash {
+  from {
+    background-color: var(--acdim);
+    box-shadow: inset 3px 0 0 var(--ac);
+  }
+}
+@keyframes lf-node-in {
+  from {
+    opacity: 0;
+    scale: 0.6;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+/* A running node: a light that circles its border in the node's colour. */
+@property --lf-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes lf-spin {
+  to {
+    --lf-angle: 360deg;
+  }
+}
+.node-running::before {
+  content: '';
+  position: absolute;
+  inset: -2.5px;
+  border-radius: inherit;
+  padding: 2.5px;
+  background: conic-gradient(from var(--lf-angle), transparent 0deg, transparent 200deg, var(--node, var(--ac)) 300deg, var(--node, var(--ac)) 340deg, transparent 360deg);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: lf-spin 1s linear infinite;
+  pointer-events: none;
+}
+.node-running {
+  box-shadow: 0 0 0 5px color-mix(in oklab, var(--node, var(--ac)) 14%, transparent);
+}
+
+/* Animated gradient underline for live/primary moments. */
+.lf-shimmer {
+  background: linear-gradient(90deg, var(--viz-2), var(--viz-5), var(--viz-7), var(--viz-1), var(--viz-3), var(--viz-2));
+  background-size: 300% 100%;
+  animation: lf-shimmer 3s linear infinite;
+}
+@keyframes lf-shimmer {
+  to {
+    background-position: 300% 0;
+  }
+}
+
+@keyframes wr-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes wr-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes wr-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--acbd);
+  }
+  50% {
+    box-shadow: 0 0 0 4px var(--acdim);
+  }
+}
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+html,
+body {
+  background: var(--bg);
+}
+body {
+  color: var(--t1);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--acbd);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.ring-live {
+  animation: wr-ring 1.6s ease-in-out infinite;
+}
+
+/* ------------------------------------------------------------ react flow */
+
+/* The non-"-default" names win over React Flow's own light/dark values. */
+.react-flow {
+  --xy-background-color: var(--bg);
+  --xy-node-background-color: transparent;
+  --xy-node-border: none;
+  --xy-node-boxshadow-selected: none;
+  --xy-edge-stroke: var(--bd);
+  --xy-connectionline-stroke: var(--t2);
+  --xy-controls-button-background-color: var(--sf);
+  --xy-controls-button-background-color-hover: var(--sf2);
+  --xy-controls-button-color: var(--t2);
+  --xy-controls-button-color-hover: var(--t1);
+  --xy-controls-button-border-color: var(--hair);
+  --xy-minimap-background-color: var(--sf);
+  --xy-minimap-mask-background-color: var(--acdim);
+  --xy-minimap-node-background-color: var(--bd);
+  --xy-selection-background-color: var(--acdim);
+  --xy-selection-border: 1px dashed var(--acbd);
+}
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__node-lf,
+.react-flow__node-exec {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+/* Read-only canvases (execution previews) get n8n's hatched background. */
+.canvas-readonly .react-flow__pane {
+  background-image: repeating-linear-gradient(-45deg, transparent 0 14px, var(--acdim) 14px 28px);
+}
+.react-flow__edge-path {
+  transition: stroke 0.2s, stroke-width 0.2s;
+}
+.react-flow__controls {
+  box-shadow: none !important;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  border-bottom: 1px solid var(--hair) !important;
+}
+.react-flow__minimap {
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.lf-tidy .react-flow__node {
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.edge-flow {
+  stroke-dasharray: 6 4;
+  animation: dash-flow 0.6s linear infinite;
+}
+
+.code-area {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

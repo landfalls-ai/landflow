@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <defs>
+    <linearGradient id="lf-db-sqlite-trg-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3a9be0"/>
+      <stop offset="1" stop-color="#0F80CC"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="12" fill="url(#lf-db-sqlite-trg-bg)"/>
+  <path d="M10 14v18c0 2.3 4.3 4.2 9.5 4.2S29 34.3 29 32V14" fill="#fff"/>
+  <ellipse cx="19.5" cy="14" rx="9.5" ry="4.2" fill="#d6ebf8"/>
+  <path d="M10 23c0 2.3 4.3 4.2 9.5 4.2S29 25.3 29 23" fill="none" stroke="#0F80CC" stroke-width="1.8"/>
+  <path d="M18.5 29.5h4M20.5 27.5v4" stroke="#0F80CC" stroke-width="1.8" stroke-linecap="round"/>
+  <circle cx="34" cy="33" r="9" fill="#fbbf24"/>
+  <path d="M35.5 26.5 30 34h4l-1.5 5.5L38 32h-4Z" fill="#1f2937"/>
+</svg>

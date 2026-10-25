@@ -1,0 +1,219 @@
+# Marketplace
+
+The Marketplace page installs plugins from Claude Code
+[plugin marketplaces](https://code.claude.com/docs/en/plugin-marketplaces), such as
+Anthropic's official one. Landflow turns each plugin's Claude Code **agents** into Landflow
+[agents](agents.md) and its **skills** into a skill library. A plugin can also be a
+**Landflow node plugin**: the host downloads it, runs it and supervises the process, and it
+announces itself to the registry like any other plugin.
+
+| A plugin contains | In Landflow |
+|---|---|
+| `agents/*.md` (frontmatter `name`, `description`, `model`, `tools`, `color`; the body is the system prompt) | one agent per file (draft, unpublished), with all of the plugin's skills attached |
+| `skills/<name>/SKILL.md` (+ `references/`) | a library skill (`GET /api/skills`), and a skill on each agent from the same plugin |
+| `landflow.plugin.json`, or a `landflow` field in the marketplace entry | a node plugin the host runs (see below) |
+| `commands/`, `hooks/`, `.mcp.json`, `.lsp.json`, `output-styles/`, `bin/`, `monitors/`, `workflows/` | listed as **not supported yet** in the detail drawer and the install result; never installed silently |
+
+## Using it
+
+**Marketplace** in the sidebar has three tabs.
+
+- **Browse.** The marketplace bar lists the added marketplaces. **Anthropic official**
+  (`anthropics/claude-plugins-official`) is built in, and it is fetched the first time you open
+  it, never at startup. **Add marketplace** takes:
+  - `owner/repo`, `owner/repo@ref` or `owner/repo#ref`;
+  - a `github.com` URL, including `/tree/<ref>`;
+  - a direct `marketplace.json` URL.
+
+  It also has preset chips: Anthropic official, and Anthropic Agent Skills (`anthropics/skills`).
+  A marketplace is fetched before it is saved, so one that can't be read isn't added.
+  The plugin grid has search and category filters. Clicking a plugin opens the detail drawer:
+  - badges: Agents N, Skills N, Node plugin, Unsupported: …;
+  - the agents with their model and the Claude Code tools that don't map;
+  - the skills with their reference counts;
+  - unsupported components, notes, the README;
+  - **Install**.
+- **Installed.** What each install created: links to its agents, its skills, and for node
+  plugins the process state, port, restarts, **Logs** and **Restart**. **Uninstall** asks first,
+  then deletes exactly what the install created. That includes agents you edited since; other
+  agents are never touched.
+- **Skill library.** Every installed skill with its *when to use* line, references and full
+  instructions.
+
+## How a plugin maps to an agent
+
+| Claude Code | Landflow agent |
+|---|---|
+| `name: code-explorer` | name *Code Explorer* |
+| `description` | description; `<example>` blocks are stripped, and the text is capped at 600 characters. Notes are added: where the agent came from, and which Claude Code tools didn't map |
+| body | instructions |
+| `model: sonnet` / `opus` / `haiku` / `inherit` | Anthropic `claude-sonnet-5-5` / `claude-opus-5-5` / `claude-haiku-5-5` / `claude-sonnet-5-5`. A full `claude-…` id is kept. Anything else leaves the model unset |
+| `color: yellow` | the agent colour (hex); the icon is picked from the name, then from the description |
+| `tools: Glob, Grep, Read…` | not mapped, because Claude Code's built-in tools have no Landflow equivalent. They are listed in the description so you can add node, workflow or sub-agent tools under **Capabilities** |
+| skills of the same plugin | `AgentSkill`s: `whenToUse` = description, `instructions` = body, `references` = text files under `references/` (at most 30 files, 128 KB each, 1 MB in total) |
+
+Other files in a skill folder (scripts, assets, examples) aren't used. The drawer says how many
+there are.
+
+## Marketplace format support
+
+What Landflow reads, checked against the official repos (`anthropics/claude-plugins-official`
+with 315 plugins, and `anthropics/skills`) and the Claude Code plugin and marketplace references:
+
+- `.claude-plugin/marketplace.json`: `name`, `description` or `metadata.description`,
+  `owner.name`, `metadata.pluginRoot`, and `plugins[]`. Each entry has `name`, `source`,
+  `description`, `version`, `category`, `author`, `homepage`, `keywords`/`tags`, `displayName`,
+  and the component keys.
+- Plugin sources:
+
+  | Source | Supported |
+  |---|---|
+  | `"./path"` (relative to the marketplace root; `..` refused), or a bare name under `metadata.pluginRoot` | ✓ (GitHub or local marketplaces; not URL marketplaces, which have no files) |
+  | `{ "source": "github", "repo": "owner/repo", "ref"?, "sha"? }` | ✓ |
+  | `{ "source": "url", "url": "https://github.com/o/r.git", "sha"? }` | ✓ for GitHub; other hosts are unsupported |
+  | `{ "source": "git-subdir", "url", "path", "ref"?, "sha"? }` | ✓ for GitHub (`url` may be `owner/repo`) |
+  | `npm`, `archive`, `command`, others | shown as *Unsupported source* |
+
+  A `sha` pins the install to that commit. Otherwise `ref`, or the default branch (`HEAD`), is used.
+- Manifest rules:
+  - `.claude-plugin/plugin.json` is optional. Without it, the entry is the manifest.
+  - A manifest `agents` list replaces the default `agents/` scan.
+  - `skills` adds to `skills/`, except for an entry whose source is the marketplace root and
+    lists `skills`: then only the listed folders load. This is how `anthropics/skills` packages
+    its skills.
+  - A lone `SKILL.md` at the plugin root is a single skill.
+- The YAML frontmatter parser is built in. It handles the subset these files use: scalars, quoted
+  strings, `|` and `>` blocks, flow and block lists, and one level of nested maps. Tool lists
+  like `Bash(git add:*), Read` keep their parentheses.
+
+## Landflow node plugins
+
+A plugin directory with a `landflow.plugin.json`, or a marketplace entry with a `landflow` field
+of the same shape, is a node plugin:
+
+```json
+{
+  "id": "acme-nodes",
+  "runtime": "node",
+  "install": ["npm", "install", "--omit=dev"],
+  "start": ["tsx", "src/main.ts"],
+  "transports": ["http"],
+  "env": { "ACME_REGION": "eu" }
+}
+```
+
+| Field | |
+|---|---|
+| `id` | the plugin id it announces (`definePlugin({ info: { id } })`), lowercase with dashes |
+| `runtime` | `node` (default), `python`, `go` or `binary` |
+| `install` | optional argv run once in the plugin directory after download |
+| `start` | argv that serves the plugin. `node` runs the host's Node; `tsx` uses the plugin's own or the host's |
+| `transports` | `http` (default) and/or `grpc`; the host picks the ports |
+| `env` | extra, non-secret environment variables (`UPPER_CASE` names only) |
+
+What installing does:
+
+1. **Asks.** Without `confirm: true` the API answers `409` with the repository, the install
+   command and the start command. The drawer shows them in a warning ("This runs code on this
+   machine") with an **I trust it — install and run** button.
+2. **Downloads** the plugin's files to `<data dir>/marketplace/plugins/<name>`:
+   - at most 500 files, 25 MB in total, 10 MB per file;
+   - `node_modules`, `.git` and `.venv` are skipped;
+   - every path is checked to stay inside the directory.
+3. **Links the SDK** (`runtime: "node"`). `@landflow/sdk` and `@landflow/protocol` aren't on
+   npm, so their dependencies are rewritten to `file:` links to the host's `packages/`, and
+   symlinked into `node_modules`. If the plugin has other dependencies and no `install`, the
+   host runs `npm install --omit=dev --no-audit --no-fund --ignore-scripts`. The timeout is
+   5 minutes.
+4. **Runs** `start` as a child process of the host:
+   - `cwd` is the plugin directory;
+   - `LANDFLOW_HTTP_PORT` gets a free port in 7250–7299, inside the default scan range;
+   - `LANDFLOW_GRPC_PORT` gets a second port or `off`;
+   - `LANDFLOW_REGISTRY_URL` is the host. Set `LANDFLOW_PUBLIC_URL` (or
+     `LANDFLOW_MARKETPLACE_REGISTRY_URL`) if the host isn't on `http://127.0.0.1:$PORT`.
+
+   The plugin then announces itself and appears under **Plugins**. All three SDKs (TypeScript,
+   Python, Go) honour these variables.
+5. **Supervises** the process:
+   - a crash restarts it after 1 s, 2 s, 4 s … up to 60 s;
+   - after 8 fast failures in a row it is marked *crashed*;
+   - a run longer than a minute resets the backoff;
+   - output goes to `<data dir>/marketplace/logs/<name>.log`, and the last 400 lines are kept
+     in memory (**Logs**).
+
+   Installed node plugins start again with the host (bootstrap). Uninstall sends `SIGTERM`, so
+   the SDK withdraws from the registry. It sends `SIGKILL` after 5 s, then deletes the directory.
+
+The process gets a minimal environment. It contains `PATH`, `HOME`, `USER`, `LANG`, `TMPDIR`,
+`TZ`, the OTLP endpoint and the Go cache variables, plus its own `env` and the `LANDFLOW_*`
+variables above. It does **not** get the host's API keys, `LANDFLOW_ENCRYPTION_KEY`,
+`GITHUB_TOKEN` or anything else from the host's environment.
+
+## Fetching
+
+- GitHub, the only remote host:
+  - The marketplace file and plugin files come from `raw.githubusercontent.com`, which doesn't
+    count against the API rate limit.
+  - Reading a plugin lists its repository once through the trees API. The listing is cached per
+    repo and ref for 10 minutes, so all the relative-path plugins of a marketplace share one call.
+  - Unauthenticated access gives 60 API requests an hour. Set `GITHUB_TOKEN` on the host for
+    more; it is sent only to `api.github.com` and `raw.githubusercontent.com`.
+- Limits:
+  - every request times out after 20 s;
+  - text files are capped at 512 KB, and READMEs at 64 KB;
+  - only `http(s)` URLs are followed.
+- Plugin details are cached for 10 minutes. **Refresh** re-reads the marketplace and drops the
+  caches.
+- Local directories (`/abs/path` as a marketplace, or `{ "source": "local", "path" }`) work only
+  with `LANDFLOW_MARKETPLACE_ALLOW_LOCAL=1`. The tests use this. It is off by default, so the API
+  can't read arbitrary host directories.
+
+## API
+
+| | |
+|---|---|
+| `GET /api/marketplaces` | `{ marketplaces: MarketplaceSummary[], presets, installed: InstalledPlugin[] }` |
+| `POST /api/marketplaces` `{ input }` | `201 { marketplace }`; `409` if already added; `502` if it can't be fetched |
+| `GET /api/marketplaces/:id` | the catalog `{ marketplace, plugins: CatalogPlugin[], categories }` (fetches on first open) |
+| `POST /api/marketplaces/:id/refresh` | `{ marketplace }` |
+| `DELETE /api/marketplaces/:id` | `{ ok }`. `409` while plugins from it are installed; `400` for the built-in one |
+| `GET /api/marketplaces/:id/plugins/:name[?fresh=1]` | `{ plugin: PluginDetail }`: manifest, agents, skills, unsupported, nodePlugin, readme, warnings |
+| `POST /api/marketplaces/:id/plugins/:name/install` `{ confirm? }` | `201 InstallResult` `{ installed, notSupported, warnings }`. `409 InstallConfirmation` for a node plugin without `confirm`. `422` when nothing in it runs in Landflow, or for an unsupported source |
+| `GET /api/marketplaces/installed` | `{ installed }`, with node-plugin process status |
+| `DELETE /api/marketplaces/installed/:pluginId` | `{ removed: { agents, skills, nodePlugin } }` (`pluginId` = `name@marketplace`, URL-encoded) |
+| `GET /api/marketplaces/installed/:pluginId/logs` | `{ lines }` |
+| `POST /api/marketplaces/installed/:pluginId/restart` | `{ installed }` |
+| `GET /api/skills` | `{ skills: LibrarySkill[] }` (an `AgentSkill` plus `source` and `installedAt`) |
+
+The types are in `apps/web/src/lib/shared/marketplace.ts`.
+
+## Storage
+
+All of it lives under `LANDFLOW_DATA_DIR` (default `apps/web/.data`):
+
+- `marketplaces.json`: the added marketplaces with their cached entries, and the installed
+  plugins with the ids of what each install created;
+- `skill-library.json`;
+- `marketplace/plugins/<name>/` and `marketplace/logs/<name>.log` for node plugins.
+
+## Telemetry
+
+| Signal | |
+|---|---|
+| spans `marketplace.fetch`, `marketplace.detail`, `marketplace.install`, `marketplace.uninstall`, `marketplace.deps` | attributes `landflow.marketplace.id`, `.plugin`, `.source`, `.node_plugin`. The outbound GitHub requests nest inside as HTTP client spans |
+| `landflow.marketplace.operations` (counter) | by `landflow.marketplace.operation` and `landflow.outcome` |
+| `landflow.marketplace.duration` (histogram, ms) | by operation |
+| `landflow.marketplace.plugin.restarts` (counter) | by `landflow.plugin.id` and the exit reason |
+| logs | `marketplace added`, `marketplace plugin installed` / `uninstalled`, restarts and crashes |
+
+## Security notes
+
+- **Agents and skills are text.** Installing them runs nothing, but their instructions come from
+  a third party and the model follows them. Agents are installed as unpublished drafts with no
+  tools, so they can't act until you add capabilities and publish.
+- **Node plugins run third-party code** as the host's user. The confirmation step, the minimal
+  environment and the file limits reduce the risk, but they are not a sandbox. Only install
+  plugins from repositories you trust, and prefer marketplace entries pinned with a `sha`.
+- `npm install` runs with `--ignore-scripts` by default. A plugin's own `install` command can
+  still do anything; the confirmation shows it.
+- URL marketplaces fetch whatever http(s) URL you enter, from the host.

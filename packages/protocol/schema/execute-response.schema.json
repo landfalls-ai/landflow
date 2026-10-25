@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "json": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "pairedItem": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "input": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "item"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "json"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "logs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "debug",
+              "info",
+              "warn",
+              "error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "itemIndex": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "pollState": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "outputs"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,54 @@
+# Build context for deploy/docker/*.Dockerfile (context = repository root).
+# Keep out dependencies, build output, local data and anything machine-specific:
+# every image installs its own dependencies from the lockfiles.
+
+# VCS, editors, OS
+.git
+.github
+.vscode
+.idea
+**/.DS_Store
+
+# Node / Next.js
+**/node_modules
+**/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+**/.pnpm-store
+**/npm-debug.log*
+
+# Python
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+sdks/python/build
+sdks/python/dist
+**/.pytest_cache
+**/.mypy_cache
+
+# Go build output
+plugins/go-crypto/go-crypto
+plugins/google-workspace/google-workspace
+plugins/databases/databases
+**/*.test
+**/*.exe
+
+# Local data, secrets and telemetry
+**/.data
+.landflow-data
+**/.env
+**/.env.*
+!**/.env.example
+**/*.key
+**/*.pem
+.otel
+
+# Not needed in any image
+docs/images
+reports
+research_notes
+exec-poll.json
+deploy/.env

@@ -1,0 +1,375 @@
+'use client';
+/**
+ * How a node looks on a canvas, shared by the editor and the read-only
+ * execution view. n8n's shapes: square tiles with the label underneath,
+ * D-shaped triggers, wide AI roots with sub-node ports along the bottom and
+ * round sub-nodes. Colour comes from the node (or its plugin / category).
+ */
+import { useMemo, type CSSProperties, type ReactNode } from 'react';
+import { Handle, Position } from '@xyflow/react';
+import { Check, Pause, Pin, Plus, X, Zap } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
+import { nodeColor, tint } from '@/lib/client/node-style';
+import type { NodeStatus } from '@/lib/client/run-data';
+import type { ConnectionType, NodeTypeInfo, PortDescriptor } from '@/lib/shared/types';
+import { NodeIcon } from '../ui/icon';
+
+export const TILE = 88;
+export const WIDE_TILE = 240;
+const AI_LABEL: Record<string, string> = { ai_languageModel: 'Model', ai_memory: 'Memory', ai_tool: 'Tool' };
+
+export function handleId(type: ConnectionType, index: number) {
+  return `${type}:${index}`;
+}
+
+function subtitleOf(template: string | undefined, parameters: Record<string, unknown>) {
+  if (!template) return undefined;
+  const text = template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key: string) => {
+    const value = parameters[key];
+    return value === undefined || value === null ? '' : typeof value === 'object' ? '…' : String(value);
+  });
+  return text.trim() || undefined;
+}
+
+/** Indexed by port type: [{ port, index }] so handle ids stay stable. */
+function indexPorts(ports: PortDescriptor[]) {
+  const counters: Record<string, number> = {};
+  return ports.map((port) => ({ port, index: (counters[port.type] = (counters[port.type] ?? -1) + 1) }));
+}
+
+export interface NodeTileProps {
+  name: string;
+  info?: NodeTypeInfo;
+  parameters: Record<string, unknown>;
+  status?: NodeStatus;
+  disabled?: boolean;
+  selected?: boolean;
+  breakpoint?: boolean;
+  pinned?: boolean;
+  /** Attached to an agent's tool port: drawn as a round sub-node. */
+  asTool?: boolean;
+  /** Source handle ids that already have an outgoing edge. */
+  connectedOutputs?: string[];
+  /** Target handle id of every attached sub-node edge. */
+  subConnections?: Array<string | null | undefined>;
+  readOnly?: boolean;
+  onAddFromOutput?: (handleId: string) => void;
+  onAddSubnode?: (handleId: string, type: ConnectionType) => void;
+  onToggleBreakpoint?: () => void;
+  /** Just added: pops in. Only the visual frame animates, so handle positions stay measurable. */
+  fresh?: boolean;
+  /** Toolbars and overlays rendered inside the node. */
+  children?: ReactNode;
+}
+
+/** Status mark in the tile's bottom-right corner, n8n style. */
+function StatusMark({ status, compact }: { status?: NodeStatus; compact?: boolean }) {
+  if (!status || status.state === 'idle' || status.state === 'running') return null;
+  const base = cn(
+    'absolute z-10 grid place-items-center rounded-full border-2 border-sf animate-pop',
+    compact ? '-bottom-0.5 -right-0.5 size-[18px]' : 'bottom-1.5 right-1.5 size-[18px]',
+  );
+  if (status.state === 'paused')
+    return (
+      <span className={cn(base, 'bg-warn text-bg')}>
+        <Pause className="size-2.5" fill="currentColor" strokeWidth={0} />
+      </span>
+    );
+  if (status.state === 'error')
+    return (
+      <span title={status.error} className={cn(base, 'bg-rd text-bg')}>
+        <X className="size-2.5" strokeWidth={3.5} />
+      </span>
+    );
+  return (
+    <span title={status.reused ? 'Reused from the earlier run' : 'Succeeded'} className={cn(base, status.reused ? 'bg-t3 text-bg' : 'bg-gn text-bg')}>
+      <Check className="size-2.5" strokeWidth={3.5} />
+    </span>
+  );
+}
+
+function frameClasses(status: NodeStatus | undefined, selected: boolean | undefined, unavailable: boolean) {
+  const state = status?.state ?? 'idle';
+  return cn(
+    'border-[1.5px] transition-[border-color,box-shadow,transform] duration-200',
+    unavailable ? 'border-dashed border-bd' : 'border-bd',
+    state === 'running' && 'node-running border-transparent',
+    state === 'paused' && 'border-warn shadow-[0_0_0_4px_var(--warndim)] animate-pulse-soft',
+    state === 'error' && 'border-rd shadow-[0_0_0_4px_var(--rddim)] animate-shake',
+    state === 'success' && (status?.reused ? 'border-dashed border-t3' : 'border-gn'),
+    selected && 'shadow-[0_0_0_2px_var(--sf),0_0_0_4px_var(--acbd)]',
+  );
+}
+
+export function NodeTile(props: NodeTileProps) {
+  const {
+    name,
+    info,
+    parameters,
+    status,
+    disabled,
+    selected,
+    breakpoint,
+    pinned,
+    asTool,
+    connectedOutputs = [],
+    subConnections = [],
+    readOnly,
+    onAddFromOutput,
+    onAddSubnode,
+    onToggleBreakpoint,
+    fresh,
+    children,
+  } = props;
+  const descriptor = info?.descriptor;
+  const kind = descriptor?.kind ?? 'action';
+  const inputs = useMemo(() => indexPorts(descriptor?.inputs ?? [{ type: 'main' }]), [descriptor]);
+  const outputs = useMemo(() => indexPorts(descriptor?.outputs ?? [{ type: 'main' }]), [descriptor]);
+  const mainIn = inputs.filter((p) => p.port.type === 'main');
+  const aiIn = inputs.filter((p) => p.port.type !== 'main');
+  const mainOut = outputs.filter((p) => p.port.type === 'main');
+  const aiOut = outputs.filter((p) => p.port.type !== 'main');
+  const compact = kind === 'subnode' || Boolean(asTool);
+  const wide = !compact && aiIn.length > 0;
+  const isTrigger = kind === 'trigger';
+  const unavailable = !info || !info.available;
+  const color = nodeColor(info);
+  const subtitle = subtitleOf(descriptor?.subtitle, parameters);
+  const lang = info && info.pluginId !== 'core' ? languageMeta(info.language) : undefined;
+  const ran = status && (status.state === 'success' || status.state === 'error') && status.durationMs !== undefined;
+  const style = { '--node': color } as CSSProperties;
+  const isImage = Boolean(descriptor?.icon && /^(https?:|data:)/.test(descriptor.icon));
+
+  const meta = (lang || unavailable || ran) && (
+    <div className="mt-0.5 flex items-center justify-center gap-1 whitespace-nowrap font-mono text-[10px] text-t3">
+      {lang && (
+        <>
+          <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
+          {lang.short} · {TRANSPORT_META[info!.transport].label}
+        </>
+      )}
+      {unavailable && <span className="text-warn">{info ? 'offline' : 'unknown type'}</span>}
+      {ran && (
+        <span>
+          {lang ? '· ' : ''}
+          {status!.reused ? 'reused' : `${status!.durationMs} ms`}
+        </span>
+      )}
+    </div>
+  );
+
+  const breakpointDot = breakpoint && (
+    <button
+      title="Breakpoint: click to remove"
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggleBreakpoint?.();
+      }}
+      className="nodrag absolute -left-1.5 -top-1.5 z-20 size-3.5 rounded-full border-2 border-sf bg-rd shadow-[0_0_0_3px_var(--rddim)]"
+    />
+  );
+  const pinMark = pinned && (
+    <span
+      title="Output is pinned: the node returns this data instead of running"
+      className="absolute -right-1.5 -top-1.5 z-20 grid size-[18px] place-items-center rounded-full border-2 border-sf bg-viz-7 text-white"
+    >
+      <Pin className="size-2.5" strokeWidth={2.5} />
+    </span>
+  );
+  const pausedLabel = status?.state === 'paused' && (
+    <div className="absolute -top-6 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full bg-warn px-2 py-px text-[10px] font-semibold text-bg animate-in">
+      <Pause className="size-2.5" fill="currentColor" strokeWidth={0} /> Paused here
+    </div>
+  );
+
+  // ---------------------------------------------------------------- sub-node
+  if (compact) {
+    const outType: ConnectionType = aiOut[0]?.port.type ?? 'ai_tool';
+    return (
+      <div className="group relative" style={{ ...style, width: 64, height: 64 }}>
+        {children}
+        <Handle
+          id={handleId(outType, 0)}
+          type="source"
+          position={Position.Top}
+          isConnectable={!readOnly}
+          className="!-top-1 !size-2.5 !rotate-45 !rounded-[2px] !border-[1.5px] !border-t2 !bg-sf"
+        />
+        <div
+          className={cn(
+            'relative grid size-16 place-items-center rounded-full bg-sf',
+            frameClasses(status, selected, unavailable),
+            disabled && 'opacity-50',
+            fresh && 'animate-node-in',
+          )}
+          style={{ background: tint(color, 8) }}
+        >
+          <NodeIcon icon={descriptor?.icon} size={isImage ? 34 : 26} style={{ color }} strokeWidth={1.7} />
+          <StatusMark status={status} compact />
+          {status?.uses && status.uses > 1 && (
+            <span className="absolute -bottom-1 -left-2 rounded-full border border-hair bg-sf px-1.5 font-mono text-[10px] text-t2 animate-pop">
+              ×{status.uses}
+            </span>
+          )}
+          {pinMark}
+        </div>
+        <div className="pointer-events-none absolute left-1/2 top-full w-[150px] -translate-x-1/2 pt-1.5 text-center">
+          <div className={cn('line-clamp-2 text-[12px] font-semibold leading-tight text-t1', disabled && 'line-through')}>{name}</div>
+          {meta}
+        </div>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------- main node
+  const width = wide ? WIDE_TILE : TILE;
+  const height = Math.max(TILE, Math.max(mainIn.length, mainOut.length) * 30 + 22);
+  return (
+    <div className="group relative" style={{ ...style, width, height }}>
+      {children}
+      {pausedLabel}
+      {isTrigger && <Zap className="absolute -left-6 top-1/2 size-4 -translate-y-1/2 text-viz-2" fill="currentColor" strokeWidth={0} />}
+      <div
+        className={cn(
+          'relative flex size-full items-center bg-sf',
+          wide ? 'gap-3 rounded-[18px] px-4' : 'justify-center',
+          !wide && (isTrigger ? 'rounded-l-[44px] rounded-r-[18px]' : 'rounded-[18px]'),
+          frameClasses(status, selected, unavailable),
+          disabled && 'opacity-50',
+          fresh && 'animate-node-in',
+        )}
+        style={{ background: `linear-gradient(160deg, ${tint(color, 9)}, var(--sf) 70%)` }}
+      >
+        <NodeIcon
+          icon={descriptor?.icon}
+          size={wide ? 30 : isImage ? 46 : 38}
+          style={{ color }}
+          strokeWidth={1.6}
+          className="shrink-0 transition-transform duration-200 group-hover:scale-110"
+        />
+        {wide && (
+          <div className="min-w-0">
+            <div className={cn('truncate text-[14px] font-semibold text-t1', disabled && 'line-through')}>{name}</div>
+            <div className="truncate text-[12px] text-t3">{subtitle ?? descriptor?.displayName}</div>
+          </div>
+        )}
+        {disabled && !wide && <span className="absolute inset-x-3 top-1/2 h-[1.5px] -rotate-45 bg-t3" />}
+        <StatusMark status={status} />
+        {pinMark}
+        {breakpointDot}
+      </div>
+
+      {!wide && (
+        <div className="pointer-events-none absolute left-1/2 top-full w-[170px] -translate-x-1/2 pt-2 text-center">
+          <div className={cn('line-clamp-2 text-[13px] font-semibold leading-tight text-t1', disabled && 'line-through')}>{name}</div>
+          {subtitle && <div className="truncate text-[11px] text-t3">{subtitle}</div>}
+          {meta}
+        </div>
+      )}
+      {wide && meta && <div className="pointer-events-none absolute -top-5 right-1">{meta}</div>}
+
+      {mainIn.map(({ port, index }, i) => (
+        <Handle
+          key={`in-${index}`}
+          id={handleId('main', index)}
+          type="target"
+          position={Position.Left}
+          isConnectable={!readOnly}
+          style={{ top: `${((i + 1) / (mainIn.length + 1)) * 100}%` }}
+          className="!h-4 !w-2 !rounded-[3px] !border-0 !bg-t3 transition-colors hover:!bg-ac"
+        >
+          {port.displayName && mainIn.length > 1 && (
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 whitespace-nowrap text-[10px] text-t3">{port.displayName}</span>
+          )}
+        </Handle>
+      ))}
+
+      {mainOut.map(({ port, index }, i) => {
+        const hid = handleId('main', index);
+        const open = !connectedOutputs.includes(hid);
+        const count = status?.itemCounts?.[index];
+        return (
+          <Handle
+            key={`out-${index}`}
+            id={hid}
+            type="source"
+            position={Position.Right}
+            isConnectable={!readOnly}
+            style={{ top: `${((i + 1) / (mainOut.length + 1)) * 100}%` }}
+            className="!size-3 !border-[1.5px] !border-t3 !bg-sf transition-colors hover:!border-ac hover:!bg-ac"
+          >
+            <span className="pointer-events-none absolute bottom-full left-2.5 mb-px whitespace-nowrap text-[10px] text-t3">
+              {mainOut.length > 1 && port.displayName}
+            </span>
+            {open && !readOnly && onAddFromOutput && (
+              <span className="absolute left-2.5 top-1/2 flex -translate-y-1/2 items-center">
+                <span className="h-px w-6 bg-bd" />
+                <button
+                  title="Add a node after this (or drag)"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddFromOutput(hid);
+                  }}
+                  className="nodrag nopan grid size-5 place-items-center rounded-md border border-bd bg-sf text-t3 transition-all hover:scale-110 hover:border-ac hover:bg-ac hover:text-on-ac"
+                >
+                  <Plus className="size-3" strokeWidth={2.5} />
+                </button>
+                {count !== undefined && (
+                  <span className={cn('ml-1.5 rounded-full px-1.5 font-mono text-[10px]', count ? 'bg-gndim text-gn' : 'text-t3')}>{count}</span>
+                )}
+              </span>
+            )}
+          </Handle>
+        );
+      })}
+
+      {descriptor?.usableAsTool && !readOnly && (
+        <Handle
+          id={handleId('ai_tool', 0)}
+          type="source"
+          position={Position.Top}
+          title="Drag to an agent's Tool slot to use this node as a tool"
+          className="!size-2 !rotate-45 !rounded-[2px] !border-[1.5px] !border-t3 !bg-sf opacity-0 transition-opacity group-hover:opacity-100"
+        />
+      )}
+
+      {aiIn.map(({ port, index }, i) => {
+        const hid = handleId(port.type, index);
+        const connected = subConnections.filter((h) => h === hid).length;
+        const missing = port.required && !connected;
+        const left = `${((i + 1) / (aiIn.length + 1)) * 100}%`;
+        return (
+          <div key={hid}>
+            <Handle
+              id={hid}
+              type="target"
+              position={Position.Bottom}
+              isConnectable={!readOnly}
+              style={{ left }}
+              className={cn('!size-2.5 !rotate-45 !rounded-[2px] !border-[1.5px] !bg-sf', missing ? '!border-rd' : '!border-t2')}
+            />
+            <div className="absolute top-full flex -translate-x-1/2 flex-col items-center pt-2.5" style={{ left }}>
+              <span className={cn('whitespace-nowrap text-[11px]', missing ? 'text-rd' : 'text-t3')}>
+                {port.displayName ?? AI_LABEL[port.type]}
+                {port.required && '*'}
+              </span>
+              {!readOnly && onAddSubnode && (!port.maxConnections || connected < port.maxConnections) && (
+                <button
+                  title={`Add ${(port.displayName ?? AI_LABEL[port.type]).toLowerCase()}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddSubnode(hid, port.type);
+                  }}
+                  className="nodrag mt-1 grid size-5 place-items-center rounded-md border border-dashed border-bd bg-sf text-t3 transition-all hover:scale-110 hover:border-solid hover:border-ac hover:bg-ac hover:text-on-ac"
+                >
+                  <Plus className="size-3" />
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

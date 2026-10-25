@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "landflow-sdk"
+version = "0.1.0"
+description = "Build Landflow workflow nodes in Python, served over HTTP (stdlib) or gRPC, with built-in tracing, metrics and credentials."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+# The committed stubs in landflow_sdk/_pb: plugin_pb2_grpc.py from grpcio-tools 1.84.1, plugin_pb2.py from
+# protoc 36.2 (protobuf gencode 7.36.2). They refuse to import on older runtimes.
+grpc = ["grpcio>=1.84.1", "protobuf>=7.36.2,<8"]
+# OpenTelemetry SDK + OTLP/HTTP exporter. Without it the SDK still traces, logs with trace ids
+# and serves /metrics (built-in mode); with it spans/metrics are exported over OTLP.
+# For OTEL_EXPORTER_OTLP_PROTOCOL=grpc also install opentelemetry-exporter-otlp-proto-grpc.
+otel = [
+  "opentelemetry-api>=1.27",
+  "opentelemetry-sdk>=1.27",
+  "opentelemetry-exporter-otlp-proto-http>=1.27",
+]
+dev = ["grpcio-tools>=1.84.1"]
+
+[tool.setuptools]
+packages = ["landflow_sdk", "landflow_sdk._pb"]
+
+[tool.setuptools.package-data]
+landflow_sdk = ["py.typed"]
+"landflow_sdk._pb" = ["*.pyi"]

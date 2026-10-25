@@ -1,0 +1,402 @@
+'use client';
+/**
+ * Overview → Executions (n8n's global list): every run of every workflow in
+ * a table, live. A row opens the execution inside its workflow's Executions
+ * tab. `?workflowId=` preselects a workflow; legacy `?id=` links redirect.
+ */
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Bug, ExternalLink, Loader2, MoreHorizontal, RotateCcw, SkipForward, Square, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+import { api } from '@/lib/client/api';
+import { duration, timeAgo } from '@/lib/client/format';
+import { useLiveEvents } from '@/lib/client/live';
+import type { ExecutionRecord, ExecutionSummary } from '@/lib/shared/types';
+import { ExecutionMarks, RERUN_LABEL, deleteExecution, startRerun } from '@/components/executions/meta';
+import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, useNow } from '@/components/run/run-status';
+import { PageHeader } from '@/components/shell/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Select, Switch } from '@/components/ui/inputs';
+import { MenuItem, MenuSeparator, Popover } from '@/components/ui/popover';
+
+type Filter = 'all' | 'error' | 'running';
+const FILTERS: Array<{ value: Filter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'error', label: 'Failed' },
+  { value: 'running', label: 'Running' },
+];
+const LIMIT = 200;
+const POLL_MS = 8000;
+const AUTO_KEY = 'landflow-executions-autorefresh';
+const COLS = 'grid-cols-[minmax(180px,1.6fr)_minmax(120px,0.9fr)_minmax(150px,1fr)_96px_minmax(130px,0.8fr)_44px_40px]';
+const NEW_ROW: CSSProperties = { animation: 'lf-slide-right 0.24s cubic-bezier(0.22, 1, 0.36, 1) both, lf-flash 1.2s ease-out' };
+
+const hrefOf = (e: ExecutionSummary) => `/workflows/${e.workflowId}/executions/${e.id}`;
+
+function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChanged: () => void }) {
+  const router = useRouter();
+  const [confirm, setConfirm] = useState(false);
+  const live = execution.status === 'running';
+  const rerun = async (body: Parameters<typeof startRerun>[1], label: string) => {
+    try {
+      const id = await startRerun(execution.id, body);
+      toast.success(label);
+      router.push(`/workflows/${execution.workflowId}/executions/${id}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  const remove = async () => {
+    try {
+      await deleteExecution(execution.id);
+      toast.success(live ? 'Canceling the run' : 'Execution deleted');
+      onChanged();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  return (
+    <Popover
+      trigger={({ open, toggle }) => (
+        <button
+          onClick={() => {
+            setConfirm(false);
+            toggle();
+          }}
+          aria-label="Execution actions"
+          aria-expanded={open}
+          className={cn('relative z-10 grid size-7 place-items-center rounded-full text-t3 transition-colors hover:bg-acdim hover:text-t1', open && 'bg-acdim text-t1')}
+        >
+          <MoreHorizontal className="size-4" />
+        </button>
+      )}
+      className="w-[250px]"
+    >
+      {(close) =>
+        confirm ? (
+          <div role="alertdialog" aria-label="Delete this execution?" className="p-2">
+            <p className="text-[13px] font-semibold text-t1">Delete this execution?</p>
+            <p className="mt-1 text-[12px] text-t2">It is removed from the history for good.</p>
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => setConfirm(false)} className="h-7 rounded-full px-3 text-[12px] font-semibold text-t2 hover:bg-acdim">
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  close();
+                  void remove();
+                }}
+                className="h-7 rounded-full border border-rdbd bg-rddim px-3 text-[12px] font-semibold text-rd hover:border-rd"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <MenuItem onClick={() => router.push(hrefOf(execution))}>
+              <ExternalLink /> Open
+            </MenuItem>
+            {!live && (
+              <MenuItem onClick={() => router.push(`/workflows/${execution.workflowId}?execution=${execution.id}`)}>
+                <Bug /> Debug in editor
+              </MenuItem>
+            )}
+            {!live && (
+              <>
+                <MenuSeparator />
+                {execution.error?.nodeId && (
+                  <MenuItem
+                    onClick={() => {
+                      close();
+                      void rerun({ scope: 'from', nodeId: execution.error!.nodeId, version: 'current' }, `Retrying from “${execution.error!.nodeName}”`);
+                    }}
+                  >
+                    <SkipForward /> Retry from {execution.error.nodeName ?? 'the failed node'}
+                  </MenuItem>
+                )}
+                <MenuItem
+                  onClick={() => {
+                    close();
+                    void rerun({ scope: 'all', version: 'current' }, 'Re-running with the same input');
+                  }}
+                >
+                  <RotateCcw /> Re-run with saved workflow
+                </MenuItem>
+              </>
+            )}
+            <MenuSeparator />
+            {live ? (
+              <MenuItem
+                danger
+                onClick={() => {
+                  close();
+                  void remove();
+                }}
+              >
+                <Square /> Cancel run
+              </MenuItem>
+            ) : (
+              <MenuItem danger onClick={() => setConfirm(true)}>
+                <Trash2 /> Delete…
+              </MenuItem>
+            )}
+          </>
+        )
+      }
+    </Popover>
+  );
+}
+
+function Row({ execution, now, index, isNew, onChanged }: { execution: ExecutionSummary; now: number; index: number; isNew: boolean; onChanged: () => void }) {
+  const state = runStateOf(execution);
+  const live = execution.status === 'running';
+  const failed = execution.status === 'error';
+  const ms = live ? Math.max(0, now - Date.parse(execution.startedAt)) : execution.durationMs;
+  return (
+    <div
+      role="row"
+      className={cn(
+        'group relative grid items-center gap-3 border-b border-hair px-4 py-2.5 text-[13px] transition-colors duration-150 last:border-b-0',
+        COLS,
+        failed ? 'bg-rddim hover:bg-[color-mix(in_oklab,var(--rd)_12%,var(--sf))]' : 'hover:bg-sf2',
+        !isNew && 'animate-fade-up',
+      )}
+      style={isNew ? NEW_ROW : { animationDelay: `${Math.min(index, 20) * 20}ms` }}
+    >
+      {/* The whole row is a link; the menu sits above it. */}
+      <Link href={hrefOf(execution)} className="absolute inset-0" aria-label={`Open execution ${execution.id} of ${execution.workflowName}`} />
+      <span className={cn('absolute inset-y-0 left-0 w-[3px]', RUN_STATE[state].bar)} />
+      <div role="cell" className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate font-semibold text-t1">{execution.workflowName}</span>
+        {execution.rerunOf && (
+          <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--viz-1)_14%,transparent)] px-2 text-[11px] text-viz-1">{RERUN_LABEL[execution.rerunOf.scope].toLowerCase()}</span>
+        )}
+        {execution.debug && <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--viz-2)_14%,transparent)] px-2 text-[11px] text-viz-2">debug</span>}
+      </div>
+      <div role="cell" className={cn('flex min-w-0 items-center gap-1.5 font-semibold', RUN_STATE[state].text)}>
+        <RunStateIcon state={state} />
+        <span className="truncate">{state === 'paused' && execution.paused ? `Paused · ${execution.paused.nodeName}` : RUN_STATE[state].label}</span>
+      </div>
+      <div role="cell" className="min-w-0">
+        <div className="truncate tabular-nums text-t1">{formatStamp(execution.startedAt)}</div>
+        <div className="text-[11px] text-t3">{timeAgo(execution.startedAt)}</div>
+      </div>
+      <div role="cell" className={cn('font-mono text-[12px] tabular-nums', live ? 'text-warn' : 'text-t2')}>
+        {duration(ms)}
+      </div>
+      <div role="cell" className="truncate font-mono text-[12px] text-t3">
+        {execution.id}
+      </div>
+      <div role="cell" className="flex justify-center">
+        <ExecutionMarks execution={{ mode: execution.mode }} />
+      </div>
+      <div role="cell" className="flex justify-end">
+        <RowMenu execution={execution} onChanged={onChanged} />
+      </div>
+      {failed && execution.error && (
+        <div className="col-span-full -mt-1 truncate text-[12px] text-rd">
+          {execution.error.nodeName && <span className="font-semibold">{execution.error.nodeName}: </span>}
+          {execution.error.message}
+        </div>
+      )}
+      {live && <div className="lf-shimmer absolute inset-x-0 bottom-0 h-[2px]" />}
+    </div>
+  );
+}
+
+function ExecutionsInner() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const legacyId = params.get('id');
+  const [workflowId, setWorkflowId] = useState(params.get('workflowId') ?? '');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [executions, setExecutions] = useState<ExecutionSummary[]>();
+  const [auto, setAuto] = useState(true);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const known = useRef<Set<string>>(undefined);
+  const flashed = useRef(new Set<string>());
+
+  // Old links (/executions?id=…) open the execution in its workflow.
+  useEffect(() => {
+    if (!legacyId) return;
+    api<{ execution: ExecutionRecord }>(`/api/executions/${legacyId}`)
+      .then((r) => router.replace(`/workflows/${r.execution.workflowId}/executions/${legacyId}`))
+      .catch(() => {
+        toast.error(`Execution ${legacyId} was not found`);
+        router.replace('/executions');
+      });
+  }, [legacyId, router]);
+
+  useEffect(() => {
+    try {
+      setAuto(localStorage.getItem(AUTO_KEY) !== 'off');
+    } catch {}
+  }, []);
+
+  const load = useCallback(() => {
+    api<{ executions: ExecutionSummary[] }>(`/api/executions?limit=${LIMIT}${workflowId ? `&workflowId=${encodeURIComponent(workflowId)}` : ''}`)
+      .then((r) => setExecutions(r.executions))
+      .catch(() => setExecutions((current) => current ?? []));
+  }, [workflowId]);
+  const refresh = useCallback(() => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(load, 150);
+  }, [load]);
+
+  useEffect(() => {
+    known.current = undefined;
+    load();
+  }, [load]);
+  useEffect(() => {
+    if (!auto) return;
+    const t = setInterval(refresh, POLL_MS);
+    return () => clearInterval(t);
+  }, [auto, refresh]);
+  useLiveEvents((event) => {
+    if (!auto || event.channel !== 'execution') return;
+    if (['execution.started', 'execution.finished', 'execution.paused', 'execution.resumed'].includes(event.event.type)) refresh();
+  });
+
+  const toggleAuto = (value: boolean) => {
+    setAuto(value);
+    try {
+      localStorage.setItem(AUTO_KEY, value ? 'on' : 'off');
+    } catch {}
+    if (value) refresh();
+  };
+
+  const chooseWorkflow = (id: string) => {
+    setWorkflowId(id);
+    router.replace(id ? `/executions?workflowId=${encodeURIComponent(id)}` : '/executions', { scroll: false });
+  };
+
+  if (executions) {
+    if (!known.current) known.current = new Set(executions.map((e) => e.id));
+    else
+      for (const e of executions)
+        if (!known.current.has(e.id)) {
+          known.current.add(e.id);
+          flashed.current.add(e.id);
+        }
+  }
+
+  const list = useMemo(() => executions ?? [], [executions]);
+  const workflows = useMemo(() => [...new Map(list.map((e) => [e.workflowId, e.workflowName])).entries()], [list]);
+  const counts = { all: list.length, error: list.filter((e) => e.status === 'error').length, running: list.filter((e) => e.status === 'running').length };
+  const visible = list.filter((e) => (filter === 'all' ? true : e.status === filter));
+  const now = useNow(counts.running > 0);
+
+  if (legacyId)
+    return (
+      <div className="grid h-screen place-items-center text-[13px] text-t3">
+        <span className="flex items-center gap-2">
+          <Loader2 className="size-4 animate-spin" /> Opening execution…
+        </span>
+      </div>
+    );
+
+  return (
+    <div className="flex min-h-screen flex-col">
+      <PageHeader
+        title="Executions"
+        meta={executions && <span>{list.length} recent runs</span>}
+        actions={
+          <label className="flex cursor-pointer items-center gap-2 text-[13px] text-t2">
+            <Switch checked={auto} onChange={toggleAuto} label="Auto refresh" />
+            Auto refresh
+            {auto && <span className="size-1.5 rounded-full bg-gn animate-pulse-soft" />}
+          </label>
+        }
+      />
+      <div className="flex flex-col gap-4 px-6 py-5">
+        <div className="flex flex-wrap items-center gap-3">
+          <div role="tablist" className="flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
+            {FILTERS.map((f) => (
+              <button
+                key={f.value}
+                role="tab"
+                aria-selected={filter === f.value}
+                onClick={() => setFilter(f.value)}
+                className={cn(
+                  'flex h-7 items-center gap-1.5 rounded-full px-3.5 text-[13px] text-t2 transition-all duration-200 hover:text-t1',
+                  filter === f.value && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
+                )}
+              >
+                {f.value === 'error' && <span className="size-1.5 rounded-full bg-rd" />}
+                {f.value === 'running' && <span className={cn('size-1.5 rounded-full bg-warn', counts.running && 'animate-pulse-soft')} />}
+                {f.label}
+                <span
+                  className={cn(
+                    'rounded-full px-1.5 font-mono text-[11px]',
+                    f.value === 'error' && counts.error ? 'bg-rddim text-rd' : f.value === 'running' && counts.running ? 'bg-warndim text-warn' : 'text-t3',
+                  )}
+                >
+                  {counts[f.value]}
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="w-[240px]">
+            <Select value={workflowId} onChange={(e) => chooseWorkflow(e.target.value)} aria-label="Workflow" className="h-8 rounded-full text-[13px]">
+              <option value="">All workflows</option>
+              {workflowId && !workflows.some(([id]) => id === workflowId) && <option value={workflowId}>{workflowId}</option>}
+              {workflows.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          {workflowId && (
+            <Link href={`/workflows/${workflowId}/executions`} className="text-[12px] text-t2 hover:text-t1">
+              Open in workflow →
+            </Link>
+          )}
+        </div>
+
+        <div role="table" aria-label="Executions" className="overflow-hidden rounded-2xl border border-hair bg-sf">
+          <div role="row" className={cn('grid items-center gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3', COLS)}>
+            <span role="columnheader">Workflow</span>
+            <span role="columnheader">Status</span>
+            <span role="columnheader">Started</span>
+            <span role="columnheader">Run time</span>
+            <span role="columnheader">Exec. ID</span>
+            <span role="columnheader" className="text-center">
+              Mode
+            </span>
+            <span />
+          </div>
+          {!executions &&
+            Array.from({ length: 6 }, (_, i) => (
+              <div key={i} className="border-b border-hair px-4 py-3 last:border-b-0">
+                <div className="h-4 rounded bg-acdim animate-pulse-soft" style={{ animationDelay: `${i * 90}ms`, width: `${70 - i * 6}%` }} />
+              </div>
+            ))}
+          {visible.map((execution, i) => (
+            <Row key={execution.id} execution={execution} now={now} index={i} isNew={flashed.current.has(execution.id)} onChanged={refresh} />
+          ))}
+          {executions && !visible.length && (
+            <EmptyState
+              compact
+              className="py-10"
+              title={list.length ? 'Nothing matches this filter' : 'No executions yet'}
+              hint={list.length ? 'Try another status or workflow.' : 'Run a workflow and it shows up here.'}
+            />
+          )}
+        </div>
+        {list.length >= LIMIT && <p className="text-center text-[12px] text-t3">Showing the latest {LIMIT} runs</p>}
+      </div>
+    </div>
+  );
+}
+
+export default function ExecutionsPage() {
+  return (
+    <Suspense>
+      <ExecutionsInner />
+    </Suspense>
+  );
+}

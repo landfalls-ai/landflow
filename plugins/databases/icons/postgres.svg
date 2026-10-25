@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <defs>
+    <linearGradient id="lf-db-pg-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4a83b5"/>
+      <stop offset="1" stop-color="#336791"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="12" fill="url(#lf-db-pg-bg)"/>
+  <path d="M10 15v18c0 2.3 4.3 4.2 9.5 4.2S29 35.3 29 33V15" fill="#fff"/>
+  <ellipse cx="19.5" cy="15" rx="9.5" ry="4.2" fill="#dbe7f3"/>
+  <path d="M10 24c0 2.3 4.3 4.2 9.5 4.2S29 26.3 29 24" fill="none" stroke="#336791" stroke-width="1.8"/>
+  <path d="M29 17.5c5.5-1.5 9.5 1.5 9.5 6.5 0 3.6-2.3 5.6-4.6 7.3-1.6 1.2-2.4 2.8-2 5.2" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="33.6" cy="21.6" r="1.5" fill="#fff"/>
+</svg>

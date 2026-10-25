@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Atom</title>
+  <id>urn:uuid:60a76c80-d399-11d9-b93C-0003939e0af6</id>
+  <updated>2026-10-25T12:00:00Z</updated>
+  <entry>
+    <title type="html">Atom &lt;em&gt;entry&lt;/em&gt; one</title>
+    <link rel="alternate" type="text/html" href="https://atom.example.com/one"/>
+    <link rel="enclosure" type="video/mp4" length="999" href="https://atom.example.com/one.mp4"/>
+    <id>urn:uuid:1225c695-cfb8-4ebb-aaaa-80da344efa6a</id>
+    <published>2026-10-25T09:15:30.250+02:00</published>
+    <updated>2026-10-25T11:00:00Z</updated>
+    <author><name>Grace Hopper</name><email>grace@example.com</email></author>
+    <category term="compilers" label="Compilers"/>
+    <category term="history"/>
+    <summary>Short summary</summary>
+    <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>Full <strong>xhtml</strong> body</p></div></content>
+  </entry>
+  <entry>
+    <title>Atom entry two</title>
+    <link href="https://atom.example.com/two"/>
+    <id>tag:atom.example.com,2026:two</id>
+    <updated>2026-10-24T08:00:00Z</updated>
+    <summary type="html">&lt;p&gt;Only a &lt;i&gt;summary&lt;/i&gt;&lt;/p&gt;</summary>
+  </entry>
+</feed>

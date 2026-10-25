@@ -1,0 +1,27 @@
+{
+  "name": "@landflow/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Landflow plugin protocol: types, JSON schemas, proto and gRPC helpers.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./grpc": "./src/grpc.ts",
+    "./proto/plugin.proto": "./proto/landflow/plugin/v1/plugin.proto"
+  },
+  "scripts": {
+    "gen:proto": "node scripts/embed-proto.mjs",
+    "gen:schema": "tsx scripts/gen-schema.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.6",
+    "@grpc/proto-loader": "^0.8.1",
+    "protobufjs": "^7.5.5",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "type": "string",
+      "const": "landflow.plugin/v1"
+    },
+    "endpoint": {
+      "type": "string",
+      "pattern": "^(https?|grpc):\\/\\/[^\\s/]+"
+    },
+    "pluginId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ttlSeconds": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 3600
+    }
+  },
+  "required": [
+    "protocol",
+    "endpoint",
+    "pluginId",
+    "version"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,296 @@
+# Observability
+
+Every Landflow process (the host and every plugin, whatever its language) is instrumented with
+**OpenTelemetry**. One workflow execution is one trace: the host's execution span, a span per
+node run, the RPC to the plugin, the plugin's own server span and the plugin's outbound calls
+(Slack API, Postgres query…) all share a trace id. Every log line carries that trace id. Built-in
+metrics cover flows, jobs (triggers, schedules, polls) and services (plugins, RPCs, AI calls), and
+both node authors and workflow authors can add their own metrics.
+
+This document is the contract. The host and the three SDKs implement the same names.
+
+## 1. Configuration
+
+Standard OpenTelemetry environment variables, plus a few Landflow ones. They are the same for the
+host and for plugins.
+
+| Variable | Default | |
+|---|---|---|
+| `OTEL_SERVICE_NAME` | host: `landflow-host`; plugin: `landflow-plugin-<pluginId>` | |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | e.g. `http://localhost:4318`. Unset: spans and metrics are still recorded (logs, `/metrics`) but not exported |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `…_METRICS_ENDPOINT`, `…_HEADERS`, `…_PROTOCOL` | standard | OTLP over HTTP/protobuf (`http/protobuf`) is the default; `grpc` where the SDK supports it. The host and the TypeScript SDK (plugins) send OTLP/HTTP **JSON** (`http/json`, same port and `/v1/*` paths), which the Collector and Jaeger accept; the host logs a warning when `OTEL_EXPORTER_OTLP_PROTOCOL` asks for anything else. `OTEL_EXPORTER_OTLP_TRACES_EXPORTER=none` / `…_METRICS_EXPORTER=none` turn off one signal |
+| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | standard |
+| `OTEL_RESOURCE_ATTRIBUTES` | – | standard, e.g. `deployment.environment=dev` |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `15000` | ms between OTLP metric exports |
+| `OTEL_SDK_DISABLED` | `false` | `true` turns all telemetry into no-ops |
+| `LANDFLOW_LOG_LEVEL` | `info` | `debug` · `info` · `warn` · `error` |
+| `LANDFLOW_LOG_FORMAT` | `json` | `json` (one object per line) or `pretty` (human-readable, still with ids) |
+| `LANDFLOW_LOG_SPANS` | `true` | write one log line per finished span (see §3) |
+| `LANDFLOW_METRICS_PROMETHEUS` | `true` | serve Prometheus text: host `GET /api/metrics`, plugins `GET /metrics` on their HTTP port |
+| `LANDFLOW_TRACE_URL` | – | host UI only: link template for a trace, e.g. `http://localhost:16686/trace/{traceId}` (Jaeger) or a Grafana Tempo URL |
+| `NEXT_OTEL_FETCH_DISABLED` | host: `1` | Next.js' own `fetch` spans stay off: the host already opens `plugin.rpc` and `gen_ai.chat` client spans for its outbound calls. Set `0` to get them back |
+
+**Resource attributes** on every span and metric: `service.name`, `service.version`,
+`service.namespace=landflow`, and for plugins `landflow.plugin.id`, `landflow.plugin.language`,
+plus `telemetry.sdk.*` and whatever `OTEL_RESOURCE_ATTRIBUTES` adds.
+
+## 2. Trace context propagation ("metadata")
+
+W3C Trace Context and Baggage: `traceparent`, `tracestate`, `baggage`.
+
+| Hop | Carried in |
+|---|---|
+| Browser / client → host API | HTTP headers (an incoming `traceparent` is continued) |
+| Host → plugin, HTTP binding | HTTP headers on `/landflow/v1/*` |
+| Host → plugin, gRPC binding | gRPC metadata (lower-case keys) |
+| Plugin → external API | HTTP headers, through the SDK's instrumented HTTP client |
+| Plugin → host (announce, heartbeat) | headers/metadata; the host does not open spans for heartbeats |
+
+The host also returns `traceparent` in API responses that start or run an execution
+(`POST /api/workflows/:id/run`, `POST /api/executions/:id/rerun`, webhooks), and stores the trace
+id on the execution record (`ExecutionRecord.traceId`) and the span id on each node run
+(`NodeRun.spanId`), so the UI can link to the trace. `GET /api/executions/:id` adds `traceUrl`
+when `LANDFLOW_TRACE_URL` is set; the execution view shows the trace id with a copy button and
+that link.
+
+**No spans** for health checks, heartbeats, manifest polling or the SSE event stream: they would
+drown the useful traces. They are counted in metrics instead. On the host, a request is traced
+when it is an API request that changes something (`POST`, `PUT`, `PATCH`, `DELETE`) or any
+webhook request. Read-only API requests (`GET`/`HEAD`/`OPTIONS`, which the UI polls), pages and
+assets, `/api/events`, `/api/health`, `/api/metrics` and `/api/plugins/announce` get no trace.
+Their server spans are still recorded but not sampled, so they still count in
+`http.server.request.duration`. An announce that (re-)registers a plugin starts its own
+`registry.register` trace.
+
+## 3. Logs
+
+One JSON object per line on stdout. Every line written while a span is active carries its ids.
+
+```json
+{"ts":"2026-10-25T10:00:00.123Z","level":"info","service":"landflow-plugin-messaging","msg":"telegram sendMessage ok","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","landflow.node.type":"messaging.telegram","landflow.execution.id":"ex_8h2…"}
+```
+
+With `LANDFLOW_LOG_SPANS=true` (the default) every finished span is also written as a log line:
+
+```json
+{"ts":"…","level":"info","service":"landflow-host","msg":"span.end","span":"node.execute messaging.telegram","kind":"internal","trace_id":"…","span_id":"…","parent_span_id":"…","duration_ms":182.4,"status":"ok","attributes":{"landflow.node.name":"Notify team","landflow.items.in":3,"landflow.items.out":3}}
+```
+
+- `level` is `error` for spans with error status, plus an `error` field holding the message.
+- Field names: `ts`, `level`, `service`, `msg`, `trace_id`, `span_id`, then attributes flattened
+  with their OTel names. `pretty` format prints `HH:MM:SS level service msg (trace=…/span=…) k=v`.
+- **Never log** credential values, `Authorization` headers or item payloads. Log counts and ids. The
+  host and the SDKs redact attribute keys matching `/(token|secret|password|authorization|api[-_]?key|cookie)/i`
+  when the value is a string (numbers and booleans such as `gen_ai.usage.input_tokens` are kept), in
+  log fields and span attributes alike. The SDKs also replace the credential values of the current
+  request wherever they appear (messages, URLs, errors).
+- Node logs (`ctx.logger.*` / `ExecuteResponse.logs`) are also written to the process log with the
+  trace context, besides being returned to the host.
+
+## 4. Spans
+
+Span names are low-cardinality (`node.execute core.httpRequest`, never a user-chosen name). The
+details go into attributes. Attribute names use the `landflow.` namespace or the OTel semantic
+conventions.
+
+### Host (`landflow-host`)
+
+| Span | Kind | Attributes |
+|---|---|---|
+| `{METHOD} {route}` (e.g. `POST /api/workflows/[id]/run`) | server | `http.request.method`, `url.path` (no query string), `http.route`, `http.response.status_code` (Next.js also sets the older `http.method`, `http.target`, `http.status_code`). Created by Next.js' built-in OpenTelemetry support, which adds one child, `executing api route (app) {route}`; its other internal spans are dropped |
+| `workflow.execute` | internal | `landflow.workflow.id`, `landflow.workflow.name`, `landflow.execution.id`, `landflow.execution.mode`, `landflow.execution.status`, `landflow.execution.debug`, `landflow.execution.rerun_of`, `landflow.execution.rerun_scope` · events `debugger.paused` (`landflow.node.name`, `landflow.debugger.reason`) / `debugger.resumed` (`landflow.debugger.command`) · error status on a failed run |
+| `node.execute {node type}` | internal | `landflow.node.id`, `landflow.node.name`, `landflow.node.type`, `landflow.plugin.id`, `landflow.transport` (`in-process`/`http`/`grpc`), `landflow.node.source` (`main`/`ai_tool`/`ai_languageModel`/`ai_memory`), `landflow.execution.id`, `landflow.items.in`, `landflow.items.out`, `landflow.node.status` (`success`/`error`/`canceled`), `landflow.node.reused`, `landflow.node.pinned`, `landflow.node.disabled` · an `exception` event per failed attempt (with `retryOnFail`), error status when the node fails |
+| `plugin.rpc {Method}` (`Execute`, `LoadOptions`, `TestCredentials`, `GetManifest`) | client | `rpc.system` (`grpc`/`http`), `rpc.service=landflow.plugin.v1.PluginService`, `rpc.method`, `server.address`, `server.port`, `landflow.plugin.id` |
+| `gen_ai.chat {model}` | client | OTel GenAI conventions: `gen_ai.system` (`anthropic`/`ollama`/`openai`), `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons` |
+| `gen_ai.embeddings {model}` | client | same conventions with `gen_ai.operation.name=embeddings`: `gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.embeddings.dimension.count`. Counts in the `landflow.ai.*` metrics like chat (input tokens only) |
+| `trigger.fire` | internal (root for schedule/poll; child of the HTTP span for manual runs, webhooks and chat) | `landflow.trigger.source` (`manual`/`webhook`/`schedule`/`poll`/`chat`), `landflow.workflow.id`, `landflow.node.name` |
+| `trigger.poll {node type}` | internal (root) | `landflow.workflow.id`, `landflow.node.name`, `landflow.node.type`, `landflow.poll.items`, `landflow.poll.first` |
+| `registry.scan`, `registry.register` | internal | `landflow.plugin.id`, `landflow.plugin.endpoint`, `landflow.discovery.source` (register); `landflow.scan.targets`, `landflow.scan.found` (scan) |
+
+| `invoke_agent {agent name}` | internal (root for schedule and Telegram runs; child of the HTTP span for the test chat; child of `execute_tool` for a sub-agent) | OTel GenAI agent conventions: `gen_ai.operation.name=invoke_agent`, `gen_ai.agent.id`, `gen_ai.agent.name`, `gen_ai.conversation.id` (the session), `gen_ai.system`, `gen_ai.request.model`, `landflow.agent.source` (`test`/`schedule`/`telegram`/`workflow`/`agent`), `landflow.agent.version` (`draft` or N), `landflow.agent.end_reason` |
+| `execute_tool {tool name}` | internal (child of `invoke_agent`) | `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type=function`, `landflow.agent.tool.kind` (`node`/`workflow`/`agent`/`skill`/`memory`), plus the agent attributes; contains the node's spans, a workflow's `workflow.execute` or a sub-agent's `invoke_agent` |
+| `assistant.suggest {node type}`, `assistant.chat` | internal (child of the request span) | The editor assistant ([assistant.md](assistant.md)). `landflow.assistant.request` (`suggest`/`chat`), `landflow.workflow.id`, `gen_ai.request.model`; suggest: `landflow.node.type`, `landflow.assistant.suggestions`, `landflow.outcome=skipped` for a node not worth a model call; chat: `landflow.assistant.turns`, `landflow.assistant.steps` and an `assistant.tool` event per tool call (`gen_ai.tool.name`, `landflow.outcome`). The model calls are `gen_ai.chat` children |
+
+A tool call by an AI agent is a `node.execute` span with `landflow.node.source=ai_tool`, a child
+of the agent's span, so the trace shows agent → model → tool → plugin → external API.
+
+### Plugins (every SDK)
+
+| Span | Kind | Attributes |
+|---|---|---|
+| `plugin.execute {node type}` | server (parent: the host's `plugin.rpc Execute`) | `landflow.plugin.id`, `landflow.node.type` (qualified), `landflow.node.name`, `landflow.workflow.id`, `landflow.execution.id`, `landflow.execution.mode`, `landflow.items.in`, `landflow.items.out` · error status + `exception` event on failure |
+| `plugin.load_options {method}` | server | `landflow.plugin.id`, `landflow.node.type`, `landflow.load_options.method` |
+| `plugin.test_credentials {credential type}` | server | `landflow.plugin.id`, `landflow.credential.type`, `landflow.credential.ok` |
+| `HTTP {METHOD}` | client | from the SDK's instrumented HTTP client: `http.request.method`, `server.address`, `url.full` (query string stripped), `http.response.status_code` |
+| `db.query` / `{db.operation} {db.collection}` | client | database integrations: `db.system` (`postgresql`/`mysql`/`redis`/`sqlite`/…), `db.operation.name`, `db.collection.name`, `db.namespace`; statements only without literal values |
+
+Node authors add their own child spans through the SDK (§6).
+
+## 5. Metrics
+
+OTel instrument names below. Prometheus names replace `.` with `_` and add the unit suffix
+(`landflow.execution.duration` in ms → `landflow_execution_duration_milliseconds`), plus `_total`
+for counters (`landflow.executions` → `landflow_executions_total`), as the OTel Prometheus exporters
+do. Durations are
+histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000`.
+
+### Flows and jobs (host)
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.executions` | counter | `landflow.workflow.id`, `landflow.workflow.name`, `landflow.execution.mode`, `landflow.execution.status` |
+| `landflow.execution.duration` | histogram (ms) | same |
+| `landflow.executions.active` | up-down counter | `landflow.execution.mode` |
+| `landflow.node.runs` | counter | `landflow.node.type`, `landflow.plugin.id`, `landflow.transport`, `landflow.node.status` (`success`/`error`), `landflow.node.source` |
+| `landflow.node.duration` | histogram (ms) | same |
+| `landflow.node.items` | counter | `landflow.node.type`, `landflow.plugin.id`, `landflow.direction` (`in`/`out`) |
+| `landflow.trigger.fires` | counter | `landflow.workflow.id`, `landflow.trigger.source` |
+| `landflow.poll.runs` | counter | `landflow.node.type`, `landflow.poll.result` (`items`/`empty`/`error`) |
+| `landflow.poll.duration` | histogram (ms) | `landflow.node.type` |
+| `landflow.schedule.lag` | histogram (ms) | `landflow.workflow.id`: how late a scheduled run started |
+| `landflow.webhook.requests` | counter | `landflow.workflow.id`, `http.response.status_code` |
+
+### Services (host)
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.plugin.rpc.duration` | histogram (ms) | `landflow.plugin.id`, `rpc.system`, `rpc.method`, `landflow.outcome` (`ok`/`error`/`timeout`) |
+| `landflow.plugins.online` | gauge | `landflow.plugin.language` |
+| `landflow.plugin.heartbeats` | counter | `landflow.plugin.id` |
+| `landflow.ai.requests` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.outcome` |
+| `landflow.ai.duration` | histogram (ms) | `gen_ai.system`, `gen_ai.request.model` |
+| `landflow.ai.tokens` | counter | `gen_ai.system`, `gen_ai.request.model`, `gen_ai.token.type` (`input`/`output`) |
+| `landflow.agent.runs` | counter | `gen_ai.agent.id`, `gen_ai.agent.name`, `landflow.agent.source`, `landflow.agent.end_reason` |
+| `landflow.agent.run.duration` | histogram (ms) | `gen_ai.agent.id`, `gen_ai.agent.name`, `landflow.agent.source` |
+| `landflow.agent.tool.calls` | counter | agent attributes, `gen_ai.tool.name`, `landflow.agent.tool.kind`, `landflow.outcome` |
+| `landflow.agent.tool.duration` | histogram (ms) | agent attributes, `gen_ai.tool.name`, `landflow.agent.tool.kind` |
+| `landflow.agent.approvals` | counter | agent attributes, `gen_ai.tool.name`, `landflow.agent.approval.decision` (`approved`/`denied`) |
+| `landflow.agent.tokens` | counter | agent attributes, `gen_ai.token.type` (`input`/`output`) |
+| `landflow.assistant.requests` | counter | `landflow.assistant.request` (`suggest`/`chat`), `landflow.outcome` (`ok`/`error`/`timeout`/`skipped`) |
+| `landflow.assistant.duration` | histogram (ms) | `landflow.assistant.request` |
+| `landflow.assistant.suggestions` | counter | `landflow.assistant.kind` (`fix`/`param`/`data`/`next`, or `proposal` for a chat proposal): what the editor was shown |
+| `landflow.assistant.applied`, `landflow.assistant.dismissed` | counter | `landflow.assistant.kind`: reported by the editor (`POST /api/assistant/feedback`) |
+| `http.server.request.duration` | histogram (s) | standard: `http.request.method`, `http.route`, `http.response.status_code`. The host measures it from the Next.js request spans, untraced requests included |
+
+### Plugins (every SDK, automatic)
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.plugin.executions` | counter | `landflow.node.type`, `landflow.node.status` |
+| `landflow.plugin.execute.duration` | histogram (ms) | same |
+| `landflow.plugin.items` | counter | `landflow.node.type`, `landflow.direction` |
+| `landflow.plugin.load_options` | counter | `landflow.load_options.method`, `landflow.outcome` |
+| `http.client.request.duration` | histogram (s) | standard (OTel semantic conventions: seconds, `http.request.method`, `server.address`, `server.port`, `http.response.status_code`, `error.type`), from the instrumented HTTP client |
+
+### Custom metrics
+
+- **Node authors** record their own through the SDK (§6), e.g. `telegram.messages.sent` or
+  `postgres.rows.returned`. Names must match `^[a-z][a-z0-9_.]{0,100}$` and should start with the
+  integration's name. The SDK adds `landflow.plugin.id`, `landflow.node.type` and
+  `landflow.workflow.id`.
+- **Workflow authors** use the core **Record Metric** node (`core.metric`). Per item it records a
+  counter increment, a histogram value or a gauge value under `landflow.flow.<name>`, with
+  attributes from expressions plus `landflow.workflow.id` and `landflow.workflow.name`. Items
+  pass through unchanged. Examples: count orders by country, record the size of each processed
+  invoice, gauge a queue length read from an API.
+- **Cardinality guard**: attribute values are truncated to 100 characters, and each custom metric
+  keeps at most 1000 attribute sets. Extra sets fold into one series marked
+  `otel.metric.overflow=true`.
+
+### Integration metrics
+
+Metrics and spans that the integration plugins add on top of the automatic ones.
+
+#### Productivity plugin (`productivity`, Python)
+
+Notion, Airtable, GitHub, Jira, HubSpot and RSS ([README](../plugins/productivity/README.md)). Paginated
+reads get a child span (`notion.query`, `notion.search`, `airtable.search`, `github.list`, `jira.search`,
+`hubspot.search`) with `landflow.pages` and `landflow.items`; feed parsing gets `rss.parse` with
+`landflow.items` and `rss.format`. The API calls themselves are `HTTP {METHOD}` client spans from `ctx.http`.
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.productivity.records_written` | counter | `service` (`notion`/`airtable`/`github`/`jira`/`hubspot`), `operation` (`create`/`update`/`upsert`/`delete`/`comment`/`archive`/`append`/`transition`) |
+| `landflow.productivity.poll.new_items` | counter | `trigger` (`github`/`rss`) |
+| `landflow.productivity.api_errors` | counter | `service` (the five above plus `rss`), `status_class` (`4xx`/`5xx`/`network`) |
+
+#### Messaging plugin (`messaging`, TypeScript)
+
+Telegram (+ Telegram Trigger), Slack, Discord, WhatsApp Business Cloud and Send Email ([README](../plugins/messaging/README.md)).
+API calls are `HTTP {METHOD}` client spans from `ctx.http` (the Telegram token in the path shows as `bot[REDACTED]`). Send Email
+opens an `smtp.send` **client** span (`server.address`, `server.port`, `messaging.system=smtp`, `smtp.recipients.accepted`,
+`smtp.recipients.rejected`) with child spans `smtp.connect`, `smtp.ehlo`, `smtp.starttls`, `smtp.auth`, `smtp.envelope`,
+`smtp.data` and `smtp.quit`. The SMTP credential test uses `smtp.verify` the same way.
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.messaging.messages_sent` | counter | `service` (`telegram`/`slack`/`discord`/`whatsapp`/`email`), `operation` (`sendMessage`, `sendPhoto`, `post`, `send`, `webhookSend`, `sendTemplate`) |
+| `landflow.messaging.api_errors` | counter | `service`, `status_class` (`4xx`/`5xx` from the HTTP status or SMTP reply code, Slack's HTTP-200 `ok: false` included; `network`/`timeout`/`tls`/`protocol` without a usable answer) |
+| `landflow.messaging.poll.updates` | counter | `service` (`telegram`) |
+
+#### Google Workspace plugin (`google`, Go)
+
+Google Sheets (+ trigger), Gmail (+ trigger), Drive, Calendar and Docs ([README](../plugins/google-workspace/README.md)).
+API calls and the OAuth token exchange are `HTTP {METHOD}` client spans from `landflow.HTTPClient`. Getting an access
+token is a `google.oauth.token` span with `google.auth` (`service_account`/`oauth2`) and `landflow.cache_hit`.
+Paginated reads get a child span (`google.gmail.messages.list`, `google.drive.files.list`,
+`google.calendar.events.list`, `google.calendar.calendar_list`) with `google.limit`, `google.pages` and `google.items`.
+Message fetches run in `google.gmail.messages.fetch`, and sheet reads in `google.sheets.read` / `google.sheets.poll`.
+Tokens, private keys and the token request body never appear in spans or logs.
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.google.sheets.rows_appended` | counter | `mode` (`auto`/`manual`) |
+| `landflow.google.gmail.messages_sent` | counter | `operation` (`send`/`reply`) |
+| `landflow.google.token_refreshes` | counter | `auth` (`service_account`/`oauth2`), `outcome` (`success`/`error`) |
+| `landflow.google.api_errors` | counter | `api` (`sheets`/`gmail`/`drive`/`calendar`/`docs`), `status_class` (`4xx`/`5xx`/`network`) |
+| `landflow.google.poll.new_items` | counter | `trigger` (`gmail`/`sheets`) |
+
+#### Databases plugin (`databases`, Go)
+
+Postgres, MySQL, SQLite (+ Postgres and SQLite poll triggers) and Redis ([README](../plugins/databases/README.md)).
+Every statement and Redis command is a `{operation} {table}` client span from `DBSpan` (`SELECT customers`, `HSET customer`)
+with `db.system`, `db.operation.name`, `db.collection.name` (for Redis, the key prefix), `db.namespace`, `db.query.text`,
+`server.address`, `server.port`, `db.response.returned_rows` and `landflow.db.affected_rows`. `db.query.text` never holds
+values: generated SQL only has placeholders, Execute Query has its literals replaced by `?`, Redis reads as `GET ?`.
+Multi-statement work runs in a `db.transaction` span with `landflow.statements` and `landflow.db.rolled_back`, and
+credential tests get a span too.
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.db.query.duration` (ms) | histogram | `db.system` (`postgresql`/`mysql`/`sqlite`/`redis`), `operation` (statement verb from a fixed list or `OTHER`; Redis command) |
+| `landflow.db.rows` | counter | `db.system`, `operation`, `direction` (`read`/`written`; Redis counts values: fields or elements read, keys written) |
+| `landflow.db.errors` | counter | `db.system`, `operation` |
+| `landflow.db.pool.connections` | gauge | `db.system`, `state` (`in_use`/`idle`) |
+| `landflow.db.poll.new_rows` | counter | `db.system` |
+
+## 6. SDK API for node authors
+
+| | TypeScript | Python | Go |
+|---|---|---|---|
+| Child span | `await ctx.span('telegram.send', { 'telegram.chat_type': t }, async (span) => …)` | `with ctx.span("telegram.send", {"telegram.chat_type": t}) as span:` | `ctx.Span("telegram.send", attrs, func(span landflow.Span) error {…})` |
+| Counter | `ctx.metrics.counter('telegram.messages.sent').add(1, attrs)` | `ctx.metrics.counter("telegram.messages.sent").add(1, attrs)` | `ctx.Metrics().Counter("telegram.messages.sent").Add(1, attrs)` |
+| Histogram | `ctx.metrics.histogram('x.duration', { unit: 'ms' }).record(v, attrs)` | `ctx.metrics.histogram(...).record(v, attrs)` | `ctx.Metrics().Histogram(...).Record(v, attrs)` |
+| Client span (non-HTTP) | `await ctx.span('smtp.send', attrs, fn, { kind: 'client' })` | `ctx.span(...)` (internal only) | `ctx.DBSpan(landflow.DBSpanInfo{…}, fn)` for databases |
+| Gauge | `ctx.metrics.gauge('x.depth').set(v, attrs)` | `ctx.metrics.gauge(...).set(v, attrs)` | `ctx.Metrics().Gauge(...).Set(v, attrs)` |
+| Traced HTTP | `ctx.http(url, init)`, a fetch with a client span and `traceparent` | `ctx.http.request(method, url, …)` | `landflow.HTTPClient(ctx)`, an `*http.Client` with `otelhttp` |
+| Logger | `ctx.logger.info(msg, attrs)` | `ctx.logger.info(msg, **attrs)` | `ctx.Logger.With(attrs...).Info(msg)` (`Logger` is a field; `Info(format, args...)` stays printf-style for compatibility) |
+
+Spans and metrics are no-ops, never errors, when telemetry is disabled. The Python SDK works
+**without** the `opentelemetry` packages installed: it then parses `traceparent` itself, generates
+span ids, writes span and log lines with the ids, and serves `/metrics` from its own in-memory
+counters. Install `landflow-sdk[otel]` to export OTLP.
+
+## 7. Seeing it locally
+
+Every process writes JSON logs with `trace_id`. To browse traces, run any OTLP backend and set
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` for the host and the plugins
+(`pnpm dev:all` passes it through). Some options:
+
+- Jaeger: `docker run --rm -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:latest`, then
+  `LANDFLOW_TRACE_URL=http://localhost:16686/trace/{traceId}`.
+- The OpenTelemetry Collector with [`docs/otel-collector.yaml`](otel-collector.yaml)
+  (OTLP in; debug, Prometheus and file out). The `docker run` line is at the top of the file. It
+  writes `.otel/{traces,metrics,logs}.jsonl` and serves every process's metrics at
+  `http://localhost:9464/metrics`.
+- Prometheus scraping `http://localhost:3000/api/metrics` and each plugin's `http://host:port/metrics`.

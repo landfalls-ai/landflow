@@ -1,0 +1,178 @@
+# Landflow development and test infrastructure.
+#
+#   docker compose -f deploy/compose.infra.yml up -d                                         # core services
+#   docker compose -f deploy/compose.infra.yml --profile auth --profile observability up -d  # + Keycloak, Jaeger
+#   docker compose -f deploy/compose.infra.yml --profile mysql up -d mysql                   # + MySQL 8.4
+#
+# Ports, credentials and URLs: deploy/README.md. Defaults live here; deploy/.env overrides them.
+# Every credential is for local development only.
+
+name: landflow-infra
+
+x-healthcheck: &healthcheck
+  interval: 5s
+  timeout: 5s
+  retries: 30
+  start_period: 10s
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LANDFLOW_POSTGRES_USER:-landflow}
+      POSTGRES_PASSWORD: ${LANDFLOW_POSTGRES_PASSWORD:-landflow-dev-only}
+      POSTGRES_DB: ${LANDFLOW_POSTGRES_DB:-landflow}
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # TCP, not the socket: during first-time init the entrypoint runs a socket-only server.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      <<: *healthcheck
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_VALKEY_PORT:-56379}:6379"
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      <<: *healthcheck
+
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    restart: unless-stopped
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: "5000"
+      # Accept any SMTP user/password (and none), without TLS: a sink for the Send Email node.
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_SMTP_PORT:-51025}:1025"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_MAIL_UI_PORT:-58025}:8025"
+    volumes:
+      - mailpit-data:/data
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      <<: *healthcheck
+
+  minio:
+    # The upstream minio/minio images are no longer published; pgsty/minio is a maintained
+    # community build of the same server (with the full console). Same env vars and API.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    restart: unless-stopped
+    init: true
+    # Server plus the bucket (created idempotently on every start): see infra/minio/start.sh.
+    entrypoint: ["/bin/sh", "/landflow/start.sh"]
+    environment:
+      MINIO_ROOT_USER: ${LANDFLOW_MINIO_ROOT_USER:-landflow}
+      MINIO_ROOT_PASSWORD: ${LANDFLOW_MINIO_ROOT_PASSWORD:-landflow-dev-only}
+      MINIO_BROWSER_REDIRECT_URL: http://localhost:${LANDFLOW_MINIO_CONSOLE_PORT:-59001}
+      LANDFLOW_BUCKET: ${LANDFLOW_MINIO_BUCKET:-landflow}
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_MINIO_PORT:-59000}:9000"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_MINIO_CONSOLE_PORT:-59001}:9001"
+    volumes:
+      - minio-data:/data
+      - ./infra/minio/start.sh:/landflow/start.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/landflow-ready && curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/ready"]
+      <<: *healthcheck
+
+  openbao:
+    image: openbao/openbao:latest
+    restart: unless-stopped
+    # Dev mode (in-memory, unsealed) plus the landflow/ KV v2 mount: see infra/openbao/dev.sh.
+    entrypoint: ["/usr/bin/dumb-init", "/bin/sh", "/landflow/dev.sh"]
+    environment:
+      BAO_DEV_ROOT_TOKEN_ID: ${LANDFLOW_OPENBAO_ROOT_TOKEN:-landflow-dev-root-token}
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_OPENBAO_PORT:-58200}:8200"
+    volumes:
+      - ./infra/openbao/dev.sh:/landflow/dev.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/landflow-ready && BAO_ADDR=http://127.0.0.1:8200 bao status >/dev/null"]
+      <<: *healthcheck
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    profiles: [auth]
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${LANDFLOW_KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${LANDFLOW_KEYCLOAK_ADMIN_PASSWORD:-admin-dev-only}
+      KC_HEALTH_ENABLED: "true"
+      # Browser-facing URL (issuer, login pages). Containers on the landflow-infra network can
+      # still call http://keycloak:8080 for the token/userinfo/JWKS endpoints.
+      KC_HOSTNAME: http://localhost:${LANDFLOW_KEYCLOAK_PORT:-58080}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_KEYCLOAK_PORT:-58080}:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+      - ./infra/keycloak/landflow-realm.json:/opt/keycloak/data/import/landflow-realm.json:ro
+    healthcheck:
+      # No curl in the image: plain HTTP over bash's /dev/tcp to the management port.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          read -r status <&3 && [[ "$$status" == *" 200 "* ]]
+      <<: *healthcheck
+      start_period: 60s
+
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0
+    profiles: [observability]
+    restart: unless-stopped
+    # In-memory storage: traces are gone after a restart.
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_JAEGER_UI_PORT:-56686}:16686"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_JAEGER_OTLP_HTTP_PORT:-54318}:4318"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_JAEGER_OTLP_GRPC_PORT:-54317}:4317"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:13133/status"]
+      <<: *healthcheck
+
+  mysql:
+    image: mysql:8.4.11
+    profiles: [mysql]
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${LANDFLOW_MYSQL_ROOT_PASSWORD:-landflow-root-dev-only}
+      MYSQL_DATABASE: ${LANDFLOW_MYSQL_DATABASE:-landflow_test}
+      MYSQL_USER: ${LANDFLOW_MYSQL_USER:-landflow}
+      MYSQL_PASSWORD: ${LANDFLOW_MYSQL_PASSWORD:-landflow-dev-only}
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_MYSQL_PORT:-53306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # TCP, not the socket: the entrypoint's temporary init server has networking off.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      <<: *healthcheck
+      start_period: 30s
+
+networks:
+  default:
+    # Fixed name so the app stack can join it (compose.infra-link.yml).
+    name: landflow-infra
+
+volumes:
+  postgres-data:
+  valkey-data:
+  mailpit-data:
+  minio-data:
+  keycloak-data:
+  mysql-data:

@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "type": "string",
+      "const": "landflow.plugin/v1"
+    },
+    "executionId": {
+      "type": "string"
+    },
+    "workflowId": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "trigger",
+        "webhook",
+        "tool",
+        "chat",
+        "poll"
+      ]
+    },
+    "node": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "typeVersion": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "type",
+        "typeVersion"
+      ],
+      "additionalProperties": false
+    },
+    "parameters": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "itemParameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "json": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "pairedItem": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "input": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "item"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "json"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "credentials": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      }
+    },
+    "pollState": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "continueOnFail": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "protocol",
+    "executionId",
+    "mode",
+    "node",
+    "parameters",
+    "itemParameters",
+    "inputs"
+  ],
+  "additionalProperties": false
+}

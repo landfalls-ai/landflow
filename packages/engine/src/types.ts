@@ -1,0 +1,341 @@
+import type {
+  ConnectionType,
+  ExecuteRequest,
+  ExecuteResponse,
+  ExecutionMode,
+  LogEntry,
+  JsonObject,
+  NodeDescriptor,
+  NodeItem,
+} from '@landflow/protocol';
+import type { ContextExtras, WaitRequest } from '@landflow/sdk';
+import type { Attributes } from '@opentelemetry/api';
+
+// ---------------------------------------------------------------------------
+// Workflow document
+// ---------------------------------------------------------------------------
+
+export type OnErrorBehaviour = 'stop' | 'continue';
+
+export interface WorkflowNode {
+  id: string;
+  /** Unique within the workflow; what `$('Name')` refers to. */
+  name: string;
+  /** Fully-qualified node type: "<pluginId>.<nodeName>". */
+  type: string;
+  typeVersion: number;
+  position: [number, number];
+  parameters: Record<string, unknown>;
+  disabled?: boolean;
+  notes?: string;
+  onError?: OnErrorBehaviour;
+  retryOnFail?: boolean;
+  maxTries?: number;
+  waitBetweenTriesMs?: number;
+  alwaysOutputData?: boolean;
+  executeOnce?: boolean;
+  /** Saved credentials this node uses, by credential type local name. Secrets live in the host's credential store. */
+  credentials?: Record<string, { id: string; name: string }>;
+}
+
+/**
+ * Directed edge. For `main`, items flow source → target. For `ai_*`, the
+ * source is a sub-node supplying a capability to the target (root) node.
+ */
+export interface WorkflowConnection {
+  id: string;
+  type: ConnectionType;
+  source: string;
+  sourceIndex: number;
+  target: string;
+  targetIndex: number;
+}
+
+export interface WorkflowSettings {
+  /** Stop a run after this many seconds. */
+  timeoutSeconds?: number;
+  /** Workflow whose Error Trigger runs when an execution of this one fails. */
+  errorWorkflowId?: string;
+  /** IANA time zone for schedules and `$now` (default: the host's). */
+  timezone?: string;
+  /** Which workflows may run this one through Execute Workflow: any, none, or `callerIds`. */
+  callerPolicy?: 'any' | 'none' | 'list';
+  callerIds?: string[];
+  /** Keep executions of this kind in the history (default: true). */
+  saveSuccessfulExecutions?: boolean;
+  saveFailedExecutions?: boolean;
+  saveManualExecutions?: boolean;
+  /** Minutes of manual work one successful run saves (Insights' "time saved"). */
+  timeSavedMinutes?: number;
+}
+
+/** A canvas note. It never runs; the engine ignores it. */
+export interface StickyNote {
+  id: string;
+  /** Markdown. */
+  content: string;
+  position: [number, number];
+  width: number;
+  height: number;
+  /** Index into the editor's sticky palette. */
+  color?: number;
+}
+
+export interface Workflow {
+  id: string;
+  name: string;
+  description?: string;
+  nodes: WorkflowNode[];
+  connections: WorkflowConnection[];
+  active?: boolean;
+  /** Fixed output per node id, used instead of executing it (n8n "pin data"). */
+  pinData?: Record<string, NodeItem[]>;
+  settings?: WorkflowSettings;
+  stickyNotes?: StickyNote[];
+  tags?: string[];
+  /** Folder in the workflows list (see the folders store); none = top level. */
+  folderId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Node type resolution (implemented by the host registry)
+// ---------------------------------------------------------------------------
+
+export type Transport = 'in-process' | 'http' | 'grpc';
+
+export interface ResolvedNodeType {
+  type: string;
+  pluginId: string;
+  transport: Transport;
+  descriptor: NodeDescriptor;
+  execute(request: ExecuteRequest, extras?: ContextExtras): Promise<ExecuteResponse>;
+  /** In-process sub-nodes only. */
+  supplyData?(request: ExecuteRequest): Promise<unknown>;
+}
+
+export interface NodeTypeResolver {
+  resolve(type: string): ResolvedNodeType | { error: string };
+}
+
+// ---------------------------------------------------------------------------
+// Run data & events
+// ---------------------------------------------------------------------------
+
+export type RunSource = 'main' | 'tool' | 'model' | 'memory';
+export type RunStatus = 'success' | 'error';
+
+export interface NodeRun {
+  startedAt: string;
+  durationMs: number;
+  status: RunStatus;
+  source: RunSource;
+  inputs: NodeItem[][];
+  outputs: NodeItem[][];
+  error?: { message: string; description?: string };
+  logs?: LogEntry[];
+  /** For sub-node runs: the root node that used the capability. */
+  parentNodeId?: string;
+  /** Copied from an earlier execution instead of being run again (partial re-runs). */
+  reused?: { executionId: string };
+  /** The run's `node.execute` span (same trace as ExecutionResult.traceId), when it was recorded. */
+  spanId?: string;
+}
+
+/** `waiting`: a node suspended the run (see ExecutionResult.wait); it continues with `ExecuteWorkflowOptions.resume`. */
+export type ExecutionStatus = 'running' | 'waiting' | 'success' | 'error' | 'canceled';
+
+export type DebugCommand = 'continue' | 'step' | 'stop';
+export type PauseReason = 'breakpoint' | 'step';
+
+export interface PauseInfo {
+  nodeId: string;
+  nodeName: string;
+  reason: PauseReason;
+  /** The input the node is about to receive. */
+  inputs: NodeItem[][];
+}
+
+/**
+ * Interactive debugging. The run pauses before a main-flow node when it has
+ * a breakpoint, or before every node while stepping, and waits for a command.
+ */
+export interface DebugController {
+  /** Read before every node, so breakpoints can change while the run is going. */
+  breakpoints(): ReadonlySet<string>;
+  /** Start in step mode: pause before the first node. */
+  stepping?: boolean;
+  pause(info: PauseInfo): Promise<DebugCommand>;
+}
+
+/** Re-run part of an earlier execution, reusing its recorded data. */
+export interface PartialRun {
+  executionId: string;
+  runData: Record<string, NodeRun[]>;
+  executionOrder?: string[];
+  /** The node to start from. Its recorded input (or its parents' recorded output) is replayed. */
+  startNodeId: string;
+  /** `from` continues downstream; `only` runs just this node. */
+  scope: 'from' | 'only';
+}
+
+export type ExecutionEvent =
+  | {
+      type: 'execution.started';
+      executionId: string;
+      workflowId: string;
+      mode: ExecutionMode;
+      traceId?: string;
+      /** The run continues after a wait (same execution id). */
+      resumed?: boolean;
+      at: string;
+    }
+  | {
+      type: 'node.started';
+      executionId: string;
+      nodeId: string;
+      nodeName: string;
+      source: RunSource;
+      parentNodeId?: string;
+      at: string;
+    }
+  | {
+      type: 'node.finished';
+      executionId: string;
+      nodeId: string;
+      nodeName: string;
+      source: RunSource;
+      parentNodeId?: string;
+      status: RunStatus;
+      durationMs: number;
+      itemCounts: number[];
+      run: NodeRun;
+      at: string;
+    }
+  | { type: 'node.log'; executionId: string; nodeId: string; level: LogEntry['level']; message: string; at: string }
+  | ({ type: 'execution.paused'; executionId: string; at: string } & PauseInfo)
+  | { type: 'execution.resumed'; executionId: string; command: DebugCommand; at: string }
+  | {
+      type: 'execution.finished';
+      executionId: string;
+      status: Exclude<ExecutionStatus, 'running'>;
+      durationMs: number;
+      error?: { message: string; nodeId?: string; nodeName?: string };
+      /** Status `waiting`: what the run waits for. */
+      wait?: ExecutionWait;
+      at: string;
+    };
+
+export interface ExecutionResult {
+  executionId: string;
+  workflowId: string;
+  mode: ExecutionMode;
+  status: Exclude<ExecutionStatus, 'running'>;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  runData: Record<string, NodeRun[]>;
+  /** Order in which nodes finished (main flow and sub-nodes). */
+  executionOrder: string[];
+  error?: { message: string; nodeId?: string; nodeName?: string };
+  /** Output of the last main-flow node that ran. */
+  lastNodeId?: string;
+  /** OpenTelemetry trace of the run (its `workflow.execute` span), when it was recorded. */
+  traceId?: string;
+  /** Status `waiting`: what the run waits for. */
+  wait?: ExecutionWait;
+  /** Status `waiting`: everything needed to continue (pass it back as `ExecuteWorkflowOptions.resume.state`). */
+  resumeState?: ResumeState;
+}
+
+// ---------------------------------------------------------------------------
+// Waiting and resuming
+// ---------------------------------------------------------------------------
+
+/** What a waiting execution waits for: the node that asked, and its WaitRequest. */
+export interface ExecutionWait extends WaitRequest {
+  nodeId: string;
+  nodeName: string;
+  /** When the node asked to wait. */
+  since: string;
+}
+
+/** A node ready to run: its main inputs. */
+export interface ResumeStackEntry {
+  nodeId: string;
+  inputs: NodeItem[][];
+}
+
+/**
+ * Everything a waiting execution needs to continue, as plain JSON: the scheduler's stack and
+ * parked multi-input nodes, what `$('Node')` reads, the run data so far, per-node state and the
+ * waiting node with its input.
+ */
+export interface ResumeState {
+  version: 1;
+  /** When the execution first started. */
+  startedAt: string;
+  /** Time spent running so far, without the waits (counts against `settings.timeoutSeconds`). */
+  activeMs: number;
+  /** Nodes still to run, last one first (LIFO, as the scheduler pops them). */
+  stack: ResumeStackEntry[];
+  /** Multi-input nodes that got data on some inputs: one slot per input, `null` = nothing yet. */
+  parked: Array<{ nodeId: string; slots: Array<NodeItem[] | null> }>;
+  /** Latest main outputs per node name. */
+  nodeOutputs: Record<string, NodeItem[][]>;
+  runData: Record<string, NodeRun[]>;
+  executionOrder: string[];
+  /** Per-run node state (ctx.getNodeState), by node id. */
+  nodeState: Record<string, JsonObject>;
+  lastNodeId?: string;
+  /** The waiting node: its input, what `execute` returned when it asked to wait, and its logs. */
+  waiting: { nodeId: string; inputs: NodeItem[][]; outputs: NodeItem[][]; startedAt: string; logs?: LogEntry[] };
+  /** Destination / `only` runs: the nodes allowed to run, and the node after which nothing is scheduled. */
+  allowed?: string[];
+  destination?: string;
+  /** Partial runs: the nodes that run again, and the reused outputs of the others. */
+  rerun?: string[];
+  reusedOutputs?: Record<string, NodeItem[][]>;
+}
+
+/** How a wait ended. `timeout`: a webhook or form wait reached its time limit; `subworkflow`: the awaited sub-execution finished. */
+export type ResumeKind = 'time' | 'webhook' | 'form' | 'timeout' | 'subworkflow';
+
+export interface ResumeOptions {
+  state: ResumeState;
+  /** The waiting node's output; default: what it returned when it asked to wait. */
+  outputs?: NodeItem[][];
+  kind: ResumeKind;
+  /** The wait failed (an awaited sub-execution failed or was canceled): the waiting node fails with this message. */
+  error?: string;
+}
+
+export interface ExecuteWorkflowOptions {
+  workflow: Workflow;
+  resolver: NodeTypeResolver;
+  executionId: string;
+  mode: ExecutionMode;
+  /** Trigger node to start from (default: first trigger, else every root node). */
+  startNodeId?: string;
+  /** Items handed to the start node (default: one empty item). */
+  triggerItems?: NodeItem[];
+  /** The start node's output, already produced (a poll trigger's new items): the node is not executed. */
+  triggerOutput?: { nodeId: string; items: NodeItem[] };
+  /** Stop after this node: only it and its ancestors run. */
+  destinationNodeId?: string;
+  partial?: PartialRun;
+  debug?: DebugController;
+  onEvent?: (event: ExecutionEvent) => void;
+  signal?: AbortSignal;
+  /** Decrypted credential data for a node, keyed by credential type local name (sent as ExecuteRequest.credentials). */
+  resolveCredentials?: (node: WorkflowNode, descriptor: NodeDescriptor) => Record<string, JsonObject> | undefined;
+  /** Extra attributes for the `workflow.execute` span (e.g. `landflow.execution.rerun_of`). */
+  spanAttributes?: Attributes;
+  /** Instance variables, read-only in expressions as `$vars.NAME`. */
+  variables?: Record<string, string>;
+  /** Continue a waiting execution (same `executionId`); start options are ignored. */
+  resume?: ResumeOptions;
+  /** `$execution.resumeUrl` / `$execution.resumeFormUrl`: where a webhook or form wait of this run is resumed. */
+  resumeUrls?: { webhook: string; form: string };
+}
