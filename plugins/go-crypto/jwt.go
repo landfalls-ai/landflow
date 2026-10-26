@@ -26,6 +26,7 @@ func (JWTDecodeNode) Description() landflow.NodeDescriptor {
 		Description: "Decode a JWT's header and payload (the signature is not verified)",
 		Version:     landflow.V(1),
 		Kind:        landflow.KindAction,
+		Idempotent:  true, // pure transform: no side effects, a repeat gives the same result
 		Categories:  []string{"Crypto"},
 		Icon:        "file:icons/jwt-decode.svg",
 		Color:       "#14b8a6",

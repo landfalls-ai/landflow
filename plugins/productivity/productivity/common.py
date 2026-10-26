@@ -282,8 +282,9 @@ def resource_property(options: list[tuple[str, str]], default: str) -> dict[str,
     }
 
 
-def operation_property(resource: str, options: list[tuple[str, str, str]], default: str) -> dict[str, Any]:
-    """``operation`` for one resource: ``(display name, value, action)`` triples."""
+def operation_property(resource: str, options: list[tuple[Any, ...]], default: str) -> dict[str, Any]:
+    """``operation`` for one resource: ``(display name, value, action)`` triples; a fourth item ``True`` marks a read-only operation
+    ``idempotent`` (safe to deliver twice over a broker); the others keep the node's default (at most once)."""
     return {
         "name": "operation",
         "displayName": "Operation",
@@ -291,7 +292,10 @@ def operation_property(resource: str, options: list[tuple[str, str, str]], defau
         "noDataExpression": True,
         "default": default,
         "displayOptions": {"show": {"resource": [resource]}},
-        "options": [{"name": name, "value": value, "action": action} for name, value, action in options],
+        "options": [
+            {"name": name, "value": value, "action": action, **({"idempotent": True} if rest and rest[0] else {})}
+            for name, value, action, *rest in options
+        ],
     }
 
 

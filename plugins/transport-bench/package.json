@@ -1,0 +1,19 @@
+{
+  "name": "@landflow/plugin-transport-bench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Benchmark plugin: one Echo node, served over HTTP, gRPC and every broker named in LANDFLOW_TRANSPORTS. Started by deploy/scripts/transport-bench.py.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@landflow/sdk": "workspace:*",
+    "@landflow/transports": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15"
+  }
+}

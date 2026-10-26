@@ -41,6 +41,7 @@ func (UUIDNode) Description() landflow.NodeDescriptor {
 		Description: "Add a random UUID (v4) to every item, or generate new items holding UUIDs",
 		Version:     landflow.V(1),
 		Kind:        landflow.KindAction,
+		Idempotent:  true, // no side effects: a repeat only draws another random value
 		Categories:  []string{"Crypto"},
 		Icon:        "file:icons/uuid.svg",
 		Color:       "#2dd4bf",

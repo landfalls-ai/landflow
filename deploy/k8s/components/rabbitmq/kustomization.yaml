@@ -1,0 +1,13 @@
+# Optional: RabbitMQ 4 with the management plugin, service `rabbitmq` (AMQP 5672, management 15672). Same image as the
+# `rabbitmq` profile of deploy/compose.infra.yml. Development credentials in the generated Secret `landflow-rabbitmq`
+# (also read by ../broker-transports for the AMQP URL): replace it for anything real. Data in an emptyDir.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - rabbitmq.yaml
+secretGenerator:
+  - name: landflow-rabbitmq
+    options: { disableNameSuffixHash: true }
+    literals:
+      - username=landflow
+      - password=landflow-dev-only

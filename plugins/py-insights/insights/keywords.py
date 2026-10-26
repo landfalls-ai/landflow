@@ -40,6 +40,7 @@ class KeywordExtract(Node):
         "description": "Extract the top-N keywords from a text field, with stopword removal",
         "version": 1,
         "kind": "action",
+        "idempotent": True,  # a pure computation over the input items: running it twice gives the same result
         "categories": ["Text"],
         "icon": "file:icons/keywords.svg",
         "color": "#fbbf24",

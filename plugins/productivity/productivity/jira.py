@@ -204,6 +204,7 @@ class JiraNode(Node):
         "description": "Create, get, search, update and transition Jira issues, and add comments",
         "version": 1,
         "kind": "action",
+        "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
         "categories": ["Development", "Productivity"],
         "icon": "file:icons/jira.svg",
         "color": "#0052CC",
@@ -231,8 +232,8 @@ class JiraNode(Node):
             operation_property("issueComment", [("Add", "add", "Add a comment")], "add"),
             operation_property("issue", [
                 ("Create", "create", "Create an issue"),
-                ("Get", "get", "Get an issue"),
-                ("Get Many", "getAll", "Get many issues"),
+                ("Get", "get", "Get an issue", True),
+                ("Get Many", "getAll", "Get many issues", True),
                 ("Transition", "transition", "Move an issue to another status"),
                 ("Update", "update", "Update an issue"),
             ], "create"),

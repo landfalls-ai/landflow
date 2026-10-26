@@ -23,6 +23,16 @@ x-plugin-env: &plugin-env
   LANDFLOW_REGISTRY_URL: http://web:3000
   LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
   OTEL_EXPORTER_OTLP_ENDPOINT: ${LANDFLOW_OTLP_ENDPOINT:-}
+  # Transports (docs/transports.md): the faces a plugin serves. Default http,grpc; to add brokers set LANDFLOW_PLUGIN_TRANSPORTS
+  # (for example http,grpc,nats) and add LANDFLOW_<KIND>_URL for each kind here (for example LANDFLOW_NATS_URL: nats://nats:4222;
+  # the infra brokers are reachable by service name once the app is joined to the infra network). Over a broker calls are encrypted
+  # and signed with the transport secret, which must equal the host's LANDFLOW_TRANSPORT_SECRET.
+  LANDFLOW_TRANSPORTS: ${LANDFLOW_PLUGIN_TRANSPORTS:-http,grpc}
+  LANDFLOW_TRANSPORT_SECRET: ${LANDFLOW_TRANSPORT_SECRET:-}
+  # The plugin's own MCP face is off in containers: agents reach plugins through the host's per-plugin endpoints and the bundled
+  # gateway. To turn it on set LANDFLOW_PLUGIN_MCP=on and LANDFLOW_PLUGIN_MCP_TOKEN (a container listens on 0.0.0.0, so a token is required).
+  LANDFLOW_MCP: ${LANDFLOW_PLUGIN_MCP:-off}
+  LANDFLOW_MCP_TOKEN: ${LANDFLOW_PLUGIN_MCP_TOKEN:-}
 
 services:
   web:

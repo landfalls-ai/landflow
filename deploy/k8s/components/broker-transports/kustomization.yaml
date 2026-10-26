@@ -1,0 +1,57 @@
+# Optional: turn the brokers on for the host and the TypeScript plugins. Pair it with ../brokers (or with brokers you run
+# elsewhere: replace the URLs below). The base plugin Deployments already read these objects through optional `envFrom`, so
+# without this component nothing changes.
+#
+#   ConfigMap landflow-transport             shared settings, read by the host and every plugin:
+#                                              LANDFLOW_<KIND>_URL            what a plugin connects to (kafka, amqp, jetstream, valkey)
+#                                              LANDFLOW_TRANSPORT_<KIND>_URL  what the host reads: one read-only connection `env-<kind>` per URL
+#                                              LANDFLOW_MAX_CONCURRENCY       calls a plugin replica runs at once (the spill-over and KEDA numbers follow from it)
+#   ConfigMap landflow-transport-<plugin>    LANDFLOW_TRANSPORTS for that plugin: which faces start. Only text-toolkit and messaging
+#                                              (TypeScript SDK) are listed; add a plugin by copying a line below. Go and Python plugins
+#                                              keep their defaults until they run the new SDKs.
+#   Secret landflow-transport                LANDFLOW_TRANSPORT_SECRET, the shared key for end-to-end encryption and signing over brokers
+#                                              (the host and every brokered plugin need the same value), and the AMQP URLs with the
+#                                              RabbitMQ credentials. Development values: replace the Secret for anything real.
+#
+# The URL list is the dev brokers of ../brokers. NATS runs as `jetstream` (buffered, redelivered, and what the KEDA scaler
+# reads); switch to core NATS with `nats` and LANDFLOW_NATS_URL / LANDFLOW_TRANSPORT_NATS_URL. Do not enable `nats` and
+# `jetstream` against one server with the same prefix (docs/protocol.md §14.9).
+# Faces per plugin: `http,grpc` keep Kubernetes discovery working next to the brokers; a broker-only plugin lists no `http`/`grpc`
+# and then needs no Service (it announces over the broker; KEDA can scale it to zero).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+configMapGenerator:
+  - name: landflow-transport
+    options: { disableNameSuffixHash: true }
+    literals:
+      - LANDFLOW_KAFKA_URL=kafka://kafka:9092
+      - LANDFLOW_JETSTREAM_URL=nats://nats:4222
+      - LANDFLOW_VALKEY_URL=redis://valkey:6379/0
+      - LANDFLOW_TRANSPORT_KAFKA_URL=kafka://kafka:9092
+      - LANDFLOW_TRANSPORT_JETSTREAM_URL=nats://nats:4222
+      - LANDFLOW_TRANSPORT_VALKEY_URL=redis://valkey:6379/0
+      - LANDFLOW_MAX_CONCURRENCY=8
+  - name: landflow-transport-text-toolkit
+    options: { disableNameSuffixHash: true }
+    literals:
+      - LANDFLOW_TRANSPORTS=http,grpc,kafka,amqp,jetstream,valkey
+  - name: landflow-transport-messaging
+    options: { disableNameSuffixHash: true }
+    literals:
+      - LANDFLOW_TRANSPORTS=http,grpc,kafka,amqp,jetstream,valkey
+secretGenerator:
+  - name: landflow-transport
+    options: { disableNameSuffixHash: true }
+    literals:
+      - LANDFLOW_TRANSPORT_SECRET=landflow-transport-dev-only
+      - LANDFLOW_AMQP_URL=amqp://landflow:landflow-dev-only@rabbitmq:5672/
+      - LANDFLOW_TRANSPORT_AMQP_URL=amqp://landflow:landflow-dev-only@rabbitmq:5672/
+patches:
+  # The host: one connection per LANDFLOW_TRANSPORT_<KIND>_URL, and the secret that keys the envelopes.
+  - target: { kind: Deployment, name: landflow-host }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/envFrom
+        value:
+          - configMapRef: { name: landflow-transport }
+          - secretRef: { name: landflow-transport }

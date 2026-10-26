@@ -5,7 +5,7 @@
  * or a 5xx. Every request is recorded, so a test can assert that a send went out exactly once.
  *
  * In-process: `const twilio = await startFakeTwilio(); … twilio.requests; twilio.failNext({ status: 429, retryAfter: 1 })`.
- * Standalone (the walk-through): `pnpm --filter @landflow/plugin-messaging fake-twilio [--port 7560] [--write-env <path>]`
+ * Standalone (the walk-through): `pnpm --filter @landflow/plugin-messaging fake-twilio [--port 7560] [--write-env <path>] [--delay-ms 400]`
  * prints the test Account SID and Auth Token, writes them to the env file, and adds control routes without auth:
  * `GET /__fake/requests`, `DELETE /__fake/requests`, `POST /__fake/fail {status, retryAfter?, times?}`, `GET /__fake/health`.
  * Fake credentials only; nothing here talks to Twilio.
@@ -45,6 +45,8 @@ export interface FakeTwilioOptions {
   accountSid?: string;
   authToken?: string;
   apiKey?: { sid: string; secret: string };
+  /** Hold every reply back this long (ms), like a real API on a real network (the walk-through uses 400 so a campaign overlaps). */
+  delayMs?: number;
   /** Serve the `/__fake/*` control routes (on by default standalone, off in tests unless asked). */
   control?: boolean;
   log?: (line: string) => void;
@@ -359,8 +361,12 @@ export async function startFakeTwilio(options: FakeTwilioOptions = {}): Promise<
       }
       const status = reply.status ?? 200;
       log(`${request.method} ${request.path}${url.search} -> ${status}`);
-      res.writeHead(status, { 'content-type': 'application/json', 'twilio-request-id': `RQ${hex(16)}`, ...reply.headers });
-      res.end(JSON.stringify(reply.body));
+      const respond = () => {
+        res.writeHead(status, { 'content-type': 'application/json', 'twilio-request-id': `RQ${hex(16)}`, ...reply.headers });
+        res.end(JSON.stringify(reply.body));
+      };
+      if (options.delayMs) setTimeout(respond, options.delayMs);
+      else respond();
     });
   });
   await new Promise<void>((resolve, reject) => {
@@ -388,7 +394,7 @@ export async function startFakeTwilio(options: FakeTwilioOptions = {}): Promise<
   };
 }
 
-/** Standalone: `tsx test/fake-twilio.ts [--port N] [--write-env path]` (env FAKE_TWILIO_PORT, FAKE_TWILIO_ENV_FILE). */
+/** Standalone: `tsx test/fake-twilio.ts [--port N] [--write-env path] [--delay-ms N]` (env FAKE_TWILIO_PORT, FAKE_TWILIO_ENV_FILE, FAKE_TWILIO_DELAY_MS). */
 async function main() {
   const argv = process.argv.slice(2);
   const flag = (name: string) => {
@@ -401,6 +407,7 @@ async function main() {
     port,
     accountSid: process.env.FAKE_TWILIO_ACCOUNT_SID,
     authToken: process.env.FAKE_TWILIO_AUTH_TOKEN,
+    delayMs: Number(flag('--delay-ms') ?? process.env.FAKE_TWILIO_DELAY_MS ?? 0) || undefined,
     control: true,
     log: (line) => console.log(`[fake-twilio] ${line}`),
   });

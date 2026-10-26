@@ -131,6 +131,37 @@ One pool per credential, keyed by a SHA-256 hash of the connection settings (an 
 are shared across executions, closed after 10 minutes unused (checked every minute) and on shutdown. Postgres and MySQL
 pools hold up to 10 connections; SQLite uses one connection per file with a 5 s busy timeout and foreign keys on.
 
+## Transports
+
+By default the plugin serves HTTP (`:7107`) and gRPC (`:7207`) and announces both to the host. It also links in the Go SDK's tier 1
+broker drivers (Kafka, RabbitMQ `amqp`, NATS with JetStream, Valkey/Redis Streams); a broker face runs only when named in
+`LANDFLOW_TRANSPORTS` with its URL (the host needs a matching connection under Settings → Transports):
+
+```sh
+LANDFLOW_TRANSPORTS=http,grpc,nats LANDFLOW_NATS_URL=nats://127.0.0.1:54222 LANDFLOW_TRANSPORT_SECRET=… go run .
+```
+
+Calls over a broker are encrypted and signed with the transport secret (`LANDFLOW_TRANSPORT_SECRET`, the host's value). The tier 2
+kinds (MQTT, AMQP 1.0, SQS, Pub/Sub, Pulsar, Service Bus) are not linked in, because their client libraries would nearly triple the binary
+(about 37 MB with tier 1, 54 MB with all ten, against 20 MB without brokers); `landflow-bridge` reaches them through the plugin's HTTP face.
+
+**`maxConcurrency`** (calls running node code at once, shared by every face) defaults to **10**, the connection pool size (`tunePool(db, 10)` for Postgres and MySQL, Redis `PoolSize: 10`; SQLite uses one connection), so more calls in flight would only wait for a connection. `LANDFLOW_MAX_CONCURRENCY`
+overrides it. Past that, as many calls again wait for a slot; beyond that HTTP answers 429 and gRPC `RESOURCE_EXHAUSTED` (`capacity`).
+
+**`idempotent`**: the read operations (Postgres, MySQL and SQLite Select; Redis Get, Info, Keys, List Length) are `idempotent: true`, so a broker may deliver them twice and MCP lists them with `idempotentHint`. Insert, Insert or Update, Update, Delete, Execute Query (arbitrary SQL), and the Redis writes, pops and publishes stay at most once. The New Row triggers are pollers that hold their own cursor.
+
+## MCP
+
+Every operation is also an MCP tool on `http://127.0.0.1:7107/mcp`: `postgres_select`, `postgres_insert`, `postgres_executeQuery`, `mySql_select`, `sqlite_update`, `redis_get`, `redis_set`, `redis_publish`… (28 tools; the triggers are not tools). Through the host (`/api/mcp/plugins/databases`) or the gateway, credentials come from the caller's grant.
+The face listens on loopback with no token. In a container (`LANDFLOW_LISTEN_HOST=0.0.0.0`, as the image sets) it needs
+`LANDFLOW_MCP_TOKEN` or stays off with a log line; the Kubernetes manifest and compose set `LANDFLOW_MCP=off`, since agents reach plugins
+through the host's per-plugin endpoints and the gateway. Without Landflow, as a local MCP server over stdio:
+
+```sh
+echo '{"postgres":{"host":"127.0.0.1","port":55432,"database":"…","user":"…","password":"…"}}' > creds.json
+LANDFLOW_MCP_CREDENTIALS=creds.json go run . --mcp-stdio
+```
+
 ## Observability
 
 Every statement and Redis command runs in a client span from the SDK's `DBSpan`: name `{operation} {table}` (`SELECT

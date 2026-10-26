@@ -6,7 +6,9 @@
  * is up, redelivered when one dies (`numDelivered` is the attempt), kept on disk for `maxAgeMs`, and answered through NATS
  * inboxes like core NATS. The other channels (instance, reply, registry, control) are plain subjects. It is a separate
  * kind from `nats` because its capabilities differ (buffering, disk persistence, inferred undeliverability) and a
- * `DriverModule` has one static capability set; both kinds run on the same server and connection URL.
+ * `DriverModule` has one static capability set; both kinds run on the same server and connection URL. Every subject this
+ * kind uses is the channel name behind a fixed `js.` token (`js.landflow.v1.plugin.<id>`; stream `js_landflow_v1_plugin_<id>`),
+ * so a work-queue stream never captures what core `nats` publishes, and the two kinds' registry/control channels stay apart.
  *
  * The SDK helper: `serve(plugin, { brokers: [jetstream({ servers: 'nats://127.0.0.1:54222' })] })`.
  */

@@ -12,6 +12,12 @@ import (
 	"log"
 
 	landflow "github.com/landflow/landflow/sdks/go"
+
+	// Broker faces: LANDFLOW_TRANSPORTS=http,grpc,nats (with LANDFLOW_NATS_URL) serves the plugin over that broker too.
+	_ "github.com/landflow/landflow/sdks/go/transport/amqp"
+	_ "github.com/landflow/landflow/sdks/go/transport/kafka"
+	_ "github.com/landflow/landflow/sdks/go/transport/nats"
+	_ "github.com/landflow/landflow/sdks/go/transport/valkey"
 )
 
 // icons holds the plugin and node icons; "file:icons/…" icons are inlined from it as data: URLs.
@@ -47,6 +53,9 @@ func main() {
 	err := landflow.Serve(context.Background(), newPlugin(), landflow.ServeOptions{
 		HTTPPort: 7107,
 		GRPCPort: 7207,
+		// The pools hold at most 10 connections per credential (tunePool, redis PoolSize), so more concurrent calls would only wait for a connection.
+		// LANDFLOW_MAX_CONCURRENCY overrides it.
+		MaxConcurrency: 10,
 	})
 	if err != nil {
 		pools.shutdown()

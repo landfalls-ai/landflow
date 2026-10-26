@@ -99,6 +99,7 @@ class HubSpot(Node):
         "description": "Create or update, get and search HubSpot contacts; create deals",
         "version": 1,
         "kind": "action",
+        "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
         "categories": ["Sales", "Marketing"],
         "icon": "file:icons/hubspot.svg",
         "color": "#FF7A59",
@@ -119,8 +120,8 @@ class HubSpot(Node):
             operation_property("deal", [("Create", "create", "Create a deal")], "create"),
             operation_property("contact", [
                 ("Create or Update", "upsert", "Create or update a contact"),
-                ("Get", "get", "Get a contact"),
-                ("Search", "search", "Search contacts"),
+                ("Get", "get", "Get a contact", True),
+                ("Search", "search", "Search contacts", True),
             ], "upsert"),
             # ---- contact upsert
             {"name": "email", "displayName": "Email", "type": "string", "default": "", "required": True, "placeholder": "name@email.com",

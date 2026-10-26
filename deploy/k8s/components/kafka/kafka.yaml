@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  labels: { app.kubernetes.io/name: kafka, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: broker }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: kafka }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: kafka, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: broker }
+    spec:
+      enableServiceLinks: false # the Service `kafka` would inject KAFKA_PORT=tcp://…, which the image reads as a setting
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # the image's `appuser`
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: kafka
+          image: apache/kafka:4.3.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: kafka, containerPort: 9092 }
+          env:
+            - name: POD_NAMESPACE # the advertised address is the full DNS name, so clients in other namespaces (KEDA's kafka scaler) can follow it
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: CLUSTER_ID, value: landflow-dev-kraft-cluster }
+            - { name: KAFKA_NODE_ID, value: "1" }
+            - { name: KAFKA_PROCESS_ROLES, value: "broker,controller" }
+            - { name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@localhost:9093" }
+            - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: CONTROLLER }
+            - { name: KAFKA_LISTENERS, value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093" }
+            - { name: KAFKA_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka.$(POD_NAMESPACE).svc.cluster.local:9092" }
+            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT" }
+            - { name: KAFKA_INTER_BROKER_LISTENER_NAME, value: PLAINTEXT }
+            - { name: KAFKA_LOG_DIRS, value: /var/lib/kafka/data }
+            - { name: KAFKA_AUTO_CREATE_TOPICS_ENABLE, value: "true" }
+            - { name: KAFKA_NUM_PARTITIONS, value: "3" }
+            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
+            - { name: KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR, value: "1" }
+            - { name: KAFKA_LOG_RETENTION_HOURS, value: "24" }
+            - { name: KAFKA_HEAP_OPTS, value: "-Xmx512m -Xms256m" }
+          startupProbe: # KRaft takes 20 to 40 s on a laptop
+            tcpSocket: { port: kafka }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            # Ready once the broker answers; the first success also finalises share.version=1 (idempotent), as in compose.infra.yml.
+            exec:
+              command:
+                - sh
+                - -c
+                - >-
+                  /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 &&
+                  (test -f /tmp/landflow-share-ready ||
+                  (/opt/kafka/bin/kafka-features.sh --bootstrap-server localhost:9092 upgrade --feature share.version=1 >/dev/null 2>&1;
+                  touch /tmp/landflow-share-ready))
+            periodSeconds: 10
+            timeoutSeconds: 8
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 100m, memory: 640Mi }
+            limits: { memory: 1280Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/kafka/data }
+            - { name: tmp, mountPath: /tmp }
+            - { name: tmp, mountPath: /opt/kafka/logs, subPath: logs }
+      volumes:
+        - name: data
+          emptyDir: { sizeLimit: 2Gi }
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  labels: { app.kubernetes.io/name: kafka, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: broker }
+spec:
+  selector: { app.kubernetes.io/name: kafka }
+  ports: [{ name: kafka, port: 9092, targetPort: kafka }]

@@ -18,10 +18,17 @@ ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-trimpath
 WORKDIR /src
 # Module files first: the download layer survives source edits. The bridge replaces the SDK and driver modules with the tree.
 COPY sdks/go/go.mod sdks/go/go.sum ./sdks/go/
+# Every driver module the bridge replaces (tier 1 and tier 2), so `go mod download` resolves them all.
 COPY sdks/go/transport/kafka/go.mod sdks/go/transport/kafka/go.sum ./sdks/go/transport/kafka/
 COPY sdks/go/transport/amqp/go.mod sdks/go/transport/amqp/go.sum ./sdks/go/transport/amqp/
 COPY sdks/go/transport/nats/go.mod sdks/go/transport/nats/go.sum ./sdks/go/transport/nats/
 COPY sdks/go/transport/valkey/go.mod sdks/go/transport/valkey/go.sum ./sdks/go/transport/valkey/
+COPY sdks/go/transport/mqtt/go.mod sdks/go/transport/mqtt/go.sum ./sdks/go/transport/mqtt/
+COPY sdks/go/transport/amqp1/go.mod sdks/go/transport/amqp1/go.sum ./sdks/go/transport/amqp1/
+COPY sdks/go/transport/sqs/go.mod sdks/go/transport/sqs/go.sum ./sdks/go/transport/sqs/
+COPY sdks/go/transport/pubsub/go.mod sdks/go/transport/pubsub/go.sum ./sdks/go/transport/pubsub/
+COPY sdks/go/transport/pulsar/go.mod sdks/go/transport/pulsar/go.sum ./sdks/go/transport/pulsar/
+COPY sdks/go/transport/servicebus/go.mod sdks/go/transport/servicebus/go.sum ./sdks/go/transport/servicebus/
 COPY services/landflow-bridge/go.mod services/landflow-bridge/go.sum ./services/landflow-bridge/
 WORKDIR /src/services/landflow-bridge
 RUN --mount=type=cache,id=landflow-gomod,target=/go/pkg/mod go mod download

@@ -1,0 +1,27 @@
+# Kafka: scale plugin-text-toolkit on the consumer group lag of its request topic.
+#   topic / consumerGroup: both are the request channel's name, landflow.v1.plugin.<pluginId> (the driver's group is named after the channel).
+#   metric:                lag = end offset - committed offset, summed over the partitions.
+#   cap:                   replicas above the topic's partition count would sit idle, so maxReplicaCount stays at or under it (the driver creates 6
+#                          partitions, the dev broker's default is 3). Set `limitToPartitionsWithLag` to cap by partitions that have a backlog.
+# This is a *consumer group* (the TypeScript and Python SDKs' default). A Go plugin consumes with a share group (Kafka 4.2+), which KEDA's
+# kafka scaler does not read: set LANDFLOW_KAFKA_MODE=group on it (docs/protocol.md §14.9) or scale it on CPU instead.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: plugin-text-toolkit-kafka
+  namespace: landflow-dev
+  labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: autoscaling }
+spec:
+  scaleTargetRef:
+    name: plugin-text-toolkit
+  minReplicaCount: 1
+  maxReplicaCount: 3
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.landflow-dev.svc.cluster.local:9092
+        consumerGroup: landflow.v1.plugin.text-toolkit
+        topic: landflow.v1.plugin.text-toolkit
+        lagThreshold: "8" # = LANDFLOW_MAX_CONCURRENCY
+        offsetResetPolicy: latest
+        limitToPartitionsWithLag: "true"

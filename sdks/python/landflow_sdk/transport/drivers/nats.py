@@ -10,6 +10,7 @@ The same wire as ``@landflow/transports/nats`` + ``/jetstream`` and ``sdks/go/tr
   per group; the driver pulls at most ``prefetch`` messages per instance, acks and naks (``num_delivered`` = attempt),
   sends progress acks while a call runs, and carries the requester's inbox in ``Landflow-Reply`` so ``Delivery.reply()``
   still answers natively; ``Nats-TTL`` is set from the deadline as a first filter. Every other channel is core NATS.
+  In jetstream mode every subject is the channel name behind a fixed ``js.`` token (``js.landflow.v1.plugin.<id>``, stream ``js_landflow_v1_plugin_<id>``), so it never meets a ``nats`` driver on the same server.
 
 CloudEvents go in binary mode with the NATS binding's ``ce-`` prefix; driver headers (``Landflow-*``) never reach the
 core. ``nats-py`` is asyncio, so the driver runs one event loop on a thread of its own and every blocking method
@@ -92,6 +93,10 @@ class NatsConfig(BrokerConfig):
 
 
 JetStreamConfig = NatsConfig
+
+
+# The token ``jetstream`` mode puts in front of every channel name, so the two NATS kinds never share a subject on one server.
+JETSTREAM_SUBJECT_TOKEN = "js"
 
 
 def stream_name_of(channel: str, prefix: str = "") -> str:
@@ -286,8 +291,17 @@ class NatsDriver(BrokerDriver):
             if self.mode == "jetstream" and spec.delivery == "shared" and spec.durable:
                 self._run(self._ensure_stream(spec))
 
+    def _subject_of(self, channel: str) -> str:
+        """The NATS subject of a channel: the channel itself for ``nats``, ``js.<channel>`` for ``jetstream``."""
+        return f"{JETSTREAM_SUBJECT_TOKEN}.{channel}" if self.mode == "jetstream" else channel
+
+    def _channel_of(self, subject: str) -> str:
+        """The channel name of a subject produced by ``_subject_of``."""
+        head = f"{JETSTREAM_SUBJECT_TOKEN}."
+        return subject[len(head):] if self.mode == "jetstream" and subject.startswith(head) else subject
+
     def _stream_name(self, channel: str) -> str:
-        return stream_name_of(channel, self._config.stream_prefix if self._config else "")
+        return stream_name_of(self._subject_of(channel), self._config.stream_prefix if self._config else "")
 
     async def _ensure_stream(self, spec: ChannelSpec) -> None:
         from nats.js import api
@@ -296,7 +310,7 @@ class NatsDriver(BrokerDriver):
         assert config is not None
         name = self._stream_name(spec.name)
         stream_config = api.StreamConfig(
-            name=name, subjects=[spec.name], retention=api.RetentionPolicy.WORK_QUEUE,
+            name=name, subjects=[self._subject_of(spec.name)], retention=api.RetentionPolicy.WORK_QUEUE,
             storage=api.StorageType.MEMORY if config.storage == "memory" else api.StorageType.FILE, discard=api.DiscardPolicy.OLD,
             max_age=(spec.ttl_ms if spec.ttl_ms is not None else config.max_age_ms) / 1000, max_msg_size=self.capabilities.max_message_bytes,
             num_replicas=config.replicas, allow_msg_ttl=True,
@@ -318,7 +332,7 @@ class NatsDriver(BrokerDriver):
         if channel in self._streams:
             return True
         try:
-            await self._js.find_stream_name_by_subject(channel)
+            await self._js.find_stream_name_by_subject(self._subject_of(channel))
             self._streams.add(channel)
             return True
         except Exception as exc:  # noqa: BLE001
@@ -356,13 +370,13 @@ class NatsDriver(BrokerDriver):
             if await self._is_stream(channel):
                 if options and options.ttl_ms:
                     headers[_TTL_HEADER] = _ttl_header(options.ttl_ms)
-                await self._js.publish(channel, event.body, headers=headers, timeout=10)
+                await self._js.publish(self._subject_of(channel), event.body, headers=headers, timeout=10)
                 return "accepted"
             # Core: publish with a reply inbox of ours and flush; the server answers a publish nobody subscribes to with a
             # 503 on that inbox before it answers the flush's PING.
             self._inbox_seq += 1
             token = str(self._inbox_seq)
-            await nc.publish(channel, event.body, reply=f"{self._inbox}.{token}", headers=headers)
+            await nc.publish(self._subject_of(channel), event.body, reply=f"{self._inbox}.{token}", headers=headers)
             await nc.flush()
             # nats-py queues subscription callbacks: let the inbox drain what arrived before the PONG (nothing, usually).
             for _ in range(100):
@@ -392,7 +406,7 @@ class NatsDriver(BrokerDriver):
                 future: asyncio.Future = asyncio.get_running_loop().create_future()
                 self._waiters[token] = lambda reply: (not future.done()) and future.set_result(reply)
                 try:
-                    await self._js.publish(channel, event.body, headers=headers, timeout=min(timeout_s, 10))
+                    await self._js.publish(self._subject_of(channel), event.body, headers=headers, timeout=min(timeout_s, 10))
                     reply = await asyncio.wait_for(future, timeout_s)
                     return RequestOutcome("replied", reply)
                 except asyncio.TimeoutError:
@@ -400,7 +414,7 @@ class NatsDriver(BrokerDriver):
                 finally:
                     self._waiters.pop(token, None)
             try:
-                msg = await nc.request(channel, event.body, timeout=timeout_s, headers=headers)
+                msg = await nc.request(self._subject_of(channel), event.body, timeout=timeout_s, headers=headers)
                 return RequestOutcome("replied", self._from_msg(msg))
             except errors.NoRespondersError:
                 return RequestOutcome("unroutable")
@@ -511,7 +525,7 @@ class NatsDriver(BrokerDriver):
             else:
                 deliver(msg)
 
-        sub = await nc.subscribe(channel, queue=options.group or "", cb=callback)
+        sub = await nc.subscribe(self._subject_of(channel), queue=options.group or "", cb=callback)
 
         def close() -> None:
             if closed["value"]:
@@ -550,7 +564,7 @@ class NatsDriver(BrokerDriver):
         name = stream_name_of(options.group or channel)
         ack_wait_s = config.ack_wait_ms / 1000
         consumer_config = api.ConsumerConfig(
-            durable_name=name, filter_subject=channel, ack_policy=api.AckPolicy.EXPLICIT, deliver_policy=api.DeliverPolicy.ALL,
+            durable_name=name, filter_subject=self._subject_of(channel), ack_policy=api.AckPolicy.EXPLICIT, deliver_policy=api.DeliverPolicy.ALL,
             replay_policy=api.ReplayPolicy.INSTANT, ack_wait=ack_wait_s, max_ack_pending=-1, max_deliver=-1,
         )
         try:
@@ -560,7 +574,7 @@ class NatsDriver(BrokerDriver):
                 await self._js.consumer_info(stream, name)
             except Exception:
                 raise exc from None
-        psub = await self._js.pull_subscribe(channel, durable=name, stream=stream)
+        psub = await self._js.pull_subscribe(self._subject_of(channel), durable=name, stream=stream)
         manual = options.ack_mode == "manual"
         in_flight: dict[int, Any] = {}
         closed = {"value": False}

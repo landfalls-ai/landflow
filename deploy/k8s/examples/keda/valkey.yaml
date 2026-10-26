@@ -1,0 +1,26 @@
+# Valkey / Redis Streams: scale plugin-text-toolkit on the pending entries of its consumer group.
+#   stream / consumerGroup: both are the request channel's name, landflow.v1.plugin.<pluginId> (plus the connection's key prefix, if one is set).
+#   metric:                 pendingEntriesCount = entries delivered to a consumer and not yet acknowledged (the group's PEL, XPENDING). A replica
+#                           holds at most maxConcurrency of them, so this counts the calls being run, not the backlog behind them:
+#                           the group's `lag` (entries not yet delivered) is the backlog. The two together are what a replica has left to do.
+#                           `lagCount` adds the lag to the scaling decision; use it when pending entries alone would never exceed the target.
+#   address:                a name KEDA can resolve from its own namespace: the Service's full DNS name.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: plugin-text-toolkit-valkey
+  namespace: landflow-dev
+  labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: autoscaling }
+spec:
+  scaleTargetRef:
+    name: plugin-text-toolkit
+  minReplicaCount: 1
+  maxReplicaCount: 6
+  triggers:
+    - type: redis-streams
+      metadata:
+        address: valkey.landflow-dev.svc.cluster.local:6379
+        stream: landflow.v1.plugin.text-toolkit
+        consumerGroup: landflow.v1.plugin.text-toolkit
+        pendingEntriesCount: "6" # a replica's pending entries top out at LANDFLOW_MAX_CONCURRENCY (8): scale up before they all run at once
+        lagCount: "8" # = LANDFLOW_MAX_CONCURRENCY, the backlog per replica

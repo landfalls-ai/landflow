@@ -375,14 +375,14 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   behind a Service, fewest in flight first (`LANDFLOW_K8S_SPREAD`), and `LANDFLOW_K8S_NAMESPACES=*`
   watches every namespace (the `cluster-discovery` component: a read-only ClusterRole).
 
-## Planned next
+## Transports and MCP (built 2026-10-26)
 
 - One plugin, every transport, and MCP: plugins reachable over HTTP, gRPC and any common message
   broker (Kafka, RabbitMQ, NATS, Valkey Streams, MQTT, SQS, Pub/Sub, Service Bus, AMQP 1.0, Pulsar)
   through one messaging core and small drivers, chosen per call from live traffic, and every plugin
   also an MCP server: its own endpoint, and a bundled open-source MCP gateway (agentgateway) that
   every installed plugin registers into automatically. Decisions settled on 2026-10-26; see
-  [transports.md](transports.md). In progress, by its phases:
+  [transports.md](transports.md). Built in waves T1 to T5 on 2026-10-26, by its phases:
   - Phase 0 (spec, infra, gateway spike) ✅ Done: protocol §14 Messaging and §15 MCP; every broker
     and agentgateway 1.6.0 in `deploy/compose.infra.yml`, one profile each, with
     `deploy/scripts/brokers-smoke.sh`; the spike (`deploy/scripts/mcp-gateway-spike.mjs`,
@@ -426,8 +426,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
     `landflow-bridge` (`services/landflow-bridge`, `deploy/docker/bridge.Dockerfile`), which Python's
     `serve()` starts for kinds without a native driver. The concurrency and deadline behaviour is the same
     in the TS, Go and Python SDKs (`maxQueue` / `max_queue`, `capacity`, `x-landflow-deadline`), and a call
-    that arrives over a broker waits for a slot instead of being refused. Next: the Go and Python MCP
-    faces.
+    that arrives over a broker waits for a slot instead of being refused.
   - Phase 5 (Auto) ✅ Done: measurements, scoring, spill-over at `floor(maxConcurrency × share)`, the
     20 % / three-window hysteresis, the circuit breaker, `Health` probes and the capacity rule (a 429,
     `RESOURCE_EXHAUSTED` or `capacity` moves the call once and holds the endpoint for its `Retry-After`);
@@ -438,12 +437,30 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   - Phase 8 (Python native drivers) ✅ Done: `landflow_sdk.transport`, byte-compatible with the TS core,
     with the Kafka, RabbitMQ, NATS/JetStream and Valkey drivers (`landflow-sdk[kafka]`, `[amqp]`,
     `[nats]`, `[valkey]`, `[brokers]`).
-  - Known follow-ups: the Go Kafka driver's group mode fails one conformance case (the at-least-once
-    hand-over after a replica dies), so share mode is its default; the bundled plugins log "MCP face
-    not started" until they get an MCP token (the final wave sets one); MCP elicitation,
-    `resource_link` and `list_options`.
-  - Then: the Twilio pilot, workers with broker connections, broker manifests and KEDA docs, the
-    transport benchmark (phase 7), and every bundled plugin on the new SDKs.
+  - Phase 7 (Twilio pilot, queue mode, Kubernetes) ✅ Done: the Twilio node and a fake Twilio server, and the
+    walk-through on the local stack (an editor run over gRPC, a burst that spilled from gRPC to Kafka with every SMS sent
+    once, the plugin pinned to Kafka, an MCP call, `--mcp-stdio`); queue-mode workers that open the broker connections
+    and call broker-only plugins; Kubernetes broker components (`brokers`, `broker-transports`,
+    `overlays/orbstack-brokers`) and KEDA `ScaledObject` examples, checked on OrbStack (1 to 6 replicas on a JetStream
+    backlog and back); the gateway sidecar checked on OrbStack; `deploy/scripts/transport-bench.py` with
+    `plugins/transport-bench`. Auto now keeps the static order between near-equal kinds (a 2 ms floor), and a policy
+    change makes it choose afresh.
+  - Every bundled plugin on the new SDKs ✅ Done: Text Toolkit, Messaging, Crypto Toolkit, Google Workspace,
+    Databases, Insights and Productivity take broker faces from `LANDFLOW_TRANSPORTS` (TS images carry all eleven
+    client libraries, Go images link the tier 1 drivers, Python images the native tier 1 drivers plus
+    `landflow-bridge`), serve their own MCP face on loopback in dev (off in containers unless a token is set), set a
+    `maxConcurrency` default with its reason, and mark every read or pure operation `idempotent` (writes stay at
+    most once). The plugin images, Compose files and Kubernetes manifests carry the new settings.
+  - A core `nats` and a `jetstream` connection on the same server keep apart: JetStream subjects carry a `js.`
+    token (protocol §14.9).
+  - Known follow-ups: the Go Kafka driver's group mode fails one conformance case (the at-least-once hand-over after a
+    replica dies), so share mode is its default; MCP elicitation, `resource_link` and `list_options`; small MQTT
+    messages are slow in the benchmark (about 45 ms at 100 B); the Service Bus emulator needs every queue declared in
+    its `Config.json`; an Ingress for the gateway on Kubernetes.
+
+## Planned next
+
+Nothing is scheduled after the transport plan. The follow-ups above are the next candidates.
 
 ## Not planned
 

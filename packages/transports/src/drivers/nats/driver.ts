@@ -115,6 +115,9 @@ export const JETSTREAM_CAPABILITIES: BrokerCapabilities = {
   attempts: true,
 };
 
+/** The token `jetstream` mode puts in front of every channel name, so the two NATS kinds never share a subject on one server. */
+export const JETSTREAM_SUBJECT_TOKEN = 'js';
+
 /** Stream and consumer names may not contain `.`, `*` or `>`; channel names only use `.` of those. */
 export const streamNameOf = (channel: string, prefix = ''): string => prefix + channel.replaceAll('.', '_');
 
@@ -287,13 +290,13 @@ export class NatsDriver<C extends NatsConfig = NatsConfig> implements BrokerDriv
     const headers = this.toHeaders(event.headers);
     if (await this.isStream(channel)) {
       if (options?.ttlMs) headers.set(TTL_HEADER, ttlHeaderValue(options.ttlMs));
-      await this.js!.publish(channel, event.body, { headers, timeout: 10_000 });
+      await this.js!.publish(this.subjectOf(channel), event.body, { headers, timeout: 10_000 });
       return 'accepted';
     }
     // Core: publish with a reply inbox of ours and flush. The server answers a publish nobody subscribes to with a 503
     // on that inbox before it answers the flush's PING, so one round trip tells whether anyone took it.
     const token = String(++this.inboxSeq);
-    this.nc!.publish(channel, event.body, { headers, reply: `${this.inbox}.${token}` });
+    this.nc!.publish(this.subjectOf(channel), event.body, { headers, reply: `${this.inbox}.${token}` });
     await this.nc!.flush();
     return this.noResponders.delete(token) ? 'unroutable' : 'accepted';
   }
@@ -318,7 +321,7 @@ export class NatsDriver<C extends NatsConfig = NatsConfig> implements BrokerDriv
             resolve({ outcome: 'replied', event: reply });
           },
         });
-        this.js!.publish(channel, event.body, { headers, timeout: Math.min(options.timeoutMs, 10_000) }).catch((error: unknown) => {
+        this.js!.publish(this.subjectOf(channel), event.body, { headers, timeout: Math.min(options.timeoutMs, 10_000) }).catch((error: unknown) => {
           clearTimeout(timer);
           this.waiters.delete(token);
           reject(error);
@@ -326,7 +329,7 @@ export class NatsDriver<C extends NatsConfig = NatsConfig> implements BrokerDriv
       });
     }
     try {
-      const msg = await this.nc!.request(channel, event.body, { timeout: options.timeoutMs, headers });
+      const msg = await this.nc!.request(this.subjectOf(channel), event.body, { timeout: options.timeoutMs, headers });
       return { outcome: 'replied', event: this.fromMsg(msg) };
     } catch (error) {
       if (isNoResponders(error)) return { outcome: 'unroutable' };
@@ -404,7 +407,7 @@ export class NatsDriver<C extends NatsConfig = NatsConfig> implements BrokerDriv
     if (spec) return spec.delivery === 'shared' && spec.durable;
     if (this.streams.has(channel)) return true;
     try {
-      await this.jsm!.streams.find(channel);
+      await this.jsm!.streams.find(this.subjectOf(channel));
       this.streams.add(channel);
       return true;
     } catch (error) {
@@ -413,8 +416,19 @@ export class NatsDriver<C extends NatsConfig = NatsConfig> implements BrokerDriv
     }
   }
 
+  /** The NATS subject of a channel: the channel name itself for `nats`, `js.<channel>` for `jetstream` (streams, consumers, publishes, subscriptions). */
+  private subjectOf(channel: string): string {
+    return this.mode === 'jetstream' ? `${JETSTREAM_SUBJECT_TOKEN}.${channel}` : channel;
+  }
+
+  /** The channel name of a subject this driver produced with `subjectOf()`. */
+  private channelOf(subject: string): string {
+    const head = `${JETSTREAM_SUBJECT_TOKEN}.`;
+    return this.mode === 'jetstream' && subject.startsWith(head) ? subject.slice(head.length) : subject;
+  }
+
   private streamName(channel: string): string {
-    return streamNameOf(channel, (this.config as JetStreamConfig | undefined)?.streamPrefix);
+    return streamNameOf(this.subjectOf(channel), (this.config as JetStreamConfig | undefined)?.streamPrefix);
   }
 
   private async ensureStream(spec: ChannelSpec): Promise<void> {
@@ -425,7 +439,7 @@ export class NatsDriver<C extends NatsConfig = NatsConfig> implements BrokerDriv
     try {
       await this.jsm!.streams.add({
         name,
-        subjects: [spec.name],
+        subjects: [this.subjectOf(spec.name)],
         retention: RetentionPolicy.Workqueue,
         storage: config.storage === 'memory' ? StorageType.Memory : StorageType.File,
         discard: DiscardPolicy.Old,
@@ -500,7 +514,7 @@ export class NatsDriver<C extends NatsConfig = NatsConfig> implements BrokerDriv
     const pump = () => {
       while (!closed && queue.length > 0 && inFlight.size < options.prefetch) deliver(queue.shift()!);
     };
-    const sub = nc.subscribe(channel, {
+    const sub = nc.subscribe(this.subjectOf(channel), {
       ...(options.group && { queue: options.group }),
       callback: (error, msg) => {
         if (error || closed) return;
@@ -553,7 +567,7 @@ export class NatsDriver<C extends NatsConfig = NatsConfig> implements BrokerDriv
     try {
       await this.jsm!.consumers.add(stream, {
         durable_name: name,
-        filter_subject: channel,
+        filter_subject: this.subjectOf(channel),
         ack_policy: AckPolicy.Explicit,
         deliver_policy: DeliverPolicy.All,
         replay_policy: ReplayPolicy.Instant,

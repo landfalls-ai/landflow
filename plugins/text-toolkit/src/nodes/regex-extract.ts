@@ -8,6 +8,8 @@ export const RegexExtract = defineNode({
     description: 'Extract every match of a regular expression from a field',
     version: 1,
     kind: 'action',
+    // Pure transform: the same input always gives the same output, so a broker may safely deliver a call twice.
+    idempotent: true,
     categories: ['Text'],
     icon: 'file:regex-extract.svg',
     color: '#a78bfa',

@@ -172,6 +172,31 @@ Credentials are development values (`deploy/.env.example` has every port and pas
 broker user per plugin, as the spec wants for real deployments, isn't set up here: every dev broker has one user or
 none.
 
+### Transport benchmark
+
+`deploy/scripts/transport-bench.py` compares every installed transport on the same call, against the dev server and the brokers
+above (it starts and stops nothing in Docker):
+
+```bash
+export LANDFLOW_TRANSPORT_SECRET=...   # the dev server's value (or --secret-file <file holding it>)
+python3 deploy/scripts/transport-bench.py --out bench.json                       # a few minutes
+python3 deploy/scripts/transport-bench.py --kinds http,grpc,nats,kafka --calls 100 --sizes 100B,64KiB --concurrency 8 --duration 10
+```
+
+It starts `plugins/transport-bench` (one node, Echo, returning its input) with tsx on `--port` (7620; gRPC on the next port)
+with a face for each kind, creates one connection per broker (`TMP T4-D <kind>`), publishes a baseline workflow (webhook -> Set) and an echo
+workflow (webhook -> `transport-bench.echo`), then for each kind pins the plugin to it (`PATCH /api/plugins/transport-bench`),
+warms up and times `--calls` sequential webhook calls per size (p50, p95, p99, mean, errors) and `--concurrency` callers for
+`--duration` seconds (calls/s). The table subtracts the baseline p50 (engine and HTTP overhead) and shows the host's own p50 for
+the kind. Kinds with no answering local broker, a message cap below the payload, or no discovery by the host are skipped and
+listed. Everything it created is deleted at the end, also on Ctrl-C.
+
+Caveats: every broker is a single local container or emulator (LocalStack for SQS, the Pub/Sub and Service Bus emulators), so
+they differ from the real services and from a clustered broker; the host, the plugin, the brokers and the load generator share
+one machine; Python's callers are threads on one core. Read the numbers as relative (which transport costs more, and how
+size changes it), not as capacity. The Service Bus emulator's entities are fixed in `infra/servicebus/Config.json`: the bench
+plugin's queue (`landflow.v1.plugin.transport-bench`) is not there, so that kind is skipped until it is added and the emulator recreated.
+
 ## Using the infra from the dev server on the host
 
 Set these before `pnpm dev` / `pnpm dev:all` for traces (sign-in, email and SSO are in the next section):
@@ -257,6 +282,16 @@ docker build -f deploy/docker/go-plugin.Dockerfile --build-arg PLUGIN=databases 
 
 **Plugins.** Each container sets `LANDFLOW_REGISTRY_URL=http://web:3000` and `LANDFLOW_ADVERTISE_HOST=<service name>`, so it announces `http://<service>:<port>` and `grpc://<service>:<port>` and heartbeats every 10 s. With `LANDFLOW_REGISTRY_SECRET` set on the host, add the same value to `x-plugin-env` so they may register. Stopping a container withdraws it at once; restarting the host is picked up on the next heartbeat. The host's scan (`LANDFLOW_SCAN_HOSTS`, `LANDFLOW_SCAN_PORTS`) probes the plugin services too, so the Plugins page's "Scan network" works in Docker.
 
+**Plugins and transports.** Every plugin image carries its SDK's broker drivers. TypeScript images have `@landflow/transports` and all eleven client libraries, native Kafka and Pulsar clients included. Go images link the tier 1 drivers (Kafka, RabbitMQ, NATS/JetStream, Valkey), and tier 2 kinds reach a Go plugin through `landflow-bridge`. Python images install the SDK with its `grpc`, `mcp` and `brokers` extras (native Kafka, RabbitMQ, NATS/JetStream and Valkey drivers) and carry `landflow-bridge` for the other kinds (about 50 MB). A broker face runs only when `LANDFLOW_TRANSPORTS` names it, plus `LANDFLOW_<KIND>_URL` for each kind; the default stays `http,grpc`. `LANDFLOW_TRANSPORTS` selects every face, the MCP face included, so a list that leaves out `mcp` turns it off in all three SDKs. Over a broker, calls are encrypted and signed with `LANDFLOW_TRANSPORT_SECRET`, which must equal the host's.
+
+| Where | Broker faces | The plugin's own MCP face |
+|---|---|---|
+| Dev (a plugin on the Mac) | `LANDFLOW_TRANSPORTS=http,grpc,mcp,nats LANDFLOW_NATS_URL=nats://127.0.0.1:54222 LANDFLOW_TRANSPORT_SECRET=…` | On, on loopback, no token (`http://127.0.0.1:7101/mcp`); `LANDFLOW_MCP=off` disables it |
+| Compose (`compose.yml`, `compose.queue.yml`) | `LANDFLOW_PLUGIN_TRANSPORTS=http,grpc,nats` plus the `LANDFLOW_<KIND>_URL` lines in `x-plugin-env`; `LANDFLOW_TRANSPORT_SECRET` is passed through (queue mode: `LANDFLOW_QUEUE_TRANSPORT_SECRET`) | Off (`LANDFLOW_PLUGIN_MCP`, default `off`); `LANDFLOW_PLUGIN_MCP=on` needs `LANDFLOW_PLUGIN_MCP_TOKEN` because containers listen on 0.0.0.0, and `mcp` in `LANDFLOW_PLUGIN_TRANSPORTS` |
+| Kubernetes | The `broker-transports` component writes `LANDFLOW_TRANSPORTS`, the URLs and the secret ("Brokers on Kubernetes") | Off (`LANDFLOW_MCP=off` in each plugin manifest, which shows how to turn it on with a token Secret) |
+
+Agents reach plugins through the host's per-plugin MCP endpoints and the bundled gateway, so a container doesn't need its own `/mcp`.
+
 **Mixing Docker and the Mac.** A plugin running on the Mac can join the dockerised host if it advertises an address the container can reach:
 
 ```bash
@@ -283,6 +318,10 @@ python3 deploy/scripts/queue-e2e.py      # load spread, a killed worker, a kille
 | `text-toolkit` | not published | registers through the load balancer; the mains keep its address in Postgres and the workers call it directly |
 
 Every process shares the database `landflow_queue` (`LANDFLOW_QUEUE_DATABASE`), the Valkey key prefix `landflow-queue`, the `landflow-queue_landflow-queue-data` volume at `/data` (agent files, one insights rollup per process; credentials and settings files are in the database, imported once from `/data` on the first start: `LANDFLOW_CONFIG_STORE`), the encryption key and file-link secret (development values; `LANDFLOW_QUEUE_ENCRYPTION_KEY`, `LANDFLOW_QUEUE_BINARY_SECRET`) and the binary store: MinIO's `landflow` bucket under `queue/`, with the endpoint (`http://minio:9000`) and keys set explicitly, so the AWS default credential chain is never used. Traces: `LANDFLOW_QUEUE_OTLP_ENDPOINT=http://jaeger:4318` (with the `observability` profile); a run's trace goes from the main that took the webhook to the worker that ran it.
+
+**Brokers in queue mode.** Mains **and workers** open the instance's enabled broker connections (`LANDFLOW_TRANSPORT_SECRET`, set for every process in `compose.queue.yml`; `LANDFLOW_QUEUE_TRANSPORT_SECRET` changes it). Connections live in the shared database: add one through any main (Settings → Transports, or `POST /api/transports/connections`) and every main and worker opens it within a second; edit it and they reopen it; disable or delete it and they close it (NATS's `/connz` on 58222 shows the client count go from 5 to 1 and back). A worker discovers plugins over the brokers itself and chooses a transport per call with Auto, so a plugin that is announced only on a broker (no HTTP or gRPC address) runs in the workers. Both networks are attached, so the brokers are `nats:4222`, `kafka:9092`, `rabbitmq:5672`, `valkey:6379` and so on in the connection's URL. The workers do not sync the MCP gateway (each main's sidecar does: `/mcp` through the load balancer goes to port 4000 of a main). The image links the broker clients the worker bundle leaves external (`@confluentinc/kafka-javascript`, `pulsar-client`, `@aws-sdk/client-sqs`, `@google-cloud/pubsub`) into `/app/node_modules` and ships the Kafka and Pulsar native addons, which Next's standalone trace skips.
+
+Try it: add a NATS connection (`{"name":"TMP nats","kind":"nats","config":{"url":"nats://nats:4222"}}`), stop the `text-toolkit` container and run the plugin on the Mac with only the broker face: `LANDFLOW_TRANSPORTS=nats LANDFLOW_NATS_URL=nats://127.0.0.1:54222 LANDFLOW_REGISTRY_URL=off LANDFLOW_MCP=off LANDFLOW_TRANSPORT_SECRET=landflow-queue-dev-only-transport-secret LANDFLOW_HTTP_PORT=7581 LANDFLOW_GRPC_PORT=7582 pnpm --filter @landflow/plugin-text-toolkit start`. A webhook workflow with a `text-toolkit.slugify` node then runs in the workers over NATS (`plugin.rpc Execute` spans in their logs carry `landflow.transport: nats`).
 
 What `queue-e2e.py` checks, and what it measured on OrbStack:
 
@@ -422,6 +461,10 @@ diff, and overlays for the differences between clusters. A Helm chart would add 
 | `k8s/components/cluster-discovery` | optional: discovery in every namespace: a **ClusterRole** (`get`/`list`/`watch` on `services` and `endpointslices`, nothing else) bound to `landflow-host`, and `LANDFLOW_K8S_NAMESPACES=*` |
 | `k8s/overlays/orbstack` | OrbStack: namespace `landflow-dev`, the local `:k8s-dev` images with `imagePullPolicy: Never`, an `emptyDir` instead of the PVC, dev-only Secrets (`landflow-registry`, `landflow-host` with the owner) |
 | `k8s/overlays/orbstack-cluster-wide` | the OrbStack overlay plus `cluster-discovery` |
+| `k8s/components/{kafka,rabbitmq,nats}`, `k8s/components/valkey` | optional: one message broker each, one small pod and a Service (`kafka:9092` KRaft, `rabbitmq:5672`, `nats:4222` with JetStream, `valkey:6379`), the images and versions of `compose.infra.yml`, data in an `emptyDir`. `k8s/components/brokers` takes all four |
+| `k8s/components/broker-transports` | optional: points the host and the TypeScript plugins at the brokers: ConfigMap `landflow-transport` (`LANDFLOW_<KIND>_URL`, `LANDFLOW_TRANSPORT_<KIND>_URL`, `LANDFLOW_MAX_CONCURRENCY`), a ConfigMap `landflow-transport-<plugin>` with `LANDFLOW_TRANSPORTS`, and a Secret `landflow-transport` (`LANDFLOW_TRANSPORT_SECRET`, the AMQP URLs) |
+| `k8s/overlays/orbstack-brokers` | the OrbStack overlay plus `brokers` and `broker-transports` |
+| `k8s/examples/keda/` | KEDA `ScaledObject`s per broker (not in any overlay): "Autoscaling with KEDA" below |
 
 For another cluster, copy the overlay: set the namespace, the image registry and tags (`images:`), real Secrets
 (`landflow-registry` key `secret`; `landflow-host` keys `encryption-key`, `owner-email`, `owner-password`; all optional),
@@ -492,6 +535,101 @@ when the host can't reach pod IPs). Keep the host at one replica on SQLite.
 | `LANDFLOW_K8S_LABEL_SELECTOR` | `landflow.dev/plugin=true` | which Services count as plugins |
 | `LANDFLOW_K8S_RESYNC_SECONDS` | `300` | full re-list interval (`0`: off) |
 | `LANDFLOW_REGISTRY_SECRET` | – | discovered plugins must prove it (protocol §13); set the same value on the plugins |
+
+### The MCP gateway sidecar
+
+The `landflow-host` pod has two containers: `host` and `mcp-gateway` (agentgateway 1.6, the config from the ConfigMap
+`landflow-mcp-gateway`). Checked on OrbStack (host image built from the tree, the orbstack overlay applied): the pod is
+`2/2` ready; the host's log says `mcp gateway sync started` (`mode: bundled`, admin API `http://127.0.0.1:15000`) and
+`mcp gateway targets changed` with the plugins; `GET /api/mcp/gateway` lists every target `in-step`; and
+`POST /mcp` through `kubectl port-forward svc/landflow-host 54000:4000` answers `initialize`. The admin API is on the pod's
+loopback only: reach it with `kubectl port-forward pod/<host pod> 55000:15000`.
+
+```bash
+kubectl --context orbstack -n landflow-dev port-forward svc/landflow-host 54000:4000 53000:3000 &
+kubectl --context orbstack -n landflow-dev port-forward pod/$(kubectl --context orbstack -n landflow-dev get pod -l app.kubernetes.io/name=landflow-host -o name | cut -d/ -f2) 55000:15000 &
+curl -s -X POST localhost:54000/mcp -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}'
+```
+
+### Brokers on Kubernetes
+
+`k8s/overlays/orbstack-brokers` is the OrbStack overlay plus Kafka (KRaft), RabbitMQ, NATS with JetStream and Valkey in
+`landflow-dev`, and the host and the TypeScript plugins (text-toolkit, messaging) connected to all four. Without it nothing
+changes: the base plugin Deployments read their broker settings through `envFrom` on optional ConfigMaps and a Secret, which
+only `broker-transports` creates. The environment a plugin gets:
+
+| Variable | From | Meaning |
+|---|---|---|
+| `LANDFLOW_TRANSPORTS` | ConfigMap `landflow-transport-<plugin>` | faces to start: `http,grpc,kafka,amqp,jetstream,valkey`. Keep `http,grpc` while the plugin is found through its Service; a broker-only plugin lists none of them and needs no Service |
+| `LANDFLOW_KAFKA_URL`, `LANDFLOW_AMQP_URL`, `LANDFLOW_JETSTREAM_URL`, `LANDFLOW_VALKEY_URL` | ConfigMap / Secret `landflow-transport` | what a plugin connects to (`LANDFLOW_<KIND>_USERNAME`, `_PASSWORD`, `_TLS`, `_PREFIX` also work) |
+| `LANDFLOW_TRANSPORT_SECRET` | Secret `landflow-transport` | the key for end-to-end encryption and signing; the same value on the host and every brokered plugin (development value: replace it) |
+| `LANDFLOW_MAX_CONCURRENCY` | ConfigMap `landflow-transport` | calls one replica runs at once (8 here) |
+
+The host gets `LANDFLOW_TRANSPORT_<KIND>_URL` for each broker, one read-only connection `env-<kind>` per URL (Settings →
+Transports), and the same secret. Both are patched into the host Deployment by the component.
+
+```bash
+kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-brokers
+kubectl --context orbstack -n landflow-dev get pods                      # kafka takes about 40 s to become ready
+kubectl --context orbstack -n landflow-dev port-forward svc/landflow-host 53000:3000 &
+# sign in as the dev owner (owner@landflow.test / landflow-dev-only), then:  GET /api/transports/connections, GET /api/plugins
+# Back to no brokers:
+kubectl --context orbstack -n landflow-dev delete deploy/kafka deploy/rabbitmq deploy/nats deploy/valkey svc/kafka svc/rabbitmq svc/nats svc/valkey \
+  cm/landflow-transport cm/landflow-transport-text-toolkit cm/landflow-transport-messaging secret/landflow-rabbitmq secret/landflow-transport
+kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack
+```
+
+**Plugin images for brokers.** Every plugin image carries its SDK's broker drivers ("Plugins and transports" above), so
+the stock `:k8s-dev` images run the faces that `broker-transports` names. Each plugin manifest sets `LANDFLOW_MCP=off`: agents
+reach the plugin through the host's per-plugin MCP endpoint and the gateway. To give a pod its own `/mcp`, set
+`LANDFLOW_MCP=on`, add `mcp` to `LANDFLOW_TRANSPORTS`, and set `LANDFLOW_MCP_TOKEN` from a Secret.
+
+### Autoscaling with KEDA
+
+[KEDA](https://keda.sh) scales a plugin Deployment on the backlog of its request channel, which is the number that
+matters for a brokered plugin: CPU says nothing while calls wait in a queue. `k8s/examples/keda/` has one `ScaledObject`
+per broker for `plugin-text-toolkit`. They are not in any overlay (KEDA is a cluster add-on; the manifests do not install
+it), and one Deployment can have only one `ScaledObject`. Names follow protocol §14.2: the request channel of a plugin is
+`landflow.v1.plugin.<pluginId>` (with the connection's prefix, default `landflow`), and its group has the same name.
+
+| Broker | Trigger (`k8s/examples/keda/`) | Names | Metric and target |
+|---|---|---|---|
+| Kafka | `kafka` (`kafka.yaml`) | `topic` and `consumerGroup`: `landflow.v1.plugin.<id>` | consumer group lag; `lagThreshold` per replica. Replicas past the partition count (6 by default, 3 on the dev broker) sit idle: keep `maxReplicaCount` under it. A Go plugin's share group is not visible to this scaler: use `LANDFLOW_KAFKA_MODE=group` there |
+| RabbitMQ | `rabbitmq` (`rabbitmq.yaml`), `protocol: amqp`, `mode: QueueLength` | `queueName`: `landflow.v1.plugin.<id>` | messages ready in the quorum queue; `value` per replica. Unacknowledged calls held by replicas (prefetch = `maxConcurrency`) are not counted |
+| NATS JetStream | `nats-jetstream` (`jetstream.yaml`), against the monitoring port 8222 | `stream` and `consumer`: the channel with `.` as `_`, `landflow_v1_plugin_<id>`; `account: "$G"` | the consumer's pending messages (`num_pending`); `lagThreshold` per replica. Core `nats` has no backlog to read |
+| Valkey / Redis Streams | `redis-streams` (`valkey.yaml`) | `stream` and `consumerGroup`: `landflow.v1.plugin.<id>` (after the connection's key prefix) | pending entries of the group (`pendingEntriesCount`) and its lag (`lagCount`). Pending entries are calls being run, at most `maxConcurrency` per replica; the lag is the backlog behind them |
+
+KEDA runs in its own namespace, so every address in a trigger is the Service's full DNS name
+(`nats.landflow-dev.svc.cluster.local:8222`), and the Kafka broker advertises its full name for the same reason. RabbitMQ's
+credentials come from a Secret through a `TriggerAuthentication`.
+
+**Numbers.** Set the target per replica to `LANDFLOW_MAX_CONCURRENCY` (8 above): the backlog one replica would still be
+working through. A replica runs `maxConcurrency` calls and queues `maxQueue` (default the same) more, refusing the rest with
+`capacity`. Auto's spill-over starts when the direct transports have `floor(maxConcurrency x share)` calls in flight per
+replica (share 0.8 `balanced`, 1.0 `latency`, 0.6 `throughput`) and sends the rest to a buffering broker, so a backlog
+appears when the replicas are at their threshold; more replicas raise that threshold in step, and the replicas the scaler
+adds are what drains the backlog. A lower target scales sooner and larger; one far above `maxConcurrency` lets calls wait
+for a replica that is already full. `maxReplicaCount` is the limit the broker allows (Kafka: partitions) and the cluster
+can carry. Scale-up is limited by the HPA (the examples allow four pods per 15 s) and by how long a pod needs to become
+ready; scale-down waits for the stabilization window (30 s in the examples).
+
+**Scaling to zero** (`minReplicaCount: 0`, with `pollingInterval` and `cooldownPeriod`) is only for a **broker-only** plugin:
+`LANDFLOW_TRANSPORTS` without `http` and `grpc`, no Service. A plugin that is also served over HTTP or gRPC is found through
+its Service, and the host would call an endpoint with no pod behind it. A broker-only plugin at zero is not announced, so
+the host sees it offline until the first message wakes a replica: the first call after idle pays the pod start, and the
+plugin's manifest hash is unknown until then. Do not use it for interactive plugins.
+
+```bash
+kubectl --context orbstack apply -f deploy/k8s/examples/keda/jetstream.yaml     # KEDA must be installed
+kubectl --context orbstack -n landflow-dev get scaledobject,hpa
+```
+
+Tested on OrbStack with KEDA 2.21.0 (`kubectl apply --server-side -f` the release's `keda-2.21.0.yaml`, installed only for
+the test and removed with `kubectl delete -f` of the same file): the JetStream example scaled `plugin-text-toolkit` from 1 to
+5 replicas about 15 s after a backlog of roughly 230 pending messages built up, to 6 about 15 s later, and back to 1 after the backlog
+drained and the 30 s window passed;
+the Kafka, RabbitMQ and Valkey examples were applied one at a time and reported `Ready`.
 
 ### A host on the Mac against the cluster
 

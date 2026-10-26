@@ -202,6 +202,78 @@ class JetStreamCoreConformance(CoreConformance, unittest.TestCase):
         delete_jetstream_streams()
 
 
+@unittest.skipIf(_nats_skip, _nats_skip)
+class NatsAndJetStreamOnOneServer(unittest.TestCase):
+    """A ``nats`` and a ``jetstream`` driver on one server with the same channel names, at the same time: requests reach only
+    their own consumer, replies are right, and an announce on one kind's registry channel is not seen by the other."""
+
+    def test_kinds_do_not_share_subjects(self) -> None:
+        import time
+
+        from landflow_sdk.transport.driver import ChannelSpec, ConsumeOptions, WireEvent
+
+        prefix = f"lftest-same-{RUN}"
+        stream_prefix = f"{prefix}-"
+        plugin, registry = f"{prefix}.v1.plugin.echo", f"{prefix}.v1.registry"
+        specs = [ChannelSpec(plugin, "request", "shared", True), ChannelSpec(registry, "registry", "broadcast", False)]
+
+        def event(text: str) -> WireEvent:
+            return WireEvent({"specversion": "1.0", "id": text, "type": "test", "source": "test"}, text.encode())
+
+        drivers = {
+            "core": load_driver("nats").create(),
+            "js": load_driver("jetstream").create(),
+        }
+        drivers["core"].connect(load_driver("nats").config_from("same-core", NATS, {}))
+        drivers["js"].connect(load_driver("jetstream").config_from("same-js", NATS, {"streamPrefix": stream_prefix}))
+        requests: dict[str, list[str]] = {"core": [], "js": []}
+        announces: dict[str, list[str]] = {"core": [], "js": []}
+        subs = []
+        try:
+            for who, driver in drivers.items():
+                driver.declare(specs)
+
+                def on_request(e: WireEvent, d, who=who) -> None:
+                    requests[who].append(e.body.decode())
+                    d.reply(event(f"{who}:{e.body.decode()}"))
+                    d.ack()
+
+                subs.append(driver.consume(plugin, ConsumeOptions(prefetch=4, group=plugin), on_request))
+                subs.append(driver.consume(registry, ConsumeOptions(prefetch=4, ack_mode="auto"), lambda e, d, who=who: announces[who].append(e.body.decode())))
+            for who, driver in drivers.items():
+                result = driver.request(plugin, event(who), 3000)
+                self.assertEqual(result.outcome, "replied", who)
+                self.assertEqual(result.event.body.decode(), f"{who}:{who}")
+            self.assertEqual(requests, {"core": ["core"], "js": ["js"]})
+            for who, driver in drivers.items():
+                driver.publish(registry, event(f"from-{who}"))
+            deadline = time.time() + 3
+            while time.time() < deadline and not (announces["core"] and announces["js"]):
+                time.sleep(0.02)
+            time.sleep(0.3)
+            self.assertEqual(announces, {"core": ["from-core"], "js": ["from-js"]})
+        finally:
+            for sub in subs:
+                sub.close()
+            for driver in drivers.values():
+                driver.close()
+            import asyncio
+
+            import nats
+
+            async def cleanup() -> None:
+                nc = await nats.connect(NATS)
+                js = nc.jetstream()
+                try:
+                    for info in await js.streams_info():
+                        if info.config.name.startswith(stream_prefix):
+                            await js.delete_stream(info.config.name)
+                finally:
+                    await nc.close()
+
+            asyncio.run(cleanup())
+
+
 # --- Valkey ---------------------------------------------------------------------------------------------------------------
 
 _valkey_skip = reason_to_skip("valkey", VALKEY, *host_port(VALKEY, 6379))

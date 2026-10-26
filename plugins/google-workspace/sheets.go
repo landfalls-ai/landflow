@@ -30,7 +30,7 @@ var sheetOperations = []landflow.PropertyOption{
 	{Name: "Append or Update Row", Value: "appendOrUpdate", Description: "Append a new row or update an existing one (upsert)", Action: "Append or update row in sheet"},
 	{Name: "Append Row", Value: "append", Description: "Create a new row in a sheet", Action: "Append row in sheet"},
 	{Name: "Clear", Value: "clear", Description: "Delete all the contents of a sheet", Action: "Clear sheet"},
-	{Name: "Get Row(s)", Value: "read", Description: "Retrieve one or more rows from a sheet", Action: "Get row(s) in sheet"},
+	{Name: "Get Row(s)", Value: "read", Description: "Retrieve one or more rows from a sheet", Action: "Get row(s) in sheet", Idempotent: true},
 	{Name: "Update Row", Value: "update", Description: "Update an existing row in a sheet", Action: "Update row in sheet"},
 }
 

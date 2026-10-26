@@ -40,7 +40,7 @@ func (DocsNode) Description() landflow.NodeDescriptor {
 			resourceProperty("document", landflow.PropertyOption{Name: "Document", Value: "document"}),
 			operationProperty("document", "create",
 				landflow.PropertyOption{Name: "Create", Value: "create", Description: "Create a document", Action: "Create a document"},
-				landflow.PropertyOption{Name: "Get", Value: "get", Description: "Get a document", Action: "Get a document"},
+				landflow.PropertyOption{Name: "Get", Value: "get", Description: "Get a document", Action: "Get a document", Idempotent: true},
 				landflow.PropertyOption{Name: "Update", Value: "update", Description: "Update a document", Action: "Update a document"},
 			),
 			{Name: "title", DisplayName: "Title", Type: landflow.PropString, Default: "", Required: true,

@@ -1,0 +1,45 @@
+# RabbitMQ: scale plugin-text-toolkit on the messages waiting in its request queue.
+#   queueName: the request channel's name, landflow.v1.plugin.<pluginId> (a durable quorum queue; replicas are competing consumers).
+#   metric:    QueueLength = messages ready (not yet delivered). Calls a replica holds unacknowledged (up to its prefetch = maxConcurrency)
+#              are not counted, so the value is the backlog beyond what the replicas already run.
+#   host:      the AMQP URL with the credentials, through a TriggerAuthentication from the Secret below. KEDA runs in its own namespace, so
+#              the host is the Service's full DNS name (the `rabbitmq` short name in `landflow-transport` does not resolve there).
+#              Development credentials, the same as components/rabbitmq; replace them with the real ones.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: plugin-text-toolkit-rabbitmq
+  namespace: landflow-dev
+  labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: autoscaling }
+stringData:
+  host: amqp://landflow:landflow-dev-only@rabbitmq.landflow-dev.svc.cluster.local:5672/
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: plugin-text-toolkit-rabbitmq
+  namespace: landflow-dev
+  labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: autoscaling }
+spec:
+  secretTargetRef:
+    - { parameter: host, name: plugin-text-toolkit-rabbitmq, key: host }
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: plugin-text-toolkit-rabbitmq
+  namespace: landflow-dev
+  labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: autoscaling }
+spec:
+  scaleTargetRef:
+    name: plugin-text-toolkit
+  minReplicaCount: 1
+  maxReplicaCount: 6
+  triggers:
+    - type: rabbitmq
+      authenticationRef: { name: plugin-text-toolkit-rabbitmq }
+      metadata:
+        protocol: amqp
+        queueName: landflow.v1.plugin.text-toolkit
+        mode: QueueLength
+        value: "8" # = LANDFLOW_MAX_CONCURRENCY

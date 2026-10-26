@@ -19,6 +19,8 @@ export class Template implements INodeType {
     description: 'Render a text template per item using [[field]] placeholders',
     version: 1,
     kind: 'action',
+    // Pure transform: the same input always gives the same output, so a broker may safely deliver a call twice.
+    idempotent: true,
     categories: ['Text'],
     icon: 'file:template.svg',
     color: '#38bdf8',

@@ -114,3 +114,26 @@ curl -s localhost:7105/landflow/v1/execute -d '{"protocol":"landflow.plugin/v1",
 - `ctx.http.request(..., verify=False)` (or an `ssl_context=`) would allow n8n's "Ignore SSL Issues" option.
 - `http_client.py` reads 4xx/5xx bodies from `urllib.error.HTTPError` without closing it, which prints
   `ResourceWarning` under `-W default` (wrap the read in `with exc:`).
+
+## Transports
+
+By default the plugin serves HTTP and gRPC and announces both to the host. To add a broker, name its kind in `LANDFLOW_TRANSPORTS` and give the
+connection URL (the host needs a matching connection under Settings → Transports):
+
+```sh
+LANDFLOW_TRANSPORTS=http,grpc,nats LANDFLOW_NATS_URL=nats://127.0.0.1:54222 LANDFLOW_TRANSPORT_SECRET=… .venv/bin/python main.py
+```
+
+`./setup.sh` installs the SDK with the `grpc`, `mcp` and `brokers` extras: `kafka`, `amqp` (RabbitMQ), `nats` (also `jetstream`) and `valkey` run on
+native Python drivers. The other kinds (`mqtt`, `amqp1`, `pulsar`, `sqs`, `pubsub`, `servicebus`) go through `landflow-bridge`, which the SDK starts
+as a child process when it finds the binary (`LANDFLOW_BRIDGE_BIN`, `landflow-bridge` on PATH, or `services/landflow-bridge/bin/landflow-bridge`);
+the container image carries it. Over a broker, calls are encrypted and signed with `LANDFLOW_TRANSPORT_SECRET` (the host's value).
+
+**`max_concurrency`** is how many calls run at once across all faces: the default is **8** (`DEFAULT_MAX_CONCURRENCY` in `main.py`): the upstream APIs are rate limited per token (Notion about 3 requests/s, Airtable 5/s per base, HubSpot about 100 per 10 s, GitHub's secondary limit, Jira's per-tenant throttle); more replicas add capacity. `LANDFLOW_MAX_CONCURRENCY` overrides it.
+
+**`idempotent`.** The action nodes are at most once over a broker (`idempotent: false`: creates, updates, upserts, archives, deletes, transitions, comments), and these read operations opt in with `idempotent: true`: Notion `page` get/search and `databasePage` getAll; Airtable `record` get/search; GitHub `file`/`repository`/`issue` get, `release`/`issue` getAll; Jira `issue` get/getAll; HubSpot `contact` get/search. `rssFeedRead` only reads a feed, so it is `idempotent: true`. The polling triggers and the GitHub webhook trigger keep the default (they hold poll state or webhooks).
+
+**MCP.** Every operation is a tool (`github_issue_create`, `notion_page_archive`, `jira_issue_getAll`, `rssFeedRead`, …), with `idempotentHint` following the flags above; credentials come from the caller's grant through the host. The face listens on the HTTP port at `/mcp`; the bind address follows the SDK (`LANDFLOW_BIND_HOST`, else loopback unless
+`LANDFLOW_ADVERTISE_HOST` is set, as in a container, when it is `0.0.0.0` and `LANDFLOW_MCP_TOKEN` is required). In dev it is on, on loopback, with
+no token. Containers and the Kubernetes manifest set `LANDFLOW_MCP=off`: agents reach the plugin through the host's per-plugin endpoint and the
+gateway.

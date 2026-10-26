@@ -71,7 +71,8 @@ for (const kind of KINDS) {
         inputs: [[{ json: { n: 1 } }]],
       };
       const reply = await client.invoke(pluginId, 'Execute', request, { timeoutMs: 20_000, delivery: 'at-least-once' });
-      expect(reply.body.outputs).toEqual([[{ json: { n: 1, echoed: true } }]]);
+      // 1:1 outputs get pairedItem filled in by the runtime (src/runtime.ts).
+      expect(reply.body.outputs).toEqual([[{ json: { n: 1, echoed: true }, pairedItem: { item: 0 } }]]);
       expect(await client.call(pluginId, 'Health', {}, { timeoutMs: 20_000 })).toMatchObject({ status: 'ok', pluginId });
     });
   });

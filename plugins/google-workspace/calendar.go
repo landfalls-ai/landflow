@@ -81,8 +81,8 @@ func (CalendarNode) Description() landflow.NodeDescriptor {
 			operationProperty("event", "create",
 				landflow.PropertyOption{Name: "Create", Value: "create", Description: "Add an event to a calendar", Action: "Create an event"},
 				landflow.PropertyOption{Name: "Delete", Value: "delete", Description: "Delete an event", Action: "Delete an event"},
-				landflow.PropertyOption{Name: "Get", Value: "get", Description: "Retrieve an event", Action: "Get an event"},
-				landflow.PropertyOption{Name: "Get Many", Value: "getAll", Description: "Retrieve many events from a calendar", Action: "Get many events"},
+				landflow.PropertyOption{Name: "Get", Value: "get", Description: "Retrieve an event", Action: "Get an event", Idempotent: true},
+				landflow.PropertyOption{Name: "Get Many", Value: "getAll", Description: "Retrieve many events from a calendar", Action: "Get many events", Idempotent: true},
 				landflow.PropertyOption{Name: "Update", Value: "update", Description: "Update an event", Action: "Update an event"},
 			),
 			{

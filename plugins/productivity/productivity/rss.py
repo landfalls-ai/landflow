@@ -392,6 +392,7 @@ class RssFeedRead(Node):
         "description": "Read the items of an RSS 2.0, RSS 1.0 (RDF) or Atom feed",
         "version": 1,
         "kind": "action",
+        "idempotent": True,  # only reads a feed
         "categories": ["Utility"],
         "icon": "file:icons/rss.svg",
         "color": "#F26522",

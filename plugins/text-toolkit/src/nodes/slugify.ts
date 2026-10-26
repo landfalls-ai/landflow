@@ -16,6 +16,8 @@ export class Slugify implements INodeType {
     description: 'Turn text into a URL-safe slug',
     version: 1,
     kind: 'action',
+    // Pure transform: the same input always gives the same output, so a broker may safely deliver a call twice.
+    idempotent: true,
     categories: ['Text'],
     icon: 'file:slugify.svg',
     color: '#60a5fa',

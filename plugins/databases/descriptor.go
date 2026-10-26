@@ -38,7 +38,7 @@ func (n sqlNode) Description() landflow.NodeDescriptor {
 				{Name: "Execute Query", Value: "executeQuery", Description: "Run an SQL query with bound parameters", Action: "Execute a SQL query"},
 				{Name: "Insert", Value: "insert", Description: "Insert rows in a table", Action: "Insert rows in a table"},
 				{Name: "Insert or Update", Value: "upsert", Description: "Insert rows, or update them when the key already exists", Action: "Insert or update rows in a table"},
-				{Name: "Select", Value: "select", Description: "Select rows from a table", Action: "Select rows from a table"},
+				{Name: "Select", Value: "select", Description: "Select rows from a table", Action: "Select rows from a table", Idempotent: true},
 				{Name: "Update", Value: "update", Description: "Update rows in a table", Action: "Update rows in a table"},
 			},
 		},

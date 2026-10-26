@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create .venv/ here and install the Landflow Python SDK (editable) with the gRPC extra.
+# Create .venv/ here and install the Landflow Python SDK (editable) with the gRPC, MCP and broker extras.
 # A venv is required on Homebrew Python (PEP 668 "externally managed").
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -15,6 +15,6 @@ if [ ! -x .venv/bin/python ]; then
   "$PYTHON" -m venv .venv
 fi
 
-.venv/bin/python -m pip install --quiet --disable-pip-version-check -e "../../sdks/python[grpc]"
-.venv/bin/python -c 'import landflow_sdk, landflow_sdk.grpc_server, grpc; print(f"landflow-sdk {landflow_sdk.__version__} installed (grpcio {grpc.__version__})")'
+.venv/bin/python -m pip install --quiet --disable-pip-version-check -e "../../sdks/python[grpc,mcp,brokers]"
+.venv/bin/python -c 'import landflow_sdk, landflow_sdk.grpc_server, grpc, mcp, nats, valkey, pika, confluent_kafka; print(f"landflow-sdk {landflow_sdk.__version__} installed (grpcio {grpc.__version__}, mcp, broker drivers)")'
 echo "run: .venv/bin/python main.py"

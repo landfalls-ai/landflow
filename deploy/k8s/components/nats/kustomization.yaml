@@ -1,0 +1,6 @@
+# Optional: NATS 2 with JetStream (file store), service `nats` (client 4222, monitoring 8222; `/jsz` and `/varz`, which KEDA's
+# nats-jetstream scaler reads). Same image and flags as the `nats` profile of deploy/compose.infra.yml. No authentication.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - nats.yaml

@@ -1,0 +1,34 @@
+# NATS JetStream: scale plugin-text-toolkit on the pending messages of its durable pull consumer.
+#   stream / consumer: the request channel with '.' written as '_' (landflow.v1.plugin.text-toolkit → landflow_v1_plugin_text-toolkit);
+#                      the driver names the work-queue stream and its one durable consumer the same (packages/transports/src/drivers/nats).
+#   metric:            the consumer's pending messages (JetStream `num_pending`: published, not yet delivered to a replica).
+#   target:            lagThreshold messages per replica → replicas = ceil(pending / lagThreshold).
+# KEDA reads the monitoring port (8222) of the server, not the client port; JetStream's account is `$G` without accounts.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: plugin-text-toolkit-jetstream
+  namespace: landflow-dev
+  labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: autoscaling }
+spec:
+  scaleTargetRef:
+    name: plugin-text-toolkit
+  minReplicaCount: 1 # the plugin also serves HTTP/gRPC and is discovered through its Service: never 0. A broker-only plugin may use 0.
+  maxReplicaCount: 6
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 30
+          policies: [{ type: Percent, value: 100, periodSeconds: 15 }]
+        scaleUp:
+          policies: [{ type: Pods, value: 4, periodSeconds: 15 }]
+  triggers:
+    - type: nats-jetstream
+      metadata:
+        natsServerMonitoringEndpoint: nats.landflow-dev.svc.cluster.local:8222
+        account: "$G"
+        stream: landflow_v1_plugin_text-toolkit
+        consumer: landflow_v1_plugin_text-toolkit
+        lagThreshold: "8" # = LANDFLOW_MAX_CONCURRENCY: one replica's worth of work per replica
+        useHttps: "false"

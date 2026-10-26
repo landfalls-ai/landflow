@@ -9,8 +9,15 @@ import (
 	"context"
 	"embed"
 	"log"
+	"runtime"
 
 	landflow "github.com/landflow/landflow/sdks/go"
+
+	// Broker faces: LANDFLOW_TRANSPORTS=http,grpc,nats (with LANDFLOW_NATS_URL) serves the plugin over that broker too.
+	_ "github.com/landflow/landflow/sdks/go/transport/amqp"
+	_ "github.com/landflow/landflow/sdks/go/transport/kafka"
+	_ "github.com/landflow/landflow/sdks/go/transport/nats"
+	_ "github.com/landflow/landflow/sdks/go/transport/valkey"
 )
 
 // icons holds the plugin and node icons; "file:icons/…" icons are inlined from it as data: URLs.
@@ -40,6 +47,9 @@ func main() {
 	err := landflow.Serve(context.Background(), newPlugin(), landflow.ServeOptions{
 		HTTPPort: 7103,
 		GRPCPort: 7203,
+		// Hashing and encoding are CPU-bound, so about one call per core keeps every core busy without queueing work behind it.
+		// LANDFLOW_MAX_CONCURRENCY overrides it.
+		MaxConcurrency: runtime.NumCPU(),
 	})
 	if err != nil {
 		log.Fatal(err)

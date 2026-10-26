@@ -154,6 +154,37 @@ gcloud auth application-default login --client-id-file=client.json \
 cat ~/.config/gcloud/application_default_credentials.json
 ```
 
+## Transports
+
+By default the plugin serves HTTP (`:7106`) and gRPC (`:7206`) and announces both to the host. It also links in the Go SDK's tier 1
+broker drivers (Kafka, RabbitMQ `amqp`, NATS with JetStream, Valkey/Redis Streams); a broker face runs only when named in
+`LANDFLOW_TRANSPORTS` with its URL (the host needs a matching connection under Settings → Transports):
+
+```sh
+LANDFLOW_TRANSPORTS=http,grpc,nats LANDFLOW_NATS_URL=nats://127.0.0.1:54222 LANDFLOW_TRANSPORT_SECRET=… go run .
+```
+
+Calls over a broker are encrypted and signed with the transport secret (`LANDFLOW_TRANSPORT_SECRET`, the host's value). The tier 2
+kinds (MQTT, AMQP 1.0, SQS, Pub/Sub, Pulsar, Service Bus) are not linked in, because their client libraries would nearly triple the binary
+(about 37 MB with tier 1, 54 MB with all ten, against 20 MB without brokers); `landflow-bridge` reaches them through the plugin's HTTP face.
+
+**`maxConcurrency`** (calls running node code at once, shared by every face) defaults to **10**: Google API quotas are per user and per minute (Sheets, Gmail, Drive and Calendar answer 429 above them), so ten calls in flight keep one instance well under them. `LANDFLOW_MAX_CONCURRENCY`
+overrides it. Past that, as many calls again wait for a slot; beyond that HTTP answers 429 and gRPC `RESOURCE_EXHAUSTED` (`capacity`).
+
+**`idempotent`**: the read operations (Gmail Get and Get Many, Calendar Get and Get Many, Docs Get, Drive Search and Download, Sheets Get Row(s)) are `idempotent: true`, so a broker may deliver them twice and MCP lists them with `idempotentHint`. Everything that writes, sends or deletes (including label changes and Update) stays at most once, and the two triggers are pollers that hold their own cursor.
+
+## MCP
+
+Every operation is also an MCP tool on `http://127.0.0.1:7106/mcp`, named `<node>_<resource>_<operation>`: `gmail_message_send`, `gmail_message_getAll`, `googleSheets_sheet_read`, `googleSheets_sheet_append`, `googleDrive_file_download`, `googleCalendar_event_create`, `googleDocs_document_get`… (19 writes and 8 reads; the triggers are not tools). Through the host (`/api/mcp/plugins/google`) or the gateway, credentials come from the caller's grant.
+The face listens on loopback with no token. In a container (`LANDFLOW_LISTEN_HOST=0.0.0.0`, as the image sets) it needs
+`LANDFLOW_MCP_TOKEN` or stays off with a log line; the Kubernetes manifest and compose set `LANDFLOW_MCP=off`, since agents reach plugins
+through the host's per-plugin endpoints and the gateway. Without Landflow, as a local MCP server over stdio:
+
+```sh
+echo '{"googleApi":{"email":"…","privateKey":"…"}}' > creds.json
+LANDFLOW_MCP_CREDENTIALS=creds.json go run . --mcp-stdio
+```
+
 ## Observability
 
 Every Google call, the token exchange included, is an `HTTP {METHOD}` client span (through `landflow.HTTPClient`) under

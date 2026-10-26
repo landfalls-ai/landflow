@@ -283,11 +283,11 @@ export function select(pluginId: string, candidates: Candidate[], policy: Transp
   if (direct.length) {
     const limit = inputs.maxConcurrency?.(pluginId) || DEFAULT_MAX_CONCURRENCY;
     const inflight = inputs.inflightDirect?.(pluginId) ?? 0;
-    const directKind = direct.find((c) => c.kind === main)?.kind ?? rank(direct, context, inputs, options)[0]!.candidate.kind;
+    const directKind = direct.find((c) => c.kind === main)?.kind ?? bestDirect(direct, context, inputs, options)!.kind;
     if (buffering.length && inflight >= spillThreshold(limit, policy.objective)) {
       return choice(rank(buffering, context, inputs, options)[0]!.candidate, 'auto.spillover', `${transportLabel(directKind)} at ${inflight} of ${limit} calls`);
     }
-    const preferredDirect = fit.find((c) => c.kind === main && isDirect(c.kind)) ?? rank(fit.filter((c) => isDirect(c.kind)), context, inputs, options)[0]!.candidate;
+    const preferredDirect = fit.find((c) => c.kind === main && isDirect(c.kind)) ?? bestDirect(fit.filter((c) => isDirect(c.kind)), context, inputs, options)!;
     return heldReason(preferredDirect, direct.find((c) => c.kind === directKind)!);
   }
 
@@ -295,6 +295,23 @@ export function select(pluginId: string, candidates: Candidate[], policy: Transp
   const preferred = fit.find((c) => c.kind === main) ?? rank(fit, context, inputs, options)[0]!.candidate;
   const picked = usable.find((c) => c.kind === main) ?? rank(usable, context, inputs, options)[0]!.candidate;
   return heldReason(preferred, picked);
+}
+
+/** Rule 4's margin: a score at most `ratio` × the other one and at least `minGainMs` below it (auto.ts passes its constants). */
+export function clearlyBetter(score: number, than: number, ratio = 0.8, minGainMs = 2): boolean {
+  return score <= ratio * than && than - score >= minGainMs;
+}
+
+/**
+ * The direct kind to use while hysteresis has no main kind for the plugin (a fresh start, a policy change): the best score,
+ * except that the static order (gRPC, then HTTP) wins unless another kind is clearly better, so near-equal kinds don't
+ * trade places on noise.
+ */
+export function bestDirect(candidates: Candidate[], context: CallContext, inputs: SelectorInputs, options: ScoreOptions = {}): Candidate | undefined {
+  const ranked = rank(candidates, context, inputs, options);
+  const first = DIRECT_PREFERENCE.find((kind) => ranked.some((r) => r.candidate.kind === kind));
+  const preferred = ranked.find((r) => r.candidate.kind === first);
+  return (preferred && ranked[0] && !clearlyBetter(ranked[0].score, preferred.score) ? preferred : ranked[0])?.candidate;
 }
 
 const choice = (candidate: Candidate, reason: TransportReason, detail?: string): TransportChoice => ({ endpoint: candidate.endpoint, kind: candidate.kind, reason, ...(detail && { detail }) });

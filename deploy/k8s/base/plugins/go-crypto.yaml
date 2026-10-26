@@ -25,9 +25,20 @@ spec:
           ports:
             - { name: http, containerPort: 7103 }
             - { name: grpc, containerPort: 7203 }
+          # Brokers: none by default. components/broker-transports creates these (LANDFLOW_TRANSPORTS, LANDFLOW_<KIND>_URL,
+          # LANDFLOW_TRANSPORT_SECRET, LANDFLOW_MAX_CONCURRENCY); env below wins over them.
+          envFrom:
+            - configMapRef: { name: landflow-transport, optional: true }
+            - configMapRef: { name: landflow-transport-go-crypto, optional: true }
+            - secretRef: { name: landflow-transport, optional: true }
           env:
             # Discovered, so no announcing (set LANDFLOW_REGISTRY_URL to announce as well).
             - { name: LANDFLOW_REGISTRY_URL, value: "off" }
+            # The plugin's own MCP face is off here: agents reach plugins through the host's per-plugin endpoints and the gateway.
+            # To turn it on set value "on" and add LANDFLOW_MCP_TOKEN from a Secret (the pod listens on 0.0.0.0, so a token is required):
+            #   - name: LANDFLOW_MCP_TOKEN
+            #     valueFrom: { secretKeyRef: { name: landflow-plugin-mcp, key: token } }
+            - { name: LANDFLOW_MCP, value: "off" }
             - name: LANDFLOW_REGISTRY_SECRET # answers the host's challenge on GetManifest (docs/protocol.md §13)
               valueFrom: { secretKeyRef: { name: landflow-registry, key: secret, optional: true } }
           # Ready only while the plugin answers its health endpoint: the host follows readiness through EndpointSlices.

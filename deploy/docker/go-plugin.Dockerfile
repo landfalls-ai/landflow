@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# A Go Landflow plugin (plugins/<PLUGIN>, which replaces the SDK module with ../../sdks/go),
+# A Go Landflow plugin (plugins/<PLUGIN>, which replaces the SDK module with ../../sdks/go and the broker
+# driver modules with ../../sdks/go/transport/<kind>: kafka, amqp, nats and valkey, the tier 1 brokers),
 # built as a static binary (CGO off: SQLite is modernc.org/sqlite, pure Go) on Alpine.
 # Build context: the repository root.
 #
@@ -9,7 +10,9 @@
 #     -t landflow/plugin-go-crypto:dev .
 #
 # It serves HTTP and gRPC and announces itself to LANDFLOW_REGISTRY_URL with
-# LANDFLOW_ADVERTISE_HOST in its endpoints (set both when you run it; see deploy/compose.yml).
+# LANDFLOW_ADVERTISE_HOST in its endpoints (set both when you run it; see deploy/compose.yml). The broker drivers are
+# linked in but idle: a broker face runs only when LANDFLOW_TRANSPORTS names it (and LANDFLOW_<KIND>_URL is set).
+# The plugin's own MCP face needs LANDFLOW_MCP_TOKEN here (the image listens on 0.0.0.0) or LANDFLOW_MCP=off.
 
 ARG GO_IMAGE=golang:1.27.0-alpine3.24
 ARG RUNTIME_IMAGE=alpine:3.24.2
@@ -20,6 +23,10 @@ ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-trimpath
 WORKDIR /src
 # Module files first: the download layer survives source edits.
 COPY sdks/go/go.mod sdks/go/go.sum ./sdks/go/
+COPY sdks/go/transport/kafka/go.mod sdks/go/transport/kafka/go.sum ./sdks/go/transport/kafka/
+COPY sdks/go/transport/amqp/go.mod sdks/go/transport/amqp/go.sum ./sdks/go/transport/amqp/
+COPY sdks/go/transport/nats/go.mod sdks/go/transport/nats/go.sum ./sdks/go/transport/nats/
+COPY sdks/go/transport/valkey/go.mod sdks/go/transport/valkey/go.sum ./sdks/go/transport/valkey/
 COPY plugins/${PLUGIN}/go.mod plugins/${PLUGIN}/go.sum ./plugins/${PLUGIN}/
 WORKDIR /src/plugins/${PLUGIN}
 RUN --mount=type=cache,id=landflow-gomod,target=/go/pkg/mod go mod download

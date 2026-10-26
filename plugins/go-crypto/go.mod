@@ -4,6 +4,10 @@ go 1.26.0
 
 require (
 	github.com/landflow/landflow/sdks/go v0.0.0
+	github.com/landflow/landflow/sdks/go/transport/amqp v0.0.0
+	github.com/landflow/landflow/sdks/go/transport/kafka v0.0.0
+	github.com/landflow/landflow/sdks/go/transport/nats v0.0.0
+	github.com/landflow/landflow/sdks/go/transport/valkey v0.0.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/sdk/metric v1.47.0
 	google.golang.org/grpc v1.84.0
@@ -19,15 +23,25 @@ require (
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/modelcontextprotocol/go-sdk v1.8.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/nats-io/nats.go v1.55.0 // indirect
+	github.com/nats-io/nkeys v0.4.16 // indirect
+	github.com/nats-io/nuid v1.0.1 // indirect
+	github.com/pierrec/lz4/v4 v4.1.33 // indirect
 	github.com/prometheus/client_golang v1.25.0 // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.72.0 // indirect
 	github.com/prometheus/otlptranslator v1.0.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
+	github.com/rabbitmq/amqp091-go v1.16.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/twmb/franz-go v1.22.2 // indirect
+	github.com/twmb/franz-go/pkg/kadm v1.19.0 // indirect
+	github.com/twmb/franz-go/pkg/kmsg v1.15.0 // indirect
+	github.com/valkey-io/valkey-go v1.0.79 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
@@ -42,6 +56,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
@@ -53,4 +68,10 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-replace github.com/landflow/landflow/sdks/go => ../../sdks/go
+replace (
+	github.com/landflow/landflow/sdks/go => ../../sdks/go
+	github.com/landflow/landflow/sdks/go/transport/amqp => ../../sdks/go/transport/amqp
+	github.com/landflow/landflow/sdks/go/transport/kafka => ../../sdks/go/transport/kafka
+	github.com/landflow/landflow/sdks/go/transport/nats => ../../sdks/go/transport/nats
+	github.com/landflow/landflow/sdks/go/transport/valkey => ../../sdks/go/transport/valkey
+)

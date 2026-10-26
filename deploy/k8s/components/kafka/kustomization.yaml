@@ -1,0 +1,7 @@
+# Optional: Kafka 4.3 in KRaft mode (one node that is broker and controller), service `kafka:9092`. Same image and settings as
+# the `kafka` profile of deploy/compose.infra.yml, share groups included. Data in an emptyDir: a restart empties it.
+# Use it through ../brokers (all brokers) or on its own; ../broker-transports points the host and the plugins at it.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - kafka.yaml

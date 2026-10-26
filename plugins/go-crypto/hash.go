@@ -46,6 +46,7 @@ func (HashNode) Description() landflow.NodeDescriptor {
 		Description: "Hash a field with SHA-256, SHA-1, SHA-512 or MD5",
 		Version:     landflow.V(1),
 		Kind:        landflow.KindAction,
+		Idempotent:  true, // pure transform: no side effects, a repeat gives the same result
 		Categories:  []string{"Crypto"},
 		Icon:        "file:icons/hash.svg",
 		Color:       "#22d3ee",

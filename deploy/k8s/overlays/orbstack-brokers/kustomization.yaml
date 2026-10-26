@@ -1,0 +1,19 @@
+# The OrbStack overlay with the tier 1 brokers (Kafka, RabbitMQ, NATS JetStream, Valkey) in landflow-dev, and the host and
+# the TypeScript plugins (text-toolkit, messaging) connected to them:
+#
+#   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-brokers
+#
+# The plugins serve HTTP and gRPC (discovery) and every broker; the host gets one connection per broker from the environment.
+# Back to no brokers: apply ../orbstack, then delete what this added (kafka, rabbitmq, nats, valkey Deployments and Services, the
+# landflow-transport* ConfigMaps and Secrets, landflow-rabbitmq): see deploy/README.md "Brokers on Kubernetes".
+# The plugin images must run the SDK that has the broker faces and @landflow/transports with its drivers; the default
+# images do not yet (README: "Plugin images for brokers").
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# The components' objects take this namespace too (the one set in ../orbstack applies only to what that overlay lists).
+namespace: landflow-dev
+resources:
+  - ../orbstack
+components:
+  - ../../components/brokers
+  - ../../components/broker-transports

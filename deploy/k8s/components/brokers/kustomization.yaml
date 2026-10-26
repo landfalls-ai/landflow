@@ -1,0 +1,13 @@
+# Optional: the tier 1 message brokers of the transport layer (docs/transports.md "Brokers") on a dev cluster, each a Service
+# in the namespace, one small pod each, no persistence (emptyDir):
+#   kafka:9092 (KRaft) · rabbitmq:5672 · nats:4222 (JetStream, monitoring 8222) · valkey:6379 (Redis Streams)
+# Same images and versions as deploy/compose.infra.yml (valkey: the existing component). This only starts the brokers; to point
+# the host and the plugins at them add ../broker-transports (overlays/orbstack-brokers does both). Take one broker alone with
+# ../kafka, ../rabbitmq, ../nats or ../valkey.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+components:
+  - ../kafka
+  - ../rabbitmq
+  - ../nats
+  - ../valkey

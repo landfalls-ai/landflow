@@ -425,6 +425,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     const entry = this.plugins.get(id);
     if (!entry) throw new Error(`Unknown plugin "${id}"`);
     const stored = transportPolicies.set(id, policy, updatedBy);
+    transportAuto.policyChanged(id);
     const how = stored.mode === 'pinned' ? `pinned to ${stored.pinned}` : `on Auto (${stored.objective})${stored.allowed ? `, limited to ${stored.allowed.join(', ')}` : ''}`;
     this.emit({ type: 'plugin.updated', pluginId: id, message: `${entry.manifest.plugin.name} transport ${how}` });
     return stored;

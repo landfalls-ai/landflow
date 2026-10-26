@@ -159,6 +159,7 @@ class GitHub(RepositoryPicker, Node):
         "description": "Create, edit, comment on and list issues; get repositories, releases and files",
         "version": 1,
         "kind": "action",
+        "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
         "categories": ["Development"],
         "icon": "file:icons/github.svg",
         "color": "#24292F",
@@ -176,15 +177,15 @@ class GitHub(RepositoryPicker, Node):
         "keywords": ["github", "git", "issues", "repository", "release", "code"],
         "properties": [
             resource_property([("File", "file"), ("Issue", "issue"), ("Release", "release"), ("Repository", "repository")], "issue"),
-            operation_property("file", [("Get", "get", "Get a file")], "get"),
-            operation_property("release", [("Get Many", "getAll", "Get many releases")], "getAll"),
-            operation_property("repository", [("Get", "get", "Get a repository")], "get"),
+            operation_property("file", [("Get", "get", "Get a file", True)], "get"),
+            operation_property("release", [("Get Many", "getAll", "Get many releases", True)], "getAll"),
+            operation_property("repository", [("Get", "get", "Get a repository", True)], "get"),
             operation_property("issue", [
                 ("Create", "create", "Create an issue"),
                 ("Create Comment", "createComment", "Create a comment on an issue"),
                 ("Edit", "edit", "Edit an issue"),
-                ("Get", "get", "Get an issue"),
-                ("Get Many", "getAll", "Get many issues"),
+                ("Get", "get", "Get an issue", True),
+                ("Get Many", "getAll", "Get many issues", True),
             ], "create"),
             *REPO_PROPERTIES,
             # ---- issue

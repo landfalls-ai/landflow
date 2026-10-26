@@ -200,6 +200,7 @@ class Notion(Node):
         "description": "Create and query Notion database pages, get, archive and search pages, append blocks",
         "version": 1,
         "kind": "action",
+        "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
         "categories": ["Productivity"],
         "icon": "file:icons/notion.svg",
         "color": "#000000",
@@ -221,12 +222,12 @@ class Notion(Node):
             operation_property("block", [("Append After", "append", "Append a block")], "append"),
             operation_property("page", [
                 ("Archive", "archive", "Archive a page"),
-                ("Get", "get", "Get a page"),
-                ("Search", "search", "Search pages"),
+                ("Get", "get", "Get a page", True),
+                ("Search", "search", "Search pages", True),
             ], "get"),
             operation_property("databasePage", [
                 ("Create", "create", "Create a database page"),
-                ("Get Many", "getAll", "Get many database pages"),
+                ("Get Many", "getAll", "Get many database pages", True),
             ], "create"),
             # ---- database page
             {

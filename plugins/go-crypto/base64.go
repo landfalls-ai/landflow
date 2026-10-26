@@ -18,6 +18,7 @@ func (Base64Node) Description() landflow.NodeDescriptor {
 		Description: "Encode a field to Base64 or decode it back to text",
 		Version:     landflow.V(1),
 		Kind:        landflow.KindAction,
+		Idempotent:  true, // pure transform: no side effects, a repeat gives the same result
 		Categories:  []string{"Crypto"},
 		Icon:        "file:icons/base64.svg",
 		Color:       "#06b6d4",

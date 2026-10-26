@@ -71,6 +71,7 @@ class Airtable(Node):
         "description": "Create, upsert, get, search, update and delete Airtable records",
         "version": 1,
         "kind": "action",
+        "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
         "categories": ["Data & Storage", "Productivity"],
         "icon": "file:icons/airtable.svg",
         "color": "#18BFFF",
@@ -92,8 +93,8 @@ class Airtable(Node):
                 ("Create", "create", "Create a record"),
                 ("Create or Update", "upsert", "Create or update a record"),
                 ("Delete", "deleteRecord", "Delete a record"),
-                ("Get", "get", "Get a record"),
-                ("Search", "search", "Search records"),
+                ("Get", "get", "Get a record", True),
+                ("Search", "search", "Search records", True),
                 ("Update", "update", "Update a record"),
             ], "search"),
             {

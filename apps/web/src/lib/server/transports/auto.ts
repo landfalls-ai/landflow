@@ -21,15 +21,19 @@ import { logger } from '../telemetry/logger';
 import { observeTransportQueues, recordTransportCall, recordTransportSwitch, type QueueDepthSample } from '../telemetry/transport-metrics';
 import { CircuitBreaker } from './breaker';
 import { transportPolicies } from './policy-store';
-import { DEFAULT_MAX_CONCURRENCY, isDirect, isInteractive, rank, type CallContext, type Candidate, type SelectorInputs } from './selector';
+import { bestDirect, clearlyBetter, DEFAULT_MAX_CONCURRENCY, isDirect, isInteractive, rank, type CallContext, type Candidate, type SelectorInputs } from './selector';
 import { sizeBucket, TransportStats, type CallOutcome } from './stats';
 
 /** The constants of the rules, in one place (tests read them). */
 export const AUTO = {
-  /** Rule 4: a 10 s window, three in a row, ≥ 20 % better (score ≤ 0.8 × the main's), then hold 60 s. */
+  /**
+   * Rule 4: a 10 s window, three in a row, ≥ 20 % better (score ≤ 0.8 × the main's) and at least 2 ms better, then hold
+   * 60 s. The floor keeps near-equal kinds (gRPC and HTTP to one process, a few ms each) from trading places on noise.
+   */
   WINDOW_MS: 10_000,
   WINDOWS: 3,
   BETTER: 0.8,
+  MIN_GAIN_MS: 2,
   HOLD_MS: 60_000,
   /** Rule 5: a Health ping every 15 s per endpoint, 2 s to answer. */
   PROBE_MS: 15_000,
@@ -267,6 +271,14 @@ export class TransportAuto {
     return this.plugins.get(pluginId)?.main?.kind;
   }
 
+  /** The plugin's policy changed: forget the main kind and any challenger, so the next window (and call) chooses afresh. */
+  policyChanged(pluginId: string): void {
+    const state = this.plugins.get(pluginId);
+    if (!state) return;
+    state.main = undefined;
+    state.challenger = undefined;
+  }
+
   // -------------------------------------------------------------------------
   // Calls
   // -------------------------------------------------------------------------
@@ -402,7 +414,8 @@ export class TransportAuto {
       const best = ranked[0]!;
       const state = this.state(pluginId);
       if (!state.main) {
-        state.main = { kind: best.candidate.kind, since: now };
+        // The first choice keeps the static order (gRPC, then HTTP) unless another kind is clearly better, as for a switch.
+        state.main = { kind: (direct.length ? bestDirect(direct, REFERENCE, inputs, { pluginId, objective: policy.objective })! : best.candidate).kind, since: now };
         continue;
       }
       if (best.candidate.kind === state.main.kind) {
@@ -410,7 +423,7 @@ export class TransportAuto {
         continue;
       }
       const mainScore = ranked.find((r) => r.candidate.kind === state.main!.kind)?.score ?? Number.POSITIVE_INFINITY;
-      if (best.score <= AUTO.BETTER * mainScore) {
+      if (clearlyBetter(best.score, mainScore, AUTO.BETTER, AUTO.MIN_GAIN_MS)) {
         const better = Number.isFinite(mainScore) ? 1 - best.score / mainScore : 1;
         state.challenger = state.challenger?.kind === best.candidate.kind ? { ...state.challenger, windows: state.challenger.windows + 1, better } : { kind: best.candidate.kind, windows: 1, better };
         if (state.challenger.windows >= AUTO.WINDOWS && now - state.main.since >= this.holdMs) {

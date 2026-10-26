@@ -48,6 +48,7 @@ class Sentiment(Node):
         "description": "Score the sentiment of a text field (-1..1) with a built-in lexicon",
         "version": 1,
         "kind": "action",
+        "idempotent": True,  # a pure computation over the input items: running it twice gives the same result
         "categories": ["AI", "Text"],
         "icon": "file:icons/sentiment.svg",
         "color": "#f97316",

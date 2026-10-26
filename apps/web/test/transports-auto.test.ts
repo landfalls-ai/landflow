@@ -396,6 +396,24 @@ describe('Auto simulations', () => {
     expect(w.auto.breakerOf(GRPC).state()).toBe('open');
   });
 
+  it('near-equal kinds keep the static order: HTTP 1 ms ahead of gRPC (25 %, under the 2 ms floor) neither wins the first pick nor a switch', async () => {
+    const w = world();
+    w.endpoints.get(GRPC)!.latencyMs = 4;
+    w.endpoints.get(HTTP)!.latencyMs = 3;
+    for (let i = 0; i < 3; i++) w.auto.stats.probe('p', HTTP, 'http', 3, true);
+    for (let i = 0; i < 3; i++) w.auto.stats.probe('p', GRPC, 'grpc', 4, true);
+    await w.tick();
+    expect(w.auto.mainOf('p')).toBe('grpc');
+    for (let window = 0; window < 10; window++) {
+      for (let i = 0; i < 3; i++) w.auto.stats.probe('p', HTTP, 'http', 3, true);
+      for (let i = 0; i < 3; i++) w.auto.stats.probe('p', GRPC, 'grpc', 4, true);
+      w.advance(AUTO.WINDOW_MS);
+      await w.tick();
+    }
+    expect(w.auto.mainOf('p')).toBe('grpc');
+    expect(w.events.filter((e) => e.change === 'switch')).toEqual([]);
+  });
+
   it('no flapping: the main kind switches only after three 10 s windows at ≥ 20 % better and a 60 s hold', async () => {
     const w = world();
     await w.tick();

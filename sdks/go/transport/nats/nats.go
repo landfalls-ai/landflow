@@ -17,6 +17,9 @@
 //     native: the requester's inbox travels in the Landflow-Reply header. The
 //     other channels (instance, reply, registry, control) stay core subjects.
 //
+// In jetstream mode every subject is the channel name behind a fixed "js." token (js.landflow.v1.plugin.<id>; stream
+// js_landflow_v1_plugin_<id>), so it never collides with a "nats" driver on the same server and prefix.
+//
 // CloudEvents attributes are `ce-` headers (binary mode); `content-type` is the
 // Content-Type header. The driver headers above are never shown to the core.
 //
@@ -286,7 +289,30 @@ func (d *Driver) conn() (*natsgo.Conn, jetstream.JetStream, error) {
 // the channel with dots replaced by underscores (as the TS driver names them).
 func StreamName(channel, prefix string) string { return prefix + strings.ReplaceAll(channel, ".", "_") }
 
-func (d *Driver) streamName(channel string) string { return StreamName(channel, d.cfg.StreamPrefix) }
+// SubjectToken is the token jetstream mode puts in front of every channel name, so the two NATS kinds never share a
+// subject on one server (a work-queue stream would otherwise capture what core "nats" publishes).
+const SubjectToken = "js"
+
+// subjectOf is the NATS subject of a channel: the channel itself for "nats", "js.<channel>" for "jetstream"
+// (stream subjects, consumer filters, publishes and core subscriptions alike).
+func (d *Driver) subjectOf(channel string) string {
+	if d.cfg.JetStream {
+		return SubjectToken + "." + channel
+	}
+	return channel
+}
+
+// channelOf maps a subject produced by subjectOf back to its channel name.
+func (d *Driver) channelOf(subject string) string {
+	if d.cfg.JetStream {
+		return strings.TrimPrefix(subject, SubjectToken+".")
+	}
+	return subject
+}
+
+func (d *Driver) streamName(channel string) string {
+	return StreamName(d.subjectOf(channel), d.cfg.StreamPrefix)
+}
 
 // streamKnown caches whether a stream serves a channel (a miss is re-checked after a while: another instance may declare it).
 type streamKnown struct {
@@ -313,7 +339,7 @@ func (d *Driver) isStream(channel string) bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := js.StreamNameBySubject(ctx, channel)
+	_, err := js.StreamNameBySubject(ctx, d.subjectOf(channel))
 	yes := err == nil
 	d.mu.Lock()
 	d.streams[channel] = streamKnown{yes: yes, checked: time.Now()}
@@ -337,7 +363,7 @@ func (d *Driver) Declare(ctx context.Context, channels []transport.ChannelSpec) 
 			maxAge = d.cfg.MaxAge
 		}
 		cfg := jetstream.StreamConfig{
-			Name: d.streamName(spec.Name), Subjects: []string{spec.Name},
+			Name: d.streamName(spec.Name), Subjects: []string{d.subjectOf(spec.Name)},
 			Retention: jetstream.WorkQueuePolicy, Storage: jetstream.FileStorage, Discard: jetstream.DiscardOld,
 			MaxAge: maxAge, MaxMsgSize: int32(d.cfg.MaxMessageBytes),
 			AllowMsgTTL: true, // per-message Nats-TTL as a first filter (the TS driver sets it the same way)
@@ -405,7 +431,7 @@ func (d *Driver) Publish(ctx context.Context, channel string, event transport.Wi
 	if err != nil {
 		return "", err
 	}
-	msg := newMsg(channel, event)
+	msg := newMsg(d.subjectOf(channel), event)
 	if d.isStream(channel) {
 		if opts.TTL > 0 {
 			msg.Header.Set(ttlHeader, ttlHeaderValue(opts.TTL))
@@ -457,7 +483,7 @@ func (d *Driver) Request(ctx context.Context, channel string, event transport.Wi
 	}
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	msg := newMsg(channel, event)
+	msg := newMsg(d.subjectOf(channel), event)
 	if !d.isStream(channel) {
 		reply, err := nc.RequestMsgWithContext(rctx, msg)
 		switch {
@@ -511,7 +537,7 @@ func (d *Driver) Consume(ctx context.Context, channel string, opts transport.Con
 	manual := opts.AckMode != transport.AckAuto && opts.Group != ""
 	if d.isStream(channel) && opts.Group != "" {
 		consumer, err := js.CreateOrUpdateConsumer(ctx, d.streamName(channel), jetstream.ConsumerConfig{
-			Durable: StreamName(opts.Group, ""), FilterSubject: channel,
+			Durable: StreamName(opts.Group, ""), FilterSubject: d.subjectOf(channel),
 			AckPolicy: jetstream.AckExplicitPolicy, AckWait: d.cfg.AckWait, MaxAckPending: -1, MaxDeliver: -1,
 			DeliverPolicy: jetstream.DeliverAllPolicy,
 		})
@@ -553,9 +579,9 @@ func (d *Driver) Consume(ctx context.Context, channel string, opts transport.Con
 		}
 		var sub *natsgo.Subscription
 		if opts.Group != "" {
-			sub, err = nc.QueueSubscribe(channel, opts.Group, deliver)
+			sub, err = nc.QueueSubscribe(d.subjectOf(channel), opts.Group, deliver)
 		} else {
-			sub, err = nc.Subscribe(channel, deliver)
+			sub, err = nc.Subscribe(d.subjectOf(channel), deliver)
 		}
 		if err != nil {
 			cancel()

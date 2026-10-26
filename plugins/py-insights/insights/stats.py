@@ -54,6 +54,7 @@ class FieldStats(Node):
         "description": "Aggregate a numeric field across all items: count, sum, mean, median, min, max, stdev (sample)",
         "version": 1,
         "kind": "action",
+        "idempotent": True,  # a pure computation over the input items: running it twice gives the same result
         "categories": ["Data"],
         "icon": "file:icons/stats.svg",
         "color": "#f59e0b",

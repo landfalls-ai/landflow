@@ -17,6 +17,12 @@ import (
 	"log"
 
 	landflow "github.com/landflow/landflow/sdks/go"
+
+	// Broker faces: LANDFLOW_TRANSPORTS=http,grpc,nats (with LANDFLOW_NATS_URL) serves the plugin over that broker too.
+	_ "github.com/landflow/landflow/sdks/go/transport/amqp"
+	_ "github.com/landflow/landflow/sdks/go/transport/kafka"
+	_ "github.com/landflow/landflow/sdks/go/transport/nats"
+	_ "github.com/landflow/landflow/sdks/go/transport/valkey"
 )
 
 // icons holds the plugin and node icons; "file:icons/…" icons are inlined from it as data: URLs.
@@ -54,6 +60,9 @@ func main() {
 	err := landflow.Serve(context.Background(), newPlugin(), landflow.ServeOptions{
 		HTTPPort: 7106,
 		GRPCPort: 7206,
+		// Google API quotas are per user and per minute (Sheets, Gmail, Drive and Calendar answer 429 above them), so 10 calls in flight keep one instance well under them.
+		// LANDFLOW_MAX_CONCURRENCY overrides it.
+		MaxConcurrency: 10,
 	})
 	if err != nil {
 		log.Fatal(err)
