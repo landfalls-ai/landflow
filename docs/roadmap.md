@@ -377,8 +377,10 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
 
 ## Planned next
 
-- Pluggable transports between the host and plugins (HTTP, gRPC and message brokers such as
-  RabbitMQ, chosen per call from live traffic): see [transports.md](transports.md).
+- One plugin, every transport, and MCP: plugins reachable over HTTP, gRPC and any common message
+  broker (Kafka, RabbitMQ, NATS, Valkey Streams, MQTT, SQS, Pub/Sub, Service Bus, AMQP 1.0, Pulsar)
+  through one messaging core and small drivers, chosen per call from live traffic, and every plugin
+  also an MCP server (its own endpoint and the host's gateway): see [transports.md](transports.md).
 
 ## Not planned
 
