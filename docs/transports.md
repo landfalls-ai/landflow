@@ -1,9 +1,12 @@
 # Plan: one plugin, every transport, and MCP
 
-Status: **planned** (2026-10-26, revised the same day: generic brokers, then the bundled MCP gateway). Nothing here is
-built yet. The decisions are settled (2026-10-26): agentgateway is the bundled MCP gateway, and agents sign in through
-the instance's identity provider or with Landflow-issued MCP tokens. The rest follow the recommendations
-([last section](#decisions)).
+Status: **in progress** (planned 2026-10-26, revised the same day: generic brokers, then the bundled MCP gateway).
+Phases 0 and 1 are built, and phase 2's TypeScript messaging core (`@landflow/transports` with the envelope, security,
+the in-memory driver and the driver conformance suite); the broker drivers come next ([Phases](#phases),
+[roadmap](roadmap.md)). The decisions are settled (2026-10-26): agentgateway is the bundled MCP gateway, and agents
+sign in through the instance's identity provider or with Landflow-issued MCP tokens. The rest follow the
+recommendations ([last section](#decisions)). Where the code chose a detail this plan left open, the plan now states
+the detail; `docs/protocol.md` §14 and §15 are the normative wire description.
 
 ## Goal
 
@@ -24,7 +27,7 @@ The goal is to make the way a plugin is reached generic, on both sides:
 
 The running example is a Twilio plugin reachable over gRPC, HTTP and the installed broker, and used by agents over MCP.
 
-## What exists today (what this builds on)
+## What existed before (what this builds on)
 
 | Piece | Where | What it does |
 |---|---|---|
@@ -36,8 +39,10 @@ The running example is a Twilio plugin reachable over gRPC, HTTP and the install
 | Telemetry | `docs/observability.md` | `plugin.rpc {Method}` spans, `landflow.plugin.rpc.duration`, `landflow.transport` on `node.execute` |
 | Idempotency, proofs | `ExecuteRequest.idempotencyKey`; protocol §13 registry proofs | Safe repeats; HMAC over `LANDFLOW_REGISTRY_SECRET` |
 
-The logical RPC is already transport-neutral. What's missing is a binding interface in the SDKs, a generic messaging layer
-with broker drivers, an MCP face, and a policy that chooses per call from measurements.
+The logical RPC was already transport-neutral. What was missing: a binding interface in the SDKs, a generic messaging
+layer with broker drivers, an MCP face, and a policy that chooses per call from measurements. The binding interface,
+the host's providers, policy and connections, and the TypeScript messaging core exist now; the sections below say
+what each piece is, and the [Phases](#phases) table says what is built.
 
 ## The shape: one core, four faces
 
@@ -91,15 +96,21 @@ Existing event tooling can read, route and archive Landflow traffic without know
 | `specversion` | `1.0` |
 | `id` | the call id (a reply has its own id) |
 | `source` | `landflow://host/<instanceId>` or `landflow://plugin/<pluginId>/<instanceId>` |
-| `type` | `dev.landflow.plugin.v1.execute`, `….execute.reply`, `….loadoptions`, `….testcredentials`, `….health`, `….getmanifest`, `….webhookmethod`, `….receivewebhook`, `….announce`, `….withdraw`, `….cancel` |
+| `type` | `dev.landflow.plugin.v1.<method>.request` and `….<method>.response`, with `<method>` one of `getmanifest`, `execute`, `loadoptions`, `testcredentials`, `health`, `webhookmethod`, `receivewebhook`; plus `dev.landflow.plugin.v1.cancel`, `….announce`, `….withdraw`. A heartbeat is an announce repeated every 10 s (TTL 30 s) |
 | `subject` | the node type (`twilio.message`) |
-| `time`, `datacontenttype` | `application/json`; the body is the HTTP binding's JSON |
+| `time`, `datacontenttype` | `application/json` for a plain body, `application/octet-stream` for an encrypted one; the body is the HTTP binding's JSON |
 | `traceparent`, `tracestate` | the CloudEvents distributed tracing extension |
 | `lfreplyto` | where to answer, when the broker has no native reply mechanism |
-| `lfcorrelation` | on a reply, the request's `id` |
+| `lfcorrelation` | on a response or a cancel, the request's `id` |
 | `lfdeadline` | epoch ms after which the call must not run |
 | `lfattempt`, `lfidempotency`, `lfmanifest` | delivery attempt, `idempotencyKey`, manifest hash |
-| `lfkeyid`, `lfsig` | signature over the event (below) |
+| `lfdelivery` | the delivery mode the host asks for: `at-most-once` or `at-least-once` |
+| `lferror` | on a response, the error code: `manifest_mismatch`, `expired`, `bad_request`, `not_found`, `internal`, `cancelled`, `unavailable` or `too_large`; the body is then `{ "error": "<message>", … }` |
+| `lfenc` | `aes-256-gcm` when the body is encrypted (every request and response) |
+| `lfkeyid`, `lfsig` | the key id and the signature over the event (below) |
+
+The full attribute rules (lengths, character sets, the two CloudEvents modes and each broker's header prefix) are in
+`docs/protocol.md` §14.3; the code is `packages/transports/src/envelope.ts`.
 
 ### One core, small drivers
 
@@ -108,16 +119,17 @@ replies, deadlines, cancellation, delivery modes, signing and encryption, announ
 A **driver** only knows its broker:
 
 ```ts
-// @landflow/transports (TypeScript; the Go package mirrors it)
-export interface BrokerDriver {
-  readonly kind: string;                                   // 'kafka' | 'amqp' | 'nats' | 'valkey' | 'mqtt' | 'sqs' | …
+// @landflow/transports/driver (TypeScript; the Go package mirrors it)
+export interface BrokerDriver<C extends BrokerConfig = BrokerConfig> {
+  readonly kind: BrokerKind;                               // 'kafka' | 'amqp' | 'nats' | 'valkey' | 'mqtt' | 'sqs' | … | 'memory'
   readonly capabilities: BrokerCapabilities;               // what the core and the selector may rely on
-  connect(config: BrokerConfig): Promise<void>;
+  connect(config: C): Promise<void>;                       // a rejection means nothing was sent anywhere
   declare(channels: ChannelSpec[]): Promise<void>;         // queues, topics, subjects or streams: the broker's own word
-  publish(channel: string, event: WireEvent, options?: PublishOptions): Promise<PublishOutcome>;   // accepted | unroutable
-  consume(channel: string, options: ConsumeOptions, onEvent: (event: WireEvent, delivery: Delivery) => Promise<void>): Promise<Subscription>;
-  request?(channel: string, event: WireEvent, timeoutMs: number): Promise<WireEvent>;              // native request/reply
-  stats?(channel: string): Promise<{ depth?: number; consumers?: number; lag?: number }>;
+  publish(channel: string, event: WireEvent, options?: PublishOptions): Promise<PublishOutcome>;   // 'accepted' | 'unroutable'
+  consume(channel: string, options: ConsumeOptions, onEvent: ConsumeHandler): Promise<Subscription>;
+  request?(channel: string, event: WireEvent, options: RequestOptions): Promise<RequestOutcome>;  // native request/reply:
+                                                           // { outcome: 'replied', event } | { outcome: 'unroutable' } | { outcome: 'timeout' }
+  stats?(channel: string): Promise<ChannelStats>;          // { depth?, consumers?, lag? }
   close(): Promise<void>;
 }
 export interface BrokerCapabilities {
@@ -129,19 +141,47 @@ export interface BrokerCapabilities {
   persistence: 'memory' | 'disk';        // decides how strict secret handling must be
   maxMessageBytes: number;
   latency: 'low' | 'medium' | 'high';    // a prior for the selector before it has measurements
+  headers: boolean;                      // string headers per message: CloudEvents binary mode; else structured mode
+  maxHeaderBytes?: number;               // a header budget (Azure Service Bus: 64 KiB)
+  orderingKeys: boolean;                 // PublishOptions.orderingKey is honoured (record key, ordering key, session id)
+  nack: boolean;                         // Delivery.nack({ requeue: true }) puts the event back for another consumer
+  attempts: boolean;                     // Delivery.attempt counts redeliveries truthfully
 }
 ```
 
-Channels (names use a prefix, default `landflow`, and the protocol version): a **request channel** per plugin
-(`landflow.v1.plugin.<pluginId>`), shared by its replicas; an **instance channel** per plugin process for calls that must
-reach one instance; a **reply channel** per host process, unless the broker replies natively; a **registry channel** for
-announce and withdraw (plugins announce over the broker, with a registry proof, so the host finds them without a port);
-a **control channel** for cancel.
+`publish()` and `request()` throw `NotConnectedError` when the connection is down **before anything was sent**; the
+core reports that as provably undelivered (`not_connected`), so the selector may use another transport. Any other
+rejection is "maybe sent". `BrokerConfig` carries the host-side `connectionId` and the channel `prefix`; drivers extend
+it (`KafkaConfig extends BrokerConfig`). A driver never reads or changes headers or bodies, except to carry them.
+
+**Layout.** One directory per broker kind, `packages/transports/src/drivers/<kind>/`, exported from `package.json` as
+`@landflow/transports/<kind>` (`./kafka`, `./amqp`, `./nats`, `./valkey`…). The broker's client library is an
+**optional peer dependency** of the package, imported lazily inside the driver module (`await import('amqplib')` in
+`connect()`), so the host and the SDK load only the clients they use; the core imports no client library. The
+**in-memory driver** (`@landflow/transports/memory`: a `MemoryBroker` shared by several driver instances in one process,
+with configurable capabilities) is the reference the conformance suite compares every real driver with, and runs the
+core without a broker in tests. The **driver conformance suite** (`@landflow/transports/conformance`,
+`runConformance(target)` in a vitest file) checks every driver member and every capability claim, then the core end to
+end over the driver (call and reply, deadline, cancel, at most once against at least once, a replica dying mid-call,
+discovery with registry proofs, manifest mismatch, tampered and unsigned events, size limits, concurrency, drain).
+Each driver ships `<kind>.conformance.test.ts` next to it, gated on an env var (`LANDFLOW_TEST_KAFKA=127.0.0.1:59092`)
+and skipping with a message when the broker is not reachable.
+
+**Channels** (`packages/transports/src/channels.ts`; names use a prefix, default `landflow`, set per broker connection,
+and the protocol version): a **request channel** per plugin, `landflow.v1.plugin.<pluginId>`, shared by its replicas;
+an **instance channel** per plugin process, `landflow.v1.instance.<pluginId>.<instanceId>`, for calls that must reach
+one instance; a **reply channel** per host process, `landflow.v1.reply.<hostInstanceId>`, unless the broker replies
+natively; a **registry channel**, `landflow.v1.registry`, for announce and withdraw (plugins announce over the broker,
+with a registry proof, so the host finds them without a port); a **control channel** per plugin,
+`landflow.v1.control.<pluginId>`, for cancel. There is no discover probe: a host that starts after the plugins learns
+them from their next heartbeat, within 10 s.
 
 ### Brokers
 
 Tier 1 lands first in the TypeScript and Go cores; tier 2 follows driver by driver. Every driver passes the same
-conformance kit against a local container (no cloud accounts; cloud services use their official emulators).
+conformance suite (`@landflow/transports/conformance`, above) against a local container (no cloud accounts; cloud
+services use their official emulators). Today only the in-memory driver exists; the brokers below run locally
+(`deploy/compose.infra.yml`, one profile each) and wait for their drivers.
 
 | Broker | Request channel; replicas share it by | Replies | Holds bursts | Notes |
 |---|---|---|---|---|
@@ -184,22 +224,38 @@ Differences the core absorbs, so drivers stay small:
 - **Deadlines** are checked by the consumer on every broker (TTL, where it exists, is only a first filter).
 - **Concurrency**: each instance takes at most its `maxConcurrency` calls at once (prefetch, max in flight, or pull batch
   size, depending on the broker).
-- **Size**: the envelope must fit the driver's limit (Azure Service Bus Standard 256 KB; Kafka, NATS and SQS about 1 MiB by
-  default). Over it, the body goes by reference through the shared store (a claim check), or the call goes by another
-  transport. Files already travel as references (§11), so a brokered plugin that handles files uses the shared binary store
-  (S3/MinIO) when it can't reach the host.
-- **Version skew**: a consumer whose manifest hash differs answers `manifest_mismatch` and puts the call back; the host
-  pulls the manifest again.
+- **Size**: the encoded event (headers plus body) must fit the driver's `maxMessageBytes` (Azure Service Bus Standard
+  256 KB; Kafka, NATS and SQS about 1 MiB by default) and its header budget. The host refuses a request that doesn't fit
+  **before publishing** (`too_large`, provably undelivered, so the selector may use another transport); a plugin whose
+  response doesn't fit answers `lferror: too_large`. Later, an oversized body goes by reference through the shared store
+  (a claim check); that is not built yet. Files already travel as references (§11), so a brokered plugin that handles
+  files uses the shared binary store (S3/MinIO) when it can't reach the host.
+- **Version skew**: a consumer whose manifest hash differs from `lfmanifest` puts the call back **once** (nack with
+  requeue, so a replica on the right version can take it); on the next delivery it acknowledges and answers
+  `manifest_mismatch` with its own hash. The host pulls the manifest again and retries. The node never runs on a
+  mismatch.
 
 ### Security over brokers
 
 An `ExecuteRequest` carries decrypted credentials (Twilio's auth token), and most brokers keep messages on disk.
 
-1. **Credentials are encrypted end to end** (AES-256-GCM) under a per-plugin key,
-   `HKDF(LANDFLOW_TRANSPORT_SECRET or LANDFLOW_REGISTRY_SECRET, "landflow transport v1" ‖ pluginId)`. All replicas of a
-   plugin derive the same key, so work sharing keeps working; whoever reads the broker can't read the secrets.
-2. **Every event is signed** (`lfsig`, HMAC from the same key family): nobody else on the broker can call a plugin or fake a
-   reply. An announce without a valid registry proof is ignored; a brokered endpoint is never used without the secret.
+1. **The whole body of every request and response is encrypted end to end** (AES-256-GCM), not only the credentials:
+   they sit in different fields per method (`credentials` in Execute, `data` in TestCredentials) and are easy to miss in
+   a new field, and the items themselves hold personal data (an SMS text, a phone number) that shouldn't sit on a
+   disk-backed broker either. The attributes stay in clear, so routing, tracing and archiving by metadata keep working;
+   announce, withdraw and cancel bodies hold no secrets and stay readable, so broker-side tooling can read the registry
+   channel. Keys: one shared secret, `LANDFLOW_TRANSPORT_SECRET` (falling back to `LANDFLOW_REGISTRY_SECRET`), and per
+   plugin two 32-byte keys by HKDF-SHA256 with info `"landflow transport v1\n" + pluginId + "\nenc"` and `…"\nsig"`. All
+   replicas of a plugin derive the same keys, so work sharing keeps working; whoever reads the broker can't read the
+   bodies. The body is `nonce ‖ ciphertext ‖ tag` with additional authenticated data `id + "\n" + type`. Rotation:
+   `LANDFLOW_TRANSPORT_SECRET_PREVIOUS` (comma-separated) lists secrets that still verify and decrypt but no longer
+   sign; `lfkeyid = hex(SHA-256("landflow transport keyid v1\n" + secret))[0..16]` says which one an event used.
+2. **Every event is signed** (`lfsig`, HMAC-SHA256 with the plugin's signing key, encrypt-then-MAC) over the canonical
+   attribute lines (`name=value\n`, in a fixed order, never `lfsig`) plus the hash of the on-wire body: nobody else on
+   the broker can call a plugin or fake a reply. A receiver refuses unsigned events, unknown key ids, bad signatures,
+   clocks more than 5 min off and replayed ids. An announce without a valid registry proof is ignored; a brokered
+   endpoint is never used without the secret. The exact forms are in `docs/protocol.md` §14.7; the code is
+   `packages/transports/src/security.ts`.
 3. **TLS** to the broker is recommended, with a warning for plain connections to a non-loopback host.
 4. **Broker permissions**: one broker user per plugin that can read only its own channels, and one host user, with an
    example per broker in `deploy/README.md`.
@@ -209,7 +265,9 @@ An `ExecuteRequest` carries decrypted credentials (Twilio's auth token), and mos
 Writing every driver three times would not scale. So:
 
 - **TypeScript**: `@landflow/transports` holds the messaging core and every driver; the host and the TypeScript SDK both
-  use it.
+  use it. The core (`MessagingClient` on the host side, `MessagingServer` on the plugin side), the envelope, security,
+  the in-memory driver and the conformance suite exist; the broker drivers, the host's `messaging.ts` and the SDK's
+  messaging binding come next.
 - **Go**: `sdks/go/transport` holds the core and every driver; the Go SDK and `landflow-bridge` both use it.
 - **Python**: through `landflow-bridge` first; native tier 1 drivers later, when there's demand.
 - Candidate client libraries: in TypeScript `@confluentinc/kafka-javascript` (Confluent's supported client; `kafkajs` has
@@ -234,7 +292,8 @@ for authorization.
    the call as an execution and sends it through the normal selector, so agents get the same transports as workflows.
    The in-process core nodes (HTTP Request, Data Table, Code…) are one more endpoint, `core`. Plugins register into the
    gateway on their own as they come and go; a new plugin version changes the tools behind the same endpoint
-   (`notifications/tools/list_changed` on the `subscriptions/listen` stream of clients that ask for it).
+   (`notifications/tools/list_changed` on the `subscriptions/listen` stream of clients that ask for it; the gateway
+   relays an upstream's notification but emits none of its own, so the `core` endpoint emits one after each sync).
 2. **The plugin's own MCP endpoint**, added by the SDK with no code: Streamable HTTP at `/mcp` on the plugin's HTTP port,
    and stdio with `--mcp-stdio` (so a desktop agent can start a plugin directly). It's for running a plugin without
    Landflow, or next to an agent on a laptop.
@@ -243,20 +302,23 @@ for authorization.
 
 | Landflow | MCP |
 |---|---|
-| An action node's operation (resource × operation) | One tool, `<resource>_<operation>` on the plugin's endpoint; through the gateway `<plugin>_<resource>_<operation>` (e.g. `twilio_message_send`), since the gateway prefixes each tool with its plugin |
-| The parameters shown for that operation (`displayOptions`) | `inputSchema` (JSON Schema): types, `required`, defaults, descriptions, collections as objects |
-| Static options | `enum` with titles |
+| An action node's operation (resource × operation) | One tool, `<node>_<resource>_<operation>` on the plugin's endpoint, the node segment dropped when the node is named after its plugin (Twilio's `twilio` node: `message_send`; the messaging plugin's `telegram` node: `telegram_message_sendMessage`); through the gateway `<plugin>_<tool>` (`twilio_message_send`), since the gateway prefixes each tool with its plugin. Names are `[A-Za-z0-9_-]`, at most 64 characters, unique per plugin |
+| The parameters shown for that operation (`displayOptions`) | `inputSchema` (JSON Schema 2020-12): types, `required`, defaults, descriptions, collections as objects |
+| Static options | `enum`, with the option names in the description |
 | Dynamic options (`loadOptions`) | `enum` when the bound credential lets the gateway resolve them (cached); otherwise a string, plus a read-only `list_options` tool |
-| Credentials | Never arguments: bound by the gateway, or by the plugin's local config |
-| `idempotent`; get, list, search; delete | `idempotentHint`; `readOnlyHint`; `destructiveHint`; always `openWorldHint` |
-| Output items | `structuredContent` (`{ items }`, with `outputSchema` when the node declares one) and a short text |
+| Credentials | Never arguments: bound by the gateway, or by the plugin's local config. The node and credential selectors travel in `_meta["dev.landflow/node"]`, which the server strips from what agents see |
+| `idempotent`; get, list, search; delete | `idempotentHint`; `readOnlyHint`; `destructiveHint`; always `openWorldHint`. A node's (or an operation option's) `toolAnnotations` override the derived hints |
+| Output items | `structuredContent` (`{ items }`, with `outputSchema` when the node or the operation option declares one) and a short text |
 | Files in the output | `resource_link` (the gateway signs a host URL); small images and audio inline |
 | A node error | a result with `isError: true` and the message |
 | Stop, timeout | the call's `AbortSignal` ↔ the client closing the request's stream (HTTP) or `notifications/cancelled` (stdio) |
 | Triggers | Not tools (later: resources an agent can subscribe to) |
 
-Which nodes become tools: the ones marked `usableAsTool` (every action node by the plugin design rules), minus anything a
-node or operation opts out of with `mcp: false`.
+Which nodes become tools: the ones marked `usableAsTool` (every action node by the plugin design rules), minus anything
+that opts out with `mcp: false`: a node, or a `resource` or `operation` option (a resource with `mcp: false` removes all
+its operations). The mapping is one pure function in `@landflow/protocol` (`packages/protocol/src/mcp-tools.ts`:
+`mcpToolsFromManifest()`, and `mcpToolsFromDescriptors('core', …)` for the host's core nodes), so a plugin lists the
+same tools wherever it is reached; `toolCallToParameters()` is the way back. Protocol §15.1 has the full rules.
 
 ### Credentials, permissions and audit
 
@@ -276,7 +338,10 @@ node or operation opts out of with `mcp: false`.
 
 Landflow comes with an MCP gateway, and every installed plugin registers into it automatically. Rather than build the
 gateway, Landflow bundles an open-source one and builds only what's specific to Landflow. Research on 2026-10-26 covered
-about 25 projects (the gateways, their docs, releases and licenses, and the MCP registry and discovery standards).
+about 25 projects (the gateways, their docs, releases and licenses, and the MCP registry and discovery standards). The
+phase 0 spike ran agentgateway 1.6.0 locally and verified the config API, the identity headers, sign-in through Keycloak
+and the file fallback: [mcp-gateway.md](mcp-gateway.md) has the exact payloads, timings and gaps, and this section
+follows its findings.
 
 ### Why agentgateway
 
@@ -329,36 +394,42 @@ online, exposed to agents and have at least one tool. It reacts to every registr
 
 | Event | In the gateway |
 |---|---|
-| A plugin announces itself, is installed from the marketplace, or is discovered in Kubernetes | Its target is added; agents that subscribe get "tool list changed" |
-| A new version with other nodes | The target stays (same URL); the host's endpoint lists the new tools and sends "tool list changed" |
+| A plugin announces itself, is installed from the marketplace, or is discovered in Kubernetes | Its target is added; agents see it on their next `tools/list`; the `core` endpoint emits `tools/list_changed` for subscribers after each sync (the gateway relays upstream notifications but emits none when its own target set changes) |
+| A new version with other nodes | The target stays (same URL); the host's endpoint lists the new tools and sends "tool list changed", which the gateway relays |
 | Offline for 60 s | The target is removed, and added back when the plugin returns |
 | Uninstalled, removed, or "Expose to agents" turned off | The target is removed |
 | The gateway restarts, or someone edits it | The next reconcile puts Landflow's targets back |
 
-- **How it writes**: through agentgateway's config API, `PUT /api/config/resources/mcp.target` and
-  `DELETE …/mcp.target/{id}` on the admin port. That port has no authentication and listens only on loopback, so the
-  gateway runs next to each main as a sidecar and the main calls it on `127.0.0.1`. Storage is agentgateway's `hybrid`
-  mode with SQLite inside the sidecar; it's rebuilt from the registry when the sidecar restarts.
+- **How it writes**: through agentgateway's config API, `PUT /api/config/resources/mcp.target` (a list, upsert) and
+  `DELETE …/mcp.target/{id}` on the admin port; **the target id is its name**, so a second PUT with the same name is an
+  update. A change is on the traffic path within milliseconds. That port has no authentication and listens only on
+  loopback, so the gateway runs next to each main as a sidecar and the main calls it on `127.0.0.1`. Storage is
+  agentgateway's `hybrid` mode: the base config is a read-only file, the targets live in SQLite inside the sidecar and
+  are rebuilt from the registry when the sidecar restarts.
 - **No leader needed**: each main keeps its own sidecar in step. In queue mode every main already sees every plugin
   through the shared registry, so all sidecars end up with the same targets.
 - **Only its own targets**: Landflow keeps the ids of the targets it created and changes only those, so servers an admin
   adds in agentgateway's UI stay.
 - **Fallback**: for a gateway that runs on its own, Landflow writes the targets into a YAML file that agentgateway
-  reloads when it changes (a volume in Compose, a ConfigMap in Kubernetes). Phase 0 tries the config API with a real
-  target, since its docs show only an LLM example.
+  reloads when it changes (a volume in Compose, a ConfigMap in Kubernetes; about 0.2 s). In file mode `GET` lists
+  nothing, so the sync treats the file as write-only and re-renders every target on each change. The phase 0 spike
+  tried both with real targets and chose the config API as the primary adapter.
 
-One target, as the sync writes it:
+One target, as the sync writes it (the shape the spike verified against 1.6.0):
 
 ```json
 { "resources": [ { "value": {
   "name": "twilio",
   "mcp": { "host": "http://127.0.0.1:3000/api/mcp/plugins/twilio" },
   "policies": {
-    "backendAuth": { "key": "<the gateway secret>", "location": { "header": { "name": "x-landflow-gateway", "prefix": "" } } },
-    "transformations": { "request": { "set": {
-      "x-landflow-caller-iss": "jwt.iss",
-      "x-landflow-caller-sub": "jwt.sub"
-    } } }
+    "backendAuth": { "key": { "value": "<the gateway secret>", "location": { "header": { "name": "x-landflow-gateway" } } } },
+    "transformations": { "request": {
+      "set": {
+        "x-landflow-caller-iss": "jwt.iss",
+        "x-landflow-caller-sub": "jwt.sub"
+      },
+      "remove": ["authorization"]
+    } }
   }
 } } ] }
 ```
@@ -411,23 +482,27 @@ description, so another gateway would only need another generator.
 
 ### Deployment
 
-- **Image** `cr.agentgateway.dev/agentgateway:v1.6.0`, pinned by digest. The base config is
-  `deploy/mcp-gateway/config.yaml`: the listener, `mcpAuthentication`, the rules, tracing to the OTLP collector and
-  metrics. The targets come from the host.
+- **Image** `cr.agentgateway.dev/agentgateway:v1.6.0`, pinned by digest (distroless: no shell, so no Docker
+  healthcheck; readiness on port 15021, metrics on 15020, inside the network only). The base config is
+  `deploy/mcp-gateway/config.yaml`: the listener, `mcpAuthentication`, the rules, `prefixMode: always`,
+  `failureMode: failOpen`, `statefulMode: stateless`, and tracing to the OTLP collector under
+  `frontendPolicies.tracing` (`config.tracing` is deprecated in 1.6). The targets come from the host.
 - **Compose** (`deploy/compose.yml`): a `mcp-gateway` service with `network_mode: service:web`, so it shares the web
   container's loopback. It's published on `127.0.0.1:54000` (`LANDFLOW_MCP_GATEWAY_PORT`). In queue mode there's one
   sidecar per main, and the load balancer gets a listener for `/mcp`. The protocol is stateless, so any main's gateway
   can serve any request.
 - **Kubernetes**: a second container in the host Deployment (`deploy/k8s/base/host`), an `mcp` port on the host Service,
   and the Ingress sends `/mcp` there.
-- **Dev** (`pnpm dev`, host outside Docker): a `mcp-gateway` profile in `deploy/compose.infra.yml`, with the admin port
-  published on `127.0.0.1:55000` only (`LANDFLOW_MCP_GATEWAY_ADMIN_URL`) and targets pointing at
-  `host.docker.internal:3000`.
+- **Dev** (`pnpm dev`, host outside Docker): the `mcp-gateway` profile in `deploy/compose.infra.yml` (built): MCP on
+  `127.0.0.1:54000`, the admin API and UI on `127.0.0.1:55000` only (`LANDFLOW_MCP_GATEWAY_ADMIN_URL`), targets pointing
+  at `host.docker.internal:3000`, a one-shot `mcp-gateway-init` that gives the SQLite volume to the image's uid.
+  `deploy/scripts/mcp-gateway-spike.mjs` reruns the phase 0 checks against it.
 - **Settings**: `LANDFLOW_MCP_GATEWAY` (`bundled` by default, `file` for a gateway that runs on its own, or `off`),
   `LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_MCP_GATEWAY_PUBLIC_URL`.
 - **Telemetry**: the gateway's spans join the host's traces (W3C trace context in headers and `_meta`), its Prometheus
-  metrics (`mcp_requests_total`) sit next to Landflow's, and its access log carries the MCP method, the target and the
-  caller.
+  metrics (`agentgateway_requests_total{protocol="mcp"}`, `agentgateway_request_duration_seconds`…) sit next to
+  Landflow's, and its access log carries the MCP method (`mcp.method.name`), the target (`mcp.target`), the tool
+  (`gen_ai.tool.name`) and the caller.
 
 ### What Landflow builds, and what it reuses
 
@@ -441,8 +516,10 @@ description, so another gateway would only need another generator.
 
 Later, the same sync can register Landflow's other MCP servers (the instance server at `/api/mcp`, and published
 workflows that start with an MCP Server Trigger), so every MCP server in Landflow sits behind one URL. External servers
-that an admin adds get routes of their own: in the shared endpoint, agentgateway serves only the protocol versions every
-target supports, so one older server would pull everything down to its revision.
+that an admin adds get routes of their own: agentgateway does no MCP version translation (it forwards `server/discover`
+and the client's protocol version to every target as is), so one older server in the shared endpoint would break
+2026-07-28 clients for every plugin. The host's endpoints therefore speak 2026-07-28 natively, and external servers
+keep their own routes.
 
 ### Swapping the gateway
 
@@ -462,70 +539,91 @@ Gateways that read registries can use the registry API directly.
 
 ## Host side
 
-New module `apps/web/src/lib/server/transports/`:
+Module `apps/web/src/lib/server/transports/` (built, except where marked):
 
 | File | Role |
 |---|---|
-| `provider.ts` | Providers per kind and their registry |
-| `direct.ts` | Today's HTTP, gRPC and pooled clients, unchanged |
-| `messaging.ts` | The host side of `@landflow/transports`: connections, discovery over the registry channel into `registry.addEndpoint('<kind>://<conn>/<plugin>', 'broker')`, stats every 5 s |
-| `connections.ts` | Broker connections in the database (migration in the 1700s), encrypted, with **Test** and health (connected, version, round trip); also from env (`LANDFLOW_TRANSPORT_<KIND>_URL`) |
-| `stats.ts`, `selector.ts` | Measurements and the choice per call (below); the selector replaces `activeEndpoint()` |
-| `policy-store.ts` | The per-plugin policy in the database (today's in-memory `preferredTransport` becomes `{ mode, pinned?, allowed?, objective }`), shared by mains and workers |
-| `../mcp/plugin-servers.ts` | The per-plugin MCP endpoints: tool generation from manifests, grants, calls through the selector |
-| `../mcp/gateway-sync.ts` | `McpGatewaySync` and the gateway adapters (agentgateway's config API, the file) |
-| `../mcp/registry.ts` | `server.json` per plugin, the registry API and Server Cards |
-| `../mcp/identity.ts` | The gateway secret, the caller's identity, Landflow-issued MCP tokens and their keys |
+| `provider.ts` | `TransportProvider` per kind (`kind`, `label`, `direct`, `capabilities`, `createClient`, `health`, `test`) and the `TransportProviderRegistry` (`transportProviders`). `http` and `grpc` register at start; a broker kind without a driver is "known but not installed": Settings → Transports lists it, connections can be saved, Test answers "No driver for <kind> yet" |
+| `direct.ts` | Today's HTTP, gRPC and pooled clients behind the provider interface, unchanged in behaviour; `DIRECT_PREFERENCE = ['grpc', 'http']` |
+| `policy-store.ts` | `TransportPolicyStore` (`transportPolicies`): the per-plugin policy `{ mode: 'auto' \| 'pinned', pinned?, allowed?, objective }` in `plugin_transport_policies` (migration 1700), shared by mains and workers (cache dropped on the replication broadcast). It replaces the in-memory `preferredTransport`: choosing "gRPC" on the Plugins page is now `{ mode: 'pinned', pinned: 'grpc' }` |
+| `selector.ts` | `select(pluginId, candidates, policy, context, inputs)` → `{ endpoint, kind, reason }` or `{ error }`; replaces `activeEndpoint()`. `CallContext` carries `method`, `mode` (`manual` \| `production` \| `mcp`), `items`, `payloadBytes`, `idempotent`, `executionId`; `SelectorInputs` is where the phase 5 measurements plug in (every input optional) |
+| `connections.ts` | `TransportConnections` (`transportConnections`): broker connections in `transport_connections` (migration 1701), secret fields sealed with the credential vault's key and only opened for the provider (the API sees which are set, never their values); `test(id)` asks the provider for a round trip; `LANDFLOW_TRANSPORT_<KIND>_URL` adds a read-only `env-<kind>` connection without a row. Changes are audited as `settings.update` on the `transports` target |
+| `schema.ts`, `view.ts` | The zod bodies of the connection routes (shared with the OpenAPI document) and what the API shows: kinds, connections, the plugins whose brokered endpoints name each connection |
+| `messaging.ts`, `stats.ts` | *Next*: the host side of `@landflow/transports` (connections, discovery over the registry channel into `registry.addEndpoint('<kind>://<conn>/<plugin>', 'broker')`, stats every 5 s) and the measurements for Auto |
+| `../mcp/plugin-servers.ts` | *Phase 3*: the per-plugin MCP endpoints: tool generation from manifests, grants, calls through the selector |
+| `../mcp/gateway-sync.ts` | *Phase 3b*: `McpGatewaySync` and the gateway adapters (agentgateway's config API, the file) |
+| `../mcp/registry.ts` | *Phase 3b*: `server.json` per plugin, the registry API and Server Cards |
+| `../mcp/identity.ts` | *Phase 3b*: the gateway secret, the caller's identity, Landflow-issued MCP tokens and their keys |
 
-Plus `PATCH /api/plugins/:id` with the new policy (the old body still works), `GET /api/transports`,
-`/api/transports/connections` (admin), `/api/mcp/plugins/:id` (MCP), `/api/mcp/grants`, `/api/mcp/gateway` (status, admin),
-`/api/mcp/tokens`, `/api/mcp/jwks` and `/api/mcp/registry/v0.1/*`; **Settings → Transports** (installed kinds,
-connections, which plugins are on each); **Settings → MCP** gains the gateway's status, URL and client config, grants,
-tokens and a tool browser; the **Plugins page** shows each
-plugin's transports with live numbers, the current choice and why, the policy picker, its MCP tools and "Expose to
-agents". Workers in queue
-mode open the broker connections too and choose for themselves. In Kubernetes, a brokered plugin needs no Service; the
-docs add broker manifests and a KEDA recipe that scales replicas on queue depth or consumer lag.
+Routes (built): `PATCH /api/plugins/:id` with `{ policy }` (the old `{ preferredTransport }` still works and becomes a
+pinned policy), audited as `plugin.transport` with the mode, pinned kind, allow-list and objective; `GET /api/transports`
+(kinds and connections, with the plugins on each); `GET`/`POST /api/transports/connections`, `GET`/`PATCH`/`DELETE
+/api/transports/connections/:id` and `POST /api/transports/connections/:id/test` (a body tests the form's values before
+they are saved); reads need `workflows:read`, writes the admin action `settings:manage`. **Settings → Transports**
+(`/settings#transports`) lists the kinds and connections and edits them; the **Plugins page** shows each plugin's
+transports, the choice the next call would take and why (`choice` / `choiceError` on the plugin summary), and the
+**policy picker** on the plugin card. Every `plugin.rpc` span carries `landflow.transport` and
+`landflow.transport.reason` (`lib/server/telemetry/rpc.ts`). Still planned: `/api/mcp/plugins/:id` (MCP),
+`/api/mcp/grants`, `/api/mcp/gateway` (status, admin), `/api/mcp/tokens`, `/api/mcp/jwks` and `/api/mcp/registry/v0.1/*`;
+**Settings → MCP** gains the gateway's status, URL and client config, grants, tokens and a tool browser; the Plugins page
+gains live numbers, its MCP tools and "Expose to agents". Workers in queue mode open the broker connections too and
+choose for themselves. In Kubernetes, a brokered plugin needs no Service; the docs add broker manifests and a KEDA recipe
+that scales replicas on queue depth or consumer lag.
 
 ## SDK side
 
 ```ts
-// packages/sdk: a binding is one face of the plugin
+// packages/sdk (binding.ts): a binding is one face of the plugin
 export interface TransportBinding {
-  readonly kind: string;                                  // 'http' | 'grpc' | 'mcp' | a broker kind
-  start(context: BindingContext): Promise<BindingInfo>;   // listen or connect; the endpoint to announce, if any
-  stop(): Promise<void>;                                  // drain in-flight calls, then close
+  readonly kind: string;                                  // 'http' | 'grpc' | 'mcp' | a broker kind; one binding per kind
+  start(context: BindingContext): Promise<BindingInfo>;   // listen or connect; resolves with the endpoints to announce, if any
+  stop(): Promise<void>;                                  // stop taking calls, drain in-flight ones (dispatcher.drain()), close
 }
+// BindingContext: plugin, manifest (hints filled in), dispatcher, telemetry, logger, advertiseHost, hints, announce(), withdraw()
 
 await serve(twilio, {
-  http: 7104,                                 // also serves /mcp unless LANDFLOW_MCP=off
+  http: 7104,                                 // also serves /mcp unless LANDFLOW_MCP=off (next wave)
   grpc: 7204,
-  brokers: [kafka({ brokers: ['127.0.0.1:59092'] }), nats({ servers: 'nats://127.0.0.1:54222' })],
+  bindings: [myBinding],                      // any TransportBinding
+  maxConcurrency: 16,                         // calls running node code at once, across every face
+  brokers: [kafka({ brokers: ['127.0.0.1:59092'] }), nats({ servers: 'nats://127.0.0.1:54222' })],   // next wave
+  mcp: { token: process.env.LANDFLOW_MCP_TOKEN },                                                      // next wave
 });
 ```
 
-- Environment instead of code: `LANDFLOW_TRANSPORTS=http,grpc,kafka,nats`, `LANDFLOW_<KIND>_URL`, `LANDFLOW_MCP`
-  (`on`, `off`, `stdio`), `LANDFLOW_MCP_TOKEN`, `LANDFLOW_TRANSPORT_SECRET`. Broker drivers load only when used.
-- Go: `landflow.Serve(p, landflow.WithHTTP(7104), landflow.WithGRPC(7204), landflow.WithBroker(kafka.New(…)))`, drivers in
-  their own packages so a plugin pulls only what it uses. Python: `serve(plugin, http=…, grpc=…)` plus the bridge for brokers.
+- **Dispatcher** (`dispatcher.ts`): the one entry point every face calls (`execute`, `loadOptions`, `testCredentials`,
+  `webhookMethod`, `webhook`, `health`), with the deadline, the `AbortSignal`, the spans and the concurrency limit. HTTP
+  and gRPC are bindings behind it (`http.ts`, `grpc.ts`); the HTTP binding reads the call's deadline from the
+  `x-landflow-deadline` header (epoch ms) and a closed connection cancels the call. `serve()` announces the kinds that
+  started as the manifest's `transports` hint and the limit as `maxConcurrency`.
+- Environment instead of code: `LANDFLOW_TRANSPORTS=http,grpc,kafka,nats` (which faces start; default: every face
+  given), `LANDFLOW_MAX_CONCURRENCY`, and, next wave, `LANDFLOW_<KIND>_URL`, `LANDFLOW_MCP` (`on`, `off`, `stdio`),
+  `LANDFLOW_MCP_TOKEN`, `LANDFLOW_TRANSPORT_SECRET`. Broker drivers load only when used.
+- Go: `landflow.Serve(ctx, p, landflow.WithHTTP(7104), landflow.WithGRPC(7204), landflow.WithBinding(b),
+  landflow.WithMaxConcurrency(16), landflow.WithTransports("http", "grpc"))`; the `Binding` interface (`Kind`, `Start`,
+  `Stop`) and the dispatcher mirror the TypeScript ones; drivers in their own packages so a plugin pulls only what it
+  uses. Python: `serve(plugin, http=…, grpc=…, bindings=[…], transports=[…], max_concurrency=…)` with the same
+  `Binding` protocol, plus the bridge for brokers. All three read `LANDFLOW_TRANSPORTS` and `LANDFLOW_MAX_CONCURRENCY`.
 - The MCP face uses the official MCP SDK of each language: `@modelcontextprotocol/server` (the v2 packages) in TypeScript,
   `github.com/modelcontextprotocol/go-sdk` (v1) in Go, `mcp` in Python. The host's existing MCP server, on the 1.x package,
   moves to v2 in phase 3.
 - Server spans keep `plugin.execute …`; brokered calls add the OpenTelemetry messaging attributes
   (`messaging.system`, `messaging.destination.name`, `messaging.operation.type`); MCP calls add `mcp.tool.name`.
-- **Conformance kit** (`packages/protocol/conformance/`): request fixtures and expected replies (deadlines, cancellation,
-  errors, size limits, delivery modes, MCP tool listing and calls), run by every SDK × face and every driver.
+- **Conformance kit** (`packages/protocol/conformance/`, `@landflow/protocol/conformance`): request fixtures and
+  expected replies (deadlines, cancellation, errors, size limits, delivery modes, MCP tool listing and calls), run by
+  every SDK × face. Drivers have their own suite, `@landflow/transports/conformance` (above).
 
-## Protocol changes (additive, still `landflow.plugin/v1`)
+## Protocol changes (additive, still `landflow.plugin/v1`; all in)
 
-1. Endpoint schemes `<kind>://<connectionId>/<pluginId>` for brokers; older hosts never see them (they're announced over
-   the broker).
-2. Manifest hints: `transports: string[]` (faces the plugin was built with) and `maxConcurrency`.
-3. Node descriptor: `idempotent?: boolean`, `mcp?: false` (per node or operation), `outputSchema?` (for MCP structured
-   output), and optional tool annotations to override the derived ones.
+1. Endpoint schemes `<kind>://<connectionId>/<pluginId>` for brokers (`parseEndpoint()`, `formatEndpoint()`,
+   `transportKindOf()` in `@landflow/protocol`); older hosts never see them (they're announced over the broker).
+2. Manifest hints: `transports: string[]` (faces the plugin was built with) and `maxConcurrency` (default assumed 16,
+   `DEFAULT_MAX_CONCURRENCY`); gRPC fields 5 and 6 of `GetManifestResponse`.
+3. Node descriptor: `idempotent?: boolean` (per node or `operation` option), `mcp?: false` (per node, `resource` or
+   `operation` option), `outputSchema?` (for MCP structured output), and `toolAnnotations?` to override the derived ones.
 4. New protocol sections: §14 "Messaging" (envelope, channels, delivery rules, security, one subsection per broker) and
    §15 "MCP" (tool mapping, the per-plugin endpoints, gateway registration and identity, grants).
-5. The engine's `Transport` type becomes an open string union, so spans and metrics carry any kind.
+5. The engine's `Transport` type is `'in-process' | TransportKind`, an open string, so spans and metrics carry any kind.
 
 ## Choosing a transport per call (Auto)
 
@@ -551,6 +649,10 @@ broker: depth ÷ consumers × mean service time), plus an error penalty. Lowest 
    surfaces, so nothing runs twice.
 8. **Objective** per plugin: `balanced` (default), `latency` or `throughput`.
 
+Today the selector does the rules that need no measurements: `pinned` → the pinned kind; the allow-list filters; `only`
+when one kind is left; otherwise gRPC, then HTTP, then a broker by its latency prior, as `auto.latency`. The scoring,
+spill-over, breaker and hysteresis are phase 5.
+
 **Explainability**: every `plugin.rpc` span carries `landflow.transport` and `landflow.transport.reason` (`pinned`,
 `only`, `auto.latency`, `auto.spillover`, `auto.failover`, `auto.breaker`, `auto.size`); metrics
 `landflow.transport.calls`, `landflow.transport.switches`, `landflow.transport.queue_depth`; the feed says why, e.g.
@@ -558,8 +660,9 @@ broker: depth ÷ consumers × mean service time), plus an error penalty. Lowest 
 
 ## Walk-through: Twilio
 
-1. **A broker is installed**, say Kafka (in dev, `deploy/compose.infra.yml` gets one profile per broker). The admin adds
-   it in Settings → Transports, and Test says it's connected.
+1. **A broker is installed**, say Kafka (in dev, `deploy/compose.infra.yml` has one profile per broker: `--profile
+   kafka`, port 59092). The admin adds it in Settings → Transports (or sets `LANDFLOW_TRANSPORT_KAFKA_URL`), and Test
+   says it's connected.
 2. **The plugin starts** with `LANDFLOW_TRANSPORTS=http,grpc,kafka`. The Plugins page shows Twilio over gRPC, HTTP and
    Kafka, on Auto, and lists its MCP tools (`twilio_message_send`, `twilio_message_list`…). It's in the MCP gateway
    already: nobody registered it.
@@ -583,18 +686,18 @@ fake Twilio server.
 
 Each phase ends with every test suite passing, a clean type check and a check in Chrome, like the roadmap's waves.
 
-| Phase | Work | Done when | Size |
-|---|---|---|---|
-| 0. Spec | §14 Messaging and §15 MCP written; tier 1 brokers and agentgateway in `compose.infra.yml` (one profile each, 5xxxx ports); a spike that registers a target over agentgateway's config API and checks "tool list changed" and the identity headers | Spec reviewed; every tier 1 broker and the gateway start locally; the spike passes, or the file fallback is chosen | S |
-| 1. Abstraction | SDK `TransportBinding` (TS, Go, Python) with HTTP and gRPC behind it; host providers; the open `Transport` type; the per-plugin policy in the database with its picker; the conformance kit | Every existing test passes, behaviour unchanged; the policy survives restarts and is the same on every process | M |
-| 2. Messaging in TypeScript | `@landflow/transports`: the core and tier 1 drivers (Kafka, RabbitMQ, NATS, Valkey Streams); host connections, discovery, Settings → Transports; the TS SDK binding; encryption and signing | A workflow runs through Text Toolkit over each tier 1 broker with one joined trace; a plugin with no open port works; broker restarts and a plugin killed mid-call behave as specified | L |
-| 3. MCP endpoints | The SDK MCP face (TS, Go, Python); the host's per-plugin MCP endpoints with grants, audit, `mcp` executions and the tool browser | A client lists and calls a plugin's tools on its host endpoint with a bound credential; a plugin runs standalone over stdio | L |
-| 3b. Bundled MCP gateway | agentgateway in Compose, queue mode and Kubernetes; `McpGatewaySync` and its adapters; `server.json`, the registry API and Server Cards; sign-in through the identity provider, Landflow-issued tokens, the identity mapping; Settings → MCP gateway status | An outside agent signs in through Keycloak and calls every plugin's tools at one URL; a plugin installed while it's connected shows up without a restart and disappears when removed; a forged identity header is refused | M |
-| 4. Go and the bridge | `sdks/go/transport` (core and tier 1 drivers) and `landflow-bridge` | Conformance passes for TS and Go natively and for Python through the bridge, on every tier 1 broker | L |
-| 5. Auto | Stats, scoring, spill-over, hysteresis, breaker, probes; the Plugins page numbers, reasons and feed events | Simulations with fake clients and a fake clock: low traffic stays direct, bursts spill over, oversized calls skip small-message brokers, failover and recovery, no flapping | L |
-| 6. Tier 2 brokers | MQTT 5, SQS, Pub/Sub, Azure Service Bus, AMQP 1.0, Pulsar: a TS driver (host) and a Go driver (Go SDK and bridge) each, tested against local containers and emulators (Mosquitto, LocalStack, the Pub/Sub emulator, the Service Bus emulator with its SQL Server container, `apache/artemis`, Pulsar standalone) | Conformance passes for each; tests set limits explicitly, since emulators differ from the services (the Pub/Sub emulator never expires messages) | M each |
-| 7. Twilio pilot, queue mode, Kubernetes | The Twilio node and fake; workers with broker connections; broker manifests and KEDA docs; `deploy/scripts/transport-bench.py` comparing every installed transport | The walk-through works end to end on the local stack and on OrbStack's cluster | M |
-| 8. Python native drivers | Tier 1 drivers in the Python SDK | Conformance passes without the bridge | M |
+| Phase | Work | Done when | Size | Status |
+|---|---|---|---|---|
+| 0. Spec | §14 Messaging and §15 MCP written; every broker and agentgateway in `compose.infra.yml` (one profile each, 5xxxx ports); a spike that registers a target over agentgateway's config API and checks "tool list changed" and the identity headers | Spec reviewed; every broker and the gateway start locally; the spike passes, or the file fallback is chosen | S | ✅ Done: all ten brokers and the gateway run locally (`deploy/README.md`, "Message brokers and the MCP gateway"; `deploy/scripts/brokers-smoke.sh`); the spike chose the config API ([mcp-gateway.md](mcp-gateway.md)) |
+| 1. Abstraction | SDK `TransportBinding` (TS, Go, Python) with HTTP and gRPC behind it; host providers; the open `Transport` type; the per-plugin policy in the database with its picker; the conformance kit | Every existing test passes, behaviour unchanged; the policy survives restarts and is the same on every process | M | ✅ Done: bindings and dispatchers in the three SDKs, `maxConcurrency` and the hints; host providers, policy store, selector, connections, `GET /api/transports`, the connections API, Settings → Transports, the policy picker |
+| 2. Messaging in TypeScript | `@landflow/transports`: the core and tier 1 drivers (Kafka, RabbitMQ, NATS, Valkey Streams); host connections, discovery, Settings → Transports; the TS SDK binding; encryption and signing | A workflow runs through Text Toolkit over each tier 1 broker with one joined trace; a plugin with no open port works; broker restarts and a plugin killed mid-call behave as specified | L | ◐ The core, envelope, encryption and signing, the in-memory driver and the driver conformance suite are done. Next: the tier 1 drivers, the host's `messaging.ts` (discovery, stats), the TS SDK's messaging binding |
+| 3. MCP endpoints | The SDK MCP face (TS, Go, Python); the host's per-plugin MCP endpoints with grants, audit, `mcp` executions and the tool browser | A client lists and calls a plugin's tools on its host endpoint with a bound credential; a plugin runs standalone over stdio | L | The tool mapping (`@landflow/protocol` `mcp-tools.ts`) is done; the faces and endpoints are next |
+| 3b. Bundled MCP gateway | agentgateway in Compose, queue mode and Kubernetes; `McpGatewaySync` and its adapters; `server.json`, the registry API and Server Cards; sign-in through the identity provider, Landflow-issued tokens, the identity mapping; Settings → MCP gateway status | An outside agent signs in through Keycloak and calls every plugin's tools at one URL; a plugin installed while it's connected shows up without a restart and disappears when removed; a forged identity header is refused | M | Planned |
+| 4. Go and the bridge | `sdks/go/transport` (core and tier 1 drivers) and `landflow-bridge` | Conformance passes for TS and Go natively and for Python through the bridge, on every tier 1 broker | L | Planned |
+| 5. Auto | Stats, scoring, spill-over, hysteresis, breaker, probes; the Plugins page numbers, reasons and feed events | Simulations with fake clients and a fake clock: low traffic stays direct, bursts spill over, oversized calls skip small-message brokers, failover and recovery, no flapping | L | Planned |
+| 6. Tier 2 brokers | MQTT 5, SQS, Pub/Sub, Azure Service Bus, AMQP 1.0, Pulsar: a TS driver (host) and a Go driver (Go SDK and bridge) each, tested against local containers and emulators (Mosquitto, LocalStack, the Pub/Sub emulator, the Service Bus emulator with its SQL Server container, `apache/artemis`, Pulsar standalone) | Conformance passes for each; tests set limits explicitly, since emulators differ from the services (the Pub/Sub emulator never expires messages) | M each | Planned (the containers are in place) |
+| 7. Twilio pilot, queue mode, Kubernetes | The Twilio node and fake; workers with broker connections; broker manifests and KEDA docs; `deploy/scripts/transport-bench.py` comparing every installed transport | The walk-through works end to end on the local stack and on OrbStack's cluster | M | Planned |
+| 8. Python native drivers | Tier 1 drivers in the Python SDK | Conformance passes without the bridge | M | Planned |
 
 After phase 1, phases 2 and 3 can run in parallel; 3b follows 3; 4 and 5 follow 2.
 
@@ -612,7 +715,7 @@ After phase 1, phases 2 and 3 can run in parallel; 3b follows 3; 4 and 5 follow 
 | Version skew during rolling deploys | The manifest-hash attribute, `manifest_mismatch` with requeue, then a fresh manifest pull |
 | A broker goes down | The breaker sends calls back to direct transports or another broker |
 | agentgateway's admin API has no authentication | It only listens on loopback, inside the sidecar; nothing else can reach it |
-| The config API for MCP targets is barely documented | A phase 0 spike; the hot-reloaded file is the fallback, and it is documented |
+| The config API for MCP targets is barely documented | The phase 0 spike verified it against 1.6.0 (exact payloads in [mcp-gateway.md](mcp-gateway.md)); the hot-reloaded file is the fallback, and it is documented |
 | Forged caller identity | The host trusts the identity headers only with the gateway secret; the gateway overwrites them on every call |
 | The gateway project changes direction | Apache-2.0 under a foundation; the adapter interface and `server.json` keep a swap (ContextForge) small |
 | An older MCP server lowers the shared endpoint's version | Landflow's endpoints all speak 2026-07-28; external servers get routes of their own |

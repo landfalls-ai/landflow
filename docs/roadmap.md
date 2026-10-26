@@ -382,7 +382,31 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   through one messaging core and small drivers, chosen per call from live traffic, and every plugin
   also an MCP server: its own endpoint, and a bundled open-source MCP gateway (agentgateway) that
   every installed plugin registers into automatically. Decisions settled on 2026-10-26; see
-  [transports.md](transports.md).
+  [transports.md](transports.md). In progress, by its phases:
+  - Phase 0 (spec, infra, gateway spike) ✅ Done: protocol §14 Messaging and §15 MCP; every broker
+    and agentgateway 1.6.0 in `deploy/compose.infra.yml`, one profile each, with
+    `deploy/scripts/brokers-smoke.sh`; the spike (`deploy/scripts/mcp-gateway-spike.mjs`,
+    [mcp-gateway.md](mcp-gateway.md)) verified the config API, the identity headers, Keycloak sign-in
+    and the file fallback, and chose the config API.
+  - Phase 1 (abstraction) ✅ Done: `TransportBinding` and a dispatcher with `maxConcurrency` in the
+    TS, Go and Python SDKs (`LANDFLOW_TRANSPORTS`, `LANDFLOW_MAX_CONCURRENCY`, the `transports` /
+    `maxConcurrency` manifest hints); the MCP tool mapping in `@landflow/protocol`; the host's
+    transport providers, the per-plugin policy in the database (`PATCH /api/plugins/:id {policy}`),
+    the selector with reasons on spans, broker connections with sealed secrets
+    (`/api/transports/connections`, `LANDFLOW_TRANSPORT_<KIND>_URL`), Settings → Transports and the
+    policy picker on plugin cards.
+  - Phase 2 (messaging in TypeScript) ◐: the core of `@landflow/transports` (CloudEvents envelope,
+    end-to-end encryption and signing, `MessagingClient` / `MessagingServer`), the in-memory driver
+    and the driver conformance suite are done. Next: the tier 1 broker drivers (Kafka, RabbitMQ,
+    NATS, Valkey Streams), the host's messaging provider with discovery over the broker, and the TS
+    SDK's messaging binding.
+  - Known follow-ups: align the concurrency-limit behaviour across the SDKs (TS queues up to the
+    limit, then refuses with HTTP 429 / gRPC `RESOURCE_EXHAUSTED`; Go and Python wait until the
+    deadline, then 503 / `RESOURCE_EXHAUSTED`); the `x-landflow-deadline` header in the Go and Python
+    HTTP bindings (TS has it); the host's announce schema accepting the `transports` and
+    `maxConcurrency` hints; `DiscoverySource` gaining `'broker'`.
+  - Then phases 3 to 8: the MCP faces and per-plugin endpoints, the bundled gateway sync, Go and the
+    bridge, Auto, tier 2 brokers, the Twilio pilot, Python native drivers.
 
 ## Not planned
 
