@@ -18,10 +18,10 @@ Object.assign(process.env, { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_
 
 import type { GatewayRoute, GatewayTarget, McpGatewayAdapter, SyncPlugin } from '@/lib/server/mcp/gateway-sync';
 
-const { McpGatewaySync, MemoryOwnedStore, dbOwnedStore, gatewayTargetName, renderTarget, renderRoutes, routePoliciesFor, sameJson, OFFLINE_GRACE_MS } = await import('@/lib/server/mcp/gateway-sync');
+const { McpGatewaySync, MemoryOwnedStore, dbOwnedStore, gatewayTargetName, renderTarget, renderRoutes, routePoliciesFor, inlineHostJwks, sameJson, OFFLINE_GRACE_MS } = await import('@/lib/server/mcp/gateway-sync');
 const { AgentgatewayAdapter, FileGatewayAdapter } = await import('@/lib/server/mcp/gateway-adapters');
 const { createUser } = await import('@/lib/server/auth/users');
-const { issueMcpToken, listMcpTokens, purgeMcpTokens, revokeMcpToken } = await import('@/lib/server/mcp/tokens');
+const { issueMcpToken, listMcpTokens, mcpJwks, purgeMcpTokens, revokeMcpToken } = await import('@/lib/server/mcp/tokens');
 
 const SECRET = 'test-gateway-secret-0123456789';
 const HOST = 'http://127.0.0.1:3000';
@@ -140,6 +140,24 @@ describe('target names and rendering', () => {
     expect(routePoliciesFor(own, '/mcp/plugins/a', 'http://gw.test')).toBe(own);
     expect(routePoliciesFor({ mcpAuthentication: auth }, '/mcp/plugins/a', undefined)).toEqual({ mcpAuthentication: auth });
     expect(routePoliciesFor({ cors: {} }, '/mcp/plugins/a', 'http://gw.test')).toEqual({ cors: {} });
+  });
+
+  it('inlines the host’s own JWKS in route policies, so a stored route does not need the host to be up', async () => {
+    const keys = await mcpJwks();
+    const auth = { mode: 'optional', issuer: 'http://landflow.test', jwks: { url: 'http://host.docker.internal:3000/api/mcp/jwks' } };
+    const inlined = await inlineHostJwks({ mcpAuthentication: auth, cors: {} }, mcpJwks);
+    expect(inlined).toEqual({ mcpAuthentication: { ...auth, jwks: JSON.stringify(keys) }, cors: {} });
+    expect(JSON.parse((inlined!.mcpAuthentication as { jwks: string }).jwks).keys[0]).not.toHaveProperty('d');
+    // Behind a base path too; an identity provider's keys, a file, no sign-in or no policies stay as configured (and are not read).
+    const behind = await inlineHostJwks({ mcpAuthentication: { jwks: { url: 'https://example.test/landflow/api/mcp/jwks/' } } }, mcpJwks);
+    expect(typeof (behind!.mcpAuthentication as { jwks: unknown }).jwks).toBe('string');
+    const never = () => Promise.reject(new Error('read'));
+    const idp = { mcpAuthentication: { jwks: { url: 'http://keycloak:8080/realms/x/protocol/openid-connect/certs' } } };
+    expect(await inlineHostJwks(idp, never)).toBe(idp);
+    const file = { mcpAuthentication: { jwks: { file: '/c/jwks.json' } } };
+    expect(await inlineHostJwks(file, never)).toBe(file);
+    expect(await inlineHostJwks({ cors: {} }, never)).toEqual({ cors: {} });
+    expect(await inlineHostJwks(undefined, never)).toBeUndefined();
   });
 
   it('compares JSON structurally', () => {

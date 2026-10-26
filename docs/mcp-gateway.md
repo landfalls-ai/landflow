@@ -267,8 +267,15 @@ mcp:
 The host writes the per-plugin routes, so it adds the same check to each one from `LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES`
 (the JSON in `deploy/.env.example`). agentgateway refuses a route whose `mcpAuthentication` has no `resourceMetadata`
 (422 "missing field `resourceMetadata`"), so the host gives each route its own: the route's URL on
-`LANDFLOW_MCP_GATEWAY_PUBLIC_URL` as the resource and the policy's issuer as the authorization server. The JWKS is fetched at startup, so start the dev server first. The Kubernetes
-equivalent is `k8s/components/gateway-landflow-tokens`.
+`LANDFLOW_MCP_GATEWAY_PUBLIC_URL` as the resource and the policy's issuer as the authorization server. The base config's
+JWKS is fetched at startup, and an unreachable one stops agentgateway from starting, so start the dev server first. The
+per-plugin routes live in the gateway's database (storage mode `hybrid`) and are loaded at every start too, so the host
+writes its own keys into them inline instead of the URL: a `jwks: { url }` at a Landflow `/api/mcp/jwks` becomes the key
+set as a JSON string (agentgateway accepts that form; checked with `--validate-only` and live: a bad token gets 401, a
+valid one passes). With the URL, a gateway restarted while the dev server was down crash-looped with `failed to load
+JWKS` even after going back to the default config. A rotated key changes the rendered route, which the sync reports as
+drift and rewrites; an identity provider's JWKS is left as a URL. The Kubernetes equivalent is
+`k8s/components/gateway-landflow-tokens`.
 
 Verified on the dev stack (2026-10-26), with a token granted every tool of `text-toolkit`:
 

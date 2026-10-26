@@ -472,6 +472,9 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
     - Go and Python claim stores take pod and task roles too (web identity, container credentials).
     - Databases created before 2026-10-25 lacked a checkpoint column, so crash-recovery checkpoints failed to save there;
       migration 1780 adds it (migrations can now add a column only where it's missing).
+    - The gateway sync writes the host's own JWKS inline into the per-plugin routes it stores in agentgateway, so a gateway
+      restarted while the host is down still starts (with the URL it crash-looped on `failed to load JWKS`). On
+      Kubernetes, applying or reverting `orbstack-brokers` now rolls the plugins, which read their broker faces only at start.
   - Known follow-ups: MCP subscriptions need a 2026-07-28 client (2025-era clients read a trigger resource to poll);
     the gateway checks one issuer, so sign-in there is Landflow tokens or the identity provider, not both; large Service Bus
     messages through the emulator stay throughput-bound (about 1 call/s at 64 KiB with 8 callers).

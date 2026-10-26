@@ -37,7 +37,7 @@ import { pluginTools } from './grants';
 import { CALLER_ISSUER_HEADER, CALLER_SUBJECT_HEADER, CALLER_TOKEN_ID_HEADER, GATEWAY_SECRET_HEADER, gatewayMode, gatewaySecret } from './identity';
 import { CORE_PLUGIN_ID, notifyPluginToolsChanged, PLUGIN_MCP_PATH } from './plugin-servers';
 import { onPublicationChangedAnywhere } from '../publications';
-import { gatewayPublicUrl, purgeMcpTokens } from './tokens';
+import { gatewayPublicUrl, mcpJwks, purgeMcpTokens } from './tokens';
 
 export type { GatewayRoute, GatewayTarget, GatewayTargetValue, McpGatewayAdapter } from './gateway-adapters';
 
@@ -132,6 +132,30 @@ export function routePoliciesFor(policies: Record<string, unknown> | undefined, 
     bearer_methods_supported: ['header'],
   };
   return { ...policies, mcpAuthentication: { ...auth, resourceMetadata } };
+}
+
+/** The path of a Landflow host's JWKS (app/api/mcp/jwks), after any base path. */
+const HOST_JWKS_PATH = '/api/mcp/jwks';
+
+/**
+ * Route policies with the host's own keys inline: an `mcpAuthentication.jwks` of `{ url }` at a Landflow `/api/mcp/jwks`
+ * becomes the key set as a JSON string, which agentgateway also takes. agentgateway fetches a remote JWKS whenever it loads
+ * its config, the routes stored in its database included, and an unreachable one keeps it from starting: with the URL, a
+ * gateway restarted while the host is down crash-loops even on a config without sign-in. A rotated key changes the
+ * rendered route, which the sync sees as drift and rewrites. Other policies (an identity provider's JWKS) are left as they are.
+ */
+export async function inlineHostJwks(policies: Record<string, unknown> | undefined, jwks: () => Promise<{ keys: unknown[] }>): Promise<Record<string, unknown> | undefined> {
+  const auth = policies?.mcpAuthentication as Record<string, unknown> | undefined;
+  const url = (auth?.jwks as { url?: unknown } | undefined)?.url;
+  if (!policies || !auth || typeof url !== 'string') return policies;
+  let path: string;
+  try {
+    path = new URL(url).pathname.replace(/\/+$/, '');
+  } catch {
+    return policies;
+  }
+  if (!path.endsWith(HOST_JWKS_PATH)) return policies;
+  return { ...policies, mcpAuthentication: { ...auth, jwks: JSON.stringify(await jwks()) } };
 }
 
 /** Which kind of MCP server a gateway target stands for. */
@@ -573,7 +597,7 @@ export class McpGatewaySync {
       this.lastError = 'LANDFLOW_MCP_GATEWAY_SECRET is not set (at least 16 characters): the host would refuse every call from the gateway, so no target is written';
       return { changed: false, upserted: [], removed: [], skipped: this.lastError };
     }
-    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: this.routePolicies(), publicUrl: gatewayPublicUrl() };
+    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: await inlineHostJwks(this.routePolicies(), mcpJwks), publicUrl: gatewayPublicUrl() };
     const upserted: string[] = [];
     const removed: string[] = [];
     try {
@@ -680,7 +704,7 @@ export class McpGatewaySync {
     base.health = await this.adapter.health();
     const secret = this.secret();
     if (!secret) return base;
-    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: this.routePolicies(), publicUrl: gatewayPublicUrl() };
+    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: await inlineHostJwks(this.routePolicies(), mcpJwks), publicUrl: gatewayPublicUrl() };
     const wanted = new Map<string, { kind: OwnedKind; pluginId: string; value: unknown; entry: SyncEntry }>();
     for (const entry of await this.desired()) {
       const target = renderEntryTarget(entry, options);
