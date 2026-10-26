@@ -130,7 +130,7 @@ export class TransportProviderRegistry {
         label: provider?.label ?? transportLabel(kind),
         direct: provider?.direct ?? false,
         installed: Boolean(provider),
-        ...(provider && { capabilities: provider.capabilities }),
+        ...(provider && { health: provider.health(), capabilities: provider.capabilities }),
         fields: provider?.direct ? [] : this.fieldsOf(kind),
       };
     });

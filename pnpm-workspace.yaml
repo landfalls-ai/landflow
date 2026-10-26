@@ -6,3 +6,4 @@ packages:
 onlyBuiltDependencies:
   - esbuild
   - protobufjs
+  - "@confluentinc/kafka-javascript"

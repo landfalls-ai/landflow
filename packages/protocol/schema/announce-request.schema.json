@@ -27,6 +27,20 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 128
+    },
+    "transports": {
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 32
+      }
+    },
+    "maxConcurrency": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 100000
     }
   },
   "required": [

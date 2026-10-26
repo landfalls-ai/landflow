@@ -98,6 +98,7 @@ type PropertyOption struct {
 	Value       any    `json:"value"`
 	Description string `json:"description,omitempty"`
 	Action      string `json:"action,omitempty"`
+	Idempotent  bool   `json:"idempotent,omitempty"` // safe to repeat: overrides the node's Idempotent (brokers, MCP idempotentHint)
 }
 
 // DisplayOptions is n8n-style conditional visibility. Values are primitives.
@@ -213,6 +214,7 @@ type NodeDescriptor struct {
 	DefaultVersion  int                  `json:"defaultVersion,omitempty"`
 	Kind            NodeKind             `json:"kind"`
 	TriggerSource   TriggerSource        `json:"triggerSource,omitempty"`
+	Idempotent      bool                 `json:"idempotent,omitempty"` // safe to run twice: at-least-once delivery over brokers (docs/transports.md)
 	Categories      []string             `json:"categories,omitempty"`
 	Icon            string               `json:"icon,omitempty"`
 	Color           string               `json:"color,omitempty"`

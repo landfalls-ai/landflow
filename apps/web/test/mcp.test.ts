@@ -1,9 +1,12 @@
 /**
- * MCP both ways. Client side: a real MCP server (the SDK's, Streamable HTTP with sessions and the
- * older SSE transport, bearer and header auth) on a random port, reached by the client library, the
- * MCP Client Tool under an AI Agent (fake OpenAI model), the MCP Client node and agents' MCP
- * servers. Server side: the SDK's client against the MCP Server Trigger route (/mcp/<path>) and the
- * instance server (/api/mcp), called in-process through the route handlers.
+ * MCP both ways, on the MCP SDK v2. Client side: real MCP servers on a random port, reached by the client library,
+ * the MCP Client Tool under an AI Agent (fake OpenAI model), the MCP Client node and agents' MCP servers:
+ * - /mcp: a 2026-07-28 endpoint (`createMcpHandler`: `server/discover`, the `_meta` envelope; stateless);
+ * - /legacy: a 2025-era Streamable HTTP endpoint with sessions (`initialize`, `Mcp-Session-Id`), as older servers
+ *   still are, to check the client negotiates down and reconnects when a session is forgotten;
+ * - /sse: the older SSE transport (a small hand-rolled server transport: v2 ships none).
+ * Server side: the SDK's client against the MCP Server Trigger route (/mcp/<path>) and the instance server (/api/mcp),
+ * called in-process through the route handlers, plus raw 2025-11-25 and 2026-07-28 requests.
  */
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
@@ -11,14 +14,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { createMcpHandler, McpServer, WebStandardStreamableHTTPServerTransport, type CallToolResult, type JSONRPCMessage, type Transport } from '@modelcontextprotocol/server';
 import { runLoadOptions } from '@landflow/sdk';
 import type { Workflow } from '@landflow/engine';
 import type { Agent, AgentConfig } from '@/lib/shared/agents';
@@ -35,6 +35,7 @@ const { store } = await import('@/lib/server/store');
 const { waits } = await import('@/lib/server/waits');
 const { credentials } = await import('@/lib/server/credentials/vault');
 const { callMcpTool, closeMcpClients, endpointFrom, listMcpTools, selectTools } = await import('@/lib/server/mcp/client');
+const { closeMcpEndpoints } = await import('@/lib/server/mcp/server');
 const { mcpClientNode, mcpClientToolNode } = await import('@/lib/server/nodes/mcp');
 const { buildToolset } = await import('@/lib/server/agents/tools');
 const { outputsOf, run, runFlow } = await import('./helpers');
@@ -45,7 +46,7 @@ const settingsRoute = await import('@/app/api/settings/mcp/route');
 registry.registerBuiltin(corePlugin);
 
 // ---------------------------------------------------------------------------
-// A remote MCP server
+// Remote MCP servers (node:http in front of web-standard handlers)
 // ---------------------------------------------------------------------------
 
 const BEARER = 'secret-token';
@@ -53,47 +54,101 @@ const API_KEY = 'k-123';
 
 function remoteServer() {
   const server = new McpServer({ name: 'test-tools', version: '1.0.0' });
-  server.registerTool('add', { description: 'Add two numbers', inputSchema: { a: z.number(), b: z.number() } }, async ({ a, b }) => ({
+  server.registerTool('add', { description: 'Add two numbers', inputSchema: z.object({ a: z.number(), b: z.number() }) }, async ({ a, b }) => ({
     content: [{ type: 'text', text: String(a + b) }],
   }));
-  server.registerTool('echo', { description: 'Echo a message', inputSchema: { message: z.string().describe('What to echo') } }, async ({ message }) => ({
+  server.registerTool('echo', { description: 'Echo a message', inputSchema: z.object({ message: z.string().describe('What to echo') }) }, async ({ message }) => ({
     content: [{ type: 'text', text: message }],
   }));
   server.registerTool(
     'weather',
-    { description: 'The weather in a city', inputSchema: { city: z.string() }, outputSchema: { city: z.string(), tempC: z.number() } },
+    { description: 'The weather in a city', inputSchema: z.object({ city: z.string() }), outputSchema: z.object({ city: z.string(), tempC: z.number() }) },
     async ({ city }) => ({ content: [{ type: 'text', text: JSON.stringify({ city, tempC: 21 }) }], structuredContent: { city, tempC: 21 } }),
   );
   server.registerTool('fail', { description: 'Always fails' }, async () => ({ content: [{ type: 'text', text: 'it broke' }], isError: true }));
   return server;
 }
 
-const sessions = new Map<string, StreamableHTTPServerTransport>();
-const sseSessions = new Map<string, SSEServerTransport>();
+/** A node request as a web-standard Request (the body streamed). */
+function toWebRequest(req: IncomingMessage, origin: string): Request {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) value.forEach((v) => headers.append(name, v));
+    else if (value !== undefined) headers.set(name, value);
+  }
+  const method = req.method ?? 'GET';
+  const body = method === 'GET' || method === 'HEAD' ? undefined : (Readable.toWeb(req) as ReadableStream<Uint8Array>);
+  return new Request(new URL(req.url ?? '/', origin), { method, headers, body, ...(body && { duplex: 'half' }) } as RequestInit);
+}
+
+async function sendWebResponse(res: ServerResponse, response: Response) {
+  res.writeHead(response.status, Object.fromEntries(response.headers));
+  if (!response.body) return res.end();
+  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) res.write(chunk);
+  res.end();
+}
+
+/** The older SSE transport, server side (GET opens the stream and names the POST endpoint; each POST is one message). */
+class SseServerTransport implements Transport {
+  readonly sessionId = randomUUID();
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage) => void;
+  constructor(
+    private readonly res: ServerResponse,
+    private readonly endpoint: string,
+  ) {}
+  async start() {
+    this.res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    this.res.write(`event: endpoint\ndata: ${this.endpoint}?sessionId=${this.sessionId}\n\n`);
+    this.res.on('close', () => this.onclose?.());
+  }
+  async send(message: JSONRPCMessage) {
+    this.res.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
+  }
+  async close() {
+    this.res.end();
+  }
+  handlePost(body: string) {
+    this.onmessage?.(JSON.parse(body) as JSONRPCMessage);
+  }
+}
+
+const modern = createMcpHandler(() => remoteServer());
+const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
+const sseSessions = new Map<string, SseServerTransport>();
 const seen: Array<{ method: string; path: string; authorization?: string; apiKey?: string }> = [];
 
+const readBody = (req: IncomingMessage) =>
+  new Promise<string>((resolve) => {
+    let raw = '';
+    req.on('data', (chunk) => (raw += chunk));
+    req.on('end', () => resolve(raw));
+  });
+
 async function handle(req: IncomingMessage, res: ServerResponse) {
-  const url = new URL(req.url ?? '/', 'http://localhost');
+  const url = new URL(req.url ?? '/', origin);
   seen.push({ method: req.method ?? '', path: url.pathname, authorization: req.headers.authorization, apiKey: req.headers['x-api-key'] as string | undefined });
   const deny = () => res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null }));
   if (url.pathname.startsWith('/secure/') && req.headers.authorization !== `Bearer ${BEARER}`) return deny();
   if (url.pathname.startsWith('/header/') && req.headers['x-api-key'] !== API_KEY) return deny();
   const path = url.pathname.replace(/^\/(secure|header)/, '');
 
-  if (path === '/mcp') {
+  if (path === '/mcp') return sendWebResponse(res, await modern.fetch(toWebRequest(req, origin)));
+  if (path === '/legacy') {
     const id = req.headers['mcp-session-id'] as string | undefined;
     let transport = id ? sessions.get(id) : undefined;
     if (!transport) {
       if (id) return res.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: 'Session not found' }, id: null }));
-      const created = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID(), onsessioninitialized: (sid) => void sessions.set(sid, created) });
+      const created = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID(), onsessioninitialized: (sid) => void sessions.set(sid, created) });
       created.onclose = () => void (created.sessionId && sessions.delete(created.sessionId));
       await remoteServer().connect(created);
       transport = created;
     }
-    return transport.handleRequest(req, res);
+    return sendWebResponse(res, await transport.handleRequest(toWebRequest(req, origin)));
   }
   if (path === '/sse' && req.method === 'GET') {
-    const transport = new SSEServerTransport(url.pathname.replace(/sse$/, 'messages'), res);
+    const transport = new SseServerTransport(res, url.pathname.replace(/sse$/, 'messages'));
     sseSessions.set(transport.sessionId, transport);
     res.on('close', () => sseSessions.delete(transport.sessionId));
     await remoteServer().connect(transport);
@@ -102,7 +157,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (path === '/messages' && req.method === 'POST') {
     const transport = sseSessions.get(url.searchParams.get('sessionId') ?? '');
     if (!transport) return res.writeHead(404).end('Unknown session');
-    return transport.handlePostMessage(req, res);
+    transport.handlePost(await readBody(req));
+    return res.writeHead(202).end('Accepted');
   }
   res.writeHead(404).end('Not found');
 }
@@ -132,6 +188,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await closeMcpClients();
+  await closeMcpEndpoints();
+  await modern.close();
   remote.closeAllConnections();
   await new Promise<void>((resolve) => remote.close(() => resolve()));
   await fake.close();
@@ -153,20 +211,30 @@ const text = (result: CallToolResult | { content?: unknown }) =>
 // ---------------------------------------------------------------------------
 
 describe('MCP client library', () => {
-  it('lists and calls tools over Streamable HTTP, reusing one session', async () => {
+  it('lists and calls tools on a 2026-07-28 server (server/discover, no initialize)', async () => {
     const endpoint = endpointFrom({ endpointUrl: `${origin}/mcp` }, {});
     const tools = await listMcpTools(endpoint);
     expect(tools.map((t) => t.name)).toEqual(['add', 'echo', 'weather', 'fail']);
     expect(tools[0].inputSchema).toMatchObject({ type: 'object', properties: { a: { type: 'number' }, b: { type: 'number' } }, required: ['a', 'b'] });
-    const before = sessions.size;
     expect(text(await callMcpTool(endpoint, 'add', { a: 2, b: 40 }))).toBe('42');
     expect(await callMcpTool(endpoint, 'weather', { city: 'Oslo' })).toMatchObject({ structuredContent: { city: 'Oslo', tempC: 21 } });
     expect(await callMcpTool(endpoint, 'fail', {})).toMatchObject({ isError: true, content: [{ type: 'text', text: 'it broke' }] });
-    expect(sessions.size).toBe(before);
+    expect(seen.some((r) => r.path === '/mcp')).toBe(true);
+  });
+
+  it('negotiates down to a 2025-era server with sessions, reusing one session', async () => {
+    const endpoint = endpointFrom({ endpointUrl: `${origin}/legacy` }, {});
+    const before = sessions.size;
+    const tools = await listMcpTools(endpoint);
+    expect(tools.map((t) => t.name)).toEqual(['add', 'echo', 'weather', 'fail']);
+    expect(sessions.size).toBe(before + 1);
+    expect(text(await callMcpTool(endpoint, 'add', { a: 2, b: 40 }))).toBe('42');
+    expect(await callMcpTool(endpoint, 'weather', { city: 'Oslo' })).toMatchObject({ structuredContent: { city: 'Oslo', tempC: 21 } });
+    expect(sessions.size).toBe(before + 1);
   });
 
   it('reconnects once when the server forgot the session', async () => {
-    const endpoint = endpointFrom({ endpointUrl: `${origin}/mcp` }, {});
+    const endpoint = endpointFrom({ endpointUrl: `${origin}/legacy` }, {});
     await listMcpTools(endpoint);
     sessions.clear();
     expect(text(await callMcpTool(endpoint, 'echo', { message: 'again' }))).toBe('again');
@@ -340,8 +408,9 @@ function routeFetch(route: Route, statuses: number[] = []) {
   };
 }
 
-async function connect(url: string, route: Route, headers: Record<string, string> = {}) {
-  const client = new Client({ name: 'landflow-test', version: '1.0.0' });
+/** A v2 client against a route; `legacy` pins the 2025-11-25 handshake (an older agent), the default negotiates 2026-07-28. */
+async function connect(url: string, route: Route, headers: Record<string, string> = {}, legacy = false) {
+  const client = new Client({ name: 'landflow-test', version: '1.0.0' }, { versionNegotiation: { mode: legacy ? 'legacy' : 'auto' } });
   await client.connect(new StreamableHTTPClientTransport(new URL(url), { fetch: routeFetch(route), requestInit: { headers } }));
   return client;
 }
@@ -409,8 +478,14 @@ describe('MCP Server Trigger', () => {
 
   it('initializes, lists the attached tools with their schemas, and calls them as executions with mode mcp', async () => {
     const client = await connect('http://mcp.test/mcp/team/tools', trigger);
+    expect(client.getNegotiatedProtocolVersion()).toBe('2026-07-28');
     expect(client.getServerVersion()).toMatchObject({ name: 'landflow', title: 'Tools wf_mcp_tools' });
     expect(client.getInstructions()).toBe('Math and greetings.');
+    // An older agent: the 2025-11-25 handshake on the same route.
+    const older = await connect('http://mcp.test/mcp/team/tools', trigger, {}, true);
+    expect(older.getNegotiatedProtocolVersion()).toBe('2025-11-25');
+    expect((await older.listTools()).tools.map((t) => t.name)).toEqual(['Calculator', 'Greet']);
+    await older.close();
 
     const executions = () => store.listExecutions({ workflowId: 'wf_mcp_tools' });
     const { tools } = await client.listTools();
@@ -448,13 +523,13 @@ describe('MCP Server Trigger', () => {
     save('wf_mcp_bearer', 'secure', { trigger: { authentication: 'bearerAuth' }, credentials: { httpBearerAuth: { id: bearer.id, name: bearer.name } } });
     save('wf_mcp_header', 'keyed', { trigger: { authentication: 'headerAuth' }, credentials: { httpHeaderAuth: { id: header.id, name: header.name } } });
 
-    await expect(connect('http://mcp.test/mcp/secure', trigger)).rejects.toMatchObject({ code: 401 });
-    await expect(connect('http://mcp.test/mcp/secure', trigger, { Authorization: 'Bearer wrong' })).rejects.toMatchObject({ code: 401 });
+    await expect(connect('http://mcp.test/mcp/secure', trigger)).rejects.toMatchObject({ status: 401 });
+    await expect(connect('http://mcp.test/mcp/secure', trigger, { Authorization: 'Bearer wrong' })).rejects.toMatchObject({ status: 401 });
     const ok = await connect('http://mcp.test/mcp/secure', trigger, { Authorization: 'Bearer trigger-secret' });
     expect((await ok.listTools()).tools).toHaveLength(2);
     await ok.close();
 
-    await expect(connect('http://mcp.test/mcp/keyed', trigger, { 'X-Api-Key': 'wrong' })).rejects.toMatchObject({ code: 401 });
+    await expect(connect('http://mcp.test/mcp/keyed', trigger, { 'X-Api-Key': 'wrong' })).rejects.toMatchObject({ status: 401 });
     const keyed = await connect('http://mcp.test/mcp/keyed', trigger, { 'X-Api-Key': 'trigger-key' });
     expect((await keyed.callTool({ name: 'Calculator', arguments: { expression: '1+1' } })).isError).toBeFalsy();
     await keyed.close();
@@ -466,8 +541,8 @@ describe('MCP Server Trigger', () => {
 
   it('answers 404 for an inactive workflow or an unknown path, and 405 for GET', async () => {
     save('wf_mcp_inactive', 'sleeping', { active: false });
-    await expect(connect('http://mcp.test/mcp/sleeping', trigger)).rejects.toMatchObject({ code: 404 });
-    await expect(connect('http://mcp.test/mcp/nothing-here', trigger)).rejects.toMatchObject({ code: 404 });
+    await expect(connect('http://mcp.test/mcp/sleeping', trigger)).rejects.toMatchObject({ status: 404 });
+    await expect(connect('http://mcp.test/mcp/nothing-here', trigger)).rejects.toMatchObject({ status: 404 });
     const get = await trigger.GET(new Request('http://mcp.test/mcp/team/tools'), { params: Promise.resolve({ path: ['team', 'tools'] }) });
     expect(get.status).toBe(405);
   });

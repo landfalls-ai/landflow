@@ -587,6 +587,10 @@ export interface AnnounceRequest {
    * Opaque, 1–128 characters; the SDKs send 32 hex characters. Older plugins leave it out.
    */
   instanceId?: string;
+  /** The faces this plugin process was built with (`["http", "grpc", "kafka"]`), as in the manifest's `transports` hint (§14.1). */
+  transports?: string[];
+  /** How many calls one instance takes at once, as in the manifest's `maxConcurrency` hint (§14.1). */
+  maxConcurrency?: number;
 }
 
 export interface AnnounceResponse {

@@ -224,7 +224,7 @@ export class MessagingClient<C extends BrokerConfig = BrokerConfig> {
     if (this.driver.capabilities.undeliverable === 'inferred' && stats?.consumers === 0 && stats.sampledAt > startedAt - 2 * DEFAULT_STATS_INTERVAL_MS) {
       throw new UndeliverableError(`"${pluginId}" has no consumers on ${channel}`, 'no_consumers');
     }
-    await this.declareOnce(channelSpecs.request(channel));
+    await this.declareOnce(options.instanceId ? channelSpecs.instance(channel) : channelSpecs.request(channel));
     const callId = packed.attributes.id;
     const publishOptions = { orderingKey: options.orderingKey, ttlMs: deadline - startedAt };
 

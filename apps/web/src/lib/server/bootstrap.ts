@@ -28,6 +28,8 @@ import { startRecovery, startTriggerBuffers } from './runner';
 import { clusterActive, ClusterConfigError, leaderService, startCluster } from './cluster';
 import { triggerBuffers } from './trigger-buffers';
 import { startRegistryGrpcServer } from './plugins/registry-grpc';
+import { registerBrokerProviders } from './transports/broker-provider';
+import { brokerConnections } from './transports/brokers';
 import { scheduler } from './scheduler';
 import { seedWorkflows } from './seed';
 import { singleton } from './singleton';
@@ -54,6 +56,9 @@ export function ensureBootstrapped(): Promise<void> {
     registry.registerBuiltin(corePlugin);
     registry.start();
     observePluginsOnline(() => registry.list());
+    // Brokers (lib/server/transports): a provider per kind with a driver, then the enabled connections open and discover plugins.
+    await registerBrokerProviders();
+    void brokerConnections.start(registry).catch((error: Error) => logger.warn('broker connections did not start', { error: error.message }));
     leaderService('seed workflows', seedWorkflows);
     // Insights backfill (first boot) and execution retention, before anything can start a run.
     leaderService('data maintenance', startDataMaintenance);

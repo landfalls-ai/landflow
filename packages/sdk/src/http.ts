@@ -21,6 +21,7 @@ import {
 } from '@landflow/protocol';
 import type { BindingContext, BindingInfo, TransportBinding } from './binding';
 import { createDispatcher, DispatchError, type DispatchCall, type Dispatcher } from './dispatcher';
+import type { McpFace } from './mcp';
 import type { IPlugin } from './node';
 import { answerRegistryChallenge, REGISTRY_CHALLENGE_HEADER } from './registry-proof';
 import { contextFromHeaders, getTelemetry, type Telemetry } from './otel';
@@ -29,6 +30,8 @@ import { toErrorPayload } from './runtime';
 export const METRICS_PATH = '/metrics';
 /** Request header: epoch ms after which the call must not run. Absent: no deadline. */
 export const DEADLINE_HEADER = 'x-landflow-deadline';
+/** Where the MCP face is mounted on the HTTP port (docs/protocol.md §15.2). */
+const DEFAULT_MCP_PATH = '/mcp';
 
 export interface FetchHandlerOptions {
   basePath?: string;
@@ -36,6 +39,8 @@ export interface FetchHandlerOptions {
   telemetry?: Telemetry;
   /** Share one dispatcher (and its concurrency limit) with other bindings; default: a private one over `telemetry`. */
   dispatcher?: Dispatcher;
+  /** The MCP face mounted on this handler (docs/protocol.md §15.2): its path (default `/mcp`) and the request handler; listed as `endpoints.mcp` in `/.well-known/landflow`. */
+  mcp?: { path?: string; fetch(request: Request): Promise<Response> };
 }
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -89,10 +94,14 @@ export function createFetchHandler(plugin: IPlugin, options: FetchHandlerOptions
   const base = options.basePath ?? '';
   const testable = (plugin.credentialTypes ?? []).some((type) => type.test);
   const appWebhooks = plugin.nodes.some((node) => node.description.triggerSource === 'appWebhook');
+  const mcpPath = options.mcp ? options.mcp.path ?? DEFAULT_MCP_PATH : undefined;
 
   return async function handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname.slice(base.length) || '/';
     const telemetry = options.telemetry ?? (options.dispatcher ? dispatcher.telemetry : getTelemetry());
+
+    // The MCP face owns its path whole (POST for requests, GET/DELETE for the 2025 session methods it answers 405 to).
+    if (options.mcp && path === mcpPath) return options.mcp.fetch(request);
 
     if (request.method === 'GET' && path === HTTP_PATHS.wellKnown) {
       const doc: WellKnownDocument = {
@@ -110,6 +119,7 @@ export function createFetchHandler(plugin: IPlugin, options: FetchHandlerOptions
           health: HTTP_PATHS.health,
           ...(testable && { testCredentials: HTTP_PATHS.testCredentials }),
           ...(appWebhooks && { webhookMethod: HTTP_PATHS.webhookMethod, webhook: HTTP_PATHS.webhook }),
+          ...(mcpPath && { mcp: mcpPath }),
         },
       };
       return json(200, doc);
@@ -227,10 +237,12 @@ export interface ServeHttpOptions {
   telemetry?: Telemetry;
   dispatcher?: Dispatcher;
   basePath?: string;
+  /** Mount the MCP face (`createMcpFace()` from `./mcp`) at `mcp.path` (default `/mcp`). */
+  mcp?: FetchHandlerOptions['mcp'];
 }
 
 export function serveHttp(plugin: IPlugin, options: ServeHttpOptions): Promise<Server> {
-  const handle = createFetchHandler(plugin, { telemetry: options.telemetry, dispatcher: options.dispatcher, basePath: options.basePath });
+  const handle = createFetchHandler(plugin, { telemetry: options.telemetry, dispatcher: options.dispatcher, basePath: options.basePath, mcp: options.mcp });
   const host = options.host ?? '0.0.0.0';
   const server = createServer(async (req, res) => {
     try {
@@ -254,18 +266,43 @@ export interface HttpBindingOptions {
   /** Default 0.0.0.0. */
   host?: string;
   basePath?: string;
+  /**
+   * Also serve the MCP face at `path` (default `/mcp`) on this port (docs/protocol.md §15.2). `token` is what callers
+   * must send as `Authorization: Bearer …` (env LANDFLOW_MCP_TOKEN); it is required unless `host` is loopback only, and
+   * the binding refuses to start without it. `credentials` default to `LANDFLOW_MCP_CREDENTIALS`.
+   */
+  mcp?: { path?: string; token?: string; credentials?: Record<string, JsonObject> };
 }
 
-/** The HTTP face as a `TransportBinding`: `serve()` builds one from `{ http: port }`. Announces `http://<advertiseHost>:<port>`. */
-export function httpBinding(options: HttpBindingOptions): TransportBinding {
+/** The HTTP face as a `TransportBinding`: `serve()` builds one from `{ http: port }`. Announces `http://<advertiseHost>:<port>`; serves `/mcp` too when asked. */
+export function httpBinding(options: HttpBindingOptions): TransportBinding & { readonly mcp: McpFace | undefined } {
   let server: Server | undefined;
   let dispatcher: Dispatcher | undefined;
+  let face: McpFace | undefined;
+  const host = options.host ?? '0.0.0.0';
   return {
     kind: 'http',
+    get mcp() {
+      return face;
+    },
     async start(context: BindingContext): Promise<BindingInfo> {
       dispatcher = context.dispatcher;
-      server = await serveHttp(context.plugin, { port: options.port, host: options.host, basePath: options.basePath, dispatcher, telemetry: context.telemetry });
-      return { endpoints: [`http://${context.advertiseHost}:${options.port}`], description: `HTTP listening on :${options.port}` };
+      let mcp: ServeHttpOptions['mcp'];
+      if (options.mcp) {
+        const { createMcpFace, isLoopbackHost, MCP_TOKEN_ENV } = await import('./mcp');
+        const loopback = isLoopbackHost(host);
+        const token = options.mcp.token || undefined;
+        if (!loopback && !token) {
+          const message = `the MCP face at ${options.mcp.path ?? DEFAULT_MCP_PATH} would listen on ${host}:${options.port} (not loopback) without a token: set ${MCP_TOKEN_ENV}, listen on 127.0.0.1, or turn it off with LANDFLOW_MCP=off`;
+          context.logger.error(`refusing to start: ${message}`, { 'landflow.transport': 'mcp' });
+          throw new Error(`serve(): ${message}`);
+        }
+        face = createMcpFace({ dispatcher, manifest: context.manifest, telemetry: context.telemetry, logger: context.logger.child({ 'landflow.transport': 'mcp' }), token, loopback, credentials: options.mcp.credentials });
+        mcp = { path: options.mcp.path ?? DEFAULT_MCP_PATH, fetch: (request) => face!.fetch(request) };
+      }
+      server = await serveHttp(context.plugin, { port: options.port, host, basePath: options.basePath, dispatcher, telemetry: context.telemetry, mcp });
+      const description = `HTTP listening on :${options.port}${mcp ? ` (MCP at ${mcp.path}${face && !options.mcp?.token ? ', loopback, no token' : ''})` : ''}`;
+      return { endpoints: [`http://${context.advertiseHost}:${options.port}`], description };
     },
     async stop() {
       const running = server;
@@ -273,6 +310,8 @@ export function httpBinding(options: HttpBindingOptions): TransportBinding {
       if (!running) return;
       // Stop accepting, let the calls in flight finish (server.close waits for open connections), then close.
       await new Promise<void>((resolve) => running.close(() => resolve()));
+      await face?.close();
+      face = undefined;
       await dispatcher?.drain();
     },
   };

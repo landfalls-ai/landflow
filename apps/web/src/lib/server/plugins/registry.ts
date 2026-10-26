@@ -12,6 +12,7 @@ import { connect } from 'node:net';
 import {
   DEFAULT_ANNOUNCE_TTL_SECONDS,
   DEFAULT_HEARTBEAT_SECONDS,
+  mcpToolsFromManifest,
   qualifyType,
   splitType,
   type AnnounceRequest,
@@ -25,6 +26,7 @@ import {
 } from '@landflow/protocol';
 import { buildManifest, runLoadOptions, runTestCredentials, type IPlugin } from '@landflow/sdk';
 import { inProcessNodeType, type NodeTypeResolver, type ResolvedNodeType, type Transport } from '@landflow/engine';
+import { isProvablyUndelivered, UndeliverableError } from '@landflow/transports';
 import type { CredentialTypeInfo, DiscoverySource, EndpointOrigin, NodeTypeInfo, PluginStatus, PluginSummary, RegistryEvent } from '../../shared/types';
 import { withBinaryData } from '../binary/access';
 import { withExtends } from '../credentials/extends';
@@ -34,12 +36,25 @@ import { withGovernance } from '../governance/policy';
 import { bus } from '../bus';
 import { singleton } from '../singleton';
 import { withSpan, withTransportChoice } from '../telemetry';
-import type { PluginTransportSummary, TransportChoice, TransportPolicy } from '../../shared/transports';
+import type { BrokerQueueStats, PluginTransportSummary, TransportChoice, TransportPolicy } from '../../shared/transports';
+import { brokerConnections } from '../transports/brokers';
 import { policyFromPreferred, transportPolicies } from '../transports/policy-store';
 import { transportProviders } from '../transports/provider';
 import { isChoice, runModeOf, select, type CallContext, type Candidate, type Selection, type SelectorInputs } from '../transports/selector';
 import { HttpPluginClient, GrpcPluginClient, normalizeEndpoint, PooledPluginClient, transportOf, type PluginClient } from './clients';
 import { provenManifest } from './registry-proof';
+import { mcpExposure } from '../mcp/exposure';
+
+/** How many MCP tools a manifest maps to (docs/protocol.md §15.1), memoised per manifest object. */
+const toolCounts = new WeakMap<PluginManifest, number>();
+function mcpToolCount(manifest: PluginManifest): number {
+  let count = toolCounts.get(manifest);
+  if (count === undefined) {
+    count = mcpToolsFromManifest(manifest).length;
+    toolCounts.set(manifest, count);
+  }
+  return count;
+}
 
 /** Extras for endpoints found by Kubernetes discovery; a re-registration without them keeps the endpoint's own. */
 export interface EndpointOptions {
@@ -82,6 +97,8 @@ interface EndpointState {
   instanceId?: string;
   /** manifestHash() of the manifest pulled through this endpoint. */
   manifestHash: string;
+  /** The `maxConcurrency` hint the plugin sent with its announce (docs/protocol.md §14.1). */
+  maxConcurrency?: number;
 }
 
 interface PluginEntry {
@@ -191,6 +208,7 @@ export class PluginRegistry implements NodeTypeResolver {
       ...(ttlSeconds && { leaseExpiresAt: Date.now() + ttlSeconds * 1000 }),
       ...(options && { options }),
       ...(instanceId && { instanceId }),
+      ...(previous?.maxConcurrency && { maxConcurrency: previous.maxConcurrency }),
       manifestHash: manifestHash(manifest),
     };
 
@@ -247,11 +265,13 @@ export class PluginRegistry implements NodeTypeResolver {
       state.lastSeen = Date.now();
       state.leaseExpiresAt = Date.now() + ttl * 1000;
       state.lastError = undefined;
+      if (request.maxConcurrency) state.maxConcurrency = request.maxConcurrency;
       if (state.source !== 'announce' && state.source !== 'builtin') state.source = 'announce';
       this.emit({ type: 'plugin.heartbeat', pluginId: entry.id, endpoint, message: `heartbeat from ${endpoint}` });
     } else {
       const added = (await this.addEndpoint(endpoint, 'announce', ttl)).endpoints.get(endpoint);
       if (added && request.instanceId) added.instanceId = request.instanceId;
+      if (added && request.maxConcurrency) added.maxConcurrency = request.maxConcurrency;
     }
     return {
       accepted: true,
@@ -513,10 +533,45 @@ export class PluginRegistry implements NodeTypeResolver {
   // Queries
   // -------------------------------------------------------------------------
 
-  /** What the selector reads about the host's transports (capabilities now; stats and breakers in the Auto wave). */
+  /**
+   * What the selector reads about the host's transports: capabilities, the brokers' queue numbers (depth, consumers, lag,
+   * sampled every 5 s by the messaging clients) and the plugin's `maxConcurrency` (announced instances over brokers, else
+   * the announce hint, else the manifest). Latency windows and breakers come with the Auto wave.
+   */
   private readonly selectorInputs: SelectorInputs = {
     capabilities: (kind) => transportProviders.get(kind)?.capabilities,
+    queue: (endpoint) => brokerConnections.queueStats(endpoint),
+    maxConcurrency: (pluginId) => {
+      const entry = this.plugins.get(pluginId);
+      const hinted = entry && [...entry.endpoints.values()].find((s) => s.maxConcurrency)?.maxConcurrency;
+      return brokerConnections.maxConcurrencyOf(pluginId) ?? hinted ?? entry?.manifest.maxConcurrency;
+    },
   };
+
+  /** Live numbers of one endpoint: a broker's request channel and announced instances (undefined for direct endpoints). */
+  private queueOf(state: EndpointState): BrokerQueueStats | undefined {
+    return brokerConnections.queueStats(state.endpoint);
+  }
+
+  /** The numbers of one transport kind: brokered endpoints summed; every kind with the plugin's `maxConcurrency` when known. */
+  private statsOf(entry: PluginEntry, states: EndpointState[]): BrokerQueueStats | undefined {
+    const queues = states.map((s) => this.queueOf(s)).filter((q): q is BrokerQueueStats => Boolean(q));
+    const sum = (key: 'depth' | 'consumers' | 'lag' | 'instances' | 'maxConcurrency') => {
+      const values = queues.map((q) => q[key]).filter((v): v is number => v !== undefined);
+      return values.length ? values.reduce((a, b) => a + b, 0) : undefined;
+    };
+    const stats: BrokerQueueStats = {
+      ...(sum('depth') !== undefined && { depth: sum('depth') }),
+      ...(sum('consumers') !== undefined && { consumers: sum('consumers') }),
+      ...(sum('lag') !== undefined && { lag: sum('lag') }),
+      ...(sum('instances') !== undefined && { instances: sum('instances') }),
+    };
+    const maxConcurrency = sum('maxConcurrency') ?? states.find((s) => s.maxConcurrency)?.maxConcurrency ?? entry.manifest.maxConcurrency;
+    if (maxConcurrency) stats.maxConcurrency = maxConcurrency;
+    const sampledAt = queues.map((q) => q.sampledAt).filter((s): s is string => Boolean(s)).sort().at(-1);
+    if (sampledAt) stats.sampledAt = sampledAt;
+    return Object.keys(stats).length ? stats : undefined;
+  }
 
   private candidates(entry: PluginEntry): Candidate[] {
     return [...entry.endpoints.values()].map((s) => ({ endpoint: s.endpoint, kind: s.transport, status: s.status, ...(s.latencyMs !== undefined && { latencyMs: s.latencyMs }) }));
@@ -558,13 +613,17 @@ export class PluginRegistry implements NodeTypeResolver {
     // Faces the plugin was built with (manifest `transports`) that no endpoint reaches yet: shown, offline, so an admin sees what a connection would add.
     for (const kind of entry.manifest.transports ?? []) if (kind !== 'mcp' && !byKind.has(kind)) byKind.set(kind, []);
     const excludedBy = (kind: string) => (policy.mode === 'pinned' && policy.pinned !== kind) || (policy.allowed?.length ? !policy.allowed.includes(kind) : false);
-    return [...byKind.entries()].map(([kind, states]) => ({
-      kind,
-      endpoints: states.map((s) => s.endpoint),
-      online: states.some((s) => s.status === 'online'),
-      ...(excludedBy(kind) && { excluded: true }),
-      ...(!states.length && { declared: true }),
-    }));
+    return [...byKind.entries()].map(([kind, states]) => {
+      const stats = this.statsOf(entry, states);
+      return {
+        kind,
+        endpoints: states.map((s) => s.endpoint),
+        online: states.some((s) => s.status === 'online'),
+        ...(excludedBy(kind) && { excluded: true }),
+        ...(!states.length && { declared: true }),
+        ...(stats && { stats }),
+      };
+    });
   }
 
   list(): PluginSummary[] {
@@ -595,6 +654,7 @@ export class PluginRegistry implements NodeTypeResolver {
             ...(s.latencyMs !== undefined && { latencyMs: s.latencyMs }),
             ...(s.lastError && { lastError: s.lastError }),
             ...(s.options?.origin && { origin: s.options.origin }),
+            ...(s.source === 'broker' && { queue: this.queueOf(s) ?? {} }),
           })),
           source: entry.source,
           registeredAt: new Date(entry.registeredAt).toISOString(),
@@ -610,6 +670,8 @@ export class PluginRegistry implements NodeTypeResolver {
             categories: n.categories,
             usableAsTool: n.usableAsTool,
           })),
+          // MCP (docs/transports.md): "Expose to agents" and the tool count of the manifest (lib/server/mcp/plugin-servers.ts).
+          mcp: { exposed: mcpExposure.isExposed(entry.id), tools: mcpToolCount(entry.manifest), path: `/api/mcp/plugins/${encodeURIComponent(entry.id)}` },
         };
       });
   }
@@ -665,15 +727,28 @@ export class PluginRegistry implements NodeTypeResolver {
     const provisional = this.choose(entry, { method: 'Execute' });
     if (!isChoice(provisional)) return { error: provisional.error.replace(`Plugin "${pluginId}"`, `Plugin "${entry.manifest.plugin.name}"`) };
     const name = entry.manifest.plugin.name;
-    const call = async <T>(context: CallContext, fn: (state: EndpointState) => Promise<T>): Promise<T> => {
-      const selection = this.choose(entry, context);
+    const call = async <T>(context: CallContext, fn: (state: EndpointState) => Promise<T>, failedEndpoint?: string): Promise<T> => {
+      // A fail-over (second try) leaves out the endpoint that provably did not get the call; a pinned policy then has nowhere to go.
+      const candidates = this.candidates(entry).filter((c) => c.endpoint !== failedEndpoint);
+      let selection = select(entry.id, candidates, transportPolicies.get(entry.id), context, this.selectorInputs);
       if (!isChoice(selection)) throw new Error(selection.error.replace(`Plugin "${pluginId}"`, `Plugin "${name}"`));
+      if (failedEndpoint) selection = { ...selection, reason: 'auto.failover' };
       const state = entry.endpoints.get(selection.endpoint);
       if (!state) throw new Error(`Plugin "${name}": ${selection.endpoint} left the registry`);
       try {
         return await withTransportChoice(selection, () => fn(state));
       } catch (error) {
         state.lastError = (error as Error).message;
+        // Rule 7 (docs/transports.md): a call moves to another transport only when it provably was not delivered, once; a call its
+        // caller aborted before it went out is not delivered either, but nobody wants it anywhere else.
+        const aborted = error instanceof UndeliverableError && error.reason === 'aborted';
+        if (!failedEndpoint && !aborted && isProvablyUndelivered(error) && candidates.some((c) => c.endpoint !== state.endpoint && c.status === 'online')) {
+          try {
+            return await call(context, fn, state.endpoint);
+          } catch (second) {
+            throw new Error(`${name} via ${state.transport.toUpperCase()} ${state.endpoint}: ${(error as Error).message}; then ${(second as Error).message}`);
+          }
+        }
         throw new Error(`${name} via ${state.transport.toUpperCase()} ${state.endpoint}: ${(error as Error).message}`);
       }
     };

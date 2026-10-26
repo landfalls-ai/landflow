@@ -1,15 +1,14 @@
 /**
- * The client side of MCP: connections to MCP servers over Streamable HTTP, or SSE for older
- * servers, with the headers of an auth credential (none, a bearer token or a custom header).
+ * The client side of MCP (the MCP SDK v2, `@modelcontextprotocol/client`): connections to MCP servers over Streamable
+ * HTTP, or SSE for older servers, with the headers of an auth credential (none, a bearer token or a custom header).
+ * The client negotiates the protocol revision itself: `server/discover` first (2026-07-28), falling back to
+ * `initialize` for 2025-xx and older servers.
  * Connections are pooled per endpoint and closed after 30 s idle, so an agent's tool calls in
  * one run share a session. Used by the MCP Client Tool and MCP Client nodes and by agents'
  * MCP server capabilities (docs/agents.md).
  */
 import { createHash } from 'node:crypto';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import { Client, ProtocolError, SdkHttpError, SSEClientTransport, StreamableHTTPClientTransport, type CallToolResult, type Tool } from '@modelcontextprotocol/client';
 import type { JsonObject } from '@landflow/protocol';
 import { toToolName, type AgentTool } from '@landflow/engine';
 import { mcpUrlBlocked } from '../governance/policy';
@@ -114,7 +113,8 @@ function keyOf(endpoint: McpEndpoint): string {
 
 function describe(error: unknown, endpoint: McpEndpoint): McpClientError {
   if (error instanceof McpClientError) return error;
-  const status = (error as { code?: unknown }).code;
+  // The SDK's HTTP errors carry the status; older shapes put it in `code`.
+  const status = error instanceof SdkHttpError ? error.status : (error as { code?: unknown }).code;
   const code = typeof status === 'number' && status >= 100 ? status : undefined;
   const message = (error as Error).message ?? String(error);
   if (code === 401 || code === 403) return new McpClientError(`The MCP server at ${endpoint.url} rejected the credentials (${code})`, code);
@@ -129,7 +129,8 @@ async function connect(endpoint: McpEndpoint): Promise<Client> {
     endpoint.transport === 'sse'
       ? new SSEClientTransport(url, { requestInit, ...(endpoint.fetch && { fetch: endpoint.fetch }) })
       : new StreamableHTTPClientTransport(url, { requestInit, ...(endpoint.fetch && { fetch: endpoint.fetch }) });
-  const client = new Client(CLIENT_INFO);
+  // `auto`: probe with `server/discover` (2026-07-28) and fall back to the `initialize` handshake of older servers.
+  const client = new Client(CLIENT_INFO, { versionNegotiation: { mode: 'auto' } });
   try {
     await client.connect(transport, { timeout: endpoint.timeoutMs ?? DEFAULT_TIMEOUT_MS });
   } catch (error) {
@@ -147,7 +148,7 @@ function drop(key: string, entry: Promise<Pooled>) {
 
 /** A session that went away (server restart, expired session id): worth one reconnect. */
 function isStale(error: unknown): boolean {
-  if (error instanceof StreamableHTTPError) return error.code === 404;
+  if (error instanceof SdkHttpError) return error.status === 404;
   return /not connected|connection closed/i.test((error as Error)?.message ?? '');
 }
 
@@ -222,18 +223,20 @@ export async function listMcpTools(endpoint: McpEndpoint): Promise<Tool[]> {
   }
 }
 
-/** Call one tool; the raw MCP result (an error result is returned, not thrown). */
+/** Call one tool; the raw MCP result (an error result is returned, not thrown; a JSON-RPC error about the call becomes one too). */
 export async function callMcpTool(endpoint: McpEndpoint, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult> {
   try {
     const result = await withMcpClient(endpoint, (client) =>
-      client.callTool({ name, arguments: args }, undefined, { timeout: endpoint.timeoutMs ?? DEFAULT_TIMEOUT_MS, ...(signal && { signal }) }),
+      client.callTool({ name, arguments: args }, { timeout: endpoint.timeoutMs ?? DEFAULT_TIMEOUT_MS, ...(signal && { signal }) }),
     );
     // Servers on the 2024-10-07 protocol answer { toolResult }.
-    if ('toolResult' in result && !('content' in result)) return { content: [{ type: 'text', text: JSON.stringify(result.toolResult) }] };
-    return result as CallToolResult;
+    const compat = result as unknown as { toolResult?: unknown; content?: unknown };
+    if ('toolResult' in compat && !('content' in compat)) return { content: [{ type: 'text', text: JSON.stringify(compat.toolResult) }] };
+    return result;
   } catch (error) {
-    // A JSON-RPC error (unknown tool, invalid arguments) is the server's answer: keep its message.
-    if ((error as { name?: string }).name === 'McpError') throw new McpClientError((error as Error).message);
+    // A JSON-RPC error (unknown tool, invalid arguments) is the server's answer about this call: an error result, as
+    // servers on the 2025 SDKs sent it, so callers treat both the same way.
+    if (error instanceof ProtocolError || (error as { name?: string }).name === 'McpError') return { content: [{ type: 'text', text: (error as Error).message }], isError: true };
     throw describe(error, endpoint);
   }
 }

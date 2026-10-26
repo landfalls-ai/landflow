@@ -33,7 +33,7 @@ import {
   type WorkflowSettings,
 } from '@landflow/engine';
 import type { EvaluationRef } from '../shared/evaluations';
-import type { ExecutionRecord, ExecutionState, ExecutionSummary, FormCompletion, PausedState, RerunOf, RerunScope } from '../shared/types';
+import type { ExecutionMcpInfo, ExecutionRecord, ExecutionState, ExecutionSummary, FormCompletion, PausedState, RerunOf, RerunScope } from '../shared/types';
 import { executionScope, executionUsage, runInUsageScope } from './ai-usage';
 import { notifyFailure } from './alerts/service';
 import { TriggerBuffers, triggerBuffers } from './trigger-buffers';
@@ -46,6 +46,7 @@ import { publishedVersionId } from './publications';
 import { workflowForCall } from './publish';
 import { retries, retryDueFor } from './retries';
 import { getVersion, versionFor } from './versions';
+import { credentials } from './credentials/vault';
 import { resolveWorkflowCredentials } from './projects/credentials';
 import { registry } from './plugins/registry';
 import { parameterSecretOptions, redactRunData } from './secrets/runtime';
@@ -134,6 +135,8 @@ export interface RunOptions {
   streaming?: boolean;
   /** The run of events a trigger's debounce or batching held (lib/server/trigger-buffers.ts): it is not held again. */
   buffered?: { kind: 'debounce' | 'batch'; key: string; count: number };
+  /** An MCP tool call on a plugin's endpoint (lib/server/mcp/plugin-servers.ts): the caller and the tool, kept on the record. */
+  mcp?: ExecutionMcpInfo;
 }
 
 export { DuplicateRunError, RunSkippedError };
@@ -413,6 +416,7 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     ...(evaluation && { evaluation }),
     ...(startedBy && { startedBy }),
     ...(options.buffered && { buffered: { kind: options.buffered.kind, count: options.buffered.count } }),
+    ...(options.mcp && { mcp: options.mcp }),
   };
   if (idempotencyKey) rememberIdempotent(options.workflow.id, idempotencyKey, executionId);
   if (!admitted.run) return enqueue(record, options);
@@ -558,7 +562,8 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       mode: record.mode === 'poll' ? 'trigger' : record.mode,
       // Only credentials the workflow's project may use (lib/server/projects/credentials.ts).
       // Audit log: which credentials (ids, never values) the run used, once per node (lib/server/audit).
-      resolveCredentials: (node, descriptor) => auditCredentialUse(executionId, workflow.id, node, resolveWorkflowCredentials(workflow.id, node, descriptor)),
+      // An MCP tool call's one-node workflow has no project: its endpoint already chose credentials the caller may use (lib/server/mcp/plugin-servers.ts).
+      resolveCredentials: (node, descriptor) => auditCredentialUse(executionId, workflow.id, node, record.mcp ? credentials.resolveFor(node, descriptor) : resolveWorkflowCredentials(workflow.id, node, descriptor)),
       // $secrets in node parameters when Settings → External secrets allows it; their values are redacted like credentials'.
       ...parameterSecretOptions,
       // $vars: read fresh for every run, so a change in Settings applies to the next one.

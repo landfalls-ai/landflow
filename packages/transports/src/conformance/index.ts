@@ -50,6 +50,8 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** Per-test timeout: real brokers rebalance for seconds, so it grows with `deliveryTimeoutMs` (vitest's default is 5 s). */
+const testTimeout = (wait: number) => Math.max(5_000, wait * 8);
 
 export async function waitFor(predicate: () => boolean, timeoutMs: number, what = 'condition'): Promise<void> {
   const until = Date.now() + timeoutMs;
@@ -72,7 +74,7 @@ export function runConformance<C extends BrokerConfig>(target: ConformanceTarget
 /** Every interface member and capability claim. */
 export function runDriverConformance<C extends BrokerConfig>(target: ConformanceTarget<C>): void {
   const wait = target.deliveryTimeoutMs ?? 2_000;
-  describe(`${target.name} driver conformance`, () => {
+  describe(`${target.name} driver conformance`, { timeout: testTimeout(wait) }, () => {
     const run = randomBytes(4).toString('hex');
     const caps = target.driver().capabilities;
     const drivers: BrokerDriver<C>[] = [];
@@ -369,7 +371,7 @@ type Seen = { method: string; context: DispatchContext; body: unknown };
 /** The core end to end over the driver. */
 export function runCoreConformance<C extends BrokerConfig>(target: ConformanceTarget<C>): void {
   const wait = target.deliveryTimeoutMs ?? 2_000;
-  describe(`${target.name} core conformance`, () => {
+  describe(`${target.name} core conformance`, { timeout: testTimeout(wait) }, () => {
     const caps = target.driver().capabilities;
     const keyring = new Keyring(SECRET);
     const prefix = `lfcore${randomBytes(3).toString('hex')}`;
@@ -521,6 +523,7 @@ export function runCoreConformance<C extends BrokerConfig>(target: ConformanceTa
       await announced(client, id);
       const atLeastOnce = client.call(id, 'Execute', execute(id, 'lookup'), { timeoutMs: wait * 3, delivery: 'at-least-once' });
       const atMostOnce = client.call(id, 'Execute', execute(id, 'echo'), { timeoutMs: 600 });
+      void atMostOnce.catch(() => undefined); // it rejects long before the assertion below on a slow broker
       await waitFor(() => seenA.length === 2, wait, 'both calls at replica A');
       const b = await startServer(id, echoDispatcher(seenB));
       await announced(client, id, 2);
@@ -719,6 +722,7 @@ export function runCoreConformance<C extends BrokerConfig>(target: ConformanceTa
       const client = await startClient();
       await announced(client, id);
       const call = client.call(id, 'Execute', execute(id), { timeoutMs: wait * 3 });
+      void call.catch(() => undefined); // rejected while close() is still waiting on the broker
       await sleep(50);
       await client.close();
       await expect(call).rejects.toBeInstanceOf(ConnectionLostError);

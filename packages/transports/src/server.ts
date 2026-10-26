@@ -334,12 +334,20 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
       this.counters.requeued++;
       return delivery.nack({ requeue: true });
     }
+    // A cancel or the deadline may have arrived while the request waited for a slot.
+    const started = this.now();
+    if (this.cancelled.has(attributes.id) || (deadline !== undefined && deadline <= started)) {
+      this.slots.release();
+      if (this.cancelled.delete(attributes.id)) this.counters.cancelled++;
+      else this.counters.expired++;
+      return delivery.ack();
+    }
     if (mode === 'at-most-once') await delivery.ack();
 
     const controller = new AbortController();
     let deadlineTimer: NodeJS.Timeout | undefined;
     if (deadline !== undefined) {
-      deadlineTimer = setTimeout(() => controller.abort(new Error('deadline passed')), deadline - now);
+      deadlineTimer = setTimeout(() => controller.abort(new Error('deadline passed')), deadline - started);
       deadlineTimer.unref?.();
     }
     const run = async () => {
@@ -360,8 +368,9 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
         });
       } catch (error) {
         if (controller.signal.aborted) {
-          code = 'cancelled';
-          body = { error: (controller.signal.reason as Error)?.message ?? 'cancelled' };
+          // The deadline timer's abort is `expired` (as in Go); the host's cancel and a stopping plugin are `cancelled`.
+          code = deadline !== undefined && this.now() >= deadline ? 'expired' : 'cancelled';
+          body = { error: (controller.signal.reason as Error)?.message ?? code };
         } else if (error instanceof DispatchError) {
           code = error.code;
           body = { error: error.message, ...error.details };

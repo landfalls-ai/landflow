@@ -306,31 +306,32 @@ describe('routes', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as TransportsResponse;
     expect(body.kinds.map((k) => k.kind).slice(0, 2)).toEqual(['http', 'grpc']);
-    expect(body.kinds.find((k) => k.kind === 'kafka')).toMatchObject({ installed: false, direct: false });
+    expect(body.kinds.find((k) => k.kind === 'kafka')).toMatchObject({ installed: true, direct: false });
+    expect(body.kinds.find((k) => k.kind === 'pulsar')).toMatchObject({ installed: false, direct: false });
     expect(body.connections).toEqual([expect.objectContaining({ id: 'kafka-main', secretsSet: [], plugins: [] })]);
   });
 
   it('creates, reads, changes, tests and deletes a connection; the environment’s are read-only', async () => {
-    const created = await connectionsRoute.POST(request({ name: 'Rabbit', kind: 'amqp', config: { url: 'amqp://127.0.0.1:55672', tls: true }, secrets: { password: 'guest-pw' } }));
+    const created = await connectionsRoute.POST(request({ name: 'Pulsar', kind: 'pulsar', config: { url: 'pulsar://127.0.0.1:56650', tls: true }, secrets: { password: 'guest-pw' } }));
     expect(created.status).toBe(201);
     const view = (await created.json()) as TransportConnectionView;
-    expect(view).toMatchObject({ id: 'rabbit', kind: 'amqp', secretsSet: ['password'], config: { url: 'amqp://127.0.0.1:55672', tls: true } });
+    expect(view).toMatchObject({ id: 'pulsar', kind: 'pulsar', secretsSet: ['password'], config: { url: 'pulsar://127.0.0.1:56650', tls: true } });
 
-    expect((await (await connectionRoute.GET(request(undefined, 'GET'), params('rabbit'))).json()) as TransportConnectionView).toMatchObject({ id: 'rabbit' });
+    expect((await (await connectionRoute.GET(request(undefined, 'GET'), params('pulsar'))).json()) as TransportConnectionView).toMatchObject({ id: 'pulsar' });
     expect((await connectionRoute.GET(request(undefined, 'GET'), params('nope'))).status).toBe(404);
 
-    const patched = await connectionRoute.PATCH(request({ enabled: false, name: 'Rabbit 2' }, 'PATCH'), params('rabbit'));
-    expect((await patched.json()) as TransportConnectionView).toMatchObject({ enabled: false, name: 'Rabbit 2', secretsSet: ['password'] });
-    expect((await connectionRoute.PATCH(request({ kind: 'nats' }, 'PATCH'), params('rabbit'))).status).toBe(400);
-    expect((await connectionsRoute.POST(request({ name: 'Rabbit 2', kind: 'amqp' }))).status).toBe(409);
+    const patched = await connectionRoute.PATCH(request({ enabled: false, name: 'Pulsar 2' }, 'PATCH'), params('pulsar'));
+    expect((await patched.json()) as TransportConnectionView).toMatchObject({ enabled: false, name: 'Pulsar 2', secretsSet: ['password'] });
+    expect((await connectionRoute.PATCH(request({ kind: 'nats' }, 'PATCH'), params('pulsar'))).status).toBe(400);
+    expect((await connectionsRoute.POST(request({ name: 'Pulsar 2', kind: 'pulsar' }))).status).toBe(409);
 
-    const tested = (await (await connectionTestRoute.POST(request(), params('rabbit'))).json()) as TransportConnectionCheck;
-    expect(tested).toMatchObject({ ok: false, message: expect.stringMatching(/^No driver for RabbitMQ/) });
+    const tested = (await (await connectionTestRoute.POST(request(), params('pulsar'))).json()) as TransportConnectionCheck;
+    expect(tested).toMatchObject({ ok: false, message: expect.stringMatching(/^No driver for (Apache )?Pulsar/) });
     const list = (await (await connectionsRoute.GET(request(undefined, 'GET'))).json()) as { connections: TransportConnectionView[] };
-    expect(list.connections.find((c) => c.id === 'rabbit')?.lastCheck).toMatchObject({ ok: false });
+    expect(list.connections.find((c) => c.id === 'pulsar')?.lastCheck).toMatchObject({ ok: false });
 
-    expect((await connectionRoute.DELETE(request(undefined, 'DELETE'), params('rabbit'))).status).toBe(200);
-    expect((await connectionRoute.DELETE(request(undefined, 'DELETE'), params('rabbit'))).status).toBe(404);
+    expect((await connectionRoute.DELETE(request(undefined, 'DELETE'), params('pulsar'))).status).toBe(200);
+    expect((await connectionRoute.DELETE(request(undefined, 'DELETE'), params('pulsar'))).status).toBe(404);
     expect((await connectionsRoute.POST(request({ name: 'bad', kind: 'kafka', config: { url: 42 } }))).status).toBe(400);
   });
 });

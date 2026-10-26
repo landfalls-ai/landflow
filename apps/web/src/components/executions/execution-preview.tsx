@@ -447,6 +447,11 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                   Ran version {record.versionNumber} ({record.versionPublished ? 'published' : 'draft'})
                 </span>
               )}
+              {record.mcp && (
+                <span className="flex items-center gap-1 rounded-full border border-hair px-2 text-[12px] text-t2" title={`MCP tool ${record.mcp.tool} of plugin ${record.mcp.pluginId}, called by ${record.mcp.caller}`}>
+                  tool <span className="font-mono">{record.mcp.tool}</span> · called by <span className="font-mono">{record.mcp.caller}</span>
+                </span>
+              )}
               {record.debug && (
                 <span className="flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--viz-2)_14%,transparent)] px-2 text-[12px] text-viz-2">
                   <Bug className="size-3" /> debug run

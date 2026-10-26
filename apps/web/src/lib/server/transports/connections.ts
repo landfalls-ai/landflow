@@ -16,6 +16,7 @@ import { recordAudit } from '../audit';
 import { credentials } from '../credentials/vault';
 import { database, type Database } from '../db';
 import { parse } from '../db/rows';
+import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { transportProviders, type TransportConnectionConfig, type TransportProviderRegistry } from './provider';
 
@@ -157,15 +158,35 @@ export interface ConnectionStoreOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+/** What changed, for listeners in this process (other processes hear it through the replication broadcast). */
+export type ConnectionChange = { type: 'created' | 'updated' | 'deleted'; id: string };
+
 export class TransportConnections {
   private readonly db: () => Database;
   private readonly providers: TransportProviderRegistry;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly listeners = new Set<(change: ConnectionChange) => void>();
 
   constructor(options: ConnectionStoreOptions = {}) {
     this.db = options.db ?? database;
     this.providers = options.providers ?? transportProviders;
     this.env = options.env ?? process.env;
+  }
+
+  /** Hear about connections created, changed or deleted through this store (the broker manager reopens them). */
+  subscribe(listener: (change: ConnectionChange) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify(change: ConnectionChange) {
+    for (const listener of this.listeners) {
+      try {
+        listener(change);
+      } catch (error) {
+        logger.warn('transport connection listener failed', { error });
+      }
+    }
   }
 
   /** Saved connections (by name), then the environment's. */
@@ -215,6 +236,7 @@ export class TransportConnections {
       summary: `Added transport connection ${name} (${transportLabel(connection.kind)})`,
       details: { connectionId: id, kind: connection.kind, enabled: connection.enabled, fields: Object.keys(connection.config), secrets: Object.keys(connection.secrets) },
     });
+    this.notify({ type: 'created', id });
     return connection;
   }
 
@@ -242,6 +264,7 @@ export class TransportConnections {
       summary: `Changed transport connection ${name}`,
       details: { connectionId: id, kind: connection.kind, enabled: connection.enabled, fields: changed },
     });
+    this.notify({ type: 'updated', id });
     return connection;
   }
 
@@ -257,6 +280,7 @@ export class TransportConnections {
         summary: `Removed transport connection ${previous.name}`,
         details: { connectionId: id, kind: previous.kind },
       });
+      this.notify({ type: 'deleted', id });
     }
     return removed;
   }
@@ -348,4 +372,5 @@ function cleanSecrets(input: Record<string, string | null> | undefined, saved: R
   return out;
 }
 
-export const transportConnections = new TransportConnections();
+/** One per process (route handlers and the bootstrap share it, so the broker manager hears every change). */
+export const transportConnections = singleton('transport-connections', () => new TransportConnections());

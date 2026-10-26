@@ -59,7 +59,8 @@ class PluginServer:
     ``http_port`` / ``grpc_port`` build the HTTP and gRPC bindings (``http=`` / ``grpc=`` are aliases);
     ``bindings`` adds more faces (a broker binding, the MCP face, your own ``Binding``); ``transports``
     limits the kinds that run; ``max_concurrency`` bounds the calls one instance runs at once (the
-    manifest's ``maxConcurrency``).
+    manifest's ``maxConcurrency``) and ``max_queue`` how many may wait for a slot (default
+    ``max_concurrency``; beyond it calls are refused at once with 429 / ``RESOURCE_EXHAUSTED``).
 
     Environment (overrides the arguments):
       LANDFLOW_HTTP_PORT / LANDFLOW_GRPC_PORT  listen ports ("off" disables, 0 = any free port)
@@ -83,11 +84,13 @@ class PluginServer:
         bindings: Sequence[Binding] = (),
         transports: Iterable[str] | None = None,
         max_concurrency: int | None = None,
+        max_queue: int | None = None,
     ) -> None:
         self.plugin = plugin
         self.http_port = _resolve_port("LANDFLOW_HTTP_PORT", http if http is not None else http_port, default=0)
         self.grpc_port = _resolve_port("LANDFLOW_GRPC_PORT", grpc if grpc is not None else grpc_port, default=None)
         self.max_concurrency = max_concurrency_from_env(max_concurrency)
+        self.max_queue = max_queue
         self.advertise_host = os.environ.get("LANDFLOW_ADVERTISE_HOST", "").strip() or "127.0.0.1"
         self.bind_host = os.environ.get("LANDFLOW_BIND_HOST", "").strip() or (
             "127.0.0.1" if _is_loopback(self.advertise_host) else "0.0.0.0"
@@ -175,7 +178,7 @@ class PluginServer:
         self.transports = [b.kind for b in self.bindings]
         self.plugin.transports = list(self.transports)
         self.plugin.max_concurrency = self.max_concurrency
-        self.dispatcher = Dispatcher(self.plugin, self.max_concurrency)
+        self.dispatcher = Dispatcher(self.plugin, self.max_concurrency, self.max_queue)
         self.plugin.dispatcher = self.dispatcher
 
     def _context(self) -> BindingContext:
@@ -308,13 +311,15 @@ def serve(
     bindings: Sequence[Binding] = (),
     transports: Iterable[str] | None = None,
     max_concurrency: int | None = None,
+    max_queue: int | None = None,
 ) -> None:
     """Serve ``plugin`` until SIGINT/SIGTERM.
 
     ``http_port`` (alias ``http=``) defaults to an OS-assigned port; ``grpc_port`` (alias ``grpc=``;
     ``None`` = no gRPC) needs the ``grpc`` extra -- without grpcio it logs a warning and serves without
     it. ``bindings=[...]`` adds more faces (``landflow_sdk.Binding``), ``transports=[...]`` limits the
-    kinds that run and ``max_concurrency=`` bounds the calls one instance runs at once.
+    kinds that run, ``max_concurrency=`` bounds the calls one instance runs at once and ``max_queue=`` how
+    many wait for a slot before further ones are refused (default ``max_concurrency``).
     ``LANDFLOW_HTTP_PORT`` / ``LANDFLOW_GRPC_PORT`` / ``LANDFLOW_TRANSPORTS`` / ``LANDFLOW_MAX_CONCURRENCY``
     override the arguments. With ``announce=True`` each endpoint is announced to ``LANDFLOW_REGISTRY_URL``
     and re-announced on every heartbeat; on shutdown it is withdrawn.
@@ -325,7 +330,7 @@ def serve(
     configure_logging(plugin)
     server = PluginServer(
         plugin, http_port=http_port, grpc_port=grpc_port, announce=announce,
-        http=http, grpc=grpc, bindings=bindings, transports=transports, max_concurrency=max_concurrency,
+        http=http, grpc=grpc, bindings=bindings, transports=transports, max_concurrency=max_concurrency, max_queue=max_queue,
     )
     server.start()
     server.wait()

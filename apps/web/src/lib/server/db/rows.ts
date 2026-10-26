@@ -70,6 +70,7 @@ export function summarize(record: ExecutionRecord): ExecutionSummary {
     ...(record.retryAt && { retryAt: record.retryAt }),
     ...(record.resumedAfterRestart && { resumedAfterRestart: true }),
     ...(record.evaluation && { evaluation: { runId: record.evaluation.runId } }),
+    ...(record.mcp && { mcp: { tool: record.mcp.tool, caller: record.mcp.caller } }),
   };
 }
 

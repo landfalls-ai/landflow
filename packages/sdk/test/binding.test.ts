@@ -163,14 +163,14 @@ describe('serve() with a third binding', () => {
     running.pop();
 
     process.env.LANDFLOW_TRANSPORTS = 'http,kafka';
-    await expect(serve(plugin, { http: HTTP_PORT, registryUrl: false, telemetry: await quietTelemetry() })).rejects.toThrow(/messaging binding is not available yet/);
+    await expect(serve(plugin, { http: HTTP_PORT, registryUrl: false, telemetry: await quietTelemetry() })).rejects.toThrow(/LANDFLOW_KAFKA_URL is not set/);
     process.env.LANDFLOW_TRANSPORTS = 'grpc';
     await expect(serve(plugin, { http: HTTP_PORT, registryUrl: false, telemetry: await quietTelemetry() })).rejects.toThrow(/no GRPC port/);
     process.env.LANDFLOW_TRANSPORTS = 'carrier-pigeon';
     await expect(serve(plugin, { http: HTTP_PORT, registryUrl: false, telemetry: await quietTelemetry() })).rejects.toThrow(/no binding provides/);
     delete process.env.LANDFLOW_TRANSPORTS;
 
-    await expect(serve(plugin, { http: HTTP_PORT, brokers: [{ kind: 'kafka' }], registryUrl: false, telemetry: await quietTelemetry() })).rejects.toThrow(/messaging binding is not available yet \(brokers: kafka\)/);
+    await expect(serve(plugin, { http: HTTP_PORT, brokers: [{ kind: 'kafka' } as never], registryUrl: false, telemetry: await quietTelemetry() })).rejects.toThrow(/brokers\[\] entries must be BrokerTargets/);
     await expect(serve(plugin, { registryUrl: false, telemetry: await quietTelemetry() })).rejects.toThrow(/at least one transport/);
     await expect(serve(plugin, { bindings: [fakeBinding('x'), fakeBinding('x')], registryUrl: false, telemetry: await quietTelemetry() })).rejects.toThrow(/two bindings of kind "x"/);
   });

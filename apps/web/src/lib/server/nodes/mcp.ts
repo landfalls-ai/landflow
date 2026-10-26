@@ -247,7 +247,7 @@ export const mcpClientNode = defineNode({
         const text = resultText(result);
         if (result.isError) throw new NodeOperationError(`${tool} returned an error: ${text || 'no details'}`, { itemIndex: i });
         out.push({
-          json: { tool, text, content: compactContent(result), ...(result.structuredContent && { structuredContent: result.structuredContent as JsonObject }) },
+          json: { tool, text, content: compactContent(result), ...(result.structuredContent !== undefined && { structuredContent: result.structuredContent as JsonObject }) },
           pairedItem: { item: i },
         });
       } catch (error) {

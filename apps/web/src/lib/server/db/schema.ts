@@ -746,6 +746,85 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS transport_connections_kind ON transport_connections (kind)`,
     ],
   },
+  // 1720–1722: the per-plugin MCP endpoints (docs/transports.md "Expose to agents"; lib/server/mcp/plugin-servers.ts).
+  {
+    version: 1720,
+    name: 'plugin_mcp_exposure',
+    statements: [
+      // One row per plugin whose "Expose to agents" differs from the default (on): `exposed` 0 hides the plugin's tools from
+      // the gateway and its /api/mcp/plugins/<id> endpoint. Shared by mains and workers in queue mode (lib/server/mcp/exposure.ts).
+      `CREATE TABLE IF NOT EXISTS plugin_mcp_exposure (
+        plugin_id TEXT PRIMARY KEY,
+        exposed BIGINT NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        updated_by TEXT
+      )`,
+    ],
+  },
+  // 1723–1729: MCP identity and catalog (docs/transports.md "Sign-in and identity", docs/protocol.md §15.4–15.5; lib/server/mcp).
+  {
+    version: 1723,
+    name: 'mcp_tokens',
+    statements: [
+      // Landflow-issued MCP tokens (Settings → MCP): signed JWTs whose `jti` is the row id; `token_hash` is the SHA-256 of the
+      // whole JWT (shown once), `scopes` a JSON list, `revoked_at` set when revoked (the host checks it on every call).
+      `CREATE TABLE IF NOT EXISTS mcp_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        token_hash TEXT NOT NULL,
+        hint TEXT NOT NULL,
+        scopes TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        last_used_at TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS mcp_tokens_user ON mcp_tokens (user_id)`,
+    ],
+  },
+  {
+    version: 1724,
+    name: 'mcp_grants',
+    statements: [
+      // Tool grants (§15.5): who (`subject_kind` user | group | project | role | token, `subject_id`) may use which tools of a plugin
+      // (`tools` is the JSON list of tool names, `!name` excludes, or the string "*"), with the credential to bind per credential
+      // type (`credentials` JSON) and whether destructive tools need an approval (`require_approval` 1/0, NULL = instance default).
+      `CREATE TABLE IF NOT EXISTS mcp_grants (
+        id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        plugin_id TEXT NOT NULL,
+        tools TEXT NOT NULL,
+        credentials TEXT NOT NULL,
+        require_approval BIGINT,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS mcp_grants_subject ON mcp_grants (subject_kind, subject_id)`,
+      `CREATE INDEX IF NOT EXISTS mcp_grants_plugin ON mcp_grants (plugin_id)`,
+    ],
+  },
+  {
+    version: 1725,
+    name: 'mcp_catalog_servers',
+    statements: [
+      // The MCP registry catalog (§15.4): one row per plugin version ever exposed, `server_json` its server.json, `status`
+      // active | deprecated | deleted as plugins come and go (the registry API answers from here, refreshed from the plugin registry).
+      `CREATE TABLE IF NOT EXISTS mcp_catalog_servers (
+        name TEXT NOT NULL,
+        version TEXT NOT NULL,
+        plugin_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        server_json TEXT NOT NULL,
+        published_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (name, version)
+      )`,
+      `CREATE INDEX IF NOT EXISTS mcp_catalog_servers_plugin ON mcp_catalog_servers (plugin_id)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -809,6 +888,10 @@ export const TABLES = {
   promotion_requests: ['id'],
   plugin_transport_policies: ['plugin_id'],
   transport_connections: ['id'],
+  plugin_mcp_exposure: ['plugin_id'],
+  mcp_tokens: ['id'],
+  mcp_grants: ['id'],
+  mcp_catalog_servers: ['name', 'version'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

@@ -402,10 +402,87 @@ hook for endpoints learned late and a `Fail(err)` hook that shuts the plugin dow
 `context.Context` reaches node code as the `ExecuteContext` (cancelled when the HTTP client disconnects,
 the gRPC deadline passes or a broker delivery expires), and `CallOptions{Transport, Deadline}` per call set
 the `landflow.transport` span attribute and an extra deadline. `landflow.TransportOf(ctx)` tells a node which
-face delivered the call. `Dispatcher.InFlight()` / `Waiting()` / `MaxConcurrency()` expose the live counts
-(also the `landflow.plugin.inflight` metric); at the limit a call waits for a slot until its context or
-deadline ends, then fails with `ErrOverloaded` (HTTP 503, gRPC `RESOURCE_EXHAUSTED`; an expired deadline
-is 504 / `DEADLINE_EXCEEDED`).
+face delivered the call. `Dispatcher.InFlight()` / `Waiting()` / `MaxConcurrency()` / `MaxQueue()` expose the live counts
+(also the `landflow.plugin.inflight` metric). At the limit a call waits for a slot in arrival order, up to
+`MaxQueue` waiters (`DispatcherOptions.MaxQueue`, default `MaxConcurrency`; `landflow.NoQueue` = none); a waiter
+whose context or deadline ends fails with that error (HTTP 504 / gRPC `DEADLINE_EXCEEDED`, or 499 / `CANCELLED`
+when the caller went away), and when the queue is full further calls are refused at once with `ErrOverloaded`
+(HTTP 429 + `Retry-After: 1`, gRPC `RESOURCE_EXHAUSTED`) so the host can take them elsewhere knowing they never
+ran. The HTTP face reads the call's deadline from the `x-landflow-deadline` header (`landflow.DeadlineHeader`,
+epoch ms), as the TypeScript and Python SDKs do.
+
+## Messaging over brokers
+
+`sdks/go/transport` is the Go messaging core of [`docs/transports.md`](../../docs/transports.md) (the mirror of
+`@landflow/transports`, byte-compatible on the wire): the CloudEvents envelope, channel names, signing and
+encryption, the plugin-side `Server`, the host-side `Client`, the driver contract, an in-memory driver and the
+driver conformance suite. A broker is one more binding:
+
+```go
+import (
+	landflow "github.com/landflow/landflow/sdks/go"
+	"github.com/landflow/landflow/sdks/go/transport/kafka"
+)
+
+landflow.Serve(ctx, plugin, landflow.WithHTTP(7104), landflow.WithBroker(kafka.New(kafka.Config{
+	Config: transport.Config{ConnectionID: "kafka-main"}, Brokers: []string{"127.0.0.1:59092"},
+})))
+```
+
+or from the environment, with a blank import of the driver package so it registers itself:
+
+```go
+import _ "github.com/landflow/landflow/sdks/go/transport/kafka"
+```
+
+```
+LANDFLOW_TRANSPORTS=http,kafka LANDFLOW_KAFKA_URL=kafka://127.0.0.1:59092 LANDFLOW_TRANSPORT_SECRET=… ./my-plugin
+```
+
+| Variable | Meaning |
+|---|---|
+| `LANDFLOW_TRANSPORT_SECRET` | the shared secret (HKDF per plugin → AES-256-GCM body encryption + HMAC-SHA256 signing); falls back to `LANDFLOW_REGISTRY_SECRET`. Required for any broker binding |
+| `LANDFLOW_TRANSPORT_SECRET_PREVIOUS` | comma-separated secrets that still verify and decrypt (rotation) |
+| `LANDFLOW_<KIND>_URL` | the broker URL for a kind named in `LANDFLOW_TRANSPORTS` (`LANDFLOW_KAFKA_URL`, `LANDFLOW_AMQP_URL`, `LANDFLOW_NATS_URL`, `LANDFLOW_VALKEY_URL`); the connection id is `env-<kind>` |
+| `LANDFLOW_<KIND>_USERNAME` / `_PASSWORD` / `_TLS` / `_PREFIX`, `LANDFLOW_<KIND>_<FIELD>` | connection fields and driver-specific fields; `LANDFLOW_TRANSPORT_PREFIX` is the default channel prefix (`landflow`) |
+| `LANDFLOW_REGISTRY_SECRET` | when set, announces carry a registry proof (the host ignores announces without one) |
+
+The binding (`landflow.BrokerBinding`) consumes `landflow.v1.plugin.<id>` and the instance channel with
+prefetch = `maxConcurrency`, acknowledges `Execute` *before* running it (at most once) unless the host asked for
+at least once and the node (or its `operation` option) is `Idempotent`, checks `lfdeadline` before dispatch and
+cancels the call's context at the deadline or on a cancel event, answers `manifest_mismatch` after one requeue,
+and announces on the broker's registry channel every 10 s (so `Start` returns no endpoint for the HTTP registry).
+Dispatcher errors become remote codes: `ErrOverloaded` → `capacity`, unknown node/loader/credential type →
+`not_found`, a bad body → `bad_request`, a passed deadline → `expired`, a cancel → `cancelled`. Each call is a
+`process <channel>` consumer span with the OTel messaging attributes, continuing the host's trace from
+`traceparent`. `landflow.DeliveryOf(ctx)` tells a node the broker kind, call id, attempt, delivery mode and
+idempotency key of the current call.
+
+Driver authors implement `transport.Driver` (`sdks/go/transport/driver.go`, documented member by member) in a
+subpackage with its own `go.mod`, register a factory in `init()` with `transport.RegisterDriver`, and run
+`conformance.Run(t, conformance.Target{…})` from `sdks/go/transport/conformance` against the local container;
+`sdks/go/transport/memory` is the reference driver (its test runs the suite in six capability guises).
+
+### Tier 1 drivers
+
+Each driver is a nested Go module (`sdks/go/transport/<kind>/go.mod`), so `sdks/go` itself never depends on a broker
+client. A plugin that uses one adds it to its own `go.mod` the way it adds the SDK (while the repo is unpublished):
+
+```
+require github.com/landflow/landflow/sdks/go/transport/kafka v0.0.0
+replace github.com/landflow/landflow/sdks/go/transport/kafka => ../../sdks/go/transport/kafka
+```
+
+| Package | Kind(s) | Client | Constructor | Env fields (`LANDFLOW_<KIND>_<FIELD>`) | Notes |
+|---|---|---|---|---|---|
+| `transport/kafka` | `kafka` | `github.com/twmb/franz-go` 1.22 | `kafka.New(kafka.Config{Brokers, Mode, …})` | `MODE=group\|share`, `PARTITIONS` | `ce_` headers, record key = ordering key, topics created on declare (6 partitions, 24 h retention for request topics). `share` (default) joins a Kafka 4.2+ share group: per-record acks, native release, truthful delivery counts, a crashed member's records redelivered at once; its catch is that franz-go auto-accepts a poll's records on the next poll, so a held at-least-once delivery stalls that consumer's fetching until it ends. `group` (what the TS driver uses; Redpanda, older Kafka) commits the low-water mark of acknowledged offsets and requeues by republishing with `lf-attempt`; a crashed member's record comes back after the rebalance as attempt 1, so it does not claim `Attempts` |
+| `transport/amqp` | `amqp` | `github.com/rabbitmq/amqp091-go` 1.16 | `amqp.New(amqp.Config{URL, QueueType, …})` | `QUEUE_TYPE=quorum\|classic` | `cloudEvents_` headers, quorum request queues (`x-expires` 24 h), fanout exchanges for broadcast channels, direct reply-to, publisher confirms, `mandatory` + a consumer-count check before publishing (no consumer = unroutable), per-message `expiration`, attempt from `x-delivery-count` |
+| `transport/nats` | `nats`, `jetstream` | `github.com/nats-io/nats.go` 1.55 | `nats.New(nats.Config{URL, JetStream, …})` | `JETSTREAM`, `STREAMPREFIX`, `ACKWAITMS`, `MAXAGEMS` | `ce-` headers; core: queue groups, inbox replies, no responders = unroutable, requeue by republish (`Landflow-Attempt`, `Landflow-Reply`); `jetstream`: a work-queue stream per request channel with a durable pull consumer per group, ack/nak/term, progress acks, `NumDelivered` as attempt, the requester's inbox in `Landflow-Reply` |
+| `transport/valkey` | `valkey` | `github.com/valkey-io/valkey-go` 1.0 | `valkey.New(valkey.Config{URL, ClaimIdle, …})` | `KEYPREFIX` | one stream per channel with `h:<header>` / `b` fields (binary mode, the TS layout), consumer groups created at `0`, `XAUTOCLAIM` after `ClaimIdle` (30 s) with keep-alives for running calls, requeue by parking on `_orphans`, `XPENDING` delivery count as attempt, `MINID` / `MAXLEN` trimming |
+
+Each package's `*_test.go` runs its smoke tests, the shared conformance suite and (under `transport/testdata/live-brokers`)
+a Go ↔ TypeScript round trip when `LANDFLOW_TEST_KAFKA` / `_AMQP` / `_NATS` / `_VALKEY` point at the dev brokers, and skips
+otherwise.
 
 ## Serve, discovery and announce
 

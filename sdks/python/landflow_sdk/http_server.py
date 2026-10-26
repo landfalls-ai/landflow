@@ -3,8 +3,9 @@
 Also serves ``GET /metrics`` (Prometheus text, unless ``LANDFLOW_METRICS_PROMETHEUS=false``).
 Request headers are handed to the dispatcher so server spans continue the caller's
 W3C trace; health, manifest and metrics requests open no spans. Every call goes through the
-plugin's ``Dispatcher`` (concurrency limit, ``landflow.transport = "http"``); HTTP carries no
-deadline of its own, so node code sees a never-set ``ctx.cancel``.
+plugin's ``Dispatcher`` (concurrency limit, ``landflow.transport = "http"``); the call's deadline
+comes in the ``x-landflow-deadline`` header (epoch ms; absent = none). A capacity refusal is 429 with
+``Retry-After: 1``, a deadline that passed 504, a cancelled call 499 (nginx's "client closed request").
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import json
 import logging
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -35,6 +37,22 @@ _POST_PATHS = {
     HTTP_PATHS["webhook"],
 }
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+DEADLINE_HEADER = "x-landflow-deadline"
+"""Request header: epoch ms after which the call must not run (and must stop). Absent or unparsable: no deadline."""
+STATUS_CLIENT_CLOSED_REQUEST = 499
+
+
+def deadline_from_header(value: str | None) -> float | None:
+    """The ``x-landflow-deadline`` header (epoch ms) as a ``time.monotonic()`` instant, ``None`` when absent or invalid."""
+    if not value:
+        return None
+    try:
+        epoch_ms = int(value.strip())
+    except ValueError:
+        return None
+    if epoch_ms <= 0:
+        return None
+    return time.monotonic() + (epoch_ms / 1000.0 - time.time())
 
 
 class _BadRequest(Exception):
@@ -98,7 +116,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         dispatcher = self.server.dispatcher
-        call = {"transport": "http"}
+        call: dict[str, Any] = {"transport": "http"}
+        deadline = deadline_from_header(self.headers.get(DEADLINE_HEADER))
+        if deadline is not None:
+            call["deadline"] = deadline
         try:
             if path == HTTP_PATHS["execute"]:
                 response: Any = dispatcher.execute(request, self.headers, **call)
@@ -115,9 +136,9 @@ class _Handler(BaseHTTPRequestHandler):
         except (UnknownNodeError, UnknownMethodError, UnknownCredentialTypeError) as exc:
             self._send_error(404, str(exc.args[0] if exc.args else exc))
         except OverloadedError as exc:
-            self._send_error(503, str(exc))
+            self._send(429, {"error": {"message": str(exc)}}, headers={"Retry-After": "1"})
         except CallCancelledError as exc:
-            self._send_error(504 if exc.deadline else 503, str(exc))
+            self._send_error(504 if exc.deadline else STATUS_CLIENT_CLOSED_REQUEST, str(exc))
         except Exception as exc:  # noqa: BLE001 - load_options failures and server bugs
             log.exception("error handling %s", path)
             self._send_error(500, f"{type(exc).__name__}: {exc}")

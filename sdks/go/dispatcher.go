@@ -7,7 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -30,42 +30,66 @@ import (
 type Dispatcher struct {
 	p              *Plugin
 	maxConcurrency int
-	slots          chan struct{} // nil: unlimited
-	inFlight       atomic.Int64
-	waiting        atomic.Int64
+	maxQueue       int
+
+	mu       sync.Mutex
+	inFlight int
+	waiters  []chan struct{} // calls waiting for a slot, in arrival order
 }
 
 // DispatcherOptions configures NewDispatcher.
 type DispatcherOptions struct {
 	// MaxConcurrency bounds the calls (Execute, LoadOptions, TestCredentials,
 	// WebhookMethod, ReceiveWebhook) running at once; 0 = unlimited. A call
-	// that arrives at the limit waits for a slot until its context or
-	// deadline expires, then fails with ErrOverloaded. Announced to the host
-	// as the manifest's maxConcurrency.
+	// that arrives at the limit waits for a slot, in arrival order, until its
+	// context or deadline ends (then it fails with that context error:
+	// HTTP 504 / 499, gRPC DEADLINE_EXCEEDED / CANCELLED). Announced to the
+	// host as the manifest's maxConcurrency.
 	MaxConcurrency int
+	// MaxQueue bounds the calls waiting for a slot. When as many are waiting,
+	// further calls are refused at once with ErrOverloaded (HTTP 429 +
+	// Retry-After: 1, gRPC RESOURCE_EXHAUSTED) so the host can take them
+	// elsewhere knowing they never ran. 0 = MaxConcurrency (the default every
+	// SDK shares); NoQueue refuses every call that finds no free slot.
+	MaxQueue int
 }
+
+// NoQueue, as DispatcherOptions.MaxQueue, makes a call that finds every slot
+// taken fail at once instead of waiting.
+const NoQueue = -1
 
 // CallOptions are per-call settings a binding passes with each request.
 type CallOptions struct {
 	// Transport is the binding's kind ("http", "grpc", "kafka"…); it becomes
 	// the landflow.transport attribute of the server span and the metrics.
 	Transport string
-	// Deadline, when set, bounds the call (the broker envelope's lfdeadline,
-	// an MCP timeout). The context's own deadline still applies as well.
+	// Deadline, when set, bounds the call (the x-landflow-deadline header, the
+	// broker envelope's lfdeadline, an MCP timeout). The context's own
+	// deadline still applies as well.
 	Deadline time.Time
 }
 
-// ErrOverloaded is returned (wrapped, together with the context's error) when
-// a call could not get a concurrency slot before its context or deadline
-// expired. Transports map it to HTTP 503 / codes.ResourceExhausted.
+// ErrOverloaded is returned when a call is refused at once because the
+// plugin is at its concurrency limit and as many calls as MaxQueue allows are
+// already waiting (the "capacity" outcome of docs/transports.md). The call
+// never ran, so the host may retry it elsewhere. Transports map it to HTTP
+// 429 with Retry-After: 1 and gRPC codes.ResourceExhausted.
+//
+// A call that did wait for a slot and ran out of time fails with its
+// context's error instead (context.DeadlineExceeded or context.Canceled).
 var ErrOverloaded = errors.New("plugin is at its concurrency limit")
 
 // NewDispatcher builds a dispatcher for p. Most plugins never call this:
 // Plugin.Dispatcher returns one, and Serve configures it from its options.
 func NewDispatcher(p *Plugin, opts DispatcherOptions) *Dispatcher {
 	d := &Dispatcher{p: p, maxConcurrency: max(opts.MaxConcurrency, 0)}
-	if d.maxConcurrency > 0 {
-		d.slots = make(chan struct{}, d.maxConcurrency)
+	switch {
+	case opts.MaxQueue < 0:
+		d.maxQueue = 0
+	case opts.MaxQueue == 0:
+		d.maxQueue = d.maxConcurrency
+	default:
+		d.maxQueue = opts.MaxQueue
 	}
 	return d
 }
@@ -91,12 +115,24 @@ func (d *Dispatcher) Plugin() *Plugin { return d.p }
 // MaxConcurrency returns the concurrency limit (0 = unlimited).
 func (d *Dispatcher) MaxConcurrency() int { return d.maxConcurrency }
 
+// MaxQueue returns how many calls may wait for a slot before further ones are
+// refused with ErrOverloaded (meaningless when MaxConcurrency is 0).
+func (d *Dispatcher) MaxQueue() int { return d.maxQueue }
+
 // InFlight returns the number of calls running right now (not counting calls
 // waiting for a slot).
-func (d *Dispatcher) InFlight() int { return int(d.inFlight.Load()) }
+func (d *Dispatcher) InFlight() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.inFlight
+}
 
 // Waiting returns the number of calls waiting for a concurrency slot.
-func (d *Dispatcher) Waiting() int { return int(d.waiting.Load()) }
+func (d *Dispatcher) Waiting() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.waiters)
+}
 
 // Manifest, WellKnown and Health are cheap and never limited.
 func (d *Dispatcher) Manifest() PluginManifest     { return d.p.Manifest() }
@@ -154,6 +190,24 @@ func (d *Dispatcher) ReceiveWebhook(ctx context.Context, req *WebhookRequest, op
 	return d.p.ReceiveWebhook(ctx, req)
 }
 
+// Drain blocks until no call is running or waiting, or until ctx ends. For a
+// binding's Stop.
+func (d *Dispatcher) Drain(ctx context.Context) error {
+	for {
+		d.mu.Lock()
+		idle := d.inFlight == 0 && len(d.waiters) == 0
+		d.mu.Unlock()
+		if idle {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 // enter applies the deadline, records the transport in ctx and takes a
 // concurrency slot. release must be called when the call is done.
 func (d *Dispatcher) enter(ctx context.Context, opts CallOptions) (context.Context, func(), error) {
@@ -171,22 +225,10 @@ func (d *Dispatcher) enter(ctx context.Context, opts CallOptions) (context.Conte
 		cancel()
 		return ctx, nil, fmt.Errorf("call not started: %w", err)
 	}
-	if d.slots != nil {
-		select {
-		case d.slots <- struct{}{}:
-		default:
-			d.waiting.Add(1)
-			select {
-			case d.slots <- struct{}{}:
-				d.waiting.Add(-1)
-			case <-ctx.Done():
-				d.waiting.Add(-1)
-				cancel()
-				return ctx, nil, fmt.Errorf("%w (%d in flight, limit %d): %w", ErrOverloaded, d.InFlight(), d.maxConcurrency, ctx.Err())
-			}
-		}
+	if err := d.acquire(ctx); err != nil {
+		cancel()
+		return ctx, nil, err
 	}
-	d.inFlight.Add(1)
 	tel := d.p.tel()
 	attrs := metric.WithAttributes(attribute.String("landflow.plugin.id", d.p.info.ID), attribute.String("landflow.transport", opts.Transport))
 	tel.inst.inFlight.Add(ctx, 1, attrs)
@@ -196,14 +238,66 @@ func (d *Dispatcher) enter(ctx context.Context, opts CallOptions) (context.Conte
 			return
 		}
 		released = true
-		d.inFlight.Add(-1)
 		tel.inst.inFlight.Add(context.WithoutCancel(ctx), -1, attrs)
-		if d.slots != nil {
-			<-d.slots
-		}
+		d.release()
 		cancel()
 	}
 	return ctx, release, nil
+}
+
+// acquire takes a slot: at once when one is free, after waiting in arrival
+// order when the queue has room, never otherwise (ErrOverloaded). A waiter
+// whose ctx ends leaves the queue with the context's error.
+func (d *Dispatcher) acquire(ctx context.Context) error {
+	d.mu.Lock()
+	if d.maxConcurrency <= 0 || d.inFlight < d.maxConcurrency {
+		d.inFlight++
+		d.mu.Unlock()
+		return nil
+	}
+	if len(d.waiters) >= d.maxQueue {
+		err := fmt.Errorf("%w (%d in flight, %d waiting, limit %d)", ErrOverloaded, d.inFlight, len(d.waiters), d.maxConcurrency)
+		d.mu.Unlock()
+		return err
+	}
+	slot := make(chan struct{})
+	d.waiters = append(d.waiters, slot)
+	d.mu.Unlock()
+
+	select {
+	case <-slot:
+		// release handed us its slot (inFlight already counts us).
+		return nil
+	case <-ctx.Done():
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		for i, w := range d.waiters {
+			if w == slot {
+				d.waiters = append(d.waiters[:i], d.waiters[i+1:]...)
+				return fmt.Errorf("gave up waiting for a concurrency slot (%d in flight, limit %d): %w", d.inFlight, d.maxConcurrency, ctx.Err())
+			}
+		}
+		// The slot was handed over while ctx ended; pass it on.
+		d.releaseLocked()
+		return fmt.Errorf("call not started: %w", ctx.Err())
+	}
+}
+
+// release frees a slot, handing it to the longest-waiting call if any.
+func (d *Dispatcher) release() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.releaseLocked()
+}
+
+func (d *Dispatcher) releaseLocked() {
+	if len(d.waiters) > 0 {
+		next := d.waiters[0]
+		d.waiters = d.waiters[1:]
+		close(next) // the slot moves to the waiter; inFlight is unchanged
+		return
+	}
+	d.inFlight--
 }
 
 // transportKey carries the binding kind of the current call in the context.

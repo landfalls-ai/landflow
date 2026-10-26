@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -183,19 +184,23 @@ class DispatcherTest(unittest.TestCase):
         first = [in_thread(dispatcher.execute, request("block"), transport="http") for _ in range(2)]
         wait_until(lambda: dispatcher.in_flight == 2, "two calls in flight")
 
-        # The third waits for a slot and gives up at its deadline.
-        with self.assertRaises(OverloadedError) as caught:
+        # The third waits for a slot (the queue holds max_concurrency by default) and gives up at its deadline: it
+        # never ran but it did wait, so it is a deadline, not a capacity refusal.
+        with self.assertRaises(CallCancelledError) as caught:
             dispatcher.execute(request("block"), deadline=time.monotonic() + 0.15)
         self.assertIn("limit 2", str(caught.exception))
+        self.assertTrue(caught.exception.deadline)
         self.assertEqual((dispatcher.in_flight, dispatcher.waiting), (2, 0))
 
-        # A fourth, cancelled while waiting, gives up too.
+        # A fourth, cancelled while waiting, gives up too (cancelled, not a deadline).
         token = CancelToken()
         waiting = in_thread(dispatcher.execute, request("block"), cancel=token)
         wait_until(lambda: dispatcher.waiting == 1, "a waiter")
-        token.cancel()
+        token.cancel("client went away")
         waiting["thread"].join(5)
-        self.assertIsInstance(waiting.get("error"), OverloadedError)
+        self.assertIsInstance(waiting.get("error"), CallCancelledError)
+        self.assertFalse(waiting["error"].deadline)
+        self.assertIn("client went away", str(waiting["error"]))
 
         # A fifth waits and runs once a slot frees up.
         fifth = in_thread(dispatcher.execute, request("upper"))
@@ -206,6 +211,109 @@ class DispatcherTest(unittest.TestCase):
             self.assertNotIn("error", box["result"], box)
         self.assertEqual((dispatcher.in_flight, dispatcher.waiting), (0, 0))
         self.assertEqual(self.plugin.telemetry.in_flight._series, {(("landflow.plugin.id", "tp"),): 0})
+
+    def test_queue_limit_refuses_at_once_and_keeps_arrival_order(self):
+        dispatcher = Dispatcher(self.plugin, max_concurrency=1, max_queue=2)
+        self.assertEqual((Dispatcher(self.plugin, 3).max_queue, Dispatcher(self.plugin, 3, 0).max_queue, dispatcher.max_queue), (3, 0, 2))
+        first = in_thread(dispatcher.execute, request("block"), transport="first")
+        wait_until(lambda: dispatcher.in_flight == 1, "first in flight")
+        second = in_thread(dispatcher.execute, request("upper", [{"v": "second"}]))
+        wait_until(lambda: dispatcher.waiting == 1, "second waiting")
+        token = CancelToken()
+        third = in_thread(dispatcher.execute, request("upper", [{"v": "third"}]), cancel=token)
+        wait_until(lambda: dispatcher.waiting == 2, "third waiting")
+
+        # Queue full: refused at once, the node never sees it.
+        started = time.monotonic()
+        with self.assertRaises(OverloadedError) as caught:
+            dispatcher.execute(request("upper"))
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertIn("2 waiting", str(caught.exception))
+        # A cancelled waiter frees its place.
+        token.cancel()
+        third["thread"].join(5)
+        self.assertIsInstance(third.get("error"), CallCancelledError)
+        wait_until(lambda: dispatcher.waiting == 1, "place freed")
+        fourth = in_thread(dispatcher.execute, request("upper", [{"v": "fourth"}]))
+        wait_until(lambda: dispatcher.waiting == 2, "fourth waiting")
+        # Release: the waiters run in arrival order.
+        Block.release.set()
+        for box in (first, second, fourth):
+            box["thread"].join(5)
+            self.assertNotIn("error", box["result"], box)
+        self.assertEqual((dispatcher.in_flight, dispatcher.waiting), (0, 0))
+        self.assertTrue(dispatcher.drain(1))
+        self.assertEqual(len(Block.seen), 1)
+
+        # max_queue=0: no waiting at all.
+        Block.release = threading.Event()
+        strict = Dispatcher(self.plugin, max_concurrency=1, max_queue=0)
+        held = in_thread(strict.execute, request("block"))
+        wait_until(lambda: strict.in_flight == 1, "slot taken")
+        with self.assertRaises(OverloadedError):
+            strict.execute(request("upper"))
+        Block.release.set()
+        held["thread"].join(5)
+
+    def test_http_status_mapping_and_deadline_header(self):
+        from landflow_sdk.http_server import DEADLINE_HEADER, deadline_from_header
+
+        self.assertIsNone(deadline_from_header(None))
+        self.assertIsNone(deadline_from_header("soon"))
+        self.assertIsNone(deadline_from_header("0"))
+        self.assertAlmostEqual(deadline_from_header(str(int((time.time() + 10) * 1000))) - time.monotonic(), 10, delta=0.5)
+
+        dispatcher = Dispatcher(self.plugin, max_concurrency=1)
+        self.plugin.dispatcher = dispatcher
+        server = HttpPluginServer(dispatcher, "127.0.0.1", 0)
+        server.start()
+        try:
+            url = f"http://127.0.0.1:{server.port}/landflow/v1/execute"
+
+            def post(node: str, deadline_ms: int | None = None, timeout: float = 5):
+                headers = {"Content-Type": "application/json"}
+                if deadline_ms is not None:
+                    headers[DEADLINE_HEADER] = str(deadline_ms)
+                req = urllib.request.Request(url, data=json.dumps(request(node)).encode(), headers=headers, method="POST")
+                try:
+                    with urllib.request.urlopen(req, timeout=timeout) as resp:
+                        return resp.status, dict(resp.headers), json.loads(resp.read())
+                except urllib.error.HTTPError as exc:
+                    with exc:
+                        return exc.code, dict(exc.headers), json.loads(exc.read())
+
+            # The header's deadline reaches the node: a node error, not a transport error.
+            started = time.monotonic()
+            status, _, body = post("block", int((time.time() + 0.1) * 1000))
+            self.assertEqual((status, body["error"]["message"]), (200, "deadline exceeded"))
+            self.assertLess(time.monotonic() - started, 3)
+            self.assertEqual(Block.seen[0]["deadline"], True)
+            # An expired deadline never runs: 504.
+            status, _, body = post("upper", int((time.time() - 1) * 1000))
+            self.assertEqual(status, 504)
+            self.assertEqual(len(Block.seen), 1)
+
+            # Fill the slot and the queue (max_queue defaults to max_concurrency = 1).
+            held = in_thread(post, "block")
+            wait_until(lambda: dispatcher.in_flight == 1, "slot taken")
+            # A waiter whose deadline passes: 504.
+            status, _, body = post("upper", int((time.time() + 0.15) * 1000))
+            self.assertEqual(status, 504)
+            self.assertIn("deadline exceeded while waiting", body["error"]["message"])
+            waiter = in_thread(post, "upper")
+            wait_until(lambda: dispatcher.waiting == 1, "a waiter")
+            # Queue full: 429 + Retry-After: 1, at once.
+            started = time.monotonic()
+            status, headers, body = post("upper")
+            self.assertEqual((status, headers.get("Retry-After")), (429, "1"))
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertIn("concurrency limit", body["error"]["message"])
+            Block.release.set()
+            for box in (held, waiter):
+                box["thread"].join(5)
+                self.assertEqual(box["result"][0], 200)
+        finally:
+            server.stop()
 
     def test_transport_on_the_span_and_in_flight_gauge(self):
         plugin = Plugin("tp", "Transport Plugin", "1.0.0", nodes=[Upper], telemetry=builtin_telemetry("tp", LANDFLOW_LOG_SPANS="true"))
@@ -284,12 +392,23 @@ class GrpcDeadlineTest(unittest.TestCase):
                 stub = pb_grpc.PluginServiceStub(channel)
                 held = stub.Execute.future(grpc_server.execute_request_to_proto(request("block")))
                 wait_until(lambda: dispatcher.in_flight == 1, "the slot taken")
-                # The waiter gives up at its deadline with RESOURCE_EXHAUSTED (or the client's identical deadline wins).
+                # A waiter gives up at its deadline with DEADLINE_EXCEEDED (the server's and the client's coincide).
                 with self.assertRaises(grpc.RpcError) as caught:
                     stub.Execute(grpc_server.execute_request_to_proto(request("upper")), timeout=0.3)
-                self.assertIn(caught.exception.code(), (grpc.StatusCode.RESOURCE_EXHAUSTED, grpc.StatusCode.DEADLINE_EXCEEDED))
+                self.assertEqual(caught.exception.code(), grpc.StatusCode.DEADLINE_EXCEEDED)
                 wait_until(lambda: dispatcher.waiting == 0, "the waiter to give up")
                 self.assertEqual(dispatcher.in_flight, 1)
+                # With the queue full (max_queue defaults to 1) the next call is refused at once: RESOURCE_EXHAUSTED.
+                waiter = stub.Execute.future(grpc_server.execute_request_to_proto(request("upper")))
+                wait_until(lambda: dispatcher.waiting == 1, "a waiter")
+                started = time.monotonic()
+                with self.assertRaises(grpc.RpcError) as caught:
+                    stub.Execute(grpc_server.execute_request_to_proto(request("upper")), timeout=5)
+                self.assertEqual(caught.exception.code(), grpc.StatusCode.RESOURCE_EXHAUSTED)
+                self.assertLess(time.monotonic() - started, 1)
+                # A waiter the client cancels ends CANCELLED on the server side and frees its place.
+                waiter.cancel()
+                wait_until(lambda: dispatcher.waiting == 0, "the cancelled waiter to leave")
                 Block.release.set()
                 self.assertFalse(held.result(timeout=5).HasField("error"))
                 self.assertEqual(stub.Execute(grpc_server.execute_request_to_proto(request("upper"))).outputs[0].items[0].json.json, b'{"v":"A"}')

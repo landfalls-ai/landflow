@@ -41,8 +41,13 @@ export const PUBLIC_ROUTES = [
   '/mcp-test',
   '/api/waiting',
   '/mcp',
-  // The instance MCP server: its own token (Settings → MCP).
+  // The instance MCP server (its own token, Settings → MCP), the per-plugin MCP endpoints, the JWKS and the MCP registry
+  // (lib/server/mcp/identity.ts authenticates their callers: the gateway secret, MCP tokens, identity provider tokens, API
+  // keys, sessions). Tokens, grants and status below /api/mcp are private: see PRIVATE_MCP_ROUTES.
   '/api/mcp',
+  // Protected resource metadata (RFC 9728) of the MCP endpoints and the instance's Server Card (which checks its callers itself).
+  '/.well-known/oauth-protected-resource',
+  '/.well-known/mcp',
   // OAuth2 credential callback (the provider redirects the browser here).
   '/api/oauth2/callback',
   // Plugins announce themselves and heartbeat here (optionally with LANDFLOW_REGISTRY_SECRET).
@@ -55,6 +60,9 @@ export const PUBLIC_ROUTES = [
 
 /** `/api/auth` routes that need a signed-in user. */
 const PRIVATE_AUTH_ROUTES = ['/api/auth/me'];
+
+/** `/api/mcp` routes that are the UI's (Settings → MCP), not MCP endpoints: a session or an API key like any other route. */
+export const PRIVATE_MCP_ROUTES = ['/api/mcp/tokens', '/api/mcp/grants', '/api/mcp/status', '/api/mcp/tools'];
 
 /** True when `path` is `prefix` or below it (`/api/mcp` matches `/api/mcp` and `/api/mcp/x`, not `/api/mcpx`). */
 export function underPath(path: string, prefix: string): boolean {
@@ -85,6 +93,7 @@ export function isPublicPath(path: string, options: PublicPathOptions = {}): boo
   if (isStaticAsset(path)) return true;
   if (isChromelessPage(path)) return true;
   if (PRIVATE_AUTH_ROUTES.some((route) => underPath(path, route))) return false;
+  if (PRIVATE_MCP_ROUTES.some((route) => underPath(path, route))) return false;
   if (PUBLIC_ROUTES.some((route) => underPath(path, route))) return true;
   // Plugins read and write files with the per-call token the host gave them; the route verifies it.
   if (underPath(path, '/api/binary') && options.bearer && !options.bearer.startsWith(API_KEY_PREFIX)) return true;

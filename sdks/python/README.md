@@ -318,16 +318,19 @@ class Binding(ABC):
 `fail(exc)` hook that shuts the plugin down. Node code sees the call's `CancelToken` as `ctx.cancel`
 (`ctx.cancel.is_set()`, `ctx.cancel.check()` raising `CallCancelledError`, `ctx.cancel.remaining()`,
 `ctx.cancel.wait(t)`; also `ctx.deadline`, `ctx.is_cancelled()`, `ctx.check_cancelled()`): over gRPC it is the
-call's deadline and the client's cancellation; over HTTP it is never set. `dispatcher.in_flight` /
-`waiting` / `max_concurrency` are the live counts (also the `landflow.plugin.inflight` gauge); at the limit a
-call waits for a slot until its token ends, then fails with `OverloadedError` (HTTP 503, gRPC
-`RESOURCE_EXHAUSTED`; an expired deadline is 504 / `DEADLINE_EXCEEDED`).
+call's deadline and the client's cancellation; over HTTP it is the `x-landflow-deadline` header (epoch ms;
+absent = never set). `dispatcher.in_flight` / `waiting` / `max_concurrency` / `max_queue` are the live counts
+(also the `landflow.plugin.inflight` gauge). At the limit a call waits for a slot in arrival order, up to
+`max_queue` waiters (default `max_concurrency`; `0` = none); a waiter whose deadline passes or that is cancelled
+fails with `CallCancelledError` (HTTP 504 / gRPC `DEADLINE_EXCEEDED`, or 499 / `CANCELLED`), and when the queue
+is full further calls are refused at once with `OverloadedError` (HTTP 429 + `Retry-After: 1`, gRPC
+`RESOURCE_EXHAUSTED`) so the host can take them elsewhere knowing they never ran.
 
 | Variable | Default | |
 |---|---|---|
 | `LANDFLOW_HTTP_PORT` / `LANDFLOW_GRPC_PORT` | the `serve()` arguments | override the ports; `off` disables a transport, `0` picks a free port |
 | `LANDFLOW_TRANSPORTS` | every configured binding | comma-separated kinds to run (`http,grpc,kafka`); a kind with no binding is ignored with a warning |
-| `LANDFLOW_MAX_CONCURRENCY` | `max_concurrency=` (unlimited) | calls one instance runs at once; announced as `maxConcurrency` |
+| `LANDFLOW_MAX_CONCURRENCY` | `max_concurrency=` (unlimited) | calls one instance runs at once; announced as `maxConcurrency`; `max_queue=` (code only) bounds the waiters |
 | `LANDFLOW_REGISTRY_URL` | `http://127.0.0.1:3000` | `http(s)://` -> `POST/DELETE /api/plugins/announce`; `grpc://host:port` -> `RegistryService`; `off` |
 | `LANDFLOW_ADVERTISE_HOST` | `127.0.0.1` | host written into announced endpoints |
 | `LANDFLOW_BIND_HOST` | `127.0.0.1` (or `0.0.0.0` if the advertised host is not loopback) | listen address |

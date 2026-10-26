@@ -149,4 +149,30 @@ describe('with a fake clock', () => {
     await call;
     await raw.close();
   });
+  for (const how of ['cancelled', 'expired'] as const) {
+    it(`drops a request ${how} while it waited for a slot`, async () => {
+      let release!: () => void;
+      const dispatched: string[] = [];
+      const { client, server } = await start(async (context) => {
+        dispatched.push(context.callId);
+        if (dispatched.length === 1) await new Promise<void>((resolve) => (release = resolve));
+        return { outputs: [] };
+      }, { maxConcurrency: 1 });
+      const first = client.call('p', 'Execute', execute(), { timeoutMs: 60_000 });
+      await settle();
+      expect(dispatched).toHaveLength(1);
+      const controller = new AbortController();
+      const waiting = client.call('p', 'Execute', execute(), how === 'cancelled' ? { timeoutMs: 60_000, signal: controller.signal } : { timeoutMs: 1_000 });
+      waiting.catch(() => {});
+      await settle();
+      if (how === 'cancelled') controller.abort();
+      await vi.advanceTimersByTimeAsync(1_500);
+      release();
+      await first;
+      await settle(50);
+      expect(dispatched).toHaveLength(1);
+      expect(server.counters[how]).toBe(1);
+      await expect(waiting).rejects.toBeTruthy();
+    });
+  }
 });

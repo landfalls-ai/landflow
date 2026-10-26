@@ -34,6 +34,7 @@ export const TRANSPORT_META: Record<string, { label: string }> = {
   kafka: { label: 'Kafka' },
   amqp: { label: 'RabbitMQ' },
   nats: { label: 'NATS' },
+  jetstream: { label: 'JetStream' },
   valkey: { label: 'Valkey' },
   mqtt: { label: 'MQTT' },
   sqs: { label: 'SQS' },

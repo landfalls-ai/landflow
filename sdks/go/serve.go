@@ -50,6 +50,9 @@ type ServeOptions struct {
 	// unlimited); LANDFLOW_MAX_CONCURRENCY overrides it. Announced in the
 	// manifest as maxConcurrency.
 	MaxConcurrency int
+	// MaxQueue bounds the calls waiting for a slot before new ones are refused
+	// with ErrOverloaded (0 = MaxConcurrency, NoQueue = refuse at once).
+	MaxQueue int
 	// Announce: nil or true announces to the registry; false disables it.
 	// LANDFLOW_REGISTRY_URL=off disables it as well.
 	Announce *bool
@@ -109,6 +112,11 @@ func WithMaxConcurrency(n int) ServeOption {
 	return serveOptionFunc(func(o *ServeOptions) { o.MaxConcurrency = n })
 }
 
+// WithMaxQueue bounds the calls waiting for a slot (0 = MaxConcurrency, NoQueue = none).
+func WithMaxQueue(n int) ServeOption {
+	return serveOptionFunc(func(o *ServeOptions) { o.MaxQueue = n })
+}
+
 // WithTransports limits the bindings that run to these kinds, like LANDFLOW_TRANSPORTS.
 func WithTransports(kinds ...string) ServeOption {
 	return serveOptionFunc(func(o *ServeOptions) { o.Transports = kinds })
@@ -139,6 +147,7 @@ type serveConfig struct {
 	bindings           []Binding // every binding to run, in start order
 	transports         []string  // the kinds of bindings
 	maxConcurrency     int
+	maxQueue           int
 	listenHost         string
 	advertiseHost      string
 	registryURL        string // "" = announce disabled
@@ -160,6 +169,7 @@ func resolveConfig(p *Plugin, opts ServeOptions) (serveConfig, error) {
 	if cfg.maxConcurrency, err = maxConcurrencyFromEnv(opts.MaxConcurrency); err != nil {
 		return cfg, err
 	}
+	cfg.maxQueue = opts.MaxQueue
 
 	// Every configured binding, HTTP and gRPC first; then the LANDFLOW_TRANSPORTS filter.
 	var configured []Binding
@@ -180,6 +190,15 @@ func resolveConfig(p *Plugin, opts ServeOptions) (serveConfig, error) {
 		cfg.bindings = configured
 	} else {
 		have := map[string]bool{}
+		for _, b := range configured {
+			have[b.Kind()] = true
+		}
+		// Broker bindings from the environment: LANDFLOW_TRANSPORTS=…,kafka + LANDFLOW_KAFKA_URL (messaging.go).
+		fromEnv, err := brokerBindingsFromEnv(selected, have)
+		if err != nil {
+			return cfg, err
+		}
+		configured = append(configured, fromEnv...)
 		for _, b := range configured {
 			if selected[b.Kind()] {
 				cfg.bindings = append(cfg.bindings, b)
@@ -295,7 +314,7 @@ func Serve(ctx context.Context, p *Plugin, opts ...ServeOption) error {
 
 	// The dispatcher every binding shares, and the manifest hints the host reads.
 	p.SetTransportHints(cfg.transports, cfg.maxConcurrency)
-	dispatcher := NewDispatcher(p, DispatcherOptions{MaxConcurrency: cfg.maxConcurrency})
+	dispatcher := NewDispatcher(p, DispatcherOptions{MaxConcurrency: cfg.maxConcurrency, MaxQueue: cfg.maxQueue})
 	p.dispatcher.Store(dispatcher)
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)

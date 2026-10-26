@@ -9,7 +9,8 @@ export type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, Node
 export type { StickyNote, WorkflowConnection, WorkflowGroup, WorkflowNode, WorkflowSettings } from '@landflow/engine';
 export type { CredentialTypeDescriptor, NodeDescriptor, NodeItem, PropertyDescriptor, PortDescriptor, ConnectionType } from '@landflow/protocol';
 
-export type DiscoverySource = 'builtin' | 'announce' | 'static' | 'scan' | 'manual' | 'kubernetes';
+/** `broker`: the plugin announced itself on a broker's registry channel (docs/transports.md, docs/protocol.md §14.8). */
+export type DiscoverySource = 'builtin' | 'announce' | 'static' | 'scan' | 'manual' | 'kubernetes' | 'broker';
 export type PluginStatus = 'online' | 'offline' | 'error';
 
 /** Where a discovered endpoint came from: the Kubernetes namespace and Service (lib/server/plugins/kubernetes.ts). */
@@ -28,6 +29,8 @@ export interface EndpointSummary {
   latencyMs?: number;
   lastError?: string;
   origin?: EndpointOrigin;
+  /** Brokered endpoints: the announced instances and their total `maxConcurrency`, and the request channel's numbers (lib/shared/transports.ts). */
+  queue?: import('./transports').BrokerQueueStats;
 }
 
 export interface PluginSummary {
@@ -53,6 +56,17 @@ export interface PluginSummary {
   updatedAt: string;
   lastError?: string;
   nodes: Array<Pick<NodeDescriptor, 'name' | 'displayName' | 'description' | 'icon' | 'color' | 'kind' | 'categories' | 'usableAsTool'>>;
+  /** MCP (docs/transports.md): whether agents see the plugin's tools through the gateway, and how many tools it has. */
+  mcp?: PluginMcpSummary;
+}
+
+export interface PluginMcpSummary {
+  /** "Expose to agents" (on by default): the plugin is a target of the MCP gateway and its endpoint answers. */
+  exposed: boolean;
+  /** How many tools the manifest maps to (lib/server/mcp/plugin-servers.ts). */
+  tools: number;
+  /** The plugin's MCP endpoint on this host. */
+  path: string;
 }
 
 export interface NodeTypeInfo {
@@ -212,6 +226,19 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   aiUsage?: ExecutionAiUsage;
   /** Started by the trigger's debounce or batching: how many held events the run took. */
   buffered?: { kind: 'debounce' | 'batch'; count: number };
+  /** An MCP tool call on a plugin's MCP endpoint (lib/server/mcp/plugin-servers.ts): who called which tool. */
+  mcp?: ExecutionMcpInfo;
+}
+
+/** The MCP tool call behind an execution with mode `mcp` on a per-plugin endpoint (docs/transports.md). */
+export interface ExecutionMcpInfo {
+  pluginId: string;
+  /** The tool's name on the plugin's endpoint (`<plugin>_<tool>` through the gateway). */
+  tool: string;
+  /** The caller: `<kind>:<subject>` (`gateway:alice@example.com`, `session:user_1`…). */
+  caller: string;
+  /** The Landflow user the caller maps to, when known. */
+  userId?: string;
 }
 
 export interface SubExecutionRef {
@@ -256,6 +283,8 @@ export interface ExecutionSummary {
   resumedAfterRestart?: boolean;
   /** An evaluation case's execution. */
   evaluation?: Pick<EvaluationRef, 'runId'>;
+  /** An MCP tool call: the tool and the caller. */
+  mcp?: Pick<ExecutionMcpInfo, 'tool' | 'caller'>;
 }
 
 /** Where a poll trigger of an active workflow stands (GET /api/workflows/:id/polls). */

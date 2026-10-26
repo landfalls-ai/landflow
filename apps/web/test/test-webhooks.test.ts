@@ -13,9 +13,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { context, trace } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Client, StreamableHTTPClientTransport, type CallToolResult } from '@modelcontextprotocol/client';
 import { defineNode, definePlugin } from '@landflow/sdk';
 import type { ExecutionEvent, Workflow } from '@landflow/engine';
 import type { ExecutionRecord } from '@/lib/shared/types';
@@ -560,7 +558,7 @@ describe('test MCP Server Trigger', () => {
     expect(isPublicPath('/mcp-test/team/tools')).toBe(true);
     expect(isPublicPath('/mcp-tester')).toBe(false);
     // Nobody listens: 404 with the hint.
-    await expect(mcpClient('tm-basic')).rejects.toMatchObject({ code: 404 });
+    await expect(mcpClient('tm-basic')).rejects.toMatchObject({ status: 404 });
     const miss = await mcpFetch('http://test-hooks.test/mcp-test/tm-basic', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
     expect((await miss.json()).error.message).toBe(`No editor is listening on /mcp-test/tm-basic. ${NOT_LISTENING_HINT}`);
 
@@ -610,7 +608,7 @@ describe('test MCP Server Trigger', () => {
     await client.close();
     listening.stop();
     await listening.closed;
-    await expect(mcpClient('tm-basic')).rejects.toMatchObject({ code: 404 });
+    await expect(mcpClient('tm-basic')).rejects.toMatchObject({ status: 404 });
   });
 
   it('listens 120 s past the last request, and times out when none comes', async () => {
@@ -637,14 +635,14 @@ describe('test MCP Server Trigger', () => {
     const quiet = readEvents(listenerStream(idle.listener, new AbortController().signal));
     expect((await quiet.next('timeout')).message).toBe('No MCP request arrived within 120 s');
     await quiet.closed;
-    await expect(mcpClient('tm-idle')).rejects.toMatchObject({ code: 404 });
+    await expect(mcpClient('tm-idle')).rejects.toMatchObject({ status: 404 });
   });
 
   it('checks the trigger’s bearer auth, and keeps one workflow per test URL', async () => {
     const token = credentials.create({ name: 'Test MCP token', type: 'core.httpBearerAuth', data: { token: 'tm-secret' } });
     const listening = await listen('wf_tm_auth', 'MCP', tools('wf_tm_auth', 'tm-auth', { authentication: 'bearerAuth' }, { httpBearerAuth: { id: token.id, name: token.name } }));
-    await expect(mcpClient('tm-auth')).rejects.toMatchObject({ code: 401 });
-    await expect(mcpClient('tm-auth', { Authorization: 'Bearer wrong' })).rejects.toMatchObject({ code: 401 });
+    await expect(mcpClient('tm-auth')).rejects.toMatchObject({ status: 401 });
+    await expect(mcpClient('tm-auth', { Authorization: 'Bearer wrong' })).rejects.toMatchObject({ status: 401 });
     const client = await mcpClient('tm-auth', { Authorization: 'Bearer tm-secret' });
     expect((await client.callTool({ name: 'Calculator', arguments: { expression: '2+2' } })).isError).toBeFalsy();
     await client.close();

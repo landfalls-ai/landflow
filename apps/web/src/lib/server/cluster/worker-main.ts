@@ -39,6 +39,11 @@ async function main() {
   registry.registerBuiltin(corePlugin);
   registry.start();
   observePluginsOnline(() => registry.list());
+  // Workers open the broker connections too and choose transports for themselves (own hostInstanceId and reply channel).
+  const { registerBrokerProviders } = await import('../transports/broker-provider');
+  const { brokerConnections } = await import('../transports/brokers');
+  await registerBrokerProviders();
+  void brokerConnections.start(registry).catch((error: Error) => logger.warn('broker connections did not start', { error: error.message }));
   const seeds = (process.env.LANDFLOW_PLUGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   await Promise.allSettled(seeds.map((endpoint) => registry.addEndpoint(endpoint, 'static')));
   if ((process.env.LANDFLOW_PLUGIN_DISCOVERY ?? '').split(',').some((mode) => mode.trim().toLowerCase() === 'kubernetes')) {
@@ -70,6 +75,7 @@ async function main() {
     logger.info('worker: stopping', { signal, 'landflow.jobs.active': clusterState().activeJobs.size });
     try {
       await clusterState().worker?.stop(config.shutdownMs);
+      await brokerConnections.stop();
       await stopCluster();
       await closeDatabase();
       const { startTelemetry: telemetry } = await import('../telemetry/sdk');

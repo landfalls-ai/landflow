@@ -1,18 +1,25 @@
 'use client';
 /**
- * Settings → MCP: the instance MCP server at /api/mcp, for coding agents such as Claude Code. On/off,
- * the access token (shown once when it is created; regenerate to get a new one) and the client config
- * to paste, built from this page's origin.
+ * Settings → MCP (docs/transports.md "The bundled MCP gateway"): the gateway (mode, URL, secret, sync status), how to
+ * connect a client (Claude Code / generic MCP JSON for the gateway and the direct per-plugin endpoints), your
+ * Landflow-issued MCP tokens (issue with scopes and expiry, copy once, revoke, last used), the tool grants (owners and
+ * admins), the tool browser (GET /api/mcp/tools, stream T2-E; an empty state until it exists), and the instance MCP
+ * server for coding agents (/api/mcp, its own on/off switch and token).
  */
-import { useEffect, useState } from 'react';
-import { KeyRound, Plug, RefreshCw, TriangleAlert } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { KeyRound, Network, Plug, Plus, RefreshCw, ShieldAlert, ShieldCheck, Trash2, TriangleAlert, Wrench, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
-import type { McpAccessResponse, McpAccessView } from '@/lib/shared/mcp';
+import { timeAgo } from '@/lib/client/format';
+import type { UserView } from '@/lib/shared/auth';
+import { MCP_GRANT_SUBJECT_KINDS, MCP_TOKEN_SCOPE_LABELS, MCP_TOKEN_SCOPES, type McpAccessResponse, type McpAccessView, type McpGrantSubjectKind, type McpStatusView, type McpTokenScope, type McpTokenView, type McpToolGrant, type McpToolsResponse } from '@/lib/shared/mcp';
+import type { CredentialSummary, PluginSummary } from '@/lib/shared/types';
 import { Card } from '@/components/shell/page-header';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
-import { SectionLabel, Switch } from '@/components/ui/inputs';
+import { EmptyState } from '@/components/ui/empty-state';
+import { FieldLabel, Input, SectionLabel, Select, Switch } from '@/components/ui/inputs';
 
 const PLACEHOLDER = '<token>';
 
@@ -28,15 +35,680 @@ function Snippet({ label, text }: { label: string; text: string }) {
   );
 }
 
-export function McpSettings() {
+const Alert = ({ children, tone = 'danger' }: { children: React.ReactNode; tone?: 'danger' | 'warning' }) => (
+  <div className={tone === 'danger' ? 'rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd animate-fade-up' : 'flex gap-2 rounded-[10px] border border-warnbd bg-warndim px-3 py-2.5 text-[12px] text-warn'}>{children}</div>
+);
+
+// ---- gateway and client config ---------------------------------------------------------
+
+function GatewayCard({ status }: { status: McpStatusView }) {
+  const mode = status.gateway.mode;
+  return (
+    <Card className="px-5 py-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Network className="size-4 text-t3" strokeWidth={1.8} />
+        <SectionLabel>MCP gateway</SectionLabel>
+        <Badge tone={mode === 'off' ? 'muted' : 'accent'} className="ml-auto font-mono">
+          {mode}
+        </Badge>
+      </div>
+      <p className="text-[13px] leading-relaxed text-t2">
+        Every installed plugin is also an MCP server. Agents connect to the bundled gateway (agentgateway) with one URL for every plugin, sign in through the identity provider or
+        with a Landflow MCP token, and the gateway hands this host the caller’s identity. Each plugin also has a direct endpoint here, <span className="font-mono text-[12px] text-t1">{status.paths.plugins}/&lt;plugin&gt;</span>.
+      </p>
+      <dl className="mt-3 grid gap-x-6 gap-y-1.5 text-[12px] sm:grid-cols-[auto_1fr]">
+        <dt className="text-t3">Mode</dt>
+        <dd className="text-t1">
+          <code className="font-mono">LANDFLOW_MCP_GATEWAY={mode}</code>
+          {mode === 'off' && <span className="text-t3"> — agents can still call the direct endpoints with a token</span>}
+        </dd>
+        <dt className="text-t3">Gateway URL</dt>
+        <dd className="font-mono text-t1">{status.gateway.publicUrl ? `${status.gateway.publicUrl}/mcp` : <span className="text-t3">not set (LANDFLOW_MCP_GATEWAY_PUBLIC_URL)</span>}</dd>
+        <dt className="text-t3">Gateway secret</dt>
+        <dd>
+          {status.gateway.secretConfigured ? (
+            <Badge tone="success">configured</Badge>
+          ) : (
+            <span className="text-warn">
+              <Badge tone="warning">missing</Badge> set <code className="font-mono">LANDFLOW_MCP_GATEWAY_SECRET</code>: without it the host refuses calls from the gateway
+            </span>
+          )}
+        </dd>
+        <dt className="text-t3">Sign-in</dt>
+        <dd className="text-t1">
+          {status.identityProvider ? (
+            <>
+              the identity provider <span className="font-mono">{status.identityProvider.issuer}</span>, or Landflow MCP tokens
+            </>
+          ) : (
+            <>
+              Landflow MCP tokens (no identity provider: set <code className="font-mono">LANDFLOW_OIDC_ISSUER</code> for SSO)
+            </>
+          )}
+        </dd>
+        <dt className="text-t3">Token keys</dt>
+        <dd className="font-mono text-t1">
+          {status.instanceUrl}
+          {status.paths.jwks}
+        </dd>
+        <dt className="text-t3">Catalog</dt>
+        <dd className="font-mono text-t1">
+          {status.instanceUrl}
+          {status.paths.registry} <span className="font-sans text-t3">(namespace {status.namespace})</span>
+        </dd>
+        <dt className="text-t3">Target sync</dt>
+        <dd className="text-t2">{status.gateway.sync === 'running' ? 'running' : 'Writing the plugins into the gateway arrives in a later release; register them in the gateway’s UI meanwhile.'}</dd>
+      </dl>
+    </Card>
+  );
+}
+
+function ConnectCard({ status, token, plugins }: { status: McpStatusView; token?: string; plugins: McpToolsResponse['plugins'] }) {
+  const [plugin, setPlugin] = useState<string>('');
+  const shown = token ?? PLACEHOLDER;
+  const gateway = status.gateway.publicUrl && status.gateway.mode !== 'off' ? `${status.gateway.publicUrl}/mcp` : undefined;
+  const direct = `${status.instanceUrl}${status.paths.plugins}/${plugin || '<plugin>'}`;
+  const url = gateway ?? direct;
+  const name = gateway ? 'landflow' : `landflow-${plugin || 'plugin'}`;
+  const command = `claude mcp add --transport http ${name} ${url} --header "Authorization: Bearer ${shown}"`;
+  const config = JSON.stringify({ mcpServers: { [name]: { type: 'http', url, headers: { Authorization: `Bearer ${shown}` } } } }, null, 2);
+  return (
+    <Card className="space-y-4 px-5 py-4">
+      <div className="flex items-center gap-2">
+        <Plug className="size-4 text-t3" strokeWidth={1.8} />
+        <SectionLabel>Connect an agent</SectionLabel>
+      </div>
+      <p className="text-[13px] text-t2">
+        {gateway ? (
+          <>
+            The gateway URL serves every plugin you may use (tools are prefixed with the plugin: <code className="font-mono text-[12px] text-t1">twilio_message_send</code>); one plugin is{' '}
+            <code className="font-mono text-[12px] text-t1">{gateway}/plugins/&lt;plugin&gt;</code>.
+          </>
+        ) : (
+          'Without a gateway URL, agents connect to one plugin’s endpoint on this host at a time.'
+        )}
+      </p>
+      {!gateway && plugins.length > 0 && (
+        <div className="max-w-xs">
+          <FieldLabel>Plugin</FieldLabel>
+          <Select value={plugin} onChange={(e) => setPlugin(e.target.value)}>
+            <option value="">Pick a plugin…</option>
+            {plugins.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.tools} tools)
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
+      <Snippet label="Claude Code command" text={command} />
+      <Snippet label="MCP client JSON" text={config} />
+      {gateway && <Snippet label="Direct endpoint of one plugin (no gateway)" text={`${status.instanceUrl}${status.paths.plugins}/<plugin>`} />}
+      {!token && <p className="text-[12px] text-t3">Replace {PLACEHOLDER} with a Landflow MCP token from below, or with an access token from the identity provider.</p>}
+    </Card>
+  );
+}
+
+// ---- tokens -----------------------------------------------------------------------------
+
+function IssueToken({ onCancel, onIssued }: { onCancel: () => void; onIssued: (token: string, record: McpTokenView) => void }) {
+  const [label, setLabel] = useState('');
+  const [scopes, setScopes] = useState<McpTokenScope[]>([...MCP_TOKEN_SCOPES]);
+  const [days, setDays] = useState('30');
+  const [busy, setBusy] = useState(false);
+  const toggle = (scope: McpTokenScope) => setScopes((s) => (s.includes(scope) ? s.filter((x) => x !== scope) : [...s, scope]));
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ token: string; record: McpTokenView }>('/api/mcp/tokens', { method: 'POST', json: { label, scopes, expiresInDays: Number(days) || 30 } });
+      onIssued(r.token, r.record);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card className="px-5 py-4">
+      <div className="mb-3 flex items-center gap-2">
+        <SectionLabel>New MCP token</SectionLabel>
+        <Button variant="ghost" size="icon-sm" className="ml-auto" onClick={onCancel} aria-label="Close">
+          <X className="size-3.5" />
+        </Button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <FieldLabel>Name</FieldLabel>
+          <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Claude Code on my laptop" autoFocus />
+        </div>
+        <div>
+          <FieldLabel>Expires in (days, 1–365)</FieldLabel>
+          <Input type="number" min={1} max={365} value={days} onChange={(e) => setDays(e.target.value)} />
+        </div>
+        <div className="sm:col-span-2">
+          <FieldLabel>Scopes</FieldLabel>
+          <div className="flex flex-wrap gap-3">
+            {MCP_TOKEN_SCOPES.map((scope) => (
+              <label key={scope} className="flex items-center gap-2 text-[13px] text-t2">
+                <input type="checkbox" checked={scopes.includes(scope)} onChange={() => toggle(scope)} className="accent-ac" />
+                <code className="font-mono text-[12px] text-t1">{scope}</code>
+                <span className="text-t3">{MCP_TOKEN_SCOPE_LABELS[scope]}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 flex justify-end gap-2">
+        <Button variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button variant="primary" onClick={() => void submit()} loading={busy} disabled={!label.trim() || scopes.length === 0}>
+          Issue token
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function TokensCard({ canManage, onToken }: { canManage: boolean; onToken: (token: string) => void }) {
+  const [tokens, setTokens] = useState<McpTokenView[]>();
+  const [all, setAll] = useState(false);
+  const [issuing, setIssuing] = useState(false);
+  const [created, setCreated] = useState<{ token: string; label: string }>();
+  const [confirm, setConfirm] = useState<string>();
+  const [error, setError] = useState<string>();
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api<{ tokens: McpTokenView[] }>(`/api/mcp/tokens${all ? '?all=1' : ''}`);
+      setTokens(r.tokens);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [all]);
+  useEffect(() => void load(), [load]);
+
+  const revoke = async (token: McpTokenView) => {
+    setConfirm(undefined);
+    try {
+      await api(`/api/mcp/tokens/${encodeURIComponent(token.id)}`, { method: 'DELETE' });
+      toast.success(`Revoked “${token.label}”`);
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  const state = (t: McpTokenView): { label: string; tone: 'danger' | 'muted' | 'success' } | undefined => {
+    if (t.revokedAt) return { label: 'revoked', tone: 'danger' };
+    if (Date.parse(t.expiresAt) <= Date.now()) return { label: 'expired', tone: 'muted' };
+    return undefined;
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <KeyRound className="size-4 text-t3" strokeWidth={1.8} />
+        <SectionLabel>MCP tokens</SectionLabel>
+        {canManage && (
+          <label className="ml-auto flex items-center gap-2 text-[12px] text-t3">
+            <Switch checked={all} onChange={setAll} label="Everyone’s tokens" /> everyone’s
+          </label>
+        )}
+      </div>
+      <p className="text-[13px] text-t2">
+        Signed tokens agents send as <code className="font-mono text-[12px] text-t1">Authorization: Bearer …</code> to the gateway or a plugin’s endpoint. They act as you within your grants and their scopes; revoking one takes
+        effect on the next call.
+      </p>
+      {created && (
+        <Card className="space-y-2 border-acbd px-5 py-4 animate-fade-up">
+          <div className="flex items-start gap-2 text-[13px]">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warn" strokeWidth={1.8} />
+            <span className="min-w-0 flex-1 text-t2">
+              <span className="font-semibold text-t1">Copy “{created.label}” now.</span> You won’t see this token again; Landflow keeps only a hash of it. The snippets above are filled in with it.
+            </span>
+            <button onClick={() => setCreated(undefined)} aria-label="Dismiss" className="text-t3 hover:text-t1">
+              <X className="size-3.5" />
+            </button>
+          </div>
+          <div className="flex items-center gap-1 rounded-[10px] border border-hair bg-wl py-1 pl-3 pr-1">
+            <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-t1" data-testid="new-mcp-token">
+              {created.token}
+            </code>
+            <CopyButton text={created.token} label="Copy token" />
+          </div>
+        </Card>
+      )}
+      {issuing ? (
+        <IssueToken
+          onCancel={() => setIssuing(false)}
+          onIssued={(token, record) => {
+            setCreated({ token, label: record.label });
+            onToken(token);
+            setIssuing(false);
+            void load();
+          }}
+        />
+      ) : (
+        <div className="flex">
+          <Button variant="primary" onClick={() => setIssuing(true)}>
+            <Plus className="size-3.5" /> New MCP token
+          </Button>
+        </div>
+      )}
+      {error && <Alert>{error}</Alert>}
+      {tokens && tokens.length === 0 && !issuing && <EmptyState title="No MCP tokens" hint="Issue one for an agent, then paste it into the client config above." compact />}
+      {tokens && tokens.length > 0 && (
+        <Card className="overflow-hidden p-0">
+          {tokens.map((t) => {
+            const st = state(t);
+            return (
+              <div key={t.id} className="flex items-start gap-3 border-b border-hair px-4 py-2.5 last:border-b-0 hover:bg-sf2">
+                <KeyRound className="mt-0.5 size-4 shrink-0 text-t3" strokeWidth={1.8} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 text-[13px] font-semibold text-t1">
+                    <span className="truncate">{t.label}</span>
+                    <code className="font-mono text-[11px] font-normal text-t3">…{t.hint}</code>
+                    {st && <Badge tone={st.tone}>{st.label}</Badge>}
+                    {all && t.userName && <Badge tone="muted">{t.userName}</Badge>}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {t.scopes.map((scope) => (
+                      <Badge key={scope} tone="muted" className="font-mono font-medium" title={MCP_TOKEN_SCOPE_LABELS[scope]}>
+                        {scope}
+                      </Badge>
+                    ))}
+                  </div>
+                  <div className="mt-1 text-[11px] text-t3">
+                    Issued {timeAgo(t.createdAt)} · {t.lastUsedAt ? `last used ${timeAgo(t.lastUsedAt)}` : 'never used'} · {Date.parse(t.expiresAt) <= Date.now() ? 'expired' : 'expires'} {new Date(t.expiresAt).toLocaleDateString()} · id{' '}
+                    <code className="font-mono">{t.id}</code>
+                  </div>
+                </div>
+                {!st &&
+                  (confirm === t.id ? (
+                    <span role="alertdialog" aria-label={`Revoke ${t.label}?`} className="flex items-center gap-1 animate-fade-up">
+                      <Button size="sm" variant="danger" onClick={() => void revoke(t)}>
+                        Revoke
+                      </Button>
+                      <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(undefined)} aria-label="Keep">
+                        <X className="size-3.5" />
+                      </Button>
+                    </span>
+                  ) : (
+                    <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(t.id)} aria-label={`Revoke ${t.label}`} title="Revoke">
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  ))}
+              </div>
+            );
+          })}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ---- grants ------------------------------------------------------------------------------
+
+interface Pickers {
+  users: UserView[];
+  projects: Array<{ id: string; name: string; type: string }>;
+  plugins: PluginSummary[];
+  credentials: CredentialSummary[];
+  tokens: McpTokenView[];
+}
+
+const KIND_LABELS: Record<McpGrantSubjectKind, string> = { user: 'User', group: 'Group (SCIM)', project: 'Project', role: 'Role', token: 'One MCP token' };
+
+function GrantForm({ pickers, tools, onDone }: { pickers: Pickers; tools: McpToolsResponse['tools']; onDone: (saved?: McpToolGrant) => void }) {
+  const [kind, setKind] = useState<McpGrantSubjectKind>('role');
+  const [subjectId, setSubjectId] = useState('member');
+  const [pluginId, setPluginId] = useState(pickers.plugins[0]?.id ?? 'core');
+  const [allTools, setAllTools] = useState(true);
+  const [toolText, setToolText] = useState('');
+  const [credentials, setCredentials] = useState<Record<string, string>>({});
+  const [approval, setApproval] = useState<'default' | 'yes' | 'no'>('default');
+  const [busy, setBusy] = useState(false);
+
+  const pluginTools = useMemo(() => tools.filter((t) => t.pluginId === pluginId), [tools, pluginId]);
+  const credentialTypes = useMemo(() => [...new Set(pluginTools.flatMap((t) => t.credentials ?? []))], [pluginTools]);
+  const credentialsFor = (type: string) => pickers.credentials.filter((c) => c.type === type || c.type.endsWith(`.${type}`));
+
+  const changeKind = (k: McpGrantSubjectKind) => {
+    setKind(k);
+    setSubjectId(k === 'role' ? 'member' : k === 'user' ? (pickers.users[0]?.id ?? '') : k === 'project' ? (pickers.projects[0]?.id ?? '') : k === 'token' ? (pickers.tokens[0]?.id ?? '') : '');
+  };
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const list = toolText
+        .split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const body = { subject: { kind, id: subjectId }, pluginId, tools: allTools ? '*' : list, credentials, requireApproval: approval === 'default' ? null : approval === 'yes' };
+      const r = await api<{ grant: McpToolGrant }>('/api/mcp/grants', { method: 'POST', json: body });
+      toast.success('Grant created');
+      onDone(r.grant);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="px-5 py-4">
+      <div className="mb-3 flex items-center gap-2">
+        <SectionLabel>New grant</SectionLabel>
+        <Button variant="ghost" size="icon-sm" className="ml-auto" onClick={() => onDone()} aria-label="Close">
+          <X className="size-3.5" />
+        </Button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <FieldLabel>Who</FieldLabel>
+          <Select value={kind} onChange={(e) => changeKind(e.target.value as McpGrantSubjectKind)}>
+            {MCP_GRANT_SUBJECT_KINDS.map((k) => (
+              <option key={k} value={k}>
+                {KIND_LABELS[k]}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div>
+          <FieldLabel>{KIND_LABELS[kind]}</FieldLabel>
+          {kind === 'role' ? (
+            <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
+              <option value="member">Members (everyone)</option>
+              <option value="admin">Admins</option>
+              <option value="owner">The owner</option>
+            </Select>
+          ) : kind === 'user' ? (
+            <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
+              {pickers.users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} ({u.email})
+                </option>
+              ))}
+            </Select>
+          ) : kind === 'project' ? (
+            <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
+              {pickers.projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
+          ) : kind === 'token' ? (
+            <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
+              {pickers.tokens.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label} (…{t.hint}{t.userName ? `, ${t.userName}` : ''})
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <Input value={subjectId} onChange={(e) => setSubjectId(e.target.value)} placeholder="SCIM group id" spellCheck={false} />
+          )}
+        </div>
+        <div>
+          <FieldLabel>Plugin</FieldLabel>
+          <Select value={pluginId} onChange={(e) => setPluginId(e.target.value)}>
+            {pickers.plugins.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.info.name} ({p.id})
+              </option>
+            ))}
+            {!pickers.plugins.some((p) => p.id === 'core') && <option value="core">Core nodes (core)</option>}
+          </Select>
+        </div>
+        <div>
+          <FieldLabel>Destructive tools</FieldLabel>
+          <Select value={approval} onChange={(e) => setApproval(e.target.value as typeof approval)}>
+            <option value="default">Instance default</option>
+            <option value="yes">Need an approval</option>
+            <option value="no">Run without approval</option>
+          </Select>
+        </div>
+        <div className="sm:col-span-2">
+          <div className="flex items-center gap-2">
+            <Switch checked={allTools} onChange={setAllTools} label="Every tool of the plugin" />
+            <span className="text-[13px] text-t2">Every tool of the plugin{pluginTools.length ? ` (${pluginTools.length} today)` : ''}</span>
+          </div>
+          {!allTools && (
+            <div className="mt-2">
+              <FieldLabel>Tool names (space or comma separated; !name excludes)</FieldLabel>
+              <Input value={toolText} onChange={(e) => setToolText(e.target.value)} placeholder={pluginTools.slice(0, 3).map((t) => t.name).join(' ') || 'message_send !message_delete'} spellCheck={false} />
+              {pluginTools.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {pluginTools.slice(0, 40).map((t) => (
+                    <button key={t.name} type="button" className="rounded-md border border-hair bg-wl px-1.5 py-0.5 font-mono text-[11px] text-t2 hover:bg-sf2" onClick={() => setToolText((s) => (s ? `${s} ${t.name}` : t.name))} title={t.description}>
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        {credentialTypes.map((type) => (
+          <div key={type}>
+            <FieldLabel>Credential for {type}</FieldLabel>
+            <Select value={credentials[type] ?? ''} onChange={(e) => setCredentials((c) => (e.target.value ? { ...c, [type]: e.target.value } : Object.fromEntries(Object.entries(c).filter(([k]) => k !== type))))}>
+              <option value="">None (tools needing it answer with what is missing)</option>
+              {credentialsFor(type).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex justify-end gap-2">
+        <Button variant="ghost" onClick={() => onDone()}>
+          Cancel
+        </Button>
+        <Button variant="primary" onClick={() => void submit()} loading={busy} disabled={!subjectId || !pluginId}>
+          Create grant
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function GrantsCard({ tools, tokens }: { tools: McpToolsResponse['tools']; tokens: McpTokenView[] }) {
+  const [grants, setGrants] = useState<McpToolGrant[]>();
+  const [pickers, setPickers] = useState<Pickers>();
+  const [adding, setAdding] = useState(false);
+  const [confirm, setConfirm] = useState<string>();
+  const [error, setError] = useState<string>();
+
+  const load = useCallback(async () => {
+    try {
+      const [g, users, projects, plugins, credentials] = await Promise.all([
+        api<{ grants: McpToolGrant[] }>('/api/mcp/grants'),
+        api<{ users: UserView[] }>('/api/users').catch(() => ({ users: [] as UserView[] })),
+        api<{ projects: Pickers['projects'] }>('/api/projects').catch(() => ({ projects: [] as Pickers['projects'] })),
+        api<{ plugins: PluginSummary[] }>('/api/plugins').catch(() => ({ plugins: [] as PluginSummary[] })),
+        api<{ credentials: CredentialSummary[] }>('/api/credentials').catch(() => ({ credentials: [] as CredentialSummary[] })),
+      ]);
+      setGrants(g.grants);
+      setPickers({ users: users.users, projects: projects.projects, plugins: plugins.plugins, credentials: credentials.credentials, tokens });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [tokens]);
+  useEffect(() => void load(), [load]);
+
+  const remove = async (grant: McpToolGrant) => {
+    setConfirm(undefined);
+    try {
+      await api(`/api/mcp/grants/${encodeURIComponent(grant.id)}`, { method: 'DELETE' });
+      toast.success('Grant removed');
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <ShieldCheck className="size-4 text-t3" strokeWidth={1.8} />
+        <SectionLabel>Tool grants</SectionLabel>
+      </div>
+      <p className="text-[13px] text-t2">
+        Who may list and call which tools, and which credential each tool uses. Without a grant an agent sees no tools. Governance’s allowed nodes (instance and project) still apply, and
+        destructive tools can require an approval.
+      </p>
+      {error && <Alert>{error}</Alert>}
+      {adding && pickers ? (
+        <GrantForm
+          pickers={pickers}
+          tools={tools}
+          onDone={(saved) => {
+            setAdding(false);
+            if (saved) void load();
+          }}
+        />
+      ) : (
+        <div className="flex">
+          <Button variant="primary" onClick={() => setAdding(true)} disabled={!pickers}>
+            <Plus className="size-3.5" /> New grant
+          </Button>
+        </div>
+      )}
+      {grants && grants.length === 0 && !adding && <EmptyState title="No grants yet" hint="Agents see no tools until a grant names them. Start with “Members → every tool of a plugin”." compact />}
+      {grants && grants.length > 0 && (
+        <Card className="overflow-hidden p-0">
+          {grants.map((g) => (
+            <div key={g.id} className="flex items-start gap-3 border-b border-hair px-4 py-2.5 last:border-b-0 hover:bg-sf2">
+              <ShieldCheck className="mt-0.5 size-4 shrink-0 text-t3" strokeWidth={1.8} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5 text-[13px] text-t1">
+                  <Badge tone="accent">{KIND_LABELS[g.subject.kind]}</Badge>
+                  <span className="font-semibold">{g.subject.name ?? g.subject.id}</span>
+                  <span className="text-t3">→</span>
+                  <code className="font-mono text-[12px]">{g.pluginId}</code>
+                  {g.requireApproval !== undefined && <Badge tone={g.requireApproval ? 'warning' : 'muted'}>{g.requireApproval ? 'approval for destructive' : 'no approval'}</Badge>}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {g.tools === '*' ? (
+                    <Badge tone="success" className="font-mono">
+                      * every tool
+                    </Badge>
+                  ) : (
+                    g.tools.map((t) => (
+                      <Badge key={t} tone={t.startsWith('!') ? 'danger' : 'muted'} className="font-mono font-medium">
+                        {t}
+                      </Badge>
+                    ))
+                  )}
+                </div>
+                <div className="mt-1 text-[11px] text-t3">
+                  {Object.keys(g.credentials).length ? `Credentials: ${Object.entries(g.credentials).map(([type, id]) => `${type} → ${pickers?.credentials.find((c) => c.id === id)?.name ?? id}`).join(', ')}` : 'No credentials bound'} · created {timeAgo(g.createdAt)}
+                </div>
+              </div>
+              {confirm === g.id ? (
+                <span role="alertdialog" aria-label="Remove this grant?" className="flex items-center gap-1 animate-fade-up">
+                  <Button size="sm" variant="danger" onClick={() => void remove(g)}>
+                    Remove
+                  </Button>
+                  <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(undefined)} aria-label="Keep">
+                    <X className="size-3.5" />
+                  </Button>
+                </span>
+              ) : (
+                <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(g.id)} aria-label="Remove grant" title="Remove">
+                  <Trash2 className="size-3.5" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ---- tool browser --------------------------------------------------------------------------
+
+function ToolBrowser({ data, unavailable }: { data?: McpToolsResponse; unavailable?: string }) {
+  const [filter, setFilter] = useState('');
+  const [plugin, setPlugin] = useState('');
+  const [open, setOpen] = useState<string>();
+  const tools = useMemo(() => (data?.tools ?? []).filter((t) => (!plugin || t.pluginId === plugin) && (!filter || `${t.name} ${t.gatewayName} ${t.title} ${t.description}`.toLowerCase().includes(filter.toLowerCase()))), [data, plugin, filter]);
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Wrench className="size-4 text-t3" strokeWidth={1.8} />
+        <SectionLabel>Tools</SectionLabel>
+        {data && (
+          <Badge tone="muted" className="ml-auto">
+            {data.tools.length} tools · {data.plugins.length} plugins
+          </Badge>
+        )}
+      </div>
+      {!data ? (
+        <EmptyState title="No tools to show yet" hint={unavailable ?? 'The tool list (GET /api/mcp/tools) lands with the per-plugin MCP endpoints in this release; grants and tokens work already.'} compact />
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-2">
+            <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter tools…" className="max-w-xs" />
+            <Select value={plugin} onChange={(e) => setPlugin(e.target.value)} className="max-w-xs">
+              <option value="">Every plugin</option>
+              {data.plugins.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.tools})
+                </option>
+              ))}
+            </Select>
+          </div>
+          {tools.length === 0 ? (
+            <EmptyState title="No tools match" compact />
+          ) : (
+            <Card className="overflow-hidden p-0">
+              {tools.slice(0, 200).map((t) => {
+                const key = `${t.pluginId}/${t.name}`;
+                return (
+                  <div key={key} className="border-b border-hair px-4 py-2.5 last:border-b-0">
+                    <button type="button" className="flex w-full items-start gap-3 text-left" onClick={() => setOpen(open === key ? undefined : key)}>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5 text-[13px] text-t1">
+                          <code className="font-mono font-semibold">{t.gatewayName}</code>
+                          <span className="text-t3">{t.title}</span>
+                          {t.annotations.readOnlyHint && <Badge tone="muted">read-only</Badge>}
+                          {t.annotations.destructiveHint && <Badge tone="danger">destructive</Badge>}
+                        </div>
+                        <div className="mt-0.5 line-clamp-2 text-[12px] text-t2">{t.description}</div>
+                        <div className="mt-0.5 text-[11px] text-t3">
+                          {t.pluginName} · <code className="font-mono">{t.name}</code> on {`/api/mcp/plugins/${t.pluginId}`}
+                        </div>
+                      </div>
+                    </button>
+                    {open === key && <pre className="mt-2 max-h-72 overflow-auto rounded-[10px] border border-hair bg-wl px-3 py-2 font-mono text-[11px] leading-relaxed text-t1">{JSON.stringify(t.inputSchema, null, 2)}</pre>}
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---- the instance MCP server (coding agents) --------------------------------------------------
+
+function InstanceServerCard({ origin }: { origin: string }) {
   const [access, setAccess] = useState<McpAccessView>();
   const [token, setToken] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState<'toggle' | 'token'>();
-  const [origin, setOrigin] = useState('http://localhost:3000');
 
   useEffect(() => {
-    setOrigin(window.location.origin);
     api<{ access: McpAccessView }>('/api/settings/mcp')
       .then((r) => setAccess(r.access))
       .catch((e: Error) => setError(e.message));
@@ -46,24 +718,20 @@ export function McpSettings() {
     setAccess(response.access);
     if (response.token) setToken(response.token);
   };
-
   const toggle = async (enabled: boolean) => {
     setBusy('toggle');
-    setError(undefined);
     try {
       apply(await api<McpAccessResponse>('/api/settings/mcp', { method: 'PATCH', json: { enabled } }));
-      toast.success(enabled ? 'MCP server on' : 'MCP server off');
+      toast.success(enabled ? 'Instance MCP server on' : 'Instance MCP server off');
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(undefined);
     }
   };
-
   const regenerate = async () => {
     if (access?.hasToken && !window.confirm('Replace the access token? Clients using the current one stop working at once.')) return;
     setBusy('token');
-    setError(undefined);
     try {
       apply(await api<McpAccessResponse>('/api/settings/mcp', { method: 'POST' }));
       toast.success('New access token created');
@@ -74,83 +742,96 @@ export function McpSettings() {
     }
   };
 
-  if (!access) {
-    return error ? (
-      <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>
-    ) : (
-      <div className="h-36 rounded-2xl border border-hair bg-sf animate-pulse-soft" />
-    );
-  }
-
+  if (error && !access) return <Alert>{error}</Alert>;
+  if (!access) return <div className="h-24 rounded-2xl border border-hair bg-sf animate-pulse-soft" />;
   const url = `${origin}${access.path}`;
   const shown = token ?? PLACEHOLDER;
-  const command = `claude mcp add --transport http landflow ${url} --header "Authorization: Bearer ${shown}"`;
-  const config = JSON.stringify({ mcpServers: { landflow: { type: 'http', url, headers: { Authorization: `Bearer ${shown}` } } } }, null, 2);
-
+  const command = `claude mcp add --transport http landflow-instance ${url} --header "Authorization: Bearer ${shown}"`;
   return (
-    <div className="space-y-4">
-      <Card className="px-5 py-4">
-        <div className="mb-3 flex items-center gap-2">
-          <Plug className="size-4 text-t3" strokeWidth={1.8} />
-          <SectionLabel>Landflow MCP server</SectionLabel>
-        </div>
-        <div className="flex items-start justify-between gap-4">
-          <p className="text-[13px] leading-relaxed text-t2">
-            Lets coding agents such as Claude Code build, validate and run workflows here: list and edit workflows, look up node types and their parameters,
-            execute a workflow and read its executions. It serves <span className="font-mono text-[12px] text-t1">{url}</span> over Streamable HTTP.
-          </p>
-          <Switch checked={access.enabled} onChange={(v) => void toggle(v)} disabled={busy === 'toggle'} label="MCP server" />
-        </div>
-        {!access.enabled && <p className="mt-3 text-[12px] text-t3">Off: the endpoint answers 403 to every request.</p>}
-      </Card>
-
+    <Card className="space-y-3 px-5 py-4">
+      <div className="flex items-center gap-2">
+        <Plug className="size-4 text-t3" strokeWidth={1.8} />
+        <SectionLabel>Instance MCP server (build workflows)</SectionLabel>
+      </div>
+      <div className="flex items-start justify-between gap-4">
+        <p className="text-[13px] leading-relaxed text-t2">
+          Lets coding agents such as Claude Code build, validate and run workflows here (owners and admins). It serves <span className="font-mono text-[12px] text-t1">{url}</span> with its own access token, separate from the
+          plugin tools above.
+        </p>
+        <Switch checked={access.enabled} onChange={(v) => void toggle(v)} disabled={busy === 'toggle'} label="Instance MCP server" />
+      </div>
       {(access.enabled || access.hasToken) && (
-        <Card className="px-5 py-4">
-          <div className="mb-3 flex items-center gap-2">
-            <KeyRound className="size-4 text-t3" strokeWidth={1.8} />
-            <SectionLabel>Access token</SectionLabel>
-          </div>
+        <>
           {token ? (
             <div className="space-y-2">
-              <div className="flex gap-2 rounded-[10px] border border-warnbd bg-warndim px-3 py-2.5 text-[12px] text-warn">
+              <Alert tone="warning">
                 <TriangleAlert className="mt-0.5 size-3.5 shrink-0" /> Copy the token now. It isn’t stored and won’t be shown again.
-              </div>
+              </Alert>
               <div className="flex items-center gap-1 rounded-[10px] border border-hair bg-wl py-1 pl-3 pr-1">
                 <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-t1">{token}</code>
                 <CopyButton text={token} label="Copy token" />
               </div>
             </div>
           ) : (
-            <p className="text-[13px] text-t2">
+            <p className="text-[12px] text-t3">
               {access.hasToken ? (
                 <>
-                  A token ending in <span className="font-mono text-t1">…{access.tokenHint}</span> is in use
-                  {access.tokenCreatedAt && <> since {new Date(access.tokenCreatedAt).toLocaleString()}</>}. It was shown once; regenerate it if you need it
-                  again.
+                  A token ending in <span className="font-mono text-t1">…{access.tokenHint}</span> is in use{access.tokenCreatedAt && <> since {new Date(access.tokenCreatedAt).toLocaleString()}</>}. It was shown once; regenerate it if you
+                  need it again.
                 </>
               ) : (
                 'No token yet.'
               )}
             </p>
           )}
-          <div className="mt-3 flex justify-end">
+          <div className="flex items-center justify-between gap-3">
+            <code className="min-w-0 truncate font-mono text-[11px] text-t3">{command}</code>
             <Button size="sm" onClick={regenerate} loading={busy === 'token'}>
               <RefreshCw className="size-3.5" /> {access.hasToken ? 'Regenerate token' : 'Create token'}
             </Button>
           </div>
-        </Card>
+        </>
       )}
+      {error && <Alert>{error}</Alert>}
+    </Card>
+  );
+}
 
-      {access.enabled && (
-        <Card className="space-y-4 px-5 py-4">
-          <SectionLabel>Connect a client</SectionLabel>
-          <Snippet label="Claude Code command" text={command} />
-          <Snippet label="Project .mcp.json" text={config} />
-          {!token && <p className="text-[12px] text-t3">Replace {PLACEHOLDER} with the access token. Regenerate it to fill it in here.</p>}
-        </Card>
-      )}
+// ---- the page ------------------------------------------------------------------------------------
 
-      {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd animate-fade-up">{error}</div>}
+export function McpSettings() {
+  const [status, setStatus] = useState<McpStatusView>();
+  const [tools, setTools] = useState<McpToolsResponse>();
+  const [toolsUnavailable, setToolsUnavailable] = useState<string>();
+  const [tokens, setTokens] = useState<McpTokenView[]>([]);
+  const [issued, setIssued] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [origin, setOrigin] = useState('http://localhost:3000');
+
+  useEffect(() => {
+    setOrigin(window.location.origin);
+    api<McpStatusView>('/api/mcp/status')
+      .then(setStatus)
+      .catch((e: Error) => setError(e.message));
+    api<McpToolsResponse>('/api/mcp/tools')
+      .then(setTools)
+      .catch((e: Error) => setToolsUnavailable(/404|not found/i.test(e.message) ? undefined : e.message));
+    api<{ tokens: McpTokenView[] }>('/api/mcp/tokens?all=1')
+      .then((r) => setTokens(r.tokens))
+      .catch(() => {});
+  }, []);
+
+  if (!status) return error ? <Alert>{error}</Alert> : <div className="h-36 rounded-2xl border border-hair bg-sf animate-pulse-soft" />;
+
+  return (
+    <div className="space-y-6">
+      <GatewayCard status={status} />
+      <ConnectCard status={status} token={issued} plugins={tools?.plugins ?? []} />
+      <TokensCard canManage={status.canManage} onToken={setIssued} />
+      {status.canManage && <GrantsCard tools={tools?.tools ?? []} tokens={tokens} />}
+      <ToolBrowser data={tools} unavailable={toolsUnavailable} />
+      {status.canManage && <InstanceServerCard origin={origin} />}
+      {error && <Alert>{error}</Alert>}
     </div>
   );
 }

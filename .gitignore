@@ -10,5 +10,7 @@ __pycache__/
 *.pyc
 .venv/
 plugins/go-crypto/go-crypto
+plugins/databases/databases
+plugins/google-workspace/google-workspace
 .DS_Store
 .otel/

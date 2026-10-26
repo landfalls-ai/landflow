@@ -9,6 +9,11 @@
     "./driver": "./src/driver.ts",
     "./drivers": "./src/drivers/index.ts",
     "./memory": "./src/memory/index.ts",
+    "./kafka": "./src/drivers/kafka/index.ts",
+    "./amqp": "./src/drivers/amqp/index.ts",
+    "./nats": "./src/drivers/nats/index.ts",
+    "./jetstream": "./src/drivers/nats/jetstream.ts",
+    "./valkey": "./src/drivers/valkey/index.ts",
     "./conformance": "./src/conformance/index.ts"
   },
   "scripts": {
@@ -19,15 +24,40 @@
     "@landflow/protocol": "workspace:*"
   },
   "peerDependencies": {
+    "@confluentinc/kafka-javascript": "1.11.0",
+    "@nats-io/jetstream": "3.4.0",
+    "@nats-io/transport-node": "3.4.0",
+    "amqplib": "2.2.0",
+    "iovalkey": "0.4.0",
     "vitest": ">=3"
   },
   "peerDependenciesMeta": {
+    "@confluentinc/kafka-javascript": {
+      "optional": true
+    },
+    "amqplib": {
+      "optional": true
+    },
+    "@nats-io/jetstream": {
+      "optional": true
+    },
+    "@nats-io/transport-node": {
+      "optional": true
+    },
+    "iovalkey": {
+      "optional": true
+    },
     "vitest": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@confluentinc/kafka-javascript": "1.11.0",
+    "@nats-io/jetstream": "3.4.0",
+    "@nats-io/transport-node": "3.4.0",
     "@types/node": "^22.20.5",
+    "amqplib": "2.2.0",
+    "iovalkey": "0.4.0",
     "vitest": "^5.0.5"
   }
 }

@@ -46,6 +46,12 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/environment')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/users')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'users:manage' };
   if (under('/api/settings/mcp')) return { scope: 'admin', action: 'mcp:manage' };
+  // The MCP tool browser (every exposed plugin's tools): anyone who reads workflows; the endpoints themselves are public paths.
+  if (path === '/api/mcp/tools') return { scope: 'workflows:read' };
+  // MCP identity (docs/transports.md): tokens are personal and session-only like API keys; grants are admin; status is for the Settings page.
+  if (under('/api/mcp/tokens')) return { scope: 'any', sessionOnly: true };
+  if (under('/api/mcp/grants')) return { scope: 'admin', action: 'mcp:manage' };
+  if (under('/api/mcp/status')) return { scope: 'any' };
   // Audit log: reading (and exporting) needs `audit:read`: owners and admins read every event, project admins their
   // projects' (the route limits it, lib/server/audit/access.ts). Verifying the hash chain, its settings and SIEM destinations are admin-only.
   if (path === '/api/audit/verify') return { scope: 'audit:read', action: 'audit:read' };

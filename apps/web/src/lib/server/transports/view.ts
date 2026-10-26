@@ -5,6 +5,7 @@
  */
 import type { TransportConnectionView, TransportsResponse } from '../../shared/transports';
 import { registry } from '../plugins/registry';
+import { brokerConnections } from './brokers';
 import { transportConnections, viewOf, type StoredConnection } from './connections';
 import { brokeredEndpoint, transportProviders } from './provider';
 
@@ -31,8 +32,10 @@ function safeBrokered(endpoint: string) {
   }
 }
 
+/** The connection with the plugins on it and the live state of this host's client for it (brokers.ts). */
 export function connectionView(connection: StoredConnection, plugins = pluginsByConnection()): TransportConnectionView {
-  return viewOf(connection, plugins.get(connection.id) ?? []);
+  const health = brokerConnections.health(connection.id);
+  return { ...viewOf(connection, plugins.get(connection.id) ?? []), ...(health && { health }) };
 }
 
 export function transportsView(): TransportsResponse {

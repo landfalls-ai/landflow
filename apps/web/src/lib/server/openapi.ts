@@ -17,6 +17,7 @@ import { routePolicy } from './auth/policy';
 import { workflowSchema } from './schemas';
 import { saveTemplateSchema, updateTemplateSchema } from './templates/schema';
 import { connectionCreateSchema, connectionTestSchema, connectionUpdateSchema } from './transports/schema';
+import { grantCreateSchema, grantPatchSchema } from './mcp/grants';
 
 type Json = Record<string, unknown>;
 type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
@@ -39,7 +40,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers' | 'Plugins';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers' | 'Plugins' | 'MCP';
   id: string;
   summary: string;
   description?: string;
@@ -292,6 +293,58 @@ const schemas: Record<string, Json> = {
     ['id', 'name', 'email', 'role'],
   ),
   ApiKeyScope: { type: 'string', enum: [...API_KEY_SCOPES] },
+  McpTokenScope: { type: 'string', enum: ['tools:list', 'tools:call', 'registry:read'] },
+  McpToken: object(
+    {
+      id: { type: 'string', description: 'The token’s `jti`' },
+      label: { type: 'string' },
+      hint: { type: 'string', description: 'The token’s last characters' },
+      scopes: array(ref('McpTokenScope')),
+      createdAt: { type: 'string', format: 'date-time' },
+      expiresAt: { type: 'string', format: 'date-time' },
+      revokedAt: { type: 'string', format: 'date-time' },
+      lastUsedAt: { type: 'string', format: 'date-time' },
+      userId: { type: 'string' },
+      userName: { type: 'string' },
+    },
+    ['id', 'label', 'hint', 'scopes', 'createdAt', 'expiresAt', 'userId'],
+  ),
+  McpToolGrant: object(
+    {
+      id: { type: 'string' },
+      subject: object({ kind: { type: 'string', enum: ['user', 'group', 'project', 'role', 'token'] }, id: { type: 'string' }, name: { type: 'string' } }, ['kind', 'id']),
+      pluginId: { type: 'string', description: 'A plugin id, or `core`' },
+      tools: { oneOf: [{ type: 'string', const: '*' }, array({ type: 'string' })], description: 'Tool names on the plugin’s endpoint, `!name` excludes, or `*`' },
+      credentials: { type: 'object', additionalProperties: { type: 'string' }, description: 'credentialType → credential id' },
+      requireApproval: { type: 'boolean' },
+      createdBy: { type: 'string' },
+      createdAt: { type: 'string', format: 'date-time' },
+      updatedAt: { type: 'string', format: 'date-time' },
+    },
+    ['id', 'subject', 'pluginId', 'tools', 'credentials', 'createdAt', 'updatedAt'],
+  ),
+  McpServerJson: object(
+    {
+      $schema: { type: 'string' },
+      name: { type: 'string', description: '`<LANDFLOW_MCP_NAMESPACE>/<pluginId>`' },
+      description: { type: 'string' },
+      title: { type: 'string' },
+      version: { type: 'string' },
+      websiteUrl: { type: 'string' },
+      remotes: array(object({ type: { type: 'string', enum: ['streamable-http', 'sse'] }, url: { type: 'string' } }, ['type', 'url'])),
+      _meta: { type: 'object' },
+    },
+    ['name', 'description', 'version', 'remotes'],
+    { description: 'The MCP Registry server.json schema (2025-12-11)' },
+  ),
+  McpServerResponse: object(
+    {
+      server: ref('McpServerJson'),
+      _meta: object({ 'io.modelcontextprotocol.registry/official': object({ status: { type: 'string', enum: ['active', 'deprecated', 'deleted'] }, publishedAt: { type: 'string', format: 'date-time' }, updatedAt: { type: 'string', format: 'date-time' }, isLatest: { type: 'boolean' } }) }),
+    },
+    ['server', '_meta'],
+  ),
+  McpServerList: object({ servers: array(ref('McpServerResponse')), metadata: object({ count: { type: 'integer' }, nextCursor: { type: 'string' } }, ['count']) }, ['servers', 'metadata']),
   ApiKey: object(
     {
       id: { type: 'string' },
@@ -322,7 +375,28 @@ const schemas: Record<string, Json> = {
     },
     ['endpoint', 'kind', 'reason'],
   ),
-  PluginTransport: object({ kind: { type: 'string' }, endpoints: array({ type: 'string' }), online: { type: 'boolean' }, excluded: { type: 'boolean', description: 'The policy keeps this kind out' } }, ['kind', 'endpoints', 'online']),
+  BrokerQueueStats: object(
+    {
+      depth: { type: 'number', description: 'Events waiting on the request channel' },
+      consumers: { type: 'number' },
+      lag: { type: 'number', description: 'Consumer-group lag, when the broker distinguishes it from depth' },
+      instances: { type: 'number', description: 'Announced, unexpired plugin instances' },
+      maxConcurrency: { type: 'number', description: 'The instances’ maxConcurrency summed' },
+      sampledAt: { type: 'string' },
+    },
+    [],
+  ),
+  PluginTransport: object(
+    {
+      kind: { type: 'string' },
+      endpoints: array({ type: 'string' }),
+      online: { type: 'boolean' },
+      excluded: { type: 'boolean', description: 'The policy keeps this kind out' },
+      declared: { type: 'boolean', description: 'The manifest names this face but no endpoint on it has been found' },
+      stats: ref('BrokerQueueStats'),
+    },
+    ['kind', 'endpoints', 'online'],
+  ),
   Plugin: object(
     {
       id: { type: 'string' },
@@ -337,6 +411,7 @@ const schemas: Record<string, Json> = {
       endpoints: array({ type: 'object' }),
       source: { type: 'string' },
       nodes: array({ type: 'object' }),
+      mcp: object({ exposed: { type: 'boolean', description: '"Expose to agents"' }, tools: { type: 'integer', description: 'MCP tools the manifest maps to' }, path: { type: 'string', description: 'The plugin’s MCP endpoint on this host' } }, ['exposed', 'tools', 'path']),
     },
     ['id', 'info', 'status', 'transport', 'endpoints', 'source', 'nodes'],
   ),
@@ -355,12 +430,26 @@ const schemas: Record<string, Json> = {
       label: { type: 'string' },
       direct: { type: 'boolean', description: 'The host connects to the plugin; brokers are reached through connections' },
       installed: { type: 'boolean', description: 'A driver for the kind is registered in this host' },
+      health: object({ ok: { type: 'boolean' }, message: { type: 'string' } }, ['ok']),
       capabilities: ref('TransportCapabilities'),
       fields: array({ type: 'object', description: 'The connection form’s fields (name, label, type, required…)' }),
     },
     ['kind', 'label', 'direct', 'installed', 'fields'],
   ),
   TransportConnectionCheck: object({ ok: { type: 'boolean' }, at: { type: 'string' }, message: { type: 'string' }, latencyMs: { type: 'number' }, version: { type: 'string' } }, ['ok', 'at', 'message']),
+  TransportConnectionHealth: object(
+    {
+      state: { type: 'string', enum: ['connecting', 'connected', 'reconnecting', 'error'] },
+      message: { type: 'string' },
+      since: { type: 'string' },
+      roundTripMs: { type: 'number' },
+      checkedAt: { type: 'string' },
+      version: { type: 'string', description: 'The broker’s version, when the driver can tell' },
+      hostInstanceId: { type: 'string' },
+      announced: { type: 'number', description: 'Plugins announced on this connection' },
+    },
+    ['state', 'since'],
+  ),
   TransportConnection: object(
     {
       id: { type: 'string' },
@@ -371,6 +460,7 @@ const schemas: Record<string, Json> = {
       secretsSet: { ...array({ type: 'string' }), description: 'Secret fields that hold a value (never the values)' },
       source: { type: 'string', enum: ['database', 'env'] },
       lastCheck: ref('TransportConnectionCheck'),
+      health: ref('TransportConnectionHealth'),
       plugins: { ...array({ type: 'string' }), description: 'Plugins with an endpoint on this connection' },
       createdAt: { type: 'string' },
       updatedAt: { type: 'string' },
@@ -1088,10 +1178,77 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Plugins',
     id: 'updatePluginTransport',
     summary: 'Set a plugin’s transport policy',
-    description: 'Auto (the host chooses per call), pinned to one transport, or limited to an allow-list; `objective` is Auto’s goal. The older `preferredTransport` body still works: a transport pins the policy to it, `null` is Auto.',
-    body: jsonBody(object({ policy: ref('TransportPolicy'), preferredTransport: { type: ['string', 'null'], description: 'Older clients: `http`, `grpc` or a broker kind; null for Auto' } })),
+    description:
+      'Auto (the host chooses per call), pinned to one transport, or limited to an allow-list; `objective` is Auto’s goal. The older `preferredTransport` body still works: a transport pins the policy to it, `null` is Auto. `mcp.exposed` is "Expose to agents": whether the plugin’s tools are served at /api/mcp/plugins/{id} and registered in the MCP gateway (on by default).',
+    body: jsonBody(
+      object({
+        policy: ref('TransportPolicy'),
+        preferredTransport: { type: ['string', 'null'], description: 'Older clients: `http`, `grpc` or a broker kind; null for Auto' },
+        mcp: object({ exposed: { type: 'boolean' } }, ['exposed']),
+      }),
+    ),
     responses: { 200: pluginsReply, 400: invalid, 404: notFound },
   });
+  // ---- MCP: the per-plugin endpoints and the tool browser (docs/protocol.md §15.3; lib/server/mcp/plugin-servers.ts) ----
+  add('post', '/api/mcp/plugins/{id}', {
+    tag: 'MCP',
+    id: 'callPluginMcp',
+    summary: 'Talk to a plugin’s MCP endpoint',
+    description:
+      'MCP over Streamable HTTP, stateless, for 2026-07-28 clients (`server/discover`, the `_meta` envelope, `subscriptions/listen`) and 2025-xx clients (`initialize`; JSON responses; GET and DELETE answer 405). `core` is the host’s built-in nodes. One tool per node operation, from the plugin’s manifest; `tools/list` is filtered by the caller’s grants, each `tools/call` runs as an execution with mode `mcp` and is audited (`mcp.tool.call`). Callers: the bundled gateway (`x-landflow-gateway` plus the caller headers it sets), a Landflow MCP token, an identity provider token, an API key or a session.',
+    public: true,
+    pathParams: { id: 'The plugin id, or `core`' },
+    body: jsonBody(jsonRpc),
+    responses: {
+      200: reply('The JSON-RPC response', jsonRpc),
+      401: reply('No acceptable credential (`WWW-Authenticate` names the protected resource metadata)', jsonRpc),
+      404: reply('The plugin is not installed or not exposed to agents', jsonRpc),
+    },
+  });
+  add('get', '/api/mcp/tools', {
+    tag: 'MCP',
+    id: 'listMcpTools',
+    summary: 'Every MCP tool of the exposed plugins',
+    description: 'The tool browser: per tool its plugin, its name on the plugin’s endpoint and on the gateway, title, description, annotations, input and output schema, the node behind it and its credential types. Grants are not applied.',
+    responses: { 200: reply('The tools and the exposed plugins', object({ tools: array({ type: 'object' }), plugins: array({ type: 'object' }) }, ['tools', 'plugins'])) },
+  });
+  // ---- MCP: tokens, grants, the catalog (docs/transports.md "The bundled MCP gateway") ----
+  add('get', '/api/mcp/tokens', { tag: 'MCP', id: 'listMcpTokens', summary: 'List your MCP tokens', description: 'Never the tokens themselves. Owners and admins: `?all=1` lists everyone’s.', query: [{ name: 'all', description: '`1`: every user’s tokens (owners and admins)', schema: { type: 'string' } }], responses: { 200: reply('Your tokens', object({ tokens: array(ref('McpToken')) }, ['tokens'])) } });
+  add('post', '/api/mcp/tokens', {
+    tag: 'MCP',
+    id: 'issueMcpToken',
+    summary: 'Issue an MCP token',
+    description: 'A signed JWT for MCP clients (the gateway or the host’s MCP endpoints), returned once as `token`. Default scopes: all; default expiry: 30 days.',
+    body: jsonBody(object({ label: { type: 'string', minLength: 1, maxLength: 100 }, scopes: { ...array(ref('McpTokenScope')), minItems: 1 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 365 } }, ['label'])),
+    responses: { 201: reply('The token, shown once', object({ token: { type: 'string' }, record: ref('McpToken') }, ['token', 'record'])), 400: invalid },
+  });
+  add('get', '/api/mcp/tokens/{id}', { tag: 'MCP', id: 'getMcpToken', summary: 'One of your MCP tokens', responses: { 200: reply('The token’s record', object({ record: ref('McpToken') }, ['record'])), 404: notFound } });
+  add('delete', '/api/mcp/tokens/{id}', { tag: 'MCP', id: 'revokeMcpToken', summary: 'Revoke an MCP token', description: 'It stops working on the next call (the host checks the `jti`).', responses: { 200: reply('Revoked', object({ ok: { type: 'boolean' }, record: ref('McpToken') }, ['ok'])), 404: notFound } });
+  add('get', '/api/mcp/grants', { tag: 'MCP', id: 'listMcpGrants', summary: 'List tool grants', query: [{ name: 'pluginId', description: 'Only this plugin’s grants', schema: { type: 'string' } }], responses: { 200: reply('The grants', object({ grants: array(ref('McpToolGrant')) }, ['grants'])) } });
+  add('post', '/api/mcp/grants', { tag: 'MCP', id: 'createMcpGrant', summary: 'Create a tool grant', description: 'Who (a user, SCIM group, project, role or MCP token) may use which tools of a plugin, and which credential each credential type binds.', body: jsonBody(fromZod(grantCreateSchema)), responses: { 201: reply('Created', object({ grant: ref('McpToolGrant') }, ['grant'])), 400: invalid, 404: notFound } });
+  add('get', '/api/mcp/grants/{id}', { tag: 'MCP', id: 'getMcpGrant', summary: 'One tool grant', responses: { 200: reply('The grant', object({ grant: ref('McpToolGrant') }, ['grant'])), 404: notFound } });
+  add('patch', '/api/mcp/grants/{id}', { tag: 'MCP', id: 'updateMcpGrant', summary: 'Change a tool grant', body: jsonBody(fromZod(grantPatchSchema)), responses: { 200: reply('Changed', object({ grant: ref('McpToolGrant') }, ['grant'])), 400: invalid, 404: notFound } });
+  add('delete', '/api/mcp/grants/{id}', { tag: 'MCP', id: 'deleteMcpGrant', summary: 'Remove a tool grant', responses: { 200: reply('Removed', ok), 404: notFound } });
+  add('get', '/api/mcp/status', { tag: 'MCP', id: 'mcpStatus', summary: 'The MCP gateway and identity configuration', description: 'What Settings → MCP shows: the gateway mode and URL, whether the gateway secret is set, the identity provider, the registry namespace.', responses: { 200: reply('The configuration', { type: 'object' }) } });
+  add('get', '/api/mcp/jwks', { tag: 'MCP', id: 'mcpJwks', summary: 'The JWKS of Landflow-issued MCP tokens', description: 'Public. The gateway (agentgateway) validates Landflow-issued tokens against it.', public: true, responses: { 200: reply('RFC 7517 key set', object({ keys: array({ type: 'object' }) }, ['keys'])) } });
+  add('get', '/api/mcp/registry/v0.1/servers', {
+    tag: 'MCP',
+    id: 'listMcpServers',
+    summary: 'The plugin catalog (MCP Registry API v0.1)',
+    description: 'Every exposed plugin as an MCP server (server.json). Read-only; for signed-in users, Landflow MCP tokens, identity provider tokens, API keys and the gateway (the route checks them itself).',
+    public: true,
+    query: [
+      { name: 'limit', description: '1–100 (default 30)', schema: { type: 'integer' } },
+      { name: 'cursor', description: 'From `metadata.nextCursor`', schema: { type: 'string' } },
+      { name: 'search', description: 'Part of a name', schema: { type: 'string' } },
+      { name: 'version', description: '`latest`: only the newest version of each server', schema: { type: 'string' } },
+      { name: 'updated_since', description: 'ISO time', schema: { type: 'string', format: 'date-time' } },
+    ],
+    responses: { 200: reply('A page of servers', ref('McpServerList')) },
+  });
+  add('get', '/api/mcp/registry/v0.1/servers/{name}/versions', { tag: 'MCP', id: 'listMcpServerVersions', summary: 'Every version of one server', public: true, pathParams: { name: 'URL-encoded, e.g. `local.landflow%2Ftwilio`' }, responses: { 200: reply('The versions, newest first', ref('McpServerList')), 404: notFound } });
+  add('get', '/api/mcp/registry/v0.1/servers/{name}/versions/{version}', { tag: 'MCP', id: 'getMcpServerVersion', summary: 'One version of a server', public: true, pathParams: { name: 'URL-encoded', version: 'A version, or `latest`' }, responses: { 200: reply('The server', ref('McpServerResponse')), 404: notFound } });
+
   add('get', '/api/transports', {
     tag: 'Plugins',
     id: 'listTransports',
@@ -1152,6 +1309,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Account', description: 'Who you are and your API keys' },
       { name: 'Triggers', description: 'Webhook, form and MCP Server Trigger URLs and their test URLs: public, each checked by its trigger’s own authentication' },
       { name: 'Plugins', description: 'Installed plugins, their transports and transport policies, and broker connections (changes need an owner or admin)' },
+      { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],
     paths: paths(),

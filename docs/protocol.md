@@ -588,8 +588,9 @@ between named channels. Everything in this section is what the core does; a driv
 | `grpc` | direct | | `sqs` | broker (Amazon SQS) |
 | `kafka` | broker (Kafka, Redpanda) | | `pubsub` | broker (Google Pub/Sub) |
 | `amqp` | broker (RabbitMQ, AMQP 0-9-1) | | `servicebus` | broker (Azure Service Bus) |
-| `nats` | broker (NATS core and JetStream) | | `amqp1` | broker (AMQP 1.0: ActiveMQ Artemis, Qpid) |
-| `valkey` | broker (Valkey / Redis Streams) | | `pulsar` | broker (Apache Pulsar) |
+| `nats` | broker (NATS core) | | `amqp1` | broker (AMQP 1.0: ActiveMQ Artemis, Qpid) |
+| `jetstream` | broker (NATS JetStream; same server and URL as `nats`, other capabilities) | | `pulsar` | broker (Apache Pulsar) |
+| `valkey` | broker (Valkey / Redis Streams) | | | |
 
 The kind is an **open string**: these are the kinds this version knows (`TRANSPORT_KINDS`, `TransportKind` in
 `@landflow/protocol`), but a host and a plugin that agree on another kind use it as is, and spans and metrics carry
@@ -708,9 +709,10 @@ plugin serves it; the host keeps the hash it learned from the announce or the la
   otherwise). The host fails the call at the deadline with "no reply … the call may have run" (code `expired` in the
   conformance kit; the typed `TimeoutError` of `@landflow/transports`) and ignores any later response. The deadline is
   also the publish TTL where the broker has one: a first filter only.
-- A consumer checks `lfdeadline` before dispatch: an expired request is acknowledged and dropped without running (the
-  host has failed it already). While a call runs, its `AbortSignal` fires at the deadline and the response then carries
-  `lferror: expired` (if it gets out at all).
+- A consumer checks `lfdeadline` before dispatch, and again when the call gets a slot: an expired request is
+  acknowledged and dropped without running (the host has failed it already). While a call runs, its `AbortSignal` fires
+  at the deadline and the response then carries `lferror: expired` (if it gets out at all; the host has failed the call
+  already and ignores it). A call aborted by the host's cancel or a stopping plugin answers `cancelled`.
 - **Cancel.** When the caller aborts, the host publishes `dev.landflow.plugin.v1.cancel` on the plugin's **control
   channel** with `lfcorrelation` = the call id and the plain body `{ "callId": "<id>", "reason": "<message>" }` (signed,
   not encrypted). Every replica sees it:
@@ -732,7 +734,11 @@ plugin serves it; the host keeps the hash it learned from the announce or the la
   `Health`, `GetManifest` and the webhook methods, and for `Execute` of idempotent nodes; a plugin never upgrades an
   `Execute` to at-least-once on its own. `lfattempt` (and `Delivery.attempt` from the driver) tells the node which
   delivery this is.
-- **Concurrency.** Each instance consumes with prefetch = its `maxConcurrency`: at most that many calls at once.
+- **Concurrency.** Each instance consumes with prefetch = its `maxConcurrency`: at most that many calls run at once.
+  The dispatcher behind every face is the same in the three SDKs: up to `maxConcurrency` calls run, up to `maxQueue`
+  (default = `maxConcurrency`) wait for a slot, and beyond that a call is refused at once with `capacity` (over HTTP
+  `429` with `Retry-After: 1`, over gRPC `RESOURCE_EXHAUSTED`); a waiting call whose deadline passes fails
+  `deadline_exceeded` (`expired` over a broker). Every HTTP face reads the `x-landflow-deadline` header (epoch ms).
 - **Version skew.** A consumer whose manifest hash differs from `lfmanifest` puts the request back once (nack with
   requeue) so a replica on the right version can take it; on the next delivery it acknowledges and answers
   `lferror: manifest_mismatch` with `{ "error", "manifestHash" }`. The host pulls the manifest again and retries. The
@@ -744,7 +750,7 @@ plugin serves it; the host keeps the hash it learned from the announce or the la
   store (a claim check) is planned and not part of this version; files already travel as references (§11).
 - **Error codes** (`lferror`): `expired`, `cancelled`, `too_large`, `not_found` (no such node type, load-options method
   or credential type), `bad_request` (the body does not validate), `internal` (the dispatcher threw), `unavailable` (the
-  plugin is draining) and `manifest_mismatch`. The body is `{ "error": "<message>", …details }`. On the caller's side
+  plugin is draining), `capacity` (refused at once at the concurrency limit: the call never ran) and `manifest_mismatch`. The body is `{ "error": "<message>", …details }`. On the caller's side
   these are *delivered* errors and are never retried blindly. Failures the caller detects itself are `unroutable` (the
   broker said at once that nobody can take the event), `no_consumers` (every announced instance stopped heartbeating,
   or the channel shows zero consumers), `not_connected` (nothing was published), `expired` and `connection_lost` (the
@@ -795,12 +801,14 @@ endpoint and its instances; an instance that misses its heartbeats for `ttlSecon
 // type dev.landflow.plugin.v1.announce, source landflow://plugin/<pluginId>/<instanceId>, lfmanifest = manifestHash
 { "protocol": "landflow.plugin/v1", "pluginId": "twilio", "version": "0.1.0", "instanceId": "3f9c…",
   "manifestHash": "9b2e4c7d1a0f3e5b", "endpoint": "kafka://kafka-main/twilio", "maxConcurrency": 16, "ttlSeconds": 30,
-  "registryProof": "d6d4…" }
+  "transports": ["http", "grpc", "kafka"], "registryProof": "d6d4…" }
 // type dev.landflow.plugin.v1.withdraw
 { "pluginId": "twilio", "instanceId": "3f9c…", "endpoint": "kafka://kafka-main/twilio" }
 ```
 
-The body's `pluginId` and `instanceId` must match the event's `source`, or the event is ignored. On the first announce
+`transports?: string[]` is optional: the faces this plugin process started, as the manifest hint (§14.1); the HTTP
+announce (§2) accepts `transports` and `maxConcurrency` too. The body's `pluginId` and `instanceId` must match the
+event's `source`, or the event is ignored. On the first announce
 of a plugin (or when `manifestHash` or `version` changes) the host pulls the manifest *over the broker* (`GetManifest`,
 at least once) and registers the endpoint `<kind>://<connectionId>/<pluginId>` with discovery source `broker`; the
 `connectionId` is the host's own name for the broker connection the announce arrived on. A plugin's `instanceId` is
@@ -815,11 +823,11 @@ limit); "mode" is the CloudEvents mode (§14.3).
 
 | Broker | Request channel; replicas share it by | Replies | Mode, header prefix | Buffering | TTL | "Nobody took it" | Persistence | Default max | Attempts |
 |---|---|---|---|---|---|---|---|---|---|
-| **Kafka** (Redpanda) | a topic per plugin; a share group on Kafka 4.x, else a consumer group (parallelism up to the partition count); record key = ordering key | reply topic per host | binary, `ce_` | yes (the log) | no: the consumer checks the deadline | inferred (consumer group members) | disk | 1 MiB | no (commit offsets; at-most-once commits before running) |
-| **RabbitMQ** (AMQP 0-9-1) | a queue per plugin; competing consumers, prefetch = `maxConcurrency` | direct reply-to (`amq.rabbitmq.reply-to`) | binary, `cloudEvents_` | yes | per-message `expiration` | reported (`mandatory` returns) | disk (durable queues) | 128 MiB (server default) | yes (`redelivered`) |
-| **NATS** core | a subject per plugin; a queue group | inboxes | binary, `ce-` | no | no | reported ("no responders") | memory | 1 MiB | no |
-| **NATS JetStream** | a work-queue stream and a durable consumer per plugin | inboxes | binary, `ce-` | yes | `max_age` + the deadline | inferred (consumer info) | disk | 1 MiB | yes (`num_delivered`) |
-| **Valkey / Redis Streams** | a stream per plugin; a consumer group (`XREADGROUP`), pending entries claimed after a crash (`XAUTOCLAIM`) | a reply stream per host | structured (no headers) | yes | no (`MAXLEN` trimming + the deadline) | inferred (`XINFO GROUPS`) | disk | 512 MiB (string limit; the driver caps at 1 MiB) | yes (delivery count) |
+| **Kafka** (Redpanda), kind `kafka` | a topic per plugin (6 partitions by default); record key = ordering key. TypeScript: a consumer group (the Confluent JS client has no share consumer), KIP-848 `group.protocol=consumer` by default, `classic` for Kafka < 4.0 and Redpanda. Go: a **share group** by default (franz-go; Kafka 4.2+; per-record acks, `share.auto.offset.reset=earliest`) or `group` mode | reply topic per host | binary, `ce_` | yes (the log) | no: the consumer checks the deadline | inferred (group members and lag) | disk | 1 MiB | share group: yes (delivery count). Consumer group: a nack and a graceful close re-publish the record with its attempt count; a record re-read after a hard crash is attempt 1 |
+| **RabbitMQ** (AMQP 0-9-1), kind `amqp` | a **quorum queue** per plugin (`classic` on request); competing consumers, prefetch = `maxConcurrency` | direct reply-to (`amq.rabbitmq.reply-to`) | binary, `cloudEvents_`; header budget about 120 KiB (`frame_max`) | yes | per-message `expiration` | reported: `mandatory` returns a missing queue, and a consumer-count check before publishing says "no consumer" (`immediate` no longer exists) | disk (durable queues) | 16 MiB (RabbitMQ 4's default) | yes (`x-delivery-count`) |
+| **NATS** core, kind `nats` | a subject per plugin; a queue group | inboxes | binary, `ce-` | no | no | reported ("no responders") | memory | 1 MiB (lowered to the server's `max_payload`) | yes while the process lives: a nack re-publishes the event with a `Landflow-Attempt` header; a hard kill loses it |
+| **NATS JetStream**, kind `jetstream` | a work-queue stream per durable request channel and a durable pull consumer per group; the other channels are core subjects | inboxes | binary, `ce-` | yes | `max_age` (1 h by default) + the deadline; `Nats-TTL` is set as a first filter (1 s granularity, not claimed as TTL) | inferred (consumer info) | disk | 1 MiB (as `nats`) | yes (`NumDelivered`) |
+| **Valkey / Redis Streams**, kind `valkey` | a stream per plugin; a consumer group (`XREADGROUP`), pending entries reclaimed after a crash (`XAUTOCLAIM`); running calls send a keep-alive so a slow call is not stolen | a reply stream per host | binary: entry fields `h:<header>` per attribute and `b` for the body | yes | no (`MINID` / `MAXLEN` trimming + the deadline) | inferred (`XINFO GROUPS`) | disk | 1 MiB, lowered to the server's `proto-max-bulk-len` | yes (`XPENDING` delivery count) |
 | MQTT 5 | a topic per plugin; a shared subscription (`$share/<group>/…`) | response topic + correlation data | binary, user properties (no prefix) | broker-dependent (QoS 1 with persistent sessions) | message expiry interval | unknown | memory/disk | 256 MiB (protocol); driver default 1 MiB | no |
 | Amazon SQS | a queue per plugin (long polling) | a reply queue per host | structured (10 attributes max) | yes | none per message; the deadline | inferred (approximate counts) | disk | 1 MiB | yes (`ApproximateReceiveCount`); visibility timeout redelivers |
 | Google Pub/Sub | a topic and a subscription per plugin | a reply subscription per host | binary, attributes `ce_` (100 max) | yes | ack deadline + the deadline | inferred | disk | 10 MB | yes (`delivery_attempt`) |
@@ -832,8 +840,13 @@ wherever the broker has no reply semantics; native replies end with the connecti
 "nobody took it" at once, elsewhere the host infers it from registry heartbeats and consumer counts, and otherwise waits
 for the deadline; tight header budgets force structured mode; every redelivery mechanism (visibility timeouts, locks,
 ack waits, pending entries) becomes `lfattempt` and the rules of §14.6. Each driver passes the driver conformance suite
-(`@landflow/transports/conformance`, `runConformance()`) against a local container before it ships; the SDK × face
-fixtures stay in `packages/protocol/conformance/`.
+(`@landflow/transports/conformance`, `runConformance()`; `conformance.Run(t, target)` in Go) against a local container
+before it ships; the SDK × face fixtures stay in `packages/protocol/conformance/`.
+
+The tier 1 rows are built in both cores (`@landflow/transports/<kind>`, `sdks/go/transport/<kind>`), wire-compatible
+with each other. The one difference is Kafka's work sharing: a TypeScript replica always consumes with a consumer group,
+a Go replica with a share group unless its mode is `group`, and the two cannot share a topic; **mixed TypeScript and Go
+replicas of one plugin must use the same mode** (`LANDFLOW_KAFKA_MODE=group` on the Go side).
 
 ## 15. MCP
 
@@ -932,14 +945,19 @@ the request's stream (HTTP) or `notifications/cancelled` (stdio) aborts the call
 
 ### 15.2 The plugin's own MCP endpoint
 
-The SDKs add an MCP face to every plugin unless `LANDFLOW_MCP=off`:
+The SDKs add an MCP face to every plugin unless `LANDFLOW_MCP=off` (`LANDFLOW_MCP` is `on`, `off` or `stdio`; the
+TypeScript SDK has it, the Go and Python faces are the next wave):
 
-- **Streamable HTTP at `/mcp`** on the plugin's HTTP port (`serve(plugin, { http })` in TypeScript; the Go and Python
-  SDKs alike), stateless (no session id). `GET /.well-known/landflow` lists it as `endpoints.mcp` when it is on.
+- **Streamable HTTP at `/mcp`** on the plugin's HTTP port (`serve(plugin, { http })`), stateless (no session id). It
+  speaks 2026-07-28 natively and answers 2025-era clients statelessly (`@modelcontextprotocol/server` 2.4.0's
+  `createMcpHandler`, SSE responses for those clients). `GET /.well-known/landflow` lists it as `endpoints.mcp` when it
+  is on.
 - **stdio** with `--mcp-stdio` (or `LANDFLOW_MCP=stdio`): the plugin speaks MCP on stdin/stdout and nothing else (no
-  announce, no HTTP), so a desktop agent can start it directly.
+  announce, no HTTP; logs go to stderr), so a desktop agent can start it directly.
 - **Token.** `/mcp` needs `Authorization: Bearer $LANDFLOW_MCP_TOKEN` unless the server listens on loopback only; a
-  missing or wrong token is `401` with `WWW-Authenticate: Bearer`. stdio needs none.
+  missing or wrong token is `401` with `WWW-Authenticate: Bearer`. stdio needs none. Without a token on a non-loopback
+  host the face stays off, an error line says so ("MCP face not started: …"), and the plugin still serves its other
+  faces.
 - **Credentials** come from `LANDFLOW_MCP_CREDENTIALS`: a path to a JSON file, or inline JSON, `{ "<credentialType>":
   { …fields } }` by local type name. A tool whose node needs a credential that is not configured answers
   `isError: true` naming the missing type and fields; it never asks the agent for them.
@@ -951,34 +969,56 @@ The SDKs add an MCP face to every plugin unless `LANDFLOW_MCP=off`:
 
 ### 15.3 The host's per-plugin MCP endpoints
 
-The host serves one MCP server per online plugin at **`/api/mcp/plugins/<pluginId>`**, and the in-process core nodes
-(HTTP Request, Data Table, Code…) at **`/api/mcp/plugins/core`**. Streamable HTTP, stateless, JSON responses.
+The host serves one MCP server per online, exposed plugin at **`/api/mcp/plugins/<pluginId>`**, and the in-process
+core nodes (HTTP Request, Data Table, Code…) at **`/api/mcp/plugins/core`**. Streamable HTTP, stateless. Both
+endpoints speak **2026-07-28 natively** (`@modelcontextprotocol/server` 2.4.0, `createMcpHandler`: the `_meta`
+envelope, `server/discover`, `subscriptions/listen`) and answer **2025-era clients** statelessly with JSON responses
+(no session id; `GET` and `DELETE` are `405`). A 2026-07-28 client sends the `Mcp-Protocol-Version` and `Mcp-Method`
+headers and, for `tools/call`, `Mcp-Name`; they must agree with the body, else `-32020`.
 
-- **Who may call.** A request carries either the gateway secret (`x-landflow-gateway: $LANDFLOW_MCP_GATEWAY_SECRET`)
-  with the caller's identity (`x-landflow-caller-iss`, `x-landflow-caller-sub`, set by the gateway from the validated
-  token; the host trusts them only together with the secret), or a signed-in session (for the tool browser in Settings).
-  Anything else is `401`. The issuer and subject map to a Landflow user through the SSO link, or to the user a
-  Landflow-issued MCP token belongs to (`iss` = the instance's `LANDFLOW_PUBLIC_URL`, `sub` = the user id, `jti` checked
-  against revocation); an unknown caller gets an empty tool list and `-32602` on every call.
+- **Who may call.** In this order: the gateway secret (`x-landflow-gateway: $LANDFLOW_MCP_GATEWAY_SECRET`, compared in
+  constant time) makes the caller headers the gateway set from the validated token trusted (`x-landflow-caller-iss`,
+  `x-landflow-caller-sub`, and `x-landflow-caller-jti`, so a revoked Landflow token stops at once; without a configured
+  secret the headers are ignored); a direct `Authorization: Bearer` with a Landflow-issued MCP token (verified against
+  the host's own keys, `jti` checked for revocation), an access token of the instance's identity provider (its
+  discovery document and JWKS; the audience must name this host, or one of `LANDFLOW_MCP_IDP_AUDIENCE`,
+  comma-separated), or a Landflow API key (`lf_…`); or a signed-in session (the tool browser in Settings → MCP).
+  Anything else is `401` with `WWW-Authenticate: Bearer resource_metadata="…"` pointing at the protected resource
+  metadata (RFC 9728) at `/.well-known/oauth-protected-resource/api/mcp` and `…/api/mcp/plugins/<id>`. The issuer and
+  subject map to a Landflow user through the SSO link, or to the user a Landflow-issued MCP token belongs to (`iss` =
+  the instance's `LANDFLOW_PUBLIC_URL`, `sub` = the user id); an unknown caller gets an empty tool list and `-32602` on
+  every call.
+- **Exposure.** "Expose to agents" is on by default for every plugin, `core` included; only plugins switched off have a
+  row (`plugin_mcp_exposure`, migration 1720; `PATCH /api/plugins/:id { mcp: { exposed } }`). `GET /api/mcp/tools`
+  lists every exposed plugin's tools for the signed-in user (the tool browser).
 - **`tools/list`** is §15.1 over the plugin's current manifest, **filtered by the caller's grants** (§15.5) and the
   governance allow-lists, served with `cacheScope: private`. Tools opt out with `mcp: false` as everywhere. When the
-  plugin's manifest changes, clients subscribed on `subscriptions/listen` get `notifications/tools/list_changed`.
-- **`tools/call`** checks the grant, binds the granted credential (and sets the credential selector), records an
-  **execution with mode `mcp`** (workflow-less, one node, visible in Executions with the caller), audits
-  `mcp.tool.call` (tool, outcome, ids, caller; never the arguments), and runs the node **through the transport
-  selector** like any workflow node, so agents get the same transports, breaker and spill-over. Destructive tools whose
-  grant requires approval return `input_required` elicitation (where the client supports it) or park the call in
-  Landflow's approvals; the host keeps the pending call until the client retries with the approval id.
-- The result shape is §15.1's; `resource_link`s point at `/api/binary/<id>` URLs signed for the caller.
+  plugin's manifest changes, clients subscribed on `subscriptions/listen` get `notifications/tools/list_changed`; the
+  `core` endpoint sends it to its subscribers whenever the registry adds, changes, loses or removes a plugin or an
+  exposure flips (the gateway relays an upstream's notification but emits none of its own).
+- **`tools/call`** checks the grant, binds the credentials (the grant's; else the ones the call's
+  `_meta["dev.landflow/node"].credentials` names; else the caller's newest visible credential of each type the node
+  uses; all limited to what the caller's projects may use) and sets the credential selector, records an **execution
+  with mode `mcp`** (a one-node workflow `mcp_<pluginId>` saved with the execution, so Executions shows the caller, the
+  tool, the inputs and the outputs), audits `mcp.tool.call` (caller, tool, outcome, execution id; never the arguments),
+  and runs the node **through the transport selector** like any workflow node, so agents get the same transports,
+  breaker and spill-over. A call runs at most `LANDFLOW_MCP_TOOL_TIMEOUT_SECONDS` (default 120), or until the request's
+  `x-landflow-deadline` if sooner. Not built yet: approvals for destructive tools (`input_required` elicitation, or
+  parking the call in Landflow's approvals).
+- The result shape is §15.1's. Not built yet: `resource_link`s for binary outputs (planned: `/api/binary/<id>` URLs
+  signed for the caller) and the `list_options` tool on the host's endpoints.
 - Spans: `mcp.tool.call {tool}` (`mcp.tool.name`, `landflow.plugin.id`, `landflow.mcp.caller`) around the normal
   `plugin.rpc` span; metrics `landflow.mcp.tool.calls` (`landflow.plugin.id`, `mcp.tool.name`, outcome).
+- The host's other MCP code is on the same SDK v2 (server and client 2.4.0): the MCP Client node and agents' MCP
+  servers negotiate 2026-07-28 (`server/discover`) first and fall back to `initialize`.
 
 ### 15.4 Gateway registration and identity
 
 The bundled gateway is [agentgateway](https://github.com/agentgateway/agentgateway), one sidecar per main
-(`docs/transports.md`, "The bundled MCP gateway"). The host's `McpGatewaySync` keeps the gateway's targets equal to the
-plugins that are online, exposed to agents ("Expose to agents", on by default) and have at least one tool; it reacts to
-registry events and reconciles every 30 s, and touches only the targets it created.
+(`docs/transports.md`, "The bundled MCP gateway"). The host's `McpGatewaySync` (the next wave; the endpoints, identity,
+tokens, grants and catalog below are built) keeps the gateway's targets equal to the plugins that are online, exposed to
+agents ("Expose to agents", on by default) and have at least one tool; it reacts to registry events and reconciles every
+30 s, and touches only the targets it created.
 
 - **Target** per plugin, written through the config API (`PUT /api/config/resources/mcp.target`, `DELETE …/{name}` on
   the admin port, loopback only) or, with `LANDFLOW_MCP_GATEWAY=file`, into a YAML file the gateway reloads:
@@ -986,36 +1026,46 @@ registry events and reconciles every 30 s, and touches only the targets it creat
   ```json
   { "name": "twilio", "mcp": { "host": "http://127.0.0.1:3000/api/mcp/plugins/twilio" },
     "policies": { "backendAuth": { "key": { "value": "<LANDFLOW_MCP_GATEWAY_SECRET>", "location": { "header": { "name": "x-landflow-gateway" } } } },
-                  "transformations": { "request": { "set": { "x-landflow-caller-iss": "jwt.iss", "x-landflow-caller-sub": "jwt.sub" },
+                  "transformations": { "request": { "set": { "x-landflow-caller-iss": "jwt.iss", "x-landflow-caller-sub": "jwt.sub", "x-landflow-caller-jti": "jwt.jti" },
                                                     "remove": ["authorization"] } } } }
   ```
 
-  The target's id is its `name`. The transformation **overwrites** any such headers a client sent, and the gateway
-  never forwards the caller's token (`remove` drops the client's `Authorization` header as well; the shape was verified
-  against agentgateway 1.6.0, `docs/mcp-gateway.md`).
+  The target's id is its `name`, which agentgateway requires in lowercase (`[a-z0-9.-]`; plugin ids are). The
+  transformation **overwrites** any such headers a client sent, and the gateway never forwards the caller's token
+  (`remove` drops the client's `Authorization` header as well; the shape was verified against agentgateway 1.6.0,
+  `docs/mcp-gateway.md`). `x-landflow-caller-jti` lets the host stop a revoked Landflow token at once (§15.3).
 - **URLs.** `/mcp` on the gateway lists every plugin's tools with the plugin prefix (`prefixMode: always`:
   `twilio_message_send`, exactly `gatewayToolName()`), `failureMode: failOpen`; `/mcp/plugins/<pluginId>` serves one
   plugin, unprefixed. In dev the gateway is `http://127.0.0.1:54000`.
 - **Sign-in.** Agents authenticate at the gateway with OAuth 2.1 per the MCP authorization spec: protected resource
   metadata at `/.well-known/oauth-protected-resource/mcp`, `401` with `WWW-Authenticate`, JWT validation against the
   instance's identity provider (Keycloak in dev; Okta, Entra, Auth0… through presets) or against Landflow's own JWKS at
-  `/api/mcp/jwks` for Landflow-issued MCP tokens (Settings → MCP, shown once, with an expiry; `jti` revocable).
+  `/api/mcp/jwks` for Landflow-issued MCP tokens.
+- **Landflow-issued MCP tokens** (`/api/mcp/tokens`, Settings → MCP: issue and revoke, shown once, last use recorded;
+  `mcp_tokens`, migration 1723): ES256 JWTs with `iss` = the instance URL, `sub` = the user id, `jti`, `scope`, `exp`,
+  and `aud` = `<instance>/api/mcp` plus `<gateway>/mcp` when a gateway URL is configured. The signing keys are
+  generated on first use and kept sealed in the settings table; the public parts are `/api/mcp/jwks` with their `kid`.
+  An identity provider's own access tokens sent straight to the host need an audience the host accepts (an audience
+  mapper in the provider, or `LANDFLOW_MCP_IDP_AUDIENCE`).
 - **Descriptions.** Per plugin a `server.json` (MCP Registry schema `2025-12-11`: `name` `<LANDFLOW_MCP_NAMESPACE,
-  default local.landflow>/<pluginId>`, `version`, `remotes[]` = the gateway URL, Landflow hints under
-  `_meta["dev.landflow/plugin"]`: plugin id, transports, health), a read-only registry API at
-  `/api/mcp/registry/v0.1/servers` (`/{name}/versions`, `/{name}/versions/latest`, cursor pagination, status `active` /
-  `deprecated` / `deleted`), and a Server Card (SEP-2127) at the gateway URL plus `/server-card`.
+  default local.landflow>/<pluginId>`, `version`, `remotes[]` = the gateway URL and the host's direct endpoint,
+  Landflow hints under `_meta["dev.landflow/plugin"]`: plugin id, transports, health), a read-only registry API at
+  `/api/mcp/registry/v0.1/servers` (`/{name}/versions`, `/{name}/versions/{version|latest}`, cursor pagination, status
+  `active` / `deprecated` / `deleted`; `mcp_catalog_servers`, migration 1725), and Server Cards (SEP-2127) at
+  `/api/mcp/plugins/<id>/server-card` per plugin and `/.well-known/mcp/server-card.json` for the instance; the gateway
+  URL plus `/server-card` is proxied to the former once the gateway sync lands.
 
 ### 15.5 Grants
 
-A **tool grant** says which tools a caller may use and which credential each tool uses. The host stores them (Settings →
-MCP, `/api/mcp/grants`); every `tools/list` is filtered by them and every `tools/call` checks them.
+A **tool grant** says which tools a caller may use and which credential each tool uses. The host stores them
+(`mcp_grants`, migration 1724; Settings → MCP, `/api/mcp/grants`, owners and admins); every `tools/list` is filtered by
+them and every `tools/call` checks them.
 
 ```ts
 interface McpToolGrant {
   id: string;
-  /** Who: a user, a group, or everyone in a project. */
-  subject: { kind: 'user' | 'group' | 'project'; id: string };
+  /** Who: a user, a SCIM group, everyone in a project, everyone with a role, or one Landflow MCP token. */
+  subject: { kind: 'user' | 'group' | 'project' | 'role' | 'token'; id: string };
   pluginId: string;                       // or 'core'
   /** Tool names on the plugin's endpoint (§15.1), or '*' for every tool of the plugin; `!name` excludes one. */
   tools: string[] | '*';
@@ -1029,7 +1079,8 @@ interface McpToolGrant {
 ```
 
 A caller's effective tool set is the union of the grants that apply to them (their user, their groups, their
-projects), minus the governance allow-lists of the instance, project and workflow. A tool with no applicable grant is
-not listed and cannot be called; a tool whose node needs a credential type the grant does not bind is listed but
-answers `isError: true` naming the missing type. The agent never sees a credential: the host binds it on the way to the
+projects, their role, the token they hold), minus the governance allow-lists of the instance, project and workflow.
+There are **no implicit grants**: owners and admins may browse every tool in Settings → MCP, but call none without a
+grant. A tool with no applicable grant is not listed and cannot be called; a tool whose node needs a credential type
+the grant does not bind is listed but answers `isError: true` naming the missing type. The agent never sees a credential: the host binds it on the way to the
 plugin, over whatever transport the selector picks.

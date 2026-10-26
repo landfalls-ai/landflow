@@ -395,18 +395,37 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
     the selector with reasons on spans, broker connections with sealed secrets
     (`/api/transports/connections`, `LANDFLOW_TRANSPORT_<KIND>_URL`), Settings → Transports and the
     policy picker on plugin cards.
-  - Phase 2 (messaging in TypeScript) ◐: the core of `@landflow/transports` (CloudEvents envelope,
-    end-to-end encryption and signing, `MessagingClient` / `MessagingServer`), the in-memory driver
-    and the driver conformance suite are done. Next: the tier 1 broker drivers (Kafka, RabbitMQ,
-    NATS, Valkey Streams), the host's messaging provider with discovery over the broker, and the TS
-    SDK's messaging binding.
-  - Known follow-ups: align the concurrency-limit behaviour across the SDKs (TS queues up to the
-    limit, then refuses with HTTP 429 / gRPC `RESOURCE_EXHAUSTED`; Go and Python wait until the
-    deadline, then 503 / `RESOURCE_EXHAUSTED`); the `x-landflow-deadline` header in the Go and Python
-    HTTP bindings (TS has it); the host's announce schema accepting the `transports` and
-    `maxConcurrency` hints; `DiscoverySource` gaining `'broker'`.
-  - Then phases 3 to 8: the MCP faces and per-plugin endpoints, the bundled gateway sync, Go and the
-    bridge, Auto, tier 2 brokers, the Twilio pilot, Python native drivers.
+  - Phase 2 (messaging in TypeScript) ✅ Done: the core of `@landflow/transports` (CloudEvents
+    envelope, end-to-end encryption and signing, `MessagingClient` / `MessagingServer`), the
+    in-memory driver and the driver conformance suite; the tier 1 drivers `kafka`, `amqp`, `nats`,
+    `jetstream` and `valkey` (live conformance against the local brokers); the host's broker
+    connections (`brokers.ts`: one client per connection in every main and worker, discovery over
+    the registry channel, queue stats, health, fail-over once for a provably undelivered call) and
+    `BrokerPluginClient`; the TS SDK's `serve({ brokers })` with `LANDFLOW_<KIND>_URL`. Without
+    `LANDFLOW_TRANSPORT_SECRET` the host opens no broker connection and says so.
+  - Phase 3 (MCP endpoints) ✅ Done in TypeScript: the SDK's MCP face (`/mcp` on the HTTP port,
+    `--mcp-stdio`, `LANDFLOW_MCP_TOKEN`, `LANDFLOW_MCP_CREDENTIALS`); the host's per-plugin endpoints
+    `/api/mcp/plugins/<id>` and `core`, speaking MCP 2026-07-28 natively and 2025-era clients
+    statelessly (`@modelcontextprotocol/server` 2.4.0), tool calls as executions with mode `mcp`,
+    audit `mcp.tool.call`, `tools/list_changed`, "Expose to agents" (on by default, `PATCH
+    /api/plugins/:id {mcp:{exposed}}`), `GET /api/mcp/tools`; the host's MCP code moved to SDK v2.
+    Identity, grants, tokens and the catalog from phase 3b too: the gateway secret and caller
+    headers, Landflow MCP tokens (ES256, `/api/mcp/jwks`), identity provider tokens, API keys,
+    protected resource metadata; grants for users, SCIM groups, projects, roles or one token, with no
+    implicit grants; `server.json`, `/api/mcp/registry/v0.1/servers…`, Server Cards; Settings → MCP.
+    Not built: `resource_link` for binary outputs, approvals/elicitation for destructive tools,
+    `list_options` on the host's endpoints.
+  - Phase 4 (Go and the bridge) ◐: the Go transport core (byte-compatible with the TS one), the
+    tier 1 Go drivers as nested modules (`sdks/go/transport/<kind>`) and the Go SDK's `WithBroker`
+    are done; the concurrency and deadline behaviour is now the same in the TS, Go and Python SDKs
+    (`maxQueue` / `max_queue`, `capacity`, `x-landflow-deadline`). Next: `landflow-bridge`, Python
+    through the bridge, the Go and Python MCP faces.
+  - Known follow-ups: the Go Kafka driver's group mode fails one conformance case (the at-least-once
+    hand-over after a replica dies), so share mode is its default; the bundled plugins log "MCP face
+    not started" until they get an MCP token (the final wave sets one); MCP elicitation,
+    `resource_link` and `list_options`.
+  - Then: the bundled gateway sync (phase 3b's `McpGatewaySync`), the rest of phase 4, Auto, tier 2
+    brokers, the Twilio pilot, Python native drivers.
 
 ## Not planned
 

@@ -254,8 +254,7 @@ describe('pulls: credential mapping and publication', () => {
 
 describe('the instance MCP tools', () => {
   it('refuse to create or change workflows in a protected environment', async () => {
-    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
-    const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+    const { Client, InMemoryTransport } = await import('@modelcontextprotocol/client');
     const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     const server = instanceServer();

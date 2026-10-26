@@ -6,6 +6,13 @@ plugin's concurrency limit (``max_concurrency``), then runs the plugin's handler
 metrics, redaction, credentials, idempotency key) and the node. Node code sees the call's
 ``CancelToken`` as ``ctx.cancel`` (``ctx.cancel.is_set()``, ``ctx.cancel.check()``,
 ``ctx.cancel.remaining()``), so a long loop can stop when the caller went away or the deadline passed.
+
+Concurrency (the behaviour every SDK shares, docs/transports.md): at most ``max_concurrency`` calls run
+node code at once; up to ``max_queue`` (default ``max_concurrency``) wait for a slot in arrival order
+while their deadline and cancellation are honoured (``CallCancelledError``: HTTP 504 / gRPC
+``DEADLINE_EXCEEDED``, or 499 / ``CANCELLED``); beyond that a call is refused at once with
+``OverloadedError`` (HTTP 429 + ``Retry-After: 1``, gRPC ``RESOURCE_EXHAUSTED``) so the host can take
+it elsewhere knowing it never ran.
 """
 
 from __future__ import annotations
@@ -13,6 +20,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from collections import deque
 from typing import Any
 
 from .errors import ProtocolError
@@ -23,8 +31,8 @@ class CallCancelledError(Exception):
     """The call was cancelled or its deadline passed before (or while) it ran.
 
     Raised by ``CancelToken.check()`` inside node code and by the dispatcher when a call's deadline
-    is already over when it arrives. Transports answer HTTP 504 / gRPC ``DEADLINE_EXCEEDED`` (deadline)
-    or 503 / ``CANCELLED`` (cancelled).
+    is already over when it arrives or passes while it waits for a concurrency slot. Transports answer
+    HTTP 504 / gRPC ``DEADLINE_EXCEEDED`` (deadline) or 499 / ``CANCELLED`` (cancelled).
     """
 
     def __init__(self, message: str, *, deadline: bool = False) -> None:
@@ -33,7 +41,8 @@ class CallCancelledError(Exception):
 
 
 class OverloadedError(Exception):
-    """No concurrency slot became free before the call's deadline (HTTP 503 / gRPC ``RESOURCE_EXHAUSTED``)."""
+    """The call was refused at once: every slot is taken and ``max_queue`` calls already wait (HTTP 429 +
+    ``Retry-After: 1`` / gRPC ``RESOURCE_EXHAUSTED``). It never ran, so the host may retry it elsewhere."""
 
 
 class CancelToken:
@@ -138,14 +147,18 @@ class Dispatcher:
     context), plus keyword-only ``cancel`` (a ``CancelToken``), ``deadline`` (``time.monotonic()``
     instant, added on top of the token's) and ``transport`` (the binding kind, recorded as the span
     attribute ``landflow.transport``). ``in_flight`` and ``waiting`` are live counts.
+
+    ``max_queue`` bounds the calls waiting for a slot (``None`` = ``max_concurrency``; ``0`` = refuse at
+    once whenever every slot is taken).
     """
 
-    def __init__(self, plugin: Plugin, max_concurrency: int | None = None) -> None:
+    def __init__(self, plugin: Plugin, max_concurrency: int | None = None, max_queue: int | None = None) -> None:
         self.plugin = plugin
         self.max_concurrency: int | None = max_concurrency if max_concurrency and max_concurrency > 0 else None
+        self.max_queue: int = max(int(max_queue), 0) if max_queue is not None else (self.max_concurrency or 0)
         self._lock = threading.Condition()
         self._in_flight = 0
-        self._waiting = 0
+        self._waiters: deque[object] = deque()  # tickets of the calls waiting for a slot, in arrival order
 
     @property
     def in_flight(self) -> int:
@@ -155,7 +168,12 @@ class Dispatcher:
     @property
     def waiting(self) -> int:
         with self._lock:
-            return self._waiting
+            return len(self._waiters)
+
+    def drain(self, timeout: float | None = None) -> bool:
+        """Block until no call runs or waits (or ``timeout`` elapses); returns whether it is idle. For a binding's ``stop``."""
+        with self._lock:
+            return self._lock.wait_for(lambda: self._in_flight == 0 and not self._waiters, timeout)
 
     # ------------------------------------------------------------ cheap calls
 
@@ -263,26 +281,34 @@ class Dispatcher:
     # ---------------------------------------------------------------- slots
 
     def _enter(self, cancel: CancelToken | None, deadline: float | None) -> CancelToken:
-        """Resolve the call's token and take a concurrency slot, waiting until the token ends."""
+        """Resolve the call's token and take a concurrency slot: at once, after waiting in arrival order, or never."""
         token = cancel if cancel is not None else (CancelToken(deadline) if deadline is not None else NEVER_CANCELLED)
         if deadline is not None and cancel is not None and (cancel.deadline is None or deadline < cancel.deadline):
             token = _LinkedToken(cancel, deadline)
         token.check()
         with self._lock:
             if self.max_concurrency is not None and self._in_flight >= self.max_concurrency:
-                self._waiting += 1
+                if len(self._waiters) >= self.max_queue:
+                    raise OverloadedError(
+                        f"plugin is at its concurrency limit ({self._in_flight} in flight, {len(self._waiters)} waiting, "
+                        f"limit {self.max_concurrency})"
+                    )
+                ticket = object()
+                self._waiters.append(ticket)
                 try:
-                    while self._in_flight >= self.max_concurrency:
+                    while self._in_flight >= self.max_concurrency or self._waiters[0] is not ticket:
                         remaining = token.remaining()
                         # Poll the token: a cancel() from another thread must wake us too.
                         self._lock.wait(min(remaining, 0.1) if remaining is not None else 0.1)
                         if token.is_set():
-                            raise OverloadedError(
-                                f"plugin is at its concurrency limit ({self._in_flight} in flight, limit {self.max_concurrency}): "
-                                f"{token.reason}"
+                            reason = token.reason or "call cancelled"
+                            raise CallCancelledError(
+                                f"{reason} while waiting for a concurrency slot ({self._in_flight} in flight, limit {self.max_concurrency})",
+                                deadline=reason == "deadline exceeded",
                             )
                 finally:
-                    self._waiting -= 1
+                    self._waiters.remove(ticket)
+                    self._lock.notify_all()  # the next waiter may be at the head now
             self._in_flight += 1
             count = self._in_flight
         self.plugin.telemetry.in_flight.set(count, {"landflow.plugin.id": self.plugin.id})
@@ -292,7 +318,7 @@ class Dispatcher:
         with self._lock:
             self._in_flight -= 1
             count = self._in_flight
-            self._lock.notify()
+            self._lock.notify_all()
         self.plugin.telemetry.in_flight.set(count, {"landflow.plugin.id": self.plugin.id})
 
 

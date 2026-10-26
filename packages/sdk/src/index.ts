@@ -12,6 +12,8 @@ export {
   type DispatchErrorCode,
 } from './dispatcher';
 export { iconFile, MAX_ICON_BYTES } from './icons';
+// The messaging and MCP faces are `@landflow/sdk/messaging` and `@landflow/sdk/mcp` (not re-exported here, so a plugin
+// that imports the root does not load @landflow/transports or the MCP SDK until serve() needs them).
 export * from './runtime';
 export * from './credentials';
 export * from './signatures';

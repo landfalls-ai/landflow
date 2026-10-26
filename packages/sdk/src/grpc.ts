@@ -23,6 +23,7 @@ import {
   type ReceiveWebhookRequestMsg,
   type WebhookMethodRequestMsg,
 } from '@landflow/protocol/grpc';
+import { executeRequestSchema, type ExecuteRequest } from '@landflow/protocol';
 import type { BindingContext, BindingInfo, TransportBinding } from './binding';
 import { createDispatcher, DispatchError, type DispatchCall, type Dispatcher } from './dispatcher';
 import type { IPlugin } from './node';
@@ -94,8 +95,10 @@ export function createPluginService(plugin: IPlugin, options: PluginServiceOptio
     },
     async Execute(call: Call<ExecuteRequestMsg>, callback: Callback) {
       try {
-        const request = executeRequestFromMsg(call.request);
-        callback(null, executeResponseToMsg(await dispatcher.execute(request, callFrom(call, telemetryFor()))));
+        // Validate like the HTTP binding does (conformance "malformed-request": INVALID_ARGUMENT, the node never runs).
+        const parsed = executeRequestSchema.safeParse(executeRequestFromMsg(call.request));
+        if (!parsed.success) return callback({ code: grpc.status.INVALID_ARGUMENT, message: `Invalid ExecuteRequest: ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')}` });
+        callback(null, executeResponseToMsg(await dispatcher.execute(parsed.data as unknown as ExecuteRequest, callFrom(call, telemetryFor()))));
       } catch (error) {
         failWith(callback, error);
       }

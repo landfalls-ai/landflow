@@ -10,7 +10,7 @@ import { Network, Pencil, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
-import type { ConnectionField, TransportConnectionCheck, TransportConnectionView, TransportKindInfo, TransportsResponse } from '@/lib/shared/transports';
+import type { ConnectionField, TransportConnectionCheck, TransportConnectionHealth, TransportConnectionView, TransportKindInfo, TransportsResponse } from '@/lib/shared/transports';
 import { Card } from '@/components/shell/page-header';
 import { Badge, StatusDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,8 +35,15 @@ const draftFor = (kind: TransportKindInfo, taken: string[]): Draft => {
 
 const draftOf = (connection: TransportConnectionView): Draft => ({ editing: connection.id, name: connection.name, kind: connection.kind, enabled: connection.enabled, values: { ...connection.config } });
 
-function CheckBadge({ check, installed }: { check?: TransportConnectionCheck; installed: boolean }) {
+/** The live connection this host holds (brokers.ts): connected with its round trip, reconnecting, or the error. Falls back to the last Test. */
+function HealthBadge({ health, check, installed }: { health?: TransportConnectionHealth; check?: TransportConnectionCheck; installed: boolean }) {
   if (!installed) return <Badge tone="muted" title="The driver for this kind lands in a later release">no driver yet</Badge>;
+  if (health) {
+    const title = [health.message, health.version && `broker ${health.version}`, health.checkedAt && `checked ${new Date(health.checkedAt).toLocaleTimeString()}`, `${health.state} since ${new Date(health.since).toLocaleString()}`].filter(Boolean).join(' · ');
+    if (health.state === 'connected') return <Badge tone="success" title={title}>{`Connected${health.roundTripMs !== undefined ? ` · ${health.roundTripMs} ms` : ''}`}</Badge>;
+    if (health.state === 'connecting') return <Badge tone="muted" title={title}>Connecting…</Badge>;
+    return <Badge tone={health.state === 'error' ? 'danger' : 'warning'} title={title}>{health.state === 'error' ? 'Error' : 'Reconnecting…'}</Badge>;
+  }
   if (!check) return <Badge tone="muted">Not tested</Badge>;
   return (
     <Badge tone={check.ok ? 'success' : 'danger'} title={`${check.message} (${new Date(check.at).toLocaleString()})`}>
@@ -219,8 +226,14 @@ function ConnectionRow({ connection, kinds, onEdit, onChanged, onDeleted }: { co
           <span className="text-[12px] text-t3" title={connection.plugins.join(', ') || 'No plugin has an endpoint on this connection yet'}>
             {connection.plugins.length} plugin{connection.plugins.length === 1 ? '' : 's'}
           </span>
-          <CheckBadge check={connection.lastCheck} installed={kind?.installed ?? false} />
-          {connection.lastCheck && <span className="hidden text-[11px] text-t3 sm:inline">{timeAgo(connection.lastCheck.at)}</span>}
+          <HealthBadge health={connection.health} check={connection.lastCheck} installed={kind?.installed ?? false} />
+          {connection.health ? (
+            <span className="hidden text-[11px] text-t3 sm:inline" title="Plugins announced on this connection">
+              {connection.health.announced ?? 0} announced
+            </span>
+          ) : (
+            connection.lastCheck && <span className="hidden text-[11px] text-t3 sm:inline">{timeAgo(connection.lastCheck.at)}</span>
+          )}
           <Switch checked={connection.enabled} onChange={toggle} disabled={readOnly || busy === 'toggle'} label={`Enable ${connection.name}`} />
           <Button variant="ghost" size="icon-sm" onClick={test} loading={busy === 'test'} aria-label={`Test ${connection.name}`} title="Test the connection">
             <RefreshCw className="size-3.5" />
@@ -233,6 +246,11 @@ function ConnectionRow({ connection, kinds, onEdit, onChanged, onDeleted }: { co
           </Button>
         </span>
       </div>
+      {connection.health && connection.health.state !== 'connected' && connection.health.message && (
+        <p className="mt-1 pl-5 text-[12px] text-rd" title={connection.health.message}>
+          {connection.health.message}
+        </p>
+      )}
       {connection.plugins.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1 pl-5">
           {connection.plugins.map((id) => (
@@ -263,12 +281,17 @@ function KindsCard({ kinds, connections }: { kinds: TransportKindInfo[]; connect
           const count = connections.filter((c) => c.kind === kind.kind).length;
           return (
             <li key={kind.kind} className="flex items-center gap-2 rounded-[10px] border border-hair bg-wl px-3 py-2">
-              <StatusDot status={kind.installed ? 'online' : 'offline'} />
+              <StatusDot status={kind.installed ? (kind.health?.ok === false ? 'error' : 'online') : 'offline'} />
               <span className="min-w-0 flex-1">
                 <span className="block text-[13px] text-t1">{kind.label}</span>
                 <span className="block text-[11px] text-t3">
                   {kind.direct ? 'direct · the host connects to the plugin' : kind.installed ? `broker · ${count} connection${count === 1 ? '' : 's'}` : `broker · driver in a later release${count ? ` · ${count} connection${count === 1 ? '' : 's'} saved` : ''}`}
                 </span>
+                {kind.health?.ok === false && kind.health.message && (
+                  <span className="block truncate text-[11px] text-rd" title={kind.health.message}>
+                    {kind.health.message}
+                  </span>
+                )}
               </span>
               {kind.capabilities && (
                 <span className="font-mono text-[11px] text-t3" title={`Up to ${Math.round(kind.capabilities.maxMessageBytes / 1024 / 1024)} MiB per message · ${kind.capabilities.delivery.join(', ')}`}>

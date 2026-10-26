@@ -259,6 +259,9 @@ export const announceRequestSchema = z.object({
   version: z.string().min(1),
   ttlSeconds: z.number().int().positive().max(3600).optional(),
   instanceId: z.string().min(1).max(128).optional(),
+  /** Hints (docs/protocol.md §14.1): the faces the plugin process was built with, and how many calls one instance takes at once. */
+  transports: z.array(z.string().min(1).max(32)).max(32).optional(),
+  maxConcurrency: z.number().int().positive().max(100_000).optional(),
 });
 
 export const withdrawRequestSchema = z.object({

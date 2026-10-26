@@ -237,10 +237,61 @@ const face: TransportBinding = {
 await serve(plugin, { http: 7101, grpc: 7201, bindings: [face], maxConcurrency: 8 });
 ```
 
-`serve()` starts every face given, unless `LANDFLOW_TRANSPORTS` (a comma list, e.g. `http,grpc`) picks a subset; a kind
-named there that nothing provides is an error. The manifest and every announce carry the hints `transports` (the faces
-that started) and `maxConcurrency` (`LANDFLOW_MAX_CONCURRENCY` overrides the option). `brokers` and `mcp` are reserved
-for the messaging and MCP faces: today `brokers` fails with "messaging binding not available yet" and `mcp` is ignored.
+`serve()` starts every face given, unless `LANDFLOW_TRANSPORTS` (a comma list, e.g. `http,grpc,kafka`) picks a subset; a
+kind named there that nothing provides is an error. The manifest and every announce carry the hints `transports` (the
+faces that started, `mcp` included when the MCP face is on) and `maxConcurrency` (`LANDFLOW_MAX_CONCURRENCY` overrides the
+option).
+
+### Brokers (the messaging face)
+
+A plugin is reachable through any broker `@landflow/transports` has a driver for ([docs/transports.md](../../docs/transports.md)
+"Generic messaging", protocol §14), with no inbound port. Give `serve()` a `BrokerTarget` from the driver module, or
+nothing but environment variables:
+
+```ts
+import { kafka } from '@landflow/transports/kafka';
+await serve(plugin, { http: 7101, brokers: [kafka({ brokers: ['127.0.0.1:59092'] })] });
+```
+
+```sh
+LANDFLOW_TRANSPORTS=http,kafka LANDFLOW_KAFKA_URL=kafka://127.0.0.1:59092 LANDFLOW_TRANSPORT_SECRET=… node main.js
+```
+
+`LANDFLOW_<KIND>_URL` (plus `LANDFLOW_<KIND>_USERNAME`, `_PASSWORD`, `_TLS=true`, `_PREFIX` when the broker needs them)
+loads the driver module for the kind on first use and builds the connection `env-<kind>`. Each broker is one binding
+(`messagingBinding(target)` from `@landflow/sdk/messaging`) wrapping the messaging core's `MessagingServer` around the
+dispatcher: the CloudEvents envelope, end-to-end encryption and signing (`LANDFLOW_TRANSPORT_SECRET`, falling back to
+`LANDFLOW_REGISTRY_SECRET`; `serve()` refuses to start without one), at most once by default and at least once for
+`idempotent` nodes, deadlines, cancel events, the `maxConcurrency` prefetch, and an announce with a registry proof on the
+broker's registry channel every 10 s (the host learns the plugin from it, so brokered endpoints are not part of the HTTP
+announce). Refused calls become `lferror` codes (`not_found`, `bad_request`, `expired`, `cancelled`, `unavailable`); server
+spans carry `messaging.system`, `messaging.destination.name` and `messaging.operation.type`. `stop()` withdraws, waits
+for the calls in flight and closes the connection.
+
+### MCP (every plugin is also an MCP server)
+
+Every action node's operations are MCP tools (`mcpToolsFromManifest()` in `@landflow/protocol`, protocol §15.1: `mcp:
+false` opts out, `outputSchema` and `toolAnnotations` are honoured), served with no code in the plugin:
+
+- **Streamable HTTP at `/mcp`** on the HTTP port, on by default, stateless, for both the 2026-07-28 revision
+  (`server/discover`, per-request `_meta` envelope) and 2025-era clients (`initialize`). Listed as `endpoints.mcp` in
+  `/.well-known/landflow`. `LANDFLOW_MCP=off` (or `mcp: false`) turns it off.
+- **Token.** Callers send `Authorization: Bearer $LANDFLOW_MCP_TOKEN` (`mcp: { token }`); a missing or wrong one is `401`
+  with `WWW-Authenticate: Bearer`. No token is needed when the server listens on loopback only (`host: '127.0.0.1'`).
+  Without a token on a non-loopback host the MCP face stays off and `serve()` logs an error line saying so; the other
+  faces still serve.
+- **stdio** with `--mcp-stdio` or `LANDFLOW_MCP=stdio`: MCP on stdin/stdout and nothing else (no HTTP, gRPC, brokers or
+  announce; logs on stderr), so a desktop agent can start the plugin directly.
+- **Credentials** come from `LANDFLOW_MCP_CREDENTIALS`: a JSON file path or inline JSON, `{ "<credentialType>": { …fields } }`
+  by local type name (`mcp: { credentials }` in code). A tool whose node needs a credential that is not configured answers
+  `isError: true` naming the missing type and its fields. When a tool has dynamic options and a credential is configured, a
+  read-only `list_options` tool resolves them (`{ tool, parameter, arguments? }`).
+- **Results**: the node's first output as `structuredContent: { items }` plus a short text; a node error is `isError: true`
+  with its message. Closing the request's stream cancels the call. Spans are the usual `plugin.execute …` with
+  `rpc.system: mcp` and `mcp.tool.name`.
+
+`createMcpFace()` in `@landflow/sdk/mcp` builds the face over any dispatcher (its `tools`, a server factory for the MCP
+SDK's transport entries, and the token-checking `fetch`); `serve()` returns it as `result.mcp`.
 
 ## Observability
 

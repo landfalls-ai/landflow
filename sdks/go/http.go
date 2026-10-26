@@ -8,6 +8,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // maxBodyBytes bounds request bodies (item batches can be large).
@@ -63,9 +66,22 @@ func (d *Dispatcher) Handler() http.Handler {
 	return mux
 }
 
-// httpCall is the CallOptions of every HTTP request: the request context
-// carries the client's disconnect; HTTP has no deadline of its own.
-var httpCall = CallOptions{Transport: "http"}
+// DeadlineHeader is the request header carrying the call's deadline as an
+// epoch in milliseconds (docs/transports.md "SDK side"). Absent or
+// unparsable: no deadline beyond the connection itself.
+const DeadlineHeader = "x-landflow-deadline"
+
+// httpCall is the CallOptions of an HTTP request: the request context carries
+// the client's disconnect, the x-landflow-deadline header the deadline.
+func httpCall(r *http.Request) CallOptions {
+	opts := CallOptions{Transport: "http"}
+	if raw := strings.TrimSpace(r.Header.Get(DeadlineHeader)); raw != "" {
+		if ms, err := strconv.ParseInt(raw, 10, 64); err == nil && ms > 0 {
+			opts.Deadline = time.UnixMilli(ms)
+		}
+	}
+	return opts
+}
 
 func (p *Plugin) only(method string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -83,9 +99,9 @@ func (h *httpHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	resp, err := h.d.Execute(h.d.p.tel().extractHTTP(r), &req, httpCall)
+	resp, err := h.d.Execute(h.d.p.tel().extractHTTP(r), &req, httpCall(r))
 	if err != nil {
-		writeError(w, statusFor(err), err.Error())
+		writeDispatchError(w, err)
 		return
 	}
 	data, err := json.Marshal(resp)
@@ -109,9 +125,9 @@ func (h *httpHandler) handleLoadOptions(w http.ResponseWriter, r *http.Request) 
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	resp, err := h.d.LoadOptions(h.d.p.tel().extractHTTP(r), &req, httpCall)
+	resp, err := h.d.LoadOptions(h.d.p.tel().extractHTTP(r), &req, httpCall(r))
 	if err != nil {
-		writeError(w, statusFor(err), err.Error())
+		writeDispatchError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -122,9 +138,9 @@ func (h *httpHandler) handleTestCredentials(w http.ResponseWriter, r *http.Reque
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	resp, err := h.d.TestCredentials(h.d.p.tel().extractHTTP(r), &req, httpCall)
+	resp, err := h.d.TestCredentials(h.d.p.tel().extractHTTP(r), &req, httpCall(r))
 	if err != nil {
-		writeError(w, statusFor(err), err.Error())
+		writeDispatchError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -135,9 +151,9 @@ func (h *httpHandler) handleWebhookMethod(w http.ResponseWriter, r *http.Request
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	resp, err := h.d.WebhookMethod(h.d.p.tel().extractHTTP(r), &req, httpCall)
+	resp, err := h.d.WebhookMethod(h.d.p.tel().extractHTTP(r), &req, httpCall(r))
 	if err != nil {
-		writeError(w, statusFor(err), err.Error())
+		writeDispatchError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -148,14 +164,21 @@ func (h *httpHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	resp, err := h.d.ReceiveWebhook(h.d.p.tel().extractHTTP(r), &req, httpCall)
+	resp, err := h.d.ReceiveWebhook(h.d.p.tel().extractHTTP(r), &req, httpCall(r))
 	if err != nil {
-		writeError(w, statusFor(err), err.Error())
+		writeDispatchError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// StatusClientClosedRequest is nginx's 499: the caller cancelled the call
+// before it finished (the connection closed). Nothing standard fits better,
+// and the TypeScript SDK answers the same.
+const StatusClientClosedRequest = 499
+
+// statusFor maps a dispatcher error to its HTTP status, as every SDK does:
+// unknown node or credential type 404, capacity 429, deadline 504, cancel 499.
 func statusFor(err error) int {
 	switch {
 	case errors.Is(err, ErrUnknownNode), errors.Is(err, ErrNoOptionsLoader), errors.Is(err, ErrUnknownCredentialType):
@@ -163,14 +186,23 @@ func statusFor(err error) int {
 	case errors.Is(err, ErrBadRequest):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrOverloaded):
-		return http.StatusServiceUnavailable
+		return http.StatusTooManyRequests
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout
 	case errors.Is(err, context.Canceled):
-		return http.StatusServiceUnavailable
+		return StatusClientClosedRequest
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// writeDispatchError answers a refused or failed call; a capacity refusal
+// carries Retry-After: 1 so the host (or a proxy) retries elsewhere or later.
+func writeDispatchError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrOverloaded) {
+		w.Header().Set("Retry-After", "1")
+	}
+	writeError(w, statusFor(err), err.Error())
 }
 
 // decodeBody parses a JSON body; on failure it writes a 400 and returns false.

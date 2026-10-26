@@ -8,8 +8,7 @@ import { nanoid } from 'nanoid';
 import { governedSave } from '../governance/saves';
 import { currentActorId } from '../auth/context';
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import type { JsonObject, NodeItem } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import type { ExecutionRecord, ExecutionSummary, NodeTypeInfo } from '../../shared/types';
@@ -146,11 +145,11 @@ export function instanceServer(): McpServer {
     {
       title: 'List workflows',
       description: 'Workflows with their id, name, whether they are active, tags and node types. Filter by a text query or by active.',
-      inputSchema: {
+      inputSchema: z.object({
         query: z.string().optional().describe('Matched against name, description and tags'),
         active: z.boolean().optional(),
         limit: z.number().int().min(1).max(500).optional().describe('Default 100'),
-      },
+      }),
       annotations: READ_ONLY,
     },
     async ({ query, active, limit }) => {
@@ -179,7 +178,7 @@ export function instanceServer(): McpServer {
     {
       title: 'Get a workflow',
       description: 'The whole workflow: nodes with their parameters, connections, settings, whether it is active.',
-      inputSchema: { id: z.string().describe('Workflow id') },
+      inputSchema: z.object({ id: z.string().describe('Workflow id') }),
       annotations: READ_ONLY,
     },
     async ({ id }) => {
@@ -194,7 +193,7 @@ export function instanceServer(): McpServer {
       title: 'Create a workflow',
       description:
         'Save a new workflow. Node ids, positions, type versions and default parameters are filled in; connections name their nodes. The reply has the id, the editor url and a validation report.',
-      inputSchema: workflowFields,
+      inputSchema: z.object(workflowFields),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
@@ -214,7 +213,7 @@ export function instanceServer(): McpServer {
       title: 'Update a workflow',
       description:
         'Change a workflow: only the fields given change. "nodes" and "connections" replace the current lists, so read the workflow with get_workflow first and send the full lists. "active" turns triggers on or off.',
-      inputSchema: {
+      inputSchema: z.object({
         id: z.string().describe('Workflow id'),
         name: workflowFields.name.optional(),
         description: workflowFields.description,
@@ -223,7 +222,7 @@ export function instanceServer(): McpServer {
         settings: workflowFields.settings,
         active: workflowFields.active,
         tags: workflowFields.tags,
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async ({ id, ...changes }) => {
@@ -248,10 +247,10 @@ export function instanceServer(): McpServer {
       title: 'Validate a workflow',
       description:
         'Check a saved workflow (id) or a draft (the same fields as create_workflow) against the installed node types: unknown types, required parameters and sub-nodes, ports and connections. Nothing is saved.',
-      inputSchema: {
+      inputSchema: z.object({
         id: z.string().optional().describe('A saved workflow'),
         workflow: z.object(workflowFields).optional().describe('A draft, as for create_workflow'),
-      },
+      }),
       annotations: READ_ONLY,
     },
     async ({ id, workflow }) => {
@@ -269,10 +268,10 @@ export function instanceServer(): McpServer {
     {
       title: 'List node types',
       description: 'Every installed node type (core and plugins): type, name, description, kind (trigger, action, subnode) and categories.',
-      inputSchema: {
+      inputSchema: z.object({
         kind: z.enum(['trigger', 'action', 'subnode']).optional(),
         category: z.string().optional().describe('e.g. "AI", "Triggers", "Data"'),
-      },
+      }),
       annotations: READ_ONLY,
     },
     async ({ kind, category }) => {
@@ -288,7 +287,7 @@ export function instanceServer(): McpServer {
     {
       title: 'Search node types',
       description: 'Find node types by keywords (e.g. "http request", "slack message", "if condition"), best matches first.',
-      inputSchema: { query: z.string().min(1), limit: z.number().int().min(1).max(50).optional().describe('Default 10') },
+      inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().min(1).max(50).optional().describe('Default 10') }),
       annotations: READ_ONLY,
     },
     async ({ query, limit }) => {
@@ -317,7 +316,7 @@ export function instanceServer(): McpServer {
       title: 'Get a node type',
       description:
         'A node type in full: its parameters (name, type, default, options, required, when they show), inputs and outputs, credentials, and whether it can be an AI tool. Use the parameter names in a node\'s "parameters".',
-      inputSchema: { type: z.string().describe('e.g. "core.httpRequest"') },
+      inputSchema: z.object({ type: z.string().describe('e.g. "core.httpRequest"') }),
       annotations: READ_ONLY,
     },
     async ({ type }) => {
@@ -343,7 +342,7 @@ export function instanceServer(): McpServer {
       title: 'Execute a workflow',
       description:
         'Run a saved workflow from its trigger (or a node you name) with input items, and get the result: status, error, each node\'s item counts and the last node\'s output. It runs the draft unless version is "published". With wait false it returns the execution id at once (read it later with get_execution).',
-      inputSchema: {
+      inputSchema: z.object({
         id: z.string().describe('Workflow id'),
         input: z
           .union([z.record(z.string(), z.unknown()), z.array(z.record(z.string(), z.unknown()))])
@@ -352,7 +351,7 @@ export function instanceServer(): McpServer {
         startNode: z.string().optional().describe('Name or id of the node to start from; default: the manual, webhook, chat or schedule trigger'),
         wait: z.boolean().optional().describe('Wait for the run to finish (default true)'),
         version: z.enum(['draft', 'published']).optional().describe('Run the saved draft (default, to test changes) or the published version that production triggers run'),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async ({ id, input, startNode: ref, wait, version }) => {
@@ -386,11 +385,11 @@ export function instanceServer(): McpServer {
     {
       title: 'List executions',
       description: 'Recent executions, newest first (running ones included): id, workflow, mode, status, start time, duration, error.',
-      inputSchema: {
+      inputSchema: z.object({
         workflowId: z.string().optional(),
         status: z.enum(['running', 'queued', 'success', 'error', 'canceled', 'waiting']).optional(),
         limit: z.number().int().min(1).max(200).optional().describe('Default 20'),
-      },
+      }),
       annotations: READ_ONLY,
     },
     async ({ workflowId, status, limit }) => {
@@ -418,7 +417,7 @@ export function instanceServer(): McpServer {
     {
       title: 'Get an execution',
       description: 'One execution: status, error, what each node did (runs, output item counts, errors) and the last node\'s output. includeData adds every node\'s full input and output.',
-      inputSchema: { id: z.string().describe('Execution id'), includeData: z.boolean().optional() },
+      inputSchema: z.object({ id: z.string().describe('Execution id'), includeData: z.boolean().optional() }),
       annotations: READ_ONLY,
     },
     async ({ id, includeData }) => {

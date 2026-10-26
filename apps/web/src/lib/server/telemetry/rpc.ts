@@ -13,6 +13,8 @@ export interface RpcTarget {
   /** "http://127.0.0.1:7101", "grpc://127.0.0.1:7201" or "kafka://kafka-main/twilio". */
   endpoint: string;
   pluginId?: string;
+  /** More span attributes: brokered calls add the OpenTelemetry messaging ones (`messaging.system`, `messaging.destination.name`, `messaging.operation.type`). */
+  attributes?: Record<string, string | number>;
 }
 
 /** The selector's choice for the call in flight (lib/server/transports/selector.ts), read by the `plugin.rpc` span. */
@@ -62,6 +64,7 @@ export async function tracePluginRpc<T>(
       'server.address': host,
       ...(port && { 'server.port': port }),
       ...(target.pluginId && { 'landflow.plugin.id': target.pluginId }),
+      ...target.attributes,
       // Explainability (docs/transports.md): the transport the call went over and why the selector chose it.
       'landflow.transport': choice?.kind ?? target.system,
       ...(choice && { 'landflow.transport.reason': choice.reason }),

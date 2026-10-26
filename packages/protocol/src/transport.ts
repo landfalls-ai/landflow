@@ -12,7 +12,7 @@
 export const DIRECT_TRANSPORT_KINDS = ['http', 'grpc'] as const;
 
 /** Tier 1 brokers land first; tier 2 follows driver by driver (docs/transports.md "Brokers"). */
-export const BROKER_TRANSPORT_KINDS = ['kafka', 'amqp', 'nats', 'valkey', 'mqtt', 'sqs', 'pubsub', 'servicebus', 'amqp1', 'pulsar'] as const;
+export const BROKER_TRANSPORT_KINDS = ['kafka', 'amqp', 'nats', 'jetstream', 'valkey', 'mqtt', 'sqs', 'pubsub', 'servicebus', 'amqp1', 'pulsar'] as const;
 
 /** Every kind this version of the protocol knows, direct first. */
 export const TRANSPORT_KINDS = [...DIRECT_TRANSPORT_KINDS, ...BROKER_TRANSPORT_KINDS] as const;

@@ -15,8 +15,7 @@
  */
 import { context } from '@opentelemetry/api';
 import { nanoid } from 'nanoid';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import type { JsonObject } from '@landflow/protocol';
 import { executeWorkflow, type ToolSpec, type Workflow, type WorkflowNode } from '@landflow/engine';
 import type { ExecutionRecord } from '../../shared/types';
@@ -140,14 +139,14 @@ export function triggerServer(workflow: Workflow, node: WorkflowNode, listener?:
     { capabilities: { tools: {} }, ...(instructions && { instructions }) },
   );
   // Raw JSON schemas, so the low-level handlers rather than registerTool (which takes zod).
-  server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.server.setRequestHandler('tools/list', async () => ({
     tools: (await listTriggerTools(workflow, node, Boolean(listener))).map((tool) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: { ...tool.inputSchema, type: 'object' as const },
     })),
   }));
-  server.server.setRequestHandler(CallToolRequestSchema, async (request) => callTriggerTool(workflow, node, request.params.name, request.params.arguments ?? {}, listener));
+  server.server.setRequestHandler('tools/call', async (request) => callTriggerTool(workflow, node, request.params.name, request.params.arguments ?? {}, listener));
   return server;
 }
 

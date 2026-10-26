@@ -65,10 +65,11 @@ type Loader = () => Promise<{ default: DriverModule<any> }>;
 
 /** Known driver modules by kind. Keep the import paths literal. */
 const LOADERS: Partial<Record<BrokerKind, Loader>> = {
-  // kafka: () => import('./kafka/index'),
-  // amqp: () => import('./amqp/index'),
-  // nats: () => import('./nats/index'),
-  // valkey: () => import('./valkey/index'),
+  kafka: () => import('./kafka/index'),
+  amqp: () => import('./amqp/index'),
+  nats: () => import('./nats/index'),
+  jetstream: () => import('./nats/jetstream'),
+  valkey: () => import('./valkey/index'),
 };
 
 /** Kinds that have a driver module in this build. */

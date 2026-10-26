@@ -73,6 +73,27 @@ export interface PluginTransportSummary {
   excluded?: boolean;
   /** The plugin says it was built with this face (manifest `transports`) but no endpoint on it has been found. */
   declared?: boolean;
+  /** Live numbers for the kind: brokers sum their endpoints' queue stats; every kind reports the plugin's `maxConcurrency` when known. */
+  stats?: BrokerQueueStats;
+}
+
+/**
+ * What the host knows about a plugin's request channel on a broker (the selector's queue inputs; the Plugins page shows
+ * them): sampled every 5 s by the messaging client (`MessagingClient.stats()`), plus the announced instances.
+ */
+export interface BrokerQueueStats {
+  /** Events waiting for a consumer. */
+  depth?: number;
+  /** Consumers attached to the request channel. */
+  consumers?: number;
+  /** Consumer-group lag, when the broker distinguishes it from depth. */
+  lag?: number;
+  /** Instances that announced themselves on the channel and have not expired. */
+  instances?: number;
+  /** The announced instances' `maxConcurrency` summed (how many calls the plugin takes at once over this transport). */
+  maxConcurrency?: number;
+  /** When `depth`/`consumers`/`lag` were sampled (ISO); absent when the broker reports no stats. */
+  sampledAt?: string;
 }
 
 /** What a transport can carry, as the provider reports it (the selector's capability inputs). */
@@ -94,6 +115,8 @@ export interface TransportKindInfo {
   direct: boolean;
   /** A provider (driver) for the kind is registered in this host. */
   installed: boolean;
+  /** The provider's own state: a broker kind without the shared secret, or without an open connection, says so here. */
+  health?: { ok: boolean; message?: string };
   capabilities?: TransportCapabilities;
   /** The connection fields the kind's form shows. */
   fields: ConnectionField[];
@@ -103,7 +126,7 @@ export interface TransportKindInfo {
 export interface ConnectionField {
   name: string;
   label: string;
-  type: 'string' | 'password' | 'boolean' | 'textarea';
+  type: 'string' | 'password' | 'boolean' | 'textarea' | 'number';
   required?: boolean;
   placeholder?: string;
   hint?: string;
@@ -116,6 +139,28 @@ export interface TransportConnectionCheck {
   message: string;
   latencyMs?: number;
   version?: string;
+}
+
+/**
+ * The state of the broker connection this host process holds open (lib/server/transports/brokers.ts): connecting on
+ * start, connected once the client is up and a round trip worked, reconnecting after the connection was lost, error when
+ * it cannot open (with the message: a refused connection, bad credentials, no shared secret).
+ */
+export interface TransportConnectionHealth {
+  state: 'connecting' | 'connected' | 'reconnecting' | 'error';
+  message?: string;
+  /** When the state was entered (ISO). */
+  since: string;
+  /** The last publish/consume round trip through the connection, in ms. */
+  roundTripMs?: number;
+  /** When the round trip was measured (ISO). */
+  checkedAt?: string;
+  /** The broker's version, when the driver can tell. */
+  version?: string;
+  /** This host process's id (its reply channel is named after it). */
+  hostInstanceId?: string;
+  /** Plugins currently announced on this connection. */
+  announced?: number;
 }
 
 /** A broker connection as the API shows it: config without secret values, and which secret fields are set. */
@@ -131,6 +176,8 @@ export interface TransportConnectionView {
   /** `database`: added in Settings; `env`: from `LANDFLOW_TRANSPORT_<KIND>_URL`, read-only. */
   source: 'database' | 'env';
   lastCheck?: TransportConnectionCheck;
+  /** The live connection this host holds (absent for a disabled connection or a kind without a driver). */
+  health?: TransportConnectionHealth;
   /** Plugins with an endpoint on this connection (`<kind>://<connectionId>/<pluginId>`). */
   plugins: string[];
   createdAt: string;

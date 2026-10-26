@@ -1,16 +1,17 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { RefreshCw, Trash2 } from 'lucide-react';
+import { ChevronDown, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo, transportLabel } from '@/lib/client/format';
+import type { McpToolsResponse, McpToolView } from '@/lib/shared/mcp';
 import type { PluginSummary } from '@/lib/shared/types';
-import type { TransportObjective, TransportPolicy, TransportReason } from '@/lib/shared/transports';
+import type { BrokerQueueStats, TransportObjective, TransportPolicy, TransportReason } from '@/lib/shared/transports';
 import { Badge, LanguageBadge, StatusDot, TransportBadge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { AppIcon, NodeIcon } from '../ui/icon';
-import { Select } from '../ui/inputs';
+import { Select, Switch } from '../ui/inputs';
 import { descriptorColor } from '@/lib/client/node-style';
 
 const LEASE_MS = 30_000;
@@ -33,6 +34,34 @@ const OBJECTIVES: Array<{ value: TransportObjective; label: string }> = [
 ];
 
 type PickerMode = 'auto' | 'pinned' | 'allowed';
+
+/** A broker's numbers in one line: `depth 3 · 2 consumers · lag 1 · 2×16`, with the sample time in the title. */
+function queueSummary(stats: BrokerQueueStats): { text: string; title: string } {
+  const parts = [
+    stats.depth !== undefined && `depth ${stats.depth}`,
+    stats.consumers !== undefined && `${stats.consumers} consumer${stats.consumers === 1 ? '' : 's'}`,
+    stats.lag !== undefined && `lag ${stats.lag}`,
+    stats.instances !== undefined && `${stats.instances} instance${stats.instances === 1 ? '' : 's'}${stats.maxConcurrency ? ` × ${Math.round(stats.maxConcurrency / Math.max(1, stats.instances))}` : ''}`,
+  ].filter((p): p is string => Boolean(p));
+  const title = [
+    'Request channel on the broker (sampled every 5 s): events waiting, consumers attached, consumer-group lag; announced instances × their maxConcurrency.',
+    stats.sampledAt && `Sampled ${new Date(stats.sampledAt).toLocaleTimeString()}.`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return { text: parts.join(' · '), title };
+}
+
+function QueueNumbers({ stats, className }: { stats?: BrokerQueueStats; className?: string }) {
+  if (!stats) return null;
+  const { text, title } = queueSummary(stats);
+  if (!text) return null;
+  return (
+    <span className={cn('font-mono text-[11px] tabular-nums text-t3', className)} title={title}>
+      {text}
+    </span>
+  );
+}
 const modeOf = (policy: TransportPolicy): PickerMode => (policy.mode === 'pinned' ? 'pinned' : policy.allowed?.length ? 'allowed' : 'auto');
 
 /**
@@ -76,9 +105,14 @@ function TransportPolicyPicker({ plugin, onChange }: { plugin: PluginSummary; on
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-0.5">Transports</span>
         {(plugin.transports ?? []).map((t) => (
-          <span key={t.kind} className={cn('inline-flex items-center gap-1 rounded-md border border-hair bg-wl px-1.5 py-px', t.excluded && 'opacity-50')} title={`${t.endpoints.join(', ')}${t.excluded ? ' · kept out by the policy' : ''}`}>
+          <span
+            key={t.kind}
+            className={cn('inline-flex items-center gap-1 rounded-md border border-hair bg-wl px-1.5 py-px', t.excluded && 'opacity-50')}
+            title={`${t.endpoints.join(', ') || 'no endpoint yet'}${t.excluded ? ' · kept out by the policy' : ''}${t.stats?.maxConcurrency ? ` · up to ${t.stats.maxConcurrency} calls at once` : ''}`}
+          >
             <StatusDot status={t.online ? 'online' : 'offline'} />
             <span className="font-mono text-[11px] text-t2">{transportLabel(t.kind)}</span>
+            {t.stats && (t.stats.depth !== undefined || t.stats.consumers !== undefined || t.stats.lag !== undefined) && <QueueNumbers stats={t.stats} />}
           </span>
         ))}
         <span className="ml-auto flex items-center gap-1.5">
@@ -152,6 +186,83 @@ function TransportPolicyPicker({ plugin, onChange }: { plugin: PluginSummary; on
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * MCP (docs/transports.md "Expose to agents"): the switch that puts the plugin's tools behind the gateway and its
+ * /api/mcp/plugins/<id> endpoint, the tool count, and a fold-out list of the tools (loaded from GET /api/mcp/tools).
+ */
+function McpExposure({ plugin, onChange }: { plugin: PluginSummary; onChange: (plugins: PluginSummary[]) => void }) {
+  const mcp = plugin.mcp;
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [tools, setTools] = useState<McpToolView[] | undefined>();
+  const [loadError, setLoadError] = useState<string | undefined>();
+
+  useEffect(() => {
+    if (!open || tools || !mcp?.exposed) return;
+    api<McpToolsResponse>('/api/mcp/tools')
+      .then((r) => setTools(r.tools.filter((t) => t.pluginId === plugin.id)))
+      .catch((e: Error) => setLoadError(e.message));
+  }, [open, tools, mcp?.exposed, plugin.id]);
+
+  if (!mcp) return null;
+  const toggle = async (exposed: boolean) => {
+    setBusy(true);
+    try {
+      onChange((await api<{ plugins: PluginSummary[] }>(`/api/plugins/${plugin.id}`, { method: 'PATCH', json: { mcp: { exposed } } })).plugins);
+      toast(`${plugin.info.name}: ${exposed ? 'exposed to agents' : 'hidden from agents'}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="border-t border-hair px-4 py-2.5 text-[12px] text-t3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Switch checked={mcp.exposed} disabled={busy} onChange={(v) => void toggle(v)} label={`Expose ${plugin.info.name} to agents`} />
+        <span className="text-t2">Expose to agents</span>
+        <span title={mcp.exposed ? `MCP endpoint ${mcp.path}; registered in the MCP gateway` : 'Not served to agents: no gateway target, the endpoint answers 404'}>
+          {mcp.exposed ? (
+            <>
+              <span className="font-mono text-[11px] text-t2">{mcp.path}</span> · {mcp.tools} MCP tool{mcp.tools === 1 ? '' : 's'}
+            </>
+          ) : (
+            <>{mcp.tools} MCP tool{mcp.tools === 1 ? '' : 's'}, hidden</>
+          )}
+        </span>
+        {mcp.exposed && mcp.tools > 0 && (
+          <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="ml-auto flex items-center gap-1 text-t3 transition-colors duration-[120ms] hover:text-t1">
+            MCP tools <ChevronDown className={cn('size-3.5 transition-transform duration-[120ms]', open && 'rotate-180')} strokeWidth={1.7} />
+          </button>
+        )}
+      </div>
+      {open && mcp.exposed && (
+        <div className="mt-2 space-y-1">
+          {loadError && <div className="text-rd">{loadError}</div>}
+          {!tools && !loadError && <div>Loading tools…</div>}
+          {tools?.map((tool) => (
+            <div key={tool.name} className={cn('flex flex-wrap items-baseline gap-x-2 gap-y-0.5', tool.blocked && 'opacity-60')} title={tool.description}>
+              <span className="font-mono text-[12px] text-t1">{tool.name}</span>
+              <span className="font-mono text-[11px] text-t3" title="The name on the gateway's shared endpoint">
+                {tool.gatewayName}
+              </span>
+              <span className="truncate text-t2">{tool.title}</span>
+              <span className="ml-auto flex shrink-0 gap-1">
+                {tool.annotations.readOnlyHint && <Badge tone="muted">read-only</Badge>}
+                {tool.annotations.destructiveHint && <Badge tone="muted">destructive</Badge>}
+                {tool.annotations.idempotentHint && !tool.annotations.readOnlyHint && <Badge tone="muted">idempotent</Badge>}
+                {tool.credentials.length > 0 && <Badge tone="muted" title={`Needs a credential: ${tool.credentials.join(', ')}`}>credential</Badge>}
+                {tool.blocked && <Badge tone="muted" title={tool.blocked}>blocked</Badge>}
+              </span>
+            </div>
+          ))}
+          {tools && !tools.length && <div>No tools: no action node of this plugin is usable as a tool.</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -262,6 +373,7 @@ export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChan
                   </span>
                 )}
                 <span className="ml-auto flex shrink-0 items-center gap-3">
+                  <QueueNumbers stats={endpoint.queue} />
                   {endpoint.latencyMs !== undefined && <span className="font-mono text-[11px] tabular-nums text-t3">{endpoint.latencyMs}ms</span>}
                   {endpoint.source === 'announce' && endpoint.status === 'online' ? <LeaseBar expiresAt={endpoint.leaseExpiresAt} /> : <span className="text-[12px] text-t3">{timeAgo(endpoint.lastSeen)}</span>}
                 </span>
@@ -272,6 +384,8 @@ export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChan
       </div>
 
       {!builtin && plugin.transports && plugin.transports.length > 0 && <TransportPolicyPicker plugin={plugin} onChange={onChange} />}
+
+      <McpExposure plugin={plugin} onChange={onChange} />
 
       {/* nodes */}
       {plugin.nodes.length > 0 && (

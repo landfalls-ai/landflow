@@ -2,7 +2,8 @@
  * The transport policy and broker connections on a real Postgres, across two processes (opt-in:
  * LANDFLOW_INTEGRATION=queue; LANDFLOW_TEST_DATABASE_URL, default the infra stack's `landflow_test`, in a schema of
  * its own). A main stores a plugin's policy and a connection; a worker sees both within moments (LISTEN/NOTIFY drops
- * its caches), the connection's secrets opened with the shared encryption key.
+ * its caches), the connection's secrets opened with the shared encryption key. A worker's broker manager opens a
+ * connection the main added (and closes it when the main deletes it), with the in-memory driver as the kind.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,6 +25,10 @@ describe.skipIf(!enabled)('transport policy and connections on Postgres, two pro
   const { openPostgres } = await import('@/lib/server/db/postgres');
   const { TransportPolicyStore } = await import('@/lib/server/transports/policy-store');
   const { TransportConnections } = await import('@/lib/server/transports/connections');
+  const { TransportProviderRegistry } = await import('@/lib/server/transports/provider');
+  const { BrokerConnectionManager, DriverModules } = await import('@/lib/server/transports/brokers');
+  const { registerBrokerProviders } = await import('@/lib/server/transports/broker-provider');
+  const { MemoryBroker } = await import('@landflow/transports/memory');
   const admin = new pg.Pool({ connectionString: URL, max: 2 });
   const opened: Database[] = [];
   const until = (check: () => void) => vi.waitFor(check, { timeout: 10_000, interval: 25 });
@@ -69,5 +74,35 @@ describe.skipIf(!enabled)('transport policy and connections on Postgres, two pro
     expect(onMain.delete(created.id)).toBe(true);
     await main.flush();
     await until(() => expect(onWorker.get(created.id)).toBeUndefined());
+  });
+
+  it('a broker connection the main adds is opened by the worker’s manager, and closed when the main deletes it', async () => {
+    const broker = new MemoryBroker();
+    const modules = new DriverModules();
+    modules.register({ kind: 'memory', label: 'Memory (test)', capabilities: broker.capabilities, exampleUrl: 'memory://local', create: () => broker.driver(), configFrom: (connectionId) => ({ connectionId }) });
+    const providers = new TransportProviderRegistry();
+    const onMain = new TransportConnections({ db: () => main, env: {}, providers });
+    const onWorker = new TransportConnections({ db: () => worker, env: {}, providers });
+    const manager = new BrokerConnectionManager({ connections: onWorker, modules, env: { LANDFLOW_TRANSPORT_SECRET: 'pg-transport-secret' }, discovery: { addEndpoint: async () => undefined, withdraw: () => true, removeEndpoint: () => true }, probeIntervalMs: 0 });
+    await registerBrokerProviders({ modules, providers, manager });
+    try {
+      await manager.start();
+      expect(manager.openConnections()).toEqual([]);
+      const created = onMain.create({ name: 'Memory main', kind: 'memory', config: { url: 'memory://local' } });
+      await main.flush();
+      await until(() => expect(manager.openConnections()).toEqual([created.id]));
+      expect(manager.health(created.id)).toMatchObject({ state: 'connected' });
+      onMain.update(created.id, { enabled: false });
+      await main.flush();
+      await until(() => expect(manager.openConnections()).toEqual([]));
+      onMain.update(created.id, { enabled: true });
+      await main.flush();
+      await until(() => expect(manager.openConnections()).toEqual([created.id]));
+      expect(onMain.delete(created.id)).toBe(true);
+      await main.flush();
+      await until(() => expect(manager.openConnections()).toEqual([]));
+    } finally {
+      await manager.stop();
+    }
   });
 });

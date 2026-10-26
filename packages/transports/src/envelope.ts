@@ -22,7 +22,7 @@
  * | `lfidempotency`   | the request's `idempotencyKey`                                                               |
  * | `lfdelivery`      | the delivery mode the sender asks for: `at-most-once` / `at-least-once` (requests)           |
  * | `lfmanifest`      | the manifest hash the sender knows for the plugin (requests), the plugin's own (replies, announces) |
- * | `lferror`         | on a response: the error code (`manifest_mismatch`, `expired`, `bad_request`, `not_found`, `internal`, `cancelled`, `unavailable`, `too_large`); the body is `{ error, … }` |
+ * | `lferror`         | on a response: the error code (`manifest_mismatch`, `expired`, `bad_request`, `not_found`, `internal`, `cancelled`, `unavailable`, `capacity`, `too_large`); the body is `{ error, … }` |
  * | `lfenc`           | `aes-256-gcm` when the body is encrypted (nonce ‖ ciphertext ‖ tag)                          |
  * | `lfkeyid`         | the id of the key that encrypted and signed the event (rotation)                             |
  * | `lfsig`           | hex HMAC-SHA256 over the canonical form of every other attribute plus the body digest        |
@@ -126,7 +126,7 @@ export type AttributeName = (typeof KNOWN_ATTRIBUTES)[number];
 export type DeliveryMode = 'at-most-once' | 'at-least-once';
 
 /** Error codes a plugin puts in `lferror` on a response; the client maps them to typed errors. */
-export type RemoteErrorCode = 'manifest_mismatch' | 'expired' | 'bad_request' | 'not_found' | 'internal' | 'cancelled' | 'unavailable' | 'too_large';
+export type RemoteErrorCode = 'manifest_mismatch' | 'expired' | 'bad_request' | 'not_found' | 'internal' | 'cancelled' | 'unavailable' | 'capacity' | 'too_large';
 
 /** The decoded attributes of an event. All values are strings on the wire; `lfdeadline` and `lfattempt` are numeric strings. */
 export interface Attributes {

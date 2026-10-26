@@ -15,7 +15,7 @@ import {
 describe('transport kinds', () => {
   it('knows the direct kinds and the tier 1 + tier 2 brokers', () => {
     expect(TRANSPORT_KINDS.slice(0, 2)).toEqual(['http', 'grpc']);
-    expect(BROKER_TRANSPORT_KINDS).toEqual(['kafka', 'amqp', 'nats', 'valkey', 'mqtt', 'sqs', 'pubsub', 'servicebus', 'amqp1', 'pulsar']);
+    expect(BROKER_TRANSPORT_KINDS).toEqual(['kafka', 'amqp', 'nats', 'jetstream', 'valkey', 'mqtt', 'sqs', 'pubsub', 'servicebus', 'amqp1', 'pulsar']);
     expect(isDirectTransport('grpc')).toBe(true);
     expect(isDirectTransport('kafka')).toBe(false);
     expect(isBrokerTransport('kafka')).toBe(true);
