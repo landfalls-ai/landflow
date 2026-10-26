@@ -381,7 +381,8 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   broker (Kafka, RabbitMQ, NATS, Valkey Streams, MQTT, SQS, Pub/Sub, Service Bus, AMQP 1.0, Pulsar)
   through one messaging core and small drivers, chosen per call from live traffic, and every plugin
   also an MCP server: its own endpoint, and a bundled open-source MCP gateway (agentgateway) that
-  every installed plugin registers into automatically. See [transports.md](transports.md).
+  every installed plugin registers into automatically. Decisions settled on 2026-10-26; see
+  [transports.md](transports.md).
 
 ## Not planned
 

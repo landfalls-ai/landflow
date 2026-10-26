@@ -1,7 +1,9 @@
 # Plan: one plugin, every transport, and MCP
 
 Status: **planned** (2026-10-26, revised the same day: generic brokers, then the bundled MCP gateway). Nothing here is
-built yet. Decisions that need a yes are in the last section.
+built yet. The decisions are settled (2026-10-26): agentgateway is the bundled MCP gateway, and agents sign in through
+the instance's identity provider or with Landflow-issued MCP tokens. The rest follow the recommendations
+([last section](#decisions)).
 
 ## Goal
 
@@ -583,7 +585,7 @@ Each phase ends with every test suite passing, a clean type check and a check in
 
 | Phase | Work | Done when | Size |
 |---|---|---|---|
-| 0. Spec | §14 Messaging and §15 MCP written; decisions settled; tier 1 brokers and agentgateway in `compose.infra.yml` (one profile each, 5xxxx ports); a spike that registers a target over agentgateway's config API and checks "tool list changed" and the identity headers | Spec reviewed; every tier 1 broker and the gateway start locally; the spike passes, or the file fallback is chosen | S |
+| 0. Spec | §14 Messaging and §15 MCP written; tier 1 brokers and agentgateway in `compose.infra.yml` (one profile each, 5xxxx ports); a spike that registers a target over agentgateway's config API and checks "tool list changed" and the identity headers | Spec reviewed; every tier 1 broker and the gateway start locally; the spike passes, or the file fallback is chosen | S |
 | 1. Abstraction | SDK `TransportBinding` (TS, Go, Python) with HTTP and gRPC behind it; host providers; the open `Transport` type; the per-plugin policy in the database with its picker; the conformance kit | Every existing test passes, behaviour unchanged; the policy survives restarts and is the same on every process | M |
 | 2. Messaging in TypeScript | `@landflow/transports`: the core and tier 1 drivers (Kafka, RabbitMQ, NATS, Valkey Streams); host connections, discovery, Settings → Transports; the TS SDK binding; encryption and signing | A workflow runs through Text Toolkit over each tier 1 broker with one joined trace; a plugin with no open port works; broker restarts and a plugin killed mid-call behave as specified | L |
 | 3. MCP endpoints | The SDK MCP face (TS, Go, Python); the host's per-plugin MCP endpoints with grants, audit, `mcp` executions and the tool browser | A client lists and calls a plugin's tools on its host endpoint with a bound credential; a plugin runs standalone over stdio | L |
@@ -615,26 +617,28 @@ After phase 1, phases 2 and 3 can run in parallel; 3b follows 3; 4 and 5 follow 
 | The gateway project changes direction | Apache-2.0 under a foundation; the adapter interface and `server.json` keep a swap (ContextForge) small |
 | An older MCP server lowers the shared endpoint's version | Landflow's endpoints all speak 2026-07-28; external servers get routes of their own |
 
-## Decisions to make
+## Decisions
 
-1. **Envelope.** Recommended: CloudEvents 1.0 (headers where the broker has them, one JSON document otherwise).
-2. **Brokers and their order.** Recommended: tier 1 Kafka, RabbitMQ, NATS (core and JetStream) and Valkey/Redis Streams;
+Settled on 2026-10-26. You confirmed 11 and 12; the others went with the recommendation, as the plan proposed.
+
+1. **Envelope.** Decided: CloudEvents 1.0 (headers where the broker has them, one JSON document otherwise).
+2. **Brokers and their order.** Decided: tier 1 Kafka, RabbitMQ, NATS (core and JetStream) and Valkey/Redis Streams;
    tier 2 MQTT 5, Amazon SQS, Google Pub/Sub, Azure Service Bus, AMQP 1.0 and Pulsar.
-3. **How each language gets them.** Recommended: one TypeScript package for the host and the TS SDK, one Go package for the
+3. **How each language gets them.** Decided: one TypeScript package for the host and the TS SDK, one Go package for the
    Go SDK and `landflow-bridge`, and Python through the bridge first.
-4. **Message body.** Recommended: the HTTP binding's JSON; protobuf only if the phase 7 benchmark shows it's worth it.
-5. **Delivery for `Execute`.** Recommended: at most once by default; at least once per node (`idempotent`).
-6. **Secrets over brokers.** Recommended: end-to-end encryption and signing, required.
-7. **MCP exposure.** Recommended: every plugin is in the gateway automatically ("Expose to agents" on by default), and
+4. **Message body.** Decided: the HTTP binding's JSON; protobuf only if the phase 7 benchmark shows it's worth it.
+5. **Delivery for `Execute`.** Decided: at most once by default; at least once per node (`idempotent`).
+6. **Secrets over brokers.** Decided: end-to-end encryption and signing, required.
+7. **MCP exposure.** Decided: every plugin is in the gateway automatically ("Expose to agents" on by default), and
    each plugin also serves its own MCP endpoint by default (token required unless it only listens on loopback).
-8. **Tool shape.** Recommended: one tool per operation; the alternative is one tool per node with resource and operation
+8. **Tool shape.** Decided: one tool per operation; the alternative was one tool per node with resource and operation
    arguments, which agents use less reliably.
-9. **Where the choice is set, and Auto's default.** Recommended: per plugin (Auto, pinned or an allow-list), `balanced` with
+9. **Where the choice is set, and Auto's default.** Decided: per plugin (Auto, pinned or an allow-list), `balanced` with
    spill-over; per-workflow overrides later.
-10. **The pilot.** Recommended: a Twilio node in the messaging plugin, against a fake Twilio server.
-11. **The MCP gateway.** Recommended: agentgateway, as a sidecar of each main, kept in step through its config API. The
-    alternative is IBM ContextForge, which brings a richer registry and admin UI but also its own users, teams,
+10. **The pilot.** Decided: a Twilio node in the messaging plugin, against a fake Twilio server.
+11. **The MCP gateway** (you confirmed it). Decided: agentgateway, as a sidecar of each main, kept in step through its config API. The
+    alternative was IBM ContextForge, which brings a richer registry and admin UI but also its own users, teams,
     credentials, Postgres and Redis.
-12. **Who signs agents in.** Recommended: the instance's identity provider through the gateway (Keycloak in dev), plus
-    Landflow-issued MCP tokens when there's no identity provider. The alternative is Landflow as a full OAuth
+12. **Who signs agents in** (you confirmed it). Decided: the instance's identity provider through the gateway (Keycloak in dev), plus
+    Landflow-issued MCP tokens when there's no identity provider. The alternative was Landflow as a full OAuth
     authorization server, which is much more to build.
