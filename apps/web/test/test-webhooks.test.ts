@@ -2,12 +2,20 @@
  * Test URLs (lib/server/test-webhooks.ts) through the real routes, in regular mode: listening (POST
  * /api/workflows/:id/listen and its SSE stream), the single-shot test webhook, 404s with the hint, the 120 s timeout,
  * Stop, the run using the workflow the editor sent (manual mode), each respond mode, the trigger's authentication,
- * test forms (GET, POST, multi-page, "Form Is Submitted"), and binary uploads. Queue mode: test-webhooks-cluster.test.ts.
+ * test forms (GET, POST, multi-page, "Form Is Submitted"), binary uploads, the MCP Server Trigger's test URL (many
+ * requests per listen, a manual run per tool call, the deadline pushed on), and how test calls are traced. Queue mode:
+ * test-webhooks-cluster.test.ts.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { context, trace } from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { defineNode, definePlugin } from '@landflow/sdk';
 import type { ExecutionEvent, Workflow } from '@landflow/engine';
 import type { ExecutionRecord } from '@/lib/shared/types';
@@ -28,12 +36,16 @@ const { binaryStore } = await import('@/lib/server/binary/access');
 const { readAll } = await import('@/lib/server/binary/store');
 const { isPublicPath } = await import('@/lib/shared/auth-paths');
 const { routePolicy, resourceRule } = await import('@/lib/server/auth/policy');
-const { listenerStream, startListening, TEST_LISTEN_MS } = await import('@/lib/server/test-webhooks');
+const { listenerStream, NOT_LISTENING_HINT, startListening, TEST_LISTEN_MS } = await import('@/lib/server/test-webhooks');
+const { isTracedRequest } = await import('@/lib/server/telemetry/processors');
+const { publishDraft } = await import('@/lib/server/publish');
 const listenRoute = await import('@/app/api/workflows/[id]/listen/route');
 const testHookRoute = await import('@/app/api/webhook-test/[...path]/route');
 const testFormRoute = await import('@/app/form-test/[...path]/route');
 const hookRoute = await import('@/app/api/webhook/[...path]/route');
 const formWaitingRoute = await import('@/app/form/waiting/[id]/route');
+const testMcpRoute = await import('@/app/mcp-test/[...path]/route');
+const mcpRoute = await import('@/app/mcp/[...path]/route');
 
 /** Holds every run that reaches it while closed, until released. */
 const gate = { closed: false, held: [] as Array<() => void> };
@@ -515,5 +527,230 @@ describe('test forms', () => {
     const item = stored(executionId)?.runData.After?.at(-1)?.outputs[0]?.[0];
     expect(item?.json).toMatchObject({ Name: 'Ada', Resume: 'cv.pdf', formMode: 'test' });
     expect(item?.binary?.Resume).toMatchObject({ fileName: 'cv.pdf', mimeType: 'application/pdf', fileSize: 11 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The MCP Server Trigger's test URL
+// ---------------------------------------------------------------------------
+
+type McpHandler = (request: Request, ctx: { params: Promise<{ path: string[] }> }) => Promise<Response>;
+/** A fetch that answers through the /mcp-test/<path> route's handlers. */
+const mcpFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+  const req = new Request(input, init);
+  const segments = new URL(req.url).pathname.split('/').filter(Boolean).slice(1);
+  return (testMcpRoute as unknown as Record<string, McpHandler>)[req.method](req, params({ path: segments }));
+};
+async function mcpClient(path: string, headers: Record<string, string> = {}) {
+  const client = new Client({ name: 'landflow-test', version: '1.0.0' });
+  await client.connect(new StreamableHTTPClientTransport(new URL(`http://test-hooks.test/mcp-test/${path}`), { fetch: mcpFetch, requestInit: { headers } }));
+  return client;
+}
+const resultText = (result: unknown) => ((result as CallToolResult).content[0] as { text: string }).text;
+
+describe('test MCP Server Trigger', () => {
+  /** An MCP Server Trigger with the Calculator tool (and `more` nodes after it). */
+  const tools = (id: string, path: string, extra: Record<string, unknown> = {}, creds?: N['credentials'], more: N[] = [], edges: Array<[string, string]> = []): Workflow => {
+    const workflow = workflowOf(id, [{ name: 'MCP', type: 'core.mcpTrigger', parameters: { path, ...extra }, ...(creds && { credentials: creds }) }, { name: 'Calculator', type: 'core.calculatorTool' }, ...more], edges);
+    return { ...workflow, connections: [...workflow.connections, { id: 'tool', type: 'ai_tool', source: 'Calculator', target: 'MCP', sourceIndex: 0, targetIndex: 0 }] };
+  };
+  const results = (listening: Listening) => listening.events.filter((e) => e.event === 'result').map((e) => e.data as { executionId: string; status: string });
+
+  it('serves the editor’s tools at /mcp-test/<path> while listening; each tool call is a manual run shown live', async () => {
+    expect(isPublicPath('/mcp-test/team/tools')).toBe(true);
+    expect(isPublicPath('/mcp-tester')).toBe(false);
+    // Nobody listens: 404 with the hint.
+    await expect(mcpClient('tm-basic')).rejects.toMatchObject({ code: 404 });
+    const miss = await mcpFetch('http://test-hooks.test/mcp-test/tm-basic', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
+    expect((await miss.json()).error.message).toBe(`No editor is listening on /mcp-test/tm-basic. ${NOT_LISTENING_HINT}`);
+
+    store.saveWorkflow(tools('wf_tm_basic', 'tm-basic', { instructions: 'Saved version' }));
+    const listening = await listen('wf_tm_basic', 'MCP', tools('wf_tm_basic', 'tm-basic', { instructions: 'Editor version' }));
+    const info = await listening.next('listening');
+    expect(info).toMatchObject({ nodeId: 'MCP', kind: 'mcp', path: 'tm-basic', executionId: expect.stringMatching(/^ex_/) });
+    expect(info.method).toBeUndefined();
+    // The production URL serves published workflows only.
+    expect((await mcpRoute.POST(request('/mcp/tm-basic', { method: 'POST', body: '{}' }), params({ path: ['tm-basic'] }))).status).toBe(404);
+
+    // The workflow the editor sent, unsaved changes included; tools/list isn't recorded.
+    const client = await mcpClient('tm-basic');
+    expect(client.getInstructions()).toBe('Editor version');
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['Calculator']);
+    const executions = () => store.listExecutions({ workflowId: 'wf_tm_basic' });
+    expect(executions()).toHaveLength(0);
+
+    const sum = await client.callTool({ name: 'Calculator', arguments: { expression: '6*7' } });
+    expect(sum.isError).toBeFalsy();
+    expect(JSON.parse(resultText(sum))).toMatchObject({ result: 42 });
+    const unknown = await client.callTool({ name: 'nope', arguments: {} });
+    expect(unknown.isError).toBe(true);
+    expect(resultText(unknown)).toMatch(/Unknown tool "nope"/);
+
+    // Each call is its own manual run (`<the listener's id>-<suffix>`), streamed to the editor with its result.
+    await vi.waitFor(() => expect(results(listening)).toHaveLength(2));
+    const [first, second] = results(listening);
+    expect([first.status, second.status]).toEqual(['success', 'error']);
+    expect(first.executionId).toMatch(new RegExp(`^${info.executionId}-`));
+    expect(second.executionId).toMatch(new RegExp(`^${info.executionId}-`));
+    expect(first.executionId).not.toBe(second.executionId);
+    expect(resultText(unknown)).toContain(second.executionId);
+    const started = listening.executionEvents().filter((e) => e.type === 'execution.started');
+    expect(started.map((e) => [e.executionId, (e as { mode?: string }).mode])).toEqual([
+      [first.executionId, 'manual'],
+      [second.executionId, 'manual'],
+    ]);
+    expect(executions().map((e) => e.mode)).toEqual(['manual', 'manual']);
+    expect(stored(first.executionId)).toMatchObject({ workflowId: 'wf_tm_basic', status: 'success' });
+
+    // Still listening (each call pushed its deadline on and told the editor), until Stop.
+    expect(listening.events.filter((e) => e.event === 'listening').length).toBeGreaterThan(1);
+    expect(listening.events.some((e) => e.event === 'timeout' || e.event === 'stopped')).toBe(false);
+    expect((await client.callTool({ name: 'Calculator', arguments: { expression: '1+2' } })).isError).toBeFalsy();
+    await vi.waitFor(() => expect(results(listening)).toHaveLength(3));
+    await client.close();
+    listening.stop();
+    await listening.closed;
+    await expect(mcpClient('tm-basic')).rejects.toMatchObject({ code: 404 });
+  });
+
+  it('listens 120 s past the last request, and times out when none comes', async () => {
+    const started = await startListening(tools('wf_tm_deadline', 'tm-deadline'), 'MCP');
+    if (!started.ok) throw new Error(started.error);
+    // Its clock, run fast: a second left.
+    started.listener.expiresAt = Date.now() + 1_000;
+    const abort = new AbortController();
+    const listening = readEvents(listenerStream(started.listener, abort.signal), abort);
+    expect((await listening.next('listening')).timeoutMs).toBeLessThanOrEqual(1_000);
+    // Requests that start no run (initialize, tools/list) push the deadline on too; the editor hears the new one.
+    const client = await mcpClient('tm-deadline');
+    await client.listTools();
+    await vi.waitFor(() => expect(listening.events.filter((e) => e.event === 'listening')).toHaveLength(2), { timeout: 5_000 });
+    expect(listening.events.at(-1)?.data.timeoutMs).toBeGreaterThan(TEST_LISTEN_MS - 5_000);
+    expect(listening.events.some((e) => e.event === 'timeout')).toBe(false);
+    await client.close();
+    listening.stop();
+    await listening.closed;
+
+    const idle = await startListening(tools('wf_tm_idle', 'tm-idle'), 'MCP');
+    if (!idle.ok) throw new Error(idle.error);
+    idle.listener.expiresAt = Date.now() + 50;
+    const quiet = readEvents(listenerStream(idle.listener, new AbortController().signal));
+    expect((await quiet.next('timeout')).message).toBe('No MCP request arrived within 120 s');
+    await quiet.closed;
+    await expect(mcpClient('tm-idle')).rejects.toMatchObject({ code: 404 });
+  });
+
+  it('checks the trigger’s bearer auth, and keeps one workflow per test URL', async () => {
+    const token = credentials.create({ name: 'Test MCP token', type: 'core.httpBearerAuth', data: { token: 'tm-secret' } });
+    const listening = await listen('wf_tm_auth', 'MCP', tools('wf_tm_auth', 'tm-auth', { authentication: 'bearerAuth' }, { httpBearerAuth: { id: token.id, name: token.name } }));
+    await expect(mcpClient('tm-auth')).rejects.toMatchObject({ code: 401 });
+    await expect(mcpClient('tm-auth', { Authorization: 'Bearer wrong' })).rejects.toMatchObject({ code: 401 });
+    const client = await mcpClient('tm-auth', { Authorization: 'Bearer tm-secret' });
+    expect((await client.callTool({ name: 'Calculator', arguments: { expression: '2+2' } })).isError).toBeFalsy();
+    await client.close();
+    expect(results(listening).map((r) => r.status)).toEqual(['success']);
+
+    const other = await listen('wf_tm_other', 'MCP', tools('wf_tm_other', 'tm-auth'));
+    expect(other.response.status).toBe(409);
+    expect((await other.response.json()).error).toBe('Another workflow (“wf_tm_auth”) is listening on /mcp-test/tm-auth');
+    listening.stop();
+    await listening.closed;
+  });
+
+  it('Stop cancels the tool calls that are going', async () => {
+    gate.closed = true;
+    try {
+      const listening = await listen('wf_tm_stop', 'MCP', tools('wf_tm_stop', 'tm-stop', {}, undefined, [gateNode], [['MCP', 'Gate']]));
+      const client = await mcpClient('tm-stop');
+      const answer = client.callTool({ name: 'Calculator', arguments: { expression: '1+1' } });
+      await vi.waitFor(() => expect(gate.held.length).toBe(1));
+      const runId = listening.executionEvents().find((e) => e.type === 'execution.started')!.executionId;
+      listening.stop();
+      expect((await answer).isError).toBe(true);
+      await vi.waitFor(() => expect(stored(runId)?.status).toBe('canceled'));
+      await client.close();
+    } finally {
+      gate.closed = false;
+      release();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tracing
+// ---------------------------------------------------------------------------
+
+describe('tracing test calls', () => {
+  const spans = new InMemorySpanExporter();
+  beforeAll(() => {
+    context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+    trace.setGlobalTracerProvider(new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter: spans })] }));
+  });
+  afterAll(() => {
+    trace.disable();
+    context.disable();
+  });
+  beforeEach(() => spans.reset());
+  const named = (name: string, workflowId: string) => spans.getFinishedSpans().filter((span) => span.name === name && span.attributes['landflow.workflow.id'] === workflowId);
+
+  it('samples the trigger URLs, production and test alike', () => {
+    for (const method of ['GET', 'POST', 'DELETE']) {
+      expect(isTracedRequest(method, '/api/webhook/orders')).toBe(true);
+      expect(isTracedRequest(method, '/api/webhook-test/orders')).toBe(true);
+    }
+    for (const path of ['/form/signup', '/form-test/signup', '/mcp/tools', '/mcp-test/tools']) {
+      expect(isTracedRequest('POST', path), path).toBe(true);
+      // Showing a form isn't a trigger call.
+      expect(isTracedRequest('GET', path), path).toBe(false);
+    }
+    expect(isTracedRequest('POST', '/api/workflows/wf_1/listen')).toBe(true);
+    expect(isTracedRequest('POST', '/mcp-tester')).toBe(false);
+  });
+
+  it('traces a test call as a trigger.fire with landflow.trigger.test, and the listening as trigger.listen', async () => {
+    const listening = await listen('wf_tt_trace', 'Hook', workflowOf('wf_tt_trace', [hook('tt-trace'), setX('traced')], [['Hook', 'Set']]));
+    const { executionId, listenerId } = await listening.next('listening');
+    expect((await postJson('tt-trace', {})).status).toBe(200);
+    await listening.closed;
+    await vi.waitFor(() => expect(named('trigger.listen', 'wf_tt_trace')).toHaveLength(1));
+    const [fire] = named('trigger.fire', 'wf_tt_trace');
+    expect(fire.attributes).toMatchObject({ 'landflow.trigger.source': 'webhook', 'landflow.trigger.test': true, 'landflow.node.name': 'Hook' });
+    // The run is inside it, as on the production URL.
+    const execute = spans.getFinishedSpans().find((span) => span.name === 'workflow.execute' && span.parentSpanContext?.spanId === fire.spanContext().spanId);
+    expect(execute).toBeDefined();
+    expect(named('trigger.listen', 'wf_tt_trace')[0].attributes).toMatchObject({
+      'landflow.trigger.source': 'webhook',
+      'landflow.trigger.test': true,
+      'landflow.listener.id': listenerId,
+      'landflow.execution.id': executionId,
+      'landflow.node.name': 'Hook',
+      'landflow.listen.outcome': 'received',
+    });
+
+    // Production: the same span without the attribute.
+    store.saveWorkflow(workflowOf('wf_tt_prod', [hook('tt-prod')], []));
+    await publishDraft('wf_tt_prod');
+    expect((await hookRoute.POST(request('/api/webhook/tt-prod', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }), params({ path: ['tt-prod'] }))).status).toBe(200);
+    const [production] = named('trigger.fire', 'wf_tt_prod');
+    expect(production.attributes['landflow.trigger.source']).toBe('webhook');
+    expect(production.attributes['landflow.trigger.test']).toBeUndefined();
+  });
+
+  it('ends an MCP listen span with its outcome and how many tool calls it took', async () => {
+    const workflow = workflowOf('wf_tt_mcp', [{ name: 'MCP', type: 'core.mcpTrigger', parameters: { path: 'tt-mcp' } }, { name: 'Calculator', type: 'core.calculatorTool' }], []);
+    workflow.connections.push({ id: 'tool', type: 'ai_tool', source: 'Calculator', target: 'MCP', sourceIndex: 0, targetIndex: 0 });
+    const listening = await listen('wf_tt_mcp', 'MCP', workflow);
+    const client = await mcpClient('tt-mcp');
+    await client.callTool({ name: 'Calculator', arguments: { expression: '3*3' } });
+    await client.callTool({ name: 'Calculator', arguments: { expression: '4*4' } });
+    await client.close();
+    await vi.waitFor(() => expect(listening.events.filter((e) => e.event === 'result')).toHaveLength(2));
+    listening.stop();
+    await listening.closed;
+    await vi.waitFor(() => expect(named('trigger.listen', 'wf_tt_mcp')).toHaveLength(1));
+    expect(named('trigger.listen', 'wf_tt_mcp')[0].attributes).toMatchObject({ 'landflow.trigger.source': 'mcp', 'landflow.listen.outcome': 'closed', 'landflow.listen.calls': 2 });
+    const fires = named('trigger.fire', 'wf_tt_mcp');
+    expect(fires).toHaveLength(2);
+    expect(fires.every((span) => span.attributes['landflow.trigger.source'] === 'mcp' && span.attributes['landflow.trigger.test'] === true)).toBe(true);
   });
 });

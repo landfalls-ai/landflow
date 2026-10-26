@@ -3,8 +3,8 @@
  * field, details as JSON text) or JSON (an array of events). Streamed page by page so a large export doesn't sit in
  * memory; capped at `MAX_EXPORT` events. CSV cells that a spreadsheet would run as a formula are prefixed with `'`.
  */
-import type { AuditEvent, AuditFilters } from '../../shared/audit';
-import { queryEvents } from './store';
+import type { AuditEvent } from '../../shared/audit';
+import { queryEvents, type StoreFilters } from './store';
 
 export const MAX_EXPORT = 100_000;
 const PAGE = 1_000;
@@ -29,8 +29,12 @@ export const CSV_COLUMNS = [
   'target_type',
   'target_id',
   'target_name',
+  'project_id',
   'summary',
   'details',
+  'chain_seq',
+  'prev_hash',
+  'hash',
 ] as const;
 
 function cell(value: unknown): string {
@@ -61,14 +65,18 @@ export function csvRow(event: AuditEvent): string {
     target_type: event.target?.type,
     target_id: event.target?.id,
     target_name: event.target?.name,
+    project_id: event.projectId,
     summary: event.summary,
     details: event.details,
+    chain_seq: event.chain?.seq,
+    prev_hash: event.chain?.prevHash,
+    hash: event.chain?.hash,
   };
   return CSV_COLUMNS.map((column) => cell(values[column])).join(',');
 }
 
 /** The matching events, page by page (newest first), at most `max`. */
-export function* exportEvents(filters: AuditFilters, max = MAX_EXPORT): Generator<AuditEvent> {
+export function* exportEvents(filters: StoreFilters, max = MAX_EXPORT): Generator<AuditEvent> {
   let cursor: string | undefined;
   let count = 0;
   do {
@@ -82,7 +90,7 @@ export function* exportEvents(filters: AuditFilters, max = MAX_EXPORT): Generato
 }
 
 /** A streamed CSV or JSON body. `onDone` gets how many events went out. */
-export function exportStream(format: 'csv' | 'json', filters: AuditFilters, onDone?: (count: number) => void): ReadableStream<Uint8Array> {
+export function exportStream(format: 'csv' | 'json', filters: StoreFilters, onDone?: (count: number) => void): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const events = exportEvents(filters);
   let count = 0;

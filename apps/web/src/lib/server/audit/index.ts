@@ -28,6 +28,7 @@ import { SECRET_KEY } from '../telemetry/config';
 import { logger } from '../telemetry/logger';
 import { auditRequestContext } from './context';
 import { emitAuditLog } from './otel';
+import { targetProject } from './project';
 import { getAuditSettings } from './settings';
 import { insertEvent } from './store';
 
@@ -46,6 +47,8 @@ export interface AuditInput {
   summary?: string;
   /** Flat ids, names, counts and flags. Keys that look secret are dropped; values are clipped. */
   details?: Record<string, unknown>;
+  /** The event's project; default: the target's (./project), null for none. */
+  project?: string | null;
   actor?: AuditActorInput;
   /** The generic layer's request line (domain events take the method and route from the request context). */
   status?: number;
@@ -124,6 +127,13 @@ export function recordAudit(input: AuditInput): AuditEvent | undefined {
     const label = AUDIT_ACTIONS[input.action] ?? input.action;
     const target = input.target && { type: input.target.type, ...(input.target.id && { id: clip(input.target.id) }), ...(input.target.name && { name: clip(input.target.name) }) };
     const details = cleanDetails(input.details);
+    // The request's own resource was looked up before the handler ran (it may be gone now); anything else is looked up here.
+    const projectId =
+      input.project !== undefined
+        ? (input.project ?? undefined)
+        : ctx?.target && target?.type === ctx.target.type && target.id === ctx.target.id
+          ? ctx.target.projectId
+          : targetProject(target, input.details);
     const event: AuditEvent = {
       id: newAuditId(at.getTime()),
       at: at.toISOString(),
@@ -139,6 +149,7 @@ export function recordAudit(input: AuditInput): AuditEvent | undefined {
       ...((ctx?.route ?? ctx?.path) && { route: ctx?.route ?? ctx?.path }),
       ...(input.status !== undefined && { status: input.status }),
       ...(target && { target }),
+      ...(projectId && { projectId }),
       summary: clip(input.summary ?? (target?.name ? `${label}: ${target.name}` : label)),
       ...(details && { details }),
     };

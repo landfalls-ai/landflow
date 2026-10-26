@@ -3,7 +3,8 @@
  * Workflow settings (n8n's Workflow settings dialog): error workflow, time
  * zone, timeout, which workflows may call this one, which executions are
  * kept, concurrency, automatic retries and AI usage limits. This dialog only edits and saves
- * `workflow.settings`; the engine and runner apply them.
+ * `workflow.settings`; the engine and runner apply them. Its Governance section (four-eyes publishing, allowed nodes)
+ * is the workflow's policy, saved on its own route first (./workflow-governance.tsx).
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Settings2 } from 'lucide-react';
@@ -15,6 +16,7 @@ import { Button } from '../ui/button';
 import { Input, Select } from '../ui/inputs';
 import { NotifyOnFailure } from './notify-on-failure';
 import { useEditor } from './store';
+import { useWorkflowGovernance, WorkflowGovernanceSection } from './workflow-governance';
 
 const ERROR_TRIGGER = 'core.errorTrigger';
 
@@ -65,6 +67,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
   );
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>();
   const [saving, setSaving] = useState(false);
+  const governance = useWorkflowGovernance(workflowId);
   const zones = useMemo(timeZones, []);
   const browserZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
 
@@ -132,8 +135,10 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
     if (settings.concurrencyOverflow === 'queue') delete settings.concurrencyOverflow;
     if (!limited || settings.concurrencyOverflow === 'skip') delete settings.concurrencyQueueSize;
     if (!settings.retryMaxAttempts) delete settings.retryBaseDelaySeconds;
-    useEditor.getState().setSettings(settings);
     setSaving(true);
+    // The workflow's policy first: the save's governance warnings then follow it.
+    if (!(await governance.save())) return setSaving(false);
+    useEditor.getState().setSettings(settings);
     const ok = await onSave();
     setSaving(false);
     if (ok) onClose();
@@ -446,6 +451,8 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
             Input and output tokens of every model call (sub-workflows included), cost estimated from the price table in Settings. A run that goes over stops with an error; the day is the instance time zone. Empty or 0: no cap.
           </p>
         </div>
+
+        <WorkflowGovernanceSection state={governance} />
       </div>
     </Dialog>
   );

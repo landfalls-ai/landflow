@@ -3,17 +3,20 @@
  * RFC 5424 syslog over UDP, TCP (octet counting and newline framing) and TLS; HTTP JSON lines signed with HMAC; the
  * Datadog and Elasticsearch presets; Splunk HEC. Then the durable outbox: events queued per destination in the
  * event's transaction, delivered in batches, retried with backoff after a failure, "Send test event", and secrets
- * that never come back from the API.
+ * that never come back from the API. Last, mTLS: syslog over TLS and HTTPS receivers that require a client certificate
+ * (throwaway CA, server and client certificates made here, lib/server/auth/x509.ts), the destination API checking and
+ * sealing the client key, and "Send test event" through it.
  */
-import { createHmac } from 'node:crypto';
+import { createHmac, createPrivateKey } from 'node:crypto';
 import { createSocket } from 'node:dgram';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { createServer as createHttpServer, type IncomingMessage, type Server } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createServer as createTlsServer } from 'node:tls';
+import { createServer as createTlsServer, type TLSSocket } from 'node:tls';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { AuditDestination, AuditEvent } from '@/lib/shared/audit';
 
@@ -35,6 +38,7 @@ const destinationsRoute = await import('@/app/api/settings/audit/destinations/ro
 const destinationRoute = await import('@/app/api/settings/audit/destinations/[id]/route');
 const testRoute = await import('@/app/api/settings/audit/destinations/[id]/test/route');
 const settingsRoute = await import('@/app/api/settings/audit/route');
+const { createCertificate } = await import('@/lib/server/auth/x509');
 
 registry.registerBuiltin(corePlugin);
 
@@ -358,5 +362,129 @@ describe('outbox', () => {
     expect(view.destinations.some((d) => d.id === destination.id)).toBe(false);
     expect(view.stored).toBeGreaterThan(0);
     expect(view.settings.retentionDays).toBe(365);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mTLS: receivers that require a client certificate
+// ---------------------------------------------------------------------------
+
+describe('mTLS (client certificates)', () => {
+  const ca = createCertificate({ commonName: 'TMP SIEM test CA', ca: true });
+  const server = createCertificate({ commonName: 'localhost', issuer: ca, altNames: ['127.0.0.1', 'localhost'], usage: ['server'] });
+  const client = createCertificate({ commonName: 'landflow-audit-client', organization: 'Landflow', issuer: ca, usage: ['client'] });
+  const rogueCa = createCertificate({ commonName: 'TMP rogue CA', ca: true });
+  const rogue = createCertificate({ commonName: 'rogue-client', issuer: rogueCa, usage: ['client'] });
+  const encryptedKey = createPrivateKey(client.key).export({ type: 'pkcs8', format: 'pem', cipher: 'aes-256-cbc', passphrase: 'key-passphrase' }) as string;
+  const peerName = (socket: TLSSocket) => socket.getPeerCertificate()?.subject?.CN as string | undefined;
+
+  /** Syslog over TLS that only takes clients with a certificate from `ca`. */
+  async function mtlsSyslogReceiver() {
+    const chunks: string[] = [];
+    const peers: Array<string | undefined> = [];
+    const tlsServer = createTlsServer({ key: server.key, cert: server.cert, ca: [ca.cert], requestCert: true, rejectUnauthorized: true }, (socket) => {
+      peers.push(peerName(socket));
+      socket.on('data', (c: Buffer) => chunks.push(c.toString('utf8')));
+    });
+    tlsServer.on('tlsClientError', () => {});
+    await new Promise<void>((resolve) => tlsServer.listen(0, '127.0.0.1', resolve));
+    closers.push(() => new Promise<void>((resolve) => tlsServer.close(() => resolve())));
+    return { text: () => chunks.join(''), peers, port: (tlsServer.address() as { port: number }).port };
+  }
+
+  /** An HTTPS endpoint that only takes clients with a certificate from `ca`. */
+  async function mtlsHttpsReceiver() {
+    const received: Array<Received & { peer?: string }> = [];
+    const httpsServer = createHttpsServer({ key: server.key, cert: server.cert, ca: [ca.cert], requestCert: true, rejectUnauthorized: true }, (req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        received.push({ method: req.method ?? '', url: req.url ?? '', headers: req.headers, body: Buffer.concat(chunks).toString('utf8'), peer: peerName(req.socket as TLSSocket) });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{}');
+      });
+    });
+    httpsServer.on('tlsClientError', () => {});
+    await new Promise<void>((resolve) => httpsServer.listen(0, '127.0.0.1', resolve));
+    closers.push(() => new Promise<void>((resolve) => httpsServer.close(() => resolve())));
+    return { received, url: `https://127.0.0.1:${(httpsServer.address() as { port: number }).port}` };
+  }
+
+  it('syslog over TLS presents the client certificate; without one, or with an untrusted one, the receiver refuses', async () => {
+    const receiver = await mtlsSyslogReceiver();
+    const base = { host: '127.0.0.1', port: receiver.port, protocol: 'tls' as const, framing: 'octet-counting' as const, ca: ca.cert };
+    await deliver({ kind: 'syslog', config: { ...base, clientCert: client.cert, clientKey: client.key } }, [event()]);
+    await until(() => octetFrames(receiver.text()).length === 1);
+    expect(RFC5424.test(octetFrames(receiver.text())[0])).toBe(true);
+    expect(receiver.peers).toEqual(['landflow-audit-client']);
+    // An encrypted key with its passphrase.
+    await deliver({ kind: 'syslog', config: { ...base, clientCert: client.cert, clientKey: encryptedKey, clientKeyPassphrase: 'key-passphrase' } }, [event()]);
+    await until(() => octetFrames(receiver.text()).length === 2);
+
+    await expect(deliver({ kind: 'syslog', config: base }, [event()])).rejects.toThrow(/wants a client certificate \(mTLS\)/);
+    await expect(deliver({ kind: 'syslog', config: { ...base, clientCert: rogue.cert, clientKey: rogue.key } }, [event()])).rejects.toThrow(/client certificate/);
+    expect(octetFrames(receiver.text())).toHaveLength(2);
+  });
+
+  it('HTTPS destinations (JSON lines, Datadog, Elasticsearch, Splunk HEC) present it too', async () => {
+    const receiver = await mtlsHttpsReceiver();
+    const tls = { ca: ca.cert, clientCert: client.cert, clientKey: client.key };
+    await deliver({ kind: 'http', config: { preset: 'generic', url: receiver.url, ...tls } }, [event()]);
+    await deliver({ kind: 'http', config: { preset: 'datadog', url: receiver.url, apiKey: 'dd', ...tls } }, [event()]);
+    await deliver({ kind: 'splunk', config: { url: receiver.url, token: 'tok', ...tls } }, [event()]);
+    expect(receiver.received.map((r) => [r.url, r.peer])).toEqual([
+      ['/', 'landflow-audit-client'],
+      ['/', 'landflow-audit-client'],
+      ['/services/collector/event', 'landflow-audit-client'],
+    ]);
+    await expect(deliver({ kind: 'http', config: { preset: 'generic', url: receiver.url, ca: ca.cert } }, [event()])).rejects.toThrow(/wants a client certificate|client certificate/);
+    expect(receiver.received).toHaveLength(3);
+  });
+
+  it('the API checks the certificate and key, seals the key, keeps it on PATCH, and "Send test event" uses it', async () => {
+    const receiver = await mtlsSyslogReceiver();
+    const config = { host: '127.0.0.1', port: receiver.port, protocol: 'tls', ca: ca.cert, clientCert: client.cert };
+    const create = (extra: Record<string, unknown>) => destinationsRoute.POST(req('POST', '/api/settings/audit/destinations', { name: 'TMP mTLS syslog', kind: 'syslog', config: { ...config, ...extra } }));
+
+    const mismatch = await create({ clientKey: rogue.key });
+    expect(mismatch.status).toBe(400);
+    expect((await mismatch.json()).error).toBe('Client certificate: The private key doesn’t belong to the certificate');
+    expect((await (await create({})).json()).error).toBe('Enter the client certificate’s private key');
+    expect((await (await create({ clientKey: encryptedKey })).json()).error).toBe('Client certificate: The private key is encrypted: enter its passphrase');
+    expect((await (await create({ clientKey: client.key, ca: 'not a certificate' })).json()).error).toMatch(/CA certificate isn’t a PEM certificate/);
+
+    const created = await create({ clientKey: encryptedKey, clientKeyPassphrase: 'key-passphrase' });
+    expect(created.status).toBe(201);
+    const { destination } = (await created.json()) as { destination: AuditDestination };
+    expect(destination.config.clientCert).toContain('BEGIN CERTIFICATE');
+    expect(destination.config).not.toHaveProperty('clientKey');
+    expect(destination.config).not.toHaveProperty('clientKeyPassphrase');
+    expect(destination.secretsSet).toEqual(expect.arrayContaining(['clientKey', 'clientKeyPassphrase']));
+    expect(destination.clientCertificate).toMatchObject({ subject: expect.stringContaining('CN=landflow-audit-client'), issuer: expect.stringContaining('CN=TMP SIEM test CA') });
+    // Sealed at rest: neither the key nor its passphrase is in the row.
+    const stored = database().get<{ data: string }>('SELECT data FROM audit_destinations WHERE id = ?', destination.id)!.data;
+    expect(stored).not.toContain('ENCRYPTED PRIVATE KEY');
+    expect(stored).not.toContain('key-passphrase');
+
+    const test = async () => (await (await testRoute.POST(req('POST', `/api/settings/audit/destinations/${destination.id}/test`), params({ id: destination.id }))).json()) as { ok: boolean; message?: string };
+    expect(await test()).toMatchObject({ ok: true });
+    await until(() => octetFrames(receiver.text()).length === 1);
+    expect(octetFrames(receiver.text())[0]).toContain('audit.test');
+    expect(receiver.peers).toEqual(['landflow-audit-client']);
+
+    // PATCH without the key keeps it (and its passphrase).
+    const patched = await destinationRoute.PATCH(req('PATCH', `/api/settings/audit/destinations/${destination.id}`, { config: { ...destination.config } }), params({ id: destination.id }));
+    expect(patched.status).toBe(200);
+    expect(await test()).toMatchObject({ ok: true });
+    // Without the certificate the key goes too, and the receiver refuses.
+    const { clientCert: _dropped, ...withoutCert } = destination.config;
+    const dropped = (await (await destinationRoute.PATCH(req('PATCH', `/api/settings/audit/destinations/${destination.id}`, { config: withoutCert }), params({ id: destination.id }))).json()) as { destination: AuditDestination };
+    expect(dropped.destination.secretsSet).not.toContain('clientKey');
+    expect(dropped.destination.clientCertificate).toBeUndefined();
+    const refused = await test();
+    expect(refused.ok).toBe(false);
+    expect(refused.message).toMatch(/wants a client certificate/);
+    resetOutboxBackoff();
+    await destinationRoute.DELETE(req('DELETE', `/api/settings/audit/destinations/${destination.id}`), params({ id: destination.id }));
   });
 });

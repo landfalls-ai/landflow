@@ -1,5 +1,6 @@
 /**
- * `$secrets` in credential fields. A credential field whose value is an expression that mentions `$secrets`
+ * `$secrets` in credential fields (and, when Settings → External secrets allows it, in node parameters: the end of
+ * this file). A credential field whose value is an expression that mentions `$secrets`
  * (`{{ $secrets.vault.db.password }}`, `Bearer {{ $secrets.op['API'].credential }}`) is resolved right before the
  * credential is used: the referenced secrets are read (./service.ts, with its short cache), the expression is
  * evaluated by the engine's resolver with only `$secrets` available, and the result goes to the node. The saved
@@ -9,9 +10,10 @@
  * that don't use external secrets behave exactly as before.
  */
 import type { JsonObject } from '@landflow/protocol';
-import { ExpressionError, ExpressionResolver, hasSecretReference, secretReferences, type SecretReference, type SecretValues } from '@landflow/engine';
+import { collectSecretReferences, ExpressionError, ExpressionResolver, formatSecretReference, hasSecretReference, secretParameterPaths, secretReferences, type SecretReference, type SecretValues } from '@landflow/engine';
 import { rememberSecretValues } from './redact';
 import { externalSecrets, SecretsError } from './service';
+import { PARAMETERS_NOT_ALLOWED, secretsAllowedInParameters } from './settings';
 
 /** Every string in `value` (deeply) that references `$secrets`, with its path. */
 function referencing(value: unknown, path: string[] = [], out: Array<{ path: string[]; text: string }> = []) {
@@ -47,6 +49,10 @@ export async function fetchSecrets(references: SecretReference[]): Promise<Secre
   );
   for (const reference of references) {
     const value = values[reference.provider]?.[reference.name];
+    // A key the JSON secret doesn't have would read as undefined and send an empty value: name it instead.
+    if (reference.key !== undefined && value && typeof value === 'object' && !Object.hasOwn(value, reference.key)) {
+      throw new SecretsError(`External secret ${formatSecretReference({ provider: reference.provider, name: reference.name })} has no key “${reference.key}”`, 404);
+    }
     // The key used, or the whole secret when the field takes it all.
     rememberSecretValues(reference.key !== undefined && value && typeof value === 'object' ? value[reference.key] : value);
   }
@@ -97,4 +103,51 @@ export async function resolveSecretsInRecord(record: Record<string, JsonObject> 
   const out: Record<string, JsonObject> = {};
   for (const [name, data] of Object.entries(record)) out[name] = await resolveSecretsIn(data);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Node parameters
+// ---------------------------------------------------------------------------
+
+/**
+ * `$secrets` in node parameters (the engine's `loadSecrets`): the referenced secrets when Settings → External secrets
+ * allows it (“Allow in node parameters”), else a SecretsError that says how to allow it. Values are cached and
+ * remembered for redaction like credential fields' ones.
+ */
+export async function loadParameterSecrets(references: SecretReference[]): Promise<SecretValues> {
+  if (!secretsAllowedInParameters()) throw new SecretsError(PARAMETERS_NOT_ALLOWED, 403);
+  return fetchSecrets(references);
+}
+
+/** For resolvers outside the engine (polls, app webhook registration): `secrets` for these parameters, or undefined. */
+export async function parameterSecrets(parameters: unknown, skip?: ReadonlySet<string>): Promise<SecretValues | undefined> {
+  const references = collectSecretReferences(parameters, skip);
+  return references.length ? loadParameterSecrets(references) : undefined;
+}
+
+/** Resolvers outside the engine: remember what the parameters that read a secret resolved to, so they are redacted too. */
+export function rememberResolvedParameters(raw: unknown, resolved: unknown, skip?: ReadonlySet<string>): void {
+  for (const path of secretParameterPaths(raw, skip)) {
+    rememberSecretValues(
+      path.reduce<unknown>((value, key) => (value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined), resolved),
+      { lines: false },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Settings Landflow itself uses (OAuth2 Connect, agents, alerts, source control)
+// ---------------------------------------------------------------------------
+
+/**
+ * A settings object with `$secrets` resolved in the named string fields (all of them when `fields` is absent), for
+ * what the host itself calls with a credential's values: the OAuth2 Connect flow's client fields, agents' models and
+ * channels, alert channels, the source control token. Same cache and redaction as credential fields; the same object
+ * when nothing references a secret.
+ */
+export async function resolveSecretFields<T extends object>(settings: T, label: string, fields?: readonly (keyof T & string)[]): Promise<T> {
+  const picked = fields ? Object.fromEntries(fields.filter((f) => hasSecretReference(settings[f])).map((f) => [f, settings[f]])) : (settings as Record<string, unknown>);
+  if (!usesSecrets(picked)) return settings;
+  const resolved = await resolveSecretsIn(picked as JsonObject, label);
+  return { ...settings, ...resolved };
 }

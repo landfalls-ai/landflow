@@ -14,6 +14,7 @@ import {
   type AgentSummary,
   type SessionSummary,
 } from '../../shared/agents';
+import { ConfigFile } from '../config-store';
 import { singleton } from '../singleton';
 import { store } from '../store';
 
@@ -90,7 +91,8 @@ class AgentStore {
   private readonly agentsDir = join(store.dir, 'agents');
   private readonly sessionsDir = join(store.dir, 'agent-sessions');
   private readonly memoryDir = join(store.dir, 'agent-memory');
-  private readonly channelsPath = join(store.dir, 'agent-channels.json');
+  /** Channel poll state: agent-channels.json, or its `config_files` row in queue mode (../config-store.ts). */
+  private readonly channels = new ConfigFile<Record<string, JsonObject>>('agent-channels.json', { dir: () => store.dir });
   private agents = new Map<string, Agent>();
   /** Session summaries per agent, newest first; full sessions are read from disk. */
   private sessions = new Map<string, SessionSummary[]>();
@@ -242,14 +244,14 @@ class AgentStore {
   // ---- channel poll state (e.g. the Telegram update offset) -------------
 
   channelState(key: string): JsonObject | undefined {
-    return readJson<Record<string, JsonObject>>(this.channelsPath)?.[key];
+    return this.channels.read()?.[key];
   }
 
   setChannelState(key: string, state: JsonObject | undefined) {
-    const all = readJson<Record<string, JsonObject>>(this.channelsPath) ?? {};
+    const all = { ...this.channels.read() };
     if (state) all[key] = state;
     else delete all[key];
-    atomicWrite(this.channelsPath, all);
+    this.channels.write(all);
   }
 }
 

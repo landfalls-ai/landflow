@@ -1,20 +1,25 @@
 'use client';
 /**
  * /templates — the templates library: search, categories, and where templates come from (built in, saved on this
- * instance, and a remote n8n-compatible library when LANDFLOW_TEMPLATES_URL is set). `?folder=` carries through to
- * "Use template", so a template picked from an empty folder lands in it. Import adds a template file someone exported.
+ * instance, and a remote n8n-compatible library when LANDFLOW_TEMPLATES_URL is set; 30 at a time, "Load more"). The
+ * project picker (`?project=`, else the project worked in last) shows that project's saved templates and the
+ * instance-wide ones; "All my projects" every one the viewer sees. `?folder=` and the project carry through to "Use
+ * template", so a template picked from an empty folder lands in it. Import adds a template file someone exported.
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { FileUp, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { TEMPLATE_CATEGORIES, type TemplateDetail, type TemplateSource } from '@/lib/shared/templates';
 import { cn } from '@/lib/utils';
+import { useViewer } from '@/components/auth/viewer';
+import { rememberedProject, rememberProject } from '@/components/projects/current-project';
+import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Input } from '@/components/ui/inputs';
+import { Input, Select } from '@/components/ui/inputs';
 import { TemplateCard } from './template-card';
 import { useNodeTypeMap, useTemplateList } from './use-templates';
 
@@ -25,15 +30,15 @@ const SOURCES: Array<{ id?: TemplateSource; label: string }> = [
   { id: 'remote', label: 'Remote' },
 ];
 
-/** Import a template file (from "Export" on another instance); the new template opens. */
-export function useTemplateImport(onImported: (template: TemplateDetail) => void) {
+/** Import a template file (from "Export" on another instance) into `projectId` (else the server's default); the new template opens. */
+export function useTemplateImport(onImported: (template: TemplateDetail) => void, projectId?: string) {
   const picker = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const importFile = async (file?: File) => {
     if (!file) return;
     setImporting(true);
     try {
-      const { template } = await api<{ template: TemplateDetail }>('/api/templates', { method: 'POST', json: { data: await file.text() } });
+      const { template } = await api<{ template: TemplateDetail }>('/api/templates', { method: 'POST', json: { data: await file.text(), ...(projectId && { projectId }) } });
       toast.success(`Imported “${template.name}”`);
       onImported(template);
     } catch (e) {
@@ -50,21 +55,37 @@ export function useTemplateImport(onImported: (template: TemplateDetail) => void
 export function TemplateLibrary() {
   const router = useRouter();
   const params = useSearchParams();
+  const viewer = useViewer();
+  const { projects } = useProjects();
   const folder = params.get('folder') ?? undefined;
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<string | undefined>(params.get('category') ?? undefined);
   const [source, setSource] = useState<TemplateSource>();
-  const { listing, error, loading, reload } = useTemplateList(query, category, source);
+  // The project: `?project=`, else the one worked in last (once it's known to be one the viewer sees).
+  const [project, setProject] = useState<string | undefined>(params.get('project') ?? undefined);
+  useEffect(() => {
+    if (project || params.get('project') || !projects) return;
+    const last = rememberedProject();
+    if (last && projects.some((p) => p.id === last)) setProject(last);
+  }, [projects, project, params]);
+  const known = project && projects && !projects.some((p) => p.id === project) ? undefined : project;
+  const { listing, error, loading, reload, loadMore, loadingMore } = useTemplateList(query, category, source, known);
   const types = useNodeTypeMap();
   const importer = useTemplateImport((t) => {
     reload();
     router.push(`/templates/${t.id}`);
-  });
+  }, known);
+  const pick = (id: string) => {
+    setProject(id || undefined);
+    rememberProject(id || undefined);
+  };
 
   const templates = listing?.templates ?? [];
   const remote = listing?.remote;
   const sources = SOURCES.filter((s) => s.id !== 'remote' || remote?.enabled);
-  const href = (id: string) => `/templates/${encodeURIComponent(id)}${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`;
+  const carried = new URLSearchParams({ ...(folder && { folder }), ...(known && { project: known }) }).toString();
+  const href = (id: string) => `/templates/${encodeURIComponent(id)}${carried ? `?${carried}` : ''}`;
+  const current = projects?.find((p) => p.id === known);
 
   return (
     <>
@@ -86,6 +107,18 @@ export function TemplateLibrary() {
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-t3" />
             <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search templates, apps, nodes…" className="pl-9" aria-label="Search templates" />
           </div>
+          {(projects?.length ?? 0) > 0 && (
+            <div className="w-[200px]">
+              <Select value={known ?? ''} onChange={(e) => pick(e.target.value)} aria-label="Project" className="h-9">
+                <option value="">All my projects</option>
+                {projects?.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {projectLabel(p, viewer?.id)}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
           <div role="tablist" aria-label="Source" className="flex w-fit items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
             {sources.map((s) => (
               <button
@@ -113,6 +146,11 @@ export function TemplateLibrary() {
           ))}
         </div>
 
+        {current && (
+          <p className="text-[12px] text-t3">
+            Saved templates of {projectLabel(current, viewer?.id)} and the instance-wide ones; built-in and remote templates show the nodes this project allows. Workflows you create go into this project.
+          </p>
+        )}
         {folder && <p className="text-[12px] text-t3">The workflow you create goes into the folder you came from.</p>}
         {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
         {remote?.error && (
@@ -127,6 +165,14 @@ export function TemplateLibrary() {
             {templates.map((t, i) => (
               <TemplateCard key={t.id} template={t} types={types} index={i} href={href(t.id)} remoteLabel={remote?.label} />
             ))}
+          </div>
+        )}
+        {listing && remote?.hasMore && (
+          <div className="flex justify-center">
+            <Button size="sm" onClick={() => void loadMore()} loading={loadingMore}>
+              Load more from {remote.label ?? 'the remote library'}
+              {remote.total !== undefined && <span className="text-t3"> ({templates.filter((t) => t.source === 'remote').length} of {remote.total})</span>}
+            </Button>
           </div>
         )}
         {listing && !templates.length && !loading && (

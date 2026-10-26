@@ -8,9 +8,9 @@ import { createHmac } from 'node:crypto';
 import type { PublishRequestView } from '../../shared/governance';
 import { mailConfigured, sendMail } from '../auth/mail';
 import { getUser, listUsers } from '../auth/users';
+import { channelConfigWithSecrets, telegramCredential } from '../alerts/channels';
 import { publicUrl } from '../alerts/message';
 import { alertStore, emailAddresses } from '../alerts/store';
-import { credentials } from '../credentials/vault';
 import { logger } from '../telemetry/logger';
 
 const TIMEOUT_MS = 10_000;
@@ -50,11 +50,18 @@ async function post(url: string, body: string, headers: Record<string, string>):
 }
 
 /** Send through one alert channel (Settings → Alerts). */
-async function sendThroughChannel(channelId: string, request: PublishRequestView, notice: RequestNotice) {
+function sendThroughChannel(channelId: string, request: PublishRequestView, notice: RequestNotice) {
+  const { subject, text } = noticeText(request, notice);
+  return sendNotice(channelId, { subject, text, event: `publish_request.${notice}`, payload: { request, url: requestUrl(request) } });
+}
+
+/** One notice through an alert channel: a signed webhook gets `{ event, subject, text, ...payload, at }`. Promotion requests use it too. */
+export async function sendNotice(channelId: string, notice: { subject: string; text: string; event: string; payload: Record<string, unknown> }) {
   const channel = alertStore.channelForSending(channelId);
   if (!channel) return;
-  const { subject, text } = noticeText(request, notice);
-  const { config } = channel;
+  const { subject, text, event } = notice;
+  // Webhook URLs, the signing secret and the Telegram credential may read $secrets (lib/server/alerts/channels.ts).
+  const config = await channelConfigWithSecrets(channel);
   switch (channel.kind) {
     case 'email':
       if (!mailConfigured()) throw new Error('Email is not configured (LANDFLOW_SMTP_HOST)');
@@ -65,16 +72,16 @@ async function sendThroughChannel(channelId: string, request: PublishRequestView
       return;
     case 'webhook': {
       if (!config.url) return;
-      const body = JSON.stringify({ event: `publish_request.${notice}`, subject, text, request, url: requestUrl(request), at: new Date().toISOString() });
+      const body = JSON.stringify({ event, subject, text, ...notice.payload, at: new Date().toISOString() });
       const timestamp = String(Math.floor(Date.now() / 1000));
-      const headers: Record<string, string> = { 'x-landflow-event': `publish_request.${notice}`, 'x-landflow-timestamp': timestamp };
+      const headers: Record<string, string> = { 'x-landflow-event': event, 'x-landflow-timestamp': timestamp };
       if (config.secret) headers['x-landflow-signature'] = `sha256=${createHmac('sha256', config.secret).update(`${timestamp}.${body}`).digest('hex')}`;
       await post(config.url, body, headers);
       return;
     }
     case 'telegram': {
       if (!config.credentialId || !config.chatId) return;
-      const data = credentials.dataFor({ id: config.credentialId, name: `of channel "${channel.name}"` }, 'messaging.telegramApi');
+      const data = await telegramCredential(channel);
       const token = String(data.accessToken ?? '').trim();
       if (!token) return;
       const base = String(data.baseUrl || 'https://api.telegram.org').replace(/\/+$/, '');

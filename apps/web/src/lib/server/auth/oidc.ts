@@ -11,9 +11,13 @@
  *
  * ID tokens are verified here (signature against the provider's JWKS, issuer, audience, expiry, nonce) with
  * node:crypto, without a JOSE library.
+ *
+ * The pending sign-in (PKCE verifier, nonce, where to go next) lives in memory, or in queue mode in Valkey (sealed with
+ * the encryption key, 10 minutes, taken once), so the provider may send the browser back to any main.
  */
 import { createHash, createHmac, createPublicKey, timingSafeEqual, verify as verifySignature, constants, type JsonWebKey, type KeyObject } from 'node:crypto';
 import { ASSIGNABLE_ROLES, type AssignableRole } from '../../shared/auth';
+import { clusterActive, coordinator } from '../cluster/state';
 import { singleton } from '../singleton';
 import { randomToken } from './passwords';
 import { createUser, findUserByEmail, findUserByOidc, setupRequired, updateUser, type UserRecord } from './users';
@@ -83,8 +87,51 @@ const caches = () =>
   singleton('oidc-caches', () => ({
     discovery: new Map<string, { doc: Discovery; at: number }>(),
     jwks: new Map<string, { keys: Array<JsonWebKey & { kid?: string; alg?: string; use?: string }>; at: number }>(),
-    states: new Map<string, { verifier: string; nonce: string; next: string; redirectUri: string; at: number }>(),
+    states: new Map<string, PendingSignIn>(),
   }));
+
+interface PendingSignIn {
+  verifier: string;
+  nonce: string;
+  next: string;
+  redirectUri: string;
+  at: number;
+}
+
+/** Queue mode: the Valkey key of a pending sign-in (the state itself isn't stored, only its hash). */
+const pendingKey = (state: string) => `oidc:state:${createHash('sha256').update(state).digest('hex')}`;
+
+/** Keep a pending sign-in until the provider sends the browser back (to this main, or in queue mode to any main). */
+async function putPending(state: string, entry: PendingSignIn): Promise<void> {
+  if (clusterActive()) {
+    const { credentials } = await import('../credentials/vault');
+    await coordinator().set(pendingKey(state), credentials.sealSecret(JSON.stringify(entry)), STATE_TTL_MS);
+    return;
+  }
+  const states = caches().states;
+  for (const [key, saved] of states) if (entry.at - saved.at > STATE_TTL_MS) states.delete(key);
+  states.set(state, entry);
+}
+
+/** The pending sign-in of `state`, at most once (a second callback with the same state finds nothing). */
+async function takePending(state: string): Promise<PendingSignIn | undefined> {
+  if (clusterActive()) {
+    const key = pendingKey(state);
+    const sealed = await coordinator().get(key);
+    // Only one main may take it.
+    if (!sealed || !(await coordinator().deleteIfValue(key, sealed))) return undefined;
+    try {
+      const { credentials } = await import('../credentials/vault');
+      return JSON.parse(credentials.openSecret(sealed)) as PendingSignIn;
+    } catch {
+      return undefined;
+    }
+  }
+  const states = caches().states;
+  const entry = states.get(state);
+  states.delete(state);
+  return entry;
+}
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', ...init?.headers } });
@@ -192,14 +239,11 @@ export function redirectUri(config: OidcConfig, origin: string): string {
 /** Step 1: the provider's authorization URL, and the state to bind to the browser (cookie). */
 export async function beginLogin(config: OidcConfig, origin: string, next: string): Promise<{ url: string; state: string }> {
   const discovery = await discover(config);
-  const states = caches().states;
-  const now = Date.now();
-  for (const [key, entry] of states) if (now - entry.at > STATE_TTL_MS) states.delete(key);
   const state = randomToken(24);
   const verifier = randomToken(48);
   const nonce = randomToken(24);
   const callback = redirectUri(config, origin);
-  states.set(state, { verifier, nonce, next, redirectUri: callback, at: now });
+  await putPending(state, { verifier, nonce, next, redirectUri: callback, at: Date.now() });
   const url = new URL(discovery.authorization_endpoint);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('client_id', config.clientId);
@@ -230,12 +274,10 @@ export function mappedRole(claims: Claims, config: Pick<OidcConfig, 'roleClaim' 
 export async function completeLogin(config: OidcConfig, params: { code?: string | null; state?: string | null; cookieState?: string }): Promise<{ user: UserRecord; next: string }> {
   const { code, state } = params;
   if (!code || !state) throw new OidcError('The provider sent no authorization code');
-  const states = caches().states;
-  const entry = states.get(state);
-  if (!entry || !params.cookieState || params.cookieState !== state || Date.now() - entry.at > STATE_TTL_MS) {
-    throw new OidcError('This sign-in expired or was started in another browser. Try again.');
-  }
-  states.delete(state);
+  // Started in another browser: the pending sign-in stays for the browser that started it.
+  if (!params.cookieState || params.cookieState !== state) throw new OidcError('This sign-in expired or was started in another browser. Try again.');
+  const entry = await takePending(state);
+  if (!entry || Date.now() - entry.at > STATE_TTL_MS) throw new OidcError('This sign-in expired or was started in another browser. Try again.');
   if (setupRequired()) throw new OidcError('Finish the owner setup before signing in with SSO');
 
   const discovery = await discover(config);

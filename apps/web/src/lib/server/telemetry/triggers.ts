@@ -14,6 +14,8 @@ export interface TriggerInfo {
   workflowId: string;
   /** The trigger node's name. */
   nodeName?: string;
+  /** A call to a test URL while the editor listens (lib/server/test-webhooks.ts): `landflow.trigger.test=true`. */
+  test?: boolean;
 }
 
 export interface TriggerFire {
@@ -32,13 +34,14 @@ export interface TriggerFire {
  * execution has finished or been handed off.
  */
 export function startTrigger(info: TriggerInfo): TriggerFire {
-  hostMetrics().triggerFires.add(1, { 'landflow.workflow.id': info.workflowId, 'landflow.trigger.source': info.source });
+  hostMetrics().triggerFires.add(1, { 'landflow.workflow.id': info.workflowId, 'landflow.trigger.source': info.source, ...(info.test && { 'landflow.trigger.test': true }) });
   const { span, context: spanContext } = startSpan('trigger.fire', {
     root: info.source === 'schedule' || info.source === 'poll' || info.source === 'error' || info.source === 'retry',
     attributes: {
       'landflow.trigger.source': info.source,
       'landflow.workflow.id': info.workflowId,
       ...(info.nodeName && { 'landflow.node.name': info.nodeName }),
+      ...(info.test && { 'landflow.trigger.test': true }),
     },
   });
   let ended = false;

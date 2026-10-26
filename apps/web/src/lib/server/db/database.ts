@@ -24,11 +24,18 @@ export type WriteOp =
   | { op: 'delete'; table: TableName; where: Record<string, SqlValue> }
   | { op: 'deleteBefore'; table: TableName; column: string; value: SqlValue };
 
+/** A connection straight to Postgres (`Database.direct`), for the few things that must be decided there. */
+export interface DirectClient {
+  query<R = Record<string, unknown>>(text: string, values?: unknown[]): Promise<{ rows: R[]; rowCount: number | null }>;
+}
+
 /** Receives the writes of each committed transaction (Postgres mode). */
 export interface WriteSink {
   enqueue(ops: WriteOp[]): void;
   flush(timeoutMs?: number): Promise<void>;
   close(): Promise<void>;
+  /** Run `fn` on a Postgres connection of its own (Postgres mode). */
+  direct?<T>(fn: (client: DirectClient) => Promise<T>): Promise<T>;
 }
 
 const COLUMN = /^[a-z_][a-z0-9_]*$/;
@@ -167,6 +174,15 @@ export class Database {
   /** Postgres mode: wait until every committed write reached Postgres. SQLite: nothing to do. */
   flush(timeoutMs?: number): Promise<void> {
     return this.sink?.flush(timeoutMs) ?? Promise.resolve();
+  }
+
+  /**
+   * Postgres mode: run `fn` on a connection straight to Postgres, past the in-memory copy (a transaction-level lock or a
+   * one-use claim several processes must agree on: lib/server/audit/chain.ts, lib/server/auth/saml-state.ts). Undefined on
+   * SQLite, where the file itself is shared and `transaction` (BEGIN IMMEDIATE) already serializes writers.
+   */
+  direct<T>(fn: (client: DirectClient) => Promise<T>): Promise<T> | undefined {
+    return this.sink?.direct?.(fn);
   }
 
   async close() {

@@ -2,14 +2,20 @@
 /**
  * Settings → Security → SAML (owners and admins): the SAML 2.0 sign-in configuration from the environment (README
  * "SAML"): what to give the IdP (entity id, ACS and metadata URLs), what was read from it (SSO and logout URLs,
- * signing certificates and when the first expires), the security settings and the attribute mappings.
+ * signing certificates and when the first expires), the security settings and the attribute mappings. Assertion
+ * encryption is set here: generate or upload the decryption key, copy its certificate for the IdP, and require
+ * encrypted assertions (/api/settings/security/saml/encryption).
  */
-import { CheckCircle2, CircleSlash, Fingerprint, TriangleAlert } from 'lucide-react';
-import type { SamlSecurityView } from '@/lib/shared/auth';
+import { useState } from 'react';
+import { CheckCircle2, CircleSlash, Fingerprint, KeyRound, TriangleAlert, Upload } from 'lucide-react';
+import { toast } from 'sonner';
+import { api } from '@/lib/client/api';
+import type { SamlEncryptionView, SamlSecurityView } from '@/lib/shared/auth';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
-import { SectionLabel } from '@/components/ui/inputs';
+import { FieldLabel, Input, SectionLabel, Switch, Textarea } from '@/components/ui/inputs';
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -43,6 +49,158 @@ function Mapping({ map, empty }: { map: Record<string, string>; empty: string })
         </Badge>
       ))}
     </span>
+  );
+}
+
+const ENCRYPTION_API = '/api/settings/security/saml/encryption';
+
+/** Encrypted assertions: the decryption key's certificate, generate / upload / remove, and "require encrypted". */
+function AssertionEncryption({ initial }: { initial: SamlEncryptionView }) {
+  const [view, setView] = useState(initial);
+  const [busy, setBusy] = useState<string>();
+  const [uploading, setUploading] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [form, setForm] = useState({ cert: '', key: '', passphrase: '' });
+  const expires = view.validTo ? new Date(view.validTo) : undefined;
+
+  const call = async (what: string, init: Parameters<typeof api>[1], done: string) => {
+    setBusy(what);
+    try {
+      setView(await api<SamlEncryptionView>(ENCRYPTION_API, init));
+      toast.success(done);
+      return true;
+    } catch (e) {
+      toast.error((e as Error).message);
+      return false;
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  return (
+    <div className="space-y-2 py-1.5">
+      <div className="grid grid-cols-[160px_minmax(0,1fr)] items-start gap-3 text-[13px]">
+        <span className="text-t3">Assertion encryption</span>
+        <div className="min-w-0 space-y-2">
+          {view.configured ? (
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2 text-t1">
+                <KeyRound className="size-3.5 text-t3" />
+                <span className="break-all">{view.subject ?? 'Certificate'}</span>
+                <Badge tone="muted">{view.source === 'env' ? 'from the environment' : view.source === 'generated' ? 'generated here' : 'uploaded'}</Badge>
+              </div>
+              <div className="text-[12px] text-t3">
+                {expires && <span className={expires.getTime() - Date.now() < 30 * 86_400_000 ? 'text-warn' : undefined}>valid until {expires.toLocaleDateString()} · </span>}
+                <span className="break-all font-mono text-[11px]">{view.fingerprint}</span>
+              </div>
+              {view.certificate && (
+                <div className="flex items-center gap-1 text-[12px] text-t2">
+                  Give the IdP this certificate to encrypt to (it is in our metadata too) <CopyButton text={view.certificate} label="Copy certificate" />
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-[12px] text-t2">Assertions arrive signed but readable by the browser. Add a decryption key, give the IdP its certificate, and it can encrypt them to this instance.</p>
+          )}
+          {view.error && <div className="text-[12px] text-rd">{view.error}</div>}
+          {view.configured && (
+            <label className="flex items-center gap-2 text-[12px] text-t1">
+              <Switch
+                checked={view.required}
+                disabled={busy === 'required'}
+                onChange={(value) => void call('required', { method: 'PATCH', json: { required: value } }, value ? 'Unencrypted assertions are refused now' : 'Unencrypted assertions are accepted again')}
+                label="Require encrypted assertions"
+              />
+              Require encrypted assertions <span className="text-t3">(refuse responses whose assertion isn’t encrypted)</span>
+            </label>
+          )}
+          {view.fromEnv ? (
+            <p className="text-[11px] text-t3">
+              Set by <Env>LANDFLOW_SAML_DECRYPTION_KEY</Env> and <Env>LANDFLOW_SAML_DECRYPTION_CERT</Env>; change it there.
+            </p>
+          ) : uploading ? (
+            <form
+              className="space-y-2 rounded-[10px] border border-hair bg-sf2 p-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void call('upload', { method: 'POST', json: { action: 'upload', cert: form.cert, key: form.key, ...(form.passphrase && { passphrase: form.passphrase }) } }, 'Decryption key saved — give the IdP its certificate').then((ok) => {
+                  if (!ok) return;
+                  setUploading(false);
+                  setForm({ cert: '', key: '', passphrase: '' });
+                });
+              }}
+            >
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div>
+                  <FieldLabel>Certificate (PEM)</FieldLabel>
+                  <Textarea rows={4} value={form.cert} onChange={(e) => setForm((f) => ({ ...f, cert: e.target.value }))} placeholder="-----BEGIN CERTIFICATE-----" className="font-mono text-[11px]" spellCheck={false} />
+                </div>
+                <div>
+                  <FieldLabel>RSA private key (PEM)</FieldLabel>
+                  <Textarea
+                    rows={4}
+                    value={form.key}
+                    onChange={(e) => setForm((f) => ({ ...f, key: e.target.value }))}
+                    placeholder="-----BEGIN PRIVATE KEY-----"
+                    className="font-mono text-[11px] [-webkit-text-security:disc]"
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+              <div className="max-w-[320px]">
+                <FieldLabel>Key passphrase (optional)</FieldLabel>
+                <Input type="password" autoComplete="off" value={form.passphrase} onChange={(e) => setForm((f) => ({ ...f, passphrase: e.target.value }))} placeholder="Only for an encrypted key" />
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="primary" type="submit" loading={busy === 'upload'} disabled={!form.cert.trim() || !form.key.trim()}>
+                  Save key
+                </Button>
+                <Button size="sm" variant="ghost" type="button" onClick={() => setUploading(false)}>
+                  Cancel
+                </Button>
+              </div>
+              <p className="text-[11px] text-t3">The key is encrypted at rest and never shown again.</p>
+            </form>
+          ) : (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button
+                size="sm"
+                onClick={() => void call('generate', { method: 'POST', json: { action: 'generate' } }, view.configured ? 'New decryption key — give the IdP the new certificate' : 'Decryption key generated — give the IdP its certificate')}
+                loading={busy === 'generate'}
+                title={view.configured ? 'Replaces the current key: the IdP must get the new certificate' : undefined}
+              >
+                <KeyRound className="size-3.5" /> {view.configured ? 'Generate a new key' : 'Generate key'}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setUploading(true)}>
+                <Upload className="size-3.5" /> Upload key
+              </Button>
+              {view.configured &&
+                (confirmRemove ? (
+                  <span className="flex items-center gap-1.5 text-[12px] text-t2">
+                    Remove? Encrypted assertions will fail.
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      loading={busy === 'remove'}
+                      onClick={() => void call('remove', { method: 'DELETE' }, 'Decryption key removed').then(() => setConfirmRemove(false))}
+                    >
+                      Remove
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirmRemove(false)}>
+                      Keep
+                    </Button>
+                  </span>
+                ) : (
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmRemove(true)}>
+                    Remove
+                  </Button>
+                ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -93,6 +251,7 @@ export function SamlSettings({ saml }: { saml?: SamlSecurityView }) {
             {saml.idpCerts} {expires && <span className={expiringSoon ? 'text-warn' : 'text-t3'}>(first expires {expires.toLocaleDateString()})</span>}
           </Row>
           <Row label="Signatures">{saml.wantAssertionsSigned ? 'Assertions must be signed' : 'The response or its assertion must be signed'}</Row>
+          {saml.encryption && <AssertionEncryption initial={saml.encryption} />}
           <Row label="Clock skew">{saml.clockSkewSeconds} s</Row>
           <Row label="Button">{saml.label}</Row>
           <Row label="Attributes">

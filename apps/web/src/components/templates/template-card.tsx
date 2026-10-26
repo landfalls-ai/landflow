@@ -48,11 +48,12 @@ export function ProblemBadge({ template }: { template: Pick<TemplateSummary, 'us
   );
 }
 
-export function SourceBadge({ template, remoteLabel }: { template: Pick<TemplateSummary, 'source'>; remoteLabel?: string }) {
+/** Saved templates: the project they belong to, or instance-wide. */
+export function SourceBadge({ template, remoteLabel }: { template: Pick<TemplateSummary, 'source' | 'projectId' | 'projectName'>; remoteLabel?: string }) {
   if (template.source === 'local')
     return (
-      <Badge tone="accent">
-        <HardDrive className="size-3" /> Saved here
+      <Badge tone="accent" title={template.projectId ? `Saved in the “${template.projectName ?? template.projectId}” project` : 'Saved here, for the whole instance'}>
+        <HardDrive className="size-3" /> {template.projectId ? <span className="max-w-[120px] truncate">{template.projectName ?? 'Project'}</span> : 'Instance-wide'}
       </Badge>
     );
   if (template.source === 'remote')

@@ -277,6 +277,8 @@ export interface Folder {
   name: string;
   /** None = top level. */
   parentId?: string;
+  /** The project the folder (and its subfolders and workflows) belongs to; none = the default project. */
+  projectId?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -104,6 +104,45 @@
         { "name": "roles", "protocol": "saml", "protocolMapper": "saml-role-list-mapper", "consentRequired": false, "config": { "single": "true", "attribute.name": "roles", "attribute.nameformat": "Basic", "friendly.name": "roles" } },
         { "name": "groups", "protocol": "saml", "protocolMapper": "saml-group-membership-mapper", "consentRequired": false, "config": { "single": "true", "full.path": "false", "attribute.name": "groups", "attribute.nameformat": "Basic", "friendly.name": "groups" } }
       ]
+    },
+    {
+      "clientId": "urn:landflow:test:saml-encrypted",
+      "name": "Landflow (SAML, encrypted assertions, tests)",
+      "description": "Encrypted SAML assertions (test/saml.integration.test.ts): signed, then encrypted to the test-only cert in test/fixtures/saml/sp-encryption.cert.pem (RSA-OAEP, AES-256-GCM)",
+      "protocol": "saml",
+      "enabled": true,
+      "publicClient": false,
+      "frontchannelLogout": true,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "http://localhost:3000/api/auth/saml/*",
+        "http://127.0.0.1:3000/api/auth/saml/*"
+      ],
+      "attributes": {
+        "saml.authnstatement": "true",
+        "saml.server.signature": "true",
+        "saml.assertion.signature": "true",
+        "saml.client.signature": "false",
+        "saml.encrypt": "true",
+        "saml.encryption.certificate": "MIIDXzCCAkegAwIBAgIQQnkb+uGmyCezMyKGdjLGKjANBgkqhkiG9w0BAQsFADBKMREwDwYDVQQKDAhMYW5kZmxvdzE1MDMGA1UEAwwsTGFuZGZsb3cgdGVzdCBTQU1MIFNQIGVuY3J5cHRpb24gKHRlc3Qgb25seSkwIBcNMjYxMDI2MDM1ODE4WhgPMjEyNjEwMDIwMzU5MThaMEoxETAPBgNVBAoMCExhbmRmbG93MTUwMwYDVQQDDCxMYW5kZmxvdyB0ZXN0IFNBTUwgU1AgZW5jcnlwdGlvbiAodGVzdCBvbmx5KTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBANJhOyXzT+KtR6EMYHXaEcdrfV1F8XB28SZDEby546PgS/b1WiJcK+J+DHIdvjOiFr9QjoeFlQyZvFvdJ2AK5KuGYdgwO4GqSQVQdhk3itRWNWQVjOmNXqR5kmu68VDdh9bjyMz45KDmcEvjYJsOZ31yB6YsXeDORTs4P8cM36OPN9D9Xyk1qKSZkQExAxIn8oyM0oPrzHY6WrJM+zQlNDl+rT4rlWm78ccCIqXnf/aX5C2rLR+cEwcz7IWbzflqo6Z7Kd0R83ZPWiazixgVsTmPChxhnIFMNiK6Y9IQnQIduCzx85ojgiDnGsklLuCzZuqUvJ3xsYXPyYKrmynghIECAwEAAaM/MD0wDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCBDAwHQYDVR0OBBYEFHxEVWGwuw8eZwfO3RwxLk40O/MwMA0GCSqGSIb3DQEBCwUAA4IBAQBo3vjhI443QRqoFhJSmMX59iWW0hJiOJh7rLD69BGS/+H5s0cPNTCfsTrLKEZYX9i0qKv3mIoPr6ieTJKp9HLkLhGmeekw3gHS5jRj/lmFRy2oQbOUAQG2S9tP/obAdxNl8cBQfL1se3k+XwD02/xvhXD7fH0GkMOi6Ix+dNMgyCyHknFGRHUQDNtWdV1LTrbUtPwdI+Gzb/vWC+9myRkpraunkuECgMkuEnORBWEMaVCy6xqmGLF1zBcs6NeT1jP5K8UQYZev4ml58y1slWUOFucCHkeIXGrueb22GbmP7X1OYcWUBU6TJokaVdPYqgBktqvj8m9UCf1ip2VKERRx",
+        "saml.encryption.algorithm": "http://www.w3.org/2009/xmlenc11#aes256-gcm",
+        "saml.encryption.keyAlgorithm": "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p",
+        "saml.encryption.digestMethod": "http://www.w3.org/2000/09/xmldsig#sha1",
+        "saml.force.post.binding": "true",
+        "saml.signature.algorithm": "RSA_SHA256",
+        "saml_signature_canonicalization_method": "http://www.w3.org/2001/10/xml-exc-c14n#",
+        "saml_force_name_id_format": "true",
+        "saml_name_id_format": "persistent",
+        "saml_single_logout_service_url_redirect": "http://localhost:3000/api/auth/saml/logout",
+        "saml_single_logout_service_url_post": "http://localhost:3000/api/auth/saml/logout"
+      },
+      "protocolMappers": [
+        { "name": "email", "protocol": "saml", "protocolMapper": "saml-user-property-mapper", "consentRequired": false, "config": { "user.attribute": "email", "friendly.name": "email", "attribute.name": "email", "attribute.nameformat": "Basic" } },
+        { "name": "firstName", "protocol": "saml", "protocolMapper": "saml-user-property-mapper", "consentRequired": false, "config": { "user.attribute": "firstName", "friendly.name": "givenName", "attribute.name": "firstName", "attribute.nameformat": "Basic" } },
+        { "name": "lastName", "protocol": "saml", "protocolMapper": "saml-user-property-mapper", "consentRequired": false, "config": { "user.attribute": "lastName", "friendly.name": "surname", "attribute.name": "lastName", "attribute.nameformat": "Basic" } },
+        { "name": "roles", "protocol": "saml", "protocolMapper": "saml-role-list-mapper", "consentRequired": false, "config": { "single": "true", "attribute.name": "roles", "attribute.nameformat": "Basic", "friendly.name": "roles" } },
+        { "name": "groups", "protocol": "saml", "protocolMapper": "saml-group-membership-mapper", "consentRequired": false, "config": { "single": "true", "full.path": "false", "attribute.name": "groups", "attribute.nameformat": "Basic", "friendly.name": "groups" } }
+      ]
     }
   ],
   "groups": [{ "name": "data-team" }],

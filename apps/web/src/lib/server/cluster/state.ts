@@ -6,6 +6,7 @@
 import { singleton } from '../singleton';
 import { clusterConfig, leaseMs, type ClusterConfig } from './config';
 import type { Coordinator, InstanceInfo } from './coordinator';
+import type { DebugControl } from './debug';
 import type { LeaderElector } from './leader';
 import type { Relay } from './relay';
 
@@ -16,7 +17,13 @@ export type ControlMessage =
   /** For the leader: arm this execution's wait timer, this retry, this held trigger buffer. */
   | { t: 'wait'; id: string }
   | { t: 'retry'; id: string }
-  | { t: 'buffer'; key: string };
+  | { t: 'buffer'; key: string }
+  /** The installed marketplace node plugins changed: every process runs what is installed now. */
+  | { t: 'marketplace' }
+  /** A test URL's listener was replaced (the trigger listens again): the main holding its stream ends it (../test-webhooks.ts). */
+  | { t: 'listener-replaced'; id: string }
+  /** A debugger command for a session another main may hold (./debug.ts). */
+  | DebugControl;
 
 export interface ClusterState {
   config: ClusterConfig;

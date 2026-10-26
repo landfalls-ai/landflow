@@ -33,20 +33,23 @@ export function slackCredential(data: JsonObject | undefined): SlackCredential {
   return { accessToken, baseUrl: (text(data?.baseUrl) || SLACK_API).replace(/\/+$/, ''), ...(text(data?.signingSecret) && { signingSecret: text(data?.signingSecret) }) };
 }
 
-/** The credential behind a saved reference. */
-export const slackCredentialFor = (ref: { id: string; name: string }) => slackCredential(credentials.dataFor(ref, SLACK_CREDENTIAL));
+/** The credential behind a saved reference (its fields may read `$secrets`, resolved here). */
+export const slackCredentialFor = async (ref: { id: string; name: string }) => slackCredential(await credentials.dataWithSecrets(ref, SLACK_CREDENTIAL));
 
 /** Every Slack credential with a signing secret (Interactivity requests are checked against each). */
-export function slackCredentialsWithSecret(): Array<{ id: string; name: string; credential: SlackCredential }> {
-  return credentials.list().flatMap((summary) => {
-    if (summary.type !== SLACK_CREDENTIAL) return [];
-    try {
-      const credential = slackCredentialFor(summary);
-      return credential.signingSecret ? [{ id: summary.id, name: summary.name, credential }] : [];
-    } catch {
-      return [];
-    }
-  });
+export async function slackCredentialsWithSecret(): Promise<Array<{ id: string; name: string; credential: SlackCredential }>> {
+  const all = await Promise.all(
+    credentials.list().map(async (summary) => {
+      if (summary.type !== SLACK_CREDENTIAL) return [];
+      try {
+        const credential = await slackCredentialFor(summary);
+        return credential.signingSecret ? [{ id: summary.id, name: summary.name, credential }] : [];
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return all.flat();
 }
 
 export class SlackApiError extends Error {

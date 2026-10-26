@@ -16,7 +16,7 @@ import { logger } from '../telemetry/logger';
 import { openSqlite, type Database, type DbKind } from './database';
 import { importJsonData } from './import';
 
-export { Database, openSqlite, openSqliteConnection, migrateSqlite, type DbKind, type Row, type SqlValue, type WriteOp } from './database';
+export { Database, openSqlite, openSqliteConnection, migrateSqlite, type DbKind, type DirectClient, type Row, type SqlValue, type WriteOp } from './database';
 export { importJsonData, type ImportSummary } from './import';
 export { LATEST_VERSION, MIGRATIONS, TABLES, type Migration, type TableName } from './schema';
 

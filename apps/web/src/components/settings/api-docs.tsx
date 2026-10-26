@@ -29,7 +29,10 @@ interface Operation {
   tags: string[];
   summary: string;
   description?: string;
-  'x-landflow-scope': string;
+  /** Absent on public operations (the trigger URLs). */
+  'x-landflow-scope'?: string;
+  /** A trigger URL: no key or session, the trigger's own auth. */
+  'x-landflow-public'?: boolean;
   'x-landflow-session-only'?: boolean;
   'x-landflow-role-action'?: string;
   parameters?: Array<{ name: string; in: string; required?: boolean; description?: string }>;
@@ -94,6 +97,7 @@ function schemaName(schema?: SchemaRef): string | undefined {
 }
 
 function ScopeChip({ op }: { op: Operation }) {
+  if (op['x-landflow-public']) return <Chip tone="muted">public</Chip>;
   if (op['x-landflow-session-only']) return <Chip tone="warning">session only</Chip>;
   const scope = op['x-landflow-scope'];
   return (

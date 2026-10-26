@@ -8,12 +8,12 @@ import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { importWorkflowJson } from '@/lib/server/n8n-import';
-import { createInProject } from '@/lib/server/projects/http';
+import { createInProject, projectParam, targetProject } from '@/lib/server/projects/http';
 import { registry } from '@/lib/server/plugins/registry';
 import { workflowSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
 import { currentActorId } from '@/lib/server/auth/context';
-import { workflowViolations } from '@/lib/server/governance/policy';
+import { scopeFor, workflowViolations } from '@/lib/server/governance/policy';
 import { governedSave } from '@/lib/server/governance/saves';
 
 export const dynamic = 'force-dynamic';
@@ -49,14 +49,16 @@ export const POST = handler(async (request: Request) => {
   }
   const imported = valid.data as Omit<Workflow, 'id'>;
   // Settings → Governance: nodes the policy blocks are reported (the import goes through; publishing is refused).
-  const blocked = workflowViolations(imported).map((v) => ({ name: v.nodeName, type: v.nodeType, reason: v.message }));
+  // The project it goes to may narrow the list (its allowed nodes).
+  const blocked = workflowViolations(imported, undefined, scopeFor({ projectId: create ? targetProject(request, folderId) : (projectParam(request) ?? undefined) })).map((v) => ({ name: v.nodeName, type: v.nodeType, reason: v.message }));
   const report = blocked.length ? { ...result.report, blocked } : result.report;
   if (!create) return json({ workflow: { ...imported, id: '' }, report });
   let extras = {};
+  const id = `wf_${nanoid(10)}`;
   const workflow = createInProject(request, 'workflow', () => {
-    const saved = governedSave({ ...imported, id: `wf_${nanoid(10)}` } as Workflow, undefined, (w) => store.saveWorkflow(w), { by: currentActorId(), action: 'workflow.import', source: result.report.format });
+    const saved = governedSave({ ...imported, id } as Workflow, undefined, (w) => store.saveWorkflow(w), { by: currentActorId(), action: 'workflow.import', source: result.report.format });
     extras = saved.extras;
     return saved.workflow;
-  }, (w) => w.id);
+  }, (w) => w.id, { folderId, id });
   return json({ workflow, report, ...extras }, 201);
 });

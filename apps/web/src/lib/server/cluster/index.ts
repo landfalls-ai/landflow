@@ -5,7 +5,9 @@
  * - the relay (./relay): live events from every process on each main's bus (the editor's SSE stream), each worker's
  *   results to the inbox of the main that waits for them, cancel and stop-all to everyone, timers to the leader;
  * - caches dropped when another process changed their tables (workflows, folders, Data Tables, publications, the
- *   plugin list; credentials are reread from the shared data directory when the file changes);
+ *   plugin list; credentials are reread when the `credentials` table, or the shared data directory's file, changes);
+ * - marketplace node plugins: every main and worker runs its own copy of each installed one (../marketplace/service.ts);
+ * - debugger commands for a session another main holds (./debug.ts);
  * - heartbeats: this process in the instance list, the leases of its runs, the slots of its limited runs;
  * - mains: leader election (./leader) and the leader's services: the scheduler and poll triggers, IMAP IDLE, app
  *   webhook registration, wait / retry / held-event timers, alerts, agent triggers and retention, plus a sweep every
@@ -29,7 +31,7 @@ import type { TableName } from '../db/schema';
 import { reloadFolders } from '../folders';
 import { publicationChangedElsewhere } from '../publications';
 import { retries } from '../retries';
-import { abortLocalExecution, abortLocalExecutions, drainQueues, failExecution, localExecutions } from '../runner';
+import { abortLocalExecution, abortLocalExecutions, debugExecution, drainQueues, failExecution, localExecutions } from '../runner';
 import { scheduler } from '../scheduler';
 import { singleton } from '../singleton';
 import { store } from '../store';
@@ -39,6 +41,7 @@ import { triggerBuffers } from '../trigger-buffers';
 import { waits } from '../waits';
 import { checkClusterConfig, ClusterConfigError, leaseMs, type ClusterConfig, type ProcessRole } from './config';
 import type { Coordinator, InstanceInfo, QueueJob } from './coordinator';
+import { answerDebugRequest, settleDebugRequest, type DebugResultMessage } from './debug';
 import { awaitedRuns, handleInbox, type InboxMessage } from './dispatch';
 import { LeaderElector } from './leader';
 import { exclusive } from './limits';
@@ -133,13 +136,17 @@ export async function startCluster(options: StartClusterOptions = {}): Promise<b
 async function start(config: ClusterConfig, options: StartClusterOptions): Promise<boolean> {
   const state = clusterState();
   const coordinator =
-    options.coordinator ?? (process.env.LANDFLOW_VALKEY_URL === 'memory' ? new MemoryCoordinator() : new ValkeyCoordinator(config.valkeyUrl, config.prefix, config.instanceId));
+    options.coordinator ??
+    (process.env.LANDFLOW_VALKEY_URL === 'memory' ? new MemoryCoordinator() : new ValkeyCoordinator(config.valkeyUrl, config.prefix, config.instanceId, { sentinel: config.sentinel }));
   if (coordinator instanceof ValkeyCoordinator) {
     try {
-      await coordinator.ping();
+      await coordinator.ping(config.sentinel ? 15_000 : 5_000);
     } catch (error) {
       await coordinator.close().catch(() => {});
-      throw new ClusterConfigError(`Queue mode can't reach Valkey at ${redact(config.valkeyUrl)}: ${(error as Error).message}. Set LANDFLOW_VALKEY_URL.`);
+      const where = config.sentinel
+        ? `through the sentinels ${config.sentinel.sentinels.map((s) => `${s.host}:${s.port}`).join(', ')} (primary "${config.sentinel.masterName}")`
+        : `at ${redact(config.valkeyUrl)}`;
+      throw new ClusterConfigError(`Queue mode can't reach Valkey ${where}: ${(error as Error).message}. Set LANDFLOW_VALKEY_URL${config.sentinel ? ' and LANDFLOW_VALKEY_SENTINELS' : ''}.`);
     }
   }
   const relay = new Relay(coordinator, config.instanceId);
@@ -151,7 +158,7 @@ async function start(config: ClusterConfig, options: StartClusterOptions): Promi
   const stoppers = state.stoppers;
 
   // Results of the runs this process waits for.
-  await relay.receive<InboxMessage>(handleInbox);
+  await relay.receive<InboxMessage | DebugResultMessage>((message) => (message.t === 'debug-result' ? settleDebugRequest(message) : handleInbox(message)));
   // Cancel, stop-all and the timers handed to the leader.
   await relay.listen<ControlMessage>('control', (message) => void onControl(message));
   state.forward = (message) => {
@@ -206,6 +213,14 @@ async function start(config: ClusterConfig, options: StartClusterOptions): Promi
 
   if (config.role === 'main') startElection(config, coordinator);
   else await startWorker(config, coordinator, relay, options.healthPort ?? config.workerPort);
+
+  // Marketplace node plugins: this process runs its own copy of each installed one.
+  try {
+    const { marketplace } = await import('../marketplace/service');
+    stoppers.push(marketplace.startClusterSync());
+  } catch (error) {
+    logger.warn('cluster: marketplace node plugins not started', { error: (error as Error).message });
+  }
 
   logger.info('queue mode running', {
     'landflow.cluster.role': config.role,
@@ -262,6 +277,16 @@ async function onControl(message: ControlMessage) {
       return;
     case 'buffer':
       if (clusterState().elector?.isLeader()) await triggerBuffers.sync(message.key);
+      return;
+    case 'marketplace':
+      await import('../marketplace/service').then(({ marketplace }) => marketplace.syncNodePlugins());
+      return;
+    case 'listener-replaced':
+      // Loaded lazily: test URLs reach the runner.
+      await import('../test-webhooks').then(({ onListenerReplaced }) => onListenerReplaced(message.id));
+      return;
+    case 'debug':
+      answerDebugRequest(message, debugExecution);
   }
 }
 

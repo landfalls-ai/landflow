@@ -33,12 +33,16 @@ const leaves = (value: unknown, out: string[] = [], depth = 0): string[] => {
   return out;
 };
 
-/** Remember secret values (a string, or every string in an object) so they are redacted from now on. */
-export function rememberSecretValues(value: unknown): void {
+/**
+ * Remember secret values (a string, or every string in an object) so they are redacted from now on. The long lines of
+ * a multi-line value count on their own too (a PEM key's), unless `lines` is false (a node parameter that read a
+ * secret, whose other lines are the workflow's own text).
+ */
+export function rememberSecretValues(value: unknown, options: { lines?: boolean } = {}): void {
   const now = Date.now();
   let added = false;
   for (const text of leaves(value)) {
-    const candidates = [text, ...text.split(/\r?\n/).filter((line) => line.trim().length >= MIN_LENGTH * 2)];
+    const candidates = options.lines === false ? [text] : [text, ...text.split(/\r?\n/).filter((line) => line.trim().length >= MIN_LENGTH * 2)];
     for (const candidate of candidates) {
       if (candidate.length < MIN_LENGTH) continue;
       if (!state.values.has(candidate)) added = true;

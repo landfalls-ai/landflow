@@ -1,13 +1,16 @@
 /**
  * SIEM destinations (Settings → Audit log): syslog (RFC 5424 over UDP, TCP or TLS), HTTP (JSON lines signed with
  * HMAC, or the Datadog and Elastic presets) and Splunk HEC, in the `audit_destinations` table. Secret settings
- * (`secret`, `apiKey`, `token`) are sealed with the credentials key and never leave the server; a PATCH that leaves
- * one empty keeps the saved value. Disabling a destination stops queueing new events for it (queued ones wait);
- * deleting it drops its outbox.
+ * (`secret`, `apiKey`, `token`, and a client certificate's `clientKey` and `clientKeyPassphrase`) are sealed with the
+ * credentials key and never leave the server; a PATCH that leaves one empty keeps the saved value (a PATCH without
+ * `clientCert` drops the client certificate and its key). Syslog over TLS and HTTPS destinations can trust a private
+ * CA and present a client certificate (mTLS); the certificate and key are checked to belong together when saved.
+ * Disabling a destination stops queueing new events for it (queued ones wait); deleting it drops its outbox.
  */
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { AUDIT_SECRET_FIELDS, type AuditDelivery, type AuditDestination, type AuditDestinationConfig, type AuditDestinationKind } from '../../shared/audit';
+import { certificateInfo, keyPairProblem, pemCertificates } from '../auth/x509';
 import { credentials } from '../credentials/vault';
 import { database } from '../db';
 import { parse } from '../db/rows';
@@ -37,6 +40,8 @@ interface Data {
 }
 
 const SECRET = new Set<string>(AUDIT_SECRET_FIELDS);
+/** Secrets that belong to the client certificate: dropped with it. */
+const CLIENT_SECRETS = new Set(['clientKey', 'clientKeyPassphrase']);
 
 const configSchema = z.strictObject({
   host: z.string().max(255).optional(),
@@ -46,7 +51,10 @@ const configSchema = z.strictObject({
   appName: z.string().max(48).optional(),
   framing: z.enum(['octet-counting', 'newline']).optional(),
   rejectUnauthorized: z.boolean().optional(),
-  ca: z.string().max(20_000).optional(),
+  ca: z.string().max(50_000).optional(),
+  clientCert: z.string().max(50_000).optional(),
+  clientKey: z.string().max(20_000).optional(),
+  clientKeyPassphrase: z.string().max(500).optional(),
   url: z.string().max(2_000).optional(),
   preset: z.enum(['generic', 'datadog', 'elastic']).optional(),
   secret: z.string().max(500).optional(),
@@ -78,6 +86,24 @@ function httpUrl(value: string | undefined, what: string): string {
   return url.toString();
 }
 
+/** TLS settings (unsealed): the CA to trust or no verification, and the client certificate with its key (mTLS). */
+function tlsSettings(config: AuditDestinationConfig): AuditDestinationConfig {
+  if (config.ca && !pemCertificates(config.ca).length) throw new AuditDestinationError('The CA certificate isn’t a PEM certificate (-----BEGIN CERTIFICATE-----)');
+  if (config.clientKey && !config.clientCert) throw new AuditDestinationError('Enter the client certificate for the private key');
+  if (config.clientCert) {
+    if (!config.clientKey) throw new AuditDestinationError('Enter the client certificate’s private key');
+    const problem = keyPairProblem(config.clientCert, config.clientKey, config.clientKeyPassphrase);
+    if (problem) throw new AuditDestinationError(`Client certificate: ${problem}`);
+  }
+  return {
+    ...(config.rejectUnauthorized === false && { rejectUnauthorized: false }),
+    ...(config.ca && { ca: config.ca }),
+    ...(config.clientCert && { clientCert: config.clientCert, clientKey: config.clientKey, ...(config.clientKeyPassphrase && { clientKeyPassphrase: config.clientKeyPassphrase }) }),
+  };
+}
+
+const https = (url: string) => url.startsWith('https:');
+
 /** The settings `kind` uses, checked and trimmed (unsealed). */
 function checked(kind: AuditDestinationKind, input: AuditDestinationConfig): AuditDestinationConfig {
   const config = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v])) as AuditDestinationConfig;
@@ -92,7 +118,7 @@ function checked(kind: AuditDestinationKind, input: AuditDestinationConfig): Aud
         facility: config.facility ?? 13,
         appName: (config.appName || 'landflow').replace(/[^\x21-\x7e]/g, '').slice(0, 48) || 'landflow',
         ...(protocol !== 'udp' && { framing: config.framing ?? 'octet-counting' }),
-        ...(protocol === 'tls' && { rejectUnauthorized: config.rejectUnauthorized ?? true, ...(config.ca && { ca: config.ca }) }),
+        ...(protocol === 'tls' && { rejectUnauthorized: config.rejectUnauthorized ?? true, ...tlsSettings(config) }),
       };
     }
     case 'http': {
@@ -106,17 +132,20 @@ function checked(kind: AuditDestinationKind, input: AuditDestinationConfig): Aud
         ...(config.apiKey && preset !== 'generic' && { apiKey: config.apiKey }),
         ...(config.index && preset === 'elastic' && { index: config.index }),
         ...(config.tags && preset === 'datadog' && { tags: config.tags }),
+        ...(https(url) && tlsSettings(config)),
       };
     }
-    case 'splunk':
+    case 'splunk': {
+      const url = httpUrl(config.url, 'Splunk HEC URL');
       return {
-        url: httpUrl(config.url, 'Splunk HEC URL'),
+        url,
         ...(config.token && { token: config.token }),
         ...(config.index && { index: config.index }),
         source: config.source || 'landflow',
         sourcetype: config.sourcetype || 'landflow:audit',
-        ...(config.rejectUnauthorized === false && { rejectUnauthorized: false }),
+        ...(https(url) && tlsSettings(config)),
       };
+    }
   }
 }
 
@@ -149,8 +178,20 @@ function outboxStats(): Map<string, OutboxStats> {
   );
 }
 
+/** What Settings shows of the client certificate (none when it can't be read). */
+function clientCertificate(cert: string | undefined): AuditDestination['clientCertificate'] {
+  if (!cert) return undefined;
+  try {
+    const { subject, issuer, validTo, fingerprint } = certificateInfo(cert);
+    return { subject, issuer, validTo, fingerprint };
+  } catch {
+    return undefined;
+  }
+}
+
 function view(row: Row, stats?: OutboxStats): AuditDestination {
   const data = parse<Data>(row.data) ?? { config: {} };
+  const cert = clientCertificate(data.config.clientCert);
   return {
     id: row.id,
     name: row.name,
@@ -158,6 +199,7 @@ function view(row: Row, stats?: OutboxStats): AuditDestination {
     enabled: Boolean(Number(row.enabled)),
     config: Object.fromEntries(Object.entries(data.config).filter(([k]) => !SECRET.has(k))) as AuditDestinationConfig,
     secretsSet: Object.keys(data.config).filter((k) => SECRET.has(k) && (data.config as Record<string, unknown>)[k]),
+    ...(cert && { clientCertificate: cert }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     pending: stats?.pending ?? 0,
@@ -205,9 +247,12 @@ export const auditDestinations = {
     const current = open(data.config);
     let config = data.config;
     if (patch.config) {
-      // Empty secret fields keep their saved value.
+      // Empty secret fields keep their saved value (the client certificate's only while it stays).
       const merged = { ...patch.config };
-      for (const key of SECRET) if (!(merged as Record<string, unknown>)[key]) (merged as Record<string, unknown>)[key] = (current as Record<string, unknown>)[key];
+      for (const key of SECRET) {
+        if ((merged as Record<string, unknown>)[key] || (CLIENT_SECRETS.has(key) && !merged.clientCert?.trim())) continue;
+        (merged as Record<string, unknown>)[key] = (current as Record<string, unknown>)[key];
+      }
       config = seal(checked(row.kind, merged));
     }
     database().upsert('audit_destinations', {

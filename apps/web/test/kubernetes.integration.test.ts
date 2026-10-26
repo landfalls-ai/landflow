@@ -7,6 +7,8 @@
  * - a pod with the wrong LANDFLOW_REGISTRY_SECRET is ready but not registered (no valid proof);
  * - with the right secret (a rollout) it is discovered and its node runs over gRPC;
  * - scaled to 0 it goes offline (nodes kept, unavailable); scaled back to 1 it is online and callable again;
+ * - scaled to 2, its calls are spread over both pods (each pod's log shows its share of the runs), the manifest is not
+ *   pulled per pod, and scaled back to 1 the gone pod gets no more calls;
  * - deleting the Service removes it.
  *
  * Needs the image built locally (deploy/README.md, "Kubernetes") and the namespace. Everything it creates is labelled
@@ -151,6 +153,43 @@ describe.skipIf(!enabled)(`Kubernetes discovery on ${CONTEXT}/${NAMESPACE}`, () 
     await apps.patchNamespacedDeployment({ name: NAME, namespace: NAMESPACE, body: { spec: { replicas: 1 } } }, mergePatch);
     await vi.waitFor(() => expect(status()).toBe('online'), { timeout: 90_000, interval: 250 });
     expect(await encode('k8s')).toBe('azhz');
+  });
+
+  it('spreads calls over its ready pods when scaled to 2, and drops the pod that goes when scaled back to 1', async () => {
+    const backends = () => registry.endpointBackends(ENDPOINT);
+    await apps.patchNamespacedDeployment({ name: NAME, namespace: NAMESPACE, body: { spec: { replicas: 2 } } }, mergePatch);
+    await vi.waitFor(async () => expect(await readyReplicas()).toBe(2), { timeout: 90_000, interval: 500 });
+    await vi.waitFor(() => expect(backends()).toHaveLength(2), { timeout: 30_000, interval: 250 });
+    await vi.waitFor(() => expect(status()).toBe('online'), { timeout: 30_000, interval: 250 });
+
+    const resolved = registry.resolve('go-crypto.hash');
+    if ('error' in resolved) throw new Error(resolved.error);
+    const ids = Array.from({ length: 8 }, (_, i) => `ex_${RUN}_spread_${i}`);
+    const before = new Map(backends().map((b) => [b.endpoint, b.calls]));
+    for (const executionId of ids) {
+      const parameters = { algorithm: 'sha256', field: 'value', encoding: 'hex', outputField: 'hash' };
+      const request: ExecuteRequest = { protocol: 'landflow.plugin/v1', executionId, mode: 'manual', node: { id: 'n2', name: 'Hash', type: 'go-crypto.hash', typeVersion: 1 }, parameters, itemParameters: [parameters], inputs: [[{ json: { value: executionId } }]] };
+      expect((await resolved.execute(request)).outputs[0]?.[0]?.json.hash).toMatch(/^[0-9a-f]{64}$/);
+    }
+    // One after the other: round robin, four each.
+    expect(backends().map((b) => b.calls - (before.get(b.endpoint) ?? 0))).toEqual([4, 4]);
+    // Each pod's log shows the runs it served.
+    // (Pods of the earlier rollout may still be terminating: only the two the calls went to.)
+    const pods = (await core.listNamespacedPod({ namespace: NAMESPACE, labelSelector: `app.kubernetes.io/name=${NAME}` })).items.filter((pod) =>
+      backends().some((b) => pod.status?.podIP && b.endpoint === `grpc://${pod.status.podIP}:7203`),
+    );
+    expect(pods).toHaveLength(2);
+    const served = await Promise.all(pods.map(async (pod) => {
+      const log = await core.readNamespacedPodLog({ name: pod.metadata!.name!, namespace: NAMESPACE });
+      return ids.filter((id) => log.includes(id));
+    }));
+    expect(served.map((list) => list.length)).toEqual([4, 4]);
+    expect(new Set(served.flat())).toEqual(new Set(ids));
+
+    await apps.patchNamespacedDeployment({ name: NAME, namespace: NAMESPACE, body: { spec: { replicas: 1 } } }, mergePatch);
+    await vi.waitFor(() => expect(backends()).toHaveLength(1), { timeout: 60_000, interval: 250 });
+    expect(await encode('one')).toBe('b25l');
+    expect(status()).toBe('online');
   });
 
   it('removes the plugin when its Service is deleted', async () => {

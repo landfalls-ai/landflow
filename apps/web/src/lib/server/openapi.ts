@@ -1,10 +1,12 @@
 /**
  * The public API as an OpenAPI 3.1 document (GET /api/openapi.json, Settings → API): workflows (and running them),
- * executions, data tables, variables, templates and your account and API keys. Request bodies of the workflow and row filter
- * come from the routes' own zod schemas, so they can't drift; every operation names the API key scope the guard
- * wants (`x-landflow-scope`, from lib/server/auth/policy.ts), so the docs and the guard agree.
+ * executions, data tables, variables, templates and your account and API keys, plus the trigger URLs (webhooks, forms,
+ * MCP Server Triggers and their test URLs: public, `security: []`, each checked by its trigger's own auth). Request
+ * bodies of the workflow and row filter come from the routes' own zod schemas, so they can't drift; every other
+ * operation names the API key scope the guard wants (`x-landflow-scope`, from lib/server/auth/policy.ts), so the docs
+ * and the guard agree.
  *
- * Only routes that exist are listed: test/openapi.test.ts checks each path against app/api and its exported methods.
+ * Only routes that exist are listed: test/openapi.test.ts checks each path against app/ and its exported methods.
  */
 import { z } from 'zod';
 import { API_KEY_SCOPES } from '../shared/auth';
@@ -13,7 +15,7 @@ import { TEMPLATE_CATEGORIES } from '../shared/templates';
 import { rowFilterSchema } from './datatables/http';
 import { routePolicy } from './auth/policy';
 import { workflowSchema } from './schemas';
-import { saveTemplateSchema } from './templates/schema';
+import { saveTemplateSchema, updateTemplateSchema } from './templates/schema';
 
 type Json = Record<string, unknown>;
 type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
@@ -36,10 +38,14 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers';
   id: string;
   summary: string;
   description?: string;
+  /** A trigger URL: no API key or session (lib/shared/auth-paths.ts), the trigger checks its callers itself. */
+  public?: boolean;
+  /** Descriptions of path parameters. */
+  pathParams?: Record<string, string>;
   query?: Array<{ name: string; description: string; schema: Json; required?: boolean }>;
   headers?: Array<{ name: string; description: string; schema: Json }>;
   body?: Json;
@@ -52,13 +58,28 @@ function scopeText(scope: string, sessionOnly?: boolean, action?: string): strin
   return action ? `${key} Owners and admins only (\`${action}\`).` : key;
 }
 
+const PUBLIC_TEXT = 'Public: no API key or session. The trigger’s own authentication (and IP allow-list) applies.';
+
 function operation(method: Method, path: string, spec: Operation): Json {
-  const policy = routePolicy(method.toUpperCase(), samplePath(path));
   const parameters = [
-    ...[...path.matchAll(/\{([^}]+)\}/g)].map(([, name]) => ({ name, in: 'path', required: true, schema: { type: 'string' } })),
+    ...[...path.matchAll(/\{([^}]+)\}/g)].map(([, name]) => ({ name, in: 'path', required: true, ...(spec.pathParams?.[name] && { description: spec.pathParams[name] }), schema: { type: 'string' } })),
     ...(spec.query ?? []).map((q) => ({ name: q.name, in: 'query', required: q.required ?? false, description: q.description, schema: q.schema })),
     ...(spec.headers ?? []).map((h) => ({ name: h.name, in: 'header', required: false, description: h.description, schema: h.schema })),
   ];
+  if (spec.public) {
+    return {
+      operationId: spec.id,
+      tags: [spec.tag],
+      summary: spec.summary,
+      description: [spec.description, PUBLIC_TEXT].filter(Boolean).join('\n\n'),
+      security: [],
+      'x-landflow-public': true,
+      ...(parameters.length && { parameters }),
+      ...(spec.body && { requestBody: spec.body }),
+      responses: spec.responses,
+    };
+  }
+  const policy = routePolicy(method.toUpperCase(), samplePath(path));
   return {
     operationId: spec.id,
     tags: [spec.tag],
@@ -234,6 +255,9 @@ const schemas: Record<string, Json> = {
       updatedAt: { type: 'string' },
       usable: { type: 'boolean', description: 'False when a node type is missing here or blocked by the governance policy' },
       problems: array(ref('TemplateProblem')),
+      projectId: { type: 'string', description: 'Saved templates: the project it belongs to (left out: instance-wide)' },
+      projectName: { type: 'string' },
+      canEdit: { type: 'boolean', description: 'Saved templates: whether the caller may edit or delete it' },
     },
     ['id', 'source', 'name', 'description', 'categories', 'nodeTypes', 'nodeCount', 'credentials', 'usable', 'problems'],
   ),
@@ -599,27 +623,41 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Templates',
     id: 'listTemplates',
     summary: 'List templates',
-    description: 'Saved on this instance, then built-in ones; remote ones (LANDFLOW_TEMPLATES_URL) when searching or with `source=remote`.',
+    description:
+      'Saved on this instance (the caller’s projects’ and the instance-wide ones), then built-in ones; remote ones (LANDFLOW_TEMPLATES_URL) when searching or with `source=remote`, 30 per page.',
     query: [
       { name: 'search', description: 'Matches name, description and node types', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Saved templates of this project and the instance-wide ones only', schema: { type: 'string' } },
+      { name: 'page', description: 'The page of remote results (1-based)', schema: { type: 'integer', minimum: 1 } },
       { name: 'category', description: 'One category', schema: { type: 'string', enum: TEMPLATE_CATEGORIES.map((c) => c.id) } },
       { name: 'source', description: 'Only templates from here', schema: { type: 'string', enum: ['builtin', 'local', 'remote'] } },
     ],
     responses: {
       200: reply(
         'The matches, and whether remote templates are on',
-        object({ templates: array(ref('TemplateSummary')), remote: object({ enabled: { type: 'boolean' }, label: { type: 'string' }, error: { type: 'string' } }, ['enabled']) }, ['templates', 'remote']),
+        object(
+          {
+            templates: array(ref('TemplateSummary')),
+            remote: object(
+              { enabled: { type: 'boolean' }, label: { type: 'string' }, error: { type: 'string' }, page: { type: 'integer' }, total: { type: 'integer' }, hasMore: { type: 'boolean' } },
+              ['enabled'],
+            ),
+          },
+          ['templates', 'remote'],
+        ),
       ),
       400: invalid,
+      404: notFound,
     },
   });
   add('post', '/api/templates', {
     tag: 'Templates',
     id: 'saveTemplate',
     summary: 'Save a workflow as a template, or import a template file',
-    description: 'Credentials become slots (never their ids) and pinned data, publication state, folder and tags are left out. `{ data }` imports what `?format=file` exported.',
-    body: jsonBody({ oneOf: [fromZod(saveTemplateSchema), object({ data: ref('TemplateFile') }, ['data'])] }),
-    responses: { 201: templateReply('The saved template'), 400: invalid },
+    description:
+      'Credentials become slots (never their ids) and pinned data, publication state, folder and tags are left out. `{ data }` imports what `?format=file` exported. `projectId`: the project it belongs to (the caller edits there); `null`: instance-wide (owners and admins).',
+    body: jsonBody({ oneOf: [fromZod(saveTemplateSchema), object({ data: ref('TemplateFile'), projectId: { type: ['string', 'null'] } }, ['data'])] }),
+    responses: { 201: templateReply('The saved template'), 400: invalid, 403: errorRef('The caller can’t save templates there') },
   });
   add('get', '/api/templates/{id}', {
     tag: 'Templates',
@@ -627,6 +665,14 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Get a template',
     query: [{ name: 'format', description: '`file`: download it as a template file to import elsewhere', schema: { type: 'string', enum: ['file'] } }],
     responses: { 200: templateReply('The template (or, with `format=file`, a TemplateFile)'), 404: notFound, 502: errorRef('The remote templates API failed') },
+  });
+  add('patch', '/api/templates/{id}', {
+    tag: 'Templates',
+    id: 'updateTemplate',
+    summary: 'Edit a saved template',
+    description: 'Name, description, categories, setup steps or project; `workflowId` replaces its workflow with that saved workflow’s (credentials become slots, pinned data is left out).',
+    body: jsonBody(fromZod(updateTemplateSchema)),
+    responses: { 200: templateReply('The template'), 400: invalid, 403: errorRef('The caller can’t edit it'), 404: notFound },
   });
   add('delete', '/api/templates/{id}', {
     tag: 'Templates',
@@ -666,6 +712,7 @@ function paths(): Record<string, Record<string, Json>> {
     { name: 'action', description: 'Comma-separated actions (`workflow.publish`); `workflow.*` for a category', schema: { type: 'string' } },
     { name: 'targetType', description: 'workflow, credential, user, api_key, settings, execution…', schema: { type: 'string' } },
     { name: 'targetId', description: 'The target’s id', schema: { type: 'string' } },
+    { name: 'projectId', description: 'The project of the event’s target (a workflow, credential, data table or agent’s home project, or the project itself)', schema: { type: 'string' } },
     { name: 'outcome', description: 'success, failure or denied', schema: { type: 'string', enum: ['success', 'failure', 'denied'] } },
     { name: 'from', description: 'From this time (ISO time or date), inclusive', schema: { type: 'string' } },
     { name: 'to', description: 'Up to this time (ISO time or date), inclusive', schema: { type: 'string' } },
@@ -687,16 +734,27 @@ function paths(): Record<string, Record<string, Json>> {
       route: { type: 'string', description: 'The route pattern, never the raw URL' },
       status: { type: 'integer' },
       target: object({ type: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' } }, ['type']),
+      projectId: { type: 'string', description: 'The project of the target; none for instance-wide targets (users, API keys, settings)' },
       summary: { type: 'string' },
       details: { type: 'object', description: 'Flat ids, names, counts and flags; never secrets', additionalProperties: true },
+      chain: object(
+        {
+          seq: { type: 'integer', description: 'Position in the hash chain' },
+          prevHash: { type: 'string', description: 'The hash of the event before (SHA-256, hex)' },
+          hash: { type: 'string', description: 'SHA-256 over the event’s canonical stored fields and `prevHash`' },
+        },
+        ['seq', 'prevHash', 'hash'],
+      ),
     },
     ['id', 'at', 'action', 'category', 'outcome', 'actor', 'summary'],
   );
+  const chainPoint = object({ seq: { type: 'integer' }, hash: { type: 'string' }, eventId: { type: 'string' }, at: { type: 'string', format: 'date-time' } }, ['seq', 'hash']);
+  const chainProblem = object({ seq: { type: 'integer' }, eventId: { type: 'string' }, at: { type: 'string', format: 'date-time' }, reason: { type: 'string' } }, ['reason']);
   add('get', '/api/audit', {
     tag: 'Audit',
     id: 'listAuditEvents',
     summary: 'List audit events',
-    description: 'Newest first; page with `cursor` (the previous page’s `nextCursor`).',
+    description: 'Newest first; page with `cursor` (the previous page’s `nextCursor`). Owners and admins read every event; anyone else the events of the projects they are an admin of (403 for `projectId` of another project).',
     query: [
       ...auditQuery,
       { name: 'limit', description: 'At most this many (default 50)', schema: { type: 'integer', minimum: 1, maximum: 500, default: 50 } },
@@ -711,6 +769,34 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'The events matching the same filters, newest first, as a CSV or JSON download (at most 100,000). The export is audited too.',
     query: [...auditQuery, { name: 'format', description: 'csv (default) or json', schema: { type: 'string', enum: ['csv', 'json'], default: 'csv' } }],
     responses: { 200: { description: 'The download', content: { 'text/csv': { schema: { type: 'string' } }, 'application/json': { schema: array(auditEvent) } } } },
+  });
+  add('get', '/api/audit/verify', {
+    tag: 'Audit',
+    id: 'verifyAuditChain',
+    summary: 'Verify the audit log’s hash chain',
+    description:
+      'Recomputes every event’s hash from its stored fields and checks each link to the event before it, that none is missing and that the newest matches the head record. Pruned events leave an anchor (the hash of the last one pruned), so the rest still verifies. The check is audited (`audit.verify`, a failure when the chain is broken).',
+    responses: {
+      200: reply(
+        'The report',
+        object(
+          {
+            ok: { type: 'boolean' },
+            checked: { type: 'integer', description: 'Events checked' },
+            firstSeq: { type: 'integer' },
+            lastSeq: { type: 'integer' },
+            head: { ...chainPoint, description: 'The newest chained event, as the chain’s head record has it' },
+            anchor: { ...chainPoint, description: 'The last event retention pruned: the chain goes on from its hash' },
+            pending: { type: 'integer', description: 'Events not chained yet (queue mode on Postgres chains them within seconds)' },
+            legacy: { type: 'integer', description: 'Events recorded before the chain existed (not covered)' },
+            brokenAt: chainProblem,
+            problems: array(chainProblem),
+            verifiedAt: { type: 'string', format: 'date-time' },
+          },
+          ['ok', 'checked', 'problems', 'verifiedAt'],
+        ),
+      ),
+    },
   });
   const publishRequest = object(
     {
@@ -757,6 +843,132 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Reject a publish request',
     body: jsonBody(object({ comment: { type: 'string', maxLength: 2000 } }), undefined, false),
     responses: { 200: reply('The request', object({ request: publishRequest }, ['request'])), 404: notFound, 409: errorRef('Already decided') },
+  });
+
+  // ---- trigger URLs (public: each trigger checks its callers) and listening for test events ----
+  const triggerPath = { path: 'The trigger’s path, as set on the node (it may contain slashes)' };
+  const anyBody = (description: string) => ({
+    required: false,
+    description,
+    content: { 'application/json': { schema: {} }, 'application/x-www-form-urlencoded': { schema: {} }, 'multipart/form-data': { schema: {} }, '*/*': { schema: {} } },
+  });
+  const anyReply = (description: string) => ({ description, content: { 'application/json': { schema: {} }, '*/*': { schema: {} } } });
+  const triggerRefused = { 401: errorRef('The trigger’s authentication failed (`WWW-Authenticate` says how to send it)'), 403: errorRef('Not allowed: wrong Header Auth secret, an address outside the IP allow-list, or the trigger’s credential isn’t available to its workflow’s project') };
+  const webhookResponses = (miss: string) => ({
+    200: anyReply('The Respond setting’s answer: the last node’s output, a Respond to Webhook reply, `{ status: "waiting" }`, or a stream (SSE or NDJSON)'),
+    202: reply('Started (Respond: Immediately), or held by debounce or batching', object({ status: { type: 'string' }, workflowId: { type: 'string' }, executionId: { type: 'string' } }, [], { additionalProperties: true })),
+    ...triggerRefused,
+    404: errorRef(miss),
+    413: errorRef('An upload is larger than LANDFLOW_BINARY_MAX_BYTES'),
+    500: errorRef('The run failed, or the trigger isn’t set up correctly'),
+  });
+  const webhookMethods: Array<[Method, string]> = [
+    ['get', 'Get'],
+    ['post', 'Post'],
+    ['put', 'Put'],
+    ['patch', 'Patch'],
+    ['delete', 'Delete'],
+  ];
+  for (const [method, name] of webhookMethods) {
+    add(method, '/api/webhook/{path}', {
+      tag: 'Triggers',
+      id: `callWebhook${name}`,
+      summary: `Call a Webhook trigger (${method.toUpperCase()})`,
+      description: 'Runs the published version of the workflow whose Webhook trigger has this path and method. Headers, query and body (JSON, form fields, files as `binary`) become the trigger’s item. An `Idempotency-Key` header makes a retry safe.',
+      public: true,
+      pathParams: triggerPath,
+      headers: [idempotencyHeader],
+      ...(method !== 'get' && { body: anyBody('Any body: JSON, form fields, multipart files, or raw bytes') }),
+      responses: { ...webhookResponses('No published workflow listens on this method and path'), 429: errorRef('The workflow is at its concurrency limit and skips runs') },
+    });
+    add(method, '/api/webhook-test/{path}', {
+      tag: 'Triggers',
+      id: `callTestWebhook${name}`,
+      summary: `Call a Webhook trigger’s test URL (${method.toUpperCase()})`,
+      description: 'Answers one call while the editor listens for the trigger (POST /api/workflows/{id}/listen) and runs the workflow the editor sent, as a manual run the editor shows live.',
+      public: true,
+      pathParams: triggerPath,
+      ...(method !== 'get' && { body: anyBody('Any body, as on the production URL') }),
+      responses: webhookResponses('No editor is listening on this method and path (`hint` says how to start)'),
+    });
+  }
+  const formPage = (description: string) => ({ description, content: { 'text/html': { schema: { type: 'string' } } } });
+  const formBody = {
+    required: true,
+    description: 'The form’s fields (`f0`, `f1`, … in field order); files as multipart parts',
+    content: { 'application/x-www-form-urlencoded': { schema: { type: 'object', additionalProperties: true } }, 'multipart/form-data': { schema: { type: 'object', additionalProperties: true } } },
+  };
+  const formResponses = {
+    200: formPage('The end screen, or the form again with what is wrong (400)'),
+    303: { description: 'The next page of a multi-page form (`Location: /form/waiting/<executionId>`)' },
+    400: formPage('Some fields are missing or invalid: the form again, with the errors'),
+    401: formPage('Sign-in required (Basic Auth, with `WWW-Authenticate`)'),
+    403: formPage('Not allowed (Header or JWT Auth, the IP allow-list, or a credential outside the workflow’s project)'),
+    404: formPage('No such form'),
+    413: formPage('An upload is too large'),
+  };
+  for (const [prefix, test] of [
+    ['/form', false],
+    ['/form-test', true],
+  ] as const) {
+    const where = test ? 'while the editor listens for the trigger (the workflow as the editor sent it, as a manual run)' : 'of the published workflow whose On Form Submission trigger has this path';
+    add('get', `${prefix}/{path}`, {
+      tag: 'Triggers',
+      id: test ? 'showTestForm' : 'showForm',
+      summary: test ? 'Show a test form' : 'Show a hosted form',
+      description: `The HTML form ${where}.`,
+      public: true,
+      pathParams: triggerPath,
+      responses: { 200: formPage('The form'), 401: formResponses[401], 403: formResponses[403], 404: formResponses[404] },
+    });
+    add('post', `${prefix}/{path}`, {
+      tag: 'Triggers',
+      id: test ? 'submitTestForm' : 'submitForm',
+      summary: test ? 'Submit a test form' : 'Submit a hosted form',
+      description: `Submits the form ${where}: the fields become the trigger’s item (\`formMode\`: \`${test ? 'test' : 'production'}\`).`,
+      public: true,
+      pathParams: triggerPath,
+      ...(!test && { headers: [idempotencyHeader] }),
+      body: formBody,
+      responses: { ...formResponses, ...(test ? { 409: formPage('Already submitted: its test run is going on') } : { 429: formPage('The workflow is at its concurrency limit and skips runs') }) },
+    });
+  }
+  const jsonRpc = { type: 'object', description: 'A JSON-RPC 2.0 message (initialize, tools/list, tools/call, …)', additionalProperties: true };
+  for (const [prefix, test] of [
+    ['/mcp', false],
+    ['/mcp-test', true],
+  ] as const) {
+    add('post', `${prefix}/{path}`, {
+      tag: 'Triggers',
+      id: test ? 'callTestMcpTrigger' : 'callMcpTrigger',
+      summary: test ? 'Talk to an MCP Server Trigger’s test URL' : 'Talk to an MCP Server Trigger',
+      description: test
+        ? 'MCP over Streamable HTTP (stateless, JSON responses) while the editor listens for the trigger: the tools of the workflow the editor sent; each tools/call is a manual run the editor shows live. Each request keeps it listening 120 s longer.'
+        : 'MCP over Streamable HTTP (stateless, JSON responses): the tools attached to the published workflow’s MCP Server Trigger. tools/list isn’t recorded; each tools/call is an execution with mode `mcp`.',
+      public: true,
+      pathParams: triggerPath,
+      body: jsonBody(jsonRpc),
+      responses: {
+        200: reply('The JSON-RPC response', jsonRpc),
+        401: reply('The trigger’s Bearer or Header Auth failed', jsonRpc),
+        403: reply('The trigger’s credential isn’t available to its workflow’s project', jsonRpc),
+        404: reply(test ? 'No editor is listening on this path' : 'No published workflow serves this path', jsonRpc),
+      },
+    });
+  }
+  add('post', '/api/workflows/{id}/listen', {
+    tag: 'Workflows',
+    id: 'listenForTestEvent',
+    summary: 'Listen for a test event on a trigger’s test URL',
+    description:
+      'Makes the test URL of a Webhook, On Form Submission or MCP Server trigger (/api/webhook-test/{path}, /form-test/{path}, /mcp-test/{path}) answer for 120 s, running `workflow` (unsaved changes included; default: the saved one) as manual runs. Server-Sent Events: `listening` `{ listenerId, nodeId, kind, method?, path, executionId, expiresAt, timeoutMs }`, then the test run’s `execution` events and its `result` `{ executionId, status, error? }`; or `timeout`, or `stopped` when the trigger listens again elsewhere. An MCP listener takes many calls (a `result` per tool call, `listening` again with the pushed-on deadline). Closing the request stops listening and stops a run that is still going.',
+    body: jsonBody(object({ nodeId: { type: 'string', minLength: 1, description: 'The trigger node’s id' }, workflow: { ...ref('WorkflowInput'), description: 'Listen with this (unsaved) version' } }, ['nodeId'])),
+    responses: {
+      200: reply('The listening stream', { type: 'string', description: '`event: <name>` and `data: <JSON>` lines' }, 'text/event-stream'),
+      400: errorRef('That node has no test URL (not such a trigger, disabled, or without a path)'),
+      404: notFound,
+      409: errorRef('Another workflow is listening on that test URL'),
+    },
   });
 
   // ---- account ----
@@ -816,8 +1028,9 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Data tables', description: 'Built-in tables workflows read and write' },
       { name: 'Variables', description: 'Instance variables (`$vars`); changing them needs an owner or admin' },
       { name: 'Templates', description: 'The templates library: start workflows from templates, save and share your own' },
-      { name: 'Audit', description: 'The audit log (owners and admins) and four-eyes publish requests' },
+      { name: 'Audit', description: 'The audit log (owners and admins; project admins their projects’ events), its hash chain and four-eyes publish requests' },
       { name: 'Account', description: 'Who you are and your API keys' },
+      { name: 'Triggers', description: 'Webhook, form and MCP Server Trigger URLs and their test URLs: public, each checked by its trigger’s own authentication' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],
     paths: paths(),

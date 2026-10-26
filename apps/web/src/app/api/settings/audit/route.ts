@@ -32,6 +32,6 @@ export const PATCH = handler(async (request: Request) => {
   const before = getAuditSettings();
   const after = updateAuditSettings(body.data);
   recordAudit({ action: 'settings.update', target: { type: 'settings', id: 'audit', name: 'Audit log' }, details: { retentionDays: after.retentionDays, credentialUse: after.credentialUse, ...(before.retentionDays !== after.retentionDays && { previousRetentionDays: before.retentionDays }) } });
-  if (after.retentionDays && after.retentionDays < before.retentionDays) pruneAuditLog();
+  if (after.retentionDays && after.retentionDays < before.retentionDays) await pruneAuditLog();
   return json(settingsView());
 });

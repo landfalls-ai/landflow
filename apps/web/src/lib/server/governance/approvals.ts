@@ -32,6 +32,8 @@ import { logger } from '../telemetry/logger';
 import { diffWorkflows, getVersion, listVersions, recordVersion, summarizeDiff, versionFor } from '../versions';
 import { notifyApprovers, notifyRequester } from './notify';
 import { getGovernancePolicy, publishBlockedReason } from './policy';
+import { ensureProjectApprovers, projectApproverLabel } from './project-approvers';
+import { workflowRequiresFourEyes } from './scopes';
 
 export class ApprovalError extends Error {
   constructor(
@@ -85,15 +87,17 @@ export function registerApproverCheck(check: ApproverCheck): () => void {
   return () => approverChecks().delete(check);
 }
 
-/** Whether four-eyes publishing applies to `kind` now. */
-export function fourEyesApplies(kind: PublishRequestKind): boolean {
+/** Whether four-eyes publishing applies to `kind` now: on for the instance, or for `workflowId` by its own policy (./scopes). */
+export function fourEyesApplies(kind: PublishRequestKind, workflowId?: string): boolean {
   const { fourEyes } = getGovernancePolicy();
-  return fourEyes.enabled && (kind !== 'unpublish' || fourEyes.unpublish);
+  return (fourEyes.enabled || workflowRequiresFourEyes(workflowId)) && (kind !== 'unpublish' || fourEyes.unpublish);
 }
 
 /** Whether `user` may approve or reject requests for `workflowId` made by `requestedBy`. */
 export function mayApprove(user: Pick<UserRecord, 'id' | 'role'> & { disabledAt?: string }, workflowId: string, requestedBy: string): boolean {
   if (!user || user.id === requestedBy || user.disabledAt) return false;
+  // Projects say who approves their workflows' requests (./project-approvers.ts).
+  ensureProjectApprovers();
   const { approverRole } = getGovernancePolicy().fourEyes;
   // `member` is the instance's editor role: owners, admins and members; `admin`: owners and admins.
   if (approverRole === 'admin' ? !can(user, 'settings:manage') : !['owner', 'admin', 'member'].includes(user.role)) return false;
@@ -279,7 +283,8 @@ export function requestList(options: Parameters<typeof listRequests>[0] = {}): P
   const pending = options.status === undefined && !options.workflowId ? requests : listRequests({ viewer: options.viewer });
   return {
     requests,
-    fourEyes: { enabled: fourEyes.enabled, approverRole: fourEyes.approverRole, unpublish: fourEyes.unpublish },
+    // One workflow's list: on when its own policy asks for four-eyes too.
+    fourEyes: { enabled: fourEyes.enabled || workflowRequiresFourEyes(options.workflowId), approverRole: fourEyes.approverRole, unpublish: fourEyes.unpublish },
     approvable: pending.filter((r) => r.canApprove).length,
   };
 }
@@ -386,7 +391,7 @@ export type PublishOutcome = ({ approvalRequired?: false } & PublishResult) | Pu
  */
 export async function publishOrRequest(ask: PublishAsk): Promise<PublishOutcome> {
   const kind: PublishRequestKind = ask.action === 'unpublish' ? 'unpublish' : 'publish';
-  if (!fourEyesApplies(kind)) {
+  if (!fourEyesApplies(kind, ask.workflowId)) {
     if (ask.action === 'unpublish') return unpublishWorkflow(ask.workflowId, ask.by, ask.note);
     return ask.versionId ? publishVersion(ask.workflowId, ask.versionId, ask.by, ask.note) : publishDraft(ask.workflowId, ask.by, ask.note);
   }
@@ -422,7 +427,7 @@ export async function approveRequest(id: string, approver: UserRecord, comment?:
   const row = pendingRow(id);
   if (approver.id === row.requested_by) throw new ApprovalError('You can’t approve your own request: someone else has to', 403);
   if (!mayApprove(approver, row.workflow_id, row.requested_by)) {
-    const role = getGovernancePolicy().fourEyes.approverRole === 'admin' ? 'an owner or admin' : 'a builder (member, admin or owner)';
+    const role = projectApproverLabel(row.workflow_id) ?? (getGovernancePolicy().fourEyes.approverRole === 'admin' ? 'an owner or admin' : 'a builder (member, admin or owner)');
     throw new ApprovalError(`Only ${role} other than the requester can approve this`, 403);
   }
   // Claim it first, so a second approver (or a double click) can't publish it twice.
@@ -499,8 +504,8 @@ export function holdActivation<T extends Pick<Workflow, 'active' | 'nodes'>>(nex
   if (wants) {
     const blocked = publishBlockedReason(next);
     if (blocked) return { workflow: { ...next, active: was }, blocked };
-    if (fourEyesApplies('publish')) return { workflow: { ...next, active: was }, held: 'publish' };
-  } else if (fourEyesApplies('unpublish')) {
+    if (fourEyesApplies('publish', (next as { id?: string }).id)) return { workflow: { ...next, active: was }, held: 'publish' };
+  } else if (fourEyesApplies('unpublish', (next as { id?: string }).id)) {
     return { workflow: { ...next, active: was }, held: 'unpublish' };
   }
   return { workflow: next };

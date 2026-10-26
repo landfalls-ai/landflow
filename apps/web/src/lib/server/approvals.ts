@@ -113,7 +113,7 @@ async function updateSlackMessage(record: ExecutionRecord, approval: PendingAppr
   const node = record.workflow?.nodes.find((n) => n.id === approval.nodeId || n.name === approval.nodeName);
   const ref = node?.credentials?.[SLACK_CREDENTIAL];
   if (!ref) return;
-  const credential = slackCredential(credentials.dataFor(ref, SLACK_CREDENTIAL));
+  const credential = slackCredential(await credentials.dataWithSecrets(ref, SLACK_CREDENTIAL));
   const user = decision.by?.startsWith('slack:') ? decision.by.slice(6) : undefined;
   await updateMessage(credential, {
     channel: approval.slack.channel,

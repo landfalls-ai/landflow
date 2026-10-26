@@ -59,6 +59,7 @@ import { WorkflowMenu } from './workflow-menu';
 import { PublishControl } from './publish-control';
 import { ListeningBar, listenForTestEvent, stopListening, testTriggerFor, useTestListener } from './test-listener';
 import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from './edit-lock';
+import { useFollowWaiting } from './waiting';
 
 const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView };
 const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView };
@@ -527,6 +528,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const assistantOpen = useAssistant((s) => s.open);
   const readOnly = useEditLock((s) => s.readOnly);
   const { takeOver } = useEditLockSync(workflowId, loaded);
+  // A waiting run on the canvas keeps its waiting mark current and shows the rest once it resumes.
+  useFollowWaiting();
 
   // The assistant's conversation lasts while this workflow is open.
   useEffect(() => useAssistant.getState().bind(workflowId), [workflowId]);
@@ -534,7 +537,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
   useEffect(() => {
     let cancelled = false;
     const requested = new URLSearchParams(window.location.search).get('execution');
-    Promise.all([api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`), api<{ nodeTypes: NodeTypeInfo[] }>('/api/node-types')])
+    // Node types for this workflow: its project's and its own allow-lists hide nodes in the node creator too.
+    Promise.all([api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`), api<{ nodeTypes: NodeTypeInfo[] }>(`/api/node-types?workflowId=${encodeURIComponent(workflowId)}`)])
       .then(([{ workflow }, { nodeTypes }]) => {
         if (cancelled) return;
         useEditor.getState().load(workflow, nodeTypes);
@@ -559,7 +563,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
   // Plugins come and go — keep node availability/transport fresh.
   useLiveEvents((event) => {
     if (event.channel !== 'registry' || event.event.type === 'plugin.heartbeat' || event.event.type.startsWith('scan.')) return;
-    api<{ nodeTypes: NodeTypeInfo[] }>('/api/node-types')
+    api<{ nodeTypes: NodeTypeInfo[] }>(`/api/node-types?workflowId=${encodeURIComponent(workflowId)}`)
       .then(({ nodeTypes }) => useEditor.getState().setNodeTypes(nodeTypes))
       .catch(() => {});
     if (event.event.type === 'plugin.registered') toast(event.event.message);
@@ -583,11 +587,17 @@ export function Editor({ workflowId }: { workflowId: string }) {
     try {
       // `active` stays out: a save is a draft, and Publish / Unpublish (PublishControl) change what is live.
       const { active: _active, ...draft } = useEditor.getState().toWorkflow();
-      const { workflow, policyWarnings } = await api<{ workflow: Workflow } & PolicyWarnings>(`/api/workflows/${workflowId}`, { method: 'PUT', json: draft, headers: editorTabHeaders() });
+      const { workflow, policyWarnings, triggerAuthWarnings } = await api<{ workflow: Workflow; triggerAuthWarnings?: Array<{ nodeName: string; message: string }> } & PolicyWarnings>(`/api/workflows/${workflowId}`, {
+        method: 'PUT',
+        json: draft,
+        headers: editorTabHeaders(),
+      });
       useEditor.getState().markSaved();
       toast.success(`Saved “${workflow.name}”`);
       // Nodes the governance policy doesn't allow: the save stands, publishing is refused and they fail when run.
       if (policyWarnings?.length) toast.warning(`${policyWarnings.length === 1 ? '1 node is' : `${policyWarnings.length} nodes are`} blocked by policy`, { description: policyWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
+      // A trigger checking callers with a credential this workflow's project can't use: its calls are refused (403).
+      if (triggerAuthWarnings?.length) toast.warning('Trigger authentication isn’t available to this project', { description: triggerAuthWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
       return true;
     } catch (e) {
       toast.error(`Save failed: ${(e as Error).message}`);

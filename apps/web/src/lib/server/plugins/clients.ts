@@ -281,6 +281,142 @@ export class GrpcPluginClient extends TracedClient implements PluginClient {
   }
 }
 
+/**
+ * One plugin Service with several ready pods (Kubernetes discovery, LANDFLOW_K8S_SPREAD=pods): a client per pod, and
+ * each call goes to the pod with the fewest calls in flight (round robin among equals). Through the Service alone, a
+ * gRPC connection (one HTTP/2 connection, many calls) would stay on whichever pod kube-proxy picked when it opened.
+ *
+ * The manifest (with the registry proof) and health probes go through the Service (`primary`), once per plugin, not
+ * per pod. Without pods (none ready yet, or `setBackends([])`) every call goes to the Service. A pod that leaves keeps
+ * its client until its calls in flight finish.
+ */
+export class PooledPluginClient implements PluginClient {
+  readonly endpoint: string;
+  readonly transport: Exclude<Transport, 'in-process'>;
+  private readonly backends = new Map<string, { client: PluginClient; inflight: number; calls: number; retiring: boolean }>();
+  private cursor = 0;
+
+  constructor(
+    private primary: PluginClient,
+    backends: string[] = [],
+    private readonly create: (endpoint: string) => PluginClient = createClient,
+  ) {
+    this.endpoint = primary.endpoint;
+    this.transport = primary.transport;
+    this.setBackends(backends);
+  }
+
+  get pluginId(): string | undefined {
+    return this.primary.pluginId;
+  }
+
+  set pluginId(id: string | undefined) {
+    this.primary.pluginId = id;
+    for (const backend of this.backends.values()) backend.client.pluginId = id;
+  }
+
+  /** The pods to spread calls over (same transport as the Service endpoint); pods not listed any more are let go. */
+  setBackends(endpoints: string[]) {
+    const wanted = new Set(endpoints);
+    for (const [endpoint, backend] of this.backends) {
+      if (wanted.has(endpoint)) continue;
+      this.backends.delete(endpoint);
+      backend.retiring = true;
+      if (!backend.inflight) backend.client.close();
+    }
+    for (const endpoint of wanted) {
+      if (this.backends.has(endpoint)) continue;
+      const client = this.create(endpoint);
+      client.pluginId = this.primary.pluginId;
+      this.backends.set(endpoint, { client, inflight: 0, calls: 0, retiring: false });
+    }
+  }
+
+  /** A re-pulled manifest came with a new Service client: the pods' clients stay. */
+  replacePrimary(client: PluginClient) {
+    if (client === this.primary) return;
+    const pluginId = client.pluginId ?? this.primary.pluginId;
+    this.primary.close();
+    this.primary = client;
+    this.pluginId = pluginId;
+  }
+
+  /** The pods and how many calls each took (tests and troubleshooting). */
+  stats(): Array<{ endpoint: string; inflight: number; calls: number }> {
+    return [...this.backends.entries()].map(([endpoint, { inflight, calls }]) => ({ endpoint, inflight, calls }));
+  }
+
+  /** The pod with the fewest calls in flight, starting the search after the last one picked. */
+  private pick() {
+    const list = [...this.backends.values()];
+    if (!list.length) return undefined;
+    let best: (typeof list)[number] | undefined;
+    let bestIndex = 0;
+    for (let i = 0; i < list.length; i++) {
+      const index = (this.cursor + i) % list.length;
+      const backend = list[index]!;
+      if (!best || backend.inflight < best.inflight) {
+        best = backend;
+        bestIndex = index;
+      }
+    }
+    this.cursor = (bestIndex + 1) % list.length;
+    return best;
+  }
+
+  private async spread<T>(call: (client: PluginClient) => Promise<T>): Promise<T> {
+    const backend = this.pick();
+    if (!backend) return call(this.primary);
+    backend.inflight++;
+    backend.calls++;
+    try {
+      return await call(backend.client);
+    } finally {
+      backend.inflight--;
+      if (backend.retiring && !backend.inflight) backend.client.close();
+    }
+  }
+
+  manifest() {
+    return this.primary.manifest();
+  }
+
+  manifestWithProof(challenge: string) {
+    if (!this.primary.manifestWithProof) throw new Error(`${this.endpoint} can't answer a registry challenge`);
+    return this.primary.manifestWithProof(challenge);
+  }
+
+  health(timeoutMs?: number) {
+    return this.primary.health(timeoutMs);
+  }
+
+  execute(request: ExecuteRequest, signal?: AbortSignal) {
+    return this.spread((client) => client.execute(request, signal));
+  }
+
+  loadOptions(request: LoadOptionsRequest) {
+    return this.spread((client) => client.loadOptions(request));
+  }
+
+  testCredentials(request: TestCredentialsRequest) {
+    return this.spread((client) => client.testCredentials(request));
+  }
+
+  webhookMethod(request: WebhookMethodRequest) {
+    return this.spread((client) => client.webhookMethod(request));
+  }
+
+  receiveWebhook(request: WebhookRequest) {
+    return this.spread((client) => client.receiveWebhook(request));
+  }
+
+  close() {
+    this.primary.close();
+    for (const backend of this.backends.values()) backend.client.close();
+    this.backends.clear();
+  }
+}
+
 export function transportOf(endpoint: string): Exclude<Transport, 'in-process'> {
   if (endpoint.startsWith('grpc://')) return 'grpc';
   if (/^https?:\/\//.test(endpoint)) return 'http';

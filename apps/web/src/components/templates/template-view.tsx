@@ -2,14 +2,16 @@
 /**
  * /templates/:id — one template: a read-only canvas preview, its description, the setup steps, the credentials and
  * data tables it needs, and (remote templates) what the n8n importer did. "Use template" opens the setup dialog;
- * templates whose nodes are missing here or blocked by the governance policy say why and can't be used.
+ * templates whose nodes are missing here or blocked by the governance policy (`?project=`: also that project's list)
+ * say why and can't be used. A saved template's editors change it in place ("Edit") or delete it.
  */
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Ban, ChevronLeft, Download, KeyRound, LayoutTemplate, PackageX, Table2, Trash2 } from 'lucide-react';
+import { Ban, ChevronLeft, Download, KeyRound, LayoutTemplate, PackageX, Pencil, Table2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
+import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { timeAgo } from '@/lib/client/format';
 import type { TemplateDetail } from '@/lib/shared/templates';
 import type { NodeTypeInfo } from '@/lib/shared/types';
@@ -19,10 +21,12 @@ import { useCredentials } from '@/components/credentials/use-credentials';
 import { ImportReportView } from '@/components/editor/import-report';
 import { ExecutionCanvas } from '@/components/executions/execution-canvas';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
+import { ProtectedGate } from '@/components/shell/protected-gate';
 import { Chip } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SectionLabel } from '@/components/ui/inputs';
+import { EditTemplateDialog } from './edit-template-dialog';
 import { categoryName, ProblemBadge, SourceBadge, TemplateNodeIcons } from './template-card';
 import { UseTemplateDialog } from './use-template-dialog';
 import { downloadTemplate, useNodeTypeMap, useTemplateDetail } from './use-templates';
@@ -67,7 +71,9 @@ function Problems({ template, types }: { template: TemplateDetail; types: Record
         ))}
       </ul>
       <div className="text-rd/80">
-        {template.problems.some((p) => p.kind === 'missing') ? 'Install the plugin from the Marketplace, then come back.' : 'An owner or admin can change this in Settings → Governance.'}
+        {template.problems.some((p) => p.kind === 'missing')
+          ? 'Install the plugin from the Marketplace, then come back.'
+          : 'An owner or admin can change this in Settings → Governance; a project’s admins in its Settings tab (Allowed nodes).'}
       </div>
     </div>
   );
@@ -75,15 +81,21 @@ function Problems({ template, types }: { template: TemplateDetail; types: Record
 
 export function TemplateView({ id }: { id: string }) {
   const router = useRouter();
-  const folder = useSearchParams().get('folder') ?? undefined;
-  const { template, error } = useTemplateDetail(id);
+  const params = useSearchParams();
+  const folder = params.get('folder') ?? undefined;
+  const project = params.get('project') ?? undefined;
+  const { template, error, setTemplate } = useTemplateDetail(id, project);
   const types = useNodeTypeMap();
   const [using, setUsing] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // A protected environment: no new workflows here (the API refuses "Use template").
+  const readOnly = useWorkflowsReadOnly();
 
+  const carried = new URLSearchParams({ ...(folder && { folder }), ...(project && { project }) }).toString();
   const back = (
-    <Link href={`/templates${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`} className="inline-flex items-center gap-1 text-t3 hover:text-t1">
+    <Link href={`/templates${carried ? `?${carried}` : ''}`} className="inline-flex items-center gap-1 text-t3 hover:text-t1">
       <ChevronLeft className="size-4" /> Templates
     </Link>
   );
@@ -140,7 +152,13 @@ export function TemplateView({ id }: { id: string }) {
         }
         actions={
           <>
+            {template.source === 'local' && template.canEdit !== false && (
+              <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+                <Pencil className="size-3.5" /> Edit
+              </Button>
+            )}
             {template.source === 'local' &&
+              template.canEdit !== false &&
               (confirmDelete ? (
                 <Button size="sm" variant="danger" onClick={() => void remove()} loading={deleting} onBlur={() => setConfirmDelete(false)} autoFocus>
                   Delete template?
@@ -153,9 +171,11 @@ export function TemplateView({ id }: { id: string }) {
             <Button size="sm" variant="ghost" onClick={() => void download()} title="Download as a template file to import on another instance">
               <Download className="size-3.5" /> Export
             </Button>
-            <Button variant="primary" size="sm" onClick={() => setUsing(true)} disabled={!template.usable} title={template.usable ? undefined : template.problems.map((p) => p.message).join('\n')}>
-              <LayoutTemplate className="size-3.5" /> Use template
-            </Button>
+            <ProtectedGate reason={readOnly}>
+              <Button variant="primary" size="sm" onClick={() => setUsing(true)} disabled={!template.usable || Boolean(readOnly)} title={readOnly ? undefined : template.usable ? undefined : template.problems.map((p) => p.message).join('\n')}>
+                <LayoutTemplate className="size-3.5" /> Use template
+              </Button>
+            </ProtectedGate>
           </>
         }
       />
@@ -240,7 +260,8 @@ export function TemplateView({ id }: { id: string }) {
           )}
         </aside>
       </PageBody>
-      {using && <UseTemplateDialog template={template} folderId={folder} onClose={() => setUsing(false)} />}
+      {using && <UseTemplateDialog template={template} folderId={folder} projectId={project ?? template.projectId} onClose={() => setUsing(false)} />}
+      {editing && <EditTemplateDialog template={template} onClose={() => setEditing(false)} onSaved={setTemplate} />}
     </>
   );
 }

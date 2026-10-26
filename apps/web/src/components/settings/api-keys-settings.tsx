@@ -34,8 +34,8 @@ function CreateKey({ onCreated, onCancel }: { onCreated: (token: string, key: Ap
   const [scopes, setScopes] = useState<ApiKeyScope[]>(['workflows:read', 'executions:read']);
   const [days, setDays] = useState(90);
   const [saving, setSaving] = useState(false);
-  // SCIM tokens are made in Settings → Security.
-  const allowed = API_KEY_SCOPES.filter((s) => s !== 'scim' && (s !== 'admin' || can(viewer, 'apiKeys:admin')) && (s !== 'audit:read' || can(viewer, 'audit:read')));
+  // SCIM tokens are made in Settings → Security. `audit:read` reads what its user may (project admins: their projects' events).
+  const allowed = API_KEY_SCOPES.filter((s) => s !== 'scim' && (s !== 'admin' || can(viewer, 'apiKeys:admin')));
   const toggle = (scope: ApiKeyScope) => setScopes((list) => (list.includes(scope) ? list.filter((s) => s !== scope) : [...list, scope]));
 
   const submit = async (event: React.FormEvent) => {

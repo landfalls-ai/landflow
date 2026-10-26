@@ -1,13 +1,15 @@
 'use client';
 /**
- * Settings → Audit log: who did what, when and from where. The log with filters (actor, action, target, outcome,
- * time, text), newest first and paged by cursor, with CSV and JSON export of the same filter; how long events are
- * kept and whether credential use in runs is recorded; and SIEM streaming: syslog (RFC 5424 over UDP, TCP or TLS),
- * HTTP JSON lines (signed, or Datadog and Elasticsearch presets) and Splunk HEC, each with "Send test event" and
- * its outbox. Owners and admins only (the `audit:read` action).
+ * Settings → Audit log: who did what, when and from where. The log with filters (actor, action, target, project,
+ * outcome, time, text), newest first and paged by cursor, with CSV and JSON export of the same filter and "Verify
+ * chain" (the hash chain, GET /api/audit/verify); how long events are kept and whether credential use in runs is
+ * recorded; and SIEM streaming: syslog (RFC 5424 over UDP, TCP or TLS), HTTP JSON lines (signed, or Datadog and
+ * Elasticsearch presets) and Splunk HEC, each with "Send test event" and its outbox, and a client certificate for
+ * receivers that want mTLS. Owners and admins only (the `audit:read` action); `AuditLog` alone, fixed to one project,
+ * is the project page's Audit log tab for project admins.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Download, Pencil, Plus, RotateCw, Search, Send, Trash2, TriangleAlert, X } from 'lucide-react';
+import { Check, Download, Pencil, Plus, RotateCw, Search, Send, ShieldCheck, Trash2, TriangleAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -16,6 +18,7 @@ import { can } from '@/lib/shared/auth';
 import {
   AUDIT_ACTIONS,
   AUDIT_DESTINATION_KINDS,
+  type AuditChainReport,
   type AuditDelivery,
   type AuditDestination,
   type AuditDestinationConfig,
@@ -26,6 +29,7 @@ import {
   type AuditSettingsView,
 } from '@/lib/shared/audit';
 import { useViewer } from '@/components/auth/viewer';
+import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { Card } from '@/components/shell/page-header';
 import { Badge, type Tone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -49,12 +53,13 @@ interface Filters {
   action: string;
   targetType: string;
   targetId: string;
+  projectId: string;
   outcome: '' | AuditOutcome;
   from: string;
   to: string;
   q: string;
 }
-const NO_FILTERS: Filters = { actor: '', action: '', targetType: '', targetId: '', outcome: '', from: '', to: '', q: '' };
+const NO_FILTERS: Filters = { actor: '', action: '', targetType: '', targetId: '', projectId: '', outcome: '', from: '', to: '', q: '' };
 
 function query(filters: Filters, extra: Record<string, string> = {}): string {
   const params = new URLSearchParams();
@@ -70,7 +75,7 @@ function actorLabel(event: AuditEvent): string {
   return actor.name || actor.email || actor.id || 'Unknown';
 }
 
-function EventRow({ event, onFilter }: { event: AuditEvent; onFilter: (patch: Partial<Filters>) => void }) {
+function EventRow({ event, onFilter, projectName }: { event: AuditEvent; onFilter: (patch: Partial<Filters>) => void; projectName: (id: string) => string }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -119,6 +124,16 @@ function EventRow({ event, onFilter }: { event: AuditEvent; onFilter: (patch: Pa
                   </dd>
                 </>
               )}
+              {event.projectId && (
+                <>
+                  <dt className="text-t3">Project</dt>
+                  <dd className="text-t1">
+                    <button type="button" className="hover:text-ac" onClick={() => onFilter({ projectId: event.projectId })}>
+                      {projectName(event.projectId)} <span className="font-mono text-t3">{event.projectId}</span>
+                    </button>
+                  </dd>
+                </>
+              )}
               {(event.method || event.route) && (
                 <>
                   <dt className="text-t3">Request</dt>
@@ -154,6 +169,14 @@ function EventRow({ event, onFilter }: { event: AuditEvent; onFilter: (patch: Pa
                     <dd className="break-all font-mono text-t1">{Array.isArray(value) ? value.join(', ') : String(value)}</dd>
                   </div>
                 ))}
+              {event.chain && (
+                <>
+                  <dt className="text-t3">Hash chain</dt>
+                  <dd className="break-all font-mono text-[11px] text-t2" title={`Previous: ${event.chain.prevHash}`}>
+                    #{event.chain.seq} · {event.chain.hash}
+                  </dd>
+                </>
+              )}
             </dl>
           </td>
         </tr>
@@ -162,13 +185,81 @@ function EventRow({ event, onFilter }: { event: AuditEvent; onFilter: (patch: Pa
   );
 }
 
-function AuditLog() {
-  const [draft, setDraft] = useState<Filters>(NO_FILTERS);
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+/** The result of "Verify chain". */
+function ChainResult({ report, onClose }: { report: AuditChainReport; onClose: () => void }) {
+  const range = report.firstSeq !== undefined ? ` (#${report.firstSeq}–#${report.lastSeq})` : '';
+  const notes = [
+    report.anchor && `continues from pruned event #${report.anchor.seq}`,
+    report.pending && `${report.pending.toLocaleString()} not chained yet`,
+    report.legacy && `${report.legacy.toLocaleString()} recorded before the chain began`,
+  ].filter(Boolean);
+  return (
+    <div className={cn('flex items-start gap-2 rounded-[10px] border px-3 py-2.5 text-[13px]', report.ok ? 'border-gnbd bg-gndim text-gn' : 'border-rdbd bg-rddim text-rd')} role="status">
+      {report.ok ? <ShieldCheck className="mt-0.5 size-4 shrink-0" /> : <TriangleAlert className="mt-0.5 size-4 shrink-0" />}
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="font-semibold">
+          {report.ok ? `Chain intact: ${report.checked.toLocaleString()} events verified${range}` : `Chain broken at #${report.brokenAt?.seq ?? '?'}: ${report.brokenAt?.reason ?? 'unknown problem'}`}
+        </div>
+        {!report.ok && report.problems.length > 1 && (
+          <ul className="list-disc space-y-0.5 pl-4 text-[12px]">
+            {report.problems.slice(1).map((problem, i) => (
+              <li key={i}>
+                {problem.seq !== undefined && `#${problem.seq}: `}
+                {problem.reason}
+                {problem.eventId && <span className="font-mono text-[11px]"> {problem.eventId}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="text-[12px] text-t2">
+          {notes.length ? `${notes.join(' · ')} · ` : ''}checked {timeAgo(report.verifiedAt)}
+          {report.brokenAt?.eventId && (
+            <>
+              {' '}
+              · event <span className="font-mono">{report.brokenAt.eventId}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <button type="button" className="text-t3 hover:text-t1" onClick={onClose} aria-label="Dismiss">
+        <X className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The events, filters, export and (instance-wide) "Verify chain". With `projectId` it shows that project's events
+ * only (the project page's Audit log tab).
+ */
+export function AuditLog({ projectId }: { projectId?: string } = {}) {
+  const viewer = useViewer();
+  const fixed = projectId ? { ...NO_FILTERS, projectId } : NO_FILTERS;
+  const [draft, setDraft] = useState<Filters>(fixed);
+  const [filters, setFilters] = useState<Filters>(fixed);
   const [events, setEvents] = useState<AuditEvent[]>();
   const [cursor, setCursor] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [verifying, setVerifying] = useState(false);
+  const [report, setReport] = useState<AuditChainReport>();
+  const { projects } = useProjects();
+  const projectName = (id: string) => {
+    const project = projects?.find((p) => p.id === id);
+    return project ? projectLabel(project, viewer?.id) : 'Project';
+  };
+  const canVerify = !projectId && can(viewer, 'audit:read');
+
+  const verify = async () => {
+    setVerifying(true);
+    try {
+      setReport(await api<AuditChainReport>('/api/audit/verify'));
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   const load = useCallback(async (next: Filters, after?: string) => {
     setLoading(true);
@@ -192,12 +283,17 @@ function AuditLog() {
     setFilters(next);
   };
   const set = (patch: Partial<Filters>) => setDraft((d) => ({ ...d, ...patch }));
-  const filtered = Object.values(filters).some(Boolean);
+  const filtered = Object.entries(filters).some(([key, value]) => value && !(projectId && key === 'projectId'));
 
   return (
     <section className="space-y-2.5">
       <div className="flex items-center gap-3">
         <SectionLabel className="flex-1">Events</SectionLabel>
+        {canVerify && (
+          <Button size="sm" onClick={() => void verify()} loading={verifying} title="Recompute every event’s hash and check the links between them">
+            <ShieldCheck className="size-3.5" /> Verify chain
+          </Button>
+        )}
         <a href={`/api/audit/export?${query(filters, { format: 'csv' })}`} download>
           <Button size="sm" tabIndex={-1}>
             <Download className="size-3.5" /> CSV
@@ -209,6 +305,7 @@ function AuditLog() {
           </Button>
         </a>
       </div>
+      {report && <ChainResult report={report} onClose={() => setReport(undefined)} />}
       <Card className="space-y-2.5 p-3">
         <form
           className="grid grid-cols-2 gap-2 sm:grid-cols-4"
@@ -249,7 +346,17 @@ function AuditLog() {
             <Input type="date" value={draft.from} onChange={(e) => apply({ from: e.target.value })} aria-label="From" title="From" />
             <Input type="date" value={draft.to} onChange={(e) => apply({ to: e.target.value })} aria-label="To" title="To" />
           </div>
-          <div className="col-span-2 flex items-center gap-2 sm:col-span-4">
+          {!projectId && (
+            <Select value={draft.projectId} onChange={(e) => apply({ projectId: e.target.value })} aria-label="Project">
+              <option value="">All projects</option>
+              {(projects ?? []).map((project) => (
+                <option key={project.id} value={project.id}>
+                  {projectLabel(project, viewer?.id)}
+                </option>
+              ))}
+            </Select>
+          )}
+          <div className={cn('col-span-2 flex items-center gap-2', projectId ? 'sm:col-span-4' : 'sm:col-span-3')}>
             <Button size="sm" variant="primary" type="submit">
               Apply
             </Button>
@@ -259,8 +366,8 @@ function AuditLog() {
                 variant="ghost"
                 type="button"
                 onClick={() => {
-                  setDraft(NO_FILTERS);
-                  setFilters(NO_FILTERS);
+                  setDraft(fixed);
+                  setFilters(fixed);
                 }}
               >
                 <X className="size-3.5" /> Clear filters
@@ -289,12 +396,12 @@ function AuditLog() {
             </thead>
             <tbody>
               {events.map((event) => (
-                <EventRow key={event.id} event={event} onFilter={apply} />
+                <EventRow key={event.id} event={event} onFilter={apply} projectName={projectName} />
               ))}
             </tbody>
           </table>
         ) : (
-          <div className="py-6">{events ? <EmptyState title={filtered ? 'No event matches' : 'No events yet'} hint={filtered ? 'Try fewer filters.' : 'Sign-ins, changes and runs that use credentials show up here.'} /> : <div className="px-4 text-[13px] text-t3">Loading…</div>}</div>
+          <div className="py-6">{events ? <EmptyState title={filtered ? 'No event matches' : 'No events yet'} hint={filtered ? 'Try fewer filters.' : projectId ? 'Changes to this project and its workflows, credentials, data tables and agents show up here.' : 'Sign-ins, changes and runs that use credentials show up here.'} /> : <div className="px-4 text-[13px] text-t3">Loading…</div>}</div>
         )}
         {cursor && (
           <div className="flex justify-center border-t border-hair py-2.5">
@@ -338,6 +445,53 @@ function destinationTarget(d: AuditDestination): string {
   if (d.kind === 'splunk') return `${c.url ?? ''}${c.index ? ` · index ${c.index}` : ''}`;
   const preset = c.preset === 'datadog' ? 'Datadog · ' : c.preset === 'elastic' ? 'Elasticsearch · ' : '';
   return `${preset}${c.url ?? ''}${(c.preset ?? 'generic') === 'generic' && d.secretsSet.includes('secret') ? ' · signed' : ''}`;
+}
+
+/** TLS for syslog over TLS and HTTPS destinations: the server check, a private CA, and a client certificate (mTLS). */
+function TlsFields({ config, set, initial }: { config: AuditDestinationConfig; set: (next: Partial<AuditDestinationConfig>) => void; initial?: AuditDestination }) {
+  const saved = (field: string) => Boolean(initial?.secretsSet.includes(field) && config.clientCert);
+  const info = initial?.clientCertificate && config.clientCert === initial.config.clientCert ? initial.clientCertificate : undefined;
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center gap-2 text-[12px] text-t1">
+        <Switch checked={config.rejectUnauthorized !== false} onChange={(value) => set({ rejectUnauthorized: value })} label="Check the server’s certificate" /> Check the server’s certificate
+      </label>
+      <div>
+        <FieldLabel>CA certificate (PEM, optional)</FieldLabel>
+        <Textarea rows={3} value={config.ca ?? ''} onChange={(e) => set({ ca: e.target.value })} placeholder="-----BEGIN CERTIFICATE-----" className="font-mono text-[11px]" spellCheck={false} />
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <FieldLabel>Client certificate (PEM, for mTLS)</FieldLabel>
+          <Textarea rows={3} value={config.clientCert ?? ''} onChange={(e) => set({ clientCert: e.target.value })} placeholder="-----BEGIN CERTIFICATE-----" className="font-mono text-[11px]" spellCheck={false} />
+        </div>
+        <div>
+          <FieldLabel>Client private key (PEM)</FieldLabel>
+          <Textarea
+            rows={3}
+            value={config.clientKey ?? ''}
+            onChange={(e) => set({ clientKey: e.target.value })}
+            placeholder={saved('clientKey') ? 'Saved — leave empty to keep it' : '-----BEGIN PRIVATE KEY-----'}
+            className="font-mono text-[11px] [-webkit-text-security:disc]"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </div>
+      </div>
+      {(config.clientCert || config.clientKey) && (
+        <div className="max-w-[320px]">
+          <FieldLabel>Key passphrase (optional)</FieldLabel>
+          <Input type="password" autoComplete="off" value={config.clientKeyPassphrase ?? ''} onChange={(e) => set({ clientKeyPassphrase: e.target.value })} placeholder={saved('clientKeyPassphrase') ? 'Saved — leave empty to keep it' : 'Only for an encrypted key'} />
+        </div>
+      )}
+      {info && (
+        <p className="text-[11px] leading-snug text-t2">
+          Presents <span className="text-t1">{info.subject}</span>, issued by {info.issuer}, valid until {new Date(info.validTo).toLocaleDateString()}.
+        </p>
+      )}
+      <p className="text-[11px] leading-snug text-t3">For receivers that require a client certificate (mutual TLS). The key is encrypted at rest and never shown again; clear the certificate to stop presenting one.</p>
+    </div>
+  );
 }
 
 function DestinationEditor({ initial, onSaved, onCancel }: { initial?: AuditDestination; onSaved: (destination: AuditDestination) => void; onCancel: () => void }) {
@@ -436,17 +590,7 @@ function DestinationEditor({ initial, onSaved, onCancel }: { initial?: AuditDest
               </div>
             )}
           </div>
-          {config.protocol === 'tls' && (
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-[12px] text-t1">
-                <Switch checked={config.rejectUnauthorized !== false} onChange={(value) => set({ rejectUnauthorized: value })} label="Check the server’s certificate" /> Check the server’s certificate
-              </label>
-              <div>
-                <FieldLabel>CA certificate (PEM, optional)</FieldLabel>
-                <Textarea rows={3} value={config.ca ?? ''} onChange={(e) => set({ ca: e.target.value })} placeholder="-----BEGIN CERTIFICATE-----" className="font-mono text-[11px]" />
-              </div>
-            </div>
-          )}
+          {config.protocol === 'tls' && <TlsFields config={config} set={set} initial={initial} />}
           <p className="text-[11px] leading-snug text-t3">
             RFC 5424 messages with the event as structured data (<code className="font-mono">[landflow@32473 …]</code>) and the full JSON as the message. UDP drops what doesn’t fit in one datagram; prefer TCP or TLS.
           </p>
@@ -507,6 +651,7 @@ function DestinationEditor({ initial, onSaved, onCancel }: { initial?: AuditDest
               )}
             </div>
           )}
+          {config.url?.trim().startsWith('https:') && <TlsFields config={config} set={set} initial={initial} />}
         </>
       )}
       {kind === 'splunk' && (
@@ -535,6 +680,7 @@ function DestinationEditor({ initial, onSaved, onCancel }: { initial?: AuditDest
               <Input value={config.sourcetype ?? ''} onChange={(e) => set({ sourcetype: e.target.value })} placeholder="landflow:audit" />
             </div>
           </div>
+          {config.url?.trim().startsWith('https:') && <TlsFields config={config} set={set} initial={initial} />}
         </>
       )}
       {problem && <div className="text-[12px] text-rd">{problem}</div>}

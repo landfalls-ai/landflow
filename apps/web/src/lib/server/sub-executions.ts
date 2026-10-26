@@ -3,6 +3,9 @@
  * per item, and when some of them wait, the parent waits for all of them (`wait.resume = 'subworkflow'`). The state is
  * the parent's `wait.data` (`EachWait`), saved with the execution: it survives a restart, and in queue mode every
  * process reads the same row. One entry per item: the child's execution id and, once it finished, its output or error.
+ * Outputs stay inline while they add up to less than EACH_INLINE_MAX_BYTES; past that an entry is only marked `stored`
+ * and the parent reads that child's output from its execution when it resumes (failing the node, naming the child, if
+ * the execution was deleted in the meantime).
  *
  * A finished child records its result through `settleChildren`, as one step: a synchronous stretch in regular mode,
  * under a cluster lock with the parent's row read fresh in queue mode. The step that settles the last open entry marks
@@ -33,6 +36,8 @@ export interface EachChild {
   status?: 'success' | 'error' | 'canceled';
   /** Success: its last node's items (`pairedItem` is set when the parent resumes). */
   output?: NodeItem[];
+  /** Success, past the inline cap: the output is read from the child's execution when the parent resumes. */
+  stored?: true;
   /** Failed or canceled: the message the parent shows. */
   error?: string;
 }
@@ -48,6 +53,9 @@ export interface EachWait {
   /** The parent is being resumed: later results change nothing. */
   resuming?: boolean;
 }
+
+/** What the finished children's outputs may add up to inline in the parent's wait (JSON bytes); past it they are `stored`. */
+export const EACH_INLINE_MAX_BYTES = 256 * 1024;
 
 const FINISHED = new Set<string>(['success', 'error', 'canceled']);
 const isFinished = (status: string | undefined) => Boolean(status && FINISHED.has(status));
@@ -77,8 +85,51 @@ export function openChildren(record: Pick<ExecutionRecord, 'status' | 'wait'>): 
 
 /** A finished child's entry; `items` is its last node's output (the runner's lastNodeItems). */
 export function finishedEntry(child: Pick<ExecutionRecord, 'executionId' | 'status' | 'error'>, items: NodeItem[]): Omit<EachChild, 'item' | 'executionId'> {
-  if (child.status === 'success') return { status: 'success', output: items.map((item) => ({ json: item.json, ...(item.binary && { binary: item.binary }) })) };
+  if (child.status === 'success') return { status: 'success', output: plainItems(items) };
   return { status: child.status === 'canceled' ? 'canceled' : 'error', error: childFailure(child) };
+}
+
+const plainItems = (items: NodeItem[]): NodeItem[] => items.map((item) => ({ json: item.json, ...(item.binary && { binary: item.binary }) }));
+
+/**
+ * Keep the wait record small: in item order, successful outputs stay inline while they add up to EACH_INLINE_MAX_BYTES,
+ * and later ones become `stored` (read from the child's execution on resume). A child whose execution isn't kept
+ * (its workflow doesn't save successful runs) stays inline: there is nothing to read it back from.
+ */
+export function capInlineOutputs(children: EachChild[]): void {
+  let bytes = 0;
+  for (const child of [...children].sort((a, b) => a.item - b.item)) {
+    if (child.status !== 'success' || !child.output) continue;
+    const size = Buffer.byteLength(JSON.stringify(child.output));
+    if (bytes + size > EACH_INLINE_MAX_BYTES && statusOf(child.executionId) === 'success') {
+      delete child.output;
+      child.stored = true;
+    } else bytes += size;
+  }
+}
+
+/** Why a stored output can't be read: the child's execution is gone (retention, or deleted by hand). */
+export const goneChildMessage = (child: Pick<EachChild, 'item' | 'executionId'>) =>
+  `Sub-execution ${child.executionId} (item ${child.item}) no longer exists, so its output can’t be read: it was deleted before this run resumed`;
+
+/** The children with the outputs of `stored` entries read from their executions, or the error for one that is gone. */
+export async function loadStoredOutputs(children: EachChild[]): Promise<{ children: EachChild[] } | { error: string }> {
+  if (!children.some((child) => child.stored)) return { children };
+  const { lastNodeItems } = await import('./runner');
+  const loaded: EachChild[] = [];
+  for (const child of children) {
+    if (!child.stored) {
+      loaded.push(child);
+      continue;
+    }
+    // Queue mode: another process saved it.
+    if (clusterActive()) await refreshRows('executions', { id: child.executionId }).catch(() => {});
+    const record = store.getExecution(child.executionId);
+    if (record?.status !== 'success') return { error: goneChildMessage(child) };
+    const { stored: _stored, ...rest } = child;
+    loaded.push({ ...rest, output: plainItems(lastNodeItems(record)) });
+  }
+  return { children: loaded };
 }
 
 /** The node's output: every child's items in item order, and `{ error }` for a child that failed (continue on error). */
@@ -92,9 +143,9 @@ export function eachOutput(children: EachChild[]): NodeItem[] {
     );
 }
 
-/** What resumes the parent and which children nothing waits for any more. */
+/** What resumes the parent (the finished children, whose `stored` outputs are read then) and which children nothing waits for any more. */
 interface Verdict {
-  request: { outputs: NodeItem[][] } | { error: string };
+  request: { children: EachChild[] } | { error: string };
   cancel: string[];
 }
 
@@ -103,7 +154,7 @@ function verdictOf(data: EachWait): Verdict | undefined {
   const open = data.children.filter((child) => !child.status).map((child) => child.executionId);
   const failed = data.continueOnFail ? undefined : data.children.find((child) => child.status && child.status !== 'success');
   if (failed) return { request: { error: failed.error ?? 'Sub-workflow failed' }, cancel: open };
-  return open.length ? undefined : { request: { outputs: [eachOutput(data.children)] }, cancel: [] };
+  return open.length ? undefined : { request: { children: data.children }, cancel: [] };
 }
 
 interface SettleOptions {
@@ -129,6 +180,7 @@ function settleStep(parentId: string, finished: ExecutionRecord[], itemsOf: (chi
     changed = true;
   }
   if (!changed) return { saved: false };
+  capInlineOutputs(data.children);
   const verdict = verdictOf(data);
   if (verdict) data.resuming = true;
   store.patchExecution(parentId, { wait: { ...parent.wait, data: data as unknown as JsonObject } });
@@ -156,7 +208,11 @@ export async function settleChildren(parentId: string, finished: ExecutionRecord
     // Queue mode: many children may finish at once, on any process; they take turns.
     const outcome = clusterActive() ? await exclusive(coordinator(), `subworkflows:${parentId}`, fresh, { waitMs: 60_000 }) : step();
     if (!outcome.verdict) return;
-    const { request, cancel } = outcome.verdict;
+    const { request: verdict, cancel } = outcome.verdict;
+    // Outputs past the inline cap come from the children's executions now (with none, no await: the resume below
+    // marks the parent running before another settle or the boot check can look at it).
+    const loaded = 'error' in verdict || !verdict.children.some((child) => child.stored) ? verdict : await loadStoredOutputs(verdict.children);
+    const request = 'error' in loaded ? { error: loaded.error } : { outputs: [eachOutput(loaded.children)] };
     // Its own trace, like any resume.
     void context
       .with(ROOT_CONTEXT, () => resumeExecution(parentId, { kind: 'subworkflow', ...request }))

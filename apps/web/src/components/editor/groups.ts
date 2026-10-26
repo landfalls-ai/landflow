@@ -3,19 +3,47 @@
  * from `nodes` and `stickies` (the engine never sees it). Its `width` / `height` are the expanded frame; a collapsed
  * group is drawn as a compact box at the frame's top-left corner, its nodes hidden and their connections re-routed to
  * the box (`canvasGraph`). Pure helpers, so the store logic stays testable without a canvas.
+ *
+ * Groups nest (`data.parentId`, `data.nodeIds` being a group's own nodes): moving a frame moves everything inside it,
+ * a frame dropped into a bigger one joins it (and leaves it when dragged out), a parent grows to fit what joins it,
+ * collapsing a parent hides the groups inside it too, and removing a group hands its nodes and groups to its parent.
  */
 import type { Edge, Node } from '@xyflow/react';
-import { DEFAULT_GROUP_NAME, GROUP_COLLAPSED_SIZE, NODE_TILE, centerOf, frameAround, groupAt, growToFit, nodeBox, normalizeGroups, type Rect } from '@/lib/shared/groups';
+import {
+  DEFAULT_GROUP_NAME,
+  GROUP_COLLAPSED_SIZE,
+  GROUP_HANDLES,
+  NODE_TILE,
+  ancestorsOf,
+  centerOf,
+  collapsedBoxes,
+  depthOf,
+  descendantGroupIds,
+  descendantNodeIds,
+  frameAround,
+  groupAt,
+  growToFit,
+  nodeBox,
+  normalizeGroups,
+  parentAt,
+  routeEdges,
+  type GroupLink,
+  type Rect,
+} from '@/lib/shared/groups';
 import type { ConnectionType, WorkflowGroup } from '@/lib/shared/types';
 import type { FlowEdge, FlowNode, StickyFlowNode } from './store';
+
+export { GROUP_HANDLES };
 
 export interface GroupData extends Record<string, unknown> {
   name: string;
   /** Index into the sticky-note palette (STICKY_COLORS). */
   color: number;
   collapsed: boolean;
-  /** Ids of the nodes in the group. */
+  /** Ids of the group's own nodes (not those of the groups nested in it). */
   nodeIds: string[];
+  /** The group this one sits in. */
+  parentId?: string;
 }
 /** `frame`, not React Flow's built-in `group` type (which comes with its own styles). */
 export type GroupFlowNode = Node<GroupData, 'frame'>;
@@ -28,10 +56,10 @@ export interface GroupProxyData extends Record<string, unknown> {
 /** A connection drawn to or from a collapsed group's box in place of the hidden node's. */
 export type GroupProxyEdge = Edge<GroupProxyData, 'groupProxy'>;
 
-/** Frames sit under the notes (-1000), the edges and the nodes. */
+/** Frames sit under the notes (-1000), the edges and the nodes; a nested frame one step above its parent. */
 export const GROUP_Z = -2000;
-/** Handles of a collapsed box: main connections in on the left and out on the right, sub-node ones on top and bottom. */
-export const GROUP_HANDLES = { in: 'group:in', out: 'group:out', aiIn: 'group:ai-in', aiOut: 'group:ai-out' } as const;
+
+type PositionChange = { type: 'position'; id: string; position: { x: number; y: number } };
 
 /** The room a node takes on the canvas (as measured, else a plain tile), its name below the tile included. */
 export function nodeRect(node: Pick<FlowNode, 'position' | 'measured' | 'width' | 'height'>): Rect {
@@ -47,11 +75,11 @@ export function toFrames(groups: readonly WorkflowGroup[] = []): GroupFlowNode[]
     height: group.height,
     zIndex: GROUP_Z,
     dragHandle: '.lf-frame-handle',
-    data: { name: group.name, color: group.color ?? 0, collapsed: Boolean(group.collapsed), nodeIds: [...group.nodeIds] },
+    data: { name: group.name, color: group.color ?? 0, collapsed: Boolean(group.collapsed), nodeIds: [...group.nodeIds], ...(group.parentId && { parentId: group.parentId }) },
   }));
 }
 
-/** Frames → `workflow.groups`, members limited to nodes that exist. */
+/** Frames → `workflow.groups`, members limited to nodes that exist, parents to groups that exist. */
 export function fromFrames(frames: readonly GroupFlowNode[], nodes: readonly Pick<FlowNode, 'id'>[]): WorkflowGroup[] {
   return normalizeGroups(
     frames.map((f) => ({
@@ -63,17 +91,52 @@ export function fromFrames(frames: readonly GroupFlowNode[], nodes: readonly Pic
       height: f.height ?? f.measured?.height ?? 0,
       ...(f.data.color ? { color: f.data.color } : {}),
       ...(f.data.collapsed && { collapsed: true }),
+      ...(f.data.parentId && { parentId: f.data.parentId }),
     })),
     nodes.map((n) => n.id),
   );
 }
 
-/** A frame as the shared geometry helpers see it. */
+/** A frame as the shared helpers see it. */
 function asGroup(frame: GroupFlowNode) {
-  return { id: frame.id, position: [frame.position.x, frame.position.y] as [number, number], width: frame.width ?? 0, height: frame.height ?? 0, collapsed: frame.data.collapsed };
+  return {
+    id: frame.id,
+    position: [frame.position.x, frame.position.y] as [number, number],
+    width: frame.width ?? 0,
+    height: frame.height ?? 0,
+    collapsed: frame.data.collapsed,
+    nodeIds: frame.data.nodeIds,
+    parentId: frame.data.parentId,
+  };
+}
+
+/** The frames as tree links, for ancestorsOf / descendantNodeIds and friends. */
+export const linksOf = (frames: readonly GroupFlowNode[]): GroupLink[] => frames.map(asGroup);
+
+/** Frames that can take a dropped node or frame: hidden ones (inside a collapsed group) count as collapsed. */
+function dropTargets(frames: readonly GroupFlowNode[]) {
+  const { hidden } = collapsedBoxes(linksOf(frames));
+  return frames.map((f) => (hidden.has(f.id) ? { ...asGroup(f), collapsed: true } : asGroup(f)));
+}
+
+/** Nodes hidden on the canvas because a group around them is collapsed. */
+export function hiddenNodeIds(frames: readonly GroupFlowNode[]): Set<string> {
+  return new Set(collapsedBoxes(linksOf(frames)).boxOf.keys());
+}
+
+/** Frames hidden on the canvas because a group around them is collapsed. */
+export function hiddenFrameIds(frames: readonly GroupFlowNode[]): Set<string> {
+  return collapsedBoxes(linksOf(frames)).hidden;
 }
 
 const withData = (frame: GroupFlowNode, patch: Partial<GroupData>): GroupFlowNode => ({ ...frame, data: { ...frame.data, ...patch } });
+
+/** A frame moved into another group, or (no parent) to the top level. */
+function withParent(frame: GroupFlowNode, parentId: string | undefined): GroupFlowNode {
+  if (frame.data.parentId === parentId) return frame;
+  const { parentId: _old, ...data } = frame.data;
+  return { ...frame, data: parentId ? { ...data, parentId } : data };
+}
 
 /** "Group", or "Group 2", "Group 3"… when the name is taken. */
 export function nextGroupName(frames: readonly GroupFlowNode[]): string {
@@ -84,11 +147,48 @@ export function nextGroupName(frames: readonly GroupFlowNode[]): string {
   return `${DEFAULT_GROUP_NAME} ${i}`;
 }
 
-/** A new frame around these nodes. */
-export function frameFor(id: string, name: string, nodes: readonly FlowNode[]): GroupFlowNode | undefined {
-  const rect = frameAround(nodes.map(nodeRect));
+/** A new frame around these nodes and frames (the frames' expanded size, so expanding them later still fits). */
+export function frameFor(id: string, name: string, nodes: readonly FlowNode[], frames: readonly GroupFlowNode[] = []): GroupFlowNode | undefined {
+  const rect = frameAround([...nodes.map(nodeRect), ...frames.map(frameRect)]);
   if (!rect) return undefined;
   return toFrames([{ id, name, nodeIds: nodes.map((n) => n.id), position: [rect.x, rect.y], width: rect.width, height: rect.height }])[0];
+}
+
+/**
+ * ⌘G: a new group around the picked nodes and frames. Picked frames move into it with everything inside them (a
+ * picked frame inside another picked one comes along with its parent, as do picked nodes inside a picked frame); the
+ * other picked nodes leave their groups for it. It sits in the innermost group that held all of them, which grows to
+ * fit it. Undefined when nothing is picked.
+ */
+export function groupAround(
+  frames: GroupFlowNode[],
+  nodes: readonly FlowNode[],
+  id: string,
+  name: string,
+  pickedNodeIds: readonly string[],
+  pickedFrameIds: readonly string[],
+): { frames: GroupFlowNode[]; frame: GroupFlowNode } | undefined {
+  const links = linksOf(frames);
+  const picked = new Set(pickedFrameIds);
+  const topFrames = frames.filter((f) => picked.has(f.id) && !ancestorsOf(links, f.id).some((a) => picked.has(a)));
+  const inside = new Set(topFrames.flatMap((f) => descendantNodeIds(links, f.id)));
+  const loose = nodes.filter((n) => pickedNodeIds.includes(n.id) && !inside.has(n.id));
+  if (!loose.length && !topFrames.length) return undefined;
+  // The innermost group that holds every picked node and frame (the chains are nearest first).
+  const chains = [
+    ...loose.map((n) => {
+      const own = frames.find((f) => f.data.nodeIds.includes(n.id));
+      return own ? [own.id, ...ancestorsOf(links, own.id)] : [];
+    }),
+    ...topFrames.map((f) => ancestorsOf(links, f.id)),
+  ];
+  const parentId = chains[0].find((candidate) => chains.every((chain) => chain.includes(candidate)));
+  const made = frameFor(id, name, loose, topFrames);
+  if (!made) return undefined;
+  const frame = withParent(made, parentId);
+  const moved = new Set(topFrames.map((f) => f.id));
+  const next = withoutMembers(frames, new Set(loose.map((n) => n.id))).map((f) => (moved.has(f.id) ? withParent(f, id) : f));
+  return { frames: growAncestors([...next, frame], id), frame };
 }
 
 /** Frames without these nodes as members (unchanged frames keep their identity). */
@@ -97,37 +197,88 @@ export function withoutMembers(frames: GroupFlowNode[], ids: ReadonlySet<string>
 }
 
 /**
- * Moving a frame moves its nodes: position changes for the members of every frame in `changes` that moved (by the
- * same distance). Members dragged along in the same gesture are left alone, and so are frames being resized (a resize
- * from the top or left edge moves the frame, not its content).
+ * Remove frames, keeping what they hold: their nodes and the groups inside them go to the nearest group around them
+ * that stays (or to the top level). The nodes handed over are returned too (ungroup selects them).
+ */
+export function removeFrames(frames: GroupFlowNode[], ids: ReadonlySet<string>): { frames: GroupFlowNode[]; freed: string[] } {
+  if (!frames.some((f) => ids.has(f.id))) return { frames, freed: [] };
+  const links = linksOf(frames);
+  const heir = (id: string) => ancestorsOf(links, id).find((a) => !ids.has(a));
+  const inherited = new Map<string, string[]>();
+  const freed: string[] = [];
+  for (const f of frames) {
+    if (!ids.has(f.id)) continue;
+    freed.push(...f.data.nodeIds);
+    const to = heir(f.id);
+    if (to) inherited.set(to, [...(inherited.get(to) ?? []), ...f.data.nodeIds]);
+  }
+  const next = frames
+    .filter((f) => !ids.has(f.id))
+    .map((f) => {
+      const parent = f.data.parentId && ids.has(f.data.parentId) ? withParent(f, heir(f.id)) : f;
+      const extra = inherited.get(f.id);
+      return extra?.length ? withData(parent, { nodeIds: [...parent.data.nodeIds, ...extra] }) : parent;
+    });
+  return { frames: next, freed };
+}
+
+/**
+ * Moving a frame moves what is inside it: position changes for the nodes and nested frames of every frame in
+ * `changes` that moved (by the same distance). Whatever is dragged along in the same gesture is left alone (and moves
+ * once even when it sits in two moving frames), and so are frames being resized (a resize from the top or left edge
+ * moves the frame, not its content).
  */
 export function memberMoves(
   frames: readonly GroupFlowNode[],
   nodes: readonly FlowNode[],
   changes: readonly { type: string; id?: string; position?: { x: number; y: number }; resizing?: boolean }[],
-): { type: 'position'; id: string; position: { x: number; y: number } }[] {
+): { nodes: PositionChange[]; frames: PositionChange[] } {
   const resizing = new Set(changes.filter((c) => c.type === 'dimensions' && c.resizing !== undefined).map((c) => c.id));
   const moving = new Set(changes.filter((c) => c.type === 'position').map((c) => c.id));
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const moves: { type: 'position'; id: string; position: { x: number; y: number } }[] = [];
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const frameById = new Map(frames.map((f) => [f.id, f]));
+  const links = linksOf(frames);
+  const nodeMoves = new Map<string, PositionChange>();
+  const frameMoves = new Map<string, PositionChange>();
   for (const change of changes) {
     if (change.type !== 'position' || !change.position || !change.id || resizing.has(change.id)) continue;
-    const frame = frames.find((f) => f.id === change.id);
+    const frame = frameById.get(change.id);
     if (!frame) continue;
     const dx = change.position.x - frame.position.x;
     const dy = change.position.y - frame.position.y;
     if (!dx && !dy) continue;
-    for (const id of frame.data.nodeIds) {
-      const node = byId.get(id);
-      if (node && !moving.has(id)) moves.push({ type: 'position', id, position: { x: node.position.x + dx, y: node.position.y + dy } });
+    for (const id of descendantNodeIds(links, frame.id)) {
+      const node = nodeById.get(id);
+      if (node && !moving.has(id) && !nodeMoves.has(id)) nodeMoves.set(id, { type: 'position', id, position: { x: node.position.x + dx, y: node.position.y + dy } });
+    }
+    for (const id of descendantGroupIds(links, frame.id)) {
+      const inner = frameById.get(id);
+      if (inner && !moving.has(id) && !frameMoves.has(id)) frameMoves.set(id, { type: 'position', id, position: { x: inner.position.x + dx, y: inner.position.y + dy } });
     }
   }
-  return moves;
+  return { nodes: [...nodeMoves.values()], frames: [...frameMoves.values()] };
+}
+
+/** Each group around `id` grown (never shrunk) so the one inside it still fits, up to the top. */
+export function growAncestors(frames: GroupFlowNode[], id: string): GroupFlowNode[] {
+  let next = frames;
+  let child = next.find((f) => f.id === id);
+  while (child?.data.parentId) {
+    const parent = next.find((f) => f.id === child!.data.parentId);
+    if (!parent) break;
+    const grown = growToFit(frameRect(parent), frameRect(child));
+    if (!sameRect(grown, frameRect(parent))) {
+      const resized = { ...parent, position: { x: grown.x, y: grown.y }, width: grown.width, height: grown.height };
+      next = next.map((f) => (f.id === parent.id ? resized : f));
+      child = resized;
+    } else child = parent;
+  }
+  return next;
 }
 
 /**
- * Nodes dropped after a drag join the expanded group their centre landed in (its frame grows to fit them) or leave
- * their group when they landed outside it.
+ * Nodes dropped after a drag join the innermost expanded group their centre landed in (its frame, and the groups
+ * around it, grow to fit them) or leave their group when they landed outside it.
  */
 export function adoptNodes(frames: GroupFlowNode[], nodes: readonly FlowNode[], ids: readonly string[]): GroupFlowNode[] {
   let next = frames;
@@ -135,7 +286,7 @@ export function adoptNodes(frames: GroupFlowNode[], nodes: readonly FlowNode[], 
     const node = nodes.find((n) => n.id === id);
     if (!node) continue;
     const rect = nodeRect(node);
-    const target = groupAt(next.map(asGroup), centerOf(rect));
+    const target = groupAt(dropTargets(next), centerOf(rect));
     const current = next.find((f) => f.data.nodeIds.includes(id));
     next = next.map((f) => {
       if (f.id === target?.id) {
@@ -147,47 +298,94 @@ export function adoptNodes(frames: GroupFlowNode[], nodes: readonly FlowNode[], 
       if (f.id === current?.id) return withData(f, { nodeIds: f.data.nodeIds.filter((n) => n !== id) });
       return f;
     });
+    if (target) next = growAncestors(next, target.id);
   }
   return next;
 }
 
-/** After a frame was resized: nodes now inside it (and in no other group) join, members now outside leave. */
+/**
+ * Frames dropped after a drag (or pasted) move into the smallest expanded group bigger than them that holds their
+ * centre (never one inside themselves); the groups around them grow to fit. Dropped outside every group, they go to
+ * the top level.
+ */
+export function adoptFrames(frames: GroupFlowNode[], ids: readonly string[]): GroupFlowNode[] {
+  let next = frames;
+  for (const id of ids) {
+    const frame = next.find((f) => f.id === id);
+    if (!frame) continue;
+    const exclude = new Set([id, ...descendantGroupIds(linksOf(next), id)]);
+    const target = parentAt(dropTargets(next), frameRect(frame), exclude);
+    next = next.map((f) => (f.id === id ? withParent(f, target?.id) : f));
+    next = growAncestors(next, id);
+  }
+  return next;
+}
+
+/**
+ * After a frame was resized: nodes now inside it (and in no other group) join and members now outside leave; groups
+ * beside it (same parent, smaller) whose centre is now inside it move in, and groups inside it whose centre is now
+ * outside move out to its parent. The groups around it grow to fit it.
+ */
 export function refitMembers(frames: GroupFlowNode[], nodes: readonly FlowNode[], frameId: string): GroupFlowNode[] {
   const frame = frames.find((f) => f.id === frameId);
   if (!frame || frame.data.collapsed) return frames;
-  const groups = frames.map(asGroup);
+  const targets = dropTargets(frames);
+  const hidden = hiddenNodeIds(frames);
   const elsewhere = new Set(frames.filter((f) => f.id !== frameId).flatMap((f) => f.data.nodeIds));
-  const nodeIds = nodes.filter((n) => !elsewhere.has(n.id) && !n.hidden && groupAt(groups, centerOf(nodeRect(n)))?.id === frameId).map((n) => n.id);
-  if (nodeIds.length === frame.data.nodeIds.length && nodeIds.every((id) => frame.data.nodeIds.includes(id))) return frames;
-  return frames.map((f) => (f.id === frameId ? withData(f, { nodeIds }) : f));
+  const nodeIds = nodes.filter((n) => !elsewhere.has(n.id) && !hidden.has(n.id) && groupAt(targets, centerOf(nodeRect(n)))?.id === frameId).map((n) => n.id);
+  const rect = frameRect(frame);
+  const area = rect.width * rect.height;
+  const hiddenFrames = hiddenFrameIds(frames);
+  let next = frames.map((f) => {
+    if (f.id === frameId) return nodeIds.length === f.data.nodeIds.length && nodeIds.every((id) => f.data.nodeIds.includes(id)) ? f : withData(f, { nodeIds });
+    if (hiddenFrames.has(f.id)) return f;
+    const inside = containsCenter(rect, frameRect(f));
+    if (f.data.parentId === frameId && !inside) return withParent(f, frame.data.parentId);
+    if (f.data.parentId === frame.data.parentId && inside && frameRect(f).width * frameRect(f).height < area) return withParent(f, frameId);
+    return f;
+  });
+  next = growAncestors(next, frameId);
+  // Nodes that left it land in whatever group is around them now (its parent, usually).
+  const left = frame.data.nodeIds.filter((id) => !nodeIds.includes(id));
+  return left.length ? adoptNodes(next, nodes, left) : next;
 }
 
-/** Frames fitted around their members again (after the graph was laid out anew). Empty frames stay where they are. */
+/** Frames fitted around their members again (after the graph was laid out anew), inner ones first. Empty frames stay where they are. */
 export function refitFrames(frames: GroupFlowNode[], nodes: readonly FlowNode[]): GroupFlowNode[] {
-  return frames.map((f) => {
-    const rect = frameAround(nodes.filter((n) => f.data.nodeIds.includes(n.id)).map(nodeRect));
-    return rect ? { ...f, position: { x: rect.x, y: rect.y }, width: rect.width, height: rect.height } : f;
-  });
+  const links = linksOf(frames);
+  const order = [...frames].sort((a, b) => depthOf(links, b.id) - depthOf(links, a.id));
+  const fitted = new Map(frames.map((f) => [f.id, f]));
+  for (const f of order) {
+    const rects = [...nodes.filter((n) => f.data.nodeIds.includes(n.id)).map(nodeRect), ...frames.filter((c) => c.data.parentId === f.id).map((c) => frameRect(fitted.get(c.id)!))];
+    const rect = frameAround(rects);
+    if (rect) fitted.set(f.id, { ...f, position: { x: rect.x, y: rect.y }, width: rect.width, height: rect.height });
+  }
+  return frames.map((f) => fitted.get(f.id)!);
 }
 
 function frameRect(frame: GroupFlowNode): Rect {
   return { x: frame.position.x, y: frame.position.y, width: frame.width ?? 0, height: frame.height ?? 0 };
 }
 
+const containsCenter = (outer: Rect, inner: Rect) => {
+  const c = centerOf(inner);
+  return c.x >= outer.x && c.x <= outer.x + outer.width && c.y >= outer.y && c.y <= outer.y + outer.height;
+};
+
 const sameRect = (a: Rect, b: Rect) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
-/** What screen readers announce for a frame. */
-export function frameLabel(data: GroupData): string {
-  return `Group ${data.name || DEFAULT_GROUP_NAME}, ${plural(data.nodeIds.length, 'node')}${data.collapsed ? ', collapsed' : ''}`;
+/** What screen readers announce for a frame: its name, the nodes inside it (nested ones included) and the groups nested in it. */
+export function frameLabel(data: Pick<GroupData, 'name' | 'collapsed'>, nodeCount: number, groupCount = 0): string {
+  return `Group ${data.name || DEFAULT_GROUP_NAME}, ${plural(nodeCount, 'node')}${groupCount ? `, ${plural(groupCount, 'group')}` : ''}${data.collapsed ? ', collapsed' : ''}`;
 }
 
 /**
- * What React Flow draws: frames under the notes under the nodes. Members of a collapsed group are hidden and their
- * connections to the rest of the workflow are drawn to the group's box instead (one line per box, node and port,
- * however many connections it stands for); connections inside the group disappear with it. Without collapsed groups
- * the store's arrays pass through unchanged.
+ * What React Flow draws: frames (nested ones above their parents) under the notes under the nodes. Members of a
+ * collapsed group, and the groups nested in it, are hidden; their connections to the rest of the workflow are drawn
+ * to the outermost collapsed box instead (one line per box, node and port, however many connections it stands for);
+ * connections inside the box disappear with it. Without collapsed groups the store's edges pass through unchanged.
  */
 export function canvasGraph(
   frames: readonly GroupFlowNode[],
@@ -195,51 +393,30 @@ export function canvasGraph(
   nodes: readonly FlowNode[],
   edges: readonly FlowEdge[],
 ): { nodes: (GroupFlowNode | StickyFlowNode | FlowNode)[]; edges: (FlowEdge | GroupProxyEdge)[] } {
+  const links = linksOf(frames);
+  const { boxOf, hidden } = collapsedBoxes(links);
   // The frame's body lets the pointer through (to the canvas and the nodes on it); its header and box take it (GroupNodeView).
-  const shownFrames = frames.map((f) =>
-    f.data.collapsed
-      ? { ...f, width: GROUP_COLLAPSED_SIZE.width, height: GROUP_COLLAPSED_SIZE.height, ariaLabel: frameLabel(f.data), style: { ...f.style, pointerEvents: 'none' as const } }
-      : { ...f, ariaLabel: frameLabel(f.data), style: { ...f.style, pointerEvents: 'none' as const } },
-  );
-  const hiddenIn = new Map<string, string>();
-  for (const f of frames) if (f.data.collapsed) for (const id of f.data.nodeIds) hiddenIn.set(id, f.id);
-  if (!hiddenIn.size) return { nodes: [...shownFrames, ...stickies, ...nodes], edges: edges as FlowEdge[] };
+  const shownFrames = frames.map((f) => {
+    const label = frameLabel(f.data, descendantNodeIds(links, f.id).length, descendantGroupIds(links, f.id).length);
+    const shown = { ...f, zIndex: GROUP_Z + depthOf(links, f.id), ariaLabel: label, style: { ...f.style, pointerEvents: 'none' as const } };
+    if (hidden.has(f.id)) return { ...shown, hidden: true, selected: false };
+    return f.data.collapsed ? { ...shown, width: GROUP_COLLAPSED_SIZE.width, height: GROUP_COLLAPSED_SIZE.height } : shown;
+  });
+  if (!boxOf.size) return { nodes: [...shownFrames, ...stickies, ...nodes], edges: edges as FlowEdge[] };
 
-  const shownNodes = nodes.map((n) => (hiddenIn.has(n.id) ? { ...n, hidden: true, selected: false } : n));
-  const shownEdges: (FlowEdge | GroupProxyEdge)[] = [];
-  const proxies = new Map<string, GroupProxyEdge>();
-  for (const edge of edges) {
-    const fromGroup = hiddenIn.get(edge.source);
-    const toGroup = hiddenIn.get(edge.target);
-    if (!fromGroup && !toGroup) {
-      shownEdges.push(edge);
-      continue;
-    }
-    if (fromGroup && fromGroup === toGroup) continue;
-    const type = edge.data?.connectionType ?? 'main';
-    const main = type === 'main';
-    const source = fromGroup ?? edge.source;
-    const target = toGroup ?? edge.target;
-    const sourceHandle = fromGroup ? (main ? GROUP_HANDLES.out : GROUP_HANDLES.aiOut) : (edge.sourceHandle ?? null);
-    const targetHandle = toGroup ? (main ? GROUP_HANDLES.in : GROUP_HANDLES.aiIn) : (edge.targetHandle ?? null);
-    const id = `proxy:${source}:${sourceHandle}:${target}:${targetHandle}`;
-    const existing = proxies.get(id);
-    if (existing) {
-      proxies.set(id, { ...existing, data: { connectionType: type, count: (existing.data?.count ?? 1) + 1 } });
-      continue;
-    }
-    proxies.set(id, {
-      id,
-      type: 'groupProxy',
-      source,
-      target,
-      sourceHandle,
-      targetHandle,
-      selectable: false,
-      deletable: false,
-      focusable: false,
-      data: { connectionType: type, count: 1 },
-    });
-  }
-  return { nodes: [...shownFrames, ...stickies, ...shownNodes], edges: [...shownEdges, ...proxies.values()] };
+  const shownNodes = nodes.map((n) => (boxOf.has(n.id) ? { ...n, hidden: true, selected: false } : n));
+  const routed = routeEdges(edges, boxOf);
+  const proxies = routed.routes.map<GroupProxyEdge>((route) => ({
+    id: route.id,
+    type: 'groupProxy',
+    source: route.source,
+    target: route.target,
+    sourceHandle: route.sourceHandle,
+    targetHandle: route.targetHandle,
+    selectable: false,
+    deletable: false,
+    focusable: false,
+    data: { connectionType: route.connectionType as ConnectionType, count: route.edgeIds.length },
+  }));
+  return { nodes: [...shownFrames, ...stickies, ...shownNodes], edges: [...routed.edges, ...proxies] };
 }

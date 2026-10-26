@@ -25,7 +25,8 @@ export const sha256 = (text: string) => createHash('sha256').update(text).digest
 export function isManagedPath(path: string): boolean {
   if (path === MANIFEST_FILE || path === VARIABLES_FILE || path === CREDENTIALS_FILE) return true;
   const parts = path.split('/');
-  if (parts[0] === DATA_TABLES_DIR) return parts.length === 2 && path.endsWith('.schema.json');
+  // A table's schema, and (written by promotion for opted-in tables) its rows.
+  if (parts[0] === DATA_TABLES_DIR) return parts.length === 2 && (path.endsWith('.schema.json') || path.endsWith('.rows.json'));
   if (parts[0] === WORKFLOWS_DIR) return parts.length >= 2 && (path.endsWith(WORKFLOW_SUFFIX) || parts.at(-1) === '.folder.json');
   return false;
 }

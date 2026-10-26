@@ -77,6 +77,7 @@ import {
 } from './ai';
 import { ExpressionError, ExpressionResolver } from './expression';
 import { sharedRateLimiter } from './rate-limit';
+import { collectSecretReferences, secretParameterPaths, type SecretValues } from './secrets';
 import { engineMetrics, failSpan, recordedIds, SOURCE_ATTRIBUTE, startChild } from './telemetry';
 import { deriveToolSchema } from './tool-schema';
 import type {
@@ -850,7 +851,8 @@ class WorkflowRun {
         const resolved = this.resolveType(node);
         telemetry.transport = resolved.transport;
         telemetry.span.setAttribute('landflow.transport', resolved.transport);
-        const request: ExecuteRequest = { ...this.buildRequest(node, resolved, effectiveInputs, effectiveInputs[0] ?? []), idempotencyKey: this.stepKey(node, 'main') };
+        const secrets = await this.parameterSecrets(node, resolved);
+        const request: ExecuteRequest = { ...this.buildRequest(node, resolved, effectiveInputs, effectiveInputs[0] ?? [], undefined, undefined, secrets), idempotencyKey: this.stepKey(node, 'main') };
         const { response, wait } = await this.callExecute(node, resolved, request, telemetry.context, limit);
         if (response.error) {
           throw new NodeExecutionError(response.error.message, node, response.error.description);
@@ -970,6 +972,28 @@ class WorkflowRun {
     });
   }
 
+  /** Parameters that aren't resolved as expressions: code and `noDataExpression` ones. */
+  private unresolvedParameters(resolved: ResolvedNodeType): Set<string> {
+    return new Set(resolved.descriptor.properties.filter((p) => p.noDataExpression || p.type === 'code').map((p) => p.name));
+  }
+
+  /**
+   * `$secrets` in a node's parameters: the secrets they reference, read through `loadSecrets` right before the call.
+   * Undefined when they reference none or nothing loads them (then `$secrets` fails as it does in any expression).
+   */
+  private async parameterSecrets(node: WorkflowNode, resolved: ResolvedNodeType): Promise<SecretValues | undefined> {
+    const load = this.options.loadSecrets;
+    if (!load) return undefined;
+    const references = collectSecretReferences(node.parameters, this.unresolvedParameters(resolved));
+    if (!references.length) return undefined;
+    try {
+      return await load(references, node);
+    } catch (error) {
+      if (error instanceof NodeExecutionError) throw error;
+      throw new NodeExecutionError((error as Error).message ?? String(error), node);
+    }
+  }
+
   private buildRequest(
     node: WorkflowNode,
     resolved: ResolvedNodeType,
@@ -977,11 +1001,10 @@ class WorkflowRun {
     expressionItems: NodeItem[],
     overrides?: Record<string, unknown>,
     toolArgs?: Record<string, unknown>,
+    secrets?: SecretValues,
   ): ExecuteRequest {
     const { workflow, executionId, mode, resumeUrls } = this.options;
-    const skip = new Set(
-      resolved.descriptor.properties.filter((p) => p.noDataExpression || p.type === 'code').map((p) => p.name),
-    );
+    const skip = this.unresolvedParameters(resolved);
     const resolver = new ExpressionResolver({
       items: expressionItems,
       nodeOutputs: this.expressionOutputs(node),
@@ -990,12 +1013,20 @@ class WorkflowRun {
       parameters: node.parameters,
       ...(toolArgs && { toolArgs }),
       ...(this.options.variables && { variables: this.options.variables }),
+      ...(secrets && { secrets }),
     });
     try {
       const parameters = { ...resolver.resolveParameters(node.parameters, 0, skip), ...overrides } as JsonObject;
       const itemParameters = (inputs[0] ?? []).map(
         (_item, index) => ({ ...resolver.resolveParameters(node.parameters, index, skip), ...overrides }) as JsonObject,
       );
+      if (secrets && this.options.onSecretParameter) {
+        const at = (root: unknown, path: string[]) => path.reduce<unknown>((value, key) => (value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined), root);
+        for (const path of secretParameterPaths(node.parameters, skip)) {
+          if (overrides && path[0] in overrides) continue;
+          for (const resolvedParameters of [parameters, ...itemParameters]) this.options.onSecretParameter(at(resolvedParameters, path));
+        }
+      }
       const credentials = this.options.resolveCredentials?.(node, resolved.descriptor);
       return {
         protocol: PROTOCOL_VERSION,
@@ -1097,7 +1128,7 @@ class WorkflowRun {
       const resolved = this.resolveType(subNode);
 
       if (resolved.supplyData) {
-        const request = this.buildRequest(subNode, resolved, [rootItems], rootItems);
+        const request = this.buildRequest(subNode, resolved, [rootItems], rootItems, undefined, undefined, await this.parameterSecrets(subNode, resolved));
         const extras: ContextExtras = {
           ...(this.signal && { signal: this.signal }),
           getInputConnectionData: <T>(subType: SubNodeType, subIndex?: number) =>
@@ -1237,7 +1268,8 @@ class WorkflowRun {
           const overrides = Object.fromEntries(
             Object.entries(input).filter(([key]) => descriptor.properties.some((p) => p.name === key)),
           );
-          const request = { ...this.buildRequest(subNode, resolved, [items], items, overrides, input), mode: 'tool' as const, idempotencyKey: this.stepKey(subNode, 'tool') };
+          const secrets = await this.parameterSecrets(subNode, resolved);
+          const request = { ...this.buildRequest(subNode, resolved, [items], items, overrides, input, secrets), mode: 'tool' as const, idempotencyKey: this.stepKey(subNode, 'tool') };
           const response = await resolved.execute(request, { signal: this.signal });
           if (response.error) throw new NodeExecutionError(response.error.message, subNode, response.error.description);
           const out = response.outputs[0] ?? [];

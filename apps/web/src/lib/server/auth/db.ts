@@ -11,7 +11,7 @@ export function authDb(): Database {
   const checked = singleton('auth-schema-checked', () => new WeakSet<Database>());
   if (!checked.has(db)) {
     const has = (table: string) => Boolean(db.get<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table));
-    if (db.kind === 'sqlite' && (!has('users') || !has('saml_replay') || !has('projects'))) migrateSqlite(db.sqlite);
+    if (db.kind === 'sqlite' && (!has('users') || !has('saml_replay') || !has('projects') || !has('saml_state'))) migrateSqlite(db.sqlite);
     checked.add(db);
   }
   return db;

@@ -12,22 +12,49 @@
  * folders on their paths come along, and data table schemas with "all". `prune` (with "all") removes the target's
  * workflows the source no longer has.
  *
+ * Credentials and data table rows come from this instance when it promotes its own environment (the usual case): the
+ * credentials the promoted workflows use travel as definitions in credentials.json (name, type, non-secret fields;
+ * secret fields stay empty, or take the `$secrets` reference Settings → Environments maps them to, and never their
+ * value), and the tables opted in to row promotion get a `data-tables/<slug>.rows.json` with their rows. The target's
+ * pull creates the credentials it lacks and replaces those tables' rows (../sync/index.ts).
+ *
+ * Approvals: with four-eyes on, a promotion is a request (./approvals.ts); approving promotes with `expectDigest`, the
+ * digest of what the preview would write, so only what was reviewed goes (anything else: StalePromotionError).
+ *
  * Conflicts: a promotion commit carries `Landflow-Promoted-From: <environment>` and `Landflow-Promoted-Commit: <sha>`
  * trailers. A workflow conflicts when the target's file differs from the source's and the target changed it since the
  * last promotion from this environment (or there is none to compare with): someone edited the target directly, and
  * promoting would overwrite that. Conflicts stop the promotion unless `force`. A dry run returns the preview, with a
  * unified diff per workflow, and changes nothing.
  */
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PromotionEntry, PromotionResult } from '../../shared/secrets';
+import { hasSecretReference } from '@landflow/engine';
+import type { PromotionCredential, PromotionEntry, PromotionResult, PromotionTable } from '../../shared/secrets';
+import { credentials as vault } from '../credentials/vault';
+import { dataTables } from '../datatables';
 import { dataDir } from '../db';
 import { singleton } from '../singleton';
 import { readSyncDir, writeSyncDir } from '../sync/files';
-import { CREDENTIALS_FILE, DATA_TABLES_DIR, FOLDER_FILE, idForPath, MANIFEST_FILE, stringify, SYNC_FORMAT, VARIABLES_FILE, WORKFLOW_SUFFIX, WORKFLOWS_DIR, type SyncFile } from '../sync/format';
-import { git, sourceControlView, SourceControlError, tokenFor } from '../sync/git';
+import {
+  CREDENTIALS_FILE,
+  DATA_TABLES_DIR,
+  FOLDER_FILE,
+  idForPath,
+  MANIFEST_FILE,
+  rowsPathFor,
+  stringify,
+  SYNC_FORMAT,
+  TABLE_SUFFIX,
+  VARIABLES_FILE,
+  WORKFLOW_SUFFIX,
+  WORKFLOWS_DIR,
+  type SyncFile,
+} from '../sync/format';
+import { git, resolvedTokenFor, sourceControlView, SourceControlError } from '../sync/git';
 import { unifiedDiff } from './diff';
-import { branchOf, currentEnvironment, ENVIRONMENT_NAME, EnvironmentError } from './settings';
+import { branchOf, currentEnvironment, ENVIRONMENT_NAME, EnvironmentError, rowTableIds, secretMappingsFor } from './settings';
 
 export const PROMOTED_FROM = 'Landflow-Promoted-From';
 export const PROMOTED_COMMIT = 'Landflow-Promoted-Commit';
@@ -47,7 +74,25 @@ export interface PromoteInput {
   message?: string;
   /** Who promotes (a user name, for the commit message). */
   by?: string;
+  /** Tables (ids or names) whose rows go along; default: Settings → Environments' row tables. */
+  rowTables?: string[];
+  /** Write the definitions of the credentials the promoted workflows use (default: true). */
+  credentials?: boolean;
+  /** Promote only if it writes exactly what a preview with this digest would (approvals). */
+  expectDigest?: string;
 }
+
+/** What an approved promotion would write changed since the request (the branches moved, a credential or rows changed). */
+export class StalePromotionError extends EnvironmentError {
+  constructor(message = 'What this promotion writes changed since it was previewed') {
+    super(message, 409);
+    this.name = 'StalePromotionError';
+  }
+}
+
+/** Diffs past this size are cut (a large table's rows). */
+const MAX_DIFF = 200_000;
+const capped = (diff: string) => (diff.length > MAX_DIFF ? `${diff.slice(0, diff.lastIndexOf('\n', MAX_DIFF))}\n… (diff cut at ${MAX_DIFF / 1000} kB)\n` : diff);
 
 /** The queue of ../sync/git.ts (`exclusive` there): one source-control operation at a time, promotions included. */
 const queue = singleton('source-control-queue', () => ({ tail: Promise.resolve() as Promise<unknown> }));
@@ -147,9 +192,32 @@ function mergeVariables(source: SyncFile | undefined, target: SyncFile | undefin
   return stringify({ variables: list });
 }
 
-function credentialsOf(file: SyncFile | undefined): Array<{ name: string; type: string }> {
+/** An entry of credentials.json: a reference, or (written by a promotion) a definition with `data` and `secretFields`. */
+type CredentialEntry = { name: string; type: string; data?: Record<string, unknown>; secretFields?: string[] };
+
+function credentialsOf(file: SyncFile | undefined): CredentialEntry[] {
   const doc = file && parse(file.content);
-  return doc && Array.isArray(doc.credentials) ? doc.credentials.filter((c): c is { name: string; type: string } => isObject(c) && typeof c.name === 'string' && typeof c.type === 'string') : [];
+  return doc && Array.isArray(doc.credentials) ? doc.credentials.filter((c): c is CredentialEntry => isObject(c) && typeof c.name === 'string' && typeof c.type === 'string') : [];
+}
+
+const credentialKey = (c: { name: string; type: string }) => `${c.type}\u0000${c.name}`;
+const entryOf = (c: CredentialEntry): CredentialEntry => ({ name: c.name, type: c.type, ...(c.data && { data: c.data }), ...(c.secretFields && { secretFields: c.secretFields }) });
+
+/**
+ * This instance's definition of a credential the files reference (by type and name): non-secret fields and the
+ * secret fields that read `$secrets`, a mapped secret field set to its reference. Undefined when it has none.
+ */
+function definitionOf(ref: { name: string; type: string }, target: string): (CredentialEntry & { mapped: string[] }) | undefined {
+  const summary = vault.list().find((c) => c.type === ref.type && c.name === ref.name);
+  const definition = summary && vault.definition(summary.id);
+  if (!definition) return undefined;
+  const data: Record<string, unknown> = { ...definition.data };
+  for (const mapping of secretMappingsFor(target)) {
+    if (mapping.type === ref.type && mapping.name === ref.name && definition.secretFields.includes(mapping.field)) data[mapping.field] = mapping.value;
+  }
+  const mapped = definition.secretFields.filter((field) => hasSecretReference(data[field]));
+  const sorted = Object.fromEntries(Object.keys(data).sort().map((key) => [key, data[key]]));
+  return { name: ref.name, type: ref.type, data: sorted, secretFields: definition.secretFields, mapped };
 }
 
 /** The credential references of workflow documents. */
@@ -164,9 +232,18 @@ function referencedCredentials(docs: Array<Record<string, unknown>>): Array<{ na
   return out;
 }
 
-function mergeCredentials(target: SyncFile | undefined, add: Array<{ name: string; type: string }>, replace: boolean): string {
-  const all = new Map<string, { name: string; type: string }>();
-  for (const c of [...(replace ? [] : credentialsOf(target)), ...add]) all.set(`${c.type}\u0000${c.name}`, { name: c.name, type: c.type });
+/**
+ * credentials.json for the target: its entries (with `replace`, none), then the references the promoted workflows make,
+ * each a definition when there is one (`definitions`, by type and name) or else the target's own entry or a reference.
+ */
+function mergeCredentials(target: SyncFile | undefined, add: Array<{ name: string; type: string }>, replace: boolean, definitions: Map<string, CredentialEntry>): string {
+  const theirs = new Map(credentialsOf(target).map((c) => [credentialKey(c), c]));
+  const all = new Map<string, CredentialEntry>();
+  if (!replace) for (const [key, c] of theirs) all.set(key, entryOf(c));
+  for (const c of add) {
+    const key = credentialKey(c);
+    all.set(key, entryOf(definitions.get(key) ?? theirs.get(key) ?? { name: c.name, type: c.type }));
+  }
   return stringify({ credentials: [...all.values()].sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name)) });
 }
 
@@ -227,7 +304,7 @@ export function promoteEnvironment(input: PromoteInput): Promise<PromotionResult
   if (sourceBranch === targetBranch) throw new EnvironmentError(`${sourceEnvironment} and ${targetEnvironment} use the same branch (${sourceBranch}): give them their own in Settings → Environments`);
 
   return exclusive(async () => {
-    const { token } = tokenFor(config);
+    const { token } = await resolvedTokenFor(config);
     const auth = { token, username: config.username };
     const cwd = promoteDir();
     const remoteUrl = existsSync(join(cwd, '.git'))
@@ -343,21 +420,86 @@ export function promoteEnvironment(input: PromoteInput): Promise<PromotionResult
     const variables = mergeVariables(sourceByPath.get(VARIABLES_FILE), targetByPath.get(VARIABLES_FILE), targetEnvironment, warnings);
     if (variables !== undefined) next.set(VARIABLES_FILE, variables);
     const remaining = [...next.entries()].filter(([path]) => path.endsWith(WORKFLOW_SUFFIX)).flatMap(([, content]) => [parse(content)].filter(isObject));
-    next.set(CREDENTIALS_FILE, mergeCredentials(targetByPath.get(CREDENTIALS_FILE), referencedCredentials(all && input.prune ? remaining : chosen.map((w) => w.doc)), Boolean(all && input.prune)));
+    const references = referencedCredentials(all && input.prune ? remaining : chosen.map((w) => w.doc));
+
+    // Credential definitions and table rows: from this instance, when it is the source environment.
+    const local = sourceEnvironment === currentEnvironment();
+    const wantsRows = input.rowTables ?? rowTableIds();
+    if (!local && (input.credentials !== false || wantsRows.length)) {
+      warnings.push(`Credential definitions and data table rows come from ${sourceEnvironment}’s own instance: promote there to include them`);
+    }
+    const definitions = new Map<string, CredentialEntry>();
+    const credentialPreview: PromotionCredential[] = [];
+    if (local && input.credentials !== false) {
+      const theirs = new Map(credentialsOf(targetByPath.get(CREDENTIALS_FILE)).map((c) => [credentialKey(c), c]));
+      for (const ref of references) {
+        const key = credentialKey(ref);
+        if (definitions.has(key)) continue;
+        const definition = definitionOf(ref, targetEnvironment);
+        if (!definition) continue;
+        const { mapped, ...entry } = definition;
+        definitions.set(key, entry);
+        const before = theirs.get(key);
+        const status = !before?.data ? 'added' : JSON.stringify(entryOf(before)) === JSON.stringify(entryOf(entry)) ? 'unchanged' : 'modified';
+        credentialPreview.push({ name: ref.name, type: ref.type, status, secretFields: entry.secretFields ?? [], mapped });
+      }
+      credentialPreview.sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
+    }
+    next.set(CREDENTIALS_FILE, mergeCredentials(targetByPath.get(CREDENTIALS_FILE), references, Boolean(all && input.prune), definitions));
+
+    const tablePreview: PromotionTable[] = [];
+    if (local && wantsRows.length) {
+      // A table's schema file in the target after this promotion (the rows file sits next to it).
+      const schemaPaths = new Map<string, string>();
+      for (const [path, content] of next) {
+        if (!path.startsWith(`${DATA_TABLES_DIR}/`) || !path.endsWith(TABLE_SUFFIX)) continue;
+        const doc = parse(content);
+        if (doc && typeof doc.id === 'string') schemaPaths.set(doc.id, path);
+      }
+      const seen = new Set<string>();
+      for (const wanted of wantsRows) {
+        const table = dataTables().findTable(wanted);
+        if (!table) {
+          warnings.push(`Data table “${wanted}” (rows to promote) isn’t on this instance`);
+          continue;
+        }
+        if (seen.has(table.id)) continue;
+        seen.add(table.id);
+        const schemaPath = schemaPaths.get(table.id);
+        if (!schemaPath) {
+          warnings.push(`Data table “${table.name}” isn’t on ${targetBranch}: push, then promote all workflows (which brings the table schemas) before its rows`);
+          continue;
+        }
+        const columns = table.columns.map((c) => c.name);
+        const rows = dataTables()
+          .listRows(table.id, { sortBy: 'id', sortDirection: 'asc' })
+          .rows.map((row) => Object.fromEntries(columns.filter((c) => row[c] !== undefined).map((c) => [c, row[c]])));
+        const path = rowsPathFor(schemaPath);
+        const content = stringify({ id: table.id, name: table.name, rows });
+        const before = targetByPath.get(path)?.content;
+        next.set(path, content);
+        tablePreview.push({ id: table.id, name: table.name, path, rows: rows.length, status: before === undefined ? 'added' : before === content ? 'unchanged' : 'modified' });
+      }
+      tablePreview.sort((a, b) => a.name.localeCompare(b.name));
+    }
 
     const files: PromotionResult['files'] = [];
     for (const [path, content] of next) {
       if (path.endsWith(WORKFLOW_SUFFIX)) continue;
       const before = targetByPath.get(path)?.content;
-      if (before === undefined) files.push({ status: 'A', path });
-      else if (before !== content) files.push({ status: 'M', path });
+      if (before === undefined) files.push({ status: 'A', path, diff: capped(unifiedDiff(path, undefined, content)) });
+      else if (before !== content) files.push({ status: 'M', path, diff: capped(unifiedDiff(path, before, content)) });
     }
-    for (const path of targetByPath.keys()) if (!next.has(path) && !path.endsWith(WORKFLOW_SUFFIX)) files.push({ status: 'D', path });
+    for (const [path, file] of targetByPath) if (!next.has(path) && !path.endsWith(WORKFLOW_SUFFIX)) files.push({ status: 'D', path, diff: capped(unifiedDiff(path, file.content, undefined)) });
     files.sort((a, b) => (a.path < b.path ? -1 : 1));
     entries.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 
     const conflicts = entries.filter((e) => e.conflict).length;
     const changes = entries.filter((e) => e.status !== 'unchanged').length + files.length;
+    // What the promotion writes, for approvals: the target's files after it.
+    const digest = createHash('sha256')
+      .update([...next.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([path, content]) => `${path}\u0000${content}`).join('\u0001'))
+      .digest('hex');
     const result: PromotionResult = {
       dryRun: Boolean(input.dryRun),
       from: { environment: sourceEnvironment, branch: sourceBranch, commit: sourceCommit },
@@ -365,11 +507,15 @@ export function promoteEnvironment(input: PromoteInput): Promise<PromotionResult
       entries,
       conflicts,
       files,
+      credentials: credentialPreview,
+      tables: tablePreview,
       promoted: false,
+      digest,
       warnings,
     };
     if (!changes) warnings.push(`${targetBranch} already has ${all ? 'every workflow' : 'these workflows'} as ${sourceBranch} has ${all ? 'them' : 'it'}: nothing to promote`);
     if (input.dryRun || !changes || (conflicts && !input.force)) return result;
+    if (input.expectDigest && input.expectDigest !== digest) throw new StalePromotionError();
 
     const root = directory ? join(cwd, directory) : cwd;
     mkdirSync(root, { recursive: true });
@@ -379,9 +525,14 @@ export function promoteEnvironment(input: PromoteInput): Promise<PromotionResult
     );
     await git(['add', '-A', '--', directory || '.'], { cwd });
     const promotedCount = entries.filter((e) => e.status !== 'unchanged').length;
-    const subject = input.message?.trim() || `Promote ${promotedCount} workflow${promotedCount === 1 ? '' : 's'} from ${sourceEnvironment} to ${targetEnvironment}`;
+    const credentialChanges = credentialPreview.filter((c) => c.status !== 'unchanged');
+    const tableChanges = tablePreview.filter((t) => t.status !== 'unchanged');
+    const what = promotedCount || (!credentialChanges.length && !tableChanges.length) ? `${promotedCount} workflow${promotedCount === 1 ? '' : 's'}` : [credentialChanges.length && 'credentials', tableChanges.length && 'data table rows'].filter(Boolean).join(' and ');
+    const subject = input.message?.trim() || `Promote ${what} from ${sourceEnvironment} to ${targetEnvironment}`;
     const body = [
       ...entries.filter((e) => e.status !== 'unchanged').map((e) => `- ${e.status}: ${e.name}${e.conflict ? ' (over a conflict)' : ''}`),
+      ...credentialChanges.map((c) => `- credential ${c.status}: ${c.name} (${c.type})`),
+      ...tableChanges.map((t) => `- rows ${t.status}: ${t.name} (${t.rows})`),
       ...(input.by ? ['', `Promoted by ${input.by}`] : []),
       '',
       `${PROMOTED_FROM}: ${sourceEnvironment}`,

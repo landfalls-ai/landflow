@@ -45,6 +45,8 @@ export const workflowGroupSchema = z.object({
   height: z.number().min(40).max(20_000),
   color: z.number().int().min(0).max(9).optional(),
   collapsed: z.boolean().optional(),
+  /** Nested groups: the group this one sits in. */
+  parentId: z.string().min(1).max(100).optional(),
 });
 
 export const workflowSchema = z
@@ -126,6 +128,18 @@ export const workflowSchema = z
       for (const nodeId of group.nodeIds) {
         if (grouped.has(nodeId) && grouped.get(nodeId) !== group.id) ctx.addIssue({ code: 'custom', message: `Node "${nodeId}" is in two groups`, path: ['groups'] });
         grouped.set(nodeId, group.id);
+      }
+    }
+    // Nested groups can't hold themselves; a parent that is gone is tolerated like a gone node.
+    const parentOf = new Map((workflow.groups ?? []).flatMap((g) => (g.parentId ? [[g.id, g.parentId] as const] : [])));
+    for (const id of parentOf.keys()) {
+      const seen = new Set([id]);
+      for (let at = parentOf.get(id); at; at = parentOf.get(at)) {
+        if (seen.has(at)) {
+          if (at === id) ctx.addIssue({ code: 'custom', message: `Group "${id}" is inside itself`, path: ['groups'] });
+          break;
+        }
+        seen.add(at);
       }
     }
   });

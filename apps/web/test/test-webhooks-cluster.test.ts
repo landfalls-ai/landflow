@@ -1,15 +1,21 @@
 /**
  * Test URLs in queue mode (lib/server/test-webhooks.ts): listeners are registered in Valkey, so a test call that
  * reaches another main than the one holding the editor's stream finds the listener there, claims it atomically and
- * runs it in that main, and the bus relay carries the run's events to the editor's main. One main (startCluster on the
- * in-process coordinator) and "another main" on the same MemoryHub that writes listener keys and hears the bus.
+ * runs it in that main, and the bus relay carries the run's events to the editor's main; an MCP Server Trigger's test URL
+ * too (each request pushes the deadline on in Valkey). Listening again on one main ends the earlier stream on the other
+ * (`stopped`, over the control channel). One main (startCluster on the in-process coordinator) and "another main" on the
+ * same MemoryHub that writes listener keys, hears the bus and the control channel, and sends on it.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ExecutionEvent, Workflow } from '@landflow/engine';
 import type { BusEvent } from '@/lib/server/bus';
+import type { ControlMessage } from '@/lib/server/cluster/state';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -47,6 +53,7 @@ type TestListener = Extract<Awaited<ReturnType<typeof startListening>>, { ok: tr
 const listenRoute = await import('@/app/api/workflows/[id]/listen/route');
 const testHookRoute = await import('@/app/api/webhook-test/[...path]/route');
 const testFormRoute = await import('@/app/form-test/[...path]/route');
+const testMcpRoute = await import('@/app/mcp-test/[...path]/route');
 
 const hub = new MemoryHub();
 /** This main's connection. */
@@ -55,11 +62,14 @@ const valkey = new MemoryCoordinator(hub);
 const otherValkey = new MemoryCoordinator(hub);
 const otherRelay = new Relay(new MemoryCoordinator(hub), 'main-other');
 const heard: BusEvent[] = [];
+/** What the other main hears on the control channel. */
+const controls: ControlMessage[] = [];
 
 beforeAll(async () => {
   expect(await startCluster({ coordinator: valkey })).toBe(true);
   await ensureBootstrapped();
   await otherRelay.listen<BusEvent>('bus', (event) => heard.push(event));
+  await otherRelay.listen<ControlMessage>('control', (message) => controls.push(message));
 });
 
 afterAll(async () => {
@@ -74,6 +84,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   heard.length = 0;
+  controls.length = 0;
 });
 
 // ---------------------------------------------------------------------------
@@ -240,5 +251,75 @@ describe('test URLs in queue mode', () => {
     expect(await valkey.get('test-listener:webhook:POST:twc-timeout')).toBeUndefined();
     expect(await valkey.get(`test-listener:${started.listener.id}`)).toBeUndefined();
     expect((await postJson('twc-timeout', {})).status).toBe(404);
+  });
+});
+
+describe('listening again on another main', () => {
+  const listenHere = async (workflow: Workflow, nodeId = 'Hook') => {
+    const response = await listenRoute.POST(
+      request(`/api/workflows/${workflow.id}/listen`, { method: 'POST', body: JSON.stringify({ nodeId, workflow }), headers: { 'content-type': 'application/json' } }),
+      params({ id: workflow.id }),
+    );
+    expect(response.status).toBe(200);
+    const stream = readEvents(response);
+    return { stream, info: await stream.next('listening') };
+  };
+
+  it('ends this main’s stream with `stopped` when the trigger listens again on another main', async () => {
+    const { stream, info } = await listenHere(workflowOf('wf_twc_moved', 'twc-moved'));
+    // The other main registered its listener over this one and says so on the control channel.
+    await remoteListener({ id: 'tl_twc_moved_there', kind: 'webhook', method: 'POST', path: 'twc-moved', workflow: workflowOf('wf_twc_moved', 'twc-moved'), nodeId: 'Hook', executionId: 'ex_twc_moved', expiresAt: Date.now() + 120_000 });
+    await otherRelay.broadcast<ControlMessage>('control', { t: 'listener-replaced', id: info.listenerId });
+    expect((await stream.next('stopped')).message).toBe('Listening again elsewhere');
+    await stream.closed;
+    // Ending it left the other main's listener alone.
+    expect(await valkey.get('test-listener:webhook:POST:twc-moved')).toBe('tl_twc_moved_there');
+  });
+
+  it('tells the main holding the earlier stream when the trigger listens again here', async () => {
+    await remoteListener({ id: 'tl_twc_old_there', kind: 'webhook', method: 'POST', path: 'twc-again', workflow: workflowOf('wf_twc_again', 'twc-again'), nodeId: 'Hook', executionId: 'ex_twc_old', expiresAt: Date.now() + 120_000 });
+    const { stream, info } = await listenHere(workflowOf('wf_twc_again', 'twc-again'));
+    await vi.waitFor(() => expect(controls).toContainEqual({ t: 'listener-replaced', id: 'tl_twc_old_there' }));
+    expect(await valkey.get('test-listener:webhook:POST:twc-again')).toBe(info.listenerId);
+    // This stream is the one that listens now.
+    expect(stream.events.some((e) => e.event === 'stopped')).toBe(false);
+    expect((await postJson('twc-again', { n: 1 })).status).toBe(200);
+    expect((await stream.next('result')).status).toBe('success');
+  });
+});
+
+describe('the MCP Server Trigger’s test URL in queue mode', () => {
+  it('serves tool calls for a listener another main holds, pushing its deadline on in Valkey; the relay takes the runs there', async () => {
+    const workflow: Workflow = {
+      id: 'wf_twc_mcp',
+      name: 'wf_twc_mcp',
+      nodes: [
+        { id: 'MCP', name: 'MCP', type: 'core.mcpTrigger', typeVersion: 1, position: [0, 0], parameters: { path: 'twc-mcp' } },
+        { id: 'Calculator', name: 'Calculator', type: 'core.calculatorTool', typeVersion: 1, position: [0, 200], parameters: {} },
+      ],
+      connections: [{ id: 'tool', type: 'ai_tool', source: 'Calculator', target: 'MCP', sourceIndex: 0, targetIndex: 0 }],
+    };
+    const expiresAt = Date.now() + 5_000;
+    await remoteListener({ id: 'tl_twc_mcp', kind: 'mcp', method: '', path: 'twc-mcp', workflow, nodeId: 'MCP', executionId: 'ex_twc_mcp', expiresAt });
+
+    type Handler = (request: Request, ctx: { params: Promise<{ path: string[] }> }) => Promise<Response>;
+    const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const req = new Request(input, init);
+      return (testMcpRoute as unknown as Record<string, Handler>)[req.method](req, params({ path: new URL(req.url).pathname.split('/').filter(Boolean).slice(1) }));
+    };
+    const client = new Client({ name: 'landflow-test', version: '1.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL('http://cluster-hooks.test/mcp-test/twc-mcp'), { fetch }));
+    const sum = (await client.callTool({ name: 'Calculator', arguments: { expression: '6*7' } })) as CallToolResult;
+    expect(JSON.parse((sum.content[0] as { text: string }).text)).toMatchObject({ result: 42 });
+    await client.close();
+
+    // The listener stays (many calls per listen), 120 s from the last request, for whichever main holds the stream.
+    expect(await otherValkey.get('test-listener:mcp::twc-mcp')).toBe('tl_twc_mcp');
+    expect(JSON.parse((await otherValkey.get('test-listener:tl_twc_mcp'))!).expiresAt).toBeGreaterThan(expiresAt + 100_000);
+    // The tool call ran here as a manual run with the listener's id and a suffix; its events reached the other main.
+    const runId = heard.find((e) => e.channel === 'execution' && e.event.type === 'execution.started' && e.event.executionId.startsWith('ex_twc_mcp-'))?.event.executionId;
+    expect(runId).toBeDefined();
+    await vi.waitFor(() => expect(heardFor(runId!).at(-1)).toMatchObject({ type: 'execution.finished', status: 'success' }));
+    expect(store.getExecution(runId!)).toMatchObject({ mode: 'manual', workflowId: 'wf_twc_mcp', status: 'success' });
   });
 });

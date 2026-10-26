@@ -3,7 +3,8 @@
  * Settings → Variables, per environment (only on an instance with LANDFLOW_ENVIRONMENT): a variable can have a value
  * for each environment. On the instance whose environment has one, `$vars.KEY` reads it instead of the variable's
  * own value; Git sync carries them (variables.json `environments`, with values), so a promotion brings every
- * environment's value along and each instance picks its own.
+ * environment's value along and each instance picks its own. A project's variables have theirs too (`base`: the
+ * project's variables route, `values` from its listing).
  */
 import { useEffect, useState } from 'react';
 import { Check, Layers } from 'lucide-react';
@@ -18,7 +19,23 @@ import { Input } from '@/components/ui/inputs';
 type Values = Record<string, Record<string, string>>;
 const NONE: Record<string, string> = {};
 
-function Row({ variable, environments, current, saved, onSaved }: { variable: Variable; environments: string[]; current?: string; saved: Record<string, string>; onSaved: (v: Record<string, string>) => void }) {
+function Row({
+  variable,
+  environments,
+  current,
+  saved,
+  onSaved,
+  base,
+  canEdit,
+}: {
+  variable: Variable;
+  environments: string[];
+  current?: string;
+  saved: Record<string, string>;
+  onSaved: (v: Record<string, string>) => void;
+  base: string;
+  canEdit: boolean;
+}) {
   const [draft, setDraft] = useState<Record<string, string>>(saved);
   const [saving, setSaving] = useState(false);
   useEffect(() => setDraft(saved), [saved]);
@@ -27,7 +44,7 @@ function Row({ variable, environments, current, saved, onSaved }: { variable: Va
     setSaving(true);
     try {
       const values = Object.fromEntries(environments.map((e) => [e, draft[e] ? draft[e] : null]));
-      const result = await api<{ values: Record<string, string> }>(`/api/variables/${encodeURIComponent(variable.key)}/environments`, { method: 'PUT', json: { values } });
+      const result = await api<{ values: Record<string, string> }>(`${base}/${encodeURIComponent(variable.key)}/environments`, { method: 'PUT', json: { values } });
       onSaved(result.values);
       toast.success(`Saved the environment values of $vars.${variable.key}`);
     } catch (e) {
@@ -46,6 +63,7 @@ function Row({ variable, environments, current, saved, onSaved }: { variable: Va
           onChange={(e) => setDraft((d) => ({ ...d, [environment]: e.target.value }))}
           placeholder={environment === current ? variable.value || '(own value)' : '(own value)'}
           className="h-7 font-mono text-[12px]"
+          disabled={!canEdit}
           aria-label={`${variable.key} in ${environment}`}
         />
       ))}
@@ -56,15 +74,16 @@ function Row({ variable, environments, current, saved, onSaved }: { variable: Va
   );
 }
 
-export function VariableEnvironments({ variables }: { variables?: Variable[] }) {
+export function VariableEnvironments({ variables, base = '/api/variables', values: given, canEdit = true }: { variables?: Variable[]; base?: string; values?: Values; canEdit?: boolean }) {
   const environment = useEnvironment();
   const [values, setValues] = useState<Values>();
   useEffect(() => {
     if (!environment?.name) return;
+    if (given) return setValues(given);
     api<{ values: Values }>('/api/environment/variables')
       .then((r) => setValues(r.values))
       .catch(() => setValues({}));
-  }, [environment?.name, variables]);
+  }, [environment?.name, variables, given]);
   if (!environment?.name || !variables?.length || !values) return null;
   const environments = environment.environments.map((e) => e.name);
   return (
@@ -86,7 +105,16 @@ export function VariableEnvironments({ variables }: { variables?: Variable[] }) 
         <span />
       </div>
       {variables.map((variable) => (
-        <Row key={variable.key} variable={variable} environments={environments} current={environment.name} saved={values[variable.key] ?? NONE} onSaved={(v) => setValues((all) => ({ ...all, [variable.key]: v }))} />
+        <Row
+          key={variable.key}
+          variable={variable}
+          environments={environments}
+          current={environment.name}
+          saved={values[variable.key] ?? NONE}
+          onSaved={(v) => setValues((all) => ({ ...all, [variable.key]: v }))}
+          base={base}
+          canEdit={canEdit}
+        />
       ))}
     </Card>
   );

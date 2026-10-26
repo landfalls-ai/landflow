@@ -11,10 +11,16 @@
  *
  * The atomic parts (leader election, admission, draining, rate limits) are Lua scripts that read the server's clock,
  * so hosts with skewed clocks agree on leases.
+ *
+ * High availability: with Sentinel (LANDFLOW_VALKEY_SENTINELS) every connection of this coordinator (commands,
+ * pub/sub, blocking reads) asks the sentinels for the primary, and all of them reconnect when the sentinels announce a
+ * failover (`+switch-master`). Valkey Cluster is not supported: the job stream is one key (so one shard), and the
+ * scripts above touch several keys at once (leader + epoch, slots + FIFO, instances + their info), which Cluster only
+ * allows within one hash slot, so every key would share one hash tag and live on one node anyway (README).
  */
 import { createHash } from 'node:crypto';
 import type { AdmitResult, Coordinator, Delivery, InstanceInfo, Leadership, QueueJob, SlotRule } from './coordinator';
-import { RespClient, RespError, type RespArg, type RespValue } from './resp';
+import { askSentinels, RespClient, RespError, type RespAddress, type RespArg, type RespOptions, type RespValue, type SentinelOptions } from './resp';
 
 const GROUP = 'workers';
 const NOW = `local t = redis.call('TIME') local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)`;
@@ -118,6 +124,9 @@ export class ValkeyCoordinator implements Coordinator {
   private readonly cmd: RespClient;
   private readonly sub: RespClient;
   private blocking?: RespClient;
+  /** Sentinel: a connection to one of the sentinels that hears failovers. */
+  private readonly watcher?: RespClient;
+  private readonly connection: Pick<RespOptions, 'resolve' | 'primaryOnly'>;
   private groupReady?: Promise<void>;
   private claimCursor = '0-0';
 
@@ -125,9 +134,39 @@ export class ValkeyCoordinator implements Coordinator {
     private readonly url: string,
     private readonly prefix: string,
     private readonly name = 'landflow',
+    options: { sentinel?: SentinelOptions } = {},
   ) {
-    this.cmd = new RespClient({ url, name: `${name}:cmd` });
-    this.sub = new RespClient({ url, name: `${name}:sub`, subscriber: true, timeoutMs: 10_000 });
+    const { sentinel } = options;
+    this.connection = sentinel ? { resolve: () => askSentinels(sentinel), primaryOnly: true } : {};
+    this.cmd = new RespClient({ url, name: `${name}:cmd`, ...this.connection });
+    this.sub = new RespClient({ url, name: `${name}:sub`, subscriber: true, timeoutMs: 10_000, ...this.connection });
+    if (sentinel) this.watcher = this.watchFailovers(sentinel);
+  }
+
+  /** Reconnect every connection when the sentinels promote another primary (calls in flight fail and are retried by their callers). */
+  private watchFailovers(sentinel: SentinelOptions): RespClient {
+    let next = 0;
+    const credentials = sentinel.password ? `${encodeURIComponent(sentinel.username ?? '')}:${encodeURIComponent(sentinel.password)}@` : '';
+    const watcher = new RespClient({
+      url: `${sentinel.tls ? 'rediss' : 'redis'}://${credentials}sentinel`,
+      name: `${this.name}:sentinel`,
+      subscriber: true,
+      // Waits for a sentinel however long it takes.
+      timeoutMs: 0,
+      resolve: async () => sentinel.sentinels[next++ % sentinel.sentinels.length],
+    });
+    void watcher
+      .subscribe('+switch-master', (message) => {
+        if (message.split(' ')[0] !== sentinel.masterName) return;
+        for (const client of [this.cmd, this.sub, this.blocking]) client?.reconnect();
+      })
+      .catch(() => {});
+    return watcher;
+  }
+
+  /** The server the command connection uses (with Sentinel: the primary it last found). */
+  get primary(): RespAddress | undefined {
+    return this.cmd.address;
   }
 
   private key(...parts: string[]): string {
@@ -184,7 +223,7 @@ export class ValkeyCoordinator implements Coordinator {
   }
 
   async take(consumer: string, count: number, blockMs: number): Promise<Delivery[]> {
-    this.blocking ??= new RespClient({ url: this.url, name: `${this.name}:block`, timeoutMs: 0 });
+    this.blocking ??= new RespClient({ url: this.url, name: `${this.name}:block`, timeoutMs: 0, ...this.connection });
     const blocking = this.blocking;
     const reply = await this.withGroup(() => blocking.callWithTimeout(blockMs + 10_000, 'XREADGROUP', 'GROUP', GROUP, consumer, 'COUNT', count, 'BLOCK', blockMs, 'STREAMS', this.stream, '>'));
     if (!Array.isArray(reply)) return [];
@@ -363,6 +402,6 @@ export class ValkeyCoordinator implements Coordinator {
   }
 
   async close(): Promise<void> {
-    await Promise.all([this.cmd.close(), this.sub.close(), this.blocking?.close()]);
+    await Promise.all([this.cmd.close(), this.sub.close(), this.blocking?.close(), this.watcher?.close()]);
   }
 }

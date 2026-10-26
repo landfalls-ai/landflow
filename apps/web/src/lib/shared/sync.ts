@@ -3,7 +3,8 @@
  * Settings page imports them); the format itself is lib/server/sync/format.ts.
  */
 
-export type SyncEntityKind = 'workflow' | 'folder' | 'variable' | 'dataTable';
+/** `credential`: one created from a promoted definition; `tableRows`: a table's rows replaced by a promoted rows file. */
+export type SyncEntityKind = 'workflow' | 'folder' | 'variable' | 'dataTable' | 'credential' | 'tableRows';
 export type SyncAction = 'create' | 'update' | 'delete';
 
 /** One difference between the files and the instance, as push would apply it. */

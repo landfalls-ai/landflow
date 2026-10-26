@@ -7,12 +7,14 @@
  * - `protected`: workflows are read-only here (./protection.ts); LANDFLOW_ENVIRONMENT_PROTECTED=true|false wins;
  * - `publishOnPull`: what a pull does with publication (lib/server/sync `publish`: file, all or none);
  * - `credentialMap`: a file's `{ type, name }` credential reference → one of this instance's credentials, so a
- *   promoted workflow uses this environment's credential even when the names differ (otherwise names match).
+ *   promoted workflow uses this environment's credential even when the names differ (otherwise names match);
+ * - `rowTables`: data tables whose rows promotion copies to the target (opt-in per table);
+ * - `secretMappings`: `$secrets` references that promoted credentials' secret fields get in the target.
  *
  * Without LANDFLOW_ENVIRONMENT none of this applies, and the instance behaves as it always did. Reads the database
  * only (no Git), so the sync code can use it.
  */
-import type { CredentialMapping, EnvironmentSettings, PullPublishMode } from '../../shared/secrets';
+import type { CredentialMapping, CredentialSecretMapping, EnvironmentSettings, PullPublishMode } from '../../shared/secrets';
 import { database } from '../db';
 import { parse } from '../db/rows';
 
@@ -99,4 +101,14 @@ export function credentialMappings(): CredentialMapping[] {
 /** The mapped credential id for a file's reference, if one is mapped. */
 export function mappedCredential(type: string, name: string): string | undefined {
   return credentialMappings().find((m) => m.type === type && m.name === name)?.credentialId;
+}
+
+/** Data tables (ids) whose rows promotion copies. */
+export function rowTableIds(): string[] {
+  return readEnvironmentSettings().rowTables ?? [];
+}
+
+/** The `$secrets` references for promoted credentials' secret fields (for promotions to `target`). */
+export function secretMappingsFor(target: string): CredentialSecretMapping[] {
+  return (readEnvironmentSettings().secretMappings ?? []).filter((m) => !m.environment || m.environment === target);
 }

@@ -127,7 +127,8 @@ What installing does:
    5 minutes.
 4. **Runs** `start` as a child process of the host:
    - `cwd` is the plugin directory;
-   - `LANDFLOW_HTTP_PORT` gets a free port in 7250–7299, inside the default scan range;
+   - `LANDFLOW_HTTP_PORT` gets a free port in 7250–7299, inside the default scan range
+     (`LANDFLOW_MARKETPLACE_PORTS=7300-7349` for another range, e.g. several processes on one host);
    - `LANDFLOW_GRPC_PORT` gets a second port or `off`;
    - `LANDFLOW_REGISTRY_URL` is the host. Set `LANDFLOW_PUBLIC_URL` (or
      `LANDFLOW_MARKETPLACE_REGISTRY_URL`) if the host isn't on `http://127.0.0.1:$PORT`.
@@ -143,6 +144,13 @@ What installing does:
 
    Installed node plugins start again with the host (bootstrap). Uninstall sends `SIGTERM`, so
    the SDK withdraws from the registry. It sends `SIGKILL` after 5 s, then deletes the directory.
+
+   In queue mode every main and worker runs its own copy, started with `LANDFLOW_REGISTRY_URL=off`
+   and registered in that process only. The install records a revision and a hash of the files;
+   a process that can't see the plugin directory downloads the same source into
+   `<data dir>/marketplace/instances/<instance id>/` and runs it only when the hash matches.
+   Install, update and uninstall reach the other processes within moments (and a check every
+   minute catches anything missed).
 
 The process gets a minimal environment. It contains `PATH`, `HOME`, `USER`, `LANG`, `TMPDIR`,
 `TZ`, the OTLP endpoint and the Go cache variables, plus its own `env` and the `LANDFLOW_*`

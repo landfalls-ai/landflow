@@ -14,6 +14,7 @@ import { agentToolsFrom, endpointFrom, listMcpTools, selectTools } from '../mcp/
 import { registry } from '../plugins/registry';
 import { workflowForCall } from '../publish';
 import { runWorkflow } from '../runner';
+import { parameterSecrets, rememberResolvedParameters } from '../secrets/resolve';
 import { store } from '../store';
 import { variables } from '../variables';
 import { knowledgeTool } from './knowledge';
@@ -147,6 +148,8 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
     async invoke(input, ctx) {
       // The arguments are the node's one input item; $fromAI() reads them and same-named parameters take them.
       const items: NodeItem[] = [{ json: input as JsonObject }];
+      // $secrets in the tool's parameters, when Settings → External secrets allows it.
+      const secrets = await parameterSecrets(config.parameters, skip);
       const resolver = new ExpressionResolver({
         items,
         nodeOutputs: {},
@@ -154,10 +157,13 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
         execution: { id: ctx.runId, mode: 'tool' },
         parameters: config.parameters,
         toolArgs: input,
-        variables: variables.record(),
+        variables: variables.forWorkflow(`agent:${ctx.agent.id}`),
+        ...(secrets && { secrets }),
       });
       const overrides = Object.fromEntries(Object.entries(input).filter(([key]) => descriptor.properties.some((p) => p.name === key)));
-      const parameters = { ...resolver.resolveParameters(config.parameters, 0, skip), ...overrides } as JsonObject;
+      const resolvedParameters = resolver.resolveParameters(config.parameters, 0, skip);
+      if (secrets) rememberResolvedParameters(config.parameters, resolvedParameters, skip);
+      const parameters = { ...resolvedParameters, ...overrides } as JsonObject;
       const creds = credentials.resolveFor({ type: config.nodeType, credentials: config.credentials, parameters: config.parameters }, descriptor);
       const request: ExecuteRequest = {
         protocol: PROTOCOL_VERSION,

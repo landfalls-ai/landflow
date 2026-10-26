@@ -3,12 +3,16 @@
  * SELECT from the URL, and a subscriber mode for pub/sub. Queue mode needs a few dozen commands and pub/sub, so this
  * keeps a client library (and its native or Lua-heavy extras) out of the host and the worker bundle.
  *
+ * Sentinel (`resolve` + `primaryOnly`): every connect asks where to go (the sentinels' `get-master-addr-by-name`),
+ * checks with ROLE that it reached the primary, and reconnects when the server turns out to be a replica (a READONLY
+ * error: a failover demoted it) or when told to (`reconnect()`, on the sentinels' `+switch-master`).
+ *
  * Replies: simple strings and bulk strings as strings (UTF-8), integers as numbers, nil as null, arrays as arrays; an
  * error reply rejects the call with a RespError. A command sent while the connection is down waits for the reconnect
  * (bounded queue); `timeoutMs` rejects a call that got no reply in time (blocking reads pass 0).
  */
 import { EventEmitter } from 'node:events';
-import { connect as netConnect, type Socket } from 'node:net';
+import { isIP, connect as netConnect, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 
 export type RespValue = string | number | null | RespValue[];
@@ -91,8 +95,20 @@ export class RespParser {
   }
 }
 
+export interface RespAddress {
+  host: string;
+  port: number;
+}
+
 export interface RespOptions {
+  /** Credentials, database and TLS (and the address, unless `resolve` gives it). */
   url: string;
+  /** Where to connect, asked at every (re)connect (Sentinel: the current primary). */
+  resolve?: () => Promise<RespAddress>;
+  /** After the handshake, check with ROLE that the server is a primary; reconnect if it isn't (Sentinel). */
+  primaryOnly?: boolean;
+  /** Give up a connection attempt after this long (default 10 s). */
+  connectTimeoutMs?: number;
   /** CLIENT SETNAME, shown by CLIENT LIST. */
   name?: string;
   /** Reject a call without a reply after this long (0 = never). Default 10 s. */
@@ -188,19 +204,55 @@ export class RespClient extends EventEmitter {
     else pending.resolve(outcome.value);
   }
 
+  /** The server this client is (or was last) connected to. */
+  get address(): RespAddress | undefined {
+    return this.connectedTo;
+  }
+
+  private connectedTo?: RespAddress;
+
   /** Open the connection (also done by the first call). */
   connect() {
     if (this.state !== 'idle') return;
     this.state = 'connecting';
-    const { host, port, tls } = this.target;
-    const socket = tls ? tlsConnect({ host, port, servername: host }) : netConnect({ host, port });
+    if (!this.options.resolve) return this.open({ host: this.target.host, port: this.target.port });
+    this.options.resolve().then(
+      (address) => {
+        if (this.state === 'connecting') this.open(address);
+      },
+      (error: Error) => {
+        if (this.state !== 'connecting') return;
+        this.emit('error', error);
+        this.retryLater();
+      },
+    );
+  }
+
+  private open(address: RespAddress) {
+    const { tls } = this.target;
+    const { host, port } = address;
+    // Sentinel names the primary by address: TLS checks the name in the URL.
+    const servername = this.options.resolve ? this.target.host : host;
+    const socket = tls ? tlsConnect({ host, port, ...(!isIP(servername) && { servername }) }) : netConnect({ host, port });
     this.socket = socket;
+    this.connectedTo = address;
     socket.setNoDelay(true);
     socket.setKeepAlive(true, 30_000);
-    socket.once(tls ? 'secureConnect' : 'connect', () => this.onConnect(socket));
+    // A host that vanished (a killed primary) never answers: give up and ask again.
+    socket.setTimeout(this.options.connectTimeoutMs ?? 10_000, () => socket.destroy(new Error(`Valkey: no connection to ${host}:${port} in time`)));
+    socket.once(tls ? 'secureConnect' : 'connect', () => {
+      socket.setTimeout(0);
+      this.onConnect(socket);
+    });
     socket.on('data', (chunk: Buffer) => this.onData(chunk));
     socket.on('error', (error) => this.emit('error', error));
     socket.on('close', () => this.onClose(socket));
+  }
+
+  /** Drop the connection and connect again (a failover moved the primary). Calls in flight are rejected. */
+  reconnect() {
+    if (this.state === 'closed') return;
+    this.socket?.destroy();
   }
 
   private onConnect(socket: Socket) {
@@ -220,6 +272,23 @@ export class RespClient extends EventEmitter {
       this.inflight.push(pending);
       socket.write(encodeCommand(args));
     }
+    if (!this.options.primaryOnly) return this.becomeReady(socket);
+    // Sentinel may still name the old primary for a moment after a failover: only a primary takes the commands.
+    const notPrimary = (role: string) => {
+      this.emit('error', new Error(`Valkey: ${socket.remoteAddress}:${socket.remotePort} is not the primary (${role}); asking again`));
+      socket.destroy();
+    };
+    this.inflight.push({
+      resolve: (value) => (Array.isArray(value) && String(value[0]) === 'master' ? this.becomeReady(socket) : notPrimary(Array.isArray(value) ? String(value[0]) : 'no role')),
+      reject: (error) => notPrimary(error.message),
+      settled: false,
+    });
+    socket.write(encodeCommand(['ROLE']));
+  }
+
+  /** Connected (and, with `primaryOnly`, to the primary): subscribe again and send what waited. */
+  private becomeReady(socket: Socket) {
+    if (this.socket !== socket || this.state !== 'connecting') return;
     // Subscriptions come back after a reconnect.
     for (const channel of this.channels.keys()) this.writeInternal(socket, ['SUBSCRIBE', channel]);
     for (const pattern of this.patterns.keys()) this.writeInternal(socket, ['PSUBSCRIBE', pattern]);
@@ -258,6 +327,8 @@ export class RespClient extends EventEmitter {
       const pending = this.inflight.shift();
       if (!pending) continue;
       this.settle(pending, value instanceof RespError ? value : { value });
+      // A replica now (a failover demoted this server): find the primary again.
+      if (value instanceof RespError && value.message.startsWith('READONLY') && this.options.resolve) this.socket?.destroy();
     }
   }
 
@@ -292,8 +363,12 @@ export class RespClient extends EventEmitter {
     for (const pending of this.inflight.splice(0)) this.settle(pending, error);
     if (this.state === 'closed') return;
     const wasReady = this.state === 'ready';
-    this.state = 'idle';
     if (wasReady) this.emit('disconnected');
+    this.retryLater();
+  }
+
+  private retryLater() {
+    this.state = 'idle';
     this.failures++;
     const delay = Math.min(5_000, 100 * 2 ** Math.min(this.failures, 6));
     clearTimeout(this.reconnectTimer);
@@ -358,4 +433,85 @@ export function pairs(reply: RespValue): Record<string, string> {
   if (!Array.isArray(reply)) return out;
   for (let i = 0; i + 1 < reply.length; i += 2) out[String(reply[i])] = String(reply[i + 1]);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Sentinel
+// ---------------------------------------------------------------------------
+
+export interface SentinelOptions {
+  sentinels: RespAddress[];
+  /** The monitored primary's name (`sentinel monitor <name> …`). */
+  masterName: string;
+  username?: string;
+  password?: string;
+  tls?: boolean;
+  /** Per sentinel asked (default 2 s). */
+  timeoutMs?: number;
+}
+
+/** One command on a short-lived connection (asking a sentinel). */
+export function oneShot(address: RespAddress, commands: RespArg[][], options: { tls?: boolean; timeoutMs?: number } = {}): Promise<Array<RespValue | RespError>> {
+  return new Promise((resolve, reject) => {
+    const { host, port } = address;
+    const socket = options.tls ? tlsConnect({ host, port }) : netConnect({ host, port });
+    const parser = new RespParser();
+    const replies: Array<RespValue | RespError> = [];
+    const fail = (error: Error) => {
+      socket.destroy();
+      reject(error);
+    };
+    socket.setTimeout(options.timeoutMs ?? 2_000, () => fail(new Error(`no answer from ${host}:${port}`)));
+    socket.once(options.tls ? 'secureConnect' : 'connect', () => socket.write(Buffer.concat(commands.map((args) => encodeCommand(args)))));
+    socket.on('error', fail);
+    socket.on('data', (chunk: Buffer) => {
+      parser.push(chunk);
+      try {
+        for (let parsed = parser.next(); parsed; parsed = parser.next()) replies.push(parsed.value);
+      } catch (error) {
+        return fail(error as Error);
+      }
+      if (replies.length < commands.length) return;
+      socket.end();
+      resolve(replies);
+    });
+  });
+}
+
+/**
+ * The current primary, from the first sentinel that knows it (sentinels are tried in turn; the one that answered moves
+ * to the front, as the Sentinel client guidelines suggest).
+ */
+export async function askSentinels(options: SentinelOptions): Promise<RespAddress> {
+  const errors: string[] = [];
+  const { sentinels } = options;
+  for (let i = 0; i < sentinels.length; i++) {
+    const sentinel = sentinels[i];
+    const auth: RespArg[][] = options.password ? [options.username ? ['AUTH', options.username, options.password] : ['AUTH', options.password]] : [];
+    try {
+      const replies = await oneShot(sentinel, [...auth, ['SENTINEL', 'get-master-addr-by-name', options.masterName]], { tls: options.tls, timeoutMs: options.timeoutMs });
+      const failed = replies.find((reply) => reply instanceof RespError);
+      if (failed) throw failed;
+      const reply = replies.at(-1);
+      if (!Array.isArray(reply) || reply.length < 2) throw new Error(`does not know "${options.masterName}"`);
+      if (i > 0) sentinels.unshift(...sentinels.splice(i, 1));
+      return { host: String(reply[0]), port: Number(reply[1]) };
+    } catch (error) {
+      errors.push(`${sentinel.host}:${sentinel.port}: ${(error as Error).message}`);
+    }
+  }
+  throw new Error(`No sentinel named the primary "${options.masterName}" (${errors.join('; ')})`);
+}
+
+/** `host:port,host:port` (IPv6 in brackets; port default 26379). */
+export function parseSentinels(text: string | undefined): RespAddress[] {
+  return (text ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const match = /^\[([^\]]+)\](?::(\d+))?$/.exec(part) ?? /^([^:]+)(?::(\d+))?$/.exec(part);
+      if (!match) throw new Error(`Not a sentinel address: ${part} (use host:port)`);
+      return { host: match[1], port: Number(match[2] ?? 26379) };
+    });
 }

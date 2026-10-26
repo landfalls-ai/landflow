@@ -6,6 +6,7 @@
  * "Waiting on N of M sub-workflows" with a link to each child on a parent that waits for them.
  */
 import { Ban, Check, CornerLeftUp, Hourglass, Layers, Sparkles, X } from 'lucide-react';
+import { waitedChildren } from '@/lib/client/run-data';
 import { formatCost, formatTokens, type ExecutionAiUsage } from '@/lib/shared/ai-usage';
 import type { ExecutionRecord } from '@/lib/shared/types';
 import { Popover } from '../ui/popover';
@@ -89,20 +90,8 @@ export function BufferedChip({ buffered }: { buffered: ExecutionRecord['buffered
   );
 }
 
-/** A child of a parent waiting for its sub-workflows: the item it ran for and, once it finished, how it ended. */
-interface WaitedChild {
-  item: number;
-  executionId: string;
-  status?: 'success' | 'error' | 'canceled';
-}
-
-/** The sub-executions a waiting parent waits for (`wait.data`: one per item in "each" mode, else the one child). */
-export function waitedChildren(record: Pick<ExecutionRecord, 'status' | 'wait'> | undefined): WaitedChild[] | undefined {
-  if (record?.status !== 'waiting' || record.wait?.resume !== 'subworkflow') return undefined;
-  const data = record.wait.data ?? {};
-  if (data.mode === 'each' && Array.isArray(data.children)) return data.children as unknown as WaitedChild[];
-  return typeof data.executionId === 'string' ? [{ item: 0, executionId: data.executionId }] : undefined;
-}
+// The waited children are read from `wait.data` by lib/client/run-data (the canvas's waiting mark uses them too).
+export { waitedChildren };
 
 /** "Sub-execution of ex_…": back to the execution whose Execute Workflow node started this one. */
 export function ParentChip({ parentId, onOpen }: { parentId: string | undefined; onOpen: (executionId: string) => void }) {

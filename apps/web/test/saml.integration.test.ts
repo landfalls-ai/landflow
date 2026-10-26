@@ -4,9 +4,12 @@
  * the test fills in Keycloak's login form with fetch and cookies like a browser, takes the auto-submitting form with
  * the signed SAMLResponse and posts it to our ACS route. The IdP comes from Keycloak's metadata. alice (realm role
  * landflow-admin) becomes an admin, bob (landflow-editor, group data-team) a member and an editor of the Data
- * project; then single logout goes to Keycloak and back. Run with LANDFLOW_INTEGRATION=saml.
+ * project; then single logout goes to Keycloak and back. Last, encrypted assertions: the realm's test client
+ * `urn:landflow:test:saml-encrypted` encrypts to the test-only certificate in test/fixtures/saml (sp-encryption.*),
+ * whose key is uploaded as the decryption key; with "Require encrypted assertions" the plain client is refused. Run with
+ * LANDFLOW_INTEGRATION=saml.
  */
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -247,5 +250,36 @@ describe.skipIf(!enabled)('SAML sign-in with Keycloak (LANDFLOW_INTEGRATION=saml
     const started = await (loginRoute.GET as Route)(new Request(`${BASE}/api/auth/saml/login`));
     const page = await fetch(started.headers.get('location')!, { redirect: 'manual', headers: { cookie: jar.header() } });
     expect(await page.text()).toContain('kc-form-login');
+  });
+
+  it('encrypted assertions: Keycloak encrypts to our certificate, Landflow decrypts with the uploaded key; required refuses plain ones', async () => {
+    const keys = await import('@/lib/server/auth/saml-keys');
+    const fixture = (name: string) => readFileSync(join(__dirname, 'fixtures', 'saml', name), 'utf8');
+    keys.uploadSamlEncryptionKey({ cert: fixture('sp-encryption.cert.pem'), key: fixture('sp-encryption.key.pem') });
+    process.env.LANDFLOW_SAML_ISSUER = 'urn:landflow:test:saml-encrypted';
+    try {
+      // Our metadata offers the certificate for encryption.
+      const metadata = await (await (metadataRoute.GET as Route)(new Request(`${BASE}/api/auth/saml/metadata`))).text();
+      expect(metadata).toContain('entityID="urn:landflow:test:saml-encrypted"');
+      expect(metadata).toContain('<KeyDescriptor use="encryption">');
+
+      const { session, response } = await signInAs('alice', 'alice-test-only');
+      const xml = Buffer.from(response, 'base64').toString('utf8');
+      expect(xml).toMatch(/<saml:EncryptedAssertion|<EncryptedAssertion/);
+      expect(xml).not.toContain('alice@landflow.test');
+      expect(session).toBeTruthy();
+      expect(await me(session!)).toMatchObject({ email: 'alice@landflow.test', role: 'admin' });
+
+      keys.setSamlEncryptionRequired(true);
+      expect((await signInAs('alice', 'alice-test-only')).session).toBeTruthy();
+      // The plain client (assertions in the clear) is refused now.
+      delete process.env.LANDFLOW_SAML_ISSUER;
+      const plain = await signInAs('alice', 'alice-test-only');
+      expect(plain.session).toBeUndefined();
+      expect(decodeURIComponent(plain.location)).toContain('requires encrypted assertions');
+    } finally {
+      delete process.env.LANDFLOW_SAML_ISSUER;
+      keys.removeSamlEncryptionKey();
+    }
   });
 });

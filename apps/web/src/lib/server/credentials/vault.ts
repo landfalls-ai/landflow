@@ -5,20 +5,27 @@
  * credential by id; decrypted values leave this module on their way to a node
  * (ExecuteRequest.credentials) or a TestCredentials call, never through the API.
  *
+ * Where they are kept (../config-store.ts): `<data dir>/credentials.json` by default, or one row per credential in the
+ * `credentials` table in queue mode (LANDFLOW_CONFIG_STORE=database), imported once from the file, which stays.
+ *
  * OAuth2 credentials (core.oAuth2Api and types extending it) also hold their token, in the same sealed data
  * (`oauthTokenData`, see ./oauth2). The API reports a status instead of it; nodes get `accessToken` and are never
  * sent the refresh token. `refreshOAuth2` renews a token that is about to expire and saves it, and ./oauth2-runtime
  * calls it before a node runs (and once more when the node's API answered 401).
  */
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nanoid } from 'nanoid';
 import { isPropertyVisible, splitType, withPropertyDefaults, type CredentialTypeDescriptor, type JsonObject, type NodeDescriptor } from '@landflow/protocol';
 import type { WorkflowNode } from '@landflow/engine';
 import { OAUTH2_CREDENTIAL } from '../../shared/oauth2';
 import type { CredentialDetail, CredentialSummary } from '../../shared/types';
+import { configStoreKind, importOnce, onConfigChanged, writeJsonFile } from '../config-store';
+import { database, type Database } from '../db';
 import { registry } from '../plugins/registry';
+import { redactText } from '../secrets/redact';
+import { resolveSecretFields, resolveSecretsIn } from '../secrets/resolve';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { logger } from '../telemetry/logger';
@@ -40,13 +47,13 @@ import {
   type StoredToken,
 } from './oauth2';
 
-interface Sealed {
+export interface Sealed {
   iv: string;
   tag: string;
   value: string;
 }
 
-interface StoredCredential {
+export interface StoredCredential {
   id: string;
   name: string;
   type: string;
@@ -92,41 +99,158 @@ const withoutReserved = <T extends Record<string, unknown>>(data: T): T => Objec
 /** Credential data handed to nodes, by the OAuth2 credential it came from: ./oauth2-runtime refreshes those before a call. */
 const oauthOrigins = singleton('oauth2-origins', () => new WeakMap<object, string>());
 
-class CredentialVault {
-  private readonly path = join(store.dir, 'credentials.json');
-  private readonly key = loadKey(store.dir);
-  private credentials = new Map<string, StoredCredential>();
-  /** OAuth2 refreshes in flight, by credential id: concurrent nodes wait for the same one. */
-  private readonly refreshing = new Map<string, Promise<boolean>>();
+/** Where the sealed credentials are kept: credentials.json, or the `credentials` table (../config-store.ts). */
+export interface CredentialBackend {
+  readonly kind: 'files' | 'database';
+  /** Every stored credential. */
+  load(): StoredCredential[];
+  /** Save one change; `all` is every credential after it (the file holds them all). */
+  save(change: { saved: StoredCredential } | { removed: string }, all: Iterable<StoredCredential>): void;
+  /** Whether another process changed the credentials since the last load or save. */
+  stale(): boolean;
+}
 
-  /** When the file was last read or written here (queue mode: other processes write it too). */
+/** credentials.json in the data directory (files mode). */
+export class CredentialFile implements CredentialBackend {
+  readonly kind = 'files' as const;
+  /** When the file was last read or written here (queue mode with a shared data directory: other processes write it too). */
   private loadedAt = 0;
 
-  constructor() {
+  constructor(readonly path: string) {}
+
+  load(): StoredCredential[] {
     try {
-      this.loadedAt = statSync(this.path).mtimeMs;
+      const mtime = statSync(this.path).mtimeMs;
       const saved = JSON.parse(readFileSync(this.path, 'utf8')) as { credentials: StoredCredential[] };
-      for (const credential of saved.credentials) this.credentials.set(credential.id, credential);
+      this.loadedAt = mtime;
+      return saved.credentials;
     } catch {
       // No credentials yet.
+      return [];
     }
   }
 
-  private persist() {
-    const tmp = `${this.path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
-    writeFileSync(tmp, JSON.stringify({ version: 1, credentials: [...this.credentials.values()] }, null, 2), { mode: 0o600 });
-    renameSync(tmp, this.path);
+  save(_change: { saved: StoredCredential } | { removed: string }, all: Iterable<StoredCredential>) {
+    writeJsonFile(this.path, { version: 1, credentials: [...all] }, 0o600);
     this.loadedAt = statSync(this.path).mtimeMs;
   }
 
-  /** Queue mode (a data directory shared by the processes): read the file again when another process wrote it. */
-  reloadIfChanged(): boolean {
+  stale(): boolean {
     try {
-      const mtime = statSync(this.path).mtimeMs;
-      if (mtime === this.loadedAt) return false;
-      const saved = JSON.parse(readFileSync(this.path, 'utf8')) as { credentials: StoredCredential[] };
-      this.credentials = new Map(saved.credentials.map((credential) => [credential.id, credential]));
-      this.loadedAt = mtime;
+      return statSync(this.path).mtimeMs !== this.loadedAt;
+    } catch {
+      return false;
+    }
+  }
+}
+
+type CredentialRow = {
+  id: string;
+  name: string;
+  type: string;
+  secret_fields: string;
+  data: string;
+  created_at: string;
+  updated_at: string;
+};
+
+const credentialRow = (credential: StoredCredential): CredentialRow => ({
+  id: credential.id,
+  name: credential.name,
+  type: credential.type,
+  secret_fields: JSON.stringify(credential.secretFields ?? []),
+  data: JSON.stringify(credential.data),
+  created_at: credential.createdAt,
+  updated_at: credential.updatedAt,
+});
+
+/** The `credentials` table (database mode, migration 1300): one row per credential; `file` is imported once. */
+export class CredentialTable implements CredentialBackend {
+  readonly kind = 'database' as const;
+  private dirty = true;
+  private stop?: () => void;
+
+  constructor(
+    private readonly file: string,
+    private readonly db: () => Database = database,
+  ) {}
+
+  load(): StoredCredential[] {
+    // Another process's writes (Postgres replication, or the SQLite broadcast in queue mode) mark the copy stale.
+    this.stop ??= onConfigChanged(['credentials'], () => (this.dirty = true));
+    const db = this.db();
+    importOnce(db, 'credentials.json', () => {
+      if (!existsSync(this.file)) return;
+      const saved = new CredentialFile(this.file).load();
+      for (const credential of saved) db.insertNew('credentials', credentialRow(credential));
+    });
+    this.dirty = false;
+    return db.all<CredentialRow>('SELECT * FROM credentials').flatMap((row) => {
+      try {
+        return [{ id: row.id, name: row.name, type: row.type, secretFields: JSON.parse(row.secret_fields) as string[], data: JSON.parse(row.data) as Sealed, createdAt: row.created_at, updatedAt: row.updated_at }];
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  save(change: { saved: StoredCredential } | { removed: string }) {
+    if ('saved' in change) this.db().upsert('credentials', { ...credentialRow(change.saved) });
+    else this.db().delete('credentials', { id: change.removed });
+  }
+
+  stale(): boolean {
+    return this.dirty;
+  }
+
+  close() {
+    this.stop?.();
+    this.stop = undefined;
+  }
+}
+
+export interface CredentialVaultOptions {
+  /** The data directory (credentials.json, encryption.key); default LANDFLOW_DATA_DIR. */
+  dir?: string;
+  backend?: CredentialBackend;
+}
+
+export class CredentialVault {
+  private readonly key: Buffer;
+  private readonly backend: CredentialBackend;
+  /** Loaded on first use: in Postgres mode the database opens after this module is imported. */
+  private loaded?: Map<string, StoredCredential>;
+  /** OAuth2 refreshes in flight, by credential id: concurrent nodes wait for the same one. */
+  private readonly refreshing = new Map<string, Promise<boolean>>();
+
+  constructor(options: CredentialVaultOptions = {}) {
+    const dir = options.dir ?? store.dir;
+    this.key = loadKey(dir);
+    const file = join(dir, 'credentials.json');
+    this.backend = options.backend ?? (configStoreKind() === 'database' ? new CredentialTable(file) : new CredentialFile(file));
+  }
+
+  /** Where the credentials are kept: `files` (credentials.json) or `database`. */
+  get storeKind(): 'files' | 'database' {
+    return this.backend.kind;
+  }
+
+  private get credentials(): Map<string, StoredCredential> {
+    // Database mode: another process's change (replicated) is read at once; the flag costs nothing to check.
+    if (this.loaded && this.backend.kind === 'database') this.reloadIfChanged();
+    this.loaded ??= new Map(this.backend.load().map((credential) => [credential.id, credential]));
+    return this.loaded;
+  }
+
+  private persist(change: { saved: StoredCredential } | { removed: string }) {
+    this.backend.save(change, this.credentials.values());
+  }
+
+  /** Queue mode: read the credentials again when another process changed them (the file's mtime, or the table). */
+  reloadIfChanged(): boolean {
+    if (!this.loaded || !this.backend.stale()) return false;
+    try {
+      this.loaded = new Map(this.backend.load().map((credential) => [credential.id, credential]));
       return true;
     } catch {
       return false;
@@ -242,14 +366,19 @@ class CredentialVault {
     };
   }
 
-  create(input: { name: string; type: string; data: JsonObject }): CredentialDetail {
+  /**
+   * `options.id` keeps a given id (a promoted definition, planned before it is created); `options.partial` skips the
+   * required-field check (a promoted definition comes without its secrets, which are filled in on this instance).
+   */
+  create(input: { name: string; type: string; data: JsonObject }, options: { id?: string; partial?: boolean } = {}): CredentialDetail {
     const info = registry.credentialType(input.type);
     if (!info) throw new CredentialError(`Unknown credential type "${input.type}" — is its plugin running?`);
+    if (options.id && this.credentials.has(options.id)) throw new CredentialError(`A credential with id ${options.id} exists already`, 409);
     const data = withoutReserved(Object.fromEntries(Object.entries(input.data).filter(([, value]) => value !== null && value !== undefined)) as JsonObject);
-    this.validate(info.descriptor, data);
+    if (!options.partial) this.validate(info.descriptor, data);
     const now = new Date().toISOString();
     const credential: StoredCredential = {
-      id: `cred_${nanoid(12)}`,
+      id: options.id ?? `cred_${nanoid(12)}`,
       name: input.name.trim() || info.descriptor.displayName,
       type: input.type,
       secretFields: secretNames(info.descriptor),
@@ -258,8 +387,31 @@ class CredentialVault {
       updatedAt: now,
     };
     this.credentials.set(credential.id, credential);
-    this.persist();
+    this.persist({ saved: credential });
     return this.get(credential.id)!;
+  }
+
+  /**
+   * What promotion copies of a credential (lib/server/environments/promote.ts): name, type, the non-secret fields and
+   * the secret fields that only reference an external secret; `secretFields` names every secret field (whose values
+   * never leave). Undefined when the credential doesn't exist.
+   */
+  definition(id: string): { name: string; type: string; data: JsonObject; secretFields: string[] } | undefined {
+    const credential = this.credentials.get(id);
+    if (!credential) return undefined;
+    const secret = new Set([...credential.secretFields, ...secretNames(registry.credentialType(credential.type)?.descriptor)]);
+    const data = withoutReserved(this.open(credential));
+    return {
+      name: credential.name,
+      type: credential.type,
+      data: Object.fromEntries(Object.entries(data).filter(([key, value]) => !secret.has(key) || isSecretReference(value))) as JsonObject,
+      secretFields: [...secret].sort(),
+    };
+  }
+
+  /** The secret (password) fields of a credential type, by its descriptor (empty when its plugin isn't running). */
+  secretFieldsOf(type: string): string[] {
+    return secretNames(registry.credentialType(type)?.descriptor);
   }
 
   /**
@@ -278,13 +430,13 @@ class CredentialVault {
     }
     if (input.name?.trim()) credential.name = input.name.trim();
     credential.updatedAt = new Date().toISOString();
-    this.persist();
+    this.persist({ saved: credential });
     return this.get(id)!;
   }
 
   delete(id: string): boolean {
     if (!this.credentials.delete(id)) return false;
-    this.persist();
+    this.persist({ removed: id });
     return true;
   }
 
@@ -328,6 +480,15 @@ class CredentialVault {
     if (!credential) throw new CredentialError(`Credential "${ref.name}" was deleted — choose another one`);
     if (credential.type !== type) throw new CredentialError(`Credential "${credential.name}" is a ${credential.type}, not a ${type}`);
     return this.nodeData(credential, registry.credentialType(type)?.descriptor);
+  }
+
+  /**
+   * `dataFor` with `$secrets` resolved, for the credentials Landflow uses itself, outside nodes (agents' models and
+   * channels, alert channels, the source control token): read right before the use, with the same cache and
+   * redaction as credential fields in nodes. A secret that can't be read throws, naming the field and the reference.
+   */
+  dataWithSecrets(ref: { id: string; name: string }, type: string): Promise<JsonObject> {
+    return resolveSecretsIn(this.dataFor(ref, type), `Credential “${this.credentials.get(ref.id)?.name ?? ref.name}”`);
   }
 
   /**
@@ -388,7 +549,7 @@ class CredentialVault {
     change(data);
     credential.data = this.seal(data);
     credential.updatedAt = new Date().toISOString();
-    this.persist();
+    this.persist({ saved: credential });
   }
 
   /** Store a token (after Connect, a refresh or a client credentials grant); `account` replaces the shown account when given. */
@@ -407,7 +568,8 @@ class CredentialVault {
     const credential = this.credentials.get(id);
     if (!credential) return;
     this.writeOAuth2(credential, (data) => {
-      if (message) data[ERROR_FIELD] = message.slice(0, 500);
+      // A provider's answer may quote a client field that came from an external secret.
+      if (message) data[ERROR_FIELD] = redactText(message).slice(0, 500);
       else delete data[ERROR_FIELD];
     });
   }
@@ -440,13 +602,14 @@ class CredentialVault {
     if (!credential) return false;
     const data = withDefaults(registry.credentialType(credential.type)?.descriptor, this.open(credential));
     if (!this.isOAuth2(credential, data)) return false;
-    const config = oauth2Config(data);
+    const saved = oauth2Config(data);
     const token = storedToken(data[TOKEN_FIELD]);
     if (token && !options.force && !isExpiring(token)) return false;
-    const clientCredentials = config.grantType === 'clientCredentials';
+    const clientCredentials = saved.grantType === 'clientCredentials';
     const refreshToken = tokenField(token, 'refresh_token');
     if (!clientCredentials && !refreshToken) return false;
     try {
+      const config = await resolveOAuth2Secrets(saved);
       const response = clientCredentials ? await clientCredentialsToken(config, options.fetch) : await refreshAccessToken(config, refreshToken, options.fetch);
       const fresh = this.credentials.get(id);
       if (!fresh) return false;
@@ -484,6 +647,18 @@ class CredentialVault {
     }
     return changed;
   }
+}
+
+/** The OAuth2 settings the host sends to the provider itself: `$secrets` may stand in the client fields and URLs. */
+const OAUTH2_SECRET_FIELDS = ['clientId', 'clientSecret', 'authUrl', 'accessTokenUrl', 'userInfoUrl'] as const;
+
+/**
+ * An OAuth2 credential's flow settings with `$secrets` resolved (`{{ $secrets.vault.app.clientSecret }}` in the client
+ * secret), right before the host builds the authorization URL, exchanges a code, refreshes or asks for a client
+ * credentials token. The saved credential keeps the expression; the values are cached and redacted like any secret.
+ */
+export function resolveOAuth2Secrets(config: OAuth2Config): Promise<OAuth2Config> {
+  return resolveSecretFields(config, 'OAuth2 credential', OAUTH2_SECRET_FIELDS);
 }
 
 export const credentials = singleton('credentials', () => new CredentialVault());

@@ -14,7 +14,7 @@ import { fileHashes, localChanges, readState, writeState, type InstanceState } f
 
 /** One difference between the files and the instance (the host's SyncChange). */
 export interface SyncChange {
-  kind: 'workflow' | 'folder' | 'variable' | 'dataTable';
+  kind: 'workflow' | 'folder' | 'variable' | 'dataTable' | 'credential' | 'tableRows';
   action: 'create' | 'update' | 'delete';
   id: string;
   name: string;

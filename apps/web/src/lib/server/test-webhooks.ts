@@ -1,8 +1,9 @@
 /**
- * Test URLs of the Webhook and Form triggers (n8n's "Listen for test event"): /api/webhook-test/<path> and
- * /form-test/<path> answer only while an editor listens for that trigger, and run the workflow the editor sent when it
- * started listening (its current state, saved or not) as a manual run: mode `manual`, kept out of production Insights,
- * attributed to the user who listened. The trigger's authentication and IP allow-list apply as on the production URLs.
+ * Test URLs of the Webhook, Form and MCP Server triggers (n8n's "Listen for test event"): /api/webhook-test/<path>,
+ * /form-test/<path> and /mcp-test/<path> answer only while an editor listens for that trigger, and run the workflow the
+ * editor sent when it started listening (its current state, saved or not) as a manual run: mode `manual`, kept out of
+ * production Insights, attributed to the user who listened. The trigger's authentication (and a webhook's or form's IP
+ * allow-list) apply as on the production URLs.
  *
  * - The editor POSTs /api/workflows/:id/listen with its workflow and the trigger's node id. That request stays open as
  *   an SSE stream (`listenerStream`): `listening`, then the run's events as /run streams them, then `result`; or
@@ -10,15 +11,22 @@
  *   that is still going.
  * - A Webhook listener is single-shot: the first call that passes the trigger's authentication claims it, and the URL
  *   answers 404 again. A Form listener shows the form until it is submitted, then stays (sending a reload to the run's
- *   next page) until the run finishes.
+ *   next page) until the run finishes. An MCP listener serves every MCP request (initialize, tools/list, tools/call)
+ *   until the editor stops or TEST_LISTEN_MS pass without one; each tools/call is its own test run, and the stream
+ *   follows them one after another (a `result` after each, a fresh `listening` with the new deadline).
  * - The run's execution id is picked when listening starts, so the stream follows the run on the bus (./bus.ts)
- *   wherever it runs, the later pages of a multi-page form too (they resume through /form/waiting/<id>).
+ *   wherever it runs, the later pages of a multi-page form too (they resume through /form/waiting/<id>). An MCP
+ *   listener's runs are `<that id>-<suffix>`.
+ * - Tracing: the listening stream is a `trigger.listen` span; each test call's run is a `trigger.fire` with the
+ *   trigger's source (`webhook`, `form`, `mcp`) and `landflow.trigger.test=true`, under the call's HTTP span.
  *
  * Queue mode (./cluster): listeners are registered in Valkey, so a test call that reaches another main than the one
  * holding the editor's stream finds it there, claims it atomically (one run per listen) and runs it in that main; the
- * bus relay brings the run's events to the editor's main. Regular mode keeps them in a process-wide map.
+ * bus relay brings the run's events to the editor's main. Listening again (another tab, or after a reload) on another
+ * main tells the main holding the earlier stream to end it (`stopped`) over the cluster's control channel. Regular mode
+ * keeps them in a process-wide map.
  */
-import { context } from '@opentelemetry/api';
+import { context, type Span } from '@opentelemetry/api';
 import { nanoid } from 'nanoid';
 import type { NodeItem } from '@landflow/protocol';
 import type { ExecutionEvent, Workflow, WorkflowNode } from '@landflow/engine';
@@ -26,15 +34,17 @@ import type { ExecutionRecord } from '../shared/types';
 import { withAuth } from './auth/context';
 import { getUser } from './auth/users';
 import { bus } from './bus';
-import { clusterActive, coordinator, instanceId } from './cluster/state';
+import { clusterActive, clusterState, coordinator, instanceId, type ControlMessage } from './cluster/state';
 import { FORM_TRIGGER, messagePage, normalizePath } from './forms';
 import { error, sseHeaders } from './http';
 import { cancelExecution, liveExecution, runWorkflow, turnedDown, type RunOptions } from './runner';
 import { singleton } from './singleton';
-import { startTrigger } from './telemetry';
+import { failSpan, startSpan, startTrigger } from './telemetry';
 import { deferred } from './webhooks';
 
 export const WEBHOOK_TRIGGER = 'core.webhook';
+/** lib/server/mcp/trigger.ts serves its tools (not imported here: that module imports this one). */
+const MCP_TRIGGER = 'core.mcpTrigger';
 /** How long a listener waits for its test call. */
 export const TEST_LISTEN_MS = 120_000;
 /** A call that claimed a listener just as it timed out: how long the stream waits for its run to start. */
@@ -44,25 +54,25 @@ const CLAIMED_TTL_MS = 60 * 60_000;
 /** SSE comment that keeps proxies from closing the listening stream. */
 const PING_MS = 15_000;
 
-export type TestTriggerKind = 'webhook' | 'form';
+export type TestTriggerKind = 'webhook' | 'form' | 'mcp';
 
 /** Where each kind of test URL is served. */
-export const TEST_PREFIX: Record<TestTriggerKind, string> = { webhook: '/api/webhook-test/', form: '/form-test/' };
+export const TEST_PREFIX: Record<TestTriggerKind, string> = { webhook: '/api/webhook-test/', form: '/form-test/', mcp: '/mcp-test/' };
 
 export const NOT_LISTENING_HINT = 'Click “Listen for test event” in the editor first: the test URL answers only while the editor listens (for 120 s).';
 
 export interface TestListener {
   id: string;
   kind: TestTriggerKind;
-  /** The Webhook trigger's HTTP method; '' for a form (GET shows it, POST submits it). */
+  /** The Webhook trigger's HTTP method; '' for a form (GET shows it, POST submits it) and an MCP server. */
   method: string;
   path: string;
   /** What the editor sent when it started listening. */
   workflow: Workflow;
   nodeId: string;
-  /** The test run's id, picked up front: the editor's stream follows it on the bus. */
+  /** The test run's id, picked up front: the editor's stream follows it on the bus (an MCP listener's runs: `<id>-<suffix>`). */
   executionId: string;
-  /** When it stops waiting for a call (epoch ms). */
+  /** When it stops waiting for a call (epoch ms); an MCP request pushes it on. */
   expiresAt: number;
   /** Who listened: the run is theirs, like an editor run. */
   actorId?: string;
@@ -72,8 +82,16 @@ export interface TestListener {
 export function testTriggerOf(workflow: Workflow, nodeId: string): { kind: TestTriggerKind; method: string; path: string; node: WorkflowNode } | { error: string } {
   const node = workflow.nodes.find((n) => n.id === nodeId);
   if (!node) return { error: 'That node is not in the workflow' };
-  if (node.type !== WEBHOOK_TRIGGER && node.type !== FORM_TRIGGER) return { error: 'Only Webhook and On Form Submission triggers have a test URL' };
+  if (node.type !== WEBHOOK_TRIGGER && node.type !== FORM_TRIGGER && node.type !== MCP_TRIGGER) return { error: 'Only Webhook, On Form Submission and MCP Server triggers have a test URL' };
   if (node.disabled) return { error: `“${node.name}” is disabled` };
+  if (node.type === MCP_TRIGGER) {
+    // Matched like /mcp/<path> matches it.
+    const path = String(node.parameters.path ?? '')
+      .trim()
+      .replace(/^\/+|\/+$/g, '');
+    if (!path) return { error: 'Set the MCP server path first' };
+    return { kind: 'mcp', method: '', path, node };
+  }
   if (node.type === FORM_TRIGGER) {
     const path = normalizePath(node.parameters.path);
     if (!path) return { error: 'Set the form path first' };
@@ -89,6 +107,12 @@ export function testTriggerOf(workflow: Workflow, nodeId: string): { kind: TestT
 /** The listener's trigger node. */
 export const listenerNode = (listener: TestListener): WorkflowNode | undefined => listener.workflow.nodes.find((n) => n.id === listener.nodeId);
 
+/** The id of the next test run: the listener's own, or for an MCP listener (one run per tool call) a new one under it. */
+export const testRunId = (listener: TestListener) => (listener.kind === 'mcp' ? `${listener.executionId}-${nanoid(8)}` : listener.executionId);
+
+/** Whether a run is one of the listener's test runs. */
+const isTestRun = (listener: TestListener, executionId: string) => executionId === listener.executionId || (listener.kind === 'mcp' && executionId.startsWith(`${listener.executionId}-`));
+
 // ---------------------------------------------------------------------------
 // Where listeners are kept: a process-wide map, or Valkey in queue mode
 // ---------------------------------------------------------------------------
@@ -97,8 +121,13 @@ interface ListenerTable {
   /** Add a listener; refused while another workflow listens on the same test URL. */
   register(listener: TestListener): Promise<{ ok: true } | { ok: false; holder: string }>;
   lookup(kind: TestTriggerKind, method: string, path: string): Promise<{ listener: TestListener; claimed: boolean } | undefined>;
-  /** Take the listener for one call (webhook: it stops listening; form: it is submitted). False when someone else did, or it expired. */
+  /**
+   * Take the listener for one call (webhook: it stops listening; form: it is submitted; MCP: it listens TEST_LISTEN_MS
+   * longer). False when someone else did, or it expired.
+   */
   claim(listener: TestListener): Promise<boolean>;
+  /** An MCP listener's current deadline (calls push it on), as kept here; undefined once it is gone. */
+  deadline(listener: TestListener): Promise<number | undefined>;
   /** Its time is up: removed unless a call claimed it (true when it was removed). */
   expire(listener: TestListener): Promise<boolean>;
   /** Gone for good (the stream closed). */
@@ -120,7 +149,7 @@ const localTable: ListenerTable = {
     }
     localListeners().set(key, { listener, claimed: false });
     // The same trigger listening again (another tab): the earlier stream ends.
-    if (existing && existing.listener.id !== listener.id) streams().get(existing.listener.id)?.('Listening again elsewhere');
+    if (existing && existing.listener.id !== listener.id) endReplacedStream(existing.listener.id);
     return { ok: true };
   },
   async lookup(kind, method, path) {
@@ -131,10 +160,15 @@ const localTable: ListenerTable = {
   async claim(listener) {
     const key = routeKey(listener.kind, listener.method, listener.path);
     const entry = localListeners().get(key);
-    if (entry?.listener.id !== listener.id || entry.claimed || expired(listener)) return false;
-    if (listener.kind === 'webhook') localListeners().delete(key);
+    if (entry?.listener.id !== listener.id || entry.claimed || expired(entry.listener)) return false;
+    if (listener.kind === 'mcp') entry.listener.expiresAt = listener.expiresAt = Date.now() + TEST_LISTEN_MS;
+    else if (listener.kind === 'webhook') localListeners().delete(key);
     else entry.claimed = true;
     return true;
+  },
+  async deadline(listener) {
+    const entry = localListeners().get(routeKey(listener.kind, listener.method, listener.path));
+    return entry?.listener.id === listener.id ? entry.listener.expiresAt : undefined;
   },
   async expire(listener) {
     const key = routeKey(listener.kind, listener.method, listener.path);
@@ -183,7 +217,8 @@ const valkeyTable: ListenerTable = {
     }
     await valkey.set(keys.data, JSON.stringify(listener), ttl);
     await valkey.set(keys.route, listener.id, ttl);
-    if (holderId && holderId !== listener.id) streams().get(holderId)?.('Listening again elsewhere');
+    // The same trigger listening again: the earlier stream ends, here or on the main that holds it.
+    if (holderId && holderId !== listener.id) endReplacedStream(holderId, true);
     return { ok: true };
   },
   async lookup(kind, method, path) {
@@ -201,6 +236,14 @@ const valkeyTable: ListenerTable = {
     if (expired(listener)) return false;
     const valkey = coordinator();
     const keys = valkeyKeys(listener);
+    if (listener.kind === 'mcp') {
+      // Many calls per listen: each one pushes the deadline on (and the keys' expiry with it).
+      if ((await valkey.get(keys.route)) !== listener.id) return false;
+      listener.expiresAt = Date.now() + TEST_LISTEN_MS;
+      await valkey.set(keys.data, JSON.stringify(listener), TEST_LISTEN_MS + CLAIM_GRACE_MS);
+      await valkey.set(keys.route, listener.id, TEST_LISTEN_MS + CLAIM_GRACE_MS);
+      return true;
+    }
     if (listener.kind === 'webhook') {
       const won = await valkey.deleteIfValue(keys.route, listener.id);
       if (won) await valkey.del(keys.data);
@@ -216,10 +259,16 @@ const valkeyTable: ListenerTable = {
     await valkey.set(keys.data, JSON.stringify(listener), CLAIMED_TTL_MS);
     return true;
   },
+  async deadline(listener) {
+    const valkey = coordinator();
+    const keys = valkeyKeys(listener);
+    const [route, raw] = await valkey.getMany([keys.route, keys.data]);
+    return route === listener.id ? parseListener(raw)?.expiresAt : undefined;
+  },
   async expire(listener) {
     const valkey = coordinator();
     const keys = valkeyKeys(listener);
-    if (listener.kind === 'webhook') {
+    if (listener.kind !== 'form') {
       const removed = await valkey.deleteIfValue(keys.route, listener.id);
       if (removed) await valkey.del(keys.data);
       return removed;
@@ -241,6 +290,20 @@ const table = (): ListenerTable => (clusterActive() ? valkeyTable : localTable);
 
 /** The streams this process holds, by listener id: called to end one that was replaced. */
 const streams = () => singleton('test-listener-streams', () => new Map<string, (reason: string) => void>());
+
+const REPLACED = 'Listening again elsewhere';
+
+/**
+ * A listener was replaced by the same trigger listening again: end its stream with `stopped`. Queue mode: the stream may
+ * be on another main, so (`broadcast`) the others hear it on the control channel and end theirs (`onListenerReplaced`).
+ */
+function endReplacedStream(listenerId: string, broadcast = false) {
+  streams().get(listenerId)?.(REPLACED);
+  if (broadcast && clusterActive()) void clusterState().relay?.broadcast<ControlMessage>('control', { t: 'listener-replaced', id: listenerId });
+}
+
+/** Queue mode: another main replaced a listener whose stream may be here (cluster control channel). */
+export const onListenerReplaced = (listenerId: string) => endReplacedStream(listenerId);
 
 // ---------------------------------------------------------------------------
 // Listening (the editor's side)
@@ -271,17 +334,36 @@ export async function startListening(workflow: Workflow, nodeId: string, actorId
 /**
  * The listening stream (SSE): `listening`, then `execution` events of the test run and its `result`; `timeout` when no
  * call came, `stopped` when the same trigger started listening elsewhere. The listener goes when the stream ends;
- * `signal` (the editor's request) aborting ends it and stops a run that is still going.
+ * `signal` (the editor's request) aborting ends it and stops a run that is still going. An MCP listener's stream goes on
+ * after each run's `result` and sends `listening` again whenever a call pushes its deadline on.
  */
 export function listenerStream(listener: TestListener, signal: AbortSignal): Response {
   const encoder = new TextEncoder();
-  let finish: (cancelRun?: boolean) => void = () => {};
+  let finish: (cancelRun?: boolean, outcome?: string) => void = () => {};
+  // A span for the listening (child of the listen request's), ended with how it ended.
+  const traced = startSpan('trigger.listen', {
+    attributes: {
+      'landflow.trigger.source': listener.kind,
+      'landflow.trigger.test': true,
+      'landflow.workflow.id': listener.workflow.id,
+      'landflow.listener.id': listener.id,
+      'landflow.execution.id': listener.executionId,
+      ...(listenerNode(listener)?.name && { 'landflow.node.name': listenerNode(listener)!.name }),
+    },
+  });
+  const span: Span = traced.span;
+  // MCP: many calls, one run per tool call.
+  const multi = listener.kind === 'mcp';
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false;
       let received = false;
       let timer: NodeJS.Timeout | undefined;
       let grace: NodeJS.Timeout | undefined;
+      /** MCP: the test runs going on, the runs so far, and the deadline the editor was last told. */
+      const runs = new Set<string>();
+      let calls = 0;
+      let announced = listener.expiresAt;
       const write = (text: string) => {
         try {
           controller.enqueue(encoder.encode(text));
@@ -290,12 +372,50 @@ export function listenerStream(listener: TestListener, signal: AbortSignal): Res
         }
       };
       const send = (event: string, data: unknown) => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-      const ping = setInterval(() => write(': ping\n\n'), PING_MS);
+      const sendListening = () =>
+        send('listening', {
+          listenerId: listener.id,
+          nodeId: listener.nodeId,
+          kind: listener.kind,
+          ...(listener.method && { method: listener.method }),
+          path: listener.path,
+          executionId: listener.executionId,
+          expiresAt: announced,
+          timeoutMs: Math.max(0, announced - Date.now()),
+        });
+      const ping = setInterval(() => {
+        write(': ping\n\n');
+        // MCP: a request that started no run (initialize, tools/list) pushed the deadline on, maybe on another main.
+        if (multi && !closed) void table().deadline(listener).then((until) => until && until > announced + 1_000 && !closed && extend(until), () => {});
+      }, PING_MS);
       ping.unref?.();
 
+      /** MCP: listen until `until` (a call came), and tell the editor. */
+      const extend = (until: number) => {
+        announced = until;
+        listener.expiresAt = Math.max(listener.expiresAt, until);
+        clearTimeout(timer);
+        timer = setTimeout(() => void onDeadline(), Math.max(0, until - Date.now()));
+        sendListening();
+      };
+
       const unsubscribe = bus.subscribe((published) => {
-        if (closed || published.channel !== 'execution' || published.event.executionId !== listener.executionId) return;
+        if (closed || published.channel !== 'execution' || !isTestRun(listener, published.event.executionId)) return;
         const event: ExecutionEvent = published.event;
+        if (multi) {
+          if (event.type === 'execution.started' && !runs.has(event.executionId)) {
+            runs.add(event.executionId);
+            calls++;
+            extend(Date.now() + TEST_LISTEN_MS);
+          }
+          send('execution', event);
+          if (event.type !== 'execution.finished') return;
+          runs.delete(event.executionId);
+          send('result', { executionId: event.executionId, status: event.status, ...(event.error && { error: event.error }) });
+          // Its time ran out while the run went on.
+          if (!runs.size && announced <= Date.now()) void onDeadline();
+          return;
+        }
         if (!received) {
           received = true;
           clearTimeout(timer);
@@ -306,14 +426,15 @@ export function listenerStream(listener: TestListener, signal: AbortSignal): Res
         // Waiting for the next page of the form: follow the run there.
         if (listener.kind === 'form' && event.status === 'waiting' && event.wait?.resume === 'form') return;
         send('result', { executionId: listener.executionId, status: event.status, ...(event.error && { error: event.error }) });
-        finish();
+        finish(false, 'received');
       });
 
       const timeout = () => {
-        send('timeout', { message: `No test event arrived within ${Math.round(TEST_LISTEN_MS / 1000)} s` });
-        finish();
+        const seconds = Math.round(TEST_LISTEN_MS / 1000);
+        send('timeout', { message: multi ? `No MCP request arrived within ${seconds} s` : `No test event arrived within ${seconds} s` });
+        finish(false, calls ? 'received' : 'timeout');
       };
-      finish = (cancelRun = false) => {
+      finish = (cancelRun = false, outcome = 'closed') => {
         if (closed) return;
         closed = true;
         unsubscribe();
@@ -324,49 +445,58 @@ export function listenerStream(listener: TestListener, signal: AbortSignal): Res
         streams().delete(listener.id);
         // Stop: a run still going is canceled, as an editor run is when its stream closes (a waiting form run stays).
         if (cancelRun && received && liveExecution(listener.executionId)) cancelExecution(listener.executionId);
+        if (cancelRun) for (const id of runs) if (liveExecution(id)) cancelExecution(id);
         void table()
           .remove(listener)
           .catch(() => {});
+        span.setAttributes({ 'landflow.listen.outcome': outcome, ...(multi && { 'landflow.listen.calls': calls }) });
+        span.end();
         try {
           controller.close();
         } catch {}
       };
-      const onAbort = () => finish(true);
+      const onAbort = () => finish(true, 'closed');
       streams().set(listener.id, (reason) => {
         send('stopped', { message: reason });
-        finish();
+        finish(false, 'stopped');
       });
       signal.addEventListener('abort', onAbort, { once: true });
 
-      timer = setTimeout(
-        async () => {
-          if (received || closed) return;
-          let removed = true;
-          try {
-            removed = await table().expire(listener);
-          } catch {}
-          if (received || closed) return;
-          if (removed) return timeout();
-          // A call claimed it just now: give its run a moment to start.
-          grace = setTimeout(() => !received && timeout(), CLAIM_GRACE_MS);
-        },
-        Math.max(0, listener.expiresAt - Date.now()),
-      );
+      /** The listener's time is up (unless a call came: a webhook's or form's run, or an MCP request that pushed it on). */
+      async function onDeadline() {
+        if (received || closed) return;
+        if (multi) {
+          // Checked again when the last run ends.
+          if (runs.size) return;
+          const until = await table()
+            .deadline(listener)
+            .catch(() => undefined);
+          if (closed) return;
+          if (until && until > Date.now()) return extend(until);
+          await table()
+            .expire(listener)
+            .catch(() => {});
+          if (!closed && !runs.size) timeout();
+          return;
+        }
+        let removed = true;
+        try {
+          removed = await table().expire(listener);
+        } catch (caught) {
+          failSpan(span, caught);
+        }
+        if (received || closed) return;
+        if (removed) return timeout();
+        // A call claimed it just now: give its run a moment to start.
+        grace = setTimeout(() => !received && timeout(), CLAIM_GRACE_MS);
+      }
 
-      send('listening', {
-        listenerId: listener.id,
-        nodeId: listener.nodeId,
-        kind: listener.kind,
-        ...(listener.method && { method: listener.method }),
-        path: listener.path,
-        executionId: listener.executionId,
-        expiresAt: listener.expiresAt,
-        timeoutMs: Math.max(0, listener.expiresAt - Date.now()),
-      });
+      timer = setTimeout(() => void onDeadline(), Math.max(0, listener.expiresAt - Date.now()));
+      sendListening();
       if (signal.aborted) onAbort();
     },
     cancel() {
-      finish(true);
+      finish(true, 'closed');
     },
   });
   return new Response(stream, { headers: sseHeaders });
@@ -405,24 +535,27 @@ export const testFormMiss = () => messagePage({ title: 'Form not found', message
  * Tell the editor its test call failed before the run could start (a file too large, a run turned down): an
  * `execution.finished` for the test run's id ends its stream with the error.
  */
-export function failTestEvent(listener: TestListener, message: string) {
+export function failTestEvent(listener: TestListener, message: string, executionId = listener.executionId) {
   bus.publish({
     channel: 'execution',
     workflowId: listener.workflow.id,
-    event: { type: 'execution.finished', executionId: listener.executionId, status: 'error', durationMs: 0, error: { message }, at: new Date().toISOString() },
+    event: { type: 'execution.finished', executionId, status: 'error', durationMs: 0, error: { message }, at: new Date().toISOString() },
   });
 }
 
 /**
- * Run a claimed listener's workflow from its trigger with `item`, as a manual run of the user who listened. `started`
- * resolves once the run exists (undefined), or with the error that kept it from starting (the editor is told).
+ * Run a claimed listener's workflow from its trigger with `item`, as a manual run of the user who listened (`executionId`:
+ * the listener's run id, or `testRunId(listener)` for an MCP tool call). Traced like the production call (`trigger.fire`
+ * with the trigger's source) plus `landflow.trigger.test=true`. `started` resolves once the run exists (undefined), or
+ * with the error that kept it from starting (the editor is told).
  */
 export function runTestEvent(
   listener: TestListener,
   item: NodeItem,
   options: Pick<RunOptions, 'onReply' | 'onEvent' | 'streaming'> = {},
+  executionId = listener.executionId,
 ): { run: Promise<ExecutionRecord>; started: Promise<unknown> } {
-  const trigger = startTrigger({ source: 'manual', workflowId: listener.workflow.id, nodeName: listenerNode(listener)?.name });
+  const trigger = startTrigger({ source: listener.kind, test: true, workflowId: listener.workflow.id, nodeName: listenerNode(listener)?.name });
   const begun = deferred<void>();
   const start = () =>
     context.with(trigger.context, () =>
@@ -431,7 +564,7 @@ export function runTestEvent(
         mode: 'manual',
         startNodeId: listener.nodeId,
         triggerItems: [item],
-        executionId: listener.executionId,
+        executionId,
         onStart: () => begun.resolve(),
         ...options,
       }),
@@ -443,7 +576,7 @@ export function runTestEvent(
     (caught) => trigger.end(caught),
   );
   const started = turnedDown(run, begun.promise).then((caught) => {
-    if (caught !== undefined) failTestEvent(listener, (caught as Error)?.message ?? 'The test run could not start');
+    if (caught !== undefined) failTestEvent(listener, (caught as Error)?.message ?? 'The test run could not start', executionId);
     return caught;
   });
   return { run, started };

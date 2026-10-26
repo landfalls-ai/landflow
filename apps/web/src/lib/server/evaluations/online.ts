@@ -61,9 +61,9 @@ export interface GradedRun {
 const clip = (text: string, limit = TEXT_LIMIT) => (text.length > limit ? `${text.slice(0, limit)}…` : text);
 
 /** The judge's model: the target's own setting, else the given fallback (the agent's model, the node's chat model). */
-function judgeModel(config: OnlineEvalConfig, fallback?: AgentModel): LanguageModel {
+function judgeModel(config: OnlineEvalConfig, fallback?: AgentModel): Promise<LanguageModel> {
   const chosen = config.model?.model ? config.model : fallback;
-  if (!chosen?.model) throw new Error('Choose a judge model for online evaluations');
+  if (!chosen?.model) return Promise.reject(new Error('Choose a judge model for online evaluations'));
   return agentModel(chosen);
 }
 
@@ -79,7 +79,7 @@ export function newScoreId(now = Date.now()): string {
 /** Grade a run with the target's rubric and save the score. */
 export async function gradeRun(target: string, run: GradedRun, options: { model?: LanguageModel; fallbackModel?: AgentModel; signal?: AbortSignal } = {}): Promise<OnlineEvalScore> {
   const config = db.getOnlineConfig(target);
-  const model = options.model ?? judgeModel(config, options.fallbackModel);
+  const model = options.model ?? (await judgeModel(config, options.fallbackModel));
   const toolsLine = run.tools?.length ? `\n\n(Tools the agent called: ${run.tools.join(', ')})` : '';
   const result = await judge(model, 'rubric', { rubric: config.rubric, question: clip(run.input) + toolsLine, actual: clip(run.output) }, options.signal);
   const now = Date.now();

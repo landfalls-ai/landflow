@@ -12,14 +12,14 @@
  * Enter), per tag added or removed and per Save of the settings dialog.
  *
  * Canvas groups (`groups`, React Flow nodes of type `frame`, see ./groups.ts) work the same way: frames behind the
- * nodes, saved as `workflow.groups`. Moving a frame moves its nodes, and nodes dropped into or out of a frame join or
- * leave it.
+ * nodes, saved as `workflow.groups`. Moving a frame moves what is inside it, and nodes and frames dropped into or out
+ * of a frame join or leave it (groups nest).
  */
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange } from '@xyflow/react';
 import { nanoid } from 'nanoid';
 import { create } from 'zustand';
 import { defaultParameters, defaultVersionOf, portParameters, withPropertyDefaults } from '@landflow/protocol';
-import { edgeCountsOf, statusesOf, type NodeStatus } from '@/lib/client/run-data';
+import { edgeCountsOf, statusesOf, waitSummary, withWaiting, type NodeStatus, type WaitInfo } from '@/lib/client/run-data';
 import type { FlowTemplate } from '@/lib/client/templates';
 import type {
   ConnectionType,
@@ -37,15 +37,20 @@ import type {
 } from '@/lib/shared/types';
 import { STICKY_DEFAULT_CONTENT, STICKY_DEFAULT_SIZE } from '../canvas/sticky-note';
 import { preparePaste, remapReferences, selectionOrigin, serializeSelection, type ClipboardData } from './clipboard';
-import { GROUP_NAME_MAX, normalizeGroups } from '@/lib/shared/groups';
+import { GROUP_NAME_MAX, descendantGroupIds, descendantNodeIds, normalizeGroups } from '@/lib/shared/groups';
 import {
+  adoptFrames,
   adoptNodes,
-  frameFor,
   fromFrames,
+  groupAround,
+  hiddenFrameIds,
+  hiddenNodeIds,
+  linksOf,
   memberMoves,
   nextGroupName,
   refitFrames,
   refitMembers,
+  removeFrames,
   toFrames,
   withoutMembers,
   type GroupData,
@@ -163,6 +168,8 @@ interface EditorState {
   log: LogLine[];
   /** Outcome of the run on the canvas, for the logs header. */
   runStatus?: ExecutionState;
+  /** A waiting run on the canvas: what it waits for (its node is marked `waiting`). */
+  wait?: WaitInfo;
   runStartedAt?: string;
   runDurationMs?: number;
 
@@ -200,9 +207,12 @@ interface EditorState {
   updateSticky(id: string, patch: Partial<StickyData>): void;
   /** ⌘A: select every visible node and sticky note (not the frames, so ⌘G can group them). */
   selectAll(): void;
-  /** ⌘G: a frame around the selected nodes (they leave other groups). Returns the group id. */
+  /** ⌘G: a frame around the selected nodes and frames (nodes leave other groups, frames nest in it). Returns the group id. */
   groupSelection(): string | undefined;
-  /** ⇧⌘G: remove frames, keeping their nodes (selected afterwards). Defaults to the selected groups, else those of the selected nodes. */
+  /**
+   * ⇧⌘G: remove frames, keeping their nodes (selected afterwards) and nested groups, which go to the group around the
+   * removed one. Defaults to the selected groups, else those of the selected nodes.
+   */
   ungroup(ids?: string[]): void;
   /** Rename, recolour, collapse or expand a group. */
   updateGroup(id: string, patch: Partial<Pick<GroupData, 'name' | 'color' | 'collapsed'>>): void;
@@ -300,6 +310,7 @@ const emptyRun = {
   flowing: {},
   log: [] as LogLine[],
   runStatus: undefined,
+  wait: undefined,
   runStartedAt: undefined,
   runDurationMs: undefined,
 };
@@ -408,11 +419,13 @@ export const useEditor = create<EditorState>((set, get) => {
     const flow = toFlow({ nodes: plan.nodes, connections: plan.connections });
     const stickies = toStickies(plan.stickyNotes);
     const frames = toFrames(plan.groups);
+    // Pasted groups that came without their parent join the group they land in, like a dropped frame.
+    const outer = frames.filter((f) => !f.data.parentId).map((f) => f.id);
     set((s) => ({
       nodes: [...unselect(s.nodes), ...flow.nodes.map((n) => ({ ...n, selected: true }))],
       edges: [...unselect(s.edges), ...flow.edges],
       stickies: [...unselect(s.stickies), ...stickies.map((n) => ({ ...n, selected: true }))],
-      groups: [...unselect(s.groups), ...frames.map((n) => ({ ...n, selected: true }))],
+      groups: adoptFrames([...unselect(s.groups), ...frames.map((n) => ({ ...n, selected: true }))], outer),
       pinData: { ...s.pinData, ...plan.pinData },
       lastAddedId: flow.nodes.at(-1)?.id ?? s.lastAddedId,
       dirty: true,
@@ -485,16 +498,22 @@ export const useEditor = create<EditorState>((set, get) => {
     const forFrames = changes.filter(isFrame) as NodeChange<GroupFlowNode>[];
     const forNodes = changes.filter((c) => !isSticky(c) && !isFrame(c)) as NodeChange<FlowNode>[];
     const meaningful = changes.some((c) => c.type === 'position' || c.type === 'remove' || c.type === 'add' || (c.type === 'dimensions' && c.resizing !== undefined));
-    // Groups: a moved frame takes its nodes along; dropped nodes join or leave groups; a resized frame refits its members.
-    const moves = forFrames.length ? memberMoves(get().groups, get().nodes, changes) : [];
+    // Groups: a moved frame takes what is inside it along; dropped nodes and frames join or leave groups; a resized
+    // frame refits its members; a removed frame hands what it held to the group around it.
+    const moves = forFrames.length ? memberMoves(get().groups, get().nodes, changes) : { nodes: [], frames: [] };
     const dropped = forNodes.flatMap((c) => (c.type === 'position' && c.dragging === false ? [c.id] : []));
+    const droppedFrames = forFrames.flatMap((c) => (c.type === 'position' && c.dragging === false ? [c.id] : []));
     const resized = forFrames.flatMap((c) => (c.type === 'dimensions' && c.resizing === false ? [c.id] : []));
     const removed = new Set(forNodes.flatMap((c) => (c.type === 'remove' ? [c.id] : [])));
+    const removedFrames = new Set(forFrames.flatMap((c) => (c.type === 'remove' ? [c.id] : [])));
+    const frameChanges = removedFrames.size ? forFrames.filter((c) => c.type !== 'remove') : forFrames;
     set((s) => {
-      const nodes = forNodes.length || moves.length ? applyNodeChanges([...forNodes, ...moves], s.nodes) : s.nodes;
-      let groups = forFrames.length ? applyNodeChanges(forFrames, s.groups) : s.groups;
+      const nodes = forNodes.length || moves.nodes.length ? applyNodeChanges([...forNodes, ...moves.nodes], s.nodes) : s.nodes;
+      let groups = frameChanges.length || moves.frames.length ? applyNodeChanges([...frameChanges, ...moves.frames], s.groups) : s.groups;
+      if (removedFrames.size) groups = removeFrames(groups, removedFrames).frames;
       if (removed.size) groups = withoutMembers(groups, removed);
       if (dropped.length) groups = adoptNodes(groups, nodes, dropped);
+      if (droppedFrames.length) groups = adoptFrames(groups, droppedFrames);
       for (const id of resized) groups = refitMembers(groups, nodes, id);
       return {
         ...(nodes !== s.nodes && { nodes }),
@@ -786,7 +805,7 @@ export const useEditor = create<EditorState>((set, get) => {
     set((s) => ({
       nodes: s.nodes.filter((n) => !drop.has(n.id)),
       stickies: s.stickies.some((n) => drop.has(n.id)) ? s.stickies.filter((n) => !drop.has(n.id)) : s.stickies,
-      groups: s.groups.length ? withoutMembers(s.groups.filter((n) => !drop.has(n.id)), drop) : s.groups,
+      groups: s.groups.length ? withoutMembers(removeFrames(s.groups, drop).frames, drop) : s.groups,
       edges: s.edges.filter((e) => !drop.has(e.source) && !drop.has(e.target)),
       openNodeId: s.openNodeId && drop.has(s.openNodeId) ? undefined : s.openNodeId,
       pinData: Object.fromEntries(Object.entries(s.pinData).filter(([nodeId]) => !drop.has(nodeId))),
@@ -857,8 +876,9 @@ export const useEditor = create<EditorState>((set, get) => {
   },
 
   selectAll() {
+    const hidden = hiddenNodeIds(get().groups);
     set((s) => ({
-      nodes: s.nodes.map((n) => (n.hidden || n.selected ? n : { ...n, selected: true })),
+      nodes: s.nodes.map((n) => (n.hidden || n.selected || hidden.has(n.id) ? n : { ...n, selected: true })),
       stickies: s.stickies.map((n) => (n.selected ? n : { ...n, selected: true })),
       groups: unselect(s.groups),
     }));
@@ -866,18 +886,20 @@ export const useEditor = create<EditorState>((set, get) => {
 
   groupSelection() {
     const s = get();
-    const picked = s.nodes.filter((n) => n.selected && !n.hidden);
-    const frame = frameFor(newId('group'), nextGroupName(s.groups), picked);
-    if (!frame) return undefined;
+    const hiddenNodes = hiddenNodeIds(s.groups);
+    const hiddenFrames = hiddenFrameIds(s.groups);
+    const pickedNodes = s.nodes.filter((n) => n.selected && !n.hidden && !hiddenNodes.has(n.id)).map((n) => n.id);
+    const pickedFrames = s.groups.filter((g) => g.selected && !hiddenFrames.has(g.id)).map((g) => g.id);
+    const made = groupAround(unselect(s.groups), s.nodes, newId('group'), nextGroupName(s.groups), pickedNodes, pickedFrames);
+    if (!made) return undefined;
     record();
-    const ids = new Set(frame.data.nodeIds);
     set((s) => ({
-      groups: [...withoutMembers(unselect(s.groups), ids), { ...frame, selected: true }],
+      groups: made.frames.map((g) => (g.id === made.frame.id ? { ...g, selected: true } : g)),
       nodes: unselect(s.nodes),
       stickies: unselect(s.stickies),
       dirty: true,
     }));
-    return frame.id;
+    return made.frame.id;
   },
 
   ungroup(ids) {
@@ -887,9 +909,10 @@ export const useEditor = create<EditorState>((set, get) => {
     const drop = new Set(ids ?? (selectedGroups.length ? selectedGroups : s.groups.filter((g) => g.data.nodeIds.some((id) => selectedNodes.has(id))).map((g) => g.id)));
     if (!s.groups.some((g) => drop.has(g.id))) return;
     record();
-    const freed = new Set(s.groups.filter((g) => drop.has(g.id)).flatMap((g) => g.data.nodeIds));
+    const removed = removeFrames(s.groups, drop);
+    const freed = new Set(removed.freed);
     set((s) => ({
-      groups: s.groups.filter((g) => !drop.has(g.id)),
+      groups: removed.frames,
       nodes: s.nodes.map((n) => (freed.has(n.id) ? (n.selected ? n : { ...n, selected: true }) : n.selected ? { ...n, selected: false } : n)),
       stickies: unselect(s.stickies),
       dirty: true,
@@ -901,10 +924,12 @@ export const useEditor = create<EditorState>((set, get) => {
     if (!frame) return;
     record(`group:${id}:${Object.keys(patch).join(',')}`, 1500);
     const next = { ...patch, ...(patch.name !== undefined && { name: patch.name.slice(0, GROUP_NAME_MAX) }) };
-    // Collapsing hides the members, so they can't stay selected.
-    const members = patch.collapsed ? new Set(frame.data.nodeIds) : undefined;
+    // Collapsing hides what is inside (nested groups too), so none of it can stay selected.
+    const links = linksOf(get().groups);
+    const members = patch.collapsed ? new Set(descendantNodeIds(links, id)) : undefined;
+    const inner = patch.collapsed ? new Set(descendantGroupIds(links, id)) : undefined;
     set((s) => ({
-      groups: s.groups.map((g) => (g.id === id ? { ...g, data: { ...g.data, ...next } } : g)),
+      groups: s.groups.map((g) => (g.id === id ? { ...g, data: { ...g.data, ...next } } : inner?.has(g.id) && g.selected ? { ...g, selected: false } : g)),
       ...(members && { nodes: s.nodes.map((n) => (members.has(n.id) && n.selected ? { ...n, selected: false } : n)) }),
       dirty: true,
     }));
@@ -1068,6 +1093,10 @@ export const useEditor = create<EditorState>((set, get) => {
           paused: undefined,
           runStatus: event.status,
           runDurationMs: event.durationMs,
+          // The node it waits at has no finished run yet: mark it, with what it waits for.
+          ...(event.status === 'waiting' && event.wait
+            ? { wait: event.wait, statuses: { ...s.statuses, [event.wait.nodeId]: { ...s.statuses[event.wait.nodeId], state: 'waiting' as const, wait: waitSummary(event.wait) } } }
+            : { wait: undefined }),
           log: [
             ...s.log,
             line({
@@ -1102,7 +1131,8 @@ export const useEditor = create<EditorState>((set, get) => {
     set({
       ...emptyRun,
       executionId: record.executionId,
-      statuses: statusesOf(record.runData),
+      statuses: withWaiting(statusesOf(record.runData), record),
+      wait: record.status === 'waiting' ? record.wait : undefined,
       runs: record.runData,
       edgeCounts,
       runStatus: record.status,

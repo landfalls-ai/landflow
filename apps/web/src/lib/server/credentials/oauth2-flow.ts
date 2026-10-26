@@ -11,6 +11,7 @@
 import type { JsonObject } from '@landflow/protocol';
 import { OAUTH2_CALLBACK_PATH, OAUTH2_MESSAGE_CHANNEL, type OAuth2CallbackMessage } from '../../shared/oauth2';
 import type { CredentialDetail } from '../../shared/types';
+import { redactText } from '../secrets/redact';
 import { logger } from '../telemetry/logger';
 import {
   accountOf,
@@ -29,7 +30,7 @@ import {
   toStoredToken,
   verifyState,
 } from './oauth2';
-import { CredentialError, credentials } from './vault';
+import { CredentialError, credentials, resolveOAuth2Secrets } from './vault';
 
 const stateKey = () => credentials.deriveKey('oauth2.state');
 const pkceKey = () => credentials.deriveKey('oauth2.pkce');
@@ -51,9 +52,12 @@ function cookie(name: string, value: string, maxAge: number, request: Request): 
   return `${name}=${value}; Path=${OAUTH2_CALLBACK_PATH}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure(request) ? '; Secure' : ''}`;
 }
 
-/** Start a Connect flow: where to send the browser, and the cookie that ties the callback to it. */
-export function startAuthorization(credentialId: string, request: Request, now = Date.now()): { url: string; cookie: string } {
-  const { config } = credentials.oauth2(credentialId);
+/**
+ * Start a Connect flow: where to send the browser, and the cookie that ties the callback to it. The client fields may
+ * read `$secrets` (here, at the code exchange, refreshes and client credentials grants: `resolveOAuth2Secrets`).
+ */
+export async function startAuthorization(credentialId: string, request: Request, now = Date.now()): Promise<{ url: string; cookie: string }> {
+  const config = await resolveOAuth2Secrets(credentials.oauth2(credentialId).config);
   const nonce = newNonce();
   const redirectUri = oauth2RedirectUrl(request);
   const state = signState(stateKey(), { c: credentialId, n: nonce, r: redirectUri, e: now + STATE_TTL_MS });
@@ -95,7 +99,8 @@ export async function completeAuthorization(request: Request, fetchImpl?: typeof
     }
     const code = params.get('code');
     if (!code) throw new OAuth2Error('The provider sent no authorization code');
-    const { config, token: previous } = credentials.oauth2(credentialId);
+    const { config: saved, token: previous } = credentials.oauth2(credentialId);
+    const config = await resolveOAuth2Secrets(saved);
     const codeVerifier = config.grantType === 'pkce' ? pkceVerifier(pkceKey(), state.n) : undefined;
     const response = await exchangeCode(config, { code, redirectUri: state.r, ...(codeVerifier && { codeVerifier }) }, fetchImpl);
     const token = toStoredToken(response, previous);
@@ -104,7 +109,7 @@ export async function completeAuthorization(request: Request, fetchImpl?: typeof
     logger.info('OAuth2 credential connected', { 'landflow.credential.id': credentialId, 'oauth2.grant': config.grantType });
     return { message: { source: OAUTH2_MESSAGE_CHANNEL, credentialId, ok: true, message: account ? `Connected as ${account}` : 'Connected', ...(account && { account }) }, clearCookie };
   } catch (error) {
-    const message = error instanceof OAuth2Error || error instanceof CredentialError ? error.message : `Connecting failed: ${(error as Error).message}`;
+    const message = redactText(error instanceof OAuth2Error || error instanceof CredentialError ? error.message : `Connecting failed: ${(error as Error).message}`);
     if (credentialId && !(error instanceof OAuth2Error && error.code === 'access_denied')) {
       try {
         credentials.setOAuth2Error(credentialId, message);
@@ -122,14 +127,14 @@ export async function completeAuthorization(request: Request, fetchImpl?: typeof
  * credential with its new status; a failure is recorded on the credential and thrown as a CredentialError.
  */
 export async function requestTokenNow(credentialId: string, fetchImpl?: typeof fetch): Promise<CredentialDetail> {
-  const { config, token } = credentials.oauth2(credentialId);
-  if (config.grantType === 'clientCredentials') {
+  const { config: saved, token } = credentials.oauth2(credentialId);
+  if (saved.grantType === 'clientCredentials') {
     let response: JsonObject;
     try {
-      response = await clientCredentialsToken(config, fetchImpl);
+      response = await clientCredentialsToken(await resolveOAuth2Secrets(saved), fetchImpl);
     } catch (error) {
       credentials.setOAuth2Error(credentialId, (error as Error).message);
-      throw new CredentialError((error as Error).message);
+      throw new CredentialError(redactText((error as Error).message));
     }
     const stored = toStoredToken(response, token);
     return credentials.saveOAuth2Token(credentialId, stored, accountOf(stored));

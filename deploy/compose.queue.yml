@@ -9,9 +9,11 @@
 # - main-1 (53081), main-2 (53082): UI, API, webhooks. They enqueue production runs on Valkey and elect a leader that
 #   runs the schedules, polls, IMAP IDLE, timers and retention; the other takes over within about 13 s.
 # - worker-1, worker-2 (health and metrics on 55691, 55692): `node worker.mjs`, 10 runs at once each by default.
-# - All of them share the Postgres database `landflow_queue`, the Valkey key prefix, the data volume (credentials,
-#   settings files), the encryption key, the file-link secret and the binary store (MinIO bucket `landflow`, prefix
-#   `queue/`).
+# - All of them share the Postgres database `landflow_queue` (with the credentials and settings files: queue mode keeps
+#   them in the database), the Valkey key prefix, the data volume, the encryption key, the file-link secret and the
+#   binary store (MinIO bucket `landflow`, prefix `queue/`).
+# - Marketplace node plugins run in every main and worker (each its own copy, on 127.0.0.1). Local marketplaces need
+#   LANDFLOW_QUEUE_MARKETPLACE_ALLOW_LOCAL=1.
 #
 # Development values throughout (dev passwords, a fixed encryption key): don't expose these ports. Details:
 # deploy/README.md "Queue mode (two mains, two workers)".
@@ -23,6 +25,9 @@ x-host-env: &host-env
   LANDFLOW_DB: postgres
   DATABASE_URL: postgres://landflow:landflow-dev-only@postgres:5432/${LANDFLOW_QUEUE_DATABASE:-landflow_queue}
   LANDFLOW_VALKEY_URL: redis://valkey:6379
+  # Valkey Sentinel instead (deploy/compose.sentinel.yml): LANDFLOW_QUEUE_VALKEY_SENTINELS=valkey-sentinel-1:26379,…
+  LANDFLOW_VALKEY_SENTINELS: ${LANDFLOW_QUEUE_VALKEY_SENTINELS:-}
+  LANDFLOW_VALKEY_MASTER_NAME: ${LANDFLOW_QUEUE_VALKEY_MASTER_NAME:-mymaster}
   LANDFLOW_QUEUE_PREFIX: ${LANDFLOW_QUEUE_PREFIX:-landflow-queue}
   LANDFLOW_LEADER_TTL_SECONDS: ${LANDFLOW_LEADER_TTL_SECONDS:-10}
   LANDFLOW_STALLED_SECONDS: ${LANDFLOW_STALLED_SECONDS:-30}
@@ -43,6 +48,7 @@ x-host-env: &host-env
   LANDFLOW_PUBLIC_URL: http://localhost:${LANDFLOW_QUEUE_PORT:-53080}
   LANDFLOW_INTERNAL_URL: http://lb:3000
   LANDFLOW_SCAN_ON_START: "false"
+  LANDFLOW_MARKETPLACE_ALLOW_LOCAL: ${LANDFLOW_QUEUE_MARKETPLACE_ALLOW_LOCAL:-}
   LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
   OTEL_EXPORTER_OTLP_ENDPOINT: ${LANDFLOW_QUEUE_OTLP_ENDPOINT:-}
   LANDFLOW_TRACE_URL: ${LANDFLOW_TRACE_URL:-http://localhost:56686/trace/{traceId}}

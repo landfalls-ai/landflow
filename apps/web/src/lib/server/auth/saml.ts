@@ -2,9 +2,14 @@
  * SAML 2.0 single sign-on (SP-initiated) with any identity provider: Keycloak, Okta, Entra ID, ADFS… Responses are
  * validated with @node-saml/node-saml: a valid XML signature from the IdP's certificate (the assertion, or the
  * whole response), the audience (our entity id), NotBefore/NotOnOrAfter with LANDFLOW_SAML_CLOCK_SKEW_SECONDS of
- * skew, and InResponseTo against the AuthnRequests this host sent (10 minutes, one use). On top of that every
+ * skew, and InResponseTo against the AuthnRequests this instance sent (10 minutes, one use). On top of that every
  * response and assertion id is recorded in `saml_replay` until it expires, so a captured response can't be posted
  * twice, and the RelayState must match a cookie set on the browser that started the sign-in.
+ *
+ * Encrypted assertions: with a decryption key (generated or uploaded in Settings → Security, or from the environment:
+ * ./saml-keys) our metadata publishes its certificate for encryption and node-saml decrypts `EncryptedAssertion`s
+ * (the decrypted assertion's signature and id are checked like a plain one's); "Require encrypted assertions" refuses
+ * the rest.
  *
  * Configuration (env, like OIDC; README "SAML"): the IdP comes from LANDFLOW_SAML_IDP_METADATA_URL (fetched and
  * cached for an hour) and/or LANDFLOW_SAML_ENTRY_POINT, LANDFLOW_SAML_IDP_ISSUER and LANDFLOW_SAML_IDP_CERT (PEM or
@@ -20,8 +25,12 @@
  *
  * Single logout: signing out of a SAML session sends a LogoutRequest to the IdP when it has a logout URL; the IdP's
  * LogoutResponse, and LogoutRequests it starts (which sign the user out of every session), arrive at
- * /api/auth/saml/logout. The NameID and SessionIndex a logout needs are kept in memory per session, so after a
- * restart signing out is local only.
+ * /api/auth/saml/logout.
+ *
+ * Sign-ins in flight (RelayStates), the request ids InResponseTo must match and the NameID and SessionIndex each SAML
+ * session's logout needs live in the database (`saml_state`, ./saml-state) with an expiry, not in memory: a sign-in
+ * can finish on another main than the one that started it, a logout reach any main, and both survive restarts. Only
+ * the IdP metadata is cached per process.
  */
 import { X509Certificate } from 'node:crypto';
 import { SAML, ValidateInResponseTo, type CacheProvider, type Profile } from '@node-saml/node-saml';
@@ -33,6 +42,8 @@ import { logger } from '../telemetry/logger';
 import { authDb } from './db';
 import { parseRoleMap } from './oidc';
 import { randomToken, tokenHash } from './passwords';
+import { samlDecryption, samlEncryptionView } from './saml-keys';
+import { clearSamlState, dropUserStates, putState, readState, recordReplayIds, takeState } from './saml-state';
 import { DEACTIVATED_MESSAGE, deleteUserSessions } from './sessions';
 import { createUser, findUserByEmail, findUserBySaml, setupRequired, updateUser, type UserPatch, type UserRecord } from './users';
 
@@ -42,6 +53,8 @@ const METADATA_TTL_MS = 60 * 60_000;
 const DEFAULT_SKEW_S = 120;
 /** How long a replay id is kept when the assertion says nothing about its lifetime. */
 const DEFAULT_REPLAY_TTL_MS = 60 * 60_000;
+/** How long a SAML session's logout details are kept when the session's own expiry isn't given. */
+const SESSION_TTL_MS = 30 * 24 * 3_600_000;
 
 export class SamlError extends Error {}
 
@@ -158,39 +171,38 @@ export interface IdpInfo {
   logoutUrl?: string;
 }
 
-const caches = () =>
-  singleton('saml-caches', () => ({
-    metadata: new Map<string, { idp: Omit<IdpInfo, 'entryPoint'> & { entryPoint?: string }; at: number }>(),
-    /** Sign-ins in flight: RelayState → where to go after. */
-    states: new Map<string, { next: string; at: number }>(),
-    /** AuthnRequest and LogoutRequest ids this host sent, for InResponseTo. */
-    requests: new Map<string, { value: string; at: number }>(),
-    /** SAML sessions by session id (hash of the cookie token), for single logout. */
-    sessions: new Map<string, { nameID: string; nameIDFormat: string; nameQualifier?: string; spNameQualifier?: string; sessionIndex?: string; userId: string; at: number }>(),
-  }));
+/** The IdP metadata, per process (an hour). */
+const caches = () => singleton('saml-caches', () => ({ metadata: new Map<string, { idp: Omit<IdpInfo, 'entryPoint'> & { entryPoint?: string }; at: number }>() }));
 
-/** node-saml's request id cache, kept per process (like OIDC's states). */
-const requestCache: CacheProvider = {
-  async saveAsync(key, value) {
-    const requests = caches().requests;
-    const now = Date.now();
-    for (const [id, entry] of requests) if (now - entry.at > STATE_TTL_MS) requests.delete(id);
-    if (requests.has(key)) return null;
-    requests.set(key, { value, at: now });
-    return { value, createdAt: now };
-  },
-  async getAsync(key) {
-    const entry = caches().requests.get(key);
-    if (!entry || Date.now() - entry.at > STATE_TTL_MS) return null;
-    return entry.value;
-  },
-  async removeAsync(key) {
-    if (!key) return null;
-    const entry = caches().requests.get(key);
-    caches().requests.delete(key);
-    return entry?.value ?? null;
-  },
-};
+/** What a SAML session's logout needs, by the hash of its session token (`saml_state` kind `session`). */
+interface SessionEntry {
+  nameID: string;
+  nameIDFormat: string;
+  sessionIndex?: string;
+}
+
+/**
+ * node-saml's cache of the AuthnRequest and LogoutRequest ids this instance sent (`saml_state` kind `request`, shared
+ * by every main). node-saml reads an id, then removes it; `track.consumed` says whether this call's remove was the one
+ * that took it (another main given the same response may have been first).
+ */
+export function requestCache(track?: { consumed: boolean }): CacheProvider {
+  return {
+    async saveAsync(key, value) {
+      await putState('request', key, value, STATE_TTL_MS);
+      return { value, createdAt: Date.now() };
+    },
+    async getAsync(key) {
+      return (await readState('request', key)) ?? null;
+    },
+    async removeAsync(key) {
+      if (!key) return null;
+      const value = await takeState('request', key);
+      if (value !== undefined && track) track.consumed = true;
+      return value ?? null;
+    },
+  };
+}
 
 const MD = 'urn:oasis:names:tc:SAML:2.0:metadata';
 const REDIRECT = 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect';
@@ -235,9 +247,13 @@ export async function resolveIdp(config: SamlConfig, force = false): Promise<Idp
   return { entryPoint, certs, ...(issuer && { issuer }), ...(logoutUrl && { logoutUrl }) };
 }
 
-/** A node-saml instance for this host and IdP (InResponseTo always checked, unless `inResponseTo` says otherwise). */
-export function samlClient(config: SamlConfig, origin: string, idp: IdpInfo, inResponseTo = ValidateInResponseTo.always): SAML {
+/**
+ * A node-saml instance for this host and IdP (InResponseTo always checked, unless `inResponseTo` says otherwise), with
+ * the decryption key for encrypted assertions when there is one.
+ */
+export function samlClient(config: SamlConfig, origin: string, idp: IdpInfo, inResponseTo = ValidateInResponseTo.always, cache: CacheProvider = requestCache()): SAML {
   const urls = spUrls(config, origin);
+  const decryption = samlDecryption();
   return new SAML({
     entryPoint: idp.entryPoint,
     issuer: urls.entityId,
@@ -258,12 +274,17 @@ export function samlClient(config: SamlConfig, origin: string, idp: IdpInfo, inR
     wantAuthnResponseSigned: config.wantResponseSigned,
     validateInResponseTo: inResponseTo,
     requestIdExpirationPeriodMs: STATE_TTL_MS,
-    cacheProvider: requestCache,
+    cacheProvider: cache,
+    ...(decryption && { decryptionPvk: decryption.key }),
   });
 }
 
-/** Our SP metadata: entity id, ACS (HTTP-POST), single logout, NameID format, and our certificate when we sign. */
+/**
+ * Our SP metadata: entity id, ACS (HTTP-POST), single logout, NameID format, our certificate when we sign, and the
+ * certificate to encrypt assertions to when we have a decryption key.
+ */
 export function spMetadata(config: SamlConfig, origin: string): string {
+  const decryption = samlDecryption();
   const client = new SAML({
     issuer: spUrls(config, origin).entityId,
     callbackUrl: spUrls(config, origin).acsUrl,
@@ -272,9 +293,10 @@ export function spMetadata(config: SamlConfig, origin: string): string {
     identifierFormat: config.nameIdFormat ?? 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
     wantAssertionsSigned: config.wantAssertionsSigned,
     ...(config.privateKey && { privateKey: config.privateKey }),
+    ...(decryption && { decryptionPvk: decryption.key }),
     signatureAlgorithm: 'sha256',
   });
-  return client.generateServiceProviderMetadata(null, config.publicCert ?? null);
+  return client.generateServiceProviderMetadata(decryption?.cert ?? null, config.publicCert ?? null);
 }
 
 // ---- signing in -------------------------------------------------------------------------------------------------
@@ -282,11 +304,8 @@ export function spMetadata(config: SamlConfig, origin: string): string {
 /** Step 1: the IdP's sign-in URL (a deflated AuthnRequest), and the RelayState to bind to the browser (cookie). */
 export async function beginLogin(config: SamlConfig, origin: string, next: string): Promise<{ url: string; state: string }> {
   const idp = await resolveIdp(config);
-  const states = caches().states;
-  const now = Date.now();
-  for (const [key, entry] of states) if (now - entry.at > STATE_TTL_MS) states.delete(key);
   const state = randomToken(24);
-  states.set(state, { next, at: now });
+  await putState('relay', state, JSON.stringify({ next }), STATE_TTL_MS);
   const url = await samlClient(config, origin, idp).getAuthorizeUrlAsync(state, undefined, {});
   return { url, state };
 }
@@ -366,8 +385,19 @@ export function identityOf(profile: Profile, config: SamlConfig, idpIssuer?: str
 
 // ---- replay protection -------------------------------------------------------------------------------------------
 
-/** The Response and Assertion ids of a SAMLResponse (base64), and the latest NotOnOrAfter it states. */
-export async function responseIds(samlResponse: string): Promise<{ ids: string[]; notOnOrAfter?: number }> {
+export interface ResponseFacts {
+  /** `response:<ID>` and, for a plain assertion, `assertion:<ID>` (an encrypted one's id is known once decrypted). */
+  ids: string[];
+  /** The latest NotOnOrAfter it states (in the clear). */
+  notOnOrAfter?: number;
+  /** The Response's InResponseTo. */
+  inResponseTo?: string;
+  /** Its assertion is an EncryptedAssertion. */
+  encrypted: boolean;
+}
+
+/** What a SAMLResponse (base64) says before validation: its ids, the latest NotOnOrAfter, InResponseTo, encryption. */
+export async function responseIds(samlResponse: string): Promise<ResponseFacts> {
   const xml = Buffer.from(samlResponse, 'base64').toString('utf8');
   const doc = await parseDomFromString(xml);
   const ids = [
@@ -378,27 +408,39 @@ export async function responseIds(samlResponse: string): Promise<{ ids: string[]
     .selectAttributes(doc, "//*[local-name()='Conditions' or local-name()='SubjectConfirmationData']/@NotOnOrAfter")
     .map((a) => Date.parse(a.value))
     .filter(Number.isFinite);
-  return { ids, ...(times.length && { notOnOrAfter: Math.max(...times) }) };
+  const inResponseTo = xpath.selectAttributes(doc, "/*[local-name()='Response']/@InResponseTo")[0]?.value;
+  const encrypted = xpath.selectElements(doc, "/*[local-name()='Response']/*[local-name()='EncryptedAssertion']").length > 0;
+  return { ids, ...(times.length && { notOnOrAfter: Math.max(...times) }), ...(inResponseTo && { inResponseTo }), encrypted };
 }
+
+/** The ID and latest NotOnOrAfter of an assertion's XML (a decrypted one). */
+async function assertionFacts(xml: string): Promise<{ id?: string; notOnOrAfter?: number }> {
+  const doc = await parseDomFromString(xml);
+  const id = xpath.selectAttributes(doc, "/*[local-name()='Assertion']/@ID")[0]?.value;
+  const times = xpath
+    .selectAttributes(doc, "//*[local-name()='Conditions' or local-name()='SubjectConfirmationData']/@NotOnOrAfter")
+    .map((a) => Date.parse(a.value))
+    .filter(Number.isFinite);
+  return { ...(id && { id }), ...(times.length && { notOnOrAfter: Math.max(...times) }) };
+}
+
+const REPLAYED = 'This SAML response was already used. Sign in again.';
 
 /** Throws when any id was seen before (and hasn't expired). */
 export function checkReplay(ids: string[], now = Date.now()) {
   const db = authDb();
   for (const id of ids) {
     const row = db.get<{ expires_at: string }>('SELECT expires_at FROM saml_replay WHERE id = ?', id);
-    if (row && Date.parse(row.expires_at) > now) throw new SamlError('This SAML response was already used. Sign in again.');
+    if (row && Date.parse(row.expires_at) > now) throw new SamlError(REPLAYED);
   }
 }
 
-/** Record ids until they expire (sweeping expired ones); throws when one is already there (a concurrent replay). */
-export function recordReplay(ids: string[], expiresAt: number, now = Date.now()) {
-  const db = authDb();
-  db.transaction(() => {
-    db.deleteBefore('saml_replay', 'expires_at', new Date(now).toISOString());
-    for (const id of ids) {
-      if (!db.insertNew('saml_replay', { id, expires_at: new Date(expiresAt).toISOString() })) throw new SamlError('This SAML response was already used. Sign in again.');
-    }
-  });
+/**
+ * Record ids until they expire (sweeping expired ones); throws when one is already there (a concurrent replay, on this
+ * main or another: on Postgres the insert is decided there, ./saml-state).
+ */
+export async function recordReplay(ids: string[], expiresAt: number, now = Date.now()): Promise<void> {
+  await recordReplayIds(ids, expiresAt, () => new SamlError(REPLAYED), now);
 }
 
 /** Readable reasons for node-saml's validation errors. */
@@ -410,15 +452,18 @@ function explain(error: Error): string {
   if (/audience/i.test(message)) return 'The SAML response is meant for another service provider (audience)';
   if (/InResponseTo/i.test(message)) return 'This SAML response doesn’t answer a sign-in started here, or it timed out. Try again.';
   if (/subject confirmation/i.test(message)) return 'The SAML response has expired or is for another sign-in';
+  if (/No decryption key/i.test(message)) return 'The identity provider encrypted the assertion, but this instance has no decryption key (Settings → Security → SAML)';
+  if (/decrypt|EncryptedAssertion|EncryptedKey|xmlenc|oaep|padding|rsa routines|decoding error|unsupported state|authenticate data/i.test(message)) return 'The encrypted SAML assertion can’t be decrypted with this instance’s key (the IdP may have an old certificate)';
   return `The SAML response was refused: ${message}`;
 }
 
 /**
- * Validate a SAMLResponse (base64, from the ACS form): replay check, node-saml (signature, audience, timestamps,
- * InResponseTo), the IdP's issuer, then record its ids. Returns the identity it asserts.
+ * Validate a SAMLResponse (base64, from the ACS form): replay check, encryption when required, node-saml (signature,
+ * audience, timestamps, InResponseTo; decryption), the IdP's issuer, that this call took the request id (one use, on
+ * any main), then record its ids (a decrypted assertion's too). Returns the identity it asserts.
  */
 export async function validateResponse(config: SamlConfig, origin: string, samlResponse: string, now = Date.now()): Promise<SamlIdentity> {
-  let parsed: { ids: string[]; notOnOrAfter?: number };
+  let parsed: ResponseFacts;
   try {
     parsed = await responseIds(samlResponse);
   } catch {
@@ -426,10 +471,12 @@ export async function validateResponse(config: SamlConfig, origin: string, samlR
   }
   if (!parsed.ids.length) throw new SamlError('The SAML response has no ID');
   checkReplay(parsed.ids, now);
+  if (!parsed.encrypted && samlDecryption()?.required) throw new SamlError('The identity provider sent the assertion unencrypted, and this instance requires encrypted assertions');
   let idp = await resolveIdp(config);
+  const track = { consumed: false };
   let profile: Profile | null;
   try {
-    ({ profile } = await samlClient(config, origin, idp).validatePostResponseAsync({ SAMLResponse: samlResponse }));
+    ({ profile } = await samlClient(config, origin, idp, ValidateInResponseTo.always, requestCache(track)).validatePostResponseAsync({ SAMLResponse: samlResponse }));
   } catch (caught) {
     // The IdP may have rotated its key: with metadata, fetch it again once and retry.
     if (config.metadataUrl && /signature/i.test((caught as Error).message ?? '') && !config.idpCerts.length) {
@@ -437,7 +484,7 @@ export async function validateResponse(config: SamlConfig, origin: string, samlR
       if (fresh.certs.join() !== idp.certs.join()) {
         idp = fresh;
         try {
-          ({ profile } = await samlClient(config, origin, idp).validatePostResponseAsync({ SAMLResponse: samlResponse }));
+          ({ profile } = await samlClient(config, origin, idp, ValidateInResponseTo.always, requestCache(track)).validatePostResponseAsync({ SAMLResponse: samlResponse }));
         } catch (again) {
           throw new SamlError(explain(again as Error));
         }
@@ -446,7 +493,19 @@ export async function validateResponse(config: SamlConfig, origin: string, samlR
   }
   if (!profile) throw new SamlError('The identity provider didn’t sign you in');
   if (idp.issuer && profile.issuer && profile.issuer !== idp.issuer) throw new SamlError(`The SAML assertion is from ${profile.issuer}, not ${idp.issuer}`);
-  recordReplay(parsed.ids, (parsed.notOnOrAfter ?? now + DEFAULT_REPLAY_TTL_MS) + config.clockSkewSeconds * 1000, now);
+  // One use: node-saml removes the request id when the subject names it; take it here otherwise. Only one main gets it.
+  if (!track.consumed && parsed.inResponseTo) track.consumed = (await takeState('request', parsed.inResponseTo)) !== undefined;
+  if (!track.consumed) throw new SamlError(REPLAYED);
+  const ids = [...parsed.ids];
+  let notOnOrAfter = parsed.notOnOrAfter;
+  if (parsed.encrypted) {
+    const assertion = await assertionFacts(profile.getAssertionXml?.() ?? '').catch(() => ({}) as { id?: string; notOnOrAfter?: number });
+    if (assertion.id) ids.push(`assertion:${assertion.id}`);
+    if (assertion.notOnOrAfter) notOnOrAfter = Math.max(notOnOrAfter ?? 0, assertion.notOnOrAfter);
+    // Seen before (a captured assertion re-wrapped in a new response)?
+    checkReplay(ids, now);
+  }
+  await recordReplay(ids, (notOnOrAfter ?? now + DEFAULT_REPLAY_TTL_MS) + config.clockSkewSeconds * 1000, now);
   return identityOf(profile, config, idp.issuer);
 }
 
@@ -487,32 +546,28 @@ export async function completeLogin(
   params: { samlResponse?: string | null; relayState?: string | null; cookieState?: string },
 ): Promise<{ user: UserRecord; next: string; identity: SamlIdentity }> {
   if (!params.samlResponse) throw new SamlError('The identity provider sent no SAML response');
-  const states = caches().states;
   const state = params.relayState ?? '';
-  const entry = states.get(state);
-  if (!state || !entry || !params.cookieState || params.cookieState !== state || Date.now() - entry.at > STATE_TTL_MS) {
-    throw new SamlError('This sign-in expired or was started in another browser. Try again.');
-  }
-  states.delete(state);
+  const expired = () => new SamlError('This sign-in expired or was started in another browser. Try again.');
+  if (!state || !params.cookieState || params.cookieState !== state) throw expired();
+  const entry = await takeState('relay', state);
+  if (entry === undefined) throw expired();
+  const next = (JSON.parse(entry) as { next?: string }).next ?? '/';
   if (setupRequired()) throw new SamlError('Finish the owner setup before signing in with SAML');
   const identity = await validateResponse(config, origin, params.samlResponse);
-  return { user: await signInUser(config, identity), next: entry.next, identity };
+  return { user: await signInUser(config, identity), next, identity };
 }
 
 // ---- single logout ---------------------------------------------------------------------------------------------
 
-/** Remember the NameID and SessionIndex of a session started with SAML (for single logout). */
-export function rememberSession(sessionToken: string, user: UserRecord, identity: SamlIdentity) {
-  const sessions = caches().sessions;
-  const now = Date.now();
-  for (const [key, entry] of sessions) if (now - entry.at > 30 * 24 * 3_600_000) sessions.delete(key);
-  sessions.set(tokenHash(sessionToken), {
+/** Remember the NameID and SessionIndex of a session started with SAML (for single logout), until the session expires. */
+export async function rememberSession(sessionToken: string, user: UserRecord, identity: SamlIdentity, expiresAt?: string): Promise<void> {
+  const entry: SessionEntry = {
     nameID: identity.nameID,
     nameIDFormat: identity.nameIDFormat ?? 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
     ...(identity.sessionIndex && { sessionIndex: identity.sessionIndex }),
-    userId: user.id,
-    at: now,
-  });
+  };
+  const until = expiresAt ? Date.parse(expiresAt) : NaN;
+  await putState('session', tokenHash(sessionToken), JSON.stringify(entry), Number.isFinite(until) && until > Date.now() ? until - Date.now() : SESSION_TTL_MS, user.id);
 }
 
 /**
@@ -521,12 +576,13 @@ export function rememberSession(sessionToken: string, user: UserRecord, identity
  */
 export async function logoutRedirect(sessionToken: string | undefined, origin: string, next = '/login'): Promise<string | undefined> {
   if (!sessionToken) return undefined;
-  const sessions = caches().sessions;
-  const key = tokenHash(sessionToken);
-  const entry = sessions.get(key);
-  sessions.delete(key);
+  const stored = await takeState('session', tokenHash(sessionToken)).catch((error) => {
+    logger.warn('could not read the SAML session for single logout', { error });
+    return undefined;
+  });
   const config = samlConfig();
-  if (!entry || !config) return undefined;
+  if (!stored || !config) return undefined;
+  const entry = JSON.parse(stored) as SessionEntry;
   try {
     const idp = await resolveIdp(config);
     if (!idp.logoutUrl) return undefined;
@@ -549,7 +605,7 @@ async function validatePostLogoutResponse(config: SamlConfig, origin: string, id
   if (!inResponseTo) throw new Error('it isn’t a LogoutResponse to a logout started here');
   const result = await samlClient(config, origin, idp, ValidateInResponseTo.ifPresent).validatePostResponseAsync({ SAMLResponse: samlResponse });
   if (!result.loggedOut) throw new Error('it isn’t a LogoutResponse');
-  if (!(await requestCache.removeAsync(inResponseTo))) throw new Error('it doesn’t answer a logout started here');
+  if ((await takeState('request', inResponseTo)) === undefined) throw new Error('it doesn’t answer a logout started here');
   return result;
 }
 
@@ -578,7 +634,7 @@ export async function handleLogoutMessage(
   const user = findUserBySaml(String(result.profile.issuer ?? idp.issuer ?? ''), String(result.profile.nameID ?? ''));
   if (user) {
     deleteUserSessions(user.id);
-    for (const [key, entry] of caches().sessions) if (entry.userId === user.id) caches().sessions.delete(key);
+    await dropUserStates('session', user.id);
     logger.info('signed out by the SAML identity provider', { 'landflow.user.id': user.id });
   }
   const redirect = await client.getLogoutResponseUrlAsync(result.profile, relayState ?? '', {}, true);
@@ -607,7 +663,7 @@ export async function samlSecurityView(origin: string): Promise<SamlSecurityView
   };
   if (!config) return base;
   const urls = spUrls(config, origin);
-  const view: SamlSecurityView = { ...base, entityId: urls.entityId, acsUrl: urls.acsUrl, metadataUrl: urls.metadataUrl };
+  const view: SamlSecurityView = { ...base, entityId: urls.entityId, acsUrl: urls.acsUrl, metadataUrl: urls.metadataUrl, encryption: samlEncryptionView() };
   try {
     const idp = await resolveIdp(config, true);
     view.idpSsoUrl = idp.entryPoint;
@@ -629,11 +685,12 @@ export async function samlSecurityView(origin: string): Promise<SamlSecurityView
   return view;
 }
 
-/** Tests. */
+/** Tests: the metadata cache and every SAML state row. */
 export function resetSamlCaches() {
-  const c = caches();
-  c.metadata.clear();
-  c.states.clear();
-  c.requests.clear();
-  c.sessions.clear();
+  caches().metadata.clear();
+  try {
+    clearSamlState();
+  } catch {
+    // No database (closed already).
+  }
 }

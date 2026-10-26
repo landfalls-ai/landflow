@@ -1,7 +1,8 @@
 /**
  * The OpenAPI document (lib/server/openapi.ts, GET /api/openapi.json): well-formed 3.1, every operation named,
- * tagged and scoped like the route guard, every $ref resolving, and every documented path and method an actual
- * route under app/api, so the docs can't name endpoints that don't exist.
+ * tagged and scoped like the route guard (trigger URLs: public, like lib/shared/auth-paths.ts says), every $ref
+ * resolving, and every documented path and method an actual route under app/, so the docs can't name endpoints that
+ * don't exist.
  */
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,6 +17,7 @@ Object.assign(process.env, ENV);
 
 const { openApiDocument } = await import('@/lib/server/openapi');
 const { routePolicy } = await import('@/lib/server/auth/policy');
+const { isPublicPath } = await import('@/lib/shared/auth-paths');
 
 afterAll(() => {
   for (const key of Object.keys(ENV)) {
@@ -30,6 +32,9 @@ const appDir = fileURLToPath(new URL('../src/app', import.meta.url));
 
 const doc = openApiDocument('http://landflow.test') as Json & { paths: Record<string, Record<string, Json>>; components: Json };
 const operations = Object.entries(doc.paths).flatMap(([path, item]) => METHODS.filter((m) => item[m]).map((method) => ({ path, method, op: item[method] })));
+
+/** The trigger URLs' catch-all routes: `{path}` there is `[...path]` (it may hold slashes). */
+const CATCH_ALL = /^\/(api\/webhook|api\/webhook-test|form|form-test|mcp|mcp-test)\/\{path\}$/;
 
 /** Every `$ref` value anywhere under `value`. */
 function refs(value: unknown, out: string[] = []): string[] {
@@ -73,7 +78,15 @@ describe('OpenAPI document', () => {
       expect(Object.keys(op.responses as Json).length, where).toBeGreaterThan(0);
       expect(op.tags, where).toHaveLength(1);
       expect(tags.has((op.tags as string[])[0]), where).toBe(true);
-      const policy = routePolicy(method.toUpperCase(), path.replace(/\{[^}]+\}/g, 'x'));
+      const sample = path.replace(/\{[^}]+\}/g, 'x');
+      // Public operations are exactly the ones the auth gate lets through without a session or key.
+      expect(Boolean(op['x-landflow-public']), where).toBe(isPublicPath(sample));
+      if (op['x-landflow-public']) {
+        expect(op.security, where).toEqual([]);
+        expect(op['x-landflow-scope'], where).toBeUndefined();
+        continue;
+      }
+      const policy = routePolicy(method.toUpperCase(), sample);
       expect(op['x-landflow-scope'], where).toBe(policy.scope);
       expect(op.description, where).toEqual(expect.stringContaining(policy.sessionOnly ? 'API keys are refused' : policy.scope === 'any' ? 'Any API key' : `\`${policy.scope}\``));
     }
@@ -91,6 +104,28 @@ describe('OpenAPI document', () => {
       expect.objectContaining({ name: 'id', in: 'path', required: true }),
       expect.objectContaining({ name: 'versionId', in: 'path', required: true }),
     ]);
+  });
+
+  it('documents the trigger URLs, their test URLs and listening for a test event', () => {
+    const methods = (path: string) => Object.keys(doc.paths[path] ?? {}).sort();
+    expect(methods('/api/webhook/{path}')).toEqual(['delete', 'get', 'patch', 'post', 'put']);
+    expect(methods('/api/webhook-test/{path}')).toEqual(['delete', 'get', 'patch', 'post', 'put']);
+    expect(methods('/form/{path}')).toEqual(['get', 'post']);
+    expect(methods('/form-test/{path}')).toEqual(['get', 'post']);
+    expect(methods('/mcp/{path}')).toEqual(['post']);
+    expect(methods('/mcp-test/{path}')).toEqual(['post']);
+    const webhook = doc.paths['/api/webhook/{path}'].post;
+    expect(webhook).toMatchObject({ tags: ['Triggers'], security: [], 'x-landflow-public': true });
+    // A generic path parameter and a free-form body.
+    expect(webhook.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'path', in: 'path', required: true })]));
+    expect(Object.keys(((webhook.requestBody as Json).content as Json) ?? {})).toEqual(expect.arrayContaining(['application/json', 'multipart/form-data']));
+    expect(webhook.responses).toHaveProperty('403');
+    expect(doc.paths['/api/webhook/{path}'].get.requestBody).toBeUndefined();
+    expect(doc.paths['/mcp-test/{path}'].post.description).toContain('manual run');
+    // The listen route is an ordinary API route (scope run) that streams.
+    const listen = doc.paths['/api/workflows/{id}/listen'].post;
+    expect(listen['x-landflow-scope']).toBe('run');
+    expect(Object.keys((((listen.responses as Json)[200] as Json).content as Json) ?? {})).toEqual(['text/event-stream']);
   });
 
   it('resolves every $ref inside the document', () => {
@@ -116,7 +151,7 @@ describe('OpenAPI document', () => {
 
   it('documents only routes that exist, with their methods', () => {
     for (const { path, method } of operations) {
-      const file = join(appDir, path.replace(/\{([^}]+)\}/g, '[$1]'), 'route.ts');
+      const file = join(appDir, CATCH_ALL.test(path) ? path.replace('{path}', '[...path]') : path.replace(/\{([^}]+)\}/g, '[$1]'), 'route.ts');
       expect(existsSync(file), `${path} → ${file}`).toBe(true);
       const source = readFileSync(file, 'utf8');
       expect(source, `${method.toUpperCase()} ${path}`).toMatch(new RegExp(`^export (const|async function|function) ${method.toUpperCase()}\\b`, 'm'));

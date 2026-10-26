@@ -12,7 +12,9 @@
  * - **splunk**: the HTTP Event Collector (`/services/collector/event`, `Authorization: Splunk <token>`).
  *
  * HTTP goes through node:http(s) so a destination can trust a private CA or (Splunk's self-signed default) skip
- * verification. Destinations are configured by admins, so their addresses are not restricted.
+ * verification. Syslog over TLS and HTTPS destinations can also present a client certificate (mTLS) when the receiver
+ * asks for one: `clientCert` and `clientKey` (PEM, the key sealed at rest, ./destinations) with an optional passphrase.
+ * Destinations are configured by admins, so their addresses are not restricted.
  */
 import { createHmac } from 'node:crypto';
 import { createSocket } from 'node:dgram';
@@ -20,13 +22,15 @@ import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { connect as netConnect, isIP, type Socket } from 'node:net';
 import { hostname } from 'node:os';
-import { connect as tlsConnect } from 'node:tls';
+import { connect as tlsConnect, type ConnectionOptions, type TLSSocket } from 'node:tls';
 import type { AuditDestinationConfig, AuditEvent } from '../../shared/audit';
 import { telemetryConfig } from '../telemetry/config';
 import type { SendableDestination } from './destinations';
 import { auditEventName } from './otel';
 
 const TIMEOUT_MS = 10_000;
+const TLS_SETTLE_MS = 1_000;
+const TLS_TICKET_WAIT_MS = 300;
 /** Events per HTTP request (syslog sends one message per event anyway). */
 export const BATCH_SIZE = 100;
 
@@ -76,6 +80,9 @@ export function syslogMessage(event: AuditEvent, config: Pick<AuditDestinationCo
     ['status', event.status === undefined ? undefined : String(event.status)],
     ['targetType', event.target?.type],
     ['targetId', event.target?.id],
+    ['projectId', event.projectId],
+    ['chainSeq', event.chain ? String(event.chain.seq) : undefined],
+    ['hash', event.chain?.hash],
   ];
   const sd = `[${SYSLOG_SD_ID}${params
     .filter(([, value]) => value !== undefined && value !== '')
@@ -83,6 +90,28 @@ export function syslogMessage(event: AuditEvent, config: Pick<AuditDestinationCo
     .join('')}]`;
   const appName = sdName(config.appName ?? 'landflow', 'landflow').slice(0, 48);
   return `<${pri}>1 ${event.at} ${host()} ${appName} ${process.pid} ${sdName(event.action)} ${sd} ${asciiJson(event)}`;
+}
+
+/** The TLS options of a destination: the CA to trust (or no verification) and the client certificate to present. */
+export type TlsConfig = Pick<AuditDestinationConfig, 'rejectUnauthorized' | 'ca' | 'clientCert' | 'clientKey' | 'clientKeyPassphrase'>;
+
+export function tlsOptions(config: TlsConfig): ConnectionOptions {
+  return {
+    rejectUnauthorized: config.rejectUnauthorized ?? true,
+    ...(config.ca && { ca: config.ca }),
+    ...(config.clientCert && config.clientKey && { cert: config.clientCert, key: config.clientKey, ...(config.clientKeyPassphrase && { passphrase: config.clientKeyPassphrase }) }),
+  };
+}
+
+/** A clearer reason for the TLS errors a receiver that wants a client certificate gives. */
+function tlsError(error: Error & { code?: string }, config: TlsConfig): Error {
+  const text = `${error.code ?? ''} ${error.message}`;
+  if (/CERTIFICATE_REQUIRED|certificate required/i.test(text)) {
+    return new Error(config.clientCert ? `The receiver refused the client certificate (${error.message})` : `The receiver wants a client certificate (mTLS): add one to the destination (${error.message})`);
+  }
+  if (config.clientCert && /UNKNOWN_CA|BAD_CERTIFICATE|unknown ca|bad certificate|CERTIFICATE_UNKNOWN/i.test(text)) return new Error(`The receiver doesn’t trust the client certificate (${error.message})`);
+  if (config.clientCert && /socket hang up|ECONNRESET/i.test(text)) return new Error(`The receiver closed the connection: it may not accept the client certificate (${error.message})`);
+  return error;
 }
 
 function frame(message: string, framing: AuditDestinationConfig['framing']): string {
@@ -111,16 +140,39 @@ async function sendSyslogStream(config: AuditDestinationConfig, messages: string
       settled = true;
       clearTimeout(timer);
       socket.destroy();
-      if (error) reject(error);
+      if (error) reject(tls ? tlsError(error, config) : error);
       else resolve();
     };
-    const socket: Socket = tls
-      ? tlsConnect({ host: config.host, port, ...(config.host && !isIP(config.host) && { servername: config.host }), rejectUnauthorized: config.rejectUnauthorized ?? true, ...(config.ca && { ca: config.ca }) })
-      : netConnect({ host: config.host!, port });
+    const socket: Socket = tls ? tlsConnect({ host: config.host, port, ...(config.host && !isIP(config.host) && { servername: config.host }), ...tlsOptions(config) }) : netConnect({ host: config.host!, port });
     const timer = setTimeout(() => done(new Error(`syslog ${config.host}:${port} timed out`)), TIMEOUT_MS);
+    let written = false;
+    const write = () => {
+      if (written || settled) return;
+      written = true;
+      socket.end(payload, () => {
+        if (!tls) return done();
+        // TLS 1.3 servers refuse a client certificate after the client's handshake is done: give the alert a moment
+        // to arrive (a receiver that closes its side settles it sooner).
+        setTimeout(() => done(), TLS_SETTLE_MS);
+      });
+    };
     socket.once('error', (error) => done(error));
     socket.once(tls ? 'secureConnect' : 'connect', () => {
-      socket.end(payload, () => done());
+      // TLS 1.3 with a client certificate: the server accepts it after our handshake ends, and then sends a session
+      // ticket, or drops the connection. Wait for one or the other (briefly: not every server sends tickets).
+      if (tls && config.clientCert && (socket as TLSSocket).getProtocol() === 'TLSv1.3') {
+        const wait = setTimeout(write, TLS_TICKET_WAIT_MS);
+        socket.once('session', () => {
+          clearTimeout(wait);
+          // Not from inside OpenSSL's ticket callback.
+          setImmediate(write);
+        });
+      } else write();
+    });
+    socket.once('close', (hadError) => {
+      if (hadError) return;
+      if (written) done();
+      else done(new Error(`syslog ${config.host}:${port} closed the connection before taking any message${tls && config.clientCert ? ': it may not accept the client certificate' : ''}`));
     });
   });
 }
@@ -136,7 +188,7 @@ export interface HttpReply {
 }
 
 /** POST `body` to `url` (node:http(s), so TLS options apply); the reply with up to 64 KB of its body. */
-export function post(url: string, body: string, headers: Record<string, string>, tls: Pick<AuditDestinationConfig, 'rejectUnauthorized' | 'ca'> = {}): Promise<HttpReply> {
+export function post(url: string, body: string, headers: Record<string, string>, tls: TlsConfig = {}): Promise<HttpReply> {
   const target = new URL(url);
   const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
   return new Promise<HttpReply>((resolve, reject) => {
@@ -146,7 +198,7 @@ export function post(url: string, body: string, headers: Record<string, string>,
         method: 'POST',
         headers: { 'content-length': String(Buffer.byteLength(body)), 'user-agent': `landflow/${telemetryConfig.serviceVersion}`, ...headers },
         timeout: TIMEOUT_MS,
-        ...(target.protocol === 'https:' && { rejectUnauthorized: tls.rejectUnauthorized ?? true, ...(tls.ca && { ca: tls.ca }) }),
+        ...(target.protocol === 'https:' && tlsOptions(tls)),
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -160,7 +212,7 @@ export function post(url: string, body: string, headers: Record<string, string>,
       },
     );
     req.on('timeout', () => req.destroy(new Error(`${target.host} timed out`)));
-    req.on('error', reject);
+    req.on('error', (error) => reject(target.protocol === 'https:' ? tlsError(error, tls) : error));
     req.end(body);
   });
 }
@@ -181,7 +233,7 @@ export function signedHeaders(secret: string | undefined, body: string, now = Da
 
 async function sendGeneric(config: AuditDestinationConfig, events: AuditEvent[]) {
   const body = events.map((event) => JSON.stringify(siemRecord(event))).join('\n') + '\n';
-  const reply = await post(config.url!, body, { 'content-type': 'application/x-ndjson', ...signedHeaders(config.secret, body) });
+  const reply = await post(config.url!, body, { 'content-type': 'application/x-ndjson', ...signedHeaders(config.secret, body) }, config);
   if (!ok(reply)) throw refused(reply, 'The endpoint');
 }
 
@@ -201,7 +253,7 @@ async function sendDatadog(config: AuditDestinationConfig, events: AuditEvent[])
       landflow: { audit: event },
     })),
   );
-  const reply = await post(config.url!, body, { 'content-type': 'application/json', ...(config.apiKey && { 'dd-api-key': config.apiKey }) });
+  const reply = await post(config.url!, body, { 'content-type': 'application/json', ...(config.apiKey && { 'dd-api-key': config.apiKey }) }, config);
   if (!ok(reply)) throw refused(reply, 'Datadog');
 }
 
@@ -228,7 +280,7 @@ async function sendElastic(config: AuditDestinationConfig, events: AuditEvent[])
           })}`,
       )
       .join('\n') + '\n';
-  const reply = await post(elasticBulkUrl(config.url!), body, { 'content-type': 'application/x-ndjson', ...(config.apiKey && { authorization: `ApiKey ${config.apiKey}` }) });
+  const reply = await post(elasticBulkUrl(config.url!), body, { 'content-type': 'application/x-ndjson', ...(config.apiKey && { authorization: `ApiKey ${config.apiKey}` }) }, config);
   if (!ok(reply)) throw refused(reply, 'Elasticsearch');
   let result: { errors?: boolean; items?: { create?: { status?: number; error?: { type?: string; reason?: string } } }[] };
   try {
@@ -262,7 +314,7 @@ async function sendSplunk(config: AuditDestinationConfig, events: AuditEvent[]) 
       }),
     )
     .join('\n');
-  const reply = await post(splunkEventUrl(config.url!), body, { 'content-type': 'application/json', authorization: `Splunk ${config.token ?? ''}` }, { rejectUnauthorized: config.rejectUnauthorized });
+  const reply = await post(splunkEventUrl(config.url!), body, { 'content-type': 'application/json', authorization: `Splunk ${config.token ?? ''}` }, config);
   if (!ok(reply)) throw refused(reply, 'Splunk HEC');
 }
 

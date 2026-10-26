@@ -80,7 +80,7 @@ export async function handleSlackEvent(request: Request, agentId: string, channe
   if (!found) return error('No published agent has this Slack channel', 404);
   let credential: SlackCredential;
   try {
-    credential = slackCredentialFor(found.channel.credential);
+    credential = await slackCredentialFor(found.channel.credential);
   } catch (caught) {
     return error((caught as Error).message, 500);
   }
@@ -171,7 +171,7 @@ interface InteractionPayload {
 /** POST /api/slack/interactions */
 export async function handleSlackInteraction(request: Request): Promise<Response> {
   const raw = await request.text();
-  const candidates = slackCredentialsWithSecret();
+  const candidates = await slackCredentialsWithSecret();
   if (!candidates.length) return error('No Slack credential has a Signing Secret: Landflow refuses unverified Slack requests', 401);
   const verifiedBy = new Set(candidates.filter((c) => verifySlackRequest(c.credential.signingSecret!, request.headers, raw).ok).map((c) => c.id));
   if (!verifiedBy.size) return error('Invalid Slack signature', 401);
@@ -223,7 +223,7 @@ async function decideAgent(
 ) {
   const found = agentChannel(target.a, target.ch);
   if (!found || !verifiedBy.has(found.channel.credential.id)) throw new Error('The approval does not belong to a Slack channel of a published agent');
-  const credential = slackCredentialFor(found.channel.credential);
+  const credential = await slackCredentialFor(found.channel.credential);
   if (!allowed(found.channel, user ? { id: user } : null)) {
     if (chat) await postMessage(credential, { channel: chat, threadTs: target.th, text: `<@${user}> only the people this agent talks to can approve its tools.` });
     return;

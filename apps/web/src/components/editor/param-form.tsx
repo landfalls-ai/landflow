@@ -10,9 +10,11 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { NodeItem, PropertyDescriptor } from '@/lib/shared/types';
 import { FIELD_DRAG_TYPE } from '../run/data-view';
-import { Input, Select, Switch, Textarea } from '../ui/inputs';
+import { Input, Select, Switch } from '../ui/inputs';
 import { sampleOf, type CompletionData } from './expression-completions';
-import { ExpressionDataContext, ExpressionInput, loadSecretNames } from './expression-input';
+import { ExpressionDataContext, ExpressionInput, loadSecretNames, ParamScopeContext as ScopeContext, type ParamScope } from './expression-input';
+import { CodeEditor } from './code-editor';
+import { languageOf } from './code-highlight';
 
 type Values = Record<string, unknown>;
 
@@ -49,6 +51,7 @@ function isNestedVisible(property: PropertyDescriptor, siblings: Values, root: V
 /** n8n's "Result" line under an expression: the value for the first input item, or why it fails. */
 function ExpressionPreview({ value }: { value: string }) {
   const data = useContext(PreviewContext);
+  const workflowId = useContext(ScopeContext)?.workflowId;
   const [result, setResult] = useState<{ ok: boolean; text: string }>();
   useEffect(() => {
     if (!data) return;
@@ -56,7 +59,7 @@ function ExpressionPreview({ value }: { value: string }) {
     const timer = setTimeout(() => {
       api<{ ok: boolean; value?: unknown; error?: string }>('/api/expressions/preview', {
         method: 'POST',
-        json: { value, items: (data.items ?? []).slice(0, 1), nodeOutputs: data.nodeOutputs },
+        json: { value, items: (data.items ?? []).slice(0, 1), nodeOutputs: data.nodeOutputs, ...(workflowId && { workflowId }) },
         signal: controller.signal,
       })
         .then((r) => setResult(r.ok ? { ok: true, text: typeof r.value === 'string' ? r.value : JSON.stringify(r.value) } : { ok: false, text: r.error ?? 'error' }))
@@ -66,7 +69,7 @@ function ExpressionPreview({ value }: { value: string }) {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [value, data]);
+  }, [value, data, workflowId]);
   if (!data || !result) return null;
   return (
     <div className={cn('mt-1 flex min-w-0 items-start gap-1.5 rounded-lg px-2 py-1 font-mono text-[11px] animate-fade-up', result.ok ? 'bg-gndim text-gn' : 'bg-rddim text-rd')}>
@@ -138,6 +141,7 @@ function useLiveOptions(nodeType: string, property: PropertyDescriptor, paramete
   const [error, setError] = useState<string>();
   const credentials = useContext(CredentialsContext);
   const credentialKey = JSON.stringify(credentials ?? {});
+  const paramScope = useContext(ScopeContext);
   // Only the latest request may set state: the one sent before a credential was auto-selected can answer last.
   const pending = useRef<AbortController>(undefined);
 
@@ -149,7 +153,7 @@ function useLiveOptions(nodeType: string, property: PropertyDescriptor, paramete
     setState('loading');
     api<{ options: LiveOption[]; error?: string }>('/api/node-types/load-options', {
       method: 'POST',
-      json: { type: nodeType, method, parameters: scope, ...(credentials && { credentials }) },
+      json: { type: nodeType, method, parameters: scope, ...(credentials && { credentials }), ...paramScope },
       signal: controller.signal,
     })
       .then((r) => {
@@ -168,7 +172,7 @@ function useLiveOptions(nodeType: string, property: PropertyDescriptor, paramete
     load();
     return () => pending.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [method, deps, nodeType, credentialKey]);
+  }, [method, deps, nodeType, credentialKey, paramScope?.workflowId, paramScope?.projectId]);
   return { method, options, state, error, load };
 }
 
@@ -334,23 +338,12 @@ function Field({ nodeType, property, value, onChange, parameters }: { nodeType: 
       return (
         <div>
           <Label property={property} />
-          <Textarea
-            className="code-area min-h-[120px]"
-            spellCheck={false}
+          <CodeEditor
+            language={languageOf(property.typeOptions?.language, property.type)}
             rows={property.typeOptions?.rows ?? 8}
-            data-language={property.typeOptions?.language}
+            aria-label={property.displayName}
             value={typeof value === 'string' ? value : JSON.stringify(value ?? property.default ?? '', null, 2)}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Tab') {
-                e.preventDefault();
-                const el = e.currentTarget;
-                const { selectionStart, selectionEnd } = el;
-                // Python's convention is four spaces; everything else here uses two.
-                el.setRangeText(property.typeOptions?.language === 'python' ? '    ' : '  ', selectionStart, selectionEnd, 'end');
-                onChange(el.value);
-              }
-            }}
+            onChange={onChange}
           />
         </div>
       );
@@ -574,6 +567,7 @@ export function ParamForm({
   credentials,
   fromAI,
   expressionScope,
+  scope,
 }: {
   nodeType: string;
   properties: PropertyDescriptor[];
@@ -586,6 +580,8 @@ export function ParamForm({
   fromAI?: boolean;
   /** `credential`: a credential's form, where text fields take `{{ $secrets.<provider>.<name> }}` (and nothing else). */
   expressionScope?: 'credential';
+  /** The workflow being edited: its project's data tables in pickers, its $vars in previews. */
+  scope?: ParamScope;
 }) {
   const visible = properties.filter((p) => isPropertyVisible(p, values));
   // Suggestions for expressions: the input's fields, and nodes that ran upstream with a sample of their output.
@@ -596,6 +592,7 @@ export function ParamForm({
   if (!visible.length) return <div className="rounded-[10px] border border-hair bg-wl p-4 text-center text-[13px] text-t3">This node has no parameters.</div>;
   return (
     <ExpressionDataContext.Provider value={completionData}>
+    <ScopeContext.Provider value={scope}>
     <PreviewContext.Provider value={preview}>
       <CredentialsContext.Provider value={credentials}>
         <RootValuesContext.Provider value={values}>
@@ -619,6 +616,7 @@ export function ParamForm({
         </RootValuesContext.Provider>
       </CredentialsContext.Provider>
     </PreviewContext.Provider>
+    </ScopeContext.Provider>
     </ExpressionDataContext.Provider>
   );
 }

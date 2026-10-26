@@ -4,11 +4,17 @@
  * channel POSTs JSON signed with HMAC-SHA256 (`X-Landflow-Signature: sha256=<hex of HMAC(secret, "<timestamp>.<body>")>`,
  * `X-Landflow-Timestamp` in seconds); Telegram through a saved Telegram API credential's bot. Each returns what the
  * receiver said and throws an Error with the reason when it refused.
+ *
+ * External secrets: the Telegram credential's fields and the channel's Slack webhook URL, webhook URL and signing
+ * secret may read `{{ $secrets.<provider>.<name> }}`, resolved right before sending (same cache and redaction as
+ * credential fields in nodes); a reason that would quote a resolved value is redacted.
  */
 import { createHmac } from 'node:crypto';
 import type { AlertChannel, AlertChannelConfig } from '../../shared/alerts';
 import { mailConfigured, sendMail } from '../auth/mail';
 import { credentials } from '../credentials/vault';
+import { redactText } from '../secrets/redact';
+import { resolveSecretFields } from '../secrets/resolve';
 import { emailAddresses } from './store';
 import { htmlOf, slackPayload, subjectOf, telegramText, textOf, webhookPayload, type AlertNotice } from './message';
 
@@ -77,7 +83,7 @@ async function sendWebhook(config: AlertChannelConfig, notice: AlertNotice): Pro
 async function sendTelegram(channel: SendableChannel, notice: AlertNotice): Promise<string> {
   const { credentialId, chatId } = channel.config;
   if (!credentialId || !chatId) throw new Error('Choose a Telegram credential and a chat ID');
-  const data = credentials.dataFor({ id: credentialId, name: `of channel "${channel.name}"` }, TELEGRAM_CREDENTIAL);
+  const data = await telegramCredential(channel);
   const token = String(data.accessToken ?? '').trim();
   if (!token) throw new Error('The Telegram credential has no access token');
   const base = String(data.baseUrl || TELEGRAM_API).replace(/\/+$/, '');
@@ -87,16 +93,31 @@ async function sendTelegram(channel: SendableChannel, notice: AlertNotice): Prom
   return 'Telegram accepted it';
 }
 
+/** A channel's settings with `$secrets` resolved in what Landflow sends with: the webhook URLs and the signing secret. */
+export function channelConfigWithSecrets(channel: SendableChannel): Promise<AlertChannelConfig> {
+  return resolveSecretFields(channel.config, `Alert channel “${channel.name}”`, ['webhookUrl', 'url', 'secret']);
+}
+
+/** The data of a Telegram channel's credential, `$secrets` resolved. */
+export function telegramCredential(channel: SendableChannel) {
+  return credentials.dataWithSecrets({ id: channel.config.credentialId ?? '', name: `of channel "${channel.name}"` }, TELEGRAM_CREDENTIAL);
+}
+
 /** Send `notice` through `channel`; resolves with the receiver's answer, rejects with the reason it failed. */
 export async function sendThrough(channel: SendableChannel, notice: AlertNotice): Promise<string> {
-  switch (channel.kind) {
-    case 'email':
-      return sendEmail(channel.config, notice);
-    case 'slack':
-      return sendSlack(channel.config, notice);
-    case 'webhook':
-      return sendWebhook(channel.config, notice);
-    case 'telegram':
-      return sendTelegram(channel, notice);
+  try {
+    const resolved = { ...channel, config: await channelConfigWithSecrets(channel) };
+    switch (resolved.kind) {
+      case 'email':
+        return await sendEmail(resolved.config, notice);
+      case 'slack':
+        return await sendSlack(resolved.config, notice);
+      case 'webhook':
+        return await sendWebhook(resolved.config, notice);
+      case 'telegram':
+        return await sendTelegram(resolved, notice);
+    }
+  } catch (error) {
+    throw new Error(redactText((error as Error).message));
   }
 }

@@ -7,6 +7,7 @@
  * gRPC); the registry tracks each one's health and executes through the
  * preferred online endpoint. It also implements the engine's NodeTypeResolver.
  */
+import { createHash } from 'node:crypto';
 import { connect } from 'node:net';
 import {
   DEFAULT_ANNOUNCE_TTL_SECONDS,
@@ -33,7 +34,7 @@ import { withGovernance } from '../governance/policy';
 import { bus } from '../bus';
 import { singleton } from '../singleton';
 import { withSpan } from '../telemetry';
-import { createClient, HttpPluginClient, GrpcPluginClient, normalizeEndpoint, transportOf, type PluginClient } from './clients';
+import { createClient, HttpPluginClient, GrpcPluginClient, normalizeEndpoint, PooledPluginClient, transportOf, type PluginClient } from './clients';
 import { provenManifest } from './registry-proof';
 
 /** Extras for endpoints found by Kubernetes discovery; a re-registration without them keeps the endpoint's own. */
@@ -42,7 +43,25 @@ export interface EndpointOptions {
   origin?: EndpointOrigin;
   /** Prove LANDFLOW_REGISTRY_SECRET on GetManifest (registry-proof.ts): the endpoint never announced with it. */
   requireProof?: boolean;
+  /**
+   * A process-local endpoint (a marketplace node plugin this process runs on 127.0.0.1): queue mode never shares it
+   * through `plugin_registrations`, since every process runs its own copy (lib/server/cluster/plugins.ts).
+   */
+  local?: boolean;
 }
+
+/** What queue mode compares to notice a plugin's restart or a changed manifest (lib/server/cluster/plugins.ts). */
+export interface EndpointInfo {
+  source: DiscoverySource;
+  status: PluginStatus;
+  instanceId?: string;
+  /** A short hash of the manifest last pulled through this endpoint. */
+  manifestHash: string;
+  local: boolean;
+}
+
+/** A short, stable hash of a manifest: a restart that changes icons or descriptors without a version bump changes it. */
+export const manifestHash = (manifest: PluginManifest) => createHash('sha256').update(JSON.stringify(manifest)).digest('hex').slice(0, 16);
 
 interface EndpointState {
   endpoint: string;
@@ -57,6 +76,8 @@ interface EndpointState {
   options?: EndpointOptions;
   /** The plugin process that announced it (AnnounceRequest.instanceId): a new one is a restart, so the manifest is pulled again. */
   instanceId?: string;
+  /** manifestHash() of the manifest pulled through this endpoint. */
+  manifestHash: string;
 }
 
 interface PluginEntry {
@@ -73,9 +94,11 @@ interface PluginEntry {
 
 const HEALTH_INTERVAL_MS = 15_000;
 
-class PluginRegistry implements NodeTypeResolver {
+export class PluginRegistry implements NodeTypeResolver {
   private readonly plugins = new Map<string, PluginEntry>();
   private readonly pending = new Map<string, Promise<PluginEntry>>();
+  /** Kubernetes discovery: the ready pods behind an endpoint (a Service), for calls spread over them (clients.ts). */
+  private readonly backends = new Map<string, string[]>();
   private timer?: NodeJS.Timeout;
   private lastHealthSweep = 0;
   private scanning = false;
@@ -144,22 +167,31 @@ class PluginRegistry implements NodeTypeResolver {
     }
 
     // A re-pull (Refresh, a version change) keeps the announcing process until an announce names another one.
-    const instanceId = existing?.endpoints.get(endpoint)?.instanceId;
+    const previous = existing?.endpoints.get(endpoint);
+    const instanceId = previous?.instanceId;
+    // Spread over pods: a re-pull keeps the pods' clients (their calls in flight go on) and swaps the Service's.
+    const pods = this.backends.get(endpoint);
+    let stateClient: PluginClient = client;
+    if (previous?.client instanceof PooledPluginClient) {
+      previous.client.replacePrimary(client);
+      stateClient = previous.client;
+    } else if (pods) stateClient = new PooledPluginClient(client, pods);
     const state: EndpointState = {
       endpoint,
       transport: client.transport,
       source,
-      client,
+      client: stateClient,
       status: 'online',
       lastSeen: Date.now(),
       latencyMs,
       ...(ttlSeconds && { leaseExpiresAt: Date.now() + ttlSeconds * 1000 }),
       ...(options && { options }),
       ...(instanceId && { instanceId }),
+      manifestHash: manifestHash(manifest),
     };
 
     if (existing) {
-      existing.endpoints.get(endpoint)?.client.close();
+      if (previous && previous.client !== stateClient) previous.client.close();
       existing.endpoints.set(endpoint, state);
       const versionChanged = existing.manifest.plugin.version !== manifest.plugin.version;
       existing.manifest = manifest;
@@ -245,6 +277,7 @@ class PluginRegistry implements NodeTypeResolver {
     for (const entry of this.plugins.values()) {
       const state = entry.endpoints.get(endpoint);
       if (!state) continue;
+      this.backends.delete(endpoint);
       if (entry.endpoints.size === 1) return this.remove(entry.id);
       state.client.close();
       entry.endpoints.delete(endpoint);
@@ -255,9 +288,51 @@ class PluginRegistry implements NodeTypeResolver {
     return false;
   }
 
+  /**
+   * The ready pods behind an endpoint (Kubernetes discovery, `grpc://10.1.2.3:7201`…): its calls are spread over them,
+   * its manifest and health still go through the endpoint. Kept for an endpoint still registering; [] (or none) ends it.
+   */
+  setEndpointBackends(rawEndpoint: string, backends: string[]) {
+    const endpoint = normalizeEndpoint(rawEndpoint);
+    const list = [...new Set(backends.map(normalizeEndpoint))].sort();
+    if (list.length) this.backends.set(endpoint, list);
+    else this.backends.delete(endpoint);
+    for (const entry of this.plugins.values()) {
+      const state = entry.endpoints.get(endpoint);
+      if (!state) continue;
+      if (state.client instanceof PooledPluginClient) state.client.setBackends(list);
+      else if (list.length) state.client = new PooledPluginClient(state.client, list);
+      return;
+    }
+  }
+
+  /** The pods an endpoint's calls are spread over, with their calls (tests and troubleshooting). */
+  endpointBackends(rawEndpoint: string): Array<{ endpoint: string; inflight: number; calls: number }> {
+    const client = this.endpointState(normalizeEndpoint(rawEndpoint))?.client;
+    return client instanceof PooledPluginClient ? client.stats() : [];
+  }
+
   /** Status of one endpoint, if any plugin has it. */
   endpointStatus(rawEndpoint: string): PluginStatus | undefined {
     return this.endpointState(normalizeEndpoint(rawEndpoint))?.status;
+  }
+
+  /** Source, status, announcing process and manifest hash of one endpoint (queue mode compares them across processes). */
+  endpointInfo(rawEndpoint: string): EndpointInfo | undefined {
+    const state = this.endpointState(normalizeEndpoint(rawEndpoint));
+    if (!state) return undefined;
+    return { source: state.source, status: state.status, ...(state.instanceId && { instanceId: state.instanceId }), manifestHash: state.manifestHash, local: Boolean(state.options?.local) };
+  }
+
+  /**
+   * Pull an endpoint's manifest again (queue mode: another process saw the plugin restart, or its manifest change), keeping
+   * its source and options; `instanceId` records the announcing process the change came with.
+   */
+  async repull(rawEndpoint: string, instanceId?: string): Promise<void> {
+    const endpoint = normalizeEndpoint(rawEndpoint);
+    const state = this.endpointState(endpoint);
+    const added = (await this.addEndpoint(endpoint, state?.source ?? 'static', undefined, state?.options)).endpoints.get(endpoint);
+    if (added && instanceId) added.instanceId = instanceId;
   }
 
   private endpointState(endpoint: string): EndpointState | undefined {

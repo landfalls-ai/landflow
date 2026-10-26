@@ -5,10 +5,15 @@
  * item's fields. Runs in-process against the host's tables and works as an
  * agent tool. When every item uses the same table, a run's changes are one
  * transaction: a failing item (without "continue on error") undoes them all.
+ *
+ * A workflow only uses its own project's tables (lib/server/datatables/projects.ts):
+ * the pickers list them, and a run that names another project's table fails on
+ * that item with a message that says whose it is.
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem, type PropertyDescriptor } from '@landflow/sdk';
 import { CONDITION_OPERATORS, type ConditionOperator, type DataTable, type RowFilter } from '../../shared/data-tables';
 import { dataTables, DataTableError } from '../datatables';
+import { scopedTable, tableProblem, tableScope, tablesInScope, workflowProject } from '../datatables/projects';
 
 const main = [{ type: 'main' as const }];
 const FILTER_OPERATIONS = ['get', 'update', 'deleteRows'];
@@ -195,10 +200,14 @@ export const dataTableNode = defineNode({
     const operation = ctx.getNodeParameter<string>('operation', 0, 'insert');
     const out: NodeItem[] = [];
 
+    // The workflow's project: its tables are the only ones it may use.
+    const projectId = workflowProject(ctx.getWorkflowId());
     const tableFor = (i: number): DataTable => {
       const ref = String(ctx.getNodeParameter('dataTableId', i, '') ?? '').trim();
       const table = service.findTable(ref);
       if (!table) throw new NodeOperationError(ref ? `Data table “${ref}” not found` : 'Choose a data table', { itemIndex: i, description: 'Tables are created on the Data Tables page.' });
+      const problem = tableProblem(table, projectId);
+      if (problem) throw new NodeOperationError(problem.message, { itemIndex: i, description: problem.description });
       return table;
     };
     const filterFor = (i: number): RowFilter => {
@@ -280,14 +289,13 @@ export const dataTableNode = defineNode({
     return [out];
   },
   methods: {
+    // The workflow being edited (the load-options route's scope): only its project's tables.
     loadOptions: {
       tables: () =>
-        dataTables()
-          .listTables()
-          .map((table) => ({ name: table.name, value: table.id, description: `${table.rowCount.toLocaleString('en-US')} rows · ${table.columns.length} columns` })),
-      columns: (ctx) => (dataTables().findTable(String(ctx.getNodeParameter('dataTableId', '') ?? ''))?.columns ?? []).map((c) => ({ name: c.name, value: c.name, description: c.type })),
+        tablesInScope(tableScope()).map((table) => ({ name: table.name, value: table.id, description: `${table.rowCount.toLocaleString('en-US')} rows · ${table.columns.length} columns` })),
+      columns: (ctx) => (scopedTable(String(ctx.getNodeParameter('dataTableId', '') ?? ''), tableScope())?.columns ?? []).map((c) => ({ name: c.name, value: c.name, description: c.type })),
       filterColumns: (ctx) => [
-        ...(dataTables().findTable(String(ctx.getNodeParameter('dataTableId', '') ?? ''))?.columns ?? []).map((c) => ({ name: c.name, value: c.name, description: c.type })),
+        ...(scopedTable(String(ctx.getNodeParameter('dataTableId', '') ?? ''), tableScope())?.columns ?? []).map((c) => ({ name: c.name, value: c.name, description: c.type })),
         { name: 'id', value: 'id', description: 'number' },
         { name: 'createdAt', value: 'createdAt', description: 'date' },
         { name: 'updatedAt', value: 'updatedAt', description: 'date' },

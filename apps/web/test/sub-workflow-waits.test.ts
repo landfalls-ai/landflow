@@ -4,7 +4,9 @@
  * whatever order they finish in; children finishing at the same moment resume it once; a failed child fails the parent
  * (and cancels the open ones) or, with continue on error, becomes an error item; stopping the parent (waiting, mid-way
  * or by its timeout) cancels the children it waits for; and a restart while children wait, children that finished
- * while nobody listened, and a run continued after a crash in the middle of the step.
+ * while nobody listened, and a run continued after a crash in the middle of the step. Children run several at once
+ * (the node's concurrency), outputs past the inline cap are read back from the children's executions on resume (or fail
+ * the node when one is gone), and the link that keeps a waiting child's files in its parent's scope survives a restart.
  *
  * Queue mode (children and the parent resumed on different workers) is in cluster-runtime.test.ts.
  */
@@ -31,7 +33,8 @@ const { closeDatabase } = await import('@/lib/server/db');
 const { singleton } = await import('@/lib/server/singleton');
 const { logger } = await import('@/lib/server/telemetry');
 const { runWorkflow, resumeExecution, cancelExecution, cancelWaitingExecution, recoverExecutions } = await import('@/lib/server/runner');
-const { settleChildren, reconcileWaitingParents } = await import('@/lib/server/sub-executions');
+const { settleChildren, reconcileWaitingParents, EACH_INLINE_MAX_BYTES } = await import('@/lib/server/sub-executions');
+const { scopeFor, shareBinaryScope, startBinaryMaintenance } = await import('@/lib/server/binary/access');
 type EachWait = import('@/lib/server/sub-executions').EachWait;
 
 // ---------------------------------------------------------------------------
@@ -52,6 +55,12 @@ registry.registerBuiltin(
         execute(ctx) {
           if (ctx.getInputData().some((item) => item.json.fail)) throw new Error('child broke');
           return [ctx.getInputData()];
+        },
+      }),
+      defineNode({
+        description: { name: 'pad', displayName: 'Pad', description: 'Answers "done <n>" with `pad` bytes of filler', version: 1, kind: 'action', inputs: main, outputs: main, properties: [] },
+        execute(ctx) {
+          return [ctx.getInputData().map((item) => ({ json: { answer: `done ${item.json.n}`, filler: 'x'.repeat(Number(item.json.pad ?? 0)) } }))];
         },
       }),
       defineNode({
@@ -125,6 +134,24 @@ kid('wf_kid');
 // Its successful runs aren't kept: what a finished child returns only exists in memory.
 kid('wf_kid_unsaved', { settings: { saveSuccessfulExecutions: false } });
 
+/** A child with a big answer: waits `hours`, then answers "done <n>" with `pad` bytes of filler. */
+const bigKid = (id: string, extra: Partial<Workflow> = {}) =>
+  save(
+    id,
+    [
+      { name: 'Called', type: 'core.workflowTrigger', parameters: { inputSource: 'passthrough' } },
+      { name: 'Wait', type: 'core.wait', typeVersion: 2, parameters: { resume: 'timeInterval', amount: '{{ $json.hours }}', unit: 'hours' } },
+      { name: 'Pad', type: 'subwaits.pad' },
+    ],
+    [
+      ['Called', 'Wait'],
+      ['Wait', 'Pad'],
+    ],
+    extra,
+  );
+bigKid('wf_kid_big');
+bigKid('wf_kid_big_unsaved', { settings: { saveSuccessfulExecutions: false } });
+
 /** Start → Execute Workflow (wf_kid, once per item, waiting for it) → After. */
 const caller = (id: string, parameters: Record<string, unknown> = {}, extra: Partial<Workflow> = {}, run: Record<string, unknown> = {}) =>
   save(
@@ -158,11 +185,14 @@ function finishUnheard(id: string, answer: string) {
   store.patchExecution(id, { status: 'success', finishedAt: startedAt, runData: { Result: [run] }, executionOrder: ['Result'], wait: undefined, resumeState: undefined });
 }
 
+const sharedScopes = singleton('binary-shared-scopes', () => new Map<string, string>());
+
 /** The host restarts: what it held in memory is gone, the database is opened again, the wait timers are re-armed. */
 async function restart() {
   waits.stop();
   live.clear();
   finishedChildren.clear();
+  sharedScopes.clear();
   await closeDatabase();
   waits.start(0);
 }
@@ -330,15 +360,18 @@ describe('waiting children in "each item" mode', () => {
     expect(stored(waiting.executionId)?.status).toBe('canceled');
     await until(() => expect(kids.map((id) => stored(id)?.status)).toEqual(['success', 'canceled', 'canceled']));
 
-    // Stopped while the second child runs: the first one, already waiting, is canceled with it.
+    // Stopped while the second child runs: the first one, already waiting, is canceled with it (the third, started at
+    // the same time, had finished).
     gate.closed = true;
     let parentId = '';
     const run = trigger(caller('wf_each_stop_midway'), [{ n: 1, hours: 2 }, { n: 2, hours: 0, hold: true }, { n: 3, hours: 0 }], { onStart: (id) => (parentId = id) });
     await until(() => expect(gate.held).toHaveLength(1));
+    // All three started (the live record lists them; the stored one is from the run's start).
+    await until(() => expect(kidsOf((live.get(parentId) as { record: ExecutionRecord } | undefined)?.record)).toHaveLength(3));
     expect(cancelExecution(parentId)).toBe(true);
     expect((await run).status).toBe('canceled');
     const started = kidsOf(stored(parentId));
-    await until(() => expect(started.map((id) => stored(id)?.status)).toEqual(['canceled', 'canceled']));
+    await until(() => expect(started.map((id) => stored(id)?.status)).toEqual(['canceled', 'canceled', 'success']));
 
     // The parent's timeout (the time it waits doesn't count, the time it runs its children does).
     const timed = trigger(caller('wf_each_stop_timeout', {}, { settings: { timeoutSeconds: 1 } }), [{ n: 1, hours: 2 }, { n: 2, hours: 0, hold: true }]);
@@ -355,6 +388,110 @@ describe('waiting children in "each item" mode', () => {
   });
 });
 
+describe('several children at once', () => {
+  it('runs up to the node’s concurrency at a time, and keeps the output in item order whatever order they finish in', async () => {
+    gate.closed = true;
+    const items = Array.from({ length: 6 }, (_, i) => ({ n: i + 1, hours: 0, hold: true }));
+    const run = trigger(caller('wf_each_parallel'), items);
+    // Four at once (the default), the others wait for a free lane.
+    await until(() => expect(gate.held).toHaveLength(4));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(gate.held).toHaveLength(4);
+    // The last ones finish first.
+    for (const release of gate.held.splice(0).reverse()) release();
+    await until(() => expect(gate.held).toHaveLength(2));
+    for (const release of gate.held.splice(0).reverse()) release();
+    const parent = await run;
+    expect(parent.status).toBe('success');
+    expect(outputOf(parent, 'After')).toEqual(items.map((item) => ({ answer: `done ${item.n}` })));
+    expect(pairedOf(parent, 'Run')).toEqual(items.map((_, i) => ({ item: i })));
+  });
+
+  it('runs one after another with a concurrency of 1, and mixes waiting children in', async () => {
+    gate.closed = true;
+    let parentId = '';
+    const run = trigger(caller('wf_each_serial', { options: { concurrency: 1 } }), [{ n: 1, hours: 0, hold: true }, { n: 2, hours: 2 }, { n: 3, hours: 0, hold: true }], { onStart: (id) => (parentId = id) });
+    await until(() => expect(gate.held).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(gate.held).toHaveLength(1);
+    expect(store.waitingExecutions().filter((e) => e.parentExecutionId === parentId)).toHaveLength(0);
+    gate.held.splice(0)[0]();
+    await until(() => expect(gate.held).toHaveLength(1));
+    expect(store.waitingExecutions().filter((e) => e.parentExecutionId === parentId)).toHaveLength(1);
+    gate.held.splice(0)[0]();
+    const parent = await run;
+    expect(parent.status).toBe('waiting');
+    expect(waitData(parentId).children.map((c) => c.status)).toEqual(['success', undefined, 'success']);
+    await resume(waitData(parentId).children[1].executionId);
+    await until(() => expect(stored(parentId)?.status).toBe('success'));
+    expect(outputOf(stored(parentId), 'After')).toEqual([{ answer: 'done 1' }, { answer: 'done 2' }, { answer: 'done 3' }]);
+  });
+
+  it('stops the children still running when one fails', async () => {
+    gate.closed = true;
+    let parentId = '';
+    const run = trigger(caller('wf_each_parallel_fail'), [{ n: 1, hours: 0, hold: true }, { n: 2, hours: 0, fail: true }, { n: 3, hours: 2 }], { onStart: (id) => (parentId = id) });
+    const parent = await run;
+    expect(parent.status).toBe('error');
+    expect(parent.error?.message).toContain('Sub-workflow failed: child broke');
+    const kids = kidsOf(stored(parentId));
+    expect(kids).toHaveLength(3);
+    await until(() => expect(kids.map((id) => stored(id)?.status)).toEqual(['canceled', 'error', 'canceled']));
+  });
+});
+
+describe('big outputs', () => {
+  const pad = 100 * 1024;
+  const bigCaller = (id: string, workflowId = 'wf_kid_big') => caller(id, { workflowId });
+  const items = [
+    { n: 1, hours: 0, pad },
+    { n: 2, hours: 0, pad },
+    { n: 3, hours: 0, pad },
+    { n: 4, hours: 2, pad },
+  ];
+
+  it('keeps outputs inline up to the cap and reads the rest from the children’s executions when the parent resumes', async () => {
+    expect(EACH_INLINE_MAX_BYTES).toBe(256 * 1024);
+    const parent = await trigger(bigCaller('wf_each_big'), items);
+    expect(parent.status).toBe('waiting');
+    const children = waitData(parent.executionId).children;
+    expect(children.map((c) => [c.status, Boolean(c.output), Boolean(c.stored)])).toEqual([
+      ['success', true, false],
+      ['success', true, false],
+      ['success', false, true],
+      [undefined, false, false],
+    ]);
+    expect(JSON.stringify(stored(parent.executionId)?.wait).length).toBeLessThan(EACH_INLINE_MAX_BYTES);
+
+    await resume(children[3].executionId);
+    await until(() => expect(stored(parent.executionId)?.status).toBe('success'));
+    const done = stored(parent.executionId)!;
+    expect(outputOf(done, 'After')?.map((json) => [json.answer, String(json.filler).length])).toEqual(items.map((item) => [`done ${item.n}`, pad]));
+    expect(pairedOf(done, 'Run')).toEqual([{ item: 0 }, { item: 1 }, { item: 2 }, { item: 3 }]);
+  });
+
+  it('fails the node, naming the child, when a stored output’s execution was deleted before the parent resumed', async () => {
+    const parent = await trigger(bigCaller('wf_each_big_gone'), items);
+    const children = waitData(parent.executionId).children;
+    expect(children[2].stored).toBe(true);
+    store.deleteExecution(children[2].executionId);
+    await resume(children[3].executionId);
+    await until(() => expect(stored(parent.executionId)?.status).toBe('error'));
+    expect(stored(parent.executionId)?.error?.message).toBe(
+      `Sub-execution ${children[2].executionId} (item 2) no longer exists, so its output can’t be read: it was deleted before this run resumed`,
+    );
+  });
+
+  it('keeps the output of a child whose execution isn’t saved inline, whatever its size', async () => {
+    const parent = await trigger(bigCaller('wf_each_big_unsaved', 'wf_kid_big_unsaved'), items);
+    const children = waitData(parent.executionId).children;
+    expect(children.slice(0, 3).map((c) => [c.status, Boolean(c.output), Boolean(c.stored)])).toEqual(Array(3).fill(['success', true, false]));
+    await resume(children[3].executionId);
+    await until(() => expect(stored(parent.executionId)?.status).toBe('success'));
+    expect(outputOf(stored(parent.executionId), 'After')).toHaveLength(4);
+  });
+});
+
 describe('restarts', () => {
   it('survives a restart while children wait, and resumes once the last one finishes after it', async () => {
     const parent = await trigger(caller('wf_each_restart'), [
@@ -363,7 +500,11 @@ describe('restarts', () => {
       { n: 3, hours: 2 },
     ]);
     const kids = kidsOf(parent);
+    // The waiting children write their files into the parent's scope, after a restart too.
+    expect(scopeFor(kids[0])).toBe(parent.executionId);
     await restart();
+    expect(scopeFor(kids[0])).toBe(parent.executionId);
+    expect(scopeFor(kids[2])).toBe(parent.executionId);
     expect(stored(parent.executionId)?.status).toBe('waiting');
     // The children's timers are back; the parent has none.
     expect(waits.pending()).toEqual(expect.arrayContaining([kids[0], kids[2]]));
@@ -403,6 +544,26 @@ describe('restarts', () => {
     await restart();
     await until(() => expect(stored(stuck.executionId)?.status).toBe('success'));
     expect(outputOf(stored(stuck.executionId), 'After')).toEqual([{ answer: 'recorded' }]);
+  });
+
+  it('keeps a sub-execution’s binary scope link in the database until the sharing ends or an execution goes', async () => {
+    shareBinaryScope('ex_link_child', 'ex_link_parent');
+    shareBinaryScope('ex_link_grandchild', 'ex_link_child');
+    await restart();
+    expect(scopeFor('ex_link_child')).toBe('ex_link_parent');
+    // A grandchild writes where its parent writes: the top run's scope.
+    expect(scopeFor('ex_link_grandchild')).toBe('ex_link_parent');
+    shareBinaryScope('ex_link_child', undefined);
+    await restart();
+    expect(scopeFor('ex_link_child')).toBe('ex_link_child');
+    // Deleting an execution deletes its files and the links into its scope (bootstrap wires that up).
+    startBinaryMaintenance();
+    shareBinaryScope('ex_link_other', 'ex_link_top');
+    store.deleteExecution('ex_link_top');
+    await until(async () => {
+      await restart();
+      expect(scopeFor('ex_link_other')).toBe('ex_link_other');
+    });
   });
 
   it('cancels the children left waiting by a step that runs again after a crash', async () => {

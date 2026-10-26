@@ -4,6 +4,10 @@
  * survive watch errors (backoff, 410 → re-list) and missed events (resync), stay in their namespaces, and read their
  * ports from annotations or named ports. The registry part runs for real against SDK plugin servers: discovered
  * endpoints carry their origin and must prove LANDFLOW_REGISTRY_SECRET when it is set (docs/protocol.md §13).
+ *
+ * Spreading over pods: the ready pods' addresses from the EndpointSlices (by port name, IPv6 too) go to the registry,
+ * which sends each call to the pod with the fewest calls in flight while the manifest is pulled once, through the
+ * Service; unready pods leave, new ones join. LANDFLOW_K8S_NAMESPACES=* lists and watches every namespace at once.
  */
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -15,7 +19,9 @@ import type { EndpointOrigin, PluginStatus } from '@/lib/shared/types';
 vi.setConfig({ testTimeout: 20_000 });
 Object.assign(process.env, { LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false' });
 
-const { KubernetesDiscovery, parseNamespaces, registryTarget, serviceEndpoints } = await import('@/lib/server/plugins/kubernetes');
+const { KubernetesDiscovery, parseNamespaces, podEndpoints, registryTarget, serviceEndpoints } = await import('@/lib/server/plugins/kubernetes');
+const { PooledPluginClient } = await import('@/lib/server/plugins/clients');
+type PluginClient = import('@/lib/server/plugins/clients').PluginClient;
 type KubeApi = import('@/lib/server/plugins/kubernetes').KubeApi;
 type KubeKind = import('@/lib/server/plugins/kubernetes').KubeKind;
 type KubeObject = import('@/lib/server/plugins/kubernetes').KubeObject;
@@ -58,7 +64,9 @@ class FakeKube implements KubeApi {
       this.listFailures--;
       throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
     }
-    return { resourceVersion: String(this.rv), items: structuredClone([...this.bucket(kind, namespace).values()]) };
+    // `*`: every namespace's objects of that kind (a cluster-wide list).
+    const items = namespace === '*' ? [...this.store.entries()].filter(([key]) => key.startsWith(`${kind}/`)).flatMap(([, bucket]) => [...bucket.values()]) : [...this.bucket(kind, namespace).values()];
+    return { resourceVersion: String(this.rv), items: structuredClone(items) };
   }
 
   watch(kind: KubeKind, namespace: string, _selector: string, resourceVersion: string, onEvent: (event: { type: string; object: KubeObject }) => void, signal: AbortSignal) {
@@ -91,14 +99,15 @@ class FakeKube implements KubeApi {
     const type = bucket.has(name) ? 'MODIFIED' : 'ADDED';
     object.metadata!.resourceVersion = String(++this.rv);
     bucket.set(name, object);
-    if (!silent) this.current(kind, namespace)?.emit(type, object);
+    if (!silent) for (const watch of [this.current(kind, namespace), this.current(kind, '*')]) watch?.emit(type, object);
   }
 
   delete(kind: KubeKind, namespace: string, name: string, silent = false) {
     const bucket = this.bucket(kind, namespace);
     const object = bucket.get(name);
     bucket.delete(name);
-    if (object && !silent) this.current(kind, namespace)?.emit('DELETED', { ...object, metadata: { ...object.metadata, resourceVersion: String(++this.rv) } });
+    const deleted = object && { ...object, metadata: { ...object.metadata, resourceVersion: String(++this.rv) } };
+    if (deleted && !silent) for (const watch of [this.current(kind, namespace), this.current(kind, '*')]) watch?.emit('DELETED', deleted);
   }
 }
 
@@ -124,6 +133,13 @@ class FakeTarget implements DiscoveryTarget {
   status(endpoint: string) {
     return this.endpoints.get(endpoint)?.status;
   }
+  /** The pods each endpoint's calls go to, as discovery last set them. */
+  readonly pods = new Map<string, string[]>();
+  backends(endpoint: string, pods: string[]) {
+    this.calls.push(`backends ${endpoint} ${pods.length}`);
+    if (pods.length) this.pods.set(endpoint, pods);
+    else this.pods.delete(endpoint);
+  }
 }
 
 const service = (name: string, namespace: string, extra: { ports?: Array<{ name?: string; port: number; appProtocol?: string }>; annotations?: Record<string, string>; clusterIP?: string } = {}): KubeObject => ({
@@ -131,16 +147,17 @@ const service = (name: string, namespace: string, extra: { ports?: Array<{ name?
   spec: { clusterIP: extra.clusterIP ?? '10.96.0.7', ports: extra.ports ?? [{ name: 'grpc', port: 7203 }, { name: 'http', port: 7103 }] },
 });
 
-/** An EndpointSlice of `serviceName` with one endpoint per entry of `ready` (pod uids `<pod>-<i>`). */
+/** An EndpointSlice of `serviceName` with one endpoint per entry of `ready` (pod uids `<pod>-<i>`, addresses 10.1.0.<i + 1>). */
 const slice = (serviceName: string, namespace: string, ready: boolean[], pod = 'pod'): KubeObject => ({
   metadata: { name: `${serviceName}-x1`, namespace, labels: { 'kubernetes.io/service-name': serviceName, 'landflow.dev/plugin': 'true' } },
+  ports: [{ name: 'grpc', port: 7203 }, { name: 'http', port: 7103 }],
   endpoints: ready.map((r, i) => ({ addresses: [`10.1.0.${i + 1}`], conditions: { ready: r }, targetRef: { uid: `${pod}-${i}` } })),
 });
 
 const grpcOf = (name: string, namespace: string, port = 7203) => `grpc://${name}.${namespace}.svc.cluster.local:${port}`;
 
 const running: Array<InstanceType<typeof KubernetesDiscovery>> = [];
-function discover(namespaces: string[], extra: { kube?: FakeKube; target?: FakeTarget; sleeps?: number[] } = {}) {
+function discover(namespaces: string[], extra: { kube?: FakeKube; target?: FakeTarget; sleeps?: number[]; spread?: 'pods' | 'service' } = {}) {
   const kube = extra.kube ?? new FakeKube();
   const target = extra.target ?? new FakeTarget();
   const sleeps = extra.sleeps ?? [];
@@ -149,6 +166,7 @@ function discover(namespaces: string[], extra: { kube?: FakeKube; target?: FakeT
     api: kube,
     namespaces,
     target,
+    ...(extra.spread && { spread: extra.spread }),
     debounceMs: 0,
     resyncMs: 0,
     backoff: { initialMs: 10, maxMs: 40, jitter: false },
@@ -212,6 +230,21 @@ describe('serviceEndpoints', () => {
     expect(parseNamespaces(undefined, 'landflow')).toEqual(['landflow']);
     expect(parseNamespaces(' ', 'landflow')).toEqual(['landflow']);
     expect(parseNamespaces('a, b,a,,c', 'landflow')).toEqual(['a', 'b', 'c']);
+    // `*` is every namespace, whatever else is listed.
+    expect(parseNamespaces('*', 'landflow')).toEqual(['*']);
+    expect(parseNamespaces('a,*', 'landflow')).toEqual(['*']);
+  });
+
+  it('finds the ready pods of a Service port in its slices: by port name, unnamed, several slices, IPv6', () => {
+    const slices: KubeObject[] = [
+      { ports: [{ name: 'grpc', port: 7201 }, { name: 'http', port: 7101 }], endpoints: [{ addresses: ['10.1.0.2'], conditions: { ready: true } }, { addresses: ['10.1.0.1'], conditions: { ready: null } }, { addresses: ['10.1.0.3'], conditions: { ready: false } }] },
+      { ports: [{ name: 'grpc', port: 7201 }], endpoints: [{ addresses: ['fd00::5'], conditions: { ready: true } }, { addresses: [] }] },
+    ];
+    expect(podEndpoints({ scheme: 'grpc', portName: 'grpc' }, slices)).toEqual(['grpc://10.1.0.1:7201', 'grpc://10.1.0.2:7201', 'grpc://[fd00::5]:7201']);
+    expect(podEndpoints({ scheme: 'http', portName: 'http' }, slices)).toEqual(['http://10.1.0.1:7101', 'http://10.1.0.2:7101']);
+    // A Service with one unnamed port: its slices name the port ''.
+    expect(podEndpoints({ scheme: 'grpc', portName: '' }, [{ ports: [{ name: '', port: 9000 }], endpoints: [{ addresses: ['10.2.0.1'] }] }])).toEqual(['grpc://10.2.0.1:9000']);
+    expect(podEndpoints({ scheme: 'grpc', portName: 'other' }, slices)).toEqual([]);
   });
 });
 
@@ -407,6 +440,181 @@ describe('KubernetesDiscovery', () => {
   });
 });
 
+describe('spreading over pods and every namespace', () => {
+  it('hands the ready pods of each endpoint to the registry, and follows scale-ups, unready pods and scale-downs', async () => {
+    const kube = new FakeKube();
+    kube.put('services', 'lf', service('go-crypto', 'lf', { annotations: { 'landflow.dev/http-port': 'http' } }));
+    kube.put('endpointslices', 'lf', slice('go-crypto', 'lf', [true]));
+    const { target, discovery } = discover(['lf'], { kube });
+    const grpc = grpcOf('go-crypto', 'lf');
+    const http = 'http://go-crypto.lf.svc.cluster.local:7103';
+    await vi.waitFor(() => expect(target.status(grpc)).toBe('online'));
+    expect(target.pods.get(grpc)).toEqual(['grpc://10.1.0.1:7203']);
+    expect(target.pods.get(http)).toEqual(['http://10.1.0.1:7103']);
+    await watching(kube, ['lf']);
+
+    // Scaled to 3, one not ready yet: two pods take calls; the manifest is pulled again once per endpoint (not per pod).
+    const adds = target.endpoints.get(grpc)!.adds;
+    kube.put('endpointslices', 'lf', slice('go-crypto', 'lf', [true, true, false]));
+    await vi.waitFor(() => expect(target.pods.get(grpc)).toEqual(['grpc://10.1.0.1:7203', 'grpc://10.1.0.2:7203']));
+    await vi.waitFor(() => expect(target.endpoints.get(grpc)!.adds).toBe(adds + 1));
+    // The third turns ready.
+    kube.put('endpointslices', 'lf', slice('go-crypto', 'lf', [true, true, true]));
+    await vi.waitFor(() => expect(target.pods.get(grpc)).toHaveLength(3));
+    // One turns unready: it stops getting calls.
+    kube.put('endpointslices', 'lf', slice('go-crypto', 'lf', [false, true, true]));
+    await vi.waitFor(() => expect(target.pods.get(grpc)).toEqual(['grpc://10.1.0.2:7203', 'grpc://10.1.0.3:7203']));
+    expect(discovery.snapshot()).toMatchObject([{ service: 'lf/go-crypto', pods: { [grpc]: ['grpc://10.1.0.2:7203', 'grpc://10.1.0.3:7203'], [http]: ['http://10.1.0.2:7103', 'http://10.1.0.3:7103'] } }]);
+    // None ready: calls go nowhere but the Service (offline anyway).
+    kube.put('endpointslices', 'lf', slice('go-crypto', 'lf', [false, false, false]));
+    await vi.waitFor(() => expect(target.status(grpc)).toBe('offline'));
+    expect(target.pods.has(grpc)).toBe(false);
+    // The Service goes: so do its pods.
+    kube.put('endpointslices', 'lf', slice('go-crypto', 'lf', [true]));
+    await vi.waitFor(() => expect(target.pods.get(grpc)).toEqual(['grpc://10.1.0.1:7203']));
+    kube.delete('services', 'lf', 'go-crypto');
+    await vi.waitFor(() => expect(target.endpoints.size).toBe(0));
+    expect(target.pods.size).toBe(0);
+  });
+
+  it('leaves calls on the Service with spread `service`', async () => {
+    const kube = new FakeKube();
+    kube.put('services', 'lf', service('go-crypto', 'lf'));
+    kube.put('endpointslices', 'lf', slice('go-crypto', 'lf', [true, true]));
+    const { target } = discover(['lf'], { kube, spread: 'service' });
+    await vi.waitFor(() => expect(target.status(grpcOf('go-crypto', 'lf'))).toBe('online'));
+    expect(target.pods.size).toBe(0);
+  });
+
+  it('with `*`, lists and watches every namespace at once and keeps namespaces apart', async () => {
+    const kube = new FakeKube();
+    for (const namespace of ['team-a', 'team-b']) {
+      kube.put('services', namespace, service('go-crypto', namespace));
+      kube.put('endpointslices', namespace, slice('go-crypto', namespace, [true]));
+    }
+    const { target } = discover(['*'], { kube });
+    await vi.waitFor(() => expect(target.endpoints.size).toBe(2));
+    expect(target.endpoints.get(grpcOf('go-crypto', 'team-a'))!.origin).toEqual({ namespace: 'team-a', service: 'go-crypto' });
+    expect(target.endpoints.get(grpcOf('go-crypto', 'team-b'))!.origin).toEqual({ namespace: 'team-b', service: 'go-crypto' });
+    // One cluster-wide list per kind, no per-namespace ones.
+    expect(kube.lists.map((l) => `${l.kind}/${l.namespace}`).sort()).toEqual(['endpointslices/*', 'services/*']);
+    await watching(kube, ['*']);
+
+    // A namespace created later: its plugin shows up through the cluster-wide watch.
+    kube.put('services', 'team-c', service('text-toolkit', 'team-c'));
+    kube.put('endpointslices', 'team-c', slice('text-toolkit', 'team-c', [true]));
+    await vi.waitFor(() => expect(target.status(grpcOf('text-toolkit', 'team-c'))).toBe('online'));
+    // A slice in team-b does not make team-a's Service unready.
+    kube.put('endpointslices', 'team-b', slice('go-crypto', 'team-b', []));
+    await vi.waitFor(() => expect(target.status(grpcOf('go-crypto', 'team-b'))).toBe('offline'));
+    expect(target.status(grpcOf('go-crypto', 'team-a'))).toBe('online');
+    // An object without a namespace on a cluster-wide watch is ignored.
+    kube.current('services', '*')!.emit('ADDED', { metadata: { name: 'nameless', labels: { 'landflow.dev/plugin': 'true' } }, spec: { ports: [{ name: 'grpc', port: 1 }] } });
+    // Deleting the namespace's Service removes its plugin.
+    kube.delete('services', 'team-c', 'text-toolkit');
+    await vi.waitFor(() => expect(target.status(grpcOf('text-toolkit', 'team-c'))).toBeUndefined());
+    expect([...target.endpoints.keys()].some((e) => e.includes('nameless'))).toBe(false);
+
+    // A re-list (resync) replaces every namespace's objects at once.
+    kube.delete('services', 'team-b', 'go-crypto', true);
+    running.at(-1)!.resync();
+    await vi.waitFor(() => expect(target.status(grpcOf('go-crypto', 'team-b'))).toBeUndefined());
+    expect(target.status(grpcOf('go-crypto', 'team-a'))).toBe('online');
+  });
+});
+
+describe('PooledPluginClient', () => {
+  /** A fake client whose execute waits until released. */
+  function fakeClient(endpoint: string, log: string[]) {
+    const waiting: Array<() => void> = [];
+    let closed = false;
+    const client: PluginClient & { release(): void; get closed(): boolean } = {
+      endpoint,
+      transport: 'grpc',
+      manifest: async () => {
+        log.push(`manifest ${endpoint}`);
+        return { plugin: { id: 'p' } } as never;
+      },
+      manifestWithProof: async () => ({ manifest: { plugin: { id: 'p' } } as never, proof: 'x' }),
+      execute: async () => {
+        log.push(`execute ${endpoint}`);
+        await new Promise<void>((resolve) => waiting.push(resolve));
+        return { outputs: [] } as never;
+      },
+      loadOptions: async () => (log.push(`options ${endpoint}`), []),
+      testCredentials: async () => (log.push(`test ${endpoint}`), { ok: true }),
+      webhookMethod: async () => (log.push(`webhookMethod ${endpoint}`), { ok: true } as never),
+      receiveWebhook: async () => (log.push(`webhook ${endpoint}`), {} as never),
+      health: async () => (log.push(`health ${endpoint}`), {} as never),
+      close: () => {
+        closed = true;
+        log.push(`close ${endpoint}`);
+      },
+      release: () => waiting.shift()?.(),
+      get closed() {
+        return closed;
+      },
+    };
+    return client;
+  }
+
+  it('sends each call to the pod with the fewest in flight (round robin among equals); manifest and health go to the Service', async () => {
+    const log: string[] = [];
+    const clients = new Map<string, ReturnType<typeof fakeClient>>();
+    const create = (endpoint: string) => {
+      const client = fakeClient(endpoint, log);
+      clients.set(endpoint, client);
+      return client;
+    };
+    const service = fakeClient('grpc://svc:7201', log);
+    const pool = new PooledPluginClient(service, ['grpc://a:7201', 'grpc://b:7201'], create);
+    pool.pluginId = 'p';
+    expect(clients.get('grpc://a:7201')!.pluginId).toBe('p');
+
+    const calls = [pool.execute({} as never), pool.execute({} as never), pool.execute({} as never)];
+    await Promise.resolve();
+    // a, b, then a again (both had one in flight: round robin).
+    expect(log.filter((l) => l.startsWith('execute'))).toEqual(['execute grpc://a:7201', 'execute grpc://b:7201', 'execute grpc://a:7201']);
+    expect(pool.stats()).toEqual([
+      { endpoint: 'grpc://a:7201', inflight: 2, calls: 2 },
+      { endpoint: 'grpc://b:7201', inflight: 1, calls: 1 },
+    ]);
+    // b has fewer in flight: the next call goes there.
+    void pool.execute({} as never);
+    await Promise.resolve();
+    expect(log.filter((l) => l.startsWith('execute')).at(-1)).toBe('execute grpc://b:7201');
+    await pool.manifest();
+    await pool.manifestWithProof('c');
+    await pool.health();
+    await pool.loadOptions({} as never);
+    expect(log).toEqual(expect.arrayContaining(['manifest grpc://svc:7201', 'health grpc://svc:7201']));
+    expect(log.some((l) => l.startsWith('options grpc://svc'))).toBe(false);
+
+    // A pod leaves while two of its calls run: its client closes once they finish; a new pod joins.
+    pool.setBackends(['grpc://b:7201', 'grpc://c:7201']);
+    expect(clients.get('grpc://a:7201')!.closed).toBe(false);
+    clients.get('grpc://a:7201')!.release();
+    clients.get('grpc://a:7201')!.release();
+    await Promise.all(calls.filter((_, i) => i !== 1));
+    expect(clients.get('grpc://a:7201')!.closed).toBe(true);
+    void pool.execute({} as never);
+    await Promise.resolve();
+    expect(log.filter((l) => l.startsWith('execute')).at(-1)).toBe('execute grpc://c:7201');
+
+    // A re-pulled manifest swaps the Service client and keeps the pods.
+    const next = fakeClient('grpc://svc:7201', log);
+    pool.replacePrimary(next);
+    expect(service.closed).toBe(true);
+    expect(pool.stats().map((s) => s.endpoint)).toEqual(['grpc://b:7201', 'grpc://c:7201']);
+    // No pods: calls go through the Service.
+    pool.setBackends([]);
+    await pool.testCredentials({} as never);
+    expect(log.at(-1)).toBe('test grpc://svc:7201');
+    pool.close();
+    expect(next.closed).toBe(true);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The registry side, for real: origin, offline/remove, and the registry secret
 // ---------------------------------------------------------------------------
@@ -507,5 +715,67 @@ describe('discovered endpoints in the registry', () => {
     await target.add(wrong.url, origin);
     expect(registry.list().find((p) => p.id === 'k8s-wrong')?.status).toBe('online');
     for (const id of ['k8s-proven', 'k8s-grpc', 'k8s-silent', 'k8s-wrong']) registry.remove(id);
+  });
+
+  it('spreads executions over the pods it was given, pulls the manifest once through the Service, and follows pod changes', async () => {
+    // Three servers of one plugin: the Service and two pods. Each counts what it serves.
+    const hits = new Map<string, string[]>();
+    const counted = async (name: string) => {
+      const handle = createFetchHandler(pluginNamed('k8s-pods'));
+      const server = createServer(async (req, res) => {
+        hits.set(name, [...(hits.get(name) ?? []), req.url ?? '']);
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const headers = new Headers(Object.entries(req.headers).flatMap(([k, v]) => (typeof v === 'string' ? [[k, v] as [string, string]] : [])));
+        const response = await handle(new Request(`http://plugin${req.url}`, { method: req.method, headers, ...(chunks.length && { body: Buffer.concat(chunks) }) }));
+        res.writeHead(response.status, Object.fromEntries(response.headers));
+        res.end(Buffer.from(await response.arrayBuffer()));
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      servers.push(server);
+      return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    };
+    const serviceUrl = await counted('service');
+    const podA = await counted('a');
+    const podB = await counted('b');
+    const target = registryTarget();
+    target.backends!(serviceUrl, [podA, podB]);
+    await target.add(serviceUrl, { namespace: 'landflow-dev', service: 'k8s-pods' });
+
+    const resolveType = (registry as unknown as { resolveType(type: string): { execute(request: object): Promise<{ outputs: Array<Array<{ json: object }>> }> } }).resolveType.bind(registry);
+    const run = (n: number) =>
+      resolveType('k8s-pods.echo').execute({
+        protocol: 'landflow.plugin/v1', executionId: `e${n}`, mode: 'manual', node: { id: 'n', name: 'Echo', type: 'k8s-pods.echo', typeVersion: 1 }, parameters: {}, itemParameters: [{}], inputs: [[{ json: { n } }]],
+      });
+    const results = await Promise.all([1, 2, 3, 4, 5, 6].map(run));
+    expect(results.map((r) => r.outputs[0]![0]!.json)).toEqual([1, 2, 3, 4, 5, 6].map((n) => ({ n, echoed: true })));
+    const executes = (name: string) => (hits.get(name) ?? []).filter((url) => url.includes('execute')).length;
+    expect(executes('a')).toBe(3);
+    expect(executes('b')).toBe(3);
+    expect(executes('service')).toBe(0);
+    // The manifest came from the Service only.
+    expect((hits.get('service') ?? []).filter((url) => url.includes('manifest'))).toHaveLength(1);
+    expect((hits.get('a') ?? []).some((url) => url.includes('manifest'))).toBe(false);
+    expect(registry.endpointBackends(serviceUrl)).toEqual([
+      { endpoint: podA, inflight: 0, calls: 3 },
+      { endpoint: podB, inflight: 0, calls: 3 },
+    ]);
+
+    // Pod a goes, pod c comes; a refresh (manifest re-pull) keeps the pods.
+    const podC = await counted('c');
+    target.backends!(serviceUrl, [podB, podC]);
+    await registry.refresh('k8s-pods');
+    await Promise.all([7, 8].map(run));
+    expect(executes('a')).toBe(3);
+    expect(executes('b') + executes('c')).toBe(5);
+    expect(executes('c')).toBeGreaterThanOrEqual(1);
+    expect((hits.get('service') ?? []).filter((url) => url.includes('manifest'))).toHaveLength(2);
+
+    // No pods: through the Service.
+    target.backends!(serviceUrl, []);
+    await run(9);
+    expect(executes('service')).toBe(1);
+    target.remove(serviceUrl);
+    expect(registry.endpointBackends(serviceUrl)).toEqual([]);
   });
 });

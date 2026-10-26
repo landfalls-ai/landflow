@@ -625,6 +625,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
               runData={record.runData}
               activeNodeIds={live ? activeIds : undefined}
               pausedNodeId={live ? record.paused?.nodeId : undefined}
+              wait={record.status === 'waiting' ? record.wait : undefined}
               running={live}
               selectedNodeId={selection?.nodeId}
               onNodeClick={selectNode}

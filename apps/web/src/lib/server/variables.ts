@@ -5,134 +5,19 @@
  * older versions used; tests use it too). The runner reads them fresh for every
  * run; the Code node and agent node tools see the same values. Read-only inside
  * workflows.
+ *
+ * Projects have variables too (./projects/variables.ts): a workflow's `$vars` is
+ * its project's variables over the instance's (`variables.forWorkflow`), each
+ * with its value for this environment where it has one.
  */
-import { readFileSync } from 'node:fs';
-import type { Variable } from '../shared/platform';
 import { database, type Database } from './db';
 import { variableRow } from './db/rows';
-import { atomicWrite } from './store';
 import { environmentValues } from './environments/variables';
+import { projectVariables } from './projects/variables';
+import { homeProjectId } from './projects/store';
+import { VariableStore, type StoredVariable, type VariableChange } from './variable-store';
 
-export type { Variable };
-
-/** n8n's rule: a letter or underscore, then letters, digits and underscores. */
-export const VARIABLE_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
-export const MAX_KEY_LENGTH = 64;
-export const MAX_VALUE_LENGTH = 10_000;
-export const MAX_VARIABLES = 500;
-
-interface StoredVariable extends Variable {
-  createdAt: string;
-  updatedAt: string;
-}
-
-export class VariableError extends Error {
-  constructor(
-    message: string,
-    readonly status = 400,
-  ) {
-    super(message);
-  }
-}
-
-function checkKey(key: string) {
-  if (!key) throw new VariableError('Enter a key');
-  if (key.length > MAX_KEY_LENGTH) throw new VariableError(`Keys are at most ${MAX_KEY_LENGTH} characters`);
-  if (!VARIABLE_KEY.test(key)) throw new VariableError('Keys start with a letter or "_" and contain only letters, digits and "_"');
-}
-
-function checkValue(value: unknown): string {
-  if (typeof value !== 'string') throw new VariableError('Values are strings');
-  if (value.length > MAX_VALUE_LENGTH) throw new VariableError(`Values are at most ${MAX_VALUE_LENGTH.toLocaleString('en-US')} characters`);
-  return value;
-}
-
-/** What changed in a write: the variable saved (under its new key) and the key that went away (a delete or a rename). */
-interface VariableChange {
-  saved?: StoredVariable;
-  removed?: string;
-}
-
-/** The variable rules over a storage that is read on every call (a JSON file or the database). */
-export abstract class VariableStore {
-  protected abstract read(): StoredVariable[];
-  protected abstract write(list: StoredVariable[], change: VariableChange): void;
-
-  /** `[{ key, value }]`, sorted by key. */
-  list(): Variable[] {
-    return this.read()
-      .map(({ key, value }) => ({ key, value }))
-      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  }
-
-  /** `{ NAME: value }`, what `$vars` sees. */
-  record(): Record<string, string> {
-    return Object.fromEntries(this.read().map((v) => [v.key, v.value]));
-  }
-
-  get(key: string): Variable | undefined {
-    const found = this.read().find((v) => v.key === key);
-    return found && { key: found.key, value: found.value };
-  }
-
-  create(input: { key: string; value: unknown }): Variable {
-    const key = input.key.trim();
-    checkKey(key);
-    const value = checkValue(input.value);
-    const list = this.read();
-    if (list.some((v) => v.key === key)) throw new VariableError(`A variable named ${key} already exists`, 409);
-    if (list.length >= MAX_VARIABLES) throw new VariableError(`At most ${MAX_VARIABLES} variables`);
-    const now = new Date().toISOString();
-    const saved = { key, value, createdAt: now, updatedAt: now };
-    list.push(saved);
-    this.write(list, { saved });
-    return { key, value };
-  }
-
-  /** Change the value and/or rename the key. */
-  update(key: string, patch: { key?: string; value?: unknown }): Variable {
-    const list = this.read();
-    const index = list.findIndex((v) => v.key === key);
-    if (index < 0) throw new VariableError(`Variable ${key} not found`, 404);
-    const nextKey = patch.key === undefined ? key : patch.key.trim();
-    if (nextKey !== key) {
-      checkKey(nextKey);
-      if (list.some((v) => v.key === nextKey)) throw new VariableError(`A variable named ${nextKey} already exists`, 409);
-    }
-    const value = patch.value === undefined ? list[index].value : checkValue(patch.value);
-    list[index] = { ...list[index], key: nextKey, value, updatedAt: new Date().toISOString() };
-    this.write(list, { saved: list[index], ...(nextKey !== key && { removed: key }) });
-    return { key: nextKey, value };
-  }
-
-  delete(key: string): boolean {
-    const list = this.read();
-    const next = list.filter((v) => v.key !== key);
-    if (next.length === list.length) return false;
-    this.write(next, { removed: key });
-    return true;
-  }
-}
-
-/** Variables backed by one JSON file. */
-export class VariableFile extends VariableStore {
-  constructor(readonly path: string) {
-    super();
-  }
-
-  protected read(): StoredVariable[] {
-    try {
-      const saved = JSON.parse(readFileSync(this.path, 'utf8')) as { variables?: StoredVariable[] };
-      return (saved.variables ?? []).filter((v) => typeof v?.key === 'string' && typeof v.value === 'string');
-    } catch {
-      return [];
-    }
-  }
-
-  protected write(list: StoredVariable[]) {
-    atomicWrite(this.path, { version: 1, variables: list.sort((a, b) => a.key.localeCompare(b.key)) });
-  }
-}
+export { MAX_KEY_LENGTH, MAX_VALUE_LENGTH, MAX_VARIABLES, VARIABLE_KEY, VariableError, VariableFile, VariableStore, type Variable } from './variable-store';
 
 /** Variables in the database's `variables` table: the instance's. */
 export class VariableTable extends VariableStore {
@@ -161,8 +46,25 @@ const table = new VariableTable();
 export const variables = {
   file: (): VariableStore => table,
   list: () => variables.file().list(),
-  /** What `$vars` sees: with LANDFLOW_ENVIRONMENT, a variable's value for this environment where it has one (lib/server/environments). */
+  /** The instance's `$vars`: with LANDFLOW_ENVIRONMENT, a variable's value for this environment where it has one (lib/server/environments). */
   record: () => environmentValues.overlay(variables.file().record()),
+  /** What `$vars` sees in a project's workflows and agents: the project's variables first, then the instance's. */
+  forProject: (projectId: string | undefined): Record<string, string> => {
+    const instance = variables.record();
+    if (!projectId) return instance;
+    try {
+      return { ...instance, ...projectVariables.record(projectId) };
+    } catch {
+      // No project variables table yet (an old database mid-upgrade): the instance's.
+      return instance;
+    }
+  },
+  /** `$vars` of a run of `workflowId` (`agent:<id>` for an agent's tools: the agent's project). */
+  forWorkflow: (workflowId: string | undefined): Record<string, string> => {
+    if (!workflowId) return variables.record();
+    const project = workflowId.startsWith('agent:') ? homeProjectId('agent', workflowId.slice('agent:'.length)) : homeProjectId('workflow', workflowId);
+    return variables.forProject(project);
+  },
   get: (key: string) => variables.file().get(key),
   create: (input: { key: string; value: unknown }) => variables.file().create(input),
   update: (key: string, patch: { key?: string; value?: unknown }) => {

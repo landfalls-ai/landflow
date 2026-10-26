@@ -105,7 +105,7 @@ function NodesCard({ view, admin, save }: { view: GovernanceView; admin: boolean
     <Card className="space-y-3 p-4">
       <div>
         <div className="text-[13px] font-semibold text-t1">Nodes</div>
-        <p className="text-[12px] text-t3">Node types workflows and agents may use. Blocked nodes are hidden from the node picker, flagged on import and save, refused at publish and fail at run time.</p>
+        <p className="text-[12px] text-t3">Node types workflows and agents may use. Blocked nodes are hidden from the node picker, flagged on import and save, refused at publish and fail at run time. A project (its Settings tab) and a workflow (its settings) can narrow this further.</p>
       </div>
       <ModePicker value={mode} onChange={setMode} modes={LIST_MODES} disabled={!admin} />
       {mode !== 'off' && (
@@ -393,8 +393,8 @@ export function GovernanceSettings() {
           mode={view.policy.http.mode}
           items={view.policy.http.hosts}
           modes={LIST_MODES}
-          placeholder={'api.example.com\n*.internal.example.com\n10.0.0.0/8'}
-          itemsHint="One per line: a host name (* matches anything), host:port, or an IPv4 CIDR range."
+          placeholder={'api.example.com\n*.internal.example.com\n10.0.0.0/8\n2001:db8::/32'}
+          itemsHint="One per line: a host name (* matches anything), host:port, an IPv4 or IPv6 address, or a CIDR range (10.0.0.0/8, fd00::/8; [::1]:8080 with a port)."
           admin={admin}
           onSave={(mode, hosts) => save({ http: { mode, hosts } })}
         />

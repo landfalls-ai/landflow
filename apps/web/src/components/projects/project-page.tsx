@@ -1,24 +1,31 @@
 'use client';
 /**
  * /projects/<id>: what a project owns and what is shared with it, by kind (workflows, credentials, data tables,
- * agents), creating things in it, and its settings (name, members and roles, delete). Each item's menu has Share and
- * "Move to project" when the viewer may (lib/shared/projects.ts `resourceCan`).
+ * agents), creating things in it, its variables, its audit log (project admins) and its settings (name, members and
+ * roles, the nodes its workflows may use, who approves its publish requests, delete). Each item's menu has Share and
+ * "Move to project" when the viewer may (lib/shared/projects.ts `resourceCan`). Its folders are on /workflows?project=<id>.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, Bot, KeyRound, MoreHorizontal, Plus, Share2, Table2, Trash2, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
+import { ArrowRightLeft, Bot, FolderOpen, KeyRound, LayoutTemplate, MoreHorizontal, Plus, Share2, Table2, Trash2, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
+import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { timeAgo } from '@/lib/client/format';
 import type { UserView } from '@/lib/shared/auth';
 import { PROJECT_ROLES, projectRoleCan, resourceCan, type ProjectDetail, type ProjectRole, type ResourceKind, type ResourceOwnership } from '@/lib/shared/projects';
+import { EMPTY_NODE_POLICY, PROJECT_APPROVER_LABELS, type ProjectApprovers, type ProjectSettingsView, type ScopedNodePolicy } from '@/lib/shared/project-policy';
+import { ScopedNodeList } from '@/components/governance/scoped-node-list';
+import { VariablesSettings } from '@/components/settings/variables-settings';
 import { useViewer } from '@/components/auth/viewer';
 import { CredentialDialog, CredentialTypeIcon } from '@/components/credentials/credential-dialog';
 import { useCredentials } from '@/components/credentials/use-credentials';
 import { CreateTableDialog } from '@/components/data-tables/create-table-dialog';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
+import { AuditLog } from '@/components/settings/audit-settings';
+import { ProtectedGate } from '@/components/shell/protected-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -26,14 +33,18 @@ import { FieldLabel, Input, Select, Textarea } from '@/components/ui/inputs';
 import { MenuItem, Popover } from '@/components/ui/popover';
 import { DeleteProjectDialog, describeCounts } from './project-dialogs';
 import { MoveToProjectDialog, RESOURCE_PATH, ShareDialog } from './share-dialog';
+import { rememberProject } from './current-project';
 import { projectLabel, useProjectStore } from './use-projects';
 
-type Tab = 'workflows' | 'credentials' | 'dataTables' | 'agents' | 'settings';
+type Tab = 'workflows' | 'credentials' | 'dataTables' | 'agents' | 'variables' | 'audit' | 'settings';
 const TABS: Array<{ id: Tab; label: string; kind?: ResourceKind }> = [
   { id: 'workflows', label: 'Workflows', kind: 'workflow' },
   { id: 'credentials', label: 'Credentials', kind: 'credential' },
   { id: 'dataTables', label: 'Data tables', kind: 'dataTable' },
   { id: 'agents', label: 'Agents', kind: 'agent' },
+  { id: 'variables', label: 'Variables' },
+  // Project admins (and owners and admins) read the project's audit events.
+  { id: 'audit', label: 'Audit log' },
   { id: 'settings', label: 'Settings' },
 ];
 const ROLE_HINT: Record<ProjectRole, string> = {
@@ -70,6 +81,9 @@ export function ProjectPage({ projectId }: { projectId: string }) {
   useEffect(() => {
     void loadProject();
   }, [loadProject]);
+  useEffect(() => {
+    if (project) rememberProject(project.id);
+  }, [project]);
 
   const setTab = (next: Tab) => router.replace(`/projects/${encodeURIComponent(projectId)}${next === 'workflows' ? '' : `?tab=${next}`}`);
   const role = project?.role;
@@ -101,7 +115,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
       <PageBody className="max-w-[980px]">
         {project?.description && <p className="mb-4 text-[13px] text-t2">{project.description}</p>}
         <div role="tablist" className="mb-4 flex w-fit items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-          {TABS.map((t) => (
+          {TABS.filter((t) => t.id !== 'audit' || projectRoleCan.manage(role)).map((t) => (
             <button
               key={t.id}
               role="tab"
@@ -114,7 +128,9 @@ export function ProjectPage({ projectId }: { projectId: string }) {
             </button>
           ))}
         </div>
-        {project && tab !== 'settings' && <ResourceList key={tab} project={project} kind={TABS.find((t) => t.id === tab)!.kind!} onChanged={() => void loadProject()} />}
+        {project && tab === 'audit' && projectRoleCan.manage(role) && <AuditLog projectId={project.id} />}
+        {project && tab === 'variables' && <VariablesSettings projectId={project.id} />}
+        {project && TABS.find((t) => t.id === tab)?.kind && <ResourceList key={tab} project={project} kind={TABS.find((t) => t.id === tab)!.kind!} onChanged={() => void loadProject()} />}
         {project && tab === 'settings' && <ProjectSettings project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />}
       </PageBody>
     </>
@@ -138,6 +154,8 @@ function ResourceList({ project, kind, onChanged }: { project: ProjectDetail; ki
   const [dialog, setDialog] = useState<{ kind: 'share' | 'move'; item: Item } | { kind: 'credential'; id?: string } | { kind: 'table' }>();
   const [creating, setCreating] = useState(false);
   const canCreate = projectRoleCan.create(project.role);
+  // A protected environment: no new workflows here (the API refuses them).
+  const readOnly = useWorkflowsReadOnly();
 
   const load = useCallback(
     () =>
@@ -181,10 +199,24 @@ function ResourceList({ project, kind, onChanged }: { project: ProjectDetail; ki
     <>
       <div className="mb-3 flex items-center gap-2">
         <span className="text-[12px] text-t3">{items ? `${items.length} ${items.length === 1 ? noun : `${noun}s`}` : 'Loading…'}</span>
+        {kind === 'workflow' && (
+          <>
+            <Link href={`/workflows?project=${encodeURIComponent(project.id)}`} className="inline-flex items-center gap-1 text-[12px] text-ac hover:underline">
+              <FolderOpen className="size-3.5" /> Folders
+            </Link>
+            <Link href={`/templates?project=${encodeURIComponent(project.id)}`} className="inline-flex items-center gap-1 text-[12px] text-ac hover:underline">
+              <LayoutTemplate className="size-3.5" /> Templates
+            </Link>
+          </>
+        )}
         {canCreate && (
-          <Button variant="primary" size="sm" className="ml-auto" onClick={() => void create()} loading={creating}>
-            <Plus className="size-3.5" /> New {noun}
-          </Button>
+          <span className="ml-auto">
+            <ProtectedGate reason={kind === 'workflow' ? readOnly : undefined}>
+              <Button variant="primary" size="sm" onClick={() => void create()} loading={creating} disabled={kind === 'workflow' && Boolean(readOnly)}>
+                <Plus className="size-3.5" /> New {noun}
+              </Button>
+            </ProtectedGate>
+          </span>
         )}
       </div>
       {items && items.length === 0 ? (
@@ -332,10 +364,13 @@ function ProjectSettings({ project, onChanged }: { project: ProjectDetail; onCha
 
   if (!team) {
     return (
-      <Card>
-        <p className="text-[13px] text-t1">A personal project belongs to {project.ownerId === viewer?.id ? 'you' : project.name} and has no other members.</p>
-        <p className="mt-1 text-[12px] text-t3">To work with others, share workflows and credentials with them, or move them to a team project.</p>
-      </Card>
+      <div className="space-y-4">
+        <Card>
+          <p className="text-[13px] text-t1">A personal project belongs to {project.ownerId === viewer?.id ? 'you' : project.name} and has no other members.</p>
+          <p className="mt-1 text-[12px] text-t3">To work with others, share workflows and credentials with them, or move them to a team project.</p>
+        </Card>
+        <GovernanceCard project={project} />
+      </div>
     );
   }
 
@@ -446,6 +481,8 @@ function ProjectSettings({ project, onChanged }: { project: ProjectDetail; onCha
         )}
       </Card>
 
+      <GovernanceCard project={project} />
+
       {manage && (
         <Card className="flex items-center gap-3 border-rdbd">
           <span className="min-w-0 flex-1">
@@ -459,5 +496,89 @@ function ProjectSettings({ project, onChanged }: { project: ProjectDetail; onCha
       )}
       {deleting && <DeleteProjectDialog project={project} onClose={() => setDeleting(false)} onDeleted={() => router.push('/projects')} />}
     </div>
+  );
+}
+
+const APPROVER_HINT: Record<ProjectApprovers, string> = {
+  default: 'Whoever the instance’s four-eyes setting names approves.',
+  admins: 'Admins of this project approve its publish requests (and instance owners and admins).',
+  editors: 'Its admins and editors approve (and instance owners and admins).',
+  instance: 'Only instance owners and admins approve, not the project’s members.',
+};
+
+/**
+ * The project's governance (lib/server/governance/scopes.ts): an allow-list of the nodes its workflows may use, under
+ * the instance's rules, and who approves its publish requests when four-eyes publishing applies.
+ */
+function GovernanceCard({ project }: { project: ProjectDetail }) {
+  const [view, setView] = useState<ProjectSettingsView>();
+  const [nodes, setNodes] = useState<ScopedNodePolicy>(EMPTY_NODE_POLICY);
+  const [approvers, setApprovers] = useState<ProjectApprovers>('default');
+  const [saving, setSaving] = useState(false);
+  const [version, setVersion] = useState(0);
+  const base = `/api/projects/${encodeURIComponent(project.id)}/settings`;
+  const show = (next: ProjectSettingsView) => {
+    setView(next);
+    setNodes(next.settings.nodes);
+    setApprovers(next.settings.approvers);
+    setVersion((v) => v + 1);
+  };
+  useEffect(() => {
+    api<ProjectSettingsView>(base)
+      .then(show)
+      .catch((e: Error) => toast.error(e.message));
+  }, [base]);
+  if (!view) return <Card className="h-24 animate-pulse-soft">{null}</Card>;
+  const editable = view.canEdit;
+  const dirty = JSON.stringify({ nodes, approvers }) !== JSON.stringify({ nodes: view.settings.nodes, approvers: view.settings.approvers });
+  const save = async () => {
+    setSaving(true);
+    try {
+      show(await api<ProjectSettingsView>(base, { method: 'PATCH', json: { nodes, approvers } }));
+      toast.success('Project governance saved');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="space-y-4">
+      <div>
+        <div className="text-[13px] font-semibold text-t1">Allowed nodes</div>
+        <p className="text-[12px] text-t3">
+          The node types this project’s workflows and agents may use, on top of the instance’s rules (Settings → Governance). Nodes not on the list are hidden from the node picker, flagged when
+          saving, refused at publish and fail when a run reaches them.
+        </p>
+      </div>
+      <ScopedNodeList key={version} value={nodes} onChange={setNodes} catalog={view} disabled={!editable} offLabel="Everything the instance allows" allowLabel="Only these" />
+      {project.type === 'team' && (
+        <div>
+          <FieldLabel>Who approves publish requests</FieldLabel>
+          <div className="max-w-[360px]">
+            <Select value={approvers} onChange={(e) => setApprovers(e.target.value as ProjectApprovers)} disabled={!editable} aria-label="Who approves publish requests">
+              {(Object.keys(PROJECT_APPROVER_LABELS) as ProjectApprovers[]).map((id) => (
+                <option key={id} value={id}>
+                  {PROJECT_APPROVER_LABELS[id]}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <p className="mt-1 text-[12px] text-t3">{APPROVER_HINT[approvers]} Never the person who asked. Applies when four-eyes publishing is on for the instance or the workflow.</p>
+        </div>
+      )}
+      {!editable && <p className="text-[12px] text-t3">The project’s admins change these.</p>}
+      {editable && dirty && (
+        <div className="flex justify-end gap-2 border-t border-hair pt-3">
+          <Button size="sm" variant="ghost" onClick={() => show(view)}>
+            Discard
+          </Button>
+          <Button size="sm" variant="primary" onClick={() => void save()} loading={saving}>
+            Save
+          </Button>
+        </div>
+      )}
+    </Card>
   );
 }

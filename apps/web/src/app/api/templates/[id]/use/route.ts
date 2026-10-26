@@ -1,13 +1,16 @@
 /**
  * POST /api/templates/:id/use — create a workflow from a template: `{ name?, folderId?, credentials: { <slot id>:
  * <credential id> } }`. Credentials are checked against their slot's type, missing data tables are created, URL paths
- * made unique; the workflow is saved as an inactive draft in the caller's project (or `?projectId=`).
+ * made unique; the workflow is saved as an inactive draft in `?projectId=` (else the folder's project, else the
+ * caller's personal project), with its data tables: the project's table of a template's table name is reused,
+ * another project's never.
  */
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
+import { currentPrincipal } from '@/lib/server/auth/guard';
 import { error, handler, json, parseBody } from '@/lib/server/http';
-import { createInProject } from '@/lib/server/projects/http';
-import { TemplateError, useTemplate } from '@/lib/server/templates';
+import { createIn, targetProject } from '@/lib/server/projects/http';
+import { getTemplate, TemplateError, templateAccess, useTemplate } from '@/lib/server/templates';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,10 +26,15 @@ export const POST = handler(async (request: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
   const body = await parseBody(request, bodySchema);
   if (!body.ok) return body.response;
+  const viewer = currentPrincipal()?.user;
   try {
+    const template = await getTemplate(id, viewer);
+    if (!template || (viewer && !templateAccess(viewer, template).read)) return error('Template not found', 404);
+    const projectId = targetProject(request, body.data.folderId);
     const result = await useTemplate(id, body.data, {
-      createWorkflow: (save) => createInProject(request, 'workflow', save, (w: Workflow) => w.id),
-      createTable: (create) => createInProject(request, 'dataTable', create, (t) => t.id),
+      projectId,
+      createWorkflow: (save, workflowId) => createIn(projectId, 'workflow', save, (w: Workflow) => w.id, workflowId),
+      createTable: (create) => createIn(projectId, 'dataTable', create, (t) => t.id),
     });
     return json(result, 201);
   } catch (caught) {

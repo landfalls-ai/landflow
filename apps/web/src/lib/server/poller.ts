@@ -13,6 +13,7 @@ import type { PollStatus } from '../shared/types';
 import { resolveWorkflowCredentials } from './projects/credentials';
 import { registry } from './plugins/registry';
 import { productionWorkflow, productionWorkflows } from './publish';
+import { parameterSecrets, rememberResolvedParameters } from './secrets/resolve';
 import { newExecutionId, runWorkflow } from './runner';
 import { singleton } from './singleton';
 import { store, type PollRecord } from './store';
@@ -44,16 +45,21 @@ function isPollTrigger(resolved: ResolvedNodeType | { error: string }): resolved
  * `executionId` is the id the run gets if the poll finds items: files the trigger stores (an email's attachments) land
  * in that execution's binary scope and are deleted with it.
  */
-function buildRequest(workflow: Workflow, node: WorkflowNode, resolved: ResolvedNodeType, state: JsonObject | undefined, executionId: string): ExecuteRequest {
+async function buildRequest(workflow: Workflow, node: WorkflowNode, resolved: ResolvedNodeType, state: JsonObject | undefined, executionId: string): Promise<ExecuteRequest> {
   const skip = new Set(resolved.descriptor.properties.filter((p) => p.noDataExpression || p.type === 'code').map((p) => p.name));
+  // $secrets in the trigger's parameters, when Settings → External secrets allows it.
+  const secrets = await parameterSecrets(node.parameters, skip);
   const resolver = new ExpressionResolver({
     items: [],
     nodeOutputs: {},
     workflow: { id: workflow.id, name: workflow.name },
     execution: { id: executionId, mode: 'poll' },
     parameters: node.parameters,
-    variables: variables.record(),
+    variables: variables.forWorkflow(workflow.id),
+    ...(secrets && { secrets }),
   });
+  const parameters = resolver.resolveParameters(node.parameters, 0, skip) as JsonObject;
+  if (secrets) rememberResolvedParameters(node.parameters, parameters, skip);
   const data = resolveWorkflowCredentials(workflow.id, node, resolved.descriptor);
   return {
     protocol: PROTOCOL_VERSION,
@@ -61,7 +67,7 @@ function buildRequest(workflow: Workflow, node: WorkflowNode, resolved: Resolved
     workflowId: workflow.id,
     mode: 'poll',
     node: { id: node.id, name: node.name, type: node.type, typeVersion: node.typeVersion },
-    parameters: resolver.resolveParameters(node.parameters, 0, skip) as JsonObject,
+    parameters,
     itemParameters: [],
     inputs: [],
     ...(Object.keys(data).length > 0 && { credentials: data }),
@@ -92,7 +98,7 @@ export const poller = singleton('poller', () => {
       // trigger.poll {type} is the root of each poll; a run it starts gets its own trace, linked to it.
       await tracePoll({ workflowId: workflow.id, nodeName: node.name, nodeType: node.type, first: baseline }, async () => {
         const executionId = newExecutionId();
-        const response = await resolved.execute(buildRequest(workflow, node, resolved, record.state, executionId), { signal: AbortSignal.timeout(POLL_TIMEOUT_MS) });
+        const response = await resolved.execute(await buildRequest(workflow, node, resolved, record.state, executionId), { signal: AbortSignal.timeout(POLL_TIMEOUT_MS) });
         if (response.error) throw new Error(response.error.message);
         // The baseline poll never starts a run, even if the node returned items.
         const items = baseline ? [] : (response.outputs[0] ?? []);

@@ -2,12 +2,13 @@
  * Copy and paste of canvas selections. The clipboard carries Landflow JSON
  * (`{ kind: 'landflow/nodes', nodes, connections, stickyNotes, groups }`, nodes in
  * the engine's shape), so a selection can move between workflows and tabs. A
- * copied group brings its frame and every node in it. n8n's
+ * copied group brings its frame, every node in it and the groups nested in it. n8n's
  * clipboard JSON (`{ nodes, connections }` keyed by node name) is recognised
  * here and converted by the importer (POST /api/workflows/import).
  *
  * Everything in this module is pure, so paste renaming is unit-tested.
  */
+import { descendantGroupIds } from '@/lib/shared/groups';
 import type { NodeItem, StickyNote, Workflow, WorkflowConnection, WorkflowGroup, WorkflowNode } from '@/lib/shared/types';
 
 export const CLIPBOARD_KIND = 'landflow/nodes';
@@ -20,7 +21,7 @@ export interface ClipboardData {
   /** Only connections whose two ends were copied. */
   connections: WorkflowConnection[];
   stickyNotes: StickyNote[];
-  /** Copied canvas groups, their members limited to the copied nodes. */
+  /** Copied canvas groups, their members limited to the copied nodes, `parentId` to the copied groups. */
   groups?: WorkflowGroup[];
   /** Pinned output of copied nodes, by node id. */
   pinData?: Record<string, NodeItem[]>;
@@ -28,18 +29,21 @@ export interface ClipboardData {
 
 export type ParsedClipboard = { kind: 'landflow'; data: ClipboardData } | { kind: 'n8n'; data: unknown };
 
-/** The selected nodes, notes and groups of a workflow, with the connections between them. A group brings all its nodes. */
+/** The selected nodes, notes and groups of a workflow, with the connections between them. A group brings all its nodes and nested groups. */
 export function serializeSelection(
   workflow: Pick<Workflow, 'nodes' | 'connections' | 'stickyNotes' | 'pinData' | 'groups'>,
   nodeIds: Set<string>,
   stickyIds: Set<string>,
   groupIds: Set<string> = new Set(),
 ): ClipboardData {
-  const picked = (workflow.groups ?? []).filter((g) => groupIds.has(g.id));
+  const all = workflow.groups ?? [];
+  const pickedIds = new Set([...groupIds].flatMap((id) => [id, ...descendantGroupIds(all, id)]));
+  const picked = all.filter((g) => pickedIds.has(g.id));
   const ids = new Set([...nodeIds, ...picked.flatMap((g) => g.nodeIds)]);
   const nodes = workflow.nodes.filter((n) => ids.has(n.id));
   const pinData = Object.fromEntries(Object.entries(workflow.pinData ?? {}).filter(([id]) => ids.has(id)));
-  const groups = picked.map((g) => ({ ...structuredClone(g), nodeIds: g.nodeIds.filter((id) => ids.has(id)) }));
+  // A copied group whose parent stays behind is a top-level group on the clipboard.
+  const groups = picked.map(({ parentId, ...g }) => ({ ...structuredClone(g), nodeIds: g.nodeIds.filter((id) => ids.has(id)), ...(parentId && pickedIds.has(parentId) && { parentId }) }));
   return {
     kind: CLIPBOARD_KIND,
     version: 1,
@@ -181,12 +185,14 @@ export function preparePaste(data: ClipboardData, options: PasteOptions): PasteP
     .filter((c) => ids[c.source] && ids[c.target])
     .map((c) => ({ ...c, id: options.newId('edge'), source: ids[c.source], target: ids[c.target] }));
   const stickyNotes = data.stickyNotes.map((note) => ({ ...structuredClone(note), id: options.newId('sticky'), position: move(note.position) }));
-  // A node joins one pasted group at most (the first that lists it).
+  // A node joins one pasted group at most (the first that lists it); nested groups keep their parent when it came along.
   const grouped = new Set<string>();
-  const groups = (data.groups ?? []).map((group) => {
+  const groupIds: Record<string, string> = Object.fromEntries((data.groups ?? []).map((group) => [group.id, options.newId('group')]));
+  const groups = (data.groups ?? []).map(({ parentId, ...group }) => {
     const nodeIds = (group.nodeIds ?? []).flatMap((id) => (ids[id] && !grouped.has(ids[id]) ? [ids[id]] : []));
     nodeIds.forEach((id) => grouped.add(id));
-    return { ...structuredClone(group), id: options.newId('group'), nodeIds, position: move(group.position) };
+    const parent = parentId && parentId !== group.id ? groupIds[parentId] : undefined;
+    return { ...structuredClone(group), id: groupIds[group.id], nodeIds, position: move(group.position), ...(parent && { parentId: parent }) };
   });
   const pinData = Object.fromEntries(Object.entries(data.pinData ?? {}).flatMap(([id, items]) => (ids[id] ? [[ids[id], structuredClone(items)]] : [])));
   return { nodes, connections, stickyNotes, groups, pinData, renamed };

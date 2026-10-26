@@ -27,7 +27,7 @@ export const SCOPE_LABELS: Record<ApiKeyScope, string> = {
   run: 'Run workflows, retry and re-run executions',
   admin: 'Everything, including settings, credentials and plugins',
   scim: 'SCIM provisioning by an identity provider (Okta, Entra ID); nothing else',
-  'audit:read': 'Read and export the audit log (the key’s user must be an owner or admin)',
+  'audit:read': 'Read and export the audit log (owners and admins: every event; project admins: their projects’ events)',
 };
 
 /** Whether `scopes` grant `needed` (`admin` grants everything). */
@@ -207,6 +207,26 @@ export interface SamlSecurityView {
   projectMap: Record<string, string>;
   /** Users are created on their first sign-in. */
   jit: boolean;
+  /** Encrypted assertions: our decryption certificate (lib/server/auth/saml-keys.ts). */
+  encryption?: SamlEncryptionView;
+  error?: string;
+}
+
+/** Settings → Security → SAML: the SP's decryption key (never shown) and certificate, for encrypted assertions. */
+export interface SamlEncryptionView {
+  configured: boolean;
+  /** Generated here, uploaded, or LANDFLOW_SAML_DECRYPTION_KEY / _CERT (then Settings can't change it). */
+  source?: 'generated' | 'uploaded' | 'env';
+  fromEnv: boolean;
+  /** Responses whose assertion isn't encrypted are refused. */
+  required: boolean;
+  subject?: string;
+  validTo?: string;
+  /** SHA-256, colon-separated hex. */
+  fingerprint?: string;
+  /** PEM, to give the IdP (it is also in our metadata). */
+  certificate?: string;
+  createdAt?: string;
   error?: string;
 }
 

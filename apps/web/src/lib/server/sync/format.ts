@@ -6,8 +6,12 @@
  *   landflow-sync.json                         manifest: { "format": "landflow-sync/v1" }
  *   variables.json                             { "variables": [{ "key": "API_BASE" }] }; `value` (and `environments`, the values per
  *                                              environment, `{ "production": "…" }`) only when exported with values
- *   credentials.json                           { "credentials": [{ "name", "type" }] }: what the workflows reference, never data
+ *   credentials.json                           { "credentials": [{ "name", "type" }] }: what the workflows reference; a promotion
+ *                                              adds the definition (`data`: non-secret fields and `$secrets` references,
+ *                                              `secretFields`: the secret fields, whose values never travel)
  *   data-tables/<slug>.schema.json             { "id", "name", "columns": [{ "name", "type" }] }: the schema, no rows
+ *   data-tables/<slug>.rows.json               { "id", "name", "rows": [{ <column>: value }] }: a table's rows, written only by
+ *                                              promotion for tables opted in (Settings → Environments); a pull replaces the rows
  *   workflows/<slug>.workflow.json             a top-level workflow
  *   workflows/<folder>/.folder.json            { "id", "name" } of a folder: one directory per folder, nested
  *   workflows/<folder>/<slug>.workflow.json    a workflow in that folder
@@ -30,6 +34,7 @@ export const WORKFLOWS_DIR = 'workflows';
 export const FOLDER_FILE = '.folder.json';
 export const WORKFLOW_SUFFIX = '.workflow.json';
 export const TABLE_SUFFIX = '.schema.json';
+export const ROWS_SUFFIX = '.rows.json';
 
 /** One file of a sync directory: a `/`-separated path relative to the directory, and its text. */
 export interface SyncFile {
@@ -59,8 +64,8 @@ export interface SyncState {
   credentials: SyncCredential[];
 }
 
-/** Entity keys: `workflow:<id>`, `folder:<id>`, `variable:<key>`, `dataTable:<id>`. */
-export type EntityKind = 'workflow' | 'folder' | 'variable' | 'dataTable';
+/** Entity keys: `workflow:<id>`, `folder:<id>`, `variable:<key>`, `dataTable:<id>` (`credential` and `tableRows` changes have no hash). */
+export type EntityKind = 'workflow' | 'folder' | 'variable' | 'dataTable' | 'credential' | 'tableRows';
 export const entityKey = (kind: EntityKind, id: string) => `${kind}:${id}`;
 
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -69,7 +74,7 @@ export const sha256 = (text: string) => createHash('sha256').update(text).digest
 export function isManagedPath(path: string): boolean {
   if (path === MANIFEST_FILE || path === VARIABLES_FILE || path === CREDENTIALS_FILE) return true;
   const parts = path.split('/');
-  if (parts[0] === DATA_TABLES_DIR) return parts.length === 2 && path.endsWith(TABLE_SUFFIX);
+  if (parts[0] === DATA_TABLES_DIR) return parts.length === 2 && (path.endsWith(TABLE_SUFFIX) || path.endsWith(ROWS_SUFFIX));
   if (parts[0] === WORKFLOWS_DIR) return parts.length >= 2 && (path.endsWith(WORKFLOW_SUFFIX) || parts.at(-1) === FOLDER_FILE);
   return false;
 }
@@ -376,16 +381,39 @@ export interface DesiredTable {
   columns: Array<{ name: string; type: string }>;
 }
 
+/** A credential of credentials.json; `data` and `secretFields` when a promotion wrote its definition. */
+export interface DesiredCredential {
+  name: string;
+  type: string;
+  /** Non-secret fields, and secret fields that hold a `$secrets` reference. */
+  data?: Record<string, unknown>;
+  /** The type's secret fields (their values never travel). */
+  secretFields?: string[];
+}
+
+/** A `.rows.json` file: the rows a promotion copied for a table (by its id, else its name). */
+export interface DesiredRows {
+  path: string;
+  id?: string;
+  name?: string;
+  rows: Array<Record<string, unknown>>;
+}
+
 export interface DesiredState {
   folders: DesiredFolder[];
   workflows: DesiredWorkflow[];
   /** Undefined when variables.json is missing: variables are left alone. */
   variables?: Array<{ key: string; value?: string; environments?: Record<string, string> }>;
   dataTables: DesiredTable[];
-  /** credentials.json, for warnings only: push never creates credentials. */
-  credentials: Array<{ name: string; type: string }>;
+  /** Rows of opted-in tables (promotion). */
+  tableRows: DesiredRows[];
+  /** credentials.json: warnings for those the instance lacks, and (with a promoted definition) the ones a pull creates. */
+  credentials: DesiredCredential[];
   errors: string[];
 }
+
+/** A rows file's path for a schema file's (`data-tables/x.schema.json` → `data-tables/x.rows.json`). */
+export const rowsPathFor = (schemaPath: string) => `${schemaPath.slice(0, -TABLE_SUFFIX.length)}${ROWS_SUFFIX}`;
 
 function parseJson(file: SyncFile, errors: string[]): unknown {
   try {
@@ -401,7 +429,7 @@ const dirOf = (path: string) => path.slice(0, path.lastIndexOf('/'));
 /** Read a sync directory's managed files. Problems are collected in `errors`; other files are ignored. */
 export function parseFiles(input: SyncFile[]): DesiredState {
   const errors: string[] = [];
-  const state: DesiredState = { folders: [], workflows: [], dataTables: [], credentials: [], errors };
+  const state: DesiredState = { folders: [], workflows: [], dataTables: [], tableRows: [], credentials: [], errors };
   const files = input.filter((f) => isSafePath(f.path) && isManagedPath(f.path)).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const seen = new Set<string>();
 
@@ -457,7 +485,29 @@ export function parseFiles(input: SyncFile[]): DesiredState {
     if (file.path === CREDENTIALS_FILE) {
       const doc = parseJson(file, errors);
       const list = isObject(doc) && Array.isArray(doc.credentials) ? doc.credentials : [];
-      state.credentials = list.filter((c): c is { name: string; type: string } => isObject(c) && typeof c.name === 'string' && typeof c.type === 'string');
+      state.credentials = list
+        .filter((c): c is { name: string; type: string } & Record<string, unknown> => isObject(c) && typeof c.name === 'string' && typeof c.type === 'string')
+        .map((c, i) => {
+          const data = c.data !== undefined && isObject(c.data) ? c.data : undefined;
+          if (c.data !== undefined && !data) errors.push(`${file.path}: credentials[${i}].data is an object of fields`);
+          const secretFields = Array.isArray(c.secretFields) ? c.secretFields.filter((f): f is string => typeof f === 'string') : undefined;
+          return { name: c.name, type: c.type, ...(data && { data }), ...(secretFields && { secretFields }) };
+        });
+      continue;
+    }
+    if (file.path.startsWith(`${DATA_TABLES_DIR}/`) && file.path.endsWith(ROWS_SUFFIX)) {
+      const doc = parseJson(file, errors);
+      if (doc === undefined) continue;
+      if (!isObject(doc) || !Array.isArray(doc.rows) || doc.rows.some((row) => !isObject(row))) {
+        errors.push(`${file.path}: expected { "id", "name", "rows": [{ <column>: value }] }`);
+        continue;
+      }
+      state.tableRows.push({
+        path: file.path,
+        ...(typeof doc.id === 'string' && doc.id && { id: doc.id }),
+        ...(typeof doc.name === 'string' && { name: doc.name }),
+        rows: doc.rows as Array<Record<string, unknown>>,
+      });
       continue;
     }
     if (file.path.startsWith(`${DATA_TABLES_DIR}/`)) {

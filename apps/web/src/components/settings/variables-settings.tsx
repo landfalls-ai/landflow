@@ -1,19 +1,30 @@
 'use client';
 /**
- * Settings → Variables: create, edit, rename and delete the instance's
- * variables, which expressions read as `{{ $vars.KEY }}`.
+ * Settings → Variables: create, edit, rename and delete the instance's variables, which expressions read as
+ * `{{ $vars.KEY }}`, or (the scope picker; a project's Variables tab) a project's: its workflows read those first, then
+ * the instance's. The instance's are changed by owners and admins, a project's by its editors and admins.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Braces, Check, Copy, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { Variable } from '@/lib/shared/platform';
+import { can } from '@/lib/shared/auth';
+import { useViewer } from '@/components/auth/viewer';
+import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Input } from '@/components/ui/inputs';
+import { Input, Select } from '@/components/ui/inputs';
 import { VariableEnvironments } from './variable-environments';
+
+/** GET /api/projects/<id>/variables */
+interface ProjectVariables {
+  variables: Variable[];
+  environments: Record<string, Record<string, string>>;
+  canEdit: boolean;
+}
 
 const KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -71,20 +82,43 @@ function Editor({ initial, existing, onSave, onCancel }: { initial?: Variable; e
   );
 }
 
-export function VariablesSettings() {
+/** `projectId`: a project's variables only (its Variables tab); else the instance's, with a picker for a project's. */
+export function VariablesSettings({ projectId }: { projectId?: string }) {
+  const viewer = useViewer();
+  const { projects } = useProjects();
+  const [scope, setScope] = useState(projectId ?? '');
   const [list, setList] = useState<Variable[]>();
+  const [envValues, setEnvValues] = useState<ProjectVariables['environments']>();
+  const [canEdit, setCanEdit] = useState(false);
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState<string | 'new' | null>(null);
   const [confirm, setConfirm] = useState<string>();
   const [query, setQuery] = useState('');
+  const base = scope ? `/api/projects/${encodeURIComponent(scope)}/variables` : '/api/variables';
+  const project = projects?.find((p) => p.id === scope);
 
-  const load = () =>
-    api<Variable[]>('/api/variables')
-      .then(setList)
-      .catch((e: Error) => setError(e.message));
+  const load = useCallback(async () => {
+    setError(undefined);
+    try {
+      if (scope) {
+        const result = await api<ProjectVariables>(`/api/projects/${encodeURIComponent(scope)}/variables`);
+        setList(result.variables);
+        setEnvValues(result.environments);
+        setCanEdit(result.canEdit);
+      } else {
+        setList(await api<Variable[]>('/api/variables'));
+        setEnvValues(undefined);
+        setCanEdit(can(viewer, 'variables:manage'));
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [scope, viewer]);
   useEffect(() => {
+    setList(undefined);
+    setEditing(null);
     void load();
-  }, []);
+  }, [load]);
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -93,7 +127,7 @@ export function VariablesSettings() {
 
   const create = async (variable: Variable) => {
     try {
-      await api('/api/variables', { method: 'POST', json: variable });
+      await api(base, { method: 'POST', json: variable });
       toast.success(`Added $vars.${variable.key}`);
       setEditing(null);
       await load();
@@ -103,7 +137,7 @@ export function VariablesSettings() {
   };
   const update = async (key: string, variable: Variable) => {
     try {
-      await api(`/api/variables/${encodeURIComponent(key)}`, { method: 'PATCH', json: variable });
+      await api(`${base}/${encodeURIComponent(key)}`, { method: 'PATCH', json: variable });
       toast.success(variable.key === key ? `Saved $vars.${key}` : `Renamed to $vars.${variable.key}`);
       setEditing(null);
       await load();
@@ -113,7 +147,7 @@ export function VariablesSettings() {
   };
   const remove = async (key: string) => {
     try {
-      await api(`/api/variables/${encodeURIComponent(key)}`, { method: 'DELETE' });
+      await api(`${base}/${encodeURIComponent(key)}`, { method: 'DELETE' });
       toast.success(`Deleted $vars.${key}`);
       setConfirm(undefined);
       await load();
@@ -130,10 +164,35 @@ export function VariablesSettings() {
 
   return (
     <div className="space-y-3">
+      {!projectId && (projects?.length ?? 0) > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="text-[12px] text-t3">Variables of</span>
+          <div className="w-64">
+            <Select className="h-8" value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Variables of">
+              <option value="">The whole instance</option>
+              {projects?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {projectLabel(p, viewer?.id)}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <p className="min-w-0 flex-1 text-[13px] text-t2">
-          Instance-wide values for expressions: <code className="rounded bg-acdim px-1.5 py-0.5 font-mono text-[12px] text-t1">{'{{ $vars.KEY }}'}</code>. Values are strings and read-only
-          in workflows; a run sees the values at the time it starts. Not encrypted: keep secrets in Credentials.
+          {scope ? (
+            <>
+              Values for the expressions of {project ? `the “${projectLabel(project, viewer?.id)}” project’s` : 'this project’s'} workflows:{' '}
+              <code className="rounded bg-acdim px-1.5 py-0.5 font-mono text-[12px] text-t1">{'{{ $vars.KEY }}'}</code> reads a project variable first, then the instance’s of the same key. Not
+              encrypted: keep secrets in Credentials.
+            </>
+          ) : (
+            <>
+              Instance-wide values for expressions: <code className="rounded bg-acdim px-1.5 py-0.5 font-mono text-[12px] text-t1">{'{{ $vars.KEY }}'}</code>. Values are strings and
+              read-only in workflows; a run sees the values at the time it starts; a project’s own variable of the same key wins in its workflows. Not encrypted: keep secrets in Credentials.
+            </>
+          )}
         </p>
         {(list?.length ?? 0) > 6 && (
           <div className="relative w-56">
@@ -141,9 +200,11 @@ export function VariablesSettings() {
             <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search variables" className="h-8 pl-8" />
           </div>
         )}
-        <Button variant="primary" size="sm" onClick={() => setEditing('new')} disabled={editing === 'new'}>
-          <Plus className="size-3.5" /> Add variable
-        </Button>
+        {canEdit && (
+          <Button variant="primary" size="sm" onClick={() => setEditing('new')} disabled={editing === 'new'}>
+            <Plus className="size-3.5" /> Add variable
+          </Button>
+        )}
       </div>
 
       {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
@@ -179,14 +240,16 @@ export function VariablesSettings() {
                     </Button>
                   </span>
                 ) : (
-                  <>
-                    <Button size="icon-sm" variant="ghost" onClick={() => setEditing(variable.key)} aria-label={`Edit ${variable.key}`} title="Edit">
-                      <Pencil className="size-3.5" />
-                    </Button>
-                    <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(variable.key)} aria-label={`Delete ${variable.key}`} title="Delete">
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </>
+                  canEdit && (
+                    <>
+                      <Button size="icon-sm" variant="ghost" onClick={() => setEditing(variable.key)} aria-label={`Edit ${variable.key}`} title="Edit">
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(variable.key)} aria-label={`Delete ${variable.key}`} title="Delete">
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </>
+                  )
                 )}
               </div>
             </div>
@@ -196,17 +259,23 @@ export function VariablesSettings() {
           <EmptyState
             className="py-8"
             title="No variables yet"
-            hint="Store a base URL, an environment name or a shared limit once and use it in any workflow as $vars.NAME."
+            hint={
+              scope
+                ? 'Give this project’s workflows their own value of a key (a base URL, a team name), or keys only they use.'
+                : 'Store a base URL, an environment name or a shared limit once and use it in any workflow as $vars.NAME.'
+            }
             action={
-              <Button variant="primary" onClick={() => setEditing('new')}>
-                <Braces className="size-3.5" /> Add your first variable
-              </Button>
+              canEdit && (
+                <Button variant="primary" onClick={() => setEditing('new')}>
+                  <Braces className="size-3.5" /> Add your first variable
+                </Button>
+              )
             }
           />
         )}
         {list && list.length > 0 && !shown.length && <EmptyState compact className="py-6" title="No variable matches" />}
       </Card>
-      <VariableEnvironments variables={list} />
+      <VariableEnvironments variables={list} base={base} values={envValues} canEdit={canEdit} />
     </div>
   );
 }

@@ -9,6 +9,11 @@
  * credentials it lacks, and leaves out pinned data, its id, folder, tags, publication state and instance-specific
  * settings. Data tables are referenced by name and created on use. A template whose nodes are missing on this
  * instance, or blocked by its governance policy, is listed with its problems and can't be used.
+ *
+ * Saved templates belong to a project (its members see and use them, its editors change them) or are instance-wide
+ * (everyone sees them; owners and admins publish and change them), like built-in ones. The library lists what the
+ * viewer sees, or with `projectId` that project's plus the instance-wide ones. A saved template can be edited in
+ * place: its name, description, categories and setup steps, its project, and its workflow, replaced from a workflow.
  */
 import { nanoid } from 'nanoid';
 import { isPropertyVisible, withPropertyDefaults, type NodeDescriptor } from '@landflow/protocol';
@@ -28,20 +33,24 @@ import {
 import { normalizeGroups } from '../../shared/groups';
 import type { Workflow, WorkflowNode } from '../../shared/types';
 import { credentials as vault } from '../credentials/vault';
+import { freeTableName, tableInProject } from '../datatables/projects';
 import { dataTables } from '../datatables/service';
 import { folders } from '../folders';
-import { workflowViolations } from '../governance/policy';
+import { scopeFor, workflowViolations } from '../governance/policy';
+import { isInstanceAdmin, projectRole, visibleProjectIds, type Actor } from '../projects/access';
+import { ensurePersonalProject, getProject, listProjects } from '../projects/store';
+import { projectRoleCan } from '../../shared/projects';
 import { normalizeWorkflow, validateWorkflow } from '../mcp/workflows';
 import { registry } from '../plugins/registry';
 import { workflowSchema } from '../schemas';
 import { store } from '../store';
 import { BUILTIN_TEMPLATES } from './builtin';
-import { getRemote, remoteBase, remoteLabel, REMOTE_PREFIX, searchRemote } from './remote';
-import { fileSchema, LIMITS, type SaveTemplateInput } from './schema';
+import { getRemote, remoteBase, remoteLabel, REMOTE_PAGE_SIZE, REMOTE_PREFIX, searchRemotePage } from './remote';
+import { fileSchema, LIMITS, type SaveTemplateInput, type UpdateTemplateInput } from './schema';
 import { localTemplates, type LocalTemplate } from './store';
 
 export { BUILTIN_TEMPLATES } from './builtin';
-export { saveTemplateSchema } from './schema';
+export { saveTemplateSchema, updateTemplateSchema } from './schema';
 
 /** A template request that can't be served: `status` is the HTTP status. */
 export class TemplateError extends Error {
@@ -65,8 +74,8 @@ const descriptorOf = (type: string): NodeDescriptor | undefined => registry.node
 /** A requirement name ("slackApi") as the qualified credential type ("messaging.slackApi"). */
 const qualified = (nodeType: string, key: string) => (key.includes('.') ? key : `${nodeType.slice(0, nodeType.indexOf('.'))}.${key}`);
 
-/** Missing node types and the governance policy's objections. */
-export function templateProblems(workflow: Pick<Workflow, 'nodes'>): TemplateProblem[] {
+/** Missing node types and the governance policy's objections (with `projectId`, that project's allowed nodes too). */
+export function templateProblems(workflow: Pick<Workflow, 'nodes'>, projectId?: string): TemplateProblem[] {
   const known = registry.nodeTypes();
   const types = new Set(known.map((t) => t.type));
   const problems: TemplateProblem[] = [];
@@ -80,7 +89,7 @@ export function templateProblems(workflow: Pick<Workflow, 'nodes'>): TemplatePro
       message: plugin ? `${plugin.pluginName} has no ${type.slice(pluginId.length + 1)} node on this instance` : `Needs the ${pluginId} plugin (${type})`,
     });
   }
-  for (const violation of workflowViolations(workflow)) {
+  for (const violation of workflowViolations(workflow, undefined, scopeFor(projectId ? { projectId } : undefined))) {
     if (!problems.some((p) => p.kind === 'blocked' && p.message === violation.message)) problems.push({ kind: 'blocked', nodeType: violation.nodeType, message: violation.message });
   }
   return problems;
@@ -147,8 +156,8 @@ export function slotCredentials(source: Pick<Workflow, 'nodes'>, declared: Templ
 
 // ---- the three sources ------------------------------------------------------------------------------------------
 
-function finish(detail: Omit<TemplateDetail, 'usable' | 'problems' | 'nodeTypes' | 'nodeCount'> & Partial<Pick<TemplateDetail, 'nodeTypes'>>): TemplateDetail {
-  const problems = templateProblems(detail.workflow);
+function finish(detail: Omit<TemplateDetail, 'usable' | 'problems' | 'nodeTypes' | 'nodeCount'> & Partial<Pick<TemplateDetail, 'nodeTypes'>>, scopeProject?: string): TemplateDetail {
+  const problems = templateProblems(detail.workflow, scopeProject ?? detail.projectId);
   return {
     ...detail,
     nodeTypes: nodeTypesOf(detail.workflow),
@@ -159,12 +168,30 @@ function finish(detail: Omit<TemplateDetail, 'usable' | 'problems' | 'nodeTypes'
   };
 }
 
-function localDetail(t: LocalTemplate): TemplateDetail {
-  return finish({ ...t, source: 'local', workflow: { ...t.workflow, id: '' } });
+/** Who may see and change a saved template (built-in and remote ones: everyone sees them, nobody changes them). */
+export function templateAccess(actor: Actor | undefined, template: Pick<TemplateSummary, 'source' | 'projectId'>): { read: boolean; edit: boolean } {
+  if (template.source !== 'local') return { read: true, edit: false };
+  if (!template.projectId) return { read: true, edit: isInstanceAdmin(actor) };
+  const role = projectRole(actor, template.projectId);
+  return { read: Boolean(role), edit: projectRoleCan.create(role) };
 }
 
-function builtinDetail(t: TemplateDetail): TemplateDetail {
-  return finish(structuredClone(t));
+function localDetail(t: LocalTemplate, viewer?: Actor, scopeProject?: string): TemplateDetail {
+  const project = t.projectId ? getProject(t.projectId) : undefined;
+  return finish(
+    {
+      ...t,
+      source: 'local',
+      workflow: { ...t.workflow, id: '' },
+      ...(project && { projectName: project.name }),
+      ...(viewer && { canEdit: templateAccess(viewer, { source: 'local', projectId: t.projectId }).edit }),
+    },
+    scopeProject,
+  );
+}
+
+function builtinDetail(t: TemplateDetail, scopeProject?: string): TemplateDetail {
+  return finish(structuredClone(t), scopeProject);
 }
 
 async function remoteDetail(id: string): Promise<TemplateDetail | undefined> {
@@ -178,8 +205,11 @@ const summaryOf = ({ workflow: _w, setup: _s, dataTables: _d, report: _r, ...sum
 
 export interface TemplateListing {
   templates: TemplateSummary[];
-  /** Remote templates: on when LANDFLOW_TEMPLATES_URL is set; `error` when the API couldn't be reached. */
-  remote: { enabled: boolean; label?: string; error?: string };
+  /**
+   * Remote templates: on when LANDFLOW_TEMPLATES_URL is set; `error` when the API couldn't be reached. With remote
+   * results, the page they are (from 1), how many there are in all (when the API says) and whether there are more.
+   */
+  remote: { enabled: boolean; label?: string; error?: string; page?: number; total?: number; hasMore?: boolean };
 }
 
 function matches(t: TemplateSummary, search: string, category?: string): boolean {
@@ -190,17 +220,36 @@ function matches(t: TemplateSummary, search: string, category?: string): boolean
   return words.every((w) => haystack.includes(w));
 }
 
-/** Every template matching `search` (name, description, node types) and `category`; remote ones only when asked for or searched. */
-export async function listTemplates(options: { search?: string; category?: string; source?: TemplateSource } = {}): Promise<TemplateListing> {
+/** The saved templates `viewer` sees: instance-wide ones and those of their projects (with `projectId`: that project's only). */
+function visibleLocal(viewer: Actor | undefined, projectId?: string): LocalTemplate[] {
+  const all = localTemplates.list();
+  if (projectId) return all.filter((t) => !t.projectId || t.projectId === projectId);
+  if (!viewer) return all;
+  const visible = visibleProjectIds(viewer);
+  // Templates of a project that no longer exists show to owners and admins only.
+  const known = new Set(listProjects().map((p) => p.id));
+  return all.filter((t) => !t.projectId || (visible ? visible.has(t.projectId) : true) || (!known.has(t.projectId) && isInstanceAdmin(viewer)));
+}
+
+/**
+ * Every template matching `search` (name, description, node types) and `category`; remote ones only when asked for
+ * or searched (`page`: which 30 of them). `projectId`: that project's saved templates and the instance-wide ones, with
+ * the project's allowed nodes counted in `usable`; else everything `viewer` sees.
+ */
+export async function listTemplates(options: { search?: string; category?: string; source?: TemplateSource; projectId?: string; viewer?: Actor; page?: number } = {}): Promise<TemplateListing> {
   const search = options.search?.trim() ?? '';
-  const local = !options.source || options.source === 'local' ? localTemplates.list().map((t) => summaryOf(localDetail(t))) : [];
-  const builtin = !options.source || options.source === 'builtin' ? BUILTIN_TEMPLATES.map((t) => summaryOf(builtinDetail(t))) : [];
+  const local = !options.source || options.source === 'local' ? visibleLocal(options.viewer, options.projectId).map((t) => summaryOf(localDetail(t, options.viewer, options.projectId))) : [];
+  const builtin = !options.source || options.source === 'builtin' ? BUILTIN_TEMPLATES.map((t) => summaryOf(builtinDetail(t, options.projectId))) : [];
   const templates = [...local, ...builtin].filter((t) => matches(t, search, options.category));
   const remote: TemplateListing['remote'] = { enabled: Boolean(remoteBase()), ...(remoteLabel() && { label: remoteLabel() }) };
   if (remote.enabled && (options.source === 'remote' || (!options.source && search))) {
     try {
       // The API searched; categories are mapped here.
-      templates.push(...(await searchRemote(search)).filter((t) => matches(t, '', options.category)));
+      const found = await searchRemotePage(search, options.page);
+      templates.push(...found.templates.filter((t) => matches(t, '', options.category)));
+      remote.page = found.page;
+      if (found.total !== undefined) remote.total = found.total;
+      remote.hasMore = found.total !== undefined ? found.page * REMOTE_PAGE_SIZE < found.total : found.templates.length >= REMOTE_PAGE_SIZE;
     } catch (caught) {
       remote.error = (caught as Error).message;
     }
@@ -208,13 +257,13 @@ export async function listTemplates(options: { search?: string; category?: strin
   return { templates, remote };
 }
 
-/** One template with its workflow, setup steps and state on this instance. */
-export async function getTemplate(id: string): Promise<TemplateDetail | undefined> {
+/** One template with its workflow, setup steps and state on this instance (`viewer`: whether they may edit it). */
+export async function getTemplate(id: string, viewer?: Actor, scopeProject?: string): Promise<TemplateDetail | undefined> {
   const builtin = BUILTIN_TEMPLATES.find((t) => t.id === id);
-  if (builtin) return builtinDetail(builtin);
+  if (builtin) return builtinDetail(builtin, scopeProject);
   if (id.startsWith('tpl_')) {
     const local = localTemplates.get(id);
-    return local && localDetail(local);
+    return local && localDetail(local, viewer, scopeProject);
   }
   if (id.startsWith(REMOTE_PREFIX)) {
     if (!remoteBase()) return undefined;
@@ -261,20 +310,26 @@ export function instantiate(detail: Pick<TemplateDetail, 'workflow' | 'credentia
   return normalizeWorkflow({ ...structuredClone(detail.workflow), nodes }) as unknown as Workflow;
 }
 
-/** Hooks the route passes in so new workflows and tables land in the caller's project. */
+/**
+ * Hooks the route passes in so new workflows and tables land in the caller's project. `projectId` is that project:
+ * its allowed nodes count, a folder must be one of its folders, and only its data tables are reused (data tables are
+ * per project).
+ */
 export interface UseHooks {
-  createWorkflow(save: () => Workflow): Workflow;
+  createWorkflow(save: () => Workflow, id: string): Workflow;
   createTable(create: () => { id: string; name: string }): { id: string; name: string };
+  projectId?: string;
 }
 
 const directHooks: UseHooks = { createWorkflow: (save) => save(), createTable: (create) => create() };
 
 /** Create a workflow from a template: credentials remapped, data tables created, saved as an inactive draft. */
 export async function useTemplate(id: string, request: UseTemplateRequest, hooks: UseHooks = directHooks): Promise<UseTemplateResult> {
-  const detail = await getTemplate(id);
+  const detail = await getTemplate(id, undefined, hooks.projectId);
   if (!detail) throw new TemplateError('Template not found', 404);
   if (!detail.usable) throw new TemplateError(`This template can’t be used here: ${detail.problems.map((p) => p.message).join('; ')}`, 409, { problems: detail.problems });
   if (request.folderId && !folders.get(request.folderId)) throw new TemplateError('Folder not found', 404);
+  if (request.folderId && hooks.projectId && folders.projectOf(request.folderId) !== hooks.projectId) throw new TemplateError('That folder belongs to another project', 400);
 
   const picks: Record<string, { id: string; name: string } | undefined> = {};
   const warnings: string[] = [];
@@ -293,21 +348,23 @@ export async function useTemplate(id: string, request: UseTemplateRequest, hooks
   const tableIds = new Map<string, string>();
   const createdTables: string[] = [];
   for (const table of detail.dataTables) {
+    // The project's table of that name is reused; another project's isn't (names are unique: the new one gets a number).
     const existing = dataTables().findTable(table.name);
-    if (existing) {
+    if (existing && (hooks.projectId === undefined || tableInProject(existing.id, hooks.projectId))) {
       tableIds.set(table.name, existing.id);
       continue;
     }
-    const created = hooks.createTable(() => dataTables().createTable({ name: table.name, columns: table.columns }));
+    const created = hooks.createTable(() => dataTables().createTable({ name: freeTableName(table.name), columns: table.columns }));
     tableIds.set(table.name, created.id);
     createdTables.push(created.name);
   }
 
   const built = instantiate(detail, picks, tableIds, takenPaths());
-  const parsed = workflowSchema.safeParse({ ...built, id: `wf_${nanoid(10)}`, name: (request.name?.trim() || detail.name).slice(0, LIMITS.name) });
+  const workflowId = `wf_${nanoid(10)}`;
+  const parsed = workflowSchema.safeParse({ ...built, id: workflowId, name: (request.name?.trim() || detail.name).slice(0, LIMITS.name) });
   if (!parsed.success) throw new TemplateError(`The template’s workflow is invalid: ${parsed.error.issues[0]?.path.join('.')}: ${parsed.error.issues[0]?.message}`, 422);
   const { folderId: _folder, active: _active, pinData: _pins, ...data } = parsed.data as Workflow;
-  const workflow = hooks.createWorkflow(() => store.saveWorkflow({ ...data, active: false, ...(request.folderId && { folderId: request.folderId }) } as Workflow));
+  const workflow = hooks.createWorkflow(() => store.saveWorkflow({ ...data, active: false, ...(request.folderId && { folderId: request.folderId }) } as Workflow), workflowId);
   for (const warning of validateWorkflow(workflow).errors) warnings.push(warning);
   return { workflow, createdTables, warnings, ...(detail.report && { report: detail.report }) };
 }
@@ -351,27 +408,79 @@ function checkedWorkflow(raw: Record<string, unknown>, name: string): Workflow {
   return { ...(parsed.data as Workflow), id: '' };
 }
 
-/** "Save as template": a local template from a workflow, credentials turned into slots, pinned data left out. */
-export function saveTemplate(input: SaveTemplateInput, author?: string): TemplateDetail {
-  const source = checkedWorkflow(input.workflow, input.name);
-  const base = portable(source, input.name, input.description || source.description || '');
+/**
+ * The project a saved template goes to: `requested` (an id: the caller must be an editor there; `null`: instance-wide,
+ * owners and admins only); not given: instance-wide for owners and admins (as before projects had templates), else
+ * the caller's personal project. No actor (system callers, tests): as asked, else instance-wide.
+ */
+export function templateProject(actor: Actor | undefined, requested: string | null | undefined): string | undefined {
+  if (requested) {
+    const project = getProject(requested);
+    if (!project) throw new TemplateError('Project not found', 404);
+    if (actor && !projectRoleCan.create(projectRole(actor, project.id))) throw new TemplateError(`You can’t add templates to “${project.name}”`, 403);
+    return project.id;
+  }
+  if (!actor || isInstanceAdmin(actor)) return undefined;
+  if (requested === null) throw new TemplateError('Only owners and admins publish templates for the whole instance: pick a project', 403);
+  return ensurePersonalProject(actor.id);
+}
+
+/** A workflow as a template's parts: portable, data tables by name, credentials as slots (declared ones kept). */
+function templateParts(source: Workflow, name: string, description: string, declared: TemplateCredentialSlot[] = []) {
+  const base = portable(source, name, description);
   const { nodes: tableNodes, tables } = portableTables(base.nodes);
-  const { nodes, slots } = slotCredentials({ nodes: tableNodes });
+  const { nodes, slots } = slotCredentials({ nodes: tableNodes }, declared);
+  return { workflow: { ...base, nodes }, credentials: slots, dataTables: tables };
+}
+
+/** "Save as template": a local template from a workflow, credentials turned into slots, pinned data left out. */
+export function saveTemplate(input: SaveTemplateInput, author?: string, actor?: Actor): TemplateDetail {
+  const projectId = templateProject(actor, input.projectId);
+  const source = checkedWorkflow(input.workflow, input.name);
+  const parts = templateParts(source, input.name, input.description || source.description || '');
   const template = localTemplates.create({
     name: input.name,
     description: input.description || source.description || '',
     categories: categoriesOf(input.categories),
-    credentials: slots,
     setup: input.setup.map((s) => s.trim()).filter(Boolean),
-    dataTables: tables,
-    workflow: { ...base, nodes },
+    ...parts,
     ...(author && { author }),
+    ...(projectId && { projectId }),
   });
-  return localDetail(template);
+  return localDetail(template, actor);
+}
+
+/**
+ * Edit a saved template in place (its id, author and creation time stay): name, description, categories, setup
+ * steps, its project (`null`: instance-wide), and its workflow, replaced from `source` (a saved workflow the route
+ * loaded) with credentials turned into slots again. The caller must be allowed to edit it (`templateAccess`).
+ */
+export function updateTemplate(id: string, patch: UpdateTemplateInput, actor?: Actor, source?: Workflow): TemplateDetail {
+  if (!id.startsWith('tpl_')) throw new TemplateError('Only templates saved on this instance can be edited', 400);
+  const current = localTemplates.get(id);
+  if (!current) throw new TemplateError('Template not found', 404);
+  if (actor && !templateAccess(actor, { source: 'local', projectId: current.projectId }).edit) throw new TemplateError('You can’t edit this template', 403);
+  const next: Partial<LocalTemplate> = {};
+  if (patch.name !== undefined) next.name = patch.name.trim();
+  if (patch.description !== undefined) next.description = patch.description;
+  if (patch.categories !== undefined) next.categories = categoriesOf(patch.categories);
+  if (patch.setup !== undefined) next.setup = patch.setup.map((s) => s.trim()).filter(Boolean);
+  if (patch.projectId !== undefined) {
+    const projectId = patch.projectId === null ? (actor && !isInstanceAdmin(actor) ? templateProject(actor, null) : undefined) : templateProject(actor, patch.projectId);
+    next.projectId = projectId;
+  }
+  if (source) {
+    const name = next.name ?? current.name;
+    Object.assign(next, templateParts(checkedWorkflow(source as unknown as Record<string, unknown>, name), name, next.description ?? current.description));
+  }
+  const updated = localTemplates.update(id, next);
+  if (!updated) throw new TemplateError('Template not found', 404);
+  return localDetail(updated, actor);
 }
 
 /** Import a template file (from "Export"): kept as a local template, its references checked against its slots. */
-export function importTemplate(data: unknown, author?: string): TemplateDetail {
+export function importTemplate(data: unknown, author?: string, actor?: Actor, requestedProject?: string | null): TemplateDetail {
+  const projectId = templateProject(actor, requestedProject);
   let raw = data;
   if (typeof raw === 'string') {
     try {
@@ -397,7 +506,9 @@ export function importTemplate(data: unknown, author?: string): TemplateDetail {
       dataTables: template.dataTables,
       workflow: { ...base, nodes },
       ...(author && { author }),
+      ...(projectId && { projectId }),
     }),
+    actor,
   );
 }
 
@@ -408,8 +519,11 @@ export function templateFile(detail: TemplateDetail): TemplateFile {
   return { kind: 'landflow/template', version: 1, template: { name, description, categories, credentials, setup, dataTables: tables, workflow: { ...workflow, id: '' } } };
 }
 
-/** Delete a saved template (built-in and remote ones can't be). */
-export function deleteTemplate(id: string) {
+/** Delete a saved template (built-in and remote ones can't be); `actor` must be allowed to edit it. */
+export function deleteTemplate(id: string, actor?: Actor) {
   if (!id.startsWith('tpl_')) throw new TemplateError('Only templates saved on this instance can be deleted', 400);
+  const current = localTemplates.get(id);
+  if (!current) throw new TemplateError('Template not found', 404);
+  if (actor && !templateAccess(actor, { source: 'local', projectId: current.projectId }).edit) throw new TemplateError('You can’t delete this template', 403);
   if (!localTemplates.delete(id)) throw new TemplateError('Template not found', 404);
 }

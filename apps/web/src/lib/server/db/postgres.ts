@@ -21,7 +21,7 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs
 import { join } from 'node:path';
 import type { Pool, PoolClient } from 'pg';
 import { logger } from '../telemetry/logger';
-import { Database, openSqliteConnection, upsertSql, type SqlValue, type WriteOp, type WriteSink } from './database';
+import { Database, openSqliteConnection, upsertSql, type DirectClient, type SqlValue, type WriteOp, type WriteSink } from './database';
 import { CHANGES_CHANNEL, noticesFor, Replica, rowIdOf } from './replication';
 import { MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type TableName } from './schema';
 
@@ -131,6 +131,17 @@ class PostgresSink implements WriteSink {
   /** Writes not yet in Postgres, in order. */
   pendingOps(): WriteOp[] {
     return this.queue.flatMap((batch) => batch.ops);
+  }
+
+  /** A pool connection for `fn` (Database.direct): straight to Postgres, released afterwards. */
+  async direct<T>(fn: (client: DirectClient) => Promise<T>): Promise<T> {
+    if (this.closed) throw new Error('The Postgres store is closed');
+    const client = await this.pool.connect();
+    try {
+      return await fn(client as unknown as DirectClient);
+    } finally {
+      client.release();
+    }
   }
 
   enqueue(ops: WriteOp[]) {

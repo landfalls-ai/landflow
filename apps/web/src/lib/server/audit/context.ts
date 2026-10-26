@@ -19,6 +19,8 @@ export interface AuditRequestContext {
   route?: string;
   params?: Record<string, string>;
   principal?: Principal;
+  /** The resource the route names and its project, looked up before the handler ran (a delete removes it: ./project). */
+  target?: { type: string; id: string; projectId?: string };
   /** Domain events recorded during this request (the generic `api.request` event is skipped when there are any). */
   recorded: number;
 }

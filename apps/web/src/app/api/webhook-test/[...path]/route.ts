@@ -26,7 +26,7 @@ async function handle(request: Request, { params }: Ctx) {
   const found = await findTestListener('webhook', path, method);
   if (!found) return testWebhookMiss(path, method);
   const { listener, node } = found;
-  const auth = await checkWebhookAuth(request, node);
+  const auth = await checkWebhookAuth(request, listener.workflow.id, node);
   if (!auth.ok) return auth.response;
   // Single-shot: this call takes the listener (another one racing it gets the 404).
   if (!(await claimTestListener(listener))) return testWebhookMiss(path, method);

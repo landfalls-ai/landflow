@@ -18,8 +18,10 @@ import { devNull } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import type { SourceControlConfig, SourceControlPullResult, SourceControlPushResult, SourceControlRun, SourceControlView } from '../../shared/sync';
+import { hasSecretReference } from '@landflow/engine';
 import { credentials as vault } from '../credentials/vault';
 import { database, dataDir } from '../db';
+import { resolveSecretFields } from '../secrets/resolve';
 import { singleton } from '../singleton';
 import { readSyncDir, writeSyncDir } from './files';
 import { MANIFEST_FILE, isSafePath } from './format';
@@ -140,6 +142,21 @@ export function tokenFor(config: SourceControlConfig): { token?: string; source:
   }
   const env = process.env.LANDFLOW_GIT_TOKEN?.trim();
   return env ? { token: env, source: 'env' } : { source: 'none' };
+}
+
+/**
+ * The token git gets: `tokenFor`'s, with `$secrets` resolved when the credential's field reads an external secret
+ * (`{{ $secrets.vault.git.token }}`), right before each push, pull or promotion (same cache and redaction).
+ */
+export async function resolvedTokenFor(config: SourceControlConfig): Promise<ReturnType<typeof tokenFor>> {
+  const found = tokenFor(config);
+  if (!found.token || !hasSecretReference(found.token)) return found;
+  try {
+    const { token } = await resolveSecretFields({ token: found.token }, `Credential “${found.credentialName ?? 'source control'}”`);
+    return { ...found, token };
+  } catch (error) {
+    throw new SourceControlError((error as Error).message);
+  }
 }
 
 export function sourceControlView(): SourceControlView {
@@ -315,7 +332,7 @@ const head = (cwd: string) =>
 export function pushToRepository(input: { message?: string; dryRun?: boolean } = {}): Promise<SourceControlPushResult> {
   return exclusive(async () => {
     const { config } = requireConfig();
-    const { token } = tokenFor(config);
+    const { token } = await resolvedTokenFor(config);
     const auth = { token, username: config.username };
     const cwd = await workingCopy(config);
     await syncBranch(cwd, config, auth);
@@ -361,7 +378,7 @@ export function pushToRepository(input: { message?: string; dryRun?: boolean } =
 export function pullFromRepository(input: { dryRun?: boolean; prune?: boolean; force?: boolean; by?: string; publish?: PlanOptions['publish'] } = {}): Promise<SourceControlPullResult> {
   return exclusive(async () => {
     const { stored, config } = requireConfig();
-    const { token } = tokenFor(config);
+    const { token } = await resolvedTokenFor(config);
     const auth = { token, username: config.username };
     const cwd = await workingCopy(config);
     if (!(await syncBranch(cwd, config, auth))) throw new SourceControlError(`The branch ${config.branch} isn’t in the repository yet: push first`, 404);

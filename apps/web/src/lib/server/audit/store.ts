@@ -1,11 +1,18 @@
 /**
- * The audit tables (lib/server/db, migration 900): `audit_events` and the SIEM outbox `audit_outbox`. An event and
- * its outbox rows (one per enabled destination) are written in one transaction, so an event that is stored is also
- * queued for every destination. Reads: filtered, newest first, with an opaque cursor for the next page.
+ * The audit tables (lib/server/db, migrations 900 and 1500): `audit_events` and the SIEM outbox `audit_outbox`. An
+ * event, its link in the hash chain (./chain) and its outbox rows (one per enabled destination) are written in one
+ * transaction, so an event that is stored is also chained and queued for every destination. Reads: filtered (a project
+ * admin's reads limited to their projects, ./access), newest first, with an opaque cursor for the next page.
  */
 import type { AuditEvent, AuditFilters, AuditOutcome, AuditPage, AuditValue } from '../../shared/audit';
-import { database, type SqlValue } from '../db';
+import type { Database, SqlValue } from '../db';
 import { parse } from '../db/rows';
+import { auditDb, chainsAtInsert, kickSealer, linkEvent, pruneChain, pruneChainInPostgres } from './chain';
+
+const database = auditDb;
+
+/** Filters as the store applies them: `projectIds` limits a project admin's reads to their projects. */
+export type StoreFilters = AuditFilters & { projectIds?: string[] };
 
 export interface AuditRow {
   id: string;
@@ -27,8 +34,12 @@ export interface AuditRow {
   target_type: string | null;
   target_id: string | null;
   target_name: string | null;
+  project_id: string | null;
   summary: string;
   details: string | null;
+  chain_seq?: number | null;
+  prev_hash?: string | null;
+  hash?: string | null;
 }
 
 export function toRow(event: AuditEvent): AuditRow {
@@ -52,6 +63,7 @@ export function toRow(event: AuditEvent): AuditRow {
     target_type: event.target?.type ?? null,
     target_id: event.target?.id ?? null,
     target_name: event.target?.name ?? null,
+    project_id: event.projectId ?? null,
     summary: event.summary,
     details: event.details && Object.keys(event.details).length ? JSON.stringify(event.details) : null,
   };
@@ -79,28 +91,36 @@ export function fromRow(row: AuditRow): AuditEvent {
     ...(row.route && { route: row.route }),
     ...(row.status !== null && row.status !== undefined && { status: Number(row.status) }),
     ...(row.target_type && { target: { type: row.target_type, ...(row.target_id && { id: row.target_id }), ...(row.target_name && { name: row.target_name }) } }),
+    ...(row.project_id && { projectId: row.project_id }),
     summary: row.summary,
     ...(details && { details }),
+    ...(row.chain_seq !== null && row.chain_seq !== undefined && row.hash && { chain: { seq: Number(row.chain_seq), prevHash: String(row.prev_hash ?? ''), hash: row.hash } }),
   };
 }
 
 /** Destinations that receive new events. */
-export function enabledDestinationIds(): string[] {
-  return database()
-    .all<{ id: string }>('SELECT id FROM audit_destinations WHERE enabled = 1')
-    .map((row) => row.id);
+export function enabledDestinationIds(db: Database = database()): string[] {
+  return db.all<{ id: string }>('SELECT id FROM audit_destinations WHERE enabled = 1').map((row) => row.id);
 }
 
-/** Store an event and queue it for every enabled destination, in one transaction. */
-export function insertEvent(event: AuditEvent): number {
-  const db = database();
-  const destinations = enabledDestinationIds();
-  db.transaction(() => {
-    db.insertNew('audit_events', { ...toRow(event) });
+/**
+ * Store an event, chain it (SQLite and Postgres with one host: in this transaction, whose write lock orders writers;
+ * queue mode on Postgres: sealed shortly, ./chain) and queue it for every enabled destination, in one transaction.
+ * Sets `event.chain` when it was chained here. Returns how many destinations it was queued for.
+ */
+export function insertEvent(event: AuditEvent, db: Database = database()): number {
+  const destinations = enabledDestinationIds(db);
+  const atInsert = chainsAtInsert(db);
+  const row = db.transaction(() => {
+    const stored = atInsert ? linkEvent(db, toRow(event)) : toRow(event);
+    db.insertNew('audit_events', { ...stored });
     for (const destinationId of destinations) {
       db.insertNew('audit_outbox', { destination_id: destinationId, event_id: event.id, created_at: event.at, attempts: 0, next_at: event.at, lease_until: null, last_error: null });
     }
+    return stored;
   });
+  if (row.chain_seq) event.chain = { seq: Number(row.chain_seq), prevHash: String(row.prev_hash), hash: String(row.hash) };
+  else kickSealer(db);
   return destinations.length;
 }
 
@@ -135,7 +155,7 @@ function decodeCursor(cursor: string | undefined): { at: string; id: string } | 
 const like = (text: string) => `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
 /** The WHERE clause and parameters for `filters`. */
-function where(filters: AuditFilters, cursor?: { at: string; id: string }): { sql: string; params: SqlValue[] } {
+function where(filters: StoreFilters, cursor?: { at: string; id: string }): { sql: string; params: SqlValue[] } {
   const clauses: string[] = [];
   const params: SqlValue[] = [];
   if (filters.actor?.trim()) {
@@ -165,6 +185,15 @@ function where(filters: AuditFilters, cursor?: { at: string; id: string }): { sq
     clauses.push('target_id = ?');
     params.push(filters.targetId.trim());
   }
+  if (filters.projectId?.trim()) {
+    clauses.push('project_id = ?');
+    params.push(filters.projectId.trim());
+  }
+  if (filters.projectIds) {
+    // A project admin: only their projects' events (none at all when that is no project).
+    clauses.push(filters.projectIds.length ? `project_id IN (${filters.projectIds.map(() => '?').join(', ')})` : '1 = 0');
+    params.push(...filters.projectIds);
+  }
   if (filters.outcome) {
     clauses.push('outcome = ?');
     params.push(filters.outcome);
@@ -190,7 +219,7 @@ function where(filters: AuditFilters, cursor?: { at: string; id: string }): { sq
 }
 
 /** One page of events, newest first. */
-export function queryEvents(filters: AuditFilters, options: { limit?: number; cursor?: string } = {}): AuditPage {
+export function queryEvents(filters: StoreFilters, options: { limit?: number; cursor?: string } = {}): AuditPage {
   const limit = Math.max(1, Math.min(Math.floor(options.limit ?? 50), 10_000));
   const { sql, params } = where(filters, decodeCursor(options.cursor));
   const rows = database().all<AuditRow>(`SELECT * FROM audit_events ${sql} ORDER BY at DESC, id DESC LIMIT ?`, ...params, limit + 1);
@@ -198,13 +227,19 @@ export function queryEvents(filters: AuditFilters, options: { limit?: number; cu
   return { events, ...(rows.length > limit && events.length && { nextCursor: encodeCursor(events[events.length - 1]) }) };
 }
 
-/** Delete events older than `days` (and their outbox rows). Returns how many went. */
-export function pruneEvents(days: number, now = Date.now()): number {
+/**
+ * Delete events older than `days`, keeping the hash chain verifiable (./chain `pruneChain`: from the oldest end, up to
+ * the first event still within the retention or still waiting for a SIEM destination, with the last pruned event's
+ * hash as the anchor). SQLite and Postgres with one host; `pruneEventsAsync` covers queue mode too. Returns how many went.
+ */
+export function pruneEvents(days: number, now = Date.now(), db: Database = database()): number {
+  if (!(days > 0)) return 0;
+  return pruneChain(db, new Date(now - days * 86_400_000).toISOString());
+}
+
+/** `pruneEvents` wherever it runs (queue mode on Postgres decides it in Postgres, under the chain's lock). */
+export async function pruneEventsAsync(days: number, now = Date.now(), db: Database = database()): Promise<number> {
   if (!(days > 0)) return 0;
   const cutoff = new Date(now - days * 86_400_000).toISOString();
-  const db = database();
-  return db.transaction(() => {
-    db.deleteBefore('audit_outbox', 'created_at', cutoff);
-    return db.deleteBefore('audit_events', 'at', cutoff);
-  });
+  return chainsAtInsert(db) ? pruneChain(db, cutoff) : pruneChainInPostgres(db, cutoff);
 }

@@ -5,11 +5,16 @@
  * its ports through LANDFLOW_HTTP_PORT / LANDFLOW_GRPC_PORT and announces itself to the registry
  * like any other plugin. This runs third-party code: the API asks for an explicit confirmation,
  * and the process gets a minimal environment (no host secrets).
+ *
+ * Queue mode (./service.ts, `syncNodePlugins`): every main and worker runs its own copy of each installed plugin, from
+ * the same source and content (a hash of the downloaded files, checked again on each process), and registers it in its
+ * own registry as a process-local endpoint instead of announcing it (`announce: false`).
  */
 import { spawn, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { NodePluginManifest, NodePluginStatus } from '../../shared/marketplace';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry';
@@ -21,10 +26,19 @@ const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
 const PORT_RANGE = [7250, 7299] as const;
+
+/** The ports node plugins get: LANDFLOW_MARKETPLACE_PORTS (`7250-7299`, the default), e.g. one range per process on a host. */
+export function portRange(setting = process.env.LANDFLOW_MARKETPLACE_PORTS): readonly [number, number] {
+  const match = /^\s*(\d+)\s*-\s*(\d+)\s*$/.exec(setting ?? '');
+  const [low, high] = match ? [Number(match[1]), Number(match[2])] : PORT_RANGE;
+  return low >= 1024 && high <= 65535 && low <= high ? [low, high] : PORT_RANGE;
+}
 const LOG_LINES = 400;
 const STABLE_MS = 60_000;
 const MAX_FAST_FAILURES = 8;
 const SKIP = /(^|\/)(node_modules|\.git|\.venv|__pycache__)(\/|$)/;
+/** Written into a plugin's directory once it is downloaded and prepared: which install it holds. */
+export const INSTALL_MARKER = '.landflow-install.json';
 
 /** The monorepo root (has packages/sdk), for linking the SDK and finding tsx. */
 function repoRoot(): string | undefined {
@@ -54,6 +68,43 @@ export async function downloadPlugin(reader: RepoReader, dir: string): Promise<n
     writeFileSync(target, await reader.bytes(file.path, MAX_FILE_BYTES));
   }
   return files.length;
+}
+
+/** A hash of a downloaded plugin's files (before dependencies are installed): processes check they run the same code. */
+export function contentHash(dir: string): string {
+  const root = resolve(dir);
+  const files: string[] = [];
+  const walk = (at: string) => {
+    for (const entry of readdirSync(at, { withFileTypes: true })) {
+      const full = join(at, entry.name);
+      const path = relative(root, full).split(sep).join('/');
+      if (SKIP.test(path) || path === INSTALL_MARKER) continue;
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) files.push(path);
+    }
+  };
+  walk(root);
+  const hash = createHash('sha256');
+  for (const path of files.sort()) hash.update(`${path}\u0000`).update(readFileSync(join(root, path))).update('\u0000');
+  return `sha256:${hash.digest('hex')}`;
+}
+
+export interface InstallMarker {
+  key: string;
+  revision: string;
+  contentHash: string;
+}
+
+export function readInstallMarker(dir: string): InstallMarker | undefined {
+  try {
+    return JSON.parse(readFileSync(join(dir, INSTALL_MARKER), 'utf8')) as InstallMarker;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeInstallMarker(dir: string, marker: InstallMarker) {
+  writeFileSync(join(dir, INSTALL_MARKER), JSON.stringify(marker, null, 2));
 }
 
 /**
@@ -124,8 +175,8 @@ export function registryUrl(): string {
   return process.env.LANDFLOW_MARKETPLACE_REGISTRY_URL ?? process.env.LANDFLOW_PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3000}`;
 }
 
-/** Only what a plugin needs: no API keys, encryption key or tokens from the host. */
-function pluginEnv(manifest: NodePluginManifest, ports: { http: number; grpc?: number }): NodeJS.ProcessEnv {
+/** Only what a plugin needs: no API keys, encryption key or tokens from the host. `announce: false`: the host registers it itself. */
+function pluginEnv(manifest: NodePluginManifest, ports: { http: number; grpc?: number }, announce = true): NodeJS.ProcessEnv {
   const pass = ['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TMPDIR', 'TZ', 'OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_METRIC_EXPORT_INTERVAL', 'GOPATH', 'GOCACHE', 'GOMODCACHE'];
   return {
     ...Object.fromEntries(pass.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])),
@@ -134,13 +185,13 @@ function pluginEnv(manifest: NodePluginManifest, ports: { http: number; grpc?: n
     LANDFLOW_HTTP_PORT: String(ports.http),
     LANDFLOW_GRPC_PORT: ports.grpc ? String(ports.grpc) : 'off',
     LANDFLOW_ADVERTISE_HOST: '127.0.0.1',
-    LANDFLOW_REGISTRY_URL: registryUrl(),
+    LANDFLOW_REGISTRY_URL: announce ? registryUrl() : 'off',
     // The host's registry secret, so the plugin can announce itself when one is required.
-    ...(process.env.LANDFLOW_REGISTRY_SECRET && { LANDFLOW_REGISTRY_SECRET: process.env.LANDFLOW_REGISTRY_SECRET }),
+    ...(announce && process.env.LANDFLOW_REGISTRY_SECRET && { LANDFLOW_REGISTRY_SECRET: process.env.LANDFLOW_REGISTRY_SECRET }),
   };
 }
 
-const portFree = (port: number) =>
+export const portFree = (port: number) =>
   new Promise<boolean>((done) => {
     const server = createServer();
     server.once('error', () => done(false));
@@ -148,10 +199,11 @@ const portFree = (port: number) =>
   });
 
 export async function freePort(taken: Set<number>): Promise<number> {
-  for (let port = PORT_RANGE[0]; port <= PORT_RANGE[1]; port++) {
+  const [low, high] = portRange();
+  for (let port = low; port <= high; port++) {
     if (!taken.has(port) && (await portFree(port))) return port;
   }
-  throw new Error(`No free port in ${PORT_RANGE[0]}-${PORT_RANGE[1]} for the plugin`);
+  throw new Error(`No free port in ${low}-${high} for the plugin (LANDFLOW_MARKETPLACE_PORTS)`);
 }
 
 /** Run a one-off command (dependency install); rejects with the output's tail on failure. */
@@ -190,6 +242,10 @@ export interface SupervisedPlugin {
   manifest: NodePluginManifest;
   port: number;
   grpcPort?: number;
+  /** Queue mode: don't announce (LANDFLOW_REGISTRY_URL=off); the process registers it in its own registry. */
+  announce?: boolean;
+  /** The install it runs (a new one, or an update, restarts it). */
+  revision?: string;
 }
 
 interface Proc {
@@ -223,7 +279,7 @@ export const nodePlugins = singleton('marketplace-node-plugins', () => {
     const started = Date.now();
     let child: ChildProcess;
     try {
-      child = spawn(argv[0], argv.slice(1), { cwd: spec.dir, env: pluginEnv(spec.manifest, { http: spec.port, grpc: spec.grpcPort }), stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(argv[0], argv.slice(1), { cwd: spec.dir, env: pluginEnv(spec.manifest, { http: spec.port, grpc: spec.grpcPort }, spec.announce !== false), stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
       append(proc, `failed to start: ${(error as Error).message}`);
       proc.status = { ...proc.status, state: 'crashed', lastExit: (error as Error).message };
@@ -336,6 +392,11 @@ export const nodePlugins = singleton('marketplace-node-plugins', () => {
 
     ports(): Set<number> {
       return new Set([...procs.values()].flatMap((p) => [p.spec.port, ...(p.spec.grpcPort ? [p.spec.grpcPort] : [])]));
+    },
+
+    /** What runs here (queue mode compares it with the installed list). */
+    specs(): SupervisedPlugin[] {
+      return [...procs.values()].map((p) => p.spec);
     },
   };
 });

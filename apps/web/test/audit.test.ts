@@ -2,7 +2,8 @@
  * The audit log (lib/server/audit): the generic layer in `handler` on representative routes (method, route pattern,
  * status, outcome; no bodies or secrets; skipped paths), domain events (sign-in, failed sign-in, sign-out, API keys,
  * workflows and publishing, credentials and their use in a run, executions, settings), filters with cursor
- * pagination, CSV and JSON export, the route policy (admins and `audit:read`), retention, and the OTel log records.
+ * pagination, CSV and JSON export, the route policy (admins and `audit:read`; project admins their projects' events),
+ * retention, and the OTel log records. The project and hash chain have their own tests (audit-chain.test.ts).
  */
 import { createServer, type Server } from 'node:http';
 import { mkdtempSync } from 'node:fs';
@@ -31,6 +32,8 @@ const { createApiKey } = await import('@/lib/server/auth/api-keys');
 const audit = await import('@/lib/server/audit');
 const { queryEvents, pruneEvents, countEvents } = await import('@/lib/server/audit/store');
 const { csvRow } = await import('@/lib/server/audit/export');
+const { verifyChain } = await import('@/lib/server/audit/chain');
+const { personalProjectId } = await import('@/lib/shared/projects');
 const { routePattern, outcomeOf } = await import('@/lib/server/audit/http');
 const { OtlpJsonLogProvider } = await import('@/lib/server/telemetry/logs');
 const { auditAttributes } = await import('@/lib/server/audit/otel');
@@ -275,10 +278,18 @@ describe('GET /api/audit and export', () => {
     expect(csvRow({ ...events[0], summary: '=HYPERLINK("x")' })).toContain(`"'=HYPERLINK(""x"")"`);
   });
 
-  it('is for owners and admins, and API keys with the audit:read scope', async () => {
+  it('is for owners and admins (every event), project admins (their projects’ events), and API keys with the audit:read scope', async () => {
+    const mine = personalProjectId(member.id);
+    audit.recordAudit({ action: 'workflow.update', target: { type: 'workflow', id: 'wf_mine', name: 'Mine' }, project: mine });
+    audit.recordAudit({ action: 'workflow.update', target: { type: 'workflow', id: 'wf_theirs', name: 'Theirs' }, project: 'prj_someone_else' });
     enableTestAuth(member);
     try {
-      expect((await auditRoute.GET(req('GET', '/api/audit'))).status).toBe(403);
+      const page = (await (await auditRoute.GET(req('GET', '/api/audit?limit=500'))).json()) as AuditPage;
+      expect(page.events.map((e) => e.target?.id)).toContain('wf_mine');
+      expect(page.events.every((e) => e.projectId === mine)).toBe(true);
+      expect((await auditRoute.GET(req('GET', '/api/audit?projectId=prj_someone_else'))).status).toBe(403);
+      expect((await auditRoute.GET(req('GET', `/api/audit?projectId=${mine}`))).status).toBe(200);
+      expect((await exportRoute.GET(req('GET', '/api/audit/export?projectId=prj_someone_else'))).status).toBe(403);
     } finally {
       enableTestAuth();
     }
@@ -293,11 +304,14 @@ describe('GET /api/audit and export', () => {
     expect(latest('api.request')).toMatchObject({ outcome: 'denied', apiKeyId: without.key.id, actor: { type: 'api_key', id: owner.id } });
   });
 
-  it('prunes events older than the retention', () => {
+  it('prunes events older than the retention from the oldest end of the hash chain (which still verifies)', async () => {
     audit.recordAudit({ action: 'settings.update', summary: 'ancient', at: new Date(Date.now() - 400 * 86_400_000) });
     expect(queryEvents({ q: 'ancient' }).events).toHaveLength(1);
-    expect(pruneEvents(365)).toBeGreaterThanOrEqual(1);
+    // Chained after today's events, it goes once they are past the retention too: a year and a day from now.
+    expect(pruneEvents(365)).toBe(0);
+    expect(pruneEvents(365, Date.now() + 366 * 86_400_000)).toBeGreaterThanOrEqual(1);
     expect(queryEvents({ q: 'ancient' }).events).toHaveLength(0);
+    expect(await verifyChain()).toMatchObject({ ok: true, checked: 0 });
     expect(pruneEvents(0)).toBe(0);
   });
 });

@@ -1,9 +1,9 @@
 'use client';
 /**
- * The URLs of a trigger that listens on this host, with copy buttons. The Webhook and Form triggers have two, as in
- * n8n: the test URL answers while the editor listens (**Listen for test event**, or **Open test form**: see
+ * The URLs of a trigger that listens on this host, with copy buttons. The Webhook, Form and MCP Server triggers have
+ * two, as in n8n: the test URL answers while the editor listens (**Listen for test event**, or **Open test form**: see
  * ./test-listener.tsx) and runs the workflow as it is in the editor, saved or not; the production URL answers once the
- * workflow is published and runs the published version. The MCP Server Trigger has only its production URL.
+ * workflow is published and runs the published version.
  */
 import { useEffect, useState } from 'react';
 import { ExternalLink, FlaskConical, Link2, Radio } from 'lucide-react';
@@ -51,6 +51,7 @@ function TestUrl({ nodeId, type, path, method, origin }: { nodeId: string; type:
   const seconds = useCountdown(listening?.deadline);
   const base = `${origin}${TEST_URL_PREFIX[type]}`;
   const form = type === 'core.formTrigger';
+  const mcp = type === 'core.mcpTrigger';
   const blocked = !path || running || busyElsewhere;
   const why = !path ? 'Set the path first' : running ? 'A run is going' : busyElsewhere ? 'The editor is listening on another trigger' : undefined;
 
@@ -78,7 +79,12 @@ function TestUrl({ nodeId, type, path, method, origin }: { nodeId: string; type:
               </Button>
             </>
           ) : (
-            <Button size="sm" onClick={() => void listenForTestEvent(nodeId)} disabled={blocked} title={why ?? 'The test URL answers for 120 s and runs the workflow as it is here'}>
+            <Button
+              size="sm"
+              onClick={() => void listenForTestEvent(nodeId)}
+              disabled={blocked}
+              title={why ?? (mcp ? 'The test URL serves this workflow’s tools until 120 s pass without a request' : 'The test URL answers for 120 s and runs the workflow as it is here')}
+            >
               <Radio className="size-3.5" /> Listen for test event
             </Button>
           )}
@@ -94,10 +100,14 @@ function TestUrl({ nodeId, type, path, method, origin }: { nodeId: string; type:
         {listening
           ? form
             ? 'Submit the test form: the submission runs the workflow as it is in the editor, shown live on the canvas.'
-            : `Send a ${method ?? 'POST'} request to the test URL: it runs the workflow as it is in the editor, shown live on the canvas.`
+            : mcp
+              ? 'Connect an MCP client (Streamable HTTP) to the test URL: it lists the tools connected here, and each tool call runs the workflow as it is in the editor, shown live on the canvas.'
+              : `Send a ${method ?? 'POST'} request to the test URL: it runs the workflow as it is in the editor, shown live on the canvas.`
           : received
-            ? `Test event received at ${new Date(received).toLocaleTimeString()}: its data is under Output.`
-            : `Answers ${form ? 'while the editor listens (120 s, then until the run ends)' : 'one call while the editor listens (120 s)'} and runs the workflow as it is in the editor, saved or not.`}
+            ? `${mcp ? 'Tool call' : 'Test event'} received at ${new Date(received).toLocaleTimeString()}: its data is under Output.`
+            : mcp
+              ? 'Answers MCP clients while the editor listens (until 120 s pass without a request); tool calls run the workflow as it is in the editor, saved or not.'
+              : `Answers ${form ? 'while the editor listens (120 s, then until the run ends)' : 'one call while the editor listens (120 s)'} and runs the workflow as it is in the editor, saved or not.`}
       </p>
     </div>
   );

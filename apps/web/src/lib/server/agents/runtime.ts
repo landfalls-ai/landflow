@@ -218,7 +218,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     let model;
     let toolset;
     try {
-      model = agentModel(config.model);
+      model = await agentModel(config.model);
       toolset = await buildToolset(agent, config);
     } catch (error) {
       upsert({ id: entryId(), type: 'error', message: (error as Error).message, at: now() });

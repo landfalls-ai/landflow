@@ -3,18 +3,20 @@
  * A canvas group in the editor: a labelled frame behind its nodes. Drag it by its header (its nodes come along),
  * resize it from its edges and corners, double-click the label to rename it. When selected, a toolbar offers the
  * colours, collapse, duplicate and ungroup. Collapsed, it is a compact box whose edges carry its nodes' connections
- * (see ./groups.ts canvasGraph); double-click the box to expand it again.
+ * (see ./groups.ts canvasGraph); double-click the box to expand it again. Groups nest: the count and the box's icons
+ * cover the nodes of the groups inside too.
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { getBezierPath, Handle, NodeResizer, NodeToolbar, Position, type EdgeProps, type NodeProps } from '@xyflow/react';
 import { ChevronsDownUp, ChevronsUpDown, Copy, PencilLine, Ungroup } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { nodeColor } from '@/lib/client/node-style';
-import { GROUP_MIN_SIZE, GROUP_NAME_MAX } from '@/lib/shared/groups';
+import { useShallow } from 'zustand/react/shallow';
+import { GROUP_MIN_SIZE, GROUP_NAME_MAX, descendantNodeIds } from '@/lib/shared/groups';
 import { EdgeLine } from '../canvas/edge-line';
 import { GroupBoxView, GroupFrameView } from '../canvas/group-frame';
 import { STICKY_COLORS, stickyColors } from '../canvas/sticky-note';
-import { GROUP_HANDLES, type GroupProxyEdge } from './groups';
+import { GROUP_HANDLES, linksOf, type GroupProxyEdge } from './groups';
 import { useEditor, type GroupFlowNode } from './store';
 
 const toolbarButton = 'grid size-6 place-items-center rounded-full text-t2 transition-colors hover:bg-acdim hover:text-t1';
@@ -26,16 +28,18 @@ export const GroupNodeView = memo(function GroupNodeView({ id, data, selected }:
   const { updateGroup, ungroup, duplicateNode } = useEditor.getState();
   const nodes = useEditor((s) => s.nodes);
   const nodeTypes = useEditor((s) => s.nodeTypes);
+  // Every node inside, nested groups' included.
+  const inside = useEditor(useShallow((s) => descendantNodeIds(linksOf(s.groups), id)));
   const icons = useMemo(
     () =>
       data.collapsed
-        ? data.nodeIds.flatMap((nodeId) => {
+        ? inside.flatMap((nodeId) => {
             const node = nodes.find((n) => n.id === nodeId);
             const info = node && nodeTypes[node.data.wf.type];
             return node ? [{ icon: info?.descriptor.icon, color: nodeColor(info) }] : [];
           })
         : [],
-    [data.collapsed, data.nodeIds, nodes, nodeTypes],
+    [data.collapsed, inside, nodes, nodeTypes],
   );
 
   useEffect(() => {
@@ -125,7 +129,7 @@ export const GroupNodeView = memo(function GroupNodeView({ id, data, selected }:
         <GroupBoxView
           name={data.name}
           color={data.color}
-          count={data.nodeIds.length}
+          count={inside.length}
           icons={icons}
           selected={selected}
           label={label}
@@ -146,7 +150,7 @@ export const GroupNodeView = memo(function GroupNodeView({ id, data, selected }:
         <GroupFrameView
           name={data.name}
           color={data.color}
-          count={data.nodeIds.length}
+          count={inside.length}
           selected={selected}
           label={label}
           headerClassName="lf-frame-handle cursor-grab active:cursor-grabbing"

@@ -4,7 +4,8 @@
  * segments are highlighted (a mirror layer under a transparent input), typing
  * `{{` closes the braces, and inside an expression a list suggests `$json`
  * fields from the node's input, upstream nodes (`$('Name').item.json.…`),
- * `$input`, `$now`, `$vars` and methods for the value's type. ↑/↓ choose,
+ * `$input`, `$now`, `$vars`, `$secrets` names (credential fields, and node
+ * parameters when the instance allows it) and methods for the value's type. ↑/↓ choose,
  * Enter or Tab accept, Escape closes, ⌃Space opens. No editor dependency.
  */
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
@@ -16,28 +17,49 @@ import { applyCompletion, completionsAt, expressionSegments, type Completion, ty
 /** Sample data for suggestions; ParamForm provides it from the node's input and upstream runs. */
 export const ExpressionDataContext = createContext<CompletionData | undefined>(undefined);
 
-// `$vars` names, fetched once per page load (the variables API may not exist yet: then there are none).
-let varsPromise: Promise<string[]> | undefined;
-function loadVars(): Promise<string[]> {
-  varsPromise ??= fetch('/api/variables', { cache: 'no-store' })
+/** The workflow being edited (or the project something goes to): pickers list its project's data tables, `$vars` its project's variables. */
+export interface ParamScope {
+  workflowId?: string;
+  projectId?: string;
+}
+export const ParamScopeContext = createContext<ParamScope | undefined>(undefined);
+
+// `$vars` names (of a workflow: its project's and the instance's), fetched once per page load and workflow (the
+// variables API may not exist yet: then there are none).
+const varsPromises = new Map<string, Promise<string[]>>();
+export function loadVars(workflowId?: string): Promise<string[]> {
+  const key = workflowId ?? '';
+  const cached = varsPromises.get(key);
+  if (cached) return cached;
+  const varsPromise = fetch(`/api/variables${workflowId ? `?workflowId=${encodeURIComponent(workflowId)}` : ''}`, { cache: 'no-store' })
     .then((r) => (r.ok ? r.json() : undefined))
     .then((body: unknown) => {
       const list = Array.isArray(body) ? body : (body as { variables?: unknown[] } | undefined)?.variables;
       return (list ?? []).map((v) => (typeof v === 'string' ? v : ((v as { key?: string; name?: string }).key ?? (v as { name?: string }).name))).filter((v): v is string => Boolean(v));
     })
-    .catch(() => []);
+    .catch(() => [] as string[]);
+  varsPromises.set(key, varsPromise);
   return varsPromise;
 }
 
-// External secrets names by provider (GET /api/external-secrets, never values), for credential fields; once per page load.
-let secretsPromise: Promise<Record<string, string[]>> | undefined;
-export function loadSecretNames(): Promise<Record<string, string[]>> {
+// External secrets names by provider (GET /api/external-secrets, never values) and whether node parameters may read
+// them (Settings → External secrets); once per page load.
+interface SecretsAccess {
+  names: Record<string, string[]>;
+  allowInParameters: boolean;
+}
+let secretsPromise: Promise<SecretsAccess> | undefined;
+function loadSecretsAccess(): Promise<SecretsAccess> {
   secretsPromise ??= fetch('/api/external-secrets', { cache: 'no-store' })
     .then((r) => (r.ok ? r.json() : undefined))
-    .then((body: { providers?: Array<{ name: string; enabled: boolean; names: string[] }> } | undefined) => Object.fromEntries((body?.providers ?? []).filter((p) => p.enabled).map((p) => [p.name, p.names])))
-    .catch(() => ({}));
+    .then((body: { providers?: Array<{ name: string; enabled: boolean; names: string[] }>; allowInParameters?: boolean } | undefined) => ({
+      names: Object.fromEntries((body?.providers ?? []).filter((p) => p.enabled).map((p) => [p.name, p.names])),
+      allowInParameters: body?.allowInParameters === true,
+    }))
+    .catch(() => ({ names: {}, allowInParameters: false }));
   return secretsPromise;
 }
+export const loadSecretNames = (): Promise<Record<string, string[]>> => loadSecretsAccess().then((access) => access.names);
 
 const field = 'w-full rounded-[10px] border px-3 text-[13px] transition-colors duration-[120ms]';
 const KIND_ICON: Record<Completion['kind'], ReactNode> = {
@@ -68,18 +90,26 @@ export function ExpressionInput({ value, onChange, placeholder, rows, className,
   const inner = useRef<HTMLDivElement>(null);
   const pendingCaret = useRef<number | undefined>(undefined);
   const data = useContext(ExpressionDataContext);
+  const workflowId = useContext(ParamScopeContext)?.workflowId;
   const [vars, setVars] = useState<string[]>([]);
   const [secrets, setSecrets] = useState<Record<string, string[]>>();
   const [menu, setMenu] = useState<(CompletionResult & { active: number }) | null>(null);
   const [rect, setRect] = useState<DOMRect>();
 
   const credentialField = data?.scope === 'credential';
-  const fullData = useMemo<CompletionData>(() => ({ json: data?.json, nodes: data?.nodes ?? [], vars, ...(credentialField && { scope: 'credential' as const, secrets: secrets ?? {} }) }), [data, vars, credentialField, secrets]);
+  const fullData = useMemo<CompletionData>(
+    () => ({ json: data?.json, nodes: data?.nodes ?? [], vars, ...(credentialField ? { scope: 'credential' as const, secrets: secrets ?? {} } : secrets && { secrets }) }),
+    [data, vars, credentialField, secrets],
+  );
 
   useEffect(() => {
     if (expression && credentialField) void loadSecretNames().then(setSecrets);
-    else if (expression) void loadVars().then(setVars);
-  }, [expression, credentialField]);
+    else if (expression) {
+      void loadVars(workflowId).then(setVars);
+      // Node parameters: $secrets names only when the instance allows them there.
+      void loadSecretsAccess().then((access) => setSecrets(access.allowInParameters ? access.names : undefined));
+    }
+  }, [expression, credentialField, workflowId]);
 
   /** Keep the highlight layer scrolled like the field. */
   const sync = useCallback(() => {
@@ -245,7 +275,7 @@ export function ExpressionInput({ value, onChange, placeholder, rows, className,
   );
 }
 
-function CompletionMenu({ menu, rect, onPick, onHover }: { menu: CompletionResult & { active: number }; rect: DOMRect; onPick: (item: Completion) => void; onHover: (index: number) => void }) {
+export function CompletionMenu({ menu, rect, onPick, onHover }: { menu: CompletionResult & { active: number }; rect: DOMRect; onPick: (item: Completion) => void; onHover: (index: number) => void }) {
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
     list.current?.querySelector<HTMLElement>(`[data-index="${menu.active}"]`)?.scrollIntoView({ block: 'nearest' });

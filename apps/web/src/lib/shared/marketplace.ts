@@ -154,6 +154,12 @@ export interface InstalledPlugin {
     port: number;
     grpcPort?: number;
     status?: NodePluginStatus;
+    /** This install (an update gets a new one): queue mode restarts every process's copy when it changes. */
+    revision?: string;
+    /** A hash of the downloaded files: workers that download the plugin themselves check they got the same code. */
+    contentHash?: string;
+    /** Where the files were downloaded from (a GitHub branch or tag pinned to its commit): workers download the same. */
+    source?: ResolvedSource;
   };
 }
 

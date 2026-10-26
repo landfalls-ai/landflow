@@ -574,6 +574,142 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  // 1400–1499: projects for folders, variables, plugins, templates; per-project and per-workflow governance (lib/server/projects).
+  {
+    version: 1400,
+    name: 'project_folders_variables',
+    statements: [
+      // A folder belongs to one project (its subfolders too); NULL is the default project (the instance owner's personal one).
+      `ALTER TABLE folders ADD COLUMN project_id TEXT`,
+      `CREATE INDEX IF NOT EXISTS folders_project ON folders (project_id)`,
+      // Existing folder trees go to the project most of their workflows are in…
+      `UPDATE folders SET project_id = (
+        WITH RECURSIVE tree (id, root) AS (
+          SELECT f.id, f.id FROM folders f WHERE f.parent_id IS NULL OR f.parent_id NOT IN (SELECT p.id FROM folders p)
+          UNION ALL
+          SELECT c.id, t.root FROM folders c JOIN tree t ON c.parent_id = t.id
+        )
+        SELECT pr.project_id FROM tree mine
+          JOIN tree t ON t.root = mine.root
+          JOIN workflows w ON w.folder_id = t.id
+          JOIN project_resources pr ON pr.kind = 'workflow' AND pr.resource_id = w.id
+        WHERE mine.id = folders.id
+        GROUP BY pr.project_id ORDER BY COUNT(*) DESC, pr.project_id LIMIT 1
+      ) WHERE project_id IS NULL`,
+      // …else to the instance owner's personal project.
+      `UPDATE folders SET project_id = (SELECT 'personal_' || u.id FROM users u WHERE u.role = 'owner' ORDER BY u.created_at LIMIT 1) WHERE project_id IS NULL`,
+      // Project variables: `$vars.KEY` reads the workflow's project's value first, then the instance's.
+      `CREATE TABLE IF NOT EXISTS project_variables (project_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (project_id, key))`,
+      // A project variable's value in one environment (as variable_environment_values, migration 1001, for instance variables).
+      `CREATE TABLE IF NOT EXISTS project_variable_environment_values (
+        project_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        environment TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, key, environment)
+      )`,
+    ],
+  },
+  {
+    version: 1401,
+    name: 'project_and_workflow_policies',
+    statements: [
+      // A project's settings: the plugins and node types its workflows may use, who approves its publish requests.
+      `CREATE TABLE IF NOT EXISTS project_settings (project_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`,
+      // A workflow's own, stricter policy: four-eyes publishing, a node allow-list.
+      `CREATE TABLE IF NOT EXISTS workflow_policies (workflow_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`,
+      // Saved templates belong to a project; NULL is instance-wide (what existed, and what owners and admins publish).
+      `ALTER TABLE templates ADD COLUMN project_id TEXT`,
+      `CREATE INDEX IF NOT EXISTS templates_project ON templates (project_id)`,
+    ],
+  },
+  // 1200–1299: sub-workflows that wait, test URLs and trigger auth (lib/server/sub-executions.ts, lib/server/binary).
+  {
+    version: 1200,
+    name: 'binary_scope_links',
+    statements: [
+      // A sub-execution its parent waits for writes its files into the parent's scope (`scope`), so the files it returns
+      // live as long as the parent run: kept here, not only in memory, so a restart or another worker keeps the link.
+      `CREATE TABLE IF NOT EXISTS binary_scope_links (execution_id TEXT PRIMARY KEY, scope TEXT NOT NULL, created_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS binary_scope_links_scope ON binary_scope_links (scope)`,
+    ],
+  },
+  // 1300–1399: queue mode without a shared data directory: credentials and settings files in the database (lib/server/config-store.ts).
+  {
+    version: 1300,
+    name: 'config_store',
+    statements: [
+      // Credentials when LANDFLOW_CONFIG_STORE=database (the default in queue mode): one row per credential, `data` the
+      // AES-256-GCM sealed values (JSON {iv, tag, value}) as in credentials.json; the key stays where it is.
+      `CREATE TABLE IF NOT EXISTS credentials (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        secret_fields TEXT NOT NULL,
+        data TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      // The data directory's settings files in that mode (mcp.json, marketplaces.json, skill-library.json, agent-channels.json): one JSON document each.
+      `CREATE TABLE IF NOT EXISTS config_files (name TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`,
+    ],
+  },
+  // 1500–1599: the audit log per project and its hash chain, SAML state shared by every main (lib/server/audit, lib/server/auth/saml*).
+  {
+    version: 1500,
+    name: 'audit_projects_and_chain',
+    statements: [
+      // The project of the event's target (workflow, credential, data table, agent, an execution's workflow, a project); NULL for
+      // instance-wide events and for events recorded before this migration.
+      `ALTER TABLE audit_events ADD COLUMN project_id TEXT`,
+      // Tamper evidence (lib/server/audit/chain.ts): the event's place in the chain, the previous event's hash and its own
+      // (SHA-256 over its stored fields). NULL for events recorded before the chain began (and, in queue mode on Postgres, until sealed).
+      `ALTER TABLE audit_events ADD COLUMN chain_seq BIGINT`,
+      `ALTER TABLE audit_events ADD COLUMN prev_hash TEXT`,
+      `ALTER TABLE audit_events ADD COLUMN hash TEXT`,
+      `CREATE INDEX IF NOT EXISTS audit_events_project ON audit_events (project_id, at)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS audit_events_chain ON audit_events (chain_seq)`,
+      // The chain's ends: `head` (the newest chained event), `anchor` (the last event retention pruned), `start` (the newest event
+      // from before the chain began, in `event_id`).
+      `CREATE TABLE IF NOT EXISTS audit_chain (id TEXT PRIMARY KEY, seq BIGINT NOT NULL, hash TEXT NOT NULL, event_id TEXT, at TEXT, updated_at TEXT NOT NULL)`,
+    ],
+  },
+  {
+    version: 1501,
+    name: 'saml_state',
+    statements: [
+      // SAML sign-ins and logouts in flight, readable by every main: RelayStates (`relay`), the AuthnRequest and LogoutRequest ids
+      // InResponseTo must match (`request`, one use) and the NameID and SessionIndex of SAML sessions for single logout (`session`).
+      `CREATE TABLE IF NOT EXISTS saml_state (kind TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, user_id TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY (kind, id))`,
+      `CREATE INDEX IF NOT EXISTS saml_state_expires ON saml_state (expires_at)`,
+      `CREATE INDEX IF NOT EXISTS saml_state_user ON saml_state (kind, user_id)`,
+    ],
+  },
+  // 1650–1699: environments, promotion approvals (lib/server/environments/approvals.ts).
+  {
+    version: 1650,
+    name: 'promotion_requests',
+    statements: [
+      // Four-eyes on promotion: a promotion to another environment waiting for (or decided by) a second person. `input` is what was
+      // asked for (target, workflows, prune, force, message, row tables), `digest` what its preview would write, `data` the preview.
+      `CREATE TABLE IF NOT EXISTS promotion_requests (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        source TEXT NOT NULL,
+        target TEXT NOT NULL,
+        digest TEXT NOT NULL,
+        input TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        decided_by TEXT,
+        decided_at TEXT,
+        comment TEXT,
+        data TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS promotion_requests_status ON promotion_requests (status, requested_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -625,6 +761,16 @@ export const TABLES = {
   variable_environment_values: ['key', 'environment'],
   plugin_registrations: ['endpoint'],
   templates: ['id'],
+  project_variables: ['project_id', 'key'],
+  project_variable_environment_values: ['project_id', 'key', 'environment'],
+  project_settings: ['project_id'],
+  workflow_policies: ['workflow_id'],
+  binary_scope_links: ['execution_id'],
+  credentials: ['id'],
+  config_files: ['name'],
+  audit_chain: ['id'],
+  saml_state: ['kind', 'id'],
+  promotion_requests: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

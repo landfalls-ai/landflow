@@ -5,6 +5,10 @@
  *   or `queue` (mains enqueue production runs on Valkey, workers run them; several mains elect a leader).
  * - `LANDFLOW_ROLE`: `main` (default: UI, API, webhooks) or `worker` (set by `pnpm worker`).
  * - `LANDFLOW_VALKEY_URL`: `redis://[user:password@]host:port[/db]` (`rediss://` for TLS), default `redis://127.0.0.1:6379`.
+ * - `LANDFLOW_VALKEY_SENTINELS` (`host:port,host:port…`): find the primary through Valkey Sentinel instead, and follow its
+ *   failovers; LANDFLOW_VALKEY_URL then gives only the primary's credentials, database and TLS. With
+ *   `LANDFLOW_VALKEY_MASTER_NAME` (default `mymaster`), `LANDFLOW_VALKEY_SENTINEL_PASSWORD` (and `_USERNAME`) when
+ *   the sentinels require AUTH, and `LANDFLOW_VALKEY_SENTINEL_TLS=true` when they speak TLS.
  * - `LANDFLOW_QUEUE_PREFIX`: the key prefix, so several installs can share one Valkey (default `landflow`).
  * - `LANDFLOW_WORKER_CONCURRENCY`: runs a worker takes at once (default 10, n8n's default).
  * - `LANDFLOW_OFFLOAD_MANUAL_EXECUTIONS=true`: editor runs go to the workers too (n8n's OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS).
@@ -16,6 +20,7 @@
  *   `LANDFLOW_WORKER_SHUTDOWN_SECONDS` (default 30: how long SIGTERM waits for runs before re-queuing them).
  */
 import { hostname } from 'node:os';
+import { parseSentinels, type SentinelOptions } from './resp';
 
 export type ExecutionsMode = 'regular' | 'queue';
 export type ProcessRole = 'main' | 'worker';
@@ -27,6 +32,8 @@ export interface ClusterConfig {
   /** Whether LANDFLOW_INSTANCE_ID was set (a stable name across restarts). */
   stableId: boolean;
   valkeyUrl: string;
+  /** Valkey Sentinel (LANDFLOW_VALKEY_SENTINELS): the primary is asked of these. */
+  sentinel?: SentinelOptions;
   prefix: string;
   workerConcurrency: number;
   offloadManual: boolean;
@@ -59,6 +66,7 @@ export function clusterConfig(env: NodeJS.ProcessEnv = process.env): ClusterConf
     instanceId: (explicitId || `${role}-${hostname()}-${process.pid}`).replace(/[^\w.-]/g, '_').slice(0, 100),
     stableId: Boolean(explicitId),
     valkeyUrl: env.LANDFLOW_VALKEY_URL?.trim() || 'redis://127.0.0.1:6379',
+    ...sentinelConfig(env),
     prefix: (env.LANDFLOW_QUEUE_PREFIX?.trim() || 'landflow').replace(/[^\w.-]/g, '_'),
     workerConcurrency: Math.floor(number(env.LANDFLOW_WORKER_CONCURRENCY, 10, 1)),
     offloadManual: flag(env.LANDFLOW_OFFLOAD_MANUAL_EXECUTIONS),
@@ -68,6 +76,22 @@ export function clusterConfig(env: NodeJS.ProcessEnv = process.env): ClusterConf
     heartbeatMs: Math.min(5_000, Math.floor(stalledMs / 6)),
     workerPort: Math.floor(number(env.LANDFLOW_WORKER_PORT, 5690, 0)),
     shutdownMs: number(env.LANDFLOW_WORKER_SHUTDOWN_SECONDS, 30, 0) * 1000,
+  };
+}
+
+function sentinelConfig(env: NodeJS.ProcessEnv): { sentinel?: SentinelOptions } {
+  const sentinels = parseSentinels(env.LANDFLOW_VALKEY_SENTINELS);
+  if (!sentinels.length) return {};
+  const username = env.LANDFLOW_VALKEY_SENTINEL_USERNAME?.trim();
+  const password = env.LANDFLOW_VALKEY_SENTINEL_PASSWORD?.trim();
+  return {
+    sentinel: {
+      sentinels,
+      masterName: env.LANDFLOW_VALKEY_MASTER_NAME?.trim() || 'mymaster',
+      ...(username && { username }),
+      ...(password && { password }),
+      ...(flag(env.LANDFLOW_VALKEY_SENTINEL_TLS) && { tls: true }),
+    },
   };
 }
 

@@ -4,21 +4,32 @@
  * coloured by their last run, edges labelled with the items they carried.
  * Node objects stay stable after layout; run state reaches the custom node
  * and edge views through context, so React Flow keeps its measurements.
+ *
+ * Canvas groups show as saved: a collapsed group is one box standing for the
+ * nodes (and nested groups) inside it, outlined by how they ran (red when one
+ * failed, blue while one waits), with their connections drawn to its edges.
+ * Its chevron (or a double-click) expands it here only; the workflow keeps
+ * its groups as they are. The node an execution waits at is marked waiting,
+ * with what it waits for on hover.
  */
-import { createContext, memo, useContext, useEffect, useMemo } from 'react';
-import { Controls, ReactFlow, ReactFlowProvider, getBezierPath, useNodesState, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { Controls, Handle, Position, ReactFlow, ReactFlowProvider, getBezierPath, useNodesState, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { nodeColor } from '@/lib/client/node-style';
-import { edgeCountsOf, statusesOf, type NodeStatus } from '@/lib/client/run-data';
+import { edgeCountsOf, statusesOf, summarizeGroupRun, withWaiting, type GroupRunSummary, type NodeStatus, type WaitInfo } from '@/lib/client/run-data';
+import { GROUP_COLLAPSED_SIZE, GROUP_HANDLES, collapsedBoxes, depthOf, descendantGroupIds, descendantNodeIds, routeEdges } from '@/lib/shared/groups';
 import type { NodeRun, NodeTypeInfo, Workflow, WorkflowNode } from '@/lib/shared/types';
 import { EdgeLine } from '../canvas/edge-line';
 import { handleId, NodeTile } from '../canvas/node-tile';
 import { StickyNoteView } from '../canvas/sticky-note';
-import { GroupFrameView } from '../canvas/group-frame';
+import { GroupBoxView, GroupFrameView } from '../canvas/group-frame';
 
 type ExecNode = Node<{ wf: Omit<WorkflowNode, 'position'> }, 'exec'>;
 type ExecEdge = Edge<{ connectionType: string }, 'exec'>;
+/** A line to or from a collapsed group's box, standing for the connections in `edgeIds`. */
+type ExecProxyEdge = Edge<{ connectionType: string; edgeIds: string[] }, 'execProxy'>;
 /** A sticky note, drawn under the nodes. */
 type ExecSticky = Node<{ content: string; color: number }, 'sticky'>;
 
@@ -40,26 +51,96 @@ const ExecStickyView = memo(function ExecStickyView({ data }: NodeProps<ExecStic
   return <StickyNoteView content={data.content} color={data.color} className="cursor-default" />;
 });
 
-/** A canvas group, drawn expanded (also when collapsed in the editor) under the notes, so every node shows. */
-type ExecFrame = Node<{ name: string; color: number; count: number }, 'frame'>;
+/** A canvas group under the notes: a frame, or (collapsed) a box in place of everything inside it. */
+type ExecFrame = Node<{ name: string; color: number; collapsed: boolean; nodeIds: string[]; groups: number }, 'frame'>;
 
-/** The workflow's canvas groups as read-only React Flow nodes. */
-export function toReadOnlyGroups(workflow: Workflow): ExecFrame[] {
-  return (workflow.groups ?? []).map((group) => ({
-    id: group.id,
-    type: 'frame',
-    position: { x: group.position[0], y: group.position[1] },
-    width: group.width,
-    height: group.height,
-    zIndex: -2000,
-    selectable: false,
-    ariaLabel: `Group ${group.name}`,
-    data: { name: group.name, color: group.color ?? 0, count: group.nodeIds.length },
-  }));
+/**
+ * The workflow's canvas groups as read-only React Flow nodes, nested ones above their parents. `collapsed` says which
+ * are drawn collapsed (the saved state, unless expanded in the preview); groups inside a collapsed one are hidden.
+ */
+export function toReadOnlyGroups(workflow: Workflow, collapsed: (id: string, saved: boolean) => boolean = (_id, saved) => saved): ExecFrame[] {
+  const groups = workflow.groups ?? [];
+  const { hidden } = collapsedBoxes(groups, (g) => collapsed(g.id, Boolean(g.collapsed)));
+  return groups.map((group) => {
+    const closed = collapsed(group.id, Boolean(group.collapsed));
+    const nodeIds = descendantNodeIds(groups, group.id);
+    return {
+      id: group.id,
+      type: 'frame',
+      position: { x: group.position[0], y: group.position[1] },
+      width: closed ? GROUP_COLLAPSED_SIZE.width : group.width,
+      height: closed ? GROUP_COLLAPSED_SIZE.height : group.height,
+      zIndex: -2000 + depthOf(groups, group.id),
+      selectable: false,
+      // The body lets the pointer through to the canvas; the header and the box take it.
+      style: { pointerEvents: 'none' },
+      ...(hidden.has(group.id) && { hidden: true }),
+      ariaLabel: `Group ${group.name}${closed ? ', collapsed' : ''}`,
+      data: { name: group.name, color: group.color ?? 0, collapsed: closed, nodeIds, groups: descendantGroupIds(groups, group.id).length },
+    };
+  });
 }
 
-const ExecFrameView = memo(function ExecFrameView({ data }: NodeProps<ExecFrame>) {
-  return <GroupFrameView name={data.name} color={data.color} count={data.count} headerClassName="cursor-default" />;
+const hiddenHandle = '!size-2 !min-h-0 !min-w-0 !border-0 !bg-transparent opacity-0';
+const toggleButton = 'nodrag grid size-5 place-items-center rounded-full text-t2 transition-colors hover:bg-acdim hover:text-t1';
+
+const ExecFrameView = memo(function ExecFrameView({ id, data }: NodeProps<ExecFrame>) {
+  const ctx = useContext(CanvasContext)!;
+  const toggle = () => ctx.toggleGroup(id, !data.collapsed);
+  if (!data.collapsed)
+    return (
+      <GroupFrameView
+        name={data.name}
+        color={data.color}
+        count={data.nodeIds.length}
+        headerClassName="cursor-default"
+        actions={
+          <button title="Collapse (here only)" aria-label={`Collapse group ${data.name}`} onClick={toggle} className={cn(toggleButton, 'size-6')}>
+            <ChevronsDownUp className="size-3.5" />
+          </button>
+        }
+      />
+    );
+  const summary = ctx.groupRuns[id];
+  const dimmed = ctx.dimIdle && summary?.state === 'idle';
+  const icons = data.nodeIds.map((nodeId) => {
+    const info = ctx.nodeTypes[ctx.typeOf[nodeId] ?? ''];
+    return { icon: info?.descriptor.icon, color: nodeColor(info) };
+  });
+  const nested = data.groups ? `, ${data.groups} group${data.groups === 1 ? '' : 's'}` : '';
+  return (
+    <div className={cn('size-full transition-[opacity,filter] duration-300', dimmed && 'opacity-40 grayscale')}>
+      <GroupBoxView
+        name={data.name}
+        color={data.color}
+        count={data.nodeIds.length}
+        icons={icons}
+        selected={Boolean(ctx.selectedNodeId && data.nodeIds.includes(ctx.selectedNodeId))}
+        status={
+          summary && {
+            tone: summary.state,
+            label: summary.label,
+            title: `${data.name}: ${data.nodeIds.length} node${data.nodeIds.length === 1 ? '' : 's'}${nested} · ${summary.ran} ran${summary.failed ? `, ${summary.failed} failed` : ''}${
+              summary.state === 'waiting' ? ` · ${summary.label}` : ''
+            } · double-click to expand (here only)`,
+          }
+        }
+        // `nopan`: a double-click expands the box instead of zooming the canvas.
+        className="nopan cursor-default"
+        onDoubleClick={toggle}
+        actions={
+          <button title="Expand (here only: the workflow keeps it collapsed)" aria-label={`Expand group ${data.name}`} onClick={toggle} className={toggleButton}>
+            <ChevronsUpDown className="size-3.5" />
+          </button>
+        }
+      >
+        <Handle type="target" position={Position.Left} id={GROUP_HANDLES.in} isConnectable={false} className={hiddenHandle} />
+        <Handle type="source" position={Position.Right} id={GROUP_HANDLES.out} isConnectable={false} className={hiddenHandle} />
+        <Handle type="source" position={Position.Top} id={GROUP_HANDLES.aiOut} isConnectable={false} className={hiddenHandle} />
+        <Handle type="target" position={Position.Bottom} id={GROUP_HANDLES.aiIn} isConnectable={false} className={hiddenHandle} />
+      </GroupBoxView>
+    </div>
+  );
 });
 
 /** Workflow → React Flow elements, with the editor's handle ids ("<type>:<index>"). */
@@ -90,6 +171,10 @@ interface CanvasState {
   running: boolean;
   dimIdle: boolean;
   selectedNodeId?: string;
+  /** How the nodes inside each group ran (nested groups' included). */
+  groupRuns: Record<string, GroupRunSummary>;
+  /** Collapse or expand a group in this view only. */
+  toggleGroup(id: string, collapsed: boolean): void;
 }
 
 const CanvasContext = createContext<CanvasState | null>(null);
@@ -138,8 +223,33 @@ const ExecEdgeView = memo(function ExecEdgeView({ id, source, target, sourceX, s
   );
 });
 
+/** A line to or from a collapsed box: the items its connections carried, or how many connections it stands for. */
+const ExecProxyEdgeView = memo(function ExecProxyEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<ExecProxyEdge>) {
+  const ctx = useContext(CanvasContext)!;
+  const isAi = data?.connectionType !== 'main';
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: isAi ? 0.35 : 0.3 });
+  const edgeIds = data?.edgeIds ?? [];
+  const count = edgeIds.reduce((sum, edgeId) => sum + (ctx.edgeCounts[edgeId] ?? 0), 0);
+  return (
+    <EdgeLine
+      id={id}
+      path={path}
+      labelX={labelX}
+      labelY={labelY}
+      isAi={isAi}
+      count={count || undefined}
+      roomy={Math.hypot(targetX - sourceX, targetY - sourceY) > 120}
+      overlay={
+        !count && edgeIds.length > 1 ? (
+          <div className="pointer-events-none rounded-full border border-hair bg-sf px-2 font-mono text-[10px] leading-[18px] text-t2">{edgeIds.length} connections</div>
+        ) : undefined
+      }
+    />
+  );
+});
+
 const nodeTypesMap = { exec: ExecNodeView, sticky: ExecStickyView, frame: ExecFrameView };
-const edgeTypesMap = { exec: ExecEdgeView };
+const edgeTypesMap = { exec: ExecEdgeView, execProxy: ExecProxyEdgeView };
 
 export interface ExecutionCanvasProps {
   workflow: Workflow;
@@ -149,20 +259,49 @@ export interface ExecutionCanvasProps {
   activeNodeIds?: string[];
   /** Where the debugger is holding the run. */
   pausedNodeId?: string;
+  /** A waiting execution: what it waits for (its node is marked waiting, with the reason on hover). */
+  wait?: WaitInfo;
   running?: boolean;
   selectedNodeId?: string;
   onNodeClick?: (nodeId: string) => void;
   className?: string;
 }
 
-function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, running = false, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
+function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
+  // Groups expanded or collapsed in this view (by id); the rest show as saved. Reset for another workflow.
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  useEffect(() => setOverrides({}), [workflow.id]);
+  const toggleGroup = useCallback((id: string, collapsed: boolean) => setOverrides((o) => ({ ...o, [id]: collapsed })), []);
+  const collapsedOf = useCallback((id: string, saved: boolean) => overrides[id] ?? saved, [overrides]);
+
   const flow = useMemo(() => toReadOnlyFlow(workflow), [workflow]);
-  const allNodes = useMemo(() => [...toReadOnlyGroups(workflow), ...toReadOnlyStickies(workflow), ...flow.nodes], [workflow, flow]);
+  const groups = useMemo(() => workflow.groups ?? [], [workflow]);
+  const boxes = useMemo(() => collapsedBoxes(groups, (g) => collapsedOf(g.id, Boolean(g.collapsed))).boxOf, [groups, collapsedOf]);
+  const routed = useMemo(() => routeEdges(flow.edges, boxes), [flow, boxes]);
+  const edges = useMemo<(ExecEdge | ExecProxyEdge)[]>(
+    () => [
+      ...routed.edges,
+      ...routed.routes.map<ExecProxyEdge>((route) => ({
+        id: route.id,
+        type: 'execProxy',
+        source: route.source,
+        target: route.target,
+        sourceHandle: route.sourceHandle,
+        targetHandle: route.targetHandle,
+        data: { connectionType: route.connectionType, edgeIds: route.edgeIds },
+      })),
+    ],
+    [routed],
+  );
+  const allNodes = useMemo(
+    () => [...toReadOnlyGroups(workflow, collapsedOf), ...toReadOnlyStickies(workflow), ...flow.nodes.map((n) => (boxes.has(n.id) ? { ...n, hidden: true } : n))],
+    [workflow, flow, collapsedOf, boxes],
+  );
   const [nodes, setNodes, onNodesChange] = useNodesState<ExecNode | ExecSticky | ExecFrame>(allNodes);
   useEffect(() => setNodes(allNodes), [allNodes, setNodes]);
 
   const state = useMemo<CanvasState>(() => {
-    const statuses: Record<string, NodeStatus> = { ...statusesOf(runData) };
+    const statuses: Record<string, NodeStatus> = wait ? withWaiting(statusesOf(runData), { status: 'waiting', wait }) : { ...statusesOf(runData) };
     for (const id of activeNodeIds) statuses[id] = { ...statuses[id], state: 'running' };
     if (pausedNodeId) statuses[pausedNodeId] = { ...statuses[pausedNodeId], state: 'paused' };
     const outputsOf: Record<string, string[]> = {};
@@ -185,15 +324,17 @@ function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId
       running,
       dimIdle: !running && Object.keys(runData).length > 0,
       selectedNodeId,
+      groupRuns: Object.fromEntries(groups.map((g) => [g.id, summarizeGroupRun(descendantNodeIds(groups, g.id), statuses)])),
+      toggleGroup,
     };
-  }, [flow, workflow, nodeTypes, runData, activeNodeIds, pausedNodeId, running, selectedNodeId]);
+  }, [flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, selectedNodeId, toggleGroup]);
 
   return (
     <CanvasContext.Provider value={state}>
       <div className={cn('canvas-readonly relative size-full', className)}>
         <ReactFlow
           nodes={nodes}
-          edges={flow.edges}
+          edges={edges}
           onNodesChange={onNodesChange}
           nodeTypes={nodeTypesMap}
           edgeTypes={edgeTypesMap}

@@ -4,20 +4,25 @@
  * search by name, a tag filter and sorting. Searching or filtering looks in
  * every folder and shows where each match lives. Workflows move to folders
  * from their menu or by dragging them onto a folder or a breadcrumb step;
- * Import creates a workflow from a Landflow, n8n or Flowise JSON file.
+ * folders belong to a project (`?project=<id>` shows one project's folders and workflows, and creates there; a
+ * workflow only goes into a folder of its own project);
+ * Import creates a workflow from a Landflow, n8n or Flowise JSON file. In a protected environment (workflows
+ * read-only, the API refuses changes) the buttons that create, move or delete are disabled with the reason.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, MoreHorizontal, Pencil, Plus, Search, Share2, Trash2, X } from 'lucide-react';
+import { ArrowRightLeft, ChevronRight, Download, ExternalLink, FileUp, Folder as FolderIcon, FolderInput, FolderPlus, LayoutTemplate, Lock, MoreHorizontal, Pencil, Plus, Search, Share2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
+import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { timeAgo } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
 import type { Folder, ImportReport, NodeTypeInfo, Workflow, WorkflowSummary as Summary } from '@/lib/shared/types';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
+import { ProtectedGate } from '@/components/shell/protected-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -27,7 +32,10 @@ import { MenuItem, MenuSeparator, Popover } from '@/components/ui/popover';
 import { ImportReportDialog, showImportReport } from '@/components/editor/import-report';
 import { readJsonFile } from '@/components/editor/import-dialog';
 import { workflowFileName } from '@/components/editor/workflow-menu';
+import { rememberProject } from '@/components/projects/current-project';
 import { MoveToProjectDialog, ShareDialog } from '@/components/projects/share-dialog';
+import { projectLabel, useProjects } from '@/components/projects/use-projects';
+import { useViewer } from '@/components/auth/viewer';
 import { FolderNameDialog, MoveDialog } from './folder-dialogs';
 
 /** A listed workflow with its project and the viewer's access (GET /api/workflows). */
@@ -53,14 +61,14 @@ function readSort(): Sort {
   }
 }
 
-/** Accepts a dragged workflow: highlights while it is over, then moves it to `folderId` (null = top level). */
-function useDropTarget(folderId: string | null, onDrop: (workflowId: string, folderId: string | null) => void) {
+/** Accepts a dragged workflow: highlights while it is over, then moves it to `folderId` (null = top level). Off when `off` (read-only). */
+function useDropTarget(folderId: string | null, onDrop: (workflowId: string, folderId: string | null) => void, off?: boolean) {
   const [over, setOver] = useState(false);
   return {
     over,
     props: {
       onDragOver: (e: DragEvent) => {
-        if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+        if (off || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         setOver(true);
@@ -69,7 +77,7 @@ function useDropTarget(folderId: string | null, onDrop: (workflowId: string, fol
       onDrop: (e: DragEvent) => {
         setOver(false);
         const id = e.dataTransfer.getData(DRAG_TYPE);
-        if (!id) return;
+        if (!id || off) return;
         e.preventDefault();
         onDrop(id, folderId);
       },
@@ -77,8 +85,22 @@ function useDropTarget(folderId: string | null, onDrop: (workflowId: string, fol
   };
 }
 
-function Crumb({ folder, last, onOpen, onDropWorkflow }: { folder?: Folder; last: boolean; onOpen: () => void; onDropWorkflow: (id: string, folderId: string | null) => void }) {
-  const drop = useDropTarget(folder?.id ?? null, onDropWorkflow);
+function Crumb({
+  folder,
+  last,
+  onOpen,
+  onDropWorkflow,
+  readOnly,
+  rootLabel = 'All workflows',
+}: {
+  folder?: Folder;
+  last: boolean;
+  onOpen: () => void;
+  onDropWorkflow: (id: string, folderId: string | null) => void;
+  readOnly?: string;
+  rootLabel?: string;
+}) {
+  const drop = useDropTarget(folder?.id ?? null, onDropWorkflow, Boolean(readOnly));
   return (
     <button
       {...drop.props}
@@ -90,7 +112,7 @@ function Crumb({ folder, last, onOpen, onDropWorkflow }: { folder?: Folder; last
         drop.over && 'bg-acdim text-t1 shadow-[0_0_0_2px_var(--ac)]',
       )}
     >
-      {folder?.name ?? 'All workflows'}
+      {folder?.name ?? rootLabel}
     </button>
   );
 }
@@ -98,19 +120,25 @@ function Crumb({ folder, last, onOpen, onDropWorkflow }: { folder?: Folder; last
 function FolderRow({
   folder,
   counts,
+  projectName,
   onOpen,
   onRename,
   onDelete,
   onDropWorkflow,
+  readOnly,
 }: {
   folder: Folder;
   counts: { folders: number; workflows: number };
+  /** Shown when the list spans projects. */
+  projectName?: string;
   onOpen: () => void;
   onRename: () => void;
   onDelete: () => void;
   onDropWorkflow: (id: string, folderId: string | null) => void;
+  /** Why folders can't change here (a protected environment). */
+  readOnly?: string;
 }) {
-  const drop = useDropTarget(folder.id, onDropWorkflow);
+  const drop = useDropTarget(folder.id, onDropWorkflow, Boolean(readOnly));
   const empty = !counts.folders && !counts.workflows;
   const [confirming, setConfirming] = useState(false);
   return (
@@ -135,6 +163,11 @@ function FolderRow({
                   .join(' · ')}
           </span>
         </span>
+        {projectName && (
+          <Badge tone="muted" className="mr-1 hidden shrink-0 sm:inline-flex" title="The project this folder belongs to">
+            {projectName}
+          </Badge>
+        )}
       </button>
       <div className="pl-2 pr-2.5">
         <Popover
@@ -184,6 +217,8 @@ function FolderRow({
                   <FolderIcon /> Open
                 </MenuItem>
                 <MenuItem
+                  disabled={Boolean(readOnly)}
+                  hint={readOnly && 'read-only'}
                   onClick={() => {
                     close();
                     onRename();
@@ -192,7 +227,7 @@ function FolderRow({
                   <Pencil /> Rename
                 </MenuItem>
                 <MenuSeparator />
-                <MenuItem danger disabled={!empty} onClick={() => setConfirming(true)} hint={empty ? undefined : 'not empty'}>
+                <MenuItem danger disabled={!empty || Boolean(readOnly)} onClick={() => setConfirming(true)} hint={readOnly ? 'read-only' : empty ? undefined : 'not empty'}>
                   <Trash2 /> Delete folder
                 </MenuItem>
               </>
@@ -212,6 +247,7 @@ function WorkflowRow({
   onShare,
   onTransfer,
   onDelete,
+  readOnly,
 }: {
   workflow: WorkflowSummary;
   types: Record<string, NodeTypeInfo>;
@@ -221,6 +257,8 @@ function WorkflowRow({
   onShare: () => void;
   onTransfer: () => void;
   onDelete: () => void;
+  /** Why workflows can't move or be deleted here (a protected environment). */
+  readOnly?: string;
 }) {
   const [confirming, setConfirming] = useState(false);
   const download = async () => {
@@ -239,7 +277,7 @@ function WorkflowRow({
   };
   return (
     <div
-      draggable
+      draggable={!readOnly}
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_TYPE, workflow.id);
         e.dataTransfer.effectAllowed = 'move';
@@ -338,6 +376,8 @@ function WorkflowRow({
                   <ExternalLink /> Open
                 </Link>
                 <MenuItem
+                  disabled={Boolean(readOnly)}
+                  hint={readOnly && 'read-only'}
                   onClick={() => {
                     close();
                     onMove();
@@ -372,7 +412,7 @@ function WorkflowRow({
                   <Download /> Download JSON
                 </MenuItem>
                 <MenuSeparator />
-                <MenuItem danger onClick={() => setConfirming(true)}>
+                <MenuItem danger disabled={Boolean(readOnly)} hint={readOnly && 'read-only'} onClick={() => setConfirming(true)}>
                   <Trash2 /> Delete
                 </MenuItem>
               </>
@@ -387,7 +427,11 @@ function WorkflowRow({
 export function WorkflowsList() {
   const router = useRouter();
   const params = useSearchParams();
+  const viewer = useViewer();
+  const { projects } = useProjects();
   const folderId = params.get('folder') ?? undefined;
+  const projectId = params.get('project') ?? undefined;
+  const project = projects?.find((p) => p.id === projectId);
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>();
   const [folders, setFolders] = useState<Folder[]>([]);
   const [types, setTypes] = useState<Record<string, NodeTypeInfo>>({});
@@ -398,14 +442,18 @@ export function WorkflowsList() {
   const [sort, setSortState] = useState<Sort>('updated');
   const [dialog, setDialog] = useState<{ kind: 'new-folder' } | { kind: 'rename'; folder: Folder } | { kind: 'move' | 'share' | 'transfer'; workflow: WorkflowSummary }>();
   const picker = useRef<HTMLInputElement>(null);
+  // A protected environment: workflows and folders are read-only here (the API refuses changes).
+  const readOnly = useWorkflowsReadOnly();
+  const locked = Boolean(readOnly);
 
+  const scopeQuery = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
   const load = useCallback(
     () =>
-      Promise.all([api<{ workflows: WorkflowSummary[] }>('/api/workflows'), api<{ folders: Folder[] }>('/api/folders').catch(() => ({ folders: [] as Folder[] }))]).then(([w, f]) => {
+      Promise.all([api<{ workflows: WorkflowSummary[] }>(`/api/workflows${scopeQuery}`), api<{ folders: Folder[] }>(`/api/folders${scopeQuery}`).catch(() => ({ folders: [] as Folder[] }))]).then(([w, f]) => {
         setWorkflows(w.workflows);
         setFolders(f.folders);
       }),
-    [],
+    [scopeQuery],
   );
   useEffect(() => {
     void load();
@@ -446,16 +494,28 @@ export function WorkflowsList() {
   const childFolders = searching ? [] : folders.filter((f) => (known(f.parentId) ?? undefined) === current?.id).sort((a, b) => a.name.localeCompare(b.name));
   const countsOf = (id: string) => ({ folders: folders.filter((f) => f.parentId === id).length, workflows: (workflows ?? []).filter((w) => w.folderId === id).length });
 
-  const openFolder = (id?: string) => {
+  const openFolder = (id?: string, inProject = projectId) => {
     setQuery('');
     setTag('');
-    router.push(id ? `/workflows?folder=${encodeURIComponent(id)}` : '/workflows');
+    const search = new URLSearchParams({ ...(inProject && { project: inProject }), ...(id && { folder: id }) }).toString();
+    router.push(search ? `/workflows?${search}` : '/workflows');
+  };
+  const pickProject = (id: string) => {
+    if (id) rememberProject(id);
+    openFolder(undefined, id || undefined);
+  };
+  // Folders of more than one project in the list: each shows its project.
+  const multiProject = new Set(folders.map((f) => f.projectId)).size > 1;
+  const projectName = (id?: string) => {
+    const p = projects?.find((candidate) => candidate.id === id);
+    return p ? projectLabel(p, viewer?.id) : undefined;
   };
 
   const create = async () => {
     setCreating(true);
     try {
-      const { workflow } = await api<{ workflow: { id: string } }>('/api/workflows', {
+      // In a folder: the folder's project; else the project picked (else the caller's personal project).
+      const { workflow } = await api<{ workflow: { id: string } }>(`/api/workflows${current ? '' : scopeQuery}`, {
         method: 'POST',
         json: { name: 'Untitled workflow', nodes: [], connections: [], ...(current && { folderId: current.id }) },
       });
@@ -471,7 +531,7 @@ export function WorkflowsList() {
     setImporting(true);
     try {
       const text = await readJsonFile(file);
-      const { workflow, report } = await api<{ workflow: Workflow; report: ImportReport }>('/api/workflows/import', {
+      const { workflow, report } = await api<{ workflow: Workflow; report: ImportReport }>(`/api/workflows/import${current ? '' : scopeQuery}`, {
         method: 'POST',
         json: { data: text, create: true, ...(current && { folderId: current.id }) },
       });
@@ -488,6 +548,11 @@ export function WorkflowsList() {
   const move = async (workflowId: string, target: string | null) => {
     const workflow = workflows?.find((w) => w.id === workflowId);
     if (!workflow || (workflow.folderId ?? null) === target) return true;
+    const folder = target ? byId.get(target) : undefined;
+    if (folder?.projectId && workflow.ownership && folder.projectId !== workflow.ownership.projectId) {
+      toast.error(`“${folder.name}” is a folder of ${projectName(folder.projectId) ? `the “${projectName(folder.projectId)}” project` : 'another project'}. Move the workflow to that project first.`);
+      return false;
+    }
     try {
       await api(`/api/workflows/${workflowId}/move`, { method: 'POST', json: { folderId: target } });
       toast(`Moved “${workflow.name}” to ${target ? (byId.get(target)?.name ?? 'the folder') : 'the top level'}`);
@@ -527,18 +592,33 @@ export function WorkflowsList() {
     <>
       <PageHeader
         title="Workflows"
-        meta={count !== undefined && <span>{searching ? `${count} found` : count}</span>}
+        meta={
+          <>
+            {count !== undefined && <span>{searching ? `${count} found` : count}</span>}
+            {readOnly && (
+              <span title={readOnly} className="flex items-center gap-1 text-warn" data-testid="workflows-read-only">
+                <Lock className="size-3" /> Read-only
+              </span>
+            )}
+          </>
+        }
         actions={
           <>
-            <Button size="sm" variant="ghost" onClick={() => picker.current?.click()} loading={importing} title="Create a workflow from a Landflow, n8n or Flowise JSON file">
-              {!importing && <FileUp className="size-3.5" />} Import
-            </Button>
-            <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })}>
-              <FolderPlus className="size-3.5" /> New folder
-            </Button>
-            <Button variant="primary" size="sm" onClick={() => void create()} loading={creating}>
-              {!creating && <Plus className="size-3.5" strokeWidth={2} />} New workflow
-            </Button>
+            <ProtectedGate reason={readOnly}>
+              <Button size="sm" variant="ghost" onClick={() => picker.current?.click()} loading={importing} disabled={locked} title={locked ? undefined : 'Create a workflow from a Landflow, n8n or Flowise JSON file'}>
+                {!importing && <FileUp className="size-3.5" />} Import
+              </Button>
+            </ProtectedGate>
+            <ProtectedGate reason={readOnly}>
+              <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })} disabled={locked}>
+                <FolderPlus className="size-3.5" /> New folder
+              </Button>
+            </ProtectedGate>
+            <ProtectedGate reason={readOnly}>
+              <Button variant="primary" size="sm" onClick={() => void create()} loading={creating} disabled={locked}>
+                {!creating && <Plus className="size-3.5" strokeWidth={2} />} New workflow
+              </Button>
+            </ProtectedGate>
             <input ref={picker} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void importFile(e.target.files?.[0] ?? undefined)} />
           </>
         }
@@ -555,14 +635,20 @@ export function WorkflowsList() {
               </span>
             ) : (
               <>
-                <Crumb last={!breadcrumb.length} onOpen={() => openFolder(undefined)} onDropWorkflow={(id, f) => void move(id, f)} />
+                <Crumb
+                  last={!breadcrumb.length}
+                  onOpen={() => openFolder(undefined)}
+                  onDropWorkflow={(id, f) => void move(id, f)}
+                  readOnly={readOnly}
+                  rootLabel={project ? projectLabel(project, viewer?.id) : undefined}
+                />
                 {breadcrumb.map((folder, i) => (
                   <span key={folder.id} className="flex min-w-0 items-center gap-0.5">
                     <ChevronRight className="size-3.5 shrink-0 text-t3" />
-                    <Crumb folder={folder} last={i === breadcrumb.length - 1} onOpen={() => openFolder(folder.id)} onDropWorkflow={(id, f) => void move(id, f)} />
+                    <Crumb folder={folder} last={i === breadcrumb.length - 1} onOpen={() => openFolder(folder.id)} onDropWorkflow={(id, f) => void move(id, f)} readOnly={readOnly} />
                   </span>
                 ))}
-                {current && (
+                {current && !readOnly && (
                   <button
                     onClick={() => setDialog({ kind: 'rename', folder: current })}
                     title="Rename folder"
@@ -575,6 +661,18 @@ export function WorkflowsList() {
               </>
             )}
           </nav>
+          {(projects?.length ?? 0) > 1 && (
+            <div className="w-[170px]">
+              <Select value={projectId ?? ''} onChange={(e) => pickProject(e.target.value)} aria-label="Project" className="h-8 rounded-full text-[12px]">
+                <option value="">All projects</option>
+                {projects?.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {projectLabel(p, viewer?.id)}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
           <div className="relative w-[240px]">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
             <input
@@ -618,10 +716,12 @@ export function WorkflowsList() {
               key={folder.id}
               folder={folder}
               counts={countsOf(folder.id)}
+              projectName={multiProject && !projectId ? projectName(folder.projectId) : undefined}
               onOpen={() => openFolder(folder.id)}
               onRename={() => setDialog({ kind: 'rename', folder })}
               onDelete={() => void removeFolder(folder)}
               onDropWorkflow={(id, f) => void move(id, f)}
+              readOnly={readOnly}
             />
           ))}
           {visibleWorkflows?.map((workflow) => (
@@ -634,6 +734,7 @@ export function WorkflowsList() {
               onShare={() => setDialog({ kind: 'share', workflow })}
               onTransfer={() => setDialog({ kind: 'transfer', workflow })}
               onDelete={() => void removeWorkflow(workflow)}
+              readOnly={readOnly}
             />
           ))}
         </div>
@@ -650,15 +751,19 @@ export function WorkflowsList() {
               hint="Chain built-in nodes with plugins written in any language. Every node, local or remote, implements the same interface. Start from a template, or import a workflow from n8n or Flowise."
               action={
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={() => picker.current?.click()}>
-                    <FileUp className="size-3.5" /> Import
-                  </Button>
-                  <Button size="sm" onClick={() => router.push('/templates')}>
+                  <ProtectedGate reason={readOnly}>
+                    <Button size="sm" onClick={() => picker.current?.click()} disabled={locked}>
+                      <FileUp className="size-3.5" /> Import
+                    </Button>
+                  </ProtectedGate>
+                  <Button size="sm" onClick={() => router.push(projectId ? `/templates?project=${encodeURIComponent(projectId)}` : '/templates')}>
                     <LayoutTemplate className="size-3.5" /> Browse templates
                   </Button>
-                  <Button variant="primary" size="sm" onClick={() => void create()} loading={creating}>
-                    New workflow
-                  </Button>
+                  <ProtectedGate reason={readOnly}>
+                    <Button variant="primary" size="sm" onClick={() => void create()} loading={creating} disabled={locked}>
+                      New workflow
+                    </Button>
+                  </ProtectedGate>
                 </div>
               }
             />
@@ -672,15 +777,21 @@ export function WorkflowsList() {
               hint="Create a workflow or a folder here, or drag workflows onto it from another folder."
               action={
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })}>
-                    <FolderPlus className="size-3.5" /> New folder
-                  </Button>
-                  <Button size="sm" onClick={() => router.push(`/templates?folder=${encodeURIComponent(current.id)}`)}>
-                    <LayoutTemplate className="size-3.5" /> From a template
-                  </Button>
-                  <Button variant="primary" size="sm" onClick={() => void create()} loading={creating}>
-                    New workflow
-                  </Button>
+                  <ProtectedGate reason={readOnly}>
+                    <Button size="sm" onClick={() => setDialog({ kind: 'new-folder' })} disabled={locked}>
+                      <FolderPlus className="size-3.5" /> New folder
+                    </Button>
+                  </ProtectedGate>
+                  <ProtectedGate reason={readOnly}>
+                    <Button size="sm" onClick={() => router.push(`/templates?folder=${encodeURIComponent(current.id)}${current.projectId ? `&project=${encodeURIComponent(current.projectId)}` : ''}`)} disabled={locked}>
+                      <LayoutTemplate className="size-3.5" /> From a template
+                    </Button>
+                  </ProtectedGate>
+                  <ProtectedGate reason={readOnly}>
+                    <Button variant="primary" size="sm" onClick={() => void create()} loading={creating} disabled={locked}>
+                      New workflow
+                    </Button>
+                  </ProtectedGate>
                 </div>
               }
             />
@@ -690,12 +801,13 @@ export function WorkflowsList() {
 
       {dialog?.kind === 'new-folder' && (
         <FolderNameDialog
-          title={current ? `New folder in “${current.name}”` : 'New folder'}
+          title={current ? `New folder in “${current.name}”` : project ? `New folder in ${projectLabel(project, viewer?.id)}` : 'New folder'}
           confirm="Create"
           onClose={() => setDialog(undefined)}
           onSubmit={async (name) => {
             try {
-              await api('/api/folders', { method: 'POST', json: { name, ...(current && { parentId: current.id }) } });
+              // A subfolder is in its parent's project; a top-level one in the project picked (else the caller's personal one).
+              await api(`/api/folders${current ? '' : scopeQuery}`, { method: 'POST', json: { name, ...(current && { parentId: current.id }) } });
               await load();
               return true;
             } catch (e) {
@@ -726,7 +838,7 @@ export function WorkflowsList() {
       {dialog?.kind === 'move' && (
         <MoveDialog
           name={dialog.workflow.name}
-          folders={folders}
+          folders={dialog.workflow.ownership ? folders.filter((f) => !f.projectId || f.projectId === dialog.workflow.ownership!.projectId) : folders}
           current={known(dialog.workflow.folderId)}
           onClose={() => setDialog(undefined)}
           onMove={(target) => move(dialog.workflow.id, target)}

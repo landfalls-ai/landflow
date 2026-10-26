@@ -28,9 +28,24 @@ export const saveTemplateSchema = z.object({
   description: z.string().max(LIMITS.description).default(''),
   categories: z.array(z.string()).max(8).default([]),
   setup: z.array(z.string().max(LIMITS.step)).max(LIMITS.setup).default([]),
+  /** The project it belongs to (the caller edits there), or `null`: instance-wide (owners and admins). */
+  projectId: z.string().nullable().optional(),
 });
 
 export type SaveTemplateInput = z.infer<typeof saveTemplateSchema>;
+
+/** PATCH /api/templates/:id: what to change in place. */
+export const updateTemplateSchema = z.strictObject({
+  name: z.string().trim().min(1).max(LIMITS.name).optional(),
+  description: z.string().max(LIMITS.description).optional(),
+  categories: z.array(z.string()).max(8).optional(),
+  setup: z.array(z.string().max(LIMITS.step)).max(LIMITS.setup).optional(),
+  /** Replace the workflow with a saved workflow's (the caller must see it). */
+  workflowId: z.string().min(1).optional(),
+  projectId: z.string().nullable().optional(),
+});
+
+export type UpdateTemplateInput = z.infer<typeof updateTemplateSchema>;
 
 /** A template file, as "Export" writes it. */
 export const fileSchema = z.object({

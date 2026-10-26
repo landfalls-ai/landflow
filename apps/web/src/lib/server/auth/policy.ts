@@ -46,8 +46,10 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/environment')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/users')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'users:manage' };
   if (under('/api/settings/mcp')) return { scope: 'admin', action: 'mcp:manage' };
-  // Audit log: reading (and exporting) needs `audit:read` and an admin; its settings and SIEM destinations are admin-only.
-  if (under('/api/audit')) return { scope: 'audit:read', action: 'audit:read' };
+  // Audit log: reading (and exporting) needs `audit:read`: owners and admins read every event, project admins their
+  // projects' (the route limits it, lib/server/audit/access.ts). Verifying the hash chain, its settings and SIEM destinations are admin-only.
+  if (path === '/api/audit/verify') return { scope: 'audit:read', action: 'audit:read' };
+  if (under('/api/audit')) return { scope: 'audit:read' };
   if (under('/api/settings/audit')) return { scope: 'admin', action: read ? 'audit:read' : 'settings:manage' };
   // Four-eyes publish requests: builders list, ask and decide (who may approve is checked by lib/server/governance).
   if (under('/api/publish-requests')) return { scope: read ? 'workflows:read' : 'workflows:write' };
@@ -108,6 +110,8 @@ function resourceAction(kind: ResourceRule['kind'], rest: string, method: string
   const sub = (name: string) => rest === `/${name}` || rest.startsWith(`/${name}/`);
   if (sub('shares')) return READ_METHODS.has(method) ? 'read' : 'share';
   if (sub('transfer')) return 'move';
+  // A workflow's governance policy: its project's admins (who may move it) change it.
+  if (kind === 'workflow' && sub('policy') && !READ_METHODS.has(method)) return 'move';
   // Starting, retrying or stopping runs and chats; credentials' OAuth2 Connect writes the token.
   if (kind === 'workflow' && (sub('run') || sub('execute') || sub('listen') || (sub('evaluations') && method === 'POST'))) return 'run';
   if (kind === 'execution' && (sub('retry') || sub('rerun') || sub('debug') || sub('stop') || sub('approvals'))) return READ_METHODS.has(method) ? 'read' : 'run';

@@ -3,8 +3,13 @@
  * ignored by the engine. Groups are a list of their own rather than pseudo-nodes for the same reasons as notes: the
  * engine, the runner, `$('Node')`, node counts and everything else that reads `workflow.nodes` stay untouched.
  *
- * Pure geometry and normalisation shared by the editor (grouping, moving, collapsing, drag in and out), the importer
- * and the templates; nothing here touches React Flow.
+ * Groups nest: `parentId` names the group a group sits in, and `nodeIds` lists only a group's own nodes. A collapsed
+ * group stands for everything inside it, nested groups included: their nodes are drawn as its box (`collapsedBoxes`)
+ * and their connections end at it (`routeEdges`).
+ *
+ * Pure geometry, tree and normalisation helpers shared by the editor (grouping, moving, collapsing, drag in and out),
+ * the read-only canvases (executions, versions, templates), the importer and the templates; nothing here touches
+ * React Flow.
  */
 import type { WorkflowGroup } from '@landflow/engine';
 
@@ -87,7 +92,8 @@ export function growToFit(frame: Rect, rect: Rect): Rect {
 
 /**
  * The expanded group whose frame holds `point` (a node's centre): the smallest frame when several overlap, so a group
- * drawn inside a bigger one wins. Collapsed groups don't take nodes.
+ * drawn inside a bigger one wins. Collapsed groups don't take nodes (callers mark groups hidden inside a collapsed one
+ * as collapsed too).
  */
 export function groupAt<T extends Pick<WorkflowGroup, 'id' | 'position' | 'width' | 'height' | 'collapsed'>>(groups: T[], point: { x: number; y: number }): T | undefined {
   return groups
@@ -98,6 +104,7 @@ export function groupAt<T extends Pick<WorkflowGroup, 'id' | 'position' | 'width
 /**
  * Groups as they can be saved: unique ids, a trimmed name, a size within limits, and members that exist, each node in
  * one group only (the first that lists it). Groups left empty are kept (a frame can be emptied by dragging nodes out).
+ * A `parentId` stays when it names another group and doesn't make a loop (the link that would close one is dropped).
  */
 export function normalizeGroups(groups: readonly WorkflowGroup[] | undefined, nodeIds: Iterable<string>): WorkflowGroup[] {
   const known = new Set(nodeIds);
@@ -121,10 +128,145 @@ export function normalizeGroups(groups: readonly WorkflowGroup[] | undefined, no
       ...(group.collapsed === true && { collapsed: true }),
     });
   }
-  return out;
+  // Parents: known groups only, no loops. Links are taken in list order, so the one that would close a loop goes.
+  const parents = new Map<string, string>();
+  const first = new Set<string>();
+  for (const group of groups ?? []) {
+    if (!group || typeof group.id !== 'string' || first.has(group.id)) continue;
+    first.add(group.id);
+    const parentId = group.parentId;
+    if (typeof parentId !== 'string' || !ids.has(parentId) || parentId === group.id) continue;
+    let at: string | undefined = parentId;
+    while (at && at !== group.id) at = parents.get(at);
+    if (!at) parents.set(group.id, parentId);
+  }
+  return parents.size ? out.map((g) => (parents.has(g.id) ? { ...g, parentId: parents.get(g.id) } : g)) : out;
 }
 
 /** The group a node belongs to. */
 export function groupOfNode<T extends Pick<WorkflowGroup, 'nodeIds'>>(groups: readonly T[], nodeId: string): T | undefined {
   return groups.find((g) => g.nodeIds.includes(nodeId));
+}
+
+// ---------------------------------------------------------------------------
+// Nesting
+// ---------------------------------------------------------------------------
+
+/** What the tree helpers read of a group (the editor's frames and saved groups both fit). */
+export type GroupLink = Pick<WorkflowGroup, 'id' | 'nodeIds'> & { parentId?: string; collapsed?: boolean };
+
+/** The groups a group sits in, nearest first. A loop (which normalizeGroups never lets through) stops the walk. */
+export function ancestorsOf(groups: readonly GroupLink[], id: string): string[] {
+  const byId = new Map(groups.map((g) => [g.id, g]));
+  const out: string[] = [];
+  for (let at = byId.get(id)?.parentId; at && byId.has(at) && at !== id && !out.includes(at); at = byId.get(at)?.parentId) out.push(at);
+  return out;
+}
+
+/** The groups inside a group, at any depth (parents before their children). */
+export function descendantGroupIds(groups: readonly GroupLink[], id: string): string[] {
+  const out: string[] = [];
+  const queue = [id];
+  while (queue.length) {
+    const at = queue.shift()!;
+    for (const g of groups) if (g.parentId === at && g.id !== id && !out.includes(g.id)) out.push(g.id), queue.push(g.id);
+  }
+  return out;
+}
+
+/** Every node inside a group: its own and those of the groups nested in it. */
+export function descendantNodeIds(groups: readonly GroupLink[], id: string): string[] {
+  const inside = new Set([id, ...descendantGroupIds(groups, id)]);
+  return groups.filter((g) => inside.has(g.id)).flatMap((g) => g.nodeIds);
+}
+
+/** How deep a group is nested (0: top level). */
+export function depthOf(groups: readonly GroupLink[], id: string): number {
+  return ancestorsOf(groups, id).length;
+}
+
+/**
+ * What collapsing hides: each node inside a collapsed group mapped to the box it is drawn as (the outermost collapsed
+ * group around it), and the groups hidden inside a collapsed one. `collapsed` overrides the saved state (the read-only
+ * canvases expand groups without changing the workflow).
+ */
+export function collapsedBoxes(groups: readonly GroupLink[], collapsed: (group: GroupLink) => boolean = (g) => Boolean(g.collapsed)): { boxOf: Map<string, string>; hidden: Set<string> } {
+  const boxOf = new Map<string, string>();
+  const hidden = new Set<string>();
+  const byId = new Map(groups.map((g) => [g.id, g]));
+  for (const group of groups) {
+    const chain = [group.id, ...ancestorsOf(groups, group.id)];
+    const closed = chain.filter((id) => collapsed(byId.get(id)!));
+    if (closed.some((id) => id !== group.id)) hidden.add(group.id);
+    const box = closed.at(-1);
+    if (box) for (const nodeId of group.nodeIds) boxOf.set(nodeId, box);
+  }
+  return { boxOf, hidden };
+}
+
+/**
+ * The expanded, shown group a dropped frame lands in: the smallest one holding the frame's centre that is bigger than
+ * the frame, leaving out the frame itself and the groups inside it. Hidden groups count as collapsed.
+ */
+export function parentAt<T extends Pick<WorkflowGroup, 'id' | 'position' | 'width' | 'height' | 'collapsed'>>(groups: T[], rect: Rect, exclude: ReadonlySet<string>): T | undefined {
+  const area = rect.width * rect.height;
+  return groupAt(
+    groups.filter((g) => !exclude.has(g.id) && g.width * g.height > area),
+    centerOf(rect),
+  );
+}
+
+/** Handles of a collapsed box: main connections in on the left and out on the right, sub-node ones on top and bottom. */
+export const GROUP_HANDLES = { in: 'group:in', out: 'group:out', aiIn: 'group:ai-in', aiOut: 'group:ai-out' } as const;
+
+/** A connection as the router sees it (the editor's and the read-only canvases' edges both fit). */
+export interface RoutableEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+  data?: { connectionType?: string };
+}
+
+/** One line drawn to or from a collapsed box, standing for the connections in `edgeIds`. */
+export interface BoxRoute {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle: string | null;
+  targetHandle: string | null;
+  connectionType: string;
+  edgeIds: string[];
+}
+
+/**
+ * Connections with collapsed groups in the way: those between shown nodes pass through; those with an end inside a
+ * collapsed group become one line per box, node and port (however many connections it stands for); those inside one
+ * box disappear with it.
+ */
+export function routeEdges<E extends RoutableEdge>(edges: readonly E[], boxOf: ReadonlyMap<string, string>): { edges: E[]; routes: BoxRoute[] } {
+  if (!boxOf.size) return { edges: edges as E[], routes: [] };
+  const shown: E[] = [];
+  const routes = new Map<string, BoxRoute>();
+  for (const edge of edges) {
+    const fromBox = boxOf.get(edge.source);
+    const toBox = boxOf.get(edge.target);
+    if (!fromBox && !toBox) {
+      shown.push(edge);
+      continue;
+    }
+    if (fromBox && fromBox === toBox) continue;
+    const type = edge.data?.connectionType ?? 'main';
+    const main = type === 'main';
+    const source = fromBox ?? edge.source;
+    const target = toBox ?? edge.target;
+    const sourceHandle = fromBox ? (main ? GROUP_HANDLES.out : GROUP_HANDLES.aiOut) : (edge.sourceHandle ?? null);
+    const targetHandle = toBox ? (main ? GROUP_HANDLES.in : GROUP_HANDLES.aiIn) : (edge.targetHandle ?? null);
+    const id = `proxy:${source}:${sourceHandle}:${target}:${targetHandle}`;
+    const existing = routes.get(id);
+    if (existing) existing.edgeIds.push(edge.id);
+    else routes.set(id, { id, source, target, sourceHandle, targetHandle, connectionType: type, edgeIds: [edge.id] });
+  }
+  return { edges: shown, routes: [...routes.values()] };
 }

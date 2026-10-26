@@ -1,7 +1,8 @@
 /**
  * GET /api/settings/security (owners and admins): how sign-in is configured, for Settings → Security. Single
  * sign-on (with a live discovery check), email, session length, the plugin registry secret and metrics access.
- * Read-only: these come from the environment (README "Authentication").
+ * Read-only: these come from the environment (README "Authentication"), except SAML assertion encryption's key
+ * (./saml/encryption).
  */
 import type { SecurityView } from '@/lib/shared/auth';
 import { publicOrigin } from '@/lib/server/auth/cookies';

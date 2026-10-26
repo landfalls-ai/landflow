@@ -25,6 +25,7 @@ import { registry } from './plugins/registry';
 import { onPublicationChangedAnywhere } from './publications';
 import { productionWorkflowById } from './publish';
 import { publicUrl } from './runner';
+import { parameterSecrets, rememberResolvedParameters } from './secrets/resolve';
 import { singleton } from './singleton';
 import { store } from './store';
 import { logger } from './telemetry/logger';
@@ -153,20 +154,25 @@ function configHash(node: RegisteredNode, webhookUrl: string): string {
 /** The fields WebhookMethod and ReceiveWebhook share: parameters (expressions resolved, no items), credentials, URL, static data. */
 export async function webhookBase(workflow: Pick<Workflow, 'id' | 'name'>, node: RegisteredNode | WorkflowNode, resolved: ResolvedNodeType, staticData: JsonObject, webhookUrl: string) {
   const skip = new Set(resolved.descriptor.properties.filter((p) => p.noDataExpression || p.type === 'code').map((p) => p.name));
+  // $secrets in the trigger's parameters, when Settings → External secrets allows it.
+  const secrets = await parameterSecrets(node.parameters, skip);
   const resolver = new ExpressionResolver({
     items: [],
     nodeOutputs: {},
     workflow: { id: workflow.id, name: workflow.name },
     execution: { id: `appwebhook_${node.id}`, mode: 'webhook' },
     parameters: node.parameters as JsonObject,
-    variables: variables.record(),
+    variables: variables.forWorkflow(workflow.id),
+    ...(secrets && { secrets }),
   });
+  const parameters = resolver.resolveParameters(node.parameters as JsonObject, 0, skip) as JsonObject;
+  if (secrets) rememberResolvedParameters(node.parameters, parameters, skip);
   const data = await freshCredentials(resolveWorkflowCredentials(workflow.id, node, resolved.descriptor));
   return {
     protocol: PROTOCOL_VERSION,
     workflowId: workflow.id,
     node: { id: node.id, name: node.name, type: node.type, typeVersion: node.typeVersion },
-    parameters: resolver.resolveParameters(node.parameters as JsonObject, 0, skip) as JsonObject,
+    parameters,
     ...(data && Object.keys(data).length > 0 && { credentials: data }),
     webhookUrl,
     staticData,

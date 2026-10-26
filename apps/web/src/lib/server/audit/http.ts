@@ -19,6 +19,7 @@ import { testPrincipal } from '../auth/test-bypass';
 import { logger } from '../telemetry/logger';
 import { withAuditRequest, type AuditRequestContext } from './context';
 import { recordAudit } from './index';
+import { projectTarget, targetProject } from './project';
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const REQUEST_ID = /^[\w.:-]{1,128}$/;
@@ -108,6 +109,9 @@ export async function auditRequest(args: unknown[], run: () => Promise<Response>
   const params = await paramsOf(args[1]);
   ctx.route = routePattern(path, params);
   if (params) ctx.params = params;
+  // A change to a project resource: its project now, while it still exists (a delete takes it along).
+  const named = MUTATING.has(method) && path.startsWith('/api/') ? targetOf(ctx.route, params) : undefined;
+  if (named?.id && projectTarget(named)) ctx.target = { type: named.type, id: named.id, projectId: targetProject(named) };
 
   const response = await withAuditRequest(ctx, run);
   try {

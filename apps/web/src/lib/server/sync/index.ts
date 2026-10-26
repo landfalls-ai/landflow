@@ -7,14 +7,19 @@
  * the instance moved since: an entity it would update or delete changed, one it would delete was created, or one it
  * would create was deleted. `force` applies them anyway. Without `base` the files simply win.
  *
- * Credentials never travel: files name them `{ name, type }`, and applying looks the name up among this instance's
- * credentials of that type (a missing one is a warning; the node keeps the name and needs a credential picked).
+ * Credentials' secrets never travel: files name them `{ name, type }`, and applying looks the name up among this
+ * instance's credentials of that type (a missing one is a warning; the node keeps the name and needs a credential
+ * picked). A promotion may add a credential's definition (non-secret fields, `$secrets` references): a missing
+ * credential is then created from it, its other secret fields left empty to fill in here; existing ones stay as they are.
+ * A promoted `.rows.json` (a table opted in to row promotion) replaces that table's rows when they differ.
  *
  * Draft and publish: applying saves each changed workflow as a draft, then publishes it (lib/server/publish.ts
  * `publishDraft`) when its file says `active: true`, or unpublishes it when the file turns it off. Deleting a workflow
  * forgets its publication too.
  */
-import type { Workflow } from '@landflow/engine';
+import { nanoid } from 'nanoid';
+import type { JsonObject } from '@landflow/protocol';
+import { hasSecretReference, type Workflow } from '@landflow/engine';
 import { COLUMN_NAME, COLUMN_TYPES, SYSTEM_COLUMNS, type ColumnType } from '../../shared/data-tables';
 import type { SyncApplyResult, SyncChange, SyncExport } from '../../shared/sync';
 import { credentials as vault } from '../credentials/vault';
@@ -24,18 +29,22 @@ import { dataTables } from '../datatables';
 import { folders } from '../folders';
 import { forgetWorkflow } from '../publish';
 import { publishOrRequest } from '../governance/approvals';
+import { registry } from '../plugins/registry';
 import { workflowSchema } from '../schemas';
 import { store } from '../store';
 import { MAX_KEY_LENGTH, MAX_VALUE_LENGTH, VARIABLE_KEY, variables } from '../variables';
 import { deleteVersions } from '../versions';
 import {
+  CREDENTIALS_FILE,
   credentialTypeOf,
   entityKey,
   idForPath,
   parseFiles,
   renderState,
+  ROWS_SUFFIX,
   sha256,
   stringify,
+  TABLE_SUFFIX,
   workflowDocument,
   type EntityKind,
   type SyncCredential,
@@ -111,7 +120,7 @@ export interface PlanOptions {
 
 interface Operation {
   change: SyncChange;
-  /** Order: folders, tables, variables, workflows, then deletes (workflows, folders deepest first, tables, variables). */
+  /** Order: folders, tables, rows, variables, credentials, workflows, then deletes (workflows, folders deepest first, tables, variables). */
   stage: number;
   run: () => unknown;
 }
@@ -123,7 +132,7 @@ export interface SyncPlan {
   operations: Operation[];
 }
 
-const KIND_ORDER: Record<EntityKind, number> = { folder: 0, dataTable: 1, variable: 2, workflow: 3 };
+const KIND_ORDER: Record<EntityKind, number> = { folder: 0, dataTable: 1, tableRows: 1.5, variable: 2, credential: 2.5, workflow: 3 };
 const SYSTEM_LOWER = new Set(SYSTEM_COLUMNS.map((c) => c.toLowerCase()));
 const ID = /^[\w-]+$/;
 const isObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -220,6 +229,8 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
   const instanceTables = new Map(state.dataTables.map((t) => [t.id, t]));
   const matchedTables = new Set<string>();
   const tableNames = new Set<string>();
+  /** Schema file → the table it is after this plan (for rows files). */
+  const plannedTables = new Map<string, { id: string; name: string; columns: Array<{ name: string; type: string }>; exists: boolean }>();
   for (const table of desired.dataTables) {
     const name = table.name.trim();
     if (!name) errors.push(`${table.path}: the table needs a name`);
@@ -237,12 +248,14 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
       (table.id && instanceTables.get(table.id)) || state.dataTables.find((t) => !matchedTables.has(t.id) && t.name.toLowerCase() === name.toLowerCase() && (!table.id || !instanceTables.has(table.id)));
     if (!existing) {
       const id = table.id ?? idForPath('dt', table.path);
+      plannedTables.set(table.path, { id, name, columns: table.columns, exists: false });
       add(1, { kind: 'dataTable', action: 'create', id, name, path: table.path }, () => {
         dataTables().createTable({ id, name, columns: table.columns });
       });
       continue;
     }
     matchedTables.add(existing.id);
+    plannedTables.set(table.path, { id: existing.id, name, columns: table.columns, exists: true });
     const added = table.columns.filter((c) => !existing.columns.some((e) => e.name === c.name));
     const removed = existing.columns.filter((e) => !table.columns.some((c) => c.name === e.name));
     for (const column of table.columns) {
@@ -267,6 +280,39 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
     if (matchedTables.has(table.id) || desired.dataTables.some((t) => t.id === table.id)) continue;
     add(6, { kind: 'dataTable', action: 'delete', id: table.id, name: table.name }, () => {
       dataTables().deleteTable(table.id);
+    });
+  }
+
+  // ---- table rows (promotion of opted-in tables): the file's rows replace the table's when they differ
+  for (const file of desired.tableRows) {
+    const schemaPath = `${file.path.slice(0, -ROWS_SUFFIX.length)}${TABLE_SUFFIX}`;
+    const byFile = plannedTables.get(schemaPath);
+    const known = byFile ?? (file.id ? [...plannedTables.values()].find((t) => t.id === file.id) : undefined);
+    if (!known) {
+      warnings.push(`${file.path}: no table for these rows (${schemaPath} is missing): left out`);
+      continue;
+    }
+    const columns = known.columns.map((c) => c.name);
+    const unknown = [...new Set(file.rows.flatMap((row) => Object.keys(row)).filter((key) => !columns.includes(key) && !SYSTEM_LOWER.has(key.toLowerCase())))];
+    if (unknown.length) warnings.push(`${file.path}: ${unknown.map((c) => `“${c}”`).join(', ')} ${unknown.length === 1 ? 'isn’t a column' : 'aren’t columns'} of ${known.name}: left out`);
+    const rows = file.rows.map((row) => Object.fromEntries(columns.filter((c) => row[c] !== undefined).map((c) => [c, row[c]])));
+    const cells = (list: Array<Record<string, unknown>>) => JSON.stringify(list.map((row) => columns.map((c) => row[c] ?? null)));
+    let current: Array<Record<string, unknown>> = [];
+    if (known.exists) {
+      try {
+        current = dataTables().listRows(known.id, { sortBy: 'id', sortDirection: 'asc' }).rows;
+      } catch {
+        current = [];
+      }
+    }
+    if (known.exists && cells(current) === cells(rows)) continue;
+    const tableId = known.id;
+    add(1.7, { kind: 'tableRows', action: known.exists && current.length ? 'update' : 'create', id: tableId, name: known.name, path: file.path, fields: [`${rows.length} row${rows.length === 1 ? '' : 's'}`] }, () => {
+      const tables = dataTables();
+      tables.transaction(tableId, () => {
+        tables.deleteRows(tableId, {});
+        tables.insertRows(tableId, rows);
+      });
     });
   }
 
@@ -306,6 +352,38 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
     }
   }
 
+  // ---- credentials: a promoted definition creates a credential this instance lacks (by name and type, or mapped)
+  const planned: SyncCredential[] = [];
+  const present = (type: string, name: string) =>
+    [...state.credentials, ...planned].some((c) => (c.type === type && c.name === name) || (c.id && c.id === mappedCredential(type, name)));
+  for (const credential of desired.credentials) {
+    if (!credential.data && !credential.secretFields) continue;
+    const { name, type } = credential;
+    if (present(type, name)) continue;
+    if (!name.trim() || name.length > 200) {
+      errors.push(`${CREDENTIALS_FILE}: credential names are 1 to 200 characters`);
+      continue;
+    }
+    if (!registry.credentialType(type)) {
+      warnings.push(`${CREDENTIALS_FILE}: credential “${name}” (${type}) can’t be created here: no running plugin has that credential type`);
+      continue;
+    }
+    const secret = new Set([...(credential.secretFields ?? []), ...vault.secretFieldsOf(type)]);
+    const data: JsonObject = {};
+    const dropped: string[] = [];
+    for (const [key, value] of Object.entries(credential.data ?? {})) {
+      // Only `$secrets` references go into a secret field: secret values never travel in files.
+      if (secret.has(key) && !hasSecretReference(value)) dropped.push(key);
+      else data[key] = value as JsonObject[string];
+    }
+    const empty = [...secret].filter((field) => data[field] === undefined).sort();
+    const id = `cred_${nanoid(12)}`;
+    planned.push({ id, name, type });
+    add(2.5, { kind: 'credential', action: 'create', id, name, path: CREDENTIALS_FILE, fields: [type, ...empty.map((field) => `${field} (empty)`)] }, () => vault.create({ name, type, data }, { id, partial: true }));
+    if (empty.length) warnings.push(`${CREDENTIALS_FILE}: credential “${name}” (${type}) is created without ${empty.join(', ')}: fill ${empty.length === 1 ? 'it' : 'them'} in on this instance`);
+    if (dropped.length) warnings.push(`${CREDENTIALS_FILE}: credential “${name}”: ${dropped.join(', ')} ${dropped.length === 1 ? 'holds a value' : 'hold values'} instead of a $secrets reference: left out (secret values never travel in files)`);
+  }
+
   // ---- workflows: by the id in the file (or one from its path)
   const instanceWorkflows = new Map(state.workflows.map((w) => [w.id, w]));
   const wantedWorkflows = new Set<string>();
@@ -321,7 +399,7 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
       continue;
     }
     wantedWorkflows.add(id);
-    const resolved = resolveCredentials(file.doc, state.credentials, file.path, warnings);
+    const resolved = resolveCredentials(file.doc, [...state.credentials, ...planned], file.path, warnings);
     const parsed = workflowSchema.safeParse({ ...resolved, id });
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
@@ -386,7 +464,7 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
   const changes = operations.map((o) => o.change);
   // Credentials the files mention that this instance lacks (credentials.json is informational).
   for (const credential of desired.credentials) {
-    if (!state.credentials.some((c) => (c.type === credential.type && c.name === credential.name) || c.id === mappedCredential(credential.type, credential.name))) {
+    if (!present(credential.type, credential.name)) {
       const message = `credential “${credential.name}” (${credential.type}) isn't on this instance`;
       if (!warnings.some((w) => w.includes(message))) warnings.push(`credentials.json: ${message}`);
     }

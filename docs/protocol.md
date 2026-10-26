@@ -502,8 +502,8 @@ example: it registers a repository hook with a random secret, verifies `X-Hub-Si
 ## 13. Kubernetes discovery and registry proofs
 
 With `LANDFLOW_PLUGIN_DISCOVERY=kubernetes` the host finds plugins itself: no announce, no heartbeat. It watches the
-Services labelled **`landflow.dev/plugin=true`** in `LANDFLOW_K8S_NAMESPACES` (default: its own namespace), and their
-EndpointSlices (which inherit the label). Announce, static seeds and scan keep working next to it; all feed the same
+Services labelled **`landflow.dev/plugin=true`** in `LANDFLOW_K8S_NAMESPACES` (default: its own namespace; `*`: every
+namespace, through one cluster-wide watch), and their EndpointSlices (which inherit the label). Announce, static seeds and scan keep working next to it; all feed the same
 registry, and a discovered endpoint shows source `kubernetes` with its namespace and Service on the Plugins page.
 
 | Service field | Meaning |
@@ -522,12 +522,17 @@ ClusterIP with `LANDFLOW_K8S_ADDRESS=cluster-ip`. The host follows the Service's
   visible and saved workflows open; the registry's health probes (every 15 s) treat it like any pulled endpoint;
 - **the Service is deleted** or loses the label → the endpoint is removed, and the plugin with its last endpoint.
 
+The manifest, health and registry proofs go through the Service, but calls (Execute, LoadOptions, TestCredentials,
+webhooks) are spread over the ready pods: the host keeps a client per pod address from the EndpointSlices (the pod IP
+and the Service's target port) and sends each call to the one with the fewest calls in flight. A pod that leaves is
+closed once its calls finish. `LANDFLOW_K8S_SPREAD=service` keeps a single connection through the Service.
+
 Plugins should base their readiness probe on `GET /landflow/v1/health` and set `LANDFLOW_REGISTRY_URL=off` (they are
 discovered, so announcing is not needed). The watch is a list followed by a watch from its `resourceVersion`; a watch
 the server closes is resumed, a failed one is retried with exponential backoff (1 s to 30 s) from a fresh list, a
 `410 Gone` re-lists at once, and everything is re-listed every `LANDFLOW_K8S_RESYNC_SECONDS` (300). The host needs
 `get`, `list` and `watch` on `services` and `discovery.k8s.io/endpointslices` in each namespace it watches
-(`deploy/k8s/base/host/rbac.yaml`). Credentials: the pod's service account in a cluster, else the kubeconfig
+(`deploy/k8s/base/host/rbac.yaml`), or cluster-wide for `*` (`deploy/k8s/components/cluster-discovery`). Credentials: the pod's service account in a cluster, else the kubeconfig
 (`KUBECONFIG` or `~/.kube/config`) with `LANDFLOW_K8S_CONTEXT`, or its current context when that is unset.
 
 ### Registry proofs

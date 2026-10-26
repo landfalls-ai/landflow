@@ -1,19 +1,25 @@
 'use client';
 /**
  * "Save as template" from the editor's … menu: the open workflow (unsaved edits included) becomes a template on this
- * instance. The server turns credentials into slots and leaves out pinned data, the folder, tags and publication state.
+ * instance, in a project (its members see it; the workflow's project first) or, for owners and admins, instance-wide.
+ * The server turns credentials into slots and leaves out pinned data, the folder, tags and publication state.
  */
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { LayoutTemplate } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
+import { can } from '@/lib/shared/auth';
 import { TEMPLATE_CATEGORIES, type TemplateCategory, type TemplateDetail } from '@/lib/shared/templates';
 import { cn } from '@/lib/utils';
 import { Dialog, Field } from '@/components/agents/dialog';
+import { useViewer } from '@/components/auth/viewer';
 import { useEditor } from '@/components/editor/store';
+import { projectLabel, useCredentialScope, useProjects, writableProjects } from '@/components/projects/use-projects';
 import { Button } from '@/components/ui/button';
-import { Input, Textarea } from '@/components/ui/inputs';
+import { Input, Select, Textarea } from '@/components/ui/inputs';
+
+const INSTANCE = '__instance__';
 
 export function SaveTemplateDialog({ onClose }: { onClose: () => void }) {
   const router = useRouter();
@@ -24,6 +30,18 @@ export function SaveTemplateDialog({ onClose }: { onClose: () => void }) {
   const [setup, setSetup] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
+  const viewer = useViewer();
+  const admin = can(viewer, 'projects:manage');
+  const { projects } = useProjects();
+  const targets = useMemo(() => writableProjects(projects), [projects]);
+  // The workflow's project (when the viewer adds there), else instance-wide for owners and admins, else their first project.
+  const { scope } = useCredentialScope(workflow.id || undefined);
+  const [project, setProject] = useState<string>();
+  useEffect(() => {
+    if (project || !projects) return;
+    const home = scope?.projectId && targets.some((p) => p.id === scope.projectId) ? scope.projectId : undefined;
+    setProject(home ?? (admin ? INSTANCE : targets.find((p) => p.type === 'personal')?.id ?? targets[0]?.id));
+  }, [project, projects, scope?.projectId, targets, admin]);
   const credentialCount = workflow.nodes.filter((n) => Object.keys(n.credentials ?? {}).length).length;
 
   const toggle = (id: TemplateCategory) => setCategories((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
@@ -35,7 +53,14 @@ export function SaveTemplateDialog({ onClose }: { onClose: () => void }) {
     try {
       const { template } = await api<{ template: TemplateDetail }>('/api/templates', {
         method: 'POST',
-        json: { workflow, name: name.trim(), description, categories, setup: setup.split('\n').map((s) => s.trim()).filter(Boolean) },
+        json: {
+          workflow,
+          name: name.trim(),
+          description,
+          categories,
+          setup: setup.split('\n').map((s) => s.trim()).filter(Boolean),
+          ...(project && { projectId: project === INSTANCE ? null : project }),
+        },
       });
       toast.success(`Saved “${template.name}” as a template`, { action: { label: 'Open', onClick: () => router.push(`/templates/${template.id}`) } });
       onClose();
@@ -48,7 +73,7 @@ export function SaveTemplateDialog({ onClose }: { onClose: () => void }) {
   return (
     <Dialog
       title="Save as template"
-      subtitle="Everyone on this instance can start a workflow from it"
+      subtitle={project === INSTANCE ? 'Everyone on this instance can start a workflow from it' : 'The project’s members can start a workflow from it'}
       icon={<LayoutTemplate className="size-5 text-t2" />}
       onClose={onClose}
       width={560}
@@ -90,6 +115,16 @@ export function SaveTemplateDialog({ onClose }: { onClose: () => void }) {
               </button>
             ))}
           </div>
+        </Field>
+        <Field id="template-project" label="Available to" hint="A project’s members see its templates; instance-wide ones show to everyone.">
+          <Select id="template-project" value={project ?? ''} onChange={(e) => setProject(e.target.value)} disabled={!projects}>
+            {admin && <option value={INSTANCE}>The whole instance</option>}
+            {targets.map((p) => (
+              <option key={p.id} value={p.id}>
+                {projectLabel(p, viewer?.id)}
+              </option>
+            ))}
+          </Select>
         </Field>
         <Field id="template-setup" label="Setup steps" hint="One step per line, Markdown: what to fill in before the first run.">
           <Textarea id="template-setup" value={setup} onChange={(e) => setSetup(e.target.value)} rows={4} placeholder={'Pick a Slack credential\nSet the channel in “Post to Slack”'} />

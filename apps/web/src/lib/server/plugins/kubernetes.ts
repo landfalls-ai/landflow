@@ -10,6 +10,15 @@
  * - no ready pod → the plugin is marked offline, not dropped (saved workflows still open);
  * - Service deleted or unlabelled → its endpoints are removed (and the plugin with its last endpoint).
  *
+ * Calls are spread over the ready pods (LANDFLOW_K8S_SPREAD=pods, the default): the registry keeps a client per ready
+ * pod address from the EndpointSlices and sends each Execute (LoadOptions, TestCredentials, webhooks) to the pod with
+ * the fewest calls in flight (clients.ts PooledPluginClient); the manifest and health probes still go through the
+ * Service, once per plugin. A pod that turns unready or goes is dropped, a new ready pod is added. Through the Service
+ * alone (`service`), one gRPC connection keeps every call on the pod it first reached.
+ *
+ * LANDFLOW_K8S_NAMESPACES=`*` watches every namespace with one cluster-wide list/watch per kind (it needs a
+ * ClusterRole: deploy/k8s/components/cluster-discovery).
+ *
  * Services and EndpointSlices are listed, then watched from that resourceVersion. A watch the server closes is
  * resumed; one that fails is retried after an exponential backoff, from a fresh list; everything is re-listed every
  * LANDFLOW_K8S_RESYNC_SECONDS. Credentials: in-cluster (the pod's service account) inside a pod, else the kubeconfig
@@ -51,6 +60,8 @@ export interface KubeService {
 
 export interface KubeEndpointSlice {
   metadata?: KubeMeta;
+  /** The pods' ports, by the Service port's name (`''` for an unnamed one). */
+  ports?: Array<{ name?: string | null; port?: number | null }> | null;
   endpoints?: Array<{ addresses?: string[]; conditions?: { ready?: boolean | null }; targetRef?: { uid?: string } }> | null;
 }
 
@@ -62,6 +73,7 @@ export interface KubeWatchEvent {
   object: KubeObject & { code?: number; message?: string };
 }
 
+/** `namespace` is `*` for a cluster-wide list or watch (LANDFLOW_K8S_NAMESPACES=*). */
 export interface KubeApi {
   list(kind: KubeKind, namespace: string, labelSelector: string): Promise<{ resourceVersion: string; items: KubeObject[] }>;
   /** Streams events from `resourceVersion` until the server closes the watch (resolves) or it fails (rejects); `signal` stops it. */
@@ -74,6 +86,8 @@ export interface DiscoveryTarget {
   offline(endpoint: string, reason: string): void;
   remove(endpoint: string): void;
   status(endpoint: string): PluginStatus | undefined;
+  /** The ready pods to spread an endpoint's calls over ([] = through the Service). */
+  backends?(endpoint: string, pods: string[]): void;
 }
 
 export interface KubernetesDiscoveryOptions {
@@ -83,6 +97,8 @@ export interface KubernetesDiscoveryOptions {
   labelSelector?: string;
   /** `dns` (default): <service>.<namespace>.svc.<clusterDomain>; `cluster-ip`: the Service's ClusterIP. */
   address?: 'dns' | 'cluster-ip';
+  /** `pods` (default): calls go to the ready pods directly, spread over them; `service`: through the Service. */
+  spread?: 'pods' | 'service';
   clusterDomain?: string;
   /** Full re-list interval (default 5 minutes); 0 turns it off. */
   resyncMs?: number;
@@ -102,25 +118,60 @@ export interface KubernetesDiscoveryOptions {
 
 /** The registry endpoints a plugin Service stands for, or why it has none. */
 export function serviceEndpoints(service: KubeService, options: { address?: 'dns' | 'cluster-ip'; clusterDomain?: string } = {}): { endpoints: string[]; error?: string } {
+  const { ports, error } = servicePorts(service, options);
+  return { endpoints: ports.map((port) => port.endpoint), ...(error && { error }) };
+}
+
+interface ServicePort {
+  endpoint: string;
+  scheme: 'grpc' | 'http';
+  /** The Service port's name ('' when unnamed): EndpointSlices name the pods' port the same. */
+  portName: string;
+}
+
+/** The Service's gRPC and HTTP ports as registry endpoints, with the port names that find them in the slices. */
+function servicePorts(service: KubeService, options: { address?: 'dns' | 'cluster-ip'; clusterDomain?: string }): { ports: ServicePort[]; error?: string } {
   const { name = '', namespace = '', annotations = {} } = service.metadata ?? {};
   const ports = service.spec?.ports ?? [];
-  const pick = (annotation: string, names: string[], protocols: string[]): { port?: number; error?: string } => {
+  type Port = (typeof ports)[number];
+  const pick = (annotation: string, names: string[], protocols: string[]): { port?: Port; error?: string } => {
     const value = annotations[annotation]?.trim();
     if (value) {
       const port = /^\d+$/.test(value) ? ports.find((p) => p.port === Number(value)) : ports.find((p) => p.name === value);
-      return port ? { port: port.port } : { error: `${annotation}: "${value}" is not a port of Service ${namespace}/${name}` };
+      return port ? { port } : { error: `${annotation}: "${value}" is not a port of Service ${namespace}/${name}` };
     }
-    return { port: (ports.find((p) => p.name && names.includes(p.name)) ?? ports.find((p) => p.appProtocol && protocols.includes(p.appProtocol)))?.port };
+    return { port: ports.find((p) => p.name && names.includes(p.name)) ?? ports.find((p) => p.appProtocol && protocols.includes(p.appProtocol)) };
   };
   const grpc = pick(GRPC_PORT_ANNOTATION, ['grpc', 'landflow-grpc'], ['grpc', 'kubernetes.io/h2c']);
   const http = pick(HTTP_PORT_ANNOTATION, [], []);
   const error = grpc.error ?? http.error;
-  if (error) return { endpoints: [], error };
-  if (!grpc.port && !http.port) return { endpoints: [], error: `Service ${namespace}/${name} has no gRPC port: annotate ${GRPC_PORT_ANNOTATION} or name a port "grpc"` };
+  if (error) return { ports: [], error };
+  if (!grpc.port && !http.port) return { ports: [], error: `Service ${namespace}/${name} has no gRPC port: annotate ${GRPC_PORT_ANNOTATION} or name a port "grpc"` };
   const clusterIP = service.spec?.clusterIP;
   const host =
     options.address === 'cluster-ip' && clusterIP && clusterIP !== 'None' ? (clusterIP.includes(':') ? `[${clusterIP}]` : clusterIP) : `${name}.${namespace}.svc.${options.clusterDomain ?? 'cluster.local'}`;
-  return { endpoints: [...(grpc.port ? [`grpc://${host}:${grpc.port}`] : []), ...(http.port ? [`http://${host}:${http.port}`] : [])] };
+  const out: ServicePort[] = [];
+  if (grpc.port) out.push({ endpoint: `grpc://${host}:${grpc.port.port}`, scheme: 'grpc', portName: grpc.port.name ?? '' });
+  if (http.port) out.push({ endpoint: `http://${host}:${http.port.port}`, scheme: 'http', portName: http.port.name ?? '' });
+  return { ports: out };
+}
+
+/**
+ * The ready pods behind one Service port, as endpoints of the same transport (`grpc://10.1.2.3:7201`): each slice's
+ * port of that name (the container port the Service targets), at each ready address. IPv6 addresses get brackets.
+ */
+export function podEndpoints(port: Pick<ServicePort, 'scheme' | 'portName'>, slices: KubeEndpointSlice[]): string[] {
+  const out = new Set<string>();
+  for (const slice of slices) {
+    const target = (slice.ports ?? []).find((p) => (p.name ?? '') === port.portName)?.port;
+    if (!target) continue;
+    for (const endpoint of slice.endpoints ?? []) {
+      const address = endpoint.addresses?.[0];
+      if (endpoint.conditions?.ready === false || !address) continue;
+      out.add(`${port.scheme}://${address.includes(':') ? `[${address}]` : address}:${target}`);
+    }
+  }
+  return [...out].sort();
 }
 
 /** Ready pods of a slice, as `<pod uid>@<address>` (an unknown readiness counts as ready, as Kubernetes defines it). */
@@ -128,11 +179,15 @@ function readyPods(slice: KubeEndpointSlice): string[] {
   return (slice.endpoints ?? []).filter((e) => e.conditions?.ready !== false && e.addresses?.length).map((e) => `${e.targetRef?.uid ?? ''}@${e.addresses![0]}`);
 }
 
-/** LANDFLOW_K8S_NAMESPACES: a comma-separated list; empty means the host's own namespace. */
+/** LANDFLOW_K8S_NAMESPACES: a comma-separated list; empty means the host's own namespace, `*` every namespace. */
 export function parseNamespaces(setting: string | undefined, own: string): string[] {
   const list = (setting ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (list.includes('*')) return ['*'];
   return [...new Set(list.length ? list : [own])];
 }
+
+/** Every namespace (LANDFLOW_K8S_NAMESPACES=*). */
+export const ALL_NAMESPACES = '*';
 
 // ---------------------------------------------------------------------------
 // Discovery
@@ -145,6 +200,8 @@ interface Applied {
   ready: boolean;
   /** Endpoints the registry accepted. */
   registered: Set<string>;
+  /** The ready pods of each endpoint (spread over them). */
+  backends: Record<string, string[]>;
   attempts: number;
   retry?: NodeJS.Timeout;
   problem?: string;
@@ -273,48 +330,56 @@ export class KubernetesDiscovery {
     }
   }
 
-  private serviceKeyOf(kind: KubeKind, namespace: string, object: KubeObject): string | undefined {
-    const name = kind === 'services' ? object.metadata?.name : object.metadata?.labels?.[SERVICE_NAME_LABEL];
-    return name ? `${namespace}/${name}` : undefined;
+  /** The namespace an object is in: the watched one, or its own in a cluster-wide watch. */
+  private namespaceOf(watched: string, object: KubeObject): string {
+    return watched === ALL_NAMESPACES ? (object.metadata?.namespace ?? '') : watched;
   }
 
-  /** A fresh list: the namespace's objects of that kind are exactly `items`. */
-  private replace(kind: KubeKind, namespace: string, items: KubeObject[]) {
+  private serviceKeyOf(kind: KubeKind, watched: string, object: KubeObject): string | undefined {
+    const name = kind === 'services' ? object.metadata?.name : object.metadata?.labels?.[SERVICE_NAME_LABEL];
+    return name ? `${this.namespaceOf(watched, object)}/${name}` : undefined;
+  }
+
+  /** A fresh list: the namespace's objects of that kind (every namespace's, for `*`) are exactly `items`. */
+  private replace(kind: KubeKind, watched: string, items: KubeObject[]) {
     const store: Map<string, KubeObject> = kind === 'services' ? this.services : this.slices;
+    const inScope = (key: string) => watched === ALL_NAMESPACES || key.startsWith(`${watched}/`);
     const touched = new Set<string>();
     for (const [key, object] of store) {
-      if (!key.startsWith(`${namespace}/`)) continue;
+      if (!inScope(key)) continue;
       store.delete(key);
-      const service = this.serviceKeyOf(kind, namespace, object);
+      const service = this.serviceKeyOf(kind, key.split('/')[0]!, object);
       if (service) touched.add(service);
     }
     for (const object of items) {
-      if (!this.accepts(namespace, object)) continue;
-      store.set(`${namespace}/${object.metadata!.name}`, object);
-      const service = this.serviceKeyOf(kind, namespace, object);
+      if (!this.accepts(watched, object)) continue;
+      store.set(`${this.namespaceOf(watched, object)}/${object.metadata!.name}`, object);
+      const service = this.serviceKeyOf(kind, watched, object);
       if (service) touched.add(service);
     }
     for (const key of touched) this.schedule(key, true);
     // Plugins whose Service and slices both vanished while the watch was down are in `applied` only.
-    for (const key of this.applied.keys()) if (key.startsWith(`${namespace}/`)) this.schedule(key, true);
+    for (const key of this.applied.keys()) if (inScope(key)) this.schedule(key, true);
   }
 
-  private apply(kind: KubeKind, namespace: string, type: string, object: KubeObject) {
-    if (!this.accepts(namespace, object)) return;
+  private apply(kind: KubeKind, watched: string, type: string, object: KubeObject) {
+    if (!this.accepts(watched, object)) return;
     const store: Map<string, KubeObject> = kind === 'services' ? this.services : this.slices;
-    const key = `${namespace}/${object.metadata!.name}`;
+    const key = `${this.namespaceOf(watched, object)}/${object.metadata!.name}`;
     const previous = store.get(key);
     // A Service that loses the label is no plugin any more (a label-selector watch reports that as DELETED anyway).
     const gone = type === 'DELETED' || (kind === 'services' && !this.matchesSelector(object));
     if (gone) store.delete(key);
     else store.set(key, object);
-    for (const service of new Set([previous && this.serviceKeyOf(kind, namespace, previous), this.serviceKeyOf(kind, namespace, object)])) if (service) this.schedule(service, false);
+    for (const service of new Set([previous && this.serviceKeyOf(kind, watched, previous), this.serviceKeyOf(kind, watched, object)])) if (service) this.schedule(service, false);
   }
 
   /** Only objects of the watched namespaces (and with a name) count, whatever a watch sends. */
-  private accepts(namespace: string, object: KubeObject): boolean {
+  private accepts(watched: string, object: KubeObject): boolean {
     const meta = object?.metadata;
-    return Boolean(meta?.name) && this.namespaces.has(namespace) && (!meta!.namespace || meta!.namespace === namespace);
+    if (!meta?.name || !this.namespaces.has(watched)) return false;
+    if (watched === ALL_NAMESPACES) return Boolean(meta.namespace);
+    return !meta.namespace || meta.namespace === watched;
   }
 
   private matchesSelector(object: KubeObject): boolean {
@@ -346,6 +411,7 @@ export class KubernetesDiscovery {
     const parsed = service ? serviceEndpoints(service, this.options) : { endpoints: [] };
     const desired = parsed.endpoints;
     for (const endpoint of previous?.registered ?? []) if (!desired.includes(endpoint)) target.remove(endpoint);
+    for (const endpoint of Object.keys(previous?.backends ?? {})) if (!desired.includes(endpoint)) target.backends?.(endpoint, []);
     if (parsed.error && parsed.error !== previous?.problem) this.notify(`Kubernetes: ${parsed.error}`, 'warn');
     if (!service) {
       clearTimeout(previous?.retry);
@@ -353,15 +419,25 @@ export class KubernetesDiscovery {
       return;
     }
     const namespace = key.split('/')[0];
-    const pods = [...this.slices.entries()]
+    const slices = [...this.slices.entries()]
       .filter(([sliceKey, slice]) => sliceKey.startsWith(`${namespace}/`) && `${namespace}/${slice.metadata?.labels?.[SERVICE_NAME_LABEL]}` === key)
-      .flatMap(([, slice]) => readyPods(slice))
-      .sort();
+      .map(([, slice]) => slice);
+    const pods = slices.flatMap((slice) => readyPods(slice)).sort();
+    // Each endpoint's ready pods: calls are spread over them (the registry keeps one client per pod).
+    const backends: Record<string, string[]> = {};
+    if ((this.options.spread ?? 'pods') === 'pods') {
+      for (const port of servicePorts(service, this.options).ports) backends[port.endpoint] = podEndpoints(port, slices);
+    }
+    for (const endpoint of desired) {
+      const list = backends[endpoint] ?? [];
+      if (list.join(',') !== (previous?.backends[endpoint] ?? []).join(',')) target.backends?.(endpoint, list);
+    }
     const state: Applied = {
       endpoints: desired,
       fingerprint: pods.join(','),
       ready: pods.length > 0,
       registered: new Set([...(previous?.registered ?? [])].filter((e) => desired.includes(e))),
+      backends,
       attempts: previous?.attempts ?? 0,
       retry: previous?.retry,
       problem: parsed.error,
@@ -419,7 +495,14 @@ export class KubernetesDiscovery {
 
   /** What discovery currently sees, for tests and troubleshooting. */
   snapshot() {
-    return [...this.applied.entries()].map(([key, state]) => ({ service: key, endpoints: state.endpoints, ready: state.ready, registered: [...state.registered], ...(state.problem && { problem: state.problem }) }));
+    return [...this.applied.entries()].map(([key, state]) => ({
+      service: key,
+      endpoints: state.endpoints,
+      ready: state.ready,
+      registered: [...state.registered],
+      pods: state.backends,
+      ...(state.problem && { problem: state.problem }),
+    }));
   }
 }
 
@@ -434,6 +517,7 @@ export function registryTarget(): DiscoveryTarget {
     offline: (endpoint, reason) => void registry.withdraw(endpoint, reason),
     remove: (endpoint) => void registry.removeEndpoint(endpoint),
     status: (endpoint) => registry.endpointStatus(endpoint),
+    backends: (endpoint, pods) => registry.setEndpointBackends(endpoint, pods),
   };
 }
 
@@ -461,11 +545,16 @@ export async function kubeApiFromEnv(env: NodeJS.ProcessEnv = process.env): Prom
   const watcher = new k8s.Watch(kc);
   const api: KubeApi = {
     async list(kind, ns, labelSelector) {
-      const list = kind === 'services' ? await core.listNamespacedService({ namespace: ns, labelSelector }) : await discovery.listNamespacedEndpointSlice({ namespace: ns, labelSelector });
+      const all = ns === ALL_NAMESPACES;
+      const list =
+        kind === 'services'
+          ? await (all ? core.listServiceForAllNamespaces({ labelSelector }) : core.listNamespacedService({ namespace: ns, labelSelector }))
+          : await (all ? discovery.listEndpointSliceForAllNamespaces({ labelSelector }) : discovery.listNamespacedEndpointSlice({ namespace: ns, labelSelector }));
       return { resourceVersion: list.metadata?.resourceVersion ?? '', items: list.items as KubeObject[] };
     },
     watch(kind, ns, labelSelector, resourceVersion, onEvent, signal) {
-      const path = kind === 'services' ? `/api/v1/namespaces/${ns}/services` : `/apis/discovery.k8s.io/v1/namespaces/${ns}/endpointslices`;
+      const scope = ns === ALL_NAMESPACES ? '' : `/namespaces/${ns}`;
+      const path = kind === 'services' ? `/api/v1${scope}/services` : `/apis/discovery.k8s.io/v1${scope}/endpointslices`;
       return new Promise((resolve, reject) => {
         let controller: AbortController | undefined;
         const stop = () => controller?.abort();
@@ -499,19 +588,21 @@ export function startKubernetesDiscovery(): Promise<KubernetesDiscovery | undefi
       const { api, namespace, context } = await kubeApiFromEnv();
       const namespaces = parseNamespaces(process.env.LANDFLOW_K8S_NAMESPACES, namespace);
       const address = process.env.LANDFLOW_K8S_ADDRESS === 'cluster-ip' ? 'cluster-ip' : 'dns';
+      const spread = process.env.LANDFLOW_K8S_SPREAD?.trim().toLowerCase() === 'service' ? 'service' : 'pods';
       const resyncSeconds = Number(process.env.LANDFLOW_K8S_RESYNC_SECONDS ?? 300);
       const discovery = new KubernetesDiscovery({
         api,
         namespaces,
         target: registryTarget(),
         address,
+        spread,
         ...(process.env.LANDFLOW_K8S_CLUSTER_DOMAIN && { clusterDomain: process.env.LANDFLOW_K8S_CLUSTER_DOMAIN }),
         ...(process.env.LANDFLOW_K8S_LABEL_SELECTOR && { labelSelector: process.env.LANDFLOW_K8S_LABEL_SELECTOR }),
         resyncMs: Number.isFinite(resyncSeconds) ? resyncSeconds * 1000 : 300_000,
         notify,
       });
       discovery.start();
-      logger.info('Kubernetes plugin discovery started', { 'k8s.context': context, 'k8s.namespaces': namespaces.join(','), 'k8s.address': address });
+      logger.info('Kubernetes plugin discovery started', { 'k8s.context': context, 'k8s.namespaces': namespaces.join(','), 'k8s.address': address, 'k8s.spread': spread });
       return discovery;
     } catch (error) {
       notify(`Kubernetes discovery not started: ${(error as Error).message}`, 'warn');

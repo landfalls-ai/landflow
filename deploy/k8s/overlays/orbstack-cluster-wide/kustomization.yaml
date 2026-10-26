@@ -1,0 +1,13 @@
+# The OrbStack overlay with cluster-wide plugin discovery: the host in landflow-dev finds plugin Services in every
+# namespace (LANDFLOW_K8S_NAMESPACES=*, the ClusterRole/ClusterRoleBinding of ../../components/cluster-discovery).
+#
+#   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-cluster-wide
+#
+# Back to namespace-only discovery: apply ../orbstack, then
+#   kubectl --context orbstack delete clusterrolebinding,clusterrole landflow-plugin-discovery-cluster
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../orbstack
+components:
+  - ../../components/cluster-discovery

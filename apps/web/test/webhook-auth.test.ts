@@ -1,6 +1,8 @@
 /**
  * Webhook and Form Trigger authentication (lib/server/webhook-auth.ts): none, Basic Auth, Header Auth, JWT Auth
- * (HS256 secret, PEM public key, JWKS URL; issuer and audience) and the IP allow-list, through the real routes.
+ * (HS256 secret, PEM public key, JWKS URL; issuer and audience) and the IP allow-list, through the real routes. And the
+ * project rule for the credential a trigger checks callers with (Webhook, Form, MCP Server Trigger): refused (403, a
+ * log line) while the workflow's project can't use it, a warning on save.
  */
 import { createServer, type Server } from 'node:http';
 import { mkdtempSync } from 'node:fs';
@@ -26,6 +28,10 @@ const { publishDraft } = await import('@/lib/server/publish');
 const { callerIp, ipMatches, parseIpList, verifyJwt } = await import('@/lib/server/webhook-auth');
 const webhookRoute = await import('@/app/api/webhook/[...path]/route');
 const formRoute = await import('@/app/form/[...path]/route');
+const mcpRoute = await import('@/app/mcp/[...path]/route');
+const workflowRoute = await import('@/app/api/workflows/[id]/route');
+const projects = await import('@/lib/server/projects');
+const { logger } = await import('@/lib/server/telemetry/logger');
 
 registry.registerBuiltin(corePlugin);
 
@@ -247,5 +253,133 @@ describe('Form Trigger authentication', () => {
     // The end screen comes straight away; the run is saved as it finishes.
     for (let i = 0; i < 200 && store.listExecutions({ workflowId: workflow.id }).length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 10));
     expect(store.listExecutions({ workflowId: workflow.id })).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The trigger's credential and the workflow's project
+// ---------------------------------------------------------------------------
+
+describe('trigger credentials outside the workflow’s project', () => {
+  const REFUSED = 'trigger call refused: its authentication credential isn’t available to the workflow’s project';
+  /** A credential that lives in another project than the workflow's (`team`). */
+  const setup = (name: string, type: string, data: Record<string, unknown>) => {
+    const team = projects.createTeamProject({ name: `${name} team` });
+    const elsewhere = projects.createTeamProject({ name: `${name} elsewhere` });
+    const credential = credentials.create({ name, type, data });
+    projects.setHomeProject('credential', credential.id, elsewhere.id);
+    return { team: team.id, credential };
+  };
+  const put = (workflow: Workflow) =>
+    workflowRoute.PUT(new Request(`http://auth.test/api/workflows/${workflow.id}`, { method: 'PUT', body: JSON.stringify(workflow), headers: { 'content-type': 'application/json' } }), {
+      params: Promise.resolve({ id: workflow.id }),
+    });
+
+  it('refuses every webhook call with 403 (not naming the credential) and logs it, until the credential is shared; saving warns', async () => {
+    const { team, credential } = setup('Team hook login', 'core.httpBasicAuth', { user: 'ada', password: 'lovelace' });
+    await hook('auth-project', { authentication: 'basicAuth' }, { httpBasicAuth: ref(credential) });
+    const id = 'wf_auth_auth_project';
+    projects.setHomeProject('workflow', id, team);
+    const warn = vi.spyOn(logger, 'warn');
+    try {
+      // The right password, or none: the same 403, before any secret is compared (no Basic challenge either).
+      for (const headers of [{ authorization: basic('ada', 'lovelace') }, {} as Record<string, string>]) {
+        const refused = await call('auth-project', headers);
+        expect(refused.status).toBe(403);
+        expect(refused.headers.get('www-authenticate')).toBeNull();
+        const body = await refused.json();
+        expect(body.error).toBe('Forbidden: the Webhook’s authentication credential isn’t available to its workflow’s project');
+        expect(JSON.stringify(body)).not.toContain(credential.id);
+        expect(JSON.stringify(body)).not.toContain(credential.name);
+      }
+      expect(store.listExecutions({ workflowId: id })).toHaveLength(0);
+      // Whoever runs the host learns which one.
+      expect(warn).toHaveBeenCalledWith(REFUSED, expect.objectContaining({ 'landflow.workflow.id': id, 'landflow.node.name': 'Hook', 'landflow.node.type': 'core.webhook', 'landflow.credential.id': credential.id }));
+    } finally {
+      warn.mockRestore();
+    }
+
+    // Saving says so (the editor shows it as a warning); the save itself stands.
+    const saved = await put(store.getWorkflow(id)!);
+    expect(saved.status).toBe(200);
+    expect((await saved.json()).triggerAuthWarnings).toEqual([{ nodeId: 'Hook', nodeName: 'Hook', message: expect.stringContaining('calls will be refused (403)') }]);
+
+    // Shared with the workflow's project: the trigger's own check applies again.
+    projects.addShare('credential', credential.id, team, 'user');
+    expect((await call('auth-project')).status).toBe(401);
+    expect((await call('auth-project', { authorization: basic('ada', 'lovelace') })).status).toBe(200);
+    expect((await (await put(store.getWorkflow(id)!)).json()).triggerAuthWarnings).toBeUndefined();
+    // A trigger without authentication never asks.
+    await hook('auth-project-open', {}, { httpBasicAuth: ref(credential) });
+    projects.removeShare('credential', credential.id, team);
+    projects.setHomeProject('workflow', 'wf_auth_auth_project_open', team);
+    expect((await call('auth-project-open')).status).toBe(200);
+  });
+
+  it('refuses a form (HTML 403) and an MCP Server Trigger (JSON-RPC 403) the same way', async () => {
+    const form = setup('Team form login', 'core.httpBasicAuth', { user: 'grace', password: 'hopper' });
+    const formWorkflow: Workflow = {
+      id: 'wf_auth_project_form',
+      name: 'Project form',
+      nodes: [
+        {
+          id: 'Form',
+          name: 'Form',
+          type: 'core.formTrigger',
+          typeVersion: 1,
+          position: [0, 0],
+          parameters: { path: 'auth-project-form', formTitle: 'Team', authentication: 'basicAuth', formFields: { values: [{ fieldLabel: 'Name', fieldType: 'text' }] } },
+          credentials: { httpBasicAuth: ref(form.credential) },
+        },
+      ],
+      connections: [],
+    };
+    store.saveWorkflow(formWorkflow);
+    await publishDraft(formWorkflow.id);
+    projects.setHomeProject('workflow', formWorkflow.id, form.team);
+    const params = { params: Promise.resolve({ path: ['auth-project-form'] }) };
+    const page = await formRoute.GET(new Request('http://auth.test/form/auth-project-form', { headers: { authorization: basic('grace', 'hopper') } }), params);
+    expect(page.status).toBe(403);
+    expect(page.headers.get('content-type')).toMatch(/text\/html/);
+    expect(await page.text()).toContain('You are not allowed to open this form.');
+    const submit = await formRoute.POST(
+      new Request('http://auth.test/form/auth-project-form', { method: 'POST', body: new URLSearchParams({ f0: 'Ada' }), headers: { authorization: basic('grace', 'hopper') } }),
+      params,
+    );
+    expect(submit.status).toBe(403);
+    projects.addShare('credential', form.credential.id, form.team, 'user');
+    expect((await formRoute.GET(new Request('http://auth.test/form/auth-project-form', { headers: { authorization: basic('grace', 'hopper') } }), params)).status).toBe(200);
+
+    const mcp = setup('Team MCP token', 'core.httpBearerAuth', { token: 'team-token' });
+    const tools: Workflow = {
+      id: 'wf_auth_project_mcp',
+      name: 'Project tools',
+      nodes: [
+        { id: 'mcp', name: 'MCP Server', type: 'core.mcpTrigger', typeVersion: 1, position: [0, 0], parameters: { path: 'auth-project-mcp', authentication: 'bearerAuth' }, credentials: { httpBearerAuth: ref(mcp.credential) } },
+        { id: 'calc', name: 'Calculator', type: 'core.calculatorTool', typeVersion: 1, position: [0, 200], parameters: {} },
+      ],
+      connections: [{ id: 'c1', type: 'ai_tool', source: 'calc', target: 'mcp', sourceIndex: 0, targetIndex: 0 }],
+    };
+    store.saveWorkflow(tools);
+    await publishDraft(tools.id);
+    projects.setHomeProject('workflow', tools.id, mcp.team);
+    const initialize = (authorization: string) =>
+      mcpRoute.POST(
+        new Request('http://auth.test/mcp/auth-project-mcp', {
+          method: 'POST',
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } } }),
+          headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization },
+        }),
+        { params: Promise.resolve({ path: ['auth-project-mcp'] }) },
+      );
+    const refused = await initialize('Bearer team-token');
+    expect(refused.status).toBe(403);
+    const body = await refused.json();
+    expect(body).toMatchObject({ jsonrpc: '2.0', error: { code: -32001, message: 'Forbidden: the MCP Server Trigger’s authentication credential isn’t available to its workflow’s project' } });
+    expect(JSON.stringify(body)).not.toContain(mcp.credential.id);
+    expect((await initialize('Bearer wrong')).status).toBe(403);
+    projects.addShare('credential', mcp.credential.id, mcp.team, 'user');
+    expect((await initialize('Bearer wrong')).status).toBe(401);
+    expect((await initialize('Bearer team-token')).status).toBe(200);
   });
 });

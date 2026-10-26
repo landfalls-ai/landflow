@@ -107,7 +107,7 @@ export function versionRow(version: WorkflowVersion): Row {
 }
 
 export function folderRow(folder: Folder): Row {
-  return { id: folder.id, name: folder.name, parent_id: folder.parentId, created_at: folder.createdAt, updated_at: folder.updatedAt };
+  return { id: folder.id, name: folder.name, parent_id: folder.parentId, project_id: folder.projectId ?? null, created_at: folder.createdAt, updated_at: folder.updatedAt };
 }
 
 export interface StoredVariable {

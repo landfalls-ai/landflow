@@ -14,6 +14,7 @@ import type {
 } from '@landflow/protocol';
 import type { ContextExtras, StreamChunk, WaitRequest } from '@landflow/sdk';
 import type { Attributes } from '@opentelemetry/api';
+import type { SecretReference, SecretValues } from './secrets';
 
 // ---------------------------------------------------------------------------
 // Workflow document
@@ -155,6 +156,8 @@ export interface WorkflowGroup {
   color?: number;
   /** Drawn as one compact box: its nodes are hidden and their connections end at the box. */
   collapsed?: boolean;
+  /** The group this one sits in (nested groups); `nodeIds` lists only its own nodes, not those of the groups inside it. */
+  parentId?: string;
 }
 
 export interface Workflow {
@@ -448,6 +451,13 @@ export interface ExecuteWorkflowOptions {
   spanAttributes?: Attributes;
   /** Instance variables, read-only in expressions as `$vars.NAME`. */
   variables?: Record<string, string>;
+  /**
+   * `$secrets` in node parameters: reads the secrets a node's parameters reference (literally), right before each call
+   * of the node. Without it, a parameter that reads `$secrets` fails. A rejection fails the node with its message.
+   */
+  loadSecrets?: (references: SecretReference[], node: WorkflowNode) => Promise<SecretValues>;
+  /** Each resolved parameter value that read `$secrets` (per item), so the host can redact it like the secrets themselves. */
+  onSecretParameter?: (value: unknown) => void;
   /** Continue a waiting execution (same `executionId`); start options are ignored. */
   resume?: ResumeOptions;
   /** `$execution.resumeUrl` / `$execution.resumeFormUrl`: where a webhook or form wait of this run is resumed. */

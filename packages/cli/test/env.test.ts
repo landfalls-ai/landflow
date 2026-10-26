@@ -1,8 +1,9 @@
 /**
  * `landflow env status/promote/pull` against a real host and a local bare repository: the host is development,
  * promotes its branch to staging (preview with a diff, then for real), a hotfix on the staging branch makes the next
- * promotion a conflict (exit 5 with the preview in `error.details`) until --force; then the host becomes staging and
- * pulls its branch with --publish. The JSON shapes are the contract (README: JSON output).
+ * promotion a conflict (exit 5 with the preview in `error.details`) until --force; a table's rows go along with
+ * --rows, and with four-eyes on a promotion waits for approval (exit 8); then the host becomes staging and pulls its
+ * branch with --publish. The JSON shapes are the contract (README: JSON output).
  */
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -102,6 +103,33 @@ describe('env', () => {
 
     expect((await cli(['env', 'promote', 'development', '--json'])).code).toBe(1);
     expect((await cli(['env', 'promote', '--json'])).code).toBe(2);
+  });
+
+  it('promote: --rows, --no-credentials, and approval with four-eyes (exit 8)', async () => {
+    const { dataTables } = await web('lib/server/datatables');
+    const table = dataTables().createTable({ name: 'Rates', columns: [{ name: 'code', type: 'string' }] });
+    dataTables().insertRows(table.id, [{ code: 'FR' }]);
+    expect((await cli(['source-control', 'push', '--json'])).code).toBe(0);
+
+    const preview = await cli(['env', 'promote', 'staging', '--rows', 'Rates', '--no-credentials', '--dry-run', '--json']);
+    expect(preview.code).toBe(0);
+    expect(preview.json.tables).toEqual([expect.objectContaining({ name: 'Rates', path: 'data-tables/rates.rows.json', rows: 1, status: 'added' })]);
+    expect(preview.json.credentials).toEqual([]);
+    expect((await cli(['env', 'promote', 'staging', '--rows', 'Rates', '--dry-run'])).stdout).toMatch(/Data table rows:\n {2}added Rates: 1 row/);
+    expect((await cli(['env', 'promote', 'staging', '--no-rows', '--dry-run', '--json'])).json.tables).toEqual([]);
+    expect((await cli(['env', 'promote', 'staging', '--rows', 'Rates', '--no-rows', '--json'])).code).toBe(2);
+
+    const { updateGovernancePolicy } = await web('lib/server/governance/policy');
+    updateGovernancePolicy({ fourEyes: { enabled: true } });
+    try {
+      const asked = await cli(['env', 'promote', 'staging', '--rows', 'Rates', '--json']);
+      expect(asked.code).toBe(8);
+      expect(asked.json).toMatchObject({ ok: false, error: { code: 'approval_pending', details: { request: { status: 'pending', source: 'development', target: 'staging' } } } });
+    } finally {
+      updateGovernancePolicy({ fourEyes: { enabled: false } });
+    }
+    const promoted = await cli(['env', 'promote', 'staging', '--rows', 'Rates', '--json']);
+    expect(promoted.json).toMatchObject({ ok: true, promoted: true });
   });
 
   it('pull: the host as staging pulls its branch and publishes', async () => {

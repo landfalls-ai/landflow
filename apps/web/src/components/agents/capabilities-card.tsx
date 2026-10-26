@@ -24,6 +24,7 @@ import { toast } from 'sonner';
 import { defaultParameters } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
+import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { languageMeta } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import type { AgentConfig, AgentToolConfig, KnowledgeBaseToolConfig, McpServerToolConfig, NodeToolConfig, SubAgentConfig, WorkflowToolConfig } from '@/lib/shared/agents';
@@ -31,6 +32,7 @@ import type { NodeTypeInfo } from '@/lib/shared/types';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { ParamForm } from '../editor/param-form';
 import { PluginIcon } from '../editor/node-creator';
+import { ProtectedGate } from '../shell/protected-gate';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
@@ -336,6 +338,8 @@ function WorkflowToolDialog({ tool, onSave, onClose }: { tool?: WorkflowToolConf
   const [workflows, setWorkflows] = useState<WorkflowOption[]>();
   const [error, setError] = useState<string>();
   const [value, setValue] = useState<WorkflowToolConfig | undefined>(tool);
+  // A protected environment: no new workflows here (the API refuses them).
+  const readOnly = useWorkflowsReadOnly();
   const load = () => {
     setError(undefined);
     api<{ workflows: WorkflowOption[] }>('/api/agents/workflow-tools')
@@ -421,9 +425,11 @@ function WorkflowToolDialog({ tool, onSave, onClose }: { tool?: WorkflowToolConf
           <Button variant="ghost" size="sm" className="mr-auto" onClick={load} aria-label="Reload workflows">
             <RefreshCw className="size-3.5" /> Reload
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void createAndOpen('workflow')}>
-            <Plus className="size-3.5" /> Create workflow
-          </Button>
+          <ProtectedGate reason={readOnly}>
+            <Button variant="outline" size="sm" onClick={() => void createAndOpen('workflow')} disabled={Boolean(readOnly)}>
+              <Plus className="size-3.5" /> Create workflow
+            </Button>
+          </ProtectedGate>
         </>
       }
     >

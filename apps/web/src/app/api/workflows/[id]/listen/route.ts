@@ -1,10 +1,12 @@
 /**
- * "Listen for test event": POST `{ nodeId, workflow? }` makes the test URL of that Webhook or Form trigger
- * (/api/webhook-test/<path>, /form-test/<path>) answer for 120 s, running `workflow` (the editor's current state, saved
- * or not; default: the saved workflow) as a manual run. The response is an SSE stream: `listening` (path, the test
- * run's execution id, `expiresAt`), then the run's `execution` events and its `result`, as /run streams them; or
- * `timeout`, or `stopped` when the trigger started listening elsewhere. Closing the request stops listening and stops
- * a run that is still going. 409 while another workflow listens on the same test URL. See lib/server/test-webhooks.ts.
+ * "Listen for test event": POST `{ nodeId, workflow? }` makes the test URL of that Webhook, Form or MCP Server trigger
+ * (/api/webhook-test/<path>, /form-test/<path>, /mcp-test/<path>) answer for 120 s, running `workflow` (the editor's
+ * current state, saved or not; default: the saved workflow) as a manual run. The response is an SSE stream: `listening`
+ * (path, the test run's execution id, `expiresAt`), then the run's `execution` events and its `result`, as /run streams
+ * them; or `timeout`, or `stopped` when the trigger started listening elsewhere (on any main). An MCP listener takes
+ * many calls: each tool call's run streams with its own `result`, and `listening` comes again with the pushed-on
+ * deadline (120 s after the last request). Closing the request stops listening and stops a run that is still going.
+ * 409 while another workflow listens on the same test URL. Traced as `trigger.listen`. See lib/server/test-webhooks.ts.
  */
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';

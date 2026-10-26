@@ -1,15 +1,18 @@
 'use client';
 /**
- * The canvas's right-click menu: group or ungroup the selection, collapse, rename or recolour a group, duplicate,
- * add a sticky note where the pointer is, delete. Right-clicking an element that isn't selected selects it first, so
- * the menu always acts on what is highlighted. Escape, a click elsewhere or scrolling closes it.
+ * The canvas's right-click menu: group or ungroup the selection (selected groups nest in the new one), collapse,
+ * rename or wrap a group in a new one, duplicate, add a sticky note where the pointer is, delete. Right-clicking an
+ * element that isn't selected selects it first, so the menu always acts on what is highlighted. Escape, a click
+ * elsewhere or scrolling closes it.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { create } from 'zustand';
 import { ChevronsDownUp, ChevronsUpDown, Copy, Group, StickyNote, Trash2, Ungroup } from 'lucide-react';
 import { Kbd } from '../ui/inputs';
+import { descendantGroupIds, descendantNodeIds } from '@/lib/shared/groups';
 import { MenuItem, MenuLabel, MenuSeparator } from '../ui/popover';
+import { linksOf } from './groups';
 import { useEditor } from './store';
 
 interface MenuState {
@@ -80,6 +83,8 @@ export function CanvasMenu() {
   const selectedNotes = stickies.filter((n) => n.selected);
   const memberGroups = groups.filter((g) => g.data.nodeIds.some((id) => selectedNodes.some((n) => n.id === id)));
   const single = selectedGroups.length === 1 && !selectedNodes.length && !selectedNotes.length ? selectedGroups[0] : undefined;
+  const links = linksOf(groups);
+  const parent = single?.data.parentId ? groups.find((g) => g.id === single.data.parentId) : undefined;
   const anything = selectedNodes.length + selectedGroups.length + selectedNotes.length > 0;
   const act = (fn: () => void) => () => {
     close();
@@ -108,7 +113,10 @@ export function CanvasMenu() {
     >
       {single ? (
         <>
-          <MenuLabel>{single.data.name || 'Group'}</MenuLabel>
+          <MenuLabel>
+            {single.data.name || 'Group'}
+            {parent && <span className="font-normal"> · in {parent.data.name || 'Group'}</span>}
+          </MenuLabel>
           <MenuItem onClick={act(() => rename(single.id))}>
             <Group /> Rename group
           </MenuItem>
@@ -118,17 +126,20 @@ export function CanvasMenu() {
           <MenuItem onClick={act(() => state.duplicateNode(single.id))} hint={<Kbd>{mod}D</Kbd>}>
             <Copy /> Duplicate group and nodes
           </MenuItem>
+          <MenuItem onClick={act(() => state.groupSelection())} hint={<Kbd>{mod}G</Kbd>}>
+            <Group /> Put in a new group
+          </MenuItem>
           <MenuItem onClick={act(() => state.ungroup([single.id]))} hint={<Kbd>⇧{mod}G</Kbd>}>
             <Ungroup /> Ungroup
           </MenuItem>
           <MenuSeparator />
-          <MenuItem danger onClick={act(() => state.removeNodes([...single.data.nodeIds, single.id]))}>
-            <Trash2 /> Delete group and nodes
+          <MenuItem danger onClick={act(() => state.removeNodes([...descendantNodeIds(links, single.id), ...descendantGroupIds(links, single.id), single.id]))}>
+            <Trash2 /> Delete group and everything in it
           </MenuItem>
         </>
       ) : (
         <>
-          <MenuItem disabled={!selectedNodes.length} onClick={act(() => state.groupSelection())} hint={<Kbd>{mod}G</Kbd>}>
+          <MenuItem disabled={!selectedNodes.length && !selectedGroups.length} onClick={act(() => state.groupSelection())} hint={<Kbd>{mod}G</Kbd>}>
             <Group /> Group selection
           </MenuItem>
           <MenuItem disabled={!selectedGroups.length && !memberGroups.length} onClick={act(() => state.ungroup())} hint={<Kbd>⇧{mod}G</Kbd>}>

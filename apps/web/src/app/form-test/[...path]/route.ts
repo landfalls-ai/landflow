@@ -41,8 +41,8 @@ const tooLarge = (limit: number) =>
   messagePage({ title: 'File too large', message: `Uploads can be up to ${Math.floor(limit / (1024 * 1024))} MiB.`, status: 413 });
 
 /** The trigger's authentication and IP allow-list (as on /form/<path>), refused calls as an HTML page. */
-async function refused(request: Request, node: WorkflowNode): Promise<Response | undefined> {
-  const auth = await checkWebhookAuth(request, node, 'Form Trigger', 'Form');
+async function refused(request: Request, workflowId: string, node: WorkflowNode): Promise<Response | undefined> {
+  const auth = await checkWebhookAuth(request, workflowId, node, 'Form Trigger', 'Form');
   if (auth.ok) return undefined;
   const { status } = auth.response;
   const message = status === 403 ? 'You are not allowed to open this form.' : status === 401 ? 'Sign in to open this form.' : 'This form is not set up correctly.';
@@ -64,7 +64,7 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
   const path = normalizePath((await params).path.join('/'));
   const found = await findTestListener('form', path);
   if (!found) return testFormMiss();
-  const denied = await refused(request, found.node);
+  const denied = await refused(request, found.listener.workflow.id, found.node);
   if (denied) return denied;
   if (found.claimed) return submitted(found.listener);
   return formPage(triggerPage(found.node), { action: `/form-test/${path}` });
@@ -75,7 +75,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const found = await findTestListener('form', path);
   if (!found) return testFormMiss();
   const { listener, node } = found;
-  const denied = await refused(request, node);
+  const denied = await refused(request, listener.workflow.id, node);
   if (denied) return denied;
   if (found.claimed) return submitted(listener, 409);
   const page = triggerPage(node);

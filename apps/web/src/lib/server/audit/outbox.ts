@@ -16,7 +16,7 @@ import { auditDestinations } from './destinations';
 import { recordAudit, setOutboxKick } from './index';
 import { getAuditSettings } from './settings';
 import { BATCH_SIZE, deliver } from './sinks';
-import { getEvents, pruneEvents } from './store';
+import { getEvents, pruneEventsAsync } from './store';
 
 const TICK_MS = 5_000;
 const KICK_DELAY_MS = 150;
@@ -158,9 +158,9 @@ function kick() {
 }
 
 /** Apply audit retention now. Returns how many events went. */
-export function pruneAuditLog(now = Date.now()): number {
+export async function pruneAuditLog(now = Date.now()): Promise<number> {
   try {
-    const removed = pruneEvents(getAuditSettings().retentionDays, now);
+    const removed = await pruneEventsAsync(getAuditSettings().retentionDays, now);
     if (removed) logger.info('pruned audit events', { 'landflow.audit.pruned': removed });
     return removed;
   } catch (error) {
@@ -177,8 +177,8 @@ export function startAuditOutbox() {
   setOutboxKick(kick);
   s.timer = setInterval(() => void drainOutbox(), TICK_MS);
   s.timer.unref?.();
-  pruneAuditLog();
-  s.pruner = setInterval(() => pruneAuditLog(), HOUR_MS);
+  void pruneAuditLog();
+  s.pruner = setInterval(() => void pruneAuditLog(), HOUR_MS);
   s.pruner.unref?.();
   kick();
 }

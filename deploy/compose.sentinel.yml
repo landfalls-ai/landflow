@@ -1,0 +1,101 @@
+# Valkey with Sentinel (README "Queue mode, workers and high availability"): a primary, a replica and three sentinels
+# that promote the replica when the primary stops answering, for queue mode without a single Valkey to lose.
+#
+#   docker compose -f deploy/compose.infra.yml up -d          # the landflow-infra network
+#   COMPOSE_BAKE=false docker compose -f deploy/compose.sentinel.yml up -d --wait
+#   LANDFLOW_INTEGRATION=sentinel npx vitest run test/valkey-sentinel.integration.test.ts   # in apps/web
+#   docker compose -f deploy/compose.sentinel.yml down
+#
+# Hosts find the primary through the sentinels:
+#
+#   LANDFLOW_VALKEY_SENTINELS=valkey-sentinel-1:26379,valkey-sentinel-2:26379,valkey-sentinel-3:26379   # in a container on landflow-infra
+#   LANDFLOW_VALKEY_SENTINELS=127.0.0.1:56391,127.0.0.1:56392,127.0.0.1:56393                          # from this machine
+#   LANDFLOW_VALKEY_MASTER_NAME=mymaster
+#
+# (the queue stack takes them as LANDFLOW_QUEUE_VALKEY_SENTINELS / LANDFLOW_QUEUE_VALKEY_MASTER_NAME).
+#
+# The sentinels name the primary by its container address (192.168.x.x:6379), not a published port: clients must run
+# in a container on landflow-infra, or on a machine that routes to container addresses (Linux, OrbStack on macOS).
+# Failover: a primary that stops answering for 3 s is replaced within about 5-10 s. Replication is asynchronous, so the
+# last writes before a crash can be lost (a job enqueued in that moment, a lease just renewed); queue mode copes with
+# lost leases (another worker takes the run over) but a lost job never runs. In memory only (tmpfs): `down` empties it.
+# Development values: no passwords, don't expose these ports.
+
+name: landflow-sentinel
+
+x-valkey: &valkey
+  image: valkey/valkey:8-alpine
+  restart: unless-stopped
+  tmpfs: [/data]
+  networks: [landflow-infra]
+
+x-sentinel: &sentinel
+  <<: *valkey
+  # Sentinel rewrites its configuration file, so each one writes its own at its first start (a restart keeps what it
+  # learned). It follows the servers by address (a stopped container's name stops resolving, which would leave the
+  # sentinels with a nameless replica), so the primary's name is resolved once here.
+  command:
+    - sh
+    - -c
+    - |
+      [ -f /tmp/sentinel.conf ] && exec valkey-sentinel /tmp/sentinel.conf
+      until primary=$$(getent hosts valkey-primary | awk '{ print $$1 }') && [ -n "$$primary" ]; do sleep 1; done
+      cat > /tmp/sentinel.conf <<EOF
+      port 26379
+      sentinel monitor mymaster $$primary 6379 2
+      sentinel down-after-milliseconds mymaster 3000
+      sentinel failover-timeout mymaster 10000
+      sentinel parallel-syncs mymaster 1
+      EOF
+      exec valkey-sentinel /tmp/sentinel.conf
+  healthcheck:
+    test: ["CMD-SHELL", "valkey-cli -p 26379 sentinel get-master-addr-by-name mymaster | grep -q 6379"]
+    interval: 3s
+    timeout: 2s
+    retries: 20
+  depends_on:
+    valkey-primary:
+      condition: service_healthy
+
+x-healthcheck: &healthcheck
+  test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+  interval: 3s
+  timeout: 2s
+  retries: 20
+
+services:
+  valkey-primary:
+    <<: *valkey
+    command: ["valkey-server", "--appendonly", "no", "--save", ""]
+    ports:
+      - "127.0.0.1:${LANDFLOW_SENTINEL_PRIMARY_PORT:-56381}:6379"
+    healthcheck: *healthcheck
+
+  valkey-replica:
+    <<: *valkey
+    command: ["valkey-server", "--appendonly", "no", "--save", "", "--replicaof", "valkey-primary", "6379"]
+    ports:
+      - "127.0.0.1:${LANDFLOW_SENTINEL_REPLICA_PORT:-56382}:6379"
+    healthcheck: *healthcheck
+    depends_on:
+      valkey-primary:
+        condition: service_healthy
+
+  valkey-sentinel-1:
+    <<: *sentinel
+    ports:
+      - "127.0.0.1:${LANDFLOW_SENTINEL_PORT_1:-56391}:26379"
+
+  valkey-sentinel-2:
+    <<: *sentinel
+    ports:
+      - "127.0.0.1:${LANDFLOW_SENTINEL_PORT_2:-56392}:26379"
+
+  valkey-sentinel-3:
+    <<: *sentinel
+    ports:
+      - "127.0.0.1:${LANDFLOW_SENTINEL_PORT_3:-56393}:26379"
+
+networks:
+  landflow-infra:
+    external: true

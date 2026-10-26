@@ -1,13 +1,13 @@
 /**
  * Settings → MCP: the host's own MCP server at /api/mcp, for coding agents (Claude Code, Cursor…).
  * It is off by default. Turning it on creates an access token, shown once; only its SHA-256 hash
- * and last four characters are kept, in <data dir>/mcp.json, read on every call like settings.json.
+ * and last four characters are kept, in <data dir>/mcp.json (in queue mode the `config_files` row, ../config-store.ts),
+ * read on every call like settings.json.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { McpAccessResponse, McpAccessView } from '../../shared/mcp';
-import { atomicWrite, store } from '../store';
+import { ConfigFile } from '../config-store';
+import { singleton } from '../singleton';
 import { sameSecret } from './server';
 
 interface McpAccessFile {
@@ -17,16 +17,13 @@ interface McpAccessFile {
   tokenCreatedAt?: string;
 }
 
-const path = () => join(store.dir, 'mcp.json');
+const accessFile = () => singleton('config-file:mcp.json', () => new ConfigFile<Partial<McpAccessFile>>('mcp.json'));
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 
 function read(): McpAccessFile {
-  try {
-    const saved = JSON.parse(readFileSync(path(), 'utf8')) as Partial<McpAccessFile>;
-    return { enabled: saved.enabled === true, ...(typeof saved.tokenHash === 'string' && { tokenHash: saved.tokenHash, tokenHint: saved.tokenHint, tokenCreatedAt: saved.tokenCreatedAt }) };
-  } catch {
-    return { enabled: false };
-  }
+  const saved = accessFile().read();
+  if (!saved || typeof saved !== 'object') return { enabled: false };
+  return { enabled: saved.enabled === true, ...(typeof saved.tokenHash === 'string' && { tokenHash: saved.tokenHash, tokenHint: saved.tokenHint, tokenCreatedAt: saved.tokenCreatedAt }) };
 }
 
 function view(file: McpAccessFile): McpAccessView {
@@ -54,14 +51,14 @@ export function setMcpEnabled(enabled: boolean): McpAccessResponse {
   let file: McpAccessFile = { ...read(), enabled };
   let token: string | undefined;
   if (enabled && !file.tokenHash) ({ file, token } = newToken(file));
-  atomicWrite(path(), file);
+  accessFile().write(file);
   return { access: view(file), ...(token && { token }) };
 }
 
 /** Replace the token (the old one stops working at once). */
 export function regenerateMcpToken(): McpAccessResponse {
   const { file, token } = newToken(read());
-  atomicWrite(path(), file);
+  accessFile().write(file);
   return { access: view(file), token };
 }
 

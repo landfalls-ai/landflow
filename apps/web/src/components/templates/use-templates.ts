@@ -1,5 +1,9 @@
 'use client';
-/** Data for the templates pages: the library (searched on the server, so remote templates are searched too), one template, node types. */
+/**
+ * Data for the templates pages: the library (searched on the server, so remote templates are searched too, 30 at a
+ * time with "Load more"; `projectId`: that project's saved templates and the instance-wide ones), one template, node
+ * types.
+ */
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
 import type { TemplateDetail, TemplateSource, TemplateSummary } from '@/lib/shared/templates';
@@ -7,20 +11,26 @@ import type { NodeTypeInfo } from '@/lib/shared/types';
 
 export interface TemplateListing {
   templates: TemplateSummary[];
-  remote: { enabled: boolean; label?: string; error?: string };
+  remote: { enabled: boolean; label?: string; error?: string; page?: number; total?: number; hasMore?: boolean };
 }
 
-/** The library for a search, category and source; the search waits for typing to pause. */
-export function useTemplateList(search: string, category?: string, source?: TemplateSource) {
+/** The library for a search, category, source and project; the search waits for typing to pause. */
+export function useTemplateList(search: string, category?: string, source?: TemplateSource, projectId?: string) {
   const [listing, setListing] = useState<TemplateListing>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [version, setVersion] = useState(0);
+  const params = useCallback(
+    (extra: Record<string, string> = {}) =>
+      new URLSearchParams({ ...(search.trim() && { search: search.trim() }), ...(category && { category }), ...(source && { source }), ...(projectId && { projectId }), ...extra }),
+    [search, category, source, projectId],
+  );
 
   useEffect(() => {
     let stale = false;
     setLoading(true);
-    const query = new URLSearchParams({ ...(search.trim() && { search: search.trim() }), ...(category && { category }), ...(source && { source }) });
+    const query = params();
     const timer = setTimeout(
       () =>
         api<TemplateListing>(`/api/templates${query.size ? `?${query}` : ''}`)
@@ -33,25 +43,46 @@ export function useTemplateList(search: string, category?: string, source?: Temp
       stale = true;
       clearTimeout(timer);
     };
-  }, [search, category, source, version]);
+  }, [params, version]);
+
+  /** The next 30 remote results, after the ones shown. */
+  const loadMore = useCallback(async () => {
+    const page = (listing?.remote.page ?? 1) + 1;
+    setLoadingMore(true);
+    try {
+      const next = await api<TemplateListing>(`/api/templates?${params({ source: 'remote', page: String(page) })}`);
+      setListing((current) => {
+        if (!current) return next;
+        const seen = new Set(current.templates.map((t) => t.id));
+        return { templates: [...current.templates, ...next.templates.filter((t) => !seen.has(t.id))], remote: { ...current.remote, ...next.remote } };
+      });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [listing?.remote.page, params]);
 
   const reload = useCallback(() => setVersion((v) => v + 1), []);
-  return { listing, error, loading, reload };
+  return { listing, error, loading, reload, loadMore, loadingMore };
 }
 
-export function useTemplateDetail(id: string) {
+/** One template (`projectId`: count that project's allowed nodes); `reload()` after editing it. */
+export function useTemplateDetail(id: string, projectId?: string) {
   const [template, setTemplate] = useState<TemplateDetail>();
   const [error, setError] = useState<{ message: string; status?: number }>();
+  const [version, setVersion] = useState(0);
   useEffect(() => {
     let stale = false;
-    api<{ template: TemplateDetail }>(`/api/templates/${encodeURIComponent(id)}`)
+    api<{ template: TemplateDetail }>(`/api/templates/${encodeURIComponent(id)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`)
       .then((r) => !stale && setTemplate(r.template))
       .catch((e: Error & { status?: number }) => !stale && setError({ message: e.message, status: e.status }));
     return () => {
       stale = true;
     };
-  }, [id]);
-  return { template, error };
+  }, [id, projectId, version]);
+  const reload = useCallback(() => setVersion((v) => v + 1), []);
+  return { template, error, reload, setTemplate };
 }
 
 /** Node types by type, for icons and the read-only canvas (blocked ones included, with the reason). */

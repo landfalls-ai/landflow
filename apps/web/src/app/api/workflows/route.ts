@@ -21,13 +21,13 @@ export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, workflowSchema);
   if (!body.ok) return body.response;
   const id = body.data.id && !store.getWorkflow(body.data.id) ? body.data.id : `wf_${nanoid(10)}`;
-  // ?projectId= puts it in a project (the caller must be an editor there); else the caller's personal project.
+  // ?projectId= puts it in a project (the caller must be an editor there), a folderId in the folder's; else the caller's personal project.
   // Governance: a new active workflow may need approval first, and nodes the policy doesn't allow come back as warnings.
   let extras = {};
   const workflow = createInProject(request, 'workflow', () => {
     const saved = governedSave({ ...body.data, id } as Workflow, undefined, (w) => store.saveWorkflow(w), { by: currentActorId() });
     extras = saved.extras;
     return saved.workflow;
-  }, (w) => w.id);
+  }, (w) => w.id, { folderId: body.data.folderId, id });
   return json({ workflow, ...extras }, 201);
 });

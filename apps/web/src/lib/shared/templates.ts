@@ -71,6 +71,11 @@ export interface TemplateSummary {
   /** False when a node type is missing on this instance or blocked by its governance policy (see `problems`). */
   usable: boolean;
   problems: TemplateProblem[];
+  /** Saved templates: the project it belongs to (none: instance-wide, like the built-in ones). */
+  projectId?: string;
+  projectName?: string;
+  /** The viewer may edit or delete it (editors of its project; owners and admins for instance-wide ones). */
+  canEdit?: boolean;
 }
 
 export interface TemplateDetail extends TemplateSummary {
@@ -91,6 +96,18 @@ export interface TemplateFile {
 }
 
 export const TEMPLATE_FILE_KIND = 'landflow/template';
+
+/** PATCH /api/templates/:id: edit a saved template in place. */
+export interface UpdateTemplateRequest {
+  name?: string;
+  description?: string;
+  categories?: TemplateCategory[];
+  setup?: string[];
+  /** Replace its workflow with a saved workflow's (credentials become slots, pinned data is left out). */
+  workflowId?: string;
+  /** Move it to a project, or `null`: instance-wide (owners and admins). */
+  projectId?: string | null;
+}
 
 /** POST /api/templates/:id/use */
 export interface UseTemplateRequest {

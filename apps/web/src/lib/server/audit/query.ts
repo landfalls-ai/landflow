@@ -24,6 +24,7 @@ export function filtersFrom(params: URLSearchParams): AuditFilters {
     ...(actions.length && { action: actions }),
     ...(params.get('targetType')?.trim() && { targetType: params.get('targetType')!.trim().slice(0, 100) }),
     ...(params.get('targetId')?.trim() && { targetId: params.get('targetId')!.trim().slice(0, 200) }),
+    ...(params.get('projectId')?.trim() && { projectId: params.get('projectId')!.trim().slice(0, 200) }),
     ...(outcome && OUTCOMES.includes(outcome) && { outcome }),
     ...(time(params.get('from')) && { from: time(params.get('from')) }),
     ...(time(params.get('to'), true) && { to: time(params.get('to'), true) }),

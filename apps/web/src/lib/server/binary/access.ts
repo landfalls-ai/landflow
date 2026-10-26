@@ -11,6 +11,7 @@ import { Readable } from 'node:stream';
 import { BINARY_ID, binaryRefsOf, binaryScopeOf, completeBinaryRef, DEFAULT_MIME_TYPE, type BinaryAccess, type BinaryRef, type NodeItem } from '@landflow/protocol';
 import { NodeOperationError, type BinaryDataClient } from '@landflow/sdk';
 import type { ResolvedNodeType } from '@landflow/engine';
+import { database } from '../db';
 import { singleton } from '../singleton';
 import { onExecutionDeleted, store } from '../store';
 import { logger } from '../telemetry';
@@ -55,21 +56,64 @@ export function setBinaryStore(replacement: BinaryStore) {
 // Scopes
 // ---------------------------------------------------------------------------
 
-/** Sub-executions writing into their parent's scope (`child → scope`). */
+/**
+ * Sub-executions writing into their parent's scope (`child → scope`): this process's copy of `binary_scope_links`
+ * (migration 1200), which keeps the link for a child that resumes after a restart or on another worker.
+ */
 const sharedScopes = singleton('binary-shared-scopes', () => new Map<string, string>());
+
+/** A write to `binary_scope_links`: if it fails, the link still holds in this process. */
+function saveLink(write: () => void) {
+  try {
+    write();
+  } catch (error) {
+    logger.warn('could not save a sub-execution’s binary scope', { error: (error as Error).message });
+  }
+}
+
+/** The scope a sub-execution shares with its parent: this process's copy, else the saved link. */
+function linkedScope(executionId: string): string | undefined {
+  const known = sharedScopes.get(executionId);
+  if (known) return known;
+  try {
+    const scope = database().get<{ scope: string }>('SELECT scope FROM binary_scope_links WHERE execution_id = ?', executionId)?.scope;
+    if (scope) sharedScopes.set(executionId, scope);
+    return scope;
+  } catch {
+    // No database yet (Postgres loads at boot): its own scope.
+    return undefined;
+  }
+}
 
 /** Where an execution's new files go: its own id, or its parent's scope while the parent waits for it. */
 export function scopeFor(executionId: string): string {
-  return sharedScopes.get(executionId) ?? executionId;
+  return linkedScope(executionId) ?? executionId;
 }
 
 /**
  * A sub-execution its parent waits for writes into the parent's scope, so the files it returns live as long as the
- * parent run (n8n copies them instead). `undefined` ends the sharing.
+ * parent run (n8n copies them instead). Saved, so a child that resumes after a restart (or on another worker in queue
+ * mode) still writes there. `undefined` ends the sharing.
  */
 export function shareBinaryScope(childExecutionId: string, parentExecutionId: string | undefined) {
-  if (parentExecutionId) sharedScopes.set(childExecutionId, scopeFor(parentExecutionId));
-  else sharedScopes.delete(childExecutionId);
+  if (parentExecutionId) {
+    const scope = scopeFor(parentExecutionId);
+    sharedScopes.set(childExecutionId, scope);
+    saveLink(() => database().upsert('binary_scope_links', { execution_id: childExecutionId, scope, created_at: new Date().toISOString() }));
+  } else {
+    sharedScopes.delete(childExecutionId);
+    saveLink(() => database().delete('binary_scope_links', { execution_id: childExecutionId }));
+  }
+}
+
+/** Whether a sub-execution writes into `scope` (its parent's), in this process or according to the saved links. */
+function isSharedScope(scope: string): boolean {
+  if ([...sharedScopes.values()].includes(scope)) return true;
+  try {
+    return Boolean(database().get('SELECT 1 AS one FROM binary_scope_links WHERE scope = ? LIMIT 1', scope));
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +252,10 @@ export function withBinaryData(resolved: ResolvedNodeType): ResolvedNodeType {
 export async function deleteExecutionBinary(executionId: string): Promise<number> {
   sharedScopes.delete(executionId);
   for (const [child, scope] of sharedScopes) if (scope === executionId) sharedScopes.delete(child);
+  saveLink(() => {
+    database().delete('binary_scope_links', { execution_id: executionId });
+    database().delete('binary_scope_links', { scope: executionId });
+  });
   try {
     return await (await binaryStore()).deleteScope(executionId);
   } catch (error) {
@@ -224,7 +272,7 @@ export async function sweepBinaryData(isKept: (scope: string) => boolean, graceM
   const binary = await binaryStore();
   let removed = 0;
   for (const { scope, modifiedAt } of await binary.scopes()) {
-    if (now - modifiedAt < graceMs || isKept(scope) || [...sharedScopes.values()].includes(scope)) continue;
+    if (now - modifiedAt < graceMs || isKept(scope) || isSharedScope(scope)) continue;
     await binary.deleteScope(scope);
     removed++;
   }

@@ -8,7 +8,7 @@
 import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { indexedPorts } from '@landflow/protocol';
-import { Check, Pause, Pin, Plus, X, Zap } from 'lucide-react';
+import { Check, Hourglass, Pause, Pin, Plus, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
@@ -96,6 +96,12 @@ function StatusMark({ status, compact }: { status?: NodeStatus; compact?: boolea
         <Pause className="size-2.5" fill="currentColor" strokeWidth={0} />
       </span>
     );
+  if (status.state === 'waiting')
+    return (
+      <span title={status.wait ?? 'Waiting'} className={cn(base, 'bg-viz-1 text-bg')}>
+        <Hourglass className="size-2.5" strokeWidth={3} />
+      </span>
+    );
   if (status.state === 'error')
     return (
       <span title={status.error} className={cn(base, 'bg-rd text-bg')}>
@@ -116,6 +122,7 @@ function frameClasses(status: NodeStatus | undefined, selected: boolean | undefi
     unavailable ? 'border-dashed border-bd' : 'border-bd',
     state === 'running' && 'node-running border-transparent',
     state === 'paused' && 'border-warn shadow-[0_0_0_4px_var(--warndim)] animate-pulse-soft',
+    state === 'waiting' && 'border-viz-1 shadow-[0_0_0_4px_color-mix(in_oklab,var(--viz-1)_16%,transparent)]',
     state === 'error' && 'border-rd shadow-[0_0_0_4px_var(--rddim)] animate-shake',
     state === 'success' && (status?.reused ? 'border-dashed border-t3' : 'border-gn'),
     selected && 'shadow-[0_0_0_2px_var(--sf),0_0_0_4px_var(--acbd)]',
@@ -197,11 +204,22 @@ export function NodeTile(props: NodeTileProps) {
       <Pin className="size-2.5" strokeWidth={2.5} />
     </span>
   );
-  const pausedLabel = status?.state === 'paused' && (
-    <div className="absolute -top-6 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full bg-warn px-2 py-px text-[10px] font-semibold text-bg animate-in">
-      <Pause className="size-2.5" fill="currentColor" strokeWidth={0} /> Paused here
-    </div>
-  );
+  const pausedLabel =
+    status?.state === 'paused' ? (
+      <div className="absolute -top-6 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full bg-warn px-2 py-px text-[10px] font-semibold text-bg animate-in">
+        <Pause className="size-2.5" fill="currentColor" strokeWidth={0} /> Paused here
+      </div>
+    ) : status?.state === 'waiting' ? (
+      // What it waits for, on hover (and for screen readers): "Waiting until 14:05", "Waiting on 2 of 3 sub-workflows"…
+      <div
+        role="status"
+        title={status.wait ?? 'Waiting'}
+        aria-label={status.wait ?? 'Waiting'}
+        className="absolute -top-6 left-1/2 z-20 flex -translate-x-1/2 cursor-help items-center gap-1 whitespace-nowrap rounded-full bg-viz-1 px-2 py-px text-[10px] font-semibold text-bg animate-in"
+      >
+        <Hourglass className="size-2.5" strokeWidth={2.75} /> Waiting
+      </div>
+    ) : null;
 
   /** Sub-node slots along the bottom (AI roots, and sub-nodes that take sub-nodes of their own). */
   const aiInputs = aiIn.map(({ port, index }, i) => {

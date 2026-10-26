@@ -3,6 +3,7 @@
  * markers the service keeps. A channel's secret settings (a Slack webhook URL, a webhook signing secret) are sealed
  * with the credential vault's key and never leave this module unsealed except through `channelForSending`.
  */
+import { hasSecretReference } from '@landflow/engine';
 import { nanoid } from 'nanoid';
 import { ALERT_SECRET_FIELDS, type AlertChannel, type AlertChannelConfig, type AlertChannelKind, type AlertDelivery, type AlertRule } from '../../shared/alerts';
 import { credentials } from '../credentials/vault';
@@ -111,11 +112,12 @@ function checkedConfig(kind: AlertChannelKind, config: AlertChannelConfig): Aler
     }
     case 'slack':
       if (!kept.webhookUrl) throw new AlertError('Enter the Slack incoming webhook URL');
-      kept.webhookUrl = httpUrl(kept.webhookUrl, 'Slack webhook URL');
+      // A `{{ $secrets.<provider>.<name> }}` reference is resolved when sending (./channels.ts).
+      if (!hasSecretReference(kept.webhookUrl)) kept.webhookUrl = httpUrl(kept.webhookUrl, 'Slack webhook URL');
       break;
     case 'webhook':
       if (!kept.url) throw new AlertError('Enter the URL to POST to');
-      kept.url = httpUrl(kept.url, 'webhook URL');
+      if (!hasSecretReference(kept.url)) kept.url = httpUrl(kept.url, 'webhook URL');
       break;
     case 'telegram':
       if (!kept.credentialId) throw new AlertError('Choose a Telegram API credential');

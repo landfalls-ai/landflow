@@ -309,7 +309,7 @@ export const mcpTrigger = defineNode({
       {
         name: 'notice',
         displayName:
-          'Attach tools below (any tool sub-node, or a node used as a tool such as Execute Workflow). The workflow must be Active. Each tool call is an execution; listing the tools is not.',
+          'Attach tools below (any tool sub-node, or a node used as a tool such as Execute Workflow). The production URL answers once the workflow is published; the test URL while the editor listens. Each tool call is an execution; listing the tools is not.',
         type: 'notice',
       },
     ],

@@ -1,7 +1,7 @@
 /**
  * External secrets on the host, against a fake Vault and a local echo server: Settings → External secrets through
  * its routes (providers saved encrypted, test, refresh, names but never values), `$secrets` in credential fields
- * resolved when a workflow runs (and not in node parameters, where it is refused), the short TTL cache with shared
+ * resolved when a workflow runs (and not in node parameters, where it is refused by default), the short TTL cache with shared
  * in-flight reads, and redaction: what a node got from a secret never reaches the saved execution, its steps and
  * checkpoints, the logs or the error texts.
  */
@@ -211,11 +211,11 @@ describe('$secrets in credentials', () => {
     expect(lines.join('')).not.toContain(SECRET);
   });
 
-  it('refuses $secrets in node parameters', async () => {
+  it('refuses $secrets in node parameters by default (Settings → External secrets allows them: secrets-parameters.test.ts)', async () => {
     const workflow = workflowOf('wf_secret_param', [node('Set', 'core.set', { mode: 'json', json: "={{ JSON.stringify({ v: $secrets.vault['dev/hello'].message }) }}" })]);
     const execution = await runWorkflow({ workflow, mode: 'manual', startNodeId: 'Start' });
     expect(execution.status).toBe('error');
-    expect(JSON.stringify(execution)).toMatch(/can only be used in credential fields/);
+    expect(JSON.stringify(execution)).toMatch(/can’t be used in node parameters on this instance/);
   });
 
   it('fails the node with the reason when a secret can’t be read', async () => {

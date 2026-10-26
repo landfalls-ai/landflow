@@ -90,3 +90,32 @@ describe('sampleOf', () => {
     expect(sampleOf([])).toBeUndefined();
   });
 });
+
+describe('$secrets suggestions', () => {
+  const allowed: CompletionData = { ...data, secrets: { vault: ['dev/db', 'api'] } };
+  const labelsWith = (text: string, with_: CompletionData) => {
+    const caret = text.indexOf('|');
+    const value = text.replace('|', '');
+    return completionsAt(value, caret, with_)?.items.map((c) => c.label) ?? [];
+  };
+
+  it('are offered in node parameters only when the instance allows $secrets there', () => {
+    expect(labels('{{ $sec| }}')).not.toContain('$secrets');
+    expect(labels('{{ $secrets.| }}')).toEqual([]);
+    expect(labelsWith('{{ $sec| }}', allowed)).toContain('$secrets');
+    // The other roots stay.
+    expect(labelsWith('{{ | }}', allowed)).toEqual(expect.arrayContaining(['$json', '$vars', '$secrets']));
+    expect(labelsWith('{{ $secrets.| }}', allowed)).toEqual(['vault']);
+    expect(labelsWith('{{ $secrets.vault.| }}', allowed)).toEqual(expect.arrayContaining(['dev/db', 'api']));
+    // A name that isn't an identifier is inserted with brackets.
+    const value = '{{ $secrets.vault.dev }}';
+    const result = completionsAt(value, value.indexOf('dev') + 3, allowed)!;
+    const next = applyCompletion(value, result, result.items.find((c) => c.label === 'dev/db')!);
+    expect(next.text).toBe("{{ $secrets.vault['dev/db'] }}");
+  });
+
+  it('are the only suggestion in credential fields', () => {
+    const credential: CompletionData = { ...data, scope: 'credential', secrets: { vault: ['api'] } };
+    expect(labelsWith('{{ | }}', credential)).toEqual(['$secrets']);
+  });
+});

@@ -119,8 +119,8 @@ async function runSandboxed(ctx: IExecuteContext, language: Language, mode: Mode
       code,
       items: ctx.getInputData(),
       nodeOutputs: Object.fromEntries(nodesReferenced(code, language, Object.keys(outputs)).map((name) => [name, outputs[name]])),
-      // $vars / _vars: the instance variables, read-only (Settings → Variables).
-      variables: variables.record(),
+      // $vars / _vars: the workflow's project variables over the instance's, read-only (Settings → Variables).
+      variables: variables.forWorkflow(ctx.getWorkflowId()),
       execution: { id: ctx.getExecutionId(), mode: ctx.getMode() },
       workflow: { id: ctx.getWorkflowId() },
       node: { name: ctx.getNode().name },
@@ -136,7 +136,7 @@ async function runSandboxed(ctx: IExecuteContext, language: Language, mode: Mode
 /** The original Code node: JavaScript in a `node:vm` context of the host process. */
 function runInProcess(ctx: IExecuteContext, mode: Mode): NodeItem[][] {
   const items = ctx.getInputData();
-  const $vars = Object.freeze(variables.record());
+  const $vars = Object.freeze(variables.forWorkflow(ctx.getWorkflowId()));
   const logs: string[] = [];
   const console = { log: (...args: unknown[]) => logs.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')) };
   const run = (source: string, scope: Record<string, unknown>) => {

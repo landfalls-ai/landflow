@@ -37,7 +37,7 @@ export const POST = handler(async (request: Request) => {
       cookieState: readCookie(request, SAML_STATE_COOKIE),
     });
     const { token, expiresAt } = createSession(user, 'saml', { ip: clientIp(request), userAgent: request.headers.get('user-agent') ?? undefined });
-    rememberSession(token, user, identity);
+    await rememberSession(token, user, identity, expiresAt.toISOString());
     logger.info('signed in', { 'landflow.user.id': user.id, 'landflow.auth.method': 'saml' });
     const response = NextResponse.redirect(`${origin}${next}`, 303);
     setSessionCookie(response, request, token, expiresAt);

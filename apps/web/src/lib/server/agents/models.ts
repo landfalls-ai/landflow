@@ -1,4 +1,7 @@
-/** The agent's chat model, built from its config with the same providers as the chat model nodes. */
+/**
+ * The agent's chat model, built from its config with the same providers as the chat model nodes. The credential's
+ * fields may read `$secrets` (resolved when the model is built, with the usual cache and redaction).
+ */
 import type { LanguageModel } from '@landflow/engine';
 import type { AgentModel, ModelOption, ModelProvider } from '../../shared/agents';
 import { credentials } from '../credentials/vault';
@@ -15,19 +18,19 @@ const ANTHROPIC_MODELS: ModelOption[] = [
 
 const NOT_CHAT = /embed|whisper|tts|dall-e|moderation|rerank/i;
 
-export function agentModel(config: AgentModel | undefined): LanguageModel {
+export async function agentModel(config: AgentModel | undefined): Promise<LanguageModel> {
   if (!config?.model) throw new Error('Choose a model for this agent first');
   const temperature = config.temperature;
   switch (config.provider) {
     case 'anthropic': {
-      const data = config.credential ? credentials.dataFor(config.credential, 'core.anthropicApi') : undefined;
+      const data = config.credential ? await credentials.dataWithSecrets(config.credential, 'core.anthropicApi') : undefined;
       const apiKey = typeof data?.apiKey === 'string' ? data.apiKey.trim() : '';
       const baseUrl = typeof data?.baseUrl === 'string' ? data.baseUrl.trim() : '';
       return anthropicModel({ model: config.model, effort: 'medium', maxTokens: 16_000, fallback: true, ...(apiKey && { apiKey, ...(baseUrl && { baseUrl }) }) });
     }
     case 'openai': {
       if (!config.credential) throw new Error('Choose an OpenAI API credential for this agent’s model');
-      return openAiModel(openAiConnection(credentials.dataFor(config.credential, 'core.openAiApi')), { model: config.model, ...(temperature !== undefined && { temperature }) });
+      return openAiModel(openAiConnection(await credentials.dataWithSecrets(config.credential, 'core.openAiApi')), { model: config.model, ...(temperature !== undefined && { temperature }) });
     }
     case 'ollama':
       return ollamaModel({ baseUrl: config.baseUrl?.trim() || OLLAMA_URL, model: config.model, ...(temperature !== undefined && { temperature }) });
@@ -41,7 +44,7 @@ export async function modelOptions(provider: ModelProvider, options: { credentia
   if (provider === 'anthropic') return ANTHROPIC_MODELS;
   if (provider === 'openai') {
     if (!options.credentialId) return [];
-    const connection = openAiConnection(credentials.dataFor({ id: options.credentialId, name: options.credentialId }, 'core.openAiApi'));
+    const connection = openAiConnection(await credentials.dataWithSecrets({ id: options.credentialId, name: options.credentialId }, 'core.openAiApi'));
     const models = await openAiModels(connection);
     return models
       .filter((m) => !NOT_CHAT.test(m.id))

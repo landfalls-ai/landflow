@@ -105,10 +105,24 @@ function nodeTypesOf(names: string[]): string[] {
 const remoteId = (value: unknown) => `${REMOTE_PREFIX}${text(value)}`;
 const userOf = (value: unknown) => (isObject(value) ? text(value.name) || text(value.username) : '') || undefined;
 
+/** Remote results per page. */
+export const REMOTE_PAGE_SIZE = 30;
+
+/** Search the remote templates: one page of matches (30 each, from 1), and how many there are in all when the API says. */
+export async function searchRemotePage(search = '', page = 1): Promise<{ templates: TemplateSummary[]; total?: number; page: number }> {
+  const current = Math.max(1, Math.min(Math.floor(page) || 1, 1_000));
+  const query = new URLSearchParams({ page: String(current), rows: String(REMOTE_PAGE_SIZE), ...(search.trim() && { search: search.trim() }) });
+  const data = await getJson(`/templates/search?${query}`);
+  const total = isObject(data) && typeof data.totalWorkflows === 'number' ? data.totalWorkflows : undefined;
+  return { templates: summariesOf(data), ...(total !== undefined && { total }), page: current };
+}
+
 /** Search the remote templates (the first 30 matches). */
 export async function searchRemote(search = ''): Promise<TemplateSummary[]> {
-  const query = new URLSearchParams({ page: '1', rows: '30', ...(search.trim() && { search: search.trim() }) });
-  const data = await getJson(`/templates/search?${query}`);
+  return (await searchRemotePage(search, 1)).templates;
+}
+
+function summariesOf(data: unknown): TemplateSummary[] {
   return list(isObject(data) ? data.workflows : undefined).flatMap((w): TemplateSummary[] => {
     if (!/^\d+$/.test(text(w.id))) return [];
     const nodes = list(w.nodes).map((n) => text(n.name));

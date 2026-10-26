@@ -62,6 +62,8 @@ export interface SecretProvidersResponse {
   cacheTtlSeconds: number;
   /** The instance's environment, which `{environment}` in a provider's path or prefix stands for. */
   environment?: string;
+  /** Node parameter expressions may read `$secrets` at run time (Settings → External secrets; off by default). */
+  allowInParameters: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +82,22 @@ export interface CredentialMapping {
   credentialId: string;
 }
 
+/**
+ * Promotion: what a promoted credential's secret field holds in the target, instead of the value (which never travels):
+ * a `$secrets` reference resolved against the target's providers (`{{ $secrets.vault.api.key }}`).
+ */
+export interface CredentialSecretMapping {
+  /** The credential's type and name on this (the source) instance. */
+  type: string;
+  name: string;
+  /** The secret field. */
+  field: string;
+  /** An expression that reads `$secrets`. */
+  value: string;
+  /** Only for promotions to this environment (default: every target). */
+  environment?: string;
+}
+
 /** Settings → Environments, as stored (the environment itself comes from LANDFLOW_ENVIRONMENT). */
 export interface EnvironmentSettings {
   /** Protected: workflows are read-only here; changes arrive only by pull or promotion. LANDFLOW_ENVIRONMENT_PROTECTED wins. */
@@ -90,6 +108,10 @@ export interface EnvironmentSettings {
   environments?: string[];
   publishOnPull?: PullPublishMode;
   credentialMap?: CredentialMapping[];
+  /** Data tables (ids) whose rows promotion copies to the target (opt-in per table; schemas travel either way). */
+  rowTables?: string[];
+  /** `$secrets` references for promoted credentials' secret fields (left empty in the target otherwise). */
+  secretMappings?: CredentialSecretMapping[];
 }
 
 /** GET /api/environment */
@@ -104,6 +126,9 @@ export interface EnvironmentView {
   environments: Array<{ name: string; branch: string; current: boolean }>;
   publishOnPull: PullPublishMode;
   credentialMap: Array<CredentialMapping & { credentialName?: string }>;
+  /** Tables whose rows promotion copies, with their names (a deleted table has none). */
+  rowTables: Array<{ id: string; name?: string }>;
+  secretMappings: CredentialSecretMapping[];
   sourceControl: boolean;
 }
 
@@ -123,6 +148,26 @@ export interface PromotionEntry {
   fields?: string[];
 }
 
+/** A credential definition in a promotion's preview: name, type and non-secret fields (secret fields stay empty or take a `$secrets` reference). */
+export interface PromotionCredential {
+  name: string;
+  type: string;
+  status: 'added' | 'modified' | 'unchanged';
+  /** Secret fields: left empty in the target unless mapped. */
+  secretFields: string[];
+  /** Secret fields that carry a `$secrets` reference (a mapping, or the credential's own). */
+  mapped: string[];
+}
+
+/** A data table whose rows the promotion copies (opted in). */
+export interface PromotionTable {
+  id: string;
+  name: string;
+  path: string;
+  rows: number;
+  status: 'added' | 'modified' | 'unchanged';
+}
+
 /** POST /api/environment/promote */
 export interface PromotionResult {
   dryRun: boolean;
@@ -130,10 +175,54 @@ export interface PromotionResult {
   to: { environment: string; branch: string; commit?: string };
   entries: PromotionEntry[];
   conflicts: number;
-  /** Other files the promotion changes (folders, variables.json, credentials.json, data tables). */
-  files: Array<{ status: 'A' | 'M' | 'D'; path: string }>;
+  /** Other files the promotion changes (folders, variables.json, credentials.json, data tables), with their diffs. */
+  files: Array<{ status: 'A' | 'M' | 'D'; path: string; diff?: string }>;
+  /** Credential definitions the promotion writes (those the promoted workflows use; from this instance). */
+  credentials?: PromotionCredential[];
+  /** Data tables whose rows it copies (opted in; from this instance). */
+  tables?: PromotionTable[];
   promoted: boolean;
   /** The commit pushed to the target branch. */
   commit?: string;
+  /** sha256 of what the promotion writes: an approval promotes only what was previewed. */
+  digest?: string;
   warnings: string[];
+}
+
+export type PromotionRequestStatus = 'pending' | 'approved' | 'rejected' | 'canceled' | 'stale' | 'failed';
+
+/** Four-eyes on promotion (Settings → Governance): a promotion waiting for (or decided by) a second person. */
+export interface PromotionRequestView {
+  id: string;
+  status: PromotionRequestStatus;
+  source: string;
+  target: string;
+  /** What was asked for: all workflows or these (ids), prune, force, the commit message, the tables whose rows go. */
+  workflows?: string[];
+  prune?: boolean;
+  force?: boolean;
+  message?: string;
+  rowTables?: string[];
+  credentials?: boolean;
+  /** The preview when it was asked for (diffs trimmed when large). */
+  preview: PromotionResult;
+  requestedBy: string;
+  requestedByName?: string;
+  requestedAt: string;
+  decidedBy?: string;
+  decidedByName?: string;
+  decidedAt?: string;
+  comment?: string;
+  /** Why it went stale or failed. */
+  reason?: string;
+  /** The promotion commit, once approved. */
+  commit?: string;
+  canApprove?: boolean;
+  canCancel?: boolean;
+}
+
+/** POST /api/environment/promote with four-eyes on: 202, nothing promoted yet. */
+export interface PromotionRequestedResponse {
+  approvalRequired: true;
+  request: PromotionRequestView;
 }

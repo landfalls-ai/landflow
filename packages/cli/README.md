@@ -46,7 +46,7 @@ Workflows are named by id or by exact name (case-insensitive; an ambiguous name 
 | `sync pull\|push\|status\|diff [--dir d]` | Git sync, below |
 | `source-control status\|push\|pull` | the host's own Git (Settings → Source control): `push [-m msg] [--dry-run]`, `pull [--dry-run] [--prune] [--force]` |
 | `env status` | the host's environment (`LANDFLOW_ENVIRONMENT`), whether it is protected, its branch, the environments it promotes to, publish on pull and credential mappings |
-| `env promote <environment> [--workflow w]… [--from env] [--dry-run] [--diff] [--force] [--prune] [-m msg]` | copy workflows from this environment's branch (or `--from`'s) to another's: all, or the `--workflow`s (id or name); `--dry-run --diff` previews with unified diffs; a workflow edited on the target branch since the last promotion is a conflict (exit 5, the preview in `error.details`) unless `--force`; `--prune` (all workflows only) removes what the source no longer has |
+| `env promote <environment> [--workflow w]… [--from env] [--rows table]… [--no-rows] [--no-credentials] [--dry-run] [--diff] [--force] [--prune] [-m msg]` | copy workflows from this environment's branch (or `--from`'s) to another's: all, or the `--workflow`s (id or name), with the definitions of the credentials they use (no secret values; `--no-credentials` leaves them out) and the rows of the tables opted in on the host (`--rows` names them for this promotion, `--no-rows` sends none); `--dry-run --diff` previews with unified diffs; a workflow edited on the target branch since the last promotion is a conflict (exit 5, the preview in `error.details`) unless `--force`; `--prune` (all workflows only) removes what the source no longer has; with four-eyes on, the promotion waits for another owner or admin (exit 8, the request in `error.details.request`) |
 | `env pull [--dry-run] [--prune] [--force] [--publish file\|all\|none]` | apply this environment's branch, like `source-control pull`; `--publish` defaults to the environment's publish on pull (`file`: what the files say) |
 
 `landflow <command> --help` lists a command's options. Global options: `--json`, `--url`, `--api-key`, `--help`, `--version`.
@@ -94,7 +94,7 @@ With `--json` a command prints exactly one document on stdout, nothing on stderr
 | 5 | conflict | `conflict` (409/423, sync conflicts, a running execution that ended) |
 | 6 | the host can't be reached | `network` |
 | 7 | `--wait` gave up | `timeout` (`details: { executionId, status }`) |
-| 8 | waiting for approval | `approval_pending`: four-eyes publishing is on, so `workflows publish`, `unpublish`, `activate` and `deactivate` recorded a request another person approves (Settings → Governance); `status: 202`, `details: { workflowId, request }` with the request's `id`, `kind` and `status: "pending"` |
+| 8 | waiting for approval | `approval_pending`: four-eyes publishing is on, so `workflows publish`, `unpublish`, `activate` and `deactivate` recorded a request another person approves (Settings → Governance); `status: 202`, `details: { workflowId, request }` with the request's `id`, `kind` and `status: "pending"`; `env promote` made a promotion request (Settings → Environments → Promotion requests), `details: { request }` with its `id`, `source`, `target` and `status: "pending"` |
 
 `sync diff --exit-code` and `sync status --exit-code` exit 1 with `ok: true` when there are differences.
 
@@ -155,7 +155,7 @@ type SyncChange = {
 | `source-control push` | `dryRun`, `committed`, `commit?`, `branch`, `files: [{ status: 'A' \| 'M' \| 'D', path }]` |
 | `source-control pull` | `dryRun`, `applied`, `appliedCount`, `changes: SyncChange[]`, `conflicts`, `warnings`, `errors`, `commit`, `branch` |
 | `env status` | `environment: { name?, protected, protectedSource: 'env' \| 'settings' \| 'none', branch?, environments: [{ name, branch, current }], publishOnPull: 'file' \| 'all' \| 'none', credentialMap: [{ type, name, credentialId, credentialName? }], sourceControl }` |
-| `env promote` | `dryRun`, `promoted`, `from: { environment, branch, commit }`, `to: { environment, branch, commit? }`, `entries: [{ id, name, path?, targetPath?, status: 'added' \| 'modified' \| 'unchanged' \| 'deleted', conflict?, fields?, diff? }]` (`diff` with `--diff`), `conflicts`, `files: [{ status, path }]` (folders, variables, credentials, tables), `commit?`, `warnings`; a conflict exits 5 with this object in `error.details` |
+| `env promote` | `dryRun`, `promoted`, `from: { environment, branch, commit }`, `to: { environment, branch, commit? }`, `entries: [{ id, name, path?, targetPath?, status: 'added' \| 'modified' \| 'unchanged' \| 'deleted', conflict?, fields?, diff? }]` (`diff` with `--diff`), `conflicts`, `files: [{ status, path, diff? }]` (folders, variables, credentials, tables and their rows), `credentials: [{ name, type, status, secretFields, mapped }]`, `tables: [{ id, name, path, rows, status }]`, `digest`, `commit?`, `warnings`; a conflict exits 5 with this object in `error.details`, an approval request exits 8 with `{ request }` there |
 | `env pull` | as `source-control pull` |
 
 ## Development

@@ -31,13 +31,19 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * checks, plugin announces/heartbeats, metric scrapes, read-only GETs (the UI
  * polls those; webhooks are still traced) and everything that is not an API
  * route (pages, assets, HMR). Their server spans are still recorded but not
- * sampled, so they count in http.server.request.duration.
+ * sampled, so they count in http.server.request.duration. Trigger URLs are
+ * traced like webhooks, production and test alike: webhooks with any method,
+ * form submissions and MCP Server Trigger requests (POST).
  */
 const UNTRACED_PATH = /^\/api\/(events|health|metrics|plugins\/announce)(\/|\?|$)/;
+const WEBHOOK_PATH = /^\/api\/webhook(-test)?\//;
+const TRIGGER_POST_PATH = /^\/(form|form-test|mcp|mcp-test)\//;
 
-function isTracedRequest(method: string, path: string): boolean {
+export function isTracedRequest(method: string, path: string): boolean {
+  if (WEBHOOK_PATH.test(path)) return true;
+  if (TRIGGER_POST_PATH.test(path)) return !READ_METHODS.has(method);
   if (!path.startsWith('/api/') || UNTRACED_PATH.test(path)) return false;
-  return !READ_METHODS.has(method) || path.startsWith('/api/webhook/');
+  return !READ_METHODS.has(method);
 }
 
 export function samplerFromEnv(): Sampler {

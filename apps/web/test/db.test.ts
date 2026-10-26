@@ -59,7 +59,8 @@ describe('migrations', () => {
     const tables = db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").map((row) => row.name);
     for (const table of [...Object.keys(TABLES), 'schema_version']) expect(tables).toContain(table);
     const versions = db.all<{ version: number; name: string }>('SELECT version, name FROM schema_version ORDER BY version');
-    expect(versions.map((v) => Number(v.version))).toEqual(MIGRATIONS.map((m) => m.version));
+    // In version order, whatever order the side-by-side ranges were added to MIGRATIONS in (pendingMigrations sorts).
+    expect(versions.map((v) => Number(v.version))).toEqual(MIGRATIONS.map((m) => m.version).sort((a, b) => a - b));
     expect(versions[0].name).toBe('initial');
     expect(db.get<{ journal_mode: string }>('PRAGMA journal_mode')?.journal_mode).toBe('wal');
   });

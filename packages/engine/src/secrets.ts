@@ -6,7 +6,8 @@
  * references first (`secretReferences`), fetches those secrets, and hands the values to the resolver as
  * `ExpressionData.secrets`. `$secrets` then reads only what was fetched: a name built at run time
  * (`$secrets.vault[$json.name]`) is "not loaded". Without `secrets`, `$secrets` is unavailable: the host passes them
- * only where secrets are allowed (credential fields).
+ * only where secrets are allowed (credential fields, and node parameters through `ExecuteWorkflowOptions.loadSecrets`
+ * when the instance allows it).
  */
 
 /** A secret's value as a provider returns it: text, or an object of keys (a KV entry, a JSON secret, an item's fields). */
@@ -48,6 +49,32 @@ export function secretReferences(value: string): SecretReference[] {
   };
   if (value.includes('{{')) for (const segment of value.matchAll(EXPRESSION)) scan(segment[1]);
   else scan(value);
+  return [...found.values()];
+}
+
+/**
+ * Where a value (a node's parameters) holds strings that read `$secrets`: their paths, deeply. Keys named in `skip` at
+ * the top level are left out (parameters that aren't resolved: code, `noDataExpression`).
+ */
+export function secretParameterPaths(value: unknown, skip?: ReadonlySet<string>): string[][] {
+  const out: string[][] = [];
+  const walk = (entry: unknown, path: string[]) => {
+    if (hasSecretReference(entry)) out.push(path);
+    else if (entry && typeof entry === 'object' && path.length < 32) {
+      for (const [key, inner] of Object.entries(entry)) if (path.length || !skip?.has(key)) walk(inner, [...path, key]);
+    }
+  };
+  walk(value, []);
+  return out;
+}
+
+/** The secrets a value reads (every string in it, deeply, like a node's parameters; `skip` as above), without duplicates. */
+export function collectSecretReferences(value: unknown, skip?: ReadonlySet<string>): SecretReference[] {
+  const found = new Map<string, SecretReference>();
+  for (const path of secretParameterPaths(value, skip)) {
+    const text = path.reduce<unknown>((node, key) => (node as Record<string, unknown>)[key], value) as string;
+    for (const reference of secretReferences(text)) found.set(`${reference.provider}\u0000${reference.name}\u0000${reference.key ?? ''}`, reference);
+  }
   return [...found.values()];
 }
 

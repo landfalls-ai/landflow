@@ -48,6 +48,7 @@ import { retries, retryDueFor } from './retries';
 import { getVersion, versionFor } from './versions';
 import { resolveWorkflowCredentials } from './projects/credentials';
 import { registry } from './plugins/registry';
+import { parameterSecretOptions, redactRunData } from './secrets/runtime';
 import { singleton } from './singleton';
 import { store } from './store';
 import { fireTrigger, logger, recordRuntimeEvent } from './telemetry';
@@ -68,6 +69,7 @@ import {
 } from './cluster/dispatch';
 import { clusterRateLimiter } from './cluster/limits';
 import { clusterActive, coordinator, instanceId, runLeaseMs } from './cluster/state';
+import { pausedElsewhere } from './cluster/debug';
 import { refreshRows } from './db/replication';
 
 /** How deep Execute Workflow may nest executions. */
@@ -248,11 +250,12 @@ export function liveExecution(executionId: string): ExecutionRecord | undefined 
   return { ...entry.record, durationMs: Date.now() - Date.parse(entry.record.startedAt), ...(entry.debug?.paused && { paused: entry.debug.paused }) };
 }
 
-/** Queue mode: an execution saved as running by another process, with the node runs it saved since. */
+/** Queue mode: an execution saved as running by another process, with the node runs it saved since (and where its debugger paused). */
 function runningElsewhere(executionId: string): ExecutionRecord | undefined {
   const stored = store.getExecution(executionId);
   if (stored?.status !== 'running') return undefined;
-  return { ...stored, ...withSavedSteps(stored), durationMs: Math.max(0, Date.now() - Date.parse(stored.startedAt)) };
+  const paused = pausedElsewhere(executionId);
+  return { ...stored, ...withSavedSteps(stored), durationMs: Math.max(0, Date.now() - Date.parse(stored.startedAt)), ...(paused && { paused }) };
 }
 
 export function cancelExecution(executionId: string): boolean {
@@ -544,7 +547,8 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
   // Token & cost tracking: every model call of this segment counts here, under the workflow's AI usage caps.
   const usage = executionScope({ executionId, workflowId: workflow.id, settings: workflow.settings, previous: record.aiUsage });
   try {
-    const result = await runInUsageScope(usage, () => executeWorkflow({
+    // $secrets in node parameters (Settings → External secrets): an engine-made text (an expression error) may quote a value.
+    const result = redactRunData(await runInUsageScope(usage, () => executeWorkflow({
       ...segment.engine,
       ...(segment.streaming && segment.onEvent && { streaming: true }),
       workflow,
@@ -555,8 +559,10 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       // Only credentials the workflow's project may use (lib/server/projects/credentials.ts).
       // Audit log: which credentials (ids, never values) the run used, once per node (lib/server/audit).
       resolveCredentials: (node, descriptor) => auditCredentialUse(executionId, workflow.id, node, resolveWorkflowCredentials(workflow.id, node, descriptor)),
+      // $secrets in node parameters when Settings → External secrets allows it; their values are redacted like credentials'.
+      ...parameterSecretOptions,
       // $vars: read fresh for every run, so a change in Settings applies to the next one.
-      variables: variables.record(),
+      variables: variables.forWorkflow(workflow.id),
       resumeUrls: resumeUrls(executionId),
       debug: segment.debug,
       signal,
@@ -575,7 +581,8 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
           }),
         );
       },
-      onEvent: (event) => {
+      onEvent: (raw) => {
+        const event = redactRunData(raw);
         if (event.type === 'execution.started' && event.traceId) record.traceId = event.traceId;
         if (event.type === 'node.finished') {
           (record.runData[event.nodeId] ??= []).push(event.run);
@@ -590,7 +597,7 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
         if (event.type !== 'node.chunk') bus.publish({ channel: 'execution', workflowId: workflow.id, event });
         segment.onEvent?.(event);
       },
-    }));
+    })));
     const aiUsage = executionUsage(usage);
     finished = {
       ...record,

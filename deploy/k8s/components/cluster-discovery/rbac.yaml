@@ -1,0 +1,29 @@
+# Cluster-wide plugin discovery (LANDFLOW_K8S_NAMESPACES=*): read-only access to Services and EndpointSlices in every
+# namespace, for the host's ServiceAccount. Nothing else: no Secrets, no Pods, no writes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landflow-plugin-discovery-cluster
+  labels: { app.kubernetes.io/name: landflow-host, app.kubernetes.io/part-of: landflow }
+rules:
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landflow-plugin-discovery-cluster
+  labels: { app.kubernetes.io/name: landflow-host, app.kubernetes.io/part-of: landflow }
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: landflow-plugin-discovery-cluster
+subjects:
+  # The overlay's namespace is set on it by kustomize.
+  - kind: ServiceAccount
+    name: landflow-host
+    namespace: default

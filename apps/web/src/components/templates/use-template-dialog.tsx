@@ -1,8 +1,8 @@
 'use client';
 /**
- * "Use template": name the workflow, pick a folder, and pick (or create) a credential for each slot. Only saved
- * credentials of the slot's type are offered; a slot left on "Choose later" leaves its nodes without one. The new
- * workflow is an inactive draft and opens in the editor.
+ * "Use template": name the workflow, pick its project and a folder of that project, and pick (or create) a credential
+ * for each slot. Only saved credentials of the slot's type are offered; a slot left on "Choose later" leaves its nodes
+ * without one. The new workflow is an inactive draft in that project (its data tables too) and opens in the editor.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -14,6 +14,8 @@ import type { Folder } from '@/lib/shared/types';
 import { Dialog, Field } from '@/components/agents/dialog';
 import { CredentialDialog, CredentialTypeIcon } from '@/components/credentials/credential-dialog';
 import { useCredentials } from '@/components/credentials/use-credentials';
+import { useViewer } from '@/components/auth/viewer';
+import { projectLabel, useProjects, writableProjects } from '@/components/projects/use-projects';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/inputs';
 
@@ -30,12 +32,26 @@ function folderOptions(folders: Folder[]): Array<{ id: string; label: string }> 
   return folders.map((f) => ({ id: f.id, label: pathOf(f).join(' / ') })).sort((a, b) => a.label.localeCompare(b.label));
 }
 
-export function UseTemplateDialog({ template, folderId, onClose }: { template: TemplateDetail; folderId?: string; onClose: () => void }) {
+export function UseTemplateDialog({ template, folderId, projectId, onClose }: { template: TemplateDetail; folderId?: string; projectId?: string; onClose: () => void }) {
   const router = useRouter();
+  const viewer = useViewer();
+  const { projects } = useProjects();
+  const targets = useMemo(() => writableProjects(projects), [projects]);
   const { credentials, types } = useCredentials();
   const [name, setName] = useState(template.name);
   const [folders, setFolders] = useState<Folder[]>();
   const [folder, setFolder] = useState(folderId ?? '');
+  const [project, setProject] = useState(projectId ?? '');
+  // Start on the folder's project, else the one asked for, else the viewer's personal project.
+  useEffect(() => {
+    if (!projects || !folders) return;
+    setProject((current) => {
+      const fromFolder = folders.find((f) => f.id === folder)?.projectId;
+      if (fromFolder) return fromFolder;
+      if (current && targets.some((p) => p.id === current)) return current;
+      return targets.find((p) => p.type === 'personal')?.id ?? targets[0]?.id ?? '';
+    });
+  }, [projects, folders]); // eslint-disable-line react-hooks/exhaustive-deps
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState<string>();
   const [saving, setSaving] = useState(false);
@@ -57,14 +73,14 @@ export function UseTemplateDialog({ template, folderId, onClose }: { template: T
     });
   }, [credentials, template.credentials]);
 
-  const options = useMemo(() => folderOptions(folders ?? []), [folders]);
+  const options = useMemo(() => folderOptions((folders ?? []).filter((f) => !project || !f.projectId || f.projectId === project)), [folders, project]);
   const unpicked = template.credentials.filter((s) => !s.optional && !picks[s.id]).length;
 
   const submit = async () => {
     setSaving(true);
     setError(undefined);
     try {
-      const result = await api<UseTemplateResult>(`/api/templates/${encodeURIComponent(template.id)}/use`, {
+      const result = await api<UseTemplateResult>(`/api/templates/${encodeURIComponent(template.id)}/use${project && !folder ? `?projectId=${encodeURIComponent(project)}` : ''}`, {
         method: 'POST',
         json: { name: name.trim() || template.name, ...(folder && { folderId: folder }), credentials: Object.fromEntries(Object.entries(picks).filter(([, id]) => id)) },
       });
@@ -107,6 +123,24 @@ export function UseTemplateDialog({ template, folderId, onClose }: { template: T
           <Field id="template-workflow-name" label="Workflow name">
             <Input id="template-workflow-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={200} autoFocus />
           </Field>
+          {targets.length > 1 && (
+            <Field id="template-project" label="Project" hint="The workflow and the data tables it creates belong to it.">
+              <Select
+                id="template-project"
+                value={project}
+                onChange={(e) => {
+                  setProject(e.target.value);
+                  setFolder('');
+                }}
+              >
+                {targets.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {projectLabel(p, viewer?.id)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
           <Field id="template-folder" label="Folder">
             <Select id="template-folder" value={folder} onChange={(e) => setFolder(e.target.value)} disabled={!folders}>
               <option value="">No folder</option>

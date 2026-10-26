@@ -130,7 +130,14 @@ describe('protected environment', () => {
     expect(environments.protectedWriteRefusal('POST', '/api/variables')).toBeUndefined();
     expect(environments.protectedWriteRefusal('POST', `/api/workflows/${workflow.id}/publish`)).toBeUndefined();
     expect(environments.protectedWriteRefusal('PATCH', `/api/workflows/${workflow.id}`)).toMatch(/protected/);
+    // Using a template creates a workflow; saving one doesn't.
+    expect(environments.protectedWriteRefusal('POST', '/api/templates/tpl_abc/use')).toMatch(/protected/);
+    expect(environments.protectedWriteRefusal('POST', '/api/templates')).toBeUndefined();
     expect(() => environments.assertWorkflowsWritable()).toThrow(environments.ProtectedEnvironmentError);
+    // The UI disables its create buttons with the server's message as their tooltip.
+    const { readOnlyReason } = await import('@/lib/client/environment');
+    expect(readOnlyReason(view.body)).toBe(update.body.error);
+    expect(readOnlyReason({ ...view.body, protected: false })).toBeUndefined();
   });
 
   it('LANDFLOW_ENVIRONMENT_PROTECTED wins over the setting, both ways', async () => {

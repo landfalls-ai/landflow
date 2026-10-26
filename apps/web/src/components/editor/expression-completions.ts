@@ -4,7 +4,8 @@
  * output, variable names), it works out what is being typed (`$json.us…`,
  * `$('Na…`, `$now.to…`) and returns the matching fields, methods and
  * variables. In credential fields (`scope: 'credential'`) only `$secrets` is
- * offered: providers, then their secret names. Pure functions: the input
+ * offered: providers, then their secret names; node parameters offer it too
+ * when the instance allows `$secrets` there (`secrets` given). Pure functions: the input
  * component (expression-input.tsx) only renders the result.
  */
 
@@ -15,9 +16,12 @@ export interface CompletionData {
   nodes: Array<{ name: string; json?: unknown }>;
   /** `$vars` names. */
   vars: string[];
-  /** External secrets: each enabled provider's secret names (`$secrets.<provider>.<name>`), for credential fields. */
+  /**
+   * External secrets: each enabled provider's secret names (`$secrets.<provider>.<name>`), for credential fields, and
+   * for node parameters when Settings → External secrets allows them there (left out otherwise: `$secrets` isn't offered).
+   */
   secrets?: Record<string, string[]>;
-  /** `credential`: a credential field, where only `$secrets` is offered (node parameters can't read secrets). */
+  /** `credential`: a credential field, where only `$secrets` is offered. */
   scope?: 'node' | 'credential';
 }
 
@@ -254,7 +258,7 @@ function rootValue(root: string, data: CompletionData): Abstract {
     case '$vars':
       return { kind: 'vars', names: data.vars };
     case '$secrets':
-      return data.scope === 'credential' ? { kind: 'secrets', providers: data.secrets ?? {} } : { kind: 'unknown' };
+      return data.scope === 'credential' || data.secrets ? { kind: 'secrets', providers: data.secrets ?? {} } : { kind: 'unknown' };
     default:
       return { kind: 'unknown' };
   }
@@ -354,6 +358,11 @@ function rootCompletions(data: CompletionData): Completion[] {
     { label: '$execution', insert: '$execution', kind: 'variable', detail: 'id and mode' },
     { label: '$vars', insert: '$vars', kind: 'variable', detail: data.vars.length ? `${data.vars.length} variable${data.vars.length === 1 ? '' : 's'}` : 'variables' },
   ];
+  // Node parameters read $secrets only when the instance allows it (then the names come along).
+  if (data.secrets) {
+    const count = Object.keys(data.secrets).length;
+    roots.push({ label: '$secrets', insert: '$secrets', kind: 'variable', detail: count ? `external secrets · ${count} provider${count === 1 ? '' : 's'}` : 'external secrets (none set up)' });
+  }
   return roots;
 }
 
@@ -370,7 +379,19 @@ function rank(items: Completion[], partial: string): Completion[] {
 export function completionsAt(text: string, caret: number, data: CompletionData): CompletionResult | undefined {
   const expression = expressionAt(text, caret);
   if (!expression) return undefined;
-  const { code } = expression;
+  return completionsIn(expression.code, text, caret, data, false);
+}
+
+/**
+ * Completions in code (the Code node's editor, code-editor.tsx): the caret's line is the expression and only what
+ * starts with `$` is suggested (`$json.…`, `$input.first().…`, `$('Node').…`, the `$` variables), so plain code stays quiet.
+ */
+export function codeCompletionsAt(text: string, caret: number, data: CompletionData): CompletionResult | undefined {
+  const lineStart = text.lastIndexOf('\n', caret - 1) + 1;
+  return completionsIn(text.slice(lineStart, caret), text, caret, data, true);
+}
+
+function completionsIn(code: string, text: string, caret: number, data: CompletionData, inCode: boolean): CompletionResult | undefined {
   // The rest of an identifier after the caret is replaced too.
   const tail = /^[\w$]*/.exec(text.slice(caret))?.[0].length ?? 0;
 
@@ -392,6 +413,7 @@ export function completionsAt(text: string, caret: number, data: CompletionData)
   if (memberMatch) {
     const base = memberMatch[1];
     const partial = memberMatch[3] ?? '';
+    if (inCode && !base.startsWith('$')) return undefined;
     const target = evaluatePath(base, data);
     const { items, hint } = membersOf(target);
     const from = caret - partial.length;
@@ -402,6 +424,12 @@ export function completionsAt(text: string, caret: number, data: CompletionData)
 
   // A bare word or `$…` at the start of a term → roots, plus a few JS globals.
   const word = /(?:^|[^\w$.'"`\])])(\$?[A-Za-z_][\w$]*|\$)$/.exec(code);
+  if (inCode) {
+    // Code: `$…` names only, once something was typed.
+    const partial = word?.[1] ?? '';
+    const items = partial.startsWith('$') ? rank(rootCompletions(data), partial) : [];
+    return items.length ? { from: caret - partial.length, to: caret + tail, items } : undefined;
+  }
   if (word || /(^|[\s(,+\-*/%!?:=<>&|{[])$/.test(code)) {
     const partial = word?.[1] ?? '';
     const pool = partial.startsWith('$') || !partial || data.scope === 'credential' ? rootCompletions(data) : [...rootCompletions(data), ...methods(GLOBALS).map((c) => ({ ...c, kind: 'keyword' as const }))];

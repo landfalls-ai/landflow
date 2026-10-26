@@ -38,6 +38,7 @@ export const PUBLIC_ROUTES = [
   // Test URLs (lib/server/test-webhooks.ts): the trigger's own auth, and only while an editor listens.
   '/api/webhook-test',
   '/form-test',
+  '/mcp-test',
   '/api/waiting',
   '/mcp',
   // The instance MCP server: its own token (Settings → MCP).

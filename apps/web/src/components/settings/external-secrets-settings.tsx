@@ -6,7 +6,7 @@
  * shown here; a provider's own credentials are stored encrypted like credentials and never sent back.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, KeyRound, Pencil, Plus, RefreshCw, Save, Trash2, Vault, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, KeyRound, Pencil, Plus, RefreshCw, Save, ShieldAlert, Trash2, Vault, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import type { SecretProviderCheck, SecretProviderField, SecretProviderKind, SecretProviderKindInfo, SecretProvidersResponse, SecretProviderView } from '@/lib/shared/secrets';
@@ -267,6 +267,44 @@ function ProviderRow({ provider, kinds, onEdit, onChanged, onDeleted }: { provid
   );
 }
 
+/** Where `$secrets` may be used: credential fields always; node parameters when an admin allows it. */
+function WhereCard({ allowed, onChange }: { allowed: boolean; onChange: (allowed: boolean) => void }) {
+  const [busy, setBusy] = useState(false);
+  const toggle = async (next: boolean) => {
+    if (next && !window.confirm('Allow $secrets in node parameters? Anyone who can edit a workflow can then use every secret of these providers (and could send it anywhere). Values stay out of executions and logs.')) return;
+    setBusy(true);
+    try {
+      const saved = await api<{ allowInParameters: boolean }>('/api/external-secrets', { method: 'PATCH', json: { allowInParameters: next } });
+      onChange(saved.allowInParameters);
+      toast.success(saved.allowInParameters ? 'Node parameters can read $secrets' : '$secrets is for credential fields only');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card className="px-5 py-4">
+      <div className="mb-2 flex items-center gap-2">
+        <ShieldAlert className="size-4 text-t3" strokeWidth={1.8} />
+        <SectionLabel>Where secrets can be used</SectionLabel>
+      </div>
+      <div className="flex items-start gap-3">
+        <Switch checked={allowed} onChange={toggle} disabled={busy} label="Allow in node parameters" />
+        <div className="min-w-0">
+          <p className="text-[13px] font-medium text-t1">Allow in node parameters</p>
+          <p className="text-[12px] text-t3">
+            Credential fields always can. With this on, node parameter expressions read <code className="font-mono text-[11px]">{'{{ $secrets.<provider>.<name> }}'}</code> too, when the workflow runs (in the
+            host and in workers); the editor suggests the names. Values are never stored: executions, checkpoints, pinned data, logs, errors and live events show{' '}
+            <code className="font-mono text-[11px]">[redacted]</code>. Off: a parameter that reads <code className="font-mono text-[11px]">$secrets</code> fails its node. Every workflow editor can use every secret, so
+            turn it on only if you trust them all.
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function ExternalSecretsSettings() {
   const [data, setData] = useState<SecretProvidersResponse>();
   const [error, setError] = useState<string>();
@@ -298,7 +336,7 @@ export function ExternalSecretsSettings() {
           )}
         </div>
         <p className="text-[13px] text-t2">
-          Reference a secret in any credential field as <code className="font-mono text-[12px]">{'{{ $secrets.<provider>.<name> }}'}</code> (a JSON secret’s key:{' '}
+          Reference a secret in any credential field{data.allowInParameters ? ' (and node parameter)' : ''} as <code className="font-mono text-[12px]">{'{{ $secrets.<provider>.<name> }}'}</code> (a JSON secret’s key:{' '}
           <code className="font-mono text-[12px]">{'{{ $secrets.vault.db.password }}'}</code>). Values are fetched when a workflow runs, kept for {data.cacheTtlSeconds ? `${data.cacheTtlSeconds} s` : 'no time'} and
           never stored with executions{data.environment ? <> ; <code className="font-mono text-[12px]">{'{environment}'}</code> in a path or prefix is {data.environment}</> : null}.
         </p>
@@ -319,6 +357,7 @@ export function ExternalSecretsSettings() {
           <p className="mt-3 text-[13px] text-t3">No providers yet.</p>
         )}
       </Card>
+      <WhereCard allowed={data.allowInParameters} onChange={(allowInParameters) => setData((d) => d && { ...d, allowInParameters })} />
       {draft && (
         <ProviderForm
           key={draft.editing ?? 'new'}

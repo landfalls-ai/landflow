@@ -5,13 +5,15 @@
  * route guard (lib/server/auth/policy.ts `resourceRule`) before these handlers.
  */
 import { z } from 'zod';
-import { SHARE_ROLES, personalProjectId, type ResourceKind, type ShareableKind, type ShareView } from '../../shared/projects';
+import { SHARE_ROLES, personalProjectId, projectRoleCan, type ProjectRole, type ResourceKind, type ShareableKind, type ShareView } from '../../shared/projects';
 import { AuthError } from '../auth/errors';
 import { currentPrincipal } from '../auth/guard';
 import { getUser, type UserRecord } from '../auth/users';
+import { folders } from '../folders';
+import { forgetWorkflowPolicy } from '../governance/scopes';
 import { error, handler, json, parseBody } from '../http';
 import { creationProject, isInstanceAdmin, ownershipOf, projectRole } from './access';
-import { ensurePersonalProject, forgetResource, getProject, ProjectError, replaceShares, setHomeProject, shares } from './store';
+import { ensurePersonalProject, forgetResource, getProject, ProjectError, replaceShares, setHomeProject, shares, type ProjectRecord } from './store';
 import { moveResource } from './transfer';
 
 /** The signed-in user of the request (the guard ran: there is one). */
@@ -33,6 +35,19 @@ export function projectRoute<A extends unknown[]>(fn: (...args: A) => Promise<Re
   });
 }
 
+/**
+ * The project `id` if `actor` may `read` it (a member), `edit` what it holds (editor or admin) or `manage` it (admin);
+ * throws ProjectError 404 (not a member) or 403 otherwise.
+ */
+export function requireProject(actor: UserRecord, id: string, need: 'read' | 'edit' | 'manage'): ProjectRecord & { role: ProjectRole } {
+  const project = getProject(id);
+  const role = project && projectRole(actor, project.id);
+  if (!project || !role) throw new ProjectError('Project not found', 404);
+  if (need === 'edit' && !projectRoleCan.create(role)) throw new ProjectError(`Only editors and admins of “${project.name}” can change this`, 403);
+  if (need === 'manage' && !projectRoleCan.manage(role)) throw new ProjectError(`Only admins of “${project.name}” can change this`, 403);
+  return { ...project, role };
+}
+
 /** `?projectId=` of a list or create request. */
 export function projectParam(request: Request): string | null {
   try {
@@ -43,19 +58,52 @@ export function projectParam(request: Request): string | null {
 }
 
 /**
- * Create a resource in the requested project (`?projectId=`, else the caller's personal project): checks the caller
- * may create there, runs `create`, and records the new resource's home project.
+ * The project something new goes to: `?projectId=`, else the project of `folderId` (a workflow made in a folder goes to
+ * the folder's project), else the caller's personal project. Throws AuthError when the caller can't create there, the
+ * folder doesn't exist or belongs to another project than `?projectId=`.
  */
-export function createInProject<T>(request: Request, kind: ResourceKind, create: () => T, idOf: (created: T) => string): T {
-  const project = creationProject(currentPrincipal()?.user, projectParam(request));
-  const created = create();
-  if (project) setHomeProject(kind, idOf(created), project);
+export function targetProject(request: Request, folderId?: string): string | undefined {
+  let requested = projectParam(request);
+  if (folderId) {
+    const folderProject = folders.get(folderId) ? folders.projectOf(folderId) : undefined;
+    if (!folderProject) throw new AuthError('Folder not found', 404);
+    if (requested && requested !== folderProject) throw new AuthError('That folder belongs to another project: a workflow only goes in a folder of its own project', 403);
+    requested = folderProject;
+  }
+  return creationProject(currentPrincipal()?.user, requested);
+}
+
+/**
+ * Run `create` and record the new resource's home project (undefined: the default project). With the new resource's
+ * `id` known up front, the home is recorded first, so what runs inside `create` (governance checks of a new workflow)
+ * already sees its project; it is forgotten again when `create` fails.
+ */
+export function createIn<T>(project: string | undefined, kind: ResourceKind, create: () => T, idOf: (created: T) => string, id?: string): T {
+  if (project && id) setHomeProject(kind, id, project);
+  let created: T;
+  try {
+    created = create();
+  } catch (caught) {
+    if (project && id) forgetResource(kind, id);
+    throw caught;
+  }
+  if (project && (!id || idOf(created) !== id)) setHomeProject(kind, idOf(created), project);
   return created;
 }
 
-/** A resource was deleted: forget its project and shares. */
+/**
+ * Create a resource in the requested project (`?projectId=`, else the project of `options.folderId`, else the caller's
+ * personal project): checks the caller may create there, runs `create`, and records the new resource's home project
+ * (before `create` when `options.id` says what its id will be).
+ */
+export function createInProject<T>(request: Request, kind: ResourceKind, create: () => T, idOf: (created: T) => string, options: { folderId?: string; id?: string } = {}): T {
+  return createIn(targetProject(request, options.folderId), kind, create, idOf, options.id);
+}
+
+/** A resource was deleted: forget its project and shares (a workflow: its own governance policy too). */
 export function forgetDeleted(kind: ResourceKind, id: string) {
   forgetResource(kind, id);
+  if (kind === 'workflow') forgetWorkflowPolicy(id);
 }
 
 export function shareViews(kind: ShareableKind, id: string): ShareView[] {
@@ -117,14 +165,22 @@ const transferSchema = z.object({
   keepAccess: z.boolean().optional(),
   /** Workflows: share the credentials the workflow uses with the new project. */
   shareCredentials: z.boolean().optional(),
+  /** Workflows: a folder of the new project to file it in (default: its top level). */
+  folderId: z.string().nullable().optional(),
 });
 
+/** Workflows: checks before the move (an error message stops it) and what follows it (refiling it in a folder). */
+export interface TransferHooks {
+  check?(id: string, projectId: string, body: z.infer<typeof transferSchema>): { status: 400 | 404; message: string } | undefined;
+  moved?(id: string, projectId: string, body: z.infer<typeof transferSchema>): Record<string, unknown> | void;
+}
+
 /**
- * POST `/api/<kind>/<id>/transfer` { projectId, keepAccess?, shareCredentials? }: "Move to project". The guard
+ * POST `/api/<kind>/<id>/transfer` { projectId, keepAccess?, shareCredentials?, folderId? }: "Move to project". The guard
  * checked the caller may move it (admin of its project); they must also be able to create in the target project.
  * `credentialsOf` lists the credential ids a workflow uses (for `shareCredentials`).
  */
-export function transferRoute(kind: ResourceKind, exists: (id: string) => boolean, credentialsOf?: (id: string) => string[]) {
+export function transferRoute(kind: ResourceKind, exists: (id: string) => boolean, credentialsOf?: (id: string) => string[], hooks: TransferHooks = {}) {
   type Ctx = { params: Promise<{ id: string }> };
   return projectRoute(async (request: Request, { params }: Ctx) => {
     const { id } = await params;
@@ -136,9 +192,12 @@ export function transferRoute(kind: ResourceKind, exists: (id: string) => boolea
     if (!target) return error('Project not found', 404);
     const role = projectRole(actor, target.id);
     if (role !== 'admin' && role !== 'editor') return error(`You can’t move things into “${target.name}”`, 403);
+    const problem = hooks.check?.(id, target.id, body.data);
+    if (problem) return error(problem.message, problem.status);
     // Only credentials the mover may share go along (owners and admins: all of them).
     const shareable = body.data.shareCredentials && credentialsOf ? credentialsOf(id).filter((credentialId) => isInstanceAdmin(actor) || projectRole(actor, ownershipOf(actor, 'credential', credentialId).projectId) === 'admin') : [];
     const { from } = moveResource(kind, id, target.id, { keepAccess: body.data.keepAccess, shareCredentials: shareable, actorId: actor.id });
-    return json({ ownership: ownershipOf(actor, kind, id), from, sharedCredentials: shareable });
+    const extra = hooks.moved?.(id, target.id, body.data) ?? {};
+    return json({ ownership: ownershipOf(actor, kind, id), from, sharedCredentials: shareable, ...extra });
   });
 }

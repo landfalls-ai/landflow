@@ -4,8 +4,9 @@
  * plugin's skills attached), library skills and, for Landflow node plugins, a supervised process;
  * it records exactly what it created so uninstall removes that and nothing else.
  */
-import { rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, rmSync } from 'node:fs';
+import { join, sep } from 'node:path';
+import { nanoid } from 'nanoid';
 import type {
   Catalog,
   CatalogPlugin,
@@ -16,14 +17,18 @@ import type {
   MarketplaceLocation,
   MarketplaceSummary,
   PluginDetail,
+  ResolvedSource,
 } from '../../shared/marketplace';
 import { agentStore } from '../agents/store';
+import { onConfigChanged } from '../config-store';
+import { clusterActive, clusterState } from '../cluster/state';
+import { registry } from '../plugins/registry';
 import { logger } from '../telemetry';
 import { traceMarketplace } from '../telemetry/marketplace';
 import { agentFromClaude, skillFromClaude } from './map';
-import { commandLine, downloadPlugin, freePort, nodePlugins } from './node-plugins';
+import { commandLine, contentHash, downloadPlugin, freePort, nodePlugins, portFree, readInstallMarker, writeInstallMarker, type SupervisedPlugin } from './node-plugins';
 import { loadPlugin, type MarketplaceEntry } from './plugin';
-import { clearTreeCache, fetchJson, readerFor } from './reader';
+import { clearTreeCache, fetchJson, fetchLimited, readerFor } from './reader';
 import { locationLabel, parseMarketplaceInput, resolveSource, sourceLabel } from './sources';
 import { marketplaceStore, PRESETS, type StoredMarketplace } from './store';
 
@@ -225,15 +230,32 @@ export const marketplace = {
       try {
         let nodeRecord: InstalledPlugin['nodePlugin'];
         if (nodePlugin && pluginDir) {
-          // The riskiest step first, so a failure leaves nothing else behind.
-          await downloadPlugin(readerFor(detail.source), pluginDir);
-          const spec = { key: pluginKey, pluginId: nodePlugin.id, dir: pluginDir, manifest: nodePlugin };
+          // The riskiest step first, so a failure leaves nothing else behind. A branch or tag is pinned to its commit, so
+          // queue mode's other processes download the very same files.
+          const downloadSource = await pinnedSource(detail.source);
+          await downloadPlugin(readerFor(downloadSource), pluginDir);
+          const hash = contentHash(pluginDir);
+          const revision = `rev_${nanoid(10)}`;
+          const spec = { key: pluginKey, pluginId: nodePlugin.id, dir: pluginDir, manifest: nodePlugin, revision };
           await nodePlugins.prepare(spec, logFile);
+          writeInstallMarker(pluginDir, { key: pluginKey, revision, contentHash: hash });
           const taken = new Set([...nodePlugins.ports(), ...marketplaceStore.installed().flatMap((p) => (p.nodePlugin ? [p.nodePlugin.port, p.nodePlugin.grpcPort ?? 0] : []))]);
           const port = await freePort(taken);
           const grpcPort = nodePlugin.transports?.includes('grpc') ? await freePort(new Set([...taken, port])) : undefined;
-          nodePlugins.start({ ...spec, port, ...(grpcPort && { grpcPort }) }, logFile);
-          nodeRecord = { pluginId: nodePlugin.id, dir: pluginDir, command: commandLine(nodePlugin.start), manifest: nodePlugin, port, ...(grpcPort && { grpcPort }) };
+          const started: SupervisedPlugin = { ...spec, port, ...(grpcPort && { grpcPort }), ...(clusterActive() && { announce: false }) };
+          nodePlugins.start(started, logFile);
+          if (clusterActive()) void registerLocal(started);
+          nodeRecord = {
+            pluginId: nodePlugin.id,
+            dir: pluginDir,
+            command: commandLine(nodePlugin.start),
+            manifest: nodePlugin,
+            port,
+            ...(grpcPort && { grpcPort }),
+            revision,
+            contentHash: hash,
+            ...(downloadSource !== detail.source && { source: downloadSource }),
+          };
         }
         const source = { plugin: name, marketplace: marketplaceName(m), installedId: pluginKey };
         const at = new Date().toISOString();
@@ -259,6 +281,7 @@ export const marketplace = {
           ...(nodeRecord && { nodePlugin: nodeRecord }),
         };
         marketplaceStore.saveInstalled(installed);
+        if (nodeRecord) announceNodePlugins();
         logger.info('marketplace plugin installed', {
           'landflow.marketplace.plugin': pluginKey,
           'landflow.marketplace.agents': createdAgents.length,
@@ -271,7 +294,7 @@ export const marketplace = {
         for (const agent of createdAgents) agentStore.delete(agent.id);
         marketplaceStore.removeSkills(createdSkills.map((s) => s.id));
         if (pluginDir) {
-          await nodePlugins.stop(pluginKey);
+          await stopOne(pluginKey);
           rmSync(pluginDir, { recursive: true, force: true });
         }
         throw error;
@@ -284,12 +307,13 @@ export const marketplace = {
     if (!installed) throw new MarketplaceError('Plugin not installed', 404);
     return traceMarketplace('uninstall', { 'landflow.marketplace.plugin': pluginKey }, async () => {
       if (installed.nodePlugin) {
-        await nodePlugins.stop(pluginKey);
+        await stopOne(pluginKey);
         rmSync(installed.nodePlugin.dir, { recursive: true, force: true });
       }
       const agents = installed.agents.filter((a) => agentStore.delete(a.id)).length;
       marketplaceStore.removeSkills(installed.skills.map((s) => s.id));
       marketplaceStore.removeInstalled(pluginKey);
+      if (installed.nodePlugin) announceNodePlugins();
       logger.info('marketplace plugin uninstalled', { 'landflow.marketplace.plugin': pluginKey, 'landflow.marketplace.agents': agents });
       return { removed: { agents, skills: installed.skills.length, nodePlugin: Boolean(installed.nodePlugin) } };
     });
@@ -308,8 +332,13 @@ export const marketplace = {
   async restart(pluginKey: string) {
     const installed = marketplaceStore.installedOne(pluginKey);
     if (!installed?.nodePlugin) throw new MarketplaceError('Not a node plugin', 404);
+    const running = clusterActive() ? nodePlugins.specs().find((spec) => spec.key === pluginKey) : undefined;
     await nodePlugins.stop(pluginKey);
-    startOne(installed);
+    if (running) {
+      // Queue mode: this process's copy, where it ran (its directory and ports).
+      nodePlugins.start(running, logFileOf(installed));
+      void registerLocal(running);
+    } else startOne(installed);
     return withStatus(installed);
   },
 
@@ -317,17 +346,184 @@ export const marketplace = {
     return marketplaceStore.skills();
   },
 
-  /** Start every installed node plugin (host startup). */
+  /** Start every installed node plugin (host startup). Queue mode: startClusterSync() does it, in every main and worker. */
   startNodePlugins() {
+    if (clusterActive()) return;
     for (const installed of marketplaceStore.installed()) if (installed.nodePlugin) startOne(installed);
   },
+
+  syncNodePlugins: () => syncNodePlugins(),
+
+  /**
+   * Queue mode, every main and worker: run the installed node plugins now, and again when an install, update or
+   * removal happens (the `marketplace` control message, or the installed list changing in the database), and every
+   * minute. Returns what stops it.
+   */
+  startClusterSync(): () => void {
+    let timer: NodeJS.Timeout | undefined;
+    const soon = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void syncNodePlugins(), 250);
+      timer.unref?.();
+    };
+    const stopListening = onConfigChanged(['config_files'], soon);
+    const every = setInterval(() => void syncNodePlugins(), 60_000);
+    every.unref?.();
+    void syncNodePlugins();
+    return () => {
+      stopListening();
+      clearTimeout(timer);
+      clearInterval(every);
+    };
+  },
 };
+
+const logFileOf = (installed: InstalledPlugin) => join(marketplaceStore.dir, 'logs', `${installed.plugin.replace(/[^\w.-]/g, '_')}.log`);
+
+/**
+ * A GitHub branch or tag pinned to the commit it points at now (one API call), so every process downloads the same
+ * files; anything else (a commit already, a local directory, the API unreachable) as it is.
+ */
+async function pinnedSource(source: ResolvedSource): Promise<ResolvedSource> {
+  if (source.kind !== 'github' || source.sha || /^[0-9a-f]{40}$/i.test(source.ref)) return source;
+  try {
+    const { body } = await fetchLimited(`https://api.github.com/repos/${source.owner}/${source.repo}/commits/${encodeURIComponent(source.ref)}`, { accept: 'application/vnd.github.sha', maxBytes: 1024 });
+    const sha = body.toString('utf8').trim();
+    return /^[0-9a-f]{40}$/i.test(sha) ? { ...source, ref: sha, sha } : source;
+  } catch {
+    return source;
+  }
+}
+
+/** Queue mode: tell the other processes the installed node plugins changed (they sync theirs). */
+function announceNodePlugins() {
+  if (!clusterActive()) return;
+  void clusterState().relay?.broadcast('control', { t: 'marketplace' });
+}
+
+/** Queue mode: the endpoints of this process's copy of a plugin, on loopback. */
+const localEndpoints = (spec: Pick<SupervisedPlugin, 'port' | 'grpcPort'>) => [`http://127.0.0.1:${spec.port}`, ...(spec.grpcPort ? [`grpc://127.0.0.1:${spec.grpcPort}`] : [])];
+
+/**
+ * Queue mode: register this process's copy in its own registry once it answers (it doesn't announce), as a local
+ * endpoint that is never shared through `plugin_registrations`. Retried with backoff while it starts.
+ */
+async function registerLocal(spec: SupervisedPlugin, attempts = 30): Promise<boolean> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const running = nodePlugins.specs().find((current) => current.key === spec.key);
+    if (!running || running.port !== spec.port || running.revision !== spec.revision) return false;
+    const results = await Promise.allSettled(localEndpoints(spec).map((endpoint) => registry.addEndpoint(endpoint, 'static', undefined, { local: true })));
+    if (results.every((result) => result.status === 'fulfilled')) return true;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(5_000, 250 * 2 ** attempt)).unref?.());
+  }
+  logger.warn('marketplace plugin did not answer; not registered here', { 'landflow.plugin.id': spec.pluginId, 'landflow.plugin.port': spec.port });
+  return false;
+}
+
+/** Stop this process's copy; queue mode also drops its local endpoints from the registry. */
+async function stopOne(key: string) {
+  const running = nodePlugins.specs().find((spec) => spec.key === key);
+  await nodePlugins.stop(key);
+  if (running && running.announce === false) for (const endpoint of localEndpoints(running)) registry.removeEndpoint(endpoint);
+}
+
+let syncing: Promise<void> | undefined;
+let syncAgain = false;
+
+/**
+ * Queue mode: make this process run exactly the installed node plugins. A plugin is started from its directory when this
+ * process can see it with the same install in it (a shared data directory), else downloaded again from the same source
+ * into a directory of this process, checked against the install's content hash and prepared; it runs on its recorded
+ * port (another free one if taken here) without announcing, and is registered locally. Plugins no longer installed, or
+ * replaced by another install (an update), are stopped.
+ */
+async function syncNodePlugins(): Promise<void> {
+  if (syncing) {
+    syncAgain = true;
+    return syncing;
+  }
+  syncing = (async () => {
+    do {
+      syncAgain = false;
+      await syncOnce().catch((error: Error) => logger.warn('marketplace: syncing node plugins failed', { error: error.message }));
+    } while (syncAgain);
+  })().finally(() => (syncing = undefined));
+  return syncing;
+}
+
+async function syncOnce() {
+  const wanted = new Map(marketplaceStore.installed().flatMap((installed) => (installed.nodePlugin ? [[installed.id, installed] as const] : [])));
+  for (const spec of nodePlugins.specs()) {
+    const installed = wanted.get(spec.key);
+    const revision = installed?.nodePlugin?.revision ?? installed?.installedAt;
+    if (installed && spec.revision === revision) continue;
+    logger.info(installed ? 'marketplace plugin updated elsewhere; restarting it here' : 'marketplace plugin uninstalled elsewhere; stopping it here', { 'landflow.marketplace.plugin': spec.key });
+    await stopOne(spec.key);
+    // Only a copy this process downloaded for itself (the installed directory is the installing main's to remove).
+    if (!installed && spec.dir.startsWith(instanceDir() + sep)) rmSync(spec.dir, { recursive: true, force: true });
+  }
+  const running = new Map(nodePlugins.specs().map((spec) => [spec.key, spec]));
+  for (const installed of wanted.values()) {
+    const spec = running.get(installed.id);
+    if (spec) {
+      // Running: make sure this process's registry has it (a registration that timed out is tried again).
+      if (spec.announce === false && localEndpoints(spec).some((endpoint) => !registry.endpointInfo(endpoint))) void registerLocal(spec, 1);
+      continue;
+    }
+    try {
+      await startHere(installed);
+    } catch (error) {
+      logger.warn('marketplace plugin could not start here', { 'landflow.marketplace.plugin': installed.id, error: (error as Error).message });
+    }
+  }
+}
+
+/** Where this process keeps the plugins it downloaded itself (queue mode without a shared data directory). */
+const instanceDir = () => join(marketplaceStore.dir, 'instances', clusterState().config.instanceId);
+
+/** Queue mode: start this process's copy of an installed plugin (downloading it when this process can't see its files). */
+async function startHere(installed: InstalledPlugin) {
+  const record = installed.nodePlugin!;
+  const revision = record.revision ?? installed.installedAt;
+  // Each process logs its own copy.
+  const logFile = join(marketplaceStore.dir, 'logs', `${installed.plugin.replace(/[^\w.-]/g, '_')}.${clusterState().config.instanceId}.log`);
+  const matches = (dir: string) => {
+    const marker = readInstallMarker(dir);
+    return Boolean(marker && marker.revision === revision && (!record.contentHash || marker.contentHash === record.contentHash));
+  };
+  let dir = record.dir;
+  if (!existsSync(dir) || !matches(dir)) {
+    dir = join(instanceDir(), installed.plugin.replace(/[^\w.-]/g, '_'));
+    if (!matches(dir)) {
+      await downloadPlugin(readerFor(record.source ?? installed.source), dir);
+      const hash = contentHash(dir);
+      if (record.contentHash && hash !== record.contentHash) {
+        rmSync(dir, { recursive: true, force: true });
+        throw new Error(`its source changed since it was installed (${hash.slice(0, 19)}… instead of ${record.contentHash.slice(0, 19)}…): reinstall it`);
+      }
+      await nodePlugins.prepare({ key: installed.id, pluginId: record.pluginId, dir, manifest: record.manifest }, logFile);
+      writeInstallMarker(dir, { key: installed.id, revision, contentHash: hash });
+    }
+  }
+  // The recorded ports when they are free here (other processes on this host may hold them), else others.
+  const taken = nodePlugins.ports();
+  const port = !taken.has(record.port) && (await portFree(record.port)) ? record.port : await freePort(taken);
+  const grpcPort = record.grpcPort
+    ? !taken.has(record.grpcPort) && record.grpcPort !== port && (await portFree(record.grpcPort))
+      ? record.grpcPort
+      : await freePort(new Set([...taken, port]))
+    : undefined;
+  const spec: SupervisedPlugin = { key: installed.id, pluginId: record.pluginId, dir, manifest: record.manifest, port, ...(grpcPort && { grpcPort }), announce: false, revision };
+  nodePlugins.start(spec, logFile);
+  logger.info('marketplace plugin started here', { 'landflow.marketplace.plugin': installed.id, 'landflow.plugin.port': port, 'landflow.marketplace.dir': dir });
+  void registerLocal(spec);
+}
 
 function startOne(installed: InstalledPlugin) {
   const record = installed.nodePlugin!;
   nodePlugins.start(
-    { key: installed.id, pluginId: record.pluginId, dir: record.dir, manifest: record.manifest, port: record.port, ...(record.grpcPort && { grpcPort: record.grpcPort }) },
-    join(marketplaceStore.dir, 'logs', `${installed.plugin.replace(/[^\w.-]/g, '_')}.log`),
+    { key: installed.id, pluginId: record.pluginId, dir: record.dir, manifest: record.manifest, port: record.port, ...(record.grpcPort && { grpcPort: record.grpcPort }), ...(record.revision && { revision: record.revision }) },
+    logFileOf(installed),
   );
 }
 

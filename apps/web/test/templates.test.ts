@@ -368,7 +368,7 @@ describe('remote templates (n8n-compatible API)', () => {
 
   it('lists remote templates when asked for them or searching', async () => {
     const listing = await templates.listTemplates({ source: 'remote' });
-    expect(listing.remote).toEqual({ enabled: true, label: new URL(base).host });
+    expect(listing.remote).toMatchObject({ enabled: true, label: new URL(base).host, page: 1, hasMore: false });
     expect(listing.templates.map((t) => [t.id, t.source, t.author])).toEqual([
       ['n8n-1750', 'remote', 'n8n Team'],
       ['n8n-2291', 'remote', 'Ada'],

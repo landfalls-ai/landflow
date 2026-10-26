@@ -7,6 +7,10 @@
  * The client address is the first `X-Forwarded-For` entry, else `X-Real-IP` (set them at your reverse proxy, which
  * must overwrite what clients send); a request with neither counts as 127.0.0.1. Secrets are compared in constant time.
  * Failures answer 401 (with `WWW-Authenticate`) or 403 before the body is read, and start no run.
+ *
+ * The credential must be one the workflow's project may use (owned by it or shared with it, as for node credentials in
+ * runs, lib/server/projects/credentials.ts): otherwise every call gets 403 before any secret is compared, the response
+ * doesn't say which credential, and the host logs a warning with the workflow, node and credential id.
  */
 import { isIP } from 'node:net';
 import { createRemoteJWKSet, importSPKI, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
@@ -16,7 +20,9 @@ import { sameSecret } from './auth/passwords';
 import { credentials } from './credentials/vault';
 import { error } from './http';
 import { registry } from './plugins/registry';
+import { triggerAuthCredential, triggerAuthUsable } from './projects/credentials';
 import { singleton } from './singleton';
+import { logger } from './telemetry/logger';
 import type { WebhookAuthentication } from './nodes/webhook-auth';
 
 export type WebhookAuthResult =
@@ -139,11 +145,28 @@ function basicCredentials(request: Request): { user: string; password: string } 
   return colon < 0 ? undefined : { user: decoded.slice(0, colon), password: decoded.slice(colon + 1) };
 }
 
+type TriggerNode = Pick<WorkflowNode, 'type' | 'name' | 'parameters' | 'credentials'>;
+
 /**
- * Check a call to a Webhook or Form Trigger node against its authentication and IP allow-list. `label` names the
- * trigger in messages; `realm` is the Basic Auth realm (browsers show a sign-in prompt for forms).
+ * Undefined when the trigger's authentication credential (if any) is one `workflowId`'s project may use; else the 403
+ * every caller gets, without naming the credential (the log line says which one, for whoever runs the host).
  */
-export async function checkWebhookAuth(request: Request, node: Pick<WorkflowNode, 'type' | 'parameters' | 'credentials'>, label = 'Webhook', realm = 'Webhook'): Promise<WebhookAuthResult> {
+export function triggerAuthRefusal(workflowId: string, node: TriggerNode, label: string, respond: (message: string) => Response = (message) => error(message, 403)): Response | undefined {
+  if (triggerAuthUsable(workflowId, node)) return undefined;
+  logger.warn('trigger call refused: its authentication credential isn’t available to the workflow’s project', {
+    'landflow.workflow.id': workflowId,
+    'landflow.node.name': node.name,
+    'landflow.node.type': node.type,
+    'landflow.credential.id': triggerAuthCredential(node)?.id ?? '',
+  });
+  return respond(`Forbidden: the ${label}’s authentication credential isn’t available to its workflow’s project`);
+}
+
+/**
+ * Check a call to a Webhook or Form Trigger node of `workflowId` against its authentication and IP allow-list. `label`
+ * names the trigger in messages; `realm` is the Basic Auth realm (browsers show a sign-in prompt for forms).
+ */
+export async function checkWebhookAuth(request: Request, workflowId: string, node: TriggerNode, label = 'Webhook', realm = 'Webhook'): Promise<WebhookAuthResult> {
   const options = (node.parameters.options ?? {}) as { ipWhitelist?: string };
   const allowed = parseIpList(options.ipWhitelist);
   if (allowed.length) {
@@ -153,6 +176,9 @@ export async function checkWebhookAuth(request: Request, node: Pick<WorkflowNode
 
   const authentication = String(node.parameters.authentication ?? 'none') as WebhookAuthentication;
   if (!['basicAuth', 'headerAuth', 'jwtAuth'].includes(authentication)) return { ok: true, secretHeaders: [] };
+  // Before any secret is compared: the caller learns nothing about the one they sent.
+  const refused = triggerAuthRefusal(workflowId, node, label);
+  if (refused) return { ok: false, response: refused };
   const resolved = registry.resolve(node.type);
   if ('error' in resolved) return { ok: false, response: error(resolved.error, 500) };
   let secrets: Record<string, JsonObject>;

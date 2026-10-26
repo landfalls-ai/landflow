@@ -1,6 +1,6 @@
 # Roadmap: closing the gaps with other workflow platforms
 
-Status: **all waves landed** (started and finished 2026-10-25; each item's "Not yet" list is what remains). The list comes from a pass over Landflow's code and
+Status: **all waves landed** (started and finished 2026-10-25; Wave 5, closing Wave 4's "Not yet" lists and the gaps the follow-ups left, landed 2026-10-26; each item's "Not yet" list is what remains). The list comes from a pass over Landflow's code and
 from research on n8n, Zapier, Make, Power Automate, the developer-first engines (Temporal,
 Inngest, Trigger.dev, Windmill, Pipedream, Activepieces, Node-RED, Kestra), the AI-native
 builders (Dify, Langflow, Flowise, Gumloop, Lindy) and team and operations features. The
@@ -29,10 +29,12 @@ Three streams in parallel, split by the files they own.
   `/api/webhook-test/<path>` and `/form-test/<path>` answer while the editor listens (120 s, with a
   countdown and Stop; Execute listens when the workflow starts at such a trigger without pinned
   data), run the editor's workflow as a manual run shown live on the canvas, and work across mains
-  in queue mode (listeners in Valkey).
+  in queue mode (listeners in Valkey). The MCP Server Trigger has one too (`/mcp-test/<path>`: the
+  editor's tools, each tool call a live manual run). Test calls are traced like production ones
+  (`landflow.trigger.test`), and listening again on another main ends the old editor's stream. ✅
 - **Loop Over Items** (batches), with node state kept for the length of a run.
 - **Execute Workflow** node (sub-workflows), and the workflow trigger called by workflows as well
-  as agents. Covers run once or per item, waiting or not (waiting children in "each item" mode too ✅), and the caller policy.
+  as agents. Covers run once or per item, waiting or not (waiting children in "each item" mode too ✅, started 4 at a time with outputs over 256 KB read back from the child on resume ✅), and the caller policy.
 - **Error Trigger** and the workflow setting *Error workflow*.
 - **Schedule** trigger: cron expressions, times of day, weekdays, a time zone, and several rules.
 - Workflow timeout, and the settings for which executions to keep.
@@ -110,7 +112,8 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
 - A sandboxed Code node running out of process in a locked-down container, with JavaScript and
   Python. ✅ Done: the code runner service, one fresh child process per run with n8n's globals,
   on an internal Docker network with a read-only root; see [deploy/README.md](../deploy/README.md),
-  "Code runner". Not yet: syntax highlighting in the code editor, `$('Node')` in in-process code.
+  "Code runner". Syntax highlighting and `$json`/`_json` completions in the code editor ✅ (Wave 5).
+  Not yet: `$('Node')` in in-process code; line numbers, bracket matching and search in the editor.
 - OAuth2 *Connect* buttons for credentials. ✅ Done: a generic OAuth2 API credential with
   presets (Google, GitHub, Slack, Microsoft, Notion, Discord) and plugin types that `extends` it
   (n8n's `extends: ['oAuth2Api']`, in the protocol and the three SDKs; Google OAuth2 uses it);
@@ -156,7 +159,8 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   Slack signature helpers in the TypeScript, Go and Python SDKs; a GitHub Webhook Trigger in the
   productivity plugin (docs/protocol.md §12). The Webhook and Form triggers authenticate callers
   with Basic Auth, a header (`httpHeaderAuth`) or a JWT (HS256 secret, PEM key or JWKS URL, issuer
-  and audience checks), plus an IP allow-list. Not yet: Stripe and Slack triggers, OAuth app
+  and audience checks), plus an IP allow-list; the auth credential must belong to the workflow's
+  project ✅ (Wave 5). Not yet: Stripe and Slack triggers, OAuth app
   installs for app webhooks.
 - An inbound-email trigger. ✅ Done: Email Trigger (IMAP) in the core plugin, polling or IMAP IDLE,
   then mark read, move to a folder or leave the message; from, to, subject, text, HTML and headers,
@@ -172,7 +176,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
 - **MCP Server Trigger** (a workflow serves tools over MCP), **MCP Client Tool** (an agent uses
   an MCP server), and an instance-level MCP server so coding agents can build and run workflows.
   ✅ Done, with an MCP Client node and MCP servers as an agent capability; see the README's MCP
-  section. Not yet: OAuth for MCP servers, a test URL for the trigger, resources and prompts.
+  section; a test URL for the trigger ✅ (Wave 5). Not yet: OAuth for MCP servers, resources and prompts.
 
 ## Wave 3: AI
 
@@ -251,10 +255,15 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   single-host override, and S3/MinIO is the binary store (a warning for the filesystem). OTel
   metrics and a read-only Settings → Workers; `deploy/compose.queue.yml` runs two mains behind a
   load balancer and two workers, with `deploy/scripts/queue-e2e.py` (load spread, a killed worker,
-  a killed leader). See the README, "Queue mode, workers and high availability". Not yet: Valkey
-  Cluster / Sentinel, sticky sessions built in (debug sessions and SSO state live in one main),
-  marketplace node plugins on workers, credentials and settings files in the database instead of
-  the shared data directory.
+  a killed leader). See the README, "Queue mode, workers and high availability". Wave 5 ✅: plugin
+  restarts with the same version reach workers; marketplace node plugins run in every main and
+  worker; credentials and settings files live in the database (`LANDFLOW_CONFIG_STORE`, default in
+  queue mode, each file imported once; migration 1300); Valkey Sentinel (`LANDFLOW_VALKEY_SENTINELS`,
+  `deploy/compose.sentinel.yml`, failover in about 5 s); debug sessions and OIDC and SAML sign-ins
+  work on any main, so no sticky sessions. Not yet: Valkey Cluster (the queue's stream and its Lua
+  scripts would all sit on one hash tag, so it can't scale out; Sentinel covers failover), agent
+  definitions, sessions and memory in the database, sign-in rate limits shared across mains,
+  Kubernetes manifests for queue-mode workers.
 - Audit log, written as events through the existing OpenTelemetry pipeline, plus streaming to a
   SIEM. ✅ Done: `audit_events` (migration 900) with its own retention records actor, API key id,
   IP, user agent, request id, route, target and outcome for sign-in, sign-out and failed sign-ins,
@@ -269,8 +278,12 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   transaction, leased, retried with backoff, kept past retention until delivered): syslog RFC 5424
   over UDP, TCP and TLS, HTTP JSON lines signed with HMAC, Datadog and Elasticsearch presets and
   Splunk HEC, with **Send test event**; tested against fake receivers, and the infra stack's `siem`
-  profile runs a Vector receiver. See the README, "Audit log and SIEM streaming". Not yet: audit
-  events per project, mTLS client certificates for syslog, a hash chain for tamper evidence.
+  profile runs a Vector receiver. See the README, "Audit log and SIEM streaming". Wave 5 ✅: events
+  carry their target's project (filter, and project admins read and export their projects' events
+  on the project page), mTLS client certificates for syslog over TLS and HTTPS destinations, and a
+  SHA-256 hash chain (migration 1500; sealed in order under an advisory lock on Postgres) checked by
+  `GET /api/audit/verify` and **Verify chain**, still verifiable after pruning. Not yet: a CLI
+  `audit verify`, external anchoring or signing of the chain head, SIEM routing per project.
 - External secrets: OpenBao/Vault, 1Password and cloud secret managers. ✅ Done: Settings →
   External secrets connects, tests, refreshes and lists the names (never values) of OpenBao/Vault
   (KV v2; token, AppRole and pluggable Kubernetes auth; namespaces; lease renewal), 1Password
@@ -280,9 +293,13 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   time in the host or a worker with a short cache, never stored in executions or checkpoints, and
   redacted from outputs, errors and logs. Tested against the infra stack's OpenBao
   (`LANDFLOW_INTEGRATION=secrets`) and local fakes of the others; see the README, "External secrets
-  and environments". Not yet: `$secrets` in node parameters (credential fields only, as in n8n),
-  in the OAuth2 Connect client fields and in credentials used outside nodes (agents' models and
-  channels, alert channels, the source control token); a LocalStack service for AWS tests.
+  and environments". Wave 5 ✅: `$secrets` in node parameters behind Settings → External secrets →
+  **Allow in node parameters** (off by default; host and workers; values redacted from everything
+  kept; names autocompleted), in the OAuth2 Connect client fields, and in the credentials Landflow
+  uses itself (agents' models and channels, alert channels, the Git token); a misspelled key in a
+  JSON secret fails instead of resolving empty; LocalStack (`aws` profile, port 54566) with a
+  `LANDFLOW_INTEGRATION=aws` test. Not yet: a Respond to Webhook reply built from a secret isn't
+  redacted (by design: it's the caller's answer).
 - Environments and promotion. ✅ Done: `LANDFLOW_ENVIRONMENT` with a badge in the shell; protected
   environments (read-only editor with a banner, the API and the instance MCP server refuse workflow
   changes; runs and publishing stay open); a Git branch per environment; **Promote** (all or picked
@@ -290,9 +307,12 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   last promotion, force) in Settings → Environments, the API and `landflow env promote`; pulls with
   publish on pull (`file`, `all`, `none`) and `landflow env pull`; variable values per environment
   (migration 1001); credentials matched by name or mapped explicitly, `$secrets` resolving against
-  the target's providers. `landflow-sync/v1` gained only optional fields. Not yet: the workflows
-  list still shows its create buttons in a protected environment (the API refuses them), promotion
-  of credentials' definitions and data table rows, approvals on promotion.
+  the target's providers. `landflow-sync/v1` gained only optional fields. Wave 5 ✅: a protected
+  environment disables every create and change button (with the reason); promotion carries
+  credential definitions (secret fields empty or mapped to `$secrets`, never their values) and the
+  rows of opted-in data tables, with a diff per file; with four-eyes on, a promotion is a request
+  someone else approves (migration 1650). Not yet: per-project four-eyes on promotion, updating a
+  credential the target already has, merging rows (a table's rows are replaced).
 - Projects, sharing, SAML and SCIM, and ownership transfer. ✅ Done: a personal project per user
   and team projects with admin, editor and viewer roles; workflows, credentials, data tables and
   agents belong to one project (migration 800 moves existing data into the owner's personal
@@ -304,9 +324,14 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   sign-in (signed assertions, replay protection, just-in-time users, role and project mapping,
   single logout; tested against the infra stack's Keycloak) and SCIM 2.0 provisioning (Users and
   Groups for Okta and Entra ID, deactivation, group-to-role and group-to-project mapping, a
-  scim-only token). See the README, "Authentication". Not yet: projects for folders, variables
-  and plugins; the Data Table node and webhook/MCP trigger auth aren't project-scoped; encrypted
-  SAML assertions; SAML logout state and pending sign-ins are per process.
+  scim-only token). See the README, "Authentication". Wave 5 ✅: folders and variables per project
+  (`$vars` reads the project's value first, then the instance's), a per-project node allow-list,
+  the Data Table node and its pickers limited to the workflow's project, webhook and MCP trigger
+  auth credentials checked against the project (migrations 1400, 1401); encrypted SAML assertions
+  (generate or upload a key, published in the metadata, can be required) and SAML state in the
+  database so any main finishes a sign-in or logout (migration 1501). Not yet: data table names
+  unique per project, evaluation datasets and agents' table pickers per project, folders from Git
+  sync in their project, the instance MCP server per project, SAML key rotation with two certificates.
 - Templates library and canvas groups. ✅ Done: a Templates page with 18 built-in templates
   (validated against the core nodes and the bundled plugins' manifests in a test), search,
   categories, cards with node icons, a detail page with a read-only canvas, setup steps and the
@@ -321,9 +346,11 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   collapse (edges merged per neighbour) and take nodes in and out by dragging, saved in
   `workflow.groups` (the engine ignores them) and handled by undo, copy and paste, duplicate,
   import and export, version diffs and Git sync. See the README, "Building and debugging a flow".
-  Not yet: templates per project (they are instance-wide), editing a saved template in place,
-  paging through more than 30 remote results; nested groups, and collapsed groups in the
-  Executions view (it shows them expanded).
+  Wave 5 ✅: templates belong to a project or the whole instance (a project picker on the library),
+  edit in place (and replace the workflow from a saved one), remote results 30 at a time with
+  **Load more**; nested groups (`parentId`, kept through undo, clipboard, import/export, diffs and
+  Git sync); collapsed groups stay collapsed in the Executions view with a run summary; waiting
+  nodes are marked on the canvas with what they wait for. Not yet: grouping across different parents.
 - An allowlist for nodes and MCP servers; four-eyes publish; ownership transfer. ✅ Done (ownership
   transfer is part of projects, above): Settings → Governance allows or blocks node types (ids,
   globs, whole plugins, Code nodes), HTTP Request hosts (globs, `host:port`, IPv4 CIDR) and MCP
@@ -333,8 +360,10 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   publish, rollback and unpublish become requests that someone else approves or rejects (no
   self-approval; any builder or admins only), go stale when the draft or the live version changes,
   notify approvers by email and alert channels, are audited, and show in the editor's Publish menu;
-  the CLI exits 8 (`approval_pending`). See the README, "Governance". Not yet: approvers per
-  project role (the hook is there: `registerApproverCheck`), per-workflow policies, IPv6 CIDR.
+  the CLI exits 8 (`approval_pending`). See the README, "Governance". Wave 5 ✅: a project picks
+  who approves its requests (its admins, admins and editors, or instance admins), a workflow can
+  require four-eyes and a stricter node allow-list on its own, and the HTTP host allow-list takes
+  IPv6 addresses, CIDR ranges and `[addr]:port`.
 - Kubernetes discovery for plugins, tested on OrbStack's local cluster. ✅ Done:
   `LANDFLOW_PLUGIN_DISCOVERY=kubernetes` watches Services labelled `landflow.dev/plugin=true` and
   their EndpointSlices in `LANDFLOW_K8S_NAMESPACES` (in-cluster, or a kubeconfig with an explicit
@@ -342,8 +371,14 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   back, a deleted Service removes it; the registry secret is proven with an HMAC challenge in the
   three SDKs; kustomize manifests in `deploy/k8s/` (the host with a namespaced Role, the seven
   plugins, optional Postgres and Valkey) and an integration test (`LANDFLOW_INTEGRATION=k8s`); see
-  [deploy/README.md](../deploy/README.md), "Kubernetes". Not yet: spreading calls across replicas
-  (one connection per Service), watching every namespace with a ClusterRole.
+  [deploy/README.md](../deploy/README.md), "Kubernetes". Wave 5 ✅: calls spread over the ready pods
+  behind a Service, fewest in flight first (`LANDFLOW_K8S_SPREAD`), and `LANDFLOW_K8S_NAMESPACES=*`
+  watches every namespace (the `cluster-discovery` component: a read-only ClusterRole).
+
+## Planned next
+
+- Pluggable transports between the host and plugins (HTTP, gRPC and message brokers such as
+  RabbitMQ, chosen per call from live traffic): see [transports.md](transports.md).
 
 ## Not planned
 

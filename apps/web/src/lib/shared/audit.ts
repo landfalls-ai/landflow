@@ -43,8 +43,19 @@ export interface AuditEvent {
   route?: string;
   status?: number;
   target?: AuditTarget;
+  /** The project of the target (a workflow, credential, data table or agent's home project, an execution's workflow's, a project itself). */
+  projectId?: string;
   summary: string;
   details?: Record<string, AuditValue>;
+  /** Its link in the hash chain (lib/server/audit/chain.ts); absent for events from before the chain began, or not sealed yet. */
+  chain?: AuditChainLink;
+}
+
+/** An event's place in the tamper-evident chain: its sequence number, the previous event's hash and its own (SHA-256, hex). */
+export interface AuditChainLink {
+  seq: number;
+  prevHash: string;
+  hash: string;
 }
 
 /** The domain events Landflow records, by action (the generic layer adds `api.request` for every other change). */
@@ -75,6 +86,11 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'publish_request.cancel': 'Withdrew a publish request',
   'publish_request.stale': 'Publish request went stale',
   'publish_request.fail': 'Approved publish failed',
+  'promotion_request.create': 'Asked for promotion approval',
+  'promotion_request.approve': 'Approved a promotion',
+  'promotion_request.reject': 'Rejected a promotion',
+  'promotion_request.cancel': 'Withdrew a promotion request',
+  'promotion_request.stale': 'Promotion request went stale',
   'credential.create': 'Created a credential',
   'credential.update': 'Changed a credential',
   'credential.delete': 'Deleted a credential',
@@ -91,6 +107,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'marketplace.install': 'Installed from a marketplace',
   'marketplace.uninstall': 'Uninstalled a marketplace plugin',
   'audit.export': 'Exported the audit log',
+  'audit.verify': 'Verified the audit log’s hash chain',
   'audit.test': 'Sent a test audit event',
   'api.request': 'API request',
 };
@@ -103,12 +120,42 @@ export interface AuditFilters {
   action?: string[];
   targetType?: string;
   targetId?: string;
+  /** The event's project (see AuditEvent.projectId). */
+  projectId?: string;
   outcome?: AuditOutcome;
   /** ISO times, inclusive. */
   from?: string;
   to?: string;
   /** Text in the summary or target name. */
   q?: string;
+}
+
+/** GET /api/audit/verify: whether the stored events still form an unbroken hash chain. */
+export interface AuditChainReport {
+  ok: boolean;
+  /** Chained events checked, and the first and last sequence numbers among them. */
+  checked: number;
+  firstSeq?: number;
+  lastSeq?: number;
+  /** The newest chained event as the chain records it, and the last event retention pruned (the chain goes on from its hash). */
+  head?: { seq: number; hash: string; eventId?: string; at?: string };
+  anchor?: { seq: number; hash: string; eventId?: string; at?: string };
+  /** Events not chained yet (queue mode on Postgres seals them within seconds). */
+  pending: number;
+  /** Events from before the chain began (not chained). */
+  legacy: number;
+  /** The first problem: the sequence number where the chain breaks, the event there (when it still exists) and why. */
+  brokenAt?: AuditChainProblem;
+  /** Up to 20 problems, in chain order. */
+  problems: AuditChainProblem[];
+  verifiedAt: string;
+}
+
+export interface AuditChainProblem {
+  seq?: number;
+  eventId?: string;
+  at?: string;
+  reason: string;
 }
 
 /** GET /api/audit */
@@ -133,7 +180,7 @@ export type AuditDestinationKind = 'syslog' | 'http' | 'splunk';
 export type AuditHttpPreset = 'generic' | 'datadog' | 'elastic';
 export type SyslogProtocol = 'udp' | 'tcp' | 'tls';
 
-/** A destination's settings; secret ones (`secret`, `apiKey`, `token`) never come back from the API (`secretsSet` lists those set). */
+/** A destination's settings; secret ones (`secret`, `apiKey`, `token`, `clientKey`, `clientKeyPassphrase`) never come back from the API (`secretsSet` lists those set). */
 export interface AuditDestinationConfig {
   /** syslog: where, RFC 5424 over UDP, TCP or TLS. */
   host?: string;
@@ -145,9 +192,13 @@ export interface AuditDestinationConfig {
   appName?: string;
   /** syslog over TCP/TLS: RFC 6587 octet counting (default) or a newline after each message. */
   framing?: 'octet-counting' | 'newline';
-  /** syslog over TLS: check the server's certificate (default true), against this CA (PEM) when given. */
+  /** TLS (syslog over TLS, https destinations): check the server's certificate (default true), against this CA (PEM) when given. */
   rejectUnauthorized?: boolean;
   ca?: string;
+  /** mTLS: the client certificate (PEM, may include its chain) Landflow presents, its private key (PEM; secret) and the key's passphrase (secret). */
+  clientCert?: string;
+  clientKey?: string;
+  clientKeyPassphrase?: string;
   /** http and splunk: the endpoint (Splunk: the HEC base URL, e.g. https://splunk:8088). */
   url?: string;
   preset?: AuditHttpPreset;
@@ -166,7 +217,7 @@ export interface AuditDestinationConfig {
   tags?: string;
 }
 
-export const AUDIT_SECRET_FIELDS = ['secret', 'apiKey', 'token'] as const;
+export const AUDIT_SECRET_FIELDS = ['secret', 'apiKey', 'token', 'clientKey', 'clientKeyPassphrase'] as const;
 
 export interface AuditDelivery {
   at: string;
@@ -182,6 +233,8 @@ export interface AuditDestination {
   enabled: boolean;
   config: AuditDestinationConfig;
   secretsSet: string[];
+  /** The client certificate's subject, issuer and expiry, when mTLS is set up. */
+  clientCertificate?: { subject: string; issuer: string; validTo: string; fingerprint: string };
   createdAt: string;
   updatedAt: string;
   /** Events waiting in the outbox, the oldest one's time, and the last delivery attempt. */

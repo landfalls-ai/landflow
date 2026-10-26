@@ -333,6 +333,7 @@ export function NodePanel() {
                       onChange={(parameters) => update({ parameters })}
                       preview={preview}
                       credentials={wf.credentials}
+                      scope={workflowId ? { workflowId } : undefined}
                     />
                   ) : (
                     <div className="rounded-[10px] border border-dashed border-bd p-4 text-[13px] text-t2">

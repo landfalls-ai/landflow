@@ -3,7 +3,8 @@
  * How a canvas group looks, shared by the editor and the read-only canvases (executions, version and template
  * previews): a tinted frame with its label on top, or, collapsed, a compact box with the name, the node count and the
  * icons of its first nodes. Groups never run: they live in `workflow.groups`, beside the nodes. Colours come from the
- * sticky-note palette, lighter, so a frame stays behind what it holds.
+ * sticky-note palette, lighter, so a frame stays behind what it holds. On the read-only canvases a collapsed box also
+ * sums up how its nodes ran (`status`): a red outline when one failed, blue while one waits, and so on.
  */
 import type { CSSProperties, ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
@@ -67,10 +68,29 @@ export function GroupFrameView({ name, color = 0, count, selected, label, action
   );
 }
 
+/** How a collapsed group's nodes ran: its outline colour and a few words in place of the node count. */
+export interface GroupBoxStatus {
+  tone: 'error' | 'paused' | 'running' | 'waiting' | 'success' | 'idle';
+  label: string;
+  /** Longer text for the tooltip. */
+  title?: string;
+}
+
+const TONE: Record<GroupBoxStatus['tone'], { border?: string; ring?: string; text: string }> = {
+  error: { border: 'var(--rd)', ring: 'var(--rddim)', text: 'text-rd' },
+  paused: { border: 'var(--warn)', ring: 'var(--warndim)', text: 'text-warn' },
+  running: { border: 'var(--warn)', ring: 'var(--warndim)', text: 'text-warn' },
+  waiting: { border: 'var(--viz-1)', ring: 'color-mix(in oklab, var(--viz-1) 16%, transparent)', text: 'text-viz-1' },
+  success: { border: 'var(--gn)', text: 'text-gn' },
+  idle: { text: 'text-t3' },
+};
+
 export interface GroupBoxViewProps {
   name: string;
   color?: number;
   count: number;
+  /** Read-only canvases: how its nodes ran. */
+  status?: GroupBoxStatus;
   /** Icon and colour of the first nodes, shown in a row. */
   icons: { icon?: string; color: string }[];
   selected?: boolean;
@@ -83,18 +103,26 @@ export interface GroupBoxViewProps {
 }
 
 /** A collapsed group: one compact box standing in for its nodes, their connections drawn to its edges. */
-export function GroupBoxView({ name, color = 0, count, icons, selected, label, actions, className, children, onDoubleClick }: GroupBoxViewProps) {
+export function GroupBoxView({ name, color = 0, count, status, icons, selected, label, actions, className, children, onDoubleClick }: GroupBoxViewProps) {
   const colors = groupColors(color);
   const shown = icons.slice(0, 5);
+  const tone = status ? TONE[status.tone] : undefined;
   return (
     <div
       onDoubleClick={onDoubleClick}
+      title={status?.title}
       className={cn(
         'pointer-events-auto relative flex size-full flex-col justify-center gap-1.5 rounded-[18px] border-[1.5px] bg-sf px-3.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-shadow duration-150',
         selected && 'shadow-[0_0_0_2px_var(--sf),0_0_0_4px_var(--acbd)]',
+        status?.tone === 'error' && 'animate-shake',
+        status?.tone === 'paused' && 'animate-pulse-soft',
         className,
       )}
-      style={{ borderColor: colors.border, backgroundImage: `linear-gradient(${colors.fill}, ${colors.fill})` }}
+      style={{
+        borderColor: tone?.border ?? colors.border,
+        backgroundImage: `linear-gradient(${colors.fill}, ${colors.fill})`,
+        ...(tone?.ring && !selected && { boxShadow: `0 0 0 4px ${tone.ring}` }),
+      }}
     >
       <div className="flex items-center gap-2">
         <span className="size-2.5 shrink-0 rounded-full" style={{ background: colors.swatch, boxShadow: `0 0 0 1px ${colors.border}` }} />
@@ -108,7 +136,11 @@ export function GroupBoxView({ name, color = 0, count, icons, selected, label, a
           </span>
         ))}
         {icons.length > shown.length && <span className="px-0.5 font-mono text-[10.5px] text-t3">+{icons.length - shown.length}</span>}
-        <span className="ml-auto text-[11.5px] text-t3">{plural(count, 'node')}</span>
+        {status ? (
+          <span className={cn('ml-auto min-w-0 truncate text-[11.5px] font-medium', tone?.text)}>{status.label}</span>
+        ) : (
+          <span className="ml-auto text-[11.5px] text-t3">{plural(count, 'node')}</span>
+        )}
       </div>
       {children}
     </div>

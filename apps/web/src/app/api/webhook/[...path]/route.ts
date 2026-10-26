@@ -45,7 +45,7 @@ async function handle(request: Request, { params }: Ctx) {
   }
 
   const [{ workflow, node }] = matches;
-  const auth = await checkWebhookAuth(request, node);
+  const auth = await checkWebhookAuth(request, workflow.id, node);
   if (!auth.ok) {
     recordWebhookRequest(auth.response.status, workflow.id);
     return auth.response;

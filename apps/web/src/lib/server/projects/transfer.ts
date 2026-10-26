@@ -1,7 +1,7 @@
 /**
  * Ownership transfer: "Move to project" for one workflow or credential (and data tables and agents), deleting a team
- * project, and removing a user, whose personal project's resources go to another user or a project. Every change is
- * one database transaction, so a failure leaves everything where it was.
+ * project, and removing a user, whose personal project's resources go to another user or a project (with its folders,
+ * variables and templates). Every change is one database transaction, so a failure leaves everything where it was.
  *
  * Moving keeps things working where that is safe: a moved credential stays usable by its old project (a `user`
  * share) unless told otherwise, and moving a workflow can share the credentials it uses with the new project.
@@ -9,6 +9,10 @@
 import { personalProjectId, type ResourceKind, type TransferTarget } from '../../shared/projects';
 import { authDb } from '../auth/db';
 import { deleteUser, getUser } from '../auth/users';
+import { folders } from '../folders';
+import { forgetProjectSettings } from '../governance/scopes';
+import { localTemplates } from '../templates/store';
+import { projectVariables } from './variables';
 import {
   addShare,
   defaultProjectId,
@@ -49,19 +53,35 @@ export function moveResource(kind: ResourceKind, id: string, projectId: string, 
   });
 }
 
-/** Move everything `fromProjectId` owns, and the shares made to it, to `toProjectId` (inside the caller's transaction). */
+/**
+ * Move everything `fromProjectId` owns, and the shares made to it, to `toProjectId` (inside the caller's transaction):
+ * its resources, its folders (so its workflows keep them), its variables (keys the target has already stay the
+ * target's) and its templates. Its settings go with it.
+ */
 function moveAll(fromProjectId: string, toProjectId: string, options: { includeUnassigned?: boolean; actorId?: string } = {}): Partial<Record<ResourceKind, number>> {
   const moved: Partial<Record<ResourceKind, number>> = {};
   for (const { kind, id } of resourcesIn(fromProjectId)) {
     setHomeProject(kind, id, toProjectId);
     moved[kind] = (moved[kind] ?? 0) + 1;
   }
+  folders.reassignProject(fromProjectId, toProjectId);
+  projectVariables.moveAll(fromProjectId, toProjectId);
+  localTemplates.moveProject(fromProjectId, toProjectId);
+  forgetProjectSettings(fromProjectId);
   for (const share of sharesTo(fromProjectId)) {
     // A share to the new owner is pointless (it owns or already has it), so it goes with the old project.
     if (homeProjectId(share.kind, share.resourceId) === toProjectId) continue;
     if (!sharesTo(toProjectId, share.kind).some((s) => s.resourceId === share.resourceId)) addShare(share.kind, share.resourceId, toProjectId, share.role, options.actorId ?? share.createdBy);
   }
   return moved;
+}
+
+/** A project goes without a transfer (it owned no resources): its folders, variables, templates and settings go too. */
+function dropProjectData(projectId: string) {
+  folders.removeProject(projectId);
+  projectVariables.removeProject(projectId);
+  localTemplates.moveProject(projectId);
+  forgetProjectSettings(projectId);
 }
 
 /** The project a transfer target names (a user's personal project, made if needed). */
@@ -106,6 +126,8 @@ export function deleteUserWithTransfer(userId: string, target?: TransferTarget, 
       moved = moveAll(personal, to.id, { actorId });
     } else if (owned.length) {
       throw new ProjectError(`${user.name} owns ${owned.length} item${owned.length === 1 ? '' : 's'}: choose a user or project to transfer them to`, 409);
+    } else {
+      dropProjectData(personal);
     }
     db.delete('project_members', { user_id: userId });
     db.delete('scim_group_members', { user_id: userId });
@@ -130,6 +152,8 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
       moved = moveAll(projectId, transferTo, { actorId });
     } else if (owned.length) {
       throw new ProjectError(`“${project.name}” owns ${owned.length} item${owned.length === 1 ? '' : 's'}: choose a project to transfer them to`, 409);
+    } else {
+      dropProjectData(projectId);
     }
     removeProjectRows(projectId);
     return { moved };
