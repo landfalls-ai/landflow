@@ -1,7 +1,7 @@
 # Plan: one plugin, every transport, and MCP
 
-Status: **planned** (2026-10-26, revised the same day). Nothing here is built yet. Decisions that need a yes are in the
-last section.
+Status: **planned** (2026-10-26, revised the same day: generic brokers, then the bundled MCP gateway). Nothing here is
+built yet. Decisions that need a yes are in the last section.
 
 ## Goal
 
@@ -12,9 +12,10 @@ The goal is to make the way a plugin is reached generic, on both sides:
   any common message broker: Kafka, RabbitMQ, NATS, Valkey/Redis Streams, MQTT, Amazon SQS, Google Pub/Sub, Azure Service
   Bus, AMQP 1.0 brokers and Pulsar. Brokers plug in through one small driver contract, so adding another is a driver,
   not a redesign.
-- **Every plugin is also an MCP server.** The SDK exposes the plugin's actions as MCP tools automatically, and the host's
-  MCP gateway lists every plugin's tools (core nodes included) for agents, with Landflow's credentials, permissions and
-  audit. Nothing to write per plugin.
+- **Every plugin is also an MCP server.** The SDK exposes the plugin's actions as MCP tools automatically. Landflow ships
+  an open-source MCP gateway ([agentgateway](https://github.com/agentgateway/agentgateway)), and every installed plugin
+  registers into it on its own, so agents find every plugin's tools (core nodes included) at one URL, with Landflow's
+  credentials, permissions and audit. Nothing to write or configure per plugin.
 - **The host chooses.** It knows which transports are installed, which of them each plugin is reachable through, and
   routes each call over the one that is currently the most efficient, from live traffic. An admin can pin a transport or
   limit the choice per plugin.
@@ -43,7 +44,8 @@ with broker drivers, an MCP face, and a policy that chooses per call from measur
    selector ─┬─ direct ───── HTTP ──────────────┐                      │                    │
              ├─ direct ───── gRPC ──────────────┤                      │ MCP                │ MCP
              └─ messaging ── broker driver ─▶ [ any broker ] ─┐        ▼                    ▼
-                                                │             │   host MCP gateway ───────▶ (through the selector)
+                                                │             │   MCP gateway (agentgateway) ─▶ host MCP endpoints
+                                                │             │                                  (through the selector)
                                                 ▼             ▼
                        ┌──────────────── plugin built with the SDK ────────────────┐
                        │  HTTP binding · gRPC binding · messaging binding · MCP     │
@@ -55,7 +57,8 @@ with broker drivers, an MCP face, and a policy that chooses per call from measur
 - **Dispatcher**: today's `handlers.ts` (spans, metrics, redaction, credentials), with an `AbortSignal` and a deadline per
   call. Every face calls it; none has its own node logic.
 - **Bindings** ("faces"): HTTP and gRPC (as today), **messaging** (one generic core plus a driver per broker) and **MCP**.
-- **Host providers** mirror the bindings: direct clients, the same messaging core and drivers, and the MCP gateway.
+- **Host providers** mirror the bindings: direct clients, the same messaging core and drivers, and one MCP endpoint per
+  plugin, which the bundled gateway joins into one.
 
 ## Concepts
 
@@ -223,10 +226,13 @@ for authorization.
 
 ### Two ways in
 
-1. **The host's MCP gateway** (the main path): `/api/mcp/plugins` lists the tools of every plugin the caller may use, and
-   `/api/mcp/plugins/<pluginId>` one plugin's. It follows the registry live (`notifications/tools/list_changed`, on the
-   `subscriptions/listen` stream of clients that ask for it, when a plugin comes, goes or changes), includes the in-process core nodes (HTTP Request, Data Table, Code…), and sends each
-   call through the normal selector, so agents get the same transports as workflows.
+1. **The bundled MCP gateway** (the main path, [below](#the-bundled-mcp-gateway)): one URL, `/mcp` on the gateway,
+   lists the tools of every plugin the caller may use, and `/mcp/plugins/<pluginId>` one plugin's. Behind it, the host
+   serves one MCP endpoint per plugin, `/api/mcp/plugins/<pluginId>`, which binds credentials, applies grants, records
+   the call as an execution and sends it through the normal selector, so agents get the same transports as workflows.
+   The in-process core nodes (HTTP Request, Data Table, Code…) are one more endpoint, `core`. Plugins register into the
+   gateway on their own as they come and go; a new plugin version changes the tools behind the same endpoint
+   (`notifications/tools/list_changed` on the `subscriptions/listen` stream of clients that ask for it).
 2. **The plugin's own MCP endpoint**, added by the SDK with no code: Streamable HTTP at `/mcp` on the plugin's HTTP port,
    and stdio with `--mcp-stdio` (so a desktop agent can start a plugin directly). It's for running a plugin without
    Landflow, or next to an agent on a laptop.
@@ -235,10 +241,10 @@ for authorization.
 
 | Landflow | MCP |
 |---|---|
-| An action node's operation (resource × operation) | One tool, `<plugin>__<resource>_<operation>` (e.g. `twilio__message_send`) |
+| An action node's operation (resource × operation) | One tool, `<resource>_<operation>` on the plugin's endpoint; through the gateway `<plugin>_<resource>_<operation>` (e.g. `twilio_message_send`), since the gateway prefixes each tool with its plugin |
 | The parameters shown for that operation (`displayOptions`) | `inputSchema` (JSON Schema): types, `required`, defaults, descriptions, collections as objects |
 | Static options | `enum` with titles |
-| Dynamic options (`loadOptions`) | `enum` when the bound credential lets the gateway resolve them (cached); otherwise a string, plus a read-only `<plugin>__list_options` tool |
+| Dynamic options (`loadOptions`) | `enum` when the bound credential lets the gateway resolve them (cached); otherwise a string, plus a read-only `list_options` tool |
 | Credentials | Never arguments: bound by the gateway, or by the plugin's local config |
 | `idempotent`; get, list, search; delete | `idempotentHint`; `readOnlyHint`; `destructiveHint`; always `openWorldHint` |
 | Output items | `structuredContent` (`{ items }`, with `outputSchema` when the node declares one) and a short text |
@@ -252,9 +258,10 @@ node or operation opts out of with `mcp: false`.
 
 ### Credentials, permissions and audit
 
-- **Gateway**: callers authenticate with a Landflow API key that has the new `mcp:tools` scope (OAuth for MCP clients,
-  per the MCP authorization spec with Client ID Metadata Documents, comes later). A **tool grant** per key or project says which tools it may call and which
-  credential each one uses, chosen from the project's credentials, so the agent never sees a token. Governance allow-lists
+- **Gateway**: agents sign in at the gateway with OAuth, per the MCP authorization spec, and the host learns who calls
+  without ever receiving their token ([sign-in and identity](#sign-in-and-identity)). A **tool grant** per user, group or
+  project says which tools the caller may call and which credential each one uses, chosen from the project's
+  credentials, so the agent never sees a token. Governance allow-lists
   (instance, project, workflow) apply; destructive tools can require an approval (Landflow's approvals, or MCP elicitation's
   `input_required` round trip where the client supports it; the gateway keeps the pending call until the client retries). Each call is audited (`mcp.tool.call`: tool, outcome, ids, no arguments) and appears as an
   execution with mode `mcp`, so costs, traces and failure alerts work as for any run.
@@ -262,6 +269,194 @@ node or operation opts out of with `mcp: false`.
   loopback. Credentials come from a local file or environment variables (`LANDFLOW_MCP_CREDENTIALS`); tools whose
   credential isn't configured answer with what's missing.
 - Landflow's own agents keep calling plugin nodes directly as tools (no MCP hop); the gateway is for agents outside.
+
+## The bundled MCP gateway
+
+Landflow comes with an MCP gateway, and every installed plugin registers into it automatically. Rather than build the
+gateway, Landflow bundles an open-source one and builds only what's specific to Landflow. Research on 2026-10-26 covered
+about 25 projects (the gateways, their docs, releases and licenses, and the MCP registry and discovery standards).
+
+### Why agentgateway
+
+| Candidate | License, backing | Adding servers at runtime | Agent sign-in (MCP OAuth) | Per-tool rules | MCP 2026-07-28 | Verdict |
+|---|---|---|---|---|---|---|
+| **agentgateway** 1.6 | Apache-2.0; Linux Foundation (Agentic AI Foundation), from Solo.io; Rust, one binary | Config API, a hot-reloaded file, or Kubernetes (xDS) | Yes: a resource server with protected resource metadata; any JWKS issuer; presets for Keycloak, Okta, Entra, Auth0, Authentik, Descope | CEL rules, which also hide tools from `tools/list` | Yes, the default; older revisions are negotiated | **Chosen** |
+| IBM ContextForge 1.1 | Apache-2.0; IBM; Python, needs Postgres and Redis | REST (`POST /gateways`), a catalog file | Only per virtual server | Roles, teams and virtual servers; plugins for finer rules | Negotiated since 1.1 | Runner-up: a second control plane with its own users, teams and credentials, which Landflow already has |
+| ToolHive | Apache-2.0; Stacklok | A Kubernetes operator; its aggregator reads the server list at start | Yes | Cedar | Not stated | Kubernetes-first; adding a server needs a restart today |
+| LiteLLM | MIT plus a commercial `enterprise/` folder | REST and UI, in Postgres | JWT/OIDC sign-in is Enterprise | Per key and team | Not stated | Open core where we need it |
+| Obot | MIT, but a license key caps Community at 100 users | UI, Git catalogs | A full OAuth server | Yes | Not stated | License-gated |
+| Microsoft mcp-gateway | MIT | Deploys images on Kubernetes | Entra ID only | App roles | Only that revision | Azure-bound, Kubernetes-only |
+| Docker MCP Gateway | MIT; every release a pre-release | CLI profiles, no API | A shared static token | Allow-lists | Not stated | A workstation tool; rejects private upstream URLs by default |
+
+Also looked at: Kong and Traefik (their MCP features are enterprise-only), Agent Router (formerly Envoy AI Gateway; full
+MCP features only on Kubernetes with Envoy Gateway), Higress, APISIX, Pomerium (sign-in and per-tool rules, but no
+aggregation), MetaMCP and Lasso (no release in 2026), MCPJungle, 1MCP, Unla, Kuadrant and plain MCP proxies.
+
+agentgateway does every job at the edge: one URL, MCP sign-in, joining many servers into one with prefixed tool names,
+version negotiation, per-tool rules, rate limits and OpenTelemetry. It needs no database (SQLite or Postgres are optional),
+and it's a small Rust binary (tens of MB of memory), under a vendor-neutral foundation with releases every few weeks.
+Landflow keeps what it already owns: users, grants, credentials and the plugin registry.
+
+### How a call flows
+
+```
+agent (Claude Code, Cursor…)
+   │  MCP 2026-07-28, OAuth bearer token
+   ▼
+agentgateway   /mcp  (one URL for every plugin)  ·  /mcp/plugins/<id>  (one plugin)
+   │  sign-in (protected resource metadata, JWKS) · CEL rules · rate limits · OpenTelemetry · tool prefixes
+   │  sends the gateway secret and the caller's identity, never the caller's token
+   ▼
+host   /api/mcp/plugins/<id>  (one MCP server per plugin)
+   │  tools from the manifest · grants · bound credential · approvals · audit · an execution with mode mcp
+   ▼
+selector ─▶ HTTP, gRPC or any broker ─▶ the plugin
+```
+
+- The gateway joins the per-plugin endpoints into one: `tools/list` on `/mcp` returns every plugin's tools, each prefixed
+  with its plugin (`prefixMode: always`, so names don't change when a second plugin arrives), and a call goes to that
+  plugin's endpoint. `failureMode: failOpen`, so one failing plugin doesn't hide the others.
+- Each plugin also gets a URL of its own on the gateway, `/mcp/plugins/<id>`, for agents that should see only one.
+- The gateway doesn't cache lists (its rules make them differ per caller); the host's endpoints answer lists with
+  `cacheScope: private`, since grants filter them.
+
+### Automatic registration
+
+The host's `McpGatewaySync` watches the plugin registry and keeps the gateway's targets equal to the plugins that are
+online, exposed to agents and have at least one tool. It reacts to every registry change, and reconciles every 30 s too.
+
+| Event | In the gateway |
+|---|---|
+| A plugin announces itself, is installed from the marketplace, or is discovered in Kubernetes | Its target is added; agents that subscribe get "tool list changed" |
+| A new version with other nodes | The target stays (same URL); the host's endpoint lists the new tools and sends "tool list changed" |
+| Offline for 60 s | The target is removed, and added back when the plugin returns |
+| Uninstalled, removed, or "Expose to agents" turned off | The target is removed |
+| The gateway restarts, or someone edits it | The next reconcile puts Landflow's targets back |
+
+- **How it writes**: through agentgateway's config API, `PUT /api/config/resources/mcp.target` and
+  `DELETE …/mcp.target/{id}` on the admin port. That port has no authentication and listens only on loopback, so the
+  gateway runs next to each main as a sidecar and the main calls it on `127.0.0.1`. Storage is agentgateway's `hybrid`
+  mode with SQLite inside the sidecar; it's rebuilt from the registry when the sidecar restarts.
+- **No leader needed**: each main keeps its own sidecar in step. In queue mode every main already sees every plugin
+  through the shared registry, so all sidecars end up with the same targets.
+- **Only its own targets**: Landflow keeps the ids of the targets it created and changes only those, so servers an admin
+  adds in agentgateway's UI stay.
+- **Fallback**: for a gateway that runs on its own, Landflow writes the targets into a YAML file that agentgateway
+  reloads when it changes (a volume in Compose, a ConfigMap in Kubernetes). Phase 0 tries the config API with a real
+  target, since its docs show only an LLM example.
+
+One target, as the sync writes it:
+
+```json
+{ "resources": [ { "value": {
+  "name": "twilio",
+  "mcp": { "host": "http://127.0.0.1:3000/api/mcp/plugins/twilio" },
+  "policies": {
+    "backendAuth": { "key": "<the gateway secret>", "location": { "header": { "name": "x-landflow-gateway", "prefix": "" } } },
+    "transformations": { "request": { "set": {
+      "x-landflow-caller-iss": "jwt.iss",
+      "x-landflow-caller-sub": "jwt.sub"
+    } } }
+  }
+} } ] }
+```
+
+### Standard descriptions
+
+Every plugin is described once in the MCP ecosystem's own formats. The agentgateway target is generated from that
+description, so another gateway would only need another generator.
+
+- **`server.json`** (the MCP Registry schema, `2025-12-11`) per plugin: `name` `<namespace>/<pluginId>` (namespace
+  `LANDFLOW_MCP_NAMESPACE`, default `local.landflow`), `version` = the plugin's version, `remotes[]` = its gateway URL
+  (Streamable HTTP), and Landflow hints (plugin id, transports, health) under `_meta["dev.landflow/plugin"]`.
+- **A private MCP Registry API**, read-only, at `/api/mcp/registry/v0.1/servers` (also `/{name}/versions` and
+  `/{name}/versions/latest`; cursor pagination; status `active`, `deprecated` or `deleted` as plugins come and go). Tools
+  that read registries can then find Landflow's plugins: GitHub Copilot's organisation registry setting, Obot, MLflow and
+  Docker's `catalog import`. Open to signed-in users and Landflow tokens only.
+- **A Server Card** (SEP-2127) per plugin at its gateway URL plus `/server-card`, for clients that look before
+  connecting.
+
+### Sign-in and identity
+
+- **Agents sign in at the gateway with OAuth 2.1**, per the MCP authorization spec: agentgateway's `mcpAuthentication`
+  serves protected resource metadata (`/.well-known/oauth-protected-resource/mcp`), answers 401 with `WWW-Authenticate`,
+  and checks each token's signature (JWKS), issuer and audience (the gateway's URL).
+- **The authorization server is the instance's identity provider**, the one Landflow's SSO sign-in already uses:
+  Keycloak in the dev stack, or Okta, Entra, Auth0 and others through agentgateway's provider presets.
+- **Without an identity provider**, Landflow issues MCP tokens itself: signed JWTs, created in Settings → MCP like API
+  keys (shown once, with an expiry), with keys at `/api/mcp/jwks`. The gateway validates them the same way. Revoking one
+  takes effect on the next call, because the host checks the token id.
+- **To the host**, the gateway never forwards the caller's token (the MCP spec forbids passing tokens through). It sends
+  the gateway secret (`backendAuth`) and the caller's issuer and subject, set from the validated token (a CEL
+  `transformations` rule, which also overwrites any such headers a client sent). The host's MCP endpoints accept a call
+  only with that secret (or from a signed-in session, for the tool browser). They map issuer and subject to a Landflow
+  user through the SSO link; an unknown caller gets no tools.
+
+### Who may call what
+
+- **Landflow decides per tool**: the grants (which tools a user, group or project may call, and which credential each
+  uses), the governance allow-lists, and approvals for destructive tools. The host checks them on every call and filters
+  every list.
+- **The gateway adds instance-wide rules** an admin writes once in CEL, which also hide the tools they deny. For example,
+  agents only for one group, and Twilio only for support:
+
+  ```yaml
+  mcpAuthorization:
+    rules:
+    - '"landflow-agents" in jwt.groups && (mcp.tool.target != "twilio" || "support" in jwt.groups)'
+  ```
+- **Rate limits per caller** (`localRateLimit` keyed by `jwt.sub`), on top of Landflow's node rate limits.
+
+### Deployment
+
+- **Image** `cr.agentgateway.dev/agentgateway:v1.6.0`, pinned by digest. The base config is
+  `deploy/mcp-gateway/config.yaml`: the listener, `mcpAuthentication`, the rules, tracing to the OTLP collector and
+  metrics. The targets come from the host.
+- **Compose** (`deploy/compose.yml`): a `mcp-gateway` service with `network_mode: service:web`, so it shares the web
+  container's loopback. It's published on `127.0.0.1:54000` (`LANDFLOW_MCP_GATEWAY_PORT`). In queue mode there's one
+  sidecar per main, and the load balancer gets a listener for `/mcp`. The protocol is stateless, so any main's gateway
+  can serve any request.
+- **Kubernetes**: a second container in the host Deployment (`deploy/k8s/base/host`), an `mcp` port on the host Service,
+  and the Ingress sends `/mcp` there.
+- **Dev** (`pnpm dev`, host outside Docker): a `mcp-gateway` profile in `deploy/compose.infra.yml`, with the admin port
+  published on `127.0.0.1:55000` only (`LANDFLOW_MCP_GATEWAY_ADMIN_URL`) and targets pointing at
+  `host.docker.internal:3000`.
+- **Settings**: `LANDFLOW_MCP_GATEWAY` (`bundled` by default, `file` for a gateway that runs on its own, or `off`),
+  `LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_MCP_GATEWAY_PUBLIC_URL`.
+- **Telemetry**: the gateway's spans join the host's traces (W3C trace context in headers and `_meta`), its Prometheus
+  metrics (`mcp_requests_total`) sit next to Landflow's, and its access log carries the MCP method, the target and the
+  caller.
+
+### What Landflow builds, and what it reuses
+
+| From agentgateway | Built in Landflow |
+|---|---|
+| One URL for every plugin, prefixed tool names, per-plugin URLs | The per-plugin MCP endpoints: tools from manifests, grants, bound credentials, approvals, audit, executions |
+| MCP OAuth (resource server), JWKS validation, identity provider presets | The identity mapping to Landflow users, and Landflow-issued MCP tokens |
+| Version negotiation (2026-07-28 and older clients) | `server.json`, the registry API and Server Cards |
+| CEL rules, rate limits, OpenTelemetry, access logs | `McpGatewaySync` and its agentgateway adapter (config API, or the file) |
+| Its admin UI with a tool playground (for admins, on the dev port or by port-forward) | Settings → MCP: gateway status (reachable, version, targets in step, last error), the URL and client config, "Expose to agents" per plugin, grants, the tool browser |
+
+Later, the same sync can register Landflow's other MCP servers (the instance server at `/api/mcp`, and published
+workflows that start with an MCP Server Trigger), so every MCP server in Landflow sits behind one URL. External servers
+that an admin adds get routes of their own: in the shared endpoint, agentgateway serves only the protocol versions every
+target supports, so one older server would pull everything down to its revision.
+
+### Swapping the gateway
+
+```ts
+// apps/web/src/lib/server/mcp/gateway-sync.ts
+interface McpGatewayAdapter {
+  readonly kind: string;                              // 'agentgateway' | 'file' | 'contextforge' …
+  list(): Promise<GatewayTarget[]>;                   // the targets Landflow created
+  upsert(target: GatewayTarget): Promise<void>;       // generated from the plugin's server.json
+  remove(name: string): Promise<void>;
+  health(): Promise<{ ok: boolean; version?: string }>;
+}
+```
+
+ContextForge is the documented alternative (`POST`, `PUT` and `DELETE /gateways`) if agentgateway stops fitting.
+Gateways that read registries can use the registry API directly.
 
 ## Host side
 
@@ -275,12 +470,18 @@ New module `apps/web/src/lib/server/transports/`:
 | `connections.ts` | Broker connections in the database (migration in the 1700s), encrypted, with **Test** and health (connected, version, round trip); also from env (`LANDFLOW_TRANSPORT_<KIND>_URL`) |
 | `stats.ts`, `selector.ts` | Measurements and the choice per call (below); the selector replaces `activeEndpoint()` |
 | `policy-store.ts` | The per-plugin policy in the database (today's in-memory `preferredTransport` becomes `{ mode, pinned?, allowed?, objective }`), shared by mains and workers |
-| `../mcp/gateway.ts` | The MCP gateway: tool generation from manifests, grants, calls through the selector |
+| `../mcp/plugin-servers.ts` | The per-plugin MCP endpoints: tool generation from manifests, grants, calls through the selector |
+| `../mcp/gateway-sync.ts` | `McpGatewaySync` and the gateway adapters (agentgateway's config API, the file) |
+| `../mcp/registry.ts` | `server.json` per plugin, the registry API and Server Cards |
+| `../mcp/identity.ts` | The gateway secret, the caller's identity, Landflow-issued MCP tokens and their keys |
 
 Plus `PATCH /api/plugins/:id` with the new policy (the old body still works), `GET /api/transports`,
-`/api/transports/connections` (admin), `/api/mcp/grants`; **Settings → Transports** (installed kinds, connections, which
-plugins are on each); **Settings → MCP** gains the gateway, its grants and a tool browser; the **Plugins page** shows each
-plugin's transports with live numbers, the current choice and why, the policy picker, and its MCP tools. Workers in queue
+`/api/transports/connections` (admin), `/api/mcp/plugins/:id` (MCP), `/api/mcp/grants`, `/api/mcp/gateway` (status, admin),
+`/api/mcp/tokens`, `/api/mcp/jwks` and `/api/mcp/registry/v0.1/*`; **Settings → Transports** (installed kinds,
+connections, which plugins are on each); **Settings → MCP** gains the gateway's status, URL and client config, grants,
+tokens and a tool browser; the **Plugins page** shows each
+plugin's transports with live numbers, the current choice and why, the policy picker, its MCP tools and "Expose to
+agents". Workers in queue
 mode open the broker connections too and choose for themselves. In Kubernetes, a brokered plugin needs no Service; the
 docs add broker manifests and a KEDA recipe that scales replicas on queue depth or consumer lag.
 
@@ -321,7 +522,7 @@ await serve(twilio, {
 3. Node descriptor: `idempotent?: boolean`, `mcp?: false` (per node or operation), `outputSchema?` (for MCP structured
    output), and optional tool annotations to override the derived ones.
 4. New protocol sections: §14 "Messaging" (envelope, channels, delivery rules, security, one subsection per broker) and
-   §15 "MCP" (tool mapping, gateway, grants).
+   §15 "MCP" (tool mapping, the per-plugin endpoints, gateway registration and identity, grants).
 5. The engine's `Transport` type becomes an open string union, so spans and metrics carry any kind.
 
 ## Choosing a transport per call (Auto)
@@ -358,14 +559,16 @@ broker: depth ÷ consumers × mean service time), plus an error penalty. Lowest 
 1. **A broker is installed**, say Kafka (in dev, `deploy/compose.infra.yml` gets one profile per broker). The admin adds
    it in Settings → Transports, and Test says it's connected.
 2. **The plugin starts** with `LANDFLOW_TRANSPORTS=http,grpc,kafka`. The Plugins page shows Twilio over gRPC, HTTP and
-   Kafka, on Auto, and lists its MCP tools (`twilio__message_send`, `twilio__message_list`…).
+   Kafka, on Auto, and lists its MCP tools (`twilio_message_send`, `twilio_message_list`…). It's in the MCP gateway
+   already: nobody registered it.
 3. **An editor test run** goes over gRPC (`auto.latency`).
 4. **A 5,000-row campaign** fills gRPC to its limit; the rest spills over to Kafka (`auto.spillover`), keyed by execution,
    and the consumer group keeps each replica under Twilio's API limits. "Send SMS" isn't idempotent, so it's at most once.
 5. **gRPC fails**: the breaker opens and everything goes through Kafka (`auto.breaker`), then comes back after recovery.
-6. **An agent sends an SMS**: Claude Code connects to the gateway with an API key whose grant allows `twilio__message_send`
-   with the "Twilio prod" credential. The call shows in Executions with mode `mcp`, traced and audited; the agent never
-   sees the token.
+6. **An agent sends an SMS**: Claude Code connects to the gateway (`http://localhost:54000/mcp` in dev), gets a 401 that
+   points at Keycloak, and the user signs in. Their grant allows `twilio_message_send` with the "Twilio prod" credential.
+   The call shows in Executions with mode `mcp`, traced from the gateway down to the plugin and audited; the agent never
+   sees the Twilio token, and the host never sees the agent's.
 7. **Without Landflow**: a developer runs the plugin with `--mcp-stdio` and a local credentials file, and adds it to
    their agent as an MCP server.
 8. **Another network**: a Twilio plugin the host can't reach is pinned to the broker and works anyway.
@@ -380,17 +583,18 @@ Each phase ends with every test suite passing, a clean type check and a check in
 
 | Phase | Work | Done when | Size |
 |---|---|---|---|
-| 0. Spec | §14 Messaging and §15 MCP written; decisions settled; tier 1 brokers in `compose.infra.yml` (one profile each, 5xxxx ports) | Spec reviewed; every tier 1 broker starts locally | S |
+| 0. Spec | §14 Messaging and §15 MCP written; decisions settled; tier 1 brokers and agentgateway in `compose.infra.yml` (one profile each, 5xxxx ports); a spike that registers a target over agentgateway's config API and checks "tool list changed" and the identity headers | Spec reviewed; every tier 1 broker and the gateway start locally; the spike passes, or the file fallback is chosen | S |
 | 1. Abstraction | SDK `TransportBinding` (TS, Go, Python) with HTTP and gRPC behind it; host providers; the open `Transport` type; the per-plugin policy in the database with its picker; the conformance kit | Every existing test passes, behaviour unchanged; the policy survives restarts and is the same on every process | M |
 | 2. Messaging in TypeScript | `@landflow/transports`: the core and tier 1 drivers (Kafka, RabbitMQ, NATS, Valkey Streams); host connections, discovery, Settings → Transports; the TS SDK binding; encryption and signing | A workflow runs through Text Toolkit over each tier 1 broker with one joined trace; a plugin with no open port works; broker restarts and a plugin killed mid-call behave as specified | L |
-| 3. MCP | The SDK MCP face (TS, Go, Python); the host gateway with grants, audit, `mcp` executions and the tool browser | An outside agent lists and calls every plugin's tools through the gateway with a bound credential; a plugin runs standalone over stdio | L |
+| 3. MCP endpoints | The SDK MCP face (TS, Go, Python); the host's per-plugin MCP endpoints with grants, audit, `mcp` executions and the tool browser | A client lists and calls a plugin's tools on its host endpoint with a bound credential; a plugin runs standalone over stdio | L |
+| 3b. Bundled MCP gateway | agentgateway in Compose, queue mode and Kubernetes; `McpGatewaySync` and its adapters; `server.json`, the registry API and Server Cards; sign-in through the identity provider, Landflow-issued tokens, the identity mapping; Settings → MCP gateway status | An outside agent signs in through Keycloak and calls every plugin's tools at one URL; a plugin installed while it's connected shows up without a restart and disappears when removed; a forged identity header is refused | M |
 | 4. Go and the bridge | `sdks/go/transport` (core and tier 1 drivers) and `landflow-bridge` | Conformance passes for TS and Go natively and for Python through the bridge, on every tier 1 broker | L |
 | 5. Auto | Stats, scoring, spill-over, hysteresis, breaker, probes; the Plugins page numbers, reasons and feed events | Simulations with fake clients and a fake clock: low traffic stays direct, bursts spill over, oversized calls skip small-message brokers, failover and recovery, no flapping | L |
 | 6. Tier 2 brokers | MQTT 5, SQS, Pub/Sub, Azure Service Bus, AMQP 1.0, Pulsar: a TS driver (host) and a Go driver (Go SDK and bridge) each, tested against local containers and emulators (Mosquitto, LocalStack, the Pub/Sub emulator, the Service Bus emulator with its SQL Server container, `apache/artemis`, Pulsar standalone) | Conformance passes for each; tests set limits explicitly, since emulators differ from the services (the Pub/Sub emulator never expires messages) | M each |
 | 7. Twilio pilot, queue mode, Kubernetes | The Twilio node and fake; workers with broker connections; broker manifests and KEDA docs; `deploy/scripts/transport-bench.py` comparing every installed transport | The walk-through works end to end on the local stack and on OrbStack's cluster | M |
 | 8. Python native drivers | Tier 1 drivers in the Python SDK | Conformance passes without the bridge | M |
 
-After phase 1, phases 2 and 3 can run in parallel; 4 and 5 follow 2.
+After phase 1, phases 2 and 3 can run in parallel; 3b follows 3; 4 and 5 follow 2.
 
 ## Risks
 
@@ -400,11 +604,16 @@ After phase 1, phases 2 and 3 can run in parallel; 4 and 5 follow 2.
 | Secrets in brokers that keep messages on disk | End-to-end encryption and signing are required; TLS; one broker user per plugin |
 | Too many drivers × languages to maintain | One core per language, small drivers, capabilities instead of special cases, the bridge for the gaps, one conformance kit |
 | Brokers differ in subtle ways | Capabilities say what each can do; the conformance kit tests each driver against a real local broker |
-| Agents calling destructive tools | Tool annotations, grants per key, governance allow-lists, approvals for destructive tools, audit |
+| Agents calling destructive tools | Tool annotations, grants per user, group or project, gateway rules, governance allow-lists, approvals for destructive tools, audit |
 | Tool schemas that don't fit a node's parameters | One tool per operation with only its parameters; generated schemas are tested on every bundled plugin |
 | Auto is hard to trust | A reason on every call; pinning is always possible; simulation tests |
 | Version skew during rolling deploys | The manifest-hash attribute, `manifest_mismatch` with requeue, then a fresh manifest pull |
 | A broker goes down | The breaker sends calls back to direct transports or another broker |
+| agentgateway's admin API has no authentication | It only listens on loopback, inside the sidecar; nothing else can reach it |
+| The config API for MCP targets is barely documented | A phase 0 spike; the hot-reloaded file is the fallback, and it is documented |
+| Forged caller identity | The host trusts the identity headers only with the gateway secret; the gateway overwrites them on every call |
+| The gateway project changes direction | Apache-2.0 under a foundation; the adapter interface and `server.json` keep a swap (ContextForge) small |
+| An older MCP server lowers the shared endpoint's version | Landflow's endpoints all speak 2026-07-28; external servers get routes of their own |
 
 ## Decisions to make
 
@@ -416,10 +625,16 @@ After phase 1, phases 2 and 3 can run in parallel; 4 and 5 follow 2.
 4. **Message body.** Recommended: the HTTP binding's JSON; protobuf only if the phase 7 benchmark shows it's worth it.
 5. **Delivery for `Execute`.** Recommended: at most once by default; at least once per node (`idempotent`).
 6. **Secrets over brokers.** Recommended: end-to-end encryption and signing, required.
-7. **MCP exposure.** Recommended: the gateway lists every plugin automatically, and each plugin also serves its own MCP
-   endpoint by default (token required unless it only listens on loopback).
+7. **MCP exposure.** Recommended: every plugin is in the gateway automatically ("Expose to agents" on by default), and
+   each plugin also serves its own MCP endpoint by default (token required unless it only listens on loopback).
 8. **Tool shape.** Recommended: one tool per operation; the alternative is one tool per node with resource and operation
    arguments, which agents use less reliably.
 9. **Where the choice is set, and Auto's default.** Recommended: per plugin (Auto, pinned or an allow-list), `balanced` with
    spill-over; per-workflow overrides later.
 10. **The pilot.** Recommended: a Twilio node in the messaging plugin, against a fake Twilio server.
+11. **The MCP gateway.** Recommended: agentgateway, as a sidecar of each main, kept in step through its config API. The
+    alternative is IBM ContextForge, which brings a richer registry and admin UI but also its own users, teams,
+    credentials, Postgres and Redis.
+12. **Who signs agents in.** Recommended: the instance's identity provider through the gateway (Keycloak in dev), plus
+    Landflow-issued MCP tokens when there's no identity provider. The alternative is Landflow as a full OAuth
+    authorization server, which is much more to build.

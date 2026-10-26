@@ -380,7 +380,8 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
 - One plugin, every transport, and MCP: plugins reachable over HTTP, gRPC and any common message
   broker (Kafka, RabbitMQ, NATS, Valkey Streams, MQTT, SQS, Pub/Sub, Service Bus, AMQP 1.0, Pulsar)
   through one messaging core and small drivers, chosen per call from live traffic, and every plugin
-  also an MCP server (its own endpoint and the host's gateway): see [transports.md](transports.md).
+  also an MCP server: its own endpoint, and a bundled open-source MCP gateway (agentgateway) that
+  every installed plugin registers into automatically. See [transports.md](transports.md).
 
 ## Not planned
 
