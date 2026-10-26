@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# agentgateway as Landflow's bundled MCP gateway, development profile (deploy/compose.infra.yml, profile mcp-gateway).
+# The base config only: the listener, an empty MCP server set with Landflow's multiplexing settings, telemetry.
+# The targets (one per plugin) are written by the host through the config API on the admin port:
+#   PUT    http://127.0.0.1:55000/api/config/resources/mcp.target        {"resources":[{"value":{...}}]}
+#   DELETE http://127.0.0.1:55000/api/config/resources/mcp.target/<id>
+# and kept in SQLite under /data (storage mode hybrid: this file is the read-only baseline, the database the overlay).
+# See docs/mcp-gateway.md for the verified payloads; mcp-gateway.auth.yaml adds sign-in through Keycloak.
+config:
+  # The admin API and UI. Inside the container it must listen on all interfaces so Docker can publish it; the compose
+  # file publishes it on 127.0.0.1:55000 only. It has no authentication of its own.
+  adminAddr: "0.0.0.0:15000"
+  storage:
+    mode: hybrid
+  database:
+    url: sqlite:///data/agentgateway.db
+  logging:
+    level: info
+frontendPolicies:
+  tracing:
+    # Jaeger in landflow-infra (profile observability); OTLP over HTTP. With Jaeger down the exporter only logs.
+    host: jaeger:4318
+    protocol: http
+    randomSampling: true
+    resources:
+      service.name: '"landflow-mcp-gateway"'
+gateways:
+  default:
+    port: 4000
+mcp:
+  gateways: default
+  # Landflow's settings: every tool is prefixed with its target (plugin) name so names never change when a second
+  # plugin arrives, one failing plugin doesn't hide the others, and the protocol is stateless (no session ids).
+  prefixMode: always
+  failureMode: failOpen
+  statefulMode: stateless
+  server:
+    name: landflow-mcp-gateway
+    version: dev
+    title: Landflow
+    instructions: Every installed Landflow plugin as MCP tools. Tool names are <plugin>_<resource>_<operation>.
+  targets: []

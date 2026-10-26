@@ -1,0 +1,108 @@
+{
+  "protocol": "landflow.plugin/v1",
+  "plugin": { "id": "twilio", "name": "Twilio", "version": "0.1.0", "language": "typescript", "color": "#f22f46" },
+  "transports": ["http", "grpc", "kafka", "mcp"],
+  "maxConcurrency": 16,
+  "credentialTypes": [
+    {
+      "name": "twilioApi",
+      "displayName": "Twilio API",
+      "testable": true,
+      "properties": [
+        { "name": "accountSid", "displayName": "Account SID", "type": "string", "required": true },
+        { "name": "authToken", "displayName": "Auth Token", "type": "string", "required": true, "typeOptions": { "password": true } }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "twilio",
+      "displayName": "Twilio",
+      "description": "Send SMS, MMS and WhatsApp messages, place calls, list and get messages.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [{ "type": "main" }],
+      "outputs": [{ "type": "main" }],
+      "credentials": [{ "name": "twilioApi", "required": true }],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "default": "message",
+          "options": [
+            { "name": "Message", "value": "message" },
+            { "name": "Call", "value": "call" }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "send",
+          "displayOptions": { "show": { "resource": ["message"] } },
+          "options": [
+            { "name": "Send", "value": "send", "action": "Send an SMS, MMS or WhatsApp message" },
+            { "name": "Get", "value": "get", "action": "Get a message by SID", "outputSchema": { "type": "object", "properties": { "sid": { "type": "string" }, "status": { "type": "string" } } } },
+            { "name": "List", "value": "list", "action": "List messages" },
+            { "name": "Delete", "value": "delete", "action": "Delete a message", "toolAnnotations": { "idempotentHint": true } }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "make",
+          "displayOptions": { "show": { "resource": ["call"] } },
+          "options": [
+            { "name": "Make", "value": "make", "action": "Place a call" },
+            { "name": "Hang up (internal)", "value": "hangup", "mcp": false }
+          ]
+        },
+        { "name": "from", "displayName": "From", "type": "string", "default": "", "required": true, "description": "The Twilio number or sender id.", "displayOptions": { "show": { "operation": ["send", "make"] } } },
+        { "name": "to", "displayName": "To", "type": "string", "default": "", "required": true, "displayOptions": { "show": { "operation": ["send", "make"] } } },
+        {
+          "name": "channel",
+          "displayName": "Channel",
+          "type": "options",
+          "default": "sms",
+          "options": [
+            { "name": "SMS", "value": "sms" },
+            { "name": "WhatsApp", "value": "whatsapp", "description": "Numbers are prefixed with whatsapp: automatically" }
+          ],
+          "displayOptions": { "show": { "resource": ["message"], "operation": ["send"] } }
+        },
+        { "name": "body", "displayName": "Message", "type": "string", "default": "", "required": true, "typeOptions": { "rows": 3 }, "displayOptions": { "show": { "resource": ["message"], "operation": ["send"] } } },
+        { "name": "mediaUrl", "displayName": "Media URL", "type": "string", "default": "", "displayOptions": { "show": { "resource": ["message"], "operation": ["send"], "channel": ["sms"] } } },
+        { "name": "sid", "displayName": "Message SID", "type": "string", "default": "", "required": true, "displayOptions": { "show": { "resource": ["message"], "operation": ["get", "delete"] } } },
+        { "name": "limit", "displayName": "Limit", "type": "number", "default": 50, "typeOptions": { "minValue": 1, "maxValue": 1000, "numberPrecision": 0 }, "displayOptions": { "show": { "resource": ["message"], "operation": ["list"] } } },
+        {
+          "name": "filters",
+          "displayName": "Filters",
+          "type": "collection",
+          "default": {},
+          "displayOptions": { "show": { "resource": ["message"], "operation": ["list"] } },
+          "values": [
+            { "name": "dateSentAfter", "displayName": "Sent after", "type": "dateTime", "default": "" },
+            { "name": "status", "displayName": "Status", "type": "multiOptions", "default": [], "options": [{ "name": "Delivered", "value": "delivered" }, { "name": "Failed", "value": "failed" }] }
+          ]
+        },
+        { "name": "url", "displayName": "TwiML URL", "type": "string", "default": "", "required": true, "displayOptions": { "show": { "resource": ["call"], "operation": ["make"] } } },
+        { "name": "secret", "displayName": "Internal", "type": "hidden", "default": "x" },
+        { "name": "notice", "displayName": "Messages are billed per segment", "type": "notice", "default": "" }
+      ]
+    },
+    {
+      "name": "twilioTrigger",
+      "displayName": "Twilio Trigger",
+      "description": "Incoming messages.",
+      "version": 1,
+      "kind": "trigger",
+      "triggerSource": "appWebhook",
+      "inputs": [],
+      "outputs": [{ "type": "main" }],
+      "properties": []
+    }
+  ]
+}

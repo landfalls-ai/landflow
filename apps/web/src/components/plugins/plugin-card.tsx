@@ -4,14 +4,157 @@ import { RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { timeAgo, TRANSPORT_META } from '@/lib/client/format';
+import { timeAgo, transportLabel } from '@/lib/client/format';
 import type { PluginSummary } from '@/lib/shared/types';
+import type { TransportObjective, TransportPolicy, TransportReason } from '@/lib/shared/transports';
 import { Badge, LanguageBadge, StatusDot, TransportBadge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { AppIcon, NodeIcon } from '../ui/icon';
+import { Select } from '../ui/inputs';
 import { descriptorColor } from '@/lib/client/node-style';
 
 const LEASE_MS = 30_000;
+
+/** `landflow.transport.reason` for people (docs/transports.md, "Explainability"). */
+export const REASON_LABELS: Record<TransportReason, { label: string; title: string }> = {
+  pinned: { label: 'pinned', title: 'The policy pins this transport' },
+  only: { label: 'only one', title: 'The only transport both sides have right now' },
+  'auto.latency': { label: 'auto · latency', title: 'Auto: the fastest transport for this call' },
+  'auto.spillover': { label: 'auto · spill-over', title: 'Auto: the direct transport is near its limit; this one holds the rest' },
+  'auto.failover': { label: 'auto · failover', title: 'Auto: the call provably was not delivered elsewhere' },
+  'auto.breaker': { label: 'auto · breaker', title: 'Auto: another transport’s circuit breaker is open' },
+  'auto.size': { label: 'auto · size', title: 'Auto: the call is too large for the other transports' },
+};
+
+const OBJECTIVES: Array<{ value: TransportObjective; label: string }> = [
+  { value: 'balanced', label: 'Balanced' },
+  { value: 'latency', label: 'Latency' },
+  { value: 'throughput', label: 'Throughput' },
+];
+
+type PickerMode = 'auto' | 'pinned' | 'allowed';
+const modeOf = (policy: TransportPolicy): PickerMode => (policy.mode === 'pinned' ? 'pinned' : policy.allowed?.length ? 'allowed' : 'auto');
+
+/**
+ * The plugin's transports (live state per kind), the policy picker (Auto, pinned to one, or an allow-list; the
+ * objective) and what the next call takes with the reason.
+ */
+function TransportPolicyPicker({ plugin, onChange }: { plugin: PluginSummary; onChange: (plugins: PluginSummary[]) => void }) {
+  const policy: TransportPolicy = plugin.policy ?? { mode: 'auto', objective: 'balanced' };
+  const kinds = (plugin.transports ?? []).map((t) => t.kind);
+  const [busy, setBusy] = useState(false);
+  const mode = modeOf(policy);
+
+  const save = async (next: TransportPolicy) => {
+    setBusy(true);
+    try {
+      const r = await api<{ plugins: PluginSummary[] }>(`/api/plugins/${plugin.id}`, { method: 'PATCH', json: { policy: next } });
+      onChange(r.plugins);
+      const how = next.mode === 'pinned' ? `pinned to ${transportLabel(next.pinned ?? '')}` : next.allowed?.length ? `Auto over ${next.allowed.map(transportLabel).join(', ')}` : 'Auto';
+      toast(`${plugin.info.name}: ${how}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const setMode = (next: PickerMode) => {
+    if (next === mode) return;
+    if (next === 'auto') return void save({ mode: 'auto', objective: policy.objective });
+    if (next === 'pinned') return void save({ mode: 'pinned', pinned: plugin.choice?.kind ?? kinds[0], objective: policy.objective });
+    void save({ mode: 'auto', allowed: kinds, objective: policy.objective });
+  };
+  const toggleAllowed = (kind: string) => {
+    const allowed = policy.allowed ?? kinds;
+    const next = allowed.includes(kind) ? allowed.filter((k) => k !== kind) : [...allowed, kind];
+    if (!next.length) return toast.error('Allow at least one transport');
+    void save({ mode: 'auto', allowed: next, objective: policy.objective });
+  };
+
+  return (
+    <div className="space-y-2 border-t border-hair px-4 py-2.5 text-[12px] text-t3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-0.5">Transports</span>
+        {(plugin.transports ?? []).map((t) => (
+          <span key={t.kind} className={cn('inline-flex items-center gap-1 rounded-md border border-hair bg-wl px-1.5 py-px', t.excluded && 'opacity-50')} title={`${t.endpoints.join(', ')}${t.excluded ? ' · kept out by the policy' : ''}`}>
+            <StatusDot status={t.online ? 'online' : 'offline'} />
+            <span className="font-mono text-[11px] text-t2">{transportLabel(t.kind)}</span>
+          </span>
+        ))}
+        <span className="ml-auto flex items-center gap-1.5">
+          {plugin.choice ? (
+            <>
+              <span>next call via</span>
+              <TransportBadge transport={plugin.choice.kind} />
+              <Badge tone="accent" title={REASON_LABELS[plugin.choice.reason]?.title}>
+                {REASON_LABELS[plugin.choice.reason]?.label ?? plugin.choice.reason}
+              </Badge>
+            </>
+          ) : (
+            plugin.choiceError && (
+              <span className="text-rd" title={plugin.choiceError}>
+                no transport: {plugin.choiceError.replace(/^Plugin "[^"]*"(:| is)?\s*/, '')}
+              </span>
+            )
+          )}
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span>Policy</span>
+        <div className="flex rounded-lg border border-hair bg-wl p-0.5" role="radiogroup" aria-label="Transport policy">
+          {(['auto', 'pinned', 'allowed'] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              disabled={busy}
+              role="radio"
+              aria-checked={mode === m}
+              className={cn('rounded-md border px-2.5 py-px text-[12px] transition-colors duration-[120ms]', mode === m ? 'border-bd bg-sf font-semibold text-t1' : 'border-transparent text-t3 hover:text-t1')}
+            >
+              {m === 'auto' ? 'Auto' : m === 'pinned' ? 'Pinned' : 'Allowed'}
+            </button>
+          ))}
+        </div>
+        {mode === 'pinned' && (
+          <Select value={policy.pinned ?? kinds[0] ?? ''} disabled={busy} onChange={(e) => void save({ mode: 'pinned', pinned: e.target.value, objective: policy.objective })} aria-label="Pinned transport" className="h-7 w-auto py-0 text-[12px]">
+            {[...new Set([...kinds, ...(policy.pinned ? [policy.pinned] : [])])].map((kind) => (
+              <option key={kind} value={kind}>
+                {transportLabel(kind)}
+              </option>
+            ))}
+          </Select>
+        )}
+        {mode === 'allowed' &&
+          [...new Set([...kinds, ...(policy.allowed ?? [])])].map((kind) => {
+            const on = (policy.allowed ?? kinds).includes(kind);
+            return (
+              <button
+                key={kind}
+                onClick={() => toggleAllowed(kind)}
+                disabled={busy}
+                aria-pressed={on}
+                className={cn('rounded-md border px-2 py-px font-mono text-[11px] transition-colors duration-[120ms]', on ? 'border-acbd bg-acdim text-ac' : 'border-hair text-t3 line-through hover:text-t1')}
+              >
+                {transportLabel(kind)}
+              </button>
+            );
+          })}
+        {mode !== 'pinned' && (
+          <span className="ml-auto flex items-center gap-1.5">
+            <span>objective</span>
+            <Select value={policy.objective} disabled={busy} onChange={(e) => void save({ ...policy, objective: e.target.value as TransportObjective })} aria-label="Auto objective" className="h-7 w-auto py-0 text-[12px]">
+              {OBJECTIVES.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function LeaseBar({ expiresAt }: { expiresAt?: string }) {
   const [now, setNow] = useState(() => Date.now());
@@ -35,16 +178,10 @@ function LeaseBar({ expiresAt }: { expiresAt?: string }) {
 export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChange: (plugins: PluginSummary[]) => void }) {
   const builtin = plugin.source === 'builtin';
   const [busy, setBusy] = useState(false);
-  const transports = [...new Set(plugin.endpoints.map((e) => e.transport))];
   // Discovery sources besides the first one (a plugin can be announced and discovered), and Kubernetes namespaces.
   const otherSources = [...new Set(plugin.endpoints.map((e) => e.source))].filter((source) => source !== plugin.source);
   const namespaces = [...new Set(plugin.endpoints.flatMap((e) => (e.origin ? [e.origin.namespace] : [])))];
 
-  const setPreferred = async (transport: 'http' | 'grpc' | null) => {
-    const r = await api<{ plugins: PluginSummary[] }>(`/api/plugins/${plugin.id}`, { method: 'PATCH', json: { preferredTransport: transport } });
-    onChange(r.plugins);
-    toast(`${plugin.info.name} → ${transport ? TRANSPORT_META[transport].label : 'auto'} transport`);
-  };
   const refresh = async () => {
     setBusy(true);
     try {
@@ -134,26 +271,7 @@ export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChan
         )}
       </div>
 
-      {transports.length > 1 && (
-        <div className="flex items-center gap-2 border-t border-hair px-4 py-2 text-[12px] text-t3">
-          Execute via
-          <div className="flex rounded-lg border border-hair bg-wl p-0.5">
-            {([null, 'grpc', 'http'] as const).map((t) => {
-              const active = (plugin.preferredTransport ?? null) === t;
-              return (
-                <button
-                  key={t ?? 'auto'}
-                  onClick={() => void setPreferred(t)}
-                  aria-pressed={active}
-                  className={cn('rounded-md border px-2.5 py-px text-[12px] transition-colors duration-[120ms]', active ? 'border-bd bg-sf font-semibold text-t1' : 'border-transparent text-t3 hover:text-t1')}
-                >
-                  {t ? TRANSPORT_META[t].label : 'Auto'}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {!builtin && plugin.transports && plugin.transports.length > 0 && <TransportPolicyPicker plugin={plugin} onChange={onChange} />}
 
       {/* nodes */}
       {plugin.nodes.length > 0 && (

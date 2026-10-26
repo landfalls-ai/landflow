@@ -710,6 +710,42 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS promotion_requests_status ON promotion_requests (status, requested_at)`,
     ],
   },
+  // 1700–1709: transports (docs/transports.md; lib/server/transports): the per-plugin transport policy and broker connections.
+  {
+    version: 1700,
+    name: 'plugin_transport_policies',
+    statements: [
+      // One row per plugin with a non-default policy: `policy` is the JSON { mode, pinned?, allowed?, objective } (lib/shared/transports.ts).
+      // Shared by mains and workers in queue mode; it replaces the registry's in-memory preferredTransport.
+      `CREATE TABLE IF NOT EXISTS plugin_transport_policies (
+        plugin_id TEXT PRIMARY KEY,
+        policy TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        updated_by TEXT
+      )`,
+    ],
+  },
+  {
+    version: 1701,
+    name: 'transport_connections',
+    statements: [
+      // Broker connections (Settings → Transports): `config` the non-secret fields as JSON, `secrets` the secret fields sealed with
+      // the credential vault's key (`v1.<iv>.<tag>.<ciphertext>`, like alert channel secrets), `last_check` the last Test's result.
+      `CREATE TABLE IF NOT EXISTS transport_connections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        enabled BIGINT NOT NULL DEFAULT 1,
+        config TEXT NOT NULL,
+        secrets TEXT,
+        last_check TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        created_by TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS transport_connections_kind ON transport_connections (kind)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -771,6 +807,8 @@ export const TABLES = {
   audit_chain: ['id'],
   saml_state: ['kind', 'id'],
   promotion_requests: ['id'],
+  plugin_transport_policies: ['plugin_id'],
+  transport_connections: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

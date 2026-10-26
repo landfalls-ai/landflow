@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { BellRing, BookOpen, Braces, CircleDollarSign, Cpu, GitBranch, KeyRound, Landmark, Layers, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
+import { BellRing, BookOpen, Braces, CircleDollarSign, Cpu, GitBranch, KeyRound, Landmark, Layers, Network, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { can, type Action } from '@/lib/shared/auth';
 import { useViewer } from '@/components/auth/viewer';
@@ -19,6 +19,7 @@ import { SecuritySettings } from '@/components/settings/security-settings';
 import { SourceControlSettings } from '@/components/settings/source-control-settings';
 import { UsersSettings } from '@/components/settings/users-settings';
 import { VariablesSettings } from '@/components/settings/variables-settings';
+import { TransportsSettings } from '@/components/settings/transports-settings';
 import { WorkersSettings } from '@/components/settings/workers-settings';
 
 /** `role`: only shown to roles that `can` do it. */
@@ -38,6 +39,7 @@ const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint:
   { id: 'environments', label: 'Environments', icon: Layers, hint: 'Promote between environments', role: 'settings:manage' },
   { id: 'external-secrets', label: 'External secrets', icon: Vault, hint: 'Vault, 1Password, cloud secret stores', role: 'settings:manage' },
   { id: 'workers', label: 'Workers', icon: Cpu, hint: 'Queue mode, workers and the leader' },
+  { id: 'transports', label: 'Transports', icon: Network, hint: 'HTTP, gRPC and broker connections', role: 'settings:manage' },
 ];
 type Section = string;
 
@@ -57,9 +59,10 @@ const BODIES: Record<string, () => React.ReactNode> = {
   environments: () => <EnvironmentsSettings />,
   'external-secrets': () => <ExternalSecretsSettings />,
   workers: () => <WorkersSettings />,
+  transports: () => <TransportsSettings />,
 };
 
-/** /settings (#general, #variables, #alerts, #ai-prices, #mcp, #users, #api-keys, #api, #security, #audit, #governance, #source-control, #environments, #external-secrets, #workers): instance settings. */
+/** /settings (#general, #variables, #alerts, #ai-prices, #mcp, #users, #api-keys, #api, #security, #audit, #governance, #source-control, #environments, #external-secrets, #workers, #transports): instance settings. */
 export default function SettingsPage() {
   const viewer = useViewer();
   const sections = SECTIONS.filter((s) => !s.role || can(viewer, s.role));

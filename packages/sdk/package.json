@@ -3,9 +3,11 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Landflow TypeScript SDK: implement INodeType, serve it over HTTP/gRPC, announce it to the registry.",
+  "description": "Landflow TypeScript SDK: implement INodeType, serve it over HTTP/gRPC (and any TransportBinding), announce it to the registry.",
   "exports": {
     ".": "./src/index.ts",
+    "./binding": "./src/binding.ts",
+    "./dispatcher": "./src/dispatcher.ts",
     "./http": "./src/http.ts",
     "./grpc": "./src/grpc.ts",
     "./announce": "./src/announce.ts",

@@ -1,4 +1,16 @@
 export * from './node';
+export { parseTransportList, type BindingContext, type BindingInfo, type TransportBinding, type TransportHints } from './binding';
+export {
+  createDispatcher,
+  DispatchError,
+  findCredentialType,
+  manifestWithHints,
+  type DispatchCall,
+  type Dispatcher,
+  type DispatcherOptions,
+  type DispatcherStats,
+  type DispatchErrorCode,
+} from './dispatcher';
 export { iconFile, MAX_ICON_BYTES } from './icons';
 export * from './runtime';
 export * from './credentials';

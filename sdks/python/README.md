@@ -290,16 +290,44 @@ installed). `/metrics` and the log lines are the same in both modes.
 Prometheus names replace `.` with `_`, add the unit (`_milliseconds`, `_seconds`, `_bytes`) and
 `_total` for counters: `landflow_plugin_executions_total`, `landflow_plugin_execute_duration_milliseconds_bucket`.
 
-## serve()
+## serve(), bindings and the dispatcher
 
-`serve(plugin, http_port=None, grpc_port=None, announce=True)` starts the servers, announces every
-endpoint, heartbeats, and on SIGINT/SIGTERM withdraws, flushes telemetry and exits cleanly. Every
-announce carries `landflow_sdk.announce.INSTANCE_ID`, random per process, so the host pulls the
-manifest again after a restart even when the version is unchanged.
+`serve(plugin, http_port=None, grpc_port=None, announce=True)` -- or, with keywords,
+`serve(plugin, http=7105, grpc=7205, bindings=[...], max_concurrency=16)` -- starts the plugin's
+**bindings**, announces every endpoint, heartbeats, and on SIGINT/SIGTERM withdraws, flushes telemetry and
+exits cleanly. Every announce carries `landflow_sdk.announce.INSTANCE_ID`, random per process, so the host
+pulls the manifest again after a restart even when the version is unchanged. The manifest and every
+announce also carry `transports` (the binding kinds that run) and `maxConcurrency`.
+
+HTTP and gRPC are two bindings ("faces", [`docs/transports.md`](../../docs/transports.md)) over one
+transport-neutral `Dispatcher` (`plugin.dispatcher`): a binding converts its wire format to the protocol
+dicts and calls `dispatcher.execute / load_options_request / test_credentials_request / webhook_method /
+receive_webhook(request, headers, cancel=, deadline=, transport=)`, which applies the call's deadline and
+cancellation, the plugin's `max_concurrency` and then the plugin's handler logic. Broker bindings (through
+`landflow-bridge` first) and the MCP face plug in the same way:
+
+```python
+class Binding(ABC):
+    kind: str                                              # "http" | "grpc" | "mcp" | a broker kind
+    def start(self, context: BindingContext) -> BindingInfo: ...   # listen/connect; endpoints to announce
+    def stop(self) -> None: ...                            # drain, then close
+```
+
+`BindingContext` carries `plugin`, the shared `dispatcher`, the `manifest` (with the hints), `logger`,
+`telemetry`, `bind_host` / `advertise_host`, an `announce(endpoints)` hook for endpoints learned late and a
+`fail(exc)` hook that shuts the plugin down. Node code sees the call's `CancelToken` as `ctx.cancel`
+(`ctx.cancel.is_set()`, `ctx.cancel.check()` raising `CallCancelledError`, `ctx.cancel.remaining()`,
+`ctx.cancel.wait(t)`; also `ctx.deadline`, `ctx.is_cancelled()`, `ctx.check_cancelled()`): over gRPC it is the
+call's deadline and the client's cancellation; over HTTP it is never set. `dispatcher.in_flight` /
+`waiting` / `max_concurrency` are the live counts (also the `landflow.plugin.inflight` gauge); at the limit a
+call waits for a slot until its token ends, then fails with `OverloadedError` (HTTP 503, gRPC
+`RESOURCE_EXHAUSTED`; an expired deadline is 504 / `DEADLINE_EXCEEDED`).
 
 | Variable | Default | |
 |---|---|---|
 | `LANDFLOW_HTTP_PORT` / `LANDFLOW_GRPC_PORT` | the `serve()` arguments | override the ports; `off` disables a transport, `0` picks a free port |
+| `LANDFLOW_TRANSPORTS` | every configured binding | comma-separated kinds to run (`http,grpc,kafka`); a kind with no binding is ignored with a warning |
+| `LANDFLOW_MAX_CONCURRENCY` | `max_concurrency=` (unlimited) | calls one instance runs at once; announced as `maxConcurrency` |
 | `LANDFLOW_REGISTRY_URL` | `http://127.0.0.1:3000` | `http(s)://` -> `POST/DELETE /api/plugins/announce`; `grpc://host:port` -> `RegistryService`; `off` |
 | `LANDFLOW_ADVERTISE_HOST` | `127.0.0.1` | host written into announced endpoints |
 | `LANDFLOW_BIND_HOST` | `127.0.0.1` (or `0.0.0.0` if the advertised host is not loopback) | listen address |

@@ -252,8 +252,11 @@ type GetManifestResponse struct {
 	Plugin          *PluginInfo            `protobuf:"bytes,2,opt,name=plugin,proto3" json:"plugin,omitempty"`
 	Nodes           []*DynamicValue        `protobuf:"bytes,3,rep,name=nodes,proto3" json:"nodes,omitempty"`                                            // each: a NodeDescriptor JSON object
 	CredentialTypes []*DynamicValue        `protobuf:"bytes,4,rep,name=credential_types,json=credentialTypes,proto3" json:"credential_types,omitempty"` // each: a CredentialTypeDescriptor JSON object
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Transport hints (docs/protocol.md §14.1; additive, empty/0 when the plugin predates them):
+	Transports     []string `protobuf:"bytes,5,rep,name=transports,proto3" json:"transports,omitempty"`                                // faces this process was built with: "http", "grpc", "mcp", "kafka", ...
+	MaxConcurrency int32    `protobuf:"varint,6,opt,name=max_concurrency,json=maxConcurrency,proto3" json:"max_concurrency,omitempty"` // calls one instance takes at once; 0 = unknown (the host assumes 16)
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetManifestResponse) Reset() {
@@ -312,6 +315,20 @@ func (x *GetManifestResponse) GetCredentialTypes() []*DynamicValue {
 		return x.CredentialTypes
 	}
 	return nil
+}
+
+func (x *GetManifestResponse) GetTransports() []string {
+	if x != nil {
+		return x.Transports
+	}
+	return nil
+}
+
+func (x *GetManifestResponse) GetMaxConcurrency() int32 {
+	if x != nil {
+		return x.MaxConcurrency
+	}
+	return 0
 }
 
 type NodeRef struct {
@@ -1983,12 +2000,16 @@ const file_landflow_plugin_v1_plugin_proto_rawDesc = "" +
 	" \x01(\tR\bhomepage\x12\x14\n" +
 	"\x05color\x18\v \x01(\tR\x05color\"7\n" +
 	"\x12GetManifestRequest\x12!\n" +
-	"\fhost_version\x18\x01 \x01(\tR\vhostVersion\"\xee\x01\n" +
+	"\fhost_version\x18\x01 \x01(\tR\vhostVersion\"\xb7\x02\n" +
 	"\x13GetManifestResponse\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\tR\bprotocol\x126\n" +
 	"\x06plugin\x18\x02 \x01(\v2\x1e.landflow.plugin.v1.PluginInfoR\x06plugin\x126\n" +
 	"\x05nodes\x18\x03 \x03(\v2 .landflow.plugin.v1.DynamicValueR\x05nodes\x12K\n" +
-	"\x10credential_types\x18\x04 \x03(\v2 .landflow.plugin.v1.DynamicValueR\x0fcredentialTypes\"d\n" +
+	"\x10credential_types\x18\x04 \x03(\v2 .landflow.plugin.v1.DynamicValueR\x0fcredentialTypes\x12\x1e\n" +
+	"\n" +
+	"transports\x18\x05 \x03(\tR\n" +
+	"transports\x12'\n" +
+	"\x0fmax_concurrency\x18\x06 \x01(\x05R\x0emaxConcurrency\"d\n" +
 	"\aNodeRef\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +

@@ -120,6 +120,7 @@ type pluginInstruments struct {
 	duration    metric.Float64Histogram
 	items       metric.Int64Counter
 	loadOptions metric.Int64Counter
+	inFlight    metric.Int64UpDownCounter
 }
 
 var (
@@ -282,6 +283,8 @@ func (t *Telemetry) finish() {
 		metric.WithDescription("Items received (in) and emitted (out) by nodes"))
 	t.inst.loadOptions, _ = t.meter.Int64Counter("landflow.plugin.load_options",
 		metric.WithDescription("LoadOptions calls served by the plugin"))
+	t.inst.inFlight, _ = t.meter.Int64UpDownCounter("landflow.plugin.inflight",
+		metric.WithDescription("Calls running in the plugin right now, by landflow.transport"))
 	t.httpRT = otelhttp.NewTransport(sanitizeTransport{next: http.DefaultTransport},
 		otelhttp.WithTracerProvider(t.tp), otelhttp.WithMeterProvider(t.mp), otelhttp.WithPropagators(t.propagator),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return "HTTP " + r.Method }))

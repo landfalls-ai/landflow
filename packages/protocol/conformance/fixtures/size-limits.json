@@ -1,0 +1,120 @@
+{
+  "kit": "landflow.conformance/v1",
+  "suite": "size-limits",
+  "description": "An envelope must fit the driver's maxMessageBytes. Over it, the body goes by reference through the shared binary store (a claim check) when one is configured, else the call fails with too_large before anything is published. Runners run this suite with the driver's limit set to 256 KiB (the smallest tier-1 default is Azure Service Bus Standard at 256 KB) and without a claim-check store unless a case says otherwise.",
+  "cases": [
+    {
+      "id": "small-request",
+      "description": "A 1 KiB request and reply go inline.",
+      "call": {
+        "method": "execute",
+        "node": "echo",
+        "parameters": {
+          "message": ""
+        },
+        "padBytes": 1024
+      },
+      "expect": {
+        "outcome": "reply",
+        "ran": true
+      }
+    },
+    {
+      "id": "request-near-limit",
+      "description": "A request 32 KiB under the limit still fits after headers, signing and encryption overhead (the core budgets 32 KiB for them).",
+      "call": {
+        "method": "execute",
+        "node": "echo",
+        "parameters": {
+          "message": ""
+        },
+        "padBytes": 229376
+      },
+      "expect": {
+        "outcome": "reply",
+        "ran": true
+      }
+    },
+    {
+      "id": "request-over-limit-no-store",
+      "description": "A request over the limit with no claim-check store fails on the caller's side before publishing; the node never runs.",
+      "applies": [
+        "messaging"
+      ],
+      "call": {
+        "method": "execute",
+        "node": "counter",
+        "parameters": {
+          "key": "size/over",
+          "message": ""
+        },
+        "padBytes": 1048576
+      },
+      "expect": {
+        "outcome": "transport-error",
+        "code": "too_large",
+        "ran": false,
+        "withinMs": 1000
+      }
+    },
+    {
+      "id": "request-over-limit-with-store",
+      "description": "With a claim-check store configured the same request succeeds: the body travels by reference and the consumer fetches it. The store is not part of this wave: runners skip this case until the core has it.",
+      "applies": [
+        "messaging"
+      ],
+      "call": {
+        "method": "execute",
+        "node": "echo",
+        "parameters": {
+          "message": ""
+        },
+        "padBytes": 1048576
+      },
+      "expect": {
+        "outcome": "reply",
+        "ran": true,
+        "note": "runners enable the claim-check store for this case only"
+      }
+    },
+    {
+      "id": "reply-over-limit",
+      "description": "A reply over the limit: the plugin answers lferror too_large with body { error } instead of publishing something the broker would refuse (by reference once a claim-check store exists).",
+      "applies": [
+        "messaging"
+      ],
+      "call": {
+        "method": "execute",
+        "node": "payload",
+        "parameters": {
+          "bytes": 1048576
+        }
+      },
+      "expect": {
+        "outcome": "transport-error",
+        "code": "too_large",
+        "ran": true
+      }
+    },
+    {
+      "id": "direct-transports-unlimited",
+      "description": "HTTP and gRPC have no envelope limit of their own at 1 MiB (gRPC's default 4 MiB receive limit is above it).",
+      "applies": [
+        "http",
+        "grpc"
+      ],
+      "call": {
+        "method": "execute",
+        "node": "echo",
+        "parameters": {
+          "message": ""
+        },
+        "padBytes": 1048576
+      },
+      "expect": {
+        "outcome": "reply",
+        "ran": true
+      }
+    }
+  ]
+}

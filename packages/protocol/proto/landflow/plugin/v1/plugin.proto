@@ -76,6 +76,9 @@ message GetManifestResponse {
   PluginInfo plugin = 2;
   repeated DynamicValue nodes = 3; // each: a NodeDescriptor JSON object
   repeated DynamicValue credential_types = 4; // each: a CredentialTypeDescriptor JSON object
+  // Transport hints (docs/protocol.md §14.1; additive, empty/0 when the plugin predates them):
+  repeated string transports = 5;  // faces this process was built with: "http", "grpc", "mcp", "kafka", ...
+  int32 max_concurrency = 6;       // calls one instance takes at once; 0 = unknown (the host assumes 16)
 }
 
 // ---- Execute ----------------------------------------------------------

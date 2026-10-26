@@ -6,6 +6,8 @@
 #   docker compose -f deploy/compose.infra.yml --profile mail up -d greenmail                # + GreenMail (IMAP + SMTP test server)
 #   docker compose -f deploy/compose.infra.yml --profile siem up -d siem                     # + Vector (syslog + HTTP audit log receiver)
 #   docker compose -f deploy/compose.infra.yml --profile aws up -d localstack                # + LocalStack (AWS Secrets Manager)
+#   docker compose -f deploy/compose.infra.yml --profile kafka --profile rabbitmq --profile nats up -d   # + tier 1 brokers
+#   ... profiles mqtt, artemis, pulsar, pubsub, servicebus (tier 2 brokers), mcp-gateway (agentgateway)
 #
 # Ports, credentials and URLs: deploy/README.md. Defaults live here; deploy/.env overrides them.
 # Every credential is for local development only.
@@ -222,6 +224,243 @@ services:
       test: ["CMD-SHELL", "curl -fs http://127.0.0.1:4566/_localstack/health | grep -Eq 'secretsmanager.: .(available|running)'"]
       <<: *healthcheck
 
+  # ------------------------------------------------------------------ message brokers (docs/transports.md), one profile each
+  # Development brokers for the transport layer, bound to 127.0.0.1 on 5xxxx ports. Credentials are dev-only; see
+  # deploy/README.md "Message brokers" for the ports, credentials and a test command per broker.
+
+  kafka:
+    # Kafka 4.3 in KRaft mode, one node that is broker and controller. Share groups (KIP-932, "Queues for Kafka",
+    # production-ready since 4.2) are on: the share rebalance protocol plus the share.version feature (set by the
+    # healthcheck once the broker is up, since the image has no hook for it). Two listeners: PLAINTEXT for containers
+    # on the landflow-infra network (kafka:9092) and HOST for the Mac (localhost:59092, the same port inside and out
+    # so the advertised address works from both sides).
+    image: apache/kafka:4.3.2
+    profiles: [kafka]
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: landflow-dev-kraft-cluster
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,HOST://0.0.0.0:${LANDFLOW_KAFKA_PORT:-59092}
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,HOST://localhost:${LANDFLOW_KAFKA_PORT:-59092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_HEAP_OPTS: -Xmx768m -Xms256m
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_KAFKA_PORT:-59092}:${LANDFLOW_KAFKA_PORT:-59092}"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      # Healthy once the broker answers; the first successful check also finalises share.version=1 (idempotent).
+      test:
+        - CMD-SHELL
+        - >-
+          /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 &&
+          (test -f /tmp/landflow-share-ready ||
+           (/opt/kafka/bin/kafka-features.sh --bootstrap-server localhost:9092 upgrade --feature share.version=1 >/dev/null 2>&1;
+            touch /tmp/landflow-share-ready))
+      <<: *healthcheck
+      interval: 10s
+      start_period: 40s
+
+  rabbitmq:
+    # RabbitMQ 4 with the management plugin (UI and HTTP API on 55673). Direct reply-to, per-message TTL and the
+    # mandatory flag need no configuration.
+    image: rabbitmq:4.4.0-management-alpine
+    profiles: [rabbitmq]
+    restart: unless-stopped
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${LANDFLOW_RABBITMQ_USER:-landflow}
+      RABBITMQ_DEFAULT_PASS: ${LANDFLOW_RABBITMQ_PASSWORD:-landflow-dev-only}
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_RABBITMQ_PORT:-55672}:5672"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_RABBITMQ_MANAGEMENT_PORT:-55673}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      <<: *healthcheck
+      start_period: 30s
+
+  nats:
+    # NATS 2 with JetStream (file store in the volume) and the monitoring endpoint on 58222. No authentication.
+    image: nats:2.15.1-alpine
+    profiles: [nats]
+    restart: unless-stopped
+    command: ["--jetstream", "--store_dir", "/data", "--http_port", "8222", "--name", "landflow-dev"]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_NATS_PORT:-54222}:4222"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_NATS_MONITOR_PORT:-58222}:8222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      <<: *healthcheck
+
+  mosquitto:
+    # Mosquitto 2 (MQTT 5: shared subscriptions, message expiry, response topics). Anonymous access, development only;
+    # the port is published on 127.0.0.1. Config: infra/mosquitto/mosquitto.conf.
+    image: eclipse-mosquitto:2.1.2-alpine
+    profiles: [mqtt]
+    restart: unless-stopped
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_MQTT_PORT:-51883}:1883"
+    volumes:
+      - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-h", "127.0.0.1", "-p", "1883", "-t", "$$SYS/broker/uptime", "-C", "1", "-W", "3"]
+      <<: *healthcheck
+
+  artemis:
+    # ActiveMQ Artemis (AMQP 1.0 on 55674, also CORE/OpenWire/STOMP/MQTT on the same acceptor; web console on 58161).
+    # Addresses and queues are created on first use (auto-create is the image's default).
+    image: apache/activemq-artemis:2.44.0-alpine
+    profiles: [artemis]
+    restart: unless-stopped
+    environment:
+      ARTEMIS_USER: ${LANDFLOW_ARTEMIS_USER:-landflow}
+      ARTEMIS_PASSWORD: ${LANDFLOW_ARTEMIS_PASSWORD:-landflow-dev-only}
+      ANONYMOUS_LOGIN: "false"
+      EXTRA_ARGS: --http-host 0.0.0.0 --relax-jolokia --nio
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_ARTEMIS_AMQP_PORT:-55674}:5672"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_ARTEMIS_CONSOLE_PORT:-58161}:8161"
+    volumes:
+      - artemis-data:/var/lib/artemis-instance
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8161/console/"]
+      <<: *healthcheck
+      start_period: 40s
+
+  pulsar:
+    # Pulsar 4 standalone (broker, bookie and ZooKeeper-free metadata in one process). Binary protocol on 56650, the
+    # admin REST API on 58180. Memory is capped for a laptop.
+    image: apachepulsar/pulsar:4.2.5
+    profiles: [pulsar]
+    restart: unless-stopped
+    command: ["bin/pulsar", "standalone", "--no-functions-worker", "--no-stream-storage"]
+    environment:
+      PULSAR_MEM: -Xms512m -Xmx512m -XX:MaxDirectMemorySize=256m
+      PULSAR_STANDALONE_USE_ZOOKEEPER: "0"
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_PULSAR_PORT:-56650}:6650"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_PULSAR_ADMIN_PORT:-58180}:8080"
+    volumes:
+      - pulsar-data:/pulsar/data
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://127.0.0.1:8080/admin/v2/brokers/health"]
+      <<: *healthcheck
+      start_period: 60s
+
+  pubsub:
+    # Google Pub/Sub emulator (gcloud SDK image, emulators variant). Project landflow-dev; no credentials. Topics and
+    # subscriptions are kept in the volume. Clients: PUBSUB_EMULATOR_HOST=127.0.0.1:58085.
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:590.0.1-emulators
+    profiles: [pubsub]
+    restart: unless-stopped
+    command:
+      - gcloud
+      - beta
+      - emulators
+      - pubsub
+      - start
+      - --host-port=0.0.0.0:8085
+      - --project=${LANDFLOW_PUBSUB_PROJECT:-landflow-dev}
+      - --data-dir=/data
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_PUBSUB_PORT:-58085}:8085"
+    volumes:
+      - pubsub-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:8085/ | grep -q Ok"]
+      <<: *healthcheck
+      start_period: 30s
+
+  servicebus:
+    # Azure Service Bus emulator (AMQP 1.0 on 55675, management and /health on 55300) with its SQL backend below.
+    # Entities are static, from infra/servicebus/Config.json (Landflow's registry, control, reply and per-plugin queues
+    # and an events topic). Starting it accepts Microsoft's EULAs for the emulator and SQL (ACCEPT_EULA=Y).
+    # Connection string: Endpoint=sb://localhost:55675;SharedAccessKeyName=RootManageSharedAccessKey;
+    #   SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;
+    # The image is distroless (no shell), so it has no Docker healthcheck: curl http://127.0.0.1:55300/health.
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1
+    profiles: [servicebus]
+    restart: unless-stopped
+    environment:
+      SQL_SERVER: servicebus-sql
+      MSSQL_SA_PASSWORD: ${LANDFLOW_SERVICEBUS_SQL_PASSWORD:-Landflow-dev-only1}
+      ACCEPT_EULA: ${LANDFLOW_SERVICEBUS_ACCEPT_EULA:-Y}
+      SQL_WAIT_INTERVAL: "5"
+      EMULATOR_HTTP_PORT: "5300"
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_SERVICEBUS_PORT:-55675}:5672"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_SERVICEBUS_HTTP_PORT:-55300}:5300"
+    volumes:
+      - ./infra/servicebus/Config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
+    depends_on:
+      servicebus-sql:
+        condition: service_healthy
+
+  servicebus-sql:
+    # The emulator's SQL Server. Azure SQL Edge 1.0.7 is the last tag with an arm64 image (2.0.0 and mssql/server are
+    # amd64 only and would run under Rosetta); it's what Microsoft's own installer uses on Apple Silicon.
+    image: mcr.microsoft.com/azure-sql-edge:1.0.7
+    profiles: [servicebus]
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: ${LANDFLOW_SERVICEBUS_ACCEPT_EULA:-Y}
+      MSSQL_SA_PASSWORD: ${LANDFLOW_SERVICEBUS_SQL_PASSWORD:-Landflow-dev-only1}
+    volumes:
+      - servicebus-sql-data:/var/opt/mssql
+    healthcheck:
+      # No sqlcmd in the image: the TDS port over bash's /dev/tcp.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/1433"]
+      <<: *healthcheck
+      start_period: 60s
+
+  # ------------------------------------------------------------------ MCP gateway (docs/transports.md, docs/mcp-gateway.md)
+
+  mcp-gateway:
+    # agentgateway 1.6, the bundled MCP gateway, for the dev server on :3000 (targets point at host.docker.internal).
+    # MCP on 54000 (/mcp), admin API and UI on 55000 (no authentication: loopback only). Base config in
+    # mcp-gateway/config.yaml; the targets live in SQLite in the mcp-gateway-data volume (storage mode hybrid) and are
+    # written by the host through the admin API. Distroless image, so no Docker healthcheck: GET http://127.0.0.1:55000/.
+    image: cr.agentgateway.dev/agentgateway:v1.6.0@sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+    profiles: [mcp-gateway]
+    restart: unless-stopped
+    command: ["-f", "/config/config.yaml"]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_MCP_GATEWAY_PORT:-54000}:4000"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_MCP_GATEWAY_ADMIN_PORT:-55000}:15000"
+    volumes:
+      - ./mcp-gateway/config.yaml:/config/config.yaml:ro
+      - mcp-gateway-data:/data
+    depends_on:
+      mcp-gateway-init:
+        condition: service_completed_successfully
+
+  mcp-gateway-init:
+    # Gives the data volume to the gateway's user (65532); the image has no shell to do it itself.
+    image: alpine:3.22
+    profiles: [mcp-gateway]
+    command: ["chown", "65532:65532", "/data"]
+    volumes:
+      - mcp-gateway-data:/data
+
 networks:
   default:
     # Fixed name so the app stack can join it (compose.infra-link.yml).
@@ -235,3 +474,12 @@ volumes:
   keycloak-data:
   mysql-data:
   siem-data:
+  kafka-data:
+  rabbitmq-data:
+  nats-data:
+  mosquitto-data:
+  artemis-data:
+  pulsar-data:
+  pubsub-data:
+  servicebus-sql-data:
+  mcp-gateway-data:

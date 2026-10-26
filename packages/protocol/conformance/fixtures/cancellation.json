@@ -1,0 +1,32 @@
+{
+  "kit": "landflow.conformance/v1",
+  "suite": "cancellation",
+  "description": "The caller can cancel a call in flight: HTTP aborts the request, gRPC cancels the call, messaging publishes a cancel event on the control channel, MCP closes the request stream (HTTP) or sends notifications/cancelled (stdio). The dispatcher's abort signal fires in the node.",
+  "cases": [
+    {
+      "id": "cancel-mid-call",
+      "description": "Cancel 100 ms into a 5 s call: the caller gets `cancelled` at once and the node's signal is aborted.",
+      "call": { "method": "execute", "node": "sleep", "parameters": { "ms": 5000 }, "cancelAfterMs": 100 },
+      "expect": { "outcome": "transport-error", "code": "cancelled", "signalAborted": true, "withinMs": 1500 }
+    },
+    {
+      "id": "cancel-after-reply",
+      "description": "Cancelling a call that already replied changes nothing: the reply stands.",
+      "call": { "method": "execute", "node": "sleep", "parameters": { "ms": 20 }, "cancelAfterMs": 1000 },
+      "expect": { "outcome": "reply", "outputs": [[{ "json": { "sleptMs": 20 } }]] }
+    },
+    {
+      "id": "cancel-before-dispatch",
+      "description": "A call cancelled before the consumer takes it must not run at all (messaging: the cancel on the control channel is matched by id when the request is picked up).",
+      "applies": ["messaging"],
+      "call": { "method": "execute", "node": "counter", "parameters": { "key": "cancellation/before" }, "cancelAfterMs": 0 },
+      "expect": { "outcome": "transport-error", "code": "cancelled", "ran": false }
+    },
+    {
+      "id": "cancel-is-not-an-error-reply",
+      "description": "A cancelled node never produces a normal reply with error `cancelled` on the caller side: the outcome is the transport error, so retries and \"continue on fail\" don't treat it as a node failure.",
+      "call": { "method": "execute", "node": "sleep", "parameters": { "ms": 5000 }, "cancelAfterMs": 50 },
+      "expect": { "outcome": "transport-error", "code": "cancelled" }
+    }
+  ]
+}

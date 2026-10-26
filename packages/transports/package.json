@@ -1,0 +1,33 @@
+{
+  "name": "@landflow/transports",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Landflow generic messaging over brokers: the CloudEvents envelope, signing and encryption, the host client and plugin server, the broker driver contract, an in-memory driver and the driver conformance suite.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./driver": "./src/driver.ts",
+    "./drivers": "./src/drivers/index.ts",
+    "./memory": "./src/memory/index.ts",
+    "./conformance": "./src/conformance/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@landflow/protocol": "workspace:*"
+  },
+  "peerDependencies": {
+    "vitest": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "vitest": "^5.0.5"
+  }
+}

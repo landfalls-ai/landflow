@@ -1,0 +1,9 @@
+# Override for the spike: the file fallback. LANDFLOW_MCP_GATEWAY_FILE_DIR is a directory on the Mac holding a writable
+# config.yaml (start from config.file.yaml); agentgateway reloads it when it changes. Mounted next to the base config.
+#   LANDFLOW_MCP_GATEWAY_FILE_DIR=<dir> COMPOSE_BAKE=false docker compose -p landflow-infra \
+#     -f deploy/compose.infra.yml -f deploy/mcp-gateway/compose.file.yml --profile mcp-gateway up -d mcp-gateway
+services:
+  mcp-gateway:
+    command: ["-f", "/config-file/config.yaml"]
+    volumes:
+      - ${LANDFLOW_MCP_GATEWAY_FILE_DIR:-./mcp-gateway}:/config-file

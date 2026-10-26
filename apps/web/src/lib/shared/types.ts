@@ -37,7 +37,16 @@ export interface PluginSummary {
   /** Transport currently used to execute nodes. */
   transport: Transport;
   activeEndpoint?: string;
+  /** The pinned transport, when the policy pins one (kept for older clients; `policy` is the whole story). */
   preferredTransport?: Transport;
+  /** The plugin's transports by kind, with their endpoints and live state (lib/shared/transports.ts). */
+  transports?: import('./transports').PluginTransportSummary[];
+  /** The plugin's transport policy (Auto, pinned or an allow-list; the objective). */
+  policy?: import('./transports').TransportPolicy;
+  /** What the next Execute would use and why; absent when nothing is online. */
+  choice?: import('./transports').TransportChoice;
+  /** Why no transport can be chosen now (the policy pins an offline kind, nothing allowed is online…). */
+  choiceError?: string;
   endpoints: EndpointSummary[];
   source: DiscoverySource;
   registeredAt: string;

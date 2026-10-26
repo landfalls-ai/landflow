@@ -1,6 +1,7 @@
 package landflow
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,36 +19,53 @@ const maxBodyBytes = 64 << 20
 // node types and credential types are 404. Execute, LoadOptions and
 // TestCredentials continue the caller's trace from the traceparent,
 // tracestate and baggage headers; health and manifest are not traced.
-func (p *Plugin) Handler() http.Handler {
+//
+// It is the HTTP binding over the plugin's Dispatcher; the request context
+// (cancelled when the client disconnects) reaches node code.
+func (p *Plugin) Handler() http.Handler { return p.Dispatcher().Handler() }
+
+// httpHandler is the HTTP face of a dispatcher.
+type httpHandler struct {
+	d *Dispatcher
+}
+
+// Handler returns the protocol's HTTP+JSON face over this dispatcher (see Plugin.Handler).
+func (d *Dispatcher) Handler() http.Handler {
+	h := &httpHandler{d: d}
+	p := d.p
 	mux := http.NewServeMux()
 	mux.HandleFunc(PathWellKnown, p.only(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, p.WellKnown())
+		writeJSON(w, http.StatusOK, d.WellKnown())
 	}))
 	mux.HandleFunc(PathManifest, p.only(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
 		// Kubernetes discovery: prove LANDFLOW_REGISTRY_SECRET when the host sends a challenge (registry_proof.go).
 		if proof := p.answerRegistryChallenge(r.Header.Get(RegistryChallengeHeader)); proof != "" {
 			w.Header().Set(RegistryProofHeader, proof)
 		}
-		writeJSON(w, http.StatusOK, p.Manifest())
+		writeJSON(w, http.StatusOK, d.Manifest())
 	}))
 	mux.HandleFunc(PathHealth, p.only(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, p.Health())
+		writeJSON(w, http.StatusOK, d.Health())
 	}))
-	mux.HandleFunc(PathExecute, p.only(http.MethodPost, p.handleExecute))
-	mux.HandleFunc(PathLoadOptions, p.only(http.MethodPost, p.handleLoadOptions))
-	mux.HandleFunc(PathTestCredentials, p.only(http.MethodPost, p.handleTestCredentials))
-	mux.HandleFunc(PathWebhookMethod, p.only(http.MethodPost, p.handleWebhookMethod))
-	mux.HandleFunc(PathWebhook, p.only(http.MethodPost, p.handleWebhook))
+	mux.HandleFunc(PathExecute, p.only(http.MethodPost, h.handleExecute))
+	mux.HandleFunc(PathLoadOptions, p.only(http.MethodPost, h.handleLoadOptions))
+	mux.HandleFunc(PathTestCredentials, p.only(http.MethodPost, h.handleTestCredentials))
+	mux.HandleFunc(PathWebhookMethod, p.only(http.MethodPost, h.handleWebhookMethod))
+	mux.HandleFunc(PathWebhook, p.only(http.MethodPost, h.handleWebhook))
 	mux.HandleFunc(PathMetrics, p.only(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
-		h := p.tel().MetricsHandler()
-		if h == nil {
+		mh := p.tel().MetricsHandler()
+		if mh == nil {
 			writeError(w, http.StatusNotFound, "metrics are not served (LANDFLOW_METRICS_PROMETHEUS=false or telemetry disabled)")
 			return
 		}
-		h.ServeHTTP(w, r)
+		mh.ServeHTTP(w, r)
 	}))
 	return mux
 }
+
+// httpCall is the CallOptions of every HTTP request: the request context
+// carries the client's disconnect; HTTP has no deadline of its own.
+var httpCall = CallOptions{Transport: "http"}
 
 func (p *Plugin) only(method string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -60,12 +78,12 @@ func (p *Plugin) only(method string, h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (p *Plugin) handleExecute(w http.ResponseWriter, r *http.Request) {
+func (h *httpHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	var req ExecuteRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	resp, err := p.Execute(p.tel().extractHTTP(r), &req)
+	resp, err := h.d.Execute(h.d.p.tel().extractHTTP(r), &req, httpCall)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -86,12 +104,12 @@ func unserializableOutput(resp *ExecuteResponse, err error) *ExecuteResponse {
 	}
 }
 
-func (p *Plugin) handleLoadOptions(w http.ResponseWriter, r *http.Request) {
+func (h *httpHandler) handleLoadOptions(w http.ResponseWriter, r *http.Request) {
 	var req LoadOptionsRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	resp, err := p.LoadOptions(p.tel().extractHTTP(r), &req)
+	resp, err := h.d.LoadOptions(h.d.p.tel().extractHTTP(r), &req, httpCall)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -99,12 +117,12 @@ func (p *Plugin) handleLoadOptions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (p *Plugin) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
+func (h *httpHandler) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 	var req TestCredentialsRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	resp, err := p.TestCredentials(p.tel().extractHTTP(r), &req)
+	resp, err := h.d.TestCredentials(h.d.p.tel().extractHTTP(r), &req, httpCall)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -112,12 +130,12 @@ func (p *Plugin) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (p *Plugin) handleWebhookMethod(w http.ResponseWriter, r *http.Request) {
+func (h *httpHandler) handleWebhookMethod(w http.ResponseWriter, r *http.Request) {
 	var req WebhookMethodRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	resp, err := p.WebhookMethod(p.tel().extractHTTP(r), &req)
+	resp, err := h.d.WebhookMethod(h.d.p.tel().extractHTTP(r), &req, httpCall)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -125,12 +143,12 @@ func (p *Plugin) handleWebhookMethod(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (p *Plugin) handleWebhook(w http.ResponseWriter, r *http.Request) {
+func (h *httpHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	var req WebhookRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	resp, err := p.ReceiveWebhook(p.tel().extractHTTP(r), &req)
+	resp, err := h.d.ReceiveWebhook(h.d.p.tel().extractHTTP(r), &req, httpCall)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -144,6 +162,12 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, ErrBadRequest):
 		return http.StatusBadRequest
+	case errors.Is(err, ErrOverloaded):
+		return http.StatusServiceUnavailable
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	case errors.Is(err, context.Canceled):
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

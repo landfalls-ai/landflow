@@ -299,6 +299,12 @@ type PluginManifest struct {
 	Plugin          PluginInfo                 `json:"plugin"`
 	Nodes           []NodeDescriptor           `json:"nodes"`
 	CredentialTypes []CredentialTypeDescriptor `json:"credentialTypes,omitempty"`
+	// Transports lists the binding kinds the plugin was started with
+	// ("http", "grpc", broker kinds, "mcp"); MaxConcurrency is the calls one
+	// instance takes at once (0/absent = unlimited). Hints for the host's
+	// transport selector (docs/transports.md); set by Serve.
+	Transports     []string `json:"transports,omitempty"`
+	MaxConcurrency int      `json:"maxConcurrency,omitempty"`
 }
 
 // WellKnownPlugin is the subset of PluginInfo in the well-known document.
@@ -479,6 +485,10 @@ type AnnounceRequest struct {
 	// InstanceID identifies the plugin process (random, see InstanceID): a new one tells the host to pull the
 	// manifest again, even when the version is the same. Older SDKs leave it out.
 	InstanceID string `json:"instanceId,omitempty"`
+	// Transports and MaxConcurrency mirror the manifest hints (docs/transports.md), so the host's
+	// selector knows them without a manifest pull. Older hosts ignore them.
+	Transports     []string `json:"transports,omitempty"`
+	MaxConcurrency int      `json:"maxConcurrency,omitempty"`
 }
 
 // AnnounceResponse is the registry's reply.

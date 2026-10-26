@@ -6,15 +6,18 @@ App webhook triggers (``triggerSource: "appWebhook"``) get a ``WebhookContext``;
 verifies GitHub, Stripe and Slack webhook signatures.
 
 See README.md for a quickstart, docs/protocol.md for the wire protocol and
-docs/observability.md for spans, metrics and logs. The gRPC transport lives in
-``landflow_sdk.grpc_server`` and needs the ``grpc`` extra; OTLP export needs
-the ``otel`` extra. Nothing here imports grpcio or opentelemetry.
+docs/observability.md for spans, metrics and logs. Transports are ``Binding``s
+over one ``Dispatcher`` (``landflow_sdk.binding``, ``landflow_sdk.dispatcher``);
+the gRPC one lives in ``landflow_sdk.grpc_server`` and needs the ``grpc`` extra;
+OTLP export needs the ``otel`` extra. Nothing here imports grpcio or opentelemetry.
 """
 
 from ._version import __version__
 from .binary import MAX_INLINE_BINARY_BYTES, BinaryClient, file_type_of, mime_type_from_file_name
+from .binding import Binding, BindingContext, BindingInfo, GrpcBinding, HttpBinding
 from .context import CredentialTestContext, ExecuteContext, LoadOptionsContext, NodeLogger
 from .credentials import CredentialType
+from .dispatcher import CallCancelledError, CancelToken, Dispatcher, OverloadedError
 from .errors import (
     DescriptorError,
     NodeOperationError,
@@ -54,15 +57,23 @@ from .webhooks import WebhookContext
 
 __all__ = [
     "BinaryClient",
+    "Binding",
+    "BindingContext",
+    "BindingInfo",
+    "CallCancelledError",
+    "CancelToken",
     "CredentialTestContext",
     "CredentialType",
     "DEFAULT_ANNOUNCE_TTL_SECONDS",
     "DEFAULT_HEARTBEAT_SECONDS",
     "DEFAULT_SIGNATURE_TOLERANCE_SECONDS",
     "DescriptorError",
+    "Dispatcher",
     "ExecuteContext",
+    "GrpcBinding",
     "HTTP_PATHS",
     "HttpClient",
+    "HttpBinding",
     "HttpError",
     "HttpResponse",
     "LoadOptionsContext",
@@ -74,6 +85,7 @@ __all__ = [
     "Node",
     "NodeLogger",
     "NodeOperationError",
+    "OverloadedError",
     "PROTOCOL_VERSION",
     "Plugin",
     "PluginServer",

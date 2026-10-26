@@ -1,9 +1,10 @@
 """gRPC binding (``pip install 'landflow-sdk[grpc]'``).
 
 Converts the proto envelope (``DynamicValue`` = JSON bytes) to and from the
-same plain dicts the HTTP binding uses, then delegates to ``Plugin``. The
-call's metadata (``traceparent`` / ``tracestate`` / ``baggage``) is handed over
-so server spans continue the caller's trace.
+same plain dicts the HTTP binding uses, then delegates to the plugin's
+``Dispatcher``. The call's metadata (``traceparent`` / ``tracestate`` /
+``baggage``) is handed over so server spans continue the caller's trace, and
+the call's gRPC deadline and cancellation become the node's ``ctx.cancel``.
 Importing this module raises ``ImportError`` when grpcio/protobuf are missing.
 """
 
@@ -19,6 +20,7 @@ import grpc
 from ._pb import plugin_pb2 as pb
 from ._pb import plugin_pb2_grpc as pb_grpc
 from .announce import RegistryRejected, RegistryUnreachable, registry_secret_headers
+from .dispatcher import CallCancelledError, CancelToken, Dispatcher, OverloadedError
 from .errors import ProtocolError, UnknownCredentialTypeError, UnknownMethodError, UnknownNodeError
 from .plugin import Plugin
 from .protocol import PROTOCOL_VERSION, dumps
@@ -352,6 +354,8 @@ def manifest_to_proto(manifest: dict[str, Any]) -> pb.GetManifestResponse:
         ),
         nodes=[to_dynamic(node) for node in manifest["nodes"]],
         credential_types=[to_dynamic(ctype) for ctype in manifest.get("credentialTypes") or []],
+        transports=list(manifest.get("transports") or []),
+        max_concurrency=int(manifest.get("maxConcurrency") or 0),
     )
 
 
@@ -375,9 +379,22 @@ def health_to_proto(health: dict[str, Any]) -> pb.HealthResponse:
 # ---------------------------------------------------------------------------
 
 
+def call_token(context: grpc.ServicerContext) -> CancelToken:
+    """A ``CancelToken`` for one RPC: its deadline from ``time_remaining()``, cancelled when the RPC ends early."""
+    remaining = context.time_remaining()
+    token = CancelToken(timeout=remaining) if remaining is not None else CancelToken()
+    context.add_callback(lambda: token.cancel("rpc cancelled by the client"))
+    return token
+
+
 class PluginServicer(pb_grpc.PluginServiceServicer):
-    def __init__(self, plugin: Plugin) -> None:
-        self.plugin = plugin
+    def __init__(self, plugin: Plugin | Dispatcher) -> None:
+        self.dispatcher = plugin if isinstance(plugin, Dispatcher) else plugin.dispatcher
+        self.plugin = self.dispatcher.plugin
+
+    def _call(self, context: grpc.ServicerContext) -> dict[str, Any]:
+        """Keyword arguments of a dispatcher call for this RPC."""
+        return {"cancel": call_token(context), "transport": "grpc"}
 
     def _guard(self, context: grpc.ServicerContext, method: str, fn: Any) -> Any:
         try:
@@ -386,6 +403,10 @@ class PluginServicer(pb_grpc.PluginServiceServicer):
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         except (UnknownNodeError, UnknownMethodError, UnknownCredentialTypeError) as exc:
             context.abort(grpc.StatusCode.NOT_FOUND, str(exc.args[0] if exc.args else exc))
+        except OverloadedError as exc:
+            context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, str(exc))
+        except CallCancelledError as exc:
+            context.abort(grpc.StatusCode.DEADLINE_EXCEEDED if exc.deadline else grpc.StatusCode.CANCELLED, str(exc))
         except Exception as exc:  # noqa: BLE001 - load_options failures and server bugs
             log.exception("error handling %s", method)
             context.abort(grpc.StatusCode.INTERNAL, f"{type(exc).__name__}: {exc}")
@@ -395,14 +416,14 @@ class PluginServicer(pb_grpc.PluginServiceServicer):
         proof = answer_registry_challenge(self.plugin.id, metadata_dict(context).get(REGISTRY_CHALLENGE_HEADER))
         if proof:
             context.send_initial_metadata(((REGISTRY_PROOF_HEADER, proof),))
-        return self._guard(context, "GetManifest", lambda: manifest_to_proto(self.plugin.manifest()))
+        return self._guard(context, "GetManifest", lambda: manifest_to_proto(self.dispatcher.manifest()))
 
     def Execute(self, request: pb.ExecuteRequest, context: grpc.ServicerContext) -> pb.ExecuteResponse:  # noqa: N802
         return self._guard(
             context,
             "Execute",
             lambda: execute_response_to_proto(
-                self.plugin.execute(execute_request_from_proto(request), metadata_dict(context))
+                self.dispatcher.execute(execute_request_from_proto(request), metadata_dict(context), **self._call(context))
             ),
         )
 
@@ -410,10 +431,12 @@ class PluginServicer(pb_grpc.PluginServiceServicer):
         def run() -> pb.LoadOptionsResponse:
             parameters = from_dynamic(_optional(request, "parameters"), {}, "parameters")
             credentials = from_dynamic(_optional(request, "credentials"), None, "credentials")
-            options = self.plugin.load_options(
-                request.node_type, request.method, parameters, credentials, metadata_dict(context)
+            response = self.dispatcher.load_options_request(
+                {"nodeType": request.node_type, "method": request.method, "parameters": parameters, "credentials": credentials},
+                metadata_dict(context),
+                **self._call(context),
             )
-            return pb.LoadOptionsResponse(options=to_dynamic(options))
+            return pb.LoadOptionsResponse(options=to_dynamic(response["options"]))
 
         return self._guard(context, "LoadOptions", run)
 
@@ -422,13 +445,15 @@ class PluginServicer(pb_grpc.PluginServiceServicer):
     ) -> pb.TestCredentialsResponse:
         def run() -> pb.TestCredentialsResponse:
             data = from_dynamic(_optional(request, "data"), {}, "data")
-            result = self.plugin.test_credentials(request.credential_type, data, metadata_dict(context))
+            result = self.dispatcher.test_credentials_request(
+                {"credentialType": request.credential_type, "data": data}, metadata_dict(context), **self._call(context)
+            )
             return pb.TestCredentialsResponse(ok=result["ok"], message=result.get("message", ""))
 
         return self._guard(context, "TestCredentials", run)
 
     def Health(self, request: pb.HealthRequest, context: grpc.ServicerContext) -> pb.HealthResponse:  # noqa: N802
-        return self._guard(context, "Health", lambda: health_to_proto(self.plugin.health()))
+        return self._guard(context, "Health", lambda: health_to_proto(self.dispatcher.health()))
 
     def WebhookMethod(  # noqa: N802
         self, request: pb.WebhookMethodRequest, context: grpc.ServicerContext
@@ -437,7 +462,7 @@ class PluginServicer(pb_grpc.PluginServiceServicer):
             context,
             "WebhookMethod",
             lambda: webhook_method_response_to_proto(
-                self.plugin.webhook_method(webhook_method_request_from_proto(request), metadata_dict(context))
+                self.dispatcher.webhook_method(webhook_method_request_from_proto(request), metadata_dict(context), **self._call(context))
             ),
         )
 
@@ -447,7 +472,9 @@ class PluginServicer(pb_grpc.PluginServiceServicer):
         return self._guard(
             context,
             "ReceiveWebhook",
-            lambda: webhook_response_to_proto(self.plugin.receive_webhook(webhook_request_from_proto(request), metadata_dict(context))),
+            lambda: webhook_response_to_proto(
+                self.dispatcher.receive_webhook(webhook_request_from_proto(request), metadata_dict(context), **self._call(context))
+            ),
         )
 
 
@@ -456,9 +483,11 @@ def _address(host: str, port: int) -> str:
 
 
 class GrpcPluginServer:
-    """Serves ``PluginService`` for ``plugin`` on ``host:port`` (port 0 = OS-assigned)."""
+    """Serves ``PluginService`` for ``plugin`` (or a ``Dispatcher``) on ``host:port`` (port 0 = OS-assigned)."""
 
-    def __init__(self, plugin: Plugin, host: str = "127.0.0.1", port: int = 0, max_workers: int = 16) -> None:
+    def __init__(self, plugin: Plugin | Dispatcher, host: str = "127.0.0.1", port: int = 0, max_workers: int = 16) -> None:
+        self.dispatcher = plugin if isinstance(plugin, Dispatcher) else plugin.dispatcher
+        self.plugin = self.dispatcher.plugin
         self.server = grpc.server(
             ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="landflow-grpc"),
             options=[
@@ -467,7 +496,7 @@ class GrpcPluginServer:
                 ("grpc.so_reuseport", 0),  # fail loudly if the port is taken
             ],
         )
-        pb_grpc.add_PluginServiceServicer_to_server(PluginServicer(plugin), self.server)
+        pb_grpc.add_PluginServiceServicer_to_server(PluginServicer(self.dispatcher), self.server)
         address = _address(host, port)
         try:
             bound = self.server.add_insecure_port(address)

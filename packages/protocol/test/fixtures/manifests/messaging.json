@@ -1,0 +1,2462 @@
+{
+  "protocol": "landflow.plugin/v1",
+  "plugin": {
+    "language": "typescript",
+    "sdk": {
+      "name": "landflow-sdk-typescript",
+      "version": "0.2.0"
+    },
+    "id": "messaging",
+    "name": "Messaging",
+    "version": "0.1.0",
+    "description": "Telegram, Slack, Discord, WhatsApp Business Cloud and SMTP email",
+    "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtbXNnLWJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzNBQUVFMyIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxQjg2QkQiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSJ1cmwoI2xmLW1zZy1iZykiLz4KICA8cGF0aCBkPSJNMjEgMTBoMTVhNCA0IDAgMCAxIDQgNHY4YTQgNCAwIDAgMS00IDRoLTF2NC41TDI5LjUgMjZIMjFhNCA0IDAgMCAxLTQtNHYtOGE0IDQgMCAwIDEgNC00eiIgZmlsbD0iI2JmZTZmOCIvPgogIDxwYXRoIGQ9Ik0xMiAxOGgxNWE0IDQgMCAwIDEgNCA0djhhNCA0IDAgMCAxLTQgNGgtOGwtNiA1di01aC0xYTQgNCAwIDAgMS00LTR2LThhNCA0IDAgMCAxIDQtNHoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxNC41IiBjeT0iMjYiIHI9IjEuNyIgZmlsbD0iIzIyOUVEOSIvPgogIDxjaXJjbGUgY3g9IjE5LjUiIGN5PSIyNiIgcj0iMS43IiBmaWxsPSIjMjI5RUQ5Ii8+CiAgPGNpcmNsZSBjeD0iMjQuNSIgY3k9IjI2IiByPSIxLjciIGZpbGw9IiMyMjlFRDkiLz4KPC9zdmc+Cg==",
+    "color": "#229ED9",
+    "author": "Landflow"
+  },
+  "nodes": [
+    {
+      "name": "telegram",
+      "displayName": "Telegram",
+      "description": "Send, edit and delete Telegram messages, send photos, documents, audio and video (URLs or item files), download files and read chat details",
+      "version": 1,
+      "kind": "action",
+      "categories": [
+        "Communication"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdGctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzRBRUU2Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBOEJDMiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtdGctYmcpIi8+CiAgPHBhdGggZD0iTTM5IDExIDkgMjIuNWwxMi41IDR6IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTM5IDExIDIxLjUgMjYuNSAyNSAzOHoiIGZpbGw9IiNkM2YwZmMiIHN0cm9rZT0iI2QzZjBmYyIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMjEuNSAyNi41IDIwIDMzLjVsMy42LTMuNHoiIGZpbGw9IiM5ZmQ4ZjIiIHN0cm9rZT0iIzlmZDhmMiIgc3Ryb2tlLXdpZHRoPSIxLjIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
+      "color": "#229ED9",
+      "subtitle": "{{operation}}: {{resource}}",
+      "documentationUrl": "https://core.telegram.org/bots/api",
+      "keywords": [
+        "telegram",
+        "bot",
+        "chat",
+        "message",
+        "document",
+        "file",
+        "upload",
+        "attachment"
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Send a Telegram message, photo, document, audio or video, edit or delete a message, show a chat action, or get chat details. Needs the numeric chat ID or @channelusername.",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "credentials": [
+        {
+          "name": "telegramApi",
+          "required": true
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "message",
+          "options": [
+            {
+              "name": "Chat",
+              "value": "chat"
+            },
+            {
+              "name": "File",
+              "value": "file"
+            },
+            {
+              "name": "Message",
+              "value": "message"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "get",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Get",
+              "value": "get",
+              "description": "Get a file\u2019s details and download it into the item",
+              "action": "Get a file"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "get",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "chat"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Get",
+              "value": "get",
+              "description": "Get up-to-date information about a chat",
+              "action": "Get a chat"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "sendMessage",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Delete Chat Message",
+              "value": "deleteMessage",
+              "action": "Delete a chat message"
+            },
+            {
+              "name": "Edit Message Text",
+              "value": "editMessageText",
+              "action": "Edit a text message"
+            },
+            {
+              "name": "Send Audio",
+              "value": "sendAudio",
+              "action": "Send an audio file"
+            },
+            {
+              "name": "Send Chat Action",
+              "value": "sendChatAction",
+              "description": "Show \"typing\u2026\" or another status in the chat",
+              "action": "Send a chat action"
+            },
+            {
+              "name": "Send Document",
+              "value": "sendDocument",
+              "description": "Any file (PDF, CSV, ZIP\u2026)",
+              "action": "Send a document"
+            },
+            {
+              "name": "Send Message",
+              "value": "sendMessage",
+              "action": "Send a text message"
+            },
+            {
+              "name": "Send Photo",
+              "value": "sendPhoto",
+              "action": "Send a photo message"
+            },
+            {
+              "name": "Send Video",
+              "value": "sendVideo",
+              "action": "Send a video"
+            }
+          ]
+        },
+        {
+          "name": "chatId",
+          "displayName": "Chat ID",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "-1001234567890 or @channelusername",
+          "description": "Unique identifier of the chat, or the username of a channel (@channelusername)",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "chat",
+                "message"
+              ]
+            }
+          }
+        },
+        {
+          "name": "fileId",
+          "displayName": "File ID",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ]
+            }
+          },
+          "description": "The file_id of a document, photo, voice note\u2026 (from the Telegram Trigger or a sent message)"
+        },
+        {
+          "name": "download",
+          "displayName": "Download",
+          "type": "boolean",
+          "default": true,
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ]
+            }
+          },
+          "description": "Put the file in item.binary (the cloud Bot API serves files up to 20 MB); off: only its details"
+        },
+        {
+          "name": "binaryPropertyName",
+          "displayName": "Put Output File in Field",
+          "type": "string",
+          "default": "data",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ],
+              "download": [
+                true
+              ]
+            }
+          }
+        },
+        {
+          "name": "binaryData",
+          "displayName": "Binary File",
+          "type": "boolean",
+          "default": false,
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendAudio",
+                "sendDocument",
+                "sendPhoto",
+                "sendVideo"
+              ]
+            }
+          },
+          "description": "Upload a file of the input item instead of sending a URL or file_id"
+        },
+        {
+          "name": "binaryPropertyName",
+          "displayName": "Input Binary Field",
+          "type": "string",
+          "required": true,
+          "default": "data",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendAudio",
+                "sendDocument",
+                "sendPhoto",
+                "sendVideo"
+              ],
+              "binaryData": [
+                true
+              ]
+            }
+          },
+          "description": "The item file to upload (item.binary.<name>)"
+        },
+        {
+          "name": "messageId",
+          "displayName": "Message ID",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "deleteMessage",
+                "editMessageText"
+              ]
+            }
+          },
+          "description": "Identifier of the message (message_id)"
+        },
+        {
+          "name": "text",
+          "displayName": "Text",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "typeOptions": {
+            "rows": 4
+          },
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendMessage",
+                "editMessageText"
+              ]
+            }
+          },
+          "description": "Text of the message, 1-4096 characters"
+        },
+        {
+          "name": "file",
+          "displayName": "Photo",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "https://example.com/picture.jpg",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendPhoto"
+              ],
+              "binaryData": [
+                false
+              ]
+            }
+          },
+          "description": "An HTTP URL Telegram downloads the photo from, or the file_id of a photo already on Telegram"
+        },
+        {
+          "name": "file",
+          "displayName": "Audio",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "https://example.com/file",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendAudio"
+              ],
+              "binaryData": [
+                false
+              ]
+            }
+          },
+          "description": "An HTTP URL Telegram downloads the file from, or the file_id of a file already on Telegram"
+        },
+        {
+          "name": "file",
+          "displayName": "Document",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "https://example.com/file",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendDocument"
+              ],
+              "binaryData": [
+                false
+              ]
+            }
+          },
+          "description": "An HTTP URL Telegram downloads the file from, or the file_id of a file already on Telegram"
+        },
+        {
+          "name": "file",
+          "displayName": "Video",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "https://example.com/file",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendVideo"
+              ],
+              "binaryData": [
+                false
+              ]
+            }
+          },
+          "description": "An HTTP URL Telegram downloads the file from, or the file_id of a file already on Telegram"
+        },
+        {
+          "name": "action",
+          "displayName": "Action",
+          "type": "options",
+          "default": "typing",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendChatAction"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Find Location",
+              "value": "find_location"
+            },
+            {
+              "name": "Record Audio",
+              "value": "record_voice"
+            },
+            {
+              "name": "Record Video",
+              "value": "record_video"
+            },
+            {
+              "name": "Record Video Note",
+              "value": "record_video_note"
+            },
+            {
+              "name": "Typing",
+              "value": "typing"
+            },
+            {
+              "name": "Upload Audio",
+              "value": "upload_voice"
+            },
+            {
+              "name": "Upload Document",
+              "value": "upload_document"
+            },
+            {
+              "name": "Upload Photo",
+              "value": "upload_photo"
+            },
+            {
+              "name": "Upload Video",
+              "value": "upload_video"
+            },
+            {
+              "name": "Upload Video Note",
+              "value": "upload_video_note"
+            },
+            {
+              "name": "Choose Sticker",
+              "value": "choose_sticker"
+            }
+          ],
+          "description": "The status to show; it lasts 5 seconds or until the bot sends a message"
+        },
+        {
+          "name": "additionalFields",
+          "displayName": "Additional Fields",
+          "type": "collection",
+          "default": {},
+          "placeholder": "Add Field",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendMessage"
+              ]
+            }
+          },
+          "values": [
+            {
+              "name": "disable_notification",
+              "displayName": "Disable Notification",
+              "type": "boolean",
+              "default": false,
+              "description": "Send silently: users get a notification without sound"
+            },
+            {
+              "name": "disable_web_page_preview",
+              "displayName": "Disable WebPage Preview",
+              "type": "boolean",
+              "default": false,
+              "description": "Do not show a preview for links in the message"
+            },
+            {
+              "name": "parse_mode",
+              "displayName": "Parse Mode",
+              "type": "options",
+              "default": "HTML",
+              "options": [
+                {
+                  "name": "Markdown (Legacy)",
+                  "value": "Markdown"
+                },
+                {
+                  "name": "MarkdownV2",
+                  "value": "MarkdownV2"
+                },
+                {
+                  "name": "HTML",
+                  "value": "HTML"
+                }
+              ],
+              "description": "How Telegram formats the text"
+            },
+            {
+              "name": "reply_to_message_id",
+              "displayName": "Reply To Message ID",
+              "type": "number",
+              "default": 0,
+              "description": "Send the message as a reply to this message"
+            }
+          ]
+        },
+        {
+          "name": "additionalFields",
+          "displayName": "Additional Fields",
+          "type": "collection",
+          "default": {},
+          "placeholder": "Add Field",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendAudio",
+                "sendDocument",
+                "sendPhoto",
+                "sendVideo"
+              ]
+            }
+          },
+          "values": [
+            {
+              "name": "caption",
+              "displayName": "Caption",
+              "type": "string",
+              "default": "",
+              "typeOptions": {
+                "rows": 2
+              }
+            },
+            {
+              "name": "disable_notification",
+              "displayName": "Disable Notification",
+              "type": "boolean",
+              "default": false,
+              "description": "Send silently: users get a notification without sound"
+            },
+            {
+              "name": "fileName",
+              "displayName": "File Name",
+              "type": "string",
+              "default": "",
+              "description": "For an uploaded item file (default: its own name)"
+            },
+            {
+              "name": "parse_mode",
+              "displayName": "Parse Mode",
+              "type": "options",
+              "default": "HTML",
+              "options": [
+                {
+                  "name": "Markdown (Legacy)",
+                  "value": "Markdown"
+                },
+                {
+                  "name": "MarkdownV2",
+                  "value": "MarkdownV2"
+                },
+                {
+                  "name": "HTML",
+                  "value": "HTML"
+                }
+              ],
+              "description": "How Telegram formats the text"
+            },
+            {
+              "name": "reply_to_message_id",
+              "displayName": "Reply To Message ID",
+              "type": "number",
+              "default": 0,
+              "description": "Send the message as a reply to this message"
+            }
+          ]
+        },
+        {
+          "name": "additionalFields",
+          "displayName": "Additional Fields",
+          "type": "collection",
+          "default": {},
+          "placeholder": "Add Field",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "editMessageText"
+              ]
+            }
+          },
+          "values": [
+            {
+              "name": "disable_web_page_preview",
+              "displayName": "Disable WebPage Preview",
+              "type": "boolean",
+              "default": false,
+              "description": "Do not show a preview for links in the message"
+            },
+            {
+              "name": "parse_mode",
+              "displayName": "Parse Mode",
+              "type": "options",
+              "default": "HTML",
+              "options": [
+                {
+                  "name": "Markdown (Legacy)",
+                  "value": "Markdown"
+                },
+                {
+                  "name": "MarkdownV2",
+                  "value": "MarkdownV2"
+                },
+                {
+                  "name": "HTML",
+                  "value": "HTML"
+                }
+              ],
+              "description": "How Telegram formats the text"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "telegramTrigger",
+      "displayName": "Telegram Trigger",
+      "description": "Starts the workflow when the bot receives Telegram updates (polls getUpdates, no public URL needed)",
+      "version": 1,
+      "kind": "trigger",
+      "triggerSource": "poll",
+      "categories": [
+        "Communication"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdGd0LWJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzM0QUVFNiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxQThCQzIiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSJ1cmwoI2xmLXRndC1iZykiLz4KICA8cGF0aCBkPSJNMzQgOSA3LjUgMTlsMTEgMy42eiIgZmlsbD0iI2ZmZiIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjEuNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0zNCA5IDE4LjUgMjIuNmwzLjEgMTAuMnoiIGZpbGw9IiNkM2YwZmMiIHN0cm9rZT0iI2QzZjBmYyIgc3Ryb2tlLXdpZHRoPSIxLjQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMTguNSAyMi42IDE3LjIgMjguOGwzLjItM3oiIGZpbGw9IiM5ZmQ4ZjIiIHN0cm9rZT0iIzlmZDhmMiIgc3Ryb2tlLXdpZHRoPSIxLjEiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIzNSIgY3k9IjM1IiByPSI5IiBmaWxsPSIjZmZmIi8+CiAgPHBhdGggZD0iTTM1IDMwLjJWMzVsMy4yIDIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzFBOEJDMiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
+      "color": "#229ED9",
+      "subtitle": "every {{pollInterval}}s",
+      "documentationUrl": "https://core.telegram.org/bots/api#getupdates",
+      "keywords": [
+        "telegram",
+        "bot",
+        "trigger",
+        "updates",
+        "getUpdates"
+      ],
+      "inputs": [],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "credentials": [
+        {
+          "name": "telegramApi",
+          "required": true
+        }
+      ],
+      "properties": [
+        {
+          "name": "pollInterval",
+          "displayName": "Poll Interval (seconds)",
+          "type": "number",
+          "default": 30,
+          "description": "How often to check for new events while the workflow is active",
+          "noDataExpression": true,
+          "typeOptions": {
+            "minValue": 10,
+            "numberPrecision": 0
+          }
+        },
+        {
+          "name": "updates",
+          "displayName": "Trigger On",
+          "type": "multiOptions",
+          "default": [
+            "message"
+          ],
+          "options": [
+            {
+              "name": "*",
+              "value": "*",
+              "description": "All update types Telegram sends by default"
+            },
+            {
+              "name": "Message",
+              "value": "message",
+              "description": "New incoming message of any kind: text, photo, sticker\u2026"
+            },
+            {
+              "name": "Edited Message",
+              "value": "edited_message"
+            },
+            {
+              "name": "Channel Post",
+              "value": "channel_post",
+              "description": "New post in a channel the bot is an admin of"
+            },
+            {
+              "name": "Callback Query",
+              "value": "callback_query",
+              "description": "A user pressed an inline keyboard button"
+            }
+          ]
+        },
+        {
+          "name": "notice",
+          "displayName": "Polls getUpdates, so the bot must have no webhook (Telegram answers 409 otherwise: call deleteWebhook first). Only one poller per bot. Execute in the editor shows up to 5 recent updates without consuming them.",
+          "type": "notice"
+        }
+      ]
+    },
+    {
+      "name": "slack",
+      "displayName": "Slack",
+      "description": "Send, update and delete Slack messages, upload and download files, list channels, look up users and add reactions",
+      "version": 1,
+      "kind": "action",
+      "categories": [
+        "Communication"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtc2xhY2stYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNUUxRjYwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzNCMEYzQyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtc2xhY2stYmcpIi8+CiAgPHBhdGggZD0iTTIwLjUgMTIgMTcuNSAzNk0zMC41IDEyIDI3LjUgMzZNMTMgMTkuNWgyM00xMiAyOC41aDIzIiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNC4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==",
+      "color": "#4A154B",
+      "subtitle": "{{operation}}: {{resource}}",
+      "documentationUrl": "https://api.slack.com/methods",
+      "keywords": [
+        "slack",
+        "chat",
+        "message",
+        "channel",
+        "file",
+        "upload",
+        "attachment"
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Send, update or delete a Slack message, get its permalink, upload or download a file, list channels, find a user by email, or add an emoji reaction.",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "credentials": [
+        {
+          "name": "slackApi",
+          "required": true
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "message",
+          "options": [
+            {
+              "name": "Channel",
+              "value": "channel"
+            },
+            {
+              "name": "File",
+              "value": "file"
+            },
+            {
+              "name": "Message",
+              "value": "message"
+            },
+            {
+              "name": "Reaction",
+              "value": "reaction"
+            },
+            {
+              "name": "User",
+              "value": "user"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "getAll",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "channel"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Get Many",
+              "value": "getAll",
+              "description": "Get many channels in the workspace",
+              "action": "Get many channels"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "add",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "reaction"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Add",
+              "value": "add",
+              "description": "Add an emoji reaction to a message",
+              "action": "Add a reaction"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "getByEmail",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "user"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Get by Email",
+              "value": "getByEmail",
+              "description": "Find a user by email address",
+              "action": "Get a user by email"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "upload",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Get",
+              "value": "get",
+              "description": "Get a file\u2019s details and download it into the item",
+              "action": "Get a file"
+            },
+            {
+              "name": "Upload",
+              "value": "upload",
+              "description": "Upload an item file to a channel or thread",
+              "action": "Upload a file"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "post",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Delete",
+              "value": "delete",
+              "action": "Delete a message"
+            },
+            {
+              "name": "Get Permalink",
+              "value": "getPermalink",
+              "action": "Get a message permalink"
+            },
+            {
+              "name": "Send",
+              "value": "post",
+              "action": "Send a message"
+            },
+            {
+              "name": "Update",
+              "value": "update",
+              "action": "Update a message"
+            }
+          ]
+        },
+        {
+          "name": "channelId",
+          "displayName": "Channel",
+          "type": "options",
+          "required": true,
+          "default": "",
+          "typeOptions": {
+            "loadOptionsMethod": "getChannels"
+          },
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message",
+                "reaction"
+              ]
+            }
+          },
+          "description": "Pick a channel, or set a channel ID (C0123ABCD) with an expression"
+        },
+        {
+          "name": "channelId",
+          "displayName": "Channel",
+          "type": "options",
+          "required": true,
+          "default": "",
+          "typeOptions": {
+            "loadOptionsMethod": "getChannels"
+          },
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ],
+              "operation": [
+                "upload"
+              ]
+            }
+          },
+          "description": "The channel to share the file in. Pick one, or set a channel ID (C0123ABCD) with an expression"
+        },
+        {
+          "name": "binaryPropertyName",
+          "displayName": "Input Binary Field",
+          "type": "string",
+          "required": true,
+          "default": "data",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ],
+              "operation": [
+                "upload"
+              ]
+            }
+          },
+          "description": "The item file to upload (item.binary.<name>)"
+        },
+        {
+          "name": "fileOptions",
+          "displayName": "Options",
+          "type": "collection",
+          "default": {},
+          "placeholder": "Add option",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ],
+              "operation": [
+                "upload"
+              ]
+            }
+          },
+          "values": [
+            {
+              "name": "fileName",
+              "displayName": "File Name",
+              "type": "string",
+              "default": "",
+              "description": "Default: the item file\u2019s name"
+            },
+            {
+              "name": "title",
+              "displayName": "Title",
+              "type": "string",
+              "default": "",
+              "description": "Default: the file name"
+            },
+            {
+              "name": "initial_comment",
+              "displayName": "Message",
+              "type": "string",
+              "default": "",
+              "typeOptions": {
+                "rows": 2
+              },
+              "description": "Text posted with the file"
+            },
+            {
+              "name": "thread_ts",
+              "displayName": "Reply to Thread (ts)",
+              "type": "string",
+              "default": "",
+              "description": "Share the file as a reply in the thread of this message"
+            }
+          ]
+        },
+        {
+          "name": "fileId",
+          "displayName": "File ID",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "F0123ABCD",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ],
+              "operation": [
+                "get"
+              ]
+            }
+          },
+          "description": "The file\u2019s ID, e.g. from a message event\u2019s files"
+        },
+        {
+          "name": "download",
+          "displayName": "Download",
+          "type": "boolean",
+          "default": true,
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ],
+              "operation": [
+                "get"
+              ]
+            }
+          },
+          "description": "Whether to put the file in item.binary; off: only its details"
+        },
+        {
+          "name": "binaryPropertyName",
+          "displayName": "Put Output File in Field",
+          "type": "string",
+          "default": "data",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ],
+              "operation": [
+                "get"
+              ],
+              "download": [
+                true
+              ]
+            }
+          },
+          "description": "The item.binary field for the downloaded file"
+        },
+        {
+          "name": "text",
+          "displayName": "Text",
+          "type": "string",
+          "default": "",
+          "typeOptions": {
+            "rows": 4
+          },
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "post",
+                "update"
+              ]
+            }
+          },
+          "description": "Message text (mrkdwn). With blocks it becomes the notification fallback"
+        },
+        {
+          "name": "blocksUi",
+          "displayName": "Blocks",
+          "type": "json",
+          "default": "",
+          "typeOptions": {
+            "rows": 6
+          },
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "post",
+                "update"
+              ]
+            }
+          },
+          "description": "Optional Block Kit blocks: a JSON array, or the {\"blocks\": [...]} object Block Kit Builder exports"
+        },
+        {
+          "name": "ts",
+          "displayName": "Message Timestamp",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "1663233118.856619",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "update",
+                "delete",
+                "getPermalink"
+              ]
+            }
+          },
+          "description": "The ts of the message (returned when it was sent)"
+        },
+        {
+          "name": "otherOptions",
+          "displayName": "Options",
+          "type": "collection",
+          "default": {},
+          "placeholder": "Add option",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "post"
+              ]
+            }
+          },
+          "values": [
+            {
+              "name": "thread_ts",
+              "displayName": "Reply to Thread (ts)",
+              "type": "string",
+              "default": "",
+              "description": "Post as a reply in the thread of this message"
+            },
+            {
+              "name": "reply_broadcast",
+              "displayName": "Also Send to Channel",
+              "type": "boolean",
+              "default": false,
+              "description": "Show a thread reply in the channel too"
+            },
+            {
+              "name": "unfurl_links",
+              "displayName": "Unfurl Links",
+              "type": "boolean",
+              "default": true
+            },
+            {
+              "name": "mrkdwn",
+              "displayName": "Use Markdown",
+              "type": "boolean",
+              "default": true
+            }
+          ]
+        },
+        {
+          "name": "timestamp",
+          "displayName": "Message Timestamp",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "reaction"
+              ]
+            }
+          },
+          "description": "The ts of the message to react to"
+        },
+        {
+          "name": "name",
+          "displayName": "Emoji Code",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "thumbsup",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "reaction"
+              ]
+            }
+          },
+          "description": "Emoji name without colons"
+        },
+        {
+          "name": "email",
+          "displayName": "Email",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "name@example.com",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "user"
+              ]
+            }
+          }
+        },
+        {
+          "name": "returnAll",
+          "displayName": "Return All",
+          "type": "boolean",
+          "default": false,
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "channel"
+              ]
+            }
+          },
+          "description": "Whether to return all results or only up to a limit"
+        },
+        {
+          "name": "limit",
+          "displayName": "Limit",
+          "type": "number",
+          "default": 50,
+          "typeOptions": {
+            "minValue": 1,
+            "numberPrecision": 0
+          },
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "channel"
+              ],
+              "returnAll": [
+                false
+              ]
+            }
+          },
+          "description": "Max number of results to return"
+        },
+        {
+          "name": "filters",
+          "displayName": "Filters",
+          "type": "collection",
+          "default": {},
+          "placeholder": "Add filter",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "channel"
+              ]
+            }
+          },
+          "values": [
+            {
+              "name": "excludeArchived",
+              "displayName": "Exclude Archived Channels",
+              "type": "boolean",
+              "default": true
+            },
+            {
+              "name": "types",
+              "displayName": "Types",
+              "type": "multiOptions",
+              "default": [
+                "public_channel"
+              ],
+              "options": [
+                {
+                  "name": "Public Channel",
+                  "value": "public_channel"
+                },
+                {
+                  "name": "Private Channel",
+                  "value": "private_channel"
+                },
+                {
+                  "name": "Group DM",
+                  "value": "mpim"
+                },
+                {
+                  "name": "Direct Message",
+                  "value": "im"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "simplify",
+          "displayName": "Simplify",
+          "type": "boolean",
+          "default": true,
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "channel",
+                "user"
+              ]
+            }
+          },
+          "description": "Whether to return a few flat fields instead of the raw Slack object"
+        }
+      ]
+    },
+    {
+      "name": "discord",
+      "displayName": "Discord",
+      "description": "Send, list, delete and react to Discord messages with a bot, or post through a channel webhook",
+      "version": 1,
+      "kind": "action",
+      "categories": [
+        "Communication"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
+      "color": "#5865F2",
+      "subtitle": "{{operation}}: {{resource}}",
+      "documentationUrl": "https://discord.com/developers/docs/resources/message",
+      "keywords": [
+        "discord",
+        "chat",
+        "message",
+        "webhook",
+        "bot"
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Send a Discord message (bot or webhook), list recent messages in a channel, delete a message, or react with an emoji.",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "credentials": [
+        {
+          "name": "discordBotApi",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "botToken"
+              ]
+            }
+          }
+        },
+        {
+          "name": "discordWebhookApi",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "webhook"
+              ]
+            }
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "authentication",
+          "displayName": "Connection Type",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "botToken",
+          "options": [
+            {
+              "name": "Bot Token",
+              "value": "botToken",
+              "description": "Manage messages in any channel the bot can see"
+            },
+            {
+              "name": "Webhook",
+              "value": "webhook",
+              "description": "Post to one channel through its webhook URL"
+            }
+          ]
+        },
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "message",
+          "options": [
+            {
+              "name": "Message",
+              "value": "message"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "send",
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "webhook"
+              ],
+              "resource": [
+                "message"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Send",
+              "value": "send",
+              "description": "Send a message through the webhook",
+              "action": "Send a message"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "send",
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "botToken"
+              ],
+              "resource": [
+                "message"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Delete",
+              "value": "deleteMessage",
+              "action": "Delete a message"
+            },
+            {
+              "name": "Get Many",
+              "value": "getAll",
+              "description": "Retrieve the latest messages in a channel",
+              "action": "Get many messages"
+            },
+            {
+              "name": "React with Emoji",
+              "value": "react",
+              "action": "React to a message with an emoji"
+            },
+            {
+              "name": "Send",
+              "value": "send",
+              "action": "Send a message"
+            }
+          ]
+        },
+        {
+          "name": "guildId",
+          "displayName": "Server",
+          "type": "options",
+          "default": "",
+          "typeOptions": {
+            "loadOptionsMethod": "getGuilds"
+          },
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "botToken"
+              ]
+            }
+          },
+          "description": "The server whose channels are listed below"
+        },
+        {
+          "name": "channelId",
+          "displayName": "Channel",
+          "type": "options",
+          "required": true,
+          "default": "",
+          "typeOptions": {
+            "loadOptionsMethod": "getChannels",
+            "loadOptionsDependsOn": [
+              "guildId"
+            ]
+          },
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "botToken"
+              ]
+            }
+          },
+          "description": "Pick a channel of the server, or set a channel ID with an expression"
+        },
+        {
+          "name": "messageId",
+          "displayName": "Message ID",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "botToken"
+              ],
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "deleteMessage",
+                "react"
+              ]
+            }
+          }
+        },
+        {
+          "name": "emoji",
+          "displayName": "Emoji",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "\ud83d\udc4d or custom_name:123456789012345678",
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "botToken"
+              ],
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "react"
+              ]
+            }
+          },
+          "description": "A Unicode emoji, or name:id for a custom emoji"
+        },
+        {
+          "name": "content",
+          "displayName": "Message",
+          "type": "string",
+          "default": "",
+          "typeOptions": {
+            "rows": 3
+          },
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "send"
+              ]
+            }
+          },
+          "description": "Up to 2000 characters. Optional when embeds are set"
+        },
+        {
+          "name": "embeds",
+          "displayName": "Embeds",
+          "type": "json",
+          "default": "",
+          "typeOptions": {
+            "rows": 6
+          },
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "send"
+              ]
+            }
+          },
+          "description": "Optional embed objects as JSON: one object or an array of up to 10"
+        },
+        {
+          "name": "options",
+          "displayName": "Options",
+          "type": "collection",
+          "default": {},
+          "placeholder": "Add option",
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "botToken"
+              ],
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "send"
+              ]
+            }
+          },
+          "values": [
+            {
+              "name": "tts",
+              "displayName": "Text-to-Speech",
+              "type": "boolean",
+              "default": false
+            },
+            {
+              "name": "replyTo",
+              "displayName": "Reply To Message ID",
+              "type": "string",
+              "default": "",
+              "description": "Send as a reply to this message in the same channel"
+            }
+          ]
+        },
+        {
+          "name": "options",
+          "displayName": "Options",
+          "type": "collection",
+          "default": {},
+          "placeholder": "Add option",
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "webhook"
+              ],
+              "operation": [
+                "send"
+              ]
+            }
+          },
+          "values": [
+            {
+              "name": "username",
+              "displayName": "Username",
+              "type": "string",
+              "default": "",
+              "description": "Override the webhook's default name"
+            },
+            {
+              "name": "avatar_url",
+              "displayName": "Avatar URL",
+              "type": "string",
+              "default": "",
+              "description": "Override the webhook's default avatar"
+            },
+            {
+              "name": "tts",
+              "displayName": "Text-to-Speech",
+              "type": "boolean",
+              "default": false
+            }
+          ]
+        },
+        {
+          "name": "returnAll",
+          "displayName": "Return All",
+          "type": "boolean",
+          "default": false,
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "botToken"
+              ],
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "getAll"
+              ]
+            }
+          },
+          "description": "Whether to return all messages or only up to a limit"
+        },
+        {
+          "name": "limit",
+          "displayName": "Limit",
+          "type": "number",
+          "default": 50,
+          "typeOptions": {
+            "minValue": 1,
+            "numberPrecision": 0
+          },
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "botToken"
+              ],
+              "operation": [
+                "getAll"
+              ],
+              "returnAll": [
+                false
+              ]
+            }
+          },
+          "description": "Max number of results to return"
+        },
+        {
+          "name": "simplify",
+          "displayName": "Simplify",
+          "type": "boolean",
+          "default": true,
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "botToken"
+              ],
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "getAll"
+              ]
+            }
+          },
+          "description": "Whether to return a few flat fields instead of the raw Discord message"
+        }
+      ]
+    },
+    {
+      "name": "whatsApp",
+      "displayName": "WhatsApp Business Cloud",
+      "description": "Send WhatsApp text, media (by URL) and template messages through the Cloud API",
+      "version": 1,
+      "kind": "action",
+      "categories": [
+        "Communication"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtd2EtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzREQjc0Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFEQjk1NSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtd2EtYmcpIi8+CiAgPHBhdGggZD0iTTI0IDEwLjVhMTMuNSAxMy41IDAgMSAxLTYuOSAyNS4xbC02LjYgMS45IDEuOS02LjNBMTMuNSAxMy41IDAgMCAxIDI0IDEwLjV6IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0xOS42IDE3LjhjLjUtLjUgMS4zLS40IDEuNy4ybDEuNSAyLjNjLjMuNS4yIDEuMi0uMiAxLjZsLS44LjhjLjggMS44IDIuMiAzLjIgNCA0bC44LS44Yy40LS40IDEuMS0uNSAxLjYtLjJsMi4zIDEuNWMuNi40LjcgMS4yLjIgMS43bC0xLjEgMS4xYy0uOS45LTIuMyAxLjItMy41LjYtMy4zLTEuNi02LTQuMy03LjYtNy42LS42LTEuMi0uMy0yLjYuNi0zLjV6IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPgo=",
+      "color": "#25D366",
+      "subtitle": "{{operation}}: {{resource}}",
+      "documentationUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages",
+      "keywords": [
+        "whatsapp",
+        "meta",
+        "message",
+        "template",
+        "sms"
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Send a WhatsApp message (text, or an image, document, audio or video by URL) or an approved template to a phone number in international format.",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "credentials": [
+        {
+          "name": "whatsAppApi",
+          "required": true
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "message",
+          "options": [
+            {
+              "name": "Message",
+              "value": "message"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "noDataExpression": true,
+          "default": "send",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Send",
+              "value": "send",
+              "description": "Send a text message, or media by URL",
+              "action": "Send message"
+            },
+            {
+              "name": "Send Template",
+              "value": "sendTemplate",
+              "description": "Send an approved message template",
+              "action": "Send template"
+            }
+          ]
+        },
+        {
+          "name": "phoneNumberId",
+          "displayName": "Sender Phone Number (or ID)",
+          "type": "options",
+          "required": true,
+          "default": "",
+          "typeOptions": {
+            "loadOptionsMethod": "getPhoneNumbers"
+          },
+          "description": "The business phone number to send from (its phone number ID)"
+        },
+        {
+          "name": "recipientPhoneNumber",
+          "displayName": "Recipient's Phone Number",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "+15551234567",
+          "description": "International format with country code"
+        },
+        {
+          "name": "messageType",
+          "displayName": "Message Type",
+          "type": "options",
+          "default": "text",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "send"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Text",
+              "value": "text"
+            },
+            {
+              "name": "Image",
+              "value": "image"
+            },
+            {
+              "name": "Document",
+              "value": "document"
+            },
+            {
+              "name": "Audio",
+              "value": "audio"
+            },
+            {
+              "name": "Video",
+              "value": "video"
+            }
+          ]
+        },
+        {
+          "name": "textBody",
+          "displayName": "Text Body",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "typeOptions": {
+            "rows": 3
+          },
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "send"
+              ],
+              "messageType": [
+                "text"
+              ]
+            }
+          }
+        },
+        {
+          "name": "previewUrl",
+          "displayName": "Show URL Preview",
+          "type": "boolean",
+          "default": false,
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "send"
+              ],
+              "messageType": [
+                "text"
+              ]
+            }
+          },
+          "description": "Whether to render a preview of the first URL in the text"
+        },
+        {
+          "name": "mediaLink",
+          "displayName": "Media URL",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "https://example.com/file.pdf",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "send"
+              ],
+              "messageType": [
+                "image",
+                "document",
+                "audio",
+                "video"
+              ]
+            }
+          },
+          "description": "Public HTTPS URL WhatsApp downloads the media from"
+        },
+        {
+          "name": "mediaCaption",
+          "displayName": "Caption",
+          "type": "string",
+          "default": "",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "send"
+              ],
+              "messageType": [
+                "image",
+                "document",
+                "video"
+              ]
+            }
+          }
+        },
+        {
+          "name": "mediaFilename",
+          "displayName": "Filename",
+          "type": "string",
+          "default": "",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "send"
+              ],
+              "messageType": [
+                "document"
+              ]
+            }
+          },
+          "description": "File name shown to the recipient"
+        },
+        {
+          "name": "templateName",
+          "displayName": "Template Name",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "hello_world",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendTemplate"
+              ]
+            }
+          }
+        },
+        {
+          "name": "languageCode",
+          "displayName": "Language Code",
+          "type": "string",
+          "required": true,
+          "default": "en_US",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendTemplate"
+              ]
+            }
+          },
+          "description": "The language of the approved template, e.g. en_US or de"
+        },
+        {
+          "name": "components",
+          "displayName": "Components",
+          "type": "json",
+          "default": "",
+          "typeOptions": {
+            "rows": 6
+          },
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "message"
+              ],
+              "operation": [
+                "sendTemplate"
+              ]
+            }
+          },
+          "description": "Optional template components as a JSON array (header, body and button parameters)"
+        }
+      ]
+    },
+    {
+      "name": "emailSend",
+      "displayName": "Send Email",
+      "description": "Send an email through any SMTP server (text, HTML or both)",
+      "version": 1,
+      "kind": "action",
+      "categories": [
+        "Communication"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZW1haWwtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjN0M4NDkyIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzU2NUQ2OSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtZW1haWwtYmcpIi8+CiAgPHJlY3QgeD0iMTAiIHk9IjE0IiB3aWR0aD0iMjgiIGhlaWdodD0iMjAiIHJ4PSIzLjUiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMTEuOCAxNi44IDI0IDI2bDEyLjItOS4yIiBmaWxsPSJub25lIiBzdHJva2U9IiM2QjcyODAiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
+      "color": "#6B7280",
+      "subtitle": "{{toEmail}}",
+      "documentationUrl": "https://www.rfc-editor.org/rfc/rfc5321",
+      "keywords": [
+        "email",
+        "mail",
+        "smtp",
+        "send"
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Send an email to one or more comma-separated addresses with a subject and a text and/or HTML body.",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "credentials": [
+        {
+          "name": "smtp",
+          "required": true
+        }
+      ],
+      "properties": [
+        {
+          "name": "fromEmail",
+          "displayName": "From Email",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "Jane Doe <jane@example.com>"
+        },
+        {
+          "name": "toEmail",
+          "displayName": "To Email",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "info@example.com, John <john@example.com>",
+          "description": "Comma-separated recipients, each optionally with a name: Nathan Doe <nate@example.com>"
+        },
+        {
+          "name": "subject",
+          "displayName": "Subject",
+          "type": "string",
+          "default": "",
+          "placeholder": "My subject line"
+        },
+        {
+          "name": "emailFormat",
+          "displayName": "Email Format",
+          "type": "options",
+          "default": "html",
+          "options": [
+            {
+              "name": "Text",
+              "value": "text",
+              "description": "Plain text only"
+            },
+            {
+              "name": "HTML",
+              "value": "html",
+              "description": "HTML only"
+            },
+            {
+              "name": "Both",
+              "value": "both",
+              "description": "HTML with a plain-text alternative (multipart/alternative)"
+            }
+          ]
+        },
+        {
+          "name": "text",
+          "displayName": "Text",
+          "type": "string",
+          "default": "",
+          "typeOptions": {
+            "rows": 5
+          },
+          "displayOptions": {
+            "show": {
+              "emailFormat": [
+                "text",
+                "both"
+              ]
+            }
+          }
+        },
+        {
+          "name": "html",
+          "displayName": "HTML",
+          "type": "string",
+          "default": "",
+          "typeOptions": {
+            "rows": 5
+          },
+          "displayOptions": {
+            "show": {
+              "emailFormat": [
+                "html",
+                "both"
+              ]
+            }
+          }
+        },
+        {
+          "name": "options",
+          "displayName": "Options",
+          "type": "collection",
+          "default": {},
+          "placeholder": "Add option",
+          "values": [
+            {
+              "name": "ccEmail",
+              "displayName": "CC Email",
+              "type": "string",
+              "default": "",
+              "description": "Comma-separated"
+            },
+            {
+              "name": "bccEmail",
+              "displayName": "BCC Email",
+              "type": "string",
+              "default": "",
+              "description": "Comma-separated; not visible to other recipients"
+            },
+            {
+              "name": "replyTo",
+              "displayName": "Reply To",
+              "type": "string",
+              "default": "",
+              "description": "Where replies go, if not to From"
+            },
+            {
+              "name": "allowUnauthorizedCerts",
+              "displayName": "Ignore SSL Issues (Insecure)",
+              "type": "boolean",
+              "default": false,
+              "description": "Accept invalid or self-signed server certificates"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "credentialTypes": [
+    {
+      "name": "telegramApi",
+      "displayName": "Telegram API",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdGctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzRBRUU2Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBOEJDMiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtdGctYmcpIi8+CiAgPHBhdGggZD0iTTM5IDExIDkgMjIuNWwxMi41IDR6IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTM5IDExIDIxLjUgMjYuNSAyNSAzOHoiIGZpbGw9IiNkM2YwZmMiIHN0cm9rZT0iI2QzZjBmYyIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMjEuNSAyNi41IDIwIDMzLjVsMy42LTMuNHoiIGZpbGw9IiM5ZmQ4ZjIiIHN0cm9rZT0iIzlmZDhmMiIgc3Ryb2tlLXdpZHRoPSIxLjIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
+      "documentationUrl": "https://core.telegram.org/bots/features#botfather",
+      "properties": [
+        {
+          "name": "accessToken",
+          "displayName": "Access Token",
+          "type": "string",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          },
+          "placeholder": "123456789:ABCdefGhIJKlmnOPQ",
+          "description": "The bot token @BotFather gives you with /newbot"
+        },
+        {
+          "name": "baseUrl",
+          "displayName": "Base URL",
+          "type": "string",
+          "default": "https://api.telegram.org",
+          "description": "Change it for a local Bot API server or a test double"
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "slackApi",
+      "displayName": "Slack API",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtc2xhY2stYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNUUxRjYwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzNCMEYzQyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtc2xhY2stYmcpIi8+CiAgPHBhdGggZD0iTTIwLjUgMTIgMTcuNSAzNk0zMC41IDEyIDI3LjUgMzZNMTMgMTkuNWgyM00xMiAyOC41aDIzIiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNC4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==",
+      "documentationUrl": "https://api.slack.com/authentication/token-types#bot",
+      "properties": [
+        {
+          "name": "accessToken",
+          "displayName": "Access Token",
+          "type": "string",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          },
+          "placeholder": "xoxb-\u2026",
+          "description": "Bot User OAuth Token from your Slack app (\"OAuth & Permissions\")"
+        },
+        {
+          "name": "baseUrl",
+          "displayName": "Base URL",
+          "type": "string",
+          "default": "https://slack.com/api",
+          "description": "Change it only for a proxy or a test double"
+        },
+        {
+          "name": "signingSecret",
+          "displayName": "Signing Secret",
+          "type": "string",
+          "default": "",
+          "typeOptions": {
+            "password": true
+          },
+          "description": "From the app's \"Basic Information\" page. Needed when Slack calls Landflow: agent channels (Events API) and approval buttons (Interactivity)."
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "discordBotApi",
+      "displayName": "Discord Bot API",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
+      "documentationUrl": "https://discord.com/developers/docs/topics/oauth2#bots",
+      "properties": [
+        {
+          "name": "botToken",
+          "displayName": "Bot Token",
+          "type": "string",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          },
+          "description": "Developer Portal \u2192 your application \u2192 Bot \u2192 Reset Token"
+        },
+        {
+          "name": "baseUrl",
+          "displayName": "Base URL",
+          "type": "string",
+          "default": "https://discord.com/api/v10",
+          "description": "Change it only for a proxy or a test double"
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "discordWebhookApi",
+      "displayName": "Discord Webhook",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
+      "documentationUrl": "https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks",
+      "properties": [
+        {
+          "name": "webhookUrl",
+          "displayName": "Webhook URL",
+          "type": "string",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          },
+          "placeholder": "https://discord.com/api/webhooks/123456789/abcDEF\u2026",
+          "description": "Channel settings \u2192 Integrations \u2192 Webhooks \u2192 Copy Webhook URL. The URL contains its own token"
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "whatsAppApi",
+      "displayName": "WhatsApp API",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtd2EtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzREQjc0Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFEQjk1NSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtd2EtYmcpIi8+CiAgPHBhdGggZD0iTTI0IDEwLjVhMTMuNSAxMy41IDAgMSAxLTYuOSAyNS4xbC02LjYgMS45IDEuOS02LjNBMTMuNSAxMy41IDAgMCAxIDI0IDEwLjV6IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0xOS42IDE3LjhjLjUtLjUgMS4zLS40IDEuNy4ybDEuNSAyLjNjLjMuNS4yIDEuMi0uMiAxLjZsLS44LjhjLjggMS44IDIuMiAzLjIgNCA0bC44LS44Yy40LS40IDEuMS0uNSAxLjYtLjJsMi4zIDEuNWMuNi40LjcgMS4yLjIgMS43bC0xLjEgMS4xYy0uOS45LTIuMyAxLjItMy41LjYtMy4zLTEuNi02LTQuMy03LjYtNy42LS42LTEuMi0uMy0yLjYuNi0zLjV6IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPgo=",
+      "documentationUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started",
+      "properties": [
+        {
+          "name": "accessToken",
+          "displayName": "Access Token",
+          "type": "string",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          },
+          "description": "A System User access token with whatsapp_business_messaging and whatsapp_business_management"
+        },
+        {
+          "name": "businessAccountId",
+          "displayName": "Business Account ID",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "description": "The WhatsApp Business Account ID (WhatsApp Manager \u2192 API Setup)"
+        },
+        {
+          "name": "baseUrl",
+          "displayName": "Base URL",
+          "type": "string",
+          "default": "https://graph.facebook.com/v21.0",
+          "description": "Graph API base, including the version"
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "smtp",
+      "displayName": "SMTP",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZW1haWwtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjN0M4NDkyIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzU2NUQ2OSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtZW1haWwtYmcpIi8+CiAgPHJlY3QgeD0iMTAiIHk9IjE0IiB3aWR0aD0iMjgiIGhlaWdodD0iMjAiIHJ4PSIzLjUiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMTEuOCAxNi44IDI0IDI2bDEyLjItOS4yIiBmaWxsPSJub25lIiBzdHJva2U9IiM2QjcyODAiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
+      "documentationUrl": "https://www.rfc-editor.org/rfc/rfc5321",
+      "properties": [
+        {
+          "name": "user",
+          "displayName": "User",
+          "type": "string",
+          "default": "",
+          "description": "Leave empty for servers that need no login"
+        },
+        {
+          "name": "password",
+          "displayName": "Password",
+          "type": "string",
+          "default": "",
+          "typeOptions": {
+            "password": true
+          }
+        },
+        {
+          "name": "host",
+          "displayName": "Host",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "placeholder": "smtp.example.com"
+        },
+        {
+          "name": "port",
+          "displayName": "Port",
+          "type": "number",
+          "default": 465,
+          "description": "465 for SSL/TLS, 587 (or 25) for STARTTLS"
+        },
+        {
+          "name": "secure",
+          "displayName": "SSL/TLS",
+          "type": "boolean",
+          "default": true,
+          "description": "Connect with TLS from the start (port 465). Off: a plain connection, upgraded with STARTTLS when the server offers it"
+        },
+        {
+          "name": "disableStartTls",
+          "displayName": "Disable STARTTLS",
+          "type": "boolean",
+          "default": false,
+          "displayOptions": {
+            "show": {
+              "secure": [
+                false
+              ]
+            }
+          },
+          "description": "Stay unencrypted even when the server offers STARTTLS (local test servers only)"
+        },
+        {
+          "name": "hostName",
+          "displayName": "Client Host Name",
+          "type": "string",
+          "default": "",
+          "description": "Name sent with EHLO (default: this machine's host name)"
+        }
+      ],
+      "testable": true
+    }
+  ]
+}

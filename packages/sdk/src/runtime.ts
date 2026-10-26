@@ -1,8 +1,8 @@
 /**
  * Turns a wire-level ExecuteRequest into an IExecuteContext, runs the node and
- * normalizes whatever it returns into an ExecuteResponse. Used by the HTTP and
- * gRPC servers and by the host's in-process transport, so a node behaves the
- * same no matter how it is reached.
+ * normalizes whatever it returns into an ExecuteResponse. Used by the dispatcher
+ * (every binding: HTTP, gRPC, brokers, MCP) and by the host's in-process
+ * transport, so a node behaves the same no matter how it is reached.
  */
 import { context as otelContext } from '@opentelemetry/api';
 import type {
@@ -48,6 +48,8 @@ export interface ContextExtras {
   /** Extra log sink (the host streams logs live). */
   onLog?: (entry: LogEntry) => void;
   signal?: AbortSignal;
+  /** Epoch ms by which the call must finish (the dispatcher sets it from the binding's deadline); exposed as `ctx.deadline`. */
+  deadline?: number;
   /** Telemetry for spans, metrics and the process log (default: getTelemetry()). */
   telemetry?: Telemetry;
   /** The plugin's credential types, so only their password fields are redacted (otherwise every string credential value is). */
@@ -186,6 +188,7 @@ function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[]
     },
     isFirstPoll: () => request.mode === 'poll' && !request.pollState,
     ...(extras.signal && { signal: extras.signal }),
+    ...(extras.deadline !== undefined && { deadline: extras.deadline }),
   };
   if (extras.getInputConnectionData) context.getInputConnectionData = extras.getInputConnectionData;
   if (extras.putExecutionToWait) context.putExecutionToWait = extras.putExecutionToWait;
@@ -306,7 +309,7 @@ export function toErrorPayload(error: unknown): NonNullable<ExecuteResponse['err
   return { message: scrub(String(error)) };
 }
 
-export type LoadOptionsExtras = Pick<ContextExtras, 'telemetry' | 'signal' | 'credentialTypes' | 'pluginId'>;
+export type LoadOptionsExtras = Pick<ContextExtras, 'telemetry' | 'signal' | 'deadline' | 'credentialTypes' | 'pluginId'>;
 
 export async function runLoadOptions(
   node: INodeType,

@@ -1,0 +1,44 @@
+{
+  "kit": "landflow.conformance/v1",
+  "suite": "delivery-modes",
+  "description": "At most once by default (acknowledge before running); at least once for idempotent nodes and for LoadOptions, TestCredentials and Health (acknowledge after the reply). The core picks the mode; runners observe it through the core's delivery hook. Direct transports have one mode and skip the mode assertions.",
+  "applies": ["messaging"],
+  "cases": [
+    {
+      "id": "default-at-most-once",
+      "description": "A node without `idempotent` is delivered at most once, even with an idempotency key.",
+      "call": { "method": "execute", "node": "counter", "parameters": { "key": "delivery/default" }, "idempotencyKey": "ex_1:n1:0" },
+      "expect": { "outcome": "reply", "deliveryMode": "at-most-once", "count": 1 }
+    },
+    {
+      "id": "idempotent-at-least-once",
+      "description": "A node marked `idempotent: true` is delivered at least once.",
+      "call": { "method": "execute", "node": "echo", "parameters": { "message": "hi" } },
+      "expect": { "outcome": "reply", "deliveryMode": "at-least-once", "outputs": [[{ "json": { "echo": "hi" } }]] }
+    },
+    {
+      "id": "load-options-at-least-once",
+      "description": "LoadOptions is always at least once (it has no side effects).",
+      "call": { "method": "loadOptions", "node": "echo", "loadOptions": { "method": "anything" } },
+      "expect": { "outcome": ["reply", "transport-error"], "deliveryMode": "at-least-once", "note": "the conformance plugin has no load-options methods; the reply may be a transport error not_found, the mode is what is asserted" }
+    },
+    {
+      "id": "health-at-least-once",
+      "description": "Health is always at least once.",
+      "call": { "method": "health" },
+      "expect": { "outcome": "reply", "deliveryMode": "at-least-once" }
+    },
+    {
+      "id": "repeat-same-key-runs-twice",
+      "description": "Two calls with the same idempotency key are two calls: the transport does not deduplicate (the node forwards the key to its API; the host's own dedupe is per execution step). Both run; the second count is 2.",
+      "call": { "method": "execute", "node": "counter", "parameters": { "key": "delivery/repeat" }, "idempotencyKey": "ex_2:n1:0", "repeat": 2 },
+      "expect": { "outcome": "reply", "count": 2 }
+    },
+    {
+      "id": "attempt-counter",
+      "description": "A redelivered event carries lfattempt 2 (or more); the first delivery carries 1. Runners that can force a redelivery (visibility timeout, nack) assert the attempt the plugin saw.",
+      "call": { "method": "execute", "node": "echo", "parameters": { "message": "attempt" } },
+      "expect": { "outcome": "reply", "note": "lfattempt starts at 1; assert through the dispatcher hook when redelivery can be forced" }
+    }
+  ]
+}

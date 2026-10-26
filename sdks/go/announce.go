@@ -170,6 +170,9 @@ type announcer struct {
 	version    string
 	ttlSeconds int
 	logger     *log.Logger
+	// transports and maxConcurrency are the manifest hints sent with every announce.
+	transports     []string
+	maxConcurrency int
 
 	mu          sync.Mutex
 	announced   map[string]bool // endpoints accepted at least once
@@ -215,6 +218,7 @@ func (a *announcer) loop(ctx context.Context, endpoint string) {
 	req := AnnounceRequest{
 		Protocol: ProtocolVersion, Endpoint: endpoint, PluginID: a.pluginID,
 		Version: a.version, TTLSeconds: a.ttlSeconds, InstanceID: processInstanceID,
+		Transports: a.transports, MaxConcurrency: a.maxConcurrency,
 	}
 	for {
 		callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

@@ -141,15 +141,21 @@ class Announcer:
         version: str,
         endpoints: list[str],
         ttl_seconds: int = DEFAULT_ANNOUNCE_TTL_SECONDS,
+        transports: list[str] | None = None,
+        max_concurrency: int | None = None,
     ) -> None:
         self.client = client
+        self.transports = list(transports) if transports else None
+        self.max_concurrency = max_concurrency or None
         self.registry_label = registry_label
         self.plugin_id = plugin_id
         self.version = version
         self.endpoints = list(endpoints)
         self.ttl_seconds = ttl_seconds
+        self._endpoints_lock = threading.Lock()
         self.interval: float = DEFAULT_HEARTBEAT_SECONDS
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
         self._state: str | None = None  # None (not tried) | "ok" | "rejected" | "unreachable"
         self._announced_once = False
@@ -159,21 +165,33 @@ class Announcer:
         self._thread = threading.Thread(target=self._run, name="landflow-announce", daemon=True)
         self._thread.start()
 
+    def add_endpoints(self, endpoints: list[str] | tuple[str, ...]) -> None:
+        """Announce more endpoints from now on (a binding that learned its endpoint after start); the next heartbeat carries them."""
+        with self._endpoints_lock:
+            for endpoint in endpoints:
+                if endpoint not in self.endpoints:
+                    self.endpoints.append(endpoint)
+        self._wake.set()
+
     def _run(self) -> None:
         backoff = 1.0
         while not self._stop.is_set():
+            self._wake.clear()
             state = self.announce_once()
             if state == "unreachable":
                 delay = min(backoff, self.interval)
                 backoff = min(backoff * 2, self.interval)
             else:
                 delay, backoff = self.interval, 1.0
-            self._stop.wait(delay)
+            # Woken early by add_endpoints (announce the new endpoint now) or by stop().
+            self._wake.wait(delay)
 
     def announce_once(self) -> str:
         intervals: list[float] = []
         rejected = False
-        for endpoint in self.endpoints:
+        with self._endpoints_lock:
+            endpoints = list(self.endpoints)
+        for endpoint in endpoints:
             if self._stop.is_set():
                 break
             payload = {
@@ -184,6 +202,10 @@ class Announcer:
                 "ttlSeconds": self.ttl_seconds,
                 "instanceId": INSTANCE_ID,
             }
+            if self.transports:
+                payload["transports"] = self.transports
+            if self.max_concurrency:
+                payload["maxConcurrency"] = self.max_concurrency
             try:
                 response = self.client.announce(payload, REQUEST_TIMEOUT_SECONDS)
             except RegistryUnreachable as exc:
@@ -226,6 +248,7 @@ class Announcer:
 
     def stop(self, withdraw: bool = True) -> None:
         self._stop.set()
+        self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=REQUEST_TIMEOUT_SECONDS + 1)
             self._thread = None

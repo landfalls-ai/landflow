@@ -386,6 +386,41 @@
               ],
               "additionalProperties": false
             }
+          },
+          "idempotent": {
+            "type": "boolean"
+          },
+          "mcp": {
+            "type": "boolean",
+            "const": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "toolAnnotations": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "readOnlyHint": {
+                "type": "boolean"
+              },
+              "destructiveHint": {
+                "type": "boolean"
+              },
+              "idempotentHint": {
+                "type": "boolean"
+              },
+              "openWorldHint": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
           }
         },
         "required": [
@@ -447,6 +482,18 @@
         ],
         "additionalProperties": false
       }
+    },
+    "transports": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      }
+    },
+    "maxConcurrency": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -520,6 +567,41 @@
               },
               "action": {
                 "type": "string"
+              },
+              "mcp": {
+                "type": "boolean",
+                "const": false
+              },
+              "idempotent": {
+                "type": "boolean"
+              },
+              "outputSchema": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "toolAnnotations": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "readOnlyHint": {
+                    "type": "boolean"
+                  },
+                  "destructiveHint": {
+                    "type": "boolean"
+                  },
+                  "idempotentHint": {
+                    "type": "boolean"
+                  },
+                  "openWorldHint": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "required": [

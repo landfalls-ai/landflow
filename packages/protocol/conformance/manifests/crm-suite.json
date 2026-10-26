@@ -1,0 +1,121 @@
+{
+  "protocol": "landflow.plugin/v1",
+  "plugin": { "id": "crm-suite", "name": "CRM Suite", "version": "2.3.0", "language": "go" },
+  "credentialTypes": [
+    { "name": "crmOAuth2Api", "displayName": "CRM OAuth2", "extends": ["oAuth2Api"], "properties": [] },
+    { "name": "crmTokenApi", "displayName": "CRM Token", "properties": [{ "name": "token", "displayName": "Token", "type": "string", "typeOptions": { "password": true } }] }
+  ],
+  "nodes": [
+    {
+      "name": "contacts",
+      "displayName": "Contacts",
+      "description": "Contacts and companies in the CRM.",
+      "version": [1, 2],
+      "defaultVersion": 2,
+      "kind": "action",
+      "usableAsTool": true,
+      "idempotent": true,
+      "inputs": [{ "type": "main" }],
+      "outputs": [{ "type": "main" }],
+      "credentials": [
+        { "name": "crmOAuth2Api", "required": true, "displayOptions": { "show": { "authentication": ["oAuth2"] } } },
+        { "name": "crmTokenApi", "required": true, "displayOptions": { "show": { "authentication": ["token"] } } }
+      ],
+      "properties": [
+        { "name": "authentication", "displayName": "Authentication", "type": "options", "default": "oAuth2", "options": [{ "name": "OAuth2", "value": "oAuth2" }, { "name": "Token", "value": "token" }] },
+        { "name": "resource", "displayName": "Resource", "type": "options", "default": "contact", "options": [{ "name": "Contact", "value": "contact" }, { "name": "Company", "value": "company" }, { "name": "Audit log", "value": "audit", "mcp": false }] },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "upsert",
+          "displayOptions": { "show": { "resource": ["contact"] } },
+          "options": [
+            { "name": "Upsert", "value": "upsert", "description": "Create or update by email" },
+            { "name": "Get", "value": "get" },
+            { "name": "Search", "value": "search" },
+            { "name": "Remove", "value": "remove", "idempotent": false }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "get",
+          "displayOptions": { "show": { "resource": ["company"] } },
+          "options": [{ "name": "Get", "value": "get" }]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "list",
+          "displayOptions": { "show": { "resource": ["audit"] } },
+          "options": [{ "name": "List", "value": "list" }]
+        },
+        { "name": "email", "displayName": "Email", "type": "string", "default": "", "required": true, "displayOptions": { "show": { "resource": ["contact"], "operation": ["upsert"] } } },
+        { "name": "contactId", "displayName": "Contact", "type": "options", "default": "", "required": true, "typeOptions": { "loadOptionsMethod": "getContacts" }, "displayOptions": { "show": { "resource": ["contact"], "operation": ["get", "remove"] } } },
+        { "name": "companyId", "displayName": "Company", "type": "options", "default": "", "required": true, "typeOptions": { "loadOptionsMethod": "getCompanies", "loadOptionsDependsOn": ["authentication"] }, "displayOptions": { "show": { "resource": ["company"] } } },
+        { "name": "query", "displayName": "Query", "type": "string", "default": "", "displayOptions": { "show": { "resource": ["contact"], "operation": ["search"] } } },
+        {
+          "name": "fields",
+          "displayName": "Fields",
+          "type": "fixedCollection",
+          "default": {},
+          "typeOptions": { "multipleValues": true },
+          "displayOptions": { "show": { "resource": ["contact"], "operation": ["upsert"] } },
+          "groups": [
+            {
+              "name": "field",
+              "displayName": "Field",
+              "values": [
+                { "name": "name", "displayName": "Name", "type": "options", "default": "firstName", "options": [{ "name": "First name", "value": "firstName" }, { "name": "Last name", "value": "lastName" }, { "name": "Phone", "value": "phone" }] },
+                { "name": "value", "displayName": "Value", "type": "string", "default": "" }
+              ]
+            }
+          ]
+        },
+        { "name": "properties", "displayName": "Properties (JSON)", "type": "json", "default": "{}", "displayOptions": { "show": { "resource": ["contact"], "operation": ["upsert"] } } },
+        { "name": "simplify", "displayName": "Simplify", "type": "boolean", "default": true, "description": "Return a simplified version of the response instead of the raw data." }
+      ]
+    },
+    {
+      "name": "notes",
+      "displayName": "Notes",
+      "description": "Notes attached to a contact.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [{ "type": "main" }],
+      "outputs": [{ "type": "main" }],
+      "toolAnnotations": { "openWorldHint": false },
+      "properties": [
+        { "name": "operation", "displayName": "Operation", "type": "options", "default": "add", "options": [{ "name": "Add", "value": "add" }, { "name": "List", "value": "list" }] },
+        { "name": "contactId", "displayName": "Contact ID", "type": "string", "default": "", "required": true },
+        { "name": "text", "displayName": "Text", "type": "string", "default": "", "displayOptions": { "show": { "operation": ["add"] } } },
+        { "name": "code", "displayName": "Formatter", "type": "code", "default": "", "typeOptions": { "language": "javascript" }, "displayOptions": { "show": { "operation": ["add"] } } }
+      ]
+    },
+    {
+      "name": "summarizer",
+      "displayName": "Summarizer",
+      "description": "An AI sub-node: never a tool.",
+      "version": 1,
+      "kind": "subnode",
+      "supplies": "ai_tool",
+      "inputs": [],
+      "outputs": [{ "type": "ai_tool" }],
+      "properties": []
+    },
+    {
+      "name": "internal",
+      "displayName": "Internal",
+      "description": "An action node not flagged usableAsTool.",
+      "version": 1,
+      "kind": "action",
+      "inputs": [{ "type": "main" }],
+      "outputs": [{ "type": "main" }],
+      "properties": [{ "name": "x", "displayName": "X", "type": "string", "default": "" }]
+    }
+  ]
+}

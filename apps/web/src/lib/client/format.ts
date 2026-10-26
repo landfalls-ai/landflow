@@ -27,8 +27,23 @@ export function languageMeta(language: string) {
   return LANGUAGE_META[language] ?? { label: language, color: 'var(--t3)', short: language.slice(0, 2).toUpperCase() };
 }
 
-export const TRANSPORT_META = {
+export const TRANSPORT_META: Record<string, { label: string }> = {
   'in-process': { label: 'in-process' },
   http: { label: 'HTTP' },
   grpc: { label: 'gRPC' },
-} as const;
+  kafka: { label: 'Kafka' },
+  amqp: { label: 'RabbitMQ' },
+  nats: { label: 'NATS' },
+  valkey: { label: 'Valkey' },
+  mqtt: { label: 'MQTT' },
+  sqs: { label: 'SQS' },
+  pubsub: { label: 'Pub/Sub' },
+  servicebus: { label: 'Service Bus' },
+  amqp1: { label: 'AMQP 1.0' },
+  pulsar: { label: 'Pulsar' },
+};
+
+/** Label of any transport kind: the known ones from TRANSPORT_META, an unknown kind as is (the engine's Transport is open). */
+export function transportLabel(transport: string): string {
+  return TRANSPORT_META[transport]?.label ?? transport;
+}

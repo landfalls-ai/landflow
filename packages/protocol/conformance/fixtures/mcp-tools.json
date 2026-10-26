@@ -1,0 +1,2082 @@
+{
+  "kit": "landflow.conformance/v1",
+  "suite": "mcp-tools",
+  "description": "For each manifest, exactly the MCP tools mcpToolsFromManifest() must produce (names, schemas, annotations, bindings).",
+  "cases": [
+    {
+      "id": "crm-suite",
+      "description": "CRM Suite (crm-suite): 4 node(s)",
+      "manifest": {
+        "protocol": "landflow.plugin/v1",
+        "plugin": {
+          "id": "crm-suite",
+          "name": "CRM Suite",
+          "version": "2.3.0",
+          "language": "go"
+        },
+        "credentialTypes": [
+          {
+            "name": "crmOAuth2Api",
+            "displayName": "CRM OAuth2",
+            "extends": [
+              "oAuth2Api"
+            ],
+            "properties": []
+          },
+          {
+            "name": "crmTokenApi",
+            "displayName": "CRM Token",
+            "properties": [
+              {
+                "name": "token",
+                "displayName": "Token",
+                "type": "string",
+                "typeOptions": {
+                  "password": true
+                }
+              }
+            ]
+          }
+        ],
+        "nodes": [
+          {
+            "name": "contacts",
+            "displayName": "Contacts",
+            "description": "Contacts and companies in the CRM.",
+            "version": [
+              1,
+              2
+            ],
+            "defaultVersion": 2,
+            "kind": "action",
+            "usableAsTool": true,
+            "idempotent": true,
+            "inputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "outputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "credentials": [
+              {
+                "name": "crmOAuth2Api",
+                "required": true,
+                "displayOptions": {
+                  "show": {
+                    "authentication": [
+                      "oAuth2"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "crmTokenApi",
+                "required": true,
+                "displayOptions": {
+                  "show": {
+                    "authentication": [
+                      "token"
+                    ]
+                  }
+                }
+              }
+            ],
+            "properties": [
+              {
+                "name": "authentication",
+                "displayName": "Authentication",
+                "type": "options",
+                "default": "oAuth2",
+                "options": [
+                  {
+                    "name": "OAuth2",
+                    "value": "oAuth2"
+                  },
+                  {
+                    "name": "Token",
+                    "value": "token"
+                  }
+                ]
+              },
+              {
+                "name": "resource",
+                "displayName": "Resource",
+                "type": "options",
+                "default": "contact",
+                "options": [
+                  {
+                    "name": "Contact",
+                    "value": "contact"
+                  },
+                  {
+                    "name": "Company",
+                    "value": "company"
+                  },
+                  {
+                    "name": "Audit log",
+                    "value": "audit",
+                    "mcp": false
+                  }
+                ]
+              },
+              {
+                "name": "operation",
+                "displayName": "Operation",
+                "type": "options",
+                "default": "upsert",
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "contact"
+                    ]
+                  }
+                },
+                "options": [
+                  {
+                    "name": "Upsert",
+                    "value": "upsert",
+                    "description": "Create or update by email"
+                  },
+                  {
+                    "name": "Get",
+                    "value": "get"
+                  },
+                  {
+                    "name": "Search",
+                    "value": "search"
+                  },
+                  {
+                    "name": "Remove",
+                    "value": "remove",
+                    "idempotent": false
+                  }
+                ]
+              },
+              {
+                "name": "operation",
+                "displayName": "Operation",
+                "type": "options",
+                "default": "get",
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "company"
+                    ]
+                  }
+                },
+                "options": [
+                  {
+                    "name": "Get",
+                    "value": "get"
+                  }
+                ]
+              },
+              {
+                "name": "operation",
+                "displayName": "Operation",
+                "type": "options",
+                "default": "list",
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "audit"
+                    ]
+                  }
+                },
+                "options": [
+                  {
+                    "name": "List",
+                    "value": "list"
+                  }
+                ]
+              },
+              {
+                "name": "email",
+                "displayName": "Email",
+                "type": "string",
+                "default": "",
+                "required": true,
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "contact"
+                    ],
+                    "operation": [
+                      "upsert"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "contactId",
+                "displayName": "Contact",
+                "type": "options",
+                "default": "",
+                "required": true,
+                "typeOptions": {
+                  "loadOptionsMethod": "getContacts"
+                },
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "contact"
+                    ],
+                    "operation": [
+                      "get",
+                      "remove"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "companyId",
+                "displayName": "Company",
+                "type": "options",
+                "default": "",
+                "required": true,
+                "typeOptions": {
+                  "loadOptionsMethod": "getCompanies",
+                  "loadOptionsDependsOn": [
+                    "authentication"
+                  ]
+                },
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "company"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "query",
+                "displayName": "Query",
+                "type": "string",
+                "default": "",
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "contact"
+                    ],
+                    "operation": [
+                      "search"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "fields",
+                "displayName": "Fields",
+                "type": "fixedCollection",
+                "default": {},
+                "typeOptions": {
+                  "multipleValues": true
+                },
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "contact"
+                    ],
+                    "operation": [
+                      "upsert"
+                    ]
+                  }
+                },
+                "groups": [
+                  {
+                    "name": "field",
+                    "displayName": "Field",
+                    "values": [
+                      {
+                        "name": "name",
+                        "displayName": "Name",
+                        "type": "options",
+                        "default": "firstName",
+                        "options": [
+                          {
+                            "name": "First name",
+                            "value": "firstName"
+                          },
+                          {
+                            "name": "Last name",
+                            "value": "lastName"
+                          },
+                          {
+                            "name": "Phone",
+                            "value": "phone"
+                          }
+                        ]
+                      },
+                      {
+                        "name": "value",
+                        "displayName": "Value",
+                        "type": "string",
+                        "default": ""
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "properties",
+                "displayName": "Properties (JSON)",
+                "type": "json",
+                "default": "{}",
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "contact"
+                    ],
+                    "operation": [
+                      "upsert"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "simplify",
+                "displayName": "Simplify",
+                "type": "boolean",
+                "default": true,
+                "description": "Return a simplified version of the response instead of the raw data."
+              }
+            ]
+          },
+          {
+            "name": "notes",
+            "displayName": "Notes",
+            "description": "Notes attached to a contact.",
+            "version": 1,
+            "kind": "action",
+            "usableAsTool": true,
+            "inputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "outputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "toolAnnotations": {
+              "openWorldHint": false
+            },
+            "properties": [
+              {
+                "name": "operation",
+                "displayName": "Operation",
+                "type": "options",
+                "default": "add",
+                "options": [
+                  {
+                    "name": "Add",
+                    "value": "add"
+                  },
+                  {
+                    "name": "List",
+                    "value": "list"
+                  }
+                ]
+              },
+              {
+                "name": "contactId",
+                "displayName": "Contact ID",
+                "type": "string",
+                "default": "",
+                "required": true
+              },
+              {
+                "name": "text",
+                "displayName": "Text",
+                "type": "string",
+                "default": "",
+                "displayOptions": {
+                  "show": {
+                    "operation": [
+                      "add"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "code",
+                "displayName": "Formatter",
+                "type": "code",
+                "default": "",
+                "typeOptions": {
+                  "language": "javascript"
+                },
+                "displayOptions": {
+                  "show": {
+                    "operation": [
+                      "add"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "summarizer",
+            "displayName": "Summarizer",
+            "description": "An AI sub-node: never a tool.",
+            "version": 1,
+            "kind": "subnode",
+            "supplies": "ai_tool",
+            "inputs": [],
+            "outputs": [
+              {
+                "type": "ai_tool"
+              }
+            ],
+            "properties": []
+          },
+          {
+            "name": "internal",
+            "displayName": "Internal",
+            "description": "An action node not flagged usableAsTool.",
+            "version": 1,
+            "kind": "action",
+            "inputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "outputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "properties": [
+              {
+                "name": "x",
+                "displayName": "X",
+                "type": "string",
+                "default": ""
+              }
+            ]
+          }
+        ]
+      },
+      "tools": [
+        {
+          "name": "contacts_contact_upsert",
+          "title": "Contacts · Contact · Upsert",
+          "description": "Create or update by email. Contacts and companies in the CRM.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "title": "Email",
+                "type": "string",
+                "default": ""
+              },
+              "fields": {
+                "title": "Fields",
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "array",
+                    "items": {
+                      "title": "Field",
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "title": "Name",
+                          "type": "string",
+                          "enum": [
+                            "firstName",
+                            "lastName",
+                            "phone"
+                          ],
+                          "description": "One of: `firstName` (First name), `lastName` (Last name), `phone` (Phone).",
+                          "default": "firstName"
+                        },
+                        "value": {
+                          "title": "Value",
+                          "type": "string",
+                          "default": ""
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "properties": {
+                "title": "Properties (JSON)",
+                "type": [
+                  "object",
+                  "array",
+                  "string"
+                ],
+                "description": "A JSON value (an object or array, or JSON text).",
+                "default": "{}"
+              },
+              "simplify": {
+                "title": "Simplify",
+                "type": "boolean",
+                "description": "Return a simplified version of the response instead of the raw data.",
+                "default": true
+              }
+            },
+            "required": [
+              "email"
+            ]
+          },
+          "annotations": {
+            "title": "Contacts · Contact · Upsert",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "crm-suite",
+              "nodeType": "crm-suite.contacts",
+              "nodeName": "contacts",
+              "typeVersion": 2,
+              "resource": "contact",
+              "operation": "upsert",
+              "fixedParameters": {
+                "resource": "contact",
+                "operation": "upsert"
+              },
+              "arguments": [
+                "email",
+                "fields",
+                "properties",
+                "simplify"
+              ],
+              "credentials": [
+                "crmOAuth2Api",
+                "crmTokenApi"
+              ],
+              "credentialSelectors": [
+                {
+                  "parameter": "authentication",
+                  "byCredential": {
+                    "crmOAuth2Api": "oAuth2",
+                    "crmTokenApi": "token"
+                  }
+                }
+              ],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "contacts_contact_get",
+          "title": "Contacts · Contact · Get",
+          "description": "Get (contact). Contacts and companies in the CRM.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "contactId": {
+                "title": "Contact",
+                "type": "string",
+                "description": "Values come from the connected account (a dynamic list); pass the id or value, not the label.",
+                "default": ""
+              },
+              "simplify": {
+                "title": "Simplify",
+                "type": "boolean",
+                "description": "Return a simplified version of the response instead of the raw data.",
+                "default": true
+              }
+            },
+            "required": [
+              "contactId"
+            ]
+          },
+          "annotations": {
+            "title": "Contacts · Contact · Get",
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "crm-suite",
+              "nodeType": "crm-suite.contacts",
+              "nodeName": "contacts",
+              "typeVersion": 2,
+              "resource": "contact",
+              "operation": "get",
+              "fixedParameters": {
+                "resource": "contact",
+                "operation": "get"
+              },
+              "arguments": [
+                "contactId",
+                "simplify"
+              ],
+              "credentials": [
+                "crmOAuth2Api",
+                "crmTokenApi"
+              ],
+              "credentialSelectors": [
+                {
+                  "parameter": "authentication",
+                  "byCredential": {
+                    "crmOAuth2Api": "oAuth2",
+                    "crmTokenApi": "token"
+                  }
+                }
+              ],
+              "dynamicOptions": [
+                {
+                  "parameter": "contactId",
+                  "method": "getContacts"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "contacts_contact_search",
+          "title": "Contacts · Contact · Search",
+          "description": "Search (contact). Contacts and companies in the CRM.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "title": "Query",
+                "type": "string",
+                "default": ""
+              },
+              "simplify": {
+                "title": "Simplify",
+                "type": "boolean",
+                "description": "Return a simplified version of the response instead of the raw data.",
+                "default": true
+              }
+            }
+          },
+          "annotations": {
+            "title": "Contacts · Contact · Search",
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "crm-suite",
+              "nodeType": "crm-suite.contacts",
+              "nodeName": "contacts",
+              "typeVersion": 2,
+              "resource": "contact",
+              "operation": "search",
+              "fixedParameters": {
+                "resource": "contact",
+                "operation": "search"
+              },
+              "arguments": [
+                "query",
+                "simplify"
+              ],
+              "credentials": [
+                "crmOAuth2Api",
+                "crmTokenApi"
+              ],
+              "credentialSelectors": [
+                {
+                  "parameter": "authentication",
+                  "byCredential": {
+                    "crmOAuth2Api": "oAuth2",
+                    "crmTokenApi": "token"
+                  }
+                }
+              ],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "contacts_contact_remove",
+          "title": "Contacts · Contact · Remove",
+          "description": "Remove (contact). Contacts and companies in the CRM.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "contactId": {
+                "title": "Contact",
+                "type": "string",
+                "description": "Values come from the connected account (a dynamic list); pass the id or value, not the label.",
+                "default": ""
+              },
+              "simplify": {
+                "title": "Simplify",
+                "type": "boolean",
+                "description": "Return a simplified version of the response instead of the raw data.",
+                "default": true
+              }
+            },
+            "required": [
+              "contactId"
+            ]
+          },
+          "annotations": {
+            "title": "Contacts · Contact · Remove",
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "crm-suite",
+              "nodeType": "crm-suite.contacts",
+              "nodeName": "contacts",
+              "typeVersion": 2,
+              "resource": "contact",
+              "operation": "remove",
+              "fixedParameters": {
+                "resource": "contact",
+                "operation": "remove"
+              },
+              "arguments": [
+                "contactId",
+                "simplify"
+              ],
+              "credentials": [
+                "crmOAuth2Api",
+                "crmTokenApi"
+              ],
+              "credentialSelectors": [
+                {
+                  "parameter": "authentication",
+                  "byCredential": {
+                    "crmOAuth2Api": "oAuth2",
+                    "crmTokenApi": "token"
+                  }
+                }
+              ],
+              "dynamicOptions": [
+                {
+                  "parameter": "contactId",
+                  "method": "getContacts"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "contacts_company_get",
+          "title": "Contacts · Company · Get",
+          "description": "Get (company). Contacts and companies in the CRM.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "companyId": {
+                "title": "Company",
+                "type": "string",
+                "description": "Values come from the connected account (a dynamic list); pass the id or value, not the label.",
+                "default": ""
+              },
+              "simplify": {
+                "title": "Simplify",
+                "type": "boolean",
+                "description": "Return a simplified version of the response instead of the raw data.",
+                "default": true
+              }
+            },
+            "required": [
+              "companyId"
+            ]
+          },
+          "annotations": {
+            "title": "Contacts · Company · Get",
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "crm-suite",
+              "nodeType": "crm-suite.contacts",
+              "nodeName": "contacts",
+              "typeVersion": 2,
+              "resource": "company",
+              "operation": "get",
+              "fixedParameters": {
+                "resource": "company",
+                "operation": "get"
+              },
+              "arguments": [
+                "companyId",
+                "simplify"
+              ],
+              "credentials": [
+                "crmOAuth2Api",
+                "crmTokenApi"
+              ],
+              "credentialSelectors": [
+                {
+                  "parameter": "authentication",
+                  "byCredential": {
+                    "crmOAuth2Api": "oAuth2",
+                    "crmTokenApi": "token"
+                  }
+                }
+              ],
+              "dynamicOptions": [
+                {
+                  "parameter": "companyId",
+                  "method": "getCompanies",
+                  "dependsOn": [
+                    "authentication"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "notes_add",
+          "title": "Notes · Add",
+          "description": "Add. Notes attached to a contact.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "contactId": {
+                "title": "Contact ID",
+                "type": "string",
+                "default": ""
+              },
+              "text": {
+                "title": "Text",
+                "type": "string",
+                "default": ""
+              },
+              "code": {
+                "title": "Formatter",
+                "type": "string",
+                "description": "javascript code.",
+                "default": ""
+              }
+            },
+            "required": [
+              "contactId"
+            ]
+          },
+          "annotations": {
+            "title": "Notes · Add",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "crm-suite",
+              "nodeType": "crm-suite.notes",
+              "nodeName": "notes",
+              "typeVersion": 1,
+              "operation": "add",
+              "fixedParameters": {
+                "operation": "add"
+              },
+              "arguments": [
+                "contactId",
+                "text",
+                "code"
+              ],
+              "credentials": [],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "notes_list",
+          "title": "Notes · List",
+          "description": "List. Notes attached to a contact.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "contactId": {
+                "title": "Contact ID",
+                "type": "string",
+                "default": ""
+              }
+            },
+            "required": [
+              "contactId"
+            ]
+          },
+          "annotations": {
+            "title": "Notes · List",
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "crm-suite",
+              "nodeType": "crm-suite.notes",
+              "nodeName": "notes",
+              "typeVersion": 1,
+              "operation": "list",
+              "fixedParameters": {
+                "operation": "list"
+              },
+              "arguments": [
+                "contactId"
+              ],
+              "credentials": [],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "twilio",
+      "description": "Twilio (twilio): 2 node(s)",
+      "manifest": {
+        "protocol": "landflow.plugin/v1",
+        "plugin": {
+          "id": "twilio",
+          "name": "Twilio",
+          "version": "0.1.0",
+          "language": "typescript",
+          "color": "#f22f46"
+        },
+        "transports": [
+          "http",
+          "grpc",
+          "kafka",
+          "mcp"
+        ],
+        "maxConcurrency": 16,
+        "credentialTypes": [
+          {
+            "name": "twilioApi",
+            "displayName": "Twilio API",
+            "testable": true,
+            "properties": [
+              {
+                "name": "accountSid",
+                "displayName": "Account SID",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "authToken",
+                "displayName": "Auth Token",
+                "type": "string",
+                "required": true,
+                "typeOptions": {
+                  "password": true
+                }
+              }
+            ]
+          }
+        ],
+        "nodes": [
+          {
+            "name": "twilio",
+            "displayName": "Twilio",
+            "description": "Send SMS, MMS and WhatsApp messages, place calls, list and get messages.",
+            "version": 1,
+            "kind": "action",
+            "usableAsTool": true,
+            "inputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "outputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "credentials": [
+              {
+                "name": "twilioApi",
+                "required": true
+              }
+            ],
+            "properties": [
+              {
+                "name": "resource",
+                "displayName": "Resource",
+                "type": "options",
+                "default": "message",
+                "options": [
+                  {
+                    "name": "Message",
+                    "value": "message"
+                  },
+                  {
+                    "name": "Call",
+                    "value": "call"
+                  }
+                ]
+              },
+              {
+                "name": "operation",
+                "displayName": "Operation",
+                "type": "options",
+                "default": "send",
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "message"
+                    ]
+                  }
+                },
+                "options": [
+                  {
+                    "name": "Send",
+                    "value": "send",
+                    "action": "Send an SMS, MMS or WhatsApp message"
+                  },
+                  {
+                    "name": "Get",
+                    "value": "get",
+                    "action": "Get a message by SID",
+                    "outputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "sid": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "name": "List",
+                    "value": "list",
+                    "action": "List messages"
+                  },
+                  {
+                    "name": "Delete",
+                    "value": "delete",
+                    "action": "Delete a message",
+                    "toolAnnotations": {
+                      "idempotentHint": true
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "operation",
+                "displayName": "Operation",
+                "type": "options",
+                "default": "make",
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "call"
+                    ]
+                  }
+                },
+                "options": [
+                  {
+                    "name": "Make",
+                    "value": "make",
+                    "action": "Place a call"
+                  },
+                  {
+                    "name": "Hang up (internal)",
+                    "value": "hangup",
+                    "mcp": false
+                  }
+                ]
+              },
+              {
+                "name": "from",
+                "displayName": "From",
+                "type": "string",
+                "default": "",
+                "required": true,
+                "description": "The Twilio number or sender id.",
+                "displayOptions": {
+                  "show": {
+                    "operation": [
+                      "send",
+                      "make"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "to",
+                "displayName": "To",
+                "type": "string",
+                "default": "",
+                "required": true,
+                "displayOptions": {
+                  "show": {
+                    "operation": [
+                      "send",
+                      "make"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "channel",
+                "displayName": "Channel",
+                "type": "options",
+                "default": "sms",
+                "options": [
+                  {
+                    "name": "SMS",
+                    "value": "sms"
+                  },
+                  {
+                    "name": "WhatsApp",
+                    "value": "whatsapp",
+                    "description": "Numbers are prefixed with whatsapp: automatically"
+                  }
+                ],
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "message"
+                    ],
+                    "operation": [
+                      "send"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "body",
+                "displayName": "Message",
+                "type": "string",
+                "default": "",
+                "required": true,
+                "typeOptions": {
+                  "rows": 3
+                },
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "message"
+                    ],
+                    "operation": [
+                      "send"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "mediaUrl",
+                "displayName": "Media URL",
+                "type": "string",
+                "default": "",
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "message"
+                    ],
+                    "operation": [
+                      "send"
+                    ],
+                    "channel": [
+                      "sms"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "sid",
+                "displayName": "Message SID",
+                "type": "string",
+                "default": "",
+                "required": true,
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "message"
+                    ],
+                    "operation": [
+                      "get",
+                      "delete"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "limit",
+                "displayName": "Limit",
+                "type": "number",
+                "default": 50,
+                "typeOptions": {
+                  "minValue": 1,
+                  "maxValue": 1000,
+                  "numberPrecision": 0
+                },
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "message"
+                    ],
+                    "operation": [
+                      "list"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "filters",
+                "displayName": "Filters",
+                "type": "collection",
+                "default": {},
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "message"
+                    ],
+                    "operation": [
+                      "list"
+                    ]
+                  }
+                },
+                "values": [
+                  {
+                    "name": "dateSentAfter",
+                    "displayName": "Sent after",
+                    "type": "dateTime",
+                    "default": ""
+                  },
+                  {
+                    "name": "status",
+                    "displayName": "Status",
+                    "type": "multiOptions",
+                    "default": [],
+                    "options": [
+                      {
+                        "name": "Delivered",
+                        "value": "delivered"
+                      },
+                      {
+                        "name": "Failed",
+                        "value": "failed"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "url",
+                "displayName": "TwiML URL",
+                "type": "string",
+                "default": "",
+                "required": true,
+                "displayOptions": {
+                  "show": {
+                    "resource": [
+                      "call"
+                    ],
+                    "operation": [
+                      "make"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "secret",
+                "displayName": "Internal",
+                "type": "hidden",
+                "default": "x"
+              },
+              {
+                "name": "notice",
+                "displayName": "Messages are billed per segment",
+                "type": "notice",
+                "default": ""
+              }
+            ]
+          },
+          {
+            "name": "twilioTrigger",
+            "displayName": "Twilio Trigger",
+            "description": "Incoming messages.",
+            "version": 1,
+            "kind": "trigger",
+            "triggerSource": "appWebhook",
+            "inputs": [],
+            "outputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "properties": []
+          }
+        ]
+      },
+      "tools": [
+        {
+          "name": "message_send",
+          "title": "Twilio · Message · Send",
+          "description": "Send an SMS, MMS or WhatsApp message. Send SMS, MMS and WhatsApp messages, place calls, list and get messages.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "title": "From",
+                "type": "string",
+                "description": "The Twilio number or sender id.",
+                "default": ""
+              },
+              "to": {
+                "title": "To",
+                "type": "string",
+                "default": ""
+              },
+              "channel": {
+                "title": "Channel",
+                "type": "string",
+                "enum": [
+                  "sms",
+                  "whatsapp"
+                ],
+                "description": "One of: `sms` (SMS), `whatsapp` (WhatsApp: Numbers are prefixed with whatsapp: automatically).",
+                "default": "sms"
+              },
+              "body": {
+                "title": "Message",
+                "type": "string",
+                "default": ""
+              },
+              "mediaUrl": {
+                "title": "Media URL",
+                "type": "string",
+                "description": "Only used when `channel` is `sms`.",
+                "default": ""
+              }
+            },
+            "required": [
+              "from",
+              "to",
+              "body"
+            ]
+          },
+          "annotations": {
+            "title": "Twilio · Message · Send",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "twilio",
+              "nodeType": "twilio.twilio",
+              "nodeName": "twilio",
+              "typeVersion": 1,
+              "resource": "message",
+              "operation": "send",
+              "fixedParameters": {
+                "resource": "message",
+                "operation": "send"
+              },
+              "arguments": [
+                "from",
+                "to",
+                "channel",
+                "body",
+                "mediaUrl"
+              ],
+              "credentials": [
+                "twilioApi"
+              ],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "message_get",
+          "title": "Twilio · Message · Get",
+          "description": "Get a message by SID. Send SMS, MMS and WhatsApp messages, place calls, list and get messages.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sid": {
+                "title": "Message SID",
+                "type": "string",
+                "default": ""
+              }
+            },
+            "required": [
+              "sid"
+            ]
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "sid": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "annotations": {
+            "title": "Twilio · Message · Get",
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "twilio",
+              "nodeType": "twilio.twilio",
+              "nodeName": "twilio",
+              "typeVersion": 1,
+              "resource": "message",
+              "operation": "get",
+              "fixedParameters": {
+                "resource": "message",
+                "operation": "get"
+              },
+              "arguments": [
+                "sid"
+              ],
+              "credentials": [
+                "twilioApi"
+              ],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "message_list",
+          "title": "Twilio · Message · List",
+          "description": "List messages. Send SMS, MMS and WhatsApp messages, place calls, list and get messages.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "limit": {
+                "title": "Limit",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 50
+              },
+              "filters": {
+                "title": "Filters",
+                "type": "object",
+                "properties": {
+                  "dateSentAfter": {
+                    "title": "Sent after",
+                    "type": "string",
+                    "format": "date-time",
+                    "default": ""
+                  },
+                  "status": {
+                    "title": "Status",
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "delivered",
+                        "failed"
+                      ]
+                    },
+                    "description": "Any of: `delivered` (Delivered), `failed` (Failed).",
+                    "default": []
+                  }
+                }
+              }
+            }
+          },
+          "annotations": {
+            "title": "Twilio · Message · List",
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "twilio",
+              "nodeType": "twilio.twilio",
+              "nodeName": "twilio",
+              "typeVersion": 1,
+              "resource": "message",
+              "operation": "list",
+              "fixedParameters": {
+                "resource": "message",
+                "operation": "list"
+              },
+              "arguments": [
+                "limit",
+                "filters"
+              ],
+              "credentials": [
+                "twilioApi"
+              ],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "message_delete",
+          "title": "Twilio · Message · Delete",
+          "description": "Delete a message. Send SMS, MMS and WhatsApp messages, place calls, list and get messages.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sid": {
+                "title": "Message SID",
+                "type": "string",
+                "default": ""
+              }
+            },
+            "required": [
+              "sid"
+            ]
+          },
+          "annotations": {
+            "title": "Twilio · Message · Delete",
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "twilio",
+              "nodeType": "twilio.twilio",
+              "nodeName": "twilio",
+              "typeVersion": 1,
+              "resource": "message",
+              "operation": "delete",
+              "fixedParameters": {
+                "resource": "message",
+                "operation": "delete"
+              },
+              "arguments": [
+                "sid"
+              ],
+              "credentials": [
+                "twilioApi"
+              ],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "call_make",
+          "title": "Twilio · Call · Make",
+          "description": "Place a call. Send SMS, MMS and WhatsApp messages, place calls, list and get messages.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "title": "From",
+                "type": "string",
+                "description": "The Twilio number or sender id.",
+                "default": ""
+              },
+              "to": {
+                "title": "To",
+                "type": "string",
+                "default": ""
+              },
+              "url": {
+                "title": "TwiML URL",
+                "type": "string",
+                "default": ""
+              }
+            },
+            "required": [
+              "from",
+              "to",
+              "url"
+            ]
+          },
+          "annotations": {
+            "title": "Twilio · Call · Make",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "twilio",
+              "nodeType": "twilio.twilio",
+              "nodeName": "twilio",
+              "typeVersion": 1,
+              "resource": "call",
+              "operation": "make",
+              "fixedParameters": {
+                "resource": "call",
+                "operation": "make"
+              },
+              "arguments": [
+                "from",
+                "to",
+                "url"
+              ],
+              "credentials": [
+                "twilioApi"
+              ],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "utilities",
+      "description": "Utilities (utilities): 4 node(s)",
+      "manifest": {
+        "protocol": "landflow.plugin/v1",
+        "plugin": {
+          "id": "utilities",
+          "name": "Utilities",
+          "version": "1.0.0",
+          "language": "python"
+        },
+        "nodes": [
+          {
+            "name": "hash",
+            "displayName": "Hash",
+            "description": "Hash a field with SHA-256, SHA-1 or MD5.",
+            "version": 1,
+            "kind": "action",
+            "usableAsTool": true,
+            "idempotent": true,
+            "inputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "outputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "properties": [
+              {
+                "name": "algorithm",
+                "displayName": "Algorithm",
+                "type": "options",
+                "default": "sha256",
+                "options": [
+                  {
+                    "name": "SHA-256",
+                    "value": "sha256"
+                  },
+                  {
+                    "name": "SHA-1",
+                    "value": "sha1"
+                  },
+                  {
+                    "name": "MD5",
+                    "value": "md5"
+                  }
+                ]
+              },
+              {
+                "name": "field",
+                "displayName": "Field",
+                "type": "string",
+                "default": "value",
+                "required": true,
+                "description": "The input field to hash."
+              },
+              {
+                "name": "rounds",
+                "displayName": "Rounds",
+                "type": "number",
+                "default": 1,
+                "typeOptions": {
+                  "minValue": 1,
+                  "numberPrecision": 0
+                },
+                "displayOptions": {
+                  "hide": {
+                    "algorithm": [
+                      "md5"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "colour",
+            "displayName": "Colour",
+            "description": "Pick a colour and a date; shows the colour, dateTime and numeric option types.",
+            "version": 1,
+            "kind": "action",
+            "usableAsTool": true,
+            "inputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "outputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "properties": [
+              {
+                "name": "colour",
+                "displayName": "Colour",
+                "type": "color",
+                "default": "#ff0000"
+              },
+              {
+                "name": "when",
+                "displayName": "When",
+                "type": "dateTime",
+                "default": ""
+              },
+              {
+                "name": "level",
+                "displayName": "Level",
+                "type": "options",
+                "default": 1,
+                "options": [
+                  {
+                    "name": "Low",
+                    "value": 1
+                  },
+                  {
+                    "name": "High",
+                    "value": 2
+                  }
+                ]
+              },
+              {
+                "name": "enabled",
+                "displayName": "Enabled",
+                "type": "options",
+                "default": true,
+                "options": [
+                  {
+                    "name": "Yes",
+                    "value": true
+                  },
+                  {
+                    "name": "No",
+                    "value": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "aVeryLongNodeNameThatGoesOnAndOnAndOnToTestTheLimitOnToolNamesInMcpClientsEverywhere",
+            "displayName": "Long",
+            "description": "Its name is sanitised and cut to the tool-name limit.",
+            "version": 1,
+            "kind": "action",
+            "usableAsTool": true,
+            "inputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "outputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "properties": []
+          },
+          {
+            "name": "dupA",
+            "displayName": "Dup A",
+            "description": "Its two operations `run` and `run!` sanitise to the same tool name, so the second gets a numeric suffix.",
+            "version": 1,
+            "kind": "action",
+            "usableAsTool": true,
+            "inputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "outputs": [
+              {
+                "type": "main"
+              }
+            ],
+            "properties": [
+              {
+                "name": "operation",
+                "displayName": "Operation",
+                "type": "options",
+                "default": "run",
+                "options": [
+                  {
+                    "name": "Run",
+                    "value": "run"
+                  },
+                  {
+                    "name": "Run (again)",
+                    "value": "run!"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "tools": [
+        {
+          "name": "hash",
+          "title": "Hash",
+          "description": "Hash a field with SHA-256, SHA-1 or MD5.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "algorithm": {
+                "title": "Algorithm",
+                "type": "string",
+                "enum": [
+                  "sha256",
+                  "sha1",
+                  "md5"
+                ],
+                "description": "One of: `sha256` (SHA-256), `sha1` (SHA-1), `md5` (MD5).",
+                "default": "sha256"
+              },
+              "field": {
+                "title": "Field",
+                "type": "string",
+                "description": "The input field to hash.",
+                "default": "value"
+              },
+              "rounds": {
+                "title": "Rounds",
+                "type": "integer",
+                "minimum": 1,
+                "description": "Only used when `algorithm` is not `md5`.",
+                "default": 1
+              }
+            },
+            "required": [
+              "field"
+            ]
+          },
+          "annotations": {
+            "title": "Hash",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "utilities",
+              "nodeType": "utilities.hash",
+              "nodeName": "hash",
+              "typeVersion": 1,
+              "fixedParameters": {},
+              "arguments": [
+                "algorithm",
+                "field",
+                "rounds"
+              ],
+              "credentials": [],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "colour",
+          "title": "Colour",
+          "description": "Pick a colour and a date; shows the colour, dateTime and numeric option types.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "colour": {
+                "title": "Colour",
+                "type": "string",
+                "default": "#ff0000"
+              },
+              "when": {
+                "title": "When",
+                "type": "string",
+                "format": "date-time",
+                "default": ""
+              },
+              "level": {
+                "title": "Level",
+                "type": "number",
+                "enum": [
+                  1,
+                  2
+                ],
+                "description": "One of: `1` (Low), `2` (High).",
+                "default": 1
+              },
+              "enabled": {
+                "title": "Enabled",
+                "type": "boolean",
+                "enum": [
+                  true,
+                  false
+                ],
+                "description": "One of: `true` (Yes), `false` (No).",
+                "default": true
+              }
+            }
+          },
+          "annotations": {
+            "title": "Colour",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "utilities",
+              "nodeType": "utilities.colour",
+              "nodeName": "colour",
+              "typeVersion": 1,
+              "fixedParameters": {},
+              "arguments": [
+                "colour",
+                "when",
+                "level",
+                "enabled"
+              ],
+              "credentials": [],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "aVeryLongNodeNameThatGoesOnAndOnAndOnToTestTheLimitOnToolNamesIn",
+          "title": "Long",
+          "description": "Its name is sanitised and cut to the tool-name limit.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          },
+          "annotations": {
+            "title": "Long",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "utilities",
+              "nodeType": "utilities.aVeryLongNodeNameThatGoesOnAndOnAndOnToTestTheLimitOnToolNamesInMcpClientsEverywhere",
+              "nodeName": "aVeryLongNodeNameThatGoesOnAndOnAndOnToTestTheLimitOnToolNamesInMcpClientsEverywhere",
+              "typeVersion": 1,
+              "fixedParameters": {},
+              "arguments": [],
+              "credentials": [],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "dupA_run",
+          "title": "Dup A · Run",
+          "description": "Run. Its two operations `run` and `run!` sanitise to the same tool name, so the second gets a numeric suffix.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          },
+          "annotations": {
+            "title": "Dup A · Run",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "utilities",
+              "nodeType": "utilities.dupA",
+              "nodeName": "dupA",
+              "typeVersion": 1,
+              "operation": "run",
+              "fixedParameters": {
+                "operation": "run"
+              },
+              "arguments": [],
+              "credentials": [],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        },
+        {
+          "name": "dupA_run_2",
+          "title": "Dup A · Run (again)",
+          "description": "Run (again). Its two operations `run` and `run!` sanitise to the same tool name, so the second gets a numeric suffix.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          },
+          "annotations": {
+            "title": "Dup A · Run (again)",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "_meta": {
+            "dev.landflow/node": {
+              "pluginId": "utilities",
+              "nodeType": "utilities.dupA",
+              "nodeName": "dupA",
+              "typeVersion": 1,
+              "operation": "run!",
+              "fixedParameters": {
+                "operation": "run!"
+              },
+              "arguments": [],
+              "credentials": [],
+              "credentialSelectors": [],
+              "dynamicOptions": []
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

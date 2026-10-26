@@ -7,11 +7,13 @@ import type {
   JsonObject,
   NodeDescriptor,
   NodeItem,
+  TransportKind,
   WebhookMethodRequest,
   WebhookMethodResponse,
   WebhookRequest,
   WebhookResponse,
 } from '@landflow/protocol';
+import { TRANSPORT_KINDS } from '@landflow/protocol';
 import type { ContextExtras, StreamChunk, WaitRequest } from '@landflow/sdk';
 import type { Attributes } from '@opentelemetry/api';
 import type { SecretReference, SecretValues } from './secrets';
@@ -187,7 +189,15 @@ export interface Workflow {
 // Node type resolution (implemented by the host registry)
 // ---------------------------------------------------------------------------
 
-export type Transport = 'in-process' | 'http' | 'grpc';
+/**
+ * How a node's plugin is reached: in this process, directly (`http`, `grpc`) or through a broker kind (`kafka`, `nats`,
+ * …; `@landflow/protocol`'s TRANSPORT_KINDS). Open: any kind a host and plugin agree on is carried as is into
+ * `landflow.transport` on spans and metrics. Compare with the KNOWN_TRANSPORTS constants, never with an exhaustive switch.
+ */
+export type Transport = 'in-process' | TransportKind;
+
+/** The transports this version knows, `in-process` first (the engine's own core plugin). */
+export const KNOWN_TRANSPORTS: readonly Transport[] = ['in-process', ...TRANSPORT_KINDS];
 
 export interface ResolvedNodeType {
   type: string;

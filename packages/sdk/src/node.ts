@@ -160,8 +160,10 @@ export interface IExecuteContext extends IBaseContext {
   setPollState(state: JsonObject): void;
   /** `mode === 'poll'` and no previous state: establish the baseline and return no items. */
   isFirstPoll(): boolean;
-  /** Aborted when the execution is canceled or times out. */
+  /** Aborted when the execution is canceled or times out (the call's deadline passed). Pass it to anything that waits. */
   readonly signal?: AbortSignal;
+  /** Epoch ms by which the call must finish; `signal` aborts when it passes. Absent when the caller set no deadline. */
+  readonly deadline?: number;
   /**
    * In-process only: suspend the execution once `execute` returns. The host saves the run and
    * stops; when it resumes, the resume payload (a webhook request, a form submission) becomes this

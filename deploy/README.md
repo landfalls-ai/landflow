@@ -4,7 +4,7 @@ Two independent Compose projects:
 
 | Project | File | What |
 |---|---|---|
-| `landflow-infra` | [`compose.infra.yml`](compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`), Vector as a SIEM receiver (profile `siem`), LocalStack for AWS Secrets Manager (profile `aws`) |
+| `landflow-infra` | [`compose.infra.yml`](compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`), Vector as a SIEM receiver (profile `siem`), LocalStack for AWS Secrets Manager (profile `aws`); the transport layer's brokers, one profile each (`kafka`, `rabbitmq`, `nats`, `mqtt`, `artemis`, `pulsar`, `pubsub`, `servicebus`) and agentgateway as the MCP gateway (`mcp-gateway`): see [Message brokers and the MCP gateway](#message-brokers-and-the-mcp-gateway) |
 | `landflow` | [`compose.yml`](compose.yml) | Landflow itself as images: the host (Next.js standalone), the seven plugins, which announce themselves to the host, and the sandboxed [code runner](#code-runner) for the Code node |
 | `landflow-queue` | [`compose.queue.yml`](compose.queue.yml) | Landflow in [queue mode with high availability](#queue-mode-two-mains-two-workers): two mains behind a load balancer and two workers, on the infra stack's Postgres, Valkey and MinIO |
 
@@ -34,6 +34,12 @@ docker compose -f deploy/compose.infra.yml --profile siem up -d --wait siem
 
 # ... LocalStack, AWS Secrets Manager for the external secrets tests (dummy credentials only)
 COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml --profile aws up -d --wait localstack
+
+# ... the transport layer's brokers (one profile each; "Message brokers and the MCP gateway" below) and agentgateway
+COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml --profile kafka --profile rabbitmq --profile nats up -d --wait
+COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml --profile mqtt --profile artemis --profile pulsar --profile pubsub --profile servicebus up -d
+COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml --profile mcp-gateway up -d
+deploy/scripts/brokers-smoke.sh                  # one produce/consume (or ping) per running broker, from the Mac
 
 # App: build the images and start the host + 7 plugins + code runner on http://localhost:53000
 COMPOSE_BAKE=false docker compose -f deploy/compose.yml up -d --build --wait
@@ -80,6 +86,15 @@ All credentials are **for local development and tests only**.
 | Vector syslog (`siem`) | `localhost:55514` (TCP and UDP) | `siem:5514` | none; RFC 5424, octet counting or newline framing |
 | Vector HTTP (`siem`) | http://localhost:55080/ | `siem:8080` | none; JSON lines (signature headers kept as fields, not checked) |
 | LocalStack 4.9 (`aws`) | http://localhost:54566 | `localstack:4566` | any access key (use dummy ones, e.g. `test` / `test`), region `us-east-1`; Secrets Manager only, in memory |
+| Kafka 4.3 KRaft (`kafka`) | `localhost:59092` | `kafka:9092` | none (PLAINTEXT); share groups on (`share.version=1`), topics auto-created with 3 partitions |
+| RabbitMQ 4.4 (`rabbitmq`) | AMQP `localhost:55672`, management http://localhost:55673 | `rabbitmq:5672`, `rabbitmq:15672` | `landflow` / `landflow-dev-only`, vhost `/` |
+| NATS 2.15 (`nats`) | `nats://localhost:54222`, monitoring http://localhost:58222 | `nats:4222`, `nats:8222` | none; JetStream on (file store) |
+| Mosquitto 2.1, MQTT 5 (`mqtt`) | `mqtt://localhost:51883` | `mosquitto:1883` | anonymous (dev only; published on 127.0.0.1) |
+| ActiveMQ Artemis 2.44 (`artemis`) | AMQP 1.0 `localhost:55674`, console http://localhost:58161/console | `artemis:5672`, `artemis:8161` | `landflow` / `landflow-dev-only`; the acceptor also speaks CORE, OpenWire, STOMP and MQTT |
+| Pulsar 4.2 standalone (`pulsar`) | `pulsar://localhost:56650`, admin http://localhost:58180 | `pulsar:6650`, `pulsar:8080` | none; tenant `public`, namespace `default` |
+| Pub/Sub emulator (`pubsub`) | http://localhost:58085 (`PUBSUB_EMULATOR_HOST=127.0.0.1:58085`) | `pubsub:8085` | none; project `landflow-dev`, data kept in the volume |
+| Azure Service Bus emulator 2.0 (`servicebus`) | AMQP `localhost:55675`, management + `/health` http://localhost:55300 | `servicebus:5672`, `servicebus:5300` | `Endpoint=sb://localhost:55675;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;`; static entities from [`infra/servicebus/Config.json`](infra/servicebus/Config.json); SQL backend `servicebus-sql` (Azure SQL Edge, `sa` / `Landflow-dev-only1`, not published) |
+| agentgateway 1.6 (`mcp-gateway`) | MCP http://localhost:54000/mcp, admin API + UI http://localhost:55000 (`/ui`) | `mcp-gateway:4000`, `mcp-gateway:15000` | none (the admin API has no authentication: loopback only); targets in SQLite in `mcp-gateway-data` |
 | **Landflow host** (app) | http://localhost:53000 | `web:3000`, gRPC registry `web:7070` | owner `owner@landflow.test` / `landflow-dev-only` (`LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`) |
 | Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207` (HTTP/gRPC) | |
 | Code runner (app) | http://127.0.0.1:53300 (through `code-runner-port`) | `code-runner:7300`, on the internal `landflow-code` network only | header `x-landflow-runner-secret: landflow-code-runner-dev-only` |
@@ -98,6 +113,30 @@ curl -s -d grant_type=password -d client_id=landflow -d client_secret=landflow-d
 ```
 
 The SAML client (`http://localhost:3000/api/auth/saml/metadata`, the dev server's SP entity id) accepts AuthnRequests for `/api/auth/saml/*` on `:3000` and `:53000` (and `127.0.0.1`), signs both the response and the assertion (RSA-SHA256), forces the persistent NameID format and posts back (HTTP-POST binding). Its mappers send `email`, `firstName`, `lastName`, the realm roles in one `roles` attribute and the groups in `groups` (`data-team`, which bob is in). Single logout goes to `/api/auth/saml/logout`. Unsigned AuthnRequests are fine (client signature off). The dockerised host on `:53000` uses the same client with `LANDFLOW_SAML_ISSUER=http://localhost:3000/api/auth/saml/metadata`.
+
+## Message brokers and the MCP gateway
+
+The transport layer ([docs/transports.md](../docs/transports.md)) runs plugins over message brokers and exposes them
+through an MCP gateway. `compose.infra.yml` has every broker the spec names as its own profile, bound to `127.0.0.1`,
+with a named volume (`landflow-infra_<service>-data`) and, where the image has a shell, a healthcheck. All images are
+native arm64 except where noted. `deploy/scripts/brokers-smoke.sh [name...]` checks each running one from the Mac
+(a produce and consume, or a ping, through the published port; brokers whose container is down are skipped).
+
+| Profile | Service, image | What to know | Test it |
+|---|---|---|---|
+| `kafka` | `apache/kafka:4.3.2` (KRaft, one node that is broker and controller) | Two listeners: `kafka:9092` in the network, `localhost:59092` from the Mac (same port inside and out, so the advertised address works from both sides). **Share groups** (KIP-932, "Queues for Kafka", production-ready since 4.2) are on: the `share.version` feature is finalised to 1 by the healthcheck once the broker is up (`kafka-features.sh upgrade --feature share.version=1`, idempotent; the `group.coordinator.rebalance.protocols=share` setting is deprecated since 4.3 and not used). Share groups deliver from "latest", so start the consumer before producing. Kafka 4.4.0 has an image but no release on kafka.apache.org/downloads yet, hence 4.3.2 | `docker compose -f deploy/compose.infra.yml exec kafka /opt/kafka/bin/kafka-console-share-consumer.sh --bootstrap-server localhost:9092 --topic t --group g --max-messages 1` in one terminal, `... kafka-console-producer.sh --bootstrap-server localhost:9092 --topic t` in another; `kafka-features.sh --bootstrap-server localhost:9092 describe` shows `share.version` |
+| `rabbitmq` | `rabbitmq:4.4.0-management-alpine` | Direct reply-to, per-message TTL and `mandatory` need no setup. RabbitMQ 4 refuses transient non-exclusive queues (`transient_nonexcl_queues` is deprecated): declare queues `durable` | the management API: `curl -u landflow:landflow-dev-only http://localhost:55673/api/overview`; UI at the same URL |
+| `nats` | `nats:2.15.1-alpine` with `--jetstream --store_dir /data` | Core NATS (inboxes, queue groups, "no responders") and JetStream; no auth | `curl http://localhost:58222/varz`, `/jsz`; the NATS CLI isn't in the image, use `nats` on the Mac or a client library |
+| `mqtt` | `eclipse-mosquitto:2.1.2-alpine`, config [`infra/mosquitto/mosquitto.conf`](infra/mosquitto/mosquitto.conf) | MQTT 5 (shared subscriptions `$share/<group>/<topic>`, message expiry, response topic and correlation data), anonymous, persistence in the volume | `docker compose -f deploy/compose.infra.yml exec mosquitto mosquitto_sub -V 5 -t 'landflow/#' -v` and `mosquitto_pub -V 5 -t landflow/x -m hi` |
+| `artemis` | `apache/activemq-artemis:2.44.0-alpine` | The `5672` acceptor takes AMQP 1.0 (and the other protocols); addresses and queues auto-create on first use; console with the same credentials | `docker compose -f deploy/compose.infra.yml exec artemis ./bin/artemis producer --url amqp://localhost:5672 --protocol amqp --user landflow --password landflow-dev-only --destination q --message-count 1` (and `consumer`) |
+| `pulsar` | `apachepulsar/pulsar:4.2.5`, `bin/pulsar standalone --no-functions-worker --no-stream-storage`, 512 MB heap | Shared subscriptions, message TTL, the admin REST API | `docker compose -f deploy/compose.infra.yml exec pulsar bin/pulsar-client produce persistent://public/default/t -m hi`; `curl http://localhost:58180/admin/v2/persistent/public/default` |
+| `pubsub` | `gcr.io/google.com/cloudsdktool/google-cloud-cli:590.0.1-emulators`, `gcloud beta emulators pubsub start` | No credentials; topics and subscriptions in the volume (`--data-dir`); the emulator never expires messages. Clients: `PUBSUB_EMULATOR_HOST=127.0.0.1:58085` | REST works too: `curl -X PUT http://localhost:58085/v1/projects/landflow-dev/topics/t`, `.../topics/t:publish`, `.../subscriptions/s:pull` |
+| `servicebus` | `mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1` + `servicebus-sql` (`mcr.microsoft.com/azure-sql-edge:1.0.7`) | Static entities only, from [`infra/servicebus/Config.json`](infra/servicebus/Config.json): queues `landflow.registry`, `landflow.control`, `landflow.v1.reply` (sessions on, for `ReplyToSessionId`), `landflow.v1.plugin.text-toolkit`, `landflow.v1.plugin.messaging`, `landflow.v1.plugin.conformance`, topic `landflow.v1.events` with subscription `all`; add what a test needs there and recreate the container. Starting the profile sets `ACCEPT_EULA=Y` for Microsoft's emulator and SQL EULAs (`LANDFLOW_SERVICEBUS_ACCEPT_EULA`). The emulator image is distroless (no healthcheck possible): poll `curl http://localhost:55300/health`. SQL: Azure SQL Edge 1.0.7 is the last tag with an arm64 build (2.0.0 and `mssql/server` are amd64 only and would run under Rosetta); Microsoft's own installer uses SQL Edge on Apple Silicon. Management operations (the Administration client) need the port in the connection string (`sb://localhost:55300`) and are .NET-only | `curl http://localhost:55300/health` → `{"status":"healthy",...}`; messaging through an AMQP 1.0 client with the connection string above |
+| `mcp-gateway` | `cr.agentgateway.dev/agentgateway:v1.6.0` (pinned by digest) + a one-shot `mcp-gateway-init` (alpine) that gives the data volume to uid 65532 | The bundled MCP gateway for the dev server: `/mcp` on 54000, the admin API and UI on 55000 (no auth, loopback only; inside the container it must listen on `0.0.0.0:15000` for Docker to publish it). Base config [`mcp-gateway/config.yaml`](mcp-gateway/config.yaml) (`prefixMode: always`, `failureMode: failOpen`, `statefulMode: stateless`, tracing to `jaeger:4318`); storage mode `hybrid`, so the host writes targets with `PUT http://127.0.0.1:55000/api/config/resources/mcp.target` and they live in SQLite in `mcp-gateway-data`; targets point at `host.docker.internal:3000`. Distroless: no healthcheck, readiness on `mcp-gateway:15021/healthz/ready` and metrics on `mcp-gateway:15020/metrics` in the network only. What was verified, the exact payloads and the gaps: [docs/mcp-gateway.md](../docs/mcp-gateway.md). Override files for the spike's other modes: `mcp-gateway/compose.auth.yml` (sign-in through Keycloak), `compose.stateful.yml`, `compose.file.yml` (file fallback) | `node deploy/scripts/mcp-gateway-spike.mjs` (core checks, 10 s) or `--all` (also Keycloak sign-in, the stateful mode and the file fallback; restarts the container and puts it back); `curl http://localhost:55000/api/config/resources/mcp.target`; the UI at http://localhost:55000/ui |
+
+Credentials are development values (`deploy/.env.example` has every port and password as `LANDFLOW_*`). One
+broker user per plugin, as the spec wants for real deployments, isn't set up here: every dev broker has one user or
+none.
 
 ## Using the infra from the dev server on the host
 

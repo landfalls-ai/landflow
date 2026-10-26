@@ -379,12 +379,42 @@ resp, err := plugin.Execute(ctx, &landflow.ExecuteRequest{...}) // in-process (t
 `ExecuteRequestToProto`, `ExecuteResponseFromProto` and `PluginInfoFromProto` help Go clients
 (see `plugins/go-crypto/cmd/probe`).
 
+## Bindings and the dispatcher
+
+HTTP and gRPC are two **bindings** ("faces", [`docs/transports.md`](../../docs/transports.md)) over one
+transport-neutral **dispatcher**. A binding converts its wire format into the protocol structs and calls
+`Dispatcher.Execute / LoadOptions / TestCredentials / WebhookMethod / ReceiveWebhook`, which applies the
+call's deadline and cancellation, the plugin's concurrency limit and then the plugin's handler logic
+(spans, metrics, redaction, credentials). Broker bindings (`sdks/go/transport`, next wave) and the MCP
+face plug in the same way:
+
+```go
+type Binding interface {
+	Kind() string                                                   // "http" | "grpc" | "mcp" | a broker kind
+	Start(ctx context.Context, bc landflow.BindingContext) (landflow.BindingInfo, error) // listen/connect; endpoints to announce
+	Stop(ctx context.Context) error                                 // drain, then close
+}
+```
+
+`BindingContext` carries the `Plugin`, the shared `*Dispatcher`, the `Manifest` (with `transports` and
+`maxConcurrency` filled in), `Logger`, `Telemetry`, `ListenHost`/`AdvertiseHost`, an `Announce(endpoints…)`
+hook for endpoints learned late and a `Fail(err)` hook that shuts the plugin down. The call's
+`context.Context` reaches node code as the `ExecuteContext` (cancelled when the HTTP client disconnects,
+the gRPC deadline passes or a broker delivery expires), and `CallOptions{Transport, Deadline}` per call set
+the `landflow.transport` span attribute and an extra deadline. `landflow.TransportOf(ctx)` tells a node which
+face delivered the call. `Dispatcher.InFlight()` / `Waiting()` / `MaxConcurrency()` expose the live counts
+(also the `landflow.plugin.inflight` metric); at the limit a call waits for a slot until its context or
+deadline ends, then fails with `ErrOverloaded` (HTTP 503, gRPC `RESOURCE_EXHAUSTED`; an expired deadline
+is 504 / `DEADLINE_EXCEEDED`).
+
 ## Serve, discovery and announce
 
-`landflow.Serve(ctx, plugin, landflow.ServeOptions{HTTPPort, GRPCPort, Announce})` does the
-following:
+`landflow.Serve(ctx, plugin, landflow.ServeOptions{HTTPPort, GRPCPort, Announce})`, or the same with
+functional options, `landflow.Serve(ctx, plugin, landflow.WithHTTP(7104), landflow.WithGRPC(7204),
+landflow.WithBinding(b), landflow.WithMaxConcurrency(16))`, does the following:
 
-1. Binds both listeners. A port clash fails fast, before anything is announced.
+1. Starts every binding in order (HTTP, gRPC, then `WithBinding`/`Bindings`). A port clash fails fast,
+   before anything is announced; `LANDFLOW_TRANSPORTS=http,grpc,kafka` selects the kinds that run.
 2. POSTs an `AnnounceRequest` to `{LANDFLOW_REGISTRY_URL}/api/plugins/announce` for each endpoint,
    `http://{advertise}:{port}` and `grpc://{advertise}:{port}`. If the URL is `grpc://`, it calls
    `RegistryService.Announce` instead. Every announce carries `InstanceID()`, random per process, so
@@ -392,19 +422,24 @@ following:
 3. Re-announces every `heartbeatIntervalSeconds` from the response (10 by default). If the host is
    down, it logs once and keeps retrying quietly. It logs again when the host comes back.
 4. On SIGINT, SIGTERM or `ctx` cancellation, it withdraws every endpoint that was accepted, using
-   `DELETE /api/plugins/announce` or `RegistryService.Withdraw`. It then gracefully stops both
-   servers and returns `nil`.
+   `DELETE /api/plugins/announce` or `RegistryService.Withdraw`. It then gracefully stops the
+   bindings in reverse order and returns `nil`.
+
+The manifest (`GET /landflow/v1/manifest`, `GetManifest`) and every announce carry `transports` (the kinds
+that run) and `maxConcurrency`, so the host's selector knows them.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `LANDFLOW_REGISTRY_URL` | `http://127.0.0.1:3000` | `http(s)://…`, `grpc://host:port`, or `off` |
 | `LANDFLOW_ADVERTISE_HOST` | `127.0.0.1` | host placed in announced endpoints |
 | `LANDFLOW_HTTP_PORT` / `LANDFLOW_GRPC_PORT` | `ServeOptions` value | override the code's ports; `off` disables a transport |
+| `LANDFLOW_TRANSPORTS` | every configured binding | comma-separated kinds to run (`http,grpc,kafka`); a kind with no binding is ignored with a log line |
+| `LANDFLOW_MAX_CONCURRENCY` | `ServeOptions.MaxConcurrency` (0 = unlimited) | calls one instance runs at once; announced as `maxConcurrency` |
 | `LANDFLOW_LISTEN_HOST` | loopback if the advertise host is loopback, otherwise all interfaces | bind address |
 
-`ServeOptions` can also override all of the above (`RegistryURL`, `AdvertiseHost`, `ListenHost`)
-and set `TTLSeconds` (30), `ShutdownTimeout` (10s), `Logger` and `GRPCOptions`.
-`Announce: landflow.Ptr(false)` disables announcing.
+`ServeOptions` can also override all of the above (`RegistryURL`, `AdvertiseHost`, `ListenHost`,
+`Transports`, `MaxConcurrency`, `Bindings`) and set `TTLSeconds` (30), `ShutdownTimeout` (10s), `Logger`
+and `GRPCOptions`. `Announce: landflow.Ptr(false)` (or `WithAnnounce(false)`) disables announcing.
 
 ## Observability
 

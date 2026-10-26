@@ -353,7 +353,7 @@ func (p *Plugin) startWebhookSpan(ctx context.Context, name string, rn *register
 		attribute.String("landflow.node.name", node.Name),
 		attribute.String("landflow.workflow.id", workflowID),
 	}, attrs...)
-	ctx, span := tel.tracer.Start(withScope(ctx, sc), name, trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(attrs...))
+	ctx, span := tel.tracer.Start(withScope(ctx, sc), name, trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(attrs...), trace.WithAttributes(transportAttrs(ctx)...))
 	return ctx, span, sc
 }
 

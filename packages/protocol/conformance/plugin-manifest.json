@@ -1,0 +1,108 @@
+{
+  "protocol": "landflow.plugin/v1",
+  "plugin": {
+    "id": "landflow-conformance",
+    "name": "Conformance",
+    "version": "1.0.0",
+    "description": "The plugin every conformance runner embeds: fixed behaviour so fixtures can predict replies.",
+    "language": "any",
+    "icon": "lucide:check-check",
+    "color": "#0ea5e9"
+  },
+  "transports": ["http", "grpc", "mcp"],
+  "maxConcurrency": 4,
+  "credentialTypes": [
+    {
+      "name": "conformanceApi",
+      "displayName": "Conformance API",
+      "testable": true,
+      "properties": [{ "name": "token", "displayName": "Token", "type": "string", "required": true, "typeOptions": { "password": true } }]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "echo",
+      "displayName": "Echo",
+      "description": "Emit each input item with the message added as `echo`; without items, one item { echo }.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "idempotent": true,
+      "inputs": [{ "type": "main" }],
+      "outputs": [{ "type": "main" }],
+      "properties": [{ "name": "message", "displayName": "Message", "type": "string", "default": "", "description": "Copied into `echo` on every item." }],
+      "outputSchema": { "type": "object", "properties": { "echo": { "type": "string" } }, "required": ["echo"] }
+    },
+    {
+      "name": "sleep",
+      "displayName": "Sleep",
+      "description": "Wait `ms` milliseconds while watching the abort signal, then emit { sleptMs }. Aborted: fail at once with `canceled`.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [{ "type": "main" }],
+      "outputs": [{ "type": "main" }],
+      "properties": [{ "name": "ms", "displayName": "Milliseconds", "type": "number", "default": 100, "typeOptions": { "minValue": 0, "numberPrecision": 0 } }]
+    },
+    {
+      "name": "fail",
+      "displayName": "Fail",
+      "description": "Fail with the given message (and item index), no outputs.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [{ "type": "main" }],
+      "outputs": [{ "type": "main" }],
+      "properties": [
+        { "name": "message", "displayName": "Message", "type": "string", "default": "boom", "required": true },
+        { "name": "itemIndex", "displayName": "Item index", "type": "number", "default": -1, "typeOptions": { "numberPrecision": 0 }, "description": "-1: not item-specific." }
+      ]
+    },
+    {
+      "name": "payload",
+      "displayName": "Payload",
+      "description": "Emit one item { data } where data is `bytes` characters long.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "idempotent": true,
+      "inputs": [{ "type": "main" }],
+      "outputs": [{ "type": "main" }],
+      "properties": [{ "name": "bytes", "displayName": "Bytes", "type": "number", "default": 1024, "typeOptions": { "minValue": 0, "numberPrecision": 0 } }]
+    },
+    {
+      "name": "counter",
+      "displayName": "Counter",
+      "description": "Increment an in-process counter for `key` and emit { key, count }.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [{ "type": "main" }],
+      "outputs": [{ "type": "main" }],
+      "properties": [{ "name": "key", "displayName": "Key", "type": "string", "default": "default", "required": true }]
+    },
+    {
+      "name": "tick",
+      "displayName": "Tick",
+      "description": "A trigger: never an MCP tool.",
+      "version": 1,
+      "kind": "trigger",
+      "triggerSource": "manual",
+      "inputs": [],
+      "outputs": [{ "type": "main" }],
+      "properties": []
+    },
+    {
+      "name": "hidden",
+      "displayName": "Hidden",
+      "description": "An action node that opted out of MCP.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "mcp": false,
+      "inputs": [{ "type": "main" }],
+      "outputs": [{ "type": "main" }],
+      "properties": [{ "name": "field", "displayName": "Field", "type": "string", "default": "" }]
+    }
+  ]
+}

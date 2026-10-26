@@ -104,6 +104,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'sync.apply': 'Applied Git sync files',
   'plugin.register': 'Registered a plugin',
   'plugin.remove': 'Removed a plugin',
+  'plugin.transport': 'Changed a plugin’s transport policy',
   'marketplace.install': 'Installed from a marketplace',
   'marketplace.uninstall': 'Uninstalled a marketplace plugin',
   'audit.export': 'Exported the audit log',

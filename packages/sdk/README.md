@@ -8,9 +8,11 @@ The wire contract is [docs/protocol.md](../../docs/protocol.md); telemetry names
 | Import | What |
 |---|---|
 | `@landflow/sdk` | `defineNode`, `definePlugin`, `defineCredentialType`, `pollIntervalProperty`, `NodeOperationError`, context types, `runNode` / `runLoadOptions` / `runTestCredentials` (in-process), `createLogger`, redaction helpers |
-| `@landflow/sdk/serve` | `serve(plugin, { http, grpc })`: telemetry + transports + announce (each announce carries `INSTANCE_ID` from `@landflow/sdk/announce`, random per process, so a restart re-pulls the manifest) |
-| `@landflow/sdk/http` | `createFetchHandler(plugin, { telemetry? })`, `serveHttp` |
-| `@landflow/sdk/grpc` | `createPluginService(plugin, { telemetry? })`, `serveGrpc` |
+| `@landflow/sdk/serve` | `serve(plugin, { http, grpc, bindings?, maxConcurrency? })`: telemetry + one dispatcher + the faces + announce (each announce carries `INSTANCE_ID` from `@landflow/sdk/announce`, random per process, so a restart re-pulls the manifest) |
+| `@landflow/sdk/http` | `createFetchHandler(plugin, { telemetry?, dispatcher? })`, `serveHttp`, `httpBinding({ port })` |
+| `@landflow/sdk/grpc` | `createPluginService(plugin, { telemetry?, dispatcher? })`, `serveGrpc`, `grpcBinding({ port })` |
+| `@landflow/sdk/binding` | `TransportBinding`, `BindingContext`, `BindingInfo`: one face of the plugin (see [Transports and bindings](#transports-and-bindings)) |
+| `@landflow/sdk/dispatcher` | `createDispatcher(plugin, { maxConcurrency? })`, `DispatchError`: the transport-neutral entry point every face calls |
 | `@landflow/sdk/telemetry` | `createTelemetry(options)` (tests, custom bootstraps) |
 
 ## A complete plugin
@@ -202,6 +204,43 @@ const repoEvents: INodeType = {
   `verifySlackSignature(secret, body, timestamp, signature)`, `verifyHmacSha256({ secret, payload, signature, prefix,
   encoding })`, the matching `githubSignature` / `stripeSignature` / `slackSignature` for tests, and `safeEqual`. All
   compare in constant time; Stripe and Slack refuse timestamps older than 5 minutes.
+
+## Transports and bindings
+
+A plugin has one core and several faces ([docs/transports.md](../../docs/transports.md)). The **dispatcher** runs the
+node with spans, metrics, redaction and credentials, and adds what a wire cannot: a **deadline** (epoch ms; a call that
+is already late is refused with `deadline_exceeded` and never runs, otherwise `ctx.deadline` says when to stop and
+`ctx.signal` aborts when it passes), **cancellation** (`ctx.signal` aborts when the caller goes away, also aborting
+`ctx.http` and the binary helpers) and the **concurrency limit** (`maxConcurrency` calls run at once; the next ones wait
+in order, still honouring their deadline; when as many are waiting as may run, further calls are refused with
+`capacity`, HTTP 429 / gRPC `RESOURCE_EXHAUSTED`, so the host can send them elsewhere knowing they never ran).
+`dispatcher.stats()` gives `inFlight` and `queued`.
+
+A **binding** owns one wire and calls the dispatcher. HTTP (`httpBinding`) reads the deadline from the
+`x-landflow-deadline` header and cancels when the connection closes; gRPC (`grpcBinding`) uses the call's own deadline and
+cancellation. Any other face is a `TransportBinding` passed in `bindings`:
+
+```ts
+import { serve } from '@landflow/sdk/serve';
+import type { TransportBinding } from '@landflow/sdk';
+
+const face: TransportBinding = {
+  kind: 'fake',
+  async start(context) {
+    // context.dispatcher, context.manifest (hints included), context.telemetry, context.logger, context.hints,
+    // context.advertiseHost, context.announce(endpoints) / context.withdraw(endpoints) for endpoints learnt later
+    const response = await context.dispatcher.execute(request, { transport: 'fake', deadline: Date.now() + 30_000, signal, parent });
+    return { endpoints: ['fake://conn-1/my-plugin'], description: 'fake connected' };
+  },
+  async stop() { /* stop taking calls, await context.dispatcher.drain(), close */ },
+};
+await serve(plugin, { http: 7101, grpc: 7201, bindings: [face], maxConcurrency: 8 });
+```
+
+`serve()` starts every face given, unless `LANDFLOW_TRANSPORTS` (a comma list, e.g. `http,grpc`) picks a subset; a kind
+named there that nothing provides is an error. The manifest and every announce carry the hints `transports` (the faces
+that started) and `maxConcurrency` (`LANDFLOW_MAX_CONCURRENCY` overrides the option). `brokers` and `mcp` are reserved
+for the messaging and MCP faces: today `brokers` fails with "messaging binding not available yet" and `mcp` is ignored.
 
 ## Observability
 

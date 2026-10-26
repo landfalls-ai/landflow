@@ -438,6 +438,7 @@ class Telemetry:
         self.execute_duration = self.metrics.histogram("landflow.plugin.execute.duration", "ms", "Duration of node executions")
         self.items = self.metrics.counter("landflow.plugin.items", "{item}", "Items received (in) and emitted (out) by node executions")
         self.load_options_calls = self.metrics.counter("landflow.plugin.load_options", "{call}", "LoadOptions calls")
+        self.in_flight = self.metrics.gauge("landflow.plugin.inflight", "{call}", "Calls running in the plugin right now")
         self.http_client_duration = self.metrics.histogram(
             "http.client.request.duration", "s", "Duration of outbound HTTP requests made through ctx.http"
         )

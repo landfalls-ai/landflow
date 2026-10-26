@@ -45,16 +45,20 @@ class GetManifestRequest(_message.Message):
     def __init__(self, host_version: _Optional[str] = ...) -> None: ...
 
 class GetManifestResponse(_message.Message):
-    __slots__ = ("protocol", "plugin", "nodes", "credential_types")
+    __slots__ = ("protocol", "plugin", "nodes", "credential_types", "transports", "max_concurrency")
     PROTOCOL_FIELD_NUMBER: _ClassVar[int]
     PLUGIN_FIELD_NUMBER: _ClassVar[int]
     NODES_FIELD_NUMBER: _ClassVar[int]
     CREDENTIAL_TYPES_FIELD_NUMBER: _ClassVar[int]
+    TRANSPORTS_FIELD_NUMBER: _ClassVar[int]
+    MAX_CONCURRENCY_FIELD_NUMBER: _ClassVar[int]
     protocol: str
     plugin: PluginInfo
     nodes: _containers.RepeatedCompositeFieldContainer[DynamicValue]
     credential_types: _containers.RepeatedCompositeFieldContainer[DynamicValue]
-    def __init__(self, protocol: _Optional[str] = ..., plugin: _Optional[_Union[PluginInfo, _Mapping]] = ..., nodes: _Optional[_Iterable[_Union[DynamicValue, _Mapping]]] = ..., credential_types: _Optional[_Iterable[_Union[DynamicValue, _Mapping]]] = ...) -> None: ...
+    transports: _containers.RepeatedScalarFieldContainer[str]
+    max_concurrency: int
+    def __init__(self, protocol: _Optional[str] = ..., plugin: _Optional[_Union[PluginInfo, _Mapping]] = ..., nodes: _Optional[_Iterable[_Union[DynamicValue, _Mapping]]] = ..., credential_types: _Optional[_Iterable[_Union[DynamicValue, _Mapping]]] = ..., transports: _Optional[_Iterable[str]] = ..., max_concurrency: _Optional[int] = ...) -> None: ...
 
 class NodeRef(_message.Message):
     __slots__ = ("id", "name", "type", "type_version")

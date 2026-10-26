@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
-import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
+import { languageMeta, transportLabel } from '@/lib/client/format';
 import type { ExecutionState, PluginStatus, Transport } from '@/lib/shared/types';
 
 export type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'muted';
@@ -35,7 +35,7 @@ export function Chip({ children, tone = 'muted', className, mono }: { children: 
 export function TransportBadge({ transport, className }: { transport: Transport; className?: string }) {
   return (
     <Badge tone="muted" className={cn('font-mono font-medium', className)}>
-      {TRANSPORT_META[transport].label}
+      {transportLabel(transport)}
     </Badge>
   );
 }

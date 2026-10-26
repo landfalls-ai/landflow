@@ -16,6 +16,7 @@ import { rowFilterSchema } from './datatables/http';
 import { routePolicy } from './auth/policy';
 import { workflowSchema } from './schemas';
 import { saveTemplateSchema, updateTemplateSchema } from './templates/schema';
+import { connectionCreateSchema, connectionTestSchema, connectionUpdateSchema } from './transports/schema';
 
 type Json = Record<string, unknown>;
 type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
@@ -38,7 +39,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers' | 'Plugins';
   id: string;
   summary: string;
   description?: string;
@@ -302,6 +303,79 @@ const schemas: Record<string, Json> = {
       lastUsedAt: { type: 'string' },
     },
     ['id', 'label', 'hint', 'scopes', 'createdAt'],
+  ),
+  // Plugins and transports (docs/transports.md; lib/shared/transports.ts).
+  TransportPolicy: object(
+    {
+      mode: { type: 'string', enum: ['auto', 'pinned'] },
+      pinned: { type: 'string', description: 'With `mode: pinned`: the kind every call uses' },
+      allowed: { ...array({ type: 'string' }), description: 'Kinds the selector may use; absent = every kind' },
+      objective: { type: 'string', enum: ['balanced', 'latency', 'throughput'] },
+    },
+    ['mode', 'objective'],
+  ),
+  TransportChoice: object(
+    {
+      endpoint: { type: 'string' },
+      kind: { type: 'string' },
+      reason: { type: 'string', enum: ['pinned', 'only', 'auto.latency', 'auto.spillover', 'auto.failover', 'auto.breaker', 'auto.size'] },
+    },
+    ['endpoint', 'kind', 'reason'],
+  ),
+  PluginTransport: object({ kind: { type: 'string' }, endpoints: array({ type: 'string' }), online: { type: 'boolean' }, excluded: { type: 'boolean', description: 'The policy keeps this kind out' } }, ['kind', 'endpoints', 'online']),
+  Plugin: object(
+    {
+      id: { type: 'string' },
+      info: { type: 'object', description: 'The manifest’s plugin section (name, version, language, icon…)' },
+      status: { type: 'string', enum: ['online', 'offline', 'error'] },
+      transport: { type: 'string', description: 'The transport the next call takes (`in-process` for built-in plugins)' },
+      activeEndpoint: { type: 'string' },
+      transports: array(ref('PluginTransport')),
+      policy: ref('TransportPolicy'),
+      choice: ref('TransportChoice'),
+      choiceError: { type: 'string', description: 'Why no transport can be chosen now' },
+      endpoints: array({ type: 'object' }),
+      source: { type: 'string' },
+      nodes: array({ type: 'object' }),
+    },
+    ['id', 'info', 'status', 'transport', 'endpoints', 'source', 'nodes'],
+  ),
+  TransportCapabilities: object(
+    {
+      maxMessageBytes: { type: 'number' },
+      delivery: array({ type: 'string', enum: ['at-most-once', 'at-least-once'] }),
+      latency: { type: 'string', enum: ['low', 'medium', 'high'] },
+      buffering: { type: 'boolean' },
+    },
+    ['maxMessageBytes', 'delivery', 'latency', 'buffering'],
+  ),
+  TransportKind: object(
+    {
+      kind: { type: 'string' },
+      label: { type: 'string' },
+      direct: { type: 'boolean', description: 'The host connects to the plugin; brokers are reached through connections' },
+      installed: { type: 'boolean', description: 'A driver for the kind is registered in this host' },
+      capabilities: ref('TransportCapabilities'),
+      fields: array({ type: 'object', description: 'The connection form’s fields (name, label, type, required…)' }),
+    },
+    ['kind', 'label', 'direct', 'installed', 'fields'],
+  ),
+  TransportConnectionCheck: object({ ok: { type: 'boolean' }, at: { type: 'string' }, message: { type: 'string' }, latencyMs: { type: 'number' }, version: { type: 'string' } }, ['ok', 'at', 'message']),
+  TransportConnection: object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      kind: { type: 'string' },
+      enabled: { type: 'boolean' },
+      config: { type: 'object', description: 'Non-secret fields' },
+      secretsSet: { ...array({ type: 'string' }), description: 'Secret fields that hold a value (never the values)' },
+      source: { type: 'string', enum: ['database', 'env'] },
+      lastCheck: ref('TransportConnectionCheck'),
+      plugins: { ...array({ type: 'string' }), description: 'Plugins with an endpoint on this connection' },
+      createdAt: { type: 'string' },
+      updatedAt: { type: 'string' },
+    },
+    ['id', 'name', 'kind', 'enabled', 'config', 'secretsSet', 'source', 'plugins', 'createdAt', 'updatedAt'],
   ),
 };
 
@@ -1006,6 +1080,52 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 201: reply('The key, shown once', object({ key: ref('ApiKey'), token: { type: 'string', description: 'lf_…' } }, ['key', 'token'])), 400: invalid },
   });
   add('delete', '/api/api-keys/{id}', { tag: 'Account', id: 'deleteApiKey', summary: 'Revoke an API key', description: 'It stops working at once.', responses: { 200: reply('Revoked', ok), 404: notFound } });
+
+  // ---- plugins and transports (docs/transports.md) ----
+  const pluginsReply = reply('Every plugin: its endpoints by transport, its transport policy, and the transport the next call takes with the reason', object({ plugins: array(ref('Plugin')) }, ['plugins']));
+  add('get', '/api/plugins', { tag: 'Plugins', id: 'listPlugins', summary: 'List plugins', responses: { 200: pluginsReply } });
+  add('patch', '/api/plugins/{id}', {
+    tag: 'Plugins',
+    id: 'updatePluginTransport',
+    summary: 'Set a plugin’s transport policy',
+    description: 'Auto (the host chooses per call), pinned to one transport, or limited to an allow-list; `objective` is Auto’s goal. The older `preferredTransport` body still works: a transport pins the policy to it, `null` is Auto.',
+    body: jsonBody(object({ policy: ref('TransportPolicy'), preferredTransport: { type: ['string', 'null'], description: 'Older clients: `http`, `grpc` or a broker kind; null for Auto' } })),
+    responses: { 200: pluginsReply, 400: invalid, 404: notFound },
+  });
+  add('get', '/api/transports', {
+    tag: 'Plugins',
+    id: 'listTransports',
+    summary: 'List transport kinds and broker connections',
+    description: 'The kinds this host knows (installed providers with their capabilities, and broker kinds whose driver has not landed yet) and the broker connections with the plugins on each.',
+    responses: { 200: reply('Kinds and connections', object({ kinds: array(ref('TransportKind')), connections: array(ref('TransportConnection')) }, ['kinds', 'connections'])) },
+  });
+  add('get', '/api/transports/connections', { tag: 'Plugins', id: 'listTransportConnections', summary: 'List broker connections', responses: { 200: reply('The connections (no secret values)', object({ connections: array(ref('TransportConnection')) }, ['connections'])) } });
+  add('post', '/api/transports/connections', {
+    tag: 'Plugins',
+    id: 'createTransportConnection',
+    summary: 'Add a broker connection',
+    description: 'Secret fields (`secrets`) are stored encrypted like credentials and never returned.',
+    body: jsonBody(fromZod(connectionCreateSchema)),
+    responses: { 201: reply('The connection', ref('TransportConnection')), 400: invalid, 409: errorRef('A connection with that id or name exists') },
+  });
+  add('get', '/api/transports/connections/{id}', { tag: 'Plugins', id: 'getTransportConnection', summary: 'Get a broker connection', responses: { 200: reply('The connection', ref('TransportConnection')), 404: notFound } });
+  add('patch', '/api/transports/connections/{id}', {
+    tag: 'Plugins',
+    id: 'updateTransportConnection',
+    summary: 'Change a broker connection',
+    description: 'A secret left empty keeps its value; `null` clears it. Connections from `LANDFLOW_TRANSPORT_<KIND>_URL` are read-only (409).',
+    body: jsonBody(fromZod(connectionUpdateSchema)),
+    responses: { 200: reply('The connection', ref('TransportConnection')), 400: invalid, 404: notFound, 409: errorRef('Read-only, or the name is taken') },
+  });
+  add('delete', '/api/transports/connections/{id}', { tag: 'Plugins', id: 'deleteTransportConnection', summary: 'Delete a broker connection', responses: { 200: reply('Deleted', ok), 404: notFound, 409: errorRef('Read-only (from the environment)') } });
+  add('post', '/api/transports/connections/{id}/test', {
+    tag: 'Plugins',
+    id: 'testTransportConnection',
+    summary: 'Test a broker connection',
+    description: 'A round trip through the kind’s driver. With a body it tests the given values before they are saved. A kind without a driver answers `ok: false`, "No driver for <kind> yet".',
+    body: jsonBody(fromZod(connectionTestSchema), 'Values to test instead of the saved ones', false),
+    responses: { 200: reply('The result', ref('TransportConnectionCheck')), 404: notFound },
+  });
   return out;
 }
 
@@ -1031,6 +1151,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Audit', description: 'The audit log (owners and admins; project admins their projects’ events), its hash chain and four-eyes publish requests' },
       { name: 'Account', description: 'Who you are and your API keys' },
       { name: 'Triggers', description: 'Webhook, form and MCP Server Trigger URLs and their test URLs: public, each checked by its trigger’s own authentication' },
+      { name: 'Plugins', description: 'Installed plugins, their transports and transport policies, and broker connections (changes need an owner or admin)' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],
     paths: paths(),

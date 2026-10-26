@@ -30,11 +30,26 @@ export const portSchema = z.object({
   displayOptions: displayOptionsSchema.optional(),
 });
 
+const jsonSchemaObject = z.record(z.string(), z.any());
+
+/** MCP `ToolAnnotations` overrides (docs/protocol.md §15.1). */
+export const toolAnnotationsSchema = z.object({
+  title: z.string().optional(),
+  readOnlyHint: z.boolean().optional(),
+  destructiveHint: z.boolean().optional(),
+  idempotentHint: z.boolean().optional(),
+  openWorldHint: z.boolean().optional(),
+});
+
 export const propertyOptionSchema = z.object({
   name: z.string(),
   value: primitive,
   description: z.string().optional(),
   action: z.string().optional(),
+  mcp: z.literal(false).optional(),
+  idempotent: z.boolean().optional(),
+  outputSchema: jsonSchemaObject.optional(),
+  toolAnnotations: toolAnnotationsSchema.optional(),
 });
 
 const typeOptionsSchema = z.object({
@@ -110,6 +125,10 @@ export const nodeDescriptorSchema: z.ZodType<NodeDescriptor> = z.object({
   credentials: z
     .array(z.object({ name: z.string().min(1), required: z.boolean().optional(), displayOptions: displayOptionsSchema.optional() }))
     .optional(),
+  idempotent: z.boolean().optional(),
+  mcp: z.literal(false).optional(),
+  outputSchema: jsonSchemaObject.optional(),
+  toolAnnotations: toolAnnotationsSchema.optional(),
 });
 
 export const credentialTypeSchema: z.ZodType<CredentialTypeDescriptor> = z.object({
@@ -141,6 +160,8 @@ export const manifestSchema: z.ZodType<PluginManifest> = z.object({
   plugin: pluginInfoSchema,
   nodes: z.array(nodeDescriptorSchema),
   credentialTypes: z.array(credentialTypeSchema).optional(),
+  transports: z.array(z.string().regex(/^[a-z0-9][a-z0-9._-]*$/, 'a transport kind is lowercase: http, grpc, kafka, …')).optional(),
+  maxConcurrency: z.number().int().positive().optional(),
 });
 
 const jsonObject = z.record(z.string(), z.unknown());
@@ -232,7 +253,8 @@ export const webhookRequestSchema = z.object({
 
 export const announceRequestSchema = z.object({
   protocol: z.literal('landflow.plugin/v1'),
-  endpoint: z.string().regex(/^(https?|grpc):\/\/[^\s/]+/, 'endpoint must be http(s):// or grpc://'),
+  /** Direct URLs, or a brokered `<kind>://<connectionId>/<pluginId>` (docs/protocol.md §14.2). */
+  endpoint: z.string().regex(/^(?:(?:https?|grpc):\/\/[^\s/]+|[a-z][a-z0-9+.-]*:\/\/[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*)$/i, 'endpoint must be http(s)://, grpc:// or <kind>://<connectionId>/<pluginId>'),
   pluginId: z.string().min(1),
   version: z.string().min(1),
   ttlSeconds: z.number().int().positive().max(3600).optional(),

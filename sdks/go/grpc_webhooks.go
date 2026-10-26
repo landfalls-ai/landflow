@@ -18,7 +18,7 @@ func (g *grpcService) WebhookMethod(ctx context.Context, in *pb.WebhookMethodReq
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	resp, err := g.p.WebhookMethod(g.p.tel().extractGRPC(ctx), req)
+	resp, err := g.d.WebhookMethod(g.p.tel().extractGRPC(ctx), req, grpcCall)
 	if err != nil {
 		return nil, grpcStatus(err)
 	}
@@ -34,7 +34,7 @@ func (g *grpcService) ReceiveWebhook(ctx context.Context, in *pb.ReceiveWebhookR
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	resp, err := g.p.ReceiveWebhook(g.p.tel().extractGRPC(ctx), req)
+	resp, err := g.d.ReceiveWebhook(g.p.tel().extractGRPC(ctx), req, grpcCall)
 	if err != nil {
 		return nil, grpcStatus(err)
 	}

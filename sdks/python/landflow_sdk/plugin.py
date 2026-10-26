@@ -145,6 +145,25 @@ class Plugin:
             raise DescriptorError("a plugin needs at least one node")
         self._manifest = self._build_manifest()
         self.telemetry = telemetry if telemetry is not None else Telemetry(self.id, self.version)
+        #: Manifest hints (docs/transports.md): the binding kinds the plugin runs with and the calls one instance
+        #: takes at once. ``PluginServer`` sets them; ``manifest()`` and the announcer carry them.
+        self.transports: list[str] | None = None
+        self.max_concurrency: int | None = None
+        self._dispatcher: Any = None
+
+    @property
+    def dispatcher(self) -> Any:
+        """The plugin's ``Dispatcher`` (``landflow_sdk.dispatcher``), created unlimited on first use.
+        ``PluginServer`` replaces it with one built from ``max_concurrency`` before any binding starts."""
+        if self._dispatcher is None:
+            from .dispatcher import Dispatcher
+
+            self._dispatcher = Dispatcher(self)
+        return self._dispatcher
+
+    @dispatcher.setter
+    def dispatcher(self, value: Any) -> None:
+        self._dispatcher = value
 
     # ------------------------------------------------------------------ meta
 
@@ -178,8 +197,13 @@ class Plugin:
         return manifest
 
     def manifest(self) -> dict[str, Any]:
-        """``PluginManifest``."""
-        return copy.deepcopy(self._manifest)
+        """``PluginManifest`` (with ``transports`` and ``maxConcurrency`` once ``PluginServer`` set them)."""
+        manifest = copy.deepcopy(self._manifest)
+        if self.transports:
+            manifest["transports"] = list(self.transports)
+        if self.max_concurrency:
+            manifest["maxConcurrency"] = self.max_concurrency
+        return manifest
 
     def well_known(self) -> dict[str, Any]:
         """``WellKnownDocument`` (the cheap discovery probe)."""
@@ -242,13 +266,17 @@ class Plugin:
             out[name] = ctype.with_defaults(data) if ctype is not None else data
         return out
 
-    def execute(self, request: Any, headers: Any = None) -> dict[str, Any]:
+    def execute(
+        self, request: Any, headers: Any = None, *, cancel: Any = None, transport: str | None = None
+    ) -> dict[str, Any]:
         """Run an ``ExecuteRequest`` dict and return an ``ExecuteResponse`` dict.
 
         ``headers``: the HTTP headers or gRPC metadata of the call (W3C trace
         context). Raises ``ProtocolError`` for malformed requests and
         ``UnknownNodeError`` for unknown node types; node failures are reported
-        in ``error``.
+        in ``error``. ``cancel`` is the call's ``CancelToken`` (``ctx.cancel``) and
+        ``transport`` the binding kind (``landflow.transport`` on the span); the
+        ``Dispatcher`` passes both.
         """
         request = _validate_execute_request(request)
         node, descriptor = self.resolve_node(request["node"]["type"])
@@ -270,6 +298,7 @@ class Plugin:
                     "landflow.execution.id": request.get("executionId") or None,
                     "landflow.execution.mode": request["mode"],
                     "landflow.items.in": items_in,
+                    "landflow.transport": transport,
                 },
             )
             try:
@@ -281,6 +310,7 @@ class Plugin:
                         telemetry=telemetry,
                         credentials=self._with_defaults(raw_credentials),
                         span=span,
+                        cancel=cancel,
                     )
                     response = self._run_node(node, ctx, descriptor, span)
             finally:
@@ -329,6 +359,9 @@ class Plugin:
         parameters: Any = None,
         credentials: Any = None,
         headers: Any = None,
+        *,
+        cancel: Any = None,
+        transport: str | None = None,
     ) -> list[dict[str, Any]]:
         """Resolve a ``loadOptionsMethod``; returns ``[{name, value, description?}]``."""
         node, descriptor = self.resolve_node(node_type)
@@ -347,7 +380,12 @@ class Plugin:
                 f"plugin.load_options {method}",
                 kind="server",
                 parent=telemetry.extract(headers),
-                attributes={"landflow.plugin.id": self.id, "landflow.node.type": qualified, "landflow.load_options.method": method},
+                attributes={
+                    "landflow.plugin.id": self.id,
+                    "landflow.node.type": qualified,
+                    "landflow.load_options.method": method,
+                    "landflow.transport": transport,
+                },
             )
             try:
                 with telemetry.use_span(span):
@@ -360,6 +398,7 @@ class Plugin:
                         telemetry=telemetry,
                         credentials=self._with_defaults(credentials),
                         span=span,
+                        cancel=cancel,
                     )
                     try:
                         result = _call_load_options(node, method, parameters, ctx)
@@ -378,16 +417,21 @@ class Plugin:
                 span.end()
                 telemetry.load_options_calls.add(1, {"landflow.load_options.method": method, "landflow.outcome": outcome})
 
-    def load_options_request(self, request: Any, headers: Any = None) -> dict[str, Any]:
+    def load_options_request(
+        self, request: Any, headers: Any = None, *, cancel: Any = None, transport: str | None = None
+    ) -> dict[str, Any]:
         """``LoadOptionsRequest`` dict -> ``LoadOptionsResponse`` dict."""
         if not isinstance(request, dict):
             raise ProtocolError("request body must be a JSON object")
         options = self.load_options(
-            request.get("nodeType"), request.get("method"), request.get("parameters"), request.get("credentials"), headers
+            request.get("nodeType"), request.get("method"), request.get("parameters"), request.get("credentials"), headers,
+            cancel=cancel, transport=transport,
         )
         return {"options": options}
 
-    def test_credentials(self, credential_type: Any, data: Any = None, headers: Any = None) -> dict[str, Any]:
+    def test_credentials(
+        self, credential_type: Any, data: Any = None, headers: Any = None, *, cancel: Any = None, transport: str | None = None
+    ) -> dict[str, Any]:
         """Run the credential type's ``test`` -> ``TestCredentialsResponse`` (``{ok, message?}``).
 
         Raises ``UnknownCredentialTypeError`` for undeclared or untestable types.
@@ -406,11 +450,11 @@ class Plugin:
                 f"plugin.test_credentials {ctype.name}",
                 kind="server",
                 parent=telemetry.extract(headers),
-                attributes={"landflow.plugin.id": self.id, "landflow.credential.type": ctype.name},
+                attributes={"landflow.plugin.id": self.id, "landflow.credential.type": ctype.name, "landflow.transport": transport},
             )
             try:
                 with telemetry.use_span(span):
-                    ctx = CredentialTestContext(ctype.name, plugin_id=self.id, telemetry=telemetry, span=span)
+                    ctx = CredentialTestContext(ctype.name, plugin_id=self.id, telemetry=telemetry, span=span, cancel=cancel)
                     try:
                         ok, message = normalize_test_result(_call_test(ctype.test, ctype.with_defaults(data), ctx))
                     except NodeOperationError as exc:  # an expected "no": bad token, 401, unreachable host
@@ -429,15 +473,17 @@ class Plugin:
                 response["message"] = redact_text(message)
         return response
 
-    def test_credentials_request(self, request: Any, headers: Any = None) -> dict[str, Any]:
+    def test_credentials_request(
+        self, request: Any, headers: Any = None, *, cancel: Any = None, transport: str | None = None
+    ) -> dict[str, Any]:
         """``TestCredentialsRequest`` dict -> ``TestCredentialsResponse`` dict."""
         if not isinstance(request, dict):
             raise ProtocolError("request body must be a JSON object")
-        return self.test_credentials(request.get("credentialType"), request.get("data"), headers)
+        return self.test_credentials(request.get("credentialType"), request.get("data"), headers, cancel=cancel, transport=transport)
 
     # ------------------------------------------------- app webhook triggers
 
-    def webhook_method(self, request: Any, headers: Any = None) -> dict[str, Any]:
+    def webhook_method(self, request: Any, headers: Any = None, *, cancel: Any = None, transport: str | None = None) -> dict[str, Any]:
         """Run a ``WebhookMethodRequest`` (``checkExists`` / ``create`` / ``delete``) -> ``WebhookMethodResponse``.
 
         Raises ``ProtocolError`` / ``UnknownNodeError`` for malformed requests; node failures come back in ``error``.
@@ -446,7 +492,10 @@ class Plugin:
         node, descriptor = self.resolve_node(request["node"]["type"])
         method = request["method"]
         with secret_scope(secret_values(request.get("credentials") or {}, self._credential_types)):
-            span, ctx = self._webhook_span(f"plugin.webhook_method {method}", request, descriptor, headers, {"landflow.webhook.method": method})
+            span, ctx = self._webhook_span(
+                f"plugin.webhook_method {method}", request, descriptor, headers,
+                {"landflow.webhook.method": method, "landflow.transport": transport}, cancel,
+            )
             try:
                 with self.telemetry.use_span(span):
                     return self._run_webhook_method(node, descriptor, ctx, method, span)
@@ -472,7 +521,7 @@ class Plugin:
             span.set_status("error", response["error"]["message"])
         return self._finish_webhook(ctx, response)
 
-    def receive_webhook(self, request: Any, headers: Any = None) -> dict[str, Any]:
+    def receive_webhook(self, request: Any, headers: Any = None, *, cancel: Any = None, transport: str | None = None) -> dict[str, Any]:
         """Run a ``WebhookRequest`` (a call to the node's webhook URL) -> ``WebhookResponse``.
 
         ``request.request.body`` is base64 (HTTP) or bytes (gRPC). Raises ``ProtocolError`` / ``UnknownNodeError`` for
@@ -482,7 +531,7 @@ class Plugin:
         node, descriptor = self.resolve_node(request["node"]["type"])
         node_type = f"{self.id}.{descriptor['name']}"
         with secret_scope(secret_values(request.get("credentials") or {}, self._credential_types)):
-            span, ctx = self._webhook_span(f"plugin.webhook {node_type}", request, descriptor, headers, {})
+            span, ctx = self._webhook_span(f"plugin.webhook {node_type}", request, descriptor, headers, {"landflow.transport": transport}, cancel)
             try:
                 with self.telemetry.use_span(span):
                     response: dict[str, Any] = {}
@@ -504,7 +553,7 @@ class Plugin:
                 span.end()
 
     def _webhook_span(
-        self, name: str, request: dict[str, Any], descriptor: dict[str, Any], headers: Any, extra: dict[str, Any]
+        self, name: str, request: dict[str, Any], descriptor: dict[str, Any], headers: Any, extra: dict[str, Any], cancel: Any = None
     ) -> tuple[Any, WebhookContext]:
         """The server span and the node's context for a webhook call (inside the caller's ``secret_scope``)."""
         span = self.telemetry.start_span(
@@ -520,7 +569,9 @@ class Plugin:
             },
         )
         credentials = self._with_defaults(request.get("credentials") or {})
-        return span, WebhookContext(request, descriptor, plugin_id=self.id, telemetry=self.telemetry, credentials=credentials, span=span)
+        return span, WebhookContext(
+            request, descriptor, plugin_id=self.id, telemetry=self.telemetry, credentials=credentials, span=span, cancel=cancel
+        )
 
     @staticmethod
     def _node_failure(descriptor: dict[str, Any], span: Any, exc: Exception) -> dict[str, Any]:

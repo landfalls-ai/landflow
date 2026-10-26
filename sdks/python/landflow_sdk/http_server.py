@@ -1,8 +1,10 @@
 """HTTP+JSON binding: a zero-dependency server built on ``http.server``.
 
 Also serves ``GET /metrics`` (Prometheus text, unless ``LANDFLOW_METRICS_PROMETHEUS=false``).
-Request headers are handed to the plugin so server spans continue the caller's
-W3C trace; health, manifest and metrics requests open no spans.
+Request headers are handed to the dispatcher so server spans continue the caller's
+W3C trace; health, manifest and metrics requests open no spans. Every call goes through the
+plugin's ``Dispatcher`` (concurrency limit, ``landflow.transport = "http"``); HTTP carries no
+deadline of its own, so node code sees a never-set ``ctx.cancel``.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from ._version import __version__
+from .dispatcher import CallCancelledError, Dispatcher, OverloadedError
 from .errors import ProtocolError, UnknownCredentialTypeError, UnknownMethodError, UnknownNodeError
 from .plugin import Plugin
 from .protocol import HTTP_PATHS, METRICS_PATH, dumps
@@ -44,6 +47,7 @@ class _BadRequest(Exception):
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
     plugin: Plugin
+    dispatcher: Dispatcher
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -57,14 +61,15 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - http.server naming
         path = self._route()
         plugin = self.server.plugin
+        dispatcher = self.server.dispatcher
         if path == HTTP_PATHS["wellKnown"]:
-            self._send(200, plugin.well_known())
+            self._send(200, dispatcher.well_known())
         elif path == HTTP_PATHS["manifest"]:
             # Kubernetes discovery: prove LANDFLOW_REGISTRY_SECRET when the host sends a challenge.
             proof = answer_registry_challenge(plugin.id, self.headers.get(REGISTRY_CHALLENGE_HEADER))
-            self._send(200, plugin.manifest(), headers={REGISTRY_PROOF_HEADER: proof} if proof else None)
+            self._send(200, dispatcher.manifest(), headers={REGISTRY_PROOF_HEADER: proof} if proof else None)
         elif path == HTTP_PATHS["health"]:
-            self._send(200, plugin.health())
+            self._send(200, dispatcher.health())
         elif path == METRICS_PATH and plugin.telemetry.prometheus:
             self._send_raw(200, plugin.telemetry.render_prometheus().encode("utf-8"), PROMETHEUS_CONTENT_TYPE)
         elif path in _POST_PATHS:
@@ -92,22 +97,27 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(400, f"malformed JSON body: {exc}")
             return
 
-        plugin = self.server.plugin
+        dispatcher = self.server.dispatcher
+        call = {"transport": "http"}
         try:
             if path == HTTP_PATHS["execute"]:
-                response: Any = plugin.execute(request, self.headers)
+                response: Any = dispatcher.execute(request, self.headers, **call)
             elif path == HTTP_PATHS["testCredentials"]:
-                response = plugin.test_credentials_request(request, self.headers)
+                response = dispatcher.test_credentials_request(request, self.headers, **call)
             elif path == HTTP_PATHS["webhookMethod"]:
-                response = plugin.webhook_method(request, self.headers)
+                response = dispatcher.webhook_method(request, self.headers, **call)
             elif path == HTTP_PATHS["webhook"]:
-                response = plugin.receive_webhook(request, self.headers)
+                response = dispatcher.receive_webhook(request, self.headers, **call)
             else:
-                response = plugin.load_options_request(request, self.headers)
+                response = dispatcher.load_options_request(request, self.headers, **call)
         except ProtocolError as exc:
             self._send_error(400, str(exc))
         except (UnknownNodeError, UnknownMethodError, UnknownCredentialTypeError) as exc:
             self._send_error(404, str(exc.args[0] if exc.args else exc))
+        except OverloadedError as exc:
+            self._send_error(503, str(exc))
+        except CallCancelledError as exc:
+            self._send_error(504 if exc.deadline else 503, str(exc))
         except Exception as exc:  # noqa: BLE001 - load_options failures and server bugs
             log.exception("error handling %s", path)
             self._send_error(500, f"{type(exc).__name__}: {exc}")
@@ -184,14 +194,18 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class HttpPluginServer:
-    """Serves ``plugin`` on ``host:port`` (port 0 = OS-assigned) from a daemon thread."""
+    """Serves ``plugin`` (or a ``Dispatcher``) on ``host:port`` (port 0 = OS-assigned) from a daemon thread."""
 
-    def __init__(self, plugin: Plugin, host: str = "127.0.0.1", port: int = 0) -> None:
+    def __init__(self, plugin: Plugin | Dispatcher, host: str = "127.0.0.1", port: int = 0) -> None:
+        dispatcher = plugin if isinstance(plugin, Dispatcher) else plugin.dispatcher
         server_cls = _Server
         if ":" in host:  # IPv6 literal
             server_cls = type("_Server6", (_Server,), {"address_family": socket.AF_INET6})
         self.httpd = server_cls((host, port), _Handler)
-        self.httpd.plugin = plugin
+        self.httpd.plugin = dispatcher.plugin
+        self.httpd.dispatcher = dispatcher
+        self.plugin = dispatcher.plugin
+        self.dispatcher = dispatcher
         self.host = host
         self.port: int = self.httpd.server_address[1]
         self._thread: threading.Thread | None = None

@@ -80,8 +80,10 @@ class WebhookContext(_TelemetryContext):
         telemetry: Telemetry | None = None,
         credentials: dict[str, Any] | None = None,
         span: Span | None = None,
+        cancel: Any = None,
     ) -> None:
         self.descriptor = descriptor
+        self._cancel = cancel
         self.node: dict[str, Any] = request["node"]
         self.node_type: str = self.node.get("type") or ""
         self.plugin_id = plugin_id

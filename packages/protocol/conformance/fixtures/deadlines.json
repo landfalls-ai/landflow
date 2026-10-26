@@ -1,0 +1,37 @@
+{
+  "kit": "landflow.conformance/v1",
+  "suite": "deadlines",
+  "description": "Deadlines are absolute (lfdeadline, epoch ms) and checked by the consumer on every transport; the caller gets `expired`, never a silent wait.",
+  "cases": [
+    {
+      "id": "met",
+      "description": "A call that finishes well inside its deadline replies normally.",
+      "call": { "method": "execute", "node": "sleep", "parameters": { "ms": 50 }, "deadlineMs": 5000 },
+      "expect": { "outcome": "reply", "outputs": [[{ "json": { "sleptMs": 50 } }]], "ran": true }
+    },
+    {
+      "id": "expired-before-dispatch",
+      "description": "A deadline already in the past when the consumer picks the call up: the node must not run (the consumer acknowledges and drops it); the caller sees `expired`.",
+      "call": { "method": "execute", "node": "counter", "parameters": { "key": "deadlines/expired" }, "deadlineMs": -1000 },
+      "expect": { "outcome": "transport-error", "code": "expired", "ran": false, "withinMs": 2000 }
+    },
+    {
+      "id": "expires-during-run",
+      "description": "The deadline passes while the node runs: the caller gets `expired` at the deadline, and the node's abort signal fires so it stops.",
+      "call": { "method": "execute", "node": "sleep", "parameters": { "ms": 5000 }, "deadlineMs": 300 },
+      "expect": { "outcome": "transport-error", "code": "expired", "signalAborted": true, "withinMs": 2000 }
+    },
+    {
+      "id": "late-reply-dropped",
+      "description": "A reply that arrives after the deadline is ignored by the caller (no second outcome, no unhandled rejection); runners wait 1 s after the error and assert nothing else happened.",
+      "call": { "method": "execute", "node": "sleep", "parameters": { "ms": 600 }, "deadlineMs": 200 },
+      "expect": { "outcome": "transport-error", "code": "expired", "note": "exactly one outcome per call" }
+    },
+    {
+      "id": "health-has-deadline-too",
+      "description": "Every method carries a deadline, not only Execute.",
+      "call": { "method": "health", "deadlineMs": 5000 },
+      "expect": { "outcome": "reply" }
+    }
+  ]
+}

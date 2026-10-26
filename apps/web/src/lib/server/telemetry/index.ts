@@ -7,7 +7,7 @@ export { logger, type Logger, type LogAttributes } from './logger';
 export { startTelemetry, prometheusText } from './sdk';
 export { activeTraceIds, failSpan, SpanKind, SpanStatusCode, startSpan, traceHeaders, traceparentHeader, withSpan, type Span, type SpanOptions } from './spans';
 export { fireTrigger, startTrigger, tracePoll, type PollInfo, type TriggerFire, type TriggerInfo, type TriggerSource } from './triggers';
-export { tracePluginRpc, type RpcMethod, type RpcTarget } from './rpc';
+export { tracePluginRpc, withTransportChoice, type RpcMethod, type RpcTarget, type TransportChoiceAttributes } from './rpc';
 export { traceChat, traceEmbeddings, type ChatRequest, type ChatResponse, type EmbeddingsResponse } from './ai';
 export { traceGuardrails, traceRerank, traceVectorStore, type VectorStoreCall, type VectorStoreOperation } from './rag';
 export { recordAgentTokens, recordApproval, traceAgentRun, traceToolCall, type AgentRunInfo, type ToolCallInfo } from './agents';

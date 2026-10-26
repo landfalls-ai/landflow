@@ -88,6 +88,28 @@ export interface PropertyOption {
   description?: string;
   /** Optional action label, n8n-style ("Hash a value"). */
   action?: string;
+  /**
+   * On an option of the `operation` property only (docs/protocol.md §15.1): `mcp: false` keeps this operation out of
+   * the plugin's MCP tools; `idempotent` marks the operation safe to repeat (it overrides the node's `idempotent`);
+   * `outputSchema` and `toolAnnotations` override the node's for this operation's tool. Ignored on other options.
+   */
+  mcp?: false;
+  idempotent?: boolean;
+  outputSchema?: JsonObject;
+  toolAnnotations?: McpToolAnnotations;
+}
+
+/**
+ * MCP tool annotations (the MCP spec's `ToolAnnotations`): hints to the agent, never a security boundary. The host
+ * derives them from the operation name (`get*`/`list*`/`search*` → `readOnlyHint`, `delete*`/`remove*` →
+ * `destructiveHint`), from `idempotent` and always `openWorldHint: true`; a node or operation can override any of them.
+ */
+export interface McpToolAnnotations {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
 }
 
 export interface DisplayOptions {
@@ -212,6 +234,21 @@ export interface NodeDescriptor {
   keywords?: string[];
   /** Credential types this node can use (declared in the manifest's `credentialTypes`). */
   credentials?: NodeCredentialRequirement[];
+  /**
+   * Running the node twice with the same input has the same effect as once (a lookup, an upsert keyed by the input).
+   * Over a broker such a node is delivered at least once instead of at most once (docs/protocol.md §14.6), and its MCP
+   * tools get `idempotentHint`. An `operation` option's `idempotent` overrides it per operation.
+   */
+  idempotent?: boolean;
+  /** `false` keeps the whole node out of the plugin's MCP tools (docs/protocol.md §15.1); per operation see PropertyOption.mcp. */
+  mcp?: false;
+  /**
+   * JSON Schema (2020-12) of one output item's `json`. MCP tools return `structuredContent: { items }` and declare
+   * `outputSchema` from it; an `operation` option's `outputSchema` overrides it per operation.
+   */
+  outputSchema?: JsonObject;
+  /** Overrides for the MCP tool annotations the host derives (docs/protocol.md §15.1). */
+  toolAnnotations?: McpToolAnnotations;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +306,21 @@ export interface PluginManifest {
   plugin: PluginInfo;
   nodes: NodeDescriptor[];
   credentialTypes?: CredentialTypeDescriptor[];
+  /**
+   * The faces this plugin process was built with (`http`, `grpc`, `mcp`, broker kinds; see TRANSPORT_KINDS). A hint
+   * for the Plugins page and the selector: an endpoint is used only when it is live, whatever this says. Absent from
+   * plugins built on older SDKs (gRPC: `GetManifestResponse.transports`).
+   */
+  transports?: string[];
+  /**
+   * How many calls one instance of the plugin takes at once (docs/protocol.md §14.6). The selector fills a direct
+   * transport up to this and spills over; brokered consumers use it as their prefetch. Absent: the host assumes 16.
+   */
+  maxConcurrency?: number;
 }
+
+/** What the host assumes for `PluginManifest.maxConcurrency` when a plugin does not say. */
+export const DEFAULT_MAX_CONCURRENCY = 16;
 
 /** Served at GET /.well-known/landflow — the cheap discovery probe. */
 export interface WellKnownDocument {
@@ -284,6 +335,8 @@ export interface WellKnownDocument {
     /** Present when a node has `triggerSource: "appWebhook"`. */
     webhookMethod?: string;
     webhook?: string;
+    /** The plugin's own MCP endpoint (Streamable HTTP, docs/protocol.md §15.2), when the MCP face is on. */
+    mcp?: string;
   };
 }
 
@@ -520,7 +573,10 @@ export interface WebhookResponse {
 
 export interface AnnounceRequest {
   protocol: ProtocolVersion;
-  /** "http://127.0.0.1:7101" or "grpc://127.0.0.1:7203". */
+  /**
+   * "http://127.0.0.1:7101" or "grpc://127.0.0.1:7203". Brokered endpoints (`kafka://kafka-main/twilio`, §14) are
+   * announced over the broker's registry channel, not here, but a host accepts them in this field too.
+   */
   endpoint: string;
   pluginId: string;
   version: string;

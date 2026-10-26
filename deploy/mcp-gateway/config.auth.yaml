@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# The base config (config.yaml) plus MCP sign-in through Keycloak, for the spike (deploy/scripts/mcp-gateway-spike.mjs
+# --auth) and as the template for the dockerised stack. Issuer: the realm the spike creates (landflow-mcp-test).
+# Tokens carry the issuer the browser sees (KC_HOSTNAME, http://localhost:58080/...), while the gateway fetches the
+# JWKS on the infra network (http://keycloak:8080/...), so the JWKS URL is set explicitly.
+config:
+  adminAddr: "0.0.0.0:15000"
+  storage:
+    mode: hybrid
+  database:
+    url: sqlite:///data/agentgateway.db
+  logging:
+    level: info
+frontendPolicies:
+  tracing:
+    host: jaeger:4318
+    protocol: http
+    randomSampling: true
+    resources:
+      service.name: '"landflow-mcp-gateway"'
+gateways:
+  default:
+    port: 4000
+mcp:
+  gateways: default
+  prefixMode: always
+  failureMode: failOpen
+  statefulMode: stateless
+  server:
+    name: landflow-mcp-gateway
+    version: dev
+    title: Landflow
+    instructions: Every installed Landflow plugin as MCP tools. Tool names are <plugin>_<resource>_<operation>.
+  targets: []
+  policies:
+    mcpAuthentication:
+      mode: strict
+      issuer: http://localhost:58080/realms/landflow-mcp-test
+      audiences: [http://localhost:54000/mcp]
+      provider:
+        keycloak: {}
+      jwks:
+        url: http://keycloak:8080/realms/landflow-mcp-test/protocol/openid-connect/certs
+      resourceMetadata:
+        resource: http://localhost:54000/mcp
+        authorization_servers: [http://localhost:58080/realms/landflow-mcp-test]
+        scopes_supported: [openid, profile]
+        bearer_methods_supported: [header]
+    mcpAuthorization:
+      rules:
+        # Only members of the landflow-agents group may call anything; the "hidden" tool of target "two" needs
+        # the support group as well. Tools a rule denies are also left out of tools/list.
+        - '"landflow-agents" in jwt.groups && (mcp.tool.name != "hidden" || "support" in jwt.groups)'

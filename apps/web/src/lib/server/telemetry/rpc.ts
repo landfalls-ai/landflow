@@ -1,5 +1,5 @@
 /** `plugin.rpc {Method}` client spans and `landflow.plugin.rpc.duration`, with trace-context injection. */
-import { context, propagation } from '@opentelemetry/api';
+import { context, createContextKey, propagation, type Context } from '@opentelemetry/api';
 import { hostMetrics, outcomeOf } from './metrics';
 import { failSpan, SpanKind, startSpan } from './spans';
 
@@ -8,11 +8,27 @@ export type RpcMethod = 'Execute' | 'LoadOptions' | 'TestCredentials' | 'GetMani
 export const RPC_SERVICE = 'landflow.plugin.v1.PluginService';
 
 export interface RpcTarget {
-  system: 'http' | 'grpc';
-  /** "http://127.0.0.1:7101" or "grpc://127.0.0.1:7201". */
+  /** The transport kind: `http`, `grpc` or a broker kind (docs/transports.md). */
+  system: string;
+  /** "http://127.0.0.1:7101", "grpc://127.0.0.1:7201" or "kafka://kafka-main/twilio". */
   endpoint: string;
   pluginId?: string;
 }
+
+/** The selector's choice for the call in flight (lib/server/transports/selector.ts), read by the `plugin.rpc` span. */
+export interface TransportChoiceAttributes {
+  kind: string;
+  reason: string;
+}
+
+const TRANSPORT_CHOICE = createContextKey('landflow.transport.choice');
+
+/** Run `fn` with the selector's choice in the active context, so the RPC span it makes carries `landflow.transport.reason`. */
+export function withTransportChoice<T>(choice: TransportChoiceAttributes, fn: () => T): T {
+  return context.with(context.active().setValue(TRANSPORT_CHOICE, choice), fn);
+}
+
+const transportChoice = (from: Context) => from.getValue(TRANSPORT_CHOICE) as TransportChoiceAttributes | undefined;
 
 function address(endpoint: string): { host: string; port?: number } {
   try {
@@ -36,6 +52,7 @@ export async function tracePluginRpc<T>(
   pluginId?: () => string | undefined,
 ): Promise<T> {
   const { host, port } = address(target.endpoint);
+  const choice = transportChoice(context.active());
   const { span, context: spanContext } = startSpan(`plugin.rpc ${method}`, {
     kind: SpanKind.CLIENT,
     attributes: {
@@ -45,6 +62,9 @@ export async function tracePluginRpc<T>(
       'server.address': host,
       ...(port && { 'server.port': port }),
       ...(target.pluginId && { 'landflow.plugin.id': target.pluginId }),
+      // Explainability (docs/transports.md): the transport the call went over and why the selector chose it.
+      'landflow.transport': choice?.kind ?? target.system,
+      ...(choice && { 'landflow.transport.reason': choice.reason }),
     },
   });
   const carrier: Record<string, string> = {};

@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# The file fallback (storage mode file): agentgateway watches this file and reloads it when it changes; Landflow (or an
+# operator) writes the targets straight into mcp.targets. The spike copies this file to a writable location, mounts it,
+# edits the targets and measures the reload. No database.
+config:
+  adminAddr: "0.0.0.0:15000"
+  storage:
+    mode: file
+  logging:
+    level: info
+gateways:
+  default:
+    port: 4000
+mcp:
+  gateways: default
+  prefixMode: always
+  failureMode: failOpen
+  statefulMode: stateless
+  targets: []

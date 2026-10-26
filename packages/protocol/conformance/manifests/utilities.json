@@ -1,0 +1,196 @@
+{
+  "protocol": "landflow.plugin/v1",
+  "plugin": {
+    "id": "utilities",
+    "name": "Utilities",
+    "version": "1.0.0",
+    "language": "python"
+  },
+  "nodes": [
+    {
+      "name": "hash",
+      "displayName": "Hash",
+      "description": "Hash a field with SHA-256, SHA-1 or MD5.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "idempotent": true,
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "algorithm",
+          "displayName": "Algorithm",
+          "type": "options",
+          "default": "sha256",
+          "options": [
+            {
+              "name": "SHA-256",
+              "value": "sha256"
+            },
+            {
+              "name": "SHA-1",
+              "value": "sha1"
+            },
+            {
+              "name": "MD5",
+              "value": "md5"
+            }
+          ]
+        },
+        {
+          "name": "field",
+          "displayName": "Field",
+          "type": "string",
+          "default": "value",
+          "required": true,
+          "description": "The input field to hash."
+        },
+        {
+          "name": "rounds",
+          "displayName": "Rounds",
+          "type": "number",
+          "default": 1,
+          "typeOptions": {
+            "minValue": 1,
+            "numberPrecision": 0
+          },
+          "displayOptions": {
+            "hide": {
+              "algorithm": [
+                "md5"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "colour",
+      "displayName": "Colour",
+      "description": "Pick a colour and a date; shows the colour, dateTime and numeric option types.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "colour",
+          "displayName": "Colour",
+          "type": "color",
+          "default": "#ff0000"
+        },
+        {
+          "name": "when",
+          "displayName": "When",
+          "type": "dateTime",
+          "default": ""
+        },
+        {
+          "name": "level",
+          "displayName": "Level",
+          "type": "options",
+          "default": 1,
+          "options": [
+            {
+              "name": "Low",
+              "value": 1
+            },
+            {
+              "name": "High",
+              "value": 2
+            }
+          ]
+        },
+        {
+          "name": "enabled",
+          "displayName": "Enabled",
+          "type": "options",
+          "default": true,
+          "options": [
+            {
+              "name": "Yes",
+              "value": true
+            },
+            {
+              "name": "No",
+              "value": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aVeryLongNodeNameThatGoesOnAndOnAndOnToTestTheLimitOnToolNamesInMcpClientsEverywhere",
+      "displayName": "Long",
+      "description": "Its name is sanitised and cut to the tool-name limit.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": []
+    },
+    {
+      "name": "dupA",
+      "displayName": "Dup A",
+      "description": "Its two operations `run` and `run!` sanitise to the same tool name, so the second gets a numeric suffix.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "run",
+          "options": [
+            {
+              "name": "Run",
+              "value": "run"
+            },
+            {
+              "name": "Run (again)",
+              "value": "run!"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

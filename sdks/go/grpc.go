@@ -23,16 +23,25 @@ func (p *Plugin) GRPCServer(opts ...grpc.ServerOption) *grpc.Server {
 // RegisterGRPC registers landflow.plugin.v1.PluginService on s. Execute,
 // LoadOptions and TestCredentials continue the caller's trace from the
 // traceparent / tracestate / baggage metadata; Health and GetManifest are
-// not traced.
-func (p *Plugin) RegisterGRPC(s grpc.ServiceRegistrar) {
-	pb.RegisterPluginServiceServer(s, &grpcService{p: p})
+// not traced. It is the gRPC binding over the plugin's Dispatcher; the call's
+// context (its deadline, the client's cancellation) reaches node code.
+func (p *Plugin) RegisterGRPC(s grpc.ServiceRegistrar) { p.Dispatcher().RegisterGRPC(s) }
+
+// RegisterGRPC registers the gRPC face of this dispatcher on s (see Plugin.RegisterGRPC).
+func (d *Dispatcher) RegisterGRPC(s grpc.ServiceRegistrar) {
+	pb.RegisterPluginServiceServer(s, &grpcService{p: d.p, d: d})
 }
 
-// grpcService adapts the transport-agnostic Plugin to PluginServiceServer by
-// converting proto messages to and from the same structs the HTTP path uses.
+// grpcCall is the CallOptions of every gRPC request: the deadline travels in
+// the call's context already.
+var grpcCall = CallOptions{Transport: "grpc"}
+
+// grpcService adapts the transport-agnostic Dispatcher to PluginServiceServer
+// by converting proto messages to and from the same structs the HTTP path uses.
 type grpcService struct {
 	pb.UnimplementedPluginServiceServer
 	p *Plugin
+	d *Dispatcher
 }
 
 func (g *grpcService) GetManifest(ctx context.Context, _ *pb.GetManifestRequest) (*pb.GetManifestResponse, error) {
@@ -54,7 +63,10 @@ func (g *grpcService) GetManifest(ctx context.Context, _ *pb.GetManifestRequest)
 		}
 		credTypes = append(credTypes, dv)
 	}
-	return &pb.GetManifestResponse{Protocol: m.Protocol, Plugin: pluginInfoToProto(m.Plugin), Nodes: nodes, CredentialTypes: credTypes}, nil
+	return &pb.GetManifestResponse{
+		Protocol: m.Protocol, Plugin: pluginInfoToProto(m.Plugin), Nodes: nodes, CredentialTypes: credTypes,
+		Transports: m.Transports, MaxConcurrency: int32(m.MaxConcurrency),
+	}, nil
 }
 
 func (g *grpcService) Execute(ctx context.Context, in *pb.ExecuteRequest) (*pb.ExecuteResponse, error) {
@@ -62,7 +74,7 @@ func (g *grpcService) Execute(ctx context.Context, in *pb.ExecuteRequest) (*pb.E
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	resp, err := g.p.Execute(g.p.tel().extractGRPC(ctx), req)
+	resp, err := g.d.Execute(g.p.tel().extractGRPC(ctx), req, grpcCall)
 	if err != nil {
 		return nil, grpcStatus(err)
 	}
@@ -82,9 +94,9 @@ func (g *grpcService) LoadOptions(ctx context.Context, in *pb.LoadOptionsRequest
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	resp, err := g.p.LoadOptions(g.p.tel().extractGRPC(ctx), &LoadOptionsRequest{
+	resp, err := g.d.LoadOptions(g.p.tel().extractGRPC(ctx), &LoadOptionsRequest{
 		NodeType: in.GetNodeType(), Method: in.GetMethod(), Parameters: params, Credentials: creds,
-	})
+	}, grpcCall)
 	if err != nil {
 		return nil, grpcStatus(err)
 	}
@@ -100,7 +112,7 @@ func (g *grpcService) TestCredentials(ctx context.Context, in *pb.TestCredential
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	resp, err := g.p.TestCredentials(g.p.tel().extractGRPC(ctx), &TestCredentialsRequest{CredentialType: in.GetCredentialType(), Data: data})
+	resp, err := g.d.TestCredentials(g.p.tel().extractGRPC(ctx), &TestCredentialsRequest{CredentialType: in.GetCredentialType(), Data: data}, grpcCall)
 	if err != nil {
 		return nil, grpcStatus(err)
 	}
@@ -120,6 +132,12 @@ func grpcStatus(err error) error {
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrBadRequest):
 		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, ErrOverloaded):
+		return status.Error(codes.ResourceExhausted, err.Error())
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, err.Error())
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}

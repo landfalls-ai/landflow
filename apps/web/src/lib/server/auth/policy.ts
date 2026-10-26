@@ -57,6 +57,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/settings')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/variables')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'variables:manage' };
   if (under('/api/plugins') || under('/api/marketplaces')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'plugins:manage' };
+  // Transports (docs/transports.md): anyone who reads workflows sees the kinds and connections; connections change like other settings.
+  if (under('/api/transports')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/credentials')) return { scope: 'admin' };
 
   if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates'].some(under)) {

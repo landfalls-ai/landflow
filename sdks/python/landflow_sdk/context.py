@@ -14,7 +14,7 @@ from __future__ import annotations
 import copy
 import logging
 from contextlib import AbstractContextManager
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from .binary import BinaryClient
 from .errors import NodeOperationError
@@ -24,6 +24,9 @@ from .metrics import Metrics
 from .protocol import to_jsonable
 from .redact import redact_text
 from .telemetry import Span, Telemetry
+
+if TYPE_CHECKING:
+    from .dispatcher import CancelToken
 
 _NO_DEFAULT = object()
 
@@ -91,13 +94,41 @@ class NodeLogger:
 
 
 class _TelemetryContext:
-    """``span()``, ``metrics``, ``http``, ``logger`` and the active ``trace_id`` / ``span_id``."""
+    """``span()``, ``metrics``, ``http``, ``logger``, the active ``trace_id`` / ``span_id`` and the call's ``cancel`` token."""
 
     telemetry: Telemetry
     metrics: Metrics
     logger: NodeLogger
     _server_span: Span | None
     _http: HttpClient | None
+    _cancel: "CancelToken | None" = None
+
+    @property
+    def cancel(self) -> "CancelToken":
+        """The call's ``CancelToken``: set when the caller went away or the deadline passed.
+
+        ``ctx.cancel.is_set()`` to poll, ``ctx.cancel.check()`` to raise ``CallCancelledError``,
+        ``ctx.cancel.remaining()`` for the seconds left, ``ctx.cancel.wait(t)`` to sleep interruptibly.
+        A call without a deadline or cancellation (HTTP today) gets a token that is never set.
+        """
+        if self._cancel is None:
+            from .dispatcher import NEVER_CANCELLED
+
+            return NEVER_CANCELLED
+        return self._cancel
+
+    @property
+    def deadline(self) -> float | None:
+        """``time.monotonic()`` instant after which the call must not run (``None`` = none)."""
+        return self.cancel.deadline
+
+    def is_cancelled(self) -> bool:
+        """True once the call was cancelled or its deadline passed."""
+        return self.cancel.is_set()
+
+    def check_cancelled(self) -> None:
+        """Raise ``CallCancelledError`` when the call should stop."""
+        self.cancel.check()
 
     def span(self, name: str, attributes: Mapping[str, Any] | None = None) -> AbstractContextManager[Span]:
         """``with ctx.span("telegram.send", {"telegram.chat_type": t}) as span:`` -- a child span.
@@ -169,9 +200,11 @@ class ExecuteContext(_TelemetryContext):
         telemetry: Telemetry | None = None,
         credentials: dict[str, Any] | None = None,
         span: Span | None = None,
+        cancel: "CancelToken | None" = None,
     ) -> None:
         self.request = request
         self.descriptor = descriptor
+        self._cancel = cancel
         self.node: dict[str, Any] = request["node"]
         self.node_type: str = self.node.get("type") or ""
         self.plugin_id = plugin_id
@@ -365,9 +398,11 @@ class LoadOptionsContext(_TelemetryContext):
         telemetry: Telemetry | None = None,
         credentials: dict[str, Any] | None = None,
         span: Span | None = None,
+        cancel: "CancelToken | None" = None,
     ) -> None:
         self.node_type = node_type
         self.method = method
+        self._cancel = cancel
         self.parameters = parameters
         self.descriptor = descriptor
         self.plugin_id = plugin_id
@@ -391,8 +426,17 @@ class LoadOptionsContext(_TelemetryContext):
 class CredentialTestContext(_TelemetryContext):
     """Passed as ``ctx`` to a ``CredentialType.test(data, ctx)`` function."""
 
-    def __init__(self, credential_type: str, *, plugin_id: str = "", telemetry: Telemetry | None = None, span: Span | None = None) -> None:
+    def __init__(
+        self,
+        credential_type: str,
+        *,
+        plugin_id: str = "",
+        telemetry: Telemetry | None = None,
+        span: Span | None = None,
+        cancel: "CancelToken | None" = None,
+    ) -> None:
         self.credential_type = credential_type
+        self._cancel = cancel
         self.plugin_id = plugin_id
         self.telemetry = telemetry or Telemetry.noop()
         self._server_span = span

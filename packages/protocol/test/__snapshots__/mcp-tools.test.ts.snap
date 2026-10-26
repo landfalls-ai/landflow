@@ -1,0 +1,155 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`mapping every bundled plugin manifest > databases > matches the snapshot of its tool list 1`] = `
+[
+  "postgres_deleteTable ro=0 d=1 i=0 [schema,table,deleteAll,where,combineConditions]",
+  "postgres_executeQuery ro=0 d=0 i=0 [query,options]",
+  "postgres_insert ro=0 d=0 i=0 [schema,table,dataMode,valuesToSend,options]",
+  "postgres_upsert ro=0 d=0 i=0 [schema,table,dataMode,valuesToSend,columnsToMatchOn,options]",
+  "postgres_select ro=1 d=0 i=1 [schema,table,where,combineConditions,returnAll,limit,sort,options]",
+  "postgres_update ro=0 d=0 i=0 [schema,table,dataMode,valuesToSend,columnToMatchOn,valueToMatchOn,options]",
+  "mySql_deleteTable ro=0 d=1 i=0 [table,deleteAll,where,combineConditions]",
+  "mySql_executeQuery ro=0 d=0 i=0 [query,options]",
+  "mySql_insert ro=0 d=0 i=0 [table,dataMode,valuesToSend]",
+  "mySql_upsert ro=0 d=0 i=0 [table,dataMode,valuesToSend,columnsToMatchOn]",
+  "mySql_select ro=1 d=0 i=1 [table,where,combineConditions,returnAll,limit,sort,options]",
+  "mySql_update ro=0 d=0 i=0 [table,dataMode,valuesToSend,columnToMatchOn,valueToMatchOn]",
+  "sqlite_deleteTable ro=0 d=1 i=0 [table,deleteAll,where,combineConditions]",
+  "sqlite_executeQuery ro=0 d=0 i=0 [query,options]",
+  "sqlite_insert ro=0 d=0 i=0 [table,dataMode,valuesToSend,options]",
+  "sqlite_upsert ro=0 d=0 i=0 [table,dataMode,valuesToSend,columnsToMatchOn,options]",
+  "sqlite_select ro=1 d=0 i=1 [table,where,combineConditions,returnAll,limit,sort,options]",
+  "sqlite_update ro=0 d=0 i=0 [table,dataMode,valuesToSend,columnToMatchOn,valueToMatchOn,options]",
+  "redis_delete ro=0 d=1 i=0 [key]",
+  "redis_get ro=1 d=0 i=1 [propertyName,key,keyType,options]",
+  "redis_incr ro=0 d=0 i=0 [key,expire,ttl]",
+  "redis_info ro=1 d=0 i=1 []",
+  "redis_keys ro=1 d=0 i=1 [keyPattern,getValues,returnAll,limit]",
+  "redis_llen ro=1 d=0 i=1 [list,propertyName]",
+  "redis_pop ro=0 d=0 i=0 [propertyName,list,tail,options]",
+  "redis_publish ro=0 d=0 i=0 [channel,messageData]",
+  "redis_push ro=0 d=0 i=0 [list,tail,messageData]",
+  "redis_set ro=0 d=0 i=0 [key,keyType,value,valueIsJSON,expire,ttl]",
+]
+`;
+
+exports[`mapping every bundled plugin manifest > go-crypto > matches the snapshot of its tool list 1`] = `
+[
+  "hash ro=0 d=0 i=0 [algorithm,field,encoding,outputField]",
+  "uuid ro=0 d=0 i=0 [mode,count,outputField]",
+  "jwtDecode ro=0 d=0 i=0 [field,outputField]",
+]
+`;
+
+exports[`mapping every bundled plugin manifest > google > matches the snapshot of its tool list 1`] = `
+[
+  "googleSheets_spreadsheet_create ro=0 d=0 i=0 [title,sheetsUi]",
+  "googleSheets_sheet_appendOrUpdate ro=0 d=0 i=0 [documentId,sheetName,dataMode,columnToMatchOn,valueToMatchOn,fieldsUi]",
+  "googleSheets_sheet_append ro=0 d=0 i=0 [documentId,sheetName,dataMode,fieldsUi]",
+  "googleSheets_sheet_clear ro=0 d=1 i=0 [documentId,sheetName,keepFirstRow]",
+  "googleSheets_sheet_read ro=1 d=0 i=1 [documentId,sheetName,filtersUI,combineFilters,options]",
+  "googleSheets_sheet_update ro=0 d=0 i=0 [documentId,sheetName,dataMode,columnToMatchOn,valueToMatchOn,fieldsUi]",
+  "gmail_message_addLabels ro=0 d=0 i=0 [messageId,labelIds]",
+  "gmail_message_get ro=1 d=0 i=1 [messageId,simple]",
+  "gmail_message_getAll ro=1 d=0 i=1 [simple,returnAll,limit,filters]",
+  "gmail_message_markAsRead ro=0 d=0 i=0 [messageId]",
+  "gmail_message_markAsUnread ro=0 d=0 i=0 [messageId]",
+  "gmail_message_removeLabels ro=0 d=1 i=0 [messageId,labelIds]",
+  "gmail_message_reply ro=0 d=0 i=0 [messageId,emailType,message,options]",
+  "gmail_message_send ro=0 d=0 i=0 [sendTo,subject,emailType,message,options]",
+  "googleDrive_file_deleteFile ro=0 d=1 i=0 [fileId,options]",
+  "googleDrive_file_download ro=1 d=0 i=1 [fileId]",
+  "googleDrive_file_upload ro=0 d=0 i=0 [name,folderId,uploadFrom,fileContent,base64Content,options]",
+  "googleDrive_fileFolder_search ro=1 d=0 i=1 [searchMethod,queryString,returnAll,limit,filter]",
+  "googleDrive_folder_create ro=0 d=0 i=0 [name,folderId]",
+  "googleCalendar_event_create ro=0 d=0 i=0 [calendar,start,end,additionalFields]",
+  "googleCalendar_event_delete ro=0 d=1 i=0 [calendar,eventId,options]",
+  "googleCalendar_event_get ro=1 d=0 i=1 [calendar,eventId]",
+  "googleCalendar_event_getAll ro=1 d=0 i=1 [calendar,returnAll,limit,timeMin,timeMax,options]",
+  "googleCalendar_event_update ro=0 d=0 i=0 [calendar,eventId,updateFields]",
+  "googleDocs_document_create ro=0 d=0 i=0 [title,folderId]",
+  "googleDocs_document_get ro=1 d=0 i=1 [documentURL,simple]",
+  "googleDocs_document_update ro=0 d=0 i=0 [documentURL,actionsUi]",
+]
+`;
+
+exports[`mapping every bundled plugin manifest > messaging > matches the snapshot of its tool list 1`] = `
+[
+  "telegram_chat_get ro=1 d=0 i=1 [chatId]",
+  "telegram_file_get ro=1 d=0 i=1 [fileId,download,binaryPropertyName]",
+  "telegram_message_deleteMessage ro=0 d=1 i=0 [chatId,messageId]",
+  "telegram_message_editMessageText ro=0 d=0 i=0 [chatId,messageId,text,additionalFields]",
+  "telegram_message_sendAudio ro=0 d=0 i=0 [chatId,binaryData,binaryPropertyName,file,additionalFields]",
+  "telegram_message_sendChatAction ro=0 d=0 i=0 [chatId,action]",
+  "telegram_message_sendDocument ro=0 d=0 i=0 [chatId,binaryData,binaryPropertyName,file,additionalFields]",
+  "telegram_message_sendMessage ro=0 d=0 i=0 [chatId,text,additionalFields]",
+  "telegram_message_sendPhoto ro=0 d=0 i=0 [chatId,binaryData,binaryPropertyName,file,additionalFields]",
+  "telegram_message_sendVideo ro=0 d=0 i=0 [chatId,binaryData,binaryPropertyName,file,additionalFields]",
+  "slack_channel_getAll ro=1 d=0 i=1 [returnAll,limit,filters,simplify]",
+  "slack_file_get ro=1 d=0 i=1 [fileId,download,binaryPropertyName]",
+  "slack_file_upload ro=0 d=0 i=0 [channelId,binaryPropertyName,fileOptions]",
+  "slack_message_delete ro=0 d=1 i=0 [channelId,ts]",
+  "slack_message_getPermalink ro=1 d=0 i=1 [channelId,ts]",
+  "slack_message_post ro=0 d=0 i=0 [channelId,text,blocksUi,otherOptions]",
+  "slack_message_update ro=0 d=0 i=0 [channelId,text,blocksUi,ts]",
+  "slack_reaction_add ro=0 d=0 i=0 [channelId,timestamp,name]",
+  "slack_user_getByEmail ro=1 d=0 i=1 [email,simplify]",
+  "discord_message_send ro=0 d=0 i=0 [guildId,channelId,content,embeds,options]",
+  "discord_message_deleteMessage ro=0 d=1 i=0 [guildId,channelId,messageId]",
+  "discord_message_getAll ro=1 d=0 i=1 [guildId,channelId,returnAll,limit,simplify]",
+  "discord_message_react ro=0 d=0 i=0 [guildId,channelId,messageId,emoji]",
+  "whatsApp_message_send ro=0 d=0 i=0 [phoneNumberId,recipientPhoneNumber,messageType,textBody,previewUrl,mediaLink,mediaCaption,mediaFilename]",
+  "whatsApp_message_sendTemplate ro=0 d=0 i=0 [phoneNumberId,recipientPhoneNumber,templateName,languageCode,components]",
+  "emailSend ro=0 d=0 i=0 [fromEmail,toEmail,subject,emailFormat,text,html,options]",
+]
+`;
+
+exports[`mapping every bundled plugin manifest > productivity > matches the snapshot of its tool list 1`] = `
+[
+  "notion_block_append ro=0 d=0 i=0 [blockId,blockSource,blockText,blocksJson]",
+  "notion_databasePage_create ro=0 d=0 i=0 [databaseId,title,propertiesUi,propertiesJson,simplify]",
+  "notion_databasePage_getAll ro=1 d=0 i=1 [databaseId,returnAll,limit,filterJson,sortsJson,simplify]",
+  "notion_page_archive ro=0 d=1 i=0 [pageId,simplify]",
+  "notion_page_get ro=1 d=0 i=1 [pageId,simplify]",
+  "notion_page_search ro=1 d=0 i=1 [text,returnAll,limit,searchOptions,simplify]",
+  "airtable_record_create ro=0 d=0 i=0 [base,table,dataMode,fieldsUi,fieldsJson,writeOptions]",
+  "airtable_record_upsert ro=0 d=0 i=0 [base,table,fieldsToMergeOn,dataMode,fieldsUi,fieldsJson,writeOptions]",
+  "airtable_record_deleteRecord ro=0 d=1 i=0 [base,table,id]",
+  "airtable_record_get ro=1 d=0 i=1 [base,table,id]",
+  "airtable_record_search ro=1 d=0 i=1 [base,table,filterByFormula,returnAll,limit,sort,searchOptions]",
+  "airtable_record_update ro=0 d=0 i=0 [base,table,id,dataMode,fieldsUi,fieldsJson,writeOptions]",
+  "github_file_get ro=1 d=0 i=1 [repo,owner,repository,filePath,fileOptions]",
+  "github_issue_create ro=0 d=0 i=0 [repo,owner,repository,title,body,labels,assignees]",
+  "github_issue_createComment ro=0 d=0 i=0 [repo,owner,repository,body,issueNumber]",
+  "github_issue_edit ro=0 d=0 i=0 [repo,owner,repository,issueNumber,editFields]",
+  "github_issue_get ro=1 d=0 i=1 [repo,owner,repository,issueNumber]",
+  "github_issue_getAll ro=1 d=0 i=1 [repo,owner,repository,returnAll,limit,getRepositoryIssuesFilters]",
+  "github_release_getAll ro=1 d=0 i=1 [repo,owner,repository,returnAll,limit]",
+  "github_repository_get ro=1 d=0 i=1 [repo,owner,repository]",
+  "jira_issue_create ro=0 d=0 i=0 [project,issueType,summary,additionalFields]",
+  "jira_issue_get ro=1 d=0 i=1 [issueKey,options,simplify]",
+  "jira_issue_getAll ro=1 d=0 i=1 [jql,returnAll,limit,options,simplify]",
+  "jira_issue_transition ro=0 d=0 i=0 [issueKey,transitionId]",
+  "jira_issue_update ro=0 d=0 i=0 [issueKey,updateFields]",
+  "jira_issueComment_add ro=0 d=0 i=0 [issueKey,comment]",
+  "hubspot_contact_upsert ro=0 d=0 i=0 [email,additionalFields,customPropertiesUi,simplify]",
+  "hubspot_contact_get ro=1 d=0 i=1 [contactId,options,simplify]",
+  "hubspot_contact_search ro=1 d=0 i=1 [filtersUi,query,returnAll,limit,options,simplify]",
+  "hubspot_deal_create ro=0 d=0 i=0 [dealName,pipeline,stage,dealFields,customPropertiesUi,simplify]",
+  "rssFeedRead ro=0 d=0 i=0 [url,options]",
+]
+`;
+
+exports[`mapping every bundled plugin manifest > py-insights > matches the snapshot of its tool list 1`] = `
+[
+  "sentiment ro=0 d=0 i=0 [field,outputField]",
+  "keywords ro=0 d=0 i=0 [field,topN,mode,minCount,language,outputField,includeScores]",
+]
+`;
+
+exports[`mapping every bundled plugin manifest > text-toolkit > matches the snapshot of its tool list 1`] = `
+[
+  "slugify ro=0 d=0 i=0 [field,outputField,separator]",
+  "changeCase ro=0 d=0 i=0 [field,case,inPlace,outputField]",
+]
+`;

@@ -1,0 +1,7 @@
+# Override for the spike: the gateway with MCP sign-in through Keycloak (config.auth.yaml).
+#   COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml -f deploy/mcp-gateway/compose.auth.yml \
+#     --profile mcp-gateway up -d mcp-gateway
+services:
+  mcp-gateway:
+    volumes:
+      - ./mcp-gateway/config.auth.yaml:/config/config.yaml:ro

@@ -7,12 +7,15 @@
   "exports": {
     ".": "./src/index.ts",
     "./grpc": "./src/grpc.ts",
-    "./proto/plugin.proto": "./proto/landflow/plugin/v1/plugin.proto"
+    "./proto/plugin.proto": "./proto/landflow/plugin/v1/plugin.proto",
+    "./conformance": "./conformance/index.ts"
   },
   "scripts": {
     "gen:proto": "node scripts/embed-proto.mjs",
     "gen:schema": "tsx scripts/gen-schema.ts",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "gen:conformance": "tsx scripts/gen-conformance.ts"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.6",
@@ -22,6 +25,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
-    "tsx": "^4.23.15"
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "tsx": "^4.23.15",
+    "vitest": "5.0.5"
   }
 }

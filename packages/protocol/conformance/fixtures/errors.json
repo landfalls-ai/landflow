@@ -1,0 +1,165 @@
+{
+  "kit": "landflow.conformance/v1",
+  "suite": "errors",
+  "description": "A node failure is a normal reply with `error` set; everything else is a transport error with a code from the kit's table.",
+  "cases": [
+    {
+      "id": "node-error",
+      "description": "The plugin answers with error set and no outputs: HTTP 200, a normal reply event over brokers, isError: true over MCP.",
+      "call": {
+        "method": "execute",
+        "node": "fail",
+        "parameters": {
+          "message": "boom"
+        }
+      },
+      "expect": {
+        "outcome": "node-error",
+        "errorMessage": "boom"
+      }
+    },
+    {
+      "id": "node-error-item-index",
+      "description": "`itemIndex` travels with the error (gRPC: -1 means none).",
+      "call": {
+        "method": "execute",
+        "node": "fail",
+        "parameters": {
+          "message": "item 1 failed",
+          "itemIndex": 1
+        },
+        "items": [
+          {
+            "json": {
+              "i": 0
+            }
+          },
+          {
+            "json": {
+              "i": 1
+            }
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "node-error",
+        "errorMessage": "item 1 failed"
+      }
+    },
+    {
+      "id": "unknown-node",
+      "description": "A node type the plugin does not have: HTTP 404, gRPC NOT_FOUND, a reply event with the `not_found` transport error over brokers, MCP: unknown tool (-32602).",
+      "call": {
+        "method": "execute",
+        "node": "doesNotExist"
+      },
+      "expect": {
+        "outcome": "transport-error",
+        "code": "not_found"
+      }
+    },
+    {
+      "id": "malformed-request",
+      "description": "A request that does not validate (the runner sends `items` that are not an array of items): HTTP 400, gRPC INVALID_ARGUMENT, `bad_request` over brokers.",
+      "call": {
+        "method": "execute",
+        "node": "echo",
+        "parameters": {
+          "message": "x"
+        },
+        "items": [
+          {
+            "json": "not-an-object"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "transport-error",
+        "code": "bad_request"
+      }
+    },
+    {
+      "id": "bad-signature",
+      "description": "An event whose lfsig does not verify is dropped by the consumer without running the node; the caller only sees the deadline (nothing claims the call).",
+      "applies": [
+        "messaging"
+      ],
+      "call": {
+        "method": "execute",
+        "node": "counter",
+        "parameters": {
+          "key": "errors/bad-signature"
+        },
+        "deadlineMs": 1500,
+        "tamper": "signature"
+      },
+      "expect": {
+        "outcome": "transport-error",
+        "code": "expired",
+        "ran": false,
+        "note": "a tampered event is dropped silently (nack without requeue); the plugin's `dropped` counter and log record it"
+      }
+    },
+    {
+      "id": "bad-ciphertext",
+      "description": "A body that does not decrypt (another key, or bit flips) fails verification like a bad signature: the consumer drops the event without running the node (nack without requeue); the caller only sees its deadline.",
+      "applies": [
+        "messaging"
+      ],
+      "call": {
+        "method": "execute",
+        "node": "counter",
+        "parameters": {
+          "key": "errors/bad-ciphertext"
+        },
+        "credentials": {
+          "conformanceApi": {
+            "token": "t"
+          }
+        },
+        "tamper": "ciphertext"
+      },
+      "expect": {
+        "outcome": "transport-error",
+        "code": "expired",
+        "ran": false,
+        "note": "dropped silently, counted in the plugin's `dropped` counter"
+      }
+    },
+    {
+      "id": "manifest-mismatch",
+      "description": "lfmanifest names another manifest hash than the consumer's: the first time the consumer puts the call back (nack with requeue) for a replica that may run the right version; the second delivery is acknowledged and answered with lferror manifest_mismatch and body { error, manifestHash }. The caller re-pulls the manifest. The node must not run.",
+      "applies": [
+        "messaging"
+      ],
+      "call": {
+        "method": "execute",
+        "node": "counter",
+        "parameters": {
+          "key": "errors/manifest-mismatch"
+        },
+        "tamper": "manifestHash"
+      },
+      "expect": {
+        "outcome": "transport-error",
+        "code": "manifest_mismatch",
+        "ran": false
+      }
+    },
+    {
+      "id": "test-credentials-unknown-type",
+      "description": "TestCredentials for a type the plugin does not declare: HTTP 404 / gRPC NOT_FOUND / lferror not_found over brokers.",
+      "call": {
+        "method": "testCredentials",
+        "testCredentials": {
+          "credentialType": "nope",
+          "data": {}
+        }
+      },
+      "expect": {
+        "outcome": "transport-error",
+        "code": "not_found"
+      }
+    }
+  ]
+}

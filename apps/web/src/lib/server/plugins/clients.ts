@@ -22,6 +22,7 @@ import {
   type WebhookMethodResponse,
   type WebhookRequest,
   type WebhookResponse,
+  transportKindOf,
   type WellKnownDocument,
 } from '@landflow/protocol';
 import {
@@ -417,18 +418,26 @@ export class PooledPluginClient implements PluginClient {
   }
 }
 
+const SCHEME = /^([a-z][a-z0-9+.-]*):\/\//i;
+
+/**
+ * The transport kind of an endpoint, from its scheme: `http`/`https`, `grpc`, or a broker kind for the logical
+ * `<kind>://<connectionId>/<pluginId>` endpoints (docs/transports.md). Throws for a malformed endpoint.
+ */
 export function transportOf(endpoint: string): Exclude<Transport, 'in-process'> {
-  if (endpoint.startsWith('grpc://')) return 'grpc';
-  if (/^https?:\/\//.test(endpoint)) return 'http';
-  throw new Error(`Unsupported endpoint "${endpoint}" (use http://, https:// or grpc://)`);
+  return transportKindOf(endpoint);
 }
 
+/** A direct client (HTTP or gRPC) for an endpoint; brokered endpoints go through their provider (lib/server/transports). */
 export function createClient(endpoint: string): PluginClient {
-  return transportOf(endpoint) === 'grpc' ? new GrpcPluginClient(endpoint) : new HttpPluginClient(endpoint);
+  const transport = transportOf(endpoint);
+  if (transport === 'grpc') return new GrpcPluginClient(endpoint);
+  if (transport === 'http') return new HttpPluginClient(endpoint);
+  throw new Error(`No direct client for "${endpoint}": ${transport} endpoints go through their transport provider`);
 }
 
 /** Normalize "localhost:7101" style input and strip trailing slashes. */
 export function normalizeEndpoint(endpoint: string): string {
   const trimmed = endpoint.trim().replace(/\/+$/, '');
-  return /^(https?|grpc):\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
+  return SCHEME.test(trimmed) ? trimmed : `http://${trimmed}`;
 }

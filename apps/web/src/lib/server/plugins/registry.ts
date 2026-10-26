@@ -4,8 +4,8 @@
  * Four discovery sources feed it — built-in (in-process), announce (plugins
  * push + heartbeat), static seeds (LANDFLOW_PLUGINS) and scan (we probe a port
  * range) — plus Kubernetes discovery (kubernetes.ts) when it is turned on. A plugin may be reachable through several endpoints (e.g. HTTP and
- * gRPC); the registry tracks each one's health and executes through the
- * preferred online endpoint. It also implements the engine's NodeTypeResolver.
+ * gRPC, later brokers); the registry tracks each one's health and executes through the endpoint the transport selector
+ * picks per call from the plugin's policy (lib/server/transports). It also implements the engine's NodeTypeResolver.
  */
 import { createHash } from 'node:crypto';
 import { connect } from 'node:net';
@@ -33,8 +33,12 @@ import { withExternalSecrets } from '../secrets/runtime';
 import { withGovernance } from '../governance/policy';
 import { bus } from '../bus';
 import { singleton } from '../singleton';
-import { withSpan } from '../telemetry';
-import { createClient, HttpPluginClient, GrpcPluginClient, normalizeEndpoint, PooledPluginClient, transportOf, type PluginClient } from './clients';
+import { withSpan, withTransportChoice } from '../telemetry';
+import type { PluginTransportSummary, TransportChoice, TransportPolicy } from '../../shared/transports';
+import { policyFromPreferred, transportPolicies } from '../transports/policy-store';
+import { transportProviders } from '../transports/provider';
+import { isChoice, runModeOf, select, type CallContext, type Candidate, type Selection, type SelectorInputs } from '../transports/selector';
+import { HttpPluginClient, GrpcPluginClient, normalizeEndpoint, PooledPluginClient, transportOf, type PluginClient } from './clients';
 import { provenManifest } from './registry-proof';
 
 /** Extras for endpoints found by Kubernetes discovery; a re-registration without them keeps the endpoint's own. */
@@ -86,7 +90,6 @@ interface PluginEntry {
   source: DiscoverySource;
   inProcess?: IPlugin;
   endpoints: Map<string, EndpointState>;
-  preferredTransport?: Transport;
   registeredAt: number;
   updatedAt: number;
   lastError?: string;
@@ -147,7 +150,8 @@ export class PluginRegistry implements NodeTypeResolver {
   }
 
   private async connectEndpoint(endpoint: string, source: DiscoverySource, ttlSeconds?: number, options?: EndpointOptions): Promise<PluginEntry> {
-    const client = createClient(endpoint);
+    // The endpoint's kind picks the provider (lib/server/transports): direct HTTP/gRPC today, broker drivers as they land.
+    const client = transportProviders.createClient(endpoint);
     const started = Date.now();
     let manifest: PluginManifest;
     try {
@@ -365,11 +369,24 @@ export class PluginRegistry implements NodeTypeResolver {
     return this.plugins.get(id)!;
   }
 
-  setPreferredTransport(id: string, transport: Transport | undefined) {
+  /** The plugin's transport policy (lib/server/transports/policy-store.ts; Auto/balanced unless stored). */
+  policy(id: string): TransportPolicy {
+    return transportPolicies.get(id);
+  }
+
+  /** Store the plugin's transport policy (shared by every process in queue mode) and tell the Plugins page. */
+  setPolicy(id: string, policy: Partial<TransportPolicy>, updatedBy?: string): TransportPolicy {
     const entry = this.plugins.get(id);
     if (!entry) throw new Error(`Unknown plugin "${id}"`);
-    entry.preferredTransport = transport;
-    this.emit({ type: 'plugin.updated', pluginId: id, message: `${entry.manifest.plugin.name} now prefers ${transport ?? 'auto'} transport` });
+    const stored = transportPolicies.set(id, policy, updatedBy);
+    const how = stored.mode === 'pinned' ? `pinned to ${stored.pinned}` : `on Auto (${stored.objective})${stored.allowed ? `, limited to ${stored.allowed.join(', ')}` : ''}`;
+    this.emit({ type: 'plugin.updated', pluginId: id, message: `${entry.manifest.plugin.name} transport ${how}` });
+    return stored;
+  }
+
+  /** The older `preferredTransport` setting: a transport pins the policy to it, none puts it back on Auto. */
+  setPreferredTransport(id: string, transport: Transport | undefined) {
+    this.setPolicy(id, policyFromPreferred(transport, transportPolicies.get(id)));
   }
 
   // -------------------------------------------------------------------------
@@ -496,12 +513,37 @@ export class PluginRegistry implements NodeTypeResolver {
   // Queries
   // -------------------------------------------------------------------------
 
+  /** What the selector reads about the host's transports (capabilities now; stats and breakers in the Auto wave). */
+  private readonly selectorInputs: SelectorInputs = {
+    capabilities: (kind) => transportProviders.get(kind)?.capabilities,
+  };
+
+  private candidates(entry: PluginEntry): Candidate[] {
+    return [...entry.endpoints.values()].map((s) => ({ endpoint: s.endpoint, kind: s.transport, status: s.status, ...(s.latencyMs !== undefined && { latencyMs: s.latencyMs }) }));
+  }
+
+  /** The transport for one call of this plugin, or why there is none (lib/server/transports/selector.ts). */
+  private choose(entry: PluginEntry, context: CallContext): Selection {
+    return select(entry.id, this.candidates(entry), transportPolicies.get(entry.id), context, this.selectorInputs);
+  }
+
+  /** `select()` for a plugin id, as the API and tests ask it: `{ endpoint, kind, reason }` or `{ error }`. */
+  select(pluginId: string, context: CallContext = { method: 'Execute' }): Selection {
+    const entry = this.plugins.get(pluginId);
+    if (!entry) return { error: `Unknown plugin "${pluginId}"` };
+    if (entry.inProcess) return { error: `Plugin "${pluginId}" runs in-process` };
+    return this.choose(entry, context);
+  }
+
+  /** The endpoint a choice names (the endpoint left the registry between choosing and calling: none). */
+  private chosen(entry: PluginEntry, context: CallContext): EndpointState | undefined {
+    const selection = this.choose(entry, context);
+    return isChoice(selection) ? entry.endpoints.get(selection.endpoint) : undefined;
+  }
+
+  /** The endpoint the next Execute would take: what the Plugins page shows as active. */
   private activeEndpoint(entry: PluginEntry): EndpointState | undefined {
-    const online = [...entry.endpoints.values()].filter((s) => s.status === 'online');
-    if (!online.length) return undefined;
-    const preferred = entry.preferredTransport && online.find((s) => s.transport === entry.preferredTransport);
-    // Default: gRPC first (binary, multiplexed), then HTTP.
-    return preferred ?? online.find((s) => s.transport === 'grpc') ?? online[0];
+    return this.chosen(entry, { method: 'Execute' });
   }
 
   private status(entry: PluginEntry): PluginStatus {
@@ -509,18 +551,40 @@ export class PluginRegistry implements NodeTypeResolver {
     return this.activeEndpoint(entry) ? 'online' : 'offline';
   }
 
+  /** The plugin's transports by kind, for the Plugins page: endpoints, live state and whether the policy keeps the kind out. */
+  private transportsOf(entry: PluginEntry, policy: TransportPolicy): PluginTransportSummary[] {
+    const byKind = new Map<string, EndpointState[]>();
+    for (const state of entry.endpoints.values()) byKind.set(state.transport, [...(byKind.get(state.transport) ?? []), state]);
+    // Faces the plugin was built with (manifest `transports`) that no endpoint reaches yet: shown, offline, so an admin sees what a connection would add.
+    for (const kind of entry.manifest.transports ?? []) if (kind !== 'mcp' && !byKind.has(kind)) byKind.set(kind, []);
+    const excludedBy = (kind: string) => (policy.mode === 'pinned' && policy.pinned !== kind) || (policy.allowed?.length ? !policy.allowed.includes(kind) : false);
+    return [...byKind.entries()].map(([kind, states]) => ({
+      kind,
+      endpoints: states.map((s) => s.endpoint),
+      online: states.some((s) => s.status === 'online'),
+      ...(excludedBy(kind) && { excluded: true }),
+      ...(!states.length && { declared: true }),
+    }));
+  }
+
   list(): PluginSummary[] {
     return [...this.plugins.values()]
       .sort((a, b) => (a.source === 'builtin' ? -1 : b.source === 'builtin' ? 1 : a.id.localeCompare(b.id)))
       .map((entry) => {
-        const active = this.activeEndpoint(entry);
+        const selection = entry.inProcess ? undefined : this.choose(entry, { method: 'Execute' });
+        const choice: TransportChoice | undefined = selection && isChoice(selection) ? selection : undefined;
+        const active = choice && entry.endpoints.get(choice.endpoint);
+        const policy = transportPolicies.get(entry.id);
         return {
           id: entry.id,
           info: entry.manifest.plugin,
           status: this.status(entry),
           transport: entry.inProcess ? 'in-process' : (active?.transport ?? [...entry.endpoints.values()][0]?.transport ?? 'http'),
           ...(active && { activeEndpoint: active.endpoint }),
-          ...(entry.preferredTransport && { preferredTransport: entry.preferredTransport }),
+          ...(policy.mode === 'pinned' && policy.pinned && { preferredTransport: policy.pinned }),
+          ...(!entry.inProcess && { transports: this.transportsOf(entry, policy), policy }),
+          ...(choice && { choice }),
+          ...(selection && !isChoice(selection) && { choiceError: selection.error }),
           endpoints: [...entry.endpoints.values()].map((s) => ({
             endpoint: s.endpoint,
             transport: s.transport,
@@ -596,25 +660,44 @@ export class PluginRegistry implements NodeTypeResolver {
 
     const descriptor = entry.manifest.nodes.find((n) => n.name === nodeName);
     if (!descriptor) return { error: `Plugin "${pluginId}" has no node "${nodeName}"` };
-    const state = this.activeEndpoint(entry);
-    if (!state) return { error: `Plugin "${entry.manifest.plugin.name}" is offline — start it or check its endpoint` };
+    // The transport is chosen per call (the request tells the run mode, the item count and whether it may repeat); what
+    // the resolver reports is the choice the next Execute would make now, and the error when there is none.
+    const provisional = this.choose(entry, { method: 'Execute' });
+    if (!isChoice(provisional)) return { error: provisional.error.replace(`Plugin "${pluginId}"`, `Plugin "${entry.manifest.plugin.name}"`) };
+    const name = entry.manifest.plugin.name;
+    const call = async <T>(context: CallContext, fn: (state: EndpointState) => Promise<T>): Promise<T> => {
+      const selection = this.choose(entry, context);
+      if (!isChoice(selection)) throw new Error(selection.error.replace(`Plugin "${pluginId}"`, `Plugin "${name}"`));
+      const state = entry.endpoints.get(selection.endpoint);
+      if (!state) throw new Error(`Plugin "${name}": ${selection.endpoint} left the registry`);
+      try {
+        return await withTransportChoice(selection, () => fn(state));
+      } catch (error) {
+        state.lastError = (error as Error).message;
+        throw new Error(`${name} via ${state.transport.toUpperCase()} ${state.endpoint}: ${(error as Error).message}`);
+      }
+    };
     return {
       type,
       pluginId,
-      transport: state.transport,
+      transport: provisional.kind,
       descriptor,
-      execute: async (request, extras) => {
-        try {
-          return await state.client.execute(request, extras?.signal);
-        } catch (error) {
-          state.lastError = (error as Error).message;
-          throw new Error(`${entry.manifest.plugin.name} via ${state.transport.toUpperCase()} ${state.endpoint}: ${(error as Error).message}`);
-        }
-      },
+      execute: (request, extras) =>
+        call(
+          {
+            method: 'Execute',
+            mode: runModeOf(request.mode),
+            items: request.inputs.reduce((n, items) => n + items.length, 0),
+            // An operation's `idempotent` overrides the node's (protocol: tool annotations); an idempotency key alone doesn't make the call repeatable.
+            ...(descriptor.idempotent !== undefined && { idempotent: descriptor.idempotent }),
+            executionId: request.executionId,
+          },
+          (state) => state.client.execute(request, extras?.signal),
+        ),
       // App webhook triggers (lib/server/app-webhooks.ts).
       ...(descriptor.triggerSource === 'appWebhook' && {
-        webhookMethod: (request: WebhookMethodRequest) => state.client.webhookMethod(request),
-        webhook: (request: WebhookRequest) => state.client.receiveWebhook(request),
+        webhookMethod: (request: WebhookMethodRequest) => call({ method: 'WebhookMethod', mode: 'production' }, (state) => state.client.webhookMethod(request)),
+        webhook: (request: WebhookRequest) => call({ method: 'ReceiveWebhook', mode: 'production' }, (state) => state.client.receiveWebhook(request)),
       }),
     };
   }
@@ -629,9 +712,11 @@ export class PluginRegistry implements NodeTypeResolver {
       if (!node) throw new Error(`Unknown node "${type}"`);
       return runLoadOptions(node, method, parameters, credentials);
     }
-    const state = this.activeEndpoint(entry);
+    const selection = this.choose(entry, { method: 'LoadOptions', mode: 'manual', idempotent: true });
+    if (!isChoice(selection)) throw new Error(selection.error);
+    const state = entry.endpoints.get(selection.endpoint);
     if (!state) throw new Error(`Plugin "${pluginId}" is offline`);
-    return state.client.loadOptions({ nodeType: nodeName, method, parameters, ...(credentials && { credentials }) });
+    return withTransportChoice(selection, () => state.client.loadOptions({ nodeType: nodeName, method, parameters, ...(credentials && { credentials }) }));
   }
 
   // -------------------------------------------------------------------------
@@ -673,10 +758,11 @@ export class PluginRegistry implements NodeTypeResolver {
     if (!entry || !descriptor) return { ok: false, message: `Unknown credential type "${type}"` };
     if (!descriptor.testable) return { ok: false, message: `${descriptor.displayName} can't be tested — save it and run a node` };
     if (entry.inProcess) return runTestCredentials(entry.inProcess, { credentialType, data });
-    const state = this.activeEndpoint(entry);
-    if (!state) return { ok: false, message: `${entry.manifest.plugin.name} is offline — start it to test this credential` };
+    const selection = this.choose(entry, { method: 'TestCredentials', mode: 'manual', idempotent: true });
+    const state = isChoice(selection) ? entry.endpoints.get(selection.endpoint) : undefined;
+    if (!state || !isChoice(selection)) return { ok: false, message: `${entry.manifest.plugin.name} is offline — start it to test this credential` };
     try {
-      return await state.client.testCredentials({ credentialType, data });
+      return await withTransportChoice(selection, () => state.client.testCredentials({ credentialType, data }));
     } catch (error) {
       return { ok: false, message: `${entry.manifest.plugin.name} via ${state.transport.toUpperCase()}: ${(error as Error).message}` };
     }

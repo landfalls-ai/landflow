@@ -29,6 +29,32 @@ type Plugin struct {
 	credOrder []string
 	started   time.Time
 	telemetry atomic.Pointer[Telemetry]
+
+	dispatcher atomic.Pointer[Dispatcher]
+	// hints are the manifest's transports and maxConcurrency, set by Serve.
+	hints atomic.Pointer[transportHints]
+}
+
+// transportHints are the manifest hints of docs/transports.md ("Protocol changes" 2).
+type transportHints struct {
+	transports     []string
+	maxConcurrency int
+}
+
+// SetTransportHints records the faces the plugin runs with and its
+// concurrency limit; Manifest and the announcer carry them (transports,
+// maxConcurrency). Serve calls it from its options; call it yourself only
+// when you run bindings without Serve.
+func (p *Plugin) SetTransportHints(transports []string, maxConcurrency int) {
+	p.hints.Store(&transportHints{transports: append([]string(nil), transports...), maxConcurrency: max(maxConcurrency, 0)})
+}
+
+// TransportHints returns what SetTransportHints recorded (nil, 0 before Serve).
+func (p *Plugin) TransportHints() (transports []string, maxConcurrency int) {
+	if h := p.hints.Load(); h != nil {
+		return append([]string(nil), h.transports...), h.maxConcurrency
+	}
+	return nil, 0
 }
 
 type registeredNode struct {
@@ -172,6 +198,7 @@ func (p *Plugin) Manifest() PluginManifest {
 		nodes = append(nodes, p.nodes[name].descriptor)
 	}
 	m := PluginManifest{Protocol: ProtocolVersion, Plugin: p.info, Nodes: nodes}
+	m.Transports, m.MaxConcurrency = p.TransportHints()
 	for _, name := range p.credOrder {
 		m.CredentialTypes = append(m.CredentialTypes, p.credTypes[name].descriptor)
 	}
@@ -269,7 +296,7 @@ func (p *Plugin) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteResp
 			attribute.String("landflow.execution.id", req.ExecutionID),
 			attribute.String("landflow.execution.mode", string(req.Mode)),
 			attribute.Int("landflow.items.in", itemsIn),
-		))
+		), trace.WithAttributes(transportAttrs(ctx)...))
 
 	ec := NewExecuteContext(ctx, req, &rn.descriptor)
 	ec.Logger = newSinkLogger(&logSink{ctx: ctx, handler: tel.logHandler, redact: sc.redact, attrs: []slog.Attr{
@@ -369,7 +396,7 @@ func (p *Plugin) LoadOptions(ctx context.Context, req *LoadOptionsRequest) (*Loa
 			attribute.String("landflow.plugin.id", p.info.ID),
 			attribute.String("landflow.node.type", nodeType),
 			attribute.String("landflow.load_options.method", req.Method),
-		))
+		), trace.WithAttributes(transportAttrs(ctx)...))
 	defer span.End()
 
 	lc := &LoadOptionsContext{
@@ -431,7 +458,7 @@ func (p *Plugin) TestCredentials(ctx context.Context, req *TestCredentialsReques
 		trace.WithAttributes(
 			attribute.String("landflow.plugin.id", p.info.ID),
 			attribute.String("landflow.credential.type", name),
-		))
+		), trace.WithAttributes(transportAttrs(ctx)...))
 	defer span.End()
 
 	resp := &TestCredentialsResponse{}
