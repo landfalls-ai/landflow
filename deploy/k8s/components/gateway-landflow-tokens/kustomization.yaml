@@ -1,0 +1,24 @@
+# Sign-in at the bundled MCP gateway with Landflow-issued MCP tokens (no identity provider needed). Replaces the sidecar's
+# ConfigMap with gateway-config.yaml, which you edit for your URLs (issuer, audience, resource), and tells the host's gateway
+# sync to put the same authentication on the per-plugin routes. See gateway-config.yaml.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+configMapGenerator:
+  - name: landflow-mcp-gateway
+    behavior: replace
+    files:
+      - config.yaml=gateway-config.yaml
+patches:
+  - target: { kind: Deployment, name: landflow-host }
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: { name: landflow-host }
+      spec:
+        template:
+          spec:
+            containers:
+              - name: host
+                env:
+                  - name: LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES
+                    value: '{"mcpAuthentication":{"mode":"optional","issuer":"http://landflow.localhost","audiences":["http://landflow.localhost/mcp"],"jwks":{"url":"http://127.0.0.1:3000/api/mcp/jwks"}}}'

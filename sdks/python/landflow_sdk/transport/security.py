@@ -136,6 +136,10 @@ class Keyring:
 
 
 def canonical_form(attributes: Attributes, body: bytes) -> str:
+    return _canonical_with_digest(attributes, hashlib.sha256(body).hexdigest())
+
+
+def _canonical_with_digest(attributes: Attributes, digest_hex: str) -> str:
     lines = []
     for name in KNOWN_ATTRIBUTES:
         if name == "lfsig":
@@ -143,7 +147,7 @@ def canonical_form(attributes: Attributes, body: bytes) -> str:
         value = getattr(attributes, name)
         if value is not None and value != "":
             lines.append(f"{name}={value}\n")
-    return "".join(lines) + hashlib.sha256(body).hexdigest() + "\n"
+    return "".join(lines) + digest_hex + "\n"
 
 
 def signature(sig_key: bytes, attributes: Attributes, body: bytes) -> str:
@@ -237,6 +241,32 @@ def seal(keyring: Keyring, plugin_id: str, event: RawEvent, *, encrypt: bool, no
         attributes.datacontenttype = JSON_CONTENT_TYPE
     attributes.lfsig = signature(keys.sig, attributes, body)
     return RawEvent(attributes, body)
+
+
+def with_claim(keyring: Keyring, plugin_id: str, event: RawEvent, key: str) -> RawEvent:
+    """Add the claim-check attributes for ``key`` to a sealed event whose (encrypted) body is ``event.body`` and sign again.
+
+    The returned event keeps the full body (the caller stores it and sends an empty one): the signature covers the body's
+    digest either way, since ``lfclaimsha256`` is that digest.
+    """
+    keys = keyring.keys(plugin_id)
+    assert keys is not None
+    attributes = event.attributes.copy(lfclaim=key, lfclaimsize=str(len(event.body)), lfclaimsha256=hashlib.sha256(event.body).hexdigest())
+    attributes.lfsig = signature(keys.sig, attributes, event.body)
+    return RawEvent(attributes, event.body)
+
+
+def verify_claimed(keyring: Keyring, plugin_id: str, attributes: Attributes) -> None:
+    """Check the signature of an event whose body is still in the claim store, without fetching it: the canonical form
+    ends in the body's digest, which ``lfclaimsha256`` gives. Signature only (``open_event`` does the rest)."""
+    if not attributes.lfsig or not attributes.lfkeyid or not attributes.lfclaimsha256:
+        raise SecurityError(f"event {attributes.id} is not signed", "unsigned")
+    keys = keyring.keys(plugin_id, attributes.lfkeyid)
+    if keys is None:
+        raise SecurityError(f"event {attributes.id} is signed with unknown key {attributes.lfkeyid}", "unknown_key")
+    expected = hmac.new(keys.sig, _canonical_with_digest(attributes, attributes.lfclaimsha256).encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, attributes.lfsig.lower()):
+        raise SecurityError(f"event {attributes.id} has a bad signature", "bad_signature")
 
 
 def open_event(

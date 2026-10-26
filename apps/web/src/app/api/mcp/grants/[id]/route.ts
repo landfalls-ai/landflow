@@ -1,4 +1,4 @@
-/** One tool grant (owners and admins): GET, PATCH { tools?, credentials?, requireApproval? }, DELETE. */
+/** One tool grant (owners and admins): GET, PATCH { tools?, credentials?, approval? (always | destructive | never | null; `requireApproval` boolean still accepted) }, DELETE. */
 import { requireUser } from '@/lib/server/auth';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { deleteGrant, getGrant, grantPatchSchema, McpGrantError, updateGrant } from '@/lib/server/mcp/grants';
@@ -14,12 +14,12 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
 });
 
 export const PATCH = handler(async (request: Request, { params }: Ctx) => {
-  await requireUser('mcp:manage');
+  const me = await requireUser('mcp:manage');
   const body = await parseBody(request, grantPatchSchema);
   if (!body.ok) return body.response;
   try {
-    const grant = updateGrant((await params).id, body.data);
-    recordAudit({ action: 'mcp.grant.update', target: { type: 'mcp_grant', id: grant.id, name: `${grant.subject.kind}:${grant.subject.id} → ${grant.pluginId}` }, summary: `Changed the grant of ${grant.subject.kind} ${grant.subject.name ?? grant.subject.id} on ${grant.pluginId}`, details: { pluginId: grant.pluginId, tools: grant.tools === '*' ? '*' : grant.tools, credentialTypes: Object.keys(grant.credentials) } });
+    const grant = updateGrant((await params).id, body.data, me);
+    recordAudit({ action: 'mcp.grant.update', target: { type: 'mcp_grant', id: grant.id, name: `${grant.subject.kind}:${grant.subject.id} → ${grant.pluginId}` }, summary: `Changed the grant of ${grant.subject.kind} ${grant.subject.name ?? grant.subject.id} on ${grant.pluginId}`, details: { pluginId: grant.pluginId, tools: grant.tools === '*' ? '*' : grant.tools, credentialTypes: Object.keys(grant.credentials), approval: grant.approval ?? null } });
     return json({ grant });
   } catch (caught) {
     if (caught instanceof McpGrantError) return error(caught.message, caught.status);

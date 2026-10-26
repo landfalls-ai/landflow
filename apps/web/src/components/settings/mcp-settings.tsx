@@ -3,7 +3,7 @@
  * Settings → MCP (docs/transports.md "The bundled MCP gateway"): the gateway (mode, URL, secret, sync status), how to
  * connect a client (Claude Code / generic MCP JSON for the gateway and the direct per-plugin endpoints), your
  * Landflow-issued MCP tokens (issue with scopes and expiry, copy once, revoke, last used), the tool grants (owners and
- * admins), the tool browser (GET /api/mcp/tools, stream T2-E; an empty state until it exists), and the instance MCP
+ * admins), approvals of destructive tool calls (the ones a person may answer), the tool browser (GET /api/mcp/tools, stream T2-E; an empty state until it exists), and the instance MCP
  * server for coding agents (/api/mcp, its own on/off switch and token).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -13,6 +13,7 @@ import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import type { UserView } from '@/lib/shared/auth';
 import { MCP_GRANT_SUBJECT_KINDS, MCP_TOKEN_SCOPE_LABELS, MCP_TOKEN_SCOPES, type McpAccessResponse, type McpAccessView, type McpGatewayStatusView, type McpGatewayTargetView, type McpGrantSubjectKind, type McpStatusView, type McpTokenScope, type McpTokenView, type McpToolGrant, type McpToolsResponse } from '@/lib/shared/mcp';
+import { MCP_APPROVAL_LABELS, MCP_APPROVAL_MODES, type McpApprovalMode, type McpApprovalView } from '@/lib/shared/mcp-approval';
 import type { CredentialSummary, PluginSummary } from '@/lib/shared/types';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -86,6 +87,12 @@ function GatewayCard({ status }: { status: McpStatusView }) {
             </>
           )}
         </dd>
+        {mode !== 'off' && (
+          <>
+            <dt className="text-t3">At the gateway</dt>
+            <dd className="text-t1">{status.gateway.signIn ? <GatewaySignIn signIn={status.gateway.signIn} status={status} /> : <GatewayNoSignIn />}</dd>
+          </>
+        )}
         <dt className="text-t3">Token keys</dt>
         <dd className="font-mono text-t1">
           {status.instanceUrl}
@@ -99,6 +106,27 @@ function GatewayCard({ status }: { status: McpStatusView }) {
       </dl>
       {mode !== 'off' && <GatewaySyncStatus canManage={status.canManage} />}
     </Card>
+  );
+}
+
+/** Whose tokens the gateway checks on the per-plugin routes (LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES). */
+function GatewaySignIn({ signIn, status }: { signIn: NonNullable<McpStatusView['gateway']['signIn']>; status: McpStatusView }) {
+  const whose = signIn.issuer === status.instanceUrl ? 'Landflow MCP tokens' : signIn.issuer === status.identityProvider?.issuer ? 'the identity provider’s tokens' : <span className="font-mono">{signIn.issuer}</span>;
+  return (
+    <>
+      <Badge tone="success">on</Badge> {whose}
+      {signIn.mode === 'optional' && <span className="text-t3"> — a call without a token is anonymous (no tools), a bad token gets 401</span>}
+    </>
+  );
+}
+
+function GatewayNoSignIn() {
+  return (
+    <span className="text-warn">
+      <Badge tone="warning">off</Badge> the per-plugin routes check no tokens (<code className="font-mono">LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES</code>), and{' '}
+      <code className="font-mono">/mcp</code> signs in only if the gateway’s config has <code className="font-mono">mcpAuthentication</code>. Without it agents there are
+      anonymous and see no tools; the direct endpoints still take tokens.
+    </span>
   );
 }
 
@@ -173,8 +201,8 @@ function GatewaySyncStatus({ canManage }: { canManage: boolean }) {
       {shown.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5" data-testid="mcp-gateway-targets">
           {shown.map((t) => (
-            <Badge key={`${t.kind}:${t.name}`} tone={TARGET_STATE_TONE[t.state]} className="font-mono font-medium" title={`${t.kind} ${t.name} (${t.pluginId}): ${t.state}`}>
-              {t.name} · {t.state}
+            <Badge key={`${t.kind}:${t.name}`} tone={TARGET_STATE_TONE[t.state]} className="font-mono font-medium" title={`${t.kind} ${t.name} (${t.label}): ${t.state}`} data-server-kind={t.serverKind}>
+              {t.serverKind === 'plugin' ? t.name : `${t.serverKind === 'instance' ? 'instance' : 'workflow'}: ${t.name}`} · {t.state}
             </Badge>
           ))}
         </div>
@@ -185,7 +213,7 @@ function GatewaySyncStatus({ canManage }: { canManage: boolean }) {
         </button>
       )}
       <p className="mt-1.5 text-[11px] text-t3">
-        Targets reach this host at <span className="font-mono">{gateway.hostUrl}</span> (<span className="font-mono">LANDFLOW_MCP_GATEWAY_HOST_URL</span>). The sync reacts to plugins coming and going, reconciles every 30 s, removes a plugin offline
+        Targets reach this host at <span className="font-mono">{gateway.hostUrl}</span> (<span className="font-mono">LANDFLOW_MCP_GATEWAY_HOST_URL</span>). It also registers the instance server (when on) and each published workflow's MCP Server Trigger. The sync reacts to plugins coming and going, reconciles every 30 s, removes a plugin offline
         for 60 s, and only ever touches the targets it created.
       </p>
     </div>
@@ -467,7 +495,7 @@ function GrantForm({ pickers, tools, onDone }: { pickers: Pickers; tools: McpToo
   const [allTools, setAllTools] = useState(true);
   const [toolText, setToolText] = useState('');
   const [credentials, setCredentials] = useState<Record<string, string>>({});
-  const [approval, setApproval] = useState<'default' | 'yes' | 'no'>('default');
+  const [approval, setApproval] = useState<'default' | McpApprovalMode>('default');
   const [busy, setBusy] = useState(false);
 
   const pluginTools = useMemo(() => tools.filter((t) => t.pluginId === pluginId), [tools, pluginId]);
@@ -486,7 +514,7 @@ function GrantForm({ pickers, tools, onDone }: { pickers: Pickers; tools: McpToo
         .split(/[\s,]+/)
         .map((s) => s.trim())
         .filter(Boolean);
-      const body = { subject: { kind, id: subjectId }, pluginId, tools: allTools ? '*' : list, credentials, requireApproval: approval === 'default' ? null : approval === 'yes' };
+      const body = { subject: { kind, id: subjectId }, pluginId, tools: allTools ? '*' : list, credentials, approval: approval === 'default' ? null : approval };
       const r = await api<{ grant: McpToolGrant }>('/api/mcp/grants', { method: 'POST', json: body });
       toast.success('Grant created');
       onDone(r.grant);
@@ -564,11 +592,14 @@ function GrantForm({ pickers, tools, onDone }: { pickers: Pickers; tools: McpToo
           </Select>
         </div>
         <div>
-          <FieldLabel>Destructive tools</FieldLabel>
-          <Select value={approval} onChange={(e) => setApproval(e.target.value as typeof approval)}>
-            <option value="default">Instance default</option>
-            <option value="yes">Need an approval</option>
-            <option value="no">Run without approval</option>
+          <FieldLabel>Approval by a person</FieldLabel>
+          <Select value={approval} onChange={(e) => setApproval(e.target.value as typeof approval)} aria-label="Approval by a person">
+            <option value="default">Instance default (destructive tools)</option>
+            {MCP_APPROVAL_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {MCP_APPROVAL_LABELS[mode]}
+              </option>
+            ))}
           </Select>
         </div>
         <div className="sm:col-span-2">
@@ -642,6 +673,16 @@ function GrantsCard({ tools, tokens }: { tools: McpToolsResponse['tools']; token
   }, [tokens]);
   useEffect(() => void load(), [load]);
 
+  const setApprovalMode = async (grant: McpToolGrant, value: 'default' | McpApprovalMode) => {
+    try {
+      await api(`/api/mcp/grants/${encodeURIComponent(grant.id)}`, { method: 'PATCH', json: { approval: value === 'default' ? null : value } });
+      toast.success('Approval setting saved');
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+    await load();
+  };
+
   const remove = async (grant: McpToolGrant) => {
     setConfirm(undefined);
     try {
@@ -661,7 +702,7 @@ function GrantsCard({ tools, tokens }: { tools: McpToolsResponse['tools']; token
       </div>
       <p className="text-[13px] text-t2">
         Who may list and call which tools, and which credential each tool uses. Without a grant an agent sees no tools. Governance’s allowed nodes (instance and project) still apply, and
-        destructive tools can require an approval.
+        destructive tools wait for a person’s OK unless the grant says otherwise (only whoever created a grant can turn its approvals down).
       </p>
       {error && <Alert>{error}</Alert>}
       {adding && pickers ? (
@@ -692,7 +733,19 @@ function GrantsCard({ tools, tokens }: { tools: McpToolsResponse['tools']; token
                   <span className="font-semibold">{g.subject.name ?? g.subject.id}</span>
                   <span className="text-t3">→</span>
                   <code className="font-mono text-[12px]">{g.pluginId}</code>
-                  {g.requireApproval !== undefined && <Badge tone={g.requireApproval ? 'warning' : 'muted'}>{g.requireApproval ? 'approval for destructive' : 'no approval'}</Badge>}
+                  <Select
+                    value={g.approval ?? 'default'}
+                    onChange={(e) => void setApprovalMode(g, e.target.value as 'default' | McpApprovalMode)}
+                    aria-label={`Approval for ${g.subject.name ?? g.subject.id} on ${g.pluginId}`}
+                    className="h-7 w-auto py-0 text-[12px]"
+                  >
+                    <option value="default">Approval: instance default</option>
+                    {MCP_APPROVAL_MODES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        Approval: {MCP_APPROVAL_LABELS[mode].toLowerCase()}
+                      </option>
+                    ))}
+                  </Select>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1">
                   {g.tools === '*' ? (
@@ -728,6 +781,102 @@ function GrantsCard({ tools, tokens }: { tools: McpToolsResponse['tools']; token
             </div>
           ))}
         </Card>
+      )}
+    </div>
+  );
+}
+
+// ---- approvals ---------------------------------------------------------------------------
+
+/** MCP tool calls waiting for a person (lib/server/mcp/approvals.ts), refreshed while the page is open. */
+function ApprovalsCard() {
+  const [approvals, setApprovals] = useState<McpApprovalView[]>();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState<string>();
+
+  const load = useCallback(async () => {
+    try {
+      setApprovals((await api<{ approvals: McpApprovalView[] }>('/api/mcp/approvals')).approvals);
+      setError(undefined);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), 4000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const decide = async (approval: McpApprovalView, approve: boolean) => {
+    setBusy(approval.id);
+    try {
+      await api(`/api/mcp/approvals/${encodeURIComponent(approval.id)}`, { method: 'POST', json: { approve } });
+      toast.success(approve ? 'Approved: the agent can repeat the call' : 'Denied');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(undefined);
+      await load();
+    }
+  };
+
+  const pending = (approvals ?? []).filter((a) => a.status === 'pending');
+  const recent = (approvals ?? []).filter((a) => a.status !== 'pending').slice(0, 8);
+  return (
+    <div className="space-y-3" id="mcp-approvals">
+      <div className="flex items-center gap-2">
+        <ShieldAlert className="size-4 text-t3" strokeWidth={1.8} />
+        <SectionLabel>Approvals</SectionLabel>
+        {pending.length > 0 && (
+          <Badge tone="warning" className="ml-auto">
+            {pending.length} waiting
+          </Badge>
+        )}
+      </div>
+      <p className="text-[13px] text-t2">
+        Destructive tools (and any a grant says so) wait for a person. Clients that support MCP elicitation ask their own user; for the rest, the call lands here. Whoever answers must be an
+        admin, the person the agent acts for, or share a project with them. An approval lets the agent repeat the same call once, within ten minutes.
+      </p>
+      {error && <Alert>{error}</Alert>}
+      {approvals && pending.length === 0 && <EmptyState title="Nothing waiting" hint="Calls that need a person show up here as they come in." compact />}
+      {pending.length > 0 && (
+        <Card className="overflow-hidden p-0">
+          {pending.map((a) => (
+            <div key={a.id} className="flex items-start gap-3 border-b border-hair px-4 py-2.5 last:border-b-0">
+              <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warn" strokeWidth={1.8} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5 text-[13px] text-t1">
+                  <code className="font-mono text-[12px] font-semibold">{a.tool}</code>
+                  <span className="text-t3">of</span>
+                  <code className="font-mono text-[12px]">{a.pluginId}</code>
+                  <span className="text-t3">for</span>
+                  <span>{a.caller}</span>
+                  <span className="text-[11px] text-t3">asked {timeAgo(a.createdAt)}</span>
+                </div>
+                <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded-[8px] border border-hair bg-wl px-2.5 py-1.5 font-mono text-[12px] text-t1">{a.summary}</pre>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="primary" disabled={busy === a.id || !a.canDecide} onClick={() => void decide(a, true)}>
+                  Approve
+                </Button>
+                <Button size="sm" variant="danger" disabled={busy === a.id || !a.canDecide} onClick={() => void decide(a, false)}>
+                  Deny
+                </Button>
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
+      {recent.length > 0 && (
+        <div className="space-y-1 text-[12px] text-t3">
+          {recent.map((a) => (
+            <div key={a.id}>
+              <Badge tone={a.status === 'denied' ? 'danger' : a.status === 'expired' ? 'muted' : 'success'}>{a.status}</Badge> <code className="font-mono">{a.tool}</code> for {a.caller}
+              {a.decidedBy ? ` · ${a.decidedBy}` : ''} · {timeAgo(a.decidedAt ?? a.createdAt)}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -929,6 +1078,7 @@ export function McpSettings() {
       <ConnectCard status={status} token={issued} plugins={tools?.plugins ?? []} />
       <TokensCard canManage={status.canManage} onToken={setIssued} />
       {status.canManage && <GrantsCard tools={tools?.tools ?? []} tokens={tokens} />}
+      <ApprovalsCard />
       <ToolBrowser data={tools} unavailable={toolsUnavailable} />
       {status.canManage && <InstanceServerCard origin={origin} />}
       {error && <Alert>{error}</Alert>}

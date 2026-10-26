@@ -1,6 +1,6 @@
 /**
  * Tool grants (docs/protocol.md §15.5; owners and admins). GET lists them (`?pluginId=` filters); POST creates one:
- * { subject: { kind, id }, pluginId, tools: string[] | '*', credentials?: { <type>: <credentialId> }, requireApproval? }.
+ * { subject: { kind, id }, pluginId, tools: string[] | '*', credentials?: { <type>: <credentialId> }, approval? (always | destructive | never) }.
  */
 import { requireUser } from '@/lib/server/auth';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -25,7 +25,7 @@ export const POST = handler(async (request: Request) => {
       action: 'mcp.grant.create',
       target: { type: 'mcp_grant', id: grant.id, name: `${grant.subject.kind}:${grant.subject.id} → ${grant.pluginId}` },
       summary: `Granted ${grant.subject.kind} ${grant.subject.name ?? grant.subject.id} ${grant.tools === '*' ? 'every tool' : `${grant.tools.length} tool(s)`} of ${grant.pluginId}`,
-      details: { subjectKind: grant.subject.kind, subjectId: grant.subject.id, pluginId: grant.pluginId, tools: grant.tools === '*' ? '*' : grant.tools, credentialTypes: Object.keys(grant.credentials) },
+      details: { subjectKind: grant.subject.kind, subjectId: grant.subject.id, pluginId: grant.pluginId, tools: grant.tools === '*' ? '*' : grant.tools, credentialTypes: Object.keys(grant.credentials), approval: grant.approval ?? null },
     });
     return json({ grant }, 201);
   } catch (caught) {

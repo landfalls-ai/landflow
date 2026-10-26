@@ -21,6 +21,9 @@ import { protectedMessage } from '../environments/protection';
 import { isProtectedEnvironment } from '../environments/settings';
 import { store } from '../store';
 import { startTrigger } from '../telemetry';
+import { canResource, creationProject, filterVisible, resourceDenial, type Actor } from '../projects/access';
+import { createIn } from '../projects/http';
+import type { ResourceAction } from '../../shared/projects';
 import { MCP_SERVER_VERSION, textResult } from './server';
 import { normalizeWorkflow, validateWorkflow, type WorkflowInput } from './workflows';
 
@@ -137,8 +140,20 @@ function startNode(workflow: Workflow, ref?: string) {
   return findTrigger(workflow, 'manual') ?? findTrigger(workflow, 'webhook') ?? findTrigger(workflow, 'chat') ?? findTrigger(workflow, 'schedule');
 }
 
-export function instanceServer(): McpServer {
+/**
+ * The instance server. `actor` is the Landflow user a gateway-routed call was made by (./identity.ts): their project
+ * access decides which workflows they see and what they may do with them (the same rules as the REST API:
+ * `resourceCan`), and what they create goes to their personal project. Without one (the instance access token) the
+ * server acts for the instance and checks nothing, as before.
+ */
+export function instanceServer(actor?: Actor): McpServer {
   const server = new McpServer({ name: 'landflow', title: 'Landflow', version: MCP_SERVER_VERSION }, { instructions: INSTRUCTIONS });
+  /** The refusal for `actor` doing `action` with a workflow, or undefined when allowed (a workflow they cannot see is "not found"). */
+  const denied = (id: string, action: ResourceAction): CallToolResult | undefined => {
+    if (!actor) return undefined;
+    const why = resourceDenial(actor, 'workflow', id, action);
+    return why ? failure(why.status === 404 ? `Workflow ${id} not found` : why.message) : undefined;
+  };
 
   server.registerTool(
     'list_workflows',
@@ -154,8 +169,7 @@ export function instanceServer(): McpServer {
     },
     async ({ query, active, limit }) => {
       const q = query?.trim().toLowerCase();
-      const list = store
-        .workflowSummaries()
+      const list = (actor ? filterVisible(actor, 'workflow', store.workflowSummaries()) : store.workflowSummaries())
         .filter((w) => (active === undefined || w.active === active) && (!q || [w.name, w.description ?? '', ...w.tags].some((text) => text.toLowerCase().includes(q))));
       return json({
         total: list.length,
@@ -183,6 +197,7 @@ export function instanceServer(): McpServer {
     },
     async ({ id }) => {
       const workflow = store.getWorkflow(id);
+      if (workflow && denied(id, 'read')) return denied(id, 'read')!;
       return workflow ? json({ ...workflow, url: workflowUrl(id) }) : failure(`Workflow ${id} not found`);
     },
   );
@@ -202,7 +217,14 @@ export function instanceServer(): McpServer {
       const parsed = workflowSchema.safeParse(normalized);
       if (!parsed.success) return failure(`Invalid workflow: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
       // Governance: activation may need approval (four-eyes) or be refused (node policy); see lib/server/governance/saves.ts.
-      const { workflow: saved, extras } = governedSave({ ...parsed.data, id: `wf_${nanoid(10)}` } as Workflow, undefined, (w) => store.saveWorkflow(w), { by: currentActorId(), source: 'mcp' });
+      const id = `wf_${nanoid(10)}`;
+      const { workflow: saved, extras } = createIn(
+        actor ? creationProject(actor) : undefined,
+        'workflow',
+        () => governedSave({ ...parsed.data, id } as Workflow, undefined, (w) => store.saveWorkflow(w), { by: currentActorId(), source: 'mcp' }),
+        (created) => created.workflow.id,
+        id,
+      );
       return json({ id: saved.id, name: saved.name, active: Boolean(saved.active), url: workflowUrl(saved.id), validation: validateWorkflow(saved), ...extras });
     },
   );
@@ -229,6 +251,8 @@ export function instanceServer(): McpServer {
       if (isProtectedEnvironment()) return failure(protectedMessage());
       const existing = store.getWorkflow(id);
       if (!existing) return failure(`Workflow ${id} not found`);
+      const refused = denied(id, 'update');
+      if (refused) return refused;
       const defined = Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined));
       let merged: Record<string, unknown> = { ...existing, ...defined };
       if (changes.nodes || changes.connections) {
@@ -256,6 +280,7 @@ export function instanceServer(): McpServer {
     async ({ id, workflow }) => {
       if (id) {
         const saved = store.getWorkflow(id);
+        if (saved && denied(id, 'read')) return denied(id, 'read')!;
         return saved ? json(validateWorkflow(saved)) : failure(`Workflow ${id} not found`);
       }
       if (!workflow) return failure('Give a workflow id or a workflow draft');
@@ -357,6 +382,8 @@ export function instanceServer(): McpServer {
     async ({ id, input, startNode: ref, wait, version }) => {
       const draft = store.getWorkflow(id);
       if (!draft) return failure(`Workflow ${id} not found`);
+      const refused = denied(id, 'run');
+      if (refused) return refused;
       const workflow = version === 'published' ? productionWorkflowById(id) : draft;
       if (!workflow) return failure(`“${draft.name}” is not published; run the draft, or publish it first`);
       const start = startNode(workflow, ref);
@@ -396,7 +423,7 @@ export function instanceServer(): McpServer {
       const max = limit ?? 20;
       const all: ExecutionSummary[] = [...liveExecutions(workflowId), ...store.listExecutions({ workflowId, limit: status ? Number.POSITIVE_INFINITY : max })];
       const seen = new Set<string>();
-      const list = all.filter((e) => !seen.has(e.id) && seen.add(e.id) && (!status || e.status === status)).slice(0, max);
+      const list = all.filter((e) => !seen.has(e.id) && seen.add(e.id) && (!status || e.status === status) && (!actor || canResource(actor, 'workflow', e.workflowId, 'read'))).slice(0, max);
       return json({
         executions: list.map((e) => ({
           id: e.id,
@@ -422,6 +449,7 @@ export function instanceServer(): McpServer {
     },
     async ({ id, includeData }) => {
       const record = liveExecution(id) ?? store.getExecution(id);
+      if (record && denied(record.workflowId, 'read')) return failure(`Execution ${id} not found`);
       return record ? json(executionDigest(record, Boolean(includeData))) : failure(`Execution ${id} not found`);
     },
   );

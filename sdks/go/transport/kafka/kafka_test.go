@@ -63,11 +63,11 @@ func TestConfigFromURL(t *testing.T) {
 		t.Fatal("driver not registered")
 	}
 	drv, err := f("c", "kafka://a:1", transport.ConnectionOptions{})
-	if err != nil || drv.Kind() != Kind || !drv.Capabilities().Nack || drv.(*Driver).KafkaConfig().Mode != ModeShare {
+	if err != nil || drv.Kind() != Kind || !drv.Capabilities().Nack || drv.(*Driver).KafkaConfig().Mode != ModeGroup {
 		t.Errorf("factory: %v %+v", err, drv)
 	}
-	if !New(Config{Mode: ModeGroup}).Capabilities().Nack || New(Config{Mode: ModeGroup}).Capabilities().Attempts || !New(Config{Mode: ModeShare}).Capabilities().Attempts || New(Config{}).KafkaConfig().Partitions != 6 {
-		t.Error("group mode requeues by republishing but cannot count attempts; share mode counts them; partitions default to 6")
+	if !New(Config{Mode: ModeGroup}).Capabilities().Nack || !New(Config{Mode: ModeGroup}).Capabilities().Attempts || !New(Config{Mode: ModeShare}).Capabilities().Attempts || New(Config{}).KafkaConfig().Partitions != 6 {
+		t.Error("both modes requeue and count attempts; partitions default to 6")
 	}
 }
 

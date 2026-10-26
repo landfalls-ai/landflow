@@ -28,7 +28,7 @@ FROM pnpm AS manifests
 COPY . /src
 RUN cd /src && mkdir /manifests \
  && find . -name package.json -not -path '*/node_modules/*' \
-    | tar -cf - -T - pnpm-lock.yaml pnpm-workspace.yaml | tar -xf - -C /manifests
+    | tar -cf - -T - pnpm-lock.yaml pnpm-workspace.yaml patches | tar -xf - -C /manifests
 
 FROM pnpm AS deps
 COPY --from=manifests /manifests/ ./
@@ -39,19 +39,11 @@ FROM deps AS build
 COPY . .
 # Turns on `output: 'standalone'` in apps/web/next.config.ts.
 ENV LANDFLOW_NEXT_OUTPUT=standalone
-# pulsar-client's package.json has a node-pre-gyp "binary" block without `napi_versions`, which Turbopack's externals tracing
-# rejects ("missing field `napi_versions`": the production build panics). The prebuilt binary is already installed; the field
-# only has to exist for the trace to read the block.
-RUN for f in /app/node_modules/.pnpm/pulsar-client@*/node_modules/pulsar-client/package.json; do \
-      node -e "const fs=require('fs');const f=process.argv[1];const p=JSON.parse(fs.readFileSync(f,'utf8'));if(p.binary&&!p.binary.napi_versions){p.binary.napi_versions=[6];fs.writeFileSync(f,JSON.stringify(p,null,2))}" "$f"; \
-    done
+# pulsar-client's package.json is patched (patches/pulsar-client@1.18.0.patch, installed by pnpm in the deps stage): its
+# node-pre-gyp `binary` block gets the `napi_versions` field Turbopack's externals tracing needs, with module_path and remote_path
+# written so node-pre-gyp still finds the same binary (lib/binding/pulsar.node) at run time.
 RUN pnpm --filter @landflow/web build \
  && test -f apps/web/.next/standalone/apps/web/server.js
-# Put package.json back as published (with the field, node-pre-gyp wants a different module_path at run time), in the store
-# and in the standalone copy.
-RUN for f in /app/node_modules/.pnpm/pulsar-client@*/node_modules/pulsar-client/package.json /app/apps/web/.next/standalone/node_modules/.pnpm/pulsar-client@*/node_modules/pulsar-client/package.json; do \
-      [ -f "$f" ] && node -e "const fs=require('fs');const f=process.argv[1];const p=JSON.parse(fs.readFileSync(f,'utf8'));if(p.binary)delete p.binary.napi_versions;fs.writeFileSync(f,JSON.stringify(p,null,2))" "$f"; \
-    done; true
 # Queue mode: the worker (`pnpm worker`, apps/web/src/lib/server/cluster/worker-main.ts) bundled into one file, so
 # the same image runs mains (`node server.js`) and workers (`node worker.mjs`). The broker clients with native addons or
 # file-based protos stay external (next.config.ts serverExternalPackages): the standalone output ships them, and the

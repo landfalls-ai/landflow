@@ -1249,6 +1249,119 @@ func RunCore(t *testing.T, target Target) {
 			}
 		})
 
+		claimable := caps.MaxMessageBytes <= 12*1024*1024
+		blob := func() string { return strings.Repeat("x", caps.MaxMessageBytes+4096) }
+		withClaims := func(store transport.ClaimStore) (serverOverride, clientOverride) {
+			return func(o *transport.ServerOptions) { o.Claims = store }, func(o *transport.ClientOptions) { o.Claims = store }
+		}
+
+		t.Run("carries an oversized call and reply by reference through a claim store, deleting the objects after the ack", func(t *testing.T) {
+			if !claimable {
+				t.Skip("limit over 12 MiB")
+			}
+			id := pluginID()
+			store := transport.NewMemoryClaimStore()
+			so, co := withClaims(store)
+			var during atomic.Int64
+			during.Store(-1)
+			// lookup is idempotent, so the host's at-least-once request is held until after the reply: its body must still be in the store while the node runs.
+			startServer(t, id, echoDispatcher(nil, func(_ context.Context, _ transport.DispatchContext, _ json.RawMessage) (any, bool, error) {
+				during.Store(int64(len(store.Keys("claims/"))))
+				return nil, false, nil
+			}), so)
+			client := startClient(t, co)
+			announced(t, client, id, 1)
+			huge := executeBody(id, "lookup", map[string]any{"inputs": []any{[]map[string]any{{"json": map[string]any{"blob": blob()}}}}})
+			reply, err := call(client, id, transport.MethodExecute, huge, transport.CallOptions{Timeout: wait * 4, Delivery: transport.AtLeastOnce})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(reply, []byte(strings.Repeat("x", 1000))) || len(reply) < caps.MaxMessageBytes {
+				t.Fatalf("reply is %d bytes", len(reply))
+			}
+			if store.Puts != 2 || during.Load() != 1 {
+				t.Fatalf("puts %d, claims while running %d", store.Puts, during.Load())
+			}
+			WaitFor(t, wait, "claims deleted", func() bool { return len(store.Keys("claims/")) == 0 })
+		})
+
+		t.Run("without a claim store an oversized reply answers too_large, and a store outage at the sender is undelivered", func(t *testing.T) {
+			if !claimable {
+				t.Skip("limit over 12 MiB")
+			}
+			id := pluginID()
+			startServer(t, id, echoDispatcher(nil, func(context.Context, transport.DispatchContext, json.RawMessage) (any, bool, error) {
+				return map[string]any{"outputs": []any{[]map[string]any{{"json": map[string]any{"blob": blob()}}}}}, true, nil
+			}))
+			plain := startClient(t)
+			announced(t, plain, id, 1)
+			_, err := call(plain, id, transport.MethodExecute, executeBody(id, "echo", nil), transport.CallOptions{})
+			var re *transport.RemoteError
+			if !errors.As(err, &re) || re.RemoteCode != transport.CodeTooLarge {
+				t.Fatalf("got %v", err)
+			}
+			store := transport.NewMemoryClaimStore()
+			_, co := withClaims(store)
+			client := startClient(t, co)
+			announced(t, client, id, 1)
+			store.FailNext = "put"
+			huge := executeBody(id, "echo", map[string]any{"inputs": []any{[]map[string]any{{"json": map[string]any{"blob": blob()}}}}})
+			_, err = call(client, id, transport.MethodExecute, huge, transport.CallOptions{})
+			var ue *transport.UndeliverableError
+			if !errors.As(err, &ue) || ue.Reason != transport.ReasonClaimFailed {
+				t.Fatalf("got %v", err)
+			}
+		})
+
+		t.Run("fails a call whose request claim is gone, and drops one whose reference was swapped", func(t *testing.T) {
+			if !claimable || target.Tap == nil || !caps.Headers {
+				t.Skip("needs a tap, headers and a limit under 12 MiB")
+			}
+			id := pluginID()
+			store := transport.NewMemoryClaimStore()
+			so, co := withClaims(store)
+			record := &seenList{}
+			startServer(t, id, echoDispatcher(record, nil), so)
+			client := startClient(t, co)
+			announced(t, client, id, 1)
+			huge := executeBody(id, "echo", map[string]any{"inputs": []any{[]map[string]any{{"json": map[string]any{"blob": blob()}}}}})
+			var mode atomic.Value
+			mode.Store("delete")
+			untap := target.Tap(func(channel string, event transport.WireEvent) (transport.WireEvent, bool) {
+				claim := event.Headers["lfclaim"]
+				if claim == "" || !strings.Contains(channel, id) {
+					return event, true
+				}
+				if mode.Load() == "delete" {
+					_ = store.Delete(ctx, claim)
+					return event, true
+				}
+				other := claim[:strings.LastIndex(claim, "/")] + "/other"
+				store.Set(other, store.Object(claim))
+				headers := map[string]string{}
+				for k, v := range event.Headers {
+					headers[k] = v
+				}
+				headers["lfclaim"] = other
+				return transport.WireEvent{Headers: headers, Body: event.Body}, true
+			})
+			defer untap()
+			_, err := call(client, id, transport.MethodExecute, huge, transport.CallOptions{Timeout: wait * 2})
+			var cu *transport.ClaimUnavailableError
+			if !errors.As(err, &cu) || cu.Knowledge() != transport.NotDelivered {
+				t.Fatalf("got %v", err)
+			}
+			mode.Store("swap")
+			_, err = call(client, id, transport.MethodExecute, huge, transport.CallOptions{Timeout: 600 * time.Millisecond})
+			var te *transport.TimeoutError
+			if !errors.As(err, &te) {
+				t.Fatalf("got %v", err)
+			}
+			if record.len() != 0 {
+				t.Fatal("a claim that failed ran")
+			}
+		})
+
 		t.Run(fmt.Sprintf("fails a call to a plugin nobody consumes (undeliverable: %s)", caps.Undeliverable), func(t *testing.T) {
 			client := startClient(t)
 			_, err := client.Call(ctx, pluginID(), transport.MethodHealth, map[string]any{}, transport.CallOptions{Timeout: 300 * time.Millisecond})

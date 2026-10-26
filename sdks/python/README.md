@@ -405,6 +405,14 @@ mapping (`docs/protocol.md` §14.9), all the same as the TypeScript and Go drive
 | `jetstream` | `nats-py` 2.16 | a work-queue stream + durable pull consumer per plugin, progress acks while a call runs, `Nats-TTL` from the deadline |
 | `valkey` | `valkey` 6.2 | a stream per channel (`h:<header>` fields + `b`), consumer groups, `XAUTOCLAIM` after `claim_idle_ms` with keep-alives, `_orphans` parking on requeue, `XPENDING` attempts |
 
+**Claim check.** `LANDFLOW_CLAIM_STORE=s3://<bucket>/<prefix>?endpoint=…` (or `?aws=true` for real S3) sends oversized broker bodies
+by reference (`landflow_sdk/transport/claim.py`, stdlib-only SigV4). Credentials, in order: static keys
+(`LANDFLOW_CLAIM_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY`, then `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`), web identity
+(EKS IRSA: `AWS_WEB_IDENTITY_TOKEN_FILE` + `AWS_ROLE_ARN`, STS from `AWS_ENDPOINT_URL_STS` / `AWS_ENDPOINT_URL`, or the regional endpoint
+only with `aws=true`), then container credentials (EKS Pod Identity, ECS: `AWS_CONTAINER_CREDENTIALS_FULL_URI` / `_RELATIVE_URI`). Temporary
+credentials are cached and renewed 5 minutes before they expire. There is deliberately no `~/.aws` file and no EC2 IMDS lookup (a laptop's
+real credentials must not leak in; IMDS probes time out off EC2): export the keys if you need them.
+
 Threading: the SDK is threaded, so is the core. A driver hands each delivery to a pool of `prefetch` workers; the server
 dispatches on that thread and returns once the reply is out, so at most `max_concurrency` calls run per instance and the
 rest wait in the broker (brokered calls never get a `capacity` refusal from the dispatcher's queue limit: they pass

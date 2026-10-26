@@ -52,6 +52,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/mcp/tokens')) return { scope: 'any', sessionOnly: true };
   if (under('/api/mcp/grants')) return { scope: 'admin', action: 'mcp:manage' };
   if (under('/api/mcp/status')) return { scope: 'any' };
+  // Approvals of destructive MCP tool calls: a signed-in user lists and answers the ones they may (lib/server/mcp/approvals.ts decides which).
+  if (under('/api/mcp/approvals')) return { scope: 'any' };
   // The gateway sync (lib/server/mcp/gateway-sync.ts): anyone sees its status on the Settings page; forcing a resync is admin.
   if (under('/api/mcp/gateway')) return read ? { scope: 'any' } : { scope: 'admin', action: 'mcp:manage' };
   // Audit log: reading (and exporting) needs `audit:read`: owners and admins read every event, project admins their

@@ -49,8 +49,14 @@ type ClientOptions struct {
 	NoRegistryProof bool
 	// NoDiscovery skips the registry channel.
 	NoDiscovery bool
-	Log         Logger
-	Now         func() time.Time
+	// Claims is the claim store (LANDFLOW_CLAIM_STORE): a request or reply that does not fit the broker goes by reference
+	// through it. Without one such a call fails with ReasonTooLargeEvent. ClaimTTL (default 1 h) bounds how long an orphaned
+	// object lives; the sweeper runs every ClaimSweepInterval (default 10 min).
+	Claims             ClaimStore
+	ClaimTTL           time.Duration
+	ClaimSweepInterval time.Duration
+	Log                Logger
+	Now                func() time.Time
 }
 
 // CallOptions tunes one Call.
@@ -206,7 +212,7 @@ func NewClient(opts ClientOptions) (*Client, error) {
 		opts: opts, HostInstanceID: id, Names: NewNames(opts.Driver.Config().Prefix), log: logger, now: now, registrySecret: secret,
 		pending: map[string]*pendingCall{}, known: map[string]*knownPlugin{}, sampled: map[string]SampledStats{}, listeners: map[int]func(PluginEvent){}, declared: map[string]bool{},
 	}
-	c.codec = NewCodec(opts.Keyring, opts.Driver.Capabilities(), CodecOptions{ClockSkew: opts.ClockSkew, Now: now})
+	c.codec = NewCodec(opts.Keyring, opts.Driver.Capabilities(), CodecOptions{ClockSkew: opts.ClockSkew, Now: now, Claims: opts.Claims})
 	return c, nil
 }
 
@@ -291,6 +297,9 @@ func (c *Client) Start(ctx context.Context) error {
 	if !c.opts.NoDiscovery {
 		c.loops.Add(1)
 		go c.loop(expirySweep, func() { c.expireInstances() })
+	}
+	if c.opts.Claims != nil {
+		startClaimSweeper(c.opts.Claims, c.opts.ClaimTTL, c.opts.ClaimSweepInterval, c.stop, c.log, c.now)
 	}
 	statsInterval := c.opts.StatsInterval
 	if statsInterval == 0 {
@@ -430,13 +439,26 @@ func (c *Client) Invoke(ctx context.Context, pluginID string, method Method, bod
 		return Reply{}, &UsageError{Message: err.Error()}
 	}
 	attributes.Subject = SubjectOf(method, bodyBytes)
-	packed, err := c.codec.PackBody(pluginID, attributes, bodyBytes, true)
+	packed, err := c.codec.PackBodyClaimed(ctx, pluginID, attributes, bodyBytes, true)
 	if err != nil {
 		var ee *EnvelopeError
+		var ce *ClaimError
 		if errors.As(err, &ee) && ee.Reason == ReasonTooLarge {
 			return Reply{}, &UndeliverableError{Reason: ReasonTooLargeEvent, Message: ee.Message}
 		}
+		if errors.As(err, &ce) {
+			return Reply{}, &UndeliverableError{Reason: ReasonClaimFailed, Message: ce.Message}
+		}
 		return Reply{}, err
+	}
+	// A call that did not get its reply never reached the receiver's ack: nobody else will delete the request body.
+	succeeded := false
+	if packed.ClaimKey != "" {
+		defer func() {
+			if !succeeded {
+				c.dropClaim(packed.ClaimKey)
+			}
+		}()
 	}
 	// Provably undeliverable before publishing: every announced instance has stopped heartbeating, or the channel has no consumers.
 	if noInstances {
@@ -527,6 +549,7 @@ func (c *Client) Invoke(ctx context.Context, pluginID string, method Method, bod
 	if res.err != nil {
 		return Reply{}, res.err
 	}
+	succeeded = true
 	_, instanceID, _ := ParsePluginSource(res.attributes.Source)
 	if res.attributes.LfError != "" {
 		var details map[string]any
@@ -534,6 +557,9 @@ func (c *Client) Invoke(ctx context.Context, pluginID string, method Method, bod
 		message := fmt.Sprintf("plugin answered %s", res.attributes.LfError)
 		if m, ok := details["error"].(string); ok {
 			message = m
+		}
+		if res.attributes.LfError == CodeClaimUnavailable {
+			return Reply{}, &ClaimUnavailableError{Message: message}
 		}
 		if res.attributes.LfError == CodeManifestMismatch {
 			actual := res.attributes.LfManifest
@@ -719,6 +745,20 @@ func (c *Client) onReply(wire WireEvent, expectedCallID string) {
 		c.log("warn", "dropped a reply from another plugin", "correlation", correlation, "source", raw.Attributes.Source)
 		return
 	}
+	// A reply that went by reference: fetch it, then delete it (the reply channel acknowledges on delivery, so nothing can redeliver it).
+	raw, claimKey, err := c.codec.ResolveClaim(context.Background(), raw, pending.pluginID)
+	if err != nil {
+		var ce *ClaimError
+		if errors.As(err, &ce) {
+			pending.deliver(pendingResult{err: &ClaimUnavailableError{Message: "the plugin's reply could not be read from the claim store: " + ce.Message, Response: true}})
+			return
+		}
+		c.log("warn", "dropped a reply that failed verification", "correlation", correlation, "error", err.Error())
+		return
+	}
+	if claimKey != "" {
+		go c.dropClaim(claimKey)
+	}
 	opened, err := c.codec.Unpack(raw, pending.pluginID)
 	if err != nil {
 		if IsDropReason(err) {
@@ -733,6 +773,15 @@ func (c *Client) onReply(wire WireEvent, expectedCallID string) {
 		return
 	}
 	pending.deliver(pendingResult{attributes: opened.Attributes, data: opened.Body})
+}
+
+// dropClaim deletes a claim object, best effort (the TTL sweeper is the safety net).
+func (c *Client) dropClaim(key string) {
+	ctx, cancel := context.WithTimeout(context.Background(), claimOperationTimeout)
+	defer cancel()
+	if err := c.opts.Claims.Delete(ctx, key); err != nil {
+		c.log("debug", "could not delete a claim", "key", key, "error", err.Error())
+	}
 }
 
 func (p *pendingCall) deliver(res pendingResult) {

@@ -67,6 +67,11 @@ x-host-env: &host-env
   # connection opens; plugins that serve on a broker need the same value. Brokers on the infra stack are reachable at
   # nats:4222, kafka:9092, rabbitmq:5672, valkey:6379 … (both networks are attached).
   LANDFLOW_TRANSPORT_SECRET: ${LANDFLOW_QUEUE_TRANSPORT_SECRET:-landflow-queue-dev-only-transport-secret}
+  # Claim check (protocol §14.6): bodies too big for a broker go by reference through this stack's MinIO. Plugins that serve
+  # on a broker need the same three values.
+  LANDFLOW_CLAIM_STORE: "${LANDFLOW_QUEUE_CLAIM_STORE:-s3://landflow/queue-claims?endpoint=http://minio:9000&region=us-east-1&forcePathStyle=true}"
+  LANDFLOW_CLAIM_ACCESS_KEY_ID: landflow
+  LANDFLOW_CLAIM_SECRET_ACCESS_KEY: landflow-dev-only
 
 x-mcp-gateway: &mcp-gateway
   # agentgateway 1.6 as a main's sidecar (docs/transports.md "Deployment"): the same digest as compose.infra.yml, the
@@ -225,6 +230,9 @@ services:
       # with LANDFLOW_NATS_URL=nats://nats:4222, and so on). The plugin's own MCP face is off in containers (agents use the gateway).
       LANDFLOW_TRANSPORTS: ${LANDFLOW_PLUGIN_TRANSPORTS:-http,grpc}
       LANDFLOW_TRANSPORT_SECRET: ${LANDFLOW_QUEUE_TRANSPORT_SECRET:-landflow-queue-dev-only-transport-secret}
+      LANDFLOW_CLAIM_STORE: "${LANDFLOW_QUEUE_CLAIM_STORE:-s3://landflow/queue-claims?endpoint=http://minio:9000&region=us-east-1&forcePathStyle=true}"
+      LANDFLOW_CLAIM_ACCESS_KEY_ID: landflow
+      LANDFLOW_CLAIM_SECRET_ACCESS_KEY: landflow-dev-only
       LANDFLOW_MCP: ${LANDFLOW_PLUGIN_MCP:-off}
       LANDFLOW_MCP_TOKEN: ${LANDFLOW_PLUGIN_MCP_TOKEN:-}
     networks: [landflow-queue]

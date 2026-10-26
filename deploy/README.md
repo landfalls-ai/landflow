@@ -131,8 +131,8 @@ native arm64 except where noted. `deploy/scripts/brokers-smoke.sh [name...]` che
 | `artemis` | `apache/activemq-artemis:2.44.0-alpine` | The `5672` acceptor takes AMQP 1.0 (and the other protocols); addresses and queues auto-create on first use; console with the same credentials | `docker compose -f deploy/compose.infra.yml exec artemis ./bin/artemis producer --url amqp://localhost:5672 --protocol amqp --user landflow --password landflow-dev-only --destination q --message-count 1` (and `consumer`) |
 | `pulsar` | `apachepulsar/pulsar:4.2.5`, `bin/pulsar standalone --no-functions-worker --no-stream-storage`, 512 MB heap | Shared subscriptions, message TTL, the admin REST API | `docker compose -f deploy/compose.infra.yml exec pulsar bin/pulsar-client produce persistent://public/default/t -m hi`; `curl http://localhost:58180/admin/v2/persistent/public/default` |
 | `pubsub` | `gcr.io/google.com/cloudsdktool/google-cloud-cli:590.0.1-emulators`, `gcloud beta emulators pubsub start` | No credentials; topics and subscriptions in the volume (`--data-dir`); the emulator never expires messages. Clients: `PUBSUB_EMULATOR_HOST=127.0.0.1:58085` | REST works too: `curl -X PUT http://localhost:58085/v1/projects/landflow-dev/topics/t`, `.../topics/t:publish`, `.../subscriptions/s:pull` |
-| `servicebus` | `mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1` + `servicebus-sql` (`mcr.microsoft.com/azure-sql-edge:1.0.7`) | Static entities only, from [`infra/servicebus/Config.json`](infra/servicebus/Config.json): queues `landflow.registry`, `landflow.control`, `landflow.v1.reply` (sessions on, for `ReplyToSessionId`), `landflow.v1.plugin.text-toolkit`, `landflow.v1.plugin.messaging`, `landflow.v1.plugin.conformance`, topic `landflow.v1.events` with subscription `all`; add what a test needs there and recreate the container. Starting the profile sets `ACCEPT_EULA=Y` for Microsoft's emulator and SQL EULAs (`LANDFLOW_SERVICEBUS_ACCEPT_EULA`). The emulator image is distroless (no healthcheck possible): poll `curl http://localhost:55300/health`. SQL: Azure SQL Edge 1.0.7 is the last tag with an arm64 build (2.0.0 and `mssql/server` are amd64 only and would run under Rosetta); Microsoft's own installer uses SQL Edge on Apple Silicon. Management operations (the Administration client) need the port in the connection string (`sb://localhost:55300`) and are .NET-only | `curl http://localhost:55300/health` → `{"status":"healthy",...}`; messaging through an AMQP 1.0 client with the connection string above |
-| `mcp-gateway` | `cr.agentgateway.dev/agentgateway:v1.6.0` (pinned by digest) + a one-shot `mcp-gateway-init` (alpine) that gives the data volume to uid 65532 | The bundled MCP gateway for the dev server: `/mcp` on 54000, the admin API and UI on 55000 (no auth, loopback only; inside the container it must listen on `0.0.0.0:15000` for Docker to publish it). Base config [`mcp-gateway/config.yaml`](mcp-gateway/config.yaml) (`prefixMode: always`, `failureMode: failOpen`, `statefulMode: stateless`, tracing to `jaeger:4318`); storage mode `hybrid`, so the host writes targets with `PUT http://127.0.0.1:55000/api/config/resources/mcp.target` and they live in SQLite in `mcp-gateway-data`; targets point at `host.docker.internal:3000`. Distroless: no healthcheck, readiness on `mcp-gateway:15021/healthz/ready` and metrics on `mcp-gateway:15020/metrics` in the network only. What was verified, the exact payloads and the gaps: [docs/mcp-gateway.md](../docs/mcp-gateway.md). Override files for the spike's other modes: `mcp-gateway/compose.auth.yml` (sign-in through Keycloak), `compose.stateful.yml`, `compose.file.yml` (file fallback) | `node deploy/scripts/mcp-gateway-spike.mjs` (core checks, 10 s) or `--all` (also Keycloak sign-in, the stateful mode and the file fallback; restarts the container and puts it back); `curl http://localhost:55000/api/config/resources/mcp.target`; the UI at http://localhost:55000/ui |
+| `servicebus` | `mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1` + `servicebus-sql` (`mcr.microsoft.com/azure-sql-edge:1.0.7`) | Static entities only, from [`infra/servicebus/Config.json`](infra/servicebus/Config.json), which [`scripts/servicebus-config.py`](scripts/servicebus-config.py) writes: see [Service Bus entities](#service-bus-entities). Starting the profile sets `ACCEPT_EULA=Y` for Microsoft's emulator and SQL EULAs (`LANDFLOW_SERVICEBUS_ACCEPT_EULA`). The emulator image is distroless (no healthcheck possible): poll `curl http://localhost:55300/health`. SQL: Azure SQL Edge 1.0.7 is the last tag with an arm64 build (2.0.0 and `mssql/server` are amd64 only and would run under Rosetta); Microsoft's own installer uses SQL Edge on Apple Silicon. Management operations (the Administration client) need the port in the connection string (`sb://localhost:55300`) and are .NET-only | `curl http://localhost:55300/health` → `{"status":"healthy",...}`; messaging through an AMQP 1.0 client with the connection string above |
+| `mcp-gateway` | `cr.agentgateway.dev/agentgateway:v1.6.0` (pinned by digest) + a one-shot `mcp-gateway-init` (alpine) that gives the data volume to uid 65532 | The bundled MCP gateway for the dev server: `/mcp` on 54000, the admin API and UI on 55000 (no auth, loopback only; inside the container it must listen on `0.0.0.0:15000` for Docker to publish it). Base config [`mcp-gateway/config.yaml`](mcp-gateway/config.yaml) (`prefixMode: always`, `failureMode: failOpen`, `statefulMode: stateless`, tracing to `jaeger:4318`); storage mode `hybrid`, so the host writes targets with `PUT http://127.0.0.1:55000/api/config/resources/mcp.target` and they live in SQLite in `mcp-gateway-data`; targets point at `host.docker.internal:3000`. Distroless: no healthcheck, readiness on `mcp-gateway:15021/healthz/ready` and metrics on `mcp-gateway:15020/metrics` in the network only. What was verified, the exact payloads and the gaps: [docs/mcp-gateway.md](../docs/mcp-gateway.md). Override files: `mcp-gateway/compose.tokens.yml` (sign-in with Landflow-issued MCP tokens, so an agent that connects with a token from Settings → MCP is that user instead of anonymous; start the dev server first, since the gateway fetches its JWKS at startup, and set `LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES` as in `.env.example` for the per-plugin routes), and for the spike's other modes `compose.auth.yml` (sign-in through Keycloak), `compose.stateful.yml`, `compose.file.yml` (file fallback) | `node deploy/scripts/mcp-gateway-spike.mjs` (core checks, 10 s) or `--all` (also Keycloak sign-in, the stateful mode and the file fallback; restarts the container and puts it back); `curl http://localhost:55000/api/config/resources/mcp.target`; the UI at http://localhost:55000/ui |
 
 
 ### The MCP gateway sync
@@ -164,13 +164,43 @@ and `/mcp` is published through `web` on `LANDFLOW_MCP_GATEWAY_PORT` (54000). `c
 (`mcp-gateway-1`, `-2`) and the load balancer sends `/mcp` and `/.well-known/oauth-protected-resource` to port 4000 of the
 main it picks (`LB_MCP_PORT`, `LB_MCP_PATHS` in `queue/lb.mjs`). Kubernetes: a second container in the `landflow-host`
 Deployment, the config from the `landflow-mcp-gateway` ConfigMap (`k8s/base/host/mcp-gateway-config.yaml`, a copy of the
-sidecar config), an `mcp` port (4000) on the Service; there is no Ingress in the manifests yet, so reach it with
-`kubectl port-forward svc/landflow-host 54000:4000` (an Ingress would send `/mcp` to that port). The sidecar configs carry no
+sidecar config), an `mcp` port (4000) on the Service; reach it from outside the cluster with the `gateway-ingress` or `gateway-httproute` component
+([Reaching the host from outside](#reaching-the-host-from-outside)), or `kubectl port-forward svc/landflow-host 54000:4000`. The sidecar configs carry no
 sign-in: add `mcp.policies.mcpAuthentication` (and `LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES`) for the instance's identity provider.
 
 Credentials are development values (`deploy/.env.example` has every port and password as `LANDFLOW_*`). One
 broker user per plugin, as the spec wants for real deployments, isn't set up here: every dev broker has one user or
 none.
+
+### The claim check (oversized broker bodies)
+
+A request or response bigger than the broker allows (NATS, Kafka and SQS about 1 MiB, Service Bus 240 KiB) fails
+`too_large` unless a claim store is configured; with one, the encrypted body goes by reference through an S3-compatible
+bucket ([protocol §14.6](../docs/protocol.md)). Set the same three values on the host (every main and worker), every plugin
+that serves on a broker, and `landflow-bridge`:
+
+| Setting | Meaning |
+|---|---|
+| `LANDFLOW_CLAIM_STORE` | `s3://<bucket>/<prefix>?endpoint=<url>&region=<region>&forcePathStyle=true` (`&ttl=<seconds>`, default 3600, for the orphan sweep). An S3 store without `endpoint` is refused unless the URL says `aws=true`. `memory://` is for tests. Empty: no claim check |
+| `LANDFLOW_CLAIM_ACCESS_KEY_ID`, `LANDFLOW_CLAIM_SECRET_ACCESS_KEY` | The bucket's keys (else `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`). Without static keys, see the credential chain below |
+
+Credentials, in order (the TypeScript store uses the AWS SDK's default chain; the Go and Python stores implement the in-cluster part of it in
+the standard library, with the same order): (1) the static keys above; (2) **web identity** (EKS IRSA): `AWS_WEB_IDENTITY_TOKEN_FILE` +
+`AWS_ROLE_ARN` (+ `AWS_ROLE_SESSION_NAME`), exchanged at STS `AssumeRoleWithWebIdentity` (`AWS_ENDPOINT_URL_STS`, else `AWS_ENDPOINT_URL`, else
+the regional `sts.<region>.amazonaws.com`, which the Go and Python stores use only when the store URL says `aws=true`); the token file is
+re-read on every refresh; (3) **container credentials** (EKS Pod Identity, ECS): `AWS_CONTAINER_CREDENTIALS_FULL_URI` or
+`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, with the `Authorization` value from `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE` or
+`AWS_CONTAINER_AUTHORIZATION_TOKEN` (a plain-http FULL_URI must name loopback, `169.254.170.2`, `169.254.170.23` or `fd00:ec2::23`).
+Temporary credentials are cached and renewed 5 minutes before they expire. The Go and Python stores read no shared credentials/config
+file (`~/.aws`) and do no EC2 IMDS lookup: a developer laptop's real credentials must never be picked up, and IMDS probes time out off
+EC2. Operators who need either export the keys. On EKS, annotate the service account (IRSA) or add a Pod Identity association; the pod
+then needs only `LANDFLOW_CLAIM_STORE=s3://<bucket>/<prefix>?aws=true&region=<region>`.
+
+Objects are deleted once the event is acknowledged; every client and server also sweeps `claims/` for objects older
+than the TTL every 10 minutes (a bucket lifecycle rule on `claims/` is an optional extra). `compose.queue.yml` turns it
+on with its own MinIO (`LANDFLOW_QUEUE_CLAIM_STORE` overrides the URL); `compose.yml` passes the variables through, empty by
+default (for the infra MinIO from containers: `endpoint=http://host.docker.internal:59000`); Kubernetes: see the comment in
+`k8s/components/broker-transports`. `GET /api/transports` (`claimStore`) and Settings → Transports say whether one is set.
 
 ### Transport benchmark
 
@@ -464,11 +494,16 @@ diff, and overlays for the differences between clusters. A Helm chart would add 
 | `k8s/components/{kafka,rabbitmq,nats}`, `k8s/components/valkey` | optional: one message broker each, one small pod and a Service (`kafka:9092` KRaft, `rabbitmq:5672`, `nats:4222` with JetStream, `valkey:6379`), the images and versions of `compose.infra.yml`, data in an `emptyDir`. `k8s/components/brokers` takes all four |
 | `k8s/components/broker-transports` | optional: points the host and the TypeScript plugins at the brokers: ConfigMap `landflow-transport` (`LANDFLOW_<KIND>_URL`, `LANDFLOW_TRANSPORT_<KIND>_URL`, `LANDFLOW_MAX_CONCURRENCY`), a ConfigMap `landflow-transport-<plugin>` with `LANDFLOW_TRANSPORTS`, and a Secret `landflow-transport` (`LANDFLOW_TRANSPORT_SECRET`, the AMQP URLs) |
 | `k8s/overlays/orbstack-brokers` | the OrbStack overlay plus `brokers` and `broker-transports` |
+| `k8s/components/gateway-ingress` | optional: a `networking.k8s.io/v1` Ingress pair for the web app (`/`) and the MCP gateway (`/mcp`, `/.well-known/oauth-protected-resource`, port 4000), with the streaming annotations: "Reaching the host from outside" below |
+| `k8s/components/gateway-httproute` | optional: the same routes as a Gateway API `HTTPRoute` (use it or `gateway-ingress`, not both) |
+| `k8s/components/gateway-landflow-tokens` | optional: sign-in at the gateway sidecar with Landflow-issued MCP tokens (no identity provider): replaces the sidecar's ConfigMap, a template to edit for your URLs |
+| `k8s/overlays/orbstack-ingress`, `orbstack-gateway-api` | the OrbStack overlay plus `gateway-ingress` or `gateway-httproute`, and `gateway-landflow-tokens`, for a Traefik in `landflow-ingress` |
 | `k8s/examples/keda/` | KEDA `ScaledObject`s per broker (not in any overlay): "Autoscaling with KEDA" below |
+| `k8s/examples/envoy-gateway/` | a `BackendTrafficPolicy` with long timeouts for the HTTPRoute, for Envoy Gateway |
 
 For another cluster, copy the overlay: set the namespace, the image registry and tags (`images:`), real Secrets
 (`landflow-registry` key `secret`; `landflow-host` keys `encryption-key`, `owner-email`, `owner-password`; all optional),
-`LANDFLOW_PUBLIC_URL`, and an Ingress for the host. Add `components:` for Postgres and Valkey, or point at external ones.
+`LANDFLOW_PUBLIC_URL`, and an Ingress for the host (the `gateway-ingress` component). Add `components:` for Postgres and Valkey, or point at external ones.
 
 ### Build the images (OrbStack)
 
@@ -552,6 +587,114 @@ curl -s -X POST localhost:54000/mcp -H 'content-type: application/json' -H 'acce
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}'
 ```
 
+### Reaching the host from outside
+
+The `landflow-host` Service has `http` (3000: UI and API) and `mcp` (4000: the gateway sidecar). `components/gateway-ingress` adds two
+standard Ingresses on one host: `landflow-web` (`/` → `http`) and `landflow-mcp` (`/mcp` and `/.well-known/oauth-protected-resource`
+→ `mcp`). Patch the placeholders in your overlay: `ingressClassName` (`CHANGE-ME-class`), the host (`landflow.example.com`, in
+`rules` and `tls`) and the TLS Secret (`landflow-tls`), and set `LANDFLOW_PUBLIC_URL` and `LANDFLOW_MCP_GATEWAY_PUBLIC_URL` on the
+host to the public URLs (they appear in OAuth metadata and links). `components/gateway-httproute` is the Gateway API form (Gateway
+API v1.2+ CRDs; patch `parentRefs` and `hostnames`; TLS is on the Gateway's listener).
+
+MCP's Streamable HTTP answers a POST with a `text/event-stream` and may hold a stream open for a long time, so whatever fronts the
+gateway must not buffer responses, must not cut idle reads quickly, and must pass `Mcp-Session-Id` and `MCP-Protocol-Version`
+through (no controller below strips them). The Ingress carries the annotations for ingress-nginx, F5 NGINX and HAProxy Ingress
+(`proxy-buffering: off`, read/send timeouts of an hour); Traefik needs none (it flushes `text/event-stream` as it arrives; only a `writeTimeout` set on the entrypoint's
+`respondingTimeouts`, unset by default, would cut a long response; the sidecar runs `statefulMode: stateless`, so there is no
+standing GET stream to test with, and only the short SSE-framed POST answers were checked); the HTTPRoute sets `timeouts.request: 0s`, and for Envoy Gateway
+`examples/envoy-gateway/backendtrafficpolicy.yaml` raises the idle and stream timeouts.
+
+**Which controller.** ingress-nginx was retired by the Kubernetes project in March 2026 (announced November 2025; no more releases,
+bug fixes or security patches; existing installs keep running, per the
+[January 2026 steering statement](https://www.kubernetes.io/blog/2026/01/29/ingress-nginx-statement/)), so don't start a new cluster on
+it. The recommendation: **Traefik** (v3.7, Helm chart 42.x) when you want the least change, because one controller serves both the
+`Ingress` and the Gateway API and streaming works without tuning; **Envoy Gateway** when you want to standardise on the Gateway API
+(HTTPRoute plus the policy CRDs). Both are checked below (Traefik on OrbStack); no other controller was run.
+
+Checked on OrbStack: Traefik chart 42.0.0 (v3.7.14) in namespace `landflow-ingress` (OrbStack publishes its LoadBalancer Service on the
+Mac's localhost: `landflow.localhost` → 127.0.0.1), and `kubectl apply -k deploy/k8s/overlays/orbstack-ingress` into `landflow-dev`:
+
+```bash
+helm repo add traefik https://traefik.github.io/charts
+helm --kube-context orbstack upgrade --install traefik traefik/traefik --version 42.0.0 -n landflow-ingress --create-namespace \
+  --set ingressClass.name=landflow-traefik --set ingressClass.isDefaultClass=false
+kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-ingress        # namespace landflow-dev; restarts the host pod (new public URLs)
+curl -s http://landflow.localhost/api/health
+# MCP: a call with no token is anonymous (initialize works, tools/list is empty), same as through a port-forward
+curl -s -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' http://landflow.localhost/mcp \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+The Gateway API form: install the standard CRDs (v1.5.1, which includes `TLSRoute`, which Traefik's provider watches), the chart with
+`--set providers.kubernetesGateway.enabled=true --set gateway.listeners.web.namespacePolicy.from=All`, then
+`kubectl apply -k deploy/k8s/overlays/orbstack-gateway-api`. Both forms returned the same answers.
+
+**Signing in with a Landflow token.** The sidecar's base config has no sign-in, so a bearer token is ignored and every caller is
+anonymous. `components/gateway-landflow-tokens` (in both OrbStack overlays) replaces the ConfigMap with one whose
+`mcpAuthentication` (`mode: optional`) checks Landflow-issued tokens against the host's keys on the pod's loopback
+(`http://127.0.0.1:3000/api/mcp/jwks`), issuer = the instance URL, audience = `<gateway URL>/mcp`, and sets the same policy on the
+per-plugin routes (`LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES`); edit the three URLs in `gateway-config.yaml` for your host. With it: no
+token → empty tool list; a bad token → 401 with `WWW-Authenticate: Bearer resource_metadata=…`; a token with a grant → the granted tools
+(`POST /api/mcp/tokens`, `POST /api/mcp/grants` with `{"subject":{"kind":"token","id":…},"pluginId":…,"tools":"*"}`) and `tools/call` runs.
+The host pod's data is an `emptyDir` in this overlay, so tokens and grants vanish when the pod restarts.
+
+### Service Bus entities
+
+The Azure Service Bus emulator has no management API, so every entity must be in `infra/servicebus/Config.json` before it starts.
+The drivers need exactly: one request queue per plugin, `landflow.v1.plugin.<pluginId>`; the session-enabled queues
+`landflow.v1.instance` and `landflow.v1.reply` (the session id is the channel, so a reply queue per host process is a session, not
+an entity); the topic `landflow.v1.broadcast` with 16 session-enabled subscriptions `bc-00`…`bc-15` (registry and control
+channels). Only the plugin queues depend on what you run, and nothing is dynamic per client.
+
+```bash
+python3 deploy/scripts/servicebus-config.py                              # bundled plugins (+ the conformance suites' queues)
+python3 deploy/scripts/servicebus-config.py --plugin my-plugin --plugin transport-bench
+python3 deploy/scripts/servicebus-config.py --from-host http://localhost:3000 --cookie-file cookies.txt   # every plugin the host lists
+python3 deploy/scripts/servicebus-config.py --check                      # is Config.json what this would write?
+COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml --profile servicebus up -d --force-recreate --no-deps servicebus
+```
+
+A missing entity fails `declare()` with its name and the fix, e.g. `servicebus: queue "landflow.v1.plugin.my-plugin" does not exist
+(the emulator has no management API: run deploy/scripts/servicebus-config.py --plugin my-plugin, then recreate the emulator …)`.
+For a real namespace the drivers create the entities themselves through the administration API (TS `ServiceBusAdministrationClient`,
+Go `azservicebus/admin`): `createEntities` is on by default when the connection string has no `UseDevelopmentEmulator=true`, can be
+set either way in the connection's fields (Settings → Transports "Create missing entities", Go `createentities`), and needs a key
+with Manage rights (without it the error names the entity and says so). That path is covered by unit tests with a fake client
+library; it has not run against a real namespace (local only).
+
+#### Throttling
+
+The emulator throttles the whole namespace when it is asked for too many operations too fast: the client sees `ServiceBusy` ("The
+request was terminated because the namespace sbemulatorns is being throttled. Error code : 50002. Please wait 10 seconds and try
+again"), the emulator's own log has the same line, and both client libraries' default retries then sleep 4 to 10 s per attempt. That
+is what made eight concurrent callers stall for 7 to 12 s with an empty "reply could not be published" in the first benchmark (T6-C);
+it is the emulator, not the drivers' links, senders or sessions (a script with only `@azure/service-bus` and no Landflow code shows
+the same: `sendMessages` in a tight loop stalls 31 s about every 1000 messages, 24 parallel sends stalled in 2 of 3 runs). What we
+measured against `servicebus-emulator:2.0.1` (SQL Edge 1.0.7), one sender, one session-enabled queue:
+
+| Load | Result |
+| --- | --- |
+| 25 or 50 messages/s, each sent and completed (50 to 100 operations/s) | clean over 600 to 900 messages |
+| 100 messages/s, each sent and completed | throttled every few seconds |
+| back-to-back sends (about 400/s) | throttled after about 1000 messages, a 3 to 7 s episode (31 s with the library's retry) |
+| a burst of 24 to 64 parallel sends | one stalled send in roughly 1 run of 3 |
+
+Microsoft's documentation lists the emulator's quotas (50 entities, 50 subscriptions per topic, 10 concurrent connections to the
+namespace, 200 concurrent receive requests per entity, 256 KB messages, 1 h TTL) and says it is "intended for development and test
+scenarios, specifically for sequential testing use cases" ([overview](https://learn.microsoft.com/azure/service-bus-messaging/overview-emulator));
+the throttle rate is not documented. The drivers therefore (both TS and Go, same schedule):
+
+- pace their publishes and settlements to **40 operations a second on the emulator** (`maxOpsPerSecond`, Settings → Transports "Max
+  operations per second", Go `maxopspersecond`; unlimited on a real namespace; `0` turns it off), so a burst of callers queues for a
+  few milliseconds each instead of tripping the throttle;
+- retry a throttled, timed-out or dropped publish, session accept and settlement 8 times (200 ms doubling to 2 s, about 11 s) instead
+  of the library's 4 to 10 s sleeps, and fail with the entity, the error code and the nested causes (`servicebus: publish to
+  landflow.v1.reply.… (session landflow.v1.reply) failed: [ServiceBusy] …`) rather than an empty message.
+
+A call over the emulator is about 40 ms (two peek-locked hops with a SQL write each: 16 ms for a queue message, 21 ms for a session
+message in a raw `@azure/service-bus` round trip), and the 40-operation pace caps it near 10 to 20 calls/s. Expect that, not
+production numbers; a real namespace has neither.
+
 ### Brokers on Kubernetes
 
 `k8s/overlays/orbstack-brokers` is the OrbStack overlay plus Kafka (KRaft), RabbitMQ, NATS with JetStream and Valkey in
@@ -569,14 +712,21 @@ only `broker-transports` creates. The environment a plugin gets:
 The host gets `LANDFLOW_TRANSPORT_<KIND>_URL` for each broker, one read-only connection `env-<kind>` per URL (Settings →
 Transports), and the same secret. Both are patched into the host Deployment by the component.
 
+A container reads `envFrom` only when it starts, so the component also puts an annotation (`landflow.dev/transports`) on
+each plugin's pod template: applying the overlay, and going back to `../orbstack`, rolls the plugins and they come up with
+(or without) their broker faces. After editing the ConfigMaps or the Secret in place, restart them yourself:
+`kubectl --context orbstack -n landflow-dev rollout restart deploy -l app.kubernetes.io/component=plugin`.
+
 ```bash
 kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-brokers
 kubectl --context orbstack -n landflow-dev get pods                      # kafka takes about 40 s to become ready
 kubectl --context orbstack -n landflow-dev port-forward svc/landflow-host 53000:3000 &
 # sign in as the dev owner (owner@landflow.test / landflow-dev-only), then:  GET /api/transports/connections, GET /api/plugins
+# (each plugin lists amqp, grpc, jetstream, kafka, valkey); pin a plugin to a kind in a workflow's settings.transports and run it
 # Back to no brokers:
 kubectl --context orbstack -n landflow-dev delete deploy/kafka deploy/rabbitmq deploy/nats deploy/valkey svc/kafka svc/rabbitmq svc/nats svc/valkey \
-  cm/landflow-transport cm/landflow-transport-text-toolkit cm/landflow-transport-messaging secret/landflow-rabbitmq secret/landflow-transport
+  cm/landflow-transport secret/landflow-rabbitmq secret/landflow-transport \
+  $(for p in text-toolkit messaging go-crypto google-workspace databases py-insights productivity; do echo cm/landflow-transport-$p; done)
 kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack
 ```
 
@@ -595,7 +745,7 @@ it), and one Deployment can have only one `ScaledObject`. Names follow protocol 
 
 | Broker | Trigger (`k8s/examples/keda/`) | Names | Metric and target |
 |---|---|---|---|
-| Kafka | `kafka` (`kafka.yaml`) | `topic` and `consumerGroup`: `landflow.v1.plugin.<id>` | consumer group lag; `lagThreshold` per replica. Replicas past the partition count (6 by default, 3 on the dev broker) sit idle: keep `maxReplicaCount` under it. A Go plugin's share group is not visible to this scaler: use `LANDFLOW_KAFKA_MODE=group` there |
+| Kafka | `kafka` (`kafka.yaml`) | `topic` and `consumerGroup`: `landflow.v1.plugin.<id>` | consumer group lag; `lagThreshold` per replica. Replicas past the partition count (6 by default, 3 on the dev broker) sit idle: keep `maxReplicaCount` under it. A share group (`LANDFLOW_KAFKA_MODE=share`) is not visible to this scaler: keep the default group mode there |
 | RabbitMQ | `rabbitmq` (`rabbitmq.yaml`), `protocol: amqp`, `mode: QueueLength` | `queueName`: `landflow.v1.plugin.<id>` | messages ready in the quorum queue; `value` per replica. Unacknowledged calls held by replicas (prefetch = `maxConcurrency`) are not counted |
 | NATS JetStream | `nats-jetstream` (`jetstream.yaml`), against the monitoring port 8222 | `stream` and `consumer`: the channel with `.` as `_`, `landflow_v1_plugin_<id>`; `account: "$G"` | the consumer's pending messages (`num_pending`); `lagThreshold` per replica. Core `nats` has no backlog to read |
 | Valkey / Redis Streams | `redis-streams` (`valkey.yaml`) | `stream` and `consumerGroup`: `landflow.v1.plugin.<id>` (after the connection's key prefix) | pending entries of the group (`pendingEntriesCount`) and its lag (`lagCount`). Pending entries are calls being run, at most `maxConcurrency` per replica; the lag is the backlog behind them |

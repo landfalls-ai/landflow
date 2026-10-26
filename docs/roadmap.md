@@ -382,7 +382,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   through one messaging core and small drivers, chosen per call from live traffic, and every plugin
   also an MCP server: its own endpoint, and a bundled open-source MCP gateway (agentgateway) that
   every installed plugin registers into automatically. Decisions settled on 2026-10-26; see
-  [transports.md](transports.md). Built in waves T1 to T5 on 2026-10-26, by its phases:
+  [transports.md](transports.md). Built in waves T1 to T6 on 2026-10-26, by its phases:
   - Phase 0 (spec, infra, gateway spike) ✅ Done: protocol §14 Messaging and §15 MCP; every broker
     and agentgateway 1.6.0 in `deploy/compose.infra.yml`, one profile each, with
     `deploy/scripts/brokers-smoke.sh`; the spike (`deploy/scripts/mcp-gateway-spike.mjs`,
@@ -413,10 +413,9 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
     headers, Landflow MCP tokens (ES256, `/api/mcp/jwks`), identity provider tokens, API keys,
     protected resource metadata; grants for users, SCIM groups, projects, roles or one token, with no
     implicit grants; `server.json`, `/api/mcp/registry/v0.1/servers…`, Server Cards; Settings → MCP.
-    Not built: `resource_link` for binary outputs, approvals/elicitation for destructive tools,
-    `list_options` on the host's endpoints.
+    `resource_link`, approvals/elicitation and `list_options` on the host's endpoints followed in wave T6.
   - Phase 3b (bundled MCP gateway) ✅ Done: agentgateway 1.6.0 as a sidecar of each main (Compose, queue
-    mode, a second container in the Kubernetes host Deployment; no Ingress yet) and `McpGatewaySync` on
+    mode, a second container in the Kubernetes host Deployment; the Ingress came in wave T6) and `McpGatewaySync` on
     the config API, with a file fallback. A target per online plugin (named by the plugin id, or a slug plus
     six hex digits when the id doesn't fit), per-plugin routes, the Server Card proxy and the
     `x-landflow-caller-jti` transformation; offline plugins are removed after 60 s and old MCP tokens are
@@ -453,10 +452,29 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
     most once). The plugin images, Compose files and Kubernetes manifests carry the new settings.
   - A core `nats` and a `jetstream` connection on the same server keep apart: JetStream subjects carry a `js.`
     token (protocol §14.9).
-  - Known follow-ups: the Go Kafka driver's group mode fails one conformance case (the at-least-once hand-over after a
-    replica dies), so share mode is its default; MCP elicitation, `resource_link` and `list_options`; small MQTT
-    messages are slow in the benchmark (about 45 ms at 100 B); the Service Bus emulator needs every queue declared in
-    its `Config.json`; an Ingress for the gateway on Kubernetes.
+  - Wave T6 (the follow-ups) ✅ Done on 2026-10-26:
+    - MCP on the host's endpoints: binary outputs as `resource_link` (signed `/api/mcp/files/{id}`) or inline media,
+      `list_options` and cached `enum`s, and approvals for destructive tools (MCP elicitation for clients that support
+      it, otherwise a Landflow approval in Settings → MCP; a grant's `approval` is always, destructive or never).
+    - Poll and app-webhook triggers as MCP resources (`landflow://triggers/<plugin>/trigger_<name>`, subscribe with
+      2026-07-28 `subscriptions/listen`). The gateway sync also registers the instance server and published MCP Server
+      Trigger workflows.
+    - The claim check: a broker body over the broker's limit goes by reference through S3 (`LANDFLOW_CLAIM_STORE`) in
+      the TS, Go and Python cores and the bridge.
+    - Per-workflow transport overrides (Workflow settings → Transports).
+    - The Go Kafka driver's group mode passes the hand-over case and is the default again; MQTT at 100 B went from
+      +45 ms to +1.4 ms (Mosquitto `set_tcp_nodelay`).
+    - Kubernetes Ingress and Gateway API routes for the gateway, with Landflow-token sign-in
+      (`components/gateway-landflow-tokens`); the same sign-in for the dev gateway (`mcp-gateway/compose.tokens.yml`).
+    - The Pulsar client as a pnpm patch; `deploy/scripts/servicebus-config.py` writes the emulator's entities. The Service
+      Bus stall under concurrency was the emulator throttling its whole namespace: the drivers pace themselves on the
+      emulator and retry a throttle, so 8 callers at 100 B run at 20 calls/s with no errors.
+    - Go and Python claim stores take pod and task roles too (web identity, container credentials).
+    - Databases created before 2026-10-25 lacked a checkpoint column, so crash-recovery checkpoints failed to save there;
+      migration 1780 adds it (migrations can now add a column only where it's missing).
+  - Known follow-ups: MCP subscriptions need a 2026-07-28 client (2025-era clients read a trigger resource to poll);
+    the gateway checks one issuer, so sign-in there is Landflow tokens or the identity provider, not both; large Service Bus
+    messages through the emulator stay throughput-bound (about 1 call/s at 64 KiB with 8 callers).
 
 ## Planned next
 

@@ -35,6 +35,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -191,6 +192,11 @@ func (k *Keyring) Keys(pluginID, keyID string) (DerivedKeys, bool) {
 
 // CanonicalForm is what the signature covers: name=value lines in KnownAttributes order (never lfsig) then the body digest.
 func CanonicalForm(attributes Attributes, body []byte) string {
+	sum := sha256.Sum256(body)
+	return canonicalFormWithDigest(attributes, hex.EncodeToString(sum[:]))
+}
+
+func canonicalFormWithDigest(attributes Attributes, digestHex string) string {
 	var b strings.Builder
 	for _, name := range KnownAttributes {
 		if name == "lfsig" {
@@ -200,8 +206,7 @@ func CanonicalForm(attributes Attributes, body []byte) string {
 			b.WriteString(name + "=" + value + "\n")
 		}
 	}
-	sum := sha256.Sum256(body)
-	b.WriteString(hex.EncodeToString(sum[:]) + "\n")
+	b.WriteString(digestHex + "\n")
 	return b.String()
 }
 
@@ -376,6 +381,41 @@ func Seal(keyring *Keyring, pluginID string, event RawEvent, opts SealOptions) R
 	}
 	attributes.LfSig = Signature(keys.Sig, attributes, body)
 	return RawEvent{Attributes: attributes, Body: body}
+}
+
+// WithClaim adds the claim-check attributes for key to a sealed event whose
+// (encrypted) body is event.Body and signs it again. The returned event keeps
+// the full body (the caller stores it and sends an empty one): the signature
+// covers the body's digest either way, since lfclaimsha256 is that digest.
+func WithClaim(keyring *Keyring, pluginID string, event RawEvent, key string) RawEvent {
+	keys, _ := keyring.Keys(pluginID, "")
+	attributes := event.Attributes
+	sum := sha256.Sum256(event.Body)
+	attributes.LfClaim = key
+	attributes.LfClaimSize = strconv.Itoa(len(event.Body))
+	attributes.LfClaimSHA256 = hex.EncodeToString(sum[:])
+	attributes.LfSig = Signature(keys.Sig, attributes, event.Body)
+	return RawEvent{Attributes: attributes, Body: event.Body}
+}
+
+// VerifyClaimed checks the signature of an event whose body is still in the
+// claim store, without fetching it: the canonical form ends in the body's
+// digest, which lfclaimsha256 gives. Signature only (Open does the rest).
+func VerifyClaimed(keyring *Keyring, pluginID string, attributes Attributes) error {
+	if attributes.LfSig == "" || attributes.LfKeyID == "" || attributes.LfClaimSHA256 == "" {
+		return securityErr(ReasonUnsigned, "event %s is not signed", attributes.ID)
+	}
+	keys, ok := keyring.Keys(pluginID, attributes.LfKeyID)
+	if !ok {
+		return securityErr(ReasonUnknownKey, "event %s is signed with unknown key %s", attributes.ID, attributes.LfKeyID)
+	}
+	mac := hmac.New(sha256.New, keys.Sig)
+	mac.Write([]byte(canonicalFormWithDigest(attributes, attributes.LfClaimSHA256)))
+	given, err := hex.DecodeString(attributes.LfSig)
+	if err != nil || !hmac.Equal(mac.Sum(nil), given) {
+		return securityErr(ReasonBadSignature, "event %s has a bad signature", attributes.ID)
+	}
+	return nil
 }
 
 // OpenOptions tunes Open.

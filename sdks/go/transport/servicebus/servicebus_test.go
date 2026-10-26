@@ -3,6 +3,7 @@ package servicebus
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,5 +111,21 @@ func TestNotConnected(t *testing.T) {
 	}
 	if err := d.Close(); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestMissingHintNamesTheScript(t *testing.T) {
+	if got := missingHint(true, "landflow.v1.plugin.my-plugin"); !strings.Contains(got, "servicebus-config.py --plugin my-plugin,") {
+		t.Fatalf("emulator plugin queue: %s", got)
+	}
+	if got := missingHint(true, "lfconf.roundtrip"); !strings.Contains(got, "servicebus-config.py --queue lfconf.roundtrip,") {
+		t.Fatalf("emulator other queue: %s", got)
+	}
+	if got := missingHint(false, "landflow.v1.plugin.x"); !strings.Contains(got, "CreateEntities") {
+		t.Fatalf("real namespace: %s", got)
+	}
+	cfg, err := ConfigFromURL("c", "Endpoint=sb://127.0.0.1:55675;SharedAccessKeyName=n;SharedAccessKey=k;UseDevelopmentEmulator=true;", transport.ConnectionOptions{Fields: map[string]string{"createentities": "true"}})
+	if err != nil || cfg.CreateEntities == nil || !*cfg.CreateEntities {
+		t.Fatalf("createentities field: %v %v", cfg.CreateEntities, err)
 	}
 }

@@ -8,7 +8,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { McpAccessResponse, McpAccessView } from '../../shared/mcp';
 import { ConfigFile } from '../config-store';
 import { singleton } from '../singleton';
-import { sameSecret } from './server';
+import { sameSecret, unauthorized, jsonRpcError, bearerToken } from './server';
+import { authenticateMcpRequest, GATEWAY_SECRET_HEADER, McpAuthError, mcpAuthErrorResponse } from './identity';
+import { getUser, type UserRecord } from '../auth/users';
+import type { Actor } from '../projects/access';
+import type { Role } from '../../shared/auth';
 
 interface McpAccessFile {
   enabled: boolean;
@@ -66,4 +70,33 @@ export function regenerateMcpToken(): McpAccessResponse {
 export function verifyMcpToken(token: string | undefined): boolean {
   const file = read();
   return Boolean(file.enabled && file.tokenHash && token && sameSecret(hash(token), file.tokenHash));
+}
+
+/** Who is calling the instance server: the instance (its access token: no per-user checks) or a Landflow user the gateway identified. */
+export type InstanceCaller = { kind: 'instance' } | { kind: 'user'; actor: Actor; user: UserRecord; via: string };
+
+/**
+ * Authenticate a call to /api/mcp. Two ways in:
+ * - the access token from Settings → MCP (`Authorization: Bearer lf_mcp_…`): the instance itself, unchanged;
+ * - the bundled gateway: its secret (`x-landflow-gateway`) plus the caller it validated (`x-landflow-caller-*`), mapped to a
+ *   Landflow user as for the plugin endpoints. The server then applies that user's permissions (project access, see
+ *   ./instance-tools.ts). A call the gateway forwarded without an identity (no sign-in configured there) is refused:
+ *   with no user there is no permission to apply, and the access token is for the instance.
+ * Returns the refusal response otherwise.
+ */
+export async function authenticateInstanceRequest(request: Request): Promise<InstanceCaller | Response> {
+  if (request.headers.get(GATEWAY_SECRET_HEADER) !== null) {
+    try {
+      const caller = await authenticateMcpRequest(request, { pluginId: '' });
+      const user = caller.userId ? getUser(caller.userId) : undefined;
+      if (!user || user.disabledAt) return jsonRpcError(403, -32003, 'The gateway forwarded no known Landflow user for this call: sign in at the gateway with an account that has signed in to Landflow');
+      if (!caller.scopes.includes('tools:call')) return jsonRpcError(403, -32003, 'This MCP token has no tools:call scope');
+      return { kind: 'user', actor: { id: user.id, role: user.role as Role }, user, via: `${caller.kind}:${caller.subject}` };
+    } catch (error) {
+      if (error instanceof McpAuthError) return mcpAuthErrorResponse(error);
+      throw error;
+    }
+  }
+  if (!verifyMcpToken(bearerToken(request))) return unauthorized('Send the access token from Settings → MCP as “Authorization: Bearer <token>”');
+  return { kind: 'instance' };
 }

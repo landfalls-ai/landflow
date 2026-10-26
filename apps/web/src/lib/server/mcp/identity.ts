@@ -25,7 +25,7 @@ import { sameSecret } from '../auth/passwords';
 import { sessionUser } from '../auth/sessions';
 import { findUserByOidc, type UserRecord } from '../auth/users';
 import { singleton } from '../singleton';
-import { effectiveTool, effectiveTools, pluginTools, type EffectiveTool } from './grants';
+import { effectiveTool, effectiveTools, effectiveTrigger, effectiveTriggers, pluginTools, type EffectiveTool, type EffectiveTrigger } from './grants';
 import { gatewayPublicUrl, instanceUrl, looksLikeLandflowMcpToken, mcpResourceRoot, parseTokenScopes, resolveTokenSubject, unverifiedClaims, verifyMcpToken } from './tokens';
 
 export interface McpCaller {
@@ -305,6 +305,18 @@ export function listableTools(caller: McpCaller, pluginId: string): EffectiveToo
 export function callableTool(caller: McpCaller, pluginId: string, toolName: string): EffectiveTool | undefined {
   if (!caller.scopes.includes('tools:call')) return undefined;
   return effectiveTool(subjectsOfCaller(caller), pluginId, toolName);
+}
+
+/** The trigger resources `caller` may list and read on `pluginId` (a grant must cover each; there is no browse-everything for subscriptions). */
+export function listableTriggers(caller: McpCaller, pluginId: string): EffectiveTrigger[] {
+  if (!caller.scopes.includes('tools:call')) return [];
+  return effectiveTriggers(subjectsOfCaller(caller), pluginId);
+}
+
+/** The grant-resolved trigger for a subscription or read, or undefined when `caller` may not use it. */
+export function callableTrigger(caller: McpCaller, pluginId: string, name: string): EffectiveTrigger | undefined {
+  if (!caller.scopes.includes('tools:call')) return undefined;
+  return effectiveTrigger(subjectsOfCaller(caller), pluginId, name);
 }
 
 /** Whether `caller` may read the catalog (server.json, the registry API, Server Cards): any known caller with the scope. */

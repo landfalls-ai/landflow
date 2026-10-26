@@ -135,7 +135,7 @@ func ParseType(typ string) (ParsedType, bool) {
 
 // LfExtensions are the Landflow extensions. lfsig is computed over all the
 // others, so it is listed but never part of the canonical form.
-var LfExtensions = []string{"lfreplyto", "lfcorrelation", "lfdeadline", "lfattempt", "lfidempotency", "lfdelivery", "lfmanifest", "lferror", "lfenc", "lfkeyid", "lfsig"}
+var LfExtensions = []string{"lfreplyto", "lfcorrelation", "lfdeadline", "lfattempt", "lfidempotency", "lfdelivery", "lfmanifest", "lferror", "lfenc", "lfkeyid", "lfclaim", "lfclaimsize", "lfclaimsha256", "lfsig"}
 
 // KnownAttributes are the attribute names the envelope knows, in canonical
 // order; anything else in the headers is ignored on decode (never signed,
@@ -171,6 +171,8 @@ const (
 	CodeCancelled        RemoteErrorCode = "cancelled"
 	CodeUnavailable      RemoteErrorCode = "unavailable"
 	CodeTooLarge         RemoteErrorCode = "too_large"
+	// CodeClaimUnavailable: the request body went by reference through the claim store and could not be read; the call never ran.
+	CodeClaimUnavailable RemoteErrorCode = "claim_unavailable"
 	// CodeCapacity: the plugin refused the call at once because it is at its
 	// concurrency limit with a full queue; it never ran (docs/transports.md
 	// "capacity"). Not in the TS enum yet; a TS client surfaces it as a
@@ -200,7 +202,11 @@ type Attributes struct {
 	LfError         RemoteErrorCode
 	LfEnc           string
 	LfKeyID         string
-	LfSig           string
+	// LfClaim, LfClaimSize and LfClaimSHA256 reference a body held in the claim store (the wire body is then empty).
+	LfClaim       string
+	LfClaimSize   string
+	LfClaimSHA256 string
+	LfSig         string
 }
 
 // Get returns an attribute by its wire name ("" when absent or unknown).
@@ -244,6 +250,12 @@ func (a *Attributes) Get(name string) string {
 		return a.LfEnc
 	case "lfkeyid":
 		return a.LfKeyID
+	case "lfclaim":
+		return a.LfClaim
+	case "lfclaimsize":
+		return a.LfClaimSize
+	case "lfclaimsha256":
+		return a.LfClaimSHA256
 	case "lfsig":
 		return a.LfSig
 	}
@@ -291,6 +303,12 @@ func (a *Attributes) Set(name, value string) {
 		a.LfEnc = value
 	case "lfkeyid":
 		a.LfKeyID = value
+	case "lfclaim":
+		a.LfClaim = value
+	case "lfclaimsize":
+		a.LfClaimSize = value
+	case "lfclaimsha256":
+		a.LfClaimSHA256 = value
 	case "lfsig":
 		a.LfSig = value
 	}
@@ -373,6 +391,8 @@ var (
 	manifestRE    = regexp.MustCompile(`^[0-9a-f]{8,64}$`)
 	keyIDRE       = regexp.MustCompile(`^[0-9a-f]{8,32}$`)
 	sigRE         = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	claimKeyRE    = regexp.MustCompile(`^claims/\d{13}/[A-Za-z0-9._-]{1,128}$`)
+	claimSizeRE   = regexp.MustCompile(`^\d{1,12}$`)
 	errorCodeRE   = regexp.MustCompile(`^[a-z_]{1,32}$`)
 	pluginSrcRE   = regexp.MustCompile(`^landflow://plugin/([^/]+)/([^/]+)$`)
 )
@@ -503,6 +523,9 @@ func ValidateAttributes(input map[string]string, opts ValidateOptions) (Attribut
 		{"lfidempotency", idempotencyRE, 4096},
 		{"lfmanifest", manifestRE, 4096},
 		{"lfkeyid", keyIDRE, 4096},
+		{"lfclaim", claimKeyRE, 4096},
+		{"lfclaimsize", claimSizeRE, 4096},
+		{"lfclaimsha256", sigRE, 4096},
 		{"lfsig", sigRE, 4096},
 	}
 	for _, o := range optional {
@@ -515,6 +538,18 @@ func ValidateAttributes(input map[string]string, opts ValidateOptions) (Attribut
 	out.LfDelivery = DeliveryMode(delivery)
 	out.LfEnc = enc
 	out.LfError = RemoteErrorCode(code)
+	claimed := 0
+	for _, v := range []string{out.LfClaim, out.LfClaimSize, out.LfClaimSHA256} {
+		if v != "" {
+			claimed++
+		}
+	}
+	if claimed != 0 && claimed != 3 {
+		return Attributes{}, bad("lfclaim", "needs lfclaimsize and lfclaimsha256 with it")
+	}
+	if claimed == 3 && enc == "" {
+		return Attributes{}, bad("lfclaim", "is only valid on an encrypted body")
+	}
 	return out, nil
 }
 

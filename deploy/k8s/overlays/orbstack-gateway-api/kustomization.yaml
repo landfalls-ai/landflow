@@ -1,0 +1,33 @@
+# Like ../orbstack-ingress, but with the Gateway API HTTPRoute instead of Ingresses, for Traefik's Gateway provider (the Gateway
+# `traefik-gateway` in landflow-ingress, listener `web`, routes from every namespace). Needs the Gateway API standard CRDs (v1.4+),
+# then:
+#   helm --kube-context orbstack upgrade --install traefik traefik/traefik --version 42.0.0 -n landflow-ingress --create-namespace \
+#     --set ingressClass.name=landflow-traefik --set ingressClass.isDefaultClass=false --set providers.kubernetesGateway.enabled=true \
+#     --set gateway.listeners.web.namespacePolicy.from=All
+#   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-gateway-api
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: landflow-dev
+resources:
+  - ../orbstack
+components:
+  - ../../components/gateway-httproute
+  - ../../components/gateway-landflow-tokens
+patches:
+  - target: { kind: HTTPRoute, name: landflow }
+    patch: |-
+      - { op: replace, path: /spec/parentRefs/0/name, value: traefik-gateway }
+      - { op: replace, path: /spec/parentRefs/0/namespace, value: landflow-ingress }
+      - { op: replace, path: /spec/hostnames/0, value: landflow.localhost }
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: { name: landflow-host }
+      spec:
+        template:
+          spec:
+            containers:
+              - name: host
+                env:
+                  - { name: LANDFLOW_PUBLIC_URL, value: "http://landflow.localhost" }
+                  - { name: LANDFLOW_MCP_GATEWAY_PUBLIC_URL, value: "http://landflow.localhost" }

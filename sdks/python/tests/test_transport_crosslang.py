@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from landflow_sdk.transport.claim import MemoryClaimStore  # noqa: E402
 from landflow_sdk.transport import Attributes, BrokerConfig, Capabilities, Codec, Keyring, WireEvent, manifest_hash_of  # noqa: E402
 from landflow_sdk.transport.envelope import ANNOUNCE_TYPE, CANCEL_TYPE, format_time, host_source, now_ms, plugin_source, request_type, response_type  # noqa: E402
 from landflow_sdk.transport.memory import MEMORY_CAPABILITIES  # noqa: E402
@@ -134,6 +135,50 @@ class CrossLanguageTest(unittest.TestCase):
             self.assertEqual(opened["attributes"]["type"], k["type"])
         self.assertIn("error", out["opened"][len(expected)], "TS accepted a tampered event")
         self.assertIn("error", out["opened"][len(expected) + 1], "TS accepted a foreign-key event")
+
+    def test_claim_check_ts_seals_python_opens_and_back(self):
+        """A body too big for the broker (4 KiB here) goes by reference: the reference is signed and both sides read the other's."""
+        blob = "x" * 20000
+        request = {"node": {"type": f"{PLUGIN}.echo"}, "inputs": [[{"json": {"blob": blob}}]], "credentials": {"api": {"token": "top-secret-token"}}}
+        response = {"outputs": [[{"json": {"blob": blob}}]]}
+        cases = [
+            ("request", request_type("Execute"), request, {"source": host_source("h1"), "lfdeadline": "1793102430000", "lfdelivery": "at-least-once"}),
+            ("response", response_type("Execute"), response, {"source": plugin_source(PLUGIN, "i1"), "lfcorrelation": "call-1"}),
+        ]
+        for mode in ("binary", "structured"):
+            caps = MEMORY_CAPABILITIES.copy(headers=mode == "binary", max_message_bytes=4096)
+            # TS seals, Python resolves and opens.
+            seal = [{"attributes": base_attributes(t, f"ts-claim-{name}-{mode}", extra).headers(), "data": data, "encrypt": True, "mode": mode, "claim": True} for name, t, data, extra in cases]
+            out = run_crosslang({"secret": SECRET, "pluginId": PLUGIN, "seal": seal})
+            store = MemoryClaimStore()
+            for key, body in out["claims"].items():
+                store.objects[key] = base64.b64decode(body)
+            codec = Codec(Keyring(SECRET), caps, claims=store)
+            self.assertEqual(len(out["sealed"]), len(cases))
+            for (name, _t, data, _e), sealed in zip(cases, out["sealed"]):
+                raw = codec.peek(WireEvent(sealed["headers"], base64.b64decode(sealed["bodyBase64"])))
+                self.assertTrue(raw.attributes.lfclaim, f"{name}/{mode}: not a reference")
+                resolved, key = codec.resolve_claim(raw, PLUGIN)
+                self.assertEqual(key, raw.attributes.lfclaim)
+                _attributes, got = codec.unpack(resolved, PLUGIN)
+                self.assertEqual(got, js_round_trip(data), f"{name}/{mode}")
+                swapped = type(raw)(raw.attributes.copy(lfclaim="claims/0000000000001/swapped"), raw.body)
+                with self.assertRaises(Exception, msg=f"{name}/{mode}: a swapped reference was accepted"):
+                    codec.resolve_claim(swapped, PLUGIN)
+            # Python seals, TS resolves and opens.
+            py_store = MemoryClaimStore()
+            py_codec = Codec(Keyring(SECRET), caps, claims=py_store)
+            open_cases = []
+            for name, t, data, extra in cases:
+                packed = py_codec.pack_claimed(PLUGIN, base_attributes(t, f"py-claim-{name}-{mode}", extra), data, True)
+                self.assertTrue(packed.claim_key)
+                open_cases.append({"headers": packed.wire.headers, "bodyBase64": base64.b64encode(packed.wire.body).decode(), "mode": mode})
+            claims = {key: base64.b64encode(body).decode() for key, body in py_store.objects.items()}
+            result = run_crosslang({"secret": SECRET, "pluginId": PLUGIN, "open": open_cases, "claims": claims})
+            for (name, _t, data, _e), opened in zip(cases, result["opened"]):
+                self.assertNotIn("error", opened, f"{name}/{mode}: TS refused: {opened.get('error')}")
+                self.assertEqual(opened["data"], js_round_trip(data))
+                self.assertTrue(opened["attributes"].get("lfclaim"))
 
     def test_manifest_hash_agrees(self):
         manifest = {

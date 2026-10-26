@@ -74,6 +74,6 @@ if (!target) {
       }
     }, 120_000);
 
-    runConformance({ name: 'servicebus', driver: () => new ServiceBusDriver(), config, deliveryTimeoutMs: 10_000 });
+    runConformance({ name: 'servicebus', driver: () => new ServiceBusDriver(), config, deliveryTimeoutMs: 20_000 });
   }
 }

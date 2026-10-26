@@ -76,6 +76,29 @@ describe('migrations', () => {
     sqlite.close();
   });
 
+  it('adds a column only where the table lacks it (a database from before migration 1 gained it)', () => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite');
+    const columns = (sqlite: import('node:sqlite').DatabaseSync) => (sqlite.prepare('PRAGMA table_info(execution_checkpoints)').all() as Array<{ name: string }>).map((c) => c.name);
+    // An old database: migration 1's checkpoint table without base_steps / base_outputs, and a checkpoint of a running execution.
+    const oldPath = join(tmp(), 'old.db');
+    const old = new DatabaseSync(oldPath);
+    const before = MIGRATIONS.filter((m) => m.version < 1780);
+    migrateSqlite(old, before);
+    old.exec('DROP TABLE execution_checkpoints');
+    old.exec('CREATE TABLE execution_checkpoints (execution_id TEXT PRIMARY KEY, step_id TEXT NOT NULL, steps BIGINT NOT NULL, saved_at TEXT NOT NULL, state TEXT NOT NULL)');
+    old.exec(`INSERT INTO execution_checkpoints VALUES ('ex_old', 's1', 3, '2026-10-26T00:00:00Z', '{}')`);
+    expect(migrateSqlite(old)).toEqual([1780]);
+    expect(columns(old)).toEqual(expect.arrayContaining(['base_steps', 'base_outputs']));
+    expect(old.prepare('SELECT steps, base_steps, base_outputs FROM execution_checkpoints').get()).toEqual({ steps: 3, base_steps: 0, base_outputs: null });
+    old.close();
+    // A new database already has them: the migration is a no-op there.
+    const fresh = new DatabaseSync(join(tmp(), 'fresh.db'));
+    migrateSqlite(fresh, before);
+    expect(migrateSqlite(fresh)).toEqual([1780]);
+    expect(columns(fresh).filter((c) => c.startsWith('base_'))).toEqual(['base_steps', 'base_outputs']);
+    fresh.close();
+  });
+
   it('runs a lower-numbered migration added after a higher one', () => {
     const sqlite = openSqliteConnection(join(tmp(), 'landflow.db'));
     const high = { version: LATEST_VERSION + 200, name: 'feature B', statements: ['CREATE TABLE test_b (id TEXT PRIMARY KEY)'] };

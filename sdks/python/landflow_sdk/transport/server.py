@@ -34,6 +34,7 @@ from typing import Any, Callable
 
 from ..dispatcher import CancelToken
 from .channels import ChannelNames, broker_endpoint, control_spec, instance_spec, registry_spec, request_spec
+from .claim import DEFAULT_CLAIM_TTL_MS, ClaimError, ClaimStore, start_claim_sweeper
 from .codec import Codec
 from .driver import BrokerDriver, ConsumeOptions, Delivery, PublishOptions, Subscription, WireEvent
 from .envelope import (
@@ -159,6 +160,8 @@ class MessagingServer:
         registry_secret: str | None | bool = None,
         drain_timeout_ms: int = 30_000,
         clock_skew_ms: int | None = None,
+        claims: ClaimStore | None = None,
+        claim_ttl_ms: int = DEFAULT_CLAIM_TTL_MS,
         now: Callable[[], int] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -176,7 +179,9 @@ class MessagingServer:
         self.transports = transports
         self.log = logger or log
         self.now = now or now_ms
-        self.codec = Codec(keyring, driver.capabilities, clock_skew_ms=clock_skew_ms, replay=ReplayGuard(), now=self.now)
+        self.codec = Codec(keyring, driver.capabilities, clock_skew_ms=clock_skew_ms, replay=ReplayGuard(), now=self.now, claims=claims)
+        self.claims = claims
+        self.claim_ttl_ms = claim_ttl_ms
         self.is_idempotent = is_idempotent or (idempotency_from_manifest(manifest) if manifest is not None else (lambda _r: False))
         self.max_concurrency = max_concurrency or (manifest or {}).get("maxConcurrency") or DEFAULT_MAX_CONCURRENCY
         if registry_secret is None:
@@ -225,6 +230,16 @@ class MessagingServer:
         self.announce()
         self._heartbeat = threading.Thread(target=self._heartbeat_loop, name=f"landflow-announce-{self.plugin_id}", daemon=True)
         self._heartbeat.start()
+        if self.claims is not None:
+            start_claim_sweeper(self.claims, self.claim_ttl_ms, self._stop, lambda exc: self.log.debug("claim sweep failed: %s", exc), self.now)
+
+    def _drop_claim(self, key: str | None) -> None:
+        if not key or self.claims is None:
+            return
+        try:
+            self.claims.delete(key)
+        except Exception as exc:  # noqa: BLE001
+            self.log.debug("could not delete a claim %s: %s", key, exc)
 
     def _heartbeat_loop(self) -> None:
         while not self._stop.wait(self.announce_interval_ms / 1000):
@@ -310,11 +325,29 @@ class MessagingServer:
         parsed = parse_type(raw.attributes.type)
         if parsed is None or parsed.kind != "request":
             return drop("not a request", type=raw.attributes.type)
+        request_attributes = raw.attributes
+        claim_key: str | None = None
         try:
+            raw, claim_key = self.codec.resolve_claim(raw, self.plugin_id)
             attributes, data = self.codec.unpack(raw, self.plugin_id)
+        except ClaimError as exc:
+            # The signature held (resolve_claim checks it first) but the body is unreadable: say so, so the host fails at once instead of at its deadline.
+            self.log.warning("a request body in the claim store is unreadable: %s (%s)", exc, exc.reason)
+            # A store outage may be over for another replica or a redelivery: put it back once.
+            if exc.reason == "store" and delivery.attempt < 2 and self.driver.capabilities.nack:
+                return delivery.nack(requeue=True)
+            delivery.ack()
+            self._reply(request_attributes, delivery, {"error": str(exc)}, "claim_unavailable")
+            return self._drop_claim(request_attributes.lfclaim)
         except Exception as exc:  # noqa: BLE001
+            self._drop_claim(request_attributes.lfclaim)
             return drop("failed verification", id=raw.attributes.id, error=str(exc))
         method = parsed.method or ""
+
+        def ack() -> None:
+            # The body of a request that went by reference is deleted once the delivery is acknowledged (never before: a redelivery must still read it).
+            delivery.ack()
+            self._drop_claim(claim_key)
 
         def requeue() -> None:
             self.codec.forget_replay(attributes.id)
@@ -327,16 +360,16 @@ class MessagingServer:
         deadline = attributes.deadline_ms()
         if deadline is not None and deadline <= now:
             self._count("expired")
-            return delivery.ack()
+            return ack()
         self._sweep_cancelled(now)
         if self._take_cancelled(attributes.id):
             self._count("cancelled")
-            return delivery.ack()
+            return ack()
         if attributes.lfmanifest and attributes.lfmanifest != self.manifest_hash:
             self._count("mismatched")
             if delivery.attempt < 2 and self.driver.capabilities.nack:
                 return requeue()
-            delivery.ack()
+            ack()
             self._reply(attributes, delivery, {"error": f"manifest mismatch: this plugin runs {self.manifest_hash}", "manifestHash": self.manifest_hash}, "manifest_mismatch")
             return
         requested = attributes.lfdelivery or (AT_MOST_ONCE if method == "Execute" else AT_LEAST_ONCE)
@@ -353,12 +386,12 @@ class MessagingServer:
             started = self.now()
             if self._take_cancelled(attributes.id):
                 self._count("cancelled")
-                return delivery.ack()
+                return ack()
             if deadline is not None and deadline <= started:
                 self._count("expired")
-                return delivery.ack()
+                return ack()
             if mode == AT_MOST_ONCE:
-                delivery.ack()
+                ack()
             token = _HostCancelToken(time.monotonic() + (deadline - started) / 1000 if deadline is not None else None)
             entry = _InFlight(token, threading.Event())
             with self._lock:
@@ -371,7 +404,7 @@ class MessagingServer:
                 entry.done.set()
             if mode == AT_LEAST_ONCE:
                 if sent:
-                    delivery.ack()
+                    ack()
                 else:
                     requeue()
         finally:
@@ -426,9 +459,9 @@ class MessagingServer:
             tracestate=request.tracestate, lferror=code,
         )
         try:
-            packed = self.codec.pack(self.plugin_id, attributes, body, True)
-        except EnvelopeError as exc:
-            if exc.reason != "too_large":
+            packed = self.codec.pack_claimed(self.plugin_id, attributes, body, True)
+        except (EnvelopeError, ClaimError) as exc:
+            if isinstance(exc, EnvelopeError) and exc.reason != "too_large":
                 raise
             attributes.lferror = "too_large"
             packed = self.codec.pack(self.plugin_id, attributes, {"error": str(exc)}, True)
@@ -441,6 +474,8 @@ class MessagingServer:
             return True
         except Exception as exc:  # noqa: BLE001
             self.log.warning("reply to %s could not be published: %s", request.id, exc)
+            # Nobody will read a reply body that never went out.
+            self._drop_claim(packed.claim_key)
             return False
 
     # -------------------------------------------------------------------- control

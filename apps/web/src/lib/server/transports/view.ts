@@ -40,5 +40,5 @@ export function connectionView(connection: StoredConnection, plugins = pluginsBy
 
 export function transportsView(): TransportsResponse {
   const plugins = pluginsByConnection();
-  return { kinds: transportProviders.kinds(), connections: transportConnections.list().map((connection) => connectionView(connection, plugins)) };
+  return { kinds: transportProviders.kinds(), connections: transportConnections.list().map((connection) => connectionView(connection, plugins)), claimStore: brokerConnections.claimStoreInfo() };
 }

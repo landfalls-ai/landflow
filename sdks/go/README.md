@@ -516,6 +516,14 @@ Each package's `*_test.go` runs its smoke tests, the shared conformance suite an
 a Go ↔ TypeScript round trip when `LANDFLOW_TEST_KAFKA` / `_AMQP` / `_NATS` / `_VALKEY` point at the dev brokers, and skips
 otherwise.
 
+**Claim check.** `LANDFLOW_CLAIM_STORE=s3://<bucket>/<prefix>?endpoint=…` (or `?aws=true` for real S3) sends oversized broker bodies
+by reference (`transport/claim.go`, `claim_s3.go`, stdlib-only SigV4). Credentials, in order: static keys
+(`LANDFLOW_CLAIM_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY`, then `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`), web identity
+(EKS IRSA: `AWS_WEB_IDENTITY_TOKEN_FILE` + `AWS_ROLE_ARN`, STS from `AWS_ENDPOINT_URL_STS` / `AWS_ENDPOINT_URL`, or the regional endpoint
+only with `aws=true`), then container credentials (EKS Pod Identity, ECS: `AWS_CONTAINER_CREDENTIALS_FULL_URI` / `_RELATIVE_URI`). Temporary
+credentials are cached and renewed 5 minutes before they expire. There is deliberately no `~/.aws` file and no EC2 IMDS lookup (a laptop's
+real credentials must not leak in; IMDS probes time out off EC2): export the keys if you need them.
+
 ## Serve, discovery and announce
 
 `landflow.Serve(ctx, plugin, landflow.ServeOptions{HTTPPort, GRPCPort, Announce})`, or the same with

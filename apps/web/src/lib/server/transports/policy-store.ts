@@ -8,13 +8,13 @@
  * (Postgres replication, or the SQLite broadcast in queue mode: lib/server/db/replication.ts).
  */
 import { z } from 'zod';
-import { DEFAULT_TRANSPORT_POLICY, type TransportKind, type TransportPolicy } from '../../shared/transports';
+import { DEFAULT_TRANSPORT_POLICY, type TransportKind, type TransportPolicy, type WorkflowTransportOverride } from '../../shared/transports';
 import { database, type Database } from '../db';
 import { onTablesChanged } from '../db/replication';
 import { parse } from '../db/rows';
 import { singleton } from '../singleton';
+import { transportKindSchema as KIND } from './schema';
 
-const KIND = z.string().min(1).max(32).regex(/^[a-z][a-z0-9+.-]*$/, 'A transport kind is lower-case: http, grpc, kafka…');
 
 /** A complete policy, as PATCH /api/plugins/:id accepts it in `policy`. */
 export const transportPolicySchema = z
@@ -29,6 +29,22 @@ export const transportPolicySchema = z
     if (policy.allowed && !policy.allowed.length) ctx.addIssue({ code: 'custom', path: ['allowed'], message: 'The allow-list names at least one transport (or leave it out)' });
     if (policy.pinned && policy.allowed && !policy.allowed.includes(policy.pinned)) ctx.addIssue({ code: 'custom', path: ['pinned'], message: 'The pinned transport must be in the allow-list' });
   });
+
+/**
+ * The policy a workflow's run uses for a plugin: the override's fields replace the plugin's, except `allowed`, which only
+ * narrows the plugin's allow-list (so an admin keeps every workflow off a transport with the plugin's allow-list). A pin
+ * outside the plugin's allow-list, or an allow-list sharing no kind with it, is an error the run reports.
+ */
+export function withWorkflowOverride(policy: TransportPolicy, override: WorkflowTransportOverride | undefined): TransportPolicy | { error: string } {
+  if (!override) return policy;
+  const allowed = override.allowed && policy.allowed ? override.allowed.filter((kind) => policy.allowed!.includes(kind)) : (override.allowed ?? policy.allowed);
+  if (allowed && !allowed.length) return { error: `the workflow's allowed transports (${override.allowed!.join(', ')}) and the plugin's (${policy.allowed!.join(', ')}) share none` };
+  const mode = override.mode ?? (override.pinned ? 'pinned' : policy.mode);
+  const pinned = mode === 'pinned' ? (override.pinned ?? policy.pinned) : undefined;
+  if (mode === 'pinned' && !pinned) return { error: 'the workflow pins no transport' };
+  if (pinned && allowed && !allowed.includes(pinned)) return { error: `the workflow pins ${pinned}, which the allowed transports (${allowed.join(', ')}) leave out` };
+  return normalizePolicy({ mode, pinned, allowed, objective: override.objective ?? policy.objective });
+}
 
 /** A policy as stored: `pinned` only with `mode: 'pinned'`, `allowed` deduplicated, nothing else. */
 export function normalizePolicy(input: Partial<TransportPolicy>): TransportPolicy {

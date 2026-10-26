@@ -29,6 +29,11 @@ import { startTrigger } from '../telemetry';
 import { claimTestListener, findTestListener, NOT_LISTENING_HINT, runTestEvent, TEST_PREFIX, testRunId, type TestListener } from '../test-webhooks';
 import { variables } from '../variables';
 import { triggerAuthRefusal } from '../webhook-auth';
+import { withAuth } from '../auth/context';
+import { getUser } from '../auth/users';
+import { canResource } from '../projects/access';
+import type { Role } from '../../shared/auth';
+import { authenticateMcpRequest, GATEWAY_SECRET_HEADER, McpAuthError, mcpAuthErrorResponse } from './identity';
 import { bearerToken, jsonRpcError, MCP_SERVER_VERSION, methodNotAllowed, sameSecret, serveMcp, textResult, unauthorized } from './server';
 
 export const MCP_TRIGGER = 'core.mcpTrigger';
@@ -150,10 +155,42 @@ export function triggerServer(workflow: Workflow, node: WorkflowNode, listener?:
   return server;
 }
 
-/** Everything /mcp/<path> does: find the trigger, check auth, serve the request. */
+/**
+ * Everything /mcp/<path> does: find the trigger, check auth, serve the request.
+ *
+ * Through the bundled gateway (the trigger's workflow is a gateway target, ./gateway-sync.ts) the call carries the gateway
+ * secret and the caller the gateway validated. The trigger's own auth (none / bearer / header) is then handled like this:
+ * - a caller Landflow knows (a user) needs no shared secret: who they are is established by the sign-in at the gateway, the
+ *   gateway removes the `authorization` header a bearer-auth trigger would read, and one static secret handed to many
+ *   identified people is the weaker check. They need what any user needs to run the workflow: `run` access to it in their
+ *   projects (403 otherwise), and the run is made as them;
+ * - a call the gateway forwarded without an identity gets no such pass: the trigger's own auth applies to what arrives
+ *   (`none` lets it in, a header-auth trigger needs its header, which the gateway forwards untouched; a bearer-auth trigger
+ *   cannot be satisfied through the gateway and says so).
+ * Direct calls (no gateway secret) are as before.
+ */
 export async function handleTriggerRequest(request: Request, path: string): Promise<Response> {
   const match = findMcpTrigger(path);
   if (!match) return jsonRpcError(404, -32001, `No active workflow serves MCP at /mcp/${path}`);
+  if (request.headers.get(GATEWAY_SECRET_HEADER) !== null) {
+    let caller;
+    try {
+      caller = await authenticateMcpRequest(request, { pluginId: '' });
+    } catch (error) {
+      if (error instanceof McpAuthError) return mcpAuthErrorResponse(error);
+      throw error;
+    }
+    const user = caller.userId ? getUser(caller.userId) : undefined;
+    if (user && !user.disabledAt) {
+      if (!caller.scopes.includes('tools:call')) return jsonRpcError(403, -32003, 'This MCP token has no tools:call scope');
+      const actor = { id: user.id, role: user.role as Role };
+      if (!canResource(actor, 'workflow', match.workflow.id, 'run')) return jsonRpcError(403, -32003, `${user.name} may not run “${match.workflow.name}”`);
+      return withAuth({ principal: { user, via: 'mcp' } }, () => serveMcp(request, () => triggerServer(match.workflow, match.node)));
+    }
+    const denied = checkTriggerAuth(request, match.workflow.id, match.node);
+    if (denied) return denied.status === 401 && String(match.node.parameters.authentication) === 'bearerAuth' ? jsonRpcError(401, -32001, 'This MCP Server Trigger needs its own bearer token, which the gateway cannot forward: sign in at the gateway as a Landflow user, or call the trigger directly') : denied;
+    return serveMcp(request, () => triggerServer(match.workflow, match.node));
+  }
   const denied = checkTriggerAuth(request, match.workflow.id, match.node);
   if (denied) return denied;
   return serveMcp(request, () => triggerServer(match.workflow, match.node));

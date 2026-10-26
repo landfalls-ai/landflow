@@ -25,6 +25,8 @@ type Bridge struct {
 	kinds      []string
 	instanceID string
 	startedAt  time.Time
+	claims     transport.ClaimStore
+	claimTTL   time.Duration
 
 	mu       sync.Mutex
 	state    bridgeState
@@ -103,6 +105,18 @@ func New(cfg Config) (*Bridge, error) {
 		}
 	}
 	sort.Strings(kinds)
+	claims, claimTTL := cfg.Claims, cfg.ClaimTTL
+	if claims == nil && !cfg.NoClaims {
+		if value := cfg.getenv(transport.ClaimStoreEnv); value != "" {
+			setting, err := transport.ParseClaimStore(value, cfg.getenv)
+			if err != nil {
+				_ = target.Close()
+				return nil, fmt.Errorf("bridge: %w", err)
+			}
+			claims, claimTTL = setting.Store, setting.TTL
+			logger.Info("claim check on", "store", setting.Describe)
+		}
+	}
 	instanceID := cfg.InstanceID
 	if instanceID == "" {
 		instanceID = randomHex(16)
@@ -123,7 +137,7 @@ func New(cfg Config) (*Bridge, error) {
 	if cfg.HealthHost == "" {
 		cfg.HealthHost = DefaultHealthHost
 	}
-	return &Bridge{cfg: cfg, log: logger, target: target, keyring: keyring, factories: factories, kinds: kinds, instanceID: instanceID}, nil
+	return &Bridge{cfg: cfg, log: logger, target: target, keyring: keyring, factories: factories, kinds: kinds, instanceID: instanceID, claims: claims, claimTTL: claimTTL}, nil
 }
 
 // Kinds are the broker kinds this bridge serves, sorted.
@@ -450,7 +464,7 @@ func (b *Bridge) startServer(ctx context.Context, f DriverFactory, state *manife
 			Driver: driver, Keyring: b.keyring, PluginID: state.info.PluginID, Version: state.info.Version,
 			ManifestHash: state.hash, Manifest: state.raw, Dispatch: b.dispatch, MaxConcurrency: b.cfg.MaxConcurrency,
 			InstanceID: b.instanceID, Transports: state.info.Transports, AnnounceInterval: b.cfg.AnnounceInterval,
-			RegistrySecret: b.cfg.RegistrySecret, NoRegistryProof: b.cfg.NoRegistryProof, DrainTimeout: b.cfg.DrainTimeout,
+			RegistrySecret: b.cfg.RegistrySecret, NoRegistryProof: b.cfg.NoRegistryProof, DrainTimeout: b.cfg.DrainTimeout, Claims: b.claims, ClaimTTL: b.claimTTL,
 			Log: b.transportLogger(f.Kind),
 		})
 		if err != nil {

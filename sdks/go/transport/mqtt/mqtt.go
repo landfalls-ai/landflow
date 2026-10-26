@@ -696,11 +696,12 @@ func (s *subscription) enqueue(pub *paho.Publish) {
 	s.pump()
 }
 
-// pump starts handlers while slots are free (manual mode holds at most prefetch; auto mode runs everything).
+// pump starts handlers while slots are free: manual mode holds at most prefetch; auto mode (broadcast, control) runs one
+// at a time, so a consumer sees the messages of a topic in the order the broker sent them.
 func (s *subscription) pump() {
 	for {
 		s.mu.Lock()
-		if s.closed || len(s.queue) == 0 || (s.manual && s.inFlight >= s.prefetch) {
+		if s.closed || len(s.queue) == 0 || (s.manual && s.inFlight >= s.prefetch) || (!s.manual && s.inFlight > 0) {
 			s.mu.Unlock()
 			return
 		}

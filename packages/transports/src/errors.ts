@@ -29,7 +29,9 @@ export type UndeliverableReason =
   /** The encoded event is bigger than the driver's `maxMessageBytes` (or the header budget). */
   | 'too_large'
   /** The call was aborted before it was published. */
-  | 'aborted';
+  | 'aborted'
+  /** The body is too big for the broker and the claim store could not take it (nothing was published). */
+  | 'claim_failed';
 
 /** Provably not delivered: safe to send over another transport. */
 export class UndeliverableError extends MessagingError {
@@ -78,6 +80,22 @@ export class RemoteError extends MessagingError {
     readonly details?: unknown,
   ) {
     super(message, remoteCode);
+  }
+}
+
+/**
+ * A body travelling through the claim store could not be read: expired or deleted, the store is down, or size/digest do
+ * not match. In the request direction the plugin refused the call before running it (`not-delivered`, so the selector may
+ * use another transport); in the response direction the plugin has already run it (`delivered`).
+ */
+export class ClaimUnavailableError extends MessagingError {
+  readonly knowledge: DeliveryKnowledge;
+  constructor(
+    message: string,
+    readonly direction: 'request' | 'response',
+  ) {
+    super(message, 'claim_unavailable');
+    this.knowledge = direction === 'request' ? 'not-delivered' : 'delivered';
   }
 }
 

@@ -46,10 +46,10 @@ AT_LEAST_ONCE = "at-least-once"
 DeliveryMode = Literal["at-most-once", "at-least-once"]
 
 #: ``lferror`` codes a plugin answers with (docs/protocol.md §14.6).
-REMOTE_ERROR_CODES = ("manifest_mismatch", "expired", "bad_request", "not_found", "internal", "cancelled", "unavailable", "capacity", "too_large")
+REMOTE_ERROR_CODES = ("manifest_mismatch", "expired", "bad_request", "not_found", "internal", "cancelled", "unavailable", "capacity", "too_large", "claim_unavailable")
 
 #: The Landflow extensions; ``lfsig`` is computed over all the others and never part of the canonical form.
-LF_EXTENSIONS = ("lfreplyto", "lfcorrelation", "lfdeadline", "lfattempt", "lfidempotency", "lfdelivery", "lfmanifest", "lferror", "lfenc", "lfkeyid", "lfsig")
+LF_EXTENSIONS = ("lfreplyto", "lfcorrelation", "lfdeadline", "lfattempt", "lfidempotency", "lfdelivery", "lfmanifest", "lferror", "lfenc", "lfkeyid", "lfclaim", "lfclaimsize", "lfclaimsha256", "lfsig")
 #: Every attribute the envelope knows, in canonical (signing) order. Anything else is dropped on decode.
 KNOWN_ATTRIBUTES = ("specversion", "id", "source", "type", "subject", "time", "datacontenttype", "traceparent", "tracestate", *LF_EXTENSIONS)
 
@@ -122,6 +122,10 @@ class Attributes:
     lferror: str | None = None
     lfenc: str | None = None
     lfkeyid: str | None = None
+    #: The claim-check reference: key, byte length and hex SHA-256 of the (encrypted) body held in the claim store.
+    lfclaim: str | None = None
+    lfclaimsize: str | None = None
+    lfclaimsha256: str | None = None
     lfsig: str | None = None
 
     def headers(self) -> dict[str, str]:
@@ -184,6 +188,9 @@ _OPTIONAL: tuple[tuple[str, re.Pattern[str] | None, int], ...] = (
     ("lfidempotency", re.compile(r"^[\x21-\x7e]{1,256}$"), 4096),
     ("lfmanifest", re.compile(r"^[0-9a-f]{8,64}$"), 4096),
     ("lfkeyid", re.compile(r"^[0-9a-f]{8,32}$"), 4096),
+    ("lfclaim", re.compile(r"^claims/\d{13}/[A-Za-z0-9._-]{1,128}$"), 4096),
+    ("lfclaimsize", re.compile(r"^\d{1,12}$"), 4096),
+    ("lfclaimsha256", re.compile(r"^[0-9a-f]{64}$"), 4096),
     ("lfsig", re.compile(r"^[0-9a-f]{64}$"), 4096),
 )
 _LFERROR_RE = re.compile(r"^[a-z_]{1,32}$")
@@ -266,6 +273,11 @@ def validate_attributes(raw: dict[str, str | None], *, strict: bool = False) -> 
     attributes.lferror = lferror
     if attributes.lfsig and not _HEX_RE.match(attributes.lfsig):
         raise bad("lfsig")
+    claimed = sum(1 for value in (attributes.lfclaim, attributes.lfclaimsize, attributes.lfclaimsha256) if value)
+    if claimed not in (0, 3):
+        raise bad("lfclaim", "needs lfclaimsize and lfclaimsha256 with it")
+    if claimed == 3 and not lfenc:
+        raise bad("lfclaim", "is only valid on an encrypted body")
     return attributes
 
 

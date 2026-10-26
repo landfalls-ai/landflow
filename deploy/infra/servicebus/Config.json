@@ -5,35 +5,49 @@
         "Name": "sbemulatorns",
         "Queues": [
           {
-            "Name": "landflow.registry",
+            "Name": "landflow.v1.plugin.core",
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT5M",
               "DuplicateDetectionHistoryTimeWindow": "PT20S",
               "ForwardDeadLetteredMessagesTo": "",
               "ForwardTo": "",
-              "LockDuration": "PT30S",
-              "MaxDeliveryCount": 10,
-              "RequiresDuplicateDetection": false,
-              "RequiresSession": false
-            }
-          },
-          {
-            "Name": "landflow.control",
-            "Properties": {
-              "DeadLetteringOnMessageExpiration": false,
-              "DefaultMessageTimeToLive": "PT5M",
-              "DuplicateDetectionHistoryTimeWindow": "PT20S",
-              "ForwardDeadLetteredMessagesTo": "",
-              "ForwardTo": "",
-              "LockDuration": "PT30S",
-              "MaxDeliveryCount": 10,
+              "LockDuration": "PT1M",
+              "MaxDeliveryCount": 3,
               "RequiresDuplicateDetection": false,
               "RequiresSession": false
             }
           },
           {
             "Name": "landflow.v1.plugin.text-toolkit",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT5M",
+              "DuplicateDetectionHistoryTimeWindow": "PT20S",
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "LockDuration": "PT1M",
+              "MaxDeliveryCount": 3,
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": false
+            }
+          },
+          {
+            "Name": "landflow.v1.plugin.py-insights",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT5M",
+              "DuplicateDetectionHistoryTimeWindow": "PT20S",
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "LockDuration": "PT1M",
+              "MaxDeliveryCount": 3,
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": false
+            }
+          },
+          {
+            "Name": "landflow.v1.plugin.go-crypto",
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT5M",
@@ -61,7 +75,49 @@
             }
           },
           {
-            "Name": "landflow.v1.plugin.conformance",
+            "Name": "landflow.v1.plugin.productivity",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT5M",
+              "DuplicateDetectionHistoryTimeWindow": "PT20S",
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "LockDuration": "PT1M",
+              "MaxDeliveryCount": 3,
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": false
+            }
+          },
+          {
+            "Name": "landflow.v1.plugin.google",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT5M",
+              "DuplicateDetectionHistoryTimeWindow": "PT20S",
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "LockDuration": "PT1M",
+              "MaxDeliveryCount": 3,
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": false
+            }
+          },
+          {
+            "Name": "landflow.v1.plugin.databases",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT5M",
+              "DuplicateDetectionHistoryTimeWindow": "PT20S",
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "LockDuration": "PT1M",
+              "MaxDeliveryCount": 3,
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": false
+            }
+          },
+          {
+            "Name": "landflow.v1.plugin.transport-bench",
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT5M",
@@ -300,28 +356,6 @@
           }
         ],
         "Topics": [
-          {
-            "Name": "landflow.v1.events",
-            "Properties": {
-              "DefaultMessageTimeToLive": "PT1H",
-              "DuplicateDetectionHistoryTimeWindow": "PT20S",
-              "RequiresDuplicateDetection": false
-            },
-            "Subscriptions": [
-              {
-                "Name": "all",
-                "Properties": {
-                  "DeadLetteringOnMessageExpiration": false,
-                  "DefaultMessageTimeToLive": "PT1H",
-                  "LockDuration": "PT1M",
-                  "MaxDeliveryCount": 3,
-                  "ForwardDeadLetteredMessagesTo": "",
-                  "ForwardTo": "",
-                  "RequiresSession": false
-                }
-              }
-            ]
-          },
           {
             "Name": "landflow.v1.broadcast",
             "Properties": {

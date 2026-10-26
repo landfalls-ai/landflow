@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { handler, json, parseBody } from '@/lib/server/http';
 import { mcpAccess, regenerateMcpToken, setMcpEnabled } from '@/lib/server/mcp/instance';
 import { recordAudit } from '@/lib/server/audit';
+import { mcpGatewaySync } from '@/lib/server/mcp/gateway-sync';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +17,8 @@ export const PATCH = handler(async (request: Request) => {
   const body = await parseBody(request, z.strictObject({ enabled: z.boolean() }));
   if (!body.ok) return body.response;
   const access = setMcpEnabled(body.data.enabled);
+  // The gateway's instance-server target follows the toggle.
+  mcpGatewaySync.nudge();
   recordAudit({ action: 'settings.update', target: { type: 'settings', id: 'mcp', name: 'Instance MCP server' }, summary: `${body.data.enabled ? 'Turned on' : 'Turned off'} the instance MCP server`, details: { enabled: body.data.enabled } });
   return json(access);
 });

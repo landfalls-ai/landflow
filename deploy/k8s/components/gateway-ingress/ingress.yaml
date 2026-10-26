@@ -1,0 +1,53 @@
+# The MCP gateway: long-lived streams, so no buffering and long timeouts.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: landflow-mcp
+  labels: { app.kubernetes.io/name: landflow-mcp, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: ingress }
+  annotations:
+    # ingress-nginx (retired; kept for clusters that still run it)
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    # HAProxy Ingress (haproxy-ingress.github.io) and F5 NGINX Ingress Controller (nginx.org) equivalents
+    haproxy-ingress.github.io/timeout-server: 1h
+    haproxy-ingress.github.io/timeout-tunnel: 1h
+    nginx.org/proxy-read-timeout: 1h
+    nginx.org/proxy-send-timeout: 1h
+    # Traefik needs no annotation for streaming (it flushes immediately for text/event-stream).
+spec:
+  ingressClassName: CHANGE-ME-class # e.g. traefik, nginx, haproxy
+  tls:
+    - hosts: [landflow.example.com]
+      secretName: landflow-tls
+  rules:
+    - host: landflow.example.com
+      http:
+        paths:
+          - { path: /mcp, pathType: Prefix, backend: { service: { name: landflow-host, port: { name: mcp } } } }
+          - { path: /.well-known/oauth-protected-resource, pathType: Prefix, backend: { service: { name: landflow-host, port: { name: mcp } } } }
+---
+# The web app (UI and API): ordinary request/response, plus server-sent event streams (execution progress), which must not be buffered.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: landflow-web
+  labels: { app.kubernetes.io/name: landflow-web, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: ingress }
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: 64m
+    nginx.org/proxy-read-timeout: 1h
+    nginx.org/client-max-body-size: 64m
+spec:
+  ingressClassName: CHANGE-ME-class
+  tls:
+    - hosts: [landflow.example.com]
+      secretName: landflow-tls
+  rules:
+    - host: landflow.example.com
+      http:
+        paths:
+          - { path: /, pathType: Prefix, backend: { service: { name: landflow-host, port: { name: http } } } }

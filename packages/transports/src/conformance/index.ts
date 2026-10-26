@@ -25,7 +25,8 @@ import { Codec, silentLogger } from '../codec';
 import { channelNames, channelSpecs } from '../channels';
 import { NotConnectedError, type BrokerConfig, type BrokerDriver, type Delivery, type WireEvent } from '../driver';
 import { hostSource, requestType } from '../envelope';
-import { CancelledError, ManifestMismatchError, MessagingError, TimeoutError, UndeliverableError, ConnectionLostError } from '../errors';
+import { MemoryClaimStore } from '../claim';
+import { CancelledError, ClaimUnavailableError, ManifestMismatchError, MessagingError, RemoteError, TimeoutError, UndeliverableError, ConnectionLostError } from '../errors';
 import { Keyring } from '../security';
 import { MessagingServer, type DispatchContext, type Dispatcher } from '../server';
 
@@ -649,6 +650,91 @@ export function runCoreConformance<C extends BrokerConfig>(target: ConformanceTa
       const error = await client.call(id, 'Execute', huge, { timeoutMs: wait }).catch((e) => e);
       expect(error).toBeInstanceOf(UndeliverableError);
       expect((error as UndeliverableError).reason).toBe('too_large');
+    });
+
+    const claimable = caps.maxMessageBytes <= 12 * 1024 * 1024;
+    const blob = (extra = 4096) => 'x'.repeat(caps.maxMessageBytes + extra);
+
+    it(claimable ? 'carries an oversized call and reply by reference through a claim store, deleting the objects after the ack' : 'skips the claim check (limit over 12 MiB)', async () => {
+      if (!claimable) return;
+      const id = pluginId();
+      const claims = new MemoryClaimStore();
+      const during: number[] = [];
+      // `lookup` is idempotent, so the host's at-least-once request is held until after the reply: its body must still be in the store while the node runs.
+      await startServer(id, echoDispatcher([], async () => void during.push(claims.keys().length)), { claims });
+      const client = await startClient({ claims });
+      await announced(client, id);
+      const huge = execute(id, 'lookup', { inputs: [[{ json: { blob: blob() } }]] });
+      const reply = await client.invoke(id, 'Execute', huge, { timeoutMs: wait * 4, delivery: 'at-least-once' });
+      expect((reply.body.outputs[0][0].json as { blob: string }).blob.length).toBe(caps.maxMessageBytes + 4096);
+      expect(claims.counters.puts).toBe(2);
+      expect(during).toEqual([1]);
+      await waitFor(() => claims.keys().length === 0, wait, 'claims deleted');
+      expect(claims.counters.deletes).toBe(2);
+    });
+
+    it(claimable ? 'stores only ciphertext in the claim store' : 'skips the claim check (limit over 12 MiB)', async () => {
+      if (!claimable) return;
+      const id = pluginId();
+      const claims = new MemoryClaimStore();
+      let stored = '';
+      await startServer(id, echoDispatcher([], () => void (stored = decoder.decode([...claims.objects.values()][0]?.subarray(0, 4096) ?? new Uint8Array()))), { claims });
+      const client = await startClient({ claims });
+      await announced(client, id);
+      await client.call(id, 'Execute', execute(id, 'lookup', { inputs: [[{ json: { blob: blob() } }]] }), { timeoutMs: wait * 4, delivery: 'at-least-once' });
+      expect(stored.length).toBeGreaterThan(0);
+      expect(stored).not.toContain('top-secret-token');
+      expect(stored).not.toContain('xxxxxxxx');
+    });
+
+    it(claimable ? 'without a claim store an oversized reply answers too_large and a store outage at the sender is undelivered' : 'skips the claim check (limit over 12 MiB)', async () => {
+      if (!claimable) return;
+      const id = pluginId();
+      await startServer(id, echoDispatcher([], () => ({ outputs: [[{ json: { blob: blob() } }]] })));
+      const plain = await startClient();
+      await announced(plain, id);
+      const error = await plain.call(id, 'Execute', execute(id), { timeoutMs: wait }).catch((e) => e);
+      expect(error).toBeInstanceOf(RemoteError);
+      expect((error as RemoteError).remoteCode).toBe('too_large');
+      const claims = new MemoryClaimStore();
+      const client = await startClient({ claims });
+      await announced(client, id);
+      claims.failNext = 'put';
+      const down = await client.call(id, 'Execute', execute(id, 'echo', { inputs: [[{ json: { blob: blob() } }]] }), { timeoutMs: wait }).catch((e) => e);
+      expect(down).toBeInstanceOf(UndeliverableError);
+      expect((down as UndeliverableError).reason).toBe('claim_failed');
+    });
+
+    it(claimable && target.tap && caps.headers ? 'fails a call whose request claim is gone, and drops one whose reference was swapped' : 'skips claim tampering (no tap, no headers or limit over 12 MiB)', async () => {
+      if (!claimable || !target.tap || !caps.headers) return;
+      const id = pluginId();
+      const claims = new MemoryClaimStore();
+      const seen: Seen[] = [];
+      await startServer(id, echoDispatcher(seen), { claims });
+      const client = await startClient({ claims });
+      await announced(client, id);
+      const huge = execute(id, 'echo', { inputs: [[{ json: { blob: blob() } }]] });
+      let mode: 'delete' | 'swap' = 'delete';
+      const untap = target.tap((channel, event) => {
+        const claim = event.headers.lfclaim ?? event.headers['ce-lfclaim'];
+        if (!claim || !channel.includes(id)) return event;
+        if (mode === 'delete') {
+          claims.objects.delete(claim);
+          return event;
+        }
+        const other = claim.replace(/\/[^/]*$/, '/other');
+        claims.objects.set(other, claims.objects.get(claim)!);
+        return { ...event, headers: Object.fromEntries(Object.entries(event.headers).map(([k, v]) => [k, k.endsWith('lfclaim') ? other : v])) };
+      });
+      cleanups.push(async () => untap());
+      const gone = await client.call(id, 'Execute', huge, { timeoutMs: wait * 2 }).catch((e) => e);
+      expect(gone).toBeInstanceOf(ClaimUnavailableError);
+      expect((gone as ClaimUnavailableError).knowledge).toBe('not-delivered');
+      expect(seen).toHaveLength(0);
+      mode = 'swap';
+      const swapped = await client.call(id, 'Execute', huge, { timeoutMs: 600 }).catch((e) => e);
+      expect(swapped).toBeInstanceOf(TimeoutError);
+      expect(seen).toHaveLength(0);
     });
 
     it(`fails a call to a plugin nobody consumes as ${caps.undeliverable === 'reported' ? 'unroutable' : 'a timeout'}`, async () => {

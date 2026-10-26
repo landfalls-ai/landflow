@@ -23,7 +23,7 @@ import type { Pool, PoolClient } from 'pg';
 import { logger } from '../telemetry/logger';
 import { Database, openSqliteConnection, upsertSql, type DirectClient, type SqlValue, type WriteOp, type WriteSink } from './database';
 import { CHANGES_CHANNEL, noticesFor, Replica, rowIdOf } from './replication';
-import { MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type TableName } from './schema';
+import { addColumnSql, MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type TableName } from './schema';
 
 /** Held for the life of the host: a second host on the same database fails to start. */
 const INSTANCE_LOCK = 0x4c414e44; // "LAND"
@@ -77,6 +77,7 @@ export async function migratePostgres(pool: Pool): Promise<number[]> {
     const done = (await client.query('SELECT version FROM schema_version')).rows.map((row: { version: string | number }) => Number(row.version));
     const applied: number[] = [];
     for (const migration of pendingMigrations(MIGRATIONS, done)) {
+      for (const column of migration.addColumns ?? []) await client.query(addColumnSql(column, true));
       for (const statement of migration.postgres ?? migration.statements) await client.query(statement);
       await client.query('INSERT INTO schema_version (version, name, applied_at) VALUES ($1, $2, $3)', [migration.version, migration.name, new Date().toISOString()]);
       applied.push(migration.version);

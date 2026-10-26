@@ -28,11 +28,17 @@
 //     reply channel; undeliverable unknown (no receiver counts); Stats peeks an
 //     approximate depth.
 //
+// Entities: a real namespace gets them created by Declare through the administration
+// client (CreateEntities, on by default outside the emulator; the key needs Manage
+// rights). The emulator's are fixed in deploy/infra/servicebus/Config.json, written by
+// deploy/scripts/servicebus-config.py (the bundled plugins plus any ids you pass); only the
+// per-plugin request queues vary. A missing one fails Declare naming the entity and the script.
+//
 // This package is its own Go module so sdks/go stays free of the Azure SDK.
 // Code use: servicebus.New(servicebus.Config{ConnectionString: "Endpoint=sb://…"});
 // env use: blank-import the package and set LANDFLOW_SERVICEBUS_URL (a
 // connection string or sb://host:port with LANDFLOW_SERVICEBUS_USERNAME /
-// _PASSWORD as the key name and key; _EMULATOR=true; _PREFIX; _MAXMESSAGEBYTES).
+// _PASSWORD as the key name and key; _EMULATOR=true; _CREATEENTITIES=true|false; _PREFIX; _MAXMESSAGEBYTES).
 package servicebus
 
 import (
@@ -99,6 +105,9 @@ type Config struct {
 	QueueFor func(channel string) string
 	// MaxMessageBytes the driver accepts (default 240 KiB).
 	MaxMessageBytes int
+	// MaxOpsPerSecond paces publishes and settlements (default: 40 on the emulator, whose namespace throttles above about 100
+	// operations a second; unlimited on a real namespace; zero or negative disables). nil means the default.
+	MaxOpsPerSecond *int
 }
 
 // Driver is a Service Bus connection: one client, a sender per entity and a receiver per subscription.
@@ -115,6 +124,7 @@ type Driver struct {
 	declared map[string]transport.ChannelSpec
 	subs     map[*subscription]struct{}
 	closed   bool
+	gate     *rateGate
 }
 
 var emulatorRE = regexp.MustCompile(`(?i)(^|;)\s*UseDevelopmentEmulator\s*=\s*true\s*(;|$)`)
@@ -152,8 +162,18 @@ func New(cfg Config) *Driver {
 	if cfg.MaxMessageBytes <= 0 {
 		cfg.MaxMessageBytes = DefaultMaxMessageBytes
 	}
+	ops, perKiB := 0, 0.0
+	if cfg.Emulator {
+		perKiB = EmulatorMsPerKiB
+	}
+	if cfg.MaxOpsPerSecond != nil {
+		ops = *cfg.MaxOpsPerSecond
+	} else if cfg.Emulator {
+		ops = EmulatorOpsPerSecond
+	}
 	return &Driver{
-		cfg: cfg,
+		cfg:  cfg,
+		gate: newRateGate(ops, 16, perKiB),
 		caps: transport.Capabilities{
 			Replies:         transport.RepliesChannel,
 			WorkSharing:     true,
@@ -198,7 +218,7 @@ var (
 
 // ConfigFromURL builds a Config from a connection string (Endpoint=sb://…;…) or
 // an sb://host endpoint with the key name as the username and the key as the
-// password; fields: emulator (true), maxmessagebytes.
+// password; fields: emulator (true), createentities (true/false; default on outside the emulator), maxmessagebytes.
 func ConfigFromURL(connectionID, rawURL string, opts transport.ConnectionOptions) (Config, error) {
 	raw := strings.TrimSpace(rawURL)
 	if raw == "" {
@@ -258,6 +278,21 @@ func ConfigFromURL(connectionID, rawURL string, opts transport.ConnectionOptions
 			return Config{}, fmt.Errorf("servicebus: maxmessagebytes %q must be a positive integer", v)
 		}
 		cfg.MaxMessageBytes = n
+	}
+	if v := opts.Fields["maxopspersecond"]; v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("servicebus: maxopspersecond %q must be an integer (0 disables)", v)
+		}
+		cfg.MaxOpsPerSecond = &n
+	}
+	switch strings.ToLower(strings.TrimSpace(opts.Fields["createentities"])) {
+	case "true":
+		on := true
+		cfg.CreateEntities = &on
+	case "false":
+		off := false
+		cfg.CreateEntities = &off
 	}
 	return cfg, nil
 }
@@ -394,14 +429,18 @@ func (d *Driver) Connect(ctx context.Context) error {
 	if d.cfg.ConnectionString == "" {
 		return errors.New("servicebus: no connection string configured")
 	}
-	client, err := azservicebus.NewClientFromConnectionString(d.cfg.ConnectionString, nil)
+	// The library's default retry waits 4 s, 8 s, ... between attempts: far longer than a throttle episode needs. Short delays here
+	// (link recovery stays in the library); withBackoff (retry.go) covers what still gets through.
+	client, err := azservicebus.NewClientFromConnectionString(d.cfg.ConnectionString, &azservicebus.ClientOptions{
+		RetryOptions: azservicebus.RetryOptions{MaxRetries: 3, RetryDelay: 200 * time.Millisecond, MaxRetryDelay: 2 * time.Second},
+	})
 	if err != nil {
 		return fmt.Errorf("servicebus: %w", err)
 	}
 	sender, err := client.NewSender(d.cfg.BroadcastTopic, nil)
 	if err == nil {
 		var batch *azservicebus.MessageBatch
-		batch, err = sender.NewMessageBatch(ctx, nil)
+		err = withBackoff(ctx, func() (e error) { batch, e = sender.NewMessageBatch(ctx, nil); return e })
 		if err == nil && batch.NumBytes() == 0 {
 			// Learn the link's maximum message size: the Standard tier and the emulator advertise 256 KiB.
 			if maxBytes := batchMaxBytes(batch); maxBytes > 0 && maxBytes-16*1024 < d.caps.MaxMessageBytes {
@@ -507,7 +546,7 @@ func (d *Driver) Declare(ctx context.Context, channels []transport.ChannelSpec) 
 		entity := d.entityFor(spec.Name, roleOf(spec))
 		if d.admin != nil {
 			if err := d.createEntity(ctx, entity, spec); err != nil {
-				return fmt.Errorf("servicebus: create %s %q: %w", entity.Kind, entity.Name, err)
+				return adminError(entity, err)
 			}
 		}
 		if err := d.verify(ctx, entity); err != nil {
@@ -567,6 +606,32 @@ func isoDuration(d time.Duration) string {
 	return fmt.Sprintf("PT%dS", max(secs, 1))
 }
 
+// missingHint says what to do about a missing entity: the emulator's entities come from deploy/scripts/servicebus-config.py, a real
+// namespace's from CreateEntities. queue is the missing queue's name ("" for a topic or subscription).
+func missingHint(emulator bool, queue string) string {
+	if !emulator {
+		return "create it, or turn on CreateEntities with a key that has Manage rights"
+	}
+	arg := ""
+	if queue != "" {
+		if _, id, ok := strings.Cut(queue, ".v1.plugin."); ok {
+			arg = " --plugin " + id
+		} else {
+			arg = " --queue " + queue
+		}
+	}
+	return "the emulator has no management API: run deploy/scripts/servicebus-config.py" + arg + ", then recreate the emulator (docs: deploy/README.md \"Service Bus entities\")"
+}
+
+// adminError names the entity when an administration call is refused for lack of the Manage right.
+func adminError(entity Entity, err error) error {
+	msg := err.Error()
+	if strings.Contains(msg, "401") || strings.Contains(msg, "403") || strings.Contains(msg, "Unauthorized") || strings.Contains(msg, "Forbidden") {
+		return fmt.Errorf("servicebus: cannot create %s %q: the connection string has no Manage right (create the entity yourself, or turn CreateEntities off): %w", entity.Kind, entity.Name, err)
+	}
+	return fmt.Errorf("servicebus: create %s %q: %w", entity.Kind, entity.Name, err)
+}
+
 func (d *Driver) verify(ctx context.Context, entity Entity) error {
 	d.mu.Lock()
 	_, known := d.senders[entity.Name]
@@ -576,7 +641,7 @@ func (d *Driver) verify(ctx context.Context, entity Entity) error {
 	}
 	sender, err := d.senderFor(entity.Name)
 	if err == nil {
-		_, err = sender.NewMessageBatch(ctx, nil)
+		err = withBackoff(ctx, func() error { _, e := sender.NewMessageBatch(ctx, nil); return e })
 	}
 	if err != nil {
 		d.mu.Lock()
@@ -586,15 +651,11 @@ func (d *Driver) verify(ctx context.Context, entity Entity) error {
 			_ = sender.Close(context.Background())
 		}
 		if entityMissing(err) {
-			where := "create it or turn on CreateEntities"
-			if d.cfg.Emulator {
-				where = "add it to deploy/infra/servicebus/Config.json and recreate the emulator"
-			}
-			kind := "queue"
+			kind, queue := "queue", entity.Name
 			if entity.Kind == EntityTopic {
-				kind = "topic"
+				kind, queue = "topic", ""
 			}
-			return fmt.Errorf("servicebus: %s %q does not exist (%s)", kind, entity.Name, where)
+			return fmt.Errorf("servicebus: %s %q does not exist (%s)", kind, entity.Name, missingHint(d.cfg.Emulator, queue))
 		}
 		return fmt.Errorf("servicebus: verify %q: %w", entity.Name, err)
 	}
@@ -644,8 +705,13 @@ func (d *Driver) Publish(ctx context.Context, channel string, event transport.Wi
 	if err != nil {
 		return "", fmt.Errorf("servicebus: sender for %s: %w", channel, err)
 	}
-	if err := sender.SendMessage(ctx, msg, nil); err != nil {
-		return "", fmt.Errorf("servicebus: send to %s: %w", channel, err)
+	if err := withBackoff(ctx, func() error {
+		if err := d.gate.take(ctx, len(event.Body)); err != nil {
+			return err
+		}
+		return sender.SendMessage(ctx, msg, nil)
+	}); err != nil {
+		return "", fmt.Errorf("servicebus: publish to %s (%s %s) failed: %w", channel, entity.Kind, entity.Name, describeError(err))
 	}
 	return transport.Accepted, nil
 }
@@ -687,7 +753,11 @@ func (d *Driver) Consume(ctx context.Context, channel string, opts transport.Con
 		s.queue = r
 		s.recv = r
 	case EntitySession:
-		r, err := client.AcceptSessionForQueue(ctx, entity.Name, entity.Session, &azservicebus.SessionReceiverOptions{ReceiveMode: mode})
+		var r *azservicebus.SessionReceiver
+		err := withBackoff(ctx, func() (e error) {
+			r, e = client.AcceptSessionForQueue(ctx, entity.Name, entity.Session, &azservicebus.SessionReceiverOptions{ReceiveMode: mode})
+			return e
+		})
 		if err != nil {
 			if sessionLocked(err) {
 				return nil, fmt.Errorf("servicebus: channel %s is already consumed by another process (session %s of %s is locked)", channel, entity.Session, entity.Name)
@@ -729,11 +799,7 @@ func (d *Driver) claimBroadcast(ctx context.Context, topic string) (*azservicebu
 				continue
 			}
 			if entityMissing(err) {
-				where := "create it or turn on CreateEntities"
-				if d.cfg.Emulator {
-					where = "add it to deploy/infra/servicebus/Config.json and recreate the emulator"
-				}
-				return nil, fmt.Errorf("servicebus: subscription %q of topic %q does not exist (%s)", name, topic, where)
+				return nil, fmt.Errorf("servicebus: subscription %q of topic %q does not exist (%s)", name, topic, missingHint(d.cfg.Emulator, ""))
 			}
 			return nil, fmt.Errorf("servicebus: accept broadcast session on %s/%s: %w", topic, name, err)
 		}
@@ -778,7 +844,8 @@ func (d *Driver) Stats(ctx context.Context, channel string) (transport.ChannelSt
 		d.peekers[entity.Name] = peeker
 		d.mu.Unlock()
 	}
-	msgs, err := peeker.PeekMessages(ctx, peekDepth, nil)
+	var msgs []*azservicebus.ReceivedMessage
+	err = withBackoff(ctx, func() (e error) { msgs, e = peeker.PeekMessages(ctx, peekDepth, nil); return e })
 	if err != nil {
 		return transport.ChannelStats{}, fmt.Errorf("servicebus: peek %s: %w", entity.Name, err)
 	}
@@ -926,7 +993,7 @@ func (s *subscription) run(ctx context.Context, hctx context.Context) {
 			del := &delivery{s: s, msg: m, attempt: max(int(m.DeliveryCount), 1)}
 			if !s.manual {
 				if s.session != nil && s.queue == nil && s.peekLock {
-					_ = s.recv.CompleteMessage(ctx, m, nil)
+					_ = s.d.settleRetry(ctx, len(m.Body), func(c context.Context) error { return s.recv.CompleteMessage(c, m, nil) })
 				}
 				del.settled.Store(true)
 				s.handler(hctx, toWire(m), del)
@@ -1062,10 +1129,12 @@ func (d *delivery) settle(ctx context.Context, ack, requeue bool) error {
 	defer func() { <-d.s.slots }()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
-	if !ack && requeue {
-		return d.s.recv.AbandonMessage(ctx, d.msg, nil)
-	}
-	return d.s.recv.CompleteMessage(ctx, d.msg, nil)
+	return d.s.d.settleRetry(ctx, len(d.msg.Body), func(c context.Context) error {
+		if !ack && requeue {
+			return d.s.recv.AbandonMessage(c, d.msg, nil)
+		}
+		return d.s.recv.CompleteMessage(c, d.msg, nil)
+	})
 }
 
 var (

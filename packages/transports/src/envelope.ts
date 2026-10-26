@@ -25,6 +25,9 @@
  * | `lferror`         | on a response: the error code (`manifest_mismatch`, `expired`, `bad_request`, `not_found`, `internal`, `cancelled`, `unavailable`, `capacity`, `too_large`); the body is `{ error, … }` |
  * | `lfenc`           | `aes-256-gcm` when the body is encrypted (nonce ‖ ciphertext ‖ tag)                          |
  * | `lfkeyid`         | the id of the key that encrypted and signed the event (rotation)                             |
+ * | `lfclaim`         | the claim-check key of the (encrypted) body in the shared store; the wire body is then empty    |
+ * | `lfclaimsize`     | byte length of the stored body                                                                |
+ * | `lfclaimsha256`   | hex SHA-256 of the stored body (which is the digest the signature covers)                    |
  * | `lfsig`           | hex HMAC-SHA256 over the canonical form of every other attribute plus the body digest        |
  *
  * **Binary mode** (the broker has headers): attributes are headers under their bare names, the body is the bytes.
@@ -115,6 +118,9 @@ export const LF_EXTENSIONS = [
   'lferror',
   'lfenc',
   'lfkeyid',
+  'lfclaim',
+  'lfclaimsize',
+  'lfclaimsha256',
   'lfsig',
 ] as const;
 export type LfExtension = (typeof LF_EXTENSIONS)[number];
@@ -126,7 +132,7 @@ export type AttributeName = (typeof KNOWN_ATTRIBUTES)[number];
 export type DeliveryMode = 'at-most-once' | 'at-least-once';
 
 /** Error codes a plugin puts in `lferror` on a response; the client maps them to typed errors. */
-export type RemoteErrorCode = 'manifest_mismatch' | 'expired' | 'bad_request' | 'not_found' | 'internal' | 'cancelled' | 'unavailable' | 'capacity' | 'too_large';
+export type RemoteErrorCode = 'manifest_mismatch' | 'expired' | 'bad_request' | 'not_found' | 'internal' | 'cancelled' | 'unavailable' | 'capacity' | 'too_large' | 'claim_unavailable';
 
 /** The decoded attributes of an event. All values are strings on the wire; `lfdeadline` and `lfattempt` are numeric strings. */
 export interface Attributes {
@@ -149,6 +155,9 @@ export interface Attributes {
   lferror?: RemoteErrorCode;
   lfenc?: 'aes-256-gcm';
   lfkeyid?: string;
+  lfclaim?: string;
+  lfclaimsize?: string;
+  lfclaimsha256?: string;
   lfsig?: string;
 }
 
@@ -250,6 +259,9 @@ export function validateAttributes(input: Record<string, string | undefined>, op
     ['lfidempotency', /^[\x21-\x7e]{1,256}$/],
     ['lfmanifest', /^[0-9a-f]{8,64}$/],
     ['lfkeyid', /^[0-9a-f]{8,32}$/],
+    ['lfclaim', /^claims\/\d{13}\/[A-Za-z0-9._-]{1,128}$/],
+    ['lfclaimsize', /^\d{1,12}$/],
+    ['lfclaimsha256', /^[0-9a-f]{64}$/],
     ['lfsig', /^[0-9a-f]{64}$/],
   ];
   for (const [name, re, max] of optional) {
@@ -260,6 +272,9 @@ export function validateAttributes(input: Record<string, string | undefined>, op
   if (lfenc) attributes.lfenc = 'aes-256-gcm';
   if (lferror) attributes.lferror = lferror as RemoteErrorCode;
   if (attributes.lfsig && !HEX_RE.test(attributes.lfsig)) throw bad('lfsig');
+  const claimed = [attributes.lfclaim, attributes.lfclaimsize, attributes.lfclaimsha256].filter((v) => v !== undefined).length;
+  if (claimed !== 0 && claimed !== 3) throw bad('lfclaim', 'needs lfclaimsize and lfclaimsha256 with it');
+  if (claimed === 3 && !lfenc) throw bad('lfclaim', 'is only valid on an encrypted body');
   return attributes;
 }
 

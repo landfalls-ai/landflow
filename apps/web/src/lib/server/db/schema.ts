@@ -13,7 +13,17 @@ export interface Migration {
   /** Statements for SQLite (and Postgres, unless `postgres` is set). */
   statements: string[];
   postgres?: string[];
+  /**
+   * Columns added only where the table lacks them, before `statements`: for a column that a shipped migration's
+   * `CREATE TABLE` gained later, so databases created before have it missing and newer ones have it already. SQLite checks
+   * `PRAGMA table_info`; Postgres uses `ADD COLUMN IF NOT EXISTS`.
+   */
+  addColumns?: Array<{ table: string; column: string; definition: string }>;
 }
+
+/** The `ALTER TABLE … ADD COLUMN` of an `addColumns` entry (identifiers come from this file, never from input). */
+export const addColumnSql = (c: { table: string; column: string; definition: string }, ifNotExists = false) =>
+  `ALTER TABLE ${c.table} ADD COLUMN ${ifNotExists ? 'IF NOT EXISTS ' : ''}${c.column} ${c.definition}`;
 
 export const SCHEMA_VERSION_TABLE = `CREATE TABLE IF NOT EXISTS schema_version (version BIGINT PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`;
 
@@ -842,6 +852,97 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  // 1750–1759: approvals for destructive MCP tools (lib/server/mcp/approvals.ts).
+  {
+    version: 1750,
+    name: 'mcp_grants_approval_mode',
+    statements: [
+      // When a grant's tools need a person's OK: `always` | `destructive` | `never` (NULL = the instance default, destructive). Replaces
+      // the older boolean `require_approval` (still written and read as an alias: 1 = destructive, 0 = never); existing values carry over.
+      `ALTER TABLE mcp_grants ADD COLUMN approval_mode TEXT`,
+      `UPDATE mcp_grants SET approval_mode = 'destructive' WHERE require_approval = 1`,
+      `UPDATE mcp_grants SET approval_mode = 'never' WHERE require_approval = 0`,
+    ],
+  },
+  {
+    version: 1751,
+    name: 'mcp_approvals',
+    statements: [
+      // An MCP tool call waiting for a person (`status` pending | approved | denied | expired | used). `args_hash` binds the answer to the
+      // exact arguments, `summary` is what the approver sees (clipped), `credentials` the names of the bound credentials (JSON), `used_at` is set when a retried call consumes an approval.
+      `CREATE TABLE IF NOT EXISTS mcp_approvals (
+        id TEXT PRIMARY KEY,
+        plugin_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        caller TEXT NOT NULL,
+        caller_user_id TEXT,
+        args_hash TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        credentials TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        decided_by TEXT,
+        decided_at TEXT,
+        used_at TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS mcp_approvals_status ON mcp_approvals (status, created_at)`,
+      `CREATE INDEX IF NOT EXISTS mcp_approvals_call ON mcp_approvals (plugin_id, tool, args_hash)`,
+    ],
+  },
+  // 1770–1779: triggers as MCP resources (lib/server/mcp/triggers.ts).
+  {
+    version: 1770,
+    name: 'mcp_trigger_subscriptions',
+    statements: [
+      // One row per (caller, trigger URI) a client subscribed to. `node` is the registered node (type, parameters, bound credentials) that
+      // `delete` of an app webhook needs once the subscription is gone, `static_data` what the plugin stored for the hook, `poll_state` the poll
+      // state (`ready` 0 until the baseline poll ran). `heartbeat_at` is the owning main's pulse: a row nobody pulses for is an orphan, and the
+      // sweep removes its webhook. `stopping` marks a subscription whose last stream ended: nothing runs for it, its events stay readable for a while.
+      `CREATE TABLE IF NOT EXISTS mcp_trigger_subs (
+        sub_key TEXT PRIMARY KEY,
+        plugin_id TEXT NOT NULL,
+        trigger TEXT NOT NULL,
+        uri TEXT NOT NULL,
+        user_key TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        node TEXT NOT NULL,
+        static_data TEXT NOT NULL,
+        poll_state TEXT,
+        ready INTEGER NOT NULL DEFAULT 0,
+        registered INTEGER NOT NULL DEFAULT 0,
+        stopping INTEGER NOT NULL DEFAULT 0,
+        owner TEXT,
+        polls INTEGER NOT NULL DEFAULT 0,
+        last_polled_at TEXT,
+        last_error TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        read_at TEXT,
+        heartbeat_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS mcp_trigger_subs_user ON mcp_trigger_subs (user_key)`,
+      // The newest events of a subscription (`id` sorts by time), pruned to a few dozen; `item` is the node item as JSON.
+      `CREATE TABLE IF NOT EXISTS mcp_trigger_events (
+        sub_key TEXT NOT NULL,
+        id TEXT NOT NULL,
+        at TEXT NOT NULL,
+        item TEXT NOT NULL,
+        PRIMARY KEY (sub_key, id)
+      )`,
+    ],
+  },
+  // 1780: the checkpoint columns that migration 1 gained on 2026-10-25 (resumed segments), for databases created before.
+  {
+    version: 1780,
+    name: 'execution_checkpoints_base',
+    statements: [],
+    addColumns: [
+      { table: 'execution_checkpoints', column: 'base_steps', definition: 'BIGINT NOT NULL DEFAULT 0' },
+      { table: 'execution_checkpoints', column: 'base_outputs', definition: 'TEXT' },
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -910,6 +1011,9 @@ export const TABLES = {
   mcp_grants: ['id'],
   mcp_catalog_servers: ['name', 'version'],
   mcp_gateway_resources: ['kind', 'name'],
+  mcp_approvals: ['id'],
+  mcp_trigger_subs: ['sub_key'],
+  mcp_trigger_events: ['sub_key', 'id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

@@ -29,6 +29,7 @@ from ..errors import ProtocolError, UnknownCredentialTypeError, UnknownMethodErr
 from .channels import ChannelNames
 from .driver import BrokerDriver
 from .drivers import driver_available, load_driver, native_driver_kinds
+from .claim import DEFAULT_CLAIM_TTL_MS, ClaimStore, claim_store_from_env
 from .security import Keyring
 from .server import DispatchContext, DispatchError, MessagingServer, idempotency_from_manifest
 
@@ -108,8 +109,14 @@ class MessagingBinding(Binding):
         announce_interval_ms: int | None = None,
         ttl_seconds: int | None = None,
         observe: Callable[[str, DispatchContext], None] | None = None,
+        claims: ClaimStore | None | bool = None,
+        claim_ttl_ms: int | None = None,
     ) -> None:
         self.kind = target.kind
+        #: The claim store for bodies too big for the broker. ``None``: the one ``LANDFLOW_CLAIM_STORE`` configures (S3-compatible,
+        #: docs/protocol.md §14.6), none when unset; ``False`` forces none. A malformed setting fails ``start``.
+        self.claims = claims
+        self.claim_ttl_ms = claim_ttl_ms
         self.target = target
         self.keyring = keyring
         self.registry_secret = registry_secret
@@ -124,6 +131,13 @@ class MessagingBinding(Binding):
         self._dispatcher = context.dispatcher
         keyring = self.keyring or Keyring.from_env()
         plugin, manifest = context.plugin, context.manifest
+        claims: ClaimStore | None = None if self.claims in (None, False) else self.claims  # type: ignore[assignment]
+        claim_ttl_ms = self.claim_ttl_ms
+        if self.claims is None:
+            setting = claim_store_from_env()
+            if setting is not None:
+                claims, claim_ttl_ms = setting.store, setting.ttl_ms
+                context.logger.info("claim check on (%s)", setting.describe)
         server = MessagingServer(
             driver=self.target.driver(),
             config=self.target.config,
@@ -140,6 +154,8 @@ class MessagingBinding(Binding):
             drain_timeout_ms=self.drain_timeout_ms,
             announce_interval_ms=self.announce_interval_ms,
             ttl_seconds=self.ttl_seconds,
+            claims=claims,
+            claim_ttl_ms=claim_ttl_ms or DEFAULT_CLAIM_TTL_MS,
             logger=context.logger,
         )
         server.start()

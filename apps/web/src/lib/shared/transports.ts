@@ -53,6 +53,13 @@ export interface TransportPolicy {
 export const DEFAULT_TRANSPORT_POLICY: TransportPolicy = { mode: 'auto', objective: 'balanced' };
 
 /**
+ * A workflow's override of one plugin's policy (workflow settings `transports`, by plugin id), for that workflow's runs:
+ * the fields it sets replace the plugin's, except `allowed`, which only narrows the plugin's allow-list. `pinned`
+ * without `mode` pins.
+ */
+export type WorkflowTransportOverride = Partial<TransportPolicy>;
+
+/**
  * Why a call went over its transport (`landflow.transport.reason` on `plugin.rpc` spans): the policy pinned it, it was
  * the only one, or Auto chose it for latency, spill-over, failover, an open breaker or the call's size.
  */
@@ -220,4 +227,10 @@ export interface TransportConnectionView {
 export interface TransportsResponse {
   kinds: TransportKindInfo[];
   connections: TransportConnectionView[];
+  /**
+   * The claim check: whether this host has a store (`LANDFLOW_CLAIM_STORE`) that carries bodies too big for a broker by
+   * reference. Without one, such a call fails `too_large` and may use another transport. `error` says why a malformed
+   * setting was ignored; `description` is the setting without credentials.
+   */
+  claimStore?: { configured: boolean; description?: string; error?: string };
 }

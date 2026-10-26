@@ -6,12 +6,17 @@
 #                                              LANDFLOW_<KIND>_URL            what a plugin connects to (kafka, amqp, jetstream, valkey)
 #                                              LANDFLOW_TRANSPORT_<KIND>_URL  what the host reads: one read-only connection `env-<kind>` per URL
 #                                              LANDFLOW_MAX_CONCURRENCY       calls a plugin replica runs at once (the spill-over and KEDA numbers follow from it)
-#   ConfigMap landflow-transport-<plugin>    LANDFLOW_TRANSPORTS for that plugin: which faces start. Only text-toolkit and messaging
-#                                              (TypeScript SDK) are listed; add a plugin by copying a line below. Go and Python plugins
-#                                              keep their defaults until they run the new SDKs.
+#   ConfigMap landflow-transport-<plugin>    LANDFLOW_TRANSPORTS for that plugin: which faces start. Every bundled plugin is listed
+#                                              (the TypeScript images carry all eleven client libraries, the Go images link the tier 1
+#                                              drivers, the Python images the native tier 1 drivers); add your own by copying a block.
 #   Secret landflow-transport                LANDFLOW_TRANSPORT_SECRET, the shared key for end-to-end encryption and signing over brokers
 #                                              (the host and every brokered plugin need the same value), and the AMQP URLs with the
 #                                              RabbitMQ credentials. Development values: replace the Secret for anything real.
+#
+# Claim check (docs/protocol.md §14.6): bodies too big for a broker go by reference through an S3-compatible bucket when the host
+# and every brokered plugin have the same LANDFLOW_CLAIM_STORE (add it to landflow-transport, e.g.
+# s3://landflow/claims?endpoint=http://minio.storage:9000&forcePathStyle=true) and LANDFLOW_CLAIM_ACCESS_KEY_ID /
+# LANDFLOW_CLAIM_SECRET_ACCESS_KEY (add them to the Secret). There is no bucket in these manifests, so it is off here.
 #
 # The URL list is the dev brokers of ../brokers. NATS runs as `jetstream` (buffered, redelivered, and what the KEDA scaler
 # reads); switch to core NATS with `nats` and LANDFLOW_NATS_URL / LANDFLOW_TRANSPORT_NATS_URL. Do not enable `nats` and
@@ -39,6 +44,26 @@ configMapGenerator:
     options: { disableNameSuffixHash: true }
     literals:
       - LANDFLOW_TRANSPORTS=http,grpc,kafka,amqp,jetstream,valkey
+  - name: landflow-transport-go-crypto
+    options: { disableNameSuffixHash: true }
+    literals:
+      - LANDFLOW_TRANSPORTS=http,grpc,kafka,amqp,jetstream,valkey
+  - name: landflow-transport-google-workspace
+    options: { disableNameSuffixHash: true }
+    literals:
+      - LANDFLOW_TRANSPORTS=http,grpc,kafka,amqp,jetstream,valkey
+  - name: landflow-transport-databases
+    options: { disableNameSuffixHash: true }
+    literals:
+      - LANDFLOW_TRANSPORTS=http,grpc,kafka,amqp,jetstream,valkey
+  - name: landflow-transport-py-insights
+    options: { disableNameSuffixHash: true }
+    literals:
+      - LANDFLOW_TRANSPORTS=http,grpc,kafka,amqp,jetstream,valkey
+  - name: landflow-transport-productivity
+    options: { disableNameSuffixHash: true }
+    literals:
+      - LANDFLOW_TRANSPORTS=http,grpc,kafka,amqp,jetstream,valkey
 secretGenerator:
   - name: landflow-transport
     options: { disableNameSuffixHash: true }
@@ -47,6 +72,19 @@ secretGenerator:
       - LANDFLOW_AMQP_URL=amqp://landflow:landflow-dev-only@rabbitmq:5672/
       - LANDFLOW_TRANSPORT_AMQP_URL=amqp://landflow:landflow-dev-only@rabbitmq:5672/
 patches:
+  # The plugins: their pod template changes with this component, so applying it (or going back to ../orbstack) rolls them;
+  # `envFrom` is read only when a container starts, and the base Deployments already reference these objects. Editing the
+  # ConfigMaps or the Secret later needs `kubectl rollout restart deploy -l app.kubernetes.io/component=plugin`.
+  - target: { kind: Deployment, labelSelector: app.kubernetes.io/component=plugin }
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: { name: plugin }
+      spec:
+        template:
+          metadata:
+            annotations:
+              landflow.dev/transports: broker-transports
   # The host: one connection per LANDFLOW_TRANSPORT_<KIND>_URL, and the secret that keys the envelopes.
   - target: { kind: Deployment, name: landflow-host }
     patch: |-

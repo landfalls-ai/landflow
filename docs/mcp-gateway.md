@@ -247,6 +247,37 @@ real: without the audience mapper (Keycloak's default `aud` is `account`) every 
 Note `mcp_protocol_version: 2025-06-18` in the protected resource metadata: the authorization metadata is still
 described at that revision, while the MCP traffic negotiates up to 2026-07-28.
 
+## Sign-in with Landflow MCP tokens (dev)
+
+Without `mcpAuthentication` the gateway forwards no caller identity, so an agent that connects to `/mcp` with a token
+from Settings → MCP is anonymous there and sees no tools. `deploy/mcp-gateway/config.tokens.yaml` (used by
+`compose.tokens.yml`) checks Landflow-issued tokens instead of Keycloak's, in `mode: optional`:
+
+```yaml
+mcp:
+  policies:
+    mcpAuthentication:
+      mode: optional                                       # no token: anonymous (no grants); a bad token: 401
+      issuer: http://localhost:3000                        # = the host's LANDFLOW_PUBLIC_URL
+      audiences: [http://127.0.0.1:54000/mcp]              # = <LANDFLOW_MCP_GATEWAY_PUBLIC_URL>/mcp
+      jwks: { url: http://host.docker.internal:3000/api/mcp/jwks }
+      resourceMetadata: { resource: http://127.0.0.1:54000/mcp, authorization_servers: [http://localhost:3000], bearer_methods_supported: [header] }
+```
+
+The host writes the per-plugin routes, so it adds the same check to each one from `LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES`
+(the JSON in `deploy/.env.example`). agentgateway refuses a route whose `mcpAuthentication` has no `resourceMetadata`
+(422 "missing field `resourceMetadata`"), so the host gives each route its own: the route's URL on
+`LANDFLOW_MCP_GATEWAY_PUBLIC_URL` as the resource and the policy's issuer as the authorization server. The JWKS is fetched at startup, so start the dev server first. The Kubernetes
+equivalent is `k8s/components/gateway-landflow-tokens`.
+
+Verified on the dev stack (2026-10-26), with a token granted every tool of `text-toolkit`:
+
+| Check | `/mcp` | `/mcp/plugins/text-toolkit` |
+|---|---|---|
+| No token | 200, 0 tools | 200, 0 tools |
+| A garbage token | 401, `WWW-Authenticate: Bearer resource_metadata="http://127.0.0.1:54000/.well-known/oauth-protected-resource/mcp"` | 401, the metadata at `…/oauth-protected-resource/mcp/plugins/text-toolkit` (without the route policy: 200 and anonymous) |
+| The granted token | `text-toolkit_slugify`, `text-toolkit_changeCase`; `tools/call` runs as the token's user | `slugify`, `changeCase` (one target, so unprefixed); `tools/call` the same |
+
 ## The file fallback
 
 `deploy/mcp-gateway/config.file.yaml` (`storage.mode: file`, `compose.file.yml` mounts a writable directory at

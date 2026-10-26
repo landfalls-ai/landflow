@@ -15,7 +15,7 @@
  * such as the in-memory driver.
  */
 import { randomBytes } from 'node:crypto';
-import { channelNames, channelSpecs, Keyring, MessagingClient, type AnnouncedPlugin, type BrokerDriver, type Logger as MessagingLogger, type PluginEvent } from '@landflow/transports';
+import { channelNames, channelSpecs, claimStoreFromEnv, Keyring, MessagingClient, type ClaimSetting, type AnnouncedPlugin, type BrokerDriver, type Logger as MessagingLogger, type PluginEvent } from '@landflow/transports';
 import { availableDriverKinds, loadDriverModule, type DriverModule } from '@landflow/transports/drivers';
 import type { BrokerQueueStats, TransportConnectionHealth, TransportKind } from '../../shared/transports';
 import type { DiscoverySource } from '../../shared/types';
@@ -157,6 +157,8 @@ export class BrokerConnectionManager {
   private discovery?: BrokerDiscovery;
   private keyring?: Keyring;
   private secretError?: string;
+  private claim?: ClaimSetting;
+  private claimError?: string;
   private stopListening: Array<() => void> = [];
   private state: 'new' | 'started' | 'stopped' = 'new';
   private syncing?: Promise<void>;
@@ -201,6 +203,19 @@ export class BrokerConnectionManager {
       this.keyring = undefined;
       this.secretError = (error as Error).message;
     }
+    // The claim check (docs/protocol.md §14.6): one store, shared by every connection, from LANDFLOW_CLAIM_STORE.
+    this.claim = undefined;
+    this.claimError = undefined;
+    try {
+      this.claim = claimStoreFromEnv(this.env);
+    } catch (error) {
+      this.claimError = (error as Error).message;
+    }
+  }
+
+  /** Whether a claim store (for bodies too big for a broker) is configured on this host; read-only, for the API and Settings. */
+  claimStoreInfo(): { configured: boolean; description?: string; error?: string } {
+    return this.claim ? { configured: true, description: this.claim.describe } : { configured: false, ...(this.claimError && { error: this.claimError }) };
   }
 
   get hasSecret(): boolean {
@@ -262,6 +277,8 @@ export class BrokerConnectionManager {
         keyring: this.keyring,
         hostInstanceId: this.hostInstanceId,
         registrySecret: this.env.LANDFLOW_REGISTRY_SECRET || null,
+        claims: this.claim?.store,
+        claimTtlMs: this.claim?.ttlMs,
         statsIntervalMs: this.options.statsIntervalMs,
         log: messagingLog(connection.id),
       });

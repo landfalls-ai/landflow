@@ -165,6 +165,11 @@ export function attemptOf(packet: Pick<IPublishPacket, 'properties'>): number {
 /** Message Expiry Interval takes whole seconds (minimum 1). */
 export const expirySeconds = (ms: number): number => Math.max(1, Math.ceil(ms / 1000));
 
+/** Disables Nagle on the client's socket (re-applied after every reconnect: MQTT.js builds a new stream each time). */
+function setNoDelay(client: MqttClient): void {
+  (client as unknown as { stream?: { setNoDelay?: (on: boolean) => void } }).stream?.setNoDelay?.(true);
+}
+
 export class MqttDriver implements BrokerDriver<MqttConfig> {
   readonly kind = 'mqtt';
   /** Per instance: `connect()` lowers `maxMessageBytes` to the broker's Maximum Packet Size. */
@@ -213,8 +218,10 @@ export class MqttDriver implements BrokerDriver<MqttConfig> {
       throw new Error(`mqtt: cannot connect to ${redact(config.url)}: ${(error as Error).message}`);
     }
     this.client = client;
+    setNoDelay(client);
     this.applyConnack((client as unknown as { connackPacket?: IConnackPacket }).connackPacket);
     client.on('connect', (connack) => {
+      setNoDelay(client);
       this.applyConnack(connack);
       if (this.state === 'reconnecting') this.state = 'connected';
     });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { connectionTypeSchema } from '@landflow/protocol';
+import { workflowTransportOverrideSchema } from './transports/schema';
 
 export const workflowNodeSchema = z.object({
   id: z.string().min(1),
@@ -94,6 +95,8 @@ export const workflowSchema = z
         aiMaxCostPerExecution: z.number().min(0).optional(),
         aiMaxTokensPerDay: z.number().int().min(0).optional(),
         aiMaxCostPerDay: z.number().min(0).optional(),
+        /** Transport policy overrides by plugin id for this workflow's runs (transports/policy-store.ts withWorkflowOverride). */
+        transports: z.record(z.string().min(1).max(128), workflowTransportOverrideSchema).optional(),
       })
       .optional(),
     stickyNotes: z

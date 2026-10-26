@@ -12,6 +12,7 @@ export * from './envelope';
 export * from './channels';
 export * from './errors';
 export * from './security';
+export * from './claim';
 export { Codec, consoleLogger, silentLogger, type Logger, type PackedEvent } from './codec';
 export * from './client';
 export * from './server';

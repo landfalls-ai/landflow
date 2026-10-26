@@ -16,6 +16,7 @@ import { bootstrapOwnerFromEnv } from './auth/bootstrap';
 import { startBinaryMaintenance } from './binary/access';
 import { marketplace } from './marketplace/service';
 import { mcpGatewaySync } from './mcp/gateway-sync';
+import { triggerSubscriptionSweeper } from './mcp/triggers';
 import { startDataMaintenance } from './maintenance';
 import { openDatabase } from './db';
 import { startOnlineEvaluations } from './evaluations/online';
@@ -74,6 +75,8 @@ export function ensureBootstrapped(): Promise<void> {
     // Projects: credentials and agents (files) and anything else without a project go to the owner's personal project.
     leaderService('project adoption', adoptUnassignedResources);
     leaderService('scheduler', () => scheduler.start(), () => scheduler.stop());
+    // Webhooks of MCP trigger subscriptions whose main died (lib/server/mcp/triggers.ts).
+    leaderService('mcp trigger subscriptions', () => triggerSubscriptionSweeper.start(), () => triggerSubscriptionSweeper.stop());
     // Waiting executions: re-arm their timers; overdue ones resume shortly (plugins get a moment to announce).
     leaderService('wait timers', () => waits.start(), () => waits.stop());
     // Runs a restart interrupted continue from their last checkpoint, then queued runs start (plugins announce first).

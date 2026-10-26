@@ -2,7 +2,7 @@
 /**
  * Workflow settings (n8n's Workflow settings dialog): error workflow, time
  * zone, timeout, which workflows may call this one, which executions are
- * kept, concurrency, automatic retries and AI usage limits. This dialog only edits and saves
+ * kept, concurrency, automatic retries, AI usage limits and transport overrides. This dialog only edits and saves
  * `workflow.settings`; the engine and runner apply them. Its Governance section (four-eyes publishing, allowed nodes)
  * is the workflow's policy, saved on its own route first (./workflow-governance.tsx).
  */
@@ -10,7 +10,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Settings2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import type { WorkflowSettings, WorkflowSummary } from '@/lib/shared/types';
+import type { PluginSummary, WorkflowSettings, WorkflowSummary } from '@/lib/shared/types';
+import { transportLabel, type TransportObjective, type TransportPolicy, type WorkflowTransportOverride } from '@/lib/shared/transports';
 import { Dialog, Field, ToggleRow } from '../agents/dialog';
 import { Button } from '../ui/button';
 import { Input, Select } from '../ui/inputs';
@@ -53,6 +54,68 @@ function timeZones(): string[] {
   }
 }
 
+const OBJECTIVE_LABELS: Record<TransportObjective, string> = { balanced: 'balanced', latency: 'lowest latency', throughput: 'throughput' };
+
+function policyText(policy: TransportPolicy | undefined): string {
+  if (!policy) return 'Auto, balanced';
+  if (policy.mode === 'pinned' && policy.pinned) return `always ${transportLabel(policy.pinned)}`;
+  return `Auto, ${OBJECTIVE_LABELS[policy.objective]}${policy.allowed?.length ? ` over ${policy.allowed.map(transportLabel).join(', ')}` : ''}`;
+}
+
+/** An override as the picker shows it: '' (the plugin's policy), `auto:<objective>`, `pin:<kind>`, or `custom` (an allow-list set through the API). */
+function overrideChoice(override: WorkflowTransportOverride | undefined): string {
+  if (!override) return '';
+  if (override.allowed) return 'custom';
+  if (override.mode === 'pinned' || (!override.mode && override.pinned)) return `pin:${override.pinned}`;
+  return `auto:${override.objective ?? 'balanced'}`;
+}
+
+/**
+ * Workflow settings → Transports: per plugin this workflow uses, the plugin's own policy (Settings → Plugins) or this
+ * workflow's override of it for its runs (settings `transports`; the host's withWorkflowOverride). Pins only offer the
+ * kinds the plugin's allow-list keeps, since an override can't widen it.
+ */
+function TransportOverrides({ plugins, value, onChange }: { plugins: PluginSummary[]; value: WorkflowSettings['transports']; onChange: (next: WorkflowSettings['transports']) => void }) {
+  const set = (pluginId: string, choice: string) => {
+    const next = { ...value };
+    if (!choice) delete next[pluginId];
+    else if (choice.startsWith('pin:')) next[pluginId] = { mode: 'pinned', pinned: choice.slice(4) };
+    else if (choice.startsWith('auto:')) next[pluginId] = { mode: 'auto', objective: choice.slice(5) as TransportObjective };
+    onChange(Object.keys(next).length ? next : undefined);
+  };
+  return (
+    <div className="space-y-2">
+      <div className="text-[12px] font-semibold text-t2">Transports</div>
+      {plugins.map((plugin) => {
+        const allowed = plugin.policy?.allowed;
+        const kinds = (plugin.transports ?? []).map((t) => t.kind).filter((kind) => !allowed || allowed.includes(kind));
+        const choice = overrideChoice(value?.[plugin.id]);
+        return (
+          <Field key={plugin.id} id={`wf-transport-${plugin.id}`} label={plugin.info.name}>
+            <Select id={`wf-transport-${plugin.id}`} value={choice} onChange={(e) => set(plugin.id, e.target.value)}>
+              <option value="">Plugin&apos;s policy ({policyText(plugin.policy)})</option>
+              {(Object.keys(OBJECTIVE_LABELS) as TransportObjective[]).map((objective) => (
+                <option key={objective} value={`auto:${objective}`}>
+                  Auto, {OBJECTIVE_LABELS[objective]}
+                </option>
+              ))}
+              {kinds.map((kind) => (
+                <option key={kind} value={`pin:${kind}`}>
+                  Always {transportLabel(kind)}
+                </option>
+              ))}
+              {choice === 'custom' && <option value="custom">Custom (set through the API)</option>}
+            </Select>
+          </Field>
+        );
+      })}
+      <p className="text-[12px] leading-snug text-t3">
+        How this workflow&apos;s runs reach each plugin it uses. An override replaces the plugin&apos;s policy for these runs only; the plugin&apos;s allow-list still applies. The editor&apos;s pickers and other workflows keep the plugin&apos;s policy.
+      </p>
+    </div>
+  );
+}
+
 export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSave: () => Promise<boolean> }) {
   const workflowId = useEditor((s) => s.workflowId);
   const [draft, setDraft] = useState<WorkflowSettings>(() => structuredClone(useEditor.getState().settings));
@@ -66,6 +129,8 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
     () => Object.fromEntries(AI_LIMITS.map(({ key }) => [key, draft[key] ? String(draft[key]) : ''])) as Record<AiLimitKey, string>,
   );
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>();
+  const [plugins, setPlugins] = useState<PluginSummary[]>();
+  const nodeTypes = useEditor((s) => s.nodes.map((n) => n.data.wf.type).join('\n'));
   const [saving, setSaving] = useState(false);
   const governance = useWorkflowGovernance(workflowId);
   const zones = useMemo(timeZones, []);
@@ -76,6 +141,17 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
       .then(({ workflows: list }) => setWorkflows(list.filter((w) => w.id !== workflowId)))
       .catch(() => setWorkflows([]));
   }, [workflowId]);
+
+  useEffect(() => {
+    api<{ plugins: PluginSummary[] }>('/api/plugins')
+      .then(({ plugins: list }) => setPlugins(list))
+      .catch(() => setPlugins([]));
+  }, []);
+  // The out-of-process plugins the workflow's nodes use (in-process core nodes have no transport), and any with an override already.
+  const transportPlugins = useMemo(() => {
+    const ids = new Set([...nodeTypes.split('\n').map((type) => type.slice(0, type.indexOf('.'))), ...Object.keys(draft.transports ?? {})]);
+    return (plugins ?? []).filter((p) => ids.has(p.id) && p.transports);
+  }, [plugins, nodeTypes, draft.transports]);
 
   // Workflows with an Error Trigger first: those are the ones that can handle errors.
   const errorTargets = useMemo(
@@ -451,6 +527,8 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
             Input and output tokens of every model call (sub-workflows included), cost estimated from the price table in Settings. A run that goes over stops with an error; the day is the instance time zone. Empty or 0: no cap.
           </p>
         </div>
+
+        {transportPlugins.length > 0 && <TransportOverrides plugins={transportPlugins} value={draft.transports} onChange={(transports) => patch({ transports })} />}
 
         <WorkflowGovernanceSection state={governance} />
       </div>

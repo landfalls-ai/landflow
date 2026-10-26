@@ -6,12 +6,14 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,6 +23,7 @@ type crossSeal struct {
 	Data       any               `json:"data"`
 	Encrypt    bool              `json:"encrypt"`
 	Mode       string            `json:"mode"`
+	Claim      bool              `json:"claim,omitempty"`
 }
 
 type crossOpen struct {
@@ -40,7 +43,8 @@ type crossOutput struct {
 		Data       any               `json:"data"`
 		Error      string            `json:"error"`
 	} `json:"opened"`
-	ManifestHash string `json:"manifestHash"`
+	ManifestHash string            `json:"manifestHash"`
+	Claims       map[string]string `json:"claims"`
 }
 
 func findTSX(t *testing.T) string {
@@ -320,4 +324,110 @@ func TestCrossLanguageManifestHash(t *testing.T) {
 		t.Fatal("idempotency from manifest")
 	}
 	_ = asJSON
+}
+
+// The claim check: a body too big for the broker (4 KiB here) goes by reference. TS seals a request and a response with a
+// claim store, Go resolves and opens them; Go seals them, TS resolves and opens them. The reference is signed on both sides.
+func TestCrossLanguageClaimCheck(t *testing.T) {
+	const pluginID = "cross-plugin"
+	ring := MustKeyring(vecSecret)
+	blob := strings.Repeat("x", 20000)
+	request := map[string]any{"node": map[string]any{"type": pluginID + ".echo"}, "inputs": []any{[]any{map[string]any{"json": map[string]any{"blob": blob}}}}, "credentials": map[string]any{"api": map[string]any{"token": "top-secret-token"}}}
+	response := map[string]any{"outputs": []any{[]any{map[string]any{"json": map[string]any{"blob": blob}}}}}
+	type claimKind struct {
+		name  string
+		typ   string
+		data  any
+		extra func(*Attributes)
+	}
+	kinds := []claimKind{
+		{"request", RequestType(MethodExecute), request, func(a *Attributes) {
+			a.Source = HostSource("h1")
+			a.LfDeadline = "1793102430000"
+			a.LfDelivery = AtLeastOnce
+		}},
+		{"response", ResponseType(MethodExecute), response, func(a *Attributes) {
+			a.Source = PluginSource(pluginID, "i1")
+			a.LfCorrelation = "call-1"
+		}},
+	}
+	for _, mode := range []string{"binary", "structured"} {
+		caps := Capabilities{MaxMessageBytes: 4096, Headers: mode == "binary"}
+
+		// TS seals, Go resolves and opens.
+		var seal []crossSeal
+		for _, k := range kinds {
+			a := baseAttributes(k.typ, "ts-claim-"+k.name+"-"+mode)
+			k.extra(&a)
+			seal = append(seal, crossSeal{Attributes: attributesToMap(a), Data: k.data, Encrypt: true, Mode: mode, Claim: true})
+		}
+		out := runCrossLang(t, map[string]any{"secret": vecSecret, "pluginId": pluginID, "seal": seal})
+		store := NewMemoryClaimStore()
+		for key, b64 := range out.Claims {
+			body, _ := base64.StdEncoding.DecodeString(b64)
+			store.Set(key, body)
+		}
+		codec := NewCodec(ring, caps, CodecOptions{Claims: store})
+		if len(out.Sealed) != len(kinds) || len(out.Claims) != len(kinds) {
+			t.Fatalf("%s: %d sealed, %d claims", mode, len(out.Sealed), len(out.Claims))
+		}
+		for i, s := range out.Sealed {
+			body, _ := base64.StdEncoding.DecodeString(s.BodyBase64)
+			raw, err := codec.Peek(WireEvent{Headers: s.Headers, Body: body})
+			if err != nil {
+				t.Fatalf("%s/%s: peek: %v", kinds[i].name, mode, err)
+			}
+			if raw.Attributes.LfClaim == "" || len(body) > 1000 && mode == "binary" {
+				t.Fatalf("%s/%s: not a reference: %+v (%d body bytes)", kinds[i].name, mode, raw.Attributes, len(body))
+			}
+			resolved, key, err := codec.ResolveClaim(context.Background(), raw, pluginID)
+			if err != nil || key != raw.Attributes.LfClaim {
+				t.Fatalf("%s/%s: resolve: %v", kinds[i].name, mode, err)
+			}
+			opened, err := codec.Unpack(resolved, pluginID)
+			if err != nil {
+				t.Fatalf("%s/%s: open: %v", kinds[i].name, mode, err)
+			}
+			var got any
+			if err := ParseBody(opened.Body, &got); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, jsonRoundTrip(t, kinds[i].data)) {
+				t.Fatalf("%s/%s: data differs", kinds[i].name, mode)
+			}
+			// A swapped reference must fail the signature before the store is touched.
+			swapped := raw
+			swapped.Attributes.LfClaim = ClaimKeyFor(time.UnixMilli(1), "swapped")
+			if _, _, err := codec.ResolveClaim(context.Background(), swapped, pluginID); err == nil {
+				t.Fatalf("%s/%s: a swapped reference was accepted", kinds[i].name, mode)
+			}
+		}
+
+		// Go seals, TS resolves and opens.
+		goStore := NewMemoryClaimStore()
+		goCodec := NewCodec(ring, caps, CodecOptions{Claims: goStore})
+		var open []crossOpen
+		for _, k := range kinds {
+			a := baseAttributes(k.typ, "go-claim-"+k.name+"-"+mode)
+			k.extra(&a)
+			packed, err := goCodec.PackBodyClaimedAny(context.Background(), pluginID, a, k.data, true)
+			if err != nil || packed.ClaimKey == "" {
+				t.Fatalf("%s/%s: pack: %v", k.name, mode, err)
+			}
+			open = append(open, crossOpen{Headers: packed.Wire.Headers, BodyBase64: base64.StdEncoding.EncodeToString(packed.Wire.Body), Mode: mode})
+		}
+		claims := map[string]string{}
+		for _, key := range goStore.Keys("claims/") {
+			claims[key] = base64.StdEncoding.EncodeToString(goStore.Object(key))
+		}
+		res := runCrossLang(t, map[string]any{"secret": vecSecret, "pluginId": pluginID, "open": open, "claims": claims})
+		for i, o := range res.Opened {
+			if o.Error != "" {
+				t.Fatalf("%s/%s: TS refused: %s", kinds[i].name, mode, o.Error)
+			}
+			if !reflect.DeepEqual(o.Data, jsonRoundTrip(t, kinds[i].data)) || o.Attributes["lfclaim"] == "" {
+				t.Fatalf("%s/%s: TS read %v", kinds[i].name, mode, o.Attributes)
+			}
+		}
+	}
 }

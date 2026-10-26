@@ -29,6 +29,11 @@ x-plugin-env: &plugin-env
   # and signed with the transport secret, which must equal the host's LANDFLOW_TRANSPORT_SECRET.
   LANDFLOW_TRANSPORTS: ${LANDFLOW_PLUGIN_TRANSPORTS:-http,grpc}
   LANDFLOW_TRANSPORT_SECRET: ${LANDFLOW_TRANSPORT_SECRET:-}
+  # Claim check (protocol §14.6): bodies too big for a broker go by reference through an S3-compatible bucket. Set the same
+  # three values here and on web (for MinIO on the infra stack: s3://landflow/claims?endpoint=http://host.docker.internal:59000&forcePathStyle=true).
+  LANDFLOW_CLAIM_STORE: ${LANDFLOW_CLAIM_STORE:-}
+  LANDFLOW_CLAIM_ACCESS_KEY_ID: ${LANDFLOW_CLAIM_ACCESS_KEY_ID:-}
+  LANDFLOW_CLAIM_SECRET_ACCESS_KEY: ${LANDFLOW_CLAIM_SECRET_ACCESS_KEY:-}
   # The plugin's own MCP face is off in containers: agents reach plugins through the host's per-plugin endpoints and the bundled
   # gateway. To turn it on set LANDFLOW_PLUGIN_MCP=on and LANDFLOW_PLUGIN_MCP_TOKEN (a container listens on 0.0.0.0, so a token is required).
   LANDFLOW_MCP: ${LANDFLOW_PLUGIN_MCP:-off}
@@ -68,6 +73,10 @@ services:
       LANDFLOW_INTERNAL_URL: http://web:3000
       # Files live under /data/binary; LANDFLOW_BINARY_STORE=s3 with LANDFLOW_S3_* moves them to S3 or MinIO.
       LANDFLOW_BINARY_STORE: ${LANDFLOW_BINARY_STORE:-filesystem}
+      # The broker claim check (see x-plugin-env): the same store as the plugins, or none.
+      LANDFLOW_CLAIM_STORE: ${LANDFLOW_CLAIM_STORE:-}
+      LANDFLOW_CLAIM_ACCESS_KEY_ID: ${LANDFLOW_CLAIM_ACCESS_KEY_ID:-}
+      LANDFLOW_CLAIM_SECRET_ACCESS_KEY: ${LANDFLOW_CLAIM_SECRET_ACCESS_KEY:-}
       # Marketplace node plugins run as child processes inside this container.
       LANDFLOW_MARKETPLACE_REGISTRY_URL: http://127.0.0.1:3000
       OLLAMA_URL: ${LANDFLOW_OLLAMA_URL:-http://host.docker.internal:11434}

@@ -27,7 +27,7 @@ FROM pnpm AS manifests
 COPY . /src
 RUN cd /src && mkdir /manifests \
  && find . -name package.json -not -path '*/node_modules/*' \
-    | tar -cf - -T - pnpm-lock.yaml pnpm-workspace.yaml | tar -xf - -C /manifests
+    | tar -cf - -T - pnpm-lock.yaml pnpm-workspace.yaml patches | tar -xf - -C /manifests
 
 # esbuild bundles src/ into dist/main.mjs and dist/forward.mjs: no TypeScript tooling at runtime.
 FROM pnpm AS build

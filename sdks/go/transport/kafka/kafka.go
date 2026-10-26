@@ -3,13 +3,17 @@
 //
 //   - A topic per channel; records carry the CloudEvents attributes as `ce_`
 //     headers (binary mode) and the ordering key as the record key.
-//   - Work sharing: a **share group** (KIP-932, Kafka 4.2+; the local broker is
-//     4.3 with share.version=1) when Config.Mode is ModeShare, the default:
-//     records are acquired and acknowledged one by one, a released record goes
-//     to another consumer and DeliveryCount counts the attempts. ModeGroup uses
-//     a classic consumer group (parallelism up to the partition count, commits
-//     instead of acks; a requeue re-publishes the record with lf-attempt + 1,
-//     like the TS driver, and attempts are not claimed).
+//   - Work sharing: a classic **consumer group** when Config.Mode is ModeGroup,
+//     the default and what the TS and Python drivers do (works on every Kafka
+//     and Redpanda, parallelism up to the partition count, commits instead of
+//     acks, group lag for KEDA). A requeue, a graceful close and a rebalance
+//     that moves a partition under a held call re-publish or commit like the TS
+//     driver, so a record is handed to a survivor and not run twice; a record
+//     re-read after a hard crash counts as attempt 1. ModeShare uses a Kafka
+//     **share group** (KIP-932, Kafka 4.2+; the local broker is 4.3 with
+//     share.version=1): records are acquired and acknowledged one by one, a
+//     released record goes to another consumer and DeliveryCount counts the
+//     attempts. Replicas of one plugin must all use the same mode.
 //   - Replies: a reply topic per host (RepliesChannel); the core correlates.
 //   - Broadcast channels (reply, registry, control): every consumer reads the
 //     topic from its end without a group.
@@ -62,17 +66,19 @@ type Mode string
 
 const (
 	// ModeShare: a Kafka share group (KIP-932, Kafka 4.2+ with the share.version
-	// feature; the default): per-record acquisition and acknowledgement, release
+	// feature; opt-in): per-record acquisition and acknowledgement, release
 	// = requeue, truthful delivery counts, a crashed member's records redelivered
 	// at once. Caveat: franz-go auto-accepts the records of a poll on the next
 	// poll, so a consumer holding an at-least-once delivery fetches nothing more
 	// until it settles it (the default at-most-once path is unaffected).
 	ModeShare Mode = "share"
-	// ModeGroup: a classic consumer group (what the TS driver uses: works on
-	// every Kafka and Redpanda; the low-water mark of acknowledged offsets is
-	// committed; a requeue republishes the record with lf-attempt + 1). A record
-	// a crashed member held is re-read by the survivor only after the rebalance,
-	// as attempt 1 (Attempts is not claimed).
+	// ModeGroup: a classic consumer group (the default, what the TS and Python
+	// drivers use: works on every Kafka and Redpanda; the low-water mark of
+	// acknowledged offsets is committed; a requeue or a graceful close
+	// republishes the record with lf-attempt + 1; a partition revoked under a
+	// held call commits it, so the new owner does not run it twice). A record a
+	// crashed member held is re-read by the survivor after the rebalance, as
+	// attempt 1.
 	ModeGroup Mode = "group"
 )
 
@@ -81,7 +87,7 @@ type Config struct {
 	transport.Config
 	// Brokers are the bootstrap addresses ("127.0.0.1:59092").
 	Brokers []string
-	// Mode: ModeShare (default; needs Kafka 4.2+) or ModeGroup.
+	// Mode: ModeGroup (default) or ModeShare (needs Kafka 4.2+).
 	Mode Mode
 	// ClientID is sent to the broker (default "landflow").
 	ClientID string
@@ -118,7 +124,7 @@ type Driver struct {
 // New returns an unconnected driver; defaults are filled in.
 func New(cfg Config) *Driver {
 	if cfg.Mode == "" {
-		cfg.Mode = ModeShare
+		cfg.Mode = ModeGroup
 	}
 	if cfg.ClientID == "" {
 		cfg.ClientID = "landflow"
@@ -155,7 +161,7 @@ func New(cfg Config) *Driver {
 			Headers:         true,
 			OrderingKeys:    true,
 			Nack:            true,
-			Attempts:        cfg.Mode == ModeShare, // a consumer group re-reads a crashed member's records as attempt 1
+			Attempts:        true, // a requeue or a graceful close re-publishes with the next attempt; a record re-read after a hard crash counts as attempt 1
 		},
 		subs: map[*subscription]struct{}{},
 	}
@@ -204,10 +210,10 @@ func ConfigFromURL(connectionID, rawURL string, opts transport.ConnectionOptions
 		cfg.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 	switch mode := strings.ToLower(opts.Fields["mode"]); mode {
-	case "", "share":
-		cfg.Mode = ModeShare
-	case "group":
+	case "", "group":
 		cfg.Mode = ModeGroup
+	case "share":
+		cfg.Mode = ModeShare
 	default:
 		return Config{}, fmt.Errorf("kafka: mode %q must be share or group", mode)
 	}
@@ -376,6 +382,12 @@ func (d *Driver) Consume(ctx context.Context, channel string, opts transport.Con
 	assigned := make(chan struct{})
 	var assignedOnce sync.Once
 	onAssigned := func(context.Context, *kgo.Client, map[string][]int32) { assignedOnce.Do(func() { close(assigned) }) }
+	var sub atomic.Pointer[subscription] // set once the subscription exists; the callbacks only fire after the first poll
+	onRevoked := func(ctx context.Context, _ *kgo.Client, revoked map[string][]int32) {
+		if s := sub.Load(); s != nil {
+			s.commitHeldOnRevoke(ctx, revoked)
+		}
+	}
 	switch {
 	case opts.Group == "":
 		// Broadcast: read from the exact end offsets of now, so nothing published after Consume returns is missed.
@@ -407,7 +419,7 @@ func (d *Driver) Consume(ctx context.Context, channel string, opts transport.Con
 		kopts = append(kopts, kgo.ConsumeTopics(channel), kgo.ShareGroup(opts.Group), kgo.ShareMaxRecords(int32(prefetch)), kgo.ShareMaxRecordsStrict())
 		time.AfterFunc(3*time.Second, func() { assignedOnce.Do(func() { close(assigned) }) })
 	default:
-		kopts = append(kopts, kgo.ConsumeTopics(channel), kgo.ConsumerGroup(opts.Group), kgo.DisableAutoCommit(), kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), kgo.OnPartitionsAssigned(onAssigned))
+		kopts = append(kopts, kgo.ConsumeTopics(channel), kgo.ConsumerGroup(opts.Group), kgo.DisableAutoCommit(), kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), kgo.OnPartitionsAssigned(onAssigned), kgo.OnPartitionsRevoked(onRevoked))
 	}
 	client, err := kgo.NewClient(kopts...)
 	if err != nil {
@@ -423,6 +435,7 @@ func (d *Driver) Consume(ctx context.Context, channel string, opts transport.Con
 	d.mu.Lock()
 	d.subs[s] = struct{}{}
 	d.mu.Unlock()
+	sub.Store(s)
 	go s.run(runCtx)
 	// A grouped consumer is ready once the group assigned it partitions (bounded, so a slow rebalance is not fatal).
 	wait := 15 * time.Second
@@ -541,20 +554,23 @@ func (d *Driver) DeleteGroups(ctx context.Context, groups ...string) error {
 // Close implements transport.Driver.
 func (d *Driver) Close() error {
 	d.mu.Lock()
-	d.closed = true
-	client := d.client
-	d.client, d.admin = nil, nil
 	subs := make([]*subscription, 0, len(d.subs))
 	for s := range d.subs {
 		subs = append(subs, s)
 	}
-	d.subs = map[*subscription]struct{}{}
 	d.mu.Unlock()
+	// Subscriptions close first, while the producer is still up: a group consumer re-publishes the records it holds.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for _, s := range subs {
 		_ = s.Close(ctx)
 	}
+	d.mu.Lock()
+	d.closed = true
+	client := d.client
+	d.client, d.admin = nil, nil
+	d.subs = map[*subscription]struct{}{}
+	d.mu.Unlock()
 	if client != nil {
 		client.Close()
 	}
@@ -636,12 +652,53 @@ func (s *subscription) settleOffset(ctx context.Context, rec *kgo.Record) error 
 	return nil
 }
 
+// commitHeldOnRevoke runs when a rebalance takes partitions away from a group consumer: the records it still holds on
+// them keep running here, so they are committed (as the TS driver does) and the new owner does not re-read, and re-run,
+// them. A graceful Close re-publishes what the consumer holds; a hard crash after a revoke loses those calls, the same
+// trade-off the TS driver makes.
+func (s *subscription) commitHeldOnRevoke(ctx context.Context, revoked map[string][]int32) {
+	if s.share || !s.manual {
+		return
+	}
+	lost := map[tp]bool{}
+	for topic, parts := range revoked {
+		for _, p := range parts {
+			lost[tp{topic, p}] = true
+		}
+	}
+	s.heldMu.Lock()
+	upTo := map[tp]int64{}
+	for del := range s.held {
+		key := tp{del.rec.Topic, del.rec.Partition}
+		if lost[key] && del.rec.Offset+1 > upTo[key] {
+			upTo[key] = del.rec.Offset + 1
+		}
+	}
+	s.heldMu.Unlock()
+	offsets := map[string]map[int32]kgo.EpochOffset{}
+	s.offMu.Lock()
+	for key, off := range upTo {
+		if off <= s.committed[key] {
+			continue
+		}
+		s.committed[key] = off
+		if offsets[key.topic] == nil {
+			offsets[key.topic] = map[int32]kgo.EpochOffset{}
+		}
+		offsets[key.topic][key.partition] = kgo.EpochOffset{Epoch: -1, Offset: off}
+	}
+	s.offMu.Unlock()
+	if len(offsets) > 0 {
+		s.client.CommitOffsetsSync(ctx, offsets, func(*kgo.Client, *kmsg.OffsetCommitRequest, *kmsg.OffsetCommitResponse, error) {})
+	}
+}
+
 func (s *subscription) Channel() string { return s.channel }
 
 // Close stops fetching. A share consumer releases the records it still holds
 // (the broker redelivers them at once with the next delivery count); a group
-// consumer just leaves, and the rebalance hands its uncommitted records to the
-// other members, as a crash would.
+// consumer re-publishes them with the next attempt, commits the originals and
+// leaves. A crash (no Close) leaves them uncommitted for the rebalance.
 func (s *subscription) Close(ctx context.Context) error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
@@ -651,20 +708,21 @@ func (s *subscription) Close(ctx context.Context) error {
 	case <-s.done:
 	case <-ctx.Done():
 	}
-	if s.share {
-		s.heldMu.Lock()
-		held := make([]*delivery, 0, len(s.held))
-		for del := range s.held {
-			held = append(held, del)
-		}
-		s.held = nil
-		s.heldMu.Unlock()
-		for _, del := range held {
-			_ = del.Nack(ctx, true)
-		}
-		if len(held) > 0 {
-			_ = s.client.FlushAcks(ctx)
-		}
+	// Hand back what is still held: a share consumer releases its records; a group consumer re-publishes them with the
+	// next attempt and commits the originals (as the TS driver does), so a survivor takes them at once and a member
+	// that is still alive on the same topic never sees the same record twice.
+	s.heldMu.Lock()
+	held := make([]*delivery, 0, len(s.held))
+	for del := range s.held {
+		held = append(held, del)
+	}
+	s.held = nil
+	s.heldMu.Unlock()
+	for _, del := range held {
+		_ = del.Nack(ctx, true)
+	}
+	if s.share && len(held) > 0 {
+		_ = s.client.FlushAcks(ctx)
 	}
 	s.d.mu.Lock()
 	delete(s.d.subs, s)
@@ -704,6 +762,11 @@ func (s *subscription) run(ctx context.Context) {
 		var batch sync.WaitGroup
 		fetches.EachRecord(func(rec *kgo.Record) {
 			s.slots <- struct{}{}
+			if !s.manual {
+				// Auto-ack (broadcast, control): one handler at a time, in log order, as the TS driver does.
+				s.deliver(ctx, rec)
+				return
+			}
 			batch.Add(1)
 			go func() {
 				defer batch.Done()

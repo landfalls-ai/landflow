@@ -1,0 +1,38 @@
+# The OrbStack overlay plus the gateway-ingress component, for an ingress controller installed in landflow-ingress (Traefik,
+# class `landflow-traefik`; OrbStack publishes its LoadBalancer Service on the Mac's localhost):
+#
+#   helm repo add traefik https://traefik.github.io/charts
+#   helm --kube-context orbstack upgrade --install traefik traefik/traefik --version 42.0.0 -n landflow-ingress --create-namespace \
+#     --set ingressClass.name=landflow-traefik --set ingressClass.isDefaultClass=false
+#   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-ingress
+#   curl -i -H 'Accept: application/json, text/event-stream' -H 'Content-Type: application/json' http://landflow.localhost/mcp -d '{...initialize...}'
+#
+# landflow.localhost resolves to 127.0.0.1 on macOS (curl and browsers). Plain HTTP: the component's TLS block is removed here.
+# Remove: kubectl --context orbstack delete -k deploy/k8s/overlays/orbstack-ingress -l app.kubernetes.io/component=ingress
+#   (or apply ../orbstack again and delete the two Ingresses), then helm uninstall traefik -n landflow-ingress.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: landflow-dev
+resources:
+  - ../orbstack
+components:
+  - ../../components/gateway-ingress
+  - ../../components/gateway-landflow-tokens
+patches:
+  - target: { kind: Ingress, labelSelector: app.kubernetes.io/component=ingress }
+    patch: |-
+      - { op: replace, path: /spec/ingressClassName, value: landflow-traefik }
+      - { op: replace, path: /spec/rules/0/host, value: landflow.localhost }
+      - { op: remove, path: /spec/tls }
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: { name: landflow-host }
+      spec:
+        template:
+          spec:
+            containers:
+              - name: host
+                env:
+                  - { name: LANDFLOW_PUBLIC_URL, value: "http://landflow.localhost" }
+                  - { name: LANDFLOW_MCP_GATEWAY_PUBLIC_URL, value: "http://landflow.localhost" }

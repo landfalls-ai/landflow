@@ -18,7 +18,7 @@ class MessagingError(Exception):
 
 
 class UndeliverableError(MessagingError):
-    """Provably not delivered (``reason``: ``unroutable``, ``no_consumers``, ``not_connected``, ``too_large``, ``aborted``)."""
+    """Provably not delivered (``reason``: ``unroutable``, ``no_consumers``, ``not_connected``, ``too_large``, ``aborted``, ``claim_failed``)."""
 
     knowledge = "not-delivered"
 
@@ -65,6 +65,17 @@ class RemoteError(MessagingError):
         super().__init__(message, remote_code)
         self.remote_code = remote_code
         self.details = details
+
+
+class ClaimUnavailableError(MessagingError):
+    """A body travelling through the claim store could not be read: expired or deleted, the store is down, or size/digest
+    do not match. In the request direction the plugin refused the call before running it (``not-delivered``, so the
+    selector may use another transport); in the response direction it has already run it (``delivered``)."""
+
+    def __init__(self, message: str, direction: str = "request") -> None:
+        super().__init__(message, "claim_unavailable")
+        self.direction = direction
+        self.knowledge = "not-delivered" if direction == "request" else "delivered"
 
 
 class ManifestMismatchError(RemoteError):

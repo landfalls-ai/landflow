@@ -25,8 +25,19 @@
  * gateway validated, a Landflow MCP token, an identity provider token, an API key or a session).
  */
 import { context } from '@opentelemetry/api';
-import { ProtocolError, ProtocolErrorCode, Server, type AuthInfo, type CallToolResult, type Tool } from '@modelcontextprotocol/server';
-import { gatewayToolName, MCP_TOOL_META_KEY, toolCallToParameters, withoutBinding, type JsonObject, type McpToolDefinition } from '@landflow/protocol';
+import { ProtocolError, ProtocolErrorCode, ResourceNotFoundError, Server, type AuthInfo, type CallToolResult, type InputRequiredResult, type Tool } from '@modelcontextprotocol/server';
+import {
+  gatewayToolName,
+  listOptionsToolDefinition,
+  MCP_LIST_OPTIONS_TOOL,
+  MCP_TOOL_META_KEY,
+  toolCallToParameters,
+  withDynamicOptionValues,
+  withoutBinding,
+  type JsonObject,
+  type McpToolDefinition,
+  type PropertyOption,
+} from '@landflow/protocol';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import { MCP_EXECUTION_META_KEY, type McpToolsResponse, type McpToolView } from '../../shared/mcp';
 import type { ExecutionMcpInfo, ExecutionRecord, PluginSummary, RegistryEvent } from '../../shared/types';
@@ -41,10 +52,16 @@ import { publicUrl, runWorkflow } from '../runner';
 import { singleton } from '../singleton';
 import { failSpan, logger, startSpan } from '../telemetry';
 import { hostMetrics } from '../telemetry/metrics';
+import { needsApproval } from './approval-mode';
+import { requireApproval, type ApprovalOutcome } from './approvals';
+import { bindCredentials, callerLabel, qualifyCredentialType, type BoundCredentials } from './bind';
 import { mcpExposure } from './exposure';
-import { pluginTools } from './grants';
-import { authenticateMcpRequest, callableTool, listableTools, McpAuthError, mcpAuthErrorResponse, type McpCaller } from './identity';
-import { jsonRpcError, notifyToolsChanged, serveMcpEndpoint, textResult } from './server';
+import { fileBlocks } from './files';
+import { pluginTools, type EffectiveTool } from './grants';
+import { authenticateMcpRequest, callableTool, listableTools, listableTriggers, McpAuthError, mcpAuthErrorResponse, type McpCaller } from './identity';
+import { optionsCacheTtlMs, recalledOptions, rememberOptions, type LookupKey } from './options';
+import { jsonRpcError, listenRefusal, notifyToolsChanged, serveMcpEndpoint, textResult } from './server';
+import { callerSubscriptions, McpTriggerError, openTriggerSubscriptions, readTriggerResource } from './triggers';
 
 export const CORE_PLUGIN_ID = 'core';
 /** Where the endpoints live on this host. */
@@ -60,7 +77,9 @@ const MAX_TEXT_BYTES = 256 * 1024;
 const LIST_CHANGED_DEBOUNCE_MS = 250;
 
 const endpointKey = (pluginId: string) => `plugin:${pluginId}`;
-const callerLabel = (caller: McpCaller) => `${caller.kind}:${caller.subject}`;
+/** Bind credentials for a tool call (./bind.ts). */
+const bindTool = (caller: McpCaller, pluginId: string, tool: McpToolDefinition, granted: Record<string, string>, requested: Record<string, string> | undefined) =>
+  bindCredentials(caller, pluginId, tool._meta[MCP_TOOL_META_KEY], granted, requested);
 
 /** What a `tools/call` may carry under `_meta["dev.landflow/node"]`: which credential to bind per credential type. */
 interface CallMeta {
@@ -128,65 +147,6 @@ function visibleTools(caller: McpCaller, pluginId: string) {
 // Credentials
 // ---------------------------------------------------------------------------
 
-/** A node's credential slot (`twilioApi`, `core.httpBearerAuth`) as the vault's fully qualified type. */
-function qualifyCredentialType(pluginId: string, name: string): string {
-  return name.includes('.') ? name : `${pluginId}.${name}`;
-}
-
-interface BoundCredentials {
-  /** By the node's slot name, as the runner expects them. */
-  credentials: Record<string, { id: string; name: string }>;
-  /** Credential selector parameters (`authentication`) set for the bound type. */
-  parameters: JsonObject;
-  /** Why the call cannot run (a named credential the caller may not use, or of the wrong type). */
-  error?: string;
-}
-
-/**
- * Bind credentials for a call: for each credential slot of the node, the grant's credential for that type, else the
- * one `_meta` names, else the caller's newest credential of that type. Only credentials the caller's projects may use
- * count (a grant's choice is trusted: it was made by an admin from the project's credentials). A slot without any
- * stays empty; the vault then fails the run only when the node requires it.
- */
-function bindCredentials(caller: McpCaller, pluginId: string, tool: McpToolDefinition, granted: Record<string, string>, requested: Record<string, string> | undefined): BoundCredentials {
-  const binding = tool._meta[MCP_TOOL_META_KEY];
-  const out: BoundCredentials = { credentials: {}, parameters: {} };
-  if (!binding.credentials.length) return out;
-  const all = credentials.list();
-  const visible = caller.userId ? visibleIds({ id: caller.userId, role: (caller.role ?? 'member') as Role }, 'credential', all.map((c) => c.id)) : new Set<string>();
-  const mayUse = (id: string) => !visible || visible.has(id);
-  const who = callerLabel(caller);
-  let selected = false;
-  for (const slot of binding.credentials) {
-    const type = qualifyCredentialType(pluginId, slot);
-    const fromGrant = granted[type] ?? granted[slot];
-    const wanted = fromGrant ?? requested?.[type] ?? requested?.[slot];
-    let chosen: { id: string; name: string } | undefined;
-    if (wanted) {
-      const credential = all.find((c) => c.id === wanted);
-      if (!credential) return { ...out, error: `Credential ${wanted} (for ${type}) does not exist` };
-      if (credential.type !== type) return { ...out, error: `Credential "${credential.name}" is a ${credential.type}, not a ${type}` };
-      if (!fromGrant && !mayUse(credential.id)) return { ...out, error: `Credential "${credential.name}" is not available to ${who}` };
-      chosen = { id: credential.id, name: credential.name };
-    } else {
-      const candidate = all.filter((c) => c.type === type && mayUse(c.id)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-      if (candidate) chosen = { id: candidate.id, name: candidate.name };
-    }
-    if (!chosen) continue;
-    out.credentials[slot] = chosen;
-    // The parameter that picks the auth method (`authentication: oAuth2`): set for the first slot that has a credential.
-    if (!selected) {
-      for (const selector of binding.credentialSelectors) {
-        if (slot in selector.byCredential) {
-          out.parameters[selector.parameter] = selector.byCredential[slot];
-          selected = true;
-        }
-      }
-    }
-  }
-  return out;
-}
-
 // ---------------------------------------------------------------------------
 // Calls
 // ---------------------------------------------------------------------------
@@ -204,8 +164,11 @@ function clip(text: string): string {
   return `${text.slice(0, MAX_TEXT_BYTES)}\n… (text clipped at ${MAX_TEXT_BYTES} bytes; structuredContent has every item)`;
 }
 
-/** What a finished run answers: the node's output items, or an error result naming the execution. */
-function callResult(record: ExecutionRecord): CallToolResult {
+/**
+ * What a finished run answers: the node's output items (`structuredContent`, a text copy), a `resource_link` per file in
+ * them and the small images and audio inline, or an error result naming the execution.
+ */
+async function callResult(record: ExecutionRecord, plugin: PluginSummary, caller: McpCaller, tool: McpToolDefinition): Promise<CallToolResult> {
   const url = `${publicUrl()}/workflows/${record.workflowId}/executions/${record.executionId}`;
   const meta = { [MCP_EXECUTION_META_KEY]: { id: record.executionId, status: record.status, url } };
   if (record.status !== 'success') {
@@ -213,20 +176,26 @@ function callResult(record: ExecutionRecord): CallToolResult {
   }
   const run = record.runData[TOOL_NODE_ID]?.filter((r) => r.source === 'main').at(-1);
   const items = run?.outputs?.[0] ?? [];
-  const files = items.flatMap((item) => Object.values(item.binary ?? {}).map((file) => file.fileName ?? file.mimeType ?? 'file'));
+  const files = await fileBlocks(items, { tool: `${plugin.id}/${tool.name}`, caller: callerLabel(caller) }).catch((error: Error) => {
+    logger.warn('mcp file blocks failed', { error: error.message });
+    return undefined;
+  });
   const structuredContent = { items: items.map((item) => item.json) };
   const text = clip(JSON.stringify(structuredContent.items, null, 2));
+  const note = files?.total
+    ? `\n(${files.total} file(s) in the output${files.total > files.links.length ? `, ${files.links.length} linked` : ''}; the links expire; execution ${record.executionId} keeps them)`
+    : '';
   return {
-    content: [{ type: 'text', text: files.length ? `${text}\n(${files.length} file(s) in the output: ${files.join(', ')}; see execution ${record.executionId})` : text }],
+    content: [{ type: 'text', text: `${text}${note}` }, ...(files?.links ?? []), ...(files?.inline ?? [])] as CallToolResult['content'],
     structuredContent,
     _meta: meta,
   };
 }
 
 /** One tool call as an execution with mode `mcp`, audited and traced; failures come back as error results. */
-async function callTool(plugin: PluginSummary, caller: McpCaller, tool: McpToolDefinition, granted: Record<string, string>, args: JsonObject, meta: CallMeta | undefined, request: Request | undefined): Promise<CallToolResult> {
+async function callTool(plugin: PluginSummary, caller: McpCaller, tool: McpToolDefinition, granted: Record<string, string>, args: JsonObject, meta: CallMeta | undefined, request: Request | undefined, approved?: Record<string, unknown>): Promise<CallToolResult> {
   const mapping = toolCallToParameters(tool, args);
-  const bound = bindCredentials(caller, plugin.id, tool, granted, meta?.credentials);
+  const bound = bindTool(caller, plugin.id, tool, granted, meta?.credentials);
   if (bound.error) {
     audit(plugin, caller, tool.name, 'denied', { reason: bound.error });
     return textResult(bound.error, true);
@@ -253,9 +222,9 @@ async function callTool(plugin: PluginSummary, caller: McpCaller, tool: McpToolD
     span.setAttribute('landflow.execution.id', record.executionId);
     const outcome = record.status === 'success' ? 'success' : 'failure';
     hostMetrics().mcpToolCalls.add(1, { 'landflow.plugin.id': plugin.id, 'mcp.tool.name': tool.name, 'landflow.mcp.outcome': outcome });
-    audit(plugin, caller, tool.name, outcome, { executionId: record.executionId, status: record.status, durationMs: Date.now() - startedAt, ...(record.error && { error: record.error.message }) });
+    audit(plugin, caller, tool.name, outcome, { executionId: record.executionId, status: record.status, durationMs: Date.now() - startedAt, ...approved, ...(record.error && { error: record.error.message }) });
     if (record.status !== 'success') failSpan(span, record.error?.message ?? record.status);
-    return callResult(record);
+    return await callResult(record, plugin, caller, tool);
   } catch (error) {
     failSpan(span, error);
     hostMetrics().mcpToolCalls.add(1, { 'landflow.plugin.id': plugin.id, 'mcp.tool.name': tool.name, 'landflow.mcp.outcome': 'failure' });
@@ -296,16 +265,191 @@ function callerOf(authInfo: AuthInfo | undefined): McpCaller | undefined {
   return (authInfo?.extra as { caller?: McpCaller } | undefined)?.caller;
 }
 
+// ---------------------------------------------------------------------------
+// list_options
+// ---------------------------------------------------------------------------
+
+const dynamicBinding = (tool: McpToolDefinition) => tool._meta[MCP_TOOL_META_KEY];
+const hasDynamicOptions = (tool: McpToolDefinition) => dynamicBinding(tool).dynamicOptions.length > 0;
+
+/**
+ * Tools that take part in `list_options`: a dynamic list, and (for `core`, whose lists such as `workflows` are Landflow's own
+ * data and not scoped to the caller's projects here) a credential. The plugin's lists are the plugin's world.
+ */
+const lookupTools = <T extends { tool: McpToolDefinition }>(plugin: PluginSummary, tools: T[]): T[] =>
+  tools.filter(({ tool }) => hasDynamicOptions(tool) && (plugin.id !== CORE_PLUGIN_ID || dynamicBinding(tool).credentials.length > 0));
+
+/** The slot → credential id map of a binding, which is what keys a remembered lookup. */
+const credentialIds = (bound: BoundCredentials) => Object.fromEntries(Object.entries(bound.credentials).map(([slot, c]) => [slot, c.id]));
+
+/** The parameters a lookup sends: the tool's fixed ones, the arguments the tool knows, the credential selector. */
+const lookupParameters = (tool: McpToolDefinition, bound: BoundCredentials, nested: JsonObject | undefined): JsonObject => ({ ...toolCallToParameters(tool, nested).parameters, ...bound.parameters });
+
+/** The tool as `tools/list` shows it to this caller: with `enum`s from remembered lookups made with the credential they would call with. */
+function withRememberedOptions(plugin: PluginSummary, caller: McpCaller, entry: EffectiveTool): McpToolDefinition {
+  const { tool } = entry;
+  const binding = dynamicBinding(tool);
+  if (!optionsCacheTtlMs() || !binding.dynamicOptions.length || !binding.credentials.length) return tool;
+  // The credential a call would bind: the grant's (an admin who browses everything has no grant in the listing, but may hold one to call with).
+  const granted = callableTool(caller, plugin.id, tool.name)?.credentials ?? entry.credentials;
+  const bound = bindTool(caller, plugin.id, tool, granted, undefined);
+  if (bound.error || !Object.keys(bound.credentials).length) return tool;
+  const selectors = new Set(binding.credentialSelectors.map((selector) => selector.parameter));
+  const lists: Record<string, PropertyOption[] | undefined> = {};
+  for (const option of binding.dynamicOptions) {
+    // Lists that depend on other arguments are the caller's to ask for; the credential's own selector is already set.
+    if (option.dependsOn?.some((name) => !selectors.has(name))) continue;
+    const key: LookupKey = { pluginId: plugin.id, nodeType: binding.nodeType, method: option.method, credentials: credentialIds(bound), parameters: lookupParameters(tool, bound, undefined) };
+    lists[option.parameter] = recalledOptions(key);
+  }
+  return withDynamicOptionValues(tool, lists);
+}
+
+/** `list_options`, as the plugin's own MCP face defines it, with the tools this caller can look values up for. */
+function listOptionsTool(toolNames: string[]): Tool {
+  return listOptionsToolDefinition(toolNames) as unknown as Tool;
+}
+
+/** Whether the caller can resolve a credential (or needs none) for at least one tool with a dynamic list: the tool is worth offering. */
+function lookupsPossible(plugin: PluginSummary, caller: McpCaller, entries: EffectiveTool[]): boolean {
+  return lookupTools(plugin, entries).some((entry) => {
+    const bound = bindTool(caller, plugin.id, entry.tool, callableTool(caller, plugin.id, entry.tool.name)?.credentials ?? entry.credentials, undefined);
+    return !bound.error && (dynamicBinding(entry.tool).credentials.length === 0 || Object.keys(bound.credentials).length > 0);
+  });
+}
+
+/** A `list_options` call: the values of one dynamic argument, resolved with the credential a call of the tool would bind. */
+async function callListOptions(plugin: PluginSummary, caller: McpCaller, tools: EffectiveTool[], args: JsonObject, meta: CallMeta | undefined, request: Request | undefined): Promise<CallToolResult> {
+  const toolName = typeof args.tool === 'string' ? args.tool : undefined;
+  const parameter = typeof args.parameter === 'string' ? args.parameter : undefined;
+  if (!toolName || !parameter) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `${MCP_LIST_OPTIONS_TOOL} needs "tool" and "parameter"`);
+  const listed = lookupTools(plugin, tools).find((entry) => entry.tool.name === toolName);
+  if (!listed) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown tool "${toolName}" or it has no dynamic options`);
+  const option = dynamicBinding(listed.tool).dynamicOptions.find((d) => d.parameter === parameter);
+  if (!option) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `"${parameter}" of ${toolName} has no dynamic options`);
+  const label = `${MCP_LIST_OPTIONS_TOOL}(${toolName}.${parameter})`;
+  // Governed like the call it prepares: the caller needs the grant to call the tool whose argument they ask about.
+  const callable = callableTool(caller, plugin.id, toolName);
+  if (!callable) {
+    audit(plugin, caller, MCP_LIST_OPTIONS_TOOL, 'denied', { lookup: toolName, parameter, reason: 'no grant allows calling the tool' });
+    return textResult(`${callerLabel(caller)} has no grant to call ${toolName}, so it cannot look up its options`, true);
+  }
+  const nested = typeof args.arguments === 'object' && args.arguments !== null && !Array.isArray(args.arguments) ? (args.arguments as JsonObject) : undefined;
+  const bound = bindTool(caller, plugin.id, callable.tool, callable.credentials, meta?.credentials);
+  if (bound.error) {
+    audit(plugin, caller, MCP_LIST_OPTIONS_TOOL, 'denied', { lookup: toolName, parameter, reason: bound.error });
+    return textResult(bound.error, true);
+  }
+  const binding = dynamicBinding(callable.tool);
+  const parameters = lookupParameters(callable.tool, bound, nested);
+  const { span, context: active } = startSpan('mcp.tool.call', {
+    attributes: { 'mcp.tool.name': MCP_LIST_OPTIONS_TOOL, 'landflow.plugin.id': plugin.id, 'landflow.mcp.caller': callerLabel(caller), 'landflow.load_options.tool': toolName },
+  });
+  const startedAt = Date.now();
+  const outcome = (value: 'success' | 'failure') => hostMetrics().mcpToolCalls.add(1, { 'landflow.plugin.id': plugin.id, 'mcp.tool.name': MCP_LIST_OPTIONS_TOOL, 'landflow.mcp.outcome': value });
+  try {
+    const resolved = registry.resolve(binding.nodeType);
+    if ('error' in resolved) throw new Error(resolved.error);
+    const data = Object.keys(bound.credentials).length ? credentials.resolveFor({ type: binding.nodeType, credentials: bound.credentials, parameters }, resolved.descriptor, true) : undefined;
+    const lookup = context.with(active, () => registry.loadOptions(binding.nodeType, option.method, parameters, data && Object.keys(data).length ? data : undefined));
+    const options = await withDeadline(lookup, timeoutSeconds(request) * 1000, request?.signal);
+    const key: LookupKey = { pluginId: plugin.id, nodeType: binding.nodeType, method: option.method, credentials: credentialIds(bound), parameters };
+    // A list that is news changes what tools/list shows this caller (the enum): tell the listeners.
+    if (rememberOptions(key, options) && !nested) notifyPluginToolsChanged(plugin.id);
+    outcome('success');
+    audit(plugin, caller, MCP_LIST_OPTIONS_TOOL, 'success', { lookup: toolName, parameter, options: options.length, durationMs: Date.now() - startedAt });
+    return { content: [{ type: 'text', text: `${options.length} option${options.length === 1 ? '' : 's'}` }], structuredContent: { options: options as unknown as JsonObject[] } };
+  } catch (error) {
+    failSpan(span, error);
+    outcome('failure');
+    audit(plugin, caller, MCP_LIST_OPTIONS_TOOL, 'failure', { lookup: toolName, parameter, error: (error as Error).message, durationMs: Date.now() - startedAt });
+    return textResult((error as Error).message, true);
+  } finally {
+    span.end();
+  }
+}
+
+/** `work`, but not past the deadline or the client's cancellation. */
+function withDeadline<T>(work: Promise<T>, ms: number, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`The lookup took longer than ${Math.round(ms / 1000)} seconds`)), ms);
+    const stop = () => (clearTimeout(timer), reject(new Error('The lookup was cancelled')));
+    signal?.addEventListener('abort', stop, { once: true });
+    work.then(
+      (value) => (clearTimeout(timer), resolve(value)),
+      (error) => (clearTimeout(timer), reject(error)),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The server
+// ---------------------------------------------------------------------------
+
+/** Whether the client can be asked a form question in the request that makes the call (2026-07-28 with `elicitation` declared). */
+function canElicit(server: Server, era: 'legacy' | 'modern'): boolean {
+  if (era !== 'modern') return false;
+  const elicitation = server.getClientCapabilities()?.elicitation as Record<string, unknown> | undefined;
+  return Boolean(elicitation) && (!Object.keys(elicitation!).length || 'form' in elicitation!);
+}
+
 /** A stateless MCP server for one request to a plugin's endpoint. */
-export function pluginServer(plugin: PluginSummary, caller: McpCaller, request?: Request): Server {
+export function pluginServer(plugin: PluginSummary, caller: McpCaller, request?: Request, era: 'legacy' | 'modern' = 'legacy'): Server {
   const tools = visibleTools(caller, plugin.id);
+  const lookups = lookupsPossible(plugin, caller, tools);
+  const triggers = listableTriggers(caller, plugin.id);
   const server = new Server(
     { name: `landflow-${plugin.id}`, title: plugin.info.name, version: plugin.info.version },
-    { capabilities: { tools: { listChanged: true } }, instructions: instructionsFor(plugin, tools.length), cacheHints: { 'tools/list': { ttlMs: 0, cacheScope: 'private' } } },
+    {
+      // Triggers are resources; only a 2026-07-28 caller can subscribe (the stateless 2025-era endpoint has no stream to notify on).
+      capabilities: { tools: { listChanged: true }, ...(triggers.length && { resources: era === 'modern' ? { subscribe: true } : {} }) },
+      instructions: instructionsFor(plugin, tools.length),
+      cacheHints: { 'tools/list': { ttlMs: 0, cacheScope: 'private' } },
+      // A 2025-era request is answered alone (no stream to ask on): approvals there are Landflow's, not elicitation.
+      inputRequired: { legacyShim: false },
+    },
   );
-  server.setRequestHandler('tools/list', async () => ({ tools: tools.map((entry) => wireTool(entry.tool)) }));
-  server.setRequestHandler('tools/call', async (req) => {
+  server.setRequestHandler('tools/list', async () => {
+    const listed = tools.map((entry) => wireTool(withRememberedOptions(plugin, caller, entry)));
+    const dynamic = lookupTools(plugin, tools).map((entry) => entry.tool.name);
+    return { tools: lookups && !tools.some((entry) => entry.tool.name === MCP_LIST_OPTIONS_TOOL) ? [...listed, listOptionsTool(dynamic)] : listed };
+  });
+  if (triggers.length) {
+    server.setRequestHandler('resources/list', async () => ({
+      resources: callerSubscriptions(caller, plugin.id).map((sub) => ({ uri: sub.uri, name: sub.trigger, description: sub.subscribed ? 'Your active subscription' : 'Your stopped subscription (its last events stay readable for a while)', mimeType: 'application/json' })),
+    }));
+    server.setRequestHandler('resources/templates/list', async () => ({
+      resourceTemplates: triggers.map(({ trigger }) => ({
+        uriTemplate: trigger.uriTemplate,
+        name: trigger.name,
+        title: trigger.title,
+        description: trigger.description,
+        mimeType: trigger.mimeType,
+        _meta: { 'dev.landflow/trigger': { inputSchema: trigger.inputSchema, source: trigger._meta[MCP_TOOL_META_KEY].triggerSource } },
+      })),
+    }));
+    server.setRequestHandler('resources/read', async (req, ctx) => {
+      try {
+        const read = await readTriggerResource(caller, plugin.id, req.params.uri, ctx.mcpReq.signal);
+        return { contents: [{ uri: req.params.uri, mimeType: 'application/json', text: JSON.stringify(read, null, 2) }] };
+      } catch (error) {
+        if (error instanceof McpTriggerError) {
+          if (error.kind === 'invalid' && /^Unknown (resource|trigger)/.test(error.message)) throw new ResourceNotFoundError(req.params.uri);
+          throw new ProtocolError(error.kind === 'invalid' ? ProtocolErrorCode.InvalidParams : ProtocolErrorCode.InvalidRequest, error.message);
+        }
+        throw error;
+      }
+    });
+  }
+  server.setRequestHandler('tools/call', async (req, ctx): Promise<CallToolResult | InputRequiredResult> => {
     const name = req.params.name;
+    const raw = req.params.arguments;
+    if (raw !== undefined && (typeof raw !== 'object' || raw === null || Array.isArray(raw))) throw new ProtocolError(ProtocolErrorCode.InvalidParams, '"arguments" must be an object');
+    const args = (raw ?? {}) as JsonObject;
+    const meta = (req.params._meta as Record<string, unknown> | undefined)?.[MCP_TOOL_META_KEY] as CallMeta | undefined;
+    if (name === MCP_LIST_OPTIONS_TOOL && lookups && !tools.some((entry) => entry.tool.name === name)) {
+      return server.projectCallToolResult(await callListOptions(plugin, caller, tools, args, meta, request), listOptionsToolDefinition([]).outputSchema);
+    }
     const listed = tools.find((entry) => entry.tool.name === name);
     if (!listed) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown tool "${name}"`);
     const callable = callableTool(caller, plugin.id, name);
@@ -313,8 +457,33 @@ export function pluginServer(plugin: PluginSummary, caller: McpCaller, request?:
       audit(plugin, caller, name, 'denied', { reason: 'no grant allows calling it' });
       return textResult(`${callerLabel(caller)} may list ${name} but has no grant to call it`, true);
     }
-    const meta = (req.params._meta as Record<string, unknown> | undefined)?.[MCP_TOOL_META_KEY] as CallMeta | undefined;
-    const result = await callTool(plugin, caller, callable.tool, callable.credentials, (req.params.arguments ?? {}) as JsonObject, meta, request);
+    let approved: Record<string, unknown> | undefined;
+    const mode = callable.approval ?? 'destructive';
+    if (needsApproval(mode, callable.tool)) {
+      const bound = bindTool(caller, plugin.id, callable.tool, callable.credentials, meta?.credentials);
+      const gate: ApprovalOutcome = await requireApproval({
+        call: {
+          pluginId: plugin.id,
+          tool: name,
+          caller: callerLabel(caller),
+          callerUserId: caller.userId,
+          args,
+          credentialNames: Object.values(bound.credentials).map((c) => c.name),
+        },
+        title: callable.tool.title,
+        inputResponses: ctx.mcpReq.inputResponses,
+        requestState: ctx.mcpReq.requestState(),
+        canElicit: canElicit(server, era),
+        timeoutSeconds: timeoutSeconds(request),
+        signal: ctx.mcpReq.signal,
+      });
+      if (!gate.proceed) {
+        if (gate.audit && gate.audit.reason !== 'elicitation requested') audit(plugin, caller, name, 'denied', { reason: gate.audit.reason, approvalMode: mode, ...(gate.audit.approvalId && { approvalId: gate.audit.approvalId }), ...(gate.audit.by && { decidedBy: gate.audit.by }) });
+        return gate.result;
+      }
+      approved = { approvalMode: mode, approvedVia: gate.how, ...(gate.approvalId && { approvalId: gate.approvalId }), ...(gate.by && { approvedBy: gate.by }) };
+    }
+    const result = await callTool(plugin, caller, callable.tool, callable.credentials, args, meta, request, approved);
     return server.projectCallToolResult(result, callable.tool.outputSchema);
   });
   return server;
@@ -344,9 +513,23 @@ export async function handlePluginMcpRequest(request: Request, pluginId: string)
       const who = callerOf(info.authInfo);
       if (!who) throw new Error('The MCP endpoint lost its caller');
       // The plugin as it is now (a manifest change between requests shows at once).
-      return pluginServer(pluginSummary(pluginId) ?? plugin, who, info.request);
+      return pluginServer(pluginSummary(pluginId) ?? plugin, who, info.request, info.era);
     },
     authInfoFor(caller),
+    {
+      // A 2026-07-28 `subscriptions/listen` naming trigger URIs starts those triggers for this caller (./triggers.ts); the stream ending stops them.
+      onListen: async (uris, info) => {
+        const who = callerOf(info.authInfo) ?? caller;
+        const refuse = (message: string) => listenRefusal(info.id, -32602, message);
+        if (!listableTriggers(who, pluginId).length) return refuse(`${callerLabel(who)} has no grant for any trigger of ${pluginId}`);
+        try {
+          return await openTriggerSubscriptions({ caller: who, pluginId, uris, endpointKey: info.key });
+        } catch (error) {
+          if (error instanceof McpTriggerError) return refuse(error.message);
+          throw error;
+        }
+      },
+    },
   );
 }
 

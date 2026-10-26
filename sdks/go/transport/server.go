@@ -168,8 +168,13 @@ type ServerOptions struct {
 	// DrainTimeout bounds how long Stop waits for calls in flight (default 30 s).
 	DrainTimeout time.Duration
 	ClockSkew    time.Duration
-	Log          Logger
-	Now          func() time.Time
+	// Claims is the claim store (LANDFLOW_CLAIM_STORE): requests may arrive by reference, and a reply that does not fit the
+	// broker goes by reference too. ClaimTTL (default 1 h) and ClaimSweepInterval (default 10 min) drive the orphan sweeper.
+	Claims             ClaimStore
+	ClaimTTL           time.Duration
+	ClaimSweepInterval time.Duration
+	Log                Logger
+	Now                func() time.Time
 }
 
 // Counters are the server's counts, for tests and metrics.
@@ -290,7 +295,7 @@ func NewServer(opts ServerOptions) (*Server, error) {
 		slots:    make(chan struct{}, maxConcurrency),
 		inFlight: map[string]*inFlight{}, cancelled: map[string]time.Time{},
 	}
-	s.codec = NewCodec(opts.Keyring, opts.Driver.Capabilities(), CodecOptions{ClockSkew: opts.ClockSkew, Replay: NewReplayGuard(0, 0), Now: now})
+	s.codec = NewCodec(opts.Keyring, opts.Driver.Capabilities(), CodecOptions{ClockSkew: opts.ClockSkew, Replay: NewReplayGuard(0, 0), Now: now, Claims: opts.Claims})
 	return s, nil
 }
 
@@ -377,6 +382,9 @@ func (s *Server) Start(ctx context.Context) error {
 		interval = DefaultHeartbeat
 	}
 	go s.announceLoop(interval)
+	if s.opts.Claims != nil {
+		startClaimSweeper(s.opts.Claims, s.opts.ClaimTTL, s.opts.ClaimSweepInterval, s.stopAnnounce, s.log, s.now)
+	}
 	return nil
 }
 
@@ -520,12 +528,39 @@ func (s *Server) onRequest(_ context.Context, wire WireEvent, delivery Delivery)
 		drop("not a request", "type", raw.Attributes.Type)
 		return
 	}
+	requestAttrs := raw.Attributes
+	raw, claimKey, err := s.codec.ResolveClaim(ctx, raw, s.PluginID)
+	if err != nil {
+		var ce *ClaimError
+		if errors.As(err, &ce) {
+			// The signature held (ResolveClaim checks it first) but the body is unreadable: say so, so the host fails at once instead of at its deadline.
+			s.log("warn", "a request body in the claim store is unreadable", "id", requestAttrs.ID, "reason", ce.Reason, "error", ce.Message)
+			// A store outage may be over for another replica or a redelivery: put it back once.
+			if ce.Reason == "store" && delivery.Attempt() < 2 && s.opts.Driver.Capabilities().Nack {
+				_ = delivery.Nack(ctx, true)
+				return
+			}
+			_ = delivery.Ack(ctx)
+			s.reply(ctx, requestAttrs, delivery, map[string]any{"error": ce.Message}, CodeClaimUnavailable)
+			s.dropClaim(requestAttrs.LfClaim)
+			return
+		}
+		s.dropClaim(requestAttrs.LfClaim)
+		drop("failed verification", "id", raw.Attributes.ID, "error", err.Error())
+		return
+	}
 	opened, err := s.codec.Unpack(raw, s.PluginID)
 	if err != nil {
+		s.dropClaim(claimKey)
 		drop("failed verification", "id", raw.Attributes.ID, "error", err.Error())
 		return
 	}
 	attributes, data := opened.Attributes, json.RawMessage(opened.Body)
+	// The body of a request that went by reference is deleted once the delivery is acknowledged (never before: a redelivery must still read it).
+	ack := func() {
+		_ = delivery.Ack(ctx)
+		s.dropClaim(claimKey)
+	}
 	requeue := func() {
 		s.codec.ForgetReplay(attributes.ID)
 		s.counters.requeued.Add(1)
@@ -541,12 +576,12 @@ func (s *Server) onRequest(_ context.Context, wire WireEvent, delivery Delivery)
 	if !deadline.IsZero() && !deadline.After(now) {
 		s.counters.expired.Add(1)
 		s.log("debug", "dropped an expired request", "id", attributes.ID)
-		_ = delivery.Ack(ctx)
+		ack()
 		return
 	}
 	if s.takeCancelled(attributes.ID, now) {
 		s.counters.cancelled.Add(1)
-		_ = delivery.Ack(ctx)
+		ack()
 		return
 	}
 	if attributes.LfManifest != "" && attributes.LfManifest != s.ManifestHash {
@@ -555,7 +590,7 @@ func (s *Server) onRequest(_ context.Context, wire WireEvent, delivery Delivery)
 			requeue()
 			return
 		}
-		_ = delivery.Ack(ctx)
+		ack()
 		s.reply(ctx, attributes, delivery, map[string]any{"error": "manifest mismatch: this plugin runs " + s.ManifestHash, "manifestHash": s.ManifestHash}, CodeManifestMismatch)
 		return
 	}
@@ -582,16 +617,16 @@ func (s *Server) onRequest(_ context.Context, wire WireEvent, delivery Delivery)
 	if !deadline.IsZero() && !deadline.After(now) {
 		s.counters.expired.Add(1)
 		s.log("debug", "dropped a request that expired while waiting for a slot", "id", attributes.ID)
-		_ = delivery.Ack(ctx)
+		ack()
 		return
 	}
 	if s.takeCancelled(attributes.ID, now) {
 		s.counters.cancelled.Add(1)
-		_ = delivery.Ack(ctx)
+		ack()
 		return
 	}
 	if mode == AtMostOnce {
-		_ = delivery.Ack(ctx)
+		ack()
 	}
 
 	callCtx, cancel := context.WithCancelCause(ctx)
@@ -621,7 +656,7 @@ func (s *Server) onRequest(_ context.Context, wire WireEvent, delivery Delivery)
 	sent := s.reply(ctx, attributes, delivery, result, code)
 	if mode == AtLeastOnce {
 		if sent {
-			_ = delivery.Ack(ctx)
+			ack()
 		} else {
 			requeue()
 		}
@@ -697,10 +732,15 @@ func (s *Server) reply(ctx context.Context, request Attributes, delivery Deliver
 	attributes.TraceParent = request.TraceParent
 	attributes.TraceState = request.TraceState
 	attributes.LfError = code
-	packed, err := s.codec.Pack(s.PluginID, attributes, body, true)
+	claimed, err := s.codec.PackBodyClaimedAny(ctx, s.PluginID, attributes, body, true)
+	packed := claimed.PackedEvent
 	if err != nil {
 		var ee *EnvelopeError
-		if !errors.As(err, &ee) || ee.Reason != ReasonTooLarge {
+		var ce *ClaimError
+		if errors.As(err, &ce) {
+			attributes.LfError = CodeTooLarge
+			packed, err = s.codec.Pack(s.PluginID, attributes, map[string]any{"error": ce.Message}, true)
+		} else if !errors.As(err, &ee) || ee.Reason != ReasonTooLarge {
 			s.log("error", "reply could not be encoded", "id", request.ID, "error", err.Error())
 			attributes.LfError = CodeInternal
 			packed, err = s.codec.Pack(s.PluginID, attributes, map[string]any{"error": "response could not be encoded: " + err.Error()}, true)
@@ -724,10 +764,28 @@ func (s *Server) reply(ctx context.Context, request Attributes, delivery Deliver
 	}
 	if err != nil {
 		s.log("warn", "reply could not be published", "id", request.ID, "error", err.Error())
+		// Nobody will read a reply body that never went out.
+		if claimed.ClaimKey != "" {
+			s.dropClaim(claimed.ClaimKey)
+		}
 		return false
 	}
 	s.counters.replied.Add(1)
 	return true
+}
+
+// dropClaim deletes a claim object, best effort (the TTL sweeper is the safety net).
+func (s *Server) dropClaim(key string) {
+	if key == "" || s.opts.Claims == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), claimOperationTimeout)
+		defer cancel()
+		if err := s.opts.Claims.Delete(ctx, key); err != nil {
+			s.log("debug", "could not delete a claim", "key", key, "error", err.Error())
+		}
+	}()
 }
 
 func (s *Server) onControl(wire WireEvent) {

@@ -38,9 +38,10 @@ import { withSpan, withTransportChoice } from '../telemetry';
 import type { BrokerQueueStats, PluginTransportSummary, TransportChoice, TransportPolicy } from '../../shared/transports';
 import { transportAuto, type AutoEndpoint, type AutoSource } from '../transports/auto';
 import { brokerConnections } from '../transports/brokers';
-import { policyFromPreferred, transportPolicies } from '../transports/policy-store';
+import { policyFromPreferred, transportPolicies, withWorkflowOverride } from '../transports/policy-store';
 import { transportProviders } from '../transports/provider';
 import { isChoice, runModeOf, select, type CallContext, type Candidate, type Selection, type SelectorInputs } from '../transports/selector';
+import { workflowTransportOverride } from '../transports/workflow-scope';
 import { HttpPluginClient, GrpcPluginClient, normalizeEndpoint, PooledPluginClient, transportOf, type PluginClient } from './clients';
 import { provenManifest } from './registry-proof';
 import { mcpExposure } from '../mcp/exposure';
@@ -606,9 +607,19 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     return [...entry.endpoints.values()].map((s) => ({ endpoint: s.endpoint, kind: s.transport, status: s.status, ...(s.latencyMs !== undefined && { latencyMs: s.latencyMs }) }));
   }
 
+  /** The plugin's policy for a call: its own, or the running workflow's override of it (settings `transports`, transports/workflow-scope.ts). */
+  private policyFor(entry: PluginEntry): TransportPolicy | { error: string } {
+    const policy = transportPolicies.get(entry.id);
+    const scoped = workflowTransportOverride(entry.id);
+    if (!scoped) return policy;
+    const effective = withWorkflowOverride(policy, scoped.override);
+    return 'error' in effective ? { error: `Plugin "${entry.id}": ${effective.error} (workflow settings → Transports)` } : effective;
+  }
+
   /** The transport for one call of this plugin, or why there is none (lib/server/transports/selector.ts). */
-  private choose(entry: PluginEntry, context: CallContext): Selection {
-    return select(entry.id, this.candidates(entry), transportPolicies.get(entry.id), context, this.selectorInputs);
+  private choose(entry: PluginEntry, context: CallContext, candidates = this.candidates(entry)): Selection {
+    const policy = this.policyFor(entry);
+    return 'error' in policy ? policy : select(entry.id, candidates, policy, context, this.selectorInputs);
   }
 
   /** `select()` for a plugin id, as the API and tests ask it: `{ endpoint, kind, reason }` or `{ error }`. */
@@ -761,7 +772,7 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     const call = async <T>(context: CallContext, fn: (state: EndpointState) => Promise<T>, failed?: { endpoint: string; detail: string }): Promise<T> => {
       // A fail-over (second try) leaves out the endpoint that provably did not get the call; a pinned policy then has nowhere to go.
       const candidates = this.candidates(entry).filter((c) => c.endpoint !== failed?.endpoint);
-      let selection = select(entry.id, candidates, transportPolicies.get(entry.id), context, this.selectorInputs);
+      let selection = this.choose(entry, context, candidates);
       if (!isChoice(selection)) throw new Error(selection.error.replace(`Plugin "${pluginId}"`, `Plugin "${name}"`));
       if (failed) selection = { ...selection, reason: 'auto.failover', detail: failed.detail };
       const state = entry.endpoints.get(selection.endpoint);

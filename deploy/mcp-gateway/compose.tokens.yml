@@ -1,0 +1,9 @@
+# Override: the dev gateway with sign-in through Landflow-issued MCP tokens (config.tokens.yaml), so agents that connect
+# with a token from Settings → MCP are themselves, not anonymous. Start the dev server first (the gateway fetches its JWKS
+# at startup) and give it the matching route policies (LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES in deploy/.env.example):
+#   COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml -f deploy/mcp-gateway/compose.tokens.yml \
+#     --profile mcp-gateway up -d mcp-gateway
+services:
+  mcp-gateway:
+    volumes:
+      - ./mcp-gateway/config.tokens.yaml:/config/config.yaml:ro

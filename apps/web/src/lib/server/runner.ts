@@ -72,6 +72,7 @@ import { clusterRateLimiter } from './cluster/limits';
 import { clusterActive, coordinator, instanceId, runLeaseMs } from './cluster/state';
 import { pausedElsewhere } from './cluster/debug';
 import { refreshRows } from './db/replication';
+import { withWorkflowTransports } from './transports/workflow-scope';
 
 /** How deep Execute Workflow may nest executions. */
 export const MAX_WORKFLOW_DEPTH = 10;
@@ -552,7 +553,8 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
   const usage = executionScope({ executionId, workflowId: workflow.id, settings: workflow.settings, previous: record.aiUsage });
   try {
     // $secrets in node parameters (Settings → External secrets): an engine-made text (an expression error) may quote a value.
-    const result = redactRunData(await runInUsageScope(usage, () => executeWorkflow({
+    // Transports: the workflow's overrides of plugin policies apply to the plugin calls of this segment (settings `transports`).
+    const result = redactRunData(await runInUsageScope(usage, () => withWorkflowTransports(workflow.id, workflow.settings?.transports, () => executeWorkflow({
       ...segment.engine,
       ...(segment.streaming && segment.onEvent && { streaming: true }),
       workflow,
@@ -602,7 +604,7 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
         if (event.type !== 'node.chunk') bus.publish({ channel: 'execution', workflowId: workflow.id, event });
         segment.onEvent?.(event);
       },
-    })));
+    }))));
     const aiUsage = executionUsage(usage);
     finished = {
       ...record,

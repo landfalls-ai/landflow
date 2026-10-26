@@ -118,15 +118,17 @@ export class Keyring {
   }
 }
 
-export const canonicalForm = (attributes: Attributes, body: Uint8Array): string => {
+export const canonicalFormWithDigest = (attributes: Attributes, bodyDigestHex: string): string => {
   let out = '';
   for (const name of KNOWN_ATTRIBUTES) {
     if (name === 'lfsig') continue;
     const value = (attributes as unknown as Record<string, string | undefined>)[name];
     if (value !== undefined) out += `${name}=${value}\n`;
   }
-  return out + createHash('sha256').update(body).digest('hex') + '\n';
+  return out + bodyDigestHex + '\n';
 };
+
+export const canonicalForm = (attributes: Attributes, body: Uint8Array): string => canonicalFormWithDigest(attributes, createHash('sha256').update(body).digest('hex'));
 
 export const signature = (sigKey: Buffer, attributes: Attributes, body: Uint8Array): string => createHmac('sha256', sigKey).update(canonicalForm(attributes, body)).digest('hex');
 
@@ -216,6 +218,32 @@ export function seal(keyring: Keyring, pluginId: string, event: RawEvent, option
   }
   attributes.lfsig = signature(keys.sig, attributes, body);
   return { attributes, body };
+}
+
+/**
+ * Add the claim-check attributes for `key` to a sealed event whose (encrypted) body is `event.body`, and sign again. The
+ * returned event keeps the full body (the caller stores it and sends an empty one): the signature covers the body's digest
+ * either way, since `lfclaimsha256` is that digest.
+ */
+export function withClaim(keyring: Keyring, pluginId: string, event: RawEvent, key: string): RawEvent {
+  const keys = keyring.keys(pluginId)!;
+  const attributes: Attributes = { ...event.attributes, lfclaim: key, lfclaimsize: String(event.body.byteLength), lfclaimsha256: createHash('sha256').update(event.body).digest('hex') };
+  attributes.lfsig = signature(keys.sig, attributes, event.body);
+  return { attributes, body: event.body };
+}
+
+/**
+ * Verify the signature of an event whose body is still in the claim store, without fetching it: the canonical form ends in
+ * the body's digest, which `lfclaimsha256` gives. Checks the signature only (`open()` does the rest once the body is here).
+ */
+export function verifyClaimed(keyring: Keyring, pluginId: string, attributes: Attributes): void {
+  if (!attributes.lfsig || !attributes.lfkeyid || !attributes.lfclaimsha256) throw new SecurityError(`event ${attributes.id} is not signed`, 'unsigned');
+  const keys = keyring.keys(pluginId, attributes.lfkeyid);
+  if (!keys) throw new SecurityError(`event ${attributes.id} is signed with unknown key ${attributes.lfkeyid}`, 'unknown_key');
+  const canonical = canonicalFormWithDigest(attributes, attributes.lfclaimsha256);
+  const expected = createHmac('sha256', keys.sig).update(canonical).digest();
+  const given = Buffer.from(attributes.lfsig, 'hex');
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) throw new SecurityError(`event ${attributes.id} has a bad signature`, 'bad_signature');
 }
 
 export interface OpenOptions {

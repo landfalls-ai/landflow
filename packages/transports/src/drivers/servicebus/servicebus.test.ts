@@ -4,16 +4,21 @@ import { NotConnectedError } from '../../driver';
 import servicebusModule, {
   BROADCAST_SESSION,
   CHANNEL_PROPERTY,
+  RateGate,
   SERVICEBUS_CAPABILITIES,
   ServiceBusDriver,
+  describeError,
   entityNames,
   entityOf,
   inferRole,
   isEmulatorConnectionString,
+  isTransient,
   isoDuration,
+  missingHint,
   propertiesToWire,
   servicebus,
   servicebusConfigFrom,
+  withBackoff,
   wireToProperties,
 } from './index';
 
@@ -84,6 +89,21 @@ describe('servicebus headers', () => {
   });
 });
 
+describe('missing entities and createEntities', () => {
+  it('names the entity and the script for the emulator, and the option for a real namespace', () => {
+    expect(missingHint({ emulator: true }, 'landflow.v1.plugin.my-plugin')).toMatch(/servicebus-config\.py --plugin my-plugin,/);
+    expect(missingHint({ emulator: true }, 'lfconf.roundtrip')).toMatch(/servicebus-config\.py --queue lfconf\.roundtrip,/);
+    expect(missingHint({ emulator: true })).toMatch(/servicebus-config\.py, then recreate/);
+    expect(missingHint({ emulator: false }, 'landflow.v1.plugin.x')).toMatch(/createEntities.*Manage rights/);
+  });
+
+  it('reads createEntities from the connection fields', () => {
+    expect(servicebusConfigFrom('c', EMULATOR).createEntities).toBeUndefined();
+    expect(servicebusConfigFrom('c', EMULATOR, { createEntities: 'true' }).createEntities).toBe(true);
+    expect(servicebusConfigFrom('c', EMULATOR, { createEntities: false }).createEntities).toBe(false);
+  });
+});
+
 describe('servicebus driver module', () => {
   it('exposes the module shape the loader and the SDK helper rely on', () => {
     expect(servicebusModule.kind).toBe('servicebus');
@@ -91,7 +111,7 @@ describe('servicebus driver module', () => {
     expect(servicebusModule.exampleUrl).toMatch(/^Endpoint=sb:\/\//);
     expect(servicebusModule.capabilities).toBe(SERVICEBUS_CAPABILITIES);
     expect(servicebusModule.create().capabilities).toEqual(SERVICEBUS_CAPABILITIES);
-    expect(servicebusModule.fields?.map((f) => f.name)).toEqual(['emulator', 'maxMessageBytes']);
+    expect(servicebusModule.fields?.map((f) => f.name)).toEqual(['emulator', 'createEntities', 'maxMessageBytes', 'maxOpsPerSecond']);
     expect(SERVICEBUS_CAPABILITIES).toMatchObject({ replies: 'reply-channel', workSharing: true, buffering: true, ttl: true, undeliverable: 'unknown', nack: true, attempts: true, orderingKeys: false, headers: true, maxHeaderBytes: 65_536, maxMessageBytes: 245_760 });
     const target = servicebus({ connectionString: EMULATOR });
     expect(target.kind).toBe('servicebus');
@@ -114,4 +134,64 @@ describe('servicebus driver module', () => {
     await expect(driver.connect({ connectionId: 'dead', connectionString: 'Endpoint=sb://127.0.0.1:1;SharedAccessKeyName=n;SharedAccessKey=k;UseDevelopmentEmulator=true;' })).rejects.toThrow(/cannot connect/);
     await expect(driver.publish('x', { headers: {}, body: new Uint8Array() })).rejects.toBeInstanceOf(NotConnectedError);
   }, 60_000);
+});
+
+describe('throttling and errors', () => {
+  const busy = () => Object.assign(new Error('The request was terminated because the namespace is being throttled. Error code : 50002'), { code: 'ServiceBusy', retryable: true });
+
+  it('classifies what is worth another try', () => {
+    expect(isTransient(busy())).toBe(true);
+    expect(isTransient(Object.assign(new Error('x'), { code: 'ServiceTimeout' }))).toBe(true);
+    expect(isTransient(Object.assign(new Error('x'), { retryable: true }))).toBe(true);
+    expect(isTransient(Object.assign(new Error('x'), { code: 'MessagingEntityNotFound' }))).toBe(false);
+    expect(isTransient(Object.assign(new Error('x'), { code: 'SessionCannotBeLocked' }))).toBe(false);
+    expect(isTransient(Object.assign(new Error('x'), { code: 'MessageLockLost' }))).toBe(false);
+    expect(isTransient(new Error('plain'))).toBe(false);
+  });
+
+  it('retries a throttled operation on the backoff schedule and gives up on a permanent error', async () => {
+    let calls = 0;
+    await expect(withBackoff(async () => { if (++calls < 3) throw busy(); return 'ok'; }, () => true, [1, 1, 1])).resolves.toBe('ok');
+    expect(calls).toBe(3);
+    calls = 0;
+    await expect(withBackoff(async () => { calls++; throw busy(); }, () => true, [1, 1])).rejects.toThrow(/throttled/);
+    expect(calls).toBe(3);
+    calls = 0;
+    await expect(withBackoff(async () => { calls++; throw Object.assign(new Error('gone'), { code: 'MessagingEntityNotFound' }); }, () => true, [1, 1])).rejects.toThrow('gone');
+    expect(calls).toBe(1);
+    calls = 0;
+    await expect(withBackoff(async () => { calls++; throw busy(); }, () => false, [1, 1])).rejects.toThrow(/throttled/);
+    expect(calls).toBe(1);
+  });
+
+  it('describes an AggregateError (whose own message is empty) with its causes', () => {
+    const aggregate = new AggregateError([Object.assign(new Error('link detached'), { code: 'ServiceCommunicationProblem' }), new Error('timed out')], '');
+    expect(describeError(aggregate)).toContain('link detached');
+    expect(describeError(aggregate)).toContain('timed out');
+    expect(describeError(busy())).toContain('[ServiceBusy]');
+  });
+
+  it('paces to the configured rate after the burst, and not at all at 0', async () => {
+    const gate = new RateGate(100, 4); // 10 ms apart, 4 free
+    const start = Date.now();
+    for (let i = 0; i < 14; i++) await gate.take();
+    expect(Date.now() - start).toBeGreaterThanOrEqual(85); // 10 paced after the 4 burst tokens ≈ 100 ms
+    const off = new RateGate(0);
+    const t = Date.now();
+    for (let i = 0; i < 1000; i++) await off.take();
+    expect(Date.now() - t).toBeLessThan(50);
+  });
+
+  it('charges an operation for the bytes it moves', async () => {
+    const gate = new RateGate(1000, 1, 1); // 1 ms per operation + 1 ms per KiB
+    const start = Date.now();
+    for (let i = 0; i < 4; i++) await gate.take(20 * 1024); // 21 ms each
+    expect(Date.now() - start).toBeGreaterThanOrEqual(55);
+  });
+
+  it('reads maxOpsPerSecond from the connection fields', () => {
+    expect(servicebusConfigFrom('c', 'sb://127.0.0.1:55675', { maxOpsPerSecond: '25' }).maxOpsPerSecond).toBe(25);
+    expect(servicebusConfigFrom('c', 'sb://127.0.0.1:55675', { maxOpsPerSecond: 0 }).maxOpsPerSecond).toBe(0);
+    expect(servicebusConfigFrom('c', 'sb://127.0.0.1:55675').maxOpsPerSecond).toBeUndefined();
+  });
 });

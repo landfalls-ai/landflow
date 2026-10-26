@@ -233,6 +233,22 @@ describe('broker providers', () => {
   });
 });
 
+describe('the claim store setting', () => {
+  const manager = (env: NodeJS.ProcessEnv) => new BrokerConnectionManager({ connections: new TransportConnections({ env: {} }), env, probeIntervalMs: 0 });
+
+  it('is read from LANDFLOW_CLAIM_STORE, never shows credentials, and a bad setting is reported instead of crashing', () => {
+    const none = manager({});
+    none.loadKeyring();
+    expect(none.claimStoreInfo()).toEqual({ configured: false });
+    const s3 = manager({ LANDFLOW_CLAIM_STORE: 's3://landflow/claims?endpoint=http://127.0.0.1:59000', LANDFLOW_CLAIM_SECRET_ACCESS_KEY: 'do-not-show' });
+    s3.loadKeyring();
+    expect(s3.claimStoreInfo()).toEqual({ configured: true, description: 's3://landflow/claims @ http://127.0.0.1:59000' });
+    const unsafe = manager({ LANDFLOW_CLAIM_STORE: 's3://landflow/claims' });
+    unsafe.loadKeyring();
+    expect(unsafe.claimStoreInfo()).toMatchObject({ configured: false, error: expect.stringContaining('refusing to use the default') });
+  });
+});
+
 describe('discovery and calls over the broker', () => {
   beforeAll(async () => {
     transportConnections.create({ id: CONNECTION_ID, name: 'TMP memory', kind: 'memory', config: { url: 'memory://local', note: 'one' } });

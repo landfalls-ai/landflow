@@ -124,6 +124,8 @@ export interface WorkflowSettings {
   /** The same over all runs of the workflow in a day (the instance time zone). */
   aiMaxTokensPerDay?: number;
   aiMaxCostPerDay?: number;
+  /** Transport policy overrides by plugin id for this workflow's runs (the host's selector; docs/transports.md). */
+  transports?: Record<string, { mode?: 'auto' | 'pinned'; pinned?: string; allowed?: string[]; objective?: 'balanced' | 'latency' | 'throughput' }>;
 }
 
 /** A canvas note. It never runs; the engine ignores it. */

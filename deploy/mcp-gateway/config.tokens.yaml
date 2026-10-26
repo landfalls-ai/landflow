@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# The base config (config.yaml) plus sign-in with Landflow-issued MCP tokens (Settings → MCP, POST /api/mcp/tokens), for
+# the dev server on :3000 (compose.tokens.yml). The gateway checks each token's signature against the host's keys, its
+# issuer (the host's LANDFLOW_PUBLIC_URL, default http://localhost:3000) and its audience
+# (<LANDFLOW_MCP_GATEWAY_PUBLIC_URL>/mcp). `mode: optional` lets a call with no token through as anonymous (no grants, so
+# an empty tool list) and still rejects a bad one. The per-plugin routes the host writes get the same check from
+# LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES (deploy/.env.example). The JWKS is fetched at startup and an unreachable one is a
+# hard error, so start the dev server first; with `restart: unless-stopped` the gateway retries until it's up.
+config:
+  adminAddr: "0.0.0.0:15000"
+  storage:
+    mode: hybrid
+  database:
+    url: sqlite:///data/agentgateway.db
+  logging:
+    level: info
+frontendPolicies:
+  tracing:
+    host: jaeger:4318
+    protocol: http
+    randomSampling: true
+    resources:
+      service.name: '"landflow-mcp-gateway"'
+gateways:
+  default:
+    port: 4000
+mcp:
+  gateways: default
+  prefixMode: always
+  failureMode: failOpen
+  statefulMode: stateless
+  server:
+    name: landflow-mcp-gateway
+    version: dev
+    title: Landflow
+    instructions: Every installed Landflow plugin as MCP tools. Tool names are <plugin>_<resource>_<operation>.
+  targets: []
+  policies:
+    mcpAuthentication:
+      mode: optional
+      issuer: http://localhost:3000
+      audiences: [http://127.0.0.1:54000/mcp]
+      # The dev server on the Mac, as the container sees it.
+      jwks:
+        url: http://host.docker.internal:3000/api/mcp/jwks
+      resourceMetadata:
+        resource: http://127.0.0.1:54000/mcp
+        authorization_servers: [http://localhost:3000]
+        bearer_methods_supported: [header]

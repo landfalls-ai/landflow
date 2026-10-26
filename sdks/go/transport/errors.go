@@ -44,6 +44,8 @@ const (
 	ReasonTooLargeEvent UndeliverableReason = "too_large"
 	// Aborted: the call was cancelled before it was published.
 	ReasonAborted UndeliverableReason = "aborted"
+	// ClaimFailed: the body is too big for the broker and the claim store could not take it (nothing was published).
+	ReasonClaimFailed UndeliverableReason = "claim_failed"
 )
 
 // UndeliverableError: provably not delivered; safe to send over another transport.
@@ -103,6 +105,26 @@ type RemoteError struct {
 func (e *RemoteError) Error() string        { return e.Message }
 func (e *RemoteError) Knowledge() Knowledge { return Delivered }
 func (e *RemoteError) Code() string         { return string(e.RemoteCode) }
+
+// ClaimUnavailableError: a body travelling through the claim store could not be
+// read (expired or deleted, the store is down, size or digest do not match). In
+// the request direction the plugin refused the call before running it
+// (NotDelivered, so the selector may use another transport); in the response
+// direction it has already run it (Delivered).
+type ClaimUnavailableError struct {
+	Message string
+	// Response is true when the plugin's reply was unreadable.
+	Response bool
+}
+
+func (e *ClaimUnavailableError) Error() string { return e.Message }
+func (e *ClaimUnavailableError) Knowledge() Knowledge {
+	if e.Response {
+		return Delivered
+	}
+	return NotDelivered
+}
+func (e *ClaimUnavailableError) Code() string { return string(CodeClaimUnavailable) }
 
 // ManifestMismatchError: the plugin's manifest differs from the one the host
 // knows: pull the manifest again, then retry. It unwraps to a *RemoteError with

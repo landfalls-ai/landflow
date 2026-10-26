@@ -14,10 +14,11 @@
 import { randomBytes } from 'node:crypto';
 import { DEFAULT_ANNOUNCE_TTL_SECONDS, type JsonValue } from '@landflow/protocol';
 import { brokerEndpoint, channelNames, channelSpecs, type ChannelNames } from './channels';
+import { ClaimError, DEFAULT_CLAIM_TTL_MS, startClaimSweeper, type ClaimStore } from './claim';
 import { Codec, consoleLogger, isDropReason, type Logger } from './codec';
 import { NotConnectedError, type BrokerConfig, type BrokerDriver, type ChannelStats, type Subscription, type WireEvent } from './driver';
 import { EnvelopeError, hostSource, parsePluginSource, parseType, requestType, CANCEL_TYPE, subjectOf, type Attributes, type DeliveryMode, type Method, type RequestBody, type ResponseBody } from './envelope';
-import { CancelledError, ConnectionLostError, ManifestMismatchError, RemoteError, TimeoutError, UndeliverableError, UsageError } from './errors';
+import { CancelledError, ClaimUnavailableError, ConnectionLostError, ManifestMismatchError, RemoteError, TimeoutError, UndeliverableError, UsageError } from './errors';
 import { verifyRegistryProof, type Keyring } from './security';
 import type { AnnounceBody, WithdrawBody } from './server';
 
@@ -42,6 +43,10 @@ export interface MessagingClientOptions<C extends BrokerConfig = BrokerConfig> {
   registrySecret?: string | null;
   /** Consume the registry channel (default `true`). */
   discovery?: boolean;
+  /** Claim store (`LANDFLOW_CLAIM_STORE`): a request or reply that does not fit the broker goes by reference through it. Without one such a call fails `too_large`. */
+  claims?: ClaimStore;
+  /** Claims older than this are swept (default 1 h); the sweeper runs every 10 min. */
+  claimTtlMs?: number;
   log?: Logger;
   now?: () => number;
 }
@@ -127,6 +132,7 @@ export class MessagingClient<C extends BrokerConfig = BrokerConfig> {
   private subscriptions: Subscription[] = [];
   private timers: NodeJS.Timeout[] = [];
   private state: 'new' | 'started' | 'closed' = 'new';
+  private stopSweeper: (() => void) | undefined;
 
   constructor(private readonly options: MessagingClientOptions<C>) {
     this.driver = options.driver;
@@ -135,7 +141,7 @@ export class MessagingClient<C extends BrokerConfig = BrokerConfig> {
     this.names = channelNames(options.config.prefix);
     this.log = options.log ?? consoleLogger;
     this.now = options.now ?? Date.now;
-    this.codec = new Codec(options.keyring, options.driver.capabilities, { clockSkewMs: options.clockSkewMs, now: this.now });
+    this.codec = new Codec(options.keyring, options.driver.capabilities, { clockSkewMs: options.clockSkewMs, now: this.now, claims: options.claims });
     this.registrySecret = options.registrySecret === null ? undefined : (options.registrySecret ?? process.env.LANDFLOW_REGISTRY_SECRET) || undefined;
   }
 
@@ -180,6 +186,7 @@ export class MessagingClient<C extends BrokerConfig = BrokerConfig> {
     const statsInterval = this.options.statsIntervalMs ?? DEFAULT_STATS_INTERVAL_MS;
     if (statsInterval > 0 && this.driver.stats) this.timers.push(setInterval(() => void this.sampleStats(), statsInterval));
     for (const timer of this.timers) timer.unref?.();
+    if (this.options.claims) this.stopSweeper = startClaimSweeper(this.options.claims, this.options.claimTtlMs ?? DEFAULT_CLAIM_TTL_MS, (e) => this.log('debug', 'claim sweep failed', { error: e.message }));
     this.state = 'started';
   }
 
@@ -213,11 +220,37 @@ export class MessagingClient<C extends BrokerConfig = BrokerConfig> {
     if (subject) attributes.subject = subject;
     let packed;
     try {
-      packed = this.codec.pack(pluginId, attributes, body as unknown as JsonValue, true);
+      packed = await this.codec.packClaimed(pluginId, attributes, body as unknown as JsonValue, true);
     } catch (error) {
       if (error instanceof EnvelopeError && error.reason === 'too_large') throw new UndeliverableError(error.message, 'too_large');
+      if (error instanceof ClaimError) throw new UndeliverableError(error.message, 'claim_failed');
       throw error;
     }
+    const claimKey = packed.claimKey;
+    // A call that did not get its reply never reached the receiver's ack: nobody else will delete the request body.
+    const dropClaim = () => {
+      if (claimKey) void this.options.claims!.delete(claimKey).catch((e: Error) => this.log('debug', 'could not delete a claim', { key: claimKey, error: e.message }));
+    };
+    try {
+      return await this.exchange(pluginId, method, known, manifestHash, channel, native, packed, options, startedAt, deadline);
+    } catch (error) {
+      dropClaim();
+      throw error;
+    }
+  }
+
+  private async exchange<M extends Method>(
+    pluginId: string,
+    method: M,
+    known: { plugin: AnnouncedPlugin; instances: Map<string, AnnouncedInstance> } | undefined,
+    manifestHash: string | undefined,
+    channel: string,
+    native: boolean,
+    packed: Awaited<ReturnType<Codec['packClaimed']>>,
+    options: CallOptions,
+    startedAt: number,
+    deadline: number,
+  ): Promise<CallReply<M>> {
     // Provably undeliverable before publishing: every announced instance has stopped heartbeating, or the channel has no consumers.
     if (known && known.instances.size === 0) throw new UndeliverableError(`no instance of "${pluginId}" has announced itself in the last ${DEFAULT_ANNOUNCE_TTL_SECONDS} s`, 'no_consumers');
     const stats = this.sampled.get(pluginId);
@@ -267,6 +300,7 @@ export class MessagingClient<C extends BrokerConfig = BrokerConfig> {
     if (reply.attributes.lferror) {
       const details = (reply.data ?? {}) as Record<string, JsonValue>;
       const message = typeof details.error === 'string' ? details.error : `plugin answered ${reply.attributes.lferror}`;
+      if (reply.attributes.lferror === 'claim_unavailable') throw new ClaimUnavailableError(message, 'request');
       if (reply.attributes.lferror === 'manifest_mismatch') throw new ManifestMismatchError(manifestHash, reply.attributes.lfmanifest ?? (details.manifestHash as string | undefined));
       throw new RemoteError(message, reply.attributes.lferror, details);
     }
@@ -316,6 +350,7 @@ export class MessagingClient<C extends BrokerConfig = BrokerConfig> {
     this.state = 'closed';
     for (const timer of this.timers) clearInterval(timer);
     this.timers = [];
+    this.stopSweeper?.();
     for (const pending of this.pending.values()) pending.reject(new ConnectionLostError('client closed; the call may have run'));
     this.pending.clear();
     await Promise.allSettled(this.subscriptions.map((s) => s.close()));
@@ -342,7 +377,7 @@ export class MessagingClient<C extends BrokerConfig = BrokerConfig> {
     }
   }
 
-  private onReply(wire: WireEvent, expectedCallId?: string): void {
+  private async onReply(wire: WireEvent, expectedCallId?: string): Promise<void> {
     let raw;
     try {
       raw = this.codec.peek(wire);
@@ -358,6 +393,15 @@ export class MessagingClient<C extends BrokerConfig = BrokerConfig> {
     const source = parsePluginSource(raw.attributes.source);
     if (!source || source.pluginId !== pending.pluginId) return this.log('warn', 'dropped a reply from another plugin', { correlation, source: raw.attributes.source });
     try {
+      // A reply that went by reference: fetch it, then delete it (the reply channel acknowledges on delivery, so nothing can redeliver it).
+      let claimKey: string | undefined;
+      try {
+        ({ raw, claimKey } = await this.codec.resolveClaim(raw, pending.pluginId));
+      } catch (error) {
+        if (error instanceof ClaimError) return pending.reject(new ClaimUnavailableError(`the plugin's reply could not be read from the claim store: ${error.message}`, 'response'));
+        throw error;
+      }
+      if (claimKey) void this.options.claims!.delete(claimKey).catch((e: Error) => this.log('debug', 'could not delete a claim', { key: claimKey, error: e.message }));
       const { attributes, data } = this.codec.unpack(raw, pending.pluginId);
       if (parsed.method !== pending.method) return this.log('warn', 'dropped a reply for another method', { correlation, type: attributes.type });
       pending.resolve({ attributes, data });

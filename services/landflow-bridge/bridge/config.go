@@ -80,6 +80,11 @@ type Config struct {
 	RegistrySecret string
 	// NoRegistryProof announces without a proof (tests).
 	NoRegistryProof bool
+	// Claims is the claim store for bodies too big for the broker (default: the one LANDFLOW_CLAIM_STORE configures,
+	// none when unset); NoClaims forces none. A malformed setting fails New. The relay passes it to every broker server.
+	Claims   transport.ClaimStore
+	ClaimTTL time.Duration
+	NoClaims bool
 	// InstanceID is the plugin's instance id (default: random per process).
 	InstanceID string
 	// MaxConcurrency overrides the manifest's maxConcurrency (0 = the manifest's, else 16).

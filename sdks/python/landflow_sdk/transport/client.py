@@ -19,10 +19,11 @@ from typing import Any, Callable
 
 from ..dispatcher import CancelToken
 from .channels import ChannelNames, broker_endpoint, control_spec, instance_spec, registry_spec, reply_spec, request_spec
+from .claim import DEFAULT_CLAIM_TTL_MS, ClaimError, ClaimStore, start_claim_sweeper
 from .codec import Codec, is_drop_reason
 from .driver import BrokerDriver, ChannelSpec, ChannelStats, ConsumeOptions, Delivery, NotConnectedError, PublishOptions, Subscription, WireEvent
 from .envelope import AT_LEAST_ONCE, AT_MOST_ONCE, CANCEL_TYPE, Attributes, EnvelopeError, host_source, now_ms, parse_plugin_source, parse_type, request_type, subject_of
-from .errors import CancelledError, ConnectionLostError, ManifestMismatchError, RemoteError, TimeoutError_, UndeliverableError, UsageError
+from .errors import CancelledError, ClaimUnavailableError, ConnectionLostError, ManifestMismatchError, RemoteError, TimeoutError_, UndeliverableError, UsageError
 from .security import Keyring, verify_registry_proof
 from .server import DEFAULT_ANNOUNCE_TTL_SECONDS
 
@@ -98,6 +99,8 @@ class MessagingClient:
         clock_skew_ms: int | None = None,
         registry_secret: str | None | bool = None,
         discovery: bool = True,
+        claims: ClaimStore | None = None,
+        claim_ttl_ms: int = DEFAULT_CLAIM_TTL_MS,
         now: Callable[[], int] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -107,7 +110,9 @@ class MessagingClient:
         self.names = ChannelNames(getattr(config, "prefix", None))
         self.log = logger or log
         self.now = now or now_ms
-        self.codec = Codec(keyring, driver.capabilities, clock_skew_ms=clock_skew_ms, now=self.now)
+        self.codec = Codec(keyring, driver.capabilities, clock_skew_ms=clock_skew_ms, now=self.now, claims=claims)
+        self.claims = claims
+        self.claim_ttl_ms = claim_ttl_ms
         if registry_secret is None:
             registry_secret = os.environ.get("LANDFLOW_REGISTRY_SECRET") or None
         self.registry_secret: str | None = registry_secret if isinstance(registry_secret, str) and registry_secret else None
@@ -157,6 +162,8 @@ class MessagingClient:
             self._threads.append(threading.Thread(target=self._expiry_loop, name="landflow-client-expiry", daemon=True))
         if self.stats_interval_ms > 0:
             self._threads.append(threading.Thread(target=self._stats_loop, name="landflow-client-stats", daemon=True))
+        if self.claims is not None:
+            start_claim_sweeper(self.claims, self.claim_ttl_ms, self._stop, lambda exc: self.log.debug("claim sweep failed: %s", exc), self.now)
         self.state = "started"
         for thread in self._threads:
             thread.start()
@@ -223,11 +230,31 @@ class MessagingClient:
             traceparent=traceparent, tracestate=tracestate, subject=subject_of(method, body),
         )
         try:
-            packed = self.codec.pack(plugin_id, attributes, body, True)
+            packed = self.codec.pack_claimed(plugin_id, attributes, body, True)
         except EnvelopeError as exc:
             if exc.reason == "too_large":
                 raise UndeliverableError(str(exc), "too_large") from exc
             raise
+        except ClaimError as exc:
+            raise UndeliverableError(str(exc), "claim_failed") from exc
+        succeeded = False
+        try:
+            reply = self._exchange(plugin_id, method, packed, known, manifest_hash, channel, native, started_at, deadline, ordering_key, instance_id, cancel)
+            succeeded = True
+            return reply
+        finally:
+            # A call that did not get its reply never reached the receiver's ack: nobody else will delete the request body.
+            if not succeeded and packed.claim_key and self.claims is not None:
+                self._drop_claim(packed.claim_key)
+
+    def _drop_claim(self, key: str) -> None:
+        try:
+            self.claims.delete(key)  # type: ignore[union-attr]
+        except Exception as exc:  # noqa: BLE001
+            self.log.debug("could not delete a claim %s: %s", key, exc)
+
+    def _exchange(self, plugin_id: str, method: str, packed: Any, known: Any, manifest_hash: str | None, channel: str, native: bool, started_at: int, deadline: int,
+                  ordering_key: str | None, instance_id: str | None, cancel: CancelToken | None) -> CallReply:
         if known and not known[1]:
             raise UndeliverableError(f'no instance of "{plugin_id}" has announced itself in the last {DEFAULT_ANNOUNCE_TTL_SECONDS} s', "no_consumers")
         sampled = self._sampled.get(plugin_id)
@@ -287,6 +314,8 @@ class MessagingClient:
         if reply_attributes.lferror:
             details = data if isinstance(data, dict) else {}
             message = details.get("error") if isinstance(details.get("error"), str) else f"plugin answered {reply_attributes.lferror}"
+            if reply_attributes.lferror == "claim_unavailable":
+                raise ClaimUnavailableError(message, "request")
             if reply_attributes.lferror == "manifest_mismatch":
                 raise ManifestMismatchError(manifest_hash, reply_attributes.lfmanifest or details.get("manifestHash"))
             raise RemoteError(message, reply_attributes.lferror, details)
@@ -356,6 +385,15 @@ class MessagingClient:
         source = parse_plugin_source(raw.attributes.source)
         if source is None or source[0] != pending.plugin_id:
             return self.log.warning("dropped a reply from another plugin: %s", raw.attributes.source)
+        # A reply that went by reference: fetch it, then delete it (the reply channel acknowledges on delivery, so nothing can redeliver it).
+        try:
+            raw, claim_key = self.codec.resolve_claim(raw, pending.plugin_id)
+        except ClaimError as exc:
+            return pending.reject(ClaimUnavailableError(f"the plugin's reply could not be read from the claim store: {exc}", "response"))
+        except Exception as exc:  # noqa: BLE001
+            return self.log.warning("dropped a reply that failed verification: %s", exc)
+        if claim_key and self.claims is not None:
+            self._drop_claim(claim_key)
         try:
             attributes, data = self.codec.unpack(raw, pending.plugin_id)
         except Exception as exc:  # noqa: BLE001

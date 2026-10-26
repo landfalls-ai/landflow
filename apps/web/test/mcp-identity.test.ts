@@ -492,6 +492,15 @@ describe('the catalog: server.json, the registry API, Server Cards, PRM', () => 
   it('reports the configuration to Settings → MCP', async () => {
     const status = (await (await statusRoute.GET(req('/api/mcp/status'))).json()) as { gateway: { mode: string; publicUrl: string; secretConfigured: boolean; sync: string }; instanceUrl: string; identityProvider?: { issuer: string }; namespace: string; canManage: boolean };
     expect(status).toMatchObject({ gateway: { mode: 'bundled', publicUrl: GATEWAY, secretConfigured: true, sync: 'stopped' }, instanceUrl: INSTANCE, identityProvider: { issuer: idpIssuer }, namespace: 'test.landflow', canManage: true });
+    expect(status.gateway).not.toHaveProperty('signIn');
+    // The route policies' token check is what the per-plugin routes sign in with.
+    process.env.LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES = JSON.stringify({ mcpAuthentication: { mode: 'optional', issuer: INSTANCE, audiences: [`${GATEWAY}/mcp`], jwks: { url: `${INSTANCE}/api/mcp/jwks` } } });
+    try {
+      const signedIn = (await (await statusRoute.GET(req('/api/mcp/status'))).json()) as { gateway: { signIn?: { issuer: string; mode: string } } };
+      expect(signedIn.gateway.signIn).toEqual({ issuer: INSTANCE, mode: 'optional' });
+    } finally {
+      delete process.env.LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES;
+    }
   });
 });
 

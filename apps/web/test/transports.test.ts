@@ -44,6 +44,7 @@ const { isChoice, runModeOf, select, staticRank } = await import('@/lib/server/t
 const { envConnections, TransportConnections, transportConnections, TransportError, viewOf } = await import('@/lib/server/transports/connections');
 const { brokeredEndpoint, endpointKind, transportProviders } = await import('@/lib/server/transports/provider');
 const { driverModules } = await import('@/lib/server/transports/brokers');
+const { transportAuto } = await import('@/lib/server/transports/auto');
 const { createFetchHandler } = await import('@landflow/sdk/http');
 const { serveGrpc } = await import('@landflow/sdk/grpc');
 const transportsRoute = await import('@/app/api/transports/route');
@@ -474,6 +475,10 @@ describe('registry: the selector chooses per call', () => {
     expect(summary().policy).toEqual({ mode: 'auto', allowed: ['http'], objective: 'latency' });
     await pluginRoute.PATCH(request({ policy: { mode: 'auto' } }, 'PATCH'), params(PLUGIN_ID));
     expect(summary().policy).toEqual(AUTO);
+    // Auto ranks by the calls measured so far (the HTTP-pinned ones above, a cold first gRPC call), which a loaded
+    // machine can tip either way; without measurements it falls back to the static order, gRPC first.
+    transportAuto.forget(HTTP);
+    transportAuto.forget(GRPC);
     expect(summary().choice).toMatchObject({ kind: 'grpc', reason: 'auto.latency' });
   });
 

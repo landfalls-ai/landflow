@@ -316,7 +316,8 @@ const schemas: Record<string, Json> = {
       pluginId: { type: 'string', description: 'A plugin id, or `core`' },
       tools: { oneOf: [{ type: 'string', const: '*' }, array({ type: 'string' })], description: 'Tool names on the plugin’s endpoint, `!name` excludes, or `*`' },
       credentials: { type: 'object', additionalProperties: { type: 'string' }, description: 'credentialType → credential id' },
-      requireApproval: { type: 'boolean' },
+      approval: { type: 'string', enum: ['always', 'destructive', 'never'], description: 'When the grant’s tools need a person’s OK: always, for destructive tools (the default), or never. Absent: the instance default' },
+      requireApproval: { type: 'boolean', description: 'Older form of `approval`: true = destructive, false = never' },
       createdBy: { type: 'string' },
       createdAt: { type: 'string', format: 'date-time' },
       updatedAt: { type: 'string', format: 'date-time' },
@@ -1231,6 +1232,9 @@ function paths(): Record<string, Record<string, Json>> {
   add('get', '/api/mcp/grants/{id}', { tag: 'MCP', id: 'getMcpGrant', summary: 'One tool grant', responses: { 200: reply('The grant', object({ grant: ref('McpToolGrant') }, ['grant'])), 404: notFound } });
   add('patch', '/api/mcp/grants/{id}', { tag: 'MCP', id: 'updateMcpGrant', summary: 'Change a tool grant', body: jsonBody(fromZod(grantPatchSchema)), responses: { 200: reply('Changed', object({ grant: ref('McpToolGrant') }, ['grant'])), 400: invalid, 404: notFound } });
   add('delete', '/api/mcp/grants/{id}', { tag: 'MCP', id: 'deleteMcpGrant', summary: 'Remove a tool grant', responses: { 200: reply('Removed', ok), 404: notFound } });
+  add('get', '/api/mcp/approvals', { tag: 'MCP', id: 'listMcpApprovals', summary: 'MCP tool calls waiting for a person', description: 'The approvals of destructive (or, per grant, every) MCP tool calls that the signed-in user may answer: pending ones and the last day’s answers. Calls from clients that support MCP elicitation are asked through the client instead (lib/server/mcp/approvals.ts).', responses: { 200: reply('The approvals', object({ approvals: array({ type: 'object', additionalProperties: true }) }, ['approvals'])) } });
+  add('post', '/api/mcp/approvals/{id}', { tag: 'MCP', id: 'decideMcpApproval', summary: 'Approve or deny an MCP tool call', description: 'Owners, admins, the user the agent acts for and members of a project they share. An approval is good for one repeat of the same call (same tool, same arguments, same caller) for ten minutes.', body: jsonBody(object({ approve: { type: 'boolean' } }, ['approve'])), responses: { 200: reply('Answered', object({ approval: { type: 'object', additionalProperties: true } }, ['approval'])), 403: errorRef('Not yours to answer'), 404: notFound, 409: errorRef('Already answered'), 410: errorRef('Expired') } });
+  add('get', '/api/mcp/files/{id}', { tag: 'MCP', id: 'downloadMcpFile', summary: 'A file of an MCP tool result', description: 'The target of a `resource_link` in a tool result: a URL the host signed (`exp`, `t`, `c`, `sig` query parameters), valid until `exp` (LANDFLOW_MCP_FILE_URL_TTL_SECONDS, default 900). No session; 403 for a wrong signature, 410 once expired.', public: true, responses: { 200: { description: 'The bytes', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 403: errorRef('Invalid signature'), 404: notFound, 410: errorRef('Expired') } });
   add('get', '/api/mcp/status', { tag: 'MCP', id: 'mcpStatus', summary: 'The MCP gateway and identity configuration', description: 'What Settings → MCP shows: the gateway mode and URL, whether the gateway secret is set, the identity provider, the registry namespace.', responses: { 200: reply('The configuration', { type: 'object' }) } });
   add('get', '/api/mcp/jwks', { tag: 'MCP', id: 'mcpJwks', summary: 'The JWKS of Landflow-issued MCP tokens', description: 'Public. The gateway (agentgateway) validates Landflow-issued tokens against it.', public: true, responses: { 200: reply('RFC 7517 key set', object({ keys: array({ type: 'object' }) }, ['keys'])) } });
   add('get', '/api/mcp/registry/v0.1/servers', {
@@ -1256,7 +1260,7 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'listTransports',
     summary: 'List transport kinds and broker connections',
     description: 'The kinds this host knows (installed providers with their capabilities, and broker kinds whose driver has not landed yet) and the broker connections with the plugins on each.',
-    responses: { 200: reply('Kinds and connections', object({ kinds: array(ref('TransportKind')), connections: array(ref('TransportConnection')) }, ['kinds', 'connections'])) },
+    responses: { 200: reply('Kinds and connections', object({ kinds: array(ref('TransportKind')), connections: array(ref('TransportConnection')), claimStore: object({ configured: { type: 'boolean' }, description: { type: 'string' }, error: { type: 'string' } }, ['configured']) }, ['kinds', 'connections'])) },
   });
   add('get', '/api/transports/connections', { tag: 'Plugins', id: 'listTransportConnections', summary: 'List broker connections', responses: { 200: reply('The connections (no secret values)', object({ connections: array(ref('TransportConnection')) }, ['connections'])) } });
   add('post', '/api/transports/connections', {

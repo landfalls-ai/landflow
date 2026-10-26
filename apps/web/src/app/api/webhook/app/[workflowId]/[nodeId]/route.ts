@@ -12,6 +12,7 @@ import { context } from '@opentelemetry/api';
 import type { WebhookResponse } from '@landflow/protocol';
 import { appWebhooks, getStaticData, setStaticData, webhookBase, appWebhookUrl, isAppWebhookTrigger } from '@/lib/server/app-webhooks';
 import { error, handler, json } from '@/lib/server/http';
+import { receiveTriggerWebhook, TRIGGER_WEBHOOK_PREFIX } from '@/lib/server/mcp/triggers';
 import { registry } from '@/lib/server/plugins/registry';
 import { productionWorkflowById } from '@/lib/server/publish';
 import { DuplicateRunError, RunBufferedError, runWorkflow, RunSkippedError } from '@/lib/server/runner';
@@ -30,6 +31,8 @@ function reply(response: WebhookResponse['response'], fallback: () => Response):
 
 async function handle(request: Request, { params }: Ctx) {
   const { workflowId, nodeId } = await params;
+  // A webhook an MCP client's subscription registered (lib/server/mcp/triggers.ts), not a published workflow's.
+  if (workflowId.startsWith(TRIGGER_WEBHOOK_PREFIX)) return receiveTriggerWebhook(workflowId.slice(TRIGGER_WEBHOOK_PREFIX.length), request);
   const workflow = productionWorkflowById(workflowId);
   const node = workflow?.nodes.find((n) => n.id === nodeId && !n.disabled);
   if (!workflow || !node) {

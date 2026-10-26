@@ -45,6 +45,8 @@ export const PUBLIC_ROUTES = [
   // (lib/server/mcp/identity.ts authenticates their callers: the gateway secret, MCP tokens, identity provider tokens, API
   // keys, sessions). Tokens, grants and status below /api/mcp are private: see PRIVATE_MCP_ROUTES.
   '/api/mcp',
+  // Files behind a tool result's `resource_link`: the URL carries the host's signature (id, expiry, tool, caller), checked by the route.
+  '/api/mcp/files',
   // Protected resource metadata (RFC 9728) of the MCP endpoints and the instance's Server Card (which checks its callers itself).
   '/.well-known/oauth-protected-resource',
   '/.well-known/mcp',
@@ -62,7 +64,7 @@ export const PUBLIC_ROUTES = [
 const PRIVATE_AUTH_ROUTES = ['/api/auth/me'];
 
 /** `/api/mcp` routes that are the UI's (Settings → MCP), not MCP endpoints: a session or an API key like any other route. */
-export const PRIVATE_MCP_ROUTES = ['/api/mcp/tokens', '/api/mcp/grants', '/api/mcp/status', '/api/mcp/tools', '/api/mcp/gateway'];
+export const PRIVATE_MCP_ROUTES = ['/api/mcp/tokens', '/api/mcp/grants', '/api/mcp/status', '/api/mcp/tools', '/api/mcp/gateway', '/api/mcp/approvals'];
 
 /** True when `path` is `prefix` or below it (`/api/mcp` matches `/api/mcp` and `/api/mcp/x`, not `/api/mcpx`). */
 export function underPath(path: string, prefix: string): boolean {

@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# The sidecar's base config (../../base/host/mcp-gateway-config.yaml) plus sign-in with Landflow-issued MCP tokens (Settings →
+# MCP, POST /api/mcp/tokens): the gateway checks each token's signature against the host's keys (JWKS on the pod's loopback),
+# its issuer (= LANDFLOW_PUBLIC_URL) and its audience (<LANDFLOW_MCP_GATEWAY_PUBLIC_URL>/mcp). `mode: optional` lets a call with no
+# token through as anonymous (no grants, so an empty tool list) and still rejects a bad token. Change the three URLs
+# below to the ones in your overlay (this file is a template: it uses the orbstack-ingress host, http://landflow.localhost).
+config:
+  adminAddr: "127.0.0.1:15000"
+  storage:
+    mode: hybrid
+  database:
+    url: sqlite:///data/agentgateway.db
+  logging:
+    level: info
+gateways:
+  default:
+    port: 4000
+mcp:
+  gateways: default
+  prefixMode: always
+  failureMode: failOpen
+  statefulMode: stateless
+  server:
+    name: landflow-mcp-gateway
+    version: dev
+    title: Landflow
+    instructions: Every installed Landflow plugin as MCP tools. Tool names are <plugin>_<resource>_<operation>.
+  targets: []
+  policies:
+    mcpAuthentication:
+      mode: optional
+      issuer: http://landflow.localhost
+      audiences: [http://landflow.localhost/mcp]
+      jwks:
+        url: http://127.0.0.1:3000/api/mcp/jwks
+      resourceMetadata:
+        resource: http://landflow.localhost/mcp
+        authorization_servers: [http://landflow.localhost]
+        bearer_methods_supported: [header]

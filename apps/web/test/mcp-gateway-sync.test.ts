@@ -18,7 +18,7 @@ Object.assign(process.env, { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_
 
 import type { GatewayRoute, GatewayTarget, McpGatewayAdapter, SyncPlugin } from '@/lib/server/mcp/gateway-sync';
 
-const { McpGatewaySync, MemoryOwnedStore, dbOwnedStore, gatewayTargetName, renderTarget, renderRoutes, sameJson, OFFLINE_GRACE_MS } = await import('@/lib/server/mcp/gateway-sync');
+const { McpGatewaySync, MemoryOwnedStore, dbOwnedStore, gatewayTargetName, renderTarget, renderRoutes, routePoliciesFor, sameJson, OFFLINE_GRACE_MS } = await import('@/lib/server/mcp/gateway-sync');
 const { AgentgatewayAdapter, FileGatewayAdapter } = await import('@/lib/server/mcp/gateway-adapters');
 const { createUser } = await import('@/lib/server/auth/users');
 const { issueMcpToken, listMcpTokens, purgeMcpTokens, revokeMcpToken } = await import('@/lib/server/mcp/tokens');
@@ -127,6 +127,19 @@ describe('target names and rendering', () => {
     expect(routes[1].value.matches[0]).toEqual({ path: { exact: '/mcp/plugins/text-toolkit/server-card' }, method: 'GET' });
     expect(routes[1].value.backends[0]).toEqual({ host: '127.0.0.1:3000' });
     expect(routes[1].value.policies).toEqual({ urlRewrite: { authority: 'auto', path: { full: '/api/mcp/plugins/text-toolkit/server-card' } } });
+  });
+
+  it('completes a route policy’s mcpAuthentication with the route’s own resource metadata', () => {
+    const auth = { mode: 'optional', issuer: 'http://landflow.test', audiences: ['http://gw.test/mcp'], jwks: { url: 'http://landflow.test/api/mcp/jwks' } };
+    const [route] = renderRoutes('text-toolkit', { hostUrl: HOST, secret: SECRET, routePolicies: { mcpAuthentication: auth }, publicUrl: 'http://gw.test/' });
+    expect(route.value.policies).toEqual({
+      mcpAuthentication: { ...auth, resourceMetadata: { resource: 'http://gw.test/mcp/plugins/text-toolkit', authorization_servers: ['http://landflow.test'], bearer_methods_supported: ['header'] } },
+    });
+    // Given metadata, no public URL, or no sign-in: left as configured.
+    const own = { mcpAuthentication: { ...auth, resourceMetadata: { resource: 'x' } } };
+    expect(routePoliciesFor(own, '/mcp/plugins/a', 'http://gw.test')).toBe(own);
+    expect(routePoliciesFor({ mcpAuthentication: auth }, '/mcp/plugins/a', undefined)).toEqual({ mcpAuthentication: auth });
+    expect(routePoliciesFor({ cors: {} }, '/mcp/plugins/a', 'http://gw.test')).toEqual({ cors: {} });
   });
 
   it('compares JSON structurally', () => {

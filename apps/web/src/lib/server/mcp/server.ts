@@ -78,14 +78,86 @@ async function serveLegacy(request: Request, factory: McpServerFactory, authInfo
   }
 }
 
+/** What an endpoint does when a 2026-07-28 client opens `subscriptions/listen` for resources: claim them, or refuse the stream. */
+export type ListenHook = (uris: string[], info: { request: Request; authInfo?: AuthInfo; key: string; id: unknown }) => Promise<{ release: () => void } | Response>;
+
+export interface ServeOptions {
+  /** Called for a `subscriptions/listen` that names `resourceSubscriptions`; `release` runs once when that stream ends (the client left, or the server closed it). */
+  onListen?: ListenHook;
+}
+
+/** A JSON-RPC error answered in-band (HTTP 200) for a `subscriptions/listen` the endpoint refuses, as the SDK's own listen router does. */
+export function listenRefusal(id: unknown, code: number, message: string): Response {
+  return Response.json({ jsonrpc: '2.0', error: { code, message }, id }, { status: 200 });
+}
+
+/** The body of an event stream with `release` called once when it ends or the reader cancels it. */
+function releasingStream(response: Response, release: () => void): Response {
+  if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
+    release();
+    return response;
+  }
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          release();
+          controller.close();
+        } else controller.enqueue(value);
+      } catch (error) {
+        release();
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      release();
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(body, { status: response.status, headers: response.headers });
+}
+
+/** The URIs a `subscriptions/listen` body subscribes to (and its JSON-RPC id), or undefined for any other request. */
+async function listenedResources(request: Request): Promise<{ id: unknown; uris: string[] } | undefined> {
+  if (request.method !== 'POST') return undefined;
+  const body = (await request
+    .clone()
+    .json()
+    .catch(() => undefined)) as { id?: unknown; method?: string; params?: { notifications?: { resourceSubscriptions?: unknown } } } | undefined;
+  if (body?.method !== 'subscriptions/listen') return undefined;
+  const uris = body.params?.notifications?.resourceSubscriptions;
+  return Array.isArray(uris) && uris.length ? { id: body.id, uris: uris.filter((u): u is string => typeof u === 'string') } : undefined;
+}
+
 /**
  * Answer one MCP request on the endpoint `key` with a server the factory makes for it (one per request, both eras).
- * `authInfo` reaches the factory and the handlers (`ctx.authInfo`).
+ * `authInfo` reaches the factory and the handlers (`ctx.authInfo`). A 2026-07-28 `subscriptions/listen` that subscribes
+ * to resources goes through `options.onListen` first, and its stream is released when it ends.
  */
-export async function serveMcpEndpoint(key: string, request: Request, factory: McpServerFactory, authInfo?: AuthInfo): Promise<Response> {
+export async function serveMcpEndpoint(key: string, request: Request, factory: McpServerFactory, authInfo?: AuthInfo, options: ServeOptions = {}): Promise<Response> {
   const entry = endpoint(key, factory);
   if (await isLegacyRequest(request)) return serveLegacy(request, entry.factory, authInfo);
-  return entry.modern.fetch(request, authInfo && { authInfo });
+  const listen = options.onListen ? await listenedResources(request) : undefined;
+  if (!listen) return entry.modern.fetch(request, authInfo && { authInfo });
+  const claim = await options.onListen!(listen.uris, { request, authInfo, key, id: listen.id });
+  if (claim instanceof Response) return claim;
+  let response: Response;
+  try {
+    response = await entry.modern.fetch(request, authInfo && { authInfo });
+  } catch (error) {
+    claim.release();
+    throw error;
+  }
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    claim.release();
+  };
+  request.signal.addEventListener('abort', release, { once: true });
+  return releasingStream(response, release);
 }
 
 /** Answer one MCP request with a server made for it (the instance server and the MCP Server Triggers). */
@@ -98,6 +170,14 @@ export function notifyToolsChanged(key: string): boolean {
   const entry = endpoints().get(key);
   if (!entry) return false;
   entry.modern.notify.toolsChanged();
+  return true;
+}
+
+/** Tell the 2026-07-28 clients listening on `key` that subscribed to `uri` (`resourceSubscriptions`) that it changed (`notifications/resources/updated`). */
+export function notifyResourceUpdated(key: string, uri: string): boolean {
+  const entry = endpoints().get(key);
+  if (!entry) return false;
+  entry.modern.notify.resourceUpdated(uri);
   return true;
 }
 

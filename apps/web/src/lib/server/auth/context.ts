@@ -10,7 +10,7 @@ import type { UserRecord } from './users';
 
 export interface Principal {
   user: UserRecord;
-  via: 'session' | 'api-key' | 'test';
+  via: 'session' | 'api-key' | 'test' | 'mcp';
   /** The SHA-256 id of the session (via session). */
   sessionId?: string;
   /** The key (via api-key). */

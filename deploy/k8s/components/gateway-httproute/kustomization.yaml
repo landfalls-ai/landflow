@@ -1,0 +1,14 @@
+# The Gateway API alternative to ../gateway-ingress: an HTTPRoute for the same paths (web app and MCP gateway) on a Gateway you
+# already run (Envoy Gateway, Traefik, Cilium, Istio, NGINX Gateway Fabric, …). Needs the Gateway API CRDs (v1.2+, standard
+# channel) in the cluster. Patch the placeholders: `parentRefs` (your Gateway's name and namespace; add `sectionName` for a
+# listener), `hostnames`. TLS terminates on the Gateway's listener (certificateRefs there), not on the route.
+# Use this component or ../gateway-ingress, not both.
+#
+# `timeouts.request: 0s` turns off the per-request timeout (Gateway API v1.1+): MCP streams stay open. A controller may still
+# have its own idle timeout: for Envoy Gateway apply ../../examples/envoy-gateway/backendtrafficpolicy.yaml; for Traefik raise
+# `ports.<entrypoint>.transport.respondingTimeouts` only if you lowered them. Mcp-Session-Id and MCP-Protocol-Version are not
+# touched by the route.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - httproute.yaml

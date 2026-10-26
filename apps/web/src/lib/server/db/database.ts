@@ -11,7 +11,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync, SQLInputValue, StatementSync } from 'node:sqlite';
 import { singleton } from '../singleton';
-import { MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type Migration, type TableName } from './schema';
+import { addColumnSql, MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type Migration, type TableName } from './schema';
 
 export type DbKind = 'sqlite' | 'postgres';
 export type SqlValue = string | number | bigint | null;
@@ -222,6 +222,10 @@ export function migrateSqlite(sqlite: DatabaseSync, migrations: Migration[] = MI
     const pending = pendingMigrations(migrations, done);
     const applied: number[] = [];
     for (const migration of pending) {
+      for (const column of migration.addColumns ?? []) {
+        const have = (sqlite.prepare(`PRAGMA table_info(${column.table})`).all() as Array<{ name: string }>).some((c) => c.name === column.column);
+        if (!have) sqlite.exec(addColumnSql(column));
+      }
       for (const statement of migration.statements) sqlite.exec(statement);
       sqlite.prepare('INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)').run(migration.version, migration.name, new Date().toISOString());
       applied.push(migration.version);

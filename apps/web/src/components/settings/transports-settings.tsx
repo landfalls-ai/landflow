@@ -340,6 +340,16 @@ export function TransportsSettings() {
           One row per installed broker. Plugins on a broker are reached as <code className="font-mono text-[11px]">{'<kind>://<connection>/<plugin>'}</code>; secrets are stored encrypted like credentials. A
           connection can also come from <code className="font-mono text-[11px]">LANDFLOW_TRANSPORT_&lt;KIND&gt;_URL</code> (read-only here).
         </p>
+        <p className="mb-2 text-[12px] text-t3" data-testid="claim-store-line">
+          {data.claimStore?.configured ? (
+            <>Claim store: <code className="font-mono text-[11px]">{data.claimStore.description}</code>. A request or reply too big for a broker goes by reference through it.</>
+          ) : (
+            <>
+              Claim store: not configured (<code className="font-mono text-[11px]">LANDFLOW_CLAIM_STORE</code>). A call too big for a broker fails <code className="font-mono text-[11px]">too_large</code> and may use another transport.
+              {data.claimStore?.error ? <> The setting was ignored: {data.claimStore.error}</> : null}
+            </>
+          )}
+        </p>
         {data.connections.length ? (
           <ul className="divide-y divide-hair">
             {data.connections.map((connection) => (

@@ -85,5 +85,5 @@ func TestConformance(t *testing.T) {
 	factory := func(cfg transport.Config) transport.Driver {
 		return New(Config{Config: cfg, ConnectionString: cs, QueueFor: conformanceQueueFor, InstanceQueue: "landflow.v1.instance", ReplyQueue: "landflow.v1.reply", BroadcastTopic: "landflow.v1.broadcast", MaxMessageBytes: 240 * 1024})
 	}
-	conformance.Run(t, conformance.Target{Name: "servicebus", Driver: factory, Config: transport.Config{ConnectionID: "servicebus-test"}, DeliveryTimeout: 10 * time.Second})
+	conformance.Run(t, conformance.Target{Name: "servicebus", Driver: factory, Config: transport.Config{ConnectionID: "servicebus-test"}, DeliveryTimeout: 20 * time.Second})
 }

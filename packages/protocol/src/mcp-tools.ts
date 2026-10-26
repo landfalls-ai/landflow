@@ -518,3 +518,217 @@ export function toolCallToParameters(tool: McpToolDefinition, args: JsonObject |
   }
   return { nodeType: binding.nodeType, typeVersion: binding.typeVersion, parameters, ignored };
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic options: the `list_options` tool, and enums from a looked-up list
+// ---------------------------------------------------------------------------
+
+/** The read-only tool that resolves a dynamic list (the plugin's own MCP face and the host's endpoints both offer it). */
+export const MCP_LIST_OPTIONS_TOOL = 'list_options';
+
+/** The note a dynamic parameter's description carries until its values are known. */
+const DYNAMIC_NOTE = 'Values come from the connected account (a dynamic list); pass the id or value, not the label.';
+
+/** The `list_options` tool definition, with `toolNames` (the tools that have a dynamic list) as the choices of `tool`. One contract everywhere. */
+export function listOptionsToolDefinition(toolNames: string[]): { name: string; title: string; description: string; inputSchema: JsonObject; outputSchema: JsonObject; annotations: JsonObject } {
+  return {
+    name: MCP_LIST_OPTIONS_TOOL,
+    title: 'List options',
+    description: 'The values a tool argument with a dynamic list accepts (resolved with the configured credential): pass the tool name, the parameter and, when the list depends on other arguments, those arguments.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tool: { type: 'string', description: 'The tool whose argument has a dynamic list.', enum: toolNames },
+        parameter: { type: 'string', description: 'The argument (a path like `channel` or `options/labels`).' },
+        arguments: { type: 'object', description: 'Other arguments the list depends on.' },
+      },
+      required: ['tool', 'parameter'],
+    },
+    outputSchema: { type: 'object', properties: { options: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, value: {} }, required: ['name', 'value'] } } }, required: ['options'] },
+    annotations: { title: 'List options', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  };
+}
+
+/** The schema node at a `parameter` path (`channel`, `options/labels`) inside an input schema, through objects and arrays. */
+function schemaAt(root: JsonObject, parameter: string): JsonObject | undefined {
+  let node: JsonObject | undefined = root;
+  for (const segment of parameter.split('/')) {
+    while (node && node.type === 'array' && node.items && typeof node.items === 'object') node = node.items as JsonObject;
+    const next: JsonValue | undefined = (node?.properties as JsonObject | undefined)?.[segment];
+    node = next && typeof next === 'object' && !Array.isArray(next) ? (next as JsonObject) : undefined;
+  }
+  return node;
+}
+
+/**
+ * A copy of `tool` where each dynamic parameter that has a looked-up list gets it as an `enum` (and in the description,
+ * like static options): `lists` maps the parameter path to the options. A list is used only when every value is a string
+ * (the schema says `string`) and it is not longer than `maxValues`; anything else leaves the parameter as it was. The
+ * `tool` itself is returned when nothing applies.
+ */
+export function withDynamicOptionValues(tool: McpToolDefinition, lists: Record<string, PropertyOption[] | undefined>, maxValues = 200): McpToolDefinition {
+  const applicable = tool._meta[MCP_TOOL_META_KEY].dynamicOptions.filter((d) => {
+    const list = lists[d.parameter];
+    return list && list.length > 0 && list.length <= maxValues && list.every((o) => typeof o.value === 'string');
+  });
+  if (!applicable.length) return tool;
+  const inputSchema = structuredClone(tool.inputSchema);
+  let changed = false;
+  for (const { parameter } of applicable) {
+    const list = lists[parameter]!;
+    const node = schemaAt(inputSchema, parameter);
+    if (!node) continue;
+    const target = node.type === 'array' && node.items && typeof node.items === 'object' ? (node.items as JsonObject) : node;
+    target.enum = list.map((o) => o.value as string);
+    const note = `One of: ${list.map((o) => `\`${String(o.value)}\` (${o.name}${o.description ? `: ${o.description}` : ''})`).join(', ')}`;
+    const described = typeof node.description === 'string' ? node.description : '';
+    node.description = described.includes(DYNAMIC_NOTE) ? described.replace(DYNAMIC_NOTE, `${note} (looked up in the connected account just now).`) : [described, note].filter(Boolean).join(' ');
+    changed = true;
+  }
+  return changed ? { ...tool, inputSchema } : tool;
+}
+
+// ---------------------------------------------------------------------------
+// Triggers as resources (docs/protocol.md §15.9)
+// ---------------------------------------------------------------------------
+
+/** A trigger's name in grants and on the wire is `trigger_<node name>`; it shares the namespace of tool names in a grant's `tools`. */
+export const MCP_TRIGGER_NAME_PREFIX = 'trigger_';
+/** Trigger resources live under this URI prefix: `landflow://triggers/<plugin id>/<trigger name>?<parameters>`. */
+export const MCP_TRIGGER_URI_PREFIX = 'landflow://triggers/';
+export const MCP_TRIGGER_MIME_TYPE = 'application/json';
+
+/** What binds a trigger resource to a node (the counterpart of {@link McpToolBinding}). */
+export interface McpTriggerBinding {
+  pluginId: string;
+  nodeType: string;
+  nodeName: string;
+  typeVersion: number;
+  triggerSource: 'poll' | 'appWebhook';
+  /** Top-level parameter names (the properties of `inputSchema`, the variables of the URI template). */
+  arguments: string[];
+  credentials: string[];
+  credentialSelectors: McpCredentialSelector[];
+  /** Poll triggers: the node's default `pollInterval` in seconds. */
+  pollInterval?: number;
+}
+
+/** A trigger as `resources/templates/list` shows it: a URI template whose variables are the node's parameters. */
+export interface McpTriggerDefinition {
+  /** `trigger_<node name>`, unique per plugin. */
+  name: string;
+  title: string;
+  description: string;
+  /** RFC 6570: `landflow://triggers/<plugin>/<name>{?param,…}`. */
+  uriTemplate: string;
+  mimeType: typeof MCP_TRIGGER_MIME_TYPE;
+  /** JSON Schema of the parameters, so a client can build the URI. */
+  inputSchema: JsonObject;
+  _meta: { [MCP_TOOL_META_KEY]: McpTriggerBinding };
+}
+
+/** Whether a node is offered as a trigger resource: a poll or app-webhook trigger that does not opt out with `mcp: false`. */
+export function isMcpTriggerNode(node: NodeDescriptor): boolean {
+  return node.kind === 'trigger' && node.mcp !== false && (node.triggerSource === 'poll' || node.triggerSource === 'appWebhook');
+}
+
+export const triggerResourceName = (node: Pick<NodeDescriptor, 'name'>) => sanitizeToolName(`${MCP_TRIGGER_NAME_PREFIX}${node.name}`);
+
+/** The URI of a trigger with its parameters (values stringified; objects and arrays as JSON), keys sorted so one subscription has one URI. */
+export function triggerResourceUri(pluginId: string, name: string, parameters: Record<string, unknown> = {}): string {
+  const query = new URLSearchParams();
+  for (const key of Object.keys(parameters).sort()) {
+    const value = parameters[key];
+    if (value === undefined || value === null || value === '') continue;
+    query.set(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+  }
+  const text = query.toString();
+  return `${MCP_TRIGGER_URI_PREFIX}${encodeURIComponent(pluginId)}/${encodeURIComponent(name)}${text ? `?${text}` : ''}`;
+}
+
+/** Take a trigger URI apart; undefined when it is not one. */
+export function parseTriggerResourceUri(uri: string): { pluginId: string; name: string; query: Record<string, string> } | undefined {
+  if (!uri.startsWith(MCP_TRIGGER_URI_PREFIX)) return undefined;
+  const rest = uri.slice(MCP_TRIGGER_URI_PREFIX.length);
+  const [path, ...queryParts] = rest.split('?');
+  const segments = path.split('/');
+  if (segments.length !== 2 || !segments[0] || !segments[1]) return undefined;
+  try {
+    const query: Record<string, string> = {};
+    for (const [key, value] of new URLSearchParams(queryParts.join('?'))) query[key] = value;
+    return { pluginId: decodeURIComponent(segments[0]), name: decodeURIComponent(segments[1]), query };
+  } catch {
+    return undefined;
+  }
+}
+
+/** The trigger resources of a set of node descriptors, names unique per plugin. */
+export function mcpTriggersFromDescriptors(pluginId: string, nodes: NodeDescriptor[]): McpTriggerDefinition[] {
+  const triggers = nodes.filter(isMcpTriggerNode);
+  const names = uniqueNames(triggers.map(triggerResourceName));
+  return triggers.map((node, i) => {
+    const credentialSelectors = credentialSelectorsOf(node);
+    const context: SchemaContext = { fixed: {}, dynamic: [], path: [], selectors: new Set(credentialSelectors.map((s) => s.parameter)) };
+    const inputSchema = objectSchema(node.properties, context);
+    const args = Object.keys(inputSchema.properties as JsonObject);
+    const poll = node.properties.find((p) => p.name === 'pollInterval');
+    const source = node.triggerSource as 'poll' | 'appWebhook';
+    return {
+      name: names[i],
+      title: node.displayName,
+      description: joinText(node.description, source === 'poll' ? 'Polled while a client is subscribed; subscribe for the events as they come' : 'Registers a webhook with the service while a client is subscribed') ?? node.displayName,
+      uriTemplate: `${MCP_TRIGGER_URI_PREFIX}${encodeURIComponent(pluginId)}/${encodeURIComponent(names[i])}${args.length ? `{?${args.join(',')}}` : ''}`,
+      mimeType: MCP_TRIGGER_MIME_TYPE,
+      inputSchema,
+      _meta: {
+        [MCP_TOOL_META_KEY]: {
+          pluginId,
+          nodeType: qualifyType(pluginId, node.name),
+          nodeName: node.name,
+          typeVersion: defaultVersionOf(node),
+          triggerSource: source,
+          arguments: args,
+          credentials: (node.credentials ?? []).map((c) => c.name),
+          credentialSelectors,
+          ...(source === 'poll' && typeof poll?.default === 'number' && { pollInterval: poll.default }),
+        },
+      },
+    };
+  });
+}
+
+/**
+ * The node parameters a trigger URI's query stands for: each value converted by its schema's type (numbers, booleans,
+ * JSON for objects and arrays). Unknown names are reported in `ignored`, a value that does not convert in `errors`.
+ */
+export function triggerQueryToParameters(trigger: McpTriggerDefinition, query: Record<string, string>): { parameters: JsonObject; ignored: string[]; errors: string[] } {
+  const properties = (trigger.inputSchema.properties ?? {}) as Record<string, JsonObject>;
+  const parameters: JsonObject = {};
+  const ignored: string[] = [];
+  const errors: string[] = [];
+  for (const [key, raw] of Object.entries(query)) {
+    const schema = properties[key];
+    if (!schema) {
+      ignored.push(key);
+      continue;
+    }
+    const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
+    try {
+      if (type === 'number' || type === 'integer') {
+        const n = Number(raw);
+        if (!Number.isFinite(n)) throw new Error('not a number');
+        parameters[key] = n;
+      } else if (type === 'boolean') {
+        if (raw !== 'true' && raw !== 'false') throw new Error('not true or false');
+        parameters[key] = raw === 'true';
+      } else if (type === 'array' || type === 'object') {
+        parameters[key] = JSON.parse(raw) as JsonValue;
+      } else {
+        parameters[key] = raw;
+      }
+    } catch (error) {
+      errors.push(`${key}: ${(error as Error).message}`);
+    }
+  }
+  return { parameters, ignored, errors };
+}

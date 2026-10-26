@@ -3,8 +3,12 @@ packages:
   - packages/*
   - plugins/*
   - services/*
+
 onlyBuiltDependencies:
   - esbuild
   - protobufjs
-  - "@confluentinc/kafka-javascript"
+  - '@confluentinc/kafka-javascript'
   - pulsar-client
+
+patchedDependencies:
+  pulsar-client@1.18.0: patches/pulsar-client@1.18.0.patch

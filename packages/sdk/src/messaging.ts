@@ -24,6 +24,8 @@ import {
   idempotencyFromManifest,
   Keyring,
   MessagingServer,
+  claimStoreFromEnv,
+  type ClaimStore,
   type DispatchContext,
   type Dispatcher as MessagingDispatcher,
   type Logger as MessagingLogger,
@@ -50,6 +52,12 @@ export interface MessagingBindingOptions {
   keyring?: Keyring;
   /** Default `LANDFLOW_REGISTRY_SECRET` (the announce's registry proof); `null` announces without a proof. */
   registrySecret?: string | null;
+  /**
+   * The claim store for bodies too big for the broker. Default: the one `LANDFLOW_CLAIM_STORE` configures (S3-compatible;
+   * `docs/protocol.md` §14.6), none when unset; `null` forces none. A malformed setting fails the start.
+   */
+  claims?: ClaimStore | null;
+  claimTtlMs?: number;
   /** How long `stop()` waits for the calls in flight (default 30 s). */
   drainTimeoutMs?: number;
   announceIntervalMs?: number;
@@ -197,6 +205,8 @@ export function messagingBinding(target: BrokerTarget, options: MessagingBinding
       dispatcher = context.dispatcher;
       const keyring = options.keyring ?? Keyring.fromEnv();
       const { plugin, manifest } = context;
+      const claim = options.claims === null ? undefined : options.claims ? { store: options.claims, ttlMs: options.claimTtlMs, describe: options.claims.kind } : claimStoreFromEnv();
+      if (claim && options.claims === undefined) context.logger.info(`claim check on (${claim.describe})`);
       const channel = channelNames(target.config.prefix).request(plugin.info.id);
       server = new MessagingServer({
         driver: target.driver(),
@@ -210,6 +220,8 @@ export function messagingBinding(target: BrokerTarget, options: MessagingBinding
         maxConcurrency: dispatcher.maxConcurrency ?? manifest.maxConcurrency,
         instanceId: INSTANCE_ID,
         registrySecret: options.registrySecret,
+        claims: claim?.store,
+        claimTtlMs: claim?.ttlMs,
         drainTimeoutMs: options.drainTimeoutMs,
         announceIntervalMs: options.announceIntervalMs,
         ttlSeconds: options.ttlSeconds,

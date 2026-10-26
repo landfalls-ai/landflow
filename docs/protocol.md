@@ -661,6 +661,9 @@ Every brokered request, response, cancel, announce and withdraw is one CloudEven
 | `lferror` | responses: an error code (§14.6); the body is then `{ "error": "<message>", … }` |
 | `lfenc` | `aes-256-gcm` when the body is encrypted (§14.7) |
 | `lfkeyid` | the id of the key that signed (and encrypted) the event, hex 8–32 chars |
+| `lfclaim` | a claim check (§14.6 Size): the key of the encrypted body in the claim store; the wire body is then empty. Only with `lfenc`, and always with the next two |
+| `lfclaimsize` | the byte length of the stored body |
+| `lfclaimsha256` | hex SHA-256 of the stored body (the digest `lfsig` covers) |
 | `lfsig` | hex HMAC-SHA256 over every other attribute and the body digest (§14.7) |
 
 All values are strings of printable ASCII (`0x20`–`0x7e`), so they survive every broker's header encoding. A receiver
@@ -752,15 +755,25 @@ plugin serves it; the host keeps the hash it learned from the announce or the la
 - **Size.** The encoded event (headers plus body) must fit the driver's `maxMessageBytes` (and `maxHeaderBytes` where
   the broker has a header budget). The host refuses a request that does not fit *before* publishing (`too_large`, a
   provably undelivered error, so the selector may use another transport). A plugin whose response does not fit answers
-  `lferror: too_large` with `{ "error" }` instead. Carrying oversized bodies by reference through the shared binary
-  store (a claim check) is planned and not part of this version; files already travel as references (§11).
+  `lferror: too_large` with `{ "error" }` instead. With a **claim store** configured on both ends (`LANDFLOW_CLAIM_STORE`,
+  an S3-compatible bucket, or `memory://` in tests), a request or response that doesn't fit goes by reference: the sender
+  stores the encrypted body under `claims/<epoch ms>/<event id>` and publishes the event with an empty body and
+  `lfclaim`, `lfclaimsize`, `lfclaimsha256`; the receiver checks the signature first, then fetches the body and checks its
+  size and digest. The receiver deletes the object once it has acknowledged the event (at least once: after the reply and
+  the ack); the host deletes a reply's object after reading it; a sender deletes the object of a call that failed; every
+  client and server sweeps objects older than the store's TTL (`?ttl=`, default 1 h) every 10 minutes. Only encrypted
+  request and response bodies are claimed (announces, withdrawals and cancels are small). Files already travel as
+  references (§11). The store's credentials are each implementation's concern, not the wire's: the Go and Python
+  implementations resolve static keys, then web identity (`AssumeRoleWithWebIdentity`), then container credentials,
+  renewing 5 minutes before expiry; they never read shared credential files or EC2 instance metadata, and they reach
+  the real AWS STS or S3 endpoints only when the store URL says `aws=true`.
 - **Error codes** (`lferror`): `expired`, `cancelled`, `too_large`, `not_found` (no such node type, load-options method
   or credential type), `bad_request` (the body does not validate), `internal` (the dispatcher threw), `unavailable` (the
-  plugin is draining), `capacity` (refused at once at the concurrency limit: the call never ran; sent over HTTP and gRPC, never by a broker face or a relay) and `manifest_mismatch`. The body is `{ "error": "<message>", …details }`. On the caller's side
+  plugin is draining), `capacity` (refused at once at the concurrency limit: the call never ran; sent over HTTP and gRPC, never by a broker face or a relay), `manifest_mismatch` and `claim_unavailable` (a claimed body is missing, expired, the wrong size or digest, or the store is down: on a request the plugin refuses before running the node, so it is provably undelivered; on a response the node already ran). The body is `{ "error": "<message>", …details }`. On the caller's side
   these are *delivered* errors and are never retried blindly. Failures the caller detects itself are `unroutable` (the
   broker said at once that nobody can take the event), `no_consumers` (every announced instance stopped heartbeating,
   or the channel shows zero consumers), `not_connected` (nothing was published), `expired` and `connection_lost` (the
-  call may have run). Only `unroutable`, `no_consumers`, `not_connected` and `too_large` are **provably undelivered**:
+  call may have run), and `claim_failed` (the sender could not write the body to the claim store; nothing was published). Only `unroutable`, `no_consumers`, `not_connected`, `too_large`, `claim_failed` and a request's `claim_unavailable` are **provably undelivered**:
   those alone let the host send the same call over another transport.
 
 ### 14.7 Security over brokers
@@ -787,8 +800,9 @@ recommended; `deploy/README.md` has an example per broker).
 - **Signing** (encrypt-then-MAC). `lfsig = hex(HMAC-SHA256(sigKey, canonical))` where the canonical form is one line
   per attribute present, in the order `specversion, id, source, type, subject, time, datacontenttype, traceparent,
   tracestate, lfreplyto, lfcorrelation, lfdeadline, lfattempt, lfidempotency, lfdelivery, lfmanifest, lferror, lfenc,
-  lfkeyid` (never `lfsig`), as `name=value\n`, followed by `hex(SHA-256(body))\n` over the on-wire body bytes (the
-  ciphertext when encrypted).
+  lfkeyid, lfclaim, lfclaimsize, lfclaimsha256` (never `lfsig`), as `name=value\n`, followed by `hex(SHA-256(body))\n`
+  over the on-wire body bytes (the ciphertext when encrypted; for a claimed event, the stored ciphertext, i.e.
+  `lfclaimsha256`).
 - **Verification.** A receiver refuses unsigned events, unknown key ids, bad signatures (constant-time compare), a
   `time` outside the clock-skew window, ids it has already accepted within the replay window (10 min), and a body that
   does not decrypt. Refused events are dropped without a response (nack without requeue; the caller sees its deadline)
@@ -829,12 +843,12 @@ limit); "mode" is the CloudEvents mode (§14.3).
 
 | Broker | Request channel; replicas share it by | Replies | Mode, header prefix | Buffering | TTL | "Nobody took it" | Persistence | Default max | Attempts |
 |---|---|---|---|---|---|---|---|---|---|
-| **Kafka** (Redpanda), kind `kafka` | a topic per plugin (6 partitions by default); record key = ordering key. TypeScript: a consumer group (the Confluent JS client has no share consumer), KIP-848 `group.protocol=consumer` by default, `classic` for Kafka < 4.0 and Redpanda. Go: a **share group** by default (franz-go; Kafka 4.2+; per-record acks, `share.auto.offset.reset=earliest`) or `group` mode. Python: a consumer group by default, a share group with `LANDFLOW_KAFKA_MODE=share` | reply topic per host | binary, `ce_` | yes (the log) | no: the consumer checks the deadline | inferred (group members and lag) | disk | 1 MiB | share group: yes (delivery count). Consumer group: a nack and a graceful close re-publish the record with its attempt count; a record re-read after a hard crash is attempt 1 |
+| **Kafka** (Redpanda), kind `kafka` | a topic per plugin (6 partitions by default); record key = ordering key. TypeScript: a consumer group (the Confluent JS client has no share consumer), KIP-848 `group.protocol=consumer` by default, `classic` for Kafka < 4.0 and Redpanda. Go (franz-go) and Python: a consumer group by default, a Kafka 4.2+ share group with `LANDFLOW_KAFKA_MODE=share` (per-record acks, `share.auto.offset.reset=earliest`) | reply topic per host | binary, `ce_` | yes (the log) | no: the consumer checks the deadline | inferred (group members and lag) | disk | 1 MiB | share group: yes (delivery count). Consumer group: a nack and a graceful close re-publish the record with its attempt count; a record re-read after a hard crash is attempt 1 |
 | **RabbitMQ** (AMQP 0-9-1), kind `amqp` | a **quorum queue** per plugin (`classic` on request); competing consumers, prefetch = `maxConcurrency` | direct reply-to (`amq.rabbitmq.reply-to`) | binary, `cloudEvents_`; header budget about 120 KiB (`frame_max`) | yes | per-message `expiration` | reported: `mandatory` returns a missing queue, and a consumer-count check before publishing says "no consumer" (`immediate` no longer exists) | disk (durable queues) | 16 MiB (RabbitMQ 4's default) | yes (`x-delivery-count`) |
 | **NATS** core, kind `nats` | a subject per plugin; a queue group | inboxes | binary, `ce-` | no | no | reported ("no responders") | memory | 1 MiB (lowered to the server's `max_payload`) | yes while the process lives: a nack re-publishes the event with a `Landflow-Attempt` header; a hard kill loses it |
 | **NATS JetStream**, kind `jetstream` | a work-queue stream per durable request channel (subject `js.<channel>`) and a durable pull consumer per group; the other channels are core subjects `js.<channel>` | inboxes | binary, `ce-` | yes | `max_age` (1 h by default) + the deadline; `Nats-TTL` is set as a first filter (1 s granularity, not claimed as TTL) | inferred (consumer info) | disk | 1 MiB (as `nats`) | yes (`NumDelivered`) |
 | **Valkey / Redis Streams**, kind `valkey` | a stream per plugin; a consumer group (`XREADGROUP`), pending entries reclaimed after a crash (`XAUTOCLAIM`); running calls send a keep-alive so a slow call is not stolen | a reply stream per host | binary: entry fields `h:<header>` per attribute and `b` for the body | yes | no (`MINID` / `MAXLEN` trimming + the deadline) | inferred (`XINFO GROUPS`) | disk | 1 MiB, lowered to the server's `proto-max-bulk-len` | yes (`XPENDING` delivery count) |
-| **MQTT 5** (Mosquitto, EMQX, HiveMQ), kind `mqtt` | a topic per plugin (`.` becomes `/`); a shared subscription (`$share/<group>/…`) at QoS 1 | response topic + correlation data | binary, user properties (no prefix) | no (clean sessions) | message expiry interval (whole seconds) | reported (a PUBACK with reason `0x10`, "no matching subscribers") | disk | 1 MiB, lowered to the broker's Maximum Packet Size | yes while the process lives: a nack re-publishes the event with a `landflow-attempt` user property, like NATS core; a hard kill loses it |
+| **MQTT 5** (Mosquitto, EMQX, HiveMQ), kind `mqtt` | a topic per plugin (`.` becomes `/`); a shared subscription (`$share/<group>/…`) at QoS 1 | response topic + correlation data | binary, user properties (no prefix) | no (clean sessions) | message expiry interval (whole seconds) | reported (a PUBACK with reason `0x10`, "no matching subscribers") | disk | 1 MiB, lowered to the broker's Maximum Packet Size | yes while the process lives: a nack re-publishes the event with a `landflow-attempt` user property, like NATS core; a hard kill loses it. Auto-acknowledged deliveries (broadcast) reach the handler one at a time, in broker order. The broker should run with `TCP_NODELAY` (Mosquitto `set_tcp_nodelay true`), or every small publish waits about 40 ms |
 | **Amazon SQS**, kind `sqs` | a standard queue per plugin (long polling, visibility keep-alive while a call runs); broadcast is a queue per consumer with publisher-side fan-out (no SNS) | a reply queue per host | structured only (10 attributes max) | yes | none per message (retention + the deadline) | unknown (registry heartbeats only) | disk | 1 MiB (set on each queue) | yes (`ApproximateReceiveCount`); the visibility timeout redelivers |
 | **Google Pub/Sub**, kind `pubsub` | a topic per channel and one shared subscription per plugin, with message ordering and a dead-letter policy (so `delivery_attempt` is populated); a subscription per consumer for broadcast | a reply topic and subscription per host | binary, attributes `ce_` (100 max) | yes | none (ack deadline + the deadline) | unknown | disk | 10 MB | yes (`delivery_attempt`) |
 | **Azure Service Bus**, kind `servicebus` | a queue per plugin, peek-lock competing receivers; sessions for instance and reply channels; broadcast through one topic with 16 session-enabled subscriptions, claimed by session lock | a session-enabled reply queue (`ReplyToSessionId`) | binary, application properties `ce_` (64 KiB budget) | yes | `TimeToLive` per message | unknown | disk | 240 KiB by default (256 KiB per AMQP message on Standard and the emulator) | yes (`DeliveryCount`); locks redeliver |
@@ -849,12 +863,20 @@ ack waits, pending entries) becomes `lfattempt` and the rules of §14.6. Each dr
 (`@landflow/transports/conformance`, `runConformance()`; `conformance.Run(t, target)` in Go) against a local container
 before it ships; the SDK × face fixtures stay in `packages/protocol/conformance/`.
 
+Azure Service Bus entities (the per-plugin queues, the `instance` and `reply` session queues, the broadcast topic and its
+16 subscriptions) are fixed names, nothing per client: on a real namespace `declare()` creates the missing ones when the
+connection's `createEntities` is on (the default outside the emulator; the key needs Manage rights), and the emulator,
+which has no administration API, gets them from `deploy/scripts/servicebus-config.py`. On the emulator the drivers pace
+publishes and settlements (`maxOpsPerSecond`, default 40: 25 ms plus 2 ms per KiB) and retry throttled operations
+(`ServiceBusy`) with a bounded backoff, about 11 s; a real namespace is not paced.
+
 Every row is built in the TypeScript and Go cores (`@landflow/transports/<kind>`, `sdks/go/transport/<kind>`),
 wire-compatible with each other; the tier 1 rows are also native in `landflow_sdk.transport` (Python reaches the tier 2
 kinds through `landflow-bridge`). The one difference is Kafka's work sharing: a TypeScript replica always consumes with
-a consumer group, a Go replica with a share group unless its mode is `group`, a Python replica with a consumer group
-unless its mode is `share`, and the two modes cannot share a topic; **mixed-language replicas of one plugin must use
-the same mode** (`LANDFLOW_KAFKA_MODE=group` on the Go side, or `share` on the Python side).
+a consumer group, a Go or Python replica with a consumer group unless its mode is `share`, and the two modes cannot
+share a topic; **all replicas of one plugin must use the same mode** (leave `LANDFLOW_KAFKA_MODE` unset, or set `share`
+on every Go and Python replica). A consumer-group replica commits a held record when its partition is revoked, so the
+new owner never runs a call twice.
 
 A `nats` and a `jetstream` connection run side by side on one server, with the same prefix. In `jetstream` mode every
 subject the driver uses is the channel name behind a fixed `js.` token: the request channel `landflow.v1.plugin.<id>` is the
@@ -1023,10 +1045,28 @@ headers and, for `tools/call`, `Mcp-Name`; they must agree with the body, else `
   tool, the inputs and the outputs), audits `mcp.tool.call` (caller, tool, outcome, execution id; never the arguments),
   and runs the node **through the transport selector** like any workflow node, so agents get the same transports,
   breaker and spill-over. A call runs at most `LANDFLOW_MCP_TOOL_TIMEOUT_SECONDS` (default 120), or until the request's
-  `x-landflow-deadline` if sooner. Not built yet: approvals for destructive tools (`input_required` elicitation, or
-  parking the call in Landflow's approvals).
-- The result shape is §15.1's. Not built yet: `resource_link`s for binary outputs (planned: `/api/binary/<id>` URLs
-  signed for the caller) and the `list_options` tool on the host's endpoints.
+  `x-landflow-deadline` if sooner.
+- **Approvals.** A tool that needs one (the grant's `approval`, §15.5: `destructive` by default, so every tool with
+  `destructiveHint`) waits for a person before it runs. A 2026-07-28 client that declared `elicitation` gets an
+  `input_required` result with a confirm form naming the tool and a summary of its arguments (secrets masked); its
+  `requestState` is an HMAC over the tool, the arguments, the caller and an expiry, so the answer only resumes that call.
+  Accept runs it; decline or cancel refuses it (`isError`), audited as denied. Any other client gets a **Landflow
+  approval** (`mcp_approvals`, migration 1751; Settings → MCP → Approvals, `GET /api/mcp/approvals`, `POST
+  /api/mcp/approvals/:id { approve }`, audited `mcp.approval.decide`): the call waits `LANDFLOW_MCP_APPROVAL_WAIT_SECONDS`
+  (20), then answers `isError` with where to approve; the same call (tool, arguments, caller) within
+  `LANDFLOW_MCP_APPROVAL_TTL_SECONDS` (600) after approval runs once, consuming the approval. The owner or an admin, the
+  user the call acts for, or a member of a project the grant shares may answer.
+- The result shape is §15.1's, plus **files**: every binary in the output items becomes a `resource_link` (`uri` =
+  `/api/mcp/files/<id>?exp&t&c&sig`, an HMAC-signed URL scoped to that one file that needs no session and expires after
+  `LANDFLOW_MCP_FILE_URL_TTL_SECONDS`, 900; `name`, `mimeType`, `size`, and `_meta["dev.landflow/file"]` with the ref),
+  at most 50 per result; small images (PNG, JPEG, GIF, WebP) and audio also go inline as `image` / `audio` content up to
+  `LANDFLOW_MCP_INLINE_MEDIA_MAX_BYTES` (512 KiB) each and 4 per result. `structuredContent` keeps the references, never
+  bytes. Downloads are audited `mcp.file.download`; a bad signature answers 403, an expired URL 410, a deleted file 404.
+- **`list_options`** (read-only, the same contract as the plugin's own endpoint, §15.2) is listed when the caller can
+  resolve a credential; it calls the plugin's load-options method like a tool call (grants, governance, audit). A
+  successful lookup is remembered per caller credential for `LANDFLOW_MCP_OPTIONS_CACHE_SECONDS` (300), and `tools/list`
+  then puts its values in that parameter's `enum` (only for parameters that depend on nothing but the credential), with
+  `notifications/tools/list_changed` when they change.
 - Spans: `mcp.tool.call {tool}` (`mcp.tool.name`, `landflow.plugin.id`, `landflow.mcp.caller`) around the normal
   `plugin.rpc` span; metrics `landflow.mcp.tool.calls` (`landflow.plugin.id`, `mcp.tool.name`, outcome).
 - The host's other MCP code is on the same SDK v2 (server and client 2.4.0): the MCP Client node and agents' MCP
@@ -1073,6 +1113,13 @@ agents ("Expose to agents", on by default) and have at least one tool; it reacts
   `active` / `deprecated` / `deleted`; `mcp_catalog_servers`, migration 1725), and Server Cards (SEP-2127) at
   `/api/mcp/plugins/<id>/server-card` per plugin and `/.well-known/mcp/server-card.json` for the instance; the gateway
   URL plus `/server-card` is proxied to the former once the gateway sync lands.
+- **Landflow's other MCP servers behind the gateway.** Besides one target per plugin and `core`, the sync registers the
+  instance server (`/api/mcp`, while Settings → MCP has it on) as target `landflow-mcp` with the route `/mcp/landflow`,
+  and every published workflow's enabled MCP Server Trigger as `wf-<path>` with the route `/mcp/workflows/<name>`; it
+  removes them when the server is turned off or the workflow is unpublished or deleted. Both speak 2026-07-28 and
+  2025-11-25 natively. A signed-in gateway caller runs as that Landflow user under their project access (a workflow's
+  trigger needs run access to the workflow); an anonymous gateway caller meets the trigger's own authentication (`none`
+  passes; `bearer` answers 401, since the gateway does not forward the client's `Authorization`).
 
 ### 15.5 Grants
 
@@ -1090,7 +1137,10 @@ interface McpToolGrant {
   tools: string[] | '*';
   /** The credential to bind per credential type the plugin's nodes use, from the project's credentials. */
   credentials: Record<string, string>;    // credentialType → credential id
-  /** Destructive tools need an approval before they run (default: instance setting). */
+  /** Which calls wait for a person (§15.3): every tool, destructive tools only, or none. Unset: LANDFLOW_MCP_APPROVAL
+   *  (default 'destructive'). The strictest grant that allows a tool wins; only the grant's creator may lower it. */
+  approval?: 'always' | 'destructive' | 'never';
+  /** Older form: true = 'destructive', false = 'never'. */
   requireApproval?: boolean;
   createdBy: string;
   createdAt: string;
@@ -1103,3 +1153,27 @@ There are **no implicit grants**: owners and admins may browse every tool in Set
 grant. A tool with no applicable grant is not listed and cannot be called; a tool whose node needs a credential type
 the grant does not bind is listed but answers `isError: true` naming the missing type. The agent never sees a credential: the host binds it on the way to the
 plugin, over whatever transport the selector picks.
+
+### 15.6 Triggers as resources
+
+A plugin's poll and app-webhook triggers are not tools; on the host's per-plugin endpoints they are **resource
+templates** (`resources/templates/list`) for callers whose grant covers `trigger_<node name>`: URI
+`landflow://triggers/<pluginId>/trigger_<node name>{?param1,param2…}` (the trigger's parameters as query variables),
+`application/json`. Credentials bind as for tools (§15.3), and governance, grants and audit apply
+(`mcp.resource.subscribe`, `mcp.resource.unsubscribe`, `mcp.resource.read`).
+
+- **Subscribe** (2026-07-28): `subscriptions/listen` with the URI in `notifications.resourceSubscriptions`. The host
+  starts the trigger for that caller and subscription: a poll loop at the node's interval (at least
+  `LANDFLOW_MCP_TRIGGER_MIN_INTERVAL_SECONDS`, 10; the first poll is a baseline with no events), or the app webhook
+  registered through the plugin's webhook methods as a workflow activation would. Each event is kept (the last
+  `LANDFLOW_MCP_TRIGGER_BUFFER`, 50, for `LANDFLOW_MCP_TRIGGER_RETAIN_SECONDS`, 600; `mcp_trigger_subs` and
+  `mcp_trigger_events`, migration 1770) and `notifications/resources/updated` (no data) goes to every listener of that
+  URI on the endpoint.
+- **Read**: `resources/read` returns `{ subscribed, events: [{ id, data, files? }] }` for the caller; files are signed
+  links (§15.3) under `files`. A 2025-11-25 client, which has no listen stream, reads a poll trigger once (a poll in
+  `manual` mode); an app-webhook trigger read without a subscription answers an error saying so.
+- **Stop**: when the last stream for the subscription closes, the grant goes, the token is revoked (noticed at the
+  next poll or heartbeat), or nothing reads it for `LANDFLOW_MCP_TRIGGER_IDLE_SECONDS` (3600); a sweeper
+  (`LANDFLOW_MCP_TRIGGER_SWEEP_SECONDS`, 60) deregisters webhooks and stops polls that lost their stream.
+- **Queue mode**: the main holding the stream polls; events live in the database, and a 1 s watch lets that main see
+  a webhook another main received. A client that reconnects to another main starts a new baseline.

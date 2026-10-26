@@ -36,7 +36,8 @@ import { AgentgatewayAdapter, FileGatewayAdapter, type GatewayHealth, type Gatew
 import { pluginTools } from './grants';
 import { CALLER_ISSUER_HEADER, CALLER_SUBJECT_HEADER, CALLER_TOKEN_ID_HEADER, GATEWAY_SECRET_HEADER, gatewayMode, gatewaySecret } from './identity';
 import { CORE_PLUGIN_ID, notifyPluginToolsChanged, PLUGIN_MCP_PATH } from './plugin-servers';
-import { purgeMcpTokens } from './tokens';
+import { onPublicationChangedAnywhere } from '../publications';
+import { gatewayPublicUrl, purgeMcpTokens } from './tokens';
 
 export type { GatewayRoute, GatewayTarget, GatewayTargetValue, McpGatewayAdapter } from './gateway-adapters';
 
@@ -113,14 +114,87 @@ export interface RenderOptions {
   hostUrl: string;
   secret: string;
   routePolicies?: Record<string, unknown>;
+  /** LANDFLOW_MCP_GATEWAY_PUBLIC_URL: completes each route's `mcpAuthentication` with the route's own resource. */
+  publicUrl?: string;
 }
 
-/** The `mcp.target` for a plugin (the shape docs/mcp-gateway.md verified against agentgateway 1.6.0). */
-export function renderTarget(pluginId: string, options: RenderOptions): GatewayTarget {
+/**
+ * A per-plugin route's policies: the configured ones, with an `mcpAuthentication` that has no `resourceMetadata` given
+ * the route's own (agentgateway refuses the route without it, 422 "missing field `resourceMetadata`", and only the host
+ * knows each route's public URL): the route's URL as the resource, the policy's issuer as the authorization server.
+ */
+export function routePoliciesFor(policies: Record<string, unknown> | undefined, path: string, publicUrl: string | undefined): Record<string, unknown> | undefined {
+  const auth = policies?.mcpAuthentication as Record<string, unknown> | undefined;
+  if (!policies || !auth || typeof auth !== 'object' || auth.resourceMetadata !== undefined || !publicUrl) return policies;
+  const resourceMetadata = {
+    resource: `${publicUrl.replace(/\/+$/, '')}${path}`,
+    ...(typeof auth.issuer === 'string' && { authorization_servers: [auth.issuer] }),
+    bearer_methods_supported: ['header'],
+  };
+  return { ...policies, mcpAuthentication: { ...auth, resourceMetadata } };
+}
+
+/** Which kind of MCP server a gateway target stands for. */
+export type ServerKind = 'plugin' | 'instance' | 'workflow';
+
+/** The owner key (`mcp_gateway_resources.plugin_id`) of the instance server's target, and the prefix of a workflow's (`@workflow:<path>`). */
+export const INSTANCE_KEY = '@instance';
+export const WORKFLOW_KEY_PREFIX = '@workflow:';
+/** Where the instance server is served on the gateway, and the prefix of a workflow's path there. */
+export const GATEWAY_INSTANCE_PATH = '/mcp/landflow';
+export const GATEWAY_WORKFLOW_PATH = '/mcp/workflows';
+
+/** What the sync keeps a target and its routes for: a plugin, the instance server, or a published workflow with an MCP Server Trigger. */
+export interface SyncEntry {
+  key: string;
+  kind: ServerKind;
+  /** The target's name (a Gateway API section name); it prefixes the tools on the shared `/mcp` endpoint. */
+  name: string;
+  /** Where the host serves it, from the host URL. */
+  hostPath: string;
+  /** Where the gateway serves it alone. */
+  gatewayPath: string;
+  /** A person-sized name for Settings → MCP. */
+  label: string;
+  /** Plugins also proxy their Server Card. */
+  cardPath?: string;
+}
+
+/** An MCP server of the host that is not a plugin: the instance server (when it is on), or a workflow's MCP Server Trigger. */
+export interface SyncServer {
+  kind: 'instance' | 'workflow';
+  /** The trigger's path (`/mcp/<path>`) for a workflow. */
+  path?: string;
+  label: string;
+}
+
+/** The name an instance or workflow target has: the same rules as a plugin's ({@link gatewayTargetName}), `wf-` before a trigger path. */
+export const gatewayServerName = (server: SyncServer) => (server.kind === 'instance' ? gatewayTargetName('landflow-mcp') : gatewayTargetName(`wf-${server.path}`));
+
+export function entryForPlugin(pluginId: string): SyncEntry {
   const name = gatewayTargetName(pluginId);
+  return { key: pluginId, kind: 'plugin', name, hostPath: `${PLUGIN_MCP_PATH}/${encodeURIComponent(pluginId)}`, gatewayPath: `${GATEWAY_PLUGIN_PATH}/${name}`, label: pluginId, cardPath: `${PLUGIN_MCP_PATH}/${encodeURIComponent(pluginId)}/server-card` };
+}
+
+export function entryForServer(server: SyncServer): SyncEntry {
+  const name = gatewayServerName(server);
+  if (server.kind === 'instance') return { key: INSTANCE_KEY, kind: 'instance', name, hostPath: '/api/mcp', gatewayPath: GATEWAY_INSTANCE_PATH, label: server.label };
+  const path = server.path ?? '';
+  return { key: `${WORKFLOW_KEY_PREFIX}${path}`, kind: 'workflow', name, hostPath: `/mcp/${path.split('/').map(encodeURIComponent).join('/')}`, gatewayPath: `${GATEWAY_WORKFLOW_PATH}/${name}`, label: server.label };
+}
+
+/** The kind and label of an owned resource whose entry is no longer wanted, from its key. */
+export function describeKey(key: string): { kind: ServerKind; label: string } {
+  if (key === INSTANCE_KEY) return { kind: 'instance', label: 'Landflow instance server' };
+  if (key.startsWith(WORKFLOW_KEY_PREFIX)) return { kind: 'workflow', label: `/mcp/${key.slice(WORKFLOW_KEY_PREFIX.length)}` };
+  return { kind: 'plugin', label: key };
+}
+
+/** The `mcp.target` for an entry (the shape docs/mcp-gateway.md verified against agentgateway 1.6.0). */
+export function renderEntryTarget(entry: SyncEntry, options: RenderOptions): GatewayTarget {
   const value: GatewayTargetValue = {
-    name,
-    mcp: { host: `${options.hostUrl}${PLUGIN_MCP_PATH}/${encodeURIComponent(pluginId)}` },
+    name: entry.name,
+    mcp: { host: `${options.hostUrl}${entry.hostPath}` },
     policies: {
       backendAuth: { key: { value: options.secret, location: { header: { name: GATEWAY_SECRET_HEADER } } } },
       transformations: {
@@ -131,35 +205,42 @@ export function renderTarget(pluginId: string, options: RenderOptions): GatewayT
       },
     },
   };
-  return { name, pluginId, value };
+  return { name: entry.name, pluginId: entry.key, value };
 }
 
-/** The per-plugin routes: `/mcp/plugins/<name>` (one MCP target, unprefixed tools) and its `/server-card`. */
-export function renderRoutes(pluginId: string, options: RenderOptions): GatewayRoute[] {
-  const target = renderTarget(pluginId, options);
-  const path = `${GATEWAY_PLUGIN_PATH}/${target.name}`;
+/** The routes of an entry: `<gatewayPath>` (one MCP target, unprefixed tools) and, for a plugin, its `/server-card`. */
+export function renderEntryRoutes(entry: SyncEntry, options: RenderOptions): GatewayRoute[] {
+  const target = renderEntryTarget(entry, options);
+  const path = entry.gatewayPath;
   const host = new URL(options.hostUrl);
   const authority = host.port ? `${host.hostname}:${host.port}` : host.hostname;
   const mcpRoute: GatewayRouteValue = {
-    name: `${PLUGIN_ROUTE_PREFIX}${target.name}`,
+    name: `${PLUGIN_ROUTE_PREFIX}${entry.kind === 'plugin' ? '' : `${entry.kind}-`}${entry.name}`,
     gateways: 'default',
     matches: [{ path: { exact: path } }, { path: { exact: `${path}/` } }],
-    ...(options.routePolicies && { policies: options.routePolicies }),
+    ...(options.routePolicies && { policies: routePoliciesFor(options.routePolicies, path, options.publicUrl) }),
     backends: [{ mcp: { statefulMode: 'stateless', prefixMode: 'conditional', failureMode: 'failOpen', targets: [target.value] } }],
   };
+  const routes: GatewayRoute[] = [{ name: mcpRoute.name, pluginId: entry.key, value: mcpRoute }];
   // The Server Card is plain HTTP: the client's own bearer goes through to the host, which validates it directly.
-  const cardRoute: GatewayRouteValue = {
-    name: `${CARD_ROUTE_PREFIX}${target.name}`,
-    gateways: 'default',
-    matches: [{ path: { exact: `${path}/server-card` }, method: 'GET' }],
-    policies: { urlRewrite: { authority: 'auto', path: { full: `${PLUGIN_MCP_PATH}/${encodeURIComponent(pluginId)}/server-card` } } },
-    backends: [{ host: authority }],
-  };
-  return [
-    { name: mcpRoute.name, pluginId, value: mcpRoute },
-    { name: cardRoute.name, pluginId, value: cardRoute },
-  ];
+  if (entry.cardPath) {
+    const cardRoute: GatewayRouteValue = {
+      name: `${CARD_ROUTE_PREFIX}${entry.name}`,
+      gateways: 'default',
+      matches: [{ path: { exact: `${path}/server-card` }, method: 'GET' }],
+      policies: { urlRewrite: { authority: 'auto', path: { full: entry.cardPath } } },
+      backends: [{ host: authority }],
+    };
+    routes.push({ name: cardRoute.name, pluginId: entry.key, value: cardRoute });
+  }
+  return routes;
 }
+
+/** The `mcp.target` for a plugin. */
+export const renderTarget = (pluginId: string, options: RenderOptions): GatewayTarget => renderEntryTarget(entryForPlugin(pluginId), options);
+
+/** The per-plugin routes: `/mcp/plugins/<name>` (one MCP target, unprefixed tools) and its `/server-card`. */
+export const renderRoutes = (pluginId: string, options: RenderOptions): GatewayRoute[] => renderEntryRoutes(entryForPlugin(pluginId), options);
 
 // ---------------------------------------------------------------------------
 // The owned-resource store
@@ -225,9 +306,13 @@ export type GatewayTargetState = 'in-step' | 'drift' | 'missing' | 'stale' | 'un
 
 export interface GatewayTargetStatus {
   name: string;
+  /** The owner key: a plugin id, `@instance`, or `@workflow:<path>`. */
   pluginId: string;
   kind: OwnedKind;
   state: GatewayTargetState;
+  /** Whether the target stands for a plugin, the instance server or a workflow's MCP Server Trigger. */
+  serverKind: ServerKind;
+  label: string;
 }
 
 export interface GatewaySyncStatus {
@@ -257,7 +342,9 @@ export interface SyncResult {
 export interface GatewaySyncOptions {
   mode?: 'bundled' | 'file' | 'off';
   adapter?: McpGatewayAdapter;
-  plugins?: () => SyncPlugin[];
+  plugins?: () => SyncPlugin[] | Promise<SyncPlugin[]>;
+  /** The host's other MCP servers (default: the instance server when it is on, and published workflows with an MCP Server Trigger; none when `plugins` is given). */
+  servers?: () => SyncServer[] | Promise<SyncServer[]>;
   now?: () => number;
   hostUrl?: () => string;
   secret?: () => string | undefined;
@@ -278,6 +365,23 @@ export async function registryPlugins(): Promise<SyncPlugin[]> {
   return registry.list().map((plugin) => ({ id: plugin.id, online: plugin.status === 'online', exposed: mcpExposure.isExposed(plugin.id), tools: pluginTools(plugin.id).length }));
 }
 
+/** The default server source: the instance server (when Settings → MCP turned it on) and every published workflow whose MCP Server Trigger is enabled. */
+export async function registryServers(): Promise<SyncServer[]> {
+  const [{ mcpAccess }, { productionWorkflows }, { MCP_TRIGGER, mcpTriggerPath }] = await Promise.all([import('./instance'), import('../publish'), import('./trigger')]);
+  const out: SyncServer[] = [];
+  if (mcpAccess().enabled) out.push({ kind: 'instance', label: 'Landflow instance server' });
+  const seen = new Set<string>();
+  for (const workflow of productionWorkflows()) {
+    for (const node of workflow.nodes) {
+      const path = node.type === MCP_TRIGGER && !node.disabled ? mcpTriggerPath(node) : '';
+      if (!path || seen.has(path)) continue;
+      seen.add(path);
+      out.push({ kind: 'workflow', path, label: `${workflow.name} (/mcp/${path})` });
+    }
+  }
+  return out;
+}
+
 export function defaultAdapter(mode: 'bundled' | 'file' | 'off'): McpGatewayAdapter | undefined {
   if (mode === 'bundled') return new AgentgatewayAdapter();
   if (mode === 'file') return new FileGatewayAdapter({ path: gatewayFilePath(), ownedRoutePrefix: ROUTE_PREFIX });
@@ -288,6 +392,7 @@ export class McpGatewaySync {
   readonly mode: 'bundled' | 'file' | 'off';
   readonly adapter?: McpGatewayAdapter;
   private readonly plugins: () => SyncPlugin[] | Promise<SyncPlugin[]>;
+  private readonly servers: () => SyncServer[] | Promise<SyncServer[]>;
   private readonly now: () => number;
   private readonly hostUrl: () => string;
   private readonly secret: () => string | undefined;
@@ -304,6 +409,7 @@ export class McpGatewaySync {
   private debounce?: ReturnType<typeof setTimeout>;
   private graceTimer?: ReturnType<typeof setTimeout>;
   private unsubscribe?: () => void;
+  private unsubscribePublications?: () => void;
   private inFlight?: Promise<SyncResult>;
   private again = false;
   private lastPurgeAt = 0;
@@ -317,6 +423,7 @@ export class McpGatewaySync {
     this.mode = options.mode ?? gatewayMode();
     this.adapter = options.adapter ?? defaultAdapter(this.mode);
     this.plugins = options.plugins ?? registryPlugins;
+    this.servers = options.servers ?? (options.plugins ? () => [] : registryServers);
     this.now = options.now ?? Date.now;
     this.hostUrl = options.hostUrl ?? gatewayHostUrl;
     this.secret = options.secret ?? gatewaySecret;
@@ -345,6 +452,8 @@ export class McpGatewaySync {
       if (event.channel !== 'registry' || !RELEVANT.has(event.event.type)) return;
       this.schedule(EVENT_DEBOUNCE_MS);
     });
+    // A workflow published, unpublished or deleted adds or removes its MCP Server Trigger's target.
+    this.unsubscribePublications = onPublicationChangedAnywhere(() => this.schedule(EVENT_DEBOUNCE_MS));
     this.timer = setInterval(() => void this.tick(), this.reconcileIntervalMs);
     this.timer.unref?.();
     this.schedule(FIRST_RECONCILE_DELAY_MS);
@@ -355,10 +464,17 @@ export class McpGatewaySync {
     this.running = false;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    this.unsubscribePublications?.();
+    this.unsubscribePublications = undefined;
     if (this.timer) clearInterval(this.timer);
     if (this.debounce) clearTimeout(this.debounce);
     if (this.graceTimer) clearTimeout(this.graceTimer);
     this.timer = this.debounce = this.graceTimer = undefined;
+  }
+
+  /** Something that changes the wanted targets happened (the instance server turned on or off): reconcile soon. */
+  nudge(): void {
+    if (this.running) this.schedule(EVENT_DEBOUNCE_MS);
   }
 
   private schedule(delayMs: number) {
@@ -389,11 +505,11 @@ export class McpGatewaySync {
     }
   }
 
-  /** The plugins that should have a target now, applying the offline grace to targets that already exist. */
-  private async desired(): Promise<string[]> {
+  /** The servers that should have a target now (plugins first, applying the offline grace to targets that already exist; then the host's own). */
+  private async desired(): Promise<SyncEntry[]> {
     const now = this.now();
     const owned = new Set(this.store.list().filter((r) => r.kind === 'mcp.target').map((r) => r.pluginId));
-    const out: string[] = [];
+    const out: SyncEntry[] = [];
     let nextGrace: number | undefined;
     for (const plugin of await this.plugins()) {
       const eligible = plugin.exposed && (plugin.tools > 0 || plugin.id === CORE_PLUGIN_ID);
@@ -403,15 +519,26 @@ export class McpGatewaySync {
       }
       if (plugin.online) {
         this.offlineSince.delete(plugin.id);
-        out.push(plugin.id);
+        out.push(entryForPlugin(plugin.id));
         continue;
       }
       const since = this.offlineSince.get(plugin.id) ?? now;
       this.offlineSince.set(plugin.id, since);
       if (owned.has(plugin.id) && now - since < this.offlineGraceMs) {
-        out.push(plugin.id);
+        out.push(entryForPlugin(plugin.id));
         nextGrace = Math.min(nextGrace ?? Infinity, since + this.offlineGraceMs - now);
       }
+    }
+    // The host's own servers are in this process: wanted exactly while they exist (no offline grace).
+    const taken = new Set(out.map((entry) => entry.name));
+    for (const server of await this.servers()) {
+      const entry = entryForServer(server);
+      if (taken.has(entry.name)) {
+        logger.warn('mcp gateway: a plugin already has this target name; skipped', { name: entry.name, server: entry.label });
+        continue;
+      }
+      taken.add(entry.name);
+      out.push(entry);
     }
     // Come back when the first grace runs out, so a removal doesn't wait for the 30 s tick.
     if (this.running && nextGrace !== undefined) {
@@ -446,13 +573,13 @@ export class McpGatewaySync {
       this.lastError = 'LANDFLOW_MCP_GATEWAY_SECRET is not set (at least 16 characters): the host would refuse every call from the gateway, so no target is written';
       return { changed: false, upserted: [], removed: [], skipped: this.lastError };
     }
-    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: this.routePolicies() };
+    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: this.routePolicies(), publicUrl: gatewayPublicUrl() };
     const upserted: string[] = [];
     const removed: string[] = [];
     try {
-      const pluginIds = await this.desired();
-      const targets = pluginIds.map((id) => renderTarget(id, options));
-      const routes = this.routes ? pluginIds.flatMap((id) => renderRoutes(id, options)) : [];
+      const entries = await this.desired();
+      const targets = entries.map((entry) => renderEntryTarget(entry, options));
+      const routes = this.routes ? entries.flatMap((entry) => renderEntryRoutes(entry, options)) : [];
       const owned = this.store.list();
       const current = await adapter.list();
 
@@ -553,12 +680,12 @@ export class McpGatewaySync {
     base.health = await this.adapter.health();
     const secret = this.secret();
     if (!secret) return base;
-    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: this.routePolicies() };
-    const wanted = new Map<string, { kind: OwnedKind; pluginId: string; value: unknown }>();
-    for (const id of await this.desired()) {
-      const target = renderTarget(id, options);
-      wanted.set(`mcp.target:${target.name}`, { kind: 'mcp.target', pluginId: id, value: target.value });
-      if (this.routes) for (const route of renderRoutes(id, options)) wanted.set(`traffic.route:${route.name}`, { kind: 'traffic.route', pluginId: id, value: route.value });
+    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: this.routePolicies(), publicUrl: gatewayPublicUrl() };
+    const wanted = new Map<string, { kind: OwnedKind; pluginId: string; value: unknown; entry: SyncEntry }>();
+    for (const entry of await this.desired()) {
+      const target = renderEntryTarget(entry, options);
+      wanted.set(`mcp.target:${target.name}`, { kind: 'mcp.target', pluginId: entry.key, value: target.value, entry });
+      if (this.routes) for (const route of renderEntryRoutes(entry, options)) wanted.set(`traffic.route:${route.name}`, { kind: 'traffic.route', pluginId: entry.key, value: route.value, entry });
     }
     let current: Map<string, unknown> | undefined;
     try {
@@ -581,7 +708,8 @@ export class McpGatewaySync {
       else if (want) state = !current.has(key) ? 'missing' : sameJson(current.get(key), want.value) ? 'in-step' : 'drift';
       else state = current.has(key) ? 'stale' : 'in-step';
       if (!want && !current?.has(key)) continue;
-      base.targets.push({ name, pluginId, kind, state });
+      const described = want?.entry ? { kind: want.entry.kind, label: want.entry.label } : describeKey(pluginId);
+      base.targets.push({ name, pluginId, kind, state, serverKind: described.kind, label: described.label });
     }
     base.targets.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
     base.inStep = base.targets.filter((t) => t.state === 'in-step').length;

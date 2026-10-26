@@ -41,6 +41,11 @@ type BrokerBinding struct {
 	// Observe, when set, sees every delivery before it is dispatched (tests and
 	// conformance runners read the delivery mode and attempt from it).
 	Observe func(method transport.Method, dc transport.DispatchContext)
+	// Claims is the claim store for bodies too big for the broker. Default: the one LANDFLOW_CLAIM_STORE configures
+	// (S3-compatible; docs/protocol.md §14.6), none when unset; NoClaims forces none. A malformed setting fails Start.
+	Claims   transport.ClaimStore
+	ClaimTTL time.Duration
+	NoClaims bool
 	// AnnounceInterval and DrainTimeout tune the server (defaults 10 s, 30 s).
 	AnnounceInterval time.Duration
 	DrainTimeout     time.Duration
@@ -94,6 +99,19 @@ func (b *BrokerBinding) Start(ctx context.Context, bc BindingContext) (BindingIn
 			return BindingInfo{}, fmt.Errorf("landflow: %s binding: %w", b.Kind(), err)
 		}
 	}
+	claims, claimTTL := b.Claims, b.ClaimTTL
+	if claims == nil && !b.NoClaims {
+		setting, err := transport.ClaimStoreFromEnv()
+		if err != nil {
+			return BindingInfo{}, fmt.Errorf("landflow: %s binding: %w", b.Kind(), err)
+		}
+		if setting != nil {
+			claims, claimTTL = setting.Store, setting.TTL
+			if bc.Logger != nil {
+				bc.Logger.Printf("%s binding: claim check on (%s)", b.Kind(), setting.Describe)
+			}
+		}
+	}
 	b.mu.Lock()
 	b.bc = bc
 	b.mu.Unlock()
@@ -108,7 +126,7 @@ func (b *BrokerBinding) Start(ctx context.Context, bc BindingContext) (BindingIn
 	server, err := transport.NewServer(transport.ServerOptions{
 		Driver: b.Driver, Keyring: keyring, PluginID: manifest.Plugin.ID, Version: manifest.Plugin.Version, Manifest: manifest,
 		Dispatch: b.dispatch, MaxConcurrency: maxConcurrency, InstanceID: InstanceID(), Transports: manifest.Transports,
-		AnnounceInterval: b.AnnounceInterval, DrainTimeout: b.DrainTimeout, RegistrySecret: b.RegistrySecret, Log: transport.StdLogger(bc.Logger),
+		AnnounceInterval: b.AnnounceInterval, DrainTimeout: b.DrainTimeout, RegistrySecret: b.RegistrySecret, Claims: claims, ClaimTTL: claimTTL, Log: transport.StdLogger(bc.Logger),
 	})
 	if err != nil {
 		return BindingInfo{}, err

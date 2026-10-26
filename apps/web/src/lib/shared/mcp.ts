@@ -1,4 +1,5 @@
-/** Settings → MCP (the instance MCP server at /api/mcp): types shared by the API route and the client. No runtime imports. */
+/** Settings → MCP (the instance MCP server at /api/mcp): types shared by the API route and the client. */
+import type { McpApprovalMode } from './mcp-approval';
 
 export interface McpAccessView {
   /** Whether /api/mcp answers at all (off by default). */
@@ -59,7 +60,12 @@ export interface McpToolGrant {
   tools: string[] | '*';
   /** credentialType → credential id: the credential bound per credential type the plugin's nodes use. */
   credentials: Record<string, string>;
-  /** Destructive tools need an approval before they run (absent: the instance default). */
+  /**
+   * When the grant's tools need a person's OK before they run: `always`, `destructive` (the default: tools with
+   * `destructiveHint`) or `never`. Absent: the instance default (`destructive`).
+   */
+  approval?: McpApprovalMode;
+  /** Older boolean form of `approval`: true = `destructive`, false = `never`. Still accepted and returned. */
   requireApproval?: boolean;
   createdBy?: string;
   createdAt: string;
@@ -77,6 +83,12 @@ export interface McpStatusView {
     secretConfigured: boolean;
     /** The gateway sync (McpGatewaySync): `running` in this process, `off` in mode off, `stopped` before bootstrap started it. */
     sync: 'running' | 'off' | 'stopped';
+    /**
+     * The token check the host puts on the gateway's per-plugin routes (`mcpAuthentication` in
+     * LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES): whose tokens and the mode. Absent: those routes don't sign callers in, so
+     * they're anonymous there. The gateway's own `/mcp` route signs in from its config file, which the host can't read.
+     */
+    signIn?: { issuer: string; mode: string };
   };
   /** This host's URL, the issuer of its MCP tokens. */
   instanceUrl: string;
@@ -96,6 +108,10 @@ export interface McpGatewayTargetView {
   name: string;
   pluginId: string;
   kind: 'mcp.target' | 'traffic.route';
+  /** What the target stands for: a plugin, the Landflow instance server, or a published workflow's MCP Server Trigger. */
+  serverKind: 'plugin' | 'instance' | 'workflow';
+  /** A human label for the target (the plugin id, "Landflow instance server", or the workflow name and path). */
+  label: string;
   /** `in-step`: as rendered; `drift`: present but different; `missing`: wanted, absent; `stale`: Landflow's but no longer wanted; `unknown`: the gateway can't be read back (file mode). */
   state: 'in-step' | 'drift' | 'missing' | 'stale' | 'unknown';
 }

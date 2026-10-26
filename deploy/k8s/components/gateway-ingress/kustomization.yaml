@@ -1,0 +1,25 @@
+# Reach the host from outside the cluster with a standard networking.k8s.io/v1 Ingress: the web app (UI + API) on port 3000
+# and the bundled MCP gateway (the sidecar in the landflow-host pod, Service port `mcp` = 4000) for agents:
+#
+#   /mcp                                     → mcp  (the shared endpoint and /mcp/plugins/<name>, /mcp/plugins/<name>/server-card)
+#   /.well-known/oauth-protected-resource    → mcp  (RFC 9728 metadata agents read to find the identity provider)
+#   /                                        → http (everything else)
+#
+# Placeholders to patch in your overlay (see overlays/orbstack-ingress for a worked example): the class name (`ingressClassName`),
+# the host (`landflow.example.com`, in rules and tls) and the TLS Secret (`landflow-tls`, a kubernetes.io/tls Secret you or
+# cert-manager create). Also set LANDFLOW_PUBLIC_URL and LANDFLOW_MCP_GATEWAY_PUBLIC_URL on the host to the URLs agents and
+# browsers use (they appear in OAuth metadata and links).
+#
+# MCP's Streamable HTTP answers a POST with a long-lived text/event-stream and may hold a GET stream open for hours, so the
+# controller must not buffer responses, must not time out an idle read quickly, and must pass Mcp-Session-Id and
+# MCP-Protocol-Version through (all controllers below do by default; none of them strips unknown headers). The annotations on
+# the MCP Ingress are for the controllers that need them; the others ignore annotations that are not theirs. Per controller:
+#   Traefik            : no response buffering (it flushes text/event-stream as it arrives). Leave the entrypoint's
+#                        respondingTimeouts.writeTimeout unset (chart: ports.websecure.transport.respondingTimeouts): it would cut long responses.
+#   Envoy Gateway      : use the HTTPRoute component (../gateway-httproute); its BackendTrafficPolicy sets the stream idle timeout.
+#   ingress-nginx      : retired in March 2026 (no more fixes), but the annotations below are the ones it reads.
+#   HAProxy, Contour…  : see their docs for "response buffering off" and a request/idle timeout of at least an hour.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - ingress.yaml

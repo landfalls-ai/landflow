@@ -20,10 +20,11 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from ..dispatcher import CancelToken
+from .claim import MemoryClaimStore
 from .client import MessagingClient
 from .driver import BrokerDriver, Capabilities, ChannelSpec, ConsumeOptions, Delivery, NotConnectedError, PublishOptions, WireEvent
 from .envelope import now_ms
-from .errors import ConnectionLostError, ManifestMismatchError, RemoteError, TimeoutError_, UndeliverableError
+from .errors import ClaimUnavailableError, ConnectionLostError, ManifestMismatchError, RemoteError, TimeoutError_, UndeliverableError
 from .security import Keyring
 from .server import DispatchContext, DispatchError, MessagingServer
 
@@ -387,7 +388,7 @@ class _Fixture:
                          "nodes": [{"name": "echo", "displayName": "Echo", "description": "", "version": 1, "properties": [], "idempotent": True},
                                    {"name": "once", "displayName": "Once", "description": "", "version": 1, "properties": []}], "maxConcurrency": 2}
         self.server = self.replica(**server_options)
-        self.client = MessagingClient(driver=case.target.driver(), config=case.config, keyring=self.ring, stats_interval_ms=0, registry_secret=False)
+        self.client = MessagingClient(driver=case.target.driver(), config=case.config, keyring=self.ring, stats_interval_ms=0, registry_secret=False, claims=server_options.get("claims"))
         self.client.start()
 
     def dispatch(self, method: str, body: Any, context: DispatchContext) -> Any:
@@ -590,6 +591,65 @@ class CoreConformance:
         with self.assertRaises(UndeliverableError) as caught:
             fx.client.call(fx.plugin_id, "Execute", fx.execute(blob="x" * (self.caps.max_message_bytes + 1024)), timeout_ms=self.timeout_ms)
         self.assertEqual(caught.exception.reason, "too_large")
+
+    def _blob(self, extra: int = 4096) -> str:
+        return "x" * (self.caps.max_message_bytes + extra)
+
+    def test_carries_an_oversized_call_and_reply_by_reference_through_a_claim_store(self):
+        if self.caps.max_message_bytes > 12 * 1024 * 1024:
+            self.skipTest("limit over 12 MiB")
+        claims = MemoryClaimStore()
+        during: list[int] = []
+        fx = self.fx(claims=claims)
+        original = fx.dispatch
+
+        def watching(method: str, body: Any, context: DispatchContext) -> Any:
+            during.append(len(claims.keys()))
+            return original(method, body, context)
+
+        fx.server.dispatch = watching
+        # `echo` is idempotent, so an at-least-once request is held until after the reply: its body must still be in the store while the node runs.
+        reply = fx.client.invoke(fx.plugin_id, "Execute", fx.execute(blob=self._blob()), timeout_ms=self.timeout_ms * 4, delivery="at-least-once")
+        self.assertEqual(reply.body["outputs"][0][0]["json"]["credential"], "top-secret")
+        self.assertEqual(claims.counters["puts"], 1)  # the reply is small: only the request went by reference
+        self.assertEqual(during, [1])
+        self.wait(lambda: not claims.keys(), "claims deleted")
+        # And a reply too big for the broker goes by reference too.
+        big = fx.client.invoke(fx.plugin_id, "Execute", {**fx.execute(), "inputs": [[{"json": {"blob": self._blob()}}]]}, timeout_ms=self.timeout_ms * 4)
+        self.assertEqual(len(big.body["outputs"][0][0]["json"]["echo"][0][0]["json"]["blob"]), self.caps.max_message_bytes + 4096)
+        self.wait(lambda: not claims.keys(), "claims deleted")
+        self.assertEqual(claims.counters["puts"], 3)
+
+    def test_without_a_claim_store_an_oversized_reply_answers_too_large_and_a_store_outage_is_undelivered(self):
+        if self.caps.max_message_bytes > 12 * 1024 * 1024:
+            self.skipTest("limit over 12 MiB")
+        fx = self.fx()
+        fx.server.dispatch = lambda method, body, context: {"outputs": [[{"json": {"blob": self._blob()}}]]}
+        with self.assertRaises(RemoteError) as caught:
+            fx.client.call(fx.plugin_id, "Execute", fx.execute(), timeout_ms=self.timeout_ms)
+        self.assertEqual(caught.exception.remote_code, "too_large")
+        claims = MemoryClaimStore()
+        fx.client.claims = claims
+        fx.client.codec.claims = claims
+        claims.fail_next = "put"
+        with self.assertRaises(UndeliverableError) as undelivered:
+            fx.client.call(fx.plugin_id, "Execute", fx.execute(blob=self._blob()), timeout_ms=self.timeout_ms)
+        self.assertEqual(undelivered.exception.reason, "claim_failed")
+
+    def test_fails_a_call_whose_request_claim_is_gone_as_not_delivered(self):
+        if self.caps.max_message_bytes > 12 * 1024 * 1024:
+            self.skipTest("limit over 12 MiB")
+
+        class Vanishing(MemoryClaimStore):
+            def put(self, key: str, body: bytes) -> None:
+                super().put(key, body)
+                self.objects.pop(key, None)  # expired between the sender's put and the receiver's get
+
+        fx = self.fx(claims=Vanishing())
+        with self.assertRaises(ClaimUnavailableError) as caught:
+            fx.client.call(fx.plugin_id, "Execute", fx.execute(blob=self._blob()), timeout_ms=self.timeout_ms)
+        self.assertEqual(caught.exception.knowledge, "not-delivered")
+        self.assertEqual([c for c in fx.calls if c[0] == "Execute"], [])
 
     def test_fails_a_call_to_a_plugin_nobody_consumes(self):
         fx = self.fx()

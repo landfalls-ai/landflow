@@ -28,7 +28,7 @@ FROM pnpm AS manifests
 COPY . /src
 RUN cd /src && mkdir /manifests \
  && find . -name package.json -not -path '*/node_modules/*' \
-    | tar -cf - -T - pnpm-lock.yaml pnpm-workspace.yaml | tar -xf - -C /manifests
+    | tar -cf - -T - pnpm-lock.yaml pnpm-workspace.yaml patches | tar -xf - -C /manifests
 
 # Production dependencies of the plugin and its workspace packages (sdk, protocol, transports). The broker client
 # libraries are the plugin's own dependencies, but the driver modules live in packages/transports and import them from

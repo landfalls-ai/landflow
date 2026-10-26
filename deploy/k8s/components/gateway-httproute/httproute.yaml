@@ -1,0 +1,23 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: landflow
+  labels: { app.kubernetes.io/name: landflow, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: ingress }
+spec:
+  parentRefs:
+    - { name: CHANGE-ME-gateway, namespace: CHANGE-ME-gateway-namespace }
+  hostnames: [landflow.example.com]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /mcp }
+        - path: { type: PathPrefix, value: /.well-known/oauth-protected-resource }
+      backendRefs:
+        - { name: landflow-host, port: 4000 }
+      timeouts:
+        request: 0s # no per-request deadline: Streamable HTTP streams stay open
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - { name: landflow-host, port: 3000 }
+      timeouts:
+        request: 0s # the editor's event streams

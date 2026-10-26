@@ -1,0 +1,19 @@
+diff --git a/package.json b/package.json
+index a407b3755a3a963fa7780b79f492495212dd2e52..73ec98cb61cd1bb23cac42e08156b16d0a58aef4 100644
+--- a/package.json
++++ b/package.json
+@@ -71,9 +71,12 @@
+   },
+   "binary": {
+     "module_name": "pulsar",
+-    "module_path": "./lib/binding/",
++    "module_path": "./lib/binding/{napi_build_version}/..",
++    "napi_versions": [
++      6
++    ],
+     "host": "https://archive.apache.org/dist/pulsar/pulsar-client-node/",
+-    "remote_path": "pulsar-client-node-{version}",
++    "remote_path": "pulsar-client-node-{version}/{napi_build_version}/..",
+     "package_name": "napi-{platform}-{libc}-{arch}.tar.gz"
+   },
+   "jest": {

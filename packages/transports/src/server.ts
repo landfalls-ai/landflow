@@ -21,6 +21,7 @@ import { randomBytes } from 'node:crypto';
 import { createHash } from 'node:crypto';
 import { DEFAULT_ANNOUNCE_TTL_SECONDS, DEFAULT_HEARTBEAT_SECONDS, DEFAULT_MAX_CONCURRENCY, PROTOCOL_VERSION, type ExecuteRequest, type JsonValue, type PluginManifest } from '@landflow/protocol';
 import { brokerEndpoint, channelNames, channelSpecs, type ChannelNames } from './channels';
+import { ClaimError, DEFAULT_CLAIM_TTL_MS, startClaimSweeper, type ClaimStore } from './claim';
 import { Codec, consoleLogger, type Logger } from './codec';
 import type { BrokerConfig, BrokerDriver, Delivery, Subscription, WireEvent } from './driver';
 import { ANNOUNCE_TYPE, EnvelopeError, parseType, pluginSource, responseType, WITHDRAW_TYPE, type Attributes, type DeliveryMode, type Method, type RemoteErrorCode } from './envelope';
@@ -104,6 +105,10 @@ export interface MessagingServerOptions<C extends BrokerConfig = BrokerConfig> {
   /** How long `stop()` waits for calls in flight (default 30 s). */
   drainTimeoutMs?: number;
   clockSkewMs?: number;
+  /** Claim store (`LANDFLOW_CLAIM_STORE`): requests may arrive by reference, and a reply that does not fit the broker goes by reference too. */
+  claims?: ClaimStore;
+  /** Claims older than this are swept (default 1 h); the sweeper runs every 10 min. */
+  claimTtlMs?: number;
   log?: Logger;
   now?: () => number;
 }
@@ -162,6 +167,7 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
   private readonly slots: Semaphore;
   private subscriptions: Subscription[] = [];
   private announceTimer: NodeJS.Timeout | undefined;
+  private stopSweeper: (() => void) | undefined;
   private state: 'new' | 'started' | 'draining' | 'stopped' = 'new';
   /** Counters for tests and metrics. */
   readonly counters = { received: 0, dispatched: 0, replied: 0, dropped: 0, expired: 0, mismatched: 0, requeued: 0, cancelled: 0, announces: 0 };
@@ -174,7 +180,7 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
     this.endpoint = brokerEndpoint(options.driver.kind, options.config.connectionId, options.pluginId);
     this.log = options.log ?? consoleLogger;
     this.now = options.now ?? Date.now;
-    this.codec = new Codec(options.keyring, options.driver.capabilities, { clockSkewMs: options.clockSkewMs, replay: new ReplayGuard(), now: this.now });
+    this.codec = new Codec(options.keyring, options.driver.capabilities, { clockSkewMs: options.clockSkewMs, replay: new ReplayGuard(), now: this.now, claims: options.claims });
     this.isIdempotent = options.isIdempotent ?? ('hash' in options.manifest ? () => false : idempotencyFromManifest(options.manifest));
     this.maxConcurrency = options.maxConcurrency ?? ('hash' in options.manifest ? undefined : options.manifest.maxConcurrency) ?? DEFAULT_MAX_CONCURRENCY;
     this.registrySecret = options.registrySecret === null ? undefined : (options.registrySecret ?? process.env.LANDFLOW_REGISTRY_SECRET) || undefined;
@@ -214,6 +220,7 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
     const interval = this.options.announceIntervalMs ?? DEFAULT_HEARTBEAT_SECONDS * 1000;
     this.announceTimer = setInterval(() => void this.announce(), interval);
     this.announceTimer.unref?.();
+    if (this.options.claims) this.stopSweeper = startClaimSweeper(this.options.claims, this.options.claimTtlMs ?? DEFAULT_CLAIM_TTL_MS, (e) => this.log('debug', 'claim sweep failed', { error: e.message }));
   }
 
   /** Stop taking calls, withdraw, wait for the calls in flight (up to `drainTimeoutMs`), close. */
@@ -221,6 +228,7 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
     if (this.state === 'stopped' || this.state === 'draining') return;
     this.state = 'draining';
     if (this.announceTimer) clearInterval(this.announceTimer);
+    this.stopSweeper?.();
     await this.withdraw();
     const drainTimeout = this.options.drainTimeoutMs ?? 30_000;
     const inFlight = [...this.inFlight.values()];
@@ -288,12 +296,34 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
     if (parsed?.kind !== 'request') return drop('not a request', { type: raw.attributes.type });
     let attributes: Attributes;
     let data: JsonValue;
+    let claimKey: string | undefined;
     try {
+      ({ raw, claimKey } = await this.codec.resolveClaim(raw, this.pluginId));
       ({ attributes, data } = this.codec.unpack(raw, this.pluginId));
     } catch (error) {
+      if (error instanceof ClaimError) {
+        // The signature held (resolveClaim checks it first) but the body is unreadable: say so, so the host fails at once instead of at its deadline.
+        const request = raw.attributes;
+        this.log('warn', 'a request body in the claim store is unreadable', { id: request.id, reason: error.reason, error: error.message });
+        // A store outage may be over for another replica or a redelivery: put it back once.
+        if (error.reason === 'store' && delivery.attempt < 2 && this.options.driver.capabilities.nack) return delivery.nack({ requeue: true });
+        await delivery.ack();
+        await this.reply(request, delivery, { error: error.message }, 'claim_unavailable');
+        if (request.lfclaim) void this.dropClaim(request.lfclaim);
+        return;
+      }
+      if (claimKey || raw.attributes.lfclaim) void this.dropClaim(raw.attributes.lfclaim!);
       return drop('failed verification', { id: raw.attributes.id, error: (error as Error).message });
     }
     const forgetReplay = () => this.codec.forgetReplay(attributes.id);
+    // The body of a request that went by reference is deleted once the delivery is acknowledged (never before: a redelivery must still read it).
+    const settle = () => {
+      if (claimKey) void this.dropClaim(claimKey);
+    };
+    const ack = async () => {
+      await delivery.ack();
+      settle();
+    };
     if (this.state !== 'started') {
       // Draining: hand it back to another replica without running it.
       forgetReplay();
@@ -305,13 +335,13 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
     if (deadline !== undefined && deadline <= now) {
       this.counters.expired++;
       this.log('debug', 'dropped an expired request', { id: attributes.id, deadline });
-      return delivery.ack();
+      return ack();
     }
     this.sweepCancelled(now);
     if (this.cancelled.has(attributes.id)) {
       this.cancelled.delete(attributes.id);
       this.counters.cancelled++;
-      return delivery.ack();
+      return ack();
     }
     if (attributes.lfmanifest && attributes.lfmanifest !== this.manifestHash) {
       this.counters.mismatched++;
@@ -320,7 +350,7 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
         this.counters.requeued++;
         return delivery.nack({ requeue: true });
       }
-      await delivery.ack();
+      await ack();
       await this.reply(attributes, delivery, { error: `manifest mismatch: this plugin runs ${this.manifestHash}`, manifestHash: this.manifestHash }, 'manifest_mismatch');
       return;
     }
@@ -340,9 +370,9 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
       this.slots.release();
       if (this.cancelled.delete(attributes.id)) this.counters.cancelled++;
       else this.counters.expired++;
-      return delivery.ack();
+      return ack();
     }
-    if (mode === 'at-most-once') await delivery.ack();
+    if (mode === 'at-most-once') await ack();
 
     const controller = new AbortController();
     let deadlineTimer: NodeJS.Timeout | undefined;
@@ -383,7 +413,7 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
       }
       const sent = await this.reply(attributes, delivery, body, code);
       if (mode === 'at-least-once') {
-        if (sent) await delivery.ack();
+        if (sent) await ack();
         else {
           forgetReplay();
           this.counters.requeued++;
@@ -434,11 +464,11 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
       ...(request.tracestate && { tracestate: request.tracestate }),
       ...(code && { lferror: code }),
     });
-    let packed;
+    let packed: Awaited<ReturnType<Codec['packClaimed']>>;
     try {
-      packed = this.codec.pack(this.pluginId, attributes, body, true);
+      packed = await this.codec.packClaimed(this.pluginId, attributes, body, true);
     } catch (error) {
-      if (!(error instanceof EnvelopeError) || error.reason !== 'too_large') throw error;
+      if (!(error instanceof EnvelopeError && error.reason === 'too_large') && !(error instanceof ClaimError)) throw error;
       attributes.lferror = 'too_large';
       packed = this.codec.pack(this.pluginId, attributes, { error: error.message }, true);
     }
@@ -449,7 +479,17 @@ export class MessagingServer<C extends BrokerConfig = BrokerConfig> {
       return true;
     } catch (error) {
       this.log('warn', 'reply could not be published', { id: request.id, error: (error as Error).message });
+      // Nobody will read a reply body that never went out.
+      if (packed.claimKey) void this.dropClaim(packed.claimKey);
       return false;
+    }
+  }
+
+  private async dropClaim(key: string): Promise<void> {
+    try {
+      await this.options.claims?.delete(key);
+    } catch (error) {
+      this.log('debug', 'could not delete a claim', { key, error: (error as Error).message });
     }
   }
 

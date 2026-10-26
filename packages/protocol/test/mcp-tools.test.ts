@@ -6,12 +6,15 @@ import { describe, expect, it } from 'vitest';
 import {
   gatewayTargetName,
   gatewayToolName,
+  listOptionsToolDefinition,
+  MCP_LIST_OPTIONS_TOOL,
   MCP_TOOL_META_KEY,
   MCP_TOOL_NAME_PATTERN,
   mcpToolsFromManifest,
   operationSlots,
   sanitizeToolName,
   toolCallToParameters,
+  withDynamicOptionValues,
   type McpToolDefinition,
   type PluginManifest,
 } from '../src';
@@ -212,4 +215,41 @@ describe('mapping every bundled plugin manifest', () => {
       });
     });
   }
+});
+
+describe('dynamic options', () => {
+  const dynamicTool = mcpToolsFromManifest(synthetic['crm-suite']).find((t) => t.name === 'contacts_contact_get');
+
+  it('defines list_options with the tools that have a dynamic list as the choices of `tool`', () => {
+    const definition = listOptionsToolDefinition(['a_get', 'b_get']);
+    expect(definition.name).toBe(MCP_LIST_OPTIONS_TOOL);
+    expect((definition.inputSchema.properties as Record<string, Record<string, unknown>>).tool.enum).toEqual(['a_get', 'b_get']);
+    expect(definition.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+    expect(isValidSchema(definition.inputSchema)).toBe(true);
+    expect(isValidSchema(definition.outputSchema)).toBe(true);
+  });
+
+  it('puts a looked-up list into the enum and the description, without touching the original', () => {
+    expect(dynamicTool).toBeDefined();
+    const tool = dynamicTool!;
+    const parameter = tool._meta[MCP_TOOL_META_KEY].dynamicOptions[0].parameter;
+    const before = JSON.stringify(tool.inputSchema);
+    const next = withDynamicOptionValues(tool, { [parameter]: [{ name: 'General', value: 'C1' }, { name: 'Random', value: 'C2', description: 'off topic' }] });
+    const schema = (next.inputSchema.properties as Record<string, Record<string, unknown>>)[parameter];
+    expect(schema.enum).toEqual(['C1', 'C2']);
+    expect(schema.description).toContain('`C1` (General)');
+    expect(schema.description).toContain('`C2` (Random: off topic)');
+    expect(schema.description).not.toContain('not the label');
+    expect(JSON.stringify(tool.inputSchema)).toBe(before);
+    expect(isValidSchema(next.inputSchema)).toBe(true);
+  });
+
+  it('ignores lists that are empty, too long or not strings', () => {
+    const tool = dynamicTool!;
+    const parameter = tool._meta[MCP_TOOL_META_KEY].dynamicOptions[0].parameter;
+    expect(withDynamicOptionValues(tool, { [parameter]: [] })).toBe(tool);
+    expect(withDynamicOptionValues(tool, { [parameter]: [{ name: 'One', value: 1 }] })).toBe(tool);
+    expect(withDynamicOptionValues(tool, { [parameter]: [{ name: 'A', value: 'a' }, { name: 'B', value: 'b' }] }, 1)).toBe(tool);
+    expect(withDynamicOptionValues(tool, {})).toBe(tool);
+  });
 });
