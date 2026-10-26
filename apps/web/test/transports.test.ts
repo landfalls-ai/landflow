@@ -43,6 +43,7 @@ const { isDefaultPolicy, normalizePolicy, policyFromPreferred, TransportPolicySt
 const { isChoice, runModeOf, select, staticRank } = await import('@/lib/server/transports/selector');
 const { envConnections, TransportConnections, transportConnections, TransportError, viewOf } = await import('@/lib/server/transports/connections');
 const { brokeredEndpoint, endpointKind, transportProviders } = await import('@/lib/server/transports/provider');
+const { driverModules } = await import('@/lib/server/transports/brokers');
 const { createFetchHandler } = await import('@landflow/sdk/http');
 const { serveGrpc } = await import('@landflow/sdk/grpc');
 const transportsRoute = await import('@/app/api/transports/route');
@@ -58,6 +59,14 @@ registry.registerBuiltin(corePlugin);
 const HTTP_PORT = 7440;
 const GRPC_PORT = 7441;
 const PLUGIN_ID = 'tp-echo';
+
+/** Set a registered provider aside (so its kind reads as "not installed") and return the function that puts it back. */
+const withoutProvider = (kind: string) => {
+  const real = transportProviders.get(kind);
+  if (!real) return () => {};
+  transportProviders.register({ ...real })(); // registering a copy and unregistering it removes the kind
+  return () => void transportProviders.register(real);
+};
 
 const request = (body?: unknown, method = 'POST') => new Request('http://landflow.test/api', { method, ...(body !== undefined && { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) });
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -307,7 +316,16 @@ describe('routes', () => {
     const body = (await response.json()) as TransportsResponse;
     expect(body.kinds.map((k) => k.kind).slice(0, 2)).toEqual(['http', 'grpc']);
     expect(body.kinds.find((k) => k.kind === 'kafka')).toMatchObject({ installed: true, direct: false });
-    expect(body.kinds.find((k) => k.kind === 'pulsar')).toMatchObject({ installed: false, direct: false });
+    // Every broker kind with a driver module is installed; a kind whose module is missing is listed as not installed.
+    const modules = driverModules.kinds();
+    for (const kind of body.kinds.filter((k) => !k.direct)) expect({ kind: kind.kind, installed: kind.installed }).toEqual({ kind: kind.kind, installed: modules.includes(kind.kind) });
+    const restore = withoutProvider('pulsar');
+    try {
+      const again = (await (await transportsRoute.GET(request(undefined, 'GET'))).json()) as TransportsResponse;
+      expect(again.kinds.find((k) => k.kind === 'pulsar')).toMatchObject({ installed: false, direct: false });
+    } finally {
+      restore();
+    }
     expect(body.connections).toEqual([expect.objectContaining({ id: 'kafka-main', secretsSet: [], plugins: [] })]);
   });
 
@@ -325,7 +343,14 @@ describe('routes', () => {
     expect((await connectionRoute.PATCH(request({ kind: 'nats' }, 'PATCH'), params('pulsar'))).status).toBe(400);
     expect((await connectionsRoute.POST(request({ name: 'Pulsar 2', kind: 'pulsar' }))).status).toBe(409);
 
-    const tested = (await (await connectionTestRoute.POST(request(), params('pulsar'))).json()) as TransportConnectionCheck;
+    // Test without a driver: the real Pulsar provider is set aside for this call, so the kind counts as "driver in a later release".
+    const restore = withoutProvider('pulsar');
+    let tested: TransportConnectionCheck;
+    try {
+      tested = (await (await connectionTestRoute.POST(request(), params('pulsar'))).json()) as TransportConnectionCheck;
+    } finally {
+      restore();
+    }
     expect(tested).toMatchObject({ ok: false, message: expect.stringMatching(/^No driver for (Apache )?Pulsar/) });
     const list = (await (await connectionsRoute.GET(request(undefined, 'GET'))).json()) as { connections: TransportConnectionView[] };
     expect(list.connections.find((c) => c.id === 'pulsar')?.lastCheck).toMatchObject({ ok: false });

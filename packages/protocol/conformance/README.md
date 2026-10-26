@@ -31,7 +31,11 @@ fixed behaviour so a fixture can predict the reply:
 | `hidden` (action, `mcp: false`) | `field` string | Exists only to be left out of the MCP tools. |
 
 The `mcp-tools.json` fixture uses the manifests under `manifests/` instead; they cover resources, operations, option
-opt-outs, collections, dynamic options, output schemas and annotation overrides.
+opt-outs, collections, dynamic options, output schemas and annotation overrides (`crm-suite`, `twilio`, `utilities`),
+and `edge-cases` the rest of the mapping: hints, code languages, json, number bounds, option value types, hide
+conditions, nested dynamic options, null and false defaults, duplicate property names, operations split by auth
+method, annotation overrides at both levels, resource-only tools, opt-outs at every level and `defaultVersion`. The
+TypeScript, Go (`sdks/go/mcpface`) and Python (`landflow_sdk.mcp_tools`) mappings all reproduce it exactly.
 
 ## Fixture format
 

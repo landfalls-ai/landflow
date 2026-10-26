@@ -50,6 +50,10 @@ type Target struct {
 	Config transport.Config
 	// DeliveryTimeout is how long to wait for an asynchronous delivery (default 2 s; raise for slow brokers).
 	DeliveryTimeout time.Duration
+	// Settle, optional, is how long a new consumer takes before it receives (a streaming pull being opened). The sharing
+	// case waits that long after starting both consumers, so the first stream can't take the whole batch on a broker
+	// that doesn't enforce flow control on the server (the Pub/Sub emulator).
+	Settle time.Duration
 	// Tap, optional, alters or drops (ok false) events in flight (the memory broker's Tap). It enables the cases that
 	// watch the wire (ciphertext only, tampered replies). Real brokers do not have one; those cases are skipped.
 	Tap func(fn func(channel string, event transport.WireEvent) (transport.WireEvent, bool)) func()
@@ -304,6 +308,7 @@ func RunDriver(t *testing.T, target Target) {
 			if _, err := b.Consume(ctx, spec.Name, manual(spec, 1), slow(&seenB)); err != nil {
 				t.Fatal(err)
 			}
+			time.Sleep(target.Settle)
 			var want []string
 			for i := 0; i < 20; i++ {
 				body := fmt.Sprintf("m%d", i)

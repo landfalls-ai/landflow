@@ -115,7 +115,13 @@ export class HttpPluginClient extends TracedClient implements PluginClient {
       try {
         message = (JSON.parse(text) as { error?: string }).error ?? text;
       } catch {}
-      throw new Error(`${response.status} from ${this.endpoint}${path}: ${message}`);
+      // The status and Retry-After ride on the error: a 429 is a `capacity` refusal the selector moves once and holds the endpoint for (transports/auto.ts).
+      const retryAfter = response.headers.get('retry-after');
+      const seconds = retryAfter === null ? NaN : Number(retryAfter);
+      throw Object.assign(new Error(`${response.status} from ${this.endpoint}${path}: ${message}`), {
+        status: response.status,
+        ...(Number.isFinite(seconds) && { retryAfterMs: Math.max(0, seconds * 1000) }),
+      });
     }
     return JSON.parse(text) as T;
   }

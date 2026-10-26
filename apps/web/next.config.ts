@@ -26,6 +26,14 @@ const nextConfig: NextConfig = {
     'mailparser',
     // Kubernetes plugin discovery (LANDFLOW_PLUGIN_DISCOVERY=kubernetes), loaded only when it is on.
     '@kubernetes/client-node',
+    // Broker clients with native addons (@landflow/transports drivers load them on connect): node-pre-gyp can't be bundled,
+    // and a bundled librdkafka binding looks for its .node file under .next ("Could not locate the bindings file").
+    '@confluentinc/kafka-javascript',
+    'pulsar-client',
+    // Tier 2 cloud clients (@landflow/transports sqs and pubsub drivers, loaded on connect): google-gax reads protos from disk over @grpc/grpc-js;
+    // the SQS client is kept external like the S3 one.
+    '@aws-sdk/client-sqs',
+    '@google-cloud/pubsub',
   ],
   devIndicators: false,
   // Docker image (deploy/docker/host.Dockerfile): a self-contained server in .next/standalone.

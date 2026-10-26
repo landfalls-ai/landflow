@@ -19,7 +19,9 @@
  *   never Health or the manifest). Calls beyond it wait in arrival order while
  *   their deadline and signal are still honoured; when as many are waiting as
  *   may run, further calls are refused at once with `capacity`, so the host
- *   can take the call elsewhere knowing it never ran.
+ *   can take the call elsewhere knowing it never ran. A call marked `wait`
+ *   (the broker faces, already bounded by their prefetch) is never refused:
+ *   it waits its turn, and the broker holds the rest.
  *
  * Health and the manifest get no spans.
  */
@@ -73,6 +75,12 @@ export interface DispatchCall {
   parent?: Context;
   /** Extra span attributes: `messaging.*` for brokers, `mcp.tool.name` for MCP. */
   attributes?: Attributes;
+  /**
+   * Wait for a slot however many are waiting, instead of being refused with `capacity`. For faces that already bound how
+   * many calls they hand over (a broker face takes at most its prefetch): the rest stays in the broker, which is the
+   * buffer the host spilled over to, so refusing would only bounce the call back.
+   */
+  wait?: boolean;
 }
 
 export interface DispatcherOptions {
@@ -198,7 +206,7 @@ export function createDispatcher(plugin: IPlugin, options: DispatcherOptions = {
     if (call.deadline !== undefined && Date.now() >= call.deadline) throw new DispatchError('deadline_exceeded', 'Deadline exceeded before the call started');
     if (call.signal?.aborted) throw new DispatchError('canceled', 'The call was canceled before it started');
     if (limit !== undefined && inFlight >= limit) {
-      if (maxQueue !== undefined && waiting.length >= maxQueue) {
+      if (!call.wait && maxQueue !== undefined && waiting.length >= maxQueue) {
         throw new DispatchError('capacity', `The plugin is at its concurrency limit (${limit} in flight, ${waiting.length} waiting)`);
       }
       await new Promise<void>((resolve, reject) => {

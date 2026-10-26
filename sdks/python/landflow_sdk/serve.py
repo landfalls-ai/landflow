@@ -6,12 +6,13 @@ import logging
 import os
 import signal
 import threading
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from .announce import Announcer, HttpRegistryClient, _is_loopback, parse_registry_url
 from .binding import Binding, BindingContext, GrpcBinding, HttpBinding
 from .dispatcher import Dispatcher, max_concurrency_from_env
 from .logs import configure_logging
+from .mcp import McpBinding, mcp_mode, serve_mcp_stdio
 from .plugin import Plugin
 
 log = logging.getLogger("landflow_sdk")
@@ -64,7 +65,9 @@ class PluginServer:
 
     Environment (overrides the arguments):
       LANDFLOW_HTTP_PORT / LANDFLOW_GRPC_PORT  listen ports ("off" disables, 0 = any free port)
-      LANDFLOW_TRANSPORTS                      comma-separated binding kinds to run (http,grpc,kafka,...)
+      LANDFLOW_TRANSPORTS                      comma-separated binding kinds to run (http,grpc,kafka,...); a broker
+                                               kind with LANDFLOW_<KIND>_URL (+ _USERNAME, _PASSWORD, _TLS, _PREFIX)
+                                               starts the native messaging face (landflow_sdk.transport)
       LANDFLOW_MAX_CONCURRENCY                 calls one instance takes at once (0 = unlimited)
       LANDFLOW_ADVERTISE_HOST                  host put in announced endpoints (default 127.0.0.1)
       LANDFLOW_BIND_HOST                       listen address (default 127.0.0.1 when the advertised
@@ -85,8 +88,12 @@ class PluginServer:
         transports: Iterable[str] | None = None,
         max_concurrency: int | None = None,
         max_queue: int | None = None,
+        mcp: bool | Mapping[str, Any] | None = None,
+        brokers: Sequence[Any] = (),
     ) -> None:
         self.plugin = plugin
+        self.mcp = mcp
+        self.brokers = list(brokers)
         self.http_port = _resolve_port("LANDFLOW_HTTP_PORT", http if http is not None else http_port, default=0)
         self.grpc_port = _resolve_port("LANDFLOW_GRPC_PORT", grpc if grpc is not None else grpc_port, default=None)
         self.max_concurrency = max_concurrency_from_env(max_concurrency)
@@ -163,11 +170,37 @@ class PluginServer:
             else:
                 configured.append(GrpcBinding(self.grpc_port))
         configured.extend(self.extra_bindings)
+        if self.brokers:
+            # Broker faces given in code (BrokerTargets from landflow_sdk.transport.drivers.<kind>); the kinds LANDFLOW_TRANSPORTS
+            # names come below through bridge.native_binding_for() (a native driver first, landflow-bridge for the rest).
+            from .transport.binding import MessagingBinding
+
+            configured.extend(MessagingBinding(target) for target in self.brokers)
+        if mcp_mode(self.mcp) == "http" and (self.selected is None or "mcp" in self.selected):
+            # The MCP face at /mcp on the HTTP port (landflow_sdk.mcp); only listed as a transport when it can start.
+            http_binding = next((b for b in configured if isinstance(b, HttpBinding) and (self.selected is None or "http" in self.selected)), None)
+            mcp_binding = McpBinding(http_binding, self.mcp if isinstance(self.mcp, Mapping) else None)
+            if mcp_binding.can_start(self.bind_host, log):
+                configured.append(mcp_binding)
         if self.selected is None:
             self.bindings = configured
         else:
+            missing = sorted(self.selected - {b.kind.lower() for b in configured})
+            # Broker kinds with no native driver go through landflow-bridge (bridge.py), a child process of this plugin.
+            from .bridge import bridge_binding_for, native_binding_for
+
+            for kind in list(missing):
+                native = native_binding_for(kind)
+                if native is not None:
+                    configured.append(native)
+                    missing.remove(kind)
+            bridge = bridge_binding_for(missing, configured)
+            if bridge is not None:
+                configured.append(bridge)
+                self.selected = set(self.selected) | {bridge.kind}
+                missing = [k for k in missing if k not in bridge.kinds]
             self.bindings = [b for b in configured if b.kind.lower() in self.selected]
-            for kind in sorted(self.selected - {b.kind.lower() for b in configured}):
+            for kind in missing:
                 log.warning("LANDFLOW_TRANSPORTS names %r but no such binding is configured; ignored", kind)
         if not self.bindings:
             raise RuntimeError(
@@ -175,7 +208,8 @@ class PluginServer:
             )
         self.http_port = next((b.port for b in self.bindings if isinstance(b, HttpBinding)), None)
         self.grpc_port = next((b.port for b in self.bindings if isinstance(b, GrpcBinding)), None)
-        self.transports = [b.kind for b in self.bindings]
+        # A binding that serves several kinds (the bridge) lists them in the manifest's transports hint.
+        self.transports = [k for b in self.bindings for k in (getattr(b, "kinds", None) or [b.kind])]
         self.plugin.transports = list(self.transports)
         self.plugin.max_concurrency = self.max_concurrency
         self.dispatcher = Dispatcher(self.plugin, self.max_concurrency, self.max_queue)
@@ -312,6 +346,8 @@ def serve(
     transports: Iterable[str] | None = None,
     max_concurrency: int | None = None,
     max_queue: int | None = None,
+    mcp: bool | Mapping[str, Any] | None = None,
+    brokers: Sequence[Any] = (),
 ) -> None:
     """Serve ``plugin`` until SIGINT/SIGTERM.
 
@@ -319,18 +355,26 @@ def serve(
     ``None`` = no gRPC) needs the ``grpc`` extra -- without grpcio it logs a warning and serves without
     it. ``bindings=[...]`` adds more faces (``landflow_sdk.Binding``), ``transports=[...]`` limits the
     kinds that run, ``max_concurrency=`` bounds the calls one instance runs at once and ``max_queue=`` how
-    many wait for a slot before further ones are refused (default ``max_concurrency``).
+    many wait for a slot before further ones are refused (default ``max_concurrency``). ``brokers=[...]`` takes
+    ``BrokerTarget``s from ``landflow_sdk.transport.drivers.<kind>`` (``kafka(...)``, ``amqp(...)``, ``nats(...)``,
+    ``jetstream(...)``, ``valkey(...)``): one messaging face per broker, announced over the broker's registry channel;
+    ``LANDFLOW_TRANSPORTS=http,nats`` with ``LANDFLOW_NATS_URL=...`` does the same from the environment.
     ``LANDFLOW_HTTP_PORT`` / ``LANDFLOW_GRPC_PORT`` / ``LANDFLOW_TRANSPORTS`` / ``LANDFLOW_MAX_CONCURRENCY``
     override the arguments. With ``announce=True`` each endpoint is announced to ``LANDFLOW_REGISTRY_URL``
-    and re-announced on every heartbeat; on shutdown it is withdrawn.
+    and re-announced on every heartbeat; on shutdown it is withdrawn. ``mcp=`` configures the MCP face
+    (``landflow_sdk.mcp``: on at ``/mcp`` by default, ``False`` off, ``{"stdio": True, "token": ..., "credentials": ...}``);
+    ``LANDFLOW_MCP`` (``on`` | ``off`` | ``stdio``) and ``--mcp-stdio`` override it.
 
     Logs go to stdout as JSON lines with trace ids (``LANDFLOW_LOG_FORMAT=pretty``
     for humans) unless the application configured ``logging`` itself.
     """
+    if mcp_mode(mcp) == "stdio":  # MCP on stdin/stdout and nothing else (landflow_sdk.mcp)
+        serve_mcp_stdio(plugin, max_concurrency=max_concurrency_from_env(max_concurrency), max_queue=max_queue, options=mcp if isinstance(mcp, Mapping) else None)
+        return
     configure_logging(plugin)
     server = PluginServer(
         plugin, http_port=http_port, grpc_port=grpc_port, announce=announce,
-        http=http, grpc=grpc, bindings=bindings, transports=transports, max_concurrency=max_concurrency, max_queue=max_queue,
+        http=http, grpc=grpc, bindings=bindings, transports=transports, max_concurrency=max_concurrency, max_queue=max_queue, mcp=mcp, brokers=brokers,
     )
     server.start()
     server.wait()

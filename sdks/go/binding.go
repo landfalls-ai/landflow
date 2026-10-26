@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,13 +78,42 @@ type HTTPBinding struct {
 	// ReadHeaderTimeout for the server (default 10s).
 	ReadHeaderTimeout time.Duration
 
-	mu  sync.Mutex
-	ln  net.Listener
-	srv *http.Server
+	mu     sync.Mutex
+	ln     net.Listener
+	srv    *http.Server
+	mounts map[string]http.Handler
 }
 
 // NewHTTPBinding returns an HTTP binding on port.
 func NewHTTPBinding(port int) *HTTPBinding { return &HTTPBinding{Port: port} }
+
+// Mount serves handler at path (and below) on the same port, next to the
+// protocol paths; the MCP face mounts itself at /mcp this way. A nil handler
+// removes the mount. Safe before and after Start.
+func (b *HTTPBinding) Mount(path string, handler http.Handler) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.mounts == nil {
+		b.mounts = map[string]http.Handler{}
+	}
+	if handler == nil {
+		delete(b.mounts, path)
+		return
+	}
+	b.mounts[path] = handler
+}
+
+// mounted returns the handler mounted at the request's path, if any.
+func (b *HTTPBinding) mounted(path string) http.Handler {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for prefix, h := range b.mounts {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return h
+		}
+	}
+	return nil
+}
 
 // Kind returns "http".
 func (b *HTTPBinding) Kind() string { return "http" }
@@ -108,7 +138,15 @@ func (b *HTTPBinding) Start(ctx context.Context, bc BindingContext) (BindingInfo
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	srv := &http.Server{Handler: bc.Dispatcher.Handler(), ReadHeaderTimeout: timeout}
+	protocol := bc.Dispatcher.Handler()
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h := b.mounted(r.URL.Path); h != nil {
+			h.ServeHTTP(w, r)
+			return
+		}
+		protocol.ServeHTTP(w, r)
+	})
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: timeout}
 	b.mu.Lock()
 	b.ln, b.srv = ln, srv
 	b.mu.Unlock()

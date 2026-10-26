@@ -238,6 +238,8 @@ export const Telegram = defineNode({
     documentationUrl: 'https://core.telegram.org/bots/api',
     keywords: ['telegram', 'bot', 'chat', 'message', 'document', 'file', 'upload', 'attachment'],
     usableAsTool: true,
+    // Sends, posts and edits are at most once over a broker; read operations opt back in with `idempotent: true`.
+    idempotent: false,
     toolDescription:
       'Send a Telegram message, photo, document, audio or video, edit or delete a message, show a chat action, or get chat details. Needs the numeric chat ID or @channelusername.',
     inputs: [{ type: 'main' }],
@@ -263,7 +265,7 @@ export const Telegram = defineNode({
         noDataExpression: true,
         default: 'get',
         displayOptions: { show: { resource: ['file'] } },
-        options: [{ name: 'Get', value: 'get', description: 'Get a file’s details and download it into the item', action: 'Get a file' }],
+        options: [{ name: 'Get', value: 'get', description: 'Get a file’s details and download it into the item', action: 'Get a file', idempotent: true }],
       },
       {
         name: 'operation',
@@ -272,7 +274,7 @@ export const Telegram = defineNode({
         noDataExpression: true,
         default: 'get',
         displayOptions: { show: { resource: ['chat'] } },
-        options: [{ name: 'Get', value: 'get', description: 'Get up-to-date information about a chat', action: 'Get a chat' }],
+        options: [{ name: 'Get', value: 'get', description: 'Get up-to-date information about a chat', action: 'Get a chat', idempotent: true }],
       },
       // The default resource's operation comes last: parameter defaults are keyed by name, last one wins.
       {

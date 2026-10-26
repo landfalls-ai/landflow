@@ -117,7 +117,7 @@ func TestServeWithThirdBinding(t *testing.T) {
 	if bc.Dispatcher != p.Dispatcher() || bc.Dispatcher.MaxConcurrency() != 3 || bc.Plugin != p || bc.Logger == nil || bc.Telemetry == nil || bc.Announce == nil || bc.Fail == nil {
 		t.Errorf("BindingContext = %+v", bc)
 	}
-	if strings.Join(bc.Manifest.Transports, ",") != "http,fakebus" || bc.Manifest.MaxConcurrency != 3 {
+	if strings.Join(bc.Manifest.Transports, ",") != "http,fakebus,mcp" || bc.Manifest.MaxConcurrency != 3 {
 		t.Errorf("manifest hints = %v %d", bc.Manifest.Transports, bc.Manifest.MaxConcurrency)
 	}
 	// …and so did the manifest over HTTP and every announce.
@@ -128,12 +128,12 @@ func TestServeWithThirdBinding(t *testing.T) {
 	var m PluginManifest
 	_ = json.NewDecoder(resp.Body).Decode(&m)
 	resp.Body.Close()
-	if strings.Join(m.Transports, ",") != "http,fakebus" || m.MaxConcurrency != 3 {
+	if strings.Join(m.Transports, ",") != "http,fakebus,mcp" || m.MaxConcurrency != 3 {
 		t.Errorf("manifest over HTTP: transports=%v maxConcurrency=%d", m.Transports, m.MaxConcurrency)
 	}
 	anns, _ := captured()
 	for _, a := range anns {
-		if strings.Join(a.Transports, ",") != "http,fakebus" || a.MaxConcurrency != 3 {
+		if strings.Join(a.Transports, ",") != "http,fakebus,mcp" || a.MaxConcurrency != 3 {
 			t.Errorf("announce %s: transports=%v maxConcurrency=%d", a.Endpoint, a.Transports, a.MaxConcurrency)
 		}
 	}

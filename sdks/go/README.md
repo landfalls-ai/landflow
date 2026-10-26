@@ -411,6 +411,38 @@ when the caller went away), and when the queue is full further calls are refused
 ran. The HTTP face reads the call's deadline from the `x-landflow-deadline` header (`landflow.DeadlineHeader`,
 epoch ms), as the TypeScript and Python SDKs do.
 
+## MCP: every plugin is also an MCP server
+
+`Serve` adds the MCP face of [`docs/protocol.md` §15.2](../../docs/protocol.md) to every plugin with no code in the
+plugin: every action node's operations become tools (`<node>_<resource>_<operation>`, the node segment dropped when the
+node is named after its plugin; `mcp: false` on a node, a `resource` option or an `operation` option opts out;
+`outputSchema`, `toolAnnotations` and `idempotent` feed `outputSchema` and the hints). The mapping is the package
+`sdks/go/mcpface` (`mcpface.ToolsFromManifest`, `ToolCallToParameters`, `GatewayToolName`), checked against the
+shared fixtures in `packages/protocol/conformance`, and the server is the official
+[`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk) v1.8.0: stateless
+Streamable HTTP that answers 2026-07-28 clients natively (per-request `_meta` envelope, `server/discover`) and
+2025-era clients per request, plus stdio.
+
+- **Streamable HTTP at `/mcp`** on the HTTP port, on by default (`landflow.WithMCP(landflow.MCPOptions{…})`,
+  `landflow.WithoutMCP()`). `/mcp` needs `Authorization: Bearer $LANDFLOW_MCP_TOKEN` unless the server listens on
+  loopback only (`LANDFLOW_LISTEN_HOST=127.0.0.1`, the default when the advertise host is loopback); without a token on
+  another host the face stays off, an error line says `MCP face not started: …`, and the plugin keeps serving. When
+  it is on, `transports` lists `mcp` and `GET /.well-known/landflow` lists it as `endpoints.mcp`.
+- **stdio** with `--mcp-stdio` (or `LANDFLOW_MCP=stdio`): the plugin speaks MCP on stdin/stdout and nothing else (no
+  HTTP, no announce; the process log goes to stderr), so a desktop agent can start it directly.
+- `LANDFLOW_MCP` is `on` (default), `off` or `stdio`; `LANDFLOW_MCP_CREDENTIALS` is a JSON file path or inline JSON
+  `{"<credentialType>": {…fields}}` for the tools of a standalone plugin (a tool whose node needs a credential that is
+  not configured answers `isError: true` naming the type and its fields); a `list_options` tool resolves dynamic
+  options when a credential is configured.
+- `tools/call` runs the plugin's dispatcher (concurrency limit, the request's context as the cancel signal, span
+  attribute `mcp.tool.name`, `landflow.transport = mcp`, `mode: "mcp"`); the result is the node's first output as
+  `structuredContent: { items }` plus a short text, a node error is `isError: true` with its message.
+
+The face is reusable outside `Serve` (landflow-bridge serves it for plugins behind a broker): `mcpface.New(manifest,
+dispatch)` takes a manifest in any JSON form and a `transport.Dispatcher`, and gives `Handler()` (the token-checking
+HTTP entry), `NewServer()`, `ServeStdio(ctx)` and `Tools()`; `mcpface.ModeFromEnv`, `LoadCredentials`,
+`BearerTokenMatches` and `IsLoopbackHost` are the shared rules.
+
 ## Messaging over brokers
 
 `sdks/go/transport` is the Go messaging core of [`docs/transports.md`](../../docs/transports.md) (the mirror of

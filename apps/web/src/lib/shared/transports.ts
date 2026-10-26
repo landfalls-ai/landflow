@@ -20,6 +20,7 @@ export const TRANSPORT_KIND_LABELS: Record<string, string> = {
   kafka: 'Kafka',
   amqp: 'RabbitMQ (AMQP 0-9-1)',
   nats: 'NATS',
+  jetstream: 'NATS JetStream',
   valkey: 'Valkey / Redis Streams',
   mqtt: 'MQTT 5',
   sqs: 'Amazon SQS',
@@ -62,6 +63,35 @@ export interface TransportChoice {
   endpoint: string;
   kind: TransportKind;
   reason: TransportReason;
+  /** The numbers behind the reason, for people ("gRPC at 14 of 16 calls", "breaker open on grpc://…"). */
+  detail?: string;
+}
+
+/** A circuit breaker's state (docs/transports.md rule 6): open after 5 failures in a row or more than half of the last 20, half-open after 15 s. */
+export type BreakerState = 'closed' | 'open' | 'half-open';
+
+/**
+ * Auto's numbers for one transport kind or endpoint of a plugin (lib/server/transports/auto.ts), over the last 60 s:
+ * what the Plugins page shows next to each transport.
+ */
+export interface TransportAutoSummary {
+  /** Latency percentiles of the calls in the window (probes excluded while there are calls), in ms. */
+  p50Ms?: number;
+  p95Ms?: number;
+  /** Calls in flight now, and the plugin's `maxConcurrency` (direct kinds: the plugin's one process behind HTTP and gRPC). */
+  inflight: number;
+  limit?: number;
+  /** Transport failures and timeouts over the calls of the window (a node error in a normal reply doesn't count), 0..1. */
+  errorRate?: number;
+  /** Calls in the window. */
+  calls: number;
+  breaker: BreakerState;
+  /** A remote `capacity` refusal asked to wait until then (ISO). */
+  retryAfterUntil?: string;
+  /** The kind hysteresis settled on as the plugin's main transport. */
+  main?: boolean;
+  /** Production calls spill over to this kind right now. */
+  spilling?: boolean;
 }
 
 /** One of a plugin's transports on the Plugins page: its kind, its endpoints and whether any of them is online. */
@@ -75,6 +105,8 @@ export interface PluginTransportSummary {
   declared?: boolean;
   /** Live numbers for the kind: brokers sum their endpoints' queue stats; every kind reports the plugin's `maxConcurrency` when known. */
   stats?: BrokerQueueStats;
+  /** Auto's measurements for the kind: p50/p95, in flight against the limit, error rate, breaker state. */
+  auto?: TransportAutoSummary;
 }
 
 /**

@@ -3,6 +3,7 @@ import { can } from '@/lib/shared/auth';
 import type { McpStatusView } from '@/lib/shared/mcp';
 import { requireUser } from '@/lib/server/auth';
 import { handler, json } from '@/lib/server/http';
+import { mcpGatewaySync } from '@/lib/server/mcp/gateway-sync';
 import { gatewayMode, gatewaySecret, identityProviderIssuer, protectedResourceMetadataUrl } from '@/lib/server/mcp/identity';
 import { mcpNamespace } from '@/lib/server/mcp/registry';
 import { gatewayPublicUrl, instanceUrl } from '@/lib/server/mcp/tokens';
@@ -13,7 +14,7 @@ export const GET = handler(async () => {
   const me = await requireUser();
   const idp = identityProviderIssuer();
   const status: McpStatusView = {
-    gateway: { mode: gatewayMode(), ...(gatewayPublicUrl() && { publicUrl: gatewayPublicUrl() }), secretConfigured: Boolean(gatewaySecret()), sync: 'not-yet' },
+    gateway: { mode: gatewayMode(), ...(gatewayPublicUrl() && { publicUrl: gatewayPublicUrl() }), secretConfigured: Boolean(gatewaySecret()), sync: gatewayMode() === 'off' ? 'off' : mcpGatewaySync.isRunning ? 'running' : 'stopped' },
     instanceUrl: instanceUrl(),
     ...(idp && { identityProvider: { issuer: idp } }),
     namespace: mcpNamespace(),

@@ -4,6 +4,7 @@ import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
 import { describe, expect, it } from 'vitest';
 import {
+  gatewayTargetName,
   gatewayToolName,
   MCP_TOOL_META_KEY,
   MCP_TOOL_NAME_PATTERN,
@@ -43,6 +44,13 @@ describe('names', () => {
   it('prefixes the plugin id on the gateway', () => {
     expect(gatewayToolName('twilio', 'message_send')).toBe('twilio_message_send');
     expect(gatewayToolName('messaging', 'telegram_message_sendMessage')).toBe('messaging_telegram_message_sendMessage');
+  });
+
+  it('prefixes the gateway target name, so ids that are not section names map the same way the sync does', () => {
+    expect(gatewayTargetName('My_Plugin')).toMatch(/^my-plugin-[0-9a-f]{6}$/);
+    expect(gatewayTargetName('My_Plugin')).toBe(gatewayTargetName('My_Plugin'));
+    expect(gatewayTargetName('My_Plugin')).not.toBe(gatewayTargetName('my_plugin'));
+    expect(gatewayToolName('My_Plugin', 'run')).toBe(`${gatewayTargetName('My_Plugin')}_run`);
   });
 });
 

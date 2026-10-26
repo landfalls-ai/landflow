@@ -3,20 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Messaging integrations for Landflow: Telegram, Slack, Discord, WhatsApp Business Cloud and SMTP email.",
+  "description": "Messaging integrations for Landflow: Telegram, Slack, Discord, WhatsApp Business Cloud, Twilio (SMS, MMS, WhatsApp, calls) and SMTP email, served over HTTP, gRPC, brokers (@landflow/transports) and MCP.",
   "scripts": {
     "start": "tsx src/main.ts",
     "dev": "tsx watch src/main.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "fake-twilio": "tsx test/fake-twilio.ts"
   },
   "dependencies": {
-    "@landflow/sdk": "workspace:*"
+    "@landflow/sdk": "workspace:*",
+    "@landflow/transports": "workspace:*"
   },
   "devDependencies": {
+    "@landflow/protocol": "workspace:*",
     "@types/node": "^22.20.5",
     "tsx": "^4.23.15",
-    "vitest": "^5.0.5",
-    "@landflow/protocol": "workspace:*"
+    "vitest": "^5.0.5"
   }
 }

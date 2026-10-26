@@ -28,10 +28,21 @@ otel = [
   "opentelemetry-sdk>=1.27",
   "opentelemetry-exporter-otlp-proto-http>=1.27",
 ]
+# The MCP face (landflow_sdk.mcp): Streamable HTTP at /mcp and --mcp-stdio, on the official mcp package (2026-07-28 and
+# 2025-era clients). Without it the face is off and serve() logs one line.
+mcp = ["mcp==2.3.0"]
+# The messaging core (landflow_sdk.transport): AES-256-GCM sealing of what goes over a broker. Every broker extra brings it.
+transport = ["cryptography>=50.0.2"]
+# Native tier 1 drivers (landflow_sdk.transport.drivers); kinds without one go through landflow-bridge (landflow_sdk.bridge).
+kafka = ["cryptography>=50.0.2", "confluent-kafka>=2.16.0"]
+amqp = ["cryptography>=50.0.2", "pika>=1.4.4"]
+nats = ["cryptography>=50.0.2", "nats-py>=2.16.0"]
+valkey = ["cryptography>=50.0.2", "valkey>=6.2.0"]
+brokers = ["cryptography>=50.0.2", "confluent-kafka>=2.16.0", "pika>=1.4.4", "nats-py>=2.16.0", "valkey>=6.2.0"]
 dev = ["grpcio-tools>=1.84.1"]
 
 [tool.setuptools]
-packages = ["landflow_sdk", "landflow_sdk._pb"]
+packages = ["landflow_sdk", "landflow_sdk._pb", "landflow_sdk.transport", "landflow_sdk.transport.drivers"]
 
 [tool.setuptools.package-data]
 landflow_sdk = ["py.typed"]

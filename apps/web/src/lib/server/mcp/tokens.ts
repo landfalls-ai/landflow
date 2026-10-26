@@ -247,6 +247,22 @@ export function deleteMcpToken(id: string): boolean {
   return mcpDb().delete('mcp_tokens', { id }) > 0;
 }
 
+/** Whether a token no longer works (revoked, or past its expiry): only such rows may be deleted by hand. */
+export function isDeadMcpToken(record: Pick<McpTokenRecord, 'revokedAt' | 'expiresAt'>, now = Date.now()): boolean {
+  return Boolean(record.revokedAt) || Date.parse(record.expiresAt) <= now;
+}
+
+/**
+ * Delete the rows of tokens revoked or expired more than `olderThanDays` ago (the gateway sync's tick runs this; a
+ * revoked token's `jti` is useless once its `exp` has passed too, so nothing is lost). Returns how many went.
+ */
+export function purgeMcpTokens(options: { olderThanDays?: number; now?: number } = {}): number {
+  const cutoff = new Date((options.now ?? Date.now()) - (options.olderThanDays ?? 30) * 86_400_000).toISOString();
+  const rows = mcpDb().all<TokenRow>('SELECT * FROM mcp_tokens WHERE (revoked_at IS NOT NULL AND revoked_at < ?) OR expires_at < ?', cutoff, cutoff);
+  for (const row of rows) mcpDb().delete('mcp_tokens', { id: row.id });
+  return rows.length;
+}
+
 export type McpTokenCheck = { ok: true; record: McpTokenRecord; user: UserRecord; claims: JWTPayload } | { ok: false; reason: 'invalid' | 'expired' | 'revoked' | 'audience' | 'user' };
 
 /** Whether `token` looks like a JWT this host issued (three parts, `iss` = the instance URL), before verifying it. */

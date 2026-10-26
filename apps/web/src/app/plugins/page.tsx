@@ -25,6 +25,7 @@ const EVENT_STYLE: Record<RegistryEvent['type'], { label: string; className: str
   'plugin.offline': { label: 'offline', className: 'text-warn' },
   'plugin.removed': { label: 'removed', className: 'text-t3' },
   'plugin.error': { label: 'error', className: 'text-rd' },
+  'plugin.transport': { label: 'transport', className: 'text-ac' },
   'scan.started': { label: 'scan', className: 'text-t2' },
   'scan.probe': { label: 'found', className: 'text-gn' },
   'scan.finished': { label: 'scan done', className: 'text-t2' },

@@ -149,7 +149,9 @@ class Dispatcher:
     attribute ``landflow.transport``). ``in_flight`` and ``waiting`` are live counts.
 
     ``max_queue`` bounds the calls waiting for a slot (``None`` = ``max_concurrency``; ``0`` = refuse at
-    once whenever every slot is taken).
+    once whenever every slot is taken). A call with ``wait=True`` (a broker face, already bounded by its
+    prefetch: the rest waits in the broker, the buffer the host spilled over to) queues past ``max_queue``
+    instead of being refused; direct faces (HTTP, gRPC, MCP) never set it.
     """
 
     def __init__(self, plugin: Plugin, max_concurrency: int | None = None, max_queue: int | None = None) -> None:
@@ -196,11 +198,14 @@ class Dispatcher:
         cancel: CancelToken | None = None,
         deadline: float | None = None,
         transport: str | None = None,
+        wait: bool = False,
+        span_attributes: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """``ExecuteRequest`` dict -> ``ExecuteResponse`` dict (see ``Plugin.execute``)."""
-        token = self._enter(cancel, deadline)
+        """``ExecuteRequest`` dict -> ``ExecuteResponse`` dict (see ``Plugin.execute``). ``span_attributes`` join the
+        server span (the MCP face adds ``mcp.tool.name``)."""
+        token = self._enter(cancel, deadline, wait)
         try:
-            return self.plugin.execute(request, headers, cancel=token, transport=transport)
+            return self.plugin.execute(request, headers, cancel=token, transport=transport, span_attributes=span_attributes)
         finally:
             self._leave()
 
@@ -212,15 +217,17 @@ class Dispatcher:
         cancel: CancelToken | None = None,
         deadline: float | None = None,
         transport: str | None = None,
+        wait: bool = False,
+        span_attributes: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """``LoadOptionsRequest`` dict -> ``LoadOptionsResponse`` dict."""
         if not isinstance(request, dict):
             raise ProtocolError("request body must be a JSON object")
-        token = self._enter(cancel, deadline)
+        token = self._enter(cancel, deadline, wait)
         try:
             options = self.plugin.load_options(
                 request.get("nodeType"), request.get("method"), request.get("parameters"), request.get("credentials"), headers,
-                cancel=token, transport=transport,
+                cancel=token, transport=transport, span_attributes=span_attributes,
             )
             return {"options": options}
         finally:
@@ -234,11 +241,12 @@ class Dispatcher:
         cancel: CancelToken | None = None,
         deadline: float | None = None,
         transport: str | None = None,
+        wait: bool = False,
     ) -> dict[str, Any]:
         """``TestCredentialsRequest`` dict -> ``TestCredentialsResponse`` dict."""
         if not isinstance(request, dict):
             raise ProtocolError("request body must be a JSON object")
-        token = self._enter(cancel, deadline)
+        token = self._enter(cancel, deadline, wait)
         try:
             return self.plugin.test_credentials(
                 request.get("credentialType"), request.get("data"), headers, cancel=token, transport=transport
@@ -254,9 +262,10 @@ class Dispatcher:
         cancel: CancelToken | None = None,
         deadline: float | None = None,
         transport: str | None = None,
+        wait: bool = False,
     ) -> dict[str, Any]:
         """``WebhookMethodRequest`` dict -> ``WebhookMethodResponse`` dict."""
-        token = self._enter(cancel, deadline)
+        token = self._enter(cancel, deadline, wait)
         try:
             return self.plugin.webhook_method(request, headers, cancel=token, transport=transport)
         finally:
@@ -270,9 +279,10 @@ class Dispatcher:
         cancel: CancelToken | None = None,
         deadline: float | None = None,
         transport: str | None = None,
+        wait: bool = False,
     ) -> dict[str, Any]:
         """``WebhookRequest`` dict -> ``WebhookResponse`` dict."""
-        token = self._enter(cancel, deadline)
+        token = self._enter(cancel, deadline, wait)
         try:
             return self.plugin.receive_webhook(request, headers, cancel=token, transport=transport)
         finally:
@@ -280,15 +290,16 @@ class Dispatcher:
 
     # ---------------------------------------------------------------- slots
 
-    def _enter(self, cancel: CancelToken | None, deadline: float | None) -> CancelToken:
-        """Resolve the call's token and take a concurrency slot: at once, after waiting in arrival order, or never."""
+    def _enter(self, cancel: CancelToken | None, deadline: float | None, wait: bool = False) -> CancelToken:
+        """Resolve the call's token and take a concurrency slot: at once, after waiting in arrival order, or never
+        (``wait=True`` always waits: the broker face is bounded by its prefetch, never refused)."""
         token = cancel if cancel is not None else (CancelToken(deadline) if deadline is not None else NEVER_CANCELLED)
         if deadline is not None and cancel is not None and (cancel.deadline is None or deadline < cancel.deadline):
             token = _LinkedToken(cancel, deadline)
         token.check()
         with self._lock:
             if self.max_concurrency is not None and self._in_flight >= self.max_concurrency:
-                if len(self._waiters) >= self.max_queue:
+                if not wait and len(self._waiters) >= self.max_queue:
                     raise OverloadedError(
                         f"plugin is at its concurrency limit ({self._in_flight} in flight, {len(self._waiters)} waiting, "
                         f"limit {self.max_concurrency})"

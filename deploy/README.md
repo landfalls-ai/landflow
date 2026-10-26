@@ -85,7 +85,7 @@ All credentials are **for local development and tests only**.
 | GreenMail 2.1 SMTP (`mail`) | `localhost:53025` | `greenmail:3025` | none; delivers to GreenMail's own mailboxes |
 | Vector syslog (`siem`) | `localhost:55514` (TCP and UDP) | `siem:5514` | none; RFC 5424, octet counting or newline framing |
 | Vector HTTP (`siem`) | http://localhost:55080/ | `siem:8080` | none; JSON lines (signature headers kept as fields, not checked) |
-| LocalStack 4.9 (`aws`) | http://localhost:54566 | `localstack:4566` | any access key (use dummy ones, e.g. `test` / `test`), region `us-east-1`; Secrets Manager only, in memory |
+| LocalStack 4.9 (`aws`) | http://localhost:54566 | `localstack:4566` | any access key (use dummy ones, e.g. `test` / `test`), region `us-east-1`; Secrets Manager and SQS only, in memory |
 | Kafka 4.3 KRaft (`kafka`) | `localhost:59092` | `kafka:9092` | none (PLAINTEXT); share groups on (`share.version=1`), topics auto-created with 3 partitions |
 | RabbitMQ 4.4 (`rabbitmq`) | AMQP `localhost:55672`, management http://localhost:55673 | `rabbitmq:5672`, `rabbitmq:15672` | `landflow` / `landflow-dev-only`, vhost `/` |
 | NATS 2.15 (`nats`) | `nats://localhost:54222`, monitoring http://localhost:58222 | `nats:4222`, `nats:8222` | none; JetStream on (file store) |
@@ -133,6 +133,40 @@ native arm64 except where noted. `deploy/scripts/brokers-smoke.sh [name...]` che
 | `pubsub` | `gcr.io/google.com/cloudsdktool/google-cloud-cli:590.0.1-emulators`, `gcloud beta emulators pubsub start` | No credentials; topics and subscriptions in the volume (`--data-dir`); the emulator never expires messages. Clients: `PUBSUB_EMULATOR_HOST=127.0.0.1:58085` | REST works too: `curl -X PUT http://localhost:58085/v1/projects/landflow-dev/topics/t`, `.../topics/t:publish`, `.../subscriptions/s:pull` |
 | `servicebus` | `mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1` + `servicebus-sql` (`mcr.microsoft.com/azure-sql-edge:1.0.7`) | Static entities only, from [`infra/servicebus/Config.json`](infra/servicebus/Config.json): queues `landflow.registry`, `landflow.control`, `landflow.v1.reply` (sessions on, for `ReplyToSessionId`), `landflow.v1.plugin.text-toolkit`, `landflow.v1.plugin.messaging`, `landflow.v1.plugin.conformance`, topic `landflow.v1.events` with subscription `all`; add what a test needs there and recreate the container. Starting the profile sets `ACCEPT_EULA=Y` for Microsoft's emulator and SQL EULAs (`LANDFLOW_SERVICEBUS_ACCEPT_EULA`). The emulator image is distroless (no healthcheck possible): poll `curl http://localhost:55300/health`. SQL: Azure SQL Edge 1.0.7 is the last tag with an arm64 build (2.0.0 and `mssql/server` are amd64 only and would run under Rosetta); Microsoft's own installer uses SQL Edge on Apple Silicon. Management operations (the Administration client) need the port in the connection string (`sb://localhost:55300`) and are .NET-only | `curl http://localhost:55300/health` → `{"status":"healthy",...}`; messaging through an AMQP 1.0 client with the connection string above |
 | `mcp-gateway` | `cr.agentgateway.dev/agentgateway:v1.6.0` (pinned by digest) + a one-shot `mcp-gateway-init` (alpine) that gives the data volume to uid 65532 | The bundled MCP gateway for the dev server: `/mcp` on 54000, the admin API and UI on 55000 (no auth, loopback only; inside the container it must listen on `0.0.0.0:15000` for Docker to publish it). Base config [`mcp-gateway/config.yaml`](mcp-gateway/config.yaml) (`prefixMode: always`, `failureMode: failOpen`, `statefulMode: stateless`, tracing to `jaeger:4318`); storage mode `hybrid`, so the host writes targets with `PUT http://127.0.0.1:55000/api/config/resources/mcp.target` and they live in SQLite in `mcp-gateway-data`; targets point at `host.docker.internal:3000`. Distroless: no healthcheck, readiness on `mcp-gateway:15021/healthz/ready` and metrics on `mcp-gateway:15020/metrics` in the network only. What was verified, the exact payloads and the gaps: [docs/mcp-gateway.md](../docs/mcp-gateway.md). Override files for the spike's other modes: `mcp-gateway/compose.auth.yml` (sign-in through Keycloak), `compose.stateful.yml`, `compose.file.yml` (file fallback) | `node deploy/scripts/mcp-gateway-spike.mjs` (core checks, 10 s) or `--all` (also Keycloak sign-in, the stateful mode and the file fallback; restarts the container and puts it back); `curl http://localhost:55000/api/config/resources/mcp.target`; the UI at http://localhost:55000/ui |
+
+
+### The MCP gateway sync
+
+The host keeps the gateway's targets equal to the plugins that are online, exposed to agents and have at least one tool
+(plus `core`): `apps/web/src/lib/server/mcp/gateway-sync.ts`, started with the host in every main (workers don't sync).
+It reacts to registry events, reconciles every 30 s, drops a plugin offline for 60 s, repairs drift (a gateway restart,
+a hand edit), and only ever touches the resources it created (`mcp_gateway_resources`, migration 1730). After every
+change of the target set the `core` endpoint emits `notifications/tools/list_changed` on its `subscriptions/listen`
+streams, which the gateway relays. Settings → MCP shows the status (targets in step vs drift, last sync, last error)
+with a resync button; `GET /api/mcp/gateway`, `POST /api/mcp/gateway/sync` (owners and admins).
+
+| Setting | Meaning |
+|---|---|
+| `LANDFLOW_MCP_GATEWAY` | `bundled` (default): the config API on `LANDFLOW_MCP_GATEWAY_ADMIN_URL` (default `http://127.0.0.1:55000`; the sidecars use `http://127.0.0.1:15000`). `file`: a gateway of its own reads `LANDFLOW_MCP_GATEWAY_FILE` (default `<data dir>/mcp-gateway.yaml`), which the sync rewrites on every change (Landflow's `mcp.targets` and `landflow-*` routes; everything else in the file is kept). `off`: nothing runs |
+| `LANDFLOW_MCP_GATEWAY_HOST_URL` | How the gateway reaches this host. Dev (gateway in Docker, host on the Mac): default `http://host.docker.internal:3000`. A compose or Kubernetes sidecar shares the host's network namespace: `http://127.0.0.1:3000` (set in `compose.yml`, `compose.queue.yml`, `k8s/base/host`) |
+| `LANDFLOW_MCP_GATEWAY_SECRET` | Sent by every target as `x-landflow-gateway` (`backendAuth`); without it the sync writes nothing (the host would refuse every call) |
+| `LANDFLOW_MCP_GATEWAY_ROUTES` | `on` (default): besides the shared `/mcp`, one route per plugin at `/mcp/plugins/<name>` (that plugin alone, tools unprefixed) and `/mcp/plugins/<name>/server-card` (proxied to the host's Server Card with the client's own bearer). `off`: targets only |
+| `LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES` | A JSON object merged into each per-plugin route's `policies`. **agentgateway applies `mcp.policies.mcpAuthentication` of the base config to `/mcp` only, not to extra routes**, so with sign-in on, put the same `mcpAuthentication` here (`{"mcpAuthentication":{...}}`), or a per-plugin route sees no caller identity and lists no tools |
+
+**Target names** are the plugin ids when they already fit agentgateway's rule (lowercase letters, digits, `-`, `.`; every
+bundled plugin does), so tools on `/mcp` are `<pluginId>_<tool>` (`text-toolkit_slugify`). Any other id is lowercased,
+runs of other characters become `-`, and a 6-hex-digit hash of the original id is appended (`My_Plugin` →
+`my-plugin-3f9a1c`); the mapping is deterministic (`gatewayTargetName()`), so the prefix is predictable.
+
+**Sidecars.** `compose.yml` runs `mcp-gateway` with `network_mode: service:web` (config `mcp-gateway/config.sidecar.yaml`:
+admin API on the shared `127.0.0.1:15000`, SQLite on `landflow-mcp-gateway-data`, chowned to uid 65532 by `mcp-gateway-init`),
+and `/mcp` is published through `web` on `LANDFLOW_MCP_GATEWAY_PORT` (54000). `compose.queue.yml` runs one sidecar per main
+(`mcp-gateway-1`, `-2`) and the load balancer sends `/mcp` and `/.well-known/oauth-protected-resource` to port 4000 of the
+main it picks (`LB_MCP_PORT`, `LB_MCP_PATHS` in `queue/lb.mjs`). Kubernetes: a second container in the `landflow-host`
+Deployment, the config from the `landflow-mcp-gateway` ConfigMap (`k8s/base/host/mcp-gateway-config.yaml`, a copy of the
+sidecar config), an `mcp` port (4000) on the Service; there is no Ingress in the manifests yet, so reach it with
+`kubectl port-forward svc/landflow-host 54000:4000` (an Ingress would send `/mcp` to that port). The sidecar configs carry no
+sign-in: add `mcp.policies.mcpAuthentication` (and `LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES`) for the instance's identity provider.
 
 Credentials are development values (`deploy/.env.example` has every port and password as `LANDFLOW_*`). One
 broker user per plugin, as the spec wants for real deployments, isn't set up here: every dev broker has one user or

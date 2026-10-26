@@ -16,10 +16,10 @@ import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Callable
 
 from ._version import __version__
-from .dispatcher import CallCancelledError, Dispatcher, OverloadedError
+from .dispatcher import CallCancelledError, CancelToken, Dispatcher, OverloadedError
 from .errors import ProtocolError, UnknownCredentialTypeError, UnknownMethodError, UnknownNodeError
 from .plugin import Plugin
 from .protocol import HTTP_PATHS, METRICS_PATH, dumps
@@ -62,10 +62,42 @@ class _BadRequest(Exception):
         self.message = message
 
 
+MountHandler = Callable[..., None]
+"""A handler mounted next to the protocol paths: ``handler(request_handler, body, disconnected=Event)`` writes the response itself."""
+
+
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
     plugin: Plugin
     dispatcher: Dispatcher
+    mounts: dict[str, MountHandler]
+
+
+def _watch_disconnect(sock: Any, on_close: Callable[[], None], stop: threading.Event) -> threading.Thread:
+    """Poll the client socket while a call runs: a peer that closed the connection (``recv`` of 0 bytes with
+    ``MSG_PEEK``) cancels the call, as closing the request does over the other faces."""
+
+    def run() -> None:
+        while not stop.wait(0.05):
+            try:
+                sock.settimeout(0.0)
+                data = sock.recv(1, socket.MSG_PEEK)
+            except (BlockingIOError, InterruptedError):
+                continue
+            except OSError:
+                data = b""
+            finally:
+                try:
+                    sock.settimeout(None)
+                except OSError:
+                    pass
+            if data == b"":
+                on_close()
+                return
+
+    thread = threading.Thread(target=run, name="landflow-http-watch", daemon=True)
+    thread.start()
+    return thread
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -76,8 +108,43 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ---------------------------------------------------------------- verbs
 
+    def _mounted(self, path: str) -> MountHandler | None:
+        for prefix, handler in self.server.mounts.items():
+            if path == prefix or path.startswith(prefix + "/"):
+                return handler
+        return None
+
+    def _serve_mount(self, handler: MountHandler) -> None:
+        try:
+            body = self._read_body()
+        except _BadRequest as exc:
+            self.close_connection = True
+            self._send_error(exc.status, exc.message)
+            return
+        disconnected = threading.Event()
+        stop = threading.Event()
+        _watch_disconnect(self.connection, disconnected.set, stop)
+        try:
+            handler(self, body, disconnected=disconnected)
+        except Exception as exc:  # noqa: BLE001 - the mounted handler's bug
+            log.exception("error handling %s", self.path)
+            self._send_error(500, f"{type(exc).__name__}: {exc}")
+        finally:
+            stop.set()
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        handler = self._mounted(self._route())
+        if handler is not None:
+            self._serve_mount(handler)
+        else:
+            self._send_error(405, "method DELETE not allowed", allow="GET, POST")
+
     def do_GET(self) -> None:  # noqa: N802 - http.server naming
         path = self._route()
+        mounted = self._mounted(path)
+        if mounted is not None:
+            self._serve_mount(mounted)
+            return
         plugin = self.server.plugin
         dispatcher = self.server.dispatcher
         if path == HTTP_PATHS["wellKnown"]:
@@ -97,6 +164,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = self._route()
+        mounted = self._mounted(path)
+        if mounted is not None:
+            self._serve_mount(mounted)
+            return
         try:
             body = self._read_body()
         except _BadRequest as exc:
@@ -116,10 +187,11 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         dispatcher = self.server.dispatcher
-        call: dict[str, Any] = {"transport": "http"}
-        deadline = deadline_from_header(self.headers.get(DEADLINE_HEADER))
-        if deadline is not None:
-            call["deadline"] = deadline
+        # The call's token: the x-landflow-deadline header, and the client closing the connection while the call runs.
+        cancel = CancelToken(deadline_from_header(self.headers.get(DEADLINE_HEADER)))
+        call: dict[str, Any] = {"transport": "http", "cancel": cancel}
+        stop_watch = threading.Event()
+        _watch_disconnect(self.connection, lambda: cancel.cancel("client closed the connection"), stop_watch)
         try:
             if path == HTTP_PATHS["execute"]:
                 response: Any = dispatcher.execute(request, self.headers, **call)
@@ -144,6 +216,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(500, f"{type(exc).__name__}: {exc}")
         else:
             self._send(200, response)
+        finally:
+            stop_watch.set()
 
     # -------------------------------------------------------------- helpers
 
@@ -225,11 +299,19 @@ class HttpPluginServer:
         self.httpd = server_cls((host, port), _Handler)
         self.httpd.plugin = dispatcher.plugin
         self.httpd.dispatcher = dispatcher
+        self.httpd.mounts = {}
         self.plugin = dispatcher.plugin
         self.dispatcher = dispatcher
         self.host = host
         self.port: int = self.httpd.server_address[1]
         self._thread: threading.Thread | None = None
+
+    def mount(self, path: str, handler: MountHandler) -> None:
+        """Serve ``handler`` at ``path`` (and below) next to the protocol paths; the MCP face mounts itself at ``/mcp``."""
+        self.httpd.mounts[path] = handler
+
+    def unmount(self, path: str) -> None:
+        self.httpd.mounts.pop(path, None)
 
     def start(self) -> None:
         self._thread = threading.Thread(

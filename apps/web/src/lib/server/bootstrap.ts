@@ -15,6 +15,7 @@ import { appWebhooks } from './app-webhooks';
 import { bootstrapOwnerFromEnv } from './auth/bootstrap';
 import { startBinaryMaintenance } from './binary/access';
 import { marketplace } from './marketplace/service';
+import { mcpGatewaySync } from './mcp/gateway-sync';
 import { startDataMaintenance } from './maintenance';
 import { openDatabase } from './db';
 import { startOnlineEvaluations } from './evaluations/online';
@@ -59,6 +60,8 @@ export function ensureBootstrapped(): Promise<void> {
     // Brokers (lib/server/transports): a provider per kind with a driver, then the enabled connections open and discover plugins.
     await registerBrokerProviders();
     void brokerConnections.start(registry).catch((error: Error) => logger.warn('broker connections did not start', { error: error.message }));
+    // The MCP gateway sidecar (lib/server/mcp/gateway-sync.ts): every main keeps its own in step; workers don't sync.
+    mcpGatewaySync.start();
     leaderService('seed workflows', seedWorkflows);
     // Insights backfill (first boot) and execution retention, before anything can start a run.
     leaderService('data maintenance', startDataMaintenance);

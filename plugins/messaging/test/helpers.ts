@@ -80,6 +80,9 @@ export interface RequestOptions {
   mode?: ExecuteRequest['mode'];
   pollState?: JsonObject;
   continueOnFail?: boolean;
+  /** The call's abort signal and deadline (epoch ms), as a binding would pass them. */
+  signal?: AbortSignal;
+  deadline?: number;
 }
 
 export function executeRequest(type: string, parameters: JsonObject, options: RequestOptions = {}): ExecuteRequest {
@@ -102,7 +105,7 @@ export function executeRequest(type: string, parameters: JsonObject, options: Re
 const extras = { credentialTypes: plugin.credentialTypes, pluginId: 'messaging' };
 
 export function run(node: INodeType, parameters: JsonObject, options: RequestOptions = {}): Promise<ExecuteResponse> {
-  return runNode(node, executeRequest(node.description.name, parameters, options), extras);
+  return runNode(node, executeRequest(node.description.name, parameters, options), { ...extras, ...(options.signal && { signal: options.signal }), ...(options.deadline && { deadline: options.deadline }) });
 }
 
 export function loadOptions(node: INodeType, method: string, parameters: JsonObject, credentials: Record<string, JsonObject>) {

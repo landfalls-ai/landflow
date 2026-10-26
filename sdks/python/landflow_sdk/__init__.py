@@ -29,6 +29,8 @@ from .errors import (
 from .http_client import HttpClient, HttpError, HttpResponse
 from .icons import MAX_ICON_BYTES, icon_file
 from .logs import LogFormatter, configure_logging
+from .mcp import DEFAULT_MCP_PATH, LIST_OPTIONS_TOOL, McpBinding, McpFace, is_loopback_host, load_mcp_credentials, mcp_available, mcp_mode
+from .mcp_tools import gateway_tool_name, mcp_tools_from_manifest, tool_call_to_parameters, without_binding
 from .metrics import Metrics, MetricsRegistry
 from .node import Node, poll_interval_property
 from .plugin import SDK_NAME, Plugin

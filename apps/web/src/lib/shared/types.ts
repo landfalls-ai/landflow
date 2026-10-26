@@ -31,6 +31,8 @@ export interface EndpointSummary {
   origin?: EndpointOrigin;
   /** Brokered endpoints: the announced instances and their total `maxConcurrency`, and the request channel's numbers (lib/shared/transports.ts). */
   queue?: import('./transports').BrokerQueueStats;
+  /** Auto's measurements for the endpoint (lib/shared/transports.ts). */
+  auto?: import('./transports').TransportAutoSummary;
 }
 
 export interface PluginSummary {
@@ -130,6 +132,8 @@ export type RegistryEvent =
   | { type: 'plugin.offline'; pluginId: string; endpoint?: string; message: string }
   | { type: 'plugin.removed'; pluginId: string; message: string }
   | { type: 'plugin.error'; pluginId?: string; endpoint: string; message: string }
+  /** Auto changed how a plugin's calls travel (docs/transports.md "Explainability"): spill-over on or off, a breaker opened or closed, the main transport switched, a capacity refusal moved a call. */
+  | { type: 'plugin.transport'; pluginId: string; endpoint?: string; kind: string; change: 'spillover' | 'direct' | 'breaker.open' | 'breaker.closed' | 'switch' | 'capacity'; message: string }
   | { type: 'scan.started'; targets: number; message: string }
   | { type: 'scan.probe'; endpoint: string; found: boolean; pluginId?: string; message: string }
   | { type: 'scan.finished'; found: number; durationMs: number; message: string };

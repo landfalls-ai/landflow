@@ -7,7 +7,7 @@ import { api } from '@/lib/client/api';
 import { timeAgo, transportLabel } from '@/lib/client/format';
 import type { McpToolsResponse, McpToolView } from '@/lib/shared/mcp';
 import type { PluginSummary } from '@/lib/shared/types';
-import type { BrokerQueueStats, TransportObjective, TransportPolicy, TransportReason } from '@/lib/shared/transports';
+import type { BrokerQueueStats, TransportAutoSummary, TransportObjective, TransportPolicy, TransportReason } from '@/lib/shared/transports';
 import { Badge, LanguageBadge, StatusDot, TransportBadge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { AppIcon, NodeIcon } from '../ui/icon';
@@ -63,6 +63,55 @@ function QueueNumbers({ stats, className }: { stats?: BrokerQueueStats; classNam
   );
 }
 const modeOf = (policy: TransportPolicy): PickerMode => (policy.mode === 'pinned' ? 'pinned' : policy.allowed?.length ? 'allowed' : 'auto');
+
+const ms = (value: number) => (value >= 1000 ? `${(value / 1000).toFixed(1)} s` : value >= 100 ? `${Math.round(value)} ms` : `${value} ms`);
+
+const BREAKER_TITLE: Record<TransportAutoSummary['breaker'], string> = {
+  closed: 'Breaker closed: calls flow',
+  open: 'Breaker open: 5 failures in a row or more than half of the last 20 calls failed; half-open after 15 s',
+  'half-open': 'Breaker half-open: one trial call or probe decides',
+};
+
+/**
+ * Auto's numbers for one transport kind (docs/transports.md "Explainability"): p50/p95 over the last 60 s, calls in
+ * flight against the plugin's limit, the error rate, the breaker, and whether it is the main kind or taking the spill.
+ */
+function AutoNumbers({ auto, stats }: { auto: TransportAutoSummary; stats?: BrokerQueueStats }) {
+  const queue = stats && (stats.depth !== undefined || stats.lag !== undefined) ? `${stats.lag !== undefined ? `lag ${stats.lag}` : `depth ${stats.depth}`}${stats.consumers !== undefined ? ` · ${stats.consumers} consumer${stats.consumers === 1 ? '' : 's'}` : ''}` : undefined;
+  return (
+    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] tabular-nums text-t3">
+      <span title="Latency of the calls in the last 60 s (p50 / p95)">{auto.p50Ms !== undefined && auto.p95Ms !== undefined ? `p50 ${ms(auto.p50Ms)} · p95 ${ms(auto.p95Ms)}` : 'no calls yet'}</span>
+      <span title={auto.limit ? 'Calls in flight against the plugin’s maxConcurrency' : 'Calls in flight'}>
+        {auto.inflight}
+        {auto.limit ? ` of ${auto.limit}` : ''} in flight
+      </span>
+      {queue && <span title="The broker’s request channel, sampled every 5 s">{queue}</span>}
+      {auto.errorRate !== undefined && (
+        <span className={cn(auto.errorRate > 0 && 'text-warn')} title="Transport failures and timeouts over the last 60 s (a node error in a normal reply doesn’t count)">
+          {Math.round(auto.errorRate * 100)} % errors
+        </span>
+      )}
+      <span className={cn(auto.breaker === 'open' && 'text-rd', auto.breaker === 'half-open' && 'text-warn')} title={BREAKER_TITLE[auto.breaker]}>
+        breaker {auto.breaker}
+      </span>
+      {auto.retryAfterUntil && (
+        <span className="text-warn" title="A capacity refusal (429 / RESOURCE_EXHAUSTED / lferror capacity) asked to wait">
+          wait until {new Date(auto.retryAfterUntil).toLocaleTimeString([], { hour12: false })}
+        </span>
+      )}
+      {auto.main && (
+        <Badge tone="muted" title="The main transport Auto settled on (switches only when another is ≥ 20 % better for 30 s, then stays ≥ 60 s)">
+          main
+        </Badge>
+      )}
+      {auto.spilling && (
+        <Badge tone="accent" title="Production calls spill over here while the direct transport is near its limit">
+          spilling
+        </Badge>
+      )}
+    </span>
+  );
+}
 
 /**
  * The plugin's transports (live state per kind), the policy picker (Auto, pinned to one, or an allow-list; the
@@ -120,9 +169,10 @@ function TransportPolicyPicker({ plugin, onChange }: { plugin: PluginSummary; on
             <>
               <span>next call via</span>
               <TransportBadge transport={plugin.choice.kind} />
-              <Badge tone="accent" title={REASON_LABELS[plugin.choice.reason]?.title}>
+              <Badge tone="accent" title={[REASON_LABELS[plugin.choice.reason]?.title, plugin.choice.detail].filter(Boolean).join(' — ')}>
                 {REASON_LABELS[plugin.choice.reason]?.label ?? plugin.choice.reason}
               </Badge>
+              {plugin.choice.detail && <span className="font-mono text-[11px] text-t3">{plugin.choice.detail}</span>}
             </>
           ) : (
             plugin.choiceError && (
@@ -133,6 +183,18 @@ function TransportPolicyPicker({ plugin, onChange }: { plugin: PluginSummary; on
           )}
         </span>
       </div>
+      {(plugin.transports ?? []).some((t) => t.auto) && (
+        <div className="space-y-0.5">
+          {(plugin.transports ?? [])
+            .filter((t) => t.auto)
+            .map((t) => (
+              <div key={t.kind} className={cn('flex flex-wrap items-center gap-x-2', t.excluded && 'opacity-50')}>
+                <span className="w-24 shrink-0 font-mono text-[11px] text-t2">{transportLabel(t.kind)}</span>
+                <AutoNumbers auto={t.auto!} stats={t.stats} />
+              </div>
+            ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <span>Policy</span>
         <div className="flex rounded-lg border border-hair bg-wl p-0.5" role="radiogroup" aria-label="Transport policy">
@@ -373,6 +435,16 @@ export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChan
                   </span>
                 )}
                 <span className="ml-auto flex shrink-0 items-center gap-3">
+                  {endpoint.auto && endpoint.auto.breaker !== 'closed' && (
+                    <Badge tone="muted" className={cn(endpoint.auto.breaker === 'open' ? 'text-rd' : 'text-warn')} title={BREAKER_TITLE[endpoint.auto.breaker]}>
+                      breaker {endpoint.auto.breaker}
+                    </Badge>
+                  )}
+                  {endpoint.auto && endpoint.auto.inflight > 0 && (
+                    <span className="font-mono text-[11px] tabular-nums text-t3" title="Calls in flight on this endpoint">
+                      {endpoint.auto.inflight} in flight
+                    </span>
+                  )}
                   <QueueNumbers stats={endpoint.queue} />
                   {endpoint.latencyMs !== undefined && <span className="font-mono text-[11px] tabular-nums text-t3">{endpoint.latencyMs}ms</span>}
                   {endpoint.source === 'announce' && endpoint.status === 'online' ? <LeaseBar expiresAt={endpoint.leaseExpiresAt} /> : <span className="text-[12px] text-t3">{timeAgo(endpoint.lastSeen)}</span>}

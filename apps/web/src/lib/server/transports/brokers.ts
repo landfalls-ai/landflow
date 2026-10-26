@@ -405,10 +405,14 @@ export class BrokerConnectionManager {
     };
   }
 
-  /** How many calls the plugin's announced instances take at once, over every open connection. */
+  /**
+   * How many calls the plugin's announced instances take at once, over every open connection. An instance announces on
+   * one registry channel, so two connections to the same broker see the same instance: counted once, by its id.
+   */
   maxConcurrencyOf(pluginId: string): number | undefined {
-    let total = 0;
-    for (const managed of this.managed.values()) for (const instance of managed.client?.plugin(pluginId)?.instances ?? []) total += instance.maxConcurrency ?? 0;
+    const seen = new Map<string, number>();
+    for (const managed of this.managed.values()) for (const instance of managed.client?.plugin(pluginId)?.instances ?? []) seen.set(instance.instanceId, instance.maxConcurrency ?? 0);
+    const total = [...seen.values()].reduce((a, b) => a + b, 0);
     return total || undefined;
   }
 

@@ -572,12 +572,12 @@ ignore challenges over 256). Test vector: secret `registry-s3cret`, plugin `test
 
 ## 14. Messaging (brokers)
 
-A plugin can also be reached through a message broker: Kafka, RabbitMQ, NATS, Valkey/Redis Streams and, later, MQTT 5,
+A plugin can also be reached through a message broker: Kafka, RabbitMQ, NATS, Valkey/Redis Streams, MQTT 5,
 Amazon SQS, Google Pub/Sub, Azure Service Bus, AMQP 1.0 brokers and Pulsar. Both sides connect *out* to the broker, so a
 brokered plugin needs no inbound port and no address the host can reach. The logical RPC is unchanged: the same seven
 methods with the same JSON bodies as the HTTP binding, carried as **CloudEvents 1.0** events. The messaging core is
 written once per language (`@landflow/transports` for the host and the TypeScript SDK, `sdks/go/transport` for the Go
-SDK and `landflow-bridge`; Python goes through the bridge) and a small **driver** per broker only moves opaque events
+SDK and `landflow-bridge`, `landflow_sdk.transport` for the Python SDK) and a small **driver** per broker only moves opaque events
 between named channels. Everything in this section is what the core does; a driver never reads an event.
 
 ### 14.1 Transport kinds, endpoints and hints
@@ -675,11 +675,12 @@ response with `error` set, as over HTTP.
 **Two modes.** When the broker carries string headers with each message (`capabilities.headers`), the event is in
 CloudEvents **binary mode**: every attribute is a header under its bare name (`specversion`, `id`, `lfsig`, …), plus
 `content-type` = `datacontenttype`, and the body is the message payload. The driver applies its protocol binding's
-prefix: `ce_` for Kafka, `cloudEvents_` for AMQP 0-9-1, `ce-` for NATS, none for MQTT 5 user properties, and the
-`ce_`-prefixed message attributes of SQS and Pub/Sub. Without headers (or with a header budget too small: SQS allows 10
-attributes), the event is in **structured mode**: one JSON document `{ "specversion": "1.0", "id": …, "data": <body> }`
-(or `"data_base64"` when the body is encrypted) with `content-type: application/cloudevents+json`. A receiver tells
-them apart by the presence of a `specversion` header.
+prefix: `ce_` for Kafka, `cloudEvents_` for AMQP 0-9-1 and AMQP 1.0, `ce-` for NATS, none for MQTT 5 user properties, and `ce_`
+for the message attributes of Pub/Sub and the properties of Azure Service Bus and Pulsar. Without headers (or with a
+header budget too small), the event is in **structured mode**: one JSON document `{ "specversion": "1.0", "id": …, "data": <body> }`
+(or `"data_base64"` when the body is encrypted) with `content-type: application/cloudevents+json`. SQS always uses structured mode:
+its 10 message attributes cannot hold the attributes. A receiver tells them apart by the presence of a `specversion`
+header.
 
 ### 14.4 Request and response
 
@@ -739,6 +740,11 @@ plugin serves it; the host keeps the hash it learned from the announce or the la
   (default = `maxConcurrency`) wait for a slot, and beyond that a call is refused at once with `capacity` (over HTTP
   `429` with `Retry-After: 1`, over gRPC `RESOURCE_EXHAUSTED`); a waiting call whose deadline passes fails
   `deadline_exceeded` (`expired` over a broker). Every HTTP face reads the `x-landflow-deadline` header (epoch ms).
+  **A broker face never answers `capacity`:** a call that arrives over a broker waits for a slot (the dispatcher's
+  `wait` option: `DispatchCall.wait` in TypeScript, `CallOptions.Wait` in Go, `wait=True` in Python), and the messaging
+  server holds at most its prefetch (= `maxConcurrency`), so the rest stays in the broker. A relay (`landflow-bridge`)
+  holds a call its plugin refuses with `capacity` and retries after the `Retry-After` until the deadline; it never
+  answers `capacity` itself.
 - **Version skew.** A consumer whose manifest hash differs from `lfmanifest` puts the request back once (nack with
   requeue) so a replica on the right version can take it; on the next delivery it acknowledges and answers
   `lferror: manifest_mismatch` with `{ "error", "manifestHash" }`. The host pulls the manifest again and retries. The
@@ -750,7 +756,7 @@ plugin serves it; the host keeps the hash it learned from the announce or the la
   store (a claim check) is planned and not part of this version; files already travel as references (§11).
 - **Error codes** (`lferror`): `expired`, `cancelled`, `too_large`, `not_found` (no such node type, load-options method
   or credential type), `bad_request` (the body does not validate), `internal` (the dispatcher threw), `unavailable` (the
-  plugin is draining), `capacity` (refused at once at the concurrency limit: the call never ran) and `manifest_mismatch`. The body is `{ "error": "<message>", …details }`. On the caller's side
+  plugin is draining), `capacity` (refused at once at the concurrency limit: the call never ran; sent over HTTP and gRPC, never by a broker face or a relay) and `manifest_mismatch`. The body is `{ "error": "<message>", …details }`. On the caller's side
   these are *delivered* errors and are never retried blindly. Failures the caller detects itself are `unroutable` (the
   broker said at once that nobody can take the event), `no_consumers` (every announced instance stopped heartbeating,
   or the channel shows zero consumers), `not_connected` (nothing was published), `expired` and `connection_lost` (the
@@ -823,30 +829,35 @@ limit); "mode" is the CloudEvents mode (§14.3).
 
 | Broker | Request channel; replicas share it by | Replies | Mode, header prefix | Buffering | TTL | "Nobody took it" | Persistence | Default max | Attempts |
 |---|---|---|---|---|---|---|---|---|---|
-| **Kafka** (Redpanda), kind `kafka` | a topic per plugin (6 partitions by default); record key = ordering key. TypeScript: a consumer group (the Confluent JS client has no share consumer), KIP-848 `group.protocol=consumer` by default, `classic` for Kafka < 4.0 and Redpanda. Go: a **share group** by default (franz-go; Kafka 4.2+; per-record acks, `share.auto.offset.reset=earliest`) or `group` mode | reply topic per host | binary, `ce_` | yes (the log) | no: the consumer checks the deadline | inferred (group members and lag) | disk | 1 MiB | share group: yes (delivery count). Consumer group: a nack and a graceful close re-publish the record with its attempt count; a record re-read after a hard crash is attempt 1 |
+| **Kafka** (Redpanda), kind `kafka` | a topic per plugin (6 partitions by default); record key = ordering key. TypeScript: a consumer group (the Confluent JS client has no share consumer), KIP-848 `group.protocol=consumer` by default, `classic` for Kafka < 4.0 and Redpanda. Go: a **share group** by default (franz-go; Kafka 4.2+; per-record acks, `share.auto.offset.reset=earliest`) or `group` mode. Python: a consumer group by default, a share group with `LANDFLOW_KAFKA_MODE=share` | reply topic per host | binary, `ce_` | yes (the log) | no: the consumer checks the deadline | inferred (group members and lag) | disk | 1 MiB | share group: yes (delivery count). Consumer group: a nack and a graceful close re-publish the record with its attempt count; a record re-read after a hard crash is attempt 1 |
 | **RabbitMQ** (AMQP 0-9-1), kind `amqp` | a **quorum queue** per plugin (`classic` on request); competing consumers, prefetch = `maxConcurrency` | direct reply-to (`amq.rabbitmq.reply-to`) | binary, `cloudEvents_`; header budget about 120 KiB (`frame_max`) | yes | per-message `expiration` | reported: `mandatory` returns a missing queue, and a consumer-count check before publishing says "no consumer" (`immediate` no longer exists) | disk (durable queues) | 16 MiB (RabbitMQ 4's default) | yes (`x-delivery-count`) |
 | **NATS** core, kind `nats` | a subject per plugin; a queue group | inboxes | binary, `ce-` | no | no | reported ("no responders") | memory | 1 MiB (lowered to the server's `max_payload`) | yes while the process lives: a nack re-publishes the event with a `Landflow-Attempt` header; a hard kill loses it |
 | **NATS JetStream**, kind `jetstream` | a work-queue stream per durable request channel and a durable pull consumer per group; the other channels are core subjects | inboxes | binary, `ce-` | yes | `max_age` (1 h by default) + the deadline; `Nats-TTL` is set as a first filter (1 s granularity, not claimed as TTL) | inferred (consumer info) | disk | 1 MiB (as `nats`) | yes (`NumDelivered`) |
 | **Valkey / Redis Streams**, kind `valkey` | a stream per plugin; a consumer group (`XREADGROUP`), pending entries reclaimed after a crash (`XAUTOCLAIM`); running calls send a keep-alive so a slow call is not stolen | a reply stream per host | binary: entry fields `h:<header>` per attribute and `b` for the body | yes | no (`MINID` / `MAXLEN` trimming + the deadline) | inferred (`XINFO GROUPS`) | disk | 1 MiB, lowered to the server's `proto-max-bulk-len` | yes (`XPENDING` delivery count) |
-| MQTT 5 | a topic per plugin; a shared subscription (`$share/<group>/…`) | response topic + correlation data | binary, user properties (no prefix) | broker-dependent (QoS 1 with persistent sessions) | message expiry interval | unknown | memory/disk | 256 MiB (protocol); driver default 1 MiB | no |
-| Amazon SQS | a queue per plugin (long polling) | a reply queue per host | structured (10 attributes max) | yes | none per message; the deadline | inferred (approximate counts) | disk | 1 MiB | yes (`ApproximateReceiveCount`); visibility timeout redelivers |
-| Google Pub/Sub | a topic and a subscription per plugin | a reply subscription per host | binary, attributes `ce_` (100 max) | yes | ack deadline + the deadline | inferred | disk | 10 MB | yes (`delivery_attempt`) |
-| Azure Service Bus | a queue per plugin | a session-enabled reply queue (`ReplyToSessionId`) | binary, application properties (64 KB budget) | yes | `TimeToLive` | inferred (message counts) | disk | 256 KB Standard, 1 MB Premium | yes (`DeliveryCount`); locks redeliver |
-| AMQP 1.0 (Artemis, Qpid) | an address per plugin; competing receivers | reply-to address | binary, application properties `cloudEvents_` | yes | `ttl` | inferred | disk | 1 MiB | yes (`delivery-count`) |
-| Apache Pulsar | a topic per plugin; a shared subscription | a reply topic per host | binary, properties `ce_` | yes | message TTL | inferred (subscription stats) | disk | 5 MB | yes (`redeliveryCount`) |
+| **MQTT 5** (Mosquitto, EMQX, HiveMQ), kind `mqtt` | a topic per plugin (`.` becomes `/`); a shared subscription (`$share/<group>/…`) at QoS 1 | response topic + correlation data | binary, user properties (no prefix) | no (clean sessions) | message expiry interval (whole seconds) | reported (a PUBACK with reason `0x10`, "no matching subscribers") | disk | 1 MiB, lowered to the broker's Maximum Packet Size | yes while the process lives: a nack re-publishes the event with a `landflow-attempt` user property, like NATS core; a hard kill loses it |
+| **Amazon SQS**, kind `sqs` | a standard queue per plugin (long polling, visibility keep-alive while a call runs); broadcast is a queue per consumer with publisher-side fan-out (no SNS) | a reply queue per host | structured only (10 attributes max) | yes | none per message (retention + the deadline) | unknown (registry heartbeats only) | disk | 1 MiB (set on each queue) | yes (`ApproximateReceiveCount`); the visibility timeout redelivers |
+| **Google Pub/Sub**, kind `pubsub` | a topic per channel and one shared subscription per plugin, with message ordering and a dead-letter policy (so `delivery_attempt` is populated); a subscription per consumer for broadcast | a reply topic and subscription per host | binary, attributes `ce_` (100 max) | yes | none (ack deadline + the deadline) | unknown | disk | 10 MB | yes (`delivery_attempt`) |
+| **Azure Service Bus**, kind `servicebus` | a queue per plugin, peek-lock competing receivers; sessions for instance and reply channels; broadcast through one topic with 16 session-enabled subscriptions, claimed by session lock | a session-enabled reply queue (`ReplyToSessionId`) | binary, application properties `ce_` (64 KiB budget) | yes | `TimeToLive` per message | unknown | disk | 240 KiB by default (256 KiB per AMQP message on Standard and the emulator) | yes (`DeliveryCount`); locks redeliver |
+| **AMQP 1.0** (ActiveMQ Artemis, Qpid), kind `amqp1` | an anycast queue per plugin, created on first attach; competing receivers; `group-id` = ordering key | a dynamic reply queue per host (`reply-to`) | binary, application properties `cloudEvents_` | yes | `ttl` header | inferred (the management API's consumer count) | disk | 1 MiB | yes (`delivery-count`); a nack is `modified{delivery-failed}` |
+| **Apache Pulsar**, kind `pulsar` | a topic per plugin; a Shared subscription named after the channel; non-durable readers for broadcast | a reply topic per host | binary, properties `ce_` | yes | no (TTL is a namespace policy; the deadline) | inferred (subscription stats from the admin API) | disk | 5 MiB | yes (`redeliveryCount` + 1) |
 
 Differences the core absorbs, so drivers stay small: correlation goes in the envelope (`lfreplyto`, `lfcorrelation`)
-wherever the broker has no reply semantics; native replies end with the connection (§14.4); only NATS and RabbitMQ say
-"nobody took it" at once, elsewhere the host infers it from registry heartbeats and consumer counts, and otherwise waits
+wherever the broker has no reply semantics; native replies end with the connection (§14.4); only NATS, RabbitMQ and MQTT 5
+say "nobody took it" at once, elsewhere the host infers it from registry heartbeats and consumer counts, and otherwise waits
 for the deadline; tight header budgets force structured mode; every redelivery mechanism (visibility timeouts, locks,
 ack waits, pending entries) becomes `lfattempt` and the rules of §14.6. Each driver passes the driver conformance suite
 (`@landflow/transports/conformance`, `runConformance()`; `conformance.Run(t, target)` in Go) against a local container
 before it ships; the SDK × face fixtures stay in `packages/protocol/conformance/`.
 
-The tier 1 rows are built in both cores (`@landflow/transports/<kind>`, `sdks/go/transport/<kind>`), wire-compatible
-with each other. The one difference is Kafka's work sharing: a TypeScript replica always consumes with a consumer group,
-a Go replica with a share group unless its mode is `group`, and the two cannot share a topic; **mixed TypeScript and Go
-replicas of one plugin must use the same mode** (`LANDFLOW_KAFKA_MODE=group` on the Go side).
+Every row is built in the TypeScript and Go cores (`@landflow/transports/<kind>`, `sdks/go/transport/<kind>`),
+wire-compatible with each other; the tier 1 rows are also native in `landflow_sdk.transport` (Python reaches the tier 2
+kinds through `landflow-bridge`). The one difference is Kafka's work sharing: a TypeScript replica always consumes with
+a consumer group, a Go replica with a share group unless its mode is `group`, a Python replica with a consumer group
+unless its mode is `share`, and the two modes cannot share a topic; **mixed-language replicas of one plugin must use
+the same mode** (`LANDFLOW_KAFKA_MODE=group` on the Go side, or `share` on the Python side).
+
+A `nats` and a `jetstream` connection on one server must use different prefixes: the JetStream stream captures the core
+subjects.
 
 ## 15. MCP
 
@@ -945,8 +956,11 @@ the request's stream (HTTP) or `notifications/cancelled` (stdio) aborts the call
 
 ### 15.2 The plugin's own MCP endpoint
 
-The SDKs add an MCP face to every plugin unless `LANDFLOW_MCP=off` (`LANDFLOW_MCP` is `on`, `off` or `stdio`; the
-TypeScript SDK has it, the Go and Python faces are the next wave):
+The SDKs add an MCP face to every plugin unless `LANDFLOW_MCP=off` (`LANDFLOW_MCP` is `on`, `off` or `stdio`). All three
+have it: TypeScript on `@modelcontextprotocol/server` 2.4.0, Go on `github.com/modelcontextprotocol/go-sdk` v1.8.0
+(`sdks/go/mcpface`, which also serves plugins behind `landflow-bridge`), Python on `mcp` 2.3.0 as the optional `mcp`
+extra (`landflow_sdk.mcp`; without it the face is off and one log line says so). Each lists `mcp` in `transports` and
+`endpoints.mcp` only when it actually started:
 
 - **Streamable HTTP at `/mcp`** on the plugin's HTTP port (`serve(plugin, { http })`), stateless (no session id). It
   speaks 2026-07-28 natively and answers 2025-era clients statelessly (`@modelcontextprotocol/server` 2.4.0's
@@ -1015,8 +1029,7 @@ headers and, for `tools/call`, `Mcp-Name`; they must agree with the body, else `
 ### 15.4 Gateway registration and identity
 
 The bundled gateway is [agentgateway](https://github.com/agentgateway/agentgateway), one sidecar per main
-(`docs/transports.md`, "The bundled MCP gateway"). The host's `McpGatewaySync` (the next wave; the endpoints, identity,
-tokens, grants and catalog below are built) keeps the gateway's targets equal to the plugins that are online, exposed to
+(`docs/transports.md`, "The bundled MCP gateway"). The host's `McpGatewaySync` keeps the gateway's targets equal to the plugins that are online, exposed to
 agents ("Expose to agents", on by default) and have at least one tool; it reacts to registry events and reconciles every
 30 s, and touches only the targets it created.
 

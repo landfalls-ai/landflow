@@ -273,6 +273,35 @@ instrumented with OpenTelemetry join the same trace) and, when an OTLP endpoint 
 metrics are exported (`http/protobuf`; `grpc` if `opentelemetry-exporter-otlp-proto-grpc` is
 installed). `/metrics` and the log lines are the same in both modes.
 
+### MCP: every plugin is also an MCP server
+
+`serve()` adds the MCP face of [`docs/protocol.md` §15.2](../../docs/protocol.md) (`landflow_sdk.mcp`) when the `mcp`
+extra is installed (`pip install 'landflow-sdk[mcp]'`, the official `mcp` package 2.3.0; without it the face is off and
+one log line says so). Every action node's operations become tools (`<node>_<resource>_<operation>`, the node segment
+dropped when the node is named after its plugin; `"mcp": False` on a node, a `resource` option or an `operation`
+option opts out; `outputSchema`, `toolAnnotations` and `idempotent` feed `outputSchema` and the hints); the mapping is
+`landflow_sdk.mcp_tools` (`mcp_tools_from_manifest`, `tool_call_to_parameters`, `gateway_tool_name`), checked against
+the shared fixtures in `packages/protocol/conformance`.
+
+- **Streamable HTTP at `/mcp`** on the HTTP port, stateless, on by default (`serve(plugin, http=…, mcp=False)` turns it
+  off; `mcp={"token": …, "credentials": {…}}` configures it). It answers 2026-07-28 clients natively (per-request
+  `_meta` envelope, `server/discover`) and 2025-era clients per request, from the SDK's own stdlib HTTP server through
+  an in-process bridge to the `mcp` package's ASGI app (no second port). `/mcp` needs `Authorization: Bearer
+  $LANDFLOW_MCP_TOKEN` unless the server listens on loopback only (`LANDFLOW_BIND_HOST=127.0.0.1`, the default when
+  the advertised host is loopback); without a token on another host the face stays off, an error line says `MCP face
+  not started: …`, and the plugin keeps serving. When it is on, `transports` lists `mcp` and `GET /.well-known/landflow`
+  lists it as `endpoints.mcp`.
+- **stdio** with `--mcp-stdio` (or `LANDFLOW_MCP=stdio`): the plugin speaks MCP on stdin/stdout and nothing else (logs
+  go to stderr), so a desktop agent can start it directly.
+- `LANDFLOW_MCP` is `on` (default), `off` or `stdio`; `LANDFLOW_MCP_CREDENTIALS` is a JSON file path or inline JSON
+  `{"<credentialType>": {…fields}}` for the tools of a standalone plugin (a tool whose node needs a credential that is
+  not configured answers `isError: true` naming the type and its fields); a `list_options` tool resolves dynamic
+  options when a credential is configured.
+- `tools/call` runs the dispatcher (`max_concurrency`, a `CancelToken` cancelled when the client closes the request,
+  span attribute `mcp.tool.name`, `landflow.transport = "mcp"`, `mode: "mcp"`); the result is the node's first output
+  as `structuredContent: {items}` plus a short text, a node error is `isError: true` with its message. The HTTP face
+  also cancels a plain `/landflow/v1/execute` call when its client closes the connection.
+
 | Variable | Default | |
 |---|---|---|
 | `OTEL_SERVICE_NAME` | `landflow-plugin-<pluginId>` | service name in logs, spans and `target_info` |
@@ -303,8 +332,8 @@ HTTP and gRPC are two bindings ("faces", [`docs/transports.md`](../../docs/trans
 transport-neutral `Dispatcher` (`plugin.dispatcher`): a binding converts its wire format to the protocol
 dicts and calls `dispatcher.execute / load_options_request / test_credentials_request / webhook_method /
 receive_webhook(request, headers, cancel=, deadline=, transport=)`, which applies the call's deadline and
-cancellation, the plugin's `max_concurrency` and then the plugin's handler logic. Broker bindings (through
-`landflow-bridge` first) and the MCP face plug in the same way:
+cancellation, the plugin's `max_concurrency` and then the plugin's handler logic. Broker bindings
+(`landflow_sdk.transport`, below) and the MCP face plug in the same way:
 
 ```python
 class Binding(ABC):
@@ -332,6 +361,7 @@ is full further calls are refused at once with `OverloadedError` (HTTP 429 + `Re
 | `LANDFLOW_TRANSPORTS` | every configured binding | comma-separated kinds to run (`http,grpc,kafka`); a kind with no binding is ignored with a warning |
 | `LANDFLOW_MAX_CONCURRENCY` | `max_concurrency=` (unlimited) | calls one instance runs at once; announced as `maxConcurrency`; `max_queue=` (code only) bounds the waiters |
 | `LANDFLOW_REGISTRY_URL` | `http://127.0.0.1:3000` | `http(s)://` -> `POST/DELETE /api/plugins/announce`; `grpc://host:port` -> `RegistryService`; `off` |
+| `LANDFLOW_MCP` / `LANDFLOW_MCP_TOKEN` / `LANDFLOW_MCP_CREDENTIALS` | `on` / unset / unset | the MCP face (`on`, `off`, `stdio`; also `--mcp-stdio`), the Bearer token `/mcp` needs off loopback, the credentials file or inline JSON for the tools |
 | `LANDFLOW_ADVERTISE_HOST` | `127.0.0.1` | host written into announced endpoints |
 | `LANDFLOW_BIND_HOST` | `127.0.0.1` (or `0.0.0.0` if the advertised host is not loopback) | listen address |
 
@@ -340,6 +370,64 @@ plugin logs once and keeps retrying quietly in the background.
 
 HTTP status codes: node failures are `200` with `error`; malformed requests `400`; unknown node
 type, load-options method or credential type `404`. gRPC uses `INVALID_ARGUMENT` / `NOT_FOUND`.
+
+## Messaging over brokers
+
+`landflow_sdk.transport` is the Python messaging core of [`docs/protocol.md`](../../docs/protocol.md) §14, byte-compatible
+with `@landflow/transports` (TypeScript) and `sdks/go/transport` (Go): the same CloudEvents 1.0 envelope, channels,
+AES-256-GCM encryption and HMAC signing, delivery rules and announce, so a TypeScript host calls a Python plugin over a
+broker exactly as it calls a TypeScript or Go one. A plugin needs no open port: both sides connect out to the broker.
+
+```python
+from landflow_sdk import serve
+from landflow_sdk.transport.drivers.nats import nats          # also: kafka, amqp, jetstream, valkey
+
+serve(plugin, http=7105, brokers=[nats("nats://127.0.0.1:54222")], max_concurrency=16)
+```
+
+or from the environment: `LANDFLOW_TRANSPORTS=http,nats LANDFLOW_NATS_URL=nats://127.0.0.1:54222` (plus
+`LANDFLOW_NATS_USERNAME`, `_PASSWORD`, `_TLS=true`, `_PREFIX`, and `LANDFLOW_<KIND>_<FIELD>` for a driver's own fields:
+`LANDFLOW_KAFKA_MODE`, `LANDFLOW_AMQP_QUEUE_TYPE`, `LANDFLOW_JETSTREAM_ACK_WAIT_MS`…). The connection is `env-<kind>`,
+the id the host gives the connection it reads from `LANDFLOW_TRANSPORT_<KIND>_URL`. Messaging needs the shared secret,
+`LANDFLOW_TRANSPORT_SECRET` (falling back to `LANDFLOW_REGISTRY_SECRET`); without it `serve()` fails with a message
+that says so. The brokered endpoint (`<kind>://<connectionId>/<pluginId>`) is announced on the broker's **registry
+channel** every 10 s with a registry proof, not in the HTTP announce: the host names its own connections.
+
+Install the extras you use: `pip install 'landflow-sdk[nats]'` (`[kafka]`, `[amqp]`, `[valkey]`, or `[brokers]` for
+all four); each pulls `[transport]` (`cryptography`, for AES-GCM). The drivers, their client libraries and the wire
+mapping (`docs/protocol.md` §14.9), all the same as the TypeScript and Go drivers':
+
+| Kind | Client | Notes |
+|---|---|---|
+| `kafka` | `confluent-kafka` 2.16 (librdkafka) | a topic per channel, `ce_` headers, record key = ordering key. `mode="group"` (default: a consumer group with manual commits and `lf-attempt` re-publishes on requeue, as the TypeScript driver, so TypeScript and Python replicas of one plugin mix) or `mode="share"` (a **share group**, Kafka 4.2+, per-record `ACCEPT`/`RELEASE`, `delivery_count` as the attempt, as the Go driver's default; the client polls batches and must acknowledge a whole batch before the next poll, so a long at-least-once call holds its batch, and share groups are invisible to the group admin calls, so `undeliverable` is `unknown`). Mixed replicas of one plugin need one mode (`LANDFLOW_KAFKA_MODE`). `group_protocol="classic"` for brokers before 4.0 and Redpanda |
+| `amqp` | `pika` 1.4 | a quorum queue per plugin (`queue_type="classic"` on request), `cloudEvents_` headers, direct reply-to, `mandatory` publishes + a consumer-count check report "nobody took it", `x-delivery-count` attempts |
+| `nats` | `nats-py` 2.16 | a subject per plugin, queue groups, inboxes, no responders → `unroutable`; a requeue re-publishes with `Landflow-Attempt` |
+| `jetstream` | `nats-py` 2.16 | a work-queue stream + durable pull consumer per plugin, progress acks while a call runs, `Nats-TTL` from the deadline |
+| `valkey` | `valkey` 6.2 | a stream per channel (`h:<header>` fields + `b`), consumer groups, `XAUTOCLAIM` after `claim_idle_ms` with keep-alives, `_orphans` parking on requeue, `XPENDING` attempts |
+
+Threading: the SDK is threaded, so is the core. A driver hands each delivery to a pool of `prefetch` workers; the server
+dispatches on that thread and returns once the reply is out, so at most `max_concurrency` calls run per instance and the
+rest wait in the broker (brokered calls never get a `capacity` refusal from the dispatcher's queue limit: they pass
+`wait=True`). Kafka keeps its consumer handle on one poll thread (acks are queued back to it); pika's
+`BlockingConnection` runs on one I/O thread and every other thread reaches it through `add_callback_threadsafe` (why
+pika, not aio-pika: the SDK has no event loop, and pika needs no asyncio bridge and no extra dependencies); nats-py is
+asyncio, so the NATS driver runs one event loop on a thread of its own and bridges every call with
+`run_coroutine_threadsafe`; valkey-py's client is thread-safe and each subscription reads on a connection of its own.
+
+Delivery rules (the same in the three SDKs): at most once by default (an `Execute` is acknowledged before it runs); at
+least once when the host asks (`lfdelivery`) and the work is repeatable (every method but Execute, an Execute of a node
+or operation marked `"idempotent": True` in its descriptor, or one with an `idempotencyKey`); the deadline (`lfdeadline`)
+is checked before dispatch and again once the call has a slot, and trips the call's `CancelToken` (the response then says
+`expired`); a cancel on the control channel cancels the token (`cancelled`); a request whose `lfmanifest` differs from
+the plugin's manifest hash is put back once, then answered `manifest_mismatch`. Error codes: `ProtocolError` →
+`bad_request`, unknown node / method / credential type → `not_found`, anything else → `internal`.
+
+For tooling and tests there is also the host side (`MessagingClient`), an in-memory broker (`MemoryBroker`) and the driver
+conformance suite (`landflow_sdk.transport.conformance`: `DriverConformance` + `CoreConformance` mixins with a
+`ConformanceTarget`), the counterpart of `@landflow/transports/conformance` and Go's `conformance.Run`. Stream-level
+lookups for other tooling: `native_driver_kinds()` (`kafka`, `amqp`, `nats`, `jetstream`, `valkey`), `load_driver(kind)`
+(the `DriverModule`: `create()`, `config_from(connection_id, url, options)`, `capabilities`) and `driver_available(kind)`
+(`None`, or why not: no driver, or the extra to install); `landflow-bridge` covers the kinds without a native driver.
 
 ## gRPC stubs
 
@@ -353,4 +441,14 @@ the `grpc` extra's lower bounds to match.
 python3 -m unittest discover -s sdks/python/tests     # gRPC / OpenTelemetry tests skip when not installed
 ```
 
-Run them once with a venv that has the `grpc` extra and once with `grpc,otel` to cover every mode.
+Run them once with a venv that has the `grpc` extra and once with `grpc,otel` to cover every mode. The messaging tests
+(`test_transport_*.py`) need the `transport` extra for the encrypted cases; the live driver conformance and the
+cross-language tests (a TypeScript `MessagingClient` calling a Python plugin) run against the local brokers only when
+told to, and skip with a message otherwise:
+
+```bash
+LANDFLOW_TEST_KAFKA=127.0.0.1:59092 LANDFLOW_TEST_AMQP=amqp://landflow:landflow-dev-only@127.0.0.1:55672/ \
+LANDFLOW_TEST_NATS=nats://127.0.0.1:54222 LANDFLOW_TEST_VALKEY=redis://127.0.0.1:56379 \
+plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests -p 'test_transport_live.py'          # driver + core conformance
+plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests -p 'test_transport_crosslang_live.py' # TS host -> Python plugin
+```

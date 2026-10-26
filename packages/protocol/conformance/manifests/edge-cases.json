@@ -1,0 +1,838 @@
+{
+  "protocol": "landflow.plugin/v1",
+  "plugin": {
+    "id": "edge",
+    "name": "Edge Cases",
+    "version": "0.9.0",
+    "language": "typescript",
+    "description": "Every corner of the mapping the other manifests leave out: hints, code languages, json, number bounds, option value types, hide conditions, nested dynamic options, null and false defaults, duplicate property names, operations split by auth method, annotation overrides, output schemas at both levels, resource-only tools, opt-outs at every level, defaultVersion."
+  },
+  "credentialTypes": [
+    {
+      "name": "edgeBasicApi",
+      "displayName": "Edge Basic",
+      "properties": [
+        {
+          "name": "user",
+          "displayName": "User",
+          "type": "string"
+        },
+        {
+          "name": "password",
+          "displayName": "Password",
+          "type": "string",
+          "typeOptions": {
+            "password": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "edgeKeyApi",
+      "displayName": "Edge Key",
+      "properties": [
+        {
+          "name": "key",
+          "displayName": "Key",
+          "type": "string",
+          "typeOptions": {
+            "password": true
+          }
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "edge",
+      "displayName": "Edge",
+      "description": "The node named after its plugin: resource × operation tools drop the node segment.",
+      "version": [
+        1,
+        2,
+        3
+      ],
+      "defaultVersion": 2,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "credentials": [
+        {
+          "name": "edgeBasicApi",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "basic"
+              ],
+              "region": [
+                "eu"
+              ]
+            }
+          }
+        },
+        {
+          "name": "edgeKeyApi",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "key"
+              ]
+            }
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "authentication",
+          "displayName": "Authentication",
+          "type": "options",
+          "default": "basic",
+          "options": [
+            {
+              "name": "Basic",
+              "value": "basic"
+            },
+            {
+              "name": "API key",
+              "value": "key"
+            }
+          ]
+        },
+        {
+          "name": "region",
+          "displayName": "Region",
+          "type": "options",
+          "default": "eu",
+          "options": [
+            {
+              "name": "EU",
+              "value": "eu"
+            },
+            {
+              "name": "US",
+              "value": "us"
+            }
+          ]
+        },
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "default": "thing",
+          "options": [
+            {
+              "name": "Thing",
+              "value": "thing",
+              "description": "A thing."
+            },
+            {
+              "name": "Report",
+              "value": "report",
+              "description": "Reports have no operations."
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "getAll",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "thing"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Get many",
+              "value": "getAll",
+              "action": "List things"
+            },
+            {
+              "name": "Getter",
+              "value": "getter",
+              "description": "Not read-only: `get` must be a whole camel-case word."
+            },
+            {
+              "name": "Describe one",
+              "value": "describeOne"
+            },
+            {
+              "name": "Create",
+              "value": "create",
+              "action": "",
+              "description": "An empty action falls through to the node description."
+            },
+            {
+              "name": "Remove",
+              "value": "remove",
+              "idempotent": true,
+              "outputSchema": {
+                "type": "object",
+                "properties": {
+                  "removed": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "notice",
+          "displayName": "Notice",
+          "type": "notice",
+          "default": "Shown in the editor only."
+        },
+        {
+          "name": "hiddenField",
+          "displayName": "Hidden",
+          "type": "hidden",
+          "default": "x"
+        },
+        {
+          "name": "name",
+          "displayName": "Name",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "hint": "A hint stands in for a missing description."
+        },
+        {
+          "name": "name",
+          "displayName": "Name (duplicate)",
+          "type": "number",
+          "default": 1
+        },
+        {
+          "name": "empty",
+          "displayName": "Empty description",
+          "type": "string",
+          "default": "",
+          "description": "",
+          "hint": "An empty description is kept, so the hint is not used."
+        },
+        {
+          "name": "script",
+          "displayName": "Script",
+          "type": "code",
+          "default": "return 1",
+          "typeOptions": {
+            "language": "javascript"
+          },
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "create"
+              ]
+            }
+          }
+        },
+        {
+          "name": "plain",
+          "displayName": "Plain code",
+          "type": "code",
+          "default": "",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "create"
+              ]
+            }
+          }
+        },
+        {
+          "name": "body",
+          "displayName": "Body",
+          "type": "json",
+          "default": "{}",
+          "description": "Request body",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "create"
+              ],
+              "/nested": [
+                "x"
+              ]
+            }
+          }
+        },
+        {
+          "name": "ratio",
+          "displayName": "Ratio",
+          "type": "number",
+          "default": 0.5,
+          "typeOptions": {
+            "minValue": 0,
+            "maxValue": 1,
+            "numberPrecision": 2
+          },
+          "displayOptions": {
+            "hide": {
+              "operation": [
+                "remove"
+              ]
+            }
+          }
+        },
+        {
+          "name": "count",
+          "displayName": "Count",
+          "type": "number",
+          "typeOptions": {
+            "numberPrecision": 0,
+            "maxValue": 100
+          }
+        },
+        {
+          "name": "flag",
+          "displayName": "Flag",
+          "type": "boolean",
+          "default": false,
+          "description": "A false default is still a default."
+        },
+        {
+          "name": "nothing",
+          "displayName": "Nothing",
+          "type": "string",
+          "default": null,
+          "description": "A null default is no default."
+        },
+        {
+          "name": "level",
+          "displayName": "Level",
+          "type": "options",
+          "default": 2,
+          "options": [
+            {
+              "name": "Low",
+              "value": 1
+            },
+            {
+              "name": "High",
+              "value": 2,
+              "description": "Twice as much"
+            }
+          ]
+        },
+        {
+          "name": "mixed",
+          "displayName": "Mixed",
+          "type": "options",
+          "default": true,
+          "options": [
+            {
+              "name": "Yes",
+              "value": true
+            },
+            {
+              "name": "Count",
+              "value": 3
+            },
+            {
+              "name": "Name",
+              "value": "name"
+            }
+          ]
+        },
+        {
+          "name": "bare",
+          "displayName": "Bare options",
+          "type": "options",
+          "default": ""
+        },
+        {
+          "name": "whenHigh",
+          "displayName": "When high",
+          "type": "string",
+          "default": "",
+          "displayOptions": {
+            "show": {
+              "level": [
+                2
+              ],
+              "flag": [
+                true
+              ],
+              "operation": [
+                "getAll",
+                "getter"
+              ]
+            },
+            "hide": {
+              "region": [
+                "us"
+              ]
+            }
+          }
+        },
+        {
+          "name": "extra",
+          "displayName": "Extra",
+          "type": "collection",
+          "default": {},
+          "description": "Nested fields.",
+          "values": [
+            {
+              "name": "labels",
+              "displayName": "Labels",
+              "type": "multiOptions",
+              "default": [],
+              "typeOptions": {
+                "loadOptionsMethod": "getLabels",
+                "loadOptionsDependsOn": [
+                  "region"
+                ]
+              }
+            },
+            {
+              "name": "owner",
+              "displayName": "Owner",
+              "type": "options",
+              "default": "",
+              "required": true,
+              "typeOptions": {
+                "loadOptionsMethod": "getOwners"
+              }
+            },
+            {
+              "name": "note",
+              "displayName": "Note",
+              "type": "string",
+              "default": "",
+              "displayOptions": {
+                "show": {
+                  "/flag": [
+                    true
+                  ]
+                }
+              }
+            },
+            {
+              "name": "rules",
+              "displayName": "Rules",
+              "type": "fixedCollection",
+              "default": {},
+              "groups": [
+                {
+                  "name": "rule",
+                  "displayName": "Rule",
+                  "values": [
+                    {
+                      "name": "field",
+                      "displayName": "Field",
+                      "type": "string",
+                      "default": "",
+                      "required": true
+                    },
+                    {
+                      "name": "op",
+                      "displayName": "Op",
+                      "type": "options",
+                      "default": "eq",
+                      "options": [
+                        {
+                          "name": "Equals",
+                          "value": "eq"
+                        },
+                        {
+                          "name": "Not equals",
+                          "value": "neq"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "pairs",
+          "displayName": "Pairs",
+          "type": "fixedCollection",
+          "default": {},
+          "typeOptions": {
+            "multipleValues": true
+          },
+          "groups": [
+            {
+              "name": "pair",
+              "displayName": "Pair",
+              "values": [
+                {
+                  "name": "key",
+                  "displayName": "Key",
+                  "type": "string",
+                  "default": ""
+                },
+                {
+                  "name": "value",
+                  "displayName": "Value",
+                  "type": "string",
+                  "default": ""
+                }
+              ]
+            },
+            {
+              "name": "tag",
+              "displayName": "Tag",
+              "values": [
+                {
+                  "name": "name",
+                  "displayName": "Name",
+                  "type": "string",
+                  "default": ""
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "when",
+          "displayName": "When",
+          "type": "dateTime",
+          "default": "",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "report"
+              ]
+            }
+          }
+        },
+        {
+          "name": "tint",
+          "displayName": "Tint",
+          "type": "color",
+          "default": "#000000",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "report"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ops",
+      "displayName": "Ops",
+      "description": "Operation-only node whose operation dropdowns are split by authentication method; names keep the node segment.",
+      "toolDescription": "Operations on the edge service.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "idempotent": true,
+      "toolAnnotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      },
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "credentials": [
+        {
+          "name": "edgeKeyApi"
+        }
+      ],
+      "properties": [
+        {
+          "name": "authentication",
+          "displayName": "Authentication",
+          "type": "options",
+          "default": "key",
+          "options": [
+            {
+              "name": "Key",
+              "value": "key"
+            },
+            {
+              "name": "None",
+              "value": "none"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "search",
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "key"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Search",
+              "value": "search"
+            },
+            {
+              "name": "Delete",
+              "value": "delete",
+              "idempotent": false,
+              "toolAnnotations": {
+                "title": "Delete for good",
+                "destructiveHint": true
+              }
+            },
+            {
+              "name": "Private",
+              "value": "private",
+              "mcp": false
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "search",
+          "displayOptions": {
+            "show": {
+              "authentication": [
+                "none"
+              ]
+            }
+          },
+          "options": [
+            {
+              "name": "Search",
+              "value": "search"
+            },
+            {
+              "name": "Ping",
+              "value": "ping",
+              "action": "Ping the service"
+            }
+          ]
+        },
+        {
+          "name": "query",
+          "displayName": "Query",
+          "type": "string",
+          "default": "",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "search"
+              ],
+              "authentication": [
+                "key",
+                "none"
+              ]
+            }
+          }
+        },
+        {
+          "name": "id",
+          "displayName": "ID",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "delete",
+                "private"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "dynamicResource",
+      "displayName": "Dynamic resource",
+      "description": "A dynamic `resource` dropdown does not split tools; it is an ordinary argument.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "default": "",
+          "typeOptions": {
+            "loadOptionsMethod": "getResources"
+          }
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "read",
+          "options": [
+            {
+              "name": "Read",
+              "value": "read"
+            },
+            {
+              "name": "Write",
+              "value": "write"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "secret",
+      "displayName": "Secret",
+      "description": "Opted out as a whole.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "mcp": false,
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "x",
+          "displayName": "X",
+          "type": "string",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "name": "notATool",
+      "displayName": "Not a tool",
+      "description": "An action node without usableAsTool is left out.",
+      "version": 1,
+      "kind": "action",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": []
+    },
+    {
+      "name": "memory",
+      "displayName": "Memory",
+      "description": "Sub-nodes are never tools.",
+      "version": 1,
+      "kind": "subnode",
+      "usableAsTool": true,
+      "supplies": "ai_memory",
+      "inputs": [],
+      "outputs": [
+        {
+          "type": "ai_memory"
+        }
+      ],
+      "properties": []
+    },
+    {
+      "name": "dup",
+      "displayName": "Dup",
+      "description": "Its one operation gives dup_x; the next node collides with it.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "x",
+          "options": [
+            {
+              "name": "X",
+              "value": "x"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "dup_x",
+      "displayName": "Dup X",
+      "description": "Collides with the operation tool of the node before it.",
+      "version": 1,
+      "kind": "action",
+      "usableAsTool": true,
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": []
+    }
+  ]
+}

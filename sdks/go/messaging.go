@@ -38,6 +38,9 @@ type BrokerBinding struct {
 	Keyring *transport.Keyring
 	// RegistrySecret proves announces (default LANDFLOW_REGISTRY_SECRET).
 	RegistrySecret string
+	// Observe, when set, sees every delivery before it is dispatched (tests and
+	// conformance runners read the delivery mode and attempt from it).
+	Observe func(method transport.Method, dc transport.DispatchContext)
 	// AnnounceInterval and DrainTimeout tune the server (defaults 10 s, 30 s).
 	AnnounceInterval time.Duration
 	DrainTimeout     time.Duration
@@ -170,6 +173,9 @@ func (b *BrokerBinding) dispatch(ctx context.Context, method transport.Method, b
 	b.mu.Lock()
 	bc := b.bc
 	b.mu.Unlock()
+	if b.Observe != nil {
+		b.Observe(method, dc)
+	}
 	kind := b.Kind()
 	ctx = context.WithValue(ctx, deliveryKey{}, DeliveryInfo{Transport: kind, CallID: dc.CallID, Attempt: dc.Attempt, Mode: dc.Delivery, IdempotencyKey: dc.IdempotencyKey, Source: dc.Source})
 	if bc.Telemetry != nil && dc.TraceParent != "" {
@@ -203,7 +209,14 @@ func (b *BrokerBinding) dispatch(ctx context.Context, method transport.Method, b
 }
 
 func (b *BrokerBinding) run(ctx context.Context, bc BindingContext, method transport.Method, body json.RawMessage, dc transport.DispatchContext) (any, error) {
-	opts := CallOptions{Transport: b.Kind(), Deadline: dc.Deadline}
+	// The messaging server already holds at most its prefetch (MaxConcurrency); the rest waits in the broker.
+	return dispatchLocal(ctx, bc.Dispatcher, method, body, CallOptions{Transport: b.Kind(), Deadline: dc.Deadline, Wait: true})
+}
+
+// dispatchLocal runs one JSON-bodied call (the transport.Dispatcher contract) through the in-process dispatcher:
+// what a broker binding and the MCP face both do once the wire is unwrapped. Dispatcher errors become
+// transport.DispatchError codes the caller can act on.
+func dispatchLocal(ctx context.Context, d *Dispatcher, method transport.Method, body json.RawMessage, opts CallOptions) (any, error) {
 	decode := func(dst any) error {
 		if len(body) == 0 {
 			return &transport.DispatchError{Code: transport.CodeBadRequest, Message: "request body is empty"}
@@ -213,7 +226,6 @@ func (b *BrokerBinding) run(ctx context.Context, bc BindingContext, method trans
 		}
 		return nil
 	}
-	d := bc.Dispatcher
 	if d == nil {
 		return nil, &transport.DispatchError{Code: transport.CodeUnavailable, Message: "binding has no dispatcher"}
 	}

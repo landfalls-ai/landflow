@@ -97,9 +97,33 @@ export function sanitizeToolName(raw: string, max = MCP_TOOL_NAME_MAX_LENGTH): s
   return cleaned || 'tool';
 }
 
-/** The name a tool has on the gateway's shared endpoint: `<pluginId>_<tool>` (`twilio_message_send`), sanitised to the same rules. */
+/**
+ * The name a tool has on the gateway's shared endpoint: `<target>_<tool>` (`twilio_message_send`), the target being
+ * {@link gatewayTargetName}, sanitised to the same rules (which only bite on ids with a `.` or names over the limit).
+ */
 export function gatewayToolName(pluginId: string, toolName: string): string {
-  return sanitizeToolName(`${pluginId}_${toolName}`);
+  return sanitizeToolName(`${gatewayTargetName(pluginId)}_${toolName}`);
+}
+
+/**
+ * The gateway target name of a plugin, which prefixes its tools on the shared endpoint. agentgateway requires a Gateway
+ * API section name (lowercase letters, digits, `-` and `.`; `_` and `+` are MCP delimiters), so an id that already fits
+ * (every bundled plugin: `text-toolkit`, `py-insights`, `core`…) is used as is. Any other id is lowercased, runs of other
+ * characters become `-`, and 6 hex digits of a hash of the original id are appended so two ids never collide
+ * (`My_Plugin` → `my-plugin-<hash>`). Deterministic, so prefixes are predictable.
+ */
+export function gatewayTargetName(pluginId: string): string {
+  const cleaned = pluginId.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^[.-]+|[.-]+$/g, '');
+  if (cleaned === pluginId && cleaned.length <= 63) return cleaned;
+  const stem = cleaned.slice(0, 40).replace(/[.-]+$/g, '') || 'plugin';
+  return `${stem}-${fnv1a(pluginId).toString(16).padStart(8, '0').slice(0, 6)}`;
+}
+
+/** FNV-1a over the UTF-8 bytes, 32 bits: a small stable hash that runs anywhere (the browser has no `node:crypto`). */
+function fnv1a(text: string): number {
+  let hash = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(text)) hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
+  return hash;
 }
 
 /** Give every entry a distinct name: a repeat gets `_2`, `_3`, … while staying within the length limit. */

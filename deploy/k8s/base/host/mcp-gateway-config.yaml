@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# agentgateway as the sidecar of a Landflow main (deploy/compose.yml, compose.queue.yml, k8s/base/host): it shares the
+# main's network namespace, so the admin API listens on loopback only and the host writes targets at
+# http://127.0.0.1:15000 (LANDFLOW_MCP_GATEWAY_ADMIN_URL); the targets point back at http://127.0.0.1:3000
+# (LANDFLOW_MCP_GATEWAY_HOST_URL). Agents reach /mcp on port 4000 (published by the main's container, or the Service's
+# `mcp` port). Storage mode hybrid: this file is the read-only baseline, the targets live in SQLite under /data and are
+# rebuilt from the plugin registry whenever the sidecar restarts (docs/transports.md "Automatic registration").
+#
+# Sign-in: add `mcp.policies.mcpAuthentication` for the instance's identity provider (see config.auth.yaml for the
+# Keycloak shape). Without it the gateway forwards no caller identity, and the host treats every call as anonymous
+# (no grants, no tools), so a sidecar without sign-in is safe but useless to agents.
+config:
+  adminAddr: "127.0.0.1:15000"
+  storage:
+    mode: hybrid
+  database:
+    url: sqlite:///data/agentgateway.db
+  logging:
+    level: info
+gateways:
+  default:
+    port: 4000
+mcp:
+  gateways: default
+  prefixMode: always
+  failureMode: failOpen
+  statefulMode: stateless
+  server:
+    name: landflow-mcp-gateway
+    version: dev
+    title: Landflow
+    instructions: Every installed Landflow plugin as MCP tools. Tool names are <plugin>_<resource>_<operation>.
+  targets: []

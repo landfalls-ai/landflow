@@ -216,6 +216,8 @@ class Plugin:
         }
         if any(descriptor.get("triggerSource") == "appWebhook" for _, descriptor in self._nodes.values()):
             endpoints.update(webhookMethod=HTTP_PATHS["webhookMethod"], webhook=HTTP_PATHS["webhook"])
+        if "mcp" in (self.transports or []):
+            endpoints["mcp"] = "/mcp"  # the MCP face (docs/protocol.md §15.2)
         return {
             "protocol": PROTOCOL_VERSION,
             "plugin": {"id": self.id, "name": self.name, "version": self.version, "language": LANGUAGE},
@@ -267,7 +269,8 @@ class Plugin:
         return out
 
     def execute(
-        self, request: Any, headers: Any = None, *, cancel: Any = None, transport: str | None = None
+        self, request: Any, headers: Any = None, *, cancel: Any = None, transport: str | None = None,
+        span_attributes: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run an ``ExecuteRequest`` dict and return an ``ExecuteResponse`` dict.
 
@@ -299,6 +302,7 @@ class Plugin:
                     "landflow.execution.mode": request["mode"],
                     "landflow.items.in": items_in,
                     "landflow.transport": transport,
+                    **(span_attributes or {}),
                 },
             )
             try:
@@ -362,6 +366,7 @@ class Plugin:
         *,
         cancel: Any = None,
         transport: str | None = None,
+        span_attributes: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Resolve a ``loadOptionsMethod``; returns ``[{name, value, description?}]``."""
         node, descriptor = self.resolve_node(node_type)
@@ -385,6 +390,7 @@ class Plugin:
                     "landflow.node.type": qualified,
                     "landflow.load_options.method": method,
                     "landflow.transport": transport,
+                    **(span_attributes or {}),
                 },
             )
             try:

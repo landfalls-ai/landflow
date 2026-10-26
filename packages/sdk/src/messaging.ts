@@ -104,6 +104,8 @@ export function messagingDispatcher(dispatcher: Dispatcher, options: { kind: str
       parent: contextFromHeaders(options.telemetry, headers),
       attributes: messagingAttributes(options.kind, options.channel, context),
       ...(context.deadline !== undefined && { deadline: context.deadline }),
+      // The messaging server already holds at most its prefetch (`maxConcurrency`); the rest waits in the broker.
+      wait: true,
     };
   };
   const bad = (what: string, issues?: unknown) => new MessagingDispatchError(`Invalid ${what}`, 'bad_request', issues ? { issues: issues as JsonValue } : undefined);
@@ -252,6 +254,11 @@ export async function brokerTargetFromEnv(kind: string, env: Record<string, stri
     ...(flag !== undefined && { tls: flag === 'true' || flag === '1' }),
     ...(env[`LANDFLOW_${upper}_PREFIX`] && { prefix: env[`LANDFLOW_${upper}_PREFIX`] }),
   };
+  // The driver's own fields as `LANDFLOW_<KIND>_<FIELD>` (upper-cased: `LANDFLOW_SQS_REGION`, `LANDFLOW_PUBSUB_PROJECTID`), as the Go SDK reads them.
+  for (const field of module.fields ?? []) {
+    const value = env[`LANDFLOW_${upper}_${field.name.toUpperCase()}`];
+    if (value !== undefined && value !== '') options[field.name] = field.type === 'boolean' ? value === 'true' || value === '1' : value;
+  }
   const config = module.configFrom(`env-${kind}`, url, options);
   return { kind: module.kind, driver: () => module.create(), config };
 }

@@ -52,6 +52,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/mcp/tokens')) return { scope: 'any', sessionOnly: true };
   if (under('/api/mcp/grants')) return { scope: 'admin', action: 'mcp:manage' };
   if (under('/api/mcp/status')) return { scope: 'any' };
+  // The gateway sync (lib/server/mcp/gateway-sync.ts): anyone sees its status on the Settings page; forcing a resync is admin.
+  if (under('/api/mcp/gateway')) return read ? { scope: 'any' } : { scope: 'admin', action: 'mcp:manage' };
   // Audit log: reading (and exporting) needs `audit:read`: owners and admins read every event, project admins their
   // projects' (the route limits it, lib/server/audit/access.ts). Verifying the hash chain, its settings and SIEM destinations are admin-only.
   if (path === '/api/audit/verify') return { scope: 'audit:read', action: 'audit:read' };

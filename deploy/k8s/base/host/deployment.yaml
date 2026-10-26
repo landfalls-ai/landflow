@@ -40,6 +40,13 @@ spec:
             - { name: LANDFLOW_INTERNAL_URL, value: "http://landflow-host:3000" }
             - { name: LANDFLOW_PUBLIC_URL, value: "http://localhost:3000" }
             - { name: LANDFLOW_LOG_LEVEL, value: info }
+            # The MCP gateway sidecar (the second container): its admin API and this host share the pod's loopback.
+            - { name: LANDFLOW_MCP_GATEWAY, value: bundled }
+            - { name: LANDFLOW_MCP_GATEWAY_ADMIN_URL, value: "http://127.0.0.1:15000" }
+            - { name: LANDFLOW_MCP_GATEWAY_HOST_URL, value: "http://127.0.0.1:3000" }
+            - { name: LANDFLOW_MCP_GATEWAY_PUBLIC_URL, value: "http://localhost:4000" }
+            - name: LANDFLOW_MCP_GATEWAY_SECRET # what the gateway sends as x-landflow-gateway; unset: the host refuses gateway calls
+              valueFrom: { secretKeyRef: { name: landflow-host, key: mcp-gateway-secret, optional: true } }
             - name: LANDFLOW_REGISTRY_SECRET # plugins prove it on GetManifest (docs/protocol.md §13); unset: not required
               valueFrom: { secretKeyRef: { name: landflow-registry, key: secret, optional: true } }
             - name: LANDFLOW_ENCRYPTION_KEY # unset: generated into /data/encryption.key on first use
@@ -65,6 +72,34 @@ spec:
             capabilities: { drop: [ALL] }
           volumeMounts:
             - { name: data, mountPath: /data }
+        # The bundled MCP gateway (agentgateway 1.6, docs/transports.md "Deployment"): /mcp on the `mcp` port, the admin
+        # API on the pod's loopback only (the host writes its targets there), targets in SQLite on an emptyDir (rebuilt
+        # from the plugin registry by the host's gateway sync on every start). Distroless, runs as 65532; same digest as compose.
+        - name: mcp-gateway
+          image: cr.agentgateway.dev/agentgateway:v1.6.0@sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+          imagePullPolicy: IfNotPresent
+          args: ["-f", "/config/config.yaml"]
+          ports:
+            - { name: mcp, containerPort: 4000 }
+          readinessProbe:
+            httpGet: { path: /healthz/ready, port: 15021 }
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: mcp-gateway-config, mountPath: /config, readOnly: true }
+            - { name: mcp-gateway-data, mountPath: /data }
       volumes:
         - name: data
           persistentVolumeClaim: { claimName: landflow-data }
+        - name: mcp-gateway-config
+          configMap: { name: landflow-mcp-gateway }
+        - name: mcp-gateway-data
+          emptyDir: { sizeLimit: 256Mi }

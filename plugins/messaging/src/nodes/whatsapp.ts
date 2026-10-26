@@ -100,6 +100,8 @@ export const WhatsApp = defineNode({
     documentationUrl: 'https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages',
     keywords: ['whatsapp', 'meta', 'message', 'template', 'sms'],
     usableAsTool: true,
+    // Sends, posts and edits are at most once over a broker; read operations opt back in with `idempotent: true`.
+    idempotent: false,
     toolDescription:
       'Send a WhatsApp message (text, or an image, document, audio or video by URL) or an approved template to a phone number in international format.',
     inputs: [{ type: 'main' }],

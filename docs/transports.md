@@ -1,11 +1,11 @@
 # Plan: one plugin, every transport, and MCP
 
 Status: **in progress** (planned 2026-10-26, revised the same day: generic brokers, then the bundled MCP gateway).
-Phases 0, 1 and 2 are built (the TypeScript messaging core and the tier 1 drivers, the host's broker connections and
-discovery, the TS SDK's messaging binding), phase 3 (the per-plugin MCP endpoints, identity, tokens, grants, the
-catalog and the TS SDK's MCP face) except approvals and `resource_link`, and part of phase 4 (the Go core and tier 1
-drivers, `WithBroker`); the gateway sync, `landflow-bridge` and the Go and Python MCP faces come next
-([Phases](#phases), [roadmap](roadmap.md)). The decisions are settled (2026-10-26): agentgateway is the bundled MCP gateway, and agents
+Phases 0, 1, 2, 3b, 4, 5, 6 and 8 are built (the TypeScript messaging core and the tier 1 and tier 2 drivers, the host's
+broker connections and discovery, the TS SDK's messaging binding, the gateway sync, the Go core and drivers,
+`landflow-bridge`, Auto and the Python native drivers), and phase 3 (the per-plugin MCP endpoints, identity, tokens,
+grants, the catalog and the MCP face in all three SDKs) except approvals and `resource_link`; the
+Twilio pilot, queue mode and Kubernetes come next ([Phases](#phases), [roadmap](roadmap.md)). The decisions are settled (2026-10-26): agentgateway is the bundled MCP gateway, and agents
 sign in through the instance's identity provider or with Landflow-issued MCP tokens. The rest follow the
 recommendations ([last section](#decisions)). Where the code chose a detail this plan left open, the plan now states
 the detail; `docs/protocol.md` §14 and §15 are the normative wire description.
@@ -75,7 +75,8 @@ sections below say what each piece is, and the [Phases](#phases) table says what
 - **Transport kind**: `http`, `grpc` (direct: the host connects to the plugin), or a broker kind (`kafka`, `amqp`,
   `nats`, `jetstream`, `valkey`, `mqtt`, `sqs`, `pubsub`, `servicebus`, `amqp1`, `pulsar`; brokered: both connect out,
   the plugin needs no inbound port). `nats` and `jetstream` are two kinds on one NATS server, because their
-  capabilities differ (core: lowest latency, nothing buffered; JetStream: buffered, on disk, redelivered).
+  capabilities differ (core: lowest latency, nothing buffered; JetStream: buffered, on disk, redelivered). Connections of
+  the two kinds on one server must use different channel prefixes, because the JetStream stream captures the core subjects.
 - **Broker connection**: one installed broker on the host side, e.g. `kafka-main`. Set up in Settings → Transports or by
   environment variables; secrets encrypted like credentials.
 - **Endpoint**: how one plugin is reached over one transport. Direct endpoints stay URLs (`grpc://10.0.0.5:7204`); brokered
@@ -182,10 +183,9 @@ them from their next heartbeat, within 10 s.
 
 ### Brokers
 
-Tier 1 is built in the TypeScript and Go cores (`@landflow/transports/<kind>` on `@confluentinc/kafka-javascript`,
-`amqplib`, `@nats-io/transport-node` + `@nats-io/jetstream` and `iovalkey`; `sdks/go/transport/<kind>` on `franz-go`,
-`amqp091-go`, `nats.go` and `valkey-go`), wire-compatible with each other; tier 2 follows driver by driver. Every
-driver passes the same conformance suite (`@landflow/transports/conformance`, above; `conformance.Run(t, target)` in
+Tier 1 and tier 2 are built in the TypeScript and Go cores (`@landflow/transports/<kind>`, `sdks/go/transport/<kind>`),
+wire-compatible with each other; the client libraries are listed [below](#how-each-language-gets-every-broker). Python
+has native drivers for tier 1. Every driver passes the same conformance suite (`@landflow/transports/conformance`, above; `conformance.Run(t, target)` in
 Go) against a local container (no cloud accounts; cloud services use their official emulators); the brokers run
 locally (`deploy/compose.infra.yml`, one profile each). The exact mapping per broker is protocol §14.9.
 
@@ -196,12 +196,12 @@ locally (`deploy/compose.infra.yml`, one profile each). The exact mapping per br
 | **NATS** core, `nats` | a subject per plugin; a queue group | native inboxes | No | "No responders" tells the host nobody took it; lowest broker latency. A nack re-publishes the event with a `Landflow-Attempt` header, so attempts count while the process lives; a hard kill loses the call |
 | **NATS JetStream**, `jetstream` | a work-queue stream per durable request channel; a durable pull consumer per group | native inboxes | Yes | Redelivered after a crash (`NumDelivered` is the attempt), kept for `max_age`; `Nats-TTL` is set as a best-effort first filter (1 s granularity, not claimed as TTL) |
 | **Valkey / Redis Streams**, `valkey` | a stream per plugin; a consumer group | a reply stream per host | Yes | Reuses queue mode's Valkey; binary mode (entry fields `h:<header>` and `b`), so stream tooling reads the attributes; pending entries are reclaimed with `XAUTOCLAIM` after a crash, attempts from `XPENDING`; 1 MiB cap, lowered to `proto-max-bulk-len` |
-| MQTT 5 (Mosquitto, EMQX, HiveMQ) | a topic per plugin; a shared subscription | response topic and correlation data | Broker-dependent | Edge and IoT networks; message expiry |
-| Amazon SQS | a queue per plugin | a reply queue per host | Yes | Messages up to 1 MiB and 10 attributes, so structured mode; larger bodies by reference |
-| Google Pub/Sub | a topic and subscription per plugin | a reply subscription per host | Yes | Ack deadlines; ordering keys |
-| Azure Service Bus | a queue per plugin | sessions (`ReplyToSessionId`) on a session-enabled reply queue | Yes | 256 KB on Standard; 1 MB by default on Premium, up to 100 MB over AMQP |
-| AMQP 1.0 (ActiveMQ Artemis, Qpid) | an address per plugin | reply-to address | Yes | Also reaches other AMQP 1.0 brokers |
-| Apache Pulsar | a topic per plugin; a shared subscription | a reply topic per host | Yes | Message TTL |
+| **MQTT 5** (Mosquitto, EMQX, HiveMQ), `mqtt` | a topic per plugin (`.` becomes `/`); a shared subscription (`$share/<group>/…`) at QoS 1 | response topic and correlation data | No (clean sessions) | Edge and IoT networks; user properties carry the attributes bare; message expiry in whole seconds. A publish nobody subscribed to is reported (PUBACK `0x10`). A nack re-publishes with a `landflow-attempt` property, like NATS core |
+| **Amazon SQS**, `sqs` | a standard queue per plugin; long polling, with a visibility keep-alive while a call runs | a reply queue per host | Yes | Structured mode only (10 attributes), 1 MiB per message. Broadcast is a queue per consumer with publisher-side fan-out (no SNS). "Nobody took it" is unknown (registry heartbeats only). Refuses to start without an explicit endpoint unless `allowAws` is set |
+| **Google Pub/Sub**, `pubsub` | a topic per channel and one shared subscription per plugin, with ordering and a dead-letter policy (so `delivery_attempt` is filled in) | a reply topic and subscription per host | Yes | Ordering keys; 10 MB; per-consumer subscriptions for broadcast; no TTL claimed; "nobody took it" is unknown. The emulator host is required unless `allowCloud` is set |
+| **Azure Service Bus**, `servicebus` | a queue per plugin; peek-lock competing receivers | sessions on a session-enabled reply queue; instance channels use sessions too | Yes | 240 KiB by default (a 256 KiB AMQP message on Standard and the emulator) and a 64 KiB header budget. Broadcast is one topic with 16 session-enabled subscriptions, claimed by session lock. TTL per message; no ordering keys; "nobody took it" is unknown. The emulator's entities are declared up front (`deploy/infra/servicebus/Config.json`) |
+| **AMQP 1.0** (ActiveMQ Artemis, Qpid), `amqp1` | an anycast queue per plugin, created on first attach; competing receivers | a dynamic reply queue per host | Yes | `cloudEvents_` application properties; `ttl` header; `group-id` as the ordering key. A consumer-count check (the management API) infers "nobody took it". A nack is `modified{delivery-failed}`, which counts as an attempt. Also reaches other AMQP 1.0 brokers |
+| **Apache Pulsar**, `pulsar` | a topic per plugin; a Shared subscription named after the channel | a reply topic per host | Yes | Non-durable readers for broadcast; 5 MiB; TTL is a namespace policy, so it is not claimed; attempts are `redeliveryCount + 1`. The admin API (`adminUrl`) infers "nobody took it" |
 
 The capabilities drive behaviour: undeliverable detection decides whether a failed publish may move to another transport;
 `persistence: 'disk'` makes end-to-end encryption mandatory (Kafka, Streams, SQS and the others keep messages on disk);
@@ -213,8 +213,9 @@ Differences the core absorbs, so drivers stay small:
   them (`lfreplyto`, `lfcorrelation`) and the core runs the reply consumer.
 - **Reply lifetime**: RabbitMQ's direct reply-to and NATS inboxes end with the connection, so a reconnect fails the calls in
   flight with "connection lost; it may have run", never a silent wait.
-- **"Nobody took it"**: only NATS core (no responders) and RabbitMQ (`mandatory` for a missing queue, plus a
-  consumer-count check before publishing, since `immediate` no longer exists) say so at once. Elsewhere the host infers
+- **"Nobody took it"**: only NATS core (no responders), RabbitMQ (`mandatory` for a missing queue, plus a
+  consumer-count check before publishing, since `immediate` no longer exists) and MQTT 5 (a PUBACK that says no
+  subscriber matched) say so at once. Elsewhere the host infers
   it from consumer heartbeats on the registry channel and from consumer counts, and otherwise waits for the deadline.
 - **Header budgets**: SQS allows 10 attributes, Pub/Sub 100, Azure Service Bus 64 KB of headers; drivers with tight budgets
   use structured mode.
@@ -233,10 +234,13 @@ Differences the core absorbs, so drivers stay small:
 - **Concurrency**: each instance takes at most its `maxConcurrency` calls at once (prefetch, max in flight, or pull batch
   size, depending on the broker). Behind every face the rule is the same in the three SDKs: up to `maxConcurrency` run,
   up to `maxQueue` (default = `maxConcurrency`) wait, and beyond that a call is refused at once (HTTP `429` with
-  `Retry-After: 1`, gRPC `RESOURCE_EXHAUSTED`, broker `lferror: capacity`; it never ran, so the host may take it
-  elsewhere); a waiting call whose deadline passes fails `deadline_exceeded`.
-- **Size**: the encoded event (headers plus body) must fit the driver's `maxMessageBytes` (Azure Service Bus Standard
-  256 KB; Kafka, NATS and SQS about 1 MiB by default) and its header budget. The host refuses a request that doesn't fit
+  `Retry-After: 1`, gRPC `RESOURCE_EXHAUSTED`; it never ran, so the host may take it elsewhere); a waiting call whose
+  deadline passes fails `deadline_exceeded`. A call that arrives over a broker is never refused: it waits for a slot,
+  and the consumer holds at most its prefetch (`maxConcurrency`), so the rest stays in the broker. The bridge
+  (`landflow-bridge`) holds a call its plugin refuses at capacity and retries after `Retry-After` until the deadline;
+  it never answers `capacity` over a broker.
+- **Size**: the encoded event (headers plus body) must fit the driver's `maxMessageBytes` (Azure Service Bus 240 KiB
+  by default; Kafka, NATS and SQS about 1 MiB) and its header budget. The host refuses a request that doesn't fit
   **before publishing** (`too_large`, provably undelivered, so the selector may use another transport); a plugin whose
   response doesn't fit answers `lferror: too_large`. Later, an oversized body goes by reference through the shared store
   (a claim check); that is not built yet. Files already travel as references (§11), so a brokered plugin that handles
@@ -279,23 +283,32 @@ Writing every driver three times would not scale. So:
 
 - **TypeScript**: `@landflow/transports` holds the messaging core and every driver; the host and the TypeScript SDK both
   use it. Built: the core (`MessagingClient` on the host side, `MessagingServer` on the plugin side), the envelope,
-  security, the in-memory driver, the conformance suite, the tier 1 drivers, the host's `brokers.ts` and the SDK's
-  messaging binding.
+  security, the in-memory driver, the conformance suite, the tier 1 and tier 2 drivers, the host's `brokers.ts` and the
+  SDK's messaging binding.
 - **Go**: `sdks/go/transport` holds the core (byte-compatible with the TypeScript one: the TS test vectors pass, and
   Go ↔ TS over NATS runs both ways) and every driver; the Go SDK and `landflow-bridge` both use it. Each driver is a
   **nested Go module** (`sdks/go/transport/<kind>`, with its own `go.mod`), so `sdks/go` stays free of client
   libraries: a plugin adds `require github.com/landflow/landflow/sdks/go/transport/kafka` (plus a `replace` to the
   directory while the repo is unpublished) and either calls `kafka.New(kafka.Config{…})` or blank-imports the package,
   whose `init()` registers the kind (`transport.RegisterDriver`) for use from the environment.
-- **Python**: through `landflow-bridge` first; native tier 1 drivers later, when there's demand.
+- **Python**: `landflow_sdk.transport` is a native core, byte-compatible with the TypeScript one (the test vectors pass,
+  and a TS host calls a Python plugin over all five tier 1 kinds), with drivers for Kafka, RabbitMQ, NATS and JetStream,
+  and Valkey, as the extras `landflow-sdk[kafka]`, `[amqp]`, `[nats]`, `[valkey]` and `[brokers]` (all four). Tier 2
+  kinds go through `landflow-bridge`: `serve()` starts it as a child for each kind that has a `LANDFLOW_<KIND>_URL` and
+  no native driver (`LANDFLOW_BRIDGE_BIN` names the binary, `LANDFLOW_BRIDGE=off` turns it off). Kafka uses a consumer
+  group by default and a share group with `LANDFLOW_KAFKA_MODE=share`; mixed-language replicas of one plugin must use
+  one mode.
 - Client libraries: in TypeScript `@confluentinc/kafka-javascript` 1.11 (Confluent's supported client; `kafkajs` has
-  had no release since 2023), `amqplib` 2.2, `@nats-io/transport-node` with `@nats-io/jetstream`, and `iovalkey`; in Go
-  `franz-go`, `amqp091-go`, `nats.go` and `valkey-go`; for MQTT, `mqtt` and `paho.golang`; in Python, later,
-  `confluent-kafka`, `aio-pika`, `nats-py` and `paho-mqtt` 2.x.
-- **`landflow-bridge`** (next wave): a small Go sidecar (one binary and container) that sits next to any plugin that
-  speaks `landflow.plugin/v1` over HTTP or gRPC (built with any SDK, or with none) and gives it every broker driver and
-  the MCP face. In Kubernetes it's a sidecar container; locally it's one more process. So every plugin is reachable
-  through every transport, whatever it was written in.
+  had no release since 2023), `amqplib` 2.2, `@nats-io/transport-node` with `@nats-io/jetstream`, `iovalkey`, `mqtt` 5.16,
+  `rhea` 3.0, the AWS SDK v3, `@google-cloud/pubsub` 6.3, `pulsar-client` 1.18 (a native addon with prebuilt glibc, musl
+  and darwin binaries) and `@azure/service-bus` 7.10; in Go `franz-go`, `amqp091-go`, `nats.go`, `valkey-go`,
+  `paho.golang`, Azure's `go-amqp`, `aws-sdk-go-v2`, `pubsub` v2, `pulsar-client-go` and `azservicebus`; in Python
+  `confluent-kafka` 2.16, `pika` 1.4 (not `aio-pika`: the SDK is threaded), `nats-py` 2.16 and `valkey` 6.2.
+- **`landflow-bridge`** (`services/landflow-bridge`, `deploy/docker/bridge.Dockerfile`): a small Go sidecar (one binary
+  and container) that sits next to any plugin that speaks `landflow.plugin/v1` over HTTP or gRPC (built with any SDK,
+  or with none) and gives it every broker driver and the MCP face. In Kubernetes it's a sidecar container; locally it's one more process. So every plugin is reachable
+  through every transport, whatever it was written in. It answers `GetManifest` itself and reads the manifest again when
+  its hash changes or a call answers `manifest_mismatch`.
 
 ## MCP: every plugin is also an MCP server
 
@@ -407,7 +420,13 @@ selector ─▶ HTTP, gRPC or any broker ─▶ the plugin
 - The gateway joins the per-plugin endpoints into one: `tools/list` on `/mcp` returns every plugin's tools, each prefixed
   with its plugin (`prefixMode: always`, so names don't change when a second plugin arrives), and a call goes to that
   plugin's endpoint. `failureMode: failOpen`, so one failing plugin doesn't hide the others.
-- Each plugin also gets a URL of its own on the gateway, `/mcp/plugins/<id>`, for agents that should see only one.
+- Each plugin also gets a URL of its own on the gateway, `/mcp/plugins/<name>`, for agents that should see only one. It
+  is not a target but an agentgateway `traffic.routes` entry with an inline MCP backend, so it needs its own
+  `mcpAuthentication` (`LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES` merges a JSON object into every route's policies).
+- `<name>`, the target name that prefixes the plugin's tools, is the plugin id when the id fits agentgateway's rules
+  (`[a-z0-9.-]`, at most 63 characters; every bundled plugin does). Any other id becomes a lowercase slug plus six hex
+  digits of its FNV-1a hash (`My_Plugin` → `my-plugin-<hash>`), so names are predictable and never collide
+  (`gatewayTargetName()` and `gatewayToolName()` in `@landflow/protocol`).
 - The gateway doesn't cache lists (its rules make them differ per caller); the host's endpoints answer lists with
   `cacheScope: private`, since grants filter them.
 
@@ -426,12 +445,13 @@ online, exposed to agents and have at least one tool. It reacts to every registr
 
 - **How it writes**: through agentgateway's config API, `PUT /api/config/resources/mcp.target` (a list, upsert) and
   `DELETE …/mcp.target/{id}` on the admin port; **the target id is its name**, so a second PUT with the same name is an
-  update. A change is on the traffic path within milliseconds. That port has no authentication and listens only on
+  update. The target points at the host through `LANDFLOW_MCP_GATEWAY_HOST_URL` (the sidecar's own view of the host). A change is on the traffic path within milliseconds. That port has no authentication and listens only on
   loopback, so the gateway runs next to each main as a sidecar and the main calls it on `127.0.0.1`. Storage is
   agentgateway's `hybrid` mode: the base config is a read-only file, the targets live in SQLite inside the sidecar and
   are rebuilt from the registry when the sidecar restarts.
 - **No leader needed**: each main keeps its own sidecar in step. In queue mode every main already sees every plugin
   through the shared registry, so all sidecars end up with the same targets.
+- **Token purge**: the same tick deletes revoked and expired MCP tokens 30 days after they died (at most hourly).
 - **Only its own targets**: Landflow keeps the ids of the targets it created and changes only those, so servers an admin
   adds in agentgateway's UI stay.
 - **Fallback**: for a gateway that runs on its own, Landflow writes the targets into a YAML file that agentgateway
@@ -450,7 +470,8 @@ One target, as the sync writes it (the shape the spike verified against 1.6.0):
     "transformations": { "request": {
       "set": {
         "x-landflow-caller-iss": "jwt.iss",
-        "x-landflow-caller-sub": "jwt.sub"
+        "x-landflow-caller-sub": "jwt.sub",
+        "x-landflow-caller-jti": "jwt.jti"
       },
       "remove": ["authorization"]
     } }
@@ -473,8 +494,8 @@ description, so another gateway would only need another generator.
   organisation registry setting, Obot, MLflow and Docker's `catalog import`. Open to signed-in users and Landflow tokens
   only.
 - **Server Cards** (SEP-2127): per plugin at `/api/mcp/plugins/<id>/server-card`, and for the instance at
-  `/.well-known/mcp/server-card.json`, for clients that look before connecting. The gateway URL plus `/server-card`
-  will proxy to the plugin's once the gateway sync lands.
+  `/.well-known/mcp/server-card.json`, for clients that look before connecting. The gateway proxies
+  `/mcp/plugins/<name>/server-card` to the plugin's, with the client's own bearer.
 
 ### Sign-in and identity
 
@@ -520,16 +541,19 @@ description, so another gateway would only need another generator.
   `frontendPolicies.tracing` (`config.tracing` is deprecated in 1.6). The targets come from the host.
 - **Compose** (`deploy/compose.yml`): a `mcp-gateway` service with `network_mode: service:web`, so it shares the web
   container's loopback. It's published on `127.0.0.1:54000` (`LANDFLOW_MCP_GATEWAY_PORT`). In queue mode there's one
-  sidecar per main, and the load balancer gets a listener for `/mcp`. The protocol is stateless, so any main's gateway
-  can serve any request.
-- **Kubernetes**: a second container in the host Deployment (`deploy/k8s/base/host`), an `mcp` port on the host Service,
-  and the Ingress sends `/mcp` there.
+  sidecar per main (`mcp-gateway-1`, `-2`), and the load balancer sends `/mcp` (and the protected resource metadata) to
+  port 4000 of the main it picks. The protocol is stateless, so any main's gateway can serve any request. The sidecar
+  configs carry no sign-in: add `mcp.policies.mcpAuthentication` for the instance's identity provider.
+- **Kubernetes**: a second container in the host Deployment (`deploy/k8s/base/host`), an `mcp` port (4000) on the host
+  Service. There is no Ingress yet: reach it with `kubectl port-forward svc/landflow-host 54000:4000` (an Ingress would
+  send `/mcp` to that port).
 - **Dev** (`pnpm dev`, host outside Docker): the `mcp-gateway` profile in `deploy/compose.infra.yml` (built): MCP on
   `127.0.0.1:54000`, the admin API and UI on `127.0.0.1:55000` only (`LANDFLOW_MCP_GATEWAY_ADMIN_URL`), targets pointing
   at `host.docker.internal:3000`, a one-shot `mcp-gateway-init` that gives the SQLite volume to the image's uid.
   `deploy/scripts/mcp-gateway-spike.mjs` reruns the phase 0 checks against it.
 - **Settings**: `LANDFLOW_MCP_GATEWAY` (`bundled` by default, `file` for a gateway that runs on its own, or `off`),
-  `LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_MCP_GATEWAY_PUBLIC_URL`.
+  `LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_MCP_GATEWAY_PUBLIC_URL`, `LANDFLOW_MCP_GATEWAY_HOST_URL`,
+  `LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES`.
 - **Telemetry**: the gateway's spans join the host's traces (W3C trace context in headers and `_meta`), its Prometheus
   metrics (`agentgateway_requests_total{protocol="mcp"}`, `agentgateway_request_duration_seconds`…) sit next to
   Landflow's, and its access log carries the MCP method (`mcp.method.name`), the target (`mcp.target`), the tool
@@ -585,7 +609,7 @@ Module `apps/web/src/lib/server/transports/` (built, except where marked):
 | `../mcp/plugin-servers.ts`, `server.ts`, `exposure.ts` | The per-plugin MCP endpoints (`/api/mcp/plugins/<id>`, `core` too): tools from the manifests, grants, `mcp` executions through the selector, `tools/list_changed`; both protocol eras; "Expose to agents" (`plugin_mcp_exposure`) |
 | `../mcp/identity.ts`, `tokens.ts`, `grants.ts` | The gateway secret and the caller's identity, Landflow-issued MCP tokens and their keys (`mcp_tokens`), grants (`mcp_grants`) |
 | `../mcp/registry.ts` | `server.json` per plugin, the registry API and Server Cards (`mcp_catalog_servers`) |
-| `../mcp/gateway-sync.ts` | *Next wave*: `McpGatewaySync` and the gateway adapters (agentgateway's config API, the file) |
+| `../mcp/gateway-sync.ts` | `McpGatewaySync` and the gateway adapters (agentgateway's config API, the file): targets, per-plugin routes, the Server Card proxy, token purge |
 
 Routes (built): `PATCH /api/plugins/:id` with `{ policy }` (the old `{ preferredTransport }` still works and becomes a
 pinned policy), audited as `plugin.transport` with the mode, pinned kind, allow-list and objective; `GET /api/transports`
@@ -643,13 +667,15 @@ the HTTP announce: the host names its own connections.
   started as the manifest's `transports` hint (`mcp` included when the face is on) and the limit as `maxConcurrency`.
   The limit behaves the same in the three SDKs: up to `maxConcurrency` run, up to `maxQueue` (default =
   `maxConcurrency`) wait, beyond that a call is refused at once (HTTP `429` + `Retry-After: 1`, gRPC
-  `RESOURCE_EXHAUSTED`, broker `lferror: capacity`); a waiting call whose deadline passes fails `deadline_exceeded`.
+  `RESOURCE_EXHAUSTED`); a call that arrives over a broker waits for a slot instead (`DispatchCall.wait` in TypeScript,
+  `CallOptions.Wait` in Go, `wait=True` in Python), so the messaging server holds at most its prefetch; a waiting call
+  whose deadline passes fails `deadline_exceeded`.
 - Environment instead of code: `LANDFLOW_TRANSPORTS=http,grpc,kafka,nats` (which faces start; default: every face
   given), `LANDFLOW_MAX_CONCURRENCY`, `LANDFLOW_<KIND>_URL` with `LANDFLOW_<KIND>_USERNAME`, `_PASSWORD`, `_TLS` and
   `_PREFIX` (the channel prefix; the driver module for the kind loads only then, and the connection is `env-<kind>`, the
   id the host gives `LANDFLOW_TRANSPORT_<KIND>_URL`), `LANDFLOW_TRANSPORT_SECRET`, `LANDFLOW_MCP` (`on`, `off`,
   `stdio`), `LANDFLOW_MCP_TOKEN`, `LANDFLOW_MCP_CREDENTIALS`, and the `--mcp-stdio` flag.
-- **MCP face** (TypeScript): Streamable HTTP at `/mcp` on the HTTP port, both protocol eras
+- **MCP face** (all three SDKs; TypeScript shown): Streamable HTTP at `/mcp` on the HTTP port, both protocol eras
   (`@modelcontextprotocol/server` 2.4.0's `createMcpHandler`: 2026-07-28 natively, 2025-era clients statelessly over
   SSE), or stdio. Without `LANDFLOW_MCP_TOKEN` on a non-loopback host the face stays off and an error line says so; the
   plugin still serves its other faces. The bundled plugins listen on `0.0.0.0` and log "MCP face not started" until
@@ -665,7 +691,9 @@ the HTTP announce: the host names its own connections.
   `serve(plugin, http=…, grpc=…, bindings=[…], transports=[…], max_concurrency=…, max_queue=…)` with the same `Binding`
   protocol, plus the bridge for brokers. All three read `LANDFLOW_TRANSPORTS` and `LANDFLOW_MAX_CONCURRENCY`.
 - The MCP face uses the official MCP SDK of each language: `@modelcontextprotocol/server` 2.4.0 (the v2 packages) in
-  TypeScript (built); `github.com/modelcontextprotocol/go-sdk` in Go and `mcp` in Python (next wave). The host's MCP
+  TypeScript, `github.com/modelcontextprotocol/go-sdk` v1.8.0 in Go (`landflow.WithMCP` / `WithoutMCP`, `sdks/go/mcpface`)
+  and `mcp` 2.3.0 in Python (`serve(plugin, mcp=…)`, the optional `mcp` extra); all built. The conformance kit runs over
+  every face of the Go SDK (HTTP, gRPC, memory messaging, MCP) and the Python SDK (HTTP, gRPC, MCP). The host's MCP
   code (the instance server, the trigger, the per-plugin endpoints, the MCP Client node) is on the v2 packages too
   (server and client 2.4.0; `@modelcontextprotocol/sdk` 1.x is gone).
 - Server spans keep `plugin.execute …`; brokered calls add the OpenTelemetry messaging attributes
@@ -699,25 +727,34 @@ broker: depth ÷ consumers × mean service time), plus an error penalty. Lowest 
 1. **Skip what can't carry the call**: too big for the driver, or a delivery mode it can't give.
 2. **Interactive calls stay fast**: editor runs, pickers, credential tests, webhooks with a caller waiting and MCP tool
    calls prefer gRPC, then HTTP, then a low-latency broker (NATS) while healthy.
-3. **Bursts spill over instead of flipping**: production calls fill the direct transport up to about 80 % of the plugin's
-   concurrency, and the rest go to a buffering broker (Kafka, RabbitMQ, JetStream, Streams, SQS…), which holds them.
+3. **Bursts spill over instead of flipping**: production calls fill the direct transport up to `floor(maxConcurrency ×
+   share)` calls in flight, the share being 0.8 for `balanced`, 1.0 for `latency` and 0.6 for `throughput`, and the rest
+   go to a buffering broker (Kafka, RabbitMQ, JetStream, Streams, SQS…), which holds them. Below the threshold the direct
+   kinds come first: a broker is for bursts and failures, not a faster path.
 4. **No flapping**: the main transport changes only when another is at least 20 % better for three 10 s windows in a row,
-   then stays at least 60 s.
+   then stays at least 60 s. The windows compare the `Health` probe round trip (the same ping on every transport) plus
+   queueing and errors, not `Execute` times, and the main stays a direct kind while the plugin has one.
 5. **Fresh numbers without risk**: a `Health` ping every 15 s per transport; `Execute` is never a probe.
-6. **Circuit breaker** per endpoint: open after 5 failures in a row or more than half of the last 20; half-open after 15 s.
+6. **Circuit breaker** per endpoint: open after 5 failures in a row, or more than half of the last 20 once at least 10
+   outcomes are in; half-open after 15 s, which lets one trial (a probe or a real call) through.
 7. **A call moves to another transport only when it provably wasn't delivered** (connection refused, DNS, gRPC
    `UNAVAILABLE` before sending, a broker that reported it unroutable or that nobody took it). Otherwise the error
    surfaces, so nothing runs twice.
 8. **Objective** per plugin: `balanced` (default), `latency` or `throughput`.
+9. **Capacity**: an endpoint that refuses a call for lack of room (HTTP `429` with `Retry-After`, gRPC
+   `RESOURCE_EXHAUSTED`, `lferror: capacity`) never ran it, so the call moves once to another endpoint
+   (`auto.failover`), and the refused endpoint is held for the `Retry-After` (1 s when there is none) and counts as full
+   for spill-over.
 
-Today the selector does the rules that need no measurements: `pinned` → the pinned kind; the allow-list filters; `only`
-when one kind is left; otherwise gRPC, then HTTP, then a broker by its latency prior, as `auto.latency`. The scoring,
-spill-over, breaker and hysteresis are phase 5.
+Without measurements (a new plugin, or an endpoint with no samples yet) the selector falls back to the static rules:
+`pinned` → the pinned kind; the allow-list filters; `only` when one kind is left; otherwise gRPC, then HTTP, then a
+broker by its latency prior, as `auto.latency`. The scoring, spill-over, breaker, hysteresis and probes are built
+(`apps/web/src/lib/server/transports/auto.ts`, `selector.ts`, `breaker.ts`, `stats.ts`).
 
 **Explainability**: every `plugin.rpc` span carries `landflow.transport` and `landflow.transport.reason` (`pinned`,
 `only`, `auto.latency`, `auto.spillover`, `auto.failover`, `auto.breaker`, `auto.size`); metrics
-`landflow.transport.calls`, `landflow.transport.switches`, `landflow.transport.queue_depth`; the feed says why, e.g.
-"Twilio now spills over to Kafka: gRPC at 14 of 16 calls, p95 2.1 s".
+`landflow.transport.calls`, `landflow.transport.switches`, `landflow.transport.queue_depth`; the feed event
+`plugin.transport` says why, e.g. "Twilio now spills over to Kafka: gRPC at 14 of 16 calls, p95 2.1 s".
 
 ## Walk-through: Twilio
 
@@ -752,13 +789,13 @@ Each phase ends with every test suite passing, a clean type check and a check in
 | 0. Spec | §14 Messaging and §15 MCP written; every broker and agentgateway in `compose.infra.yml` (one profile each, 5xxxx ports); a spike that registers a target over agentgateway's config API and checks "tool list changed" and the identity headers | Spec reviewed; every broker and the gateway start locally; the spike passes, or the file fallback is chosen | S | ✅ Done: all ten brokers and the gateway run locally (`deploy/README.md`, "Message brokers and the MCP gateway"; `deploy/scripts/brokers-smoke.sh`); the spike chose the config API ([mcp-gateway.md](mcp-gateway.md)) |
 | 1. Abstraction | SDK `TransportBinding` (TS, Go, Python) with HTTP and gRPC behind it; host providers; the open `Transport` type; the per-plugin policy in the database with its picker; the conformance kit | Every existing test passes, behaviour unchanged; the policy survives restarts and is the same on every process | M | ✅ Done: bindings and dispatchers in the three SDKs, `maxConcurrency` and the hints; host providers, policy store, selector, connections, `GET /api/transports`, the connections API, Settings → Transports, the policy picker |
 | 2. Messaging in TypeScript | `@landflow/transports`: the core and tier 1 drivers (Kafka, RabbitMQ, NATS, Valkey Streams); host connections, discovery, Settings → Transports; the TS SDK binding; encryption and signing | A workflow runs through Text Toolkit over each tier 1 broker with one joined trace; a plugin with no open port works; broker restarts and a plugin killed mid-call behave as specified | L | ✅ Done: the core, envelope, encryption and signing, the in-memory driver and the conformance suite; the `kafka`, `amqp`, `nats`, `jetstream` and `valkey` drivers (live conformance against the local brokers); the host's `brokers.ts` and `broker-provider.ts` (connections, discovery, stats, health, fail-over once); the TS SDK's `brokers` option and `LANDFLOW_<KIND>_URL` |
-| 3. MCP endpoints | The SDK MCP face (TS, Go, Python); the host's per-plugin MCP endpoints with grants, audit, `mcp` executions and the tool browser | A client lists and calls a plugin's tools on its host endpoint with a bound credential; a plugin runs standalone over stdio | L | ✅ Done in TypeScript: the SDK's `/mcp` and stdio face; `/api/mcp/plugins/<id>` and `core` speaking both protocol eras; `mcp` executions, audit, `tools/list_changed`, "Expose to agents", `GET /api/mcp/tools`; the host's MCP code on SDK v2. Not built: `resource_link` for binary outputs, approvals/elicitation for destructive tools, `list_options` on the host. The Go and Python faces are next |
-| 3b. Bundled MCP gateway | agentgateway in Compose, queue mode and Kubernetes; `McpGatewaySync` and its adapters; `server.json`, the registry API and Server Cards; sign-in through the identity provider, Landflow-issued tokens, the identity mapping; Settings → MCP gateway status | An outside agent signs in through Keycloak and calls every plugin's tools at one URL; a plugin installed while it's connected shows up without a restart and disappears when removed; a forged identity header is refused | M | ◐ Identity (gateway secret and caller headers, Landflow MCP tokens and `/api/mcp/jwks`, identity provider tokens, API keys, PRM routes), grants, tokens, `server.json`, the registry API, Server Cards and Settings → MCP are done. Next: `McpGatewaySync` and its adapters, the gateway's `/server-card` proxy, the `x-landflow-caller-jti` transformation |
-| 4. Go and the bridge | `sdks/go/transport` (core and tier 1 drivers) and `landflow-bridge` | Conformance passes for TS and Go natively and for Python through the bridge, on every tier 1 broker | L | ◐ The Go core (byte-compatible with TS), the in-memory driver, `conformance.Run`, the Go SDK's `WithBroker` and the four tier 1 drivers as nested modules are done. Next: `landflow-bridge`, Python through it, the Go and Python MCP faces |
-| 5. Auto | Stats, scoring, spill-over, hysteresis, breaker, probes; the Plugins page numbers, reasons and feed events | Simulations with fake clients and a fake clock: low traffic stays direct, bursts spill over, oversized calls skip small-message brokers, failover and recovery, no flapping | L | Planned |
-| 6. Tier 2 brokers | MQTT 5, SQS, Pub/Sub, Azure Service Bus, AMQP 1.0, Pulsar: a TS driver (host) and a Go driver (Go SDK and bridge) each, tested against local containers and emulators (Mosquitto, LocalStack, the Pub/Sub emulator, the Service Bus emulator with its SQL Server container, `apache/artemis`, Pulsar standalone) | Conformance passes for each; tests set limits explicitly, since emulators differ from the services (the Pub/Sub emulator never expires messages) | M each | Planned (the containers are in place) |
+| 3. MCP endpoints | The SDK MCP face (TS, Go, Python); the host's per-plugin MCP endpoints with grants, audit, `mcp` executions and the tool browser | A client lists and calls a plugin's tools on its host endpoint with a bound credential; a plugin runs standalone over stdio | L | ✅ Done: the SDK's `/mcp` and stdio face (TypeScript; Go and Python since wave T3); `/api/mcp/plugins/<id>` and `core` speaking both protocol eras; `mcp` executions, audit, `tools/list_changed`, "Expose to agents", `GET /api/mcp/tools`; the host's MCP code on SDK v2. Not built: `resource_link` for binary outputs, approvals/elicitation for destructive tools, `list_options` on the host. |
+| 3b. Bundled MCP gateway | agentgateway in Compose, queue mode and Kubernetes; `McpGatewaySync` and its adapters; `server.json`, the registry API and Server Cards; sign-in through the identity provider, Landflow-issued tokens, the identity mapping; Settings → MCP gateway status | An outside agent signs in through Keycloak and calls every plugin's tools at one URL; a plugin installed while it's connected shows up without a restart and disappears when removed; a forged identity header is refused | M | ✅ Done: `McpGatewaySync` and its adapters (the config API, the file) with per-plugin routes, target names and the Server Card proxy; offline plugins removed after 60 s; token purge; the `x-landflow-caller-jti` transformation; the sidecar in Compose, queue mode and Kubernetes (no Ingress yet); identity, grants, tokens, `server.json`, the registry API, Server Cards and Settings → MCP |
+| 4. Go and the bridge | `sdks/go/transport` (core and tier 1 drivers) and `landflow-bridge` | Conformance passes for TS and Go natively and for Python through the bridge, on every tier 1 broker | L | ✅ Done: the Go core (byte-compatible with TS), the in-memory driver, `conformance.Run`, `WithBroker` and the tier 1 drivers as nested modules; `landflow-bridge` (`services/landflow-bridge`), which Python's `serve()` starts for kinds it has no native driver for. The Go and Python MCP faces are next |
+| 5. Auto | Stats, scoring, spill-over, hysteresis, breaker, probes; the Plugins page numbers, reasons and feed events | Simulations with fake clients and a fake clock: low traffic stays direct, bursts spill over, oversized calls skip small-message brokers, failover and recovery, no flapping | L | ✅ Done: the measurements, scoring, spill-over, hysteresis, breaker, probes and the capacity rule (`auto.ts`, `selector.ts`, `breaker.ts`, `stats.ts`); reasons, `plugin.transport` feed events and the `landflow.transport.*` metrics; simulations with fake clients and a fake clock |
+| 6. Tier 2 brokers | MQTT 5, SQS, Pub/Sub, Azure Service Bus, AMQP 1.0, Pulsar: a TS driver (host) and a Go driver (Go SDK and bridge) each, tested against local containers and emulators (Mosquitto, LocalStack, the Pub/Sub emulator, the Service Bus emulator with its SQL Server container, `apache/artemis`, Pulsar standalone) | Conformance passes for each; tests set limits explicitly, since emulators differ from the services (the Pub/Sub emulator never expires messages) | M each | ✅ Done for all six, in TypeScript and Go: conformance 37/37 and the cross-language check pass against the local containers and emulators |
 | 7. Twilio pilot, queue mode, Kubernetes | The Twilio node and fake; workers with broker connections; broker manifests and KEDA docs; `deploy/scripts/transport-bench.py` comparing every installed transport | The walk-through works end to end on the local stack and on OrbStack's cluster | M | Planned |
-| 8. Python native drivers | Tier 1 drivers in the Python SDK | Conformance passes without the bridge | M | Planned |
+| 8. Python native drivers | Tier 1 drivers in the Python SDK | Conformance passes without the bridge | M | ✅ Done: `landflow_sdk.transport`, byte-compatible with the TS core, with the Kafka, RabbitMQ, NATS/JetStream and Valkey drivers (the extras `[kafka]`, `[amqp]`, `[nats]`, `[valkey]`, `[brokers]`); a TS host calls a Python plugin over all five tier 1 kinds |
 
 After phase 1, phases 2 and 3 can run in parallel; 3b follows 3; 4 and 5 follow 2.
 

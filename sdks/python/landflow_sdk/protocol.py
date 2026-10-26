@@ -52,7 +52,7 @@ PROPERTY_TYPES = (
     "notice",
     "hidden",
 )
-EXECUTION_MODES = ("manual", "trigger", "webhook", "tool", "chat", "poll")
+EXECUTION_MODES = ("manual", "trigger", "webhook", "tool", "chat", "poll", "mcp")
 LOG_LEVELS = ("debug", "info", "warn", "error")
 
 

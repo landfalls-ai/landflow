@@ -221,6 +221,12 @@ func (p *Plugin) WellKnown() WellKnownDocument {
 			break
 		}
 	}
+	transports, _ := p.TransportHints()
+	for _, kind := range transports {
+		if kind == "mcp" {
+			doc.Endpoints.MCP = PathMCP
+		}
+	}
 	return doc
 }
 
@@ -296,7 +302,7 @@ func (p *Plugin) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteResp
 			attribute.String("landflow.execution.id", req.ExecutionID),
 			attribute.String("landflow.execution.mode", string(req.Mode)),
 			attribute.Int("landflow.items.in", itemsIn),
-		), trace.WithAttributes(transportAttrs(ctx)...))
+		), trace.WithAttributes(callAttrs(ctx)...))
 
 	ec := NewExecuteContext(ctx, req, &rn.descriptor)
 	ec.Logger = newSinkLogger(&logSink{ctx: ctx, handler: tel.logHandler, redact: sc.redact, attrs: []slog.Attr{
@@ -396,7 +402,7 @@ func (p *Plugin) LoadOptions(ctx context.Context, req *LoadOptionsRequest) (*Loa
 			attribute.String("landflow.plugin.id", p.info.ID),
 			attribute.String("landflow.node.type", nodeType),
 			attribute.String("landflow.load_options.method", req.Method),
-		), trace.WithAttributes(transportAttrs(ctx)...))
+		), trace.WithAttributes(callAttrs(ctx)...))
 	defer span.End()
 
 	lc := &LoadOptionsContext{
@@ -458,7 +464,7 @@ func (p *Plugin) TestCredentials(ctx context.Context, req *TestCredentialsReques
 		trace.WithAttributes(
 			attribute.String("landflow.plugin.id", p.info.ID),
 			attribute.String("landflow.credential.type", name),
-		), trace.WithAttributes(transportAttrs(ctx)...))
+		), trace.WithAttributes(callAttrs(ctx)...))
 	defer span.End()
 
 	resp := &TestCredentialsResponse{}

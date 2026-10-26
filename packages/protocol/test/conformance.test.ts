@@ -61,7 +61,7 @@ describe('conformance kit', () => {
 
   it('has an MCP fixture with every synthetic manifest', () => {
     const fixture = loadMcpToolsFixture();
-    expect(fixture.cases.map((c) => c.id)).toEqual(['crm-suite', 'twilio', 'utilities']);
+    expect(fixture.cases.map((c) => c.id)).toEqual(['crm-suite', 'edge-cases', 'twilio', 'utilities']);
     for (const c of fixture.cases) expect(parseManifest(c.manifest), c.id).toMatchObject({ ok: true });
   });
 });

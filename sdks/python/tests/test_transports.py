@@ -255,6 +255,26 @@ class DispatcherTest(unittest.TestCase):
         Block.release.set()
         held["thread"].join(5)
 
+    def test_a_call_that_asks_to_wait_queues_past_the_limit_instead_of_being_refused(self):
+        """A broker face (already bounded by its prefetch) passes ``wait=True``: its calls wait their turn past
+        ``max_queue``; direct calls are still refused at once."""
+        Block.release = threading.Event()
+        dispatcher = Dispatcher(self.plugin, max_concurrency=1, max_queue=1)
+        direct = [in_thread(dispatcher.execute, request("block"), transport="grpc")]
+        wait_until(lambda: dispatcher.in_flight == 1, "first in flight")
+        direct.append(in_thread(dispatcher.execute, request("upper", [{"v": "d"}]), transport="grpc"))
+        wait_until(lambda: dispatcher.waiting == 1, "the queue is full")
+        brokered = [in_thread(dispatcher.execute, request("upper", [{"v": f"b{i}"}]), transport="kafka", wait=True) for i in range(3)]
+        wait_until(lambda: dispatcher.waiting == 4, "the brokered calls wait past the limit")
+        with self.assertRaises(OverloadedError):
+            dispatcher.execute(request("upper"), transport="grpc")
+        Block.release.set()
+        for box in direct + brokered:
+            box["thread"].join(5)
+            self.assertNotIn("error", box, box)
+            self.assertNotIn("error", box["result"], box)
+        self.assertEqual((dispatcher.in_flight, dispatcher.waiting), (0, 0))
+
     def test_http_status_mapping_and_deadline_header(self):
         from landflow_sdk.http_server import DEADLINE_HEADER, deadline_from_header
 
@@ -504,7 +524,7 @@ class FakeRegistry:
 
 CLEAN_ENV = {
     "LANDFLOW_HTTP_PORT": "", "LANDFLOW_GRPC_PORT": "", "LANDFLOW_TRANSPORTS": "", "LANDFLOW_MAX_CONCURRENCY": "",
-    "LANDFLOW_REGISTRY_URL": "off", "LANDFLOW_ADVERTISE_HOST": "", "LANDFLOW_BIND_HOST": "",
+    "LANDFLOW_REGISTRY_URL": "off", "LANDFLOW_ADVERTISE_HOST": "", "LANDFLOW_BIND_HOST": "", "LANDFLOW_MCP": "off",
 }
 
 

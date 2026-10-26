@@ -11,7 +11,7 @@ export function mcpDb(): Database {
   const checked = singleton('mcp-schema-checked', () => new WeakSet<Database>());
   if (!checked.has(db)) {
     const has = (table: string) => Boolean(db.get<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table));
-    if (db.kind === 'sqlite' && (!has('mcp_tokens') || !has('mcp_grants') || !has('mcp_catalog_servers'))) migrateSqlite(db.sqlite);
+    if (db.kind === 'sqlite' && (!has('mcp_tokens') || !has('mcp_grants') || !has('mcp_catalog_servers') || !has('mcp_gateway_resources'))) migrateSqlite(db.sqlite);
     checked.add(db);
   }
   return db;

@@ -825,6 +825,23 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS mcp_catalog_servers_plugin ON mcp_catalog_servers (plugin_id)`,
     ],
   },
+  // 1730–1739: the MCP gateway sync (docs/transports.md "Automatic registration"; lib/server/mcp/gateway-sync.ts).
+  {
+    version: 1730,
+    name: 'mcp_gateway_resources',
+    statements: [
+      // The gateway resources Landflow created (`kind` mcp.target | traffic.route, `name` = the resource id in agentgateway) for
+      // which plugin, so the sync changes only its own targets and routes and leaves what an admin added in the gateway alone.
+      `CREATE TABLE IF NOT EXISTS mcp_gateway_resources (
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        plugin_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (kind, name)
+      )`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -892,6 +909,7 @@ export const TABLES = {
   mcp_tokens: ['id'],
   mcp_grants: ['id'],
   mcp_catalog_servers: ['name', 'version'],
+  mcp_gateway_resources: ['kind', 'name'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

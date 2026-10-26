@@ -75,8 +75,8 @@ export interface McpStatusView {
     publicUrl?: string;
     /** Whether the host has the secret the gateway sends (`x-landflow-gateway`); without it gateway calls are refused. */
     secretConfigured: boolean;
-    /** Synchronising targets into the gateway lands in a later release (McpGatewaySync). */
-    sync: 'not-yet' | 'running';
+    /** The gateway sync (McpGatewaySync): `running` in this process, `off` in mode off, `stopped` before bootstrap started it. */
+    sync: 'running' | 'off' | 'stopped';
   };
   /** This host's URL, the issuer of its MCP tokens. */
   instanceUrl: string;
@@ -88,6 +88,38 @@ export interface McpStatusView {
   paths: { jwks: string; registry: string; plugins: string; protectedResourceMetadata: string };
   /** Whether the signed-in user may manage grants (owners and admins). */
   canManage: boolean;
+}
+
+/** One resource the gateway sync wants in the gateway, and whether the gateway has it as rendered (GET /api/mcp/gateway). */
+export interface McpGatewayTargetView {
+  /** The resource id in agentgateway (a target name = the plugin's gateway name; a route name). */
+  name: string;
+  pluginId: string;
+  kind: 'mcp.target' | 'traffic.route';
+  /** `in-step`: as rendered; `drift`: present but different; `missing`: wanted, absent; `stale`: Landflow's but no longer wanted; `unknown`: the gateway can't be read back (file mode). */
+  state: 'in-step' | 'drift' | 'missing' | 'stale' | 'unknown';
+}
+
+/** Settings → MCP: the gateway sync's status (GET /api/mcp/gateway; POST /api/mcp/gateway/sync forces a reconcile). */
+export interface McpGatewayStatusView {
+  mode: 'bundled' | 'file' | 'off';
+  /** `agentgateway` (the config API) or `file`. */
+  adapter?: string;
+  /** The admin URL or the file the adapter writes. */
+  location?: string;
+  /** The URL the gateway reaches this host at (LANDFLOW_MCP_GATEWAY_HOST_URL). */
+  hostUrl: string;
+  /** Whether per-plugin routes (`/mcp/plugins/<name>`, `…/server-card`) are written too. */
+  routes: boolean;
+  running: boolean;
+  health?: { ok: boolean; version?: string; message?: string };
+  targets: McpGatewayTargetView[];
+  inStep: number;
+  drift: number;
+  lastSyncAt?: string;
+  lastChangeAt?: string;
+  lastError?: string;
+  secretConfigured: boolean;
 }
 
 // ---- the per-plugin MCP endpoints and the tool browser (lib/server/mcp/plugin-servers.ts; GET /api/mcp/tools) ----

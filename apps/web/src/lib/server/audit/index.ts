@@ -20,6 +20,7 @@ import { randomBytes } from 'node:crypto';
 import type { WorkflowNode } from '@landflow/engine';
 import { AUDIT_ACTIONS, type AuditActor, type AuditEvent, type AuditOutcome, type AuditTarget, type AuditValue } from '../../shared/audit';
 import { requestAuth } from '../auth/context';
+import { getUser } from '../auth/users';
 import { bus } from '../bus';
 import { database } from '../db';
 import { onPublicationChanged, publishLog } from '../publications';
@@ -92,13 +93,22 @@ export function cleanDetails(details: Record<string, unknown> | undefined): Reco
   return Object.keys(out).length ? out : undefined;
 }
 
+function lookupUser(id: string): { name?: string; email?: string } | undefined {
+  try {
+    return getUser(id);
+  } catch {
+    return undefined; // Recording never throws.
+  }
+}
+
 function actorOf(input: AuditActorInput | undefined, ctx = auditRequestContext()): { actor: AuditActor; apiKeyId?: string } {
   if (input === 'system') return { actor: { type: 'system' } };
   if (input === 'anonymous') return { actor: { type: 'anonymous' } };
   const principal = requestAuth()?.principal ?? ctx?.principal;
   if (input) {
-    const fromPrincipal = principal?.user.id === input.id ? principal.user : undefined;
-    return { actor: { type: 'user', id: input.id, ...((input.name ?? fromPrincipal?.name) && { name: input.name ?? fromPrincipal?.name }), ...((input.email ?? fromPrincipal?.email) && { email: input.email ?? fromPrincipal?.email }) } };
+    // A bare id (an MCP token's or the gateway's caller) gets the user's name and email, so the log shows who it was.
+    const known = principal?.user.id === input.id ? principal.user : input.name === undefined && input.email === undefined ? lookupUser(input.id) : undefined;
+    return { actor: { type: 'user', id: input.id, ...((input.name ?? known?.name) && { name: input.name ?? known?.name }), ...((input.email ?? known?.email) && { email: input.email ?? known?.email }) } };
   }
   if (principal) {
     const { user } = principal;

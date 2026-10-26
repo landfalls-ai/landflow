@@ -70,6 +70,12 @@ const LOADERS: Partial<Record<BrokerKind, Loader>> = {
   nats: () => import('./nats/index'),
   jetstream: () => import('./nats/jetstream'),
   valkey: () => import('./valkey/index'),
+  sqs: () => import('./sqs/index'),
+  pubsub: () => import('./pubsub/index'),
+  pulsar: () => import('./pulsar/index'),
+  servicebus: () => import('./servicebus/index'),
+  mqtt: () => import('./mqtt/index'),
+  amqp1: () => import('./amqp1/index'),
 };
 
 /** Kinds that have a driver module in this build. */

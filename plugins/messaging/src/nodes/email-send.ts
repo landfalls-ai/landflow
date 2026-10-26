@@ -127,6 +127,8 @@ export const EmailSend = defineNode({
     documentationUrl: 'https://www.rfc-editor.org/rfc/rfc5321',
     keywords: ['email', 'mail', 'smtp', 'send'],
     usableAsTool: true,
+    // Sends, posts and edits are at most once over a broker; read operations opt back in with `idempotent: true`.
+    idempotent: false,
     toolDescription: 'Send an email to one or more comma-separated addresses with a subject and a text and/or HTML body.',
     inputs: [{ type: 'main' }],
     outputs: [{ type: 'main' }],

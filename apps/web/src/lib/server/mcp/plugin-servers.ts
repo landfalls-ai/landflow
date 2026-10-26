@@ -356,6 +356,11 @@ export async function handlePluginMcpRequest(request: Request, pluginId: string)
 
 const RELEVANT: ReadonlySet<RegistryEvent['type']> = new Set(['plugin.registered', 'plugin.updated', 'plugin.offline', 'plugin.removed']);
 
+/** Tell a plugin endpoint's 2026-07-28 subscribers its tool list changed (the gateway sync does this on `core` after a target change). */
+export function notifyPluginToolsChanged(pluginId: string): boolean {
+  return notifyToolsChanged(endpointKey(pluginId));
+}
+
 /**
  * Relay registry changes to the endpoints' `subscriptions/listen` streams: the changed plugin's own endpoint and the
  * `core` endpoint (always registered in the gateway, so agents listening through it learn of every plugin that comes

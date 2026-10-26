@@ -205,14 +205,15 @@ services:
       <<: *healthcheck
 
   localstack:
-    # AWS Secrets Manager for the external secrets tests (LANDFLOW_INTEGRATION=aws): LocalStack, Secrets Manager only,
-    # in memory, any access key works (use dummy ones, never real credentials). Pinned to 4.9, which runs without a
-    # LocalStack auth token. Published on 54566: another project's LocalStack may hold 4566.
+    # AWS Secrets Manager for the external secrets tests (LANDFLOW_INTEGRATION=aws) and SQS for the `sqs` transport driver
+    # (LANDFLOW_TEST_SQS=http://127.0.0.1:54566): LocalStack, those two services only, in memory, any access key works (use
+    # dummy ones, never real credentials). Pinned to 4.9, which runs without a LocalStack auth token. Published on 54566:
+    # another project's LocalStack may hold 4566.
     image: localstack/localstack:4.9
     profiles: [aws]
     restart: unless-stopped
     environment:
-      SERVICES: secretsmanager
+      SERVICES: secretsmanager,sqs
       EAGER_SERVICE_LOADING: "1"
       PERSISTENCE: "0"
       SKIP_SSL_CERT_DOWNLOAD: "1"

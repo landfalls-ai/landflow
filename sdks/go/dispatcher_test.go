@@ -318,6 +318,40 @@ func TestDispatcherQueueLimit(t *testing.T) {
 	close(n2.release)
 }
 
+// TestDispatcherWaitSkipsQueueLimit: a call with Wait (a broker face, already bounded by its prefetch) queues past
+// MaxQueue instead of being refused, and runs once a slot frees; a call without it is still refused.
+func TestDispatcherWaitSkipsQueueLimit(t *testing.T) {
+	p, node := blockPlugin()
+	d := NewDispatcher(p, DispatcherOptions{MaxConcurrency: 1, MaxQueue: NoQueue})
+	done := make(chan error, 3)
+	go func() {
+		_, err := d.Execute(context.Background(), execReq("block-plugin.block", nil, map[string]any{}), CallOptions{Transport: "grpc"})
+		done <- err
+	}()
+	waitFor(t, "slot taken", func() bool { return d.InFlight() == 1 })
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, err := d.Execute(context.Background(), execReq("block-plugin.block", nil, map[string]any{}), CallOptions{Transport: "kafka", Wait: true})
+			done <- err
+		}()
+	}
+	waitFor(t, "brokered calls waiting", func() bool { return d.Waiting() == 2 })
+	if _, err := d.Execute(context.Background(), execReq("block-plugin.block", nil, map[string]any{}), CallOptions{Transport: "grpc"}); !errors.Is(err, ErrOverloaded) {
+		t.Errorf("direct call past the queue: err = %v, want ErrOverloaded", err)
+	}
+	close(node.release)
+	for i := 0; i < 3; i++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("call %d: %v", i, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("calls did not finish")
+		}
+	}
+}
+
 // TestHTTPDeadlineHeader: x-landflow-deadline (epoch ms) bounds the call; the node sees it; an expired one never runs.
 func TestHTTPDeadlineHeader(t *testing.T) {
 	p, node := blockPlugin()

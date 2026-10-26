@@ -433,6 +433,15 @@ func (t *Telemetry) extractHTTP(r *http.Request) context.Context {
 	return t.propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 }
 
+// extractTraceParent continues a trace from explicit traceparent/tracestate values (an MCP call's _meta).
+func (t *Telemetry) extractTraceParent(ctx context.Context, traceParent, traceState string) context.Context {
+	carrier := propagation.MapCarrier{"traceparent": traceParent}
+	if traceState != "" {
+		carrier["tracestate"] = traceState
+	}
+	return t.propagator.Extract(ctx, carrier)
+}
+
 // extractGRPC continues the caller's trace from the incoming gRPC metadata.
 func (t *Telemetry) extractGRPC(ctx context.Context) context.Context {
 	md, ok := metadata.FromIncomingContext(ctx)

@@ -26,7 +26,6 @@ import {
 } from '@landflow/protocol';
 import { buildManifest, runLoadOptions, runTestCredentials, type IPlugin } from '@landflow/sdk';
 import { inProcessNodeType, type NodeTypeResolver, type ResolvedNodeType, type Transport } from '@landflow/engine';
-import { isProvablyUndelivered, UndeliverableError } from '@landflow/transports';
 import type { CredentialTypeInfo, DiscoverySource, EndpointOrigin, NodeTypeInfo, PluginStatus, PluginSummary, RegistryEvent } from '../../shared/types';
 import { withBinaryData } from '../binary/access';
 import { withExtends } from '../credentials/extends';
@@ -37,6 +36,7 @@ import { bus } from '../bus';
 import { singleton } from '../singleton';
 import { withSpan, withTransportChoice } from '../telemetry';
 import type { BrokerQueueStats, PluginTransportSummary, TransportChoice, TransportPolicy } from '../../shared/transports';
+import { transportAuto, type AutoEndpoint, type AutoSource } from '../transports/auto';
 import { brokerConnections } from '../transports/brokers';
 import { policyFromPreferred, transportPolicies } from '../transports/policy-store';
 import { transportProviders } from '../transports/provider';
@@ -114,7 +114,7 @@ interface PluginEntry {
 
 const HEALTH_INTERVAL_MS = 15_000;
 
-export class PluginRegistry implements NodeTypeResolver {
+export class PluginRegistry implements NodeTypeResolver, AutoSource {
   private readonly plugins = new Map<string, PluginEntry>();
   private readonly pending = new Map<string, Promise<PluginEntry>>();
   /** Kubernetes discovery: the ready pods behind an endpoint (a Service), for calls spread over them (clients.ts). */
@@ -131,6 +131,28 @@ export class PluginRegistry implements NodeTypeResolver {
     if (this.timer) return;
     this.timer = setInterval(() => void this.sweep(), 5_000);
     this.timer.unref?.();
+    // Auto's windows, probes and gauge (lib/server/transports/auto.ts) run over this registry's endpoints.
+    transportAuto.start(this, this.baseInputs);
+  }
+
+  /** The endpoints as Auto probes and ranks them (transports/auto.ts). */
+  autoEndpoints(): AutoEndpoint[] {
+    const list: AutoEndpoint[] = [];
+    for (const entry of this.plugins.values()) {
+      if (entry.inProcess) continue;
+      for (const state of entry.endpoints.values()) {
+        list.push({
+          pluginId: entry.id,
+          pluginName: entry.manifest.plugin.name,
+          endpoint: state.endpoint,
+          kind: state.transport,
+          status: state.status,
+          ...(state.latencyMs !== undefined && { latencyMs: state.latencyMs }),
+          health: (timeoutMs) => state.client.health(timeoutMs),
+        });
+      }
+    }
+    return list;
   }
 
   // -------------------------------------------------------------------------
@@ -304,6 +326,7 @@ export class PluginRegistry implements NodeTypeResolver {
       this.backends.delete(endpoint);
       if (entry.endpoints.size === 1) return this.remove(entry.id);
       state.client.close();
+      transportAuto.forget(endpoint);
       entry.endpoints.delete(endpoint);
       entry.updatedAt = Date.now();
       this.emit({ type: 'plugin.updated', pluginId: entry.id, endpoint, message: `${entry.manifest.plugin.name} no longer listed at ${endpoint}` });
@@ -370,7 +393,10 @@ export class PluginRegistry implements NodeTypeResolver {
   remove(id: string) {
     const entry = this.plugins.get(id);
     if (!entry || entry.source === 'builtin') return false;
-    entry.endpoints.forEach((state) => state.client.close());
+    entry.endpoints.forEach((state) => {
+      state.client.close();
+      transportAuto.forget(state.endpoint);
+    });
     this.plugins.delete(id);
     this.emit({ type: 'plugin.removed', pluginId: id, message: `${entry.manifest.plugin.name} removed` });
     return true;
@@ -534,11 +560,12 @@ export class PluginRegistry implements NodeTypeResolver {
   // -------------------------------------------------------------------------
 
   /**
-   * What the selector reads about the host's transports: capabilities, the brokers' queue numbers (depth, consumers, lag,
-   * sampled every 5 s by the messaging clients) and the plugin's `maxConcurrency` (announced instances over brokers, else
-   * the announce hint, else the manifest). Latency windows and breakers come with the Auto wave.
+   * What the registry knows for the selector: capabilities, the brokers' queue numbers (depth, consumers, lag, sampled
+   * every 5 s by the messaging clients) and the plugin's `maxConcurrency` (announced instances over brokers, else the
+   * announce hint, else the manifest). Auto (transports/auto.ts) completes them with the latency windows, failures,
+   * calls in flight, breakers and the main kind.
    */
-  private readonly selectorInputs: SelectorInputs = {
+  private readonly baseInputs: SelectorInputs = {
     capabilities: (kind) => transportProviders.get(kind)?.capabilities,
     queue: (endpoint) => brokerConnections.queueStats(endpoint),
     maxConcurrency: (pluginId) => {
@@ -547,6 +574,7 @@ export class PluginRegistry implements NodeTypeResolver {
       return brokerConnections.maxConcurrencyOf(pluginId) ?? hinted ?? entry?.manifest.maxConcurrency;
     },
   };
+  private readonly selectorInputs: SelectorInputs = transportAuto.inputs(this.baseInputs);
 
   /** Live numbers of one endpoint: a broker's request channel and announced instances (undefined for direct endpoints). */
   private queueOf(state: EndpointState): BrokerQueueStats | undefined {
@@ -622,6 +650,7 @@ export class PluginRegistry implements NodeTypeResolver {
         ...(excludedBy(kind) && { excluded: true }),
         ...(!states.length && { declared: true }),
         ...(stats && { stats }),
+        ...(states.length && { auto: transportAuto.summary(entry.id, kind, states.map((s) => s.endpoint)) }),
       };
     });
   }
@@ -655,6 +684,7 @@ export class PluginRegistry implements NodeTypeResolver {
             ...(s.lastError && { lastError: s.lastError }),
             ...(s.options?.origin && { origin: s.options.origin }),
             ...(s.source === 'broker' && { queue: this.queueOf(s) ?? {} }),
+            auto: transportAuto.endpointSummary(entry.id, s.endpoint, s.transport),
           })),
           source: entry.source,
           registeredAt: new Date(entry.registeredAt).toISOString(),
@@ -727,24 +757,28 @@ export class PluginRegistry implements NodeTypeResolver {
     const provisional = this.choose(entry, { method: 'Execute' });
     if (!isChoice(provisional)) return { error: provisional.error.replace(`Plugin "${pluginId}"`, `Plugin "${entry.manifest.plugin.name}"`) };
     const name = entry.manifest.plugin.name;
-    const call = async <T>(context: CallContext, fn: (state: EndpointState) => Promise<T>, failedEndpoint?: string): Promise<T> => {
+    const call = async <T>(context: CallContext, fn: (state: EndpointState) => Promise<T>, failed?: { endpoint: string; detail: string }): Promise<T> => {
       // A fail-over (second try) leaves out the endpoint that provably did not get the call; a pinned policy then has nowhere to go.
-      const candidates = this.candidates(entry).filter((c) => c.endpoint !== failedEndpoint);
+      const candidates = this.candidates(entry).filter((c) => c.endpoint !== failed?.endpoint);
       let selection = select(entry.id, candidates, transportPolicies.get(entry.id), context, this.selectorInputs);
       if (!isChoice(selection)) throw new Error(selection.error.replace(`Plugin "${pluginId}"`, `Plugin "${name}"`));
-      if (failedEndpoint) selection = { ...selection, reason: 'auto.failover' };
+      if (failed) selection = { ...selection, reason: 'auto.failover', detail: failed.detail };
       const state = entry.endpoints.get(selection.endpoint);
       if (!state) throw new Error(`Plugin "${name}": ${selection.endpoint} left the registry`);
+      const choice = selection;
       try {
-        return await withTransportChoice(selection, () => fn(state));
+        // Auto records the outcome (latency windows, failures, breaker, metrics) and holds the endpoint after a `capacity` refusal.
+        return await transportAuto.run({ pluginId: entry.id, pluginName: name, choice, context }, () => withTransportChoice(choice, () => fn(state)));
       } catch (error) {
         state.lastError = (error as Error).message;
-        // Rule 7 (docs/transports.md): a call moves to another transport only when it provably was not delivered, once; a call its
-        // caller aborted before it went out is not delivered either, but nobody wants it anywhere else.
-        const aborted = error instanceof UndeliverableError && error.reason === 'aborted';
-        if (!failedEndpoint && !aborted && isProvablyUndelivered(error) && candidates.some((c) => c.endpoint !== state.endpoint && c.status === 'online')) {
+        // Rule 7 (docs/transports.md): a call moves to another transport only when it provably was not delivered (connection refused,
+        // DNS, gRPC UNAVAILABLE before sending, a broker that reported it unroutable), or when the plugin refused it for capacity: once.
+        // A call its caller aborted before it went out is not delivered either, but nobody wants it anywhere else.
+        const verdict = transportAuto.classify(error);
+        if (!failed && verdict.movable && candidates.some((c) => c.endpoint !== state.endpoint && c.status === 'online')) {
+          const detail = verdict.kind === 'capacity' ? `${state.transport} refused the call (capacity)` : `${state.transport} did not deliver the call: ${(error as Error).message}`;
           try {
-            return await call(context, fn, state.endpoint);
+            return await call(context, fn, { endpoint: state.endpoint, detail });
           } catch (second) {
             throw new Error(`${name} via ${state.transport.toUpperCase()} ${state.endpoint}: ${(error as Error).message}; then ${(second as Error).message}`);
           }
@@ -763,6 +797,8 @@ export class PluginRegistry implements NodeTypeResolver {
             method: 'Execute',
             mode: runModeOf(request.mode),
             items: request.inputs.reduce((n, items) => n + items.length, 0),
+            // The serialized size: brokers with a smaller limit are skipped, and latency is measured per size bucket.
+            payloadBytes: Buffer.byteLength(JSON.stringify(request)),
             // An operation's `idempotent` overrides the node's (protocol: tool annotations); an idempotency key alone doesn't make the call repeatable.
             ...(descriptor.idempotent !== undefined && { idempotent: descriptor.idempotent }),
             executionId: request.executionId,
@@ -787,11 +823,14 @@ export class PluginRegistry implements NodeTypeResolver {
       if (!node) throw new Error(`Unknown node "${type}"`);
       return runLoadOptions(node, method, parameters, credentials);
     }
-    const selection = this.choose(entry, { method: 'LoadOptions', mode: 'manual', idempotent: true });
+    const context: CallContext = { method: 'LoadOptions', mode: 'manual', idempotent: true };
+    const selection = this.choose(entry, context);
     if (!isChoice(selection)) throw new Error(selection.error);
     const state = entry.endpoints.get(selection.endpoint);
     if (!state) throw new Error(`Plugin "${pluginId}" is offline`);
-    return withTransportChoice(selection, () => state.client.loadOptions({ nodeType: nodeName, method, parameters, ...(credentials && { credentials }) }));
+    return transportAuto.run({ pluginId: entry.id, pluginName: entry.manifest.plugin.name, choice: selection, context }, () =>
+      withTransportChoice(selection, () => state.client.loadOptions({ nodeType: nodeName, method, parameters, ...(credentials && { credentials }) })),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -833,11 +872,14 @@ export class PluginRegistry implements NodeTypeResolver {
     if (!entry || !descriptor) return { ok: false, message: `Unknown credential type "${type}"` };
     if (!descriptor.testable) return { ok: false, message: `${descriptor.displayName} can't be tested — save it and run a node` };
     if (entry.inProcess) return runTestCredentials(entry.inProcess, { credentialType, data });
-    const selection = this.choose(entry, { method: 'TestCredentials', mode: 'manual', idempotent: true });
+    const context: CallContext = { method: 'TestCredentials', mode: 'manual', idempotent: true };
+    const selection = this.choose(entry, context);
     const state = isChoice(selection) ? entry.endpoints.get(selection.endpoint) : undefined;
     if (!state || !isChoice(selection)) return { ok: false, message: `${entry.manifest.plugin.name} is offline — start it to test this credential` };
     try {
-      return await withTransportChoice(selection, () => state.client.testCredentials({ credentialType, data }));
+      return await transportAuto.run({ pluginId: entry.id, pluginName: entry.manifest.plugin.name, choice: selection, context }, () =>
+        withTransportChoice(selection, () => state.client.testCredentials({ credentialType, data })),
+      );
     } catch (error) {
       return { ok: false, message: `${entry.manifest.plugin.name} via ${state.transport.toUpperCase()}: ${(error as Error).message}` };
     }

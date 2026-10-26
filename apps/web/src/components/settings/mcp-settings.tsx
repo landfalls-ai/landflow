@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import type { UserView } from '@/lib/shared/auth';
-import { MCP_GRANT_SUBJECT_KINDS, MCP_TOKEN_SCOPE_LABELS, MCP_TOKEN_SCOPES, type McpAccessResponse, type McpAccessView, type McpGrantSubjectKind, type McpStatusView, type McpTokenScope, type McpTokenView, type McpToolGrant, type McpToolsResponse } from '@/lib/shared/mcp';
+import { MCP_GRANT_SUBJECT_KINDS, MCP_TOKEN_SCOPE_LABELS, MCP_TOKEN_SCOPES, type McpAccessResponse, type McpAccessView, type McpGatewayStatusView, type McpGatewayTargetView, type McpGrantSubjectKind, type McpStatusView, type McpTokenScope, type McpTokenView, type McpToolGrant, type McpToolsResponse } from '@/lib/shared/mcp';
 import type { CredentialSummary, PluginSummary } from '@/lib/shared/types';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -96,10 +96,99 @@ function GatewayCard({ status }: { status: McpStatusView }) {
           {status.instanceUrl}
           {status.paths.registry} <span className="font-sans text-t3">(namespace {status.namespace})</span>
         </dd>
-        <dt className="text-t3">Target sync</dt>
-        <dd className="text-t2">{status.gateway.sync === 'running' ? 'running' : 'Writing the plugins into the gateway arrives in a later release; register them in the gateway’s UI meanwhile.'}</dd>
       </dl>
+      {mode !== 'off' && <GatewaySyncStatus canManage={status.canManage} />}
     </Card>
+  );
+}
+
+const TARGET_STATE_TONE: Record<McpGatewayTargetView['state'], 'success' | 'warning' | 'danger' | 'muted'> = { 'in-step': 'success', drift: 'warning', missing: 'danger', stale: 'warning', unknown: 'muted' };
+
+/** The sync's view (GET /api/mcp/gateway): health, targets in step vs drift, last sync and error, a resync button for admins. */
+function GatewaySyncStatus({ canManage }: { canManage: boolean }) {
+  const [gateway, setGateway] = useState<McpGatewayStatusView>();
+  const [error, setError] = useState<string>();
+  const [syncing, setSyncing] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setGateway(await api<McpGatewayStatusView>('/api/mcp/gateway'));
+      setError(undefined);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), 30_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const resync = async () => {
+    setSyncing(true);
+    try {
+      const r = await api<McpGatewayStatusView & { result: { upserted: string[]; removed: string[]; skipped?: string } }>('/api/mcp/gateway/sync', { method: 'POST' });
+      setGateway(r);
+      toast.success(r.result.skipped ? r.result.skipped : `Gateway synced: ${r.result.upserted.length} written, ${r.result.removed.length} removed`);
+    } catch (e) {
+      toast.error((e as Error).message);
+      await load();
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  if (error) return <Alert>{error}</Alert>;
+  if (!gateway) return <div className="mt-3 h-10 rounded-xl border border-hair bg-sf animate-pulse-soft" />;
+  const targets = gateway.targets.filter((t) => t.kind === 'mcp.target');
+  const routes = gateway.targets.filter((t) => t.kind === 'traffic.route');
+  const shown = showAll ? gateway.targets : targets;
+  return (
+    <div className="mt-4 border-t border-hair pt-3">
+      <div className="flex flex-wrap items-center gap-2 text-[12px]">
+        <span className="font-semibold text-t2">Target sync</span>
+        {gateway.health ? (
+          <Badge tone={gateway.health.ok ? 'success' : 'danger'}>{gateway.health.ok ? `gateway reachable${gateway.health.version ? ` · ${gateway.health.version}` : ''}` : 'gateway unreachable'}</Badge>
+        ) : null}
+        <Badge tone={gateway.running ? 'accent' : 'muted'}>{gateway.running ? 'running' : 'not running'}</Badge>
+        <Badge tone="success">{gateway.inStep} in step</Badge>
+        {gateway.drift > 0 && <Badge tone="warning">{gateway.drift} drift</Badge>}
+        <span className="text-t3">
+          {gateway.adapter} · {gateway.location}
+          {gateway.lastSyncAt ? ` · synced ${timeAgo(gateway.lastSyncAt)}` : ' · not synced yet'}
+          {gateway.lastChangeAt ? ` · last change ${timeAgo(gateway.lastChangeAt)}` : ''}
+        </span>
+        {canManage && (
+          <Button size="sm" variant="ghost" className="ml-auto" onClick={() => void resync()} disabled={syncing} aria-label="Resync the gateway">
+            <RefreshCw className={`size-3.5 ${syncing ? 'animate-spin' : ''}`} /> Resync
+          </Button>
+        )}
+      </div>
+      {!gateway.running && (
+        <p className="mt-1.5 text-[12px] text-t3">The sync starts with the host (a dev server started before this build needs a restart); until then the targets are what the gateway last had.</p>
+      )}
+      {gateway.health && !gateway.health.ok && gateway.health.message && <p className="mt-1.5 text-[12px] text-danger">{gateway.health.message}</p>}
+      {gateway.lastError && <p className="mt-1.5 text-[12px] text-danger">Last error: {gateway.lastError}</p>}
+      {shown.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5" data-testid="mcp-gateway-targets">
+          {shown.map((t) => (
+            <Badge key={`${t.kind}:${t.name}`} tone={TARGET_STATE_TONE[t.state]} className="font-mono font-medium" title={`${t.kind} ${t.name} (${t.pluginId}): ${t.state}`}>
+              {t.name} · {t.state}
+            </Badge>
+          ))}
+        </div>
+      )}
+      {routes.length > 0 && (
+        <button type="button" className="mt-1.5 text-[11px] text-t3 underline-offset-2 hover:underline" onClick={() => setShowAll((v) => !v)}>
+          {showAll ? 'Hide' : 'Show'} the {routes.length} per-plugin routes (<span className="font-mono">/mcp/plugins/&lt;plugin&gt;</span> and <span className="font-mono">…/server-card</span>)
+        </button>
+      )}
+      <p className="mt-1.5 text-[11px] text-t3">
+        Targets reach this host at <span className="font-mono">{gateway.hostUrl}</span> (<span className="font-mono">LANDFLOW_MCP_GATEWAY_HOST_URL</span>). The sync reacts to plugins coming and going, reconciles every 30 s, removes a plugin offline
+        for 60 s, and only ever touches the targets it created.
+      </p>
+    </div>
   );
 }
 
@@ -239,6 +328,18 @@ function TokensCard({ canManage, onToken }: { canManage: boolean; onToken: (toke
     }
   };
 
+  /** A revoked or expired token's row can go (rows older than 30 days are purged on their own). */
+  const remove = async (token: McpTokenView) => {
+    setConfirm(undefined);
+    try {
+      await api(`/api/mcp/tokens/${encodeURIComponent(token.id)}`, { method: 'DELETE' });
+      toast.success(`Removed “${token.label}”`);
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
   const state = (t: McpTokenView): { label: string; tone: 'danger' | 'muted' | 'success' } | undefined => {
     if (t.revokedAt) return { label: 'revoked', tone: 'danger' };
     if (Date.parse(t.expiresAt) <= Date.now()) return { label: 'expired', tone: 'muted' };
@@ -324,21 +425,20 @@ function TokensCard({ canManage, onToken }: { canManage: boolean; onToken: (toke
                     <code className="font-mono">{t.id}</code>
                   </div>
                 </div>
-                {!st &&
-                  (confirm === t.id ? (
-                    <span role="alertdialog" aria-label={`Revoke ${t.label}?`} className="flex items-center gap-1 animate-fade-up">
-                      <Button size="sm" variant="danger" onClick={() => void revoke(t)}>
-                        Revoke
-                      </Button>
-                      <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(undefined)} aria-label="Keep">
-                        <X className="size-3.5" />
-                      </Button>
-                    </span>
-                  ) : (
-                    <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(t.id)} aria-label={`Revoke ${t.label}`} title="Revoke">
-                      <Trash2 className="size-3.5" />
+                {confirm === t.id ? (
+                  <span role="alertdialog" aria-label={`${st ? 'Remove' : 'Revoke'} ${t.label}?`} className="flex items-center gap-1 animate-fade-up">
+                    <Button size="sm" variant="danger" onClick={() => void (st ? remove(t) : revoke(t))}>
+                      {st ? 'Remove' : 'Revoke'}
                     </Button>
-                  ))}
+                    <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(undefined)} aria-label="Keep">
+                      <X className="size-3.5" />
+                    </Button>
+                  </span>
+                ) : (
+                  <Button size="icon-sm" variant="ghost" onClick={() => setConfirm(t.id)} aria-label={`${st ? 'Remove' : 'Revoke'} ${t.label}`} title={st ? `Remove this ${st.label} token's row` : 'Revoke'}>
+                    {st ? <X className="size-3.5" /> : <Trash2 className="size-3.5" />}
+                  </Button>
+                )}
               </div>
             );
           })}

@@ -20,6 +20,22 @@ const upstreams = (process.env.LB_UPSTREAMS ?? 'main-1:3000,main-2:3000')
     return { name, host, port: Number(port || 3000), downUntil: 0 };
   });
 const port = Number(process.env.LB_PORT ?? 3000);
+/**
+ * The MCP gateway sidecars (compose.queue.yml): requests whose path is one of LB_MCP_PATHS (or below) go to LB_MCP_PORT
+ * of the same mains (the sidecar shares its main's network namespace). The protocol is stateless, so any main's gateway
+ * can serve any request; the sticky cookie still applies.
+ */
+const mcpPort = Number(process.env.LB_MCP_PORT ?? 0);
+const mcpPaths = (process.env.LB_MCP_PATHS ?? '/mcp,/.well-known/oauth-protected-resource')
+  .split(',')
+  .map((p) => p.trim())
+  .filter(Boolean);
+const isMcpPath = (url) => {
+  const path = (url ?? '/').split('?')[0];
+  return mcpPaths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+};
+/** The upstream port for a request: the gateway sidecar's for MCP paths (when configured), else the main's. */
+const portFor = (upstream, req) => (mcpPort && isMcpPath(req.url) ? mcpPort : upstream.port);
 /** Request bodies are held so a refused connection can go to the next main. */
 const MAX_BODY = 64 * 1024 * 1024;
 const DOWN_MS = 5_000;
@@ -43,7 +59,7 @@ function forward(upstream, req, res, body, sticky) {
     const headers = { ...req.headers, 'x-forwarded-for': req.socket.remoteAddress ?? '', 'x-forwarded-host': req.headers.host ?? '', 'x-forwarded-proto': 'http' };
     delete headers['transfer-encoding'];
     if (body.length || req.headers['content-length'] !== undefined) headers['content-length'] = String(body.length);
-    const proxied = http.request({ host: upstream.host, port: upstream.port, method: req.method, path: req.url, headers }, (answer) => {
+    const proxied = http.request({ host: upstream.host, port: portFor(upstream, req), method: req.method, path: req.url, headers }, (answer) => {
       const out = { ...answer.headers, 'x-landflow-main': upstream.name };
       if (sticky !== upstream.name) {
         const cookie = `${STICKY}=${upstream.name}; Path=/; HttpOnly; SameSite=Lax`;

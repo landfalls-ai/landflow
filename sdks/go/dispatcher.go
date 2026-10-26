@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,6 +68,15 @@ type CallOptions struct {
 	// broker envelope's lfdeadline, an MCP timeout). The context's own
 	// deadline still applies as well.
 	Deadline time.Time
+	// Attributes are extra span attributes of the call (the MCP face sets
+	// mcp.tool.name); they join landflow.transport on the server span.
+	Attributes Attrs
+	// Wait makes the call wait for a slot however many are waiting, instead
+	// of being refused with ErrOverloaded. For faces that already bound how
+	// many calls they hand over (a broker face takes at most its prefetch):
+	// the rest stays in the broker, which is the buffer the host spilled
+	// over to, so refusing would only bounce the call back.
+	Wait bool
 }
 
 // ErrOverloaded is returned when a call is refused at once because the
@@ -221,11 +231,14 @@ func (d *Dispatcher) enter(ctx context.Context, opts CallOptions) (context.Conte
 	if opts.Transport != "" {
 		ctx = withTransport(ctx, opts.Transport)
 	}
+	if len(opts.Attributes) > 0 {
+		ctx = context.WithValue(ctx, callAttrsKey{}, opts.Attributes)
+	}
 	if err := ctx.Err(); err != nil {
 		cancel()
 		return ctx, nil, fmt.Errorf("call not started: %w", err)
 	}
-	if err := d.acquire(ctx); err != nil {
+	if err := d.acquire(ctx, opts.Wait); err != nil {
 		cancel()
 		return ctx, nil, err
 	}
@@ -246,16 +259,17 @@ func (d *Dispatcher) enter(ctx context.Context, opts CallOptions) (context.Conte
 }
 
 // acquire takes a slot: at once when one is free, after waiting in arrival
-// order when the queue has room, never otherwise (ErrOverloaded). A waiter
-// whose ctx ends leaves the queue with the context's error.
-func (d *Dispatcher) acquire(ctx context.Context) error {
+// order when the queue has room (or wait is set), never otherwise
+// (ErrOverloaded). A waiter whose ctx ends leaves the queue with the
+// context's error.
+func (d *Dispatcher) acquire(ctx context.Context, wait bool) error {
 	d.mu.Lock()
 	if d.maxConcurrency <= 0 || d.inFlight < d.maxConcurrency {
 		d.inFlight++
 		d.mu.Unlock()
 		return nil
 	}
-	if len(d.waiters) >= d.maxQueue {
+	if !wait && len(d.waiters) >= d.maxQueue {
 		err := fmt.Errorf("%w (%d in flight, %d waiting, limit %d)", ErrOverloaded, d.inFlight, len(d.waiters), d.maxConcurrency)
 		d.mu.Unlock()
 		return err
@@ -318,12 +332,33 @@ func TransportOf(ctx context.Context) string {
 	return kind
 }
 
-// transportAttrs returns the landflow.transport span attribute for ctx, if any.
-func transportAttrs(ctx context.Context) []attribute.KeyValue {
+// callAttrsKey carries CallOptions.Attributes in the context.
+type callAttrsKey struct{}
+
+// callAttrs returns the landflow.transport span attribute for ctx plus the
+// call's extra attributes (CallOptions.Attributes), if any.
+func callAttrs(ctx context.Context) []attribute.KeyValue {
+	var out []attribute.KeyValue
 	if kind := TransportOf(ctx); kind != "" {
-		return []attribute.KeyValue{attribute.String("landflow.transport", kind)}
+		out = append(out, attribute.String("landflow.transport", kind))
 	}
-	return nil
+	if extra, _ := ctx.Value(callAttrsKey{}).(Attrs); len(extra) > 0 {
+		for _, key := range sortedAttrKeys(extra) {
+			if kv, ok := toKeyValue(key, extra[key], nil); ok {
+				out = append(out, kv)
+			}
+		}
+	}
+	return out
+}
+
+func sortedAttrKeys(a Attrs) []string {
+	keys := make([]string, 0, len(a))
+	for k := range a {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // maxConcurrencyFromEnv reads LANDFLOW_MAX_CONCURRENCY (empty or 0 = fallback).

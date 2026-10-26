@@ -52,6 +52,20 @@ x-host-env: &host-env
   LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
   OTEL_EXPORTER_OTLP_ENDPOINT: ${LANDFLOW_QUEUE_OTLP_ENDPOINT:-}
   LANDFLOW_TRACE_URL: ${LANDFLOW_TRACE_URL:-http://localhost:56686/trace/{traceId}}
+  # The MCP gateway: one agentgateway sidecar per main (below), each kept in step by its main through the shared loopback;
+  # agents reach /mcp through the load balancer, which sends it to port 4000 of a main (deploy/queue/lb.mjs).
+  LANDFLOW_MCP_GATEWAY: ${LANDFLOW_MCP_GATEWAY:-bundled}
+  LANDFLOW_MCP_GATEWAY_ADMIN_URL: http://127.0.0.1:15000
+  LANDFLOW_MCP_GATEWAY_HOST_URL: http://127.0.0.1:3000
+  LANDFLOW_MCP_GATEWAY_PUBLIC_URL: ${LANDFLOW_MCP_GATEWAY_PUBLIC_URL:-http://localhost:${LANDFLOW_QUEUE_PORT:-53080}}
+  LANDFLOW_MCP_GATEWAY_SECRET: ${LANDFLOW_MCP_GATEWAY_SECRET:-landflow-mcp-gateway-dev-only-secret}
+
+x-mcp-gateway: &mcp-gateway
+  # agentgateway 1.6 as a main's sidecar (docs/transports.md "Deployment"): the same digest as compose.infra.yml, the
+  # sidecar base config (admin API on the shared 127.0.0.1:15000, targets in SQLite under /data, rebuilt by the main's sync).
+  image: cr.agentgateway.dev/agentgateway:v1.6.0@sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+  restart: unless-stopped
+  command: ["-f", "/config/config.yaml"]
 
 x-host: &host
   image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/host:${LANDFLOW_IMAGE_TAG:-dev}
@@ -98,6 +112,38 @@ services:
       main-1:
         condition: service_healthy
 
+  mcp-gateway-1:
+    <<: *mcp-gateway
+    network_mode: service:main-1
+    volumes:
+      - ./mcp-gateway/config.sidecar.yaml:/config/config.yaml:ro
+      - landflow-queue-mcp-gateway-1:/data
+    depends_on:
+      main-1:
+        condition: service_started
+      mcp-gateway-init:
+        condition: service_completed_successfully
+
+  mcp-gateway-2:
+    <<: *mcp-gateway
+    network_mode: service:main-2
+    volumes:
+      - ./mcp-gateway/config.sidecar.yaml:/config/config.yaml:ro
+      - landflow-queue-mcp-gateway-2:/data
+    depends_on:
+      main-2:
+        condition: service_started
+      mcp-gateway-init:
+        condition: service_completed_successfully
+
+  mcp-gateway-init:
+    # Gives both data volumes to the gateway's user (65532); the image has no shell to do it itself.
+    image: alpine:3.22
+    command: ["chown", "65532:65532", "/data-1", "/data-2"]
+    volumes:
+      - landflow-queue-mcp-gateway-1:/data-1
+      - landflow-queue-mcp-gateway-2:/data-2
+
   worker-1:
     <<: *host
     command: ["node", "worker.mjs"]
@@ -139,6 +185,9 @@ services:
     environment:
       LB_UPSTREAMS: main-1:3000,main-2:3000
       LB_PORT: "3000"
+      # /mcp (and the protected resource metadata agents fetch before signing in) go to the main's gateway sidecar.
+      LB_MCP_PORT: "4000"
+      LB_MCP_PATHS: /mcp,/.well-known/oauth-protected-resource
     volumes:
       - ./queue/lb.mjs:/lb/lb.mjs:ro
     ports:
@@ -171,6 +220,8 @@ services:
 
 volumes:
   landflow-queue-data:
+  landflow-queue-mcp-gateway-1:
+  landflow-queue-mcp-gateway-2:
 
 networks:
   landflow-queue:

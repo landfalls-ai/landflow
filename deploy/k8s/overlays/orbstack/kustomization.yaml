@@ -32,7 +32,7 @@ secretGenerator:
   - name: landflow-registry
     literals: [secret=landflow-registry-dev-only]
   - name: landflow-host
-    literals: [owner-email=owner@landflow.test, owner-password=landflow-dev-only]
+    literals: [owner-email=owner@landflow.test, owner-password=landflow-dev-only, mcp-gateway-secret=landflow-mcp-gateway-dev-only-secret]
 patches:
   # Local images only.
   - target: { kind: Deployment, labelSelector: app.kubernetes.io/part-of=landflow }
@@ -52,6 +52,7 @@ patches:
               - name: host
                 env:
                   - { name: LANDFLOW_PUBLIC_URL, value: "http://landflow-host.landflow-dev.svc.cluster.local:3000" }
+                  - { name: LANDFLOW_MCP_GATEWAY_PUBLIC_URL, value: "http://landflow-host.landflow-dev.svc.cluster.local:4000" }
             volumes:
               - name: data
                 persistentVolumeClaim: null

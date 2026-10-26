@@ -135,6 +135,19 @@ describe('dispatcher: concurrency', () => {
     expect(dispatcher.stats()).toEqual({ inFlight: 0, queued: 0, maxConcurrency: 2 });
   });
 
+  it('a call that asks to wait (a broker face, already bounded by its prefetch) queues past the limit instead of being refused', async () => {
+    const dispatcher = createDispatcher(plugin, { maxConcurrency: 1 });
+    // One direct call running and one waiting fill the queue; the broker's calls still wait their turn.
+    const direct = [1, 2].map(() => dispatcher.execute(request('slow', 30), { transport: 'grpc' }));
+    await tick();
+    const brokered = [1, 2, 3].map(() => dispatcher.execute(request('slow', 0), { transport: 'kafka', wait: true }));
+    await tick();
+    expect(dispatcher.stats()).toEqual({ inFlight: 1, queued: 4, maxConcurrency: 1 });
+    const refused = await dispatcher.execute(request('slow', 0), { transport: 'grpc' }).catch((e) => e);
+    expect((refused as DispatchError).code).toBe('capacity');
+    expect((await Promise.all([...direct, ...brokered])).every((r) => !r.error)).toBe(true);
+  });
+
   it('a queued call whose deadline passes while waiting fails without running', async () => {
     const dispatcher = createDispatcher(plugin, { maxConcurrency: 1 });
     const first = dispatcher.execute(request('slow', 80), { transport: 'fake' });

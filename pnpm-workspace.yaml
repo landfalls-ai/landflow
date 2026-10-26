@@ -7,3 +7,4 @@ onlyBuiltDependencies:
   - esbuild
   - protobufjs
   - "@confluentinc/kafka-javascript"
+  - pulsar-client

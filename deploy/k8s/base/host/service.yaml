@@ -9,3 +9,5 @@ spec:
     - { name: http, port: 3000, targetPort: http }
     # The gRPC RegistryService, for plugins that announce themselves instead of being discovered.
     - { name: registry, port: 7070, targetPort: registry, appProtocol: grpc }
+    # The MCP gateway sidecar: agents connect to /mcp here (an Ingress would send /mcp to this port).
+    - { name: mcp, port: 4000, targetPort: mcp }

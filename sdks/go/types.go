@@ -33,6 +33,8 @@ const (
 	PathWebhook       = "/landflow/v1/webhook"
 	// PathMetrics serves Prometheus text (LANDFLOW_METRICS_PROMETHEUS); see docs/observability.md.
 	PathMetrics = "/metrics"
+	// PathMCP is the Streamable HTTP MCP face on the HTTP port (docs/protocol.md §15.2; mcpface.DefaultPath).
+	PathMCP = "/mcp"
 )
 
 // Registry defaults.
@@ -99,6 +101,21 @@ type PropertyOption struct {
 	Description string `json:"description,omitempty"`
 	Action      string `json:"action,omitempty"`
 	Idempotent  bool   `json:"idempotent,omitempty"` // safe to repeat: overrides the node's Idempotent (brokers, MCP idempotentHint)
+	// On an option of the `operation` property only (docs/protocol.md §15.1): MCP false keeps the operation out of
+	// the plugin's MCP tools (landflow.Ptr(false)); OutputSchema and ToolAnnotations override the node's for its tool.
+	MCP             *bool               `json:"mcp,omitempty"`
+	OutputSchema    map[string]any      `json:"outputSchema,omitempty"`
+	ToolAnnotations *McpToolAnnotations `json:"toolAnnotations,omitempty"`
+}
+
+// McpToolAnnotations are the MCP hints of a tool; the mapping derives them (docs/protocol.md §15.1) and a node or an
+// operation option overrides the ones it sets (nil = derived).
+type McpToolAnnotations struct {
+	Title           string `json:"title,omitempty"`
+	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
 }
 
 // DisplayOptions is n8n-style conditional visibility. Values are primitives.
@@ -227,10 +244,15 @@ type NodeDescriptor struct {
 	// ToolInputSchema is an optional JSON Schema for the tool's arguments.
 	// Without it the host derives one from the primitive properties. The
 	// arguments become the input item's JSON and override same-named parameters.
-	ToolInputSchema  map[string]any `json:"toolInputSchema,omitempty"`
-	Supplies         ConnectionType `json:"supplies,omitempty"`
-	DocumentationURL string         `json:"documentationUrl,omitempty"`
-	Keywords         []string       `json:"keywords,omitempty"`
+	ToolInputSchema map[string]any `json:"toolInputSchema,omitempty"`
+	// MCP false (landflow.Ptr(false)) keeps the whole node out of the plugin's MCP tools; OutputSchema (the schema of
+	// one output item's json) gives its tools an outputSchema; ToolAnnotations override the derived hints.
+	MCP              *bool               `json:"mcp,omitempty"`
+	OutputSchema     map[string]any      `json:"outputSchema,omitempty"`
+	ToolAnnotations  *McpToolAnnotations `json:"toolAnnotations,omitempty"`
+	Supplies         ConnectionType      `json:"supplies,omitempty"`
+	DocumentationURL string              `json:"documentationUrl,omitempty"`
+	Keywords         []string            `json:"keywords,omitempty"`
 	// Credentials lists the credential types (declared in PluginInfo.CredentialTypes)
 	// this node can use.
 	Credentials []NodeCredentialRequirement `json:"credentials,omitempty"`
@@ -327,6 +349,8 @@ type WellKnownEndpoints struct {
 	// WebhookMethod and Webhook are listed when a node is an app webhook trigger.
 	WebhookMethod string `json:"webhookMethod,omitempty"`
 	Webhook       string `json:"webhook,omitempty"`
+	// MCP is the Streamable HTTP MCP endpoint ("/mcp") when the face is on (docs/protocol.md §15.2).
+	MCP string `json:"mcp,omitempty"`
 }
 
 // WellKnownDocument is served at GET /.well-known/landflow.
@@ -366,6 +390,8 @@ const (
 	ModeChat    ExecutionMode = "chat"
 	// ModePoll is a scheduled poll of a TriggerPoll node.
 	ModePoll ExecutionMode = "poll"
+	// ModeMCP: started by an MCP client (the plugin's own /mcp face or the host's MCP server).
+	ModeMCP ExecutionMode = "mcp"
 )
 
 // NodeRef identifies the workflow node being executed. Type is fully

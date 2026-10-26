@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/landflow/landflow/sdks/go/mcpface"
 	"google.golang.org/grpc"
 )
 
@@ -28,6 +29,10 @@ import (
 //	LANDFLOW_ADVERTISE_HOST                  host put into announced endpoints (default 127.0.0.1)
 //	LANDFLOW_LISTEN_HOST                     bind address (default: loopback when the advertise
 //	                                         host is loopback, all interfaces otherwise)
+//	LANDFLOW_MCP                             on (default) | off | stdio: the MCP face at /mcp on the
+//	                                         HTTP port, or MCP on stdin/stdout only (also --mcp-stdio)
+//	LANDFLOW_MCP_TOKEN                       Bearer token /mcp requires unless listening on loopback
+//	LANDFLOW_MCP_CREDENTIALS                 JSON file or inline JSON {"<credentialType>": {...}} for the tools
 //
 // Telemetry follows the OTEL_* and LANDFLOW_LOG_* / LANDFLOW_METRICS_PROMETHEUS
 // variables of docs/observability.md (see TelemetryOptions).
@@ -56,6 +61,9 @@ type ServeOptions struct {
 	// Announce: nil or true announces to the registry; false disables it.
 	// LANDFLOW_REGISTRY_URL=off disables it as well.
 	Announce *bool
+	// MCP configures the plugin's own MCP face (WithMCP / WithoutMCP); nil =
+	// on at /mcp on the HTTP port (docs/protocol.md §15.2).
+	MCP *MCPOptions
 
 	// Optional overrides of the corresponding environment variables.
 	RegistryURL   string
@@ -155,6 +163,8 @@ type serveConfig struct {
 	shutdownTimeout    time.Duration
 	logger             *log.Logger
 	skipped            []string // kinds LANDFLOW_TRANSPORTS named that have no binding
+	mcpMode            mcpface.Mode
+	mcpSkipped         *MCPBinding // the face that could not start (no HTTP binding, or no token off loopback); logged in Serve
 }
 
 func resolveConfig(p *Plugin, opts ServeOptions) (serveConfig, error) {
@@ -170,11 +180,26 @@ func resolveConfig(p *Plugin, opts ServeOptions) (serveConfig, error) {
 		return cfg, err
 	}
 	cfg.maxQueue = opts.MaxQueue
+	if cfg.mcpMode, err = mcpMode(opts.MCP); err != nil {
+		return cfg, fmt.Errorf("landflow: %w", err)
+	}
+	cfg.shutdownTimeout = opts.ShutdownTimeout
+	if cfg.shutdownTimeout <= 0 {
+		cfg.shutdownTimeout = 10 * time.Second
+	}
+	cfg.logger = opts.Logger // nil: the telemetry logger, set in Serve
+	cfg.advertiseHost = firstNonEmpty(opts.AdvertiseHost, os.Getenv("LANDFLOW_ADVERTISE_HOST"), "127.0.0.1")
+	if cfg.mcpMode == mcpface.ModeStdio {
+		// stdio: MCP on stdin/stdout and nothing else (serveMCPStdio).
+		return cfg, nil
+	}
 
 	// Every configured binding, HTTP and gRPC first; then the LANDFLOW_TRANSPORTS filter.
 	var configured []Binding
+	var httpBinding *HTTPBinding
 	if cfg.httpPort > 0 {
-		configured = append(configured, NewHTTPBinding(cfg.httpPort))
+		httpBinding = NewHTTPBinding(cfg.httpPort)
+		configured = append(configured, httpBinding)
 	}
 	if cfg.grpcPort > 0 {
 		configured = append(configured, NewGRPCBinding(cfg.grpcPort, opts.GRPCOptions...))
@@ -184,6 +209,13 @@ func resolveConfig(p *Plugin, opts ServeOptions) (serveConfig, error) {
 			return cfg, fmt.Errorf("landflow: Bindings[%d] is nil", i)
 		}
 		configured = append(configured, b)
+	}
+	if cfg.mcpMode == mcpface.ModeHTTP {
+		mo := MCPOptions{}
+		if opts.MCP != nil {
+			mo = *opts.MCP
+		}
+		configured = append(configured, NewMCPBinding(httpBinding, mo))
 	}
 	selected := transportsFromEnv(opts.Transports)
 	if selected == nil {
@@ -211,24 +243,40 @@ func resolveConfig(p *Plugin, opts ServeOptions) (serveConfig, error) {
 			}
 		}
 	}
+	cfg.listenHost = firstNonEmpty(opts.ListenHost, os.Getenv("LANDFLOW_LISTEN_HOST"))
+	if cfg.listenHost == "" && isLoopback(cfg.advertiseHost) {
+		cfg.listenHost = "127.0.0.1"
+	}
 	cfg.httpPort, cfg.grpcPort = 0, 0
+	hasHTTP := false
 	for _, b := range cfg.bindings {
-		cfg.transports = append(cfg.transports, b.Kind())
 		switch hb := b.(type) {
 		case *HTTPBinding:
 			cfg.httpPort = hb.Port
+			hasHTTP = true
 		case *GRPCBinding:
 			cfg.grpcPort = hb.Port
 		}
 	}
+	// The MCP face lives on the HTTP port: without the HTTP binding (or without a token off loopback) it does not
+	// start, so it is not announced as a transport either.
+	kept := cfg.bindings[:0]
+	for _, b := range cfg.bindings {
+		if mb, ok := b.(*MCPBinding); ok {
+			token := firstNonEmpty(mb.Options.Token, os.Getenv(mcpface.TokenEnv))
+			if !hasHTTP || (token == "" && !mcpface.IsLoopbackHost(cfg.listenHost)) {
+				cfg.mcpSkipped = mb
+				continue
+			}
+		}
+		kept = append(kept, b)
+	}
+	cfg.bindings = kept
+	for _, b := range cfg.bindings {
+		cfg.transports = append(cfg.transports, b.Kind())
+	}
 	if len(cfg.bindings) == 0 {
 		return cfg, errors.New("landflow: no transport enabled; set ServeOptions.HTTPPort/GRPCPort, WithBinding, or LANDFLOW_HTTP_PORT/LANDFLOW_GRPC_PORT (and check LANDFLOW_TRANSPORTS)")
-	}
-
-	cfg.advertiseHost = firstNonEmpty(opts.AdvertiseHost, os.Getenv("LANDFLOW_ADVERTISE_HOST"), "127.0.0.1")
-	cfg.listenHost = firstNonEmpty(opts.ListenHost, os.Getenv("LANDFLOW_LISTEN_HOST"))
-	if cfg.listenHost == "" && isLoopback(cfg.advertiseHost) {
-		cfg.listenHost = "127.0.0.1"
 	}
 
 	registry := firstNonEmpty(opts.RegistryURL, os.Getenv("LANDFLOW_REGISTRY_URL"), DefaultRegistryURL)
@@ -241,11 +289,6 @@ func resolveConfig(p *Plugin, opts ServeOptions) (serveConfig, error) {
 	if cfg.ttl <= 0 {
 		cfg.ttl = DefaultAnnounceTTLSeconds
 	}
-	cfg.shutdownTimeout = opts.ShutdownTimeout
-	if cfg.shutdownTimeout <= 0 {
-		cfg.shutdownTimeout = 10 * time.Second
-	}
-	cfg.logger = opts.Logger // nil: the telemetry logger, set in Serve
 	return cfg, nil
 }
 
@@ -294,6 +337,9 @@ func Serve(ctx context.Context, p *Plugin, opts ...ServeOption) error {
 	if tel == nil {
 		topts := so.Telemetry
 		topts.Global = true
+		if cfg.mcpMode == mcpface.ModeStdio && topts.LogWriter == nil {
+			topts.LogWriter = os.Stderr // stdout is the MCP wire
+		}
 		if tel, err = p.SetupTelemetry(ctx, topts); err != nil {
 			return fmt.Errorf("landflow: telemetry: %w", err)
 		}
@@ -308,17 +354,27 @@ func Serve(ctx context.Context, p *Plugin, opts ...ServeOption) error {
 		cfg.logger = slog.NewLogLogger(tel.logHandler, slog.LevelInfo)
 	}
 	logger := cfg.logger
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if cfg.mcpMode == mcpface.ModeStdio {
+		return serveMCPStdio(ctx, p, so, cfg, tel)
+	}
 	for _, kind := range cfg.skipped {
 		logger.Printf("LANDFLOW_TRANSPORTS names %q but no such binding is configured; ignored", kind)
+	}
+	if mb := cfg.mcpSkipped; mb != nil {
+		if mb.HTTP == nil || cfg.httpPort == 0 {
+			logger.Printf("MCP face not started: it needs the HTTP binding (set an HTTP port, or use --mcp-stdio); LANDFLOW_MCP=off silences this")
+		} else {
+			logger.Printf("MCP face not started: %s is not set and the HTTP server listens on %s (not loopback only); set a token, LANDFLOW_LISTEN_HOST=127.0.0.1, or LANDFLOW_MCP=off",
+				mcpface.TokenEnv, orDefault(cfg.listenHost, "all interfaces"))
+		}
 	}
 
 	// The dispatcher every binding shares, and the manifest hints the host reads.
 	p.SetTransportHints(cfg.transports, cfg.maxConcurrency)
 	dispatcher := NewDispatcher(p, DispatcherOptions{MaxConcurrency: cfg.maxConcurrency, MaxQueue: cfg.maxQueue})
 	p.dispatcher.Store(dispatcher)
-
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// The announcer is created before the bindings start so a binding can announce from Start.
 	var ann *announcer

@@ -62,7 +62,7 @@ export const PUBLIC_ROUTES = [
 const PRIVATE_AUTH_ROUTES = ['/api/auth/me'];
 
 /** `/api/mcp` routes that are the UI's (Settings → MCP), not MCP endpoints: a session or an API key like any other route. */
-export const PRIVATE_MCP_ROUTES = ['/api/mcp/tokens', '/api/mcp/grants', '/api/mcp/status', '/api/mcp/tools'];
+export const PRIVATE_MCP_ROUTES = ['/api/mcp/tokens', '/api/mcp/grants', '/api/mcp/status', '/api/mcp/tools', '/api/mcp/gateway'];
 
 /** True when `path` is `prefix` or below it (`/api/mcp` matches `/api/mcp` and `/api/mcp/x`, not `/api/mcpx`). */
 export function underPath(path: string, prefix: string): boolean {

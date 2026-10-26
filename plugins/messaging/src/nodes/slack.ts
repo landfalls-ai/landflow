@@ -237,6 +237,8 @@ export const Slack = defineNode({
     documentationUrl: 'https://api.slack.com/methods',
     keywords: ['slack', 'chat', 'message', 'channel', 'file', 'upload', 'attachment'],
     usableAsTool: true,
+    // Sends, posts and edits are at most once over a broker; read operations opt back in with `idempotent: true`.
+    idempotent: false,
     toolDescription: 'Send, update or delete a Slack message, get its permalink, upload or download a file, list channels, find a user by email, or add an emoji reaction.',
     inputs: [{ type: 'main' }],
     outputs: [{ type: 'main' }],
@@ -263,7 +265,7 @@ export const Slack = defineNode({
         noDataExpression: true,
         default: 'getAll',
         displayOptions: { show: { resource: ['channel'] } },
-        options: [{ name: 'Get Many', value: 'getAll', description: 'Get many channels in the workspace', action: 'Get many channels' }],
+        options: [{ name: 'Get Many', value: 'getAll', description: 'Get many channels in the workspace', action: 'Get many channels', idempotent: true }],
       },
       {
         name: 'operation',
@@ -281,7 +283,7 @@ export const Slack = defineNode({
         noDataExpression: true,
         default: 'getByEmail',
         displayOptions: { show: { resource: ['user'] } },
-        options: [{ name: 'Get by Email', value: 'getByEmail', description: 'Find a user by email address', action: 'Get a user by email' }],
+        options: [{ name: 'Get by Email', value: 'getByEmail', description: 'Find a user by email address', action: 'Get a user by email', idempotent: true }],
       },
       {
         name: 'operation',
@@ -291,7 +293,7 @@ export const Slack = defineNode({
         default: 'upload',
         displayOptions: { show: { resource: ['file'] } },
         options: [
-          { name: 'Get', value: 'get', description: 'Get a file’s details and download it into the item', action: 'Get a file' },
+          { name: 'Get', value: 'get', description: 'Get a file’s details and download it into the item', action: 'Get a file', idempotent: true },
           { name: 'Upload', value: 'upload', description: 'Upload an item file to a channel or thread', action: 'Upload a file' },
         ],
       },
@@ -305,7 +307,7 @@ export const Slack = defineNode({
         displayOptions: { show: { resource: ['message'] } },
         options: [
           { name: 'Delete', value: 'delete', action: 'Delete a message' },
-          { name: 'Get Permalink', value: 'getPermalink', action: 'Get a message permalink' },
+          { name: 'Get Permalink', value: 'getPermalink', action: 'Get a message permalink', idempotent: true },
           { name: 'Send', value: 'post', action: 'Send a message' },
           { name: 'Update', value: 'update', action: 'Update a message' },
         ],

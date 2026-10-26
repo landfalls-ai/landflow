@@ -16,7 +16,7 @@ import {
   type TracedFetch,
 } from '@landflow/sdk';
 
-export type Service = 'telegram' | 'slack' | 'discord' | 'whatsapp' | 'email';
+export type Service = 'telegram' | 'slack' | 'discord' | 'whatsapp' | 'email' | 'twilio';
 
 /** What the API helpers need: the traced fetch, plus metrics when called from execute (loadOptions and credential tests have none). */
 export interface ApiContext {
@@ -171,3 +171,19 @@ export function clientSpan<T>(ctx: { span: SpanFunction }, name: string, attribu
 }
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Sleep that ends early (rejecting with `canceled`) when the execution's signal aborts, so a rate-limit wait never outlives its call. */
+export function sleepUnless(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new NodeOperationError('The execution was canceled while waiting'));
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new NodeOperationError('The execution was canceled while waiting'));
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}

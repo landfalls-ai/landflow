@@ -207,8 +207,9 @@ describe('broker providers', () => {
     expect(memory).toMatchObject({ installed: true, direct: false, label: 'Memory (test)', capabilities: { delivery: ['at-most-once', 'at-least-once'], latency: 'low', buffering: true, maxMessageBytes: 64 * 1024 } });
     expect(memory?.fields.map((f) => f.name)).toEqual(['url', 'username', 'password', 'tls', 'note']);
     expect(memory?.fields[0]?.placeholder).toBe('memory://local');
-    // Kinds without a module stay "driver in a later release".
-    expect(transportProviders.kinds().find((k) => k.kind === 'pulsar')).toMatchObject({ installed: false });
+    // A broker kind is installed exactly when a driver module exists for it; the rest stay "driver in a later release".
+    const modules = driverModules.kinds();
+    for (const kind of transportProviders.kinds().filter((k) => !k.direct)) expect({ kind: kind.kind, installed: kind.installed }).toEqual({ kind: kind.kind, installed: modules.includes(kind.kind) });
     expect(() => new BrokerPluginClient('http://127.0.0.1:7101')).toThrow(/not a brokered endpoint/);
   });
 
@@ -300,8 +301,9 @@ describe('discovery and calls over the broker', () => {
     expect(p.transports?.find((t) => t.kind === 'slow')?.stats).toBeUndefined();
   });
 
-  it('fails over once to another allowed transport when the call provably was not delivered, never on a timeout, never when pinned', async () => {
-    // Auto prefers the low-latency memory broker over the high-latency stub; a request too big for the broker is refused before publishing.
+  it('skips a broker the call is too big for (auto.size), never retries a timeout, and a pinned call has nowhere to go', async () => {
+    // Auto prefers the low-latency memory broker over the high-latency stub; a request too big for the broker is skipped before
+    // publishing (rule 1: the registry knows the request's size since the Auto wave), so the call goes straight to the stub.
     transportPolicies.set(PLUGIN_ID, { mode: 'auto', allowed: ['memory', 'slow'] });
     expect(registry.select(PLUGIN_ID)).toMatchObject({ kind: 'memory', reason: 'auto.latency' });
     const big = { blob: 'x'.repeat(100 * 1024) };
@@ -311,10 +313,7 @@ describe('discovery and calls over the broker', () => {
     expect(response.outputs[0]?.[0]?.json).toMatchObject({ via: 'slow' });
     expect(slowCalls).toBe(1);
     const rpc = spans.getFinishedSpans().filter((s) => s.name === 'plugin.rpc Execute');
-    expect(rpc.map((s) => [s.attributes['landflow.transport'], s.attributes['landflow.transport.reason']])).toEqual([
-      ['memory', 'auto.latency'],
-      ['slow', 'auto.failover'],
-    ]);
+    expect(rpc.map((s) => [s.attributes['landflow.transport'], s.attributes['landflow.transport.reason']])).toEqual([['slow', 'auto.size']]);
     // A timeout may have run: it fails the node, no second try.
     slowCalls = 0;
     await expect(execute('slow')).rejects.toThrow(/may have run/);

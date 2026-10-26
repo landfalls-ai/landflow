@@ -187,6 +187,8 @@ export const Discord = defineNode({
     documentationUrl: 'https://discord.com/developers/docs/resources/message',
     keywords: ['discord', 'chat', 'message', 'webhook', 'bot'],
     usableAsTool: true,
+    // Sends, posts and edits are at most once over a broker; read operations opt back in with `idempotent: true`.
+    idempotent: false,
     toolDescription: 'Send a Discord message (bot or webhook), list recent messages in a channel, delete a message, or react with an emoji.',
     inputs: [{ type: 'main' }],
     outputs: [{ type: 'main' }],
@@ -233,7 +235,7 @@ export const Discord = defineNode({
         displayOptions: { show: { authentication: ['botToken'], resource: ['message'] } },
         options: [
           { name: 'Delete', value: 'deleteMessage', action: 'Delete a message' },
-          { name: 'Get Many', value: 'getAll', description: 'Retrieve the latest messages in a channel', action: 'Get many messages' },
+          { name: 'Get Many', value: 'getAll', description: 'Retrieve the latest messages in a channel', action: 'Get many messages', idempotent: true },
           { name: 'React with Emoji', value: 'react', action: 'React to a message with an emoji' },
           { name: 'Send', value: 'send', action: 'Send a message' },
         ],

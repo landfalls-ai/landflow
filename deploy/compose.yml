@@ -34,8 +34,17 @@ services:
     init: true
     ports:
       - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_HOST_PORT:-53000}:3000"
+      # The MCP gateway sidecar below shares this container's network namespace, so its /mcp listener is published here.
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_MCP_GATEWAY_PORT:-54000}:4000"
     environment:
       LANDFLOW_DATA_DIR: /data
+      # The bundled MCP gateway (docs/transports.md): the sidecar's admin API and this host, both on the shared loopback;
+      # the secret is what the gateway sends as `x-landflow-gateway`; the public URL is where agents connect.
+      LANDFLOW_MCP_GATEWAY: ${LANDFLOW_MCP_GATEWAY:-bundled}
+      LANDFLOW_MCP_GATEWAY_ADMIN_URL: http://127.0.0.1:15000
+      LANDFLOW_MCP_GATEWAY_HOST_URL: http://127.0.0.1:3000
+      LANDFLOW_MCP_GATEWAY_PUBLIC_URL: ${LANDFLOW_MCP_GATEWAY_PUBLIC_URL:-http://localhost:${LANDFLOW_MCP_GATEWAY_PORT:-54000}}
+      LANDFLOW_MCP_GATEWAY_SECRET: ${LANDFLOW_MCP_GATEWAY_SECRET:-landflow-mcp-gateway-dev-only-secret}
       # Empty: the vault generates a key into the data volume (/data/encryption.key) on first use.
       LANDFLOW_ENCRYPTION_KEY: ${LANDFLOW_ENCRYPTION_KEY:-}
       LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
@@ -87,6 +96,32 @@ services:
         condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  # The bundled MCP gateway (agentgateway 1.6, docs/transports.md "Deployment"): a sidecar in the web container's network
+  # namespace, so the host writes its targets on 127.0.0.1:15000 (no authentication, never published) and the targets
+  # reach the host on 127.0.0.1:3000. /mcp is published through `web` on LANDFLOW_MCP_GATEWAY_PORT. Base config
+  # mcp-gateway/config.sidecar.yaml (storage mode hybrid); the targets live in SQLite on the volume and are rebuilt from
+  # the plugin registry by the host's gateway sync. Distroless image (no shell, no healthcheck); same digest as compose.infra.yml.
+  mcp-gateway:
+    image: cr.agentgateway.dev/agentgateway:v1.6.0@sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+    restart: unless-stopped
+    network_mode: service:web
+    command: ["-f", "/config/config.yaml"]
+    volumes:
+      - ./mcp-gateway/config.sidecar.yaml:/config/config.yaml:ro
+      - landflow-mcp-gateway-data:/data
+    depends_on:
+      web:
+        condition: service_started
+      mcp-gateway-init:
+        condition: service_completed_successfully
+
+  mcp-gateway-init:
+    # Gives the data volume to the gateway's user (65532); the image has no shell to do it itself.
+    image: alpine:3.22
+    command: ["chown", "65532:65532", "/data"]
+    volumes:
+      - landflow-mcp-gateway-data:/data
 
   text-toolkit:
     <<: *plugin
@@ -229,3 +264,4 @@ networks:
 
 volumes:
   landflow-data:
+  landflow-mcp-gateway-data:

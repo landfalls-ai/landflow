@@ -45,7 +45,7 @@ describe('manifest', () => {
   function check(manifest: PluginManifest) {
     expect(manifestSchema.safeParse(manifest).success).toBe(true);
     expect(manifest.plugin).toMatchObject({ id: 'messaging', name: 'Messaging', color: '#229ED9', language: 'typescript' });
-    expect(manifest.nodes.map((n) => n.name)).toEqual(['telegram', 'telegramTrigger', 'slack', 'discord', 'whatsApp', 'emailSend']);
+    expect(manifest.nodes.map((n) => n.name)).toEqual(['telegram', 'telegramTrigger', 'slack', 'discord', 'whatsApp', 'twilio', 'emailSend']);
     for (const icon of [manifest.plugin.icon, ...manifest.nodes.map((n) => n.icon), ...(manifest.credentialTypes ?? []).map((c) => c.icon)]) {
       expect(icon).toMatch(/^data:image\/svg\+xml;base64,/);
     }
@@ -56,6 +56,7 @@ describe('manifest', () => {
       ['discordBotApi', true],
       ['discordWebhookApi', true],
       ['whatsAppApi', true],
+      ['twilioApi', true],
       ['smtp', true],
     ]);
     for (const node of manifest.nodes) {
@@ -63,7 +64,25 @@ describe('manifest', () => {
       expect(node.documentationUrl).toMatch(/^https:\/\//);
       expect(node.color).toMatch(/^#[0-9A-F]{6}$/i);
       expect(node.usableAsTool ?? false).toBe(node.kind === 'action');
+      // Every action node is at most once over a broker unless an operation opts in (docs/transports.md delivery rules).
+      if (node.kind === 'action') expect(node.idempotent).toBe(false);
     }
+    const idempotentOperations = manifest.nodes.flatMap((n) =>
+      n.properties.filter((p) => p.name === 'operation').flatMap((p) => (p.options ?? []).filter((o) => o.idempotent === true).map((o) => `${n.name}.${o.value}`)),
+    );
+    expect(idempotentOperations).toEqual([
+      'telegram.get',
+      'telegram.get',
+      'slack.getAll',
+      'slack.getByEmail',
+      'slack.get',
+      'slack.getPermalink',
+      'discord.getAll',
+      'twilio.get',
+      'twilio.list',
+      'twilio.get',
+      'twilio.list',
+    ]);
     // Every secret field is masked.
     for (const type of manifest.credentialTypes ?? []) {
       for (const property of type.properties) {
