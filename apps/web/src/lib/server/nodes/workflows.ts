@@ -15,7 +15,7 @@ import { store } from '../store';
 import { cancelSubExecutions, capInlineOutputs, childFailure, eachOutput, finishedEntry, type EachChild, type EachWait } from '../sub-executions';
 
 const main = [{ type: 'main' as const }];
-const WORKFLOW_TRIGGER = 'core.workflowTrigger';
+export const WORKFLOW_TRIGGER = 'core.workflowTrigger';
 const TRIGGER_NAME = 'When Called by a Workflow or Agent';
 /** "Run Once for Each Item" with waiting: how many sub-executions run at once unless the node says otherwise. */
 export const EACH_CONCURRENCY = 4;
@@ -30,7 +30,7 @@ interface TriggerField {
 /** n8n stores the workflow as a resource locator (`{ __rl, value, mode }`); Landflow as the id. */
 const workflowIdOf = (value: unknown) => String((value && typeof value === 'object' ? (value as { value?: unknown }).value : value) ?? '').trim();
 
-const triggerOf = (workflow: Workflow): WorkflowNode | undefined => workflow.nodes.find((n) => n.type === WORKFLOW_TRIGGER && !n.disabled);
+export const triggerOf = (workflow: Workflow): WorkflowNode | undefined => workflow.nodes.find((n) => n.type === WORKFLOW_TRIGGER && !n.disabled);
 
 const triggerFields = (trigger: WorkflowNode | undefined): TriggerField[] =>
   ((trigger?.parameters.inputs as { fields?: TriggerField[] } | undefined)?.fields ?? []).filter((f) => f.name?.trim());

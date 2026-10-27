@@ -79,7 +79,7 @@ describe('authentication', () => {
     expect((await fetch(`${runner.url}/v1/info`)).status).toBe(401);
     const info = await (await fetch(`${runner.url}/v1/info`, { headers: { [SECRET_HEADER]: SECRET } })).json();
     expect(info.languages.javascript.version).toMatch(/^v\d+/);
-    expect(info.limits).toEqual(LIMITS);
+    expect(info.limits).toEqual({ ...LIMITS, maxBinaryBytes: 6 * 1024 * 1024 });
     expect(info.isolation.guards).toBe(true);
   });
 
@@ -444,5 +444,106 @@ describe('availability', () => {
     } finally {
       await noPython.close();
     }
+  });
+});
+
+describe('node references and files', () => {
+  const b64 = (text: string) => Buffer.from(text).toString('base64');
+  const fileItems = [
+    { json: { n: 0 }, binary: { data: { mimeType: 'text/plain', fileName: 'a.txt', fileSize: 5, id: 'x' } } },
+    { json: { n: 1 }, binary: { data: { mimeType: 'text/plain', fileName: 'b.txt', fileSize: 3, id: 'y' }, other: { mimeType: 'text/plain', fileName: 'c.txt', fileSize: 1, id: 'z' } } },
+  ];
+  const files = { '0:data': b64('hello'), '1:data': b64('abc'), '1:other': b64('!') };
+
+  it('has isExecuted, itemMatching, last, .binary and $node[...].json in JavaScript', async () => {
+    const result = await ok({
+      ...context,
+      code: `return {
+  executed: $('Customers').isExecuted,
+  notExecuted: $('Nowhere').isExecuted,
+  matching: $('Customers').itemMatching(1).json.id,
+  last: $('Customers').last().json.id,
+  legacy: $node['Customers'].json.id,
+  legacyItems: $node.Customers.items.length,
+  inputExecuted: $input.isExecuted,
+};`,
+    });
+    expect(result.items[0].json).toEqual({ executed: true, notExecuted: false, matching: 'c2', last: 'c3', legacy: 'c1', legacyItems: 3, inputExecuted: true });
+    const noMatch = await failed({ ...context, code: "return $('Customers').itemMatching(9);" });
+    expect(noMatch.error.message).toBe('Node "Customers" has no item matching input item 9');
+    const missing = await failed({ ...context, code: "return $('Nowhere').first();" });
+    expect(missing.error.message).toBe('Node "Nowhere" has not run yet (or produced no output)');
+  });
+
+  it.skipIf(!hasPython)('has is_executed, item_matching, last and .binary in Python', async () => {
+    const result = await ok({
+      ...context,
+      language: 'python',
+      code: `return {
+    'executed': _('Customers').is_executed,
+    'notExecuted': _('Nowhere').isExecuted,
+    'matching': _('Customers').item_matching(1).json.id,
+    'last': _('Customers').last().json.id,
+    'inputExecuted': _input.is_executed,
+}`,
+    });
+    expect(result.items[0].json).toEqual({ executed: true, notExecuted: false, matching: 'c2', last: 'c3', inputExecuted: true });
+  });
+
+  it('reads input files and creates files in JavaScript', async () => {
+    const result = await ok({
+      items: fileItems,
+      binary: files,
+      mode: 'each',
+      code: `const meta = $input.item.binary.data;
+const buffer = await this.helpers.getBinaryDataBuffer($itemIndex, 'data');
+const out = await this.helpers.prepareBinaryData(Buffer.from(buffer.toString().toUpperCase()), 'up-' + meta.fileName, 'text/plain');
+return { json: { name: meta.fileName, text: buffer.toString(), isBuffer: Buffer.isBuffer(buffer) }, binary: { data: out } };`,
+    });
+    expect(result.items.map((item) => item.json)).toEqual([
+      { name: 'a.txt', text: 'hello', isBuffer: true },
+      { name: 'b.txt', text: 'abc', isBuffer: true },
+    ]);
+    expect(result.items[0].binary).toEqual({ data: { data: b64('HELLO'), mimeType: 'text/plain', fileName: 'up-a.txt', fileExtension: 'txt', fileSize: 5 } });
+    const other = await ok({ items: fileItems, binary: files, code: "return [{ json: { t: (await this.helpers.getBinaryDataBuffer(1, 'other')).toString() } }];" });
+    expect(other.items[0].json).toEqual({ t: '!' });
+  });
+
+  it('explains a missing, skipped or unsent file and enforces the creation cap in JavaScript', async () => {
+    expect((await failed({ items: fileItems, binary: files, code: "return await this.helpers.getBinaryDataBuffer(0, 'nope');" })).error.message).toBe(
+      'Item 0 has no binary file "nope" (its files: data)',
+    );
+    expect((await failed({ items: fileItems, binary: {}, code: "return await this.helpers.getBinaryDataBuffer(0, 'data');" })).error.message).toContain('were not sent');
+    expect(
+      (await failed({ items: fileItems, binary: {}, binarySkipped: { '0:data': 'too big for the cap' }, code: "return await this.helpers.getBinaryDataBuffer(0, 'data');" })).error.message,
+    ).toBe('too big for the cap');
+    const capped = await failed({ maxBinaryBytes: 10, code: "await this.helpers.prepareBinaryData(Buffer.alloc(6), 'a.bin');\nawait this.helpers.prepareBinaryData(Buffer.alloc(6), 'b.bin');\nreturn 1;" });
+    expect(capped.error.message).toBe('Files created by the code are over the 0 MB limit (12 bytes so far)');
+    // The runner's own cap wins over a larger request.
+    const huge = await failed({ maxBinaryBytes: 1e12, code: "return await this.helpers.prepareBinaryData(Buffer.alloc(7 * 1024 * 1024), 'big.bin');" });
+    expect(huge.error.message).toContain('over the 6 MB limit');
+  });
+
+  it.skipIf(!hasPython)('reads input files and creates files in Python', async () => {
+    const result = await ok({
+      language: 'python',
+      mode: 'each',
+      items: fileItems,
+      binary: files,
+      code: `meta = _input.item.binary['data']
+data = _helpers.get_binary_data_buffer(_itemIndex, 'data')
+out = _helpers.prepare_binary_data(data.upper(), 'up-' + meta['fileName'], 'text/plain')
+return {'json': {'name': meta.fileName, 'text': data.decode(), 'type': type(data).__name__}, 'binary': {'data': out}}`,
+    });
+    expect(result.items.map((item) => item.json)).toEqual([
+      { name: 'a.txt', text: 'hello', type: 'bytes' },
+      { name: 'b.txt', text: 'abc', type: 'bytes' },
+    ]);
+    expect(result.items[1].binary).toEqual({ data: { data: b64('ABC'), mimeType: 'text/plain', fileName: 'up-b.txt', fileExtension: 'txt', fileSize: 3 } });
+    const missing = await failed({ language: 'python', items: fileItems, binary: files, code: "return _helpers.get_binary_data_buffer(0, 'nope')" });
+    expect(missing.error).toMatchObject({ name: 'KeyError', line: 1 });
+    const capped = await failed({ language: 'python', maxBinaryBytes: 10, code: "_helpers.prepare_binary_data(b'x' * 6)\n_helpers.prepare_binary_data(b'x' * 6)" });
+    expect(capped.error.message).toContain('limit');
+    expect(capped.error.line).toBe(2);
   });
 });

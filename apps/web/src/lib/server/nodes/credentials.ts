@@ -49,6 +49,33 @@ export const openAiApiCredential = defineCredentialType({
   },
 });
 
+export const cohereApiCredential = defineCredentialType({
+  name: 'cohereApi',
+  displayName: 'Cohere API',
+  description: 'A Cohere API key for the Cohere Reranker. Cohere-compatible servers (vLLM, Jina, gateways) work with their own Base URL.',
+  icon: 'lucide:arrow-down-wide-narrow',
+  documentationUrl: 'https://dashboard.cohere.com/api-keys',
+  properties: [
+    { name: 'apiKey', displayName: 'API Key', type: 'string', default: '', typeOptions: { password: true }, description: 'Leave empty for compatible servers that need none' },
+    { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: 'https://api.cohere.com', description: 'The API root; /v2/rerank is added to it' },
+  ],
+  async test(data, ctx) {
+    const base = String(data.baseUrl || 'https://api.cohere.com').replace(/\/+$/, '');
+    try {
+      const response = await ctx.http(`${base}/v2/rerank`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(data.apiKey && { authorization: `Bearer ${String(data.apiKey)}` }) },
+        body: JSON.stringify({ model: 'rerank-v3.5', query: 'ping', documents: ['pong'], top_n: 1 }),
+      });
+      if (response.status === 401 || response.status === 403) return { ok: false, message: `${base} refused the API key (${response.status})` };
+      // An unknown model or a thin body (400, 404, 422) still means the server is there and took the key.
+      return response.ok || [400, 404, 422].includes(response.status) ? { ok: true, message: `Connected to ${base}` } : { ok: false, message: `${base} answered ${response.status}` };
+    } catch (error) {
+      return { ok: false, message: `Can’t reach ${base}: ${(error as Error).message}` };
+    }
+  },
+});
+
 export const anthropicApiCredential = defineCredentialType({
   name: 'anthropicApi',
   displayName: 'Anthropic API',

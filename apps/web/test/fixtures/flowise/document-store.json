@@ -1,0 +1,11 @@
+{
+  "id": "store-9",
+  "name": "Product manuals",
+  "description": "PDF manuals",
+  "status": "UPSERTED",
+  "loaders": [
+    { "id": "a", "loaderId": "pdfFile", "loaderName": "Manual", "loaderConfig": { "metadata": "{\"kind\":\"manual\"}" }, "splitterId": "tokenTextSplitter", "splitterName": "Token Splitter", "splitterConfig": { "chunkSize": 400, "chunkOverlap": 40 } }
+  ],
+  "vectorStoreConfig": { "name": "chroma", "config": { "collectionName": "manuals" } },
+  "embeddingConfig": { "name": "ollamaEmbedding", "config": { "modelName": "nomic-embed-text", "baseUrl": "http://localhost:11434" } }
+}

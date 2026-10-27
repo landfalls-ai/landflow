@@ -11,6 +11,8 @@ import {
   type JsonValue,
   type NodeItem,
   type NodeMetrics,
+  type PropertyDescriptor,
+  type GetCredentials,
   type Span,
   type SpanFunction,
   type TracedFetch,
@@ -91,6 +93,20 @@ export function networkReason(error: unknown): string {
 export function baseUrl(value: unknown, fallback: string): string {
   const url = typeof value === 'string' && value.trim() ? value.trim() : fallback;
   return url.replace(/\/+$/, '');
+}
+
+/** The OAuth2 credential types' shared fields: the host's generic type (`oAuth2Api`) merged over what a plugin type declares. */
+export const oauth2Hidden = (name: string, displayName: string, value: string): PropertyDescriptor => ({ name, displayName, type: 'hidden', default: value });
+
+/**
+ * The credential for a node that accepts a token type or its OAuth2 variant (n8n's "Authentication" switch). The
+ * `authentication` parameter picks one; when only the other was sent (a picker inside a collection or a load-options
+ * call does not see the parameter) that one is used. An OAuth2 credential arrives with a fresh `accessToken` on
+ * every call (the host refreshes it before expiry and renews it after a 401), so nothing here caches a token.
+ */
+export function pickCredentials<T extends JsonObject>(ctx: { getCredentials: GetCredentials }, authentication: unknown, token: string, oauth2: string): T {
+  const [want, other] = authentication === 'oAuth2' ? [oauth2, token] : [token, oauth2];
+  return ctx.getCredentials<T>(want, { optional: true }) ?? ctx.getCredentials<T>(other, { optional: true }) ?? ctx.getCredentials<T>(want);
 }
 
 /** A `json` parameter: the editor stores text, expressions may produce objects. Empty means "not set". */

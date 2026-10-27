@@ -1,6 +1,8 @@
-/** Evaluations: offline runs over a Data Table (./runner, ./dataset), metrics (./metrics), online grading (./online), storage (./store). */
+/** Evaluations: offline runs over a Data Table or an uploaded file (./runner, ./dataset, ./files), schedules (./schedule), alerts (./alerts), metrics (./metrics), online grading (./online), storage (./store). */
 export { EVALUATION_NODE, EVALUATION_TRIGGER, evaluationTriggerOf } from './dataset';
-export { cancelEvaluation, compareRuns, deleteEvaluation, evaluationDetail, evaluationDone, EvaluationError, evaluationsOverview, startEvaluation, summarizeMetrics } from './runner';
+export { cancelEvaluation, compareRuns, deleteEvaluation, evaluationDetail, evaluationDone, EvaluationError, evaluationsOverview, startEvaluation, startEvaluationRun, summarizeMetrics } from './runner';
+export { checkSchedule, evaluationSchedules, nextRun } from './schedule';
+export { DatasetFileError, parseDatasetText, readDatasetFile, removeDatasetFile, saveDatasetFile } from './files';
 export {
   agentTarget,
   gradeAgentSession,

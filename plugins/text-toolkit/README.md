@@ -8,6 +8,15 @@ pnpm --filter @landflow/plugin-text-toolkit start   # HTTP :7101 (MCP at /mcp), 
 pnpm --filter @landflow/plugin-text-toolkit test
 ```
 
+## Files (binary data)
+
+Two nodes work with `item.binary` (docs/protocol.md §11):
+
+| Node | Option | What it does |
+|---|---|---|
+| **Render Template** (`template`) | Also Output as File: Binary Field (`data`), File Name (`rendered.txt`), MIME Type (`text/plain`) | Stores the rendered text as a UTF-8 file next to the JSON output field; the item's other files stay. Attach it to an email or upload it |
+| **Regex Extract** (`regexExtract`) | Text From: **Binary File**, Input Binary Field (`data`) | Matches against a text file of the item (UTF-8, byte order mark dropped) instead of a JSON field; "One Item per Match" works as before |
+
 ## Transports
 
 By default the plugin serves HTTP and gRPC and announces both to the host. To add a broker, name its kind in `LANDFLOW_TRANSPORTS`

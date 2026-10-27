@@ -182,7 +182,9 @@ function NodeToolDialog({
   onSave,
   onClose,
   onBack,
+  agentId,
 }: {
+  agentId: string;
   tool: NodeToolConfig;
   info?: NodeTypeInfo;
   onSave: (tool: NodeToolConfig) => void;
@@ -290,6 +292,7 @@ function NodeToolDialog({
                   values={value.parameters}
                   onChange={(parameters) => set({ parameters })}
                   credentials={value.credentials}
+                  scope={{ agentId }}
                   fromAI
                 />
               </div>
@@ -786,6 +789,7 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       {dialog?.kind === 'node' && (
         <NodeToolDialog
           key={dialog.tool.id}
+          agentId={agentId}
           tool={dialog.tool}
           info={nodeTypes?.[dialog.tool.nodeType]}
           onSave={save}
@@ -806,7 +810,7 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       {dialog?.kind === 'mcp' && (
         <McpServerDialog key={dialog.tool?.id ?? 'new'} tool={dialog.tool} info={nodeTypes?.[MCP_CLIENT_TOOL]} onSave={save} onClose={() => setDialog(null)} />
       )}
-      {dialog?.kind === 'knowledge' && <KnowledgeDialog key={dialog.tool?.id ?? 'new'} tool={dialog.tool} onSave={save} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'knowledge' && <KnowledgeDialog key={dialog.tool?.id ?? 'new'} agentId={agentId} tool={dialog.tool} onSave={save} onClose={() => setDialog(null)} />}
     </>
   );
 }

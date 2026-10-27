@@ -6,7 +6,7 @@ The job arrives as JSON on stdin; answers go out as JSON lines on fd 3, so nothi
 {"type": "log", ...} per printed line, then one {"type": "result", "items": [...]} or {"type": "error", "error": {...}}.
 
 The snippet becomes the body of a function, so a bare `return` works as in n8n, and keeps its own line numbers.
-Globals follow n8n's Python Code node: _input (all/first/last/item), _json, _items, _item, _('Node'), _vars,
+Globals follow n8n's Python Code node: _input (all/first/last/item/item_matching), _json, _helpers (files), _items, _item, _('Node'), _vars,
 _execution, _workflow, _now, _today, _itemIndex. Items are dicts that also allow attribute access
 (item.json.name as well as item["json"]["name"]).
 
@@ -16,6 +16,7 @@ sandbox and limits the runner applies, and in Docker the container, are what act
 """
 
 import ast
+import base64
 import datetime
 import decimal
 import io
@@ -98,11 +99,19 @@ class Obj(dict):
 
 
 class Accessor:
-    """_input and _('Node'): all(), first(), last(), and .item / .json following the current item."""
+    """_input and _('Node'): all(), first(), last(), item_matching(i), and .item / .json / .binary following the
+    current item. `items` None is a node that hasn't run: is_executed is False and reading anything else raises."""
 
-    def __init__(self, items, current):
-        self._items = items
+    def __init__(self, name, items, current):
+        self._name = name
+        self._list = items
         self._current = current
+
+    @property
+    def _items(self):
+        if self._list is None:
+            raise KeyError(f'Node "{self._name}" has not run yet (or produced no output)')
+        return self._list
 
     def all(self):
         return self._items
@@ -113,18 +122,89 @@ class Accessor:
     def last(self):
         return self._items[-1] if self._items else None
 
+    def item_matching(self, index):
+        items = self._items
+        if not 0 <= index < len(items):
+            raise IndexError(f'Node "{self._name}" has no item matching input item {index}')
+        return items[index]
+
+    itemMatching = item_matching
+
     @property
     def item(self):
+        items = self._items
         index = self._current()
-        return self._items[index] if 0 <= index < len(self._items) else self.first()
+        return items[index] if 0 <= index < len(items) else self.first()
 
     @property
     def json(self):
         item = self.item
         return item.get('json') if item is not None else None
 
-    is_executed = True
-    isExecuted = True
+    @property
+    def binary(self):
+        item = self.item
+        return item.get('binary') if item is not None else None
+
+    @property
+    def is_executed(self):
+        return self._list is not None
+
+    isExecuted = is_executed
+
+
+class Helpers:
+    """_helpers: the input files the host sent (bytes) and files created, as base64 for the host to store."""
+
+    def __init__(self, items, files, skipped, limit):
+        self._items = items
+        self._files = files
+        self._skipped = skipped
+        self._limit = limit
+        self._created = 0
+
+    def assert_binary_data(self, item_index, property_name='data'):
+        item = self._items[item_index] if 0 <= item_index < len(self._items) else None
+        ref = (item.get('binary') or {}).get(property_name) if item is not None else None
+        if not isinstance(ref, dict):
+            available = list((item.get('binary') or {}).keys()) if item is not None else []
+            hint = f" (its files: {', '.join(available)})" if available else ''
+            raise KeyError(f'Item {item_index} has no binary file "{property_name}"{hint}')
+        return ref
+
+    def get_binary_data_buffer(self, item_index, property_name='data'):
+        self.assert_binary_data(item_index, property_name)
+        key = f'{item_index}:{property_name}'
+        if key in self._skipped:
+            raise ValueError(self._skipped[key])
+        if key not in self._files:
+            raise KeyError(f'The bytes of item {item_index}\'s file "{property_name}" were not sent to the code sandbox')
+        return base64.b64decode(self._files[key])
+
+    def prepare_binary_data(self, data, file_name=None, mime_type=None):
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        elif isinstance(data, (bytearray, memoryview)):
+            data = bytes(data)
+        elif not isinstance(data, bytes):
+            raise TypeError('prepare_binary_data needs bytes, a bytearray or a str')
+        self._created += len(data)
+        if self._created > self._limit:
+            raise ValueError(f'Files created by the code are over the {self._limit / 1024 / 1024:.1f} MB limit ({self._created} bytes so far)'.replace('.0 MB', ' MB'))
+        ref = Obj({'data': base64.b64encode(data).decode('ascii')})
+        if mime_type:
+            ref['mimeType'] = mime_type
+        if file_name:
+            ref['fileName'] = file_name
+            extension = os.path.splitext(file_name)[1].lstrip('.')
+            if extension and extension.isalnum() and len(extension) <= 10:
+                ref['fileExtension'] = extension.lower()
+        ref['fileSize'] = len(data)
+        return ref
+
+    getBinaryDataBuffer = get_binary_data_buffer
+    prepareBinaryData = prepare_binary_data
+    assertBinaryData = assert_binary_data
 
 
 # --------------------------------------------------------------------------------------------- guards
@@ -306,13 +386,14 @@ def main():
     now = datetime.datetime.now(zone)
 
     def node_output(name):
-        if name not in outputs:
-            raise KeyError(f'Node "{name}" has not run yet (or produced no output)')
-        return Accessor(outputs[name], lambda: current[0])
+        return Accessor(name, outputs[name] if name in outputs else None, lambda: current[0])
+
+    limit = job.get('maxBinaryBytes') or float('inf')
 
     namespace = {
         '__name__': '__landflow__',
-        '_input': Accessor(items, lambda: current[0]),
+        '_input': Accessor(None, items, lambda: current[0]),
+        '_helpers': Helpers(items, job.get('binary') or {}, job.get('binarySkipped') or {}, limit),
         '_items': items,
         '_': node_output,
         '_vars': Obj(job.get('variables') or {}),

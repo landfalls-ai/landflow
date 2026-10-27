@@ -50,6 +50,7 @@ export function configOf(source: Agent | AgentConfig): AgentConfig {
     channels: source.channels ?? [],
     memory: { crossSession: Boolean(source.memory?.crossSession) },
     settings: { ...DEFAULT_AGENT_SETTINGS, ...source.settings },
+    ...(source.guardrails && ((source.guardrails.input || source.guardrails.output) ? { guardrails: source.guardrails } : {})),
   };
 }
 

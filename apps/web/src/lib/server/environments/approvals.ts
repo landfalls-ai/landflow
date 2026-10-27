@@ -56,8 +56,15 @@ interface Data {
 /** A stored preview stays under this size: past it, diffs are left out. */
 const MAX_PREVIEW = 1_000_000;
 
-/** Whether a promotion needs a second person now. */
+/** Whether the instance asks every promotion for a second person (Settings → Governance). */
 export const promotionApprovalRequired = () => fourEyesApplies('publish');
+
+/**
+ * Whether a previewed promotion needs a second person: the instance asks for four-eyes, or it changes a workflow whose
+ * own policy or project asks for it (project settings `fourEyes`, the workflow's policy).
+ */
+export const promotionNeedsApproval = (preview: Pick<PromotionResult, 'entries'>): boolean =>
+  promotionApprovalRequired() || preview.entries.some((e) => e.status !== 'unchanged' && store.getWorkflow(e.id) && fourEyesApplies('publish', e.id));
 
 const rowOf = (id: string) => database().get<Row>('SELECT * FROM promotion_requests WHERE id = ?', id);
 const save = (row: Row) => database().upsert('promotion_requests', { ...row });

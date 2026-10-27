@@ -4,6 +4,7 @@
  *   LANDFLOW_CODE_RUNNER_URL      http://127.0.0.1:53300 (the Docker runner from the Mac), http://code-runner:7300 (in compose)
  *   LANDFLOW_CODE_RUNNER_SECRET   the runner's CODE_RUNNER_SECRET
  *   LANDFLOW_CODE_IN_PROCESS      `false`: no in-process JavaScript (node:vm) on this host at all
+ *   LANDFLOW_CODE_BINARY_MAX_BYTES  files a Code node reads (all together) and creates, either path (default 6 MiB)
  *
  * Read on every run. With a runner configured the sandbox is the default for JavaScript; Python always needs it.
  */
@@ -24,16 +25,20 @@ export interface CodeRunnerSettings {
   inProcess: boolean;
   /** How long the host waits for an answer (the runner's own timeout is shorter). */
   timeoutMs: number;
+  /** Bytes of files the code reads or creates (`this.helpers`), each way; the runner applies its own cap too. */
+  binaryMaxBytes: number;
 }
 
 export function codeRunnerSettings(env: NodeJS.ProcessEnv = process.env): CodeRunnerSettings {
   const url = env.LANDFLOW_CODE_RUNNER_URL?.trim().replace(/\/+$/, '');
   const timeout = Number(env.LANDFLOW_EXECUTE_TIMEOUT_MS);
+  const binaryMax = Number(env.LANDFLOW_CODE_BINARY_MAX_BYTES);
   return {
     ...(url && { url }),
     ...(env.LANDFLOW_CODE_RUNNER_SECRET && { secret: env.LANDFLOW_CODE_RUNNER_SECRET }),
     inProcess: !['false', '0', 'off', 'no'].includes((env.LANDFLOW_CODE_IN_PROCESS ?? '').trim().toLowerCase()),
     timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : 120_000,
+    binaryMaxBytes: Number.isFinite(binaryMax) && binaryMax > 0 ? binaryMax : 6 * 1024 * 1024,
   };
 }
 
@@ -89,6 +94,11 @@ export function nodesReferenced(code: string, language: Language, available: str
     }
   }
   return [...names];
+}
+
+/** Whether the code reads input files, so the host loads their bytes (JavaScript and Python helper names). */
+export function readsBinary(code: string): boolean {
+  return /getBinaryDataBuffer|get_binary_data_buffer/.test(code);
 }
 
 /** n8n's format: "TypeError: x is not a function [line 3, for item 1]"; limits keep their own message. */

@@ -1,7 +1,9 @@
 /**
  * The Coordinator on Valkey (or Redis 7+). Keys live under `<prefix>:`:
  *
- * - `jobs`: the job stream, consumed by the `workers` group (one consumer per worker process);
+ * - `jobs`, `jobs:high`, `jobs:low`: the job streams by priority (normal, high, low), each consumed by the `workers` group (one
+ *   consumer per worker process); a worker reads high first and takes a low job after every LOW_EVERY others (./coordinator).
+ *   Delivery ids of the other two carry a prefix (`h|`, `l|`) that says which stream they belong to;
  * - `k:<key>`: leases, claims and markers with a time to live;
  * - `leader` (`<id>|<token>`, with a TTL) and `leader:epoch` (the fencing token counter);
  * - `slots:<workflowId>` / `fifo:<workflowId>`: sorted sets of the runs holding a concurrency slot (score: lease
@@ -14,13 +16,17 @@
  *
  * High availability: with Sentinel (LANDFLOW_VALKEY_SENTINELS) every connection of this coordinator (commands,
  * pub/sub, blocking reads) asks the sentinels for the primary, and all of them reconnect when the sentinels announce a
- * failover (`+switch-master`). Valkey Cluster is not supported: the job stream is one key (so one shard), and the
- * scripts above touch several keys at once (leader + epoch, slots + FIFO, instances + their info), which Cluster only
- * allows within one hash slot, so every key would share one hash tag and live on one node anyway (README).
+ * failover (`+switch-master`).
+ *
+ * Valkey Cluster (LANDFLOW_VALKEY_CLUSTER): the job stream is one key and the scripts above touch several keys at once
+ * (leader + epoch, slots + FIFO, instances + their info), which Cluster only allows within one hash slot, so the prefix
+ * becomes a hash tag (`{landflow}:jobs`, `{landflow}:k:…`): every key lives on the one node that owns that slot, and the
+ * connections (commands, pub/sub, blocking reads) go to that node, ask the cluster again on MOVED / CLUSTERDOWN and follow
+ * its failovers. That makes managed cluster-mode Valkey work; it can't scale the queue out (README).
  */
 import { createHash } from 'node:crypto';
-import type { AdmitResult, Coordinator, Delivery, InstanceInfo, Leadership, QueueJob, SlotRule } from './coordinator';
-import { askSentinels, RespClient, RespError, type RespAddress, type RespArg, type RespOptions, type RespValue, type SentinelOptions } from './resp';
+import { priorityOrder, type AdmitResult, type Coordinator, type Delivery, type InstanceInfo, type Leadership, type QueueJob, type SlotRule } from './coordinator';
+import { askCluster, askSentinels, hashSlot, parseValkeyUrl, RespClient, RespError, type RespAddress, type RespArg, type RespOptions, type RespValue, type SentinelOptions, type ClusterOptions } from './resp';
 
 const GROUP = 'workers';
 const NOW = `local t = redis.call('TIME') local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)`;
@@ -102,7 +108,13 @@ const SCRIPTS = {
 type ScriptName = keyof typeof SCRIPTS;
 const SHA = Object.fromEntries(Object.entries(SCRIPTS).map(([name, body]) => [name, createHash('sha1').update(body).digest('hex')])) as Record<ScriptName, string>;
 
-function parseEntries(entries: RespValue): Delivery[] {
+type Priority = 'high' | 'normal' | 'low';
+const PREFIX: Record<Priority, string> = { high: 'h|', normal: '', low: 'l|' };
+const SUFFIX: Record<Priority, string> = { high: ':high', normal: '', low: ':low' };
+const PRIORITIES: Priority[] = ['high', 'normal', 'low'];
+const priorityOfId = (id: string): { priority: Priority; raw: string } => (id.startsWith('h|') ? { priority: 'high', raw: id.slice(2) } : id.startsWith('l|') ? { priority: 'low', raw: id.slice(2) } : { priority: 'normal', raw: id });
+
+function parseEntries(entries: RespValue, priority: Priority = 'normal'): Delivery[] {
   if (!Array.isArray(entries)) return [];
   const out: Delivery[] = [];
   for (const entry of entries) {
@@ -111,7 +123,7 @@ function parseEntries(entries: RespValue): Delivery[] {
     const index = fields.findIndex((value, i) => i % 2 === 0 && value === 'job');
     if (index < 0) continue;
     try {
-      out.push({ id: String(entry[0]), job: JSON.parse(String(fields[index + 1])) as QueueJob });
+      out.push({ id: PREFIX[priority] + String(entry[0]), job: JSON.parse(String(fields[index + 1])) as QueueJob });
     } catch {
       // A malformed entry: skipped (and left for its consumer's pending list).
     }
@@ -126,18 +138,28 @@ export class ValkeyCoordinator implements Coordinator {
   private blocking?: RespClient;
   /** Sentinel: a connection to one of the sentinels that hears failovers. */
   private readonly watcher?: RespClient;
-  private readonly connection: Pick<RespOptions, 'resolve' | 'primaryOnly'>;
+  private readonly connection: Pick<RespOptions, 'resolve' | 'primaryOnly' | 'cluster'>;
+  /** The key prefix (in cluster mode wrapped in a hash tag). */
+  private readonly prefix: string;
   private groupReady?: Promise<void>;
-  private claimCursor = '0-0';
+  private readonly claimCursors: Record<Priority, string> = { high: '0-0', normal: '0-0', low: '0-0' };
+  /** Jobs taken since the last low-priority one (priorityOrder). */
+  private sinceLow = 0;
 
   constructor(
     private readonly url: string,
-    private readonly prefix: string,
+    prefix: string,
     private readonly name = 'landflow',
-    options: { sentinel?: SentinelOptions } = {},
+    options: { sentinel?: SentinelOptions; cluster?: Pick<ClusterOptions, 'nodes' | 'natMap'> } = {},
   ) {
-    const { sentinel } = options;
-    this.connection = sentinel ? { resolve: () => askSentinels(sentinel), primaryOnly: true } : {};
+    const { sentinel, cluster } = options;
+    this.prefix = cluster ? `{${prefix}}` : prefix;
+    if (cluster) {
+      const { username, password, tls } = parseValkeyUrl(url);
+      const seeds: ClusterOptions = { nodes: [...cluster.nodes], natMap: cluster.natMap, username, password, tls };
+      const slot = hashSlot(this.prefix);
+      this.connection = { resolve: () => askCluster(seeds, slot), primaryOnly: true, cluster: true };
+    } else this.connection = sentinel ? { resolve: () => askSentinels(sentinel), primaryOnly: true } : {};
     this.cmd = new RespClient({ url, name: `${name}:cmd`, ...this.connection });
     this.sub = new RespClient({ url, name: `${name}:sub`, subscriber: true, timeoutMs: 10_000, ...this.connection });
     if (sentinel) this.watcher = this.watchFailovers(sentinel);
@@ -173,8 +195,8 @@ export class ValkeyCoordinator implements Coordinator {
     return [this.prefix, ...parts].join(':');
   }
 
-  private get stream(): string {
-    return this.key('jobs');
+  private streamOf(priority: Priority): string {
+    return this.key(`jobs${SUFFIX[priority]}`);
   }
 
   /** Wait until the command connection is up (or fail after `timeoutMs`). */
@@ -192,10 +214,19 @@ export class ValkeyCoordinator implements Coordinator {
   }
 
   private ensureGroup(): Promise<void> {
-    this.groupReady ??= this.cmd.call('XGROUP', 'CREATE', this.stream, GROUP, '0', 'MKSTREAM').then(
+    this.groupReady ??= Promise.all(
+      PRIORITIES.map((priority) =>
+        this.cmd.call('XGROUP', 'CREATE', this.streamOf(priority), GROUP, '0', 'MKSTREAM').then(
+          () => undefined,
+          (error: Error) => {
+            if (error instanceof RespError && error.message.startsWith('BUSYGROUP')) return;
+            throw error;
+          },
+        ),
+      ),
+    ).then(
       () => undefined,
       (error: Error) => {
-        if (error instanceof RespError && error.message.startsWith('BUSYGROUP')) return;
         this.groupReady = undefined;
         throw error;
       },
@@ -219,45 +250,86 @@ export class ValkeyCoordinator implements Coordinator {
   // ---- job queue -------------------------------------------------------------
 
   async enqueue(job: QueueJob): Promise<string> {
-    return String(await this.cmd.call('XADD', this.stream, '*', 'job', JSON.stringify(job)));
+    const priority = job.priority ?? 'normal';
+    return PREFIX[priority] + String(await this.cmd.call('XADD', this.streamOf(priority), '*', 'job', JSON.stringify(job)));
+  }
+
+  /** What the streams gave, kept in the order they were asked in, and counted for the low-priority turn. */
+  private tally(taken: Delivery[]): Delivery[] {
+    for (const delivery of taken) this.sinceLow = priorityOfId(delivery.id).priority === 'low' ? 0 : this.sinceLow + 1;
+    return taken;
   }
 
   async take(consumer: string, count: number, blockMs: number): Promise<Delivery[]> {
+    // Whatever is waiting now, high priority first (a low job goes first after LOW_EVERY others).
+    const taken: Delivery[] = [];
+    for (const priority of priorityOrder(this.sinceLow)) {
+      if (taken.length >= count) break;
+      const reply = await this.withGroup(() => this.cmd.call('XREADGROUP', 'GROUP', GROUP, consumer, 'COUNT', count - taken.length, 'STREAMS', this.streamOf(priority), '>'));
+      if (Array.isArray(reply)) taken.push(...reply.flatMap((stream) => (Array.isArray(stream) ? parseEntries(stream[1], priority) : [])));
+    }
+    if (taken.length || blockMs <= 0) return this.tally(taken);
+    // Nothing: wait on all three streams for the first job (a few may arrive together: the surplus goes back).
     this.blocking ??= new RespClient({ url: this.url, name: `${this.name}:block`, timeoutMs: 0, ...this.connection });
     const blocking = this.blocking;
-    const reply = await this.withGroup(() => blocking.callWithTimeout(blockMs + 10_000, 'XREADGROUP', 'GROUP', GROUP, consumer, 'COUNT', count, 'BLOCK', blockMs, 'STREAMS', this.stream, '>'));
+    const reply = await this.withGroup(() =>
+      blocking.callWithTimeout(blockMs + 10_000, 'XREADGROUP', 'GROUP', GROUP, consumer, 'COUNT', count, 'BLOCK', blockMs, 'STREAMS', ...PRIORITIES.map((p) => this.streamOf(p)), ...PRIORITIES.map(() => '>')),
+    );
     if (!Array.isArray(reply)) return [];
-    return reply.flatMap((stream) => (Array.isArray(stream) ? parseEntries(stream[1]) : []));
+    const got = reply.flatMap((stream) => {
+      if (!Array.isArray(stream)) return [];
+      const priority = PRIORITIES.find((p) => this.streamOf(p) === String(stream[0])) ?? 'normal';
+      return parseEntries(stream[1], priority);
+    });
+    got.sort((a, b) => PRIORITIES.indexOf(priorityOfId(a.id).priority) - PRIORITIES.indexOf(priorityOfId(b.id).priority));
+    for (const extra of got.slice(count)) await this.requeue(extra);
+    return this.tally(got.slice(0, count));
   }
 
   async ack(id: string): Promise<void> {
-    await Promise.all([this.cmd.call('XACK', this.stream, GROUP, id), this.cmd.call('XDEL', this.stream, id)]);
+    const { priority, raw } = priorityOfId(id);
+    await Promise.all([this.cmd.call('XACK', this.streamOf(priority), GROUP, raw), this.cmd.call('XDEL', this.streamOf(priority), raw)]);
   }
 
   async touch(consumer: string, ids: string[]): Promise<void> {
     if (!ids.length) return;
-    await this.withGroup(() => this.cmd.call('XCLAIM', this.stream, GROUP, consumer, 0, ...ids, 'JUSTID'));
+    for (const priority of PRIORITIES) {
+      const raw = ids.map(priorityOfId).filter((entry) => entry.priority === priority).map((entry) => entry.raw);
+      if (raw.length) await this.withGroup(() => this.cmd.call('XCLAIM', this.streamOf(priority), GROUP, consumer, 0, ...raw, 'JUSTID'));
+    }
   }
 
   async claimStalled(consumer: string, minIdleMs: number, count: number): Promise<Delivery[]> {
-    const reply = await this.withGroup(() => this.cmd.call('XAUTOCLAIM', this.stream, GROUP, consumer, Math.floor(minIdleMs), this.claimCursor, 'COUNT', count));
-    if (!Array.isArray(reply)) return [];
-    this.claimCursor = String(reply[0] ?? '0-0');
-    // Entries deleted while pending: nothing to run, drop them from the pending list.
-    const deleted = Array.isArray(reply[2]) ? reply[2].map(String) : [];
-    if (deleted.length) await this.cmd.call('XACK', this.stream, GROUP, ...deleted).catch(() => {});
-    return parseEntries(reply[1]);
+    const taken: Delivery[] = [];
+    for (const priority of PRIORITIES) {
+      if (taken.length >= count) break;
+      const reply = await this.withGroup(() => this.cmd.call('XAUTOCLAIM', this.streamOf(priority), GROUP, consumer, Math.floor(minIdleMs), this.claimCursors[priority], 'COUNT', count - taken.length));
+      if (!Array.isArray(reply)) continue;
+      this.claimCursors[priority] = String(reply[0] ?? '0-0');
+      // Entries deleted while pending: nothing to run, drop them from the pending list.
+      const deleted = Array.isArray(reply[2]) ? reply[2].map(String) : [];
+      if (deleted.length) await this.cmd.call('XACK', this.streamOf(priority), GROUP, ...deleted).catch(() => {});
+      taken.push(...parseEntries(reply[1], priority));
+    }
+    return taken;
   }
 
   async requeue(delivery: Delivery): Promise<void> {
-    await this.cmd.call('XADD', this.stream, '*', 'job', JSON.stringify(delivery.job));
+    await this.enqueue(delivery.job);
     await this.ack(delivery.id);
   }
 
   async queueStats(): Promise<{ waiting: number; active: number }> {
-    const [length, pending] = await Promise.all([this.cmd.call('XLEN', this.stream), this.withGroup(() => this.cmd.call('XPENDING', this.stream, GROUP))]);
-    const active = Array.isArray(pending) ? Number(pending[0] ?? 0) : 0;
-    return { waiting: Math.max(0, Number(length ?? 0) - active), active };
+    let waiting = 0;
+    let active = 0;
+    for (const priority of PRIORITIES) {
+      const stream = this.streamOf(priority);
+      const [length, pending] = await Promise.all([this.cmd.call('XLEN', stream), this.withGroup(() => this.cmd.call('XPENDING', stream, GROUP))]);
+      const pend = Array.isArray(pending) ? Number(pending[0] ?? 0) : 0;
+      active += pend;
+      waiting += Math.max(0, Number(length ?? 0) - pend);
+    }
+    return { waiting, active };
   }
 
   // ---- keys ------------------------------------------------------------------

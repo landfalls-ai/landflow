@@ -35,12 +35,13 @@ import {
 import type { EvaluationRef } from '../shared/evaluations';
 import type { ExecutionMcpInfo, ExecutionRecord, ExecutionState, ExecutionSummary, FormCompletion, PausedState, RerunOf, RerunScope } from '../shared/types';
 import { executionScope, executionUsage, runInUsageScope } from './ai-usage';
+import { tagNodeCredentials } from './ai-usage/credential-id';
 import { notifyFailure } from './alerts/service';
 import { TriggerBuffers, triggerBuffers } from './trigger-buffers';
 import { auditCredentialUse } from './audit';
 import { currentActorId } from './auth/context';
 import { bus } from './bus';
-import { admission, hasFreeSlot, LIMITED_MODES, RunSkippedError } from './concurrency';
+import { admission, CAPPED_MODES, hasFreeSlot, LIMITED_MODES, maxRuns, priorityOf, queueOrder, RunSkippedError } from './concurrency';
 import { DuplicateRunError, findIdempotent, rememberIdempotent } from './idempotency';
 import { publishedVersionId } from './publications';
 import { workflowForCall } from './publish';
@@ -369,7 +370,9 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
   }
   // Queue mode: the key and the slot are claimed in Valkey, so two processes can't both take them (throws like below).
   const claimed = clusterActive() ? await preflight(options, isLimitedStart(options), newExecutionId) : undefined;
-  const admitted = claimed?.admitted ?? (isLimitedStart(options) ? admission(options.workflow.settings, slotCounts(options.workflow.id)) : ({ run: true } as const));
+  let admitted = claimed?.admitted ?? (isLimitedStart(options) ? admission(options.workflow.settings, slotCounts(options.workflow.id)) : ({ run: true } as const));
+  // The instance's run cap (LANDFLOW_MAX_RUNS, regular mode): a production run over it waits in the queue, where priorities order it.
+  if (!claimed && admitted.run && isLimitedStart(options) && overRunCap(options.mode)) admitted = { run: false, queue: true };
   if (!admitted.run && !admitted.queue) {
     recordRuntimeEvent('skipped', options.workflow.id);
     throw new RunSkippedError(options.workflow.id, admitted.reason);
@@ -550,7 +553,8 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
   let finished: ExecutionRecord;
   let checkpointed = false;
   // Token & cost tracking: every model call of this segment counts here, under the workflow's AI usage caps.
-  const usage = executionScope({ executionId, workflowId: workflow.id, settings: workflow.settings, previous: record.aiUsage });
+  // Caps per user count the runs a signed-in user started (record.startedBy: the editor's Execute, the API, chat), also after a Wait.
+  const usage = executionScope({ executionId, workflowId: workflow.id, settings: workflow.settings, previous: record.aiUsage, ...((record.startedBy ?? currentActorId()) && { userId: (record.startedBy ?? currentActorId())! }) });
   try {
     // $secrets in node parameters (Settings → External secrets): an engine-made text (an expression error) may quote a value.
     // Transports: the workflow's overrides of plugin policies apply to the plugin calls of this segment (settings `transports`).
@@ -565,7 +569,8 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       // Only credentials the workflow's project may use (lib/server/projects/credentials.ts).
       // Audit log: which credentials (ids, never values) the run used, once per node (lib/server/audit).
       // An MCP tool call's one-node workflow has no project: its endpoint already chose credentials the caller may use (lib/server/mcp/plugin-servers.ts).
-      resolveCredentials: (node, descriptor) => auditCredentialUse(executionId, workflow.id, node, record.mcp ? credentials.resolveFor(node, descriptor) : resolveWorkflowCredentials(workflow.id, node, descriptor)),
+      // The resolved objects are tagged with their credential's id: AI usage caps per credential (lib/server/ai-usage/credential-id.ts).
+      resolveCredentials: (node, descriptor) => tagNodeCredentials(node, auditCredentialUse(executionId, workflow.id, node, record.mcp ? credentials.resolveFor(node, descriptor) : resolveWorkflowCredentials(workflow.id, node, descriptor))),
       // $secrets in node parameters when Settings → External secrets allows it; their values are redacted like credentials'.
       ...parameterSecretOptions,
       // $vars: read fresh for every run, so a change in Settings applies to the next one.
@@ -575,6 +580,8 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       signal,
       // Queue mode: node rate limits count across all processes.
       ...(clusterActive() && { rateLimiter: clusterRateLimiter(coordinator) }),
+      // A rate limit set on a credential holds for every node and run that uses it.
+      credentialRateLimits: (node) => credentials.rateLimitsFor(node),
       onCheckpoint: (checkpoint) => {
         // The first checkpoint of a segment also keeps where it started and the `$('Node')` outputs it started with.
         const first = !checkpointed;
@@ -666,6 +673,19 @@ function isLimitedStart(options: RunOptions): boolean {
     !options.fromCheckpoint &&
     !options.bypassConcurrency
   );
+}
+
+/** Production runs this process runs now (the ones LANDFLOW_MAX_RUNS counts). */
+function cappedRunning(): number {
+  let running = 0;
+  for (const entry of live.values()) if (entry.limited && CAPPED_MODES.has(entry.record.mode)) running++;
+  return running;
+}
+
+/** Whether a start in `mode` finds the instance's run cap full. */
+function overRunCap(mode: ExecutionRecord['mode']): boolean {
+  const cap = maxRuns();
+  return cap > 0 && CAPPED_MODES.has(mode) && cappedRunning() >= cap;
 }
 
 /** A workflow's runs that take a slot now, its waiting runs and its queue. */
@@ -951,6 +971,8 @@ export function drainQueue(workflowId: string): number {
     void drainRemote(workflowId, startQueued);
     return 0;
   }
+  // An instance-wide run cap: queued runs of every workflow compete for the free places, higher priorities first.
+  if (maxRuns() > 0) return drainByPriority();
   const queue = store.executionsWithStatus('queued', workflowId);
   if (!queue.length) return 0;
   // The saved workflow's settings: a changed limit applies to the runs already queued.
@@ -959,6 +981,33 @@ export function drainQueue(workflowId: string): number {
   for (const record of queue) {
     if (live.has(record.executionId)) continue;
     if (!hasFreeSlot(settings, slotCounts(workflowId))) break;
+    // Synchronous up to runSegment's live.set(): the next round counts this run.
+    startQueued(record);
+    started++;
+  }
+  return started;
+}
+
+/**
+ * With LANDFLOW_MAX_RUNS: start the queued runs of all workflows that fit under the cap and their workflow's own limit, in
+ * the order of their priority setting and queue time (`queueOrder`: a high run overtakes older normal and low ones, but a low
+ * run that waited long enough still goes first).
+ */
+function drainByPriority(): number {
+  const queue = store
+    .executionsWithStatus('queued')
+    .filter((record) => !live.has(record.executionId))
+    .map((record) => {
+      const settings = store.getWorkflow(record.workflowId)?.settings ?? record.workflow?.settings;
+      return { record, settings, order: queueOrder(Date.parse(record.queued?.queuedAt ?? record.startedAt) || 0, priorityOf(settings)) };
+    })
+    .sort((a, b) => a.order - b.order);
+  let started = 0;
+  for (const { record, settings } of queue) {
+    if (!CAPPED_MODES.has(record.mode)) {
+      // Not counted by the cap (tool runs): only its workflow's own limit holds it.
+      if (!hasFreeSlot(settings, slotCounts(record.workflowId))) continue;
+    } else if (cappedRunning() >= maxRuns() || !hasFreeSlot(settings, slotCounts(record.workflowId))) continue;
     // Synchronous up to runSegment's live.set(): the next round counts this run.
     startQueued(record);
     started++;

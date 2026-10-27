@@ -19,7 +19,7 @@ import type { ExecutionEvent } from '@landflow/engine';
 import type { WorkflowSettings } from '@landflow/engine';
 import type { ExecutionRecord, ExecutionSummary } from '../../shared/types';
 import { bus } from '../bus';
-import { DEFAULT_QUEUE_SIZE, RunSkippedError, slotsOf, type Admission } from '../concurrency';
+import { DEFAULT_QUEUE_SIZE, priorityOf, RunSkippedError, slotsOf, type Admission } from '../concurrency';
 import { database } from '../db';
 import { refreshRows } from '../db/replication';
 import { summarize } from '../db/rows';
@@ -127,6 +127,7 @@ export async function dispatchSegment(segment: Segment): Promise<ExecutionRecord
     executionId: id,
     workflowId: workflow.id,
     expect: resume ? 'waiting' : 'queued',
+    ...(priorityOf(workflow.settings) !== 'normal' && { priority: priorityOf(workflow.settings) }),
     record,
     workflow,
     engine,

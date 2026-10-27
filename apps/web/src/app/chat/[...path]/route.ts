@@ -5,10 +5,14 @@
  * - GET  /chat/widget.js                  the chat script (hosted page and embeddable bubble)
  * - GET  /chat/<key>                      the hosted chat page (Basic Auth when the trigger asks for it)
  * - GET  /chat/<key>/config               title, initial messages, uploads… for the script
- * - GET  /chat/<key>/session?sessionId=   the session's earlier messages ("Load Previous Session")
+ * - GET  /chat/<key>/session?sessionId=   the session's earlier messages ("Load Previous Session"), with their ratings
+ * - POST /chat/<key>/feedback             `{ sessionId, executionId, rating: 'up' | 'down' | null, comment? }`: rate an answer
  * - POST /chat/<key>                      a message: JSON `{ sessionId, message }` or multipart (`files`) →
  *                                         SSE / NDJSON chunks then `done` (Streaming), or `{ output, sessionId }`
  * - OPTIONS                               CORS preflight
+ *
+ * With Basic Auth the hosted page asks the browser for the password; the widget (any origin) sends the same
+ * `Authorization: Basic …` header over CORS from its sign-in form, and a 401 answers JSON `{ authRequired: true }`.
  *
  * `<key>` is the trigger's Path, else the workflow id; the workflow must be published (active). Runs start in
  * webhook mode (production: counted in Insights, held by concurrency limits).
@@ -31,8 +35,10 @@ import {
   type PublicChatConfig,
 } from '@/lib/server/chat';
 import { CHAT_CLIENT_JS, chatPageHtml } from '@/lib/server/chat-client';
+import { cleanComment, isRating, setFeedback } from '@/lib/server/chat-feedback';
 import { handler } from '@/lib/server/http';
-import { newExecutionId, RunBufferedError, runWorkflow, RunSkippedError, turnedDown } from '@/lib/server/runner';
+import { liveExecution, newExecutionId, RunBufferedError, runWorkflow, RunSkippedError, turnedDown } from '@/lib/server/runner';
+import { store } from '@/lib/server/store';
 import { replyText, runStream, streamFormatOf } from '@/lib/server/streaming';
 import { logger, startTrigger } from '@/lib/server/telemetry';
 
@@ -40,15 +46,17 @@ export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ path: string[] }> };
 
 const MAX_MESSAGE_CHARS = 32_000;
+/** The hosted page loads nothing from other sites, whatever the Custom CSS says (the sanitizer already removes external url()s). */
+const PAGE_CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'self'";
 
 function jsonResponse(data: unknown, status: number, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } });
 }
 
-/** `/chat/<key>[/config|/session]` → key and sub-path. */
+/** `/chat/<key>[/config|/session|/feedback]` → key and sub-path. */
 function parse(path: string[]): { key: string; sub?: string } {
   const last = path.at(-1);
-  if (path.length > 1 && (last === 'config' || last === 'session')) return { key: path.slice(0, -1).join('/'), sub: last };
+  if (path.length > 1 && (last === 'config' || last === 'session' || last === 'feedback')) return { key: path.slice(0, -1).join('/'), sub: last };
   return { key: path.join('/') };
 }
 
@@ -63,6 +71,9 @@ function allowedFor(config: PublicChatConfig, request: Request): { ok: boolean; 
 
 const notFound = (cors: Record<string, string> = {}) => jsonResponse({ error: 'This chat doesn’t exist, or its workflow isn’t published' }, 404, cors);
 const askForAuth = () => new Response('Authentication required', { status: 401, headers: { 'www-authenticate': 'Basic realm="Landflow chat", charset="UTF-8"', 'content-type': 'text/plain; charset=utf-8' } });
+/** The widget's 401: JSON with CORS headers (no `www-authenticate`, so the browser doesn't open its own prompt over the site), plus what the sign-in form needs. */
+const authRequired = (config: PublicChatConfig, cors: Record<string, string>) =>
+  jsonResponse({ error: 'Sign in to use this chat', authRequired: true, title: config.title, subtitle: config.subtitle, customCss: config.customCss }, 401, { ...cors, 'cache-control': 'no-store' });
 
 export const GET = handler(async (request: Request, { params }: Ctx) => {
   const path = (await params).path;
@@ -77,10 +88,11 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
   const { config } = found;
   const access = allowedFor(config, request);
   if (!access.ok) return jsonResponse({ error: 'This site may not use this chat (Allowed Origins)' }, 403);
-  if (!basicAuthOk(config, request)) return askForAuth();
+  if (!basicAuthOk(config, request)) return sub ? authRequired(config, access.cors) : askForAuth();
   if (!sub) {
-    return new Response(chatPageHtml({ key: config.key, title: config.title }), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'SAMEORIGIN' } });
+    return new Response(chatPageHtml({ key: config.key, title: config.title }), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'SAMEORIGIN', 'content-security-policy': PAGE_CSP } });
   }
+  if (sub === 'feedback') return jsonResponse({ error: 'Send feedback with POST' }, 405, access.cors);
   if (sub === 'config') {
     return jsonResponse(
       {
@@ -93,6 +105,8 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
         loadPreviousSession: config.loadPreviousSession,
         allowFileUploads: config.allowFileUploads,
         allowedFilesMimeTypes: config.allowedFilesMimeTypes,
+        feedback: true,
+        customCss: config.customCss,
       },
       200,
       { ...access.cors, 'cache-control': 'no-store' },
@@ -148,14 +162,36 @@ async function readMessage(request: Request, config: PublicChatConfig): Promise<
   return { sessionId, message: text, files };
 }
 
+/** Rate an answer: the execution must be this chat's, and (when its trigger item is still there) of this session. */
+async function postFeedback(request: Request, found: NonNullable<ReturnType<typeof findPublicChat>>, cors: Record<string, string>): Promise<Response> {
+  const { workflow, node } = found;
+  let body: { sessionId?: unknown; executionId?: unknown; rating?: unknown; comment?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return jsonResponse({ error: 'Send JSON { sessionId, executionId, rating, comment? }' }, 400, cors);
+  }
+  if (!validSessionId(body.sessionId)) return jsonResponse({ error: 'sessionId must be 1–128 letters, digits, dots, dashes, colons or underscores' }, 400, cors);
+  if (typeof body.executionId !== 'string' || !/^[\w-]{1,128}$/.test(body.executionId)) return jsonResponse({ error: 'executionId is the id the chat answered with' }, 400, cors);
+  if (body.rating !== null && !isRating(body.rating)) return jsonResponse({ error: "rating is 'up', 'down' or null (take it back)" }, 400, cors);
+  const record = liveExecution(body.executionId) ?? store.getExecution(body.executionId);
+  if (!record || record.workflowId !== workflow.id) return jsonResponse({ error: 'That answer doesn’t belong to this chat' }, 404, cors);
+  const asked = (record.runData[node.id]?.[0]?.outputs?.[0]?.[0]?.json as { sessionId?: unknown } | undefined)?.sessionId;
+  if (typeof asked === 'string' && asked !== body.sessionId) return jsonResponse({ error: 'That answer belongs to another session' }, 403, cors);
+  const feedback = setFeedback({ kind: 'execution', workflowId: workflow.id, executionId: body.executionId, sessionId: body.sessionId }, body.rating, { comment: cleanComment(body.comment), source: 'chat' });
+  return jsonResponse({ ok: true, feedback: feedback ?? null }, 200, cors);
+}
+
 export const POST = handler(async (request: Request, { params }: Ctx) => {
   const { key, sub } = parse((await params).path);
-  const found = sub ? undefined : findPublicChat(key);
+  if (sub && sub !== 'feedback') return notFound();
+  const found = findPublicChat(key);
   if (!found) return notFound();
   const { workflow, node, config } = found;
   const access = allowedFor(config, request);
   if (!access.ok) return jsonResponse({ error: 'This site may not use this chat (Allowed Origins)' }, 403);
-  if (!basicAuthOk(config, request)) return askForAuth();
+  if (!basicAuthOk(config, request)) return authRequired(config, access.cors);
+  if (sub === 'feedback') return postFeedback(request, found, access.cors);
   const parsed = await readMessage(request, config);
   if ('error' in parsed) return jsonResponse({ error: parsed.error }, parsed.status, access.cors);
 
@@ -188,7 +224,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     (record) => {
       trigger.end();
       const reply = record.status === 'success' ? replyText(record) : '';
-      if (config.loadPreviousSession) appendTranscript(workflow.id, parsed.sessionId, [{ role: 'user', text: parsed.message, at, ...(fileList.length && { files: fileList }) }, ...(reply ? [{ role: 'assistant' as const, text: reply, at: new Date().toISOString() }] : [])]);
+      if (config.loadPreviousSession) appendTranscript(workflow.id, parsed.sessionId, [{ role: 'user', text: parsed.message, at, ...(fileList.length && { files: fileList }) }, ...(reply ? [{ role: 'assistant' as const, text: reply, at: new Date().toISOString(), executionId: record.executionId }] : [])]);
       return record;
     },
     (caught: unknown) => {

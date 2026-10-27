@@ -4,7 +4,7 @@
  * limits, pub/sub and heartbeats. Several MemoryCoordinators on one MemoryHub act like processes sharing a Valkey
  * (tests of failover, takeover and relays); `clock` lets a test move time.
  */
-import type { AdmitResult, Coordinator, Delivery, InstanceInfo, Leadership, QueueJob, SlotRule } from './coordinator';
+import { priorityOrder, type AdmitResult, type Coordinator, type Delivery, type InstanceInfo, type Leadership, type QueueJob, type SlotRule } from './coordinator';
 
 interface Entry {
   id: string;
@@ -84,6 +84,8 @@ export class MemoryHub {
 export class MemoryCoordinator implements Coordinator {
   readonly kind = 'memory' as const;
   private closed = false;
+  /** Jobs this coordinator (one worker process) took since the last low-priority one (priorityOrder). */
+  private sinceLow = 0;
   private readonly subscriptions = new Set<() => void>();
 
   constructor(readonly hub: MemoryHub = new MemoryHub()) {}
@@ -100,6 +102,24 @@ export class MemoryCoordinator implements Coordinator {
     return id;
   }
 
+  /** The next `count` undelivered jobs: by priority (see priorityOrder), each priority in the order it arrived. */
+  private pick(count: number): string[] {
+    const priorityOf = (id: string) => (JSON.parse(this.hub.entries.get(id)!.job) as QueueJob).priority ?? 'normal';
+    const byPriority = new Map<string, string[]>();
+    for (const id of this.hub.undelivered) byPriority.set(priorityOf(id), [...(byPriority.get(priorityOf(id)) ?? []), id]);
+    const taken: string[] = [];
+    for (const priority of priorityOrder(this.sinceLow)) {
+      for (const id of byPriority.get(priority) ?? []) {
+        if (taken.length >= count) break;
+        taken.push(id);
+        this.sinceLow = priority === 'low' ? 0 : this.sinceLow + 1;
+      }
+    }
+    const gone = new Set(taken);
+    this.hub.undelivered.splice(0, this.hub.undelivered.length, ...this.hub.undelivered.filter((id) => !gone.has(id)));
+    return taken;
+  }
+
   private deliveries(ids: string[]): Delivery[] {
     return ids.flatMap((id) => {
       const entry = this.hub.entries.get(id);
@@ -112,7 +132,7 @@ export class MemoryCoordinator implements Coordinator {
     for (;;) {
       if (this.closed) return [];
       if (this.hub.undelivered.length) {
-        const ids = this.hub.undelivered.splice(0, count);
+        const ids = this.pick(count);
         for (const id of ids) this.hub.pending.set(id, { consumer, deliveredAt: this.now });
         return this.deliveries(ids);
       }

@@ -31,7 +31,7 @@ export function environmentView(): EnvironmentView {
     environments: environmentNames().map((environment) => ({ name: environment, branch: branchOf(environment), current: environment === name })),
     publishOnPull: defaultPublishMode(),
     credentialMap: (settings.credentialMap ?? []).map((m) => ({ ...m, ...(vault.get(m.credentialId) && { credentialName: vault.get(m.credentialId)!.name }) })),
-    rowTables: (settings.rowTables ?? []).map((id) => ({ id, ...(tableName(id) && { name: tableName(id) }) })),
+    rowTables: (settings.rowTables ?? []).map((id) => ({ id, ...(tableName(id) && { name: tableName(id) }), ...(settings.rowMerge?.[id] && { merge: settings.rowMerge[id] }) })),
     secretMappings: settings.secretMappings ?? [],
     sourceControl: source.configured,
   };
@@ -58,6 +58,7 @@ export const environmentSettingsSchema = z.strictObject({
     .max(500)
     .optional(),
   rowTables: z.array(z.string().min(1).max(100)).max(500).optional(),
+  rowMerge: z.record(z.string().min(1).max(100), z.strictObject({ keys: z.array(z.string().min(1).max(100)).min(1).max(10), deleteMissing: z.boolean().optional() })).optional(),
   secretMappings: z
     .array(
       z.strictObject({
@@ -85,6 +86,13 @@ export function saveEnvironmentSettings(input: z.output<typeof environmentSettin
     if (!table) throw new EnvironmentError(`Data table “${key}” not found`, 404);
     return table.id;
   });
+  // Row merges: by table id or name, keyed on columns the table has (never the system columns).
+  const rowMerge = input.rowMerge && Object.fromEntries(Object.entries(input.rowMerge).map(([key, merge]) => {
+    const table = findTable(key);
+    if (!table) throw new EnvironmentError(`Data table “${key}” not found`, 404);
+    for (const column of merge.keys) if (!table.columns.some((c) => c.name === column)) throw new EnvironmentError(`“${table.name}” has no column “${column}” to merge rows on`);
+    return [table.id, { keys: [...new Set(merge.keys)], ...(merge.deleteMissing && { deleteMissing: true }) }];
+  }));
   const fields = new Set<string>();
   for (const mapping of input.secretMappings ?? []) {
     const key = `${mapping.type}\u0000${mapping.name}\u0000${mapping.field}\u0000${mapping.environment ?? ''}`;
@@ -103,11 +111,12 @@ export function saveEnvironmentSettings(input: z.output<typeof environmentSettin
   }
   if (next.environments && !next.environments.length) delete next.environments;
   if (rowTables) next.rowTables = [...new Set(rowTables)];
+  if (rowMerge) next.rowMerge = Object.keys(rowMerge).length ? rowMerge : undefined;
   writeEnvironmentSettings(next);
   return environmentView();
 }
 
 /** Pull this environment's branch (Settings → Source control) with the publish-on-pull setting unless `publish` says otherwise. */
-export function pullEnvironment(input: { dryRun?: boolean; prune?: boolean; force?: boolean; publish?: PullPublishMode; by?: string } = {}) {
+export function pullEnvironment(input: { dryRun?: boolean; prune?: boolean; force?: boolean; publish?: PullPublishMode; updateCredentials?: boolean; by?: string } = {}) {
   return pullFromRepository({ ...input, publish: input.publish ?? defaultPublishMode() });
 }

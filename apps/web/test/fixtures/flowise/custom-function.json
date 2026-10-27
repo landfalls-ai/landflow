@@ -1,0 +1,67 @@
+{
+  "nodes": [
+    {
+      "id": "customFunction_0",
+      "position": { "x": 200, "y": 100 },
+      "type": "customNode",
+      "data": {
+        "id": "customFunction_0",
+        "name": "customFunction",
+        "label": "Custom JS Function",
+        "version": 3,
+        "category": "Utilities",
+        "inputs": {
+          "functionInputVariables": "[{\"variableName\":\"city\",\"variableValue\":\"{{question}}\"},{\"variableName\":\"greeting\",\"variableValue\":\"Hello, {{question}}!\"},{\"variableName\":\"limit\",\"variableValue\":\"5\"},{\"variableName\":\"key\",\"variableValue\":\"{{$vars.apiKey}}\"},{\"variableName\":\"history\",\"variableValue\":\"{{chat_history}}\"}]",
+          "javascriptFunction": "const text = $flow.input.toUpperCase();\nconst token = process.env.TOKEN;\nconst state = $flow.state;\nreturn `${$greeting} ${$city} (${$limit}) ${text}`;",
+          "functionName": "shout"
+        }
+      }
+    },
+    {
+      "id": "chatOpenAI_0",
+      "position": { "x": 600, "y": 0 },
+      "type": "customNode",
+      "data": {
+        "id": "chatOpenAI_0",
+        "name": "chatOpenAI",
+        "label": "ChatOpenAI",
+        "version": 8,
+        "credential": "flowise-cred-openai",
+        "inputParams": [{ "label": "Connect Credential", "name": "credential", "type": "credential", "credentialNames": ["openAIApi"] }],
+        "inputs": { "modelName": "gpt-4o-mini", "temperature": 0.2 }
+      }
+    },
+    {
+      "id": "conversationChain_0",
+      "position": { "x": 900, "y": 100 },
+      "type": "customNode",
+      "data": {
+        "id": "conversationChain_0",
+        "name": "conversationChain",
+        "label": "Conversation Chain",
+        "version": 3,
+        "inputs": { "model": "{{chatOpenAI_0.data.instance}}", "systemMessagePrompt": "Answer using the text you are given." }
+      }
+    },
+    {
+      "id": "customFunction_1",
+      "position": { "x": 200, "y": 400 },
+      "type": "customNode",
+      "data": {
+        "id": "customFunction_1",
+        "name": "customFunction",
+        "label": "Lookup",
+        "version": 3,
+        "inputs": {
+          "functionInputVariables": "[{\"variableName\":\"previous\",\"variableValue\":\"{{customFunction_0.data.instance}}\"}]",
+          "javascriptFunction": "return { seen: $previous };"
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e0", "source": "chatOpenAI_0", "sourceHandle": "chatOpenAI_0-output-chatOpenAI-ChatOpenAI", "target": "conversationChain_0", "targetHandle": "conversationChain_0-input-model-BaseChatModel" },
+    { "id": "e1", "source": "customFunction_0", "sourceHandle": "customFunction_0-output-output-string", "target": "conversationChain_0", "targetHandle": "conversationChain_0-input-prompt-string" },
+    { "id": "e2", "source": "customFunction_0", "sourceHandle": "customFunction_0-output-output-string", "target": "customFunction_1", "targetHandle": "customFunction_1-input-functionInputVariables-json" }
+  ]
+}

@@ -9,9 +9,8 @@
 import type { JsonObject } from '@landflow/protocol';
 import type { ExecutionEvent } from '@landflow/engine';
 import type { ExecutionRecord } from '../shared/types';
-import { credentials } from './credentials/vault';
 import { liveExecution, resumeExecution } from './runner';
-import { decidedBlocks, SLACK_CREDENTIAL, slackCredential, updateMessage } from './slack';
+import { decidedBlocks, slackCredentialFor, slackRefOf, updateMessage } from './slack';
 import { store } from './store';
 import { logger } from './telemetry';
 
@@ -33,11 +32,12 @@ export interface PendingApproval {
   nodeName: string;
   nodeId?: string;
   itemIndex?: number;
-  channel: 'chat' | 'slack';
+  channel: 'chat' | 'slack' | 'email';
   calls: ApprovalCall[];
   requestedAt?: string;
   decisions?: Record<string, ApprovalDecision>;
   slack?: { channel: string; messages?: Record<string, string>; approvers?: string[] };
+  email?: { to: string[] };
 }
 
 export class ApprovalError extends Error {
@@ -111,9 +111,9 @@ async function updateSlackMessage(record: ExecutionRecord, approval: PendingAppr
   const ts = approval.slack?.messages?.[call.id];
   if (!approval.slack || !ts) return;
   const node = record.workflow?.nodes.find((n) => n.id === approval.nodeId || n.name === approval.nodeName);
-  const ref = node?.credentials?.[SLACK_CREDENTIAL];
-  if (!ref) return;
-  const credential = slackCredential(await credentials.dataWithSecrets(ref, SLACK_CREDENTIAL));
+  const held = slackRefOf(node?.credentials);
+  if (!held) return;
+  const credential = await slackCredentialFor(held.ref);
   const user = decision.by?.startsWith('slack:') ? decision.by.slice(6) : undefined;
   await updateMessage(credential, {
     channel: approval.slack.channel,

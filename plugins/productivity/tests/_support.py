@@ -193,3 +193,50 @@ class LogCapture:
     def spans(self, prefix: str = "") -> list[dict[str, Any]]:
         lines = [json.loads(line) for line in self.text.splitlines() if line.startswith("{")]
         return [line for line in lines if line.get("msg") == "span.end" and line["span"].startswith(prefix)]
+
+
+# ------------------------------------------------------------ RSA keys and JWTs (GitHub App tests)
+
+_KEYS: dict[str, str] = {}
+
+
+def rsa_key(kind: str = "pkcs1") -> str | None:
+    """A freshly generated 2048-bit RSA private key PEM (``pkcs1`` or ``pkcs8``: the same key; ``other``: a different one), or ``None`` when openssl is missing."""
+    import shutil
+    import subprocess
+
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        return None
+    if kind == "other":  # a second, unrelated key
+        if "other" not in _KEYS:
+            _KEYS["other"] = subprocess.run([openssl, "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048"], check=True, capture_output=True).stdout.decode()
+        return _KEYS["other"]
+    if "pkcs8" not in _KEYS:
+        _KEYS["pkcs8"] = subprocess.run([openssl, "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048"], check=True, capture_output=True).stdout.decode()
+        _KEYS["pkcs1"] = subprocess.run([openssl, "rsa", "-traditional"], input=_KEYS["pkcs8"].encode(), check=True, capture_output=True).stdout.decode()
+    return _KEYS[kind]
+
+
+def jwt_claims(token: str, private_key_pem: str) -> dict[str, Any] | None:
+    """The claims of an RS256 JWT when its signature verifies against the public half of ``private_key_pem``, else ``None``."""
+    import base64
+    import hashlib
+
+    from landflow_sdk.jwt import _SHA256_PREFIX, _pem_to_der, _sequence, parse_rsa_private_key
+
+    try:
+        head, body, sig = token.split(".")
+    except ValueError:
+        return None
+    unb64 = lambda text: base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))  # noqa: E731
+    n, _ = parse_rsa_private_key(private_key_pem)
+    label, der = _pem_to_der(private_key_pem)
+    fields = _sequence(der) if label == "RSA PRIVATE KEY" else _sequence(_sequence(der)[2][1])
+    e = int.from_bytes(fields[2][1], "big")
+    size = (n.bit_length() + 7) // 8
+    recovered = pow(int.from_bytes(unb64(sig), "big"), e, n).to_bytes(size, "big")
+    expected = _SHA256_PREFIX + hashlib.sha256(f"{head}.{body}".encode()).digest()
+    if json.loads(unb64(head)).get("alg") != "RS256" or not recovered.startswith(b"\x00\x01\xff") or not recovered.endswith(b"\x00" + expected):
+        return None
+    return json.loads(unb64(body))

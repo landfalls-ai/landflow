@@ -18,7 +18,8 @@ export interface Recorded {
 export interface FakeReply {
   text?: string;
   toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
-  usage?: { input: number; output: number };
+  /** `cacheRead` / `cacheWrite`: OpenAI reports cached input inside `input`; Anthropic reports both next to `input`. */
+  usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
 }
 
 type Provider = 'openai' | 'ollama' | 'anthropic';
@@ -80,7 +81,7 @@ export async function startFakeModels(options: { reply?: (provider: Provider, bo
           JSON.stringify({
             model: body.model,
             choices: [{ index: 0, message: { role: 'assistant', content: text || null, ...(toolCalls.length && { tool_calls: toolCalls }) }, finish_reason: toolCalls.length ? 'tool_calls' : 'stop' }],
-            usage: { prompt_tokens: usage.input, completion_tokens: usage.output },
+            usage: { prompt_tokens: usage.input, completion_tokens: usage.output, ...(usage.cacheRead && { prompt_tokens_details: { cached_tokens: usage.cacheRead } }) },
           }),
         );
         return;
@@ -98,7 +99,7 @@ export async function startFakeModels(options: { reply?: (provider: Provider, bo
         send({ choices: [{ index: 0, delta: { tool_calls: [{ index, function: { arguments: call.function.arguments.slice(half) } }] } }] });
       });
       send({ choices: [{ index: 0, delta: {}, finish_reason: toolCalls.length ? 'tool_calls' : 'stop' }] });
-      if (body.stream_options?.include_usage) send({ choices: [], usage: { prompt_tokens: usage.input, completion_tokens: usage.output } });
+      if (body.stream_options?.include_usage) send({ choices: [], usage: { prompt_tokens: usage.input, completion_tokens: usage.output, ...(usage.cacheRead && { prompt_tokens_details: { cached_tokens: usage.cacheRead } }) } });
       res.end('data: [DONE]\n\n');
       return;
     }
@@ -128,12 +129,12 @@ export async function startFakeModels(options: { reply?: (provider: Provider, bo
       const stopReason = reply.toolCalls?.length ? 'tool_use' : 'end_turn';
       if (!body.stream) {
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ id: 'msg_1', type: 'message', role: 'assistant', model: body.model, content, stop_reason: stopReason, stop_sequence: null, usage: { input_tokens: usage.input, output_tokens: usage.output } }));
+        res.end(JSON.stringify({ id: 'msg_1', type: 'message', role: 'assistant', model: body.model, content, stop_reason: stopReason, stop_sequence: null, usage: { input_tokens: usage.input, output_tokens: usage.output, ...(usage.cacheRead && { cache_read_input_tokens: usage.cacheRead }), ...(usage.cacheWrite && { cache_creation_input_tokens: usage.cacheWrite }) } }));
         return;
       }
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-      send('message_start', { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: usage.input, output_tokens: 1 } } });
+      send('message_start', { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: usage.input, output_tokens: 1, ...(usage.cacheRead && { cache_read_input_tokens: usage.cacheRead }), ...(usage.cacheWrite && { cache_creation_input_tokens: usage.cacheWrite }) } } });
       let index = 0;
       if (text) {
         send('content_block_start', { type: 'content_block_start', index, content_block: { type: 'text', text: '' } });

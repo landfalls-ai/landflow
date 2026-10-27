@@ -13,7 +13,7 @@ from landflow_sdk.http_server import HttpPluginServer
 
 ACTIONS = {"notion", "airtable", "github", "jira", "hubspot", "rssFeedRead"}
 TRIGGERS = {"githubTrigger", "rssFeedReadTrigger"}
-APP_WEBHOOKS = {"githubWebhookTrigger"}
+APP_WEBHOOKS = {"githubWebhookTrigger", "stripeWebhookTrigger"}
 
 
 def visible(prop: dict, params: dict) -> bool:
@@ -53,11 +53,18 @@ class ManifestTests(unittest.TestCase):
     def test_credential_types(self):
         types = {c["name"]: c for c in self.manifest["credentialTypes"]}
         secret = {"notionApi": "apiKey", "airtableTokenApi": "accessToken", "githubApi": "accessToken",
-                  "jiraSoftwareCloudApi": "apiToken", "jiraSoftwareServerPatApi": "personalAccessToken", "hubspotAppToken": "appToken"}
+                  "jiraSoftwareCloudApi": "apiToken", "jiraSoftwareServerPatApi": "personalAccessToken", "hubspotAppToken": "appToken",
+                  "githubAppApi": "privateKey", "stripeApi": "apiKey"}
         base = {"notionApi": "baseUrl", "airtableTokenApi": "baseUrl", "githubApi": "baseUrl",
-                "jiraSoftwareCloudApi": "domain", "jiraSoftwareServerPatApi": "domain", "hubspotAppToken": "baseUrl"}
-        self.assertEqual(set(types), set(secret))
+                "jiraSoftwareCloudApi": "domain", "jiraSoftwareServerPatApi": "domain", "hubspotAppToken": "baseUrl",
+                "githubAppApi": "baseUrl", "stripeApi": "baseUrl"}
+        oauth2 = {name for name, ctype in types.items() if ctype.get("extends") == ["oAuth2Api"]}
+        self.assertEqual(oauth2, {"notionOAuth2Api", "airtableOAuth2Api", "githubOAuth2Api", "hubspotOAuth2Api", "jiraSoftwareCloudOAuth2Api"})
+        self.assertEqual(set(types) - oauth2, set(secret))
         for name, ctype in types.items():
+            if name in oauth2:  # the host adds the generic OAuth2 fields and the access token; see test_oauth2.py
+                self.assertTrue(ctype["testable"], name)
+                continue
             props = {p["name"]: p for p in ctype["properties"]}
             self.assertTrue(ctype["testable"], name)
             self.assertEqual(props[secret[name]]["typeOptions"], {"password": True}, name)

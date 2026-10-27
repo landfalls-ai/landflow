@@ -19,7 +19,9 @@ import type { OAuth2GrantType, OAuth2Status } from '../../shared/oauth2';
 export const TOKEN_FIELD = 'oauthTokenData';
 export const ACCOUNT_FIELD = 'oauthAccount';
 export const ERROR_FIELD = 'oauthError';
-export const RESERVED_FIELDS: readonly string[] = [TOKEN_FIELD, ACCOUNT_FIELD, ERROR_FIELD];
+/** What discovery learned for an MCP server's credential (lib/server/mcp/oauth.ts): endpoints, the registered client, the resource. Survives Disconnect. */
+export const META_FIELD = 'oauthMeta';
+export const RESERVED_FIELDS: readonly string[] = [TOKEN_FIELD, ACCOUNT_FIELD, ERROR_FIELD, META_FIELD];
 
 /** How long a Connect flow may take, from opening the provider's page to the callback. */
 export const STATE_TTL_MS = 10 * 60_000;
@@ -41,6 +43,8 @@ export interface OAuth2Config {
   /** How the client authenticates at the token endpoint: HTTP Basic (RFC 6749 §2.3.1) or client_id/client_secret in the body. */
   authentication: 'header' | 'body';
   userInfoUrl: string;
+  /** RFC 8707 resource indicator: sent with the authorization request and every token request (an MCP server's URL). */
+  resource: string;
 }
 
 /**
@@ -74,16 +78,23 @@ const GRANTS: OAuth2GrantType[] = ['pkce', 'authorizationCode', 'clientCredentia
 /** The flow settings of an OAuth2 credential's data (type defaults already applied). */
 export function oauth2Config(data: JsonObject): OAuth2Config {
   const grant = text(data.grantType) as OAuth2GrantType;
+  // An MCP server's credential: what discovery found fills in what the form left empty (the form's own values win).
+  const meta = data[META_FIELD] && typeof data[META_FIELD] === 'object' && !Array.isArray(data[META_FIELD]) ? (data[META_FIELD] as JsonObject) : undefined;
+  const found = (key: string) => (meta ? text(meta[key]) : '');
+  const clientId = text(data.clientId) || found('clientId');
+  // The registered client's secret goes with the registered client id, not with one the form names.
+  const clientSecret = text(data.clientSecret) || (text(data.clientId) ? '' : found('clientSecret'));
   return {
     grantType: GRANTS.includes(grant) ? grant : 'pkce',
-    authUrl: text(data.authUrl),
-    accessTokenUrl: text(data.accessTokenUrl),
-    clientId: text(data.clientId),
-    clientSecret: text(data.clientSecret),
-    scope: text(data.scope),
+    authUrl: text(data.authUrl) || found('authUrl'),
+    accessTokenUrl: text(data.accessTokenUrl) || found('accessTokenUrl'),
+    clientId,
+    clientSecret,
+    scope: text(data.scope) || found('scope'),
     authQueryParameters: text(data.authQueryParameters),
-    authentication: text(data.authentication) === 'body' ? 'body' : 'header',
+    authentication: text(data.authentication) === 'body' || (!text(data.authentication) && found('tokenAuth') === 'post') ? 'body' : 'header',
     userInfoUrl: text(data.userInfoUrl),
+    resource: text(data.resource) || found('resource'),
   };
 }
 
@@ -167,6 +178,7 @@ export function authorizationUrl(config: OAuth2Config, options: { redirectUri: s
   params.set('redirect_uri', options.redirectUri);
   if (config.scope) params.set('scope', config.scope);
   params.set('state', options.state);
+  if (config.resource) params.set('resource', config.resource);
   if (options.codeChallenge) {
     params.set('code_challenge', options.codeChallenge);
     params.set('code_challenge_method', 'S256');
@@ -186,7 +198,7 @@ const formEncode = (value: string) => encodeURIComponent(value).replace(/%20/g, 
 export async function requestToken(config: OAuth2Config, params: Record<string, string>, fetchImpl: typeof fetch = fetch): Promise<JsonObject> {
   const url = httpUrl(config.accessTokenUrl, 'access token URL');
   if (!config.clientId) throw new OAuth2Error('Enter the client ID');
-  const body = new URLSearchParams(params);
+  const body = new URLSearchParams(config.resource && !params.resource ? { ...params, resource: config.resource } : params);
   const headers: Record<string, string> = { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' };
   if (config.authentication === 'header' && config.clientSecret) {
     headers.authorization = `Basic ${Buffer.from(`${formEncode(config.clientId)}:${formEncode(config.clientSecret)}`).toString('base64')}`;

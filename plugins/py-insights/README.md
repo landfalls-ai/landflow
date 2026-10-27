@@ -8,6 +8,19 @@ Three nodes built with [`landflow-sdk`](../../sdks/python), served over HTTP (`:
 | Sentiment | `py-insights.sentiment` | lexicon sentiment of a text field, adds `{score, label, matched}`; usable as an AI tool |
 | Keyword Extract | `py-insights.keywords` | top-N keywords per item (frequency or TF-IDF lite), stopwords from a `loadOptions` language list; usable as an AI tool |
 
+## Binary files
+
+All three nodes can read their input from a binary file on the item and write a result file
+([docs/protocol.md §11](../../docs/protocol.md#11-binary-data), SDK `ctx.get_binary_bytes` / `ctx.prepare_binary_data`):
+
+| Option | Nodes | What it does |
+|---|---|---|
+| **Text From Binary File** (`fromBinary`, **Input Binary Field** `binaryPropertyName`, default `data`) | Sentiment, Keyword Extract | the text is the content of the item's file (TXT, MD, CSV, ... decoded as UTF-8 with or without BOM, UTF-16 with a BOM, else Latin-1) instead of a field; the item's binary is kept on the output |
+| **Rows From Binary File** (`fromBinary`, `binaryPropertyName`) | Field Statistics | every input item's CSV, TSV, JSON (an array of objects, or an object with a `data` / `items` / `rows` / `records` / `results` array) or NDJSON file is read into rows (format from the MIME type or extension, else the content; the CSV delimiter (comma, semicolon, tab or pipe) is sniffed) and `Field` / `Group By` aggregate those rows |
+| **Output Result File** (`outputFile`, **Output Binary Field** `outputBinaryName`, default `data`) | all | one CSV for the whole run (`stats.csv`: a row per output item; `sentiment.csv`: item, score, label, matched; `keywords.csv`: item, rank, keyword, score) is attached to every output item |
+
+Files over 20 MB are refused (they are read into memory). `tests/test_binary.py` covers each option.
+
 ## Run
 
 ```bash

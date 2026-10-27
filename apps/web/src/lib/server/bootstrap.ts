@@ -20,10 +20,13 @@ import { triggerSubscriptionSweeper } from './mcp/triggers';
 import { startDataMaintenance } from './maintenance';
 import { openDatabase } from './db';
 import { startOnlineEvaluations } from './evaluations/online';
+import { evaluationSchedules } from './evaluations/schedule';
 import { imapIdle } from './imap-idle';
 import { corePlugin } from './nodes';
+import { auditHeads } from './audit/anchoring';
 import { registry } from './plugins/registry';
 import { ensurePublications } from './publish';
+import { publishSchedules } from './publish-schedule';
 import { adoptUnassignedResources } from './projects/boot';
 import { retries } from './retries';
 import { startRecovery, startTriggerBuffers } from './runner';
@@ -68,12 +71,16 @@ export function ensureBootstrapped(): Promise<void> {
     leaderService('data maintenance', startDataMaintenance);
     // Audit log: publish/plugin listeners, SIEM outbox delivery and hourly retention (lib/server/audit).
     startAudit();
+    // Signed chain heads (lib/server/audit/anchoring.ts): the leader signs the head on a schedule and anchors it (S3, webhook).
+    leaderService('audit head signing', () => auditHeads.start(), () => auditHeads.stop());
     // Binary data goes with its execution; orphaned files are swept hourly.
     startBinaryMaintenance();
     // Draft and publish: an active workflow without a publication (imported after migration 200) publishes its newest version.
     leaderService('publications', ensurePublications);
     // Projects: credentials and agents (files) and anything else without a project go to the owner's personal project.
     leaderService('project adoption', adoptUnassignedResources);
+    // Scheduled publishes (lib/server/publish-schedule.ts): one main publishes what is due; a restart re-reads the table.
+    leaderService('scheduled publishes', () => publishSchedules.start(), () => publishSchedules.stop());
     leaderService('scheduler', () => scheduler.start(), () => scheduler.stop());
     // Webhooks of MCP trigger subscriptions whose main died (lib/server/mcp/triggers.ts).
     leaderService('mcp trigger subscriptions', () => triggerSubscriptionSweeper.start(), () => triggerSubscriptionSweeper.stop());
@@ -89,6 +96,8 @@ export function ensureBootstrapped(): Promise<void> {
     // Failure alerts: throttle digests and "waiting too long" checks.
     leaderService('alerts', () => alerts.start(), () => alerts.stop());
     leaderService('agent triggers', () => agentTriggers.start(), () => agentTriggers.stop());
+    // Scheduled evaluation runs (a cron on a workflow's Evaluations tab): one main evaluates them.
+    leaderService('evaluation schedules', () => evaluationSchedules.start(), () => evaluationSchedules.stop());
     // Online evaluations: a sample of finished agent runs is graded by an LLM judge.
     startOnlineEvaluations();
     await startRegistryGrpcServer();

@@ -171,7 +171,7 @@ const transferSchema = z.object({
 
 /** Workflows: checks before the move (an error message stops it) and what follows it (refiling it in a folder). */
 export interface TransferHooks {
-  check?(id: string, projectId: string, body: z.infer<typeof transferSchema>): { status: 400 | 404; message: string } | undefined;
+  check?(id: string, projectId: string, body: z.infer<typeof transferSchema>): { status: 400 | 404 | 409; message: string } | undefined;
   moved?(id: string, projectId: string, body: z.infer<typeof transferSchema>): Record<string, unknown> | void;
 }
 

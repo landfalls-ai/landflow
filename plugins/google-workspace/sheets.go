@@ -69,6 +69,7 @@ func (SheetsNode) Description() landflow.NodeDescriptor {
 			),
 			operationProperty("spreadsheet", "create",
 				landflow.PropertyOption{Name: "Create", Value: "create", Description: "Create a spreadsheet", Action: "Create spreadsheet"},
+				landflow.PropertyOption{Name: "Export", Value: "export", Description: "Export a spreadsheet as an Excel, OpenDocument, CSV or PDF file", Action: "Export spreadsheet as a file", Idempotent: true},
 			),
 			operationProperty("sheet", "append", sheetOperations...),
 
@@ -85,6 +86,24 @@ func (SheetsNode) Description() landflow.NodeDescriptor {
 					{Name: "title", DisplayName: "Title", Type: landflow.PropString, Default: "", Description: "Name of the sheet"},
 				}}},
 			},
+
+			// Document → Export
+			{
+				Name: "exportDocumentId", DisplayName: "Spreadsheet ID or URL", Type: landflow.PropString, Default: "", Required: true,
+				DisplayOptions: show("spreadsheet", "export")},
+			{
+				Name: "exportFormat", DisplayName: "Export As", Type: landflow.PropOptions, Default: "xlsx",
+				Options: exportOptions("xlsx", "ods", "csv", "tsv", "pdf", "html"), DisplayOptions: show("spreadsheet", "export")},
+			{
+				Name: "outputBinaryField", DisplayName: "Output Binary Field", Type: landflow.PropString, Default: "data",
+				Description: "Name of the binary property that gets the file", DisplayOptions: show("spreadsheet", "export")},
+			{
+				Name: "options", DisplayName: "Options", Type: landflow.PropCollection, Default: map[string]any{}, Placeholder: "Add Option",
+				DisplayOptions: show("spreadsheet", "export"),
+				Values: []landflow.PropertyDescriptor{
+					{Name: "fileName", DisplayName: "File Name", Type: landflow.PropString, Default: "",
+						Description: "Defaults to the spreadsheet's name plus the format's extension"},
+				}},
 
 			// Sheet Within Document
 			{
@@ -234,6 +253,11 @@ func (SheetsNode) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, erro
 			results, err = one(s.clear(i))
 		case "spreadsheet.create":
 			results, err = one(s.createSpreadsheet(i))
+		case "spreadsheet.export":
+			var id string
+			if id, err = requireParam(ctx, "exportDocumentId", "Spreadsheet ID or URL", i); err == nil {
+				err = (&driveRun{ctx: ctx, c: s.c}).exportFile(i, idFrom(id, spreadsheetURLPattern), ctx.ParamString("exportFormat", i, "xlsx"), &out)
+			}
 		default:
 			err = userError("Pick an operation listed for the resource.", "Unsupported operation %q for resource %q", operation, resource)
 		}

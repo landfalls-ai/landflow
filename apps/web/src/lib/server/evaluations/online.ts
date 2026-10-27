@@ -8,10 +8,12 @@ import { nanoid } from 'nanoid';
 import type { LanguageModel, Workflow } from '@landflow/engine';
 import type { AgentModel, AgentSession } from '../../shared/agents';
 import type { OnlineEvalConfig, OnlineEvalReport, OnlineEvalScore, WorkflowOnlineEvals } from '../../shared/evaluations';
+import type { ChatFeedback } from '../../shared/chat-feedback';
 import type { ExecutionRecord } from '../../shared/types';
 import { agentModel } from '../agents/models';
 import { agentStore } from '../agents/store';
 import { bus, isRelayed } from '../bus';
+import { executionFeedback, getFeedback, onFeedback } from '../chat-feedback';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { logger } from '../telemetry';
@@ -56,6 +58,16 @@ export interface GradedRun {
   workflowId?: string;
   nodeId?: string;
   executionId?: string;
+  /** Agent sessions: the timeline entry of the reply (where its thumbs up/down are kept). */
+  entryId?: string;
+  userFeedback?: { rating: 'up' | 'down'; comment?: string };
+}
+
+/** The thumbs up/down the graded reply got, if any (chat feedback). */
+function feedbackOf(run: GradedRun): GradedRun['userFeedback'] {
+  if (run.userFeedback) return run.userFeedback;
+  const found = run.executionId ? executionFeedback(run.executionId) : run.agentId && run.sessionId && run.entryId ? getFeedback(`agent:${run.sessionId}:${run.entryId}`) : undefined;
+  return found && { rating: found.rating, ...(found.comment && { comment: found.comment }) };
 }
 
 const clip = (text: string, limit = TEXT_LIMIT) => (text.length > limit ? `${text.slice(0, limit)}…` : text);
@@ -81,7 +93,9 @@ export async function gradeRun(target: string, run: GradedRun, options: { model?
   const config = db.getOnlineConfig(target);
   const model = options.model ?? (await judgeModel(config, options.fallbackModel));
   const toolsLine = run.tools?.length ? `\n\n(Tools the agent called: ${run.tools.join(', ')})` : '';
-  const result = await judge(model, 'rubric', { rubric: config.rubric, question: clip(run.input) + toolsLine, actual: clip(run.output) }, options.signal);
+  const userFeedback = feedbackOf(run);
+  const feedbackLine = userFeedback ? `\n\n(The person rated this reply thumbs ${userFeedback.rating}${userFeedback.comment ? `: "${clip(userFeedback.comment, 500)}"` : ''}. Weigh that, but grade the reply against the rubric.)` : '';
+  const result = await judge(model, 'rubric', { rubric: config.rubric, question: clip(run.input) + toolsLine + feedbackLine, actual: clip(run.output) }, options.signal);
   const now = Date.now();
   const score: OnlineEvalScore = {
     id: newScoreId(now),
@@ -94,6 +108,7 @@ export async function gradeRun(target: string, run: GradedRun, options: { model?
     output: clip(run.output, 1_000),
     ...(run.tools?.length && { tools: run.tools }),
     judge: `${model.provider}/${model.model}`,
+    ...(userFeedback && { userFeedback }),
     ...(run.agentId && { agentId: run.agentId }),
     ...(run.sessionId && { sessionId: run.sessionId }),
     ...(run.workflowId && { workflowId: run.workflowId }),
@@ -121,7 +136,7 @@ export function sessionRun(session: AgentSession): GradedRun | undefined {
     .filter((entry) => entry !== reply)
     .map((entry) => (entry.type === 'user' ? `User: ${entry.text}` : entry.type === 'assistant' ? `Agent: ${entry.text}` : ''));
   const tools = [...new Set(timeline.slice(lastUser).flatMap((entry) => (entry.type === 'tool' ? [entry.label || entry.tool] : [])))];
-  return { input: turns.join('\n\n'), output: reply.text, ...(tools.length && { tools }), agentId: session.agentId, sessionId: session.id };
+  return { input: turns.join('\n\n'), output: reply.text, ...(tools.length && { tools }), agentId: session.agentId, sessionId: session.id, entryId: reply.id };
 }
 
 /** Grade a session's latest turn now (sampling aside). */
@@ -271,11 +286,44 @@ export function onExecutionFinished(workflowId: string, executionId: string, ran
   });
 }
 
-const subscription = singleton('online-eval-subscription', () => ({ stop: undefined as (() => void) | undefined }));
+/** A reply someone marked as bad is graded now (the sample rate aside), when its target has grading on and hasn't scored it yet. */
+export function onBadFeedback(feedback: ChatFeedback) {
+  if (feedback.rating !== 'down') return undefined;
+  if (feedback.kind === 'agent' && feedback.agentId && feedback.sessionId) {
+    const { agentId, sessionId, entryId } = feedback;
+    if (!db.getOnlineConfig(agentTarget(agentId)).enabled) return undefined;
+    if (db.listScores(agentTarget(agentId), 200).some((s) => s.sessionId === sessionId && s.userFeedback)) return undefined;
+    const session = agentStore.getSession(sessionId);
+    const run = session && sessionRun(session);
+    if (!run || run.entryId !== entryId) return undefined;
+    return enqueueGrading(() => gradeAgentSession(agentId, sessionId));
+  }
+  if (!feedback.workflowId || !feedback.executionId) return undefined;
+  const { workflowId, executionId } = feedback;
+  const targets = db.enabledTargets(`node:${workflowId}:`).filter((target) => !db.listScores(target, 200).some((s) => s.executionId === executionId && s.userFeedback));
+  if (!targets.length) return undefined;
+  return enqueueGrading(async () => {
+    const record = await loadRecord(executionId);
+    if (!record || record.evaluation || record.debug || record.status !== 'success') return;
+    for (const target of targets) {
+      const nodeId = target.slice(`node:${workflowId}:`.length);
+      if (record.runData[nodeId]) await gradeNodeExecution(record, nodeId).catch((error: Error) => logger.warn('online evaluation failed', { 'landflow.evaluation.target': target, error: error.message }));
+    }
+  });
+}
+
+const subscription = singleton('online-eval-subscription', () => ({ stop: undefined as (() => void) | undefined, stopFeedback: undefined as (() => void) | undefined }));
 
 /** Listen for finished agent runs and executions (once per process). */
 export function startOnlineEvaluations(): void {
   if (subscription.stop) return;
+  subscription.stopFeedback = onFeedback((feedback) => {
+    try {
+      onBadFeedback(feedback);
+    } catch (error) {
+      logger.warn('online evaluation sampling failed', { error: (error as Error).message });
+    }
+  });
   subscription.stop = bus.subscribe((message) => {
     // Queue mode: the process that ran it grades it.
     if (isRelayed(message)) return;
@@ -291,4 +339,6 @@ export function startOnlineEvaluations(): void {
 export function stopOnlineEvaluations(): void {
   subscription.stop?.();
   subscription.stop = undefined;
+  subscription.stopFeedback?.();
+  subscription.stopFeedback = undefined;
 }

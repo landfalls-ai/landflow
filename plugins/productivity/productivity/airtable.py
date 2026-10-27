@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 from urllib.parse import quote
 
@@ -9,15 +10,25 @@ from landflow_sdk import CredentialType, Node, NodeOperationError
 
 from .common import (
     Api,
+    authentication_property,
+    binary_input,
+    binary_name_property,
+    binary_out,
     collection,
+    content_type_of,
     count_written,
+    download,
+    credential_requirements,
     fixed_entries,
+    item_errors,
     items_of,
     json_param,
     limit_of,
+    oauth2_properties,
     operation_property,
     out,
     outs,
+    pick_credentials,
     resource_property,
     return_all_properties,
     split_list,
@@ -25,12 +36,18 @@ from .common import (
     text_param,
 )
 
+MAX_UPLOAD_BYTES = 5 * 1000 * 1000  # the uploadAttachment endpoint takes at most 5 MB
+CONTENT_HOST = "https://content.airtable.com"  # uploadAttachment lives on its own host; a custom base URL (proxy, test double) serves both
 BATCH_SIZE = 10  # Airtable accepts at most 10 records per write request
 PAGE_SIZE = 100
 
 
 def airtable_api(ctx: Any, creds: dict[str, Any]) -> Api:
     return Api(ctx, "airtable", creds.get("baseUrl") or "https://api.airtable.com", {"Authorization": f"Bearer {creds.get('accessToken', '')}"})
+
+
+def airtable_credentials(ctx: Any, authentication: Any = None) -> dict[str, Any]:
+    return pick_credentials(ctx, "airtableTokenApi", "airtableOAuth2Api", authentication)
 
 
 def test_airtable(data: dict[str, Any], ctx: Any) -> tuple[bool, str]:
@@ -55,6 +72,24 @@ AIRTABLE_TOKEN_API = CredentialType(
 )
 
 
+AIRTABLE_OAUTH2_API = CredentialType(
+    name="airtableOAuth2Api",
+    display_name="Airtable OAuth2 API",
+    documentation_url="https://airtable.com/developers/web/guides/oauth-integrations",
+    description="Sign in with Airtable: register an OAuth integration at airtable.com/create/oauth, add the redirect URL shown below, then Connect. "
+                "Airtable requires PKCE and rotates refresh tokens; Landflow keeps them.",
+    test=test_airtable,
+    extends=["oAuth2Api"],
+    properties=[
+        *oauth2_properties("https://airtable.com/oauth2/v1/authorize", "https://airtable.com/oauth2/v1/token",
+                           "data.records:read data.records:write schema.bases:read user.email:read",
+                           authentication="header", user_info_url="https://api.airtable.com/v0/meta/whoami"),
+        {"name": "baseUrl", "displayName": "API Base URL", "type": "string", "default": "https://api.airtable.com",
+         "description": "Change only for a proxy or a test double"},
+    ],
+)
+
+
 def flatten(record: dict[str, Any]) -> dict[str, Any]:
     """``{id, createdTime, fields: {...}}`` -> ``{id, createdTime, ...fields}`` (as n8n's Airtable v2 node)."""
     return {"id": record.get("id"), "createdTime": record.get("createdTime"), **(record.get("fields") or {})}
@@ -68,7 +103,7 @@ class Airtable(Node):
     description = {
         "name": "airtable",
         "displayName": "Airtable",
-        "description": "Create, upsert, get, search, update and delete Airtable records",
+        "description": "Create, upsert, get, search, update and delete Airtable records; upload and download attachments",
         "version": 1,
         "kind": "action",
         "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
@@ -79,16 +114,23 @@ class Airtable(Node):
         "documentationUrl": "https://airtable.com/developers/web/api/introduction",
         "inputs": [{"type": "main"}],
         "outputs": [{"type": "main"}],
-        "credentials": [{"name": "airtableTokenApi", "required": True}],
+        "credentials": credential_requirements("airtableTokenApi", "airtableOAuth2Api"),
         "usableAsTool": True,
         "toolDescription": (
             "Read and write Airtable records in a table (`base` and `table` ids). Operations: `search` with an Airtable "
             "formula in `filterByFormula`, `get` / `deleteRecord` by record `id`, `create` / `update` / `upsert` with the "
-            "record fields as a JSON object in `fieldsJson` (set `dataMode` to `json`)."
+            "record fields as a JSON object in `fieldsJson` (set `dataMode` to `json`). Attachments (resource `attachment`): `upload` "
+            "sends the item's binary file (`binaryPropertyName`) to `attachmentField` of record `attachmentRecordId` (up to 5 MB); "
+            "`download` returns each file of that field as binary data."
         ),
         "keywords": ["airtable", "spreadsheet", "database", "table", "records", "rows"],
         "properties": [
-            resource_property([("Record", "record")], "record"),
+            authentication_property("Personal Access Token"),
+            resource_property([("Attachment", "attachment"), ("Record", "record")], "record"),
+            operation_property("attachment", [
+                ("Download", "download", "Download the attachments of a record field as binary data", True),
+                ("Upload", "upload", "Upload binary data to an attachment field of a record"),
+            ], "download"),
             operation_property("record", [
                 ("Create", "create", "Create a record"),
                 ("Create or Update", "upsert", "Create or update a record"),
@@ -99,13 +141,26 @@ class Airtable(Node):
             ], "search"),
             {
                 "name": "base", "displayName": "Base", "type": "options", "default": "", "required": True,
-                "typeOptions": {"loadOptionsMethod": "getBases"}, "description": "Base id (app…)", "displayOptions": {"show": RECORD},
+                "typeOptions": {"loadOptionsMethod": "getBases"}, "description": "Base id (app…)", "displayOptions": {"show": {"resource": ["record", "attachment"]}},
             },
             {
                 "name": "table", "displayName": "Table", "type": "options", "default": "", "required": True,
                 "typeOptions": {"loadOptionsMethod": "getTables", "loadOptionsDependsOn": ["base"]},
-                "description": "Table id (tbl…) or name", "displayOptions": {"show": RECORD},
+                "description": "Table id (tbl…) or name",
+                "displayOptions": {"show": {"resource": ["record", "attachment"], "operation": ["create", "upsert", "update", "deleteRecord", "get", "search", "download"]}},
             },
+            {
+                "name": "attachmentRecordId", "displayName": "Record ID", "type": "string", "default": "", "required": True, "placeholder": "rec…",
+                "displayOptions": {"show": {"resource": ["attachment"]}},
+            },
+            {
+                "name": "attachmentField", "displayName": "Attachment Field", "type": "string", "default": "", "required": True, "placeholder": "Attachments",
+                "description": "Name or id of the attachment field", "displayOptions": {"show": {"resource": ["attachment"]}},
+            },
+            binary_name_property("binaryPropertyName", "Input Binary Field", {"resource": ["attachment"], "operation": ["upload"]},
+                                 "Name of the binary property that holds the file to upload (up to 5 MB)"),
+            binary_name_property("outputBinaryName", "Output Binary Field", {"resource": ["attachment"], "operation": ["download"]},
+                                 "Binary property that receives each file (one output item per attachment)"),
             {
                 "name": "id", "displayName": "Record ID", "type": "string", "default": "", "required": True, "placeholder": "rec…",
                 "displayOptions": {"show": {**RECORD, "operation": ["get", "update", "deleteRecord"]}},
@@ -183,7 +238,7 @@ class Airtable(Node):
 
     def load_options(self, method, parameters, ctx=None):
         if method == "getBases":
-            api = airtable_api(ctx, ctx.get_credentials("airtableTokenApi"))
+            api = airtable_api(ctx, airtable_credentials(ctx, (parameters or {}).get("authentication")))
             options, offset = [], None
             for _ in range(20):
                 page = api.get("/v0/meta/bases", params={"offset": offset} if offset else None) or {}
@@ -196,13 +251,13 @@ class Airtable(Node):
             base = str((parameters or {}).get("base") or "").strip()
             if not base:
                 return []
-            api = airtable_api(ctx, ctx.get_credentials("airtableTokenApi"))
+            api = airtable_api(ctx, airtable_credentials(ctx, (parameters or {}).get("authentication")))
             body = api.get(f"/v0/meta/bases/{quote(base, safe='')}/tables") or {}
             return [{"name": t.get("name") or t.get("id"), "value": t.get("id"), "description": t.get("description")} for t in body.get("tables") or []]
         return super().load_options(method, parameters, ctx)
 
     def execute(self, ctx):
-        api = airtable_api(ctx, ctx.get_credentials("airtableTokenApi"))
+        api = airtable_api(ctx, airtable_credentials(ctx, ctx.get_node_parameter("authentication")))
         items = items_of(ctx)
         results: list[dict[str, Any]] = []
         batch: list[tuple[int, dict[str, Any]]] = []  # (item index, record) waiting to be written
@@ -218,6 +273,16 @@ class Airtable(Node):
             api.item_index = i
             operation = ctx.get_node_parameter("operation", i)
             base = text_param(ctx, "base", i, required=True, label="Base")
+            if ctx.get_node_parameter("resource", i, "record") == "attachment":
+                flush()  # attachments are one request per item and keep the order of the batches before them
+                with item_errors(ctx, results, i):
+                    if operation == "upload":
+                        results.append(out(self._upload(ctx, api, i, base), i))
+                    elif operation == "download":
+                        results.extend(self._download(ctx, api, i, base))
+                    else:
+                        raise NodeOperationError(f"Unsupported operation attachment.{operation}", item_index=i)
+                continue
             table = text_param(ctx, "table", i, required=True, label="Table")
             path = f"/v0/{quote(base, safe='')}/{quote(table, safe='')}"
             if operation in WRITE_OPS or operation == "deleteRecord":
@@ -236,6 +301,43 @@ class Airtable(Node):
             else:
                 raise NodeOperationError(f"Unsupported operation record.{operation}", item_index=i)
         flush()
+        return results
+
+    # ------------------------------------------------------------ attachments
+
+    @staticmethod
+    def _upload(ctx, api: Api, i: int, base: str) -> dict[str, Any]:
+        """``uploadAttachment``: the file as base64 JSON, added to the record's attachment field (existing files stay)."""
+        record_id = text_param(ctx, "attachmentRecordId", i, required=True, label="Record ID")
+        field = text_param(ctx, "attachmentField", i, required=True, label="Attachment Field")
+        content, ref, file_name = binary_input(ctx, "binaryPropertyName", i)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise NodeOperationError(f"'{file_name}' is {len(content)} bytes; Airtable takes up to 5 MB per upload", item_index=i)
+        host = CONTENT_HOST if api.base_url == "https://api.airtable.com" else api.base_url
+        url = f"{host}/v0/{quote(base, safe='')}/{quote(record_id, safe='')}/{quote(field, safe='')}/uploadAttachment"
+        record = api.call("POST", url, timeout=120, json={"contentType": content_type_of(ref, file_name), "file": base64.b64encode(content).decode("ascii"), "filename": file_name}) or {}
+        count_written(ctx, "airtable", "upload")
+        return flatten(record)
+
+    @staticmethod
+    def _download(ctx, api: Api, i: int, base: str) -> list[dict[str, Any]]:
+        """One output item per file of the record's attachment field, the bytes in ``outputBinaryName``."""
+        table = text_param(ctx, "table", i, required=True, label="Table")
+        record_id = text_param(ctx, "attachmentRecordId", i, required=True, label="Record ID")
+        field = text_param(ctx, "attachmentField", i, required=True, label="Attachment Field")
+        record = api.get(f"/v0/{quote(base, safe='')}/{quote(table, safe='')}/{quote(record_id, safe='')}", params={"returnFieldsByFieldId": "false"}) or {}
+        files = (record.get("fields") or {}).get(field)
+        if files is not None and not isinstance(files, list):
+            raise NodeOperationError(f"Field '{field}' is not an attachment field", item_index=i)
+        prop = text_param(ctx, "outputBinaryName", i) or "data"
+        results = []
+        for attachment in files or []:
+            if not isinstance(attachment, dict) or not attachment.get("url"):
+                continue
+            resp = download(api, attachment["url"], i, auth=False)  # a signed URL on Airtable's CDN: the token stays off it
+            name = str(attachment.get("filename") or attachment.get("id") or "attachment")
+            info = {"recordId": record_id, "field": field, "id": attachment.get("id"), "filename": name, "type": attachment.get("type"), "size": len(resp.content)}
+            results.append(binary_out(ctx, info, i, prop, resp.content, name, attachment.get("type")))
         return results
 
     # ------------------------------------------------------------ operations

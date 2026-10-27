@@ -9,6 +9,11 @@
  *   failovers; LANDFLOW_VALKEY_URL then gives only the primary's credentials, database and TLS. With
  *   `LANDFLOW_VALKEY_MASTER_NAME` (default `mymaster`), `LANDFLOW_VALKEY_SENTINEL_PASSWORD` (and `_USERNAME`) when
  *   the sentinels require AUTH, and `LANDFLOW_VALKEY_SENTINEL_TLS=true` when they speak TLS.
+ * - `LANDFLOW_VALKEY_CLUSTER` (`host:port,host:port…`): run on a Valkey (or Redis) Cluster: every key sits under one hash tag
+ *   (`{<prefix>}`), so the Lua scripts stay valid, and the client asks the cluster which node owns that slot and follows
+ *   MOVED / ASK. It doesn't scale the queue out (one slot, one node); it lets cluster-mode deployments work. With
+ *   `LANDFLOW_VALKEY_CLUSTER_NAT` (`announced:port=reachable:port,…`) for clusters that announce unreachable addresses.
+ *   LANDFLOW_VALKEY_URL gives credentials and TLS. Not combined with Sentinel.
  * - `LANDFLOW_QUEUE_PREFIX`: the key prefix, so several installs can share one Valkey (default `landflow`).
  * - `LANDFLOW_WORKER_CONCURRENCY`: runs a worker takes at once (default 10, n8n's default).
  * - `LANDFLOW_OFFLOAD_MANUAL_EXECUTIONS=true`: editor runs go to the workers too (n8n's OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS).
@@ -20,7 +25,7 @@
  *   `LANDFLOW_WORKER_SHUTDOWN_SECONDS` (default 30: how long SIGTERM waits for runs before re-queuing them).
  */
 import { hostname } from 'node:os';
-import { parseSentinels, type SentinelOptions } from './resp';
+import { parseClusterNat, parseSentinels, type RespAddress, type SentinelOptions } from './resp';
 
 export type ExecutionsMode = 'regular' | 'queue';
 export type ProcessRole = 'main' | 'worker';
@@ -34,6 +39,8 @@ export interface ClusterConfig {
   valkeyUrl: string;
   /** Valkey Sentinel (LANDFLOW_VALKEY_SENTINELS): the primary is asked of these. */
   sentinel?: SentinelOptions;
+  /** Valkey Cluster (LANDFLOW_VALKEY_CLUSTER): seed nodes, and the address translation. */
+  cluster?: { nodes: RespAddress[]; natMap: Record<string, RespAddress> };
   prefix: string;
   workerConcurrency: number;
   offloadManual: boolean;
@@ -67,6 +74,7 @@ export function clusterConfig(env: NodeJS.ProcessEnv = process.env): ClusterConf
     stableId: Boolean(explicitId),
     valkeyUrl: env.LANDFLOW_VALKEY_URL?.trim() || 'redis://127.0.0.1:6379',
     ...sentinelConfig(env),
+    ...clusterSettings(env),
     prefix: (env.LANDFLOW_QUEUE_PREFIX?.trim() || 'landflow').replace(/[^\w.-]/g, '_'),
     workerConcurrency: Math.floor(number(env.LANDFLOW_WORKER_CONCURRENCY, 10, 1)),
     offloadManual: flag(env.LANDFLOW_OFFLOAD_MANUAL_EXECUTIONS),
@@ -77,6 +85,12 @@ export function clusterConfig(env: NodeJS.ProcessEnv = process.env): ClusterConf
     workerPort: Math.floor(number(env.LANDFLOW_WORKER_PORT, 5690, 0)),
     shutdownMs: number(env.LANDFLOW_WORKER_SHUTDOWN_SECONDS, 30, 0) * 1000,
   };
+}
+
+function clusterSettings(env: NodeJS.ProcessEnv): Pick<ClusterConfig, 'cluster'> {
+  const nodes = parseSentinels(env.LANDFLOW_VALKEY_CLUSTER, 6379);
+  if (!nodes.length) return {};
+  return { cluster: { nodes, natMap: parseClusterNat(env.LANDFLOW_VALKEY_CLUSTER_NAT) } };
 }
 
 function sentinelConfig(env: NodeJS.ProcessEnv): { sentinel?: SentinelOptions } {
@@ -115,6 +129,7 @@ export function checkClusterConfig(config: ClusterConfig, env: NodeJS.ProcessEnv
     if (config.role === 'worker') throw new ClusterConfigError('A worker needs queue mode: set LANDFLOW_EXECUTIONS_MODE=queue (and LANDFLOW_VALKEY_URL)');
     return [];
   }
+  if (config.cluster && config.sentinel) throw new ClusterConfigError('Set LANDFLOW_VALKEY_CLUSTER or LANDFLOW_VALKEY_SENTINELS, not both: a cluster has no sentinels, and Sentinel is a single primary.');
   const postgres = env.LANDFLOW_DB?.trim().toLowerCase() === 'postgres';
   if (!postgres && !config.allowSqlite) {
     throw new ClusterConfigError(

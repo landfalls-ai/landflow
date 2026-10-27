@@ -1,13 +1,14 @@
 /** Request schemas and helpers shared by the alert routes (/api/settings/alerts/**, /api/workflows/[id]/alert). */
 import { z } from 'zod';
-import { DEFAULT_THROTTLE_MINUTES, type AlertsView, type WorkflowAlertView } from '../../shared/alerts';
+import { DEFAULT_THROTTLE_MINUTES, RULE_KIND_EVENTS, type AlertsView, type WorkflowAlertView } from '../../shared/alerts';
 import { mailConfigured } from '../auth/mail';
 import { CredentialError } from '../credentials/vault';
 import { error } from '../http';
 import { AlertError, alertStore } from './store';
 
-const kind = z.enum(['email', 'slack', 'webhook', 'telegram']);
+const kind = z.enum(['email', 'slack', 'webhook', 'telegram', 'teams', 'discord']);
 const event = z.enum(['failed', 'timedOut', 'retriesExhausted', 'waiting']);
+const ruleKind = z.enum(['runs', 'failureRate', 'plugin', 'cost', 'evaluation']);
 
 const config = z
   .object({
@@ -29,14 +30,22 @@ const ruleFields = {
   name: z.string().min(1).max(120),
   enabled: z.boolean(),
   workflows: scope,
+  // Rules of the other kinds alert on their own events: left out, they are filled in.
   events: z.array(event).min(1),
+  kind: ruleKind.optional(),
+  failureRate: z.object({ minRuns: z.number().int().min(1).max(100_000), percent: z.number().min(0).max(100), windowMinutes: z.number().int().min(1).max(1_440) }).optional(),
+  plugins: z.object({ ids: z.array(z.string().min(1)).max(500).optional(), graceSeconds: z.number().int().min(0).max(86_400), notifyRecovery: z.boolean() }).optional(),
+  cost: z.object({ thresholdPercent: z.number().min(1).max(100) }).optional(),
+  evaluation: z.object({ metric: z.string().max(200).optional(), below: z.number().min(0).max(1_000).optional(), dropPercent: z.number().min(0).max(100).optional() }).optional(),
   waitingMinutes: z.number().int().min(1).max(43_200).optional(),
   includeManual: z.boolean().optional(),
   channelIds: z.array(z.string().min(1)).max(50),
   throttleMinutes: z.number().int().min(0).max(1_440),
 };
 
-export const ruleCreateSchema = z.object({ ...ruleFields, enabled: ruleFields.enabled.default(true), throttleMinutes: ruleFields.throttleMinutes.default(DEFAULT_THROTTLE_MINUTES) });
+export const ruleCreateSchema = z
+  .object({ ...ruleFields, events: ruleFields.events.optional(), enabled: ruleFields.enabled.default(true), throttleMinutes: ruleFields.throttleMinutes.default(DEFAULT_THROTTLE_MINUTES) })
+  .transform((rule) => ({ ...rule, events: rule.events ?? (rule.kind && rule.kind !== 'runs' ? RULE_KIND_EVENTS[rule.kind] : ['failed' as const]) }));
 export const rulePatchSchema = z.object(ruleFields).partial();
 
 /** The workflow editor's "Notify on failure": which channels, how often. */

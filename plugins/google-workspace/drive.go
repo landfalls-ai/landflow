@@ -20,9 +20,9 @@ import (
 	landflow "github.com/landflow/landflow/sdks/go"
 )
 
-// DriveNode is Google Drive: search files and folders, upload, download and
-// delete files, and create folders. Downloads return the content as text or
-// base64 (the protocol carries no binary data yet).
+// DriveNode is Google Drive: search files and folders, upload, download,
+// export and delete files, and create folders. Files move as binary data
+// (drive_binary.go); a download can also return the content as text or base64.
 type DriveNode struct{}
 
 const (
@@ -30,7 +30,7 @@ const (
 	mimeDocument = "application/vnd.google-apps.document"
 	// driveFileFields are the file fields every operation returns.
 	driveFileFields = "id,name,mimeType,parents,size,createdTime,modifiedTime,webViewLink,trashed"
-	// maxDownload caps downloads, which travel inside JSON.
+	// maxDownload caps downloads that travel inside JSON (binary downloads have no cap).
 	maxDownload = 10 << 20
 	// maxUpload is the limit of Drive's multipart upload.
 	maxUpload = 5 << 20
@@ -89,7 +89,9 @@ func (DriveNode) Description() landflow.NodeDescriptor {
 		UsableAsTool: true,
 		ToolDescription: "Work with Google Drive files. resource=fileFolder, operation=search finds files by name " +
 			"(queryString) or Drive query syntax; resource=file: upload creates a file from fileContent text, " +
-			"download returns `content` (text, or base64 for binary files, max 10 MB), deleteFile trashes fileId; " +
+			"download returns `content` (text, or base64 for binary files, max 10 MB) or, with downloadAs=binary, the file as the item's binary data; " +
+			"export converts a Google Doc/Sheet/Slides to a binary file (exportFormat pdf, docx, xlsx…); upload with uploadFrom=binary " +
+			"sends the input item's binary file; deleteFile trashes fileId; " +
 			"resource=folder, operation=create makes a folder.",
 
 		Properties: []landflow.PropertyDescriptor{
@@ -101,7 +103,8 @@ func (DriveNode) Description() landflow.NodeDescriptor {
 			),
 			operationProperty("file", "upload",
 				landflow.PropertyOption{Name: "Delete", Value: "deleteFile", Description: "Move a file to the trash, or delete it permanently", Action: "Delete a file"},
-				landflow.PropertyOption{Name: "Download", Value: "download", Description: "Download a file's content", Action: "Download a file", Idempotent: true},
+				landflow.PropertyOption{Name: "Download", Value: "download", Description: "Download a file's content as text or as a binary file", Action: "Download a file", Idempotent: true},
+				landflow.PropertyOption{Name: "Export", Value: "export", Description: "Export a Google Doc, Sheet, Slides or Drawing as a file (PDF, Word, Excel…)", Action: "Export a Google file", Idempotent: true},
 				landflow.PropertyOption{Name: "Upload", Value: "upload", Description: "Upload a file", Action: "Upload a file"},
 			),
 			operationProperty("fileFolder", "search",
@@ -112,15 +115,20 @@ func (DriveNode) Description() landflow.NodeDescriptor {
 			),
 
 			// File → Upload
-			{Name: "name", DisplayName: "File Name", Type: landflow.PropString, Default: "", Required: true,
-				Placeholder: "report.txt", DisplayOptions: show("file", "upload")},
+			{Name: "name", DisplayName: "File Name", Type: landflow.PropString, Default: "",
+				Placeholder: "report.txt", Description: "Required unless the content comes from a binary file (it then defaults to that file's name)",
+				DisplayOptions: show("file", "upload")},
 			folderProperty("folderId", "Parent Folder", "Folder to upload into", show("file", "upload")),
 			{Name: "uploadFrom", DisplayName: "Content From", Type: landflow.PropOptions, Default: "text",
 				Options: []landflow.PropertyOption{
+					{Name: "Binary File", Value: "binary", Description: "A file of the input item (Read Files, HTTP Request, a form upload, Convert to File…); big files are streamed"},
 					{Name: "Text", Value: "text", Description: "The text below becomes the file"},
 					{Name: "Base64", Value: "base64", Description: "Base64-encoded bytes, e.g. from a download"},
 				},
 				DisplayOptions: show("file", "upload")},
+			{Name: "binaryPropertyName", DisplayName: "Input Binary Field", Type: landflow.PropString, Default: "data",
+				Description:    "Name of the input item's binary property that holds the file",
+				DisplayOptions: with(show("file", "upload"), "uploadFrom", "binary")},
 			{Name: "fileContent", DisplayName: "File Content", Type: landflow.PropString, Default: "",
 				TypeOptions:    &landflow.TypeOptions{Rows: landflow.Ptr(6)},
 				DisplayOptions: with(show("file", "upload"), "uploadFrom", "text")},
@@ -136,7 +144,24 @@ func (DriveNode) Description() landflow.NodeDescriptor {
 
 			// File → Download / Delete
 			{Name: "fileId", DisplayName: "File ID", Type: landflow.PropString, Default: "", Required: true,
-				Description: "ID or link of the file", DisplayOptions: show("file", "download", "deleteFile")},
+				Description: "ID or link of the file", DisplayOptions: show("file", "download", "deleteFile", "export")},
+			{Name: "downloadAs", DisplayName: "Return Content As", Type: landflow.PropOptions, Default: "json",
+				Options: []landflow.PropertyOption{
+					{Name: "Text or Base64 (in the JSON)", Value: "json", Description: "`content` in the item, up to 10 MB"},
+					{Name: "Binary File", Value: "binary", Description: "The file under the item's binary data, streamed to the host's store (no size limit)"},
+				},
+				DisplayOptions: show("file", "download")},
+			{Name: "exportFormat", DisplayName: "Export As", Type: landflow.PropOptions, Default: "pdf",
+				Options: exportFormatOptions, DisplayOptions: show("file", "export")},
+			{Name: "outputBinaryField", DisplayName: "Output Binary Field", Type: landflow.PropString, Default: "data",
+				Description:    "Name of the binary property that gets the file",
+				DisplayOptions: &landflow.DisplayOptions{Show: map[string][]any{"resource": {"file"}, "operation": {"download", "export"}}}},
+			{Name: "options", DisplayName: "Options", Type: landflow.PropCollection, Default: map[string]any{},
+				Placeholder: "Add Option", DisplayOptions: show("file", "export"),
+				Values: []landflow.PropertyDescriptor{
+					{Name: "fileName", DisplayName: "File Name", Type: landflow.PropString, Default: "",
+						Description: "Defaults to the Google file's name plus the format's extension"},
+				}},
 			{Name: "options", DisplayName: "Options", Type: landflow.PropCollection, Default: map[string]any{},
 				Placeholder: "Add Option", DisplayOptions: show("file", "deleteFile"),
 				Values: []landflow.PropertyDescriptor{
@@ -199,7 +224,13 @@ func (DriveNode) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, error
 		case "file.upload":
 			results, err = one(d.upload(i))
 		case "file.download":
-			results, err = one(d.download(i))
+			if ctx.ParamString("downloadAs", i, "json") == "binary" {
+				err = d.downloadBinary(i, &out)
+			} else {
+				results, err = one(d.download(i))
+			}
+		case "file.export":
+			err = d.exportBinary(i, &out)
 		case "file.deleteFile":
 			results, err = one(d.delete(i))
 		case "folder.create":
@@ -307,6 +338,9 @@ func listDriveFiles(ctx context.Context, c *client, q, fields, orderBy, token st
 
 // upload creates a file with a multipart (metadata + content) upload.
 func (d *driveRun) upload(i int) (map[string]any, error) {
+	if d.ctx.ParamString("uploadFrom", i, "text") == "binary" {
+		return d.uploadBinary(i)
+	}
 	name, err := requireParam(d.ctx, "name", "File Name", i)
 	if err != nil {
 		return nil, err
@@ -451,7 +485,7 @@ func (d *driveRun) download(i int) (map[string]any, error) {
 }
 
 func tooLarge(name string, size int64) error {
-	return userError("Downloads are returned inside the item's JSON and are limited to 10 MB until the protocol carries binary data.",
+	return userError("Downloads returned inside the item's JSON are limited to 10 MB; set Return Content As to Binary File for bigger files.",
 		"File %q is %d bytes, more than the 10 MB download limit", name, size)
 }
 

@@ -84,6 +84,7 @@ export const workflowSchema = z
         timeSavedMinutes: z.number().min(0).max(100_000).optional(),
         /** Durable runtime: production runs at once (0 = no limit), one at a time, and what happens to the extra ones. */
         concurrencyLimit: z.number().int().min(0).max(1000).optional(),
+        priority: z.enum(['high', 'normal', 'low']).optional(),
         singleton: z.boolean().optional(),
         concurrencyOverflow: z.enum(['queue', 'skip']).optional(),
         concurrencyQueueSize: z.number().int().min(1).max(10_000).optional(),
@@ -157,3 +158,6 @@ export const runDigestSchema = z.object({
   outputs: z.array(portDigestSchema).max(10).default([]),
   logs: z.array(z.string()).max(20).optional(),
 });
+
+/** A rate limit set on a credential: at most `limit` calls per `intervalSeconds` across every node and run that uses it. */
+export const credentialRateLimitSchema = z.object({ limit: z.number().int().min(1).max(100_000), intervalSeconds: z.number().min(0.1).max(86_400) });

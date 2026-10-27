@@ -259,13 +259,16 @@ describe('templates per project', () => {
     expect(inTeam.body.createdTables).toEqual([]);
     expect(inTeam.body.workflow.nodes.find((n) => n.type === 'core.dataTable')?.parameters.dataTableId).toBe(teamTable);
 
-    // In Ops the Sales table isn't reused: a new one (its name is taken on the instance) in Ops.
+    // In Ops the Sales table isn't reused: Ops gets a table of its own (names are unique per project, not per instance).
     const inOps = await use(bob, `?projectId=${ops}`);
     expect(inOps.status).toBe(201);
     expect(projects.homeProjectId('workflow', inOps.body.workflow.id)).toBe(ops);
-    expect(inOps.body.createdTables).toEqual(['TMP Leads 2']);
-    const created = dataTables().findTable('TMP Leads 2')!;
+    expect(inOps.body.createdTables).toEqual(['TMP Leads']);
+    const created = dataTables().findTable('TMP Leads', ops)!;
+    expect(created.id).not.toBe(teamTable);
     expect(projects.homeProjectId('dataTable', created.id)).toBe(ops);
+    // Using the template again in Ops reuses Ops's table.
+    expect((await use(bob, `?projectId=${ops}`)).body.createdTables).toEqual([]);
     expect((await runWorkflow({ workflow: store.getWorkflow(inOps.body.workflow.id)!, mode: 'manual' })).status).toBe('success');
 
     // Viewers and outsiders can't create there; a folder of another project is refused.

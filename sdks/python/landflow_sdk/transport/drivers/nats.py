@@ -58,6 +58,8 @@ _REPLY_HEADER = "Landflow-Reply"
 _ATTEMPT_HEADER = "Landflow-Attempt"
 _TTL_HEADER = "Nats-TTL"
 _REQUEUE_DELAY_S = 0.025
+# How long a core publish waits past its flush for the server's "no responders" (the Go driver's 1 ms).
+_NO_RESPONDERS_WAIT_S = 0.001
 DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024
 DEFAULT_ACK_WAIT_MS = 30_000
 DEFAULT_MAX_AGE_MS = 60 * 60_000
@@ -163,7 +165,8 @@ class NatsDriver(BrokerDriver):
         self._inbox = ""
         self._inbox_sub: Any = None
         self._inbox_seq = 0
-        self._no_responders: set[str] = set()
+        # A core publish's inbox token → the future its 503 (no responders) resolves.
+        self._no_responders: dict[str, asyncio.Future[None]] = {}
         self._waiters: dict[str, Callable[[WireEvent], None]] = {}
         self._lock = threading.Lock()
 
@@ -354,7 +357,9 @@ class NatsDriver(BrokerDriver):
         token = msg.subject[len(self._inbox) + 1:]
         status = (msg.headers or {}).get("Status")
         if status == "503":
-            self._no_responders.add(token)
+            future = self._no_responders.get(token)
+            if future is not None and not future.done():
+                future.set_result(None)
             return
         waiter = self._waiters.get(token)
         if waiter is not None:
@@ -373,20 +378,21 @@ class NatsDriver(BrokerDriver):
                 await self._js.publish(self._subject_of(channel), event.body, headers=headers, timeout=10)
                 return "accepted"
             # Core: publish with a reply inbox of ours and flush; the server answers a publish nobody subscribes to with a
-            # 503 on that inbox before it answers the flush's PING.
+            # 503 on that inbox. The 503 can arrive just after the flush's PONG, so wait for it up to
+            # _NO_RESPONDERS_WAIT_S past the flush, as the Go driver does (replies and requests don't pay this).
             self._inbox_seq += 1
             token = str(self._inbox_seq)
-            await nc.publish(self._subject_of(channel), event.body, reply=f"{self._inbox}.{token}", headers=headers)
-            await nc.flush()
-            # nats-py queues subscription callbacks: let the inbox drain what arrived before the PONG (nothing, usually).
-            for _ in range(100):
-                if self._inbox_sub is None or not self._inbox_sub.pending_msgs:
-                    break
-                await asyncio.sleep(0)
-            if token in self._no_responders:
-                self._no_responders.discard(token)
+            no_responders = asyncio.get_running_loop().create_future()
+            self._no_responders[token] = no_responders
+            try:
+                await nc.publish(self._subject_of(channel), event.body, reply=f"{self._inbox}.{token}", headers=headers)
+                await nc.flush()
+                await asyncio.wait_for(no_responders, _NO_RESPONDERS_WAIT_S)
                 return "unroutable"
-            return "accepted"
+            except asyncio.TimeoutError:
+                return "accepted"
+            finally:
+                self._no_responders.pop(token, None)
 
         return self._run(do())
 

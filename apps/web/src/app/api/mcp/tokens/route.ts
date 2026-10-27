@@ -1,6 +1,6 @@
 /**
  * Your Landflow-issued MCP tokens (session only, like API keys). GET lists them (owners and admins: everyone's with
- * `?all=1`); POST { label, scopes?, expiresInDays? } issues one and returns the JWT once as `token`.
+ * `?all=1`); POST { label, scopes?, expiresInDays?, projectId? } issues one (a `projectId` scopes the instance MCP server to that project for this token) and returns the JWT once as `token`.
  */
 import { z } from 'zod';
 import { can } from '@/lib/shared/auth';
@@ -22,6 +22,7 @@ const schema = z.object({
   label: z.string().trim().min(1, 'Name the token').max(100),
   scopes: z.array(z.enum(MCP_TOKEN_SCOPES)).min(1).optional(),
   expiresInDays: z.number().int().min(1).max(MCP_TOKEN_MAX_DAYS).optional(),
+  projectId: z.string().trim().min(1).optional(),
 });
 
 export const POST = handler(async (request: Request) => {
@@ -30,7 +31,7 @@ export const POST = handler(async (request: Request) => {
   if (!body.ok) return body.response;
   try {
     const { token, record } = await issueMcpToken(me, body.data);
-    recordAudit({ action: 'mcp.token.issue', target: { type: 'mcp_token', id: record.id, name: record.label }, summary: `Issued the MCP token “${record.label}” (${record.scopes.join(', ')}, expires ${record.expiresAt.slice(0, 10)})`, details: { scopes: record.scopes, expiresAt: record.expiresAt } });
+    recordAudit({ action: 'mcp.token.issue', target: { type: 'mcp_token', id: record.id, name: record.label }, summary: `Issued the MCP token “${record.label}” (${record.scopes.join(', ')}, expires ${record.expiresAt.slice(0, 10)}${record.projectId ? `, project ${record.projectId}` : ''})`, details: { scopes: record.scopes, expiresAt: record.expiresAt, ...(record.projectId && { projectId: record.projectId }) } });
     return json({ token, record: mcpTokenView(record) }, 201);
   } catch (caught) {
     if (caught instanceof McpTokenError) return error(caught.message, caught.status);

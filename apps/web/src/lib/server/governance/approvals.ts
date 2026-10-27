@@ -26,6 +26,7 @@ import { database } from '../db';
 import { parse } from '../db/rows';
 import { onPublicationChanged, publishedVersionId } from '../publications';
 import { publicationStatus, publishDraft, PublishError, publishVersion, unpublishWorkflow } from '../publish';
+import { releaseScheduleAfterApproval } from '../publish-schedule-store';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { logger } from '../telemetry/logger';
@@ -67,6 +68,9 @@ interface Data {
   baseVersionNumber?: number;
   diff?: PublishRequestDiff;
   reason?: string;
+  /** A scheduled publish's request (../publish-schedule.ts): approving it releases the schedule instead of publishing now. */
+  scheduleId?: string;
+  scheduledFor?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +156,7 @@ function view(row: Row, viewer?: Pick<UserRecord, 'id' | 'role'>, names = userNa
     ...(row.decided_at && { decidedAt: row.decided_at }),
     ...(row.comment && { comment: row.comment }),
     ...(data.reason && { reason: data.reason }),
+    ...(data.scheduledFor && { scheduledFor: data.scheduledFor }),
     ...(viewer && {
       canApprove: pending && mayApprove(getUser(viewer.id) ?? viewer, row.workflow_id, row.requested_by),
       canCancel: pending && (viewer.id === row.requested_by || can(viewer, 'settings:manage')),
@@ -199,6 +204,8 @@ function draftVersionId(workflow: Workflow): string | undefined {
 function staleReason(row: Row): string | undefined {
   const workflow = store.getWorkflow(row.workflow_id);
   if (!workflow) return 'The workflow was deleted';
+  // A scheduled publish names its version and runs later: only the version has to exist.
+  if ((parse<Data>(row.data) ?? {}).scheduleId) return undefined;
   if ((publishedVersionId(row.workflow_id) ?? null) !== (row.base_version_id ?? null)) return 'What is live changed after the request was made';
   if (row.kind !== 'unpublish' && (draftVersionId(workflow) ?? null) !== (row.draft_version_id ?? null)) return 'The draft changed after the request was made';
   return undefined;
@@ -318,6 +325,8 @@ export interface PublishAsk {
   versionId?: string;
   note?: string;
   by?: string;
+  /** A scheduled publish (../publish-schedule.ts): the request approves the schedule; it goes live at `at` (ISO). */
+  schedule?: { id: string; at: string };
 }
 
 /** Record a publish request (four-eyes on). Throws ApprovalError when there is nothing to ask for. */
@@ -331,7 +340,7 @@ export function requestPublish(ask: PublishAsk): PublishRequestView {
   const draft = draftVersionId(workflow);
   let kind: PublishRequestKind = 'unpublish';
   let versionId: string | undefined;
-  let data: Data = { workflowName: workflow.name, ...(liveVersion && { baseVersionNumber: liveVersion.number }) };
+  let data: Data = { workflowName: workflow.name, ...(liveVersion && { baseVersionNumber: liveVersion.number }), ...(ask.schedule && { scheduleId: ask.schedule.id, scheduledFor: ask.schedule.at }) };
   if (ask.action === 'unpublish') {
     if (!live && !workflow.active) throw new ApprovalError('This workflow isn’t published', 409);
     data = { ...data, diff: { summary: 'Stops its production triggers', nodesAdded: [], nodesRemoved: [], nodesChanged: [], connectionsChanged: 0, settingsChanged: false } };
@@ -340,7 +349,7 @@ export function requestPublish(ask: PublishAsk): PublishRequestView {
     if (!summary) throw new ApprovalError(ask.versionId ? 'Version not found' : 'This workflow has no saved version to publish: save it first', ask.versionId ? 404 : 409);
     const version = getVersion(workflow.id, summary.id);
     if (!version) throw new ApprovalError('Version not found', 404);
-    if (live === version.id) throw new ApprovalError(`Version ${version.number} is already published`, 409);
+    if (live === version.id && !ask.schedule) throw new ApprovalError(`Version ${version.number} is already published`, 409);
     const blocked = publishBlockedReason(version.workflow);
     if (blocked) throw new ApprovalError(blocked, 422);
     const newest = listVersions(workflow.id)[0];
@@ -366,13 +375,14 @@ export function requestPublish(ask: PublishAsk): PublishRequestView {
     comment: null,
     data: JSON.stringify(data),
   };
-  const replaced = database().all<Row>('SELECT * FROM publish_requests WHERE workflow_id = ? AND status = ?', workflow.id, 'pending');
+  // A newer request replaces a pending one, but scheduled requests (each is its own plan) neither replace nor get replaced.
+  const replaced = ask.schedule ? [] : database().all<Row>('SELECT * FROM publish_requests WHERE workflow_id = ? AND status = ?', workflow.id, 'pending').filter((old) => !(parse<Data>(old.data) ?? {}).scheduleId);
   database().transaction(() => {
     for (const old of replaced) setStatus(old, 'canceled', { by, reason: 'Replaced by a newer request' });
     save(row);
   });
   for (const old of replaced) audit('publish_request.cancel', { ...old, status: 'canceled' }, { summary: `Publish request replaced by a newer one`, details: { replacedBy: row.id } });
-  audit('publish_request.create', row, { summary: `Asked for approval to ${KIND_LABEL[kind]} “${workflow.name}”${data.versionNumber !== undefined ? ` (version ${data.versionNumber})` : ''}`, details: { note: row.note, diff: data.diff?.summary } });
+  audit('publish_request.create', row, { summary: `Asked for approval to ${KIND_LABEL[kind]} “${workflow.name}”${data.versionNumber !== undefined ? ` (version ${data.versionNumber})` : ''}${ask.schedule ? ` at ${ask.schedule.at}` : ''}`, details: { note: row.note, diff: data.diff?.summary } });
   const request = view(row);
   const { fourEyes } = getGovernancePolicy();
   try {
@@ -438,6 +448,15 @@ export async function approveRequest(id: string, approver: UserRecord, comment?:
   });
   if (!claimed) throw new ApprovalError('This request was decided meanwhile', 409);
   const approverName = approver.name || approver.email;
+  const scheduleId = (parse<Data>(row.data) ?? {}).scheduleId;
+  if (scheduleId) {
+    // A scheduled publish: approval releases the schedule; it goes live at its time (../publish-schedule.ts), through the same checks.
+    releaseScheduleAfterApproval(scheduleId);
+    audit('publish_request.approve', claimed, { summary: `Approved the scheduled ${KIND_LABEL[row.kind]}${comment?.trim() ? `: ${comment.trim()}` : ''}`, details: { comment, scheduleId } });
+    const request = view(rowOf(id) ?? claimed, approver);
+    notifyRequester(request, 'approved', { email: getGovernancePolicy().fourEyes.notifyEmail });
+    return { request, result: { ...(await publicationStatus(row.workflow_id)), triggerErrors: [] } };
+  }
   const note = [row.note, `approved by ${approverName}`].filter(Boolean).join(' — ');
   let result: PublishResult;
   try {

@@ -132,6 +132,8 @@ func (d *dialect) bind(v any) any {
 		return t
 	case string:
 		return t
+	case []byte:
+		return t // a file's bytes (bytea / BLOB columns)
 	case json.Number:
 		if d.dollarParams {
 			return t.String()

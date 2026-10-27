@@ -74,7 +74,8 @@
               "name": "Select",
               "value": "select",
               "description": "Select rows from a table",
-              "action": "Select rows from a table"
+              "action": "Select rows from a table",
+              "idempotent": true
             },
             {
               "name": "Update",
@@ -89,7 +90,7 @@
           "displayName": "Query",
           "type": "string",
           "default": "",
-          "description": "The SQL to run. Put values in $1, $2, \u2026 placeholders and list them in Options \u2192 Query Parameters instead of writing them into the SQL.",
+          "description": "The SQL to run. Put values in $1, $2, … placeholders and list them in Options → Query Parameters instead of writing them into the SQL.",
           "placeholder": "SELECT id, name FROM orders WHERE status = $1 AND total > $2",
           "required": true,
           "typeOptions": {
@@ -502,7 +503,7 @@
               "displayName": "Query Parameters",
               "type": "string",
               "default": "",
-              "description": "Values for the $1, $2, \u2026 placeholders: a comma-separated list, or an expression returning an array such as {{ [$json.status, $json.total] }}",
+              "description": "Values for the $1, $2, … placeholders: a comma-separated list, or an expression returning an array such as {{ [$json.status, $json.total] }}",
               "placeholder": "e.g. paid, 100"
             },
             {
@@ -534,6 +535,51 @@
             "show": {
               "operation": [
                 "executeQuery"
+              ]
+            }
+          }
+        },
+        {
+          "name": "binaryOptions",
+          "displayName": "Binary Data",
+          "type": "collection",
+          "default": {},
+          "description": "Read bytea / BLOB columns into binary files, or write them from the input item's binary files",
+          "placeholder": "Add binary option",
+          "values": [
+            {
+              "name": "inputColumns",
+              "displayName": "Columns From Binary Files",
+              "type": "string",
+              "default": "",
+              "description": "Insert, Insert or Update and Update: column=binary property pairs; the column gets the file's bytes (a bare column name reads the property of the same name)",
+              "placeholder": "avatar=data, contract=pdf"
+            },
+            {
+              "name": "outputColumns",
+              "displayName": "Columns to Return as Files",
+              "type": "string",
+              "default": "",
+              "description": "Select, Execute Query and the rows writes return: column=binary property pairs; the column leaves the JSON and becomes a binary file on the item",
+              "placeholder": "avatar=photo"
+            },
+            {
+              "name": "fileNameColumn",
+              "displayName": "File Name Column",
+              "type": "string",
+              "default": "",
+              "description": "Column of the same row that holds the file name of the returned files",
+              "placeholder": "filename"
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "select",
+                "executeQuery",
+                "insert",
+                "upsert",
+                "update"
               ]
             }
           }
@@ -589,7 +635,7 @@
         }
       ],
       "usableAsTool": true,
-      "toolDescription": "Read or change data in a PostgreSQL database. Set `operation`: `select` reads rows of `table` (up to `limit`), `executeQuery` runs the SQL in `query` (use $1, $2, \u2026 placeholders for values), `insert` / `upsert` / `update` write the other arguments as columns of `table` (fields that are not columns are ignored), and `deleteTable` deletes rows matching the node's configured conditions.",
+      "toolDescription": "Read or change data in a PostgreSQL database. Set `operation`: `select` reads rows of `table` (up to `limit`), `executeQuery` runs the SQL in `query` (use $1, $2, … placeholders for values), `insert` / `upsert` / `update` write the other arguments as columns of `table` (fields that are not columns are ignored), and `deleteTable` deletes rows matching the node's configured conditions.",
       "toolInputSchema": {
         "properties": {
           "limit": {
@@ -697,7 +743,8 @@
               "name": "Select",
               "value": "select",
               "description": "Select rows from a table",
-              "action": "Select rows from a table"
+              "action": "Select rows from a table",
+              "idempotent": true
             },
             {
               "name": "Update",
@@ -712,7 +759,7 @@
           "displayName": "Query",
           "type": "string",
           "default": "",
-          "description": "The SQL to run. Put values in ? placeholders and list them in Options \u2192 Query Parameters instead of writing them into the SQL.",
+          "description": "The SQL to run. Put values in ? placeholders and list them in Options → Query Parameters instead of writing them into the SQL.",
           "placeholder": "SELECT id, name FROM orders WHERE status = ? AND total > ?",
           "required": true,
           "typeOptions": {
@@ -1132,6 +1179,51 @@
           }
         },
         {
+          "name": "binaryOptions",
+          "displayName": "Binary Data",
+          "type": "collection",
+          "default": {},
+          "description": "Read bytea / BLOB columns into binary files, or write them from the input item's binary files",
+          "placeholder": "Add binary option",
+          "values": [
+            {
+              "name": "inputColumns",
+              "displayName": "Columns From Binary Files",
+              "type": "string",
+              "default": "",
+              "description": "Insert, Insert or Update and Update: column=binary property pairs; the column gets the file's bytes (a bare column name reads the property of the same name)",
+              "placeholder": "avatar=data, contract=pdf"
+            },
+            {
+              "name": "outputColumns",
+              "displayName": "Columns to Return as Files",
+              "type": "string",
+              "default": "",
+              "description": "Select, Execute Query and the rows writes return: column=binary property pairs; the column leaves the JSON and becomes a binary file on the item",
+              "placeholder": "avatar=photo"
+            },
+            {
+              "name": "fileNameColumn",
+              "displayName": "File Name Column",
+              "type": "string",
+              "default": "",
+              "description": "Column of the same row that holds the file name of the returned files",
+              "placeholder": "filename"
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "select",
+                "executeQuery",
+                "insert",
+                "upsert",
+                "update"
+              ]
+            }
+          }
+        },
+        {
           "name": "options",
           "displayName": "Options",
           "type": "collection",
@@ -1265,7 +1357,8 @@
               "name": "Select",
               "value": "select",
               "description": "Select rows from a table",
-              "action": "Select rows from a table"
+              "action": "Select rows from a table",
+              "idempotent": true
             },
             {
               "name": "Update",
@@ -1280,7 +1373,7 @@
           "displayName": "Query",
           "type": "string",
           "default": "",
-          "description": "The SQL to run. Put values in ? placeholders and list them in Options \u2192 Query Parameters instead of writing them into the SQL.",
+          "description": "The SQL to run. Put values in ? placeholders and list them in Options → Query Parameters instead of writing them into the SQL.",
           "placeholder": "SELECT id, name FROM orders WHERE status = ? AND total > ?",
           "required": true,
           "typeOptions": {
@@ -1700,6 +1793,51 @@
           }
         },
         {
+          "name": "binaryOptions",
+          "displayName": "Binary Data",
+          "type": "collection",
+          "default": {},
+          "description": "Read bytea / BLOB columns into binary files, or write them from the input item's binary files",
+          "placeholder": "Add binary option",
+          "values": [
+            {
+              "name": "inputColumns",
+              "displayName": "Columns From Binary Files",
+              "type": "string",
+              "default": "",
+              "description": "Insert, Insert or Update and Update: column=binary property pairs; the column gets the file's bytes (a bare column name reads the property of the same name)",
+              "placeholder": "avatar=data, contract=pdf"
+            },
+            {
+              "name": "outputColumns",
+              "displayName": "Columns to Return as Files",
+              "type": "string",
+              "default": "",
+              "description": "Select, Execute Query and the rows writes return: column=binary property pairs; the column leaves the JSON and becomes a binary file on the item",
+              "placeholder": "avatar=photo"
+            },
+            {
+              "name": "fileNameColumn",
+              "displayName": "File Name Column",
+              "type": "string",
+              "default": "",
+              "description": "Column of the same row that holds the file name of the returned files",
+              "placeholder": "filename"
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "select",
+                "executeQuery",
+                "insert",
+                "upsert",
+                "update"
+              ]
+            }
+          }
+        },
+        {
           "name": "options",
           "displayName": "Options",
           "type": "collection",
@@ -1840,7 +1978,8 @@
               "name": "Get",
               "value": "get",
               "description": "Get the value of a key",
-              "action": "Get the value of a key"
+              "action": "Get the value of a key",
+              "idempotent": true
             },
             {
               "name": "Increment",
@@ -1852,19 +1991,22 @@
               "name": "Info",
               "value": "info",
               "description": "Return information about the server",
-              "action": "Return information about the server"
+              "action": "Return information about the server",
+              "idempotent": true
             },
             {
               "name": "Keys",
               "value": "keys",
               "description": "Return keys matching a pattern",
-              "action": "Return keys matching a pattern"
+              "action": "Return keys matching a pattern",
+              "idempotent": true
             },
             {
               "name": "List Length",
               "value": "llen",
               "description": "Return the length of a list",
-              "action": "Return the length of a list"
+              "action": "Return the length of a list",
+              "idempotent": true
             },
             {
               "name": "Pop",
@@ -1982,7 +2124,7 @@
           "displayName": "Value Is JSON",
           "type": "boolean",
           "default": true,
-          "description": "Whether the hash value is a JSON object; otherwise \u201cfield value field value \u2026\u201d",
+          "description": "Whether the hash value is a JSON object; otherwise “field value field value …”",
           "displayOptions": {
             "show": {
               "keyType": [
@@ -2186,7 +2328,7 @@
               "displayName": "Dot Notation",
               "type": "boolean",
               "default": true,
-              "description": "Whether a property name like a.b sets the nested field b of a, instead of a field called \u201ca.b\u201d"
+              "description": "Whether a property name like a.b sets the nested field b of a, instead of a field called “a.b”"
             }
           ],
           "displayOptions": {
@@ -2494,7 +2636,7 @@
     {
       "name": "postgres",
       "displayName": "Postgres",
-      "description": "A PostgreSQL server (also Supabase, Neon, RDS, CockroachDB\u2026)",
+      "description": "A PostgreSQL server (also Supabase, Neon, RDS, CockroachDB…)",
       "documentationUrl": "https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-PARAMKEYWORDS",
       "properties": [
         {

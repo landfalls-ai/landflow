@@ -9,7 +9,8 @@ import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, 
 import type { LanguageModel } from '@landflow/engine';
 import type { EvaluationRef } from '../../shared/evaluations';
 import { dataTables } from '../datatables';
-import { loadDataset, rowItem } from '../evaluations/dataset';
+import { scopedTable, tableScope, tablesInScope } from '../datatables/projects';
+import { loadDataset, loadFileDataset, rowItem, type Dataset } from '../evaluations/dataset';
 import {
   asText,
   contains,
@@ -63,7 +64,7 @@ export const evaluationTrigger = defineNode({
   description: {
     name: 'evaluationTrigger',
     displayName: 'Evaluation Trigger',
-    description: 'Start an evaluation run: one execution per test case of a Data Table',
+    description: 'Start an evaluation run: one execution per test case of a Data Table or an uploaded CSV or JSON file',
     version: 1,
     kind: 'trigger',
     triggerSource: 'manual',
@@ -77,8 +78,20 @@ export const evaluationTrigger = defineNode({
       {
         name: 'notice',
         displayName:
-          'Start a run on the workflow’s Evaluations tab: each row of the table runs the workflow once, as one item with the row’s columns and row_id. “Run” in the editor uses the first row.',
+          'Start a run on the workflow’s Evaluations tab: each row runs the workflow once, as one item with the row’s columns and row_id. “Run” in the editor uses the first row.',
         type: 'notice',
+      },
+      {
+        name: 'source',
+        displayName: 'Dataset',
+        type: 'options',
+        default: 'dataTable',
+        noDataExpression: true,
+        options: [
+          { name: 'Data Table', value: 'dataTable', description: 'A table on the Data Tables page' },
+          { name: 'Uploaded file', value: 'file', description: 'A CSV or JSON file uploaded on the Evaluations tab' },
+        ],
+        description: 'Where the test cases are: one row per case, with input columns and an expected-output column.',
       },
       {
         name: 'dataTableId',
@@ -88,6 +101,7 @@ export const evaluationTrigger = defineNode({
         required: true,
         noDataExpression: true,
         typeOptions: { loadOptionsMethod: 'tables' },
+        displayOptions: { show: { source: ['dataTable'] } },
         description: 'The test cases: one row per case, with input columns and an expected-output column.',
       },
       {
@@ -97,7 +111,23 @@ export const evaluationTrigger = defineNode({
         default: '',
         noDataExpression: true,
         typeOptions: { loadOptionsMethod: 'columns', loadOptionsDependsOn: ['dataTableId'] },
+        displayOptions: { show: { source: ['dataTable'] } },
         hint: 'Empty: a column named expected, expected_output or answer. Metrics compare against it when “Expected Answer” is empty.',
+      },
+      {
+        name: 'fileNotice',
+        displayName: 'Upload the CSV or JSON file on the workflow’s Evaluations tab. CSV: the first row names the columns. JSON: an array of objects.',
+        type: 'notice',
+        displayOptions: { show: { source: ['file'] } },
+      },
+      {
+        name: 'fileExpectedColumn',
+        displayName: 'Expected Output Column',
+        type: 'string',
+        default: '',
+        noDataExpression: true,
+        displayOptions: { show: { source: ['file'] } },
+        hint: 'Empty: a column named expected, expected_output or answer.',
       },
       { name: 'limitRows', displayName: 'Limit Rows', type: 'boolean', default: false, noDataExpression: true, description: 'Evaluate only the first rows of the table' },
       {
@@ -114,25 +144,29 @@ export const evaluationTrigger = defineNode({
   async execute(ctx) {
     // An evaluation run hands over the case's row; a plain run reads the first row itself.
     if (await evaluationOf(ctx)) return [ctx.getInputData()];
-    const parameters = { dataTableId: ctx.getNodeParameter('dataTableId', 0, ''), expectedColumn: ctx.getNodeParameter('expectedColumn', 0, '') };
-    let dataset;
+    const source = ctx.getNodeParameter<string>('source', 0, 'dataTable') === 'file' ? 'file' : 'dataTable';
+    const parameters = { source, dataTableId: ctx.getNodeParameter('dataTableId', 0, ''), expectedColumn: ctx.getNodeParameter('expectedColumn', 0, ''), fileExpectedColumn: ctx.getNodeParameter('fileExpectedColumn', 0, '') };
+    let dataset: Dataset;
     try {
-      dataset = loadDataset(parameters, { maxRows: 1 });
+      if (source === 'file') {
+        const workflowId = ctx.getWorkflowId();
+        if (!workflowId) throw new Error('The file dataset belongs to a saved workflow: save it first');
+        dataset = await loadFileDataset(workflowId, parameters, { maxRows: 1 });
+      } else dataset = loadDataset(parameters, { maxRows: 1, ...(ctx.getWorkflowId() && { workflowId: ctx.getWorkflowId() }) });
     } catch (error) {
-      throw new NodeOperationError((error as Error).message, { description: 'Tables are created on the Data Tables page.' });
+      throw new NodeOperationError((error as Error).message, { description: source === 'file' ? 'Upload the file on the workflow’s Evaluations tab.' : 'Tables are created on the Data Tables page.' });
     }
-    if (!dataset.rows.length) throw new NodeOperationError(`Data table “${dataset.table.name}” has no rows`, { description: 'Add one row per test case.' });
+    if (!dataset.rows.length) throw new NodeOperationError(`${dataset.source === 'file' ? 'The file' : 'Data table'} “${dataset.name}” has no rows`, { description: 'Add one row per test case.' });
     return [[rowItem(dataset.rows[0])]];
   },
   methods: {
     loadOptions: {
+      // The workflow being edited (the load-options route's scope): only its project's tables.
       tables: () =>
-        dataTables()
-          .listTables()
-          .map((table) => ({ name: table.name, value: table.id, description: `${table.rowCount.toLocaleString('en-US')} rows · ${table.columns.length} columns` })),
+        tablesInScope(tableScope()).map((table) => ({ name: table.name, value: table.id, description: `${table.rowCount.toLocaleString('en-US')} rows · ${table.columns.length} columns` })),
       columns: (ctx) => [
         { name: '(automatic)', value: '', description: 'expected, expected_output or answer' },
-        ...(dataTables().findTable(String(ctx.getNodeParameter('dataTableId', '') ?? ''))?.columns ?? []).map((c) => ({ name: c.name, value: c.name, description: c.type })),
+        ...(scopedTable(String(ctx.getNodeParameter('dataTableId', '') ?? ''), tableScope())?.columns ?? []).map((c) => ({ name: c.name, value: c.name, description: c.type })),
       ],
     },
   },
@@ -490,6 +524,9 @@ export const evaluationNode = defineNode({
       if (evaluation && Object.keys(outputs).length) {
         updateCase(evaluation.runId, evaluation.caseIndex, (current) => ({ ...current, outputs: { ...current.outputs, ...outputs } }));
         const run = getRun(evaluation.runId);
+        if (ctx.getNodeParameter<string>('destination', 0, 'run') === 'row' && run?.source === 'file') {
+          throw new NodeOperationError('Outputs can only be written into rows of a Data Table', { description: 'This evaluation reads an uploaded file: set “Destination” to “Run”.' });
+        }
         if (ctx.getNodeParameter<string>('destination', 0, 'run') === 'row' && run && evaluation.rowId !== undefined) {
           try {
             writeRow(run.dataTableId, evaluation.rowId, outputs);

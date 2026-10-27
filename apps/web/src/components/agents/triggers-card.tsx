@@ -1,7 +1,7 @@
 'use client';
 /** Build tab → Triggers: schedules that message the agent, and chat channels it answers in (Telegram, Slack). */
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { Clock, Hash, Info, Pencil, Plus, Send, Trash2, X, Zap } from 'lucide-react';
+import { Clock, Hash, Info, MessagesSquare, Pencil, Plus, Send, Trash2, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AgentChannel, AgentConfig, AgentSchedule, ScheduleFrequency } from '@/lib/shared/agents';
 import { CredentialDialog } from '../credentials/credential-dialog';
@@ -14,7 +14,8 @@ import { Dialog, Field, ItemRow, Section, ToggleRow } from './dialog';
 import { describeSchedule, localTimezone, newId, timezones, WEEKDAYS, type UpdateConfig } from './util';
 
 const TELEGRAM = 'messaging.telegramApi';
-const SLACK = 'messaging.slackApi';
+const SLACK_TYPES = ['messaging.slackApi', 'messaging.slackOAuth2Api'];
+const TEAMS = 'core.microsoftBotApi';
 const CREATE = '__create__';
 
 type ChannelType = AgentChannel['type'];
@@ -35,11 +36,21 @@ const CHANNEL_TEXT: Record<ChannelType, { name: string; subtitle: string; bot: s
     name: 'Slack',
     subtitle: 'The published agent answers when it is mentioned in a channel or sent a direct message, in the message’s thread.',
     bot: 'Slack app',
-    noCredential: 'Create a Slack API credential with the bot token (xoxb-…) and the app’s Signing Secret.',
+    noCredential: 'Create a Slack API credential with the bot token (xoxb-…) and the app’s Signing Secret, or a Slack OAuth2 credential and Connect it (it needs the Signing Secret too).',
     publicHint: 'Anyone in the workspace who can reach the app',
     usersHint: 'Slack member ids (U…, from a profile’s “Copy member ID”).',
     usersMissing: 'Add at least one Slack member id.',
     placeholder: 'Member id (U0123ABC), then Enter',
+  },
+  teams: {
+    name: 'Microsoft Teams',
+    subtitle: 'The published agent answers messages sent to your Teams bot, in the chat or the channel thread.',
+    bot: 'Microsoft Bot',
+    noCredential: 'Create a Microsoft Bot credential with the Azure Bot registration’s app ID and client secret.',
+    publicHint: 'Anyone who can reach the bot',
+    usersHint: 'Microsoft Entra object ids (or Teams user ids) of the people allowed.',
+    usersMissing: 'Add at least one Entra object id.',
+    placeholder: 'Entra object id, then Enter',
   },
 };
 
@@ -63,10 +74,36 @@ function SlackUrls({ agentId, channelId }: { agentId: string; channelId: string 
     <div className="space-y-3 rounded-xl border border-hair bg-sf2 px-3 py-3">
       {row('Event Subscriptions → Request URL', `${origin}/api/slack/events/${agentId}/${channelId}`, 'Subscribe to the bot events app_mention and message.im.')}
       {row('Interactivity → Request URL', `${origin}/api/slack/interactions`, 'For the Approve / Reject buttons of tools that need approval.')}
+      {row('Slash Commands → Request URL', `${origin}/api/slack/commands/${agentId}/${channelId}`, 'Optional: create a command such as /ask pointing here. Landflow acknowledges it at once and answers on its response URL; one session per person and Slack channel.')}
       <p className="flex items-start gap-1.5 text-[12px] leading-snug text-t3">
         <Info className="mt-0.5 size-3 shrink-0" />
         Slack checks the Request URL right away: save and publish the agent first. Landflow verifies every request with the credential’s Signing Secret and refuses
         requests without one. Bot scopes: app_mentions:read, chat:write, im:history.
+      </p>
+    </div>
+  );
+}
+
+/** The messaging endpoint a Teams bot registration needs. */
+function TeamsUrl({ agentId, channelId }: { agentId: string; channelId: string }) {
+  const [origin, setOrigin] = useState('');
+  useEffect(() => setOrigin(window.location.origin), []);
+  const url = `${origin}/api/teams/messages/${agentId}/${channelId}`;
+  return (
+    <div className="space-y-3 rounded-xl border border-hair bg-sf2 px-3 py-3">
+      <div>
+        <div className="text-[12px] font-semibold text-t2">Azure Bot → Configuration → Messaging endpoint</div>
+        <div className="mt-1 flex items-center gap-1 rounded-[10px] border border-hair bg-wl py-1 pl-2.5 pr-1">
+          <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-t1" title={url}>
+            {url}
+          </code>
+          <CopyButton text={url} label="Copy messaging endpoint" />
+        </div>
+      </div>
+      <p className="flex items-start gap-1.5 text-[12px] leading-snug text-t3">
+        <Info className="mt-0.5 size-3 shrink-0" />
+        The endpoint must be reachable from the internet over HTTPS (set LANDFLOW_PUBLIC_URL). Landflow validates the token on every request against the registration’s app ID. Add
+        the Microsoft Teams channel to the bot.
       </p>
     </div>
   );
@@ -298,9 +335,9 @@ function ChannelDialog({
 }) {
   const type = channel?.type ?? newType;
   const text = CHANNEL_TEXT[type];
-  const credentialType = type === 'slack' ? SLACK : TELEGRAM;
+  const credentialTypes = type === 'slack' ? SLACK_TYPES : type === 'teams' ? [TEAMS] : [TELEGRAM];
   const { credentials } = useCredentials();
-  const options = (credentials ?? []).filter((c) => c.type === credentialType);
+  const options = (credentials ?? []).filter((c) => credentialTypes.includes(c.type));
   const [value, setValue] = useState<
     Omit<AgentChannel, 'credential'> & {
       credential?: AgentChannel['credential'];
@@ -314,7 +351,7 @@ function ChannelDialog({
       // Slack threads are sessions of their own.
       newSessionAfterMinutes: type === 'slack' ? 0 : 60,
       enabled: true,
-      ...(type === 'slack' && { threadReplies: true }),
+      ...(type === 'slack' && { threadReplies: true, slashCommands: true }),
     },
   );
   const [creating, setCreating] = useState(false);
@@ -328,7 +365,7 @@ function ChannelDialog({
       subtitle={text.subtitle}
       icon={
         <span className="grid size-8 place-items-center rounded-[10px] border border-hair bg-wl text-t2">
-          {type === 'slack' ? <Hash className="size-4" /> : <Send className="size-4" />}
+          {type === 'slack' ? <Hash className="size-4" /> : type === 'teams' ? <MessagesSquare className="size-4" /> : <Send className="size-4" />}
         </span>
       }
       onClose={onClose}
@@ -446,6 +483,14 @@ function ChannelDialog({
         </Field>
         {type === 'slack' && (
           <ToggleRow
+            title="Slash commands"
+            description="Answer the app’s slash commands (one session per person and Slack channel); the answer is posted on the command’s response URL."
+            checked={value.slashCommands !== false}
+            onChange={(slashCommands) => set({ slashCommands })}
+          />
+        )}
+        {type === 'slack' && (
+          <ToggleRow
             title="Reply in thread"
             description="Answer under the message that asked (each thread is its own session); off: answer in the channel."
             checked={value.threadReplies !== false}
@@ -454,9 +499,10 @@ function ChannelDialog({
         )}
         <ToggleRow title="Enabled" description="A disabled channel ignores new messages." checked={value.enabled} onChange={(enabled) => set({ enabled })} />
         {type === 'slack' && agentId && <SlackUrls agentId={agentId} channelId={value.id} />}
+        {type === 'teams' && agentId && <TeamsUrl agentId={agentId} channelId={value.id} />}
       </div>
       {creating && (
-        <CredentialDialog allowedTypes={[credentialType]} onClose={() => setCreating(false)} onSaved={(c) => set({ credential: { id: c.id, name: c.name } })} />
+        <CredentialDialog allowedTypes={credentialTypes} onClose={() => setCreating(false)} onSaved={(c) => set({ credential: { id: c.id, name: c.name } })} />
       )}
     </Dialog>
   );
@@ -502,6 +548,9 @@ export function TriggersCard({ config, update, published, agentId }: { config: A
           </Button>
           <Button size="sm" variant="outline" onClick={() => setChannel({ type: 'slack' })}>
             <Hash className="size-3.5" /> Add Slack
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setChannel({ type: 'teams' })}>
+            <MessagesSquare className="size-3.5" /> Add Teams
           </Button>
         </>
       }
@@ -549,8 +598,8 @@ export function TriggersCard({ config, update, published, agentId }: { config: A
           <ItemRow
             key={ch.id}
             icon={
-              <span className={cn('grid size-8 shrink-0 place-items-center rounded-[10px] border border-hair bg-sf', ch.type === 'slack' ? 'text-[#E01E5A]' : 'text-[#229ED9]')}>
-                {ch.type === 'slack' ? <Hash className="size-3.5" /> : <Send className="size-3.5" />}
+              <span className={cn('grid size-8 shrink-0 place-items-center rounded-[10px] border border-hair bg-sf', ch.type === 'slack' ? 'text-[#E01E5A]' : ch.type === 'teams' ? 'text-[#6264A7]' : 'text-[#229ED9]')}>
+                {ch.type === 'slack' ? <Hash className="size-3.5" /> : ch.type === 'teams' ? <MessagesSquare className="size-3.5" /> : <Send className="size-3.5" />}
               </span>
             }
             title={`${CHANNEL_TEXT[ch.type]?.name ?? ch.type} · ${ch.credential.name}`}

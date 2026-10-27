@@ -285,6 +285,48 @@ Verified on the dev stack (2026-10-26), with a token granted every tool of `text
 | A garbage token | 401, `WWW-Authenticate: Bearer resource_metadata="http://127.0.0.1:54000/.well-known/oauth-protected-resource/mcp"` | 401, the metadata at `…/oauth-protected-resource/mcp/plugins/text-toolkit` (without the route policy: 200 and anonymous) |
 | The granted token | `text-toolkit_slugify`, `text-toolkit_changeCase`; `tools/call` runs as the token's user | `slugify`, `changeCase` (one target, so unprefixed); `tools/call` the same |
 
+## Two issuers on one route (Landflow tokens and the identity provider's)
+
+The question: can one route accept both Landflow-issued MCP tokens and the identity provider's access tokens, so a person
+who signed in with Keycloak and a script holding a token from Settings → MCP both get through? Verified on agentgateway
+v1.6.0 with `--validate-only` and live (a throwaway container, a fake upstream that echoes the caller headers, a temporary
+Keycloak realm; `apps/web/test/mcp-gateway-two-issuers.test.ts` repeats it when `LANDFLOW_TEST_AGENTGATEWAY_IMAGE` is set):
+
+| Policy | Several issuers? |
+|---|---|
+| `mcpAuthentication` | No. One `issuer` (`providers` is an unknown field; `jwtValidationOptions` only has `requiredClaims`) |
+| `jwtAuth` | Yes: `providers: [{ issuer, audiences, jwks }]`, validation by `iss`. A token from either issuer passes (200, and the caller headers reach the target), an unknown issuer gets 401 (`InvalidIssuer`), so does a garbage token |
+
+So **no RFC 8693 token exchange is needed**: the route uses `jwtAuth` with two providers in place of `mcpAuthentication`.
+What it costs, all measured:
+
+- With `jwtAuth` present, `mcpAuthentication` is bypassed on the route (strict `mcpAuthentication` next to a permissive
+  `jwtAuth` lets everything through), so the route has only `jwtAuth`.
+- `jwtAuth` answers 401 with a plain text body and **no `WWW-Authenticate: Bearer resource_metadata`** challenge, and
+  `transformations.response` does not apply to the gateway's own 401s. A client that only learns where to sign in from the
+  challenge has to be told (Settings → MCP shows the sign-in settings; the host's own 401 for direct calls keeps the challenge).
+- On the shorthand `/mcp` route of the base config the `/.well-known/oauth-protected-resource/mcp` path then goes to the
+  upstream (202 with the base config's target) instead of being served by the gateway. Per-plugin routes (exact path
+  matches) already returned 404 there before, so nothing changes for them.
+- `jwks` takes the key set as JSON text or `{ url }`, as in `mcpAuthentication`; an unreachable URL fails with `failed to load
+  JWKS` at load. With `mode: optional` (Landflow's default) the only 401s are bad tokens, as before.
+
+What the host does (`apps/web/src/lib/server/mcp/gateway-sync.ts`): when the instance has an identity provider
+(`LANDFLOW_OIDC_ISSUER`), the policies that reach each route have an `mcpAuthentication` whose issuer is this instance, and
+no `jwtAuth`, `acceptIdentityProvider()` replaces the `mcpAuthentication` with `jwtAuth { mode, providers: [landflow, idp] }`
+(`LANDFLOW_MCP_GATEWAY_ACCEPT_IDP=off` turns it off). Landflow's provider keeps the audiences of the old policy and its
+JWKS; the identity provider's keys are fetched from its discovery document's `jwks_uri` (cached 60 s, the last good copy
+kept) and written **inline**, with the old policy's audiences (the route's URL) plus `LANDFLOW_MCP_IDP_AUDIENCE`, so a gateway
+restarted while the identity provider is down still loads its routes. If the keys can't be fetched the policies are left
+alone. `inlineHostJwks` still inlines Landflow's own JWKS URLs, now inside `jwtAuth.providers` as well. A rotated identity
+provider key changes the rendered route, which the sync reports as drift and rewrites. Settings → MCP shows the second
+issuer under the sign-in settings (`signIn.alsoIssuer`).
+
+Static configs for the same shape: `deploy/mcp-gateway/config.tokens-idp.yaml` with `compose.tokens-idp.yml` (dev: Landflow
+tokens plus the Keycloak realm `landflow`; start the dev server first, as with `config.tokens.yaml`) and the Kubernetes
+component `deploy/k8s/components/gateway-landflow-tokens-idp` (use it in place of `gateway-landflow-tokens`; both overlays
+`orbstack-ingress` and `orbstack-gateway-api` build with it).
+
 ## The file fallback
 
 `deploy/mcp-gateway/config.file.yaml` (`storage.mode: file`, `compose.file.yml` mounts a writable directory at

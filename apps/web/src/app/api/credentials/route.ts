@@ -4,6 +4,7 @@ import { CredentialError, credentials } from '@/lib/server/credentials/vault';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { homeProjectId, usableCredentialIds, visibleIds, withOwnership } from '@/lib/server/projects';
 import { createInProject, projectParam, routeActor } from '@/lib/server/projects/http';
+import { credentialRateLimitSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
 import { recordAudit } from '@/lib/server/audit';
 
@@ -27,9 +28,9 @@ export const GET = handler(async (request: Request) => {
   return json({ credentials: workflows ? list.map((c) => ({ ...c, usedBy: c.usedBy.filter((u) => workflows.has(u.workflowId)) })) : list, ...(usableBy && { projectId: usableBy }) });
 });
 
-/** POST { name, type, data } */
+/** POST { name, type, data, rateLimit? } */
 export const POST = handler(async (request: Request) => {
-  const body = await parseBody(request, z.object({ name: z.string().max(120).default(''), type: z.string().min(3), data: z.record(z.string(), z.unknown()).default({}) }));
+  const body = await parseBody(request, z.object({ name: z.string().max(120).default(''), type: z.string().min(3), data: z.record(z.string(), z.unknown()).default({}), rateLimit: credentialRateLimitSchema.nullable().optional() }));
   if (!body.ok) return body.response;
   try {
     // ?projectId= puts it in a project (the caller must be an editor there); else the caller's personal project.

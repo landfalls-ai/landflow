@@ -5,12 +5,13 @@
  * keyboard shortcuts.
  */
 import { useState } from 'react';
-import { ArrowRightLeft, ClipboardPaste, Download, FileUp, History, Keyboard, LayoutTemplate, MoreHorizontal, Settings2, Share2 } from 'lucide-react';
+import { ArrowRightLeft, ClipboardPaste, Download, FileUp, GitCommitHorizontal, History, Keyboard, LayoutTemplate, MoreHorizontal, Settings2, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { MoveToProjectDialog, ShareDialog } from '../projects/share-dialog';
 import { SaveTemplateDialog } from '../templates/save-template-dialog';
 import { Button } from '../ui/button';
 import { MenuItem, MenuSeparator, Popover } from '../ui/popover';
+import { GitHistoryDialog } from './git-history';
 import { ImportDialog } from './import-dialog';
 import { SettingsDialog } from './settings-dialog';
 import { useShortcuts } from './shortcuts-dialog';
@@ -36,7 +37,7 @@ function download() {
 }
 
 export function WorkflowMenu({ onSave }: { onSave: () => Promise<boolean> }) {
-  const [dialog, setDialog] = useState<'settings' | 'import-file' | 'import-paste' | 'share' | 'move' | 'template'>();
+  const [dialog, setDialog] = useState<'settings' | 'import-file' | 'import-paste' | 'share' | 'move' | 'template' | 'git'>();
   const workflowId = useEditor((s) => s.workflowId);
   const name = useEditor((s) => s.name);
   return (
@@ -64,6 +65,9 @@ export function WorkflowMenu({ onSave }: { onSave: () => Promise<boolean> }) {
               </MenuItem>
               {workflowId && (
                 <>
+                  <MenuItem onClick={item(() => setDialog('git'))}>
+                    <GitCommitHorizontal /> Git history…
+                  </MenuItem>
                   <MenuItem onClick={item(() => setDialog('share'))}>
                     <Share2 /> Share…
                   </MenuItem>
@@ -94,6 +98,7 @@ export function WorkflowMenu({ onSave }: { onSave: () => Promise<boolean> }) {
         }}
       </Popover>
       {dialog === 'settings' && <SettingsDialog onClose={() => setDialog(undefined)} onSave={onSave} />}
+      {dialog === 'git' && workflowId && <GitHistoryDialog workflowId={workflowId} onClose={() => setDialog(undefined)} />}
       {dialog === 'share' && <ShareDialog kind="workflow" id={workflowId} name={name} onClose={() => setDialog(undefined)} />}
       {dialog === 'move' && <MoveToProjectDialog kind="workflow" id={workflowId} name={name} onClose={() => setDialog(undefined)} />}
       {dialog === 'template' && <SaveTemplateDialog onClose={() => setDialog(undefined)} />}

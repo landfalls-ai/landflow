@@ -87,14 +87,15 @@ describe('migrations', () => {
     old.exec('DROP TABLE execution_checkpoints');
     old.exec('CREATE TABLE execution_checkpoints (execution_id TEXT PRIMARY KEY, step_id TEXT NOT NULL, steps BIGINT NOT NULL, saved_at TEXT NOT NULL, state TEXT NOT NULL)');
     old.exec(`INSERT INTO execution_checkpoints VALUES ('ex_old', 's1', 3, '2026-10-26T00:00:00Z', '{}')`);
-    expect(migrateSqlite(old)).toEqual([1780]);
+    // Migration 1780 first, then whatever was added after it.
+    expect(migrateSqlite(old)[0]).toBe(1780);
     expect(columns(old)).toEqual(expect.arrayContaining(['base_steps', 'base_outputs']));
     expect(old.prepare('SELECT steps, base_steps, base_outputs FROM execution_checkpoints').get()).toEqual({ steps: 3, base_steps: 0, base_outputs: null });
     old.close();
     // A new database already has them: the migration is a no-op there.
     const fresh = new DatabaseSync(join(tmp(), 'fresh.db'));
     migrateSqlite(fresh, before);
-    expect(migrateSqlite(fresh)).toEqual([1780]);
+    expect(migrateSqlite(fresh)[0]).toBe(1780);
     expect(columns(fresh).filter((c) => c.startsWith('base_'))).toEqual(['base_steps', 'base_outputs']);
     fresh.close();
   });

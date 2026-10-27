@@ -5,14 +5,14 @@
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Mail, MessageSquare, Send, Webhook } from 'lucide-react';
+import { Mail, MessageCircle, MessageSquare, Send, Users, Webhook } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { DEFAULT_THROTTLE_MINUTES, type AlertChannelKind, type WorkflowAlertView } from '@/lib/shared/alerts';
 import { Select, Switch } from '../ui/inputs';
 
-const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send };
+const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send, teams: Users, discord: MessageCircle };
 
 export function NotifyOnFailure({ workflowId }: { workflowId?: string }) {
   const [view, setView] = useState<WorkflowAlertView>();

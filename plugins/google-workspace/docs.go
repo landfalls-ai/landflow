@@ -33,7 +33,8 @@ func (DocsNode) Description() landflow.NodeDescriptor {
 		UsableAsTool: true,
 		ToolDescription: "Work with Google Docs. operation=create makes a document called title; get returns " +
 			"documentURL's text as `content`; update applies actionsUi actions to documentURL: insert appends text " +
-			"at the end, replaceAll replaces every occurrence of text with replaceText.",
+			"at the end, replaceAll replaces every occurrence of text with replaceText; export returns documentURL as a " +
+			"binary file (exportFormat docx, pdf, odt, txt…).",
 
 		Properties: []landflow.PropertyDescriptor{
 			authProperty(),
@@ -42,12 +43,23 @@ func (DocsNode) Description() landflow.NodeDescriptor {
 				landflow.PropertyOption{Name: "Create", Value: "create", Description: "Create a document", Action: "Create a document"},
 				landflow.PropertyOption{Name: "Get", Value: "get", Description: "Get a document", Action: "Get a document", Idempotent: true},
 				landflow.PropertyOption{Name: "Update", Value: "update", Description: "Update a document", Action: "Update a document"},
+				landflow.PropertyOption{Name: "Export", Value: "export", Description: "Export a document as a Word, PDF, OpenDocument, text or HTML file", Action: "Export a document as a file", Idempotent: true},
 			),
 			{Name: "title", DisplayName: "Title", Type: landflow.PropString, Default: "", Required: true,
 				DisplayOptions: show("document", "create")},
 			folderProperty("folderId", "Folder", "Folder to put the document in (moved there through Drive)", show("document", "create")),
 			{Name: "documentURL", DisplayName: "Doc ID or URL", Type: landflow.PropString, Default: "", Required: true,
-				DisplayOptions: show("document", "get", "update")},
+				DisplayOptions: show("document", "get", "update", "export")},
+			{Name: "exportFormat", DisplayName: "Export As", Type: landflow.PropOptions, Default: "docx",
+				Options: exportOptions("docx", "pdf", "odt", "rtf", "txt", "html", "epub", "md"), DisplayOptions: show("document", "export")},
+			{Name: "outputBinaryField", DisplayName: "Output Binary Field", Type: landflow.PropString, Default: "data",
+				Description: "Name of the binary property that gets the file", DisplayOptions: show("document", "export")},
+			{Name: "options", DisplayName: "Options", Type: landflow.PropCollection, Default: map[string]any{}, Placeholder: "Add Option",
+				DisplayOptions: show("document", "export"),
+				Values: []landflow.PropertyDescriptor{
+					{Name: "fileName", DisplayName: "File Name", Type: landflow.PropString, Default: "",
+						Description: "Defaults to the document's title plus the format's extension"},
+				}},
 			simplifyProperty(show("document", "get")),
 			{
 				Name: "actionsUi", DisplayName: "Actions", Type: landflow.PropFixedCollection, Default: map[string]any{},
@@ -92,6 +104,14 @@ func (DocsNode) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, error)
 			result, err = d.get(i)
 		case "update":
 			result, err = d.update(i)
+		case "export":
+			var raw string
+			if raw, err = requireParam(ctx, "documentURL", "Doc ID or URL", i); err == nil {
+				err = (&driveRun{ctx: ctx, c: d.c}).exportFile(i, idFrom(raw, documentURLPattern), ctx.ParamString("exportFormat", i, "docx"), &out)
+			}
+			if err == nil {
+				continue
+			}
 		default:
 			err = userError("Pick an operation listed for the document resource.", "Unsupported operation %q", operation)
 		}

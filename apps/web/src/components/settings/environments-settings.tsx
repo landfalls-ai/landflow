@@ -383,12 +383,13 @@ function PromotionRequestsCard({ version }: { version: number }) {
 function PullCard({ view }: { view: EnvironmentView }) {
   const [publish, setPublish] = useState<PullPublishMode>(view.publishOnPull);
   const [prune, setPrune] = useState(false);
+  const [updateCredentials, setUpdateCredentials] = useState(false);
   const [busy, setBusy] = useState<'preview' | 'pull'>();
   const [preview, setPreview] = useState<SourceControlPullResult>();
   const pull = async (dryRun: boolean, force = false) => {
     setBusy(dryRun ? 'preview' : 'pull');
     try {
-      const result = await api<SourceControlPullResult>('/api/environment/pull', { method: 'POST', json: { dryRun, prune, force, publish } });
+      const result = await api<SourceControlPullResult>('/api/environment/pull', { method: 'POST', json: { dryRun, prune, force, publish, ...(updateCredentials && { updateCredentials }) } });
       setPreview(dryRun ? result : undefined);
       if (!dryRun) toast.success(result.appliedCount ? `Applied ${plural(result.appliedCount, 'change')} from ${result.commit.slice(0, 7)}` : 'Already up to date');
     } catch (e) {
@@ -419,6 +420,8 @@ function PullCard({ view }: { view: EnvironmentView }) {
         <span className="flex items-center gap-2 pb-1.5">
           <Switch checked={prune} onChange={setPrune} label="Delete missing" />
           <span className="text-[13px] text-t2">Delete missing</span>
+          <Switch checked={updateCredentials} onChange={setUpdateCredentials} label="Update existing credentials" />
+          <span className="text-[13px] text-t2" title="Updates the non-secret fields of credentials this instance already has from the promoted definitions; secret values are never touched">Update existing credentials</span>
         </span>
         <span className="flex gap-2">
           <Button onClick={() => pull(true)} loading={busy === 'preview'}>
@@ -468,6 +471,8 @@ interface Draft {
   publishOnPull: PullPublishMode;
   credentialMap: CredentialMapping[];
   rowTables: string[];
+  /** Per table id: merge rows by these key columns (comma-separated) instead of replacing. */
+  rowMerge: Record<string, { keys: string; deleteMissing: boolean }>;
   secretMappings: CredentialSecretMapping[];
 }
 
@@ -478,6 +483,7 @@ const draftOf = (view: EnvironmentView): Draft => ({
   publishOnPull: view.publishOnPull,
   credentialMap: view.credentialMap.map(({ type, name, credentialId }) => ({ type, name, credentialId })),
   rowTables: view.rowTables.map((t) => t.id),
+  rowMerge: Object.fromEntries(view.rowTables.filter((t) => t.merge).map((t) => [t.id, { keys: t.merge!.keys.join(', '), deleteMissing: Boolean(t.merge!.deleteMissing) }])),
   secretMappings: view.secretMappings.map((m) => ({ ...m })),
 });
 
@@ -540,6 +546,11 @@ export function EnvironmentsSettings() {
           publishOnPull: draft.publishOnPull,
           credentialMap: draft.credentialMap.filter((m) => m.type && m.name.trim() && m.credentialId),
           rowTables: draft.rowTables,
+          rowMerge: Object.fromEntries(
+            Object.entries(draft.rowMerge)
+              .filter(([id, m]) => draft.rowTables.includes(id) && m.keys.trim())
+              .map(([id, m]) => [id, { keys: m.keys.split(',').map((k) => k.trim()).filter(Boolean), ...(m.deleteMissing && { deleteMissing: true }) }]),
+          ),
           secretMappings: draft.secretMappings.filter((m) => m.type && m.name && m.field.trim() && m.value.trim()).map((m) => ({ ...m, ...(!m.environment && { environment: undefined }) })),
         },
       });
@@ -646,7 +657,7 @@ export function EnvironmentsSettings() {
         <div className="mt-4 border-t border-hair pt-3">
           <SectionLabel>Promoted data table rows</SectionLabel>
           <p className="mb-2 mt-1 text-[12px] text-t3">
-            Promotion copies these tables’ rows from this instance; the target’s pull replaces the table’s rows with them. Schemas travel with “All workflows” either way.
+            Promotion copies these tables’ rows from this instance; the target’s pull replaces the table’s rows with them, or, with key columns set, merges them: new rows are inserted, changed ones updated and (if asked) the ones missing deleted. Schemas travel with “All workflows” either way.
           </p>
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             {tables.map((t) => (
@@ -661,6 +672,27 @@ export function EnvironmentsSettings() {
             ))}
             {!tables.length && <span className="text-[13px] text-t3">No data tables.</span>}
           </div>
+          {draft.rowTables.map((id) => {
+            const table = tables.find((t) => t.id === id);
+            const merge = draft.rowMerge[id] ?? { keys: '', deleteMissing: false };
+            return (
+              <div key={id} className="mt-2 flex flex-wrap items-center gap-2 text-[13px]">
+                <span className="w-40 truncate text-t1">{table?.name ?? id}</span>
+                <Input
+                  className="max-w-[260px]"
+                  value={merge.keys}
+                  onChange={(e) => set('rowMerge', { ...draft.rowMerge, [id]: { ...merge, keys: e.target.value } })}
+                  placeholder="Key columns to merge on (empty: replace the rows)"
+                  aria-label={`Key columns of ${table?.name ?? id}`}
+                  spellCheck={false}
+                />
+                <label className="flex items-center gap-1.5 text-t2">
+                  <input type="checkbox" checked={merge.deleteMissing} disabled={!merge.keys.trim()} onChange={(e) => set('rowMerge', { ...draft.rowMerge, [id]: { ...merge, deleteMissing: e.target.checked } })} />
+                  Delete rows the source lacks
+                </label>
+              </div>
+            );
+          })}
         </div>
 
         <div className="mt-4 border-t border-hair pt-3">

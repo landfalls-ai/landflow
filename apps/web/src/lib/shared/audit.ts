@@ -85,6 +85,9 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'publish_request.reject': 'Rejected a publish',
   'publish_request.cancel': 'Withdrew a publish request',
   'publish_request.stale': 'Publish request went stale',
+  'publish_schedule.create': 'Scheduled a publish',
+  'publish_schedule.cancel': 'Canceled a scheduled publish',
+  'publish_schedule.run': 'Scheduled publish ran',
   'publish_request.fail': 'Approved publish failed',
   'promotion_request.create': 'Asked for promotion approval',
   'promotion_request.approve': 'Approved a promotion',
@@ -116,6 +119,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'marketplace.uninstall': 'Uninstalled a marketplace plugin',
   'audit.export': 'Exported the audit log',
   'audit.verify': 'Verified the audit log’s hash chain',
+  'audit.sign_head': 'Signed the audit chain’s head',
   'audit.test': 'Sent a test audit event',
   'api.request': 'API request',
 };
@@ -225,6 +229,15 @@ export interface AuditDestinationConfig {
   tags?: string;
 }
 
+/**
+ * Which events a destination receives: the events of these projects, plus the instance-wide ones (no project: sign-ins, users,
+ * settings, plugins…) when `instance` is true. A destination without a scope receives every event.
+ */
+export interface AuditDestinationScope {
+  projectIds: string[];
+  instance: boolean;
+}
+
 export const AUDIT_SECRET_FIELDS = ['secret', 'apiKey', 'token', 'clientKey', 'clientKeyPassphrase'] as const;
 
 export interface AuditDelivery {
@@ -241,6 +254,8 @@ export interface AuditDestination {
   enabled: boolean;
   config: AuditDestinationConfig;
   secretsSet: string[];
+  /** The projects (and instance events) it receives; absent: every event. */
+  scope?: AuditDestinationScope;
   /** The client certificate's subject, issuer and expiry, when mTLS is set up. */
   clientCertificate?: { subject: string; issuer: string; validTo: string; fingerprint: string };
   createdAt: string;
@@ -265,4 +280,99 @@ export interface AuditSettingsView {
   otlp: { enabled: boolean; endpoint?: string };
   /** Events stored now. */
   stored: number;
+}
+
+// ---------------------------------------------------------------------------
+// Signed chain heads and anchoring (lib/server/audit/signing.ts, anchoring.ts; migration 1882)
+// ---------------------------------------------------------------------------
+
+export const AUDIT_HEAD_FORMAT = 'landflow.audit.head/1';
+
+/** What a signed head says: the chain's newest link (sequence number and hash) at the time, and which key signed it. */
+export interface AuditHeadPayload {
+  format: typeof AUDIT_HEAD_FORMAT;
+  seq: number;
+  hash: string;
+  eventId?: string;
+  /** When the newest event was recorded. */
+  at?: string;
+  signedAt: string;
+  keyId: string;
+  /** Where it came from (the instance's public URL, when set). */
+  instance?: string;
+}
+
+/**
+ * A signed head: `payload` is the exact JSON text that was signed (so nothing needs canonicalising), `signature` the Ed25519
+ * signature of its UTF-8 bytes (base64). `publicKey` (SPKI PEM) is for convenience: a verifier pins the key it trusts instead.
+ */
+export interface SignedAuditHead {
+  format: typeof AUDIT_HEAD_FORMAT;
+  payload: string;
+  algorithm: 'Ed25519';
+  keyId: string;
+  signature: string;
+  publicKey: string;
+}
+
+export interface AuditSigningKey {
+  keyId: string;
+  /** SPKI PEM. */
+  publicKey: string;
+  createdAt: string;
+}
+
+/** A signed head as stored, with where it was anchored. */
+export interface AuditHeadRecord {
+  seq: number;
+  signedAt: string;
+  head: SignedAuditHead;
+  anchoredAt?: string;
+  anchorError?: string;
+}
+
+/** GET /api/audit/head */
+export interface AuditHeadView {
+  /** The newest signed head (null before the first). */
+  head: SignedAuditHead | null;
+  signedAt?: string;
+  anchoredAt?: string;
+  /** Every key that ever signed (the current one last). */
+  keys: AuditSigningKey[];
+}
+
+export interface AuditAnchorS3 {
+  bucket: string;
+  endpoint?: string;
+  region?: string;
+  prefix?: string;
+  accessKeyId?: string;
+  /** Secret: never comes back. */
+  secretAccessKey?: string;
+  forcePathStyle?: boolean;
+}
+
+export interface AuditAnchorWebhook {
+  url: string;
+  /** Secret: signs each body (`X-Landflow-Signature: sha256=HMAC(secret, "<timestamp>.<body>")`). */
+  secret?: string;
+}
+
+/** Settings → Audit log → Integrity: how often the head is signed and where signed heads are anchored. */
+export interface AuditAnchoringSettings {
+  /** Sign the chain head on the leader's schedule (default on, every 60 minutes). */
+  enabled: boolean;
+  intervalMinutes: number;
+  s3?: AuditAnchorS3;
+  webhook?: AuditAnchorWebhook;
+}
+
+export const DEFAULT_AUDIT_ANCHORING: AuditAnchoringSettings = { enabled: true, intervalMinutes: 60 };
+
+/** GET /api/settings/audit/anchoring (secrets as `secretsSet`). */
+export interface AuditAnchoringView {
+  settings: AuditAnchoringSettings;
+  secretsSet: string[];
+  latest?: { seq: number; signedAt: string; anchoredAt?: string; anchorError?: string };
+  keyId?: string;
 }

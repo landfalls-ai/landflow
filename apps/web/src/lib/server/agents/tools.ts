@@ -10,7 +10,7 @@ import { ExpressionResolver, deriveToolSchema, toToolName, type ToolSpec } from 
 import type { Agent, AgentConfig, AgentSession, McpServerToolConfig, NodeToolConfig, SubAgentConfig, ToolKind, WorkflowToolConfig } from '../../shared/agents';
 import type { ExecutionRecord } from '../../shared/types';
 import { credentials } from '../credentials/vault';
-import { agentToolsFrom, endpointFrom, listMcpTools, selectTools } from '../mcp/client';
+import { agentToolsFrom, endpointFrom, listMcpTools, resourceAndPromptTools, selectTools } from '../mcp/client';
 import { registry } from '../plugins/registry';
 import { workflowForCall } from '../publish';
 import { runWorkflow } from '../runner';
@@ -106,10 +106,23 @@ async function mcpServerTools(config: McpServerToolConfig): Promise<BuiltTool[] 
   const resolved = registry.resolve(MCP_CLIENT_TOOL);
   if ('error' in resolved) return { error: `${config.name}: ${resolved.error}` };
   try {
-    const secrets = credentials.resolveFor({ type: MCP_CLIENT_TOOL, credentials: config.credentials, parameters: config.parameters }, resolved.descriptor);
+    const resolveSecrets = () => credentials.resolveFor({ type: MCP_CLIENT_TOOL, credentials: config.credentials, parameters: config.parameters }, resolved.descriptor);
+    // An OAuth2 credential's token is renewed before the call (it may have expired since the last run).
+    const secrets = (await credentials.freshen(resolveSecrets())) ?? resolveSecrets();
     const endpoint = endpointFrom(config.parameters, secrets);
-    const { include, includeTools, excludeTools } = config.parameters;
-    const tools = agentToolsFrom(endpoint, selectTools(await listMcpTools(endpoint), include, includeTools, excludeTools));
+    // A 401 mid-run (the token was revoked or expired early): renew it by force and use the new header once.
+    if (config.parameters.authentication === 'mcpOAuth2') {
+      endpoint.reauth = async () => {
+        const renewed = await credentials.freshen(resolveSecrets(), true);
+        return renewed ? endpointFrom(config.parameters, renewed).headers : undefined;
+      };
+    }
+    const { include, includeTools, excludeTools, extras } = config.parameters;
+    const tools = [
+      ...agentToolsFrom(endpoint, selectTools(await listMcpTools(endpoint), include, includeTools, excludeTools)),
+      // Resources and prompts as tools (list_resources, read_resource, list_prompts, get_prompt), when the server config asks.
+      ...resourceAndPromptTools(endpoint, Array.isArray(extras) ? extras.map(String) : []),
+    ];
     return tools.map((tool) => ({
       // Shown with the MCP Client Tool's icon in the timeline.
       kind: 'node' as const,

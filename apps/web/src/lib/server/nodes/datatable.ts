@@ -204,7 +204,7 @@ export const dataTableNode = defineNode({
     const projectId = workflowProject(ctx.getWorkflowId());
     const tableFor = (i: number): DataTable => {
       const ref = String(ctx.getNodeParameter('dataTableId', i, '') ?? '').trim();
-      const table = service.findTable(ref);
+      const table = service.findTable(ref, projectId);
       if (!table) throw new NodeOperationError(ref ? `Data table “${ref}” not found` : 'Choose a data table', { itemIndex: i, description: 'Tables are created on the Data Tables page.' });
       const problem = tableProblem(table, projectId);
       if (problem) throw new NodeOperationError(problem.message, { itemIndex: i, description: problem.description });

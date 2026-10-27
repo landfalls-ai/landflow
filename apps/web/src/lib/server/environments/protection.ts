@@ -14,7 +14,7 @@ import { currentEnvironment, isProtectedEnvironment } from './settings';
 const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /** Workflow routes that only run or publish what is there, hold the editor's lock or share it: open in a protected environment. */
-const OPEN = [/^\/api\/workflows\/[^/]+\/(run|execute|publish|unpublish|lock|alert|polls|shares|transfer)$/, /^\/api\/workflows\/[^/]+\/(evaluations|online-evaluations)(\/.*)?$/];
+const OPEN = [/^\/api\/workflows\/[^/]+\/(run|execute|publish|unpublish|lock|alert|polls|shares|transfer)$/, /^\/api\/workflows\/[^/]+\/schedules(\/[^/]+)?$/, /^\/api\/workflows\/[^/]+\/(evaluations|online-evaluations)(\/.*)?$/];
 
 /** The message for a refused change. */
 export function protectedMessage(): string {

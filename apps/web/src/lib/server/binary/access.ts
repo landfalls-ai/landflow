@@ -289,7 +289,9 @@ export function startBinaryMaintenance() {
       if (!leads()) return;
       try {
         const { liveExecution } = await import('../runner');
-        const removed = await sweepBinaryData((scope) => Boolean(liveExecution(scope) || store.getExecution(scope)));
+        const { isDatasetScope } = await import('../evaluations/store');
+        // Evaluation datasets (an uploaded CSV or JSON file) live in scopes of their own, kept while their workflow exists.
+        const removed = await sweepBinaryData((scope) => Boolean(liveExecution(scope) || store.getExecution(scope) || isDatasetScope(scope, (workflowId) => Boolean(store.getWorkflow(workflowId)))));
         if (removed) logger.info('removed orphaned binary data', { 'landflow.binary.scopes': removed });
       } catch (error) {
         logger.warn('binary data sweep failed', { error: (error as Error).message });

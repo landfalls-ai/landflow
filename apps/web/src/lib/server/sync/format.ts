@@ -397,6 +397,8 @@ export interface DesiredRows {
   id?: string;
   name?: string;
   rows: Array<Record<string, unknown>>;
+  /** Merge by these key columns instead of replacing the table's rows (insert new, update changed; delete missing when asked). */
+  merge?: { keys: string[]; deleteMissing?: boolean };
 }
 
 export interface DesiredState {
@@ -507,6 +509,7 @@ export function parseFiles(input: SyncFile[]): DesiredState {
         ...(typeof doc.id === 'string' && doc.id && { id: doc.id }),
         ...(typeof doc.name === 'string' && { name: doc.name }),
         rows: doc.rows as Array<Record<string, unknown>>,
+        ...(isObject(doc.merge) && Array.isArray(doc.merge.keys) && doc.merge.keys.length && doc.merge.keys.every((k) => typeof k === 'string') && { merge: { keys: doc.merge.keys as string[], ...(doc.merge.deleteMissing === true && { deleteMissing: true }) } }),
       });
       continue;
     }

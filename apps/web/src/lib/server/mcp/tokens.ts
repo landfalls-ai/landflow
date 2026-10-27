@@ -16,6 +16,9 @@ import { nanoid } from 'nanoid';
 import { MCP_TOKEN_SCOPES, type McpTokenScope, type McpTokenView } from '../../shared/mcp';
 import { mcpDb } from './db';
 import { getUser, type UserRecord } from '../auth/users';
+import type { Role } from '../../shared/auth';
+import { projectRole } from '../projects/access';
+import { getProject } from '../projects/store';
 import { credentials } from '../credentials/vault';
 import { parse } from '../db/rows';
 import { singleton } from '../singleton';
@@ -149,6 +152,8 @@ interface TokenRow {
   expires_at: string;
   revoked_at: string | null;
   last_used_at: string | null;
+  /** The project the token is scoped to (migration 1870). */
+  project_id?: string | null;
 }
 
 export interface McpTokenRecord extends Omit<McpTokenView, 'userName'> {}
@@ -171,11 +176,12 @@ function fromRow(row: TokenRow): McpTokenRecord {
     expiresAt: row.expires_at,
     ...(row.revoked_at && { revokedAt: row.revoked_at }),
     ...(row.last_used_at && { lastUsedAt: row.last_used_at }),
+    ...(row.project_id && { projectId: row.project_id }),
   };
 }
 
 export function mcpTokenView(record: McpTokenRecord): McpTokenView {
-  return { ...record, userName: getUser(record.userId)?.name };
+  return { ...record, userName: getUser(record.userId)?.name, ...(record.projectId && { projectName: getProject(record.projectId)?.name }) };
 }
 
 export interface IssueTokenInput {
@@ -183,6 +189,8 @@ export interface IssueTokenInput {
   scopes?: McpTokenScope[];
   /** Days until it expires (1–365; default 30). */
   expiresInDays?: number;
+  /** Scope the token to one project: the instance MCP server then lists and changes only that project's workflows. */
+  projectId?: string;
 }
 
 /** Issue a token for `user`; the result's `token` is the JWT, shown once. */
@@ -192,6 +200,12 @@ export async function issueMcpToken(user: UserRecord, input: IssueTokenInput, no
   if (!Number.isInteger(days) || days < 1 || days > MCP_TOKEN_MAX_DAYS) throw new McpTokenError(`Expiry must be between 1 and ${MCP_TOKEN_MAX_DAYS} days`);
   const scopes = input.scopes?.length ? parseTokenScopes(input.scopes) : [...MCP_TOKEN_SCOPES];
   if (!scopes.length) throw new McpTokenError('Pick at least one scope');
+  if (input.projectId) {
+    const project = getProject(input.projectId);
+    if (!project) throw new McpTokenError('Project not found', 404);
+    // Someone who can't see the project can't scope a token to it.
+    if (!projectRole({ id: user.id, role: user.role as Role }, project.id)) throw new McpTokenError(`You are not a member of “${project.name}”`, 403);
+  }
   const key = await signingKey();
   const id = `mcpt_${nanoid(16)}`;
   const issuedAt = Math.floor(now / 1000);
@@ -216,6 +230,7 @@ export async function issueMcpToken(user: UserRecord, input: IssueTokenInput, no
     expires_at: new Date(expiresAt * 1000).toISOString(),
     revoked_at: null,
     last_used_at: null,
+    ...(input.projectId && { project_id: input.projectId }),
   };
   mcpDb().insertNew('mcp_tokens', { ...row });
   return { token, record: fromRow(row) };

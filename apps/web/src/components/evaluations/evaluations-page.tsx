@@ -31,6 +31,7 @@ import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { Select } from '../ui/inputs';
 import { RUN_STATE, RunStateIcon, formatStamp, useNow, type RunState } from '../run/run-status';
+import { FileDataset, ScheduleCard } from './dataset-schedule';
 import { OnlineEvalPanel, type OnlineEvalPatch } from './online-eval-panel';
 
 const POLL_MS = 1500;
@@ -92,6 +93,7 @@ function RunCard({ run, selected, onClick, now }: { run: EvaluationRunSummary; s
       <div className="flex items-center gap-2">
         <span className="text-[13px] font-semibold tabular-nums text-t1">Run #{run.number}</span>
         <span className="truncate text-[12px] tabular-nums text-t3">{formatStamp(run.startedAt)}</span>
+        {run.trigger === 'schedule' && <span className="ml-auto shrink-0 rounded-md border border-hair bg-wl px-1.5 py-px text-[10px] text-t3">scheduled</span>}
       </div>
       <div className={cn('mt-0.5 flex items-center gap-1.5 text-[12px]', RUN_STATE[state].text)}>
         <RunStateIcon state={state} className="size-3" />
@@ -124,7 +126,7 @@ function TriggerCard({ overview, workflowId }: { overview?: EvaluationsOverview;
           <TriangleAlert className="size-3.5" /> No Evaluation Trigger
         </div>
         <p className="mt-0.5 leading-snug">
-          Add one in the <Link href={`/workflows/${workflowId}`} className="text-ac hover:underline">editor</Link> and point it at a Data Table of test cases.
+          Add one in the <Link href={`/workflows/${workflowId}`} className="text-ac hover:underline">editor</Link> and point it at a Data Table (or an uploaded CSV or JSON file) of test cases.
         </p>
       </div>
     );
@@ -132,7 +134,7 @@ function TriggerCard({ overview, workflowId }: { overview?: EvaluationsOverview;
     <div className="rounded-[10px] border border-hair bg-sf px-3 py-2 text-[12px]">
       <div className="flex items-center gap-1.5 text-t1">
         <Table2 className="size-3.5 text-t3" />
-        <span className="truncate font-semibold">{trigger.dataTableName ?? (trigger.dataTableId ? 'Missing table' : 'No table chosen')}</span>
+        <span className="truncate font-semibold">{trigger.source === 'file' ? (trigger.dataTableName ?? 'No file uploaded') : (trigger.dataTableName ?? (trigger.dataTableId ? 'Missing table' : 'No table chosen'))}</span>
         {trigger.rows !== undefined && <span className="ml-auto shrink-0 tabular-nums text-t3">{trigger.maxRows ? `${Math.min(trigger.maxRows, trigger.rows)} of ${trigger.rows}` : trigger.rows} rows</span>}
       </div>
       <div className="mt-0.5 text-t3">
@@ -734,7 +736,7 @@ export function EvaluationsPage({ workflowId }: { workflowId: string }) {
   const runs = overview?.runs ?? [];
   const now = useNow(running);
   const hasAgents = Boolean(workflow?.nodes.some((n) => n.type === 'core.aiAgent'));
-  const canStart = Boolean(overview?.trigger?.dataTableId) && !running;
+  const canStart = Boolean(overview?.trigger?.source === 'file' ? overview.file : overview?.trigger?.dataTableId) && !running;
 
   let main: ReactNode;
   if (view.kind === 'online') main = <OnlineView workflowId={workflowId} />;
@@ -750,7 +752,7 @@ export function EvaluationsPage({ workflowId }: { workflowId: string }) {
       <EmptyState
         className="mt-16"
         title="No evaluation runs yet"
-        hint={`Run the workflow over ${overview.trigger.dataTableName ? `“${overview.trigger.dataTableName}”` : 'its Data Table'}, one execution per row, and the scores show up here.`}
+        hint={`Run the workflow over ${overview.trigger.dataTableName ? `“${overview.trigger.dataTableName}”` : overview.trigger.source === 'file' ? 'the uploaded file (upload it first)' : 'its Data Table'}, one execution per row, and the scores show up here.`}
         action={
           <Button variant="primary" onClick={() => void start()} loading={starting} disabled={!canStart}>
             <Play className="size-3.5" /> Run evaluation
@@ -798,6 +800,8 @@ export function EvaluationsPage({ workflowId }: { workflowId: string }) {
               </Button>
             </div>
             <TriggerCard overview={overview} workflowId={workflowId} />
+            {overview?.trigger && <FileDataset workflowId={workflowId} overview={overview} onChanged={() => void loadOverview()} />}
+            {overview?.trigger && <ScheduleCard key={overview.schedule?.cron ?? 'none'} workflowId={workflowId} overview={overview} onChanged={() => void loadOverview()} />}
           </div>
           <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-3 pt-1">
             {!overview &&

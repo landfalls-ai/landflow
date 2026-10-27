@@ -13,8 +13,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { NodeOperationError, type JsonObject } from '@landflow/sdk';
 import type { AgentMessage, LanguageModel, ModelAttachment, ModelTurn, ToolCall, ToolSpec } from '@landflow/engine';
 import type { Attributes } from '@opentelemetry/api';
+import { credentialIdOf } from '../ai-usage/credential-id';
 import { traceChat, traceEmbeddings } from '../telemetry';
-import { attachmentText, pdfAttachmentText } from './attachments';
+import { attachmentText, audioFormat, pdfAttachmentText } from './attachments';
 
 /**
  * The engine's generate() input. Root nodes that need structured output (chains,
@@ -33,6 +34,8 @@ const describeReply = (reply: ProviderReply) => ({
   responseModel: reply.model,
   inputTokens: reply.turn.usage?.inputTokens,
   outputTokens: reply.turn.usage?.outputTokens,
+  cacheReadTokens: reply.turn.usage?.cacheReadTokens,
+  cacheWriteTokens: reply.turn.usage?.cacheWriteTokens,
   finishReasons: [reply.turn.stopReason],
 });
 
@@ -59,6 +62,7 @@ function echoable(content: Anthropic.Beta.BetaContentBlock[]): Anthropic.Beta.Be
 /** A user message's files as Anthropic content blocks: images, PDFs (base64 documents) and text documents. */
 function anthropicAttachments(attachments: ModelAttachment[]): Anthropic.Beta.BetaContentBlockParam[] {
   return attachments.map((file): Anthropic.Beta.BetaContentBlockParam => {
+    if (file.kind === 'audio' || file.kind === 'video') throw new Error(`Anthropic models can’t take ${file.kind} input${file.fileName ? ` (${file.fileName})` : ''}`);
     if (file.kind === 'image') {
       return { type: 'image', source: { type: 'base64', media_type: file.mimeType as 'image/png', data: file.data } };
     }
@@ -101,7 +105,22 @@ export function toAnthropicMessages(messages: AgentMessage[]): Anthropic.Beta.Be
   });
 }
 
-export function anthropicModel(options: { model: string; effort: Effort; maxTokens: number; fallback: boolean; apiKey?: string; baseUrl?: string }): LanguageModel {
+/**
+ * Anthropic's usage: `input_tokens` counts only the prompt after the last cache breakpoint; cache reads and writes are
+ * reported next to it. `inputTokens` here is the whole prompt, with the cached parts alongside (priced separately).
+ */
+export function anthropicUsage(usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }) {
+  const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
+  const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
+  return {
+    inputTokens: usage.input_tokens + cacheReadTokens + cacheWriteTokens,
+    outputTokens: usage.output_tokens,
+    ...(cacheReadTokens > 0 && { cacheReadTokens }),
+    ...(cacheWriteTokens > 0 && { cacheWriteTokens }),
+  };
+}
+
+export function anthropicModel(options: { model: string; effort: Effort; maxTokens: number; fallback: boolean; apiKey?: string; baseUrl?: string; credentialId?: string }): LanguageModel {
   let client: Anthropic;
   try {
     // A selected Anthropic credential wins; otherwise the SDK resolves ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or an `ant auth login` profile.
@@ -120,7 +139,7 @@ export function anthropicModel(options: { model: string; effort: Effort; maxToke
     provider: 'anthropic',
     model: options.model,
     async generate(input): Promise<ModelTurn> {
-      const request = { system: 'anthropic', model: options.model, attributes: { 'gen_ai.request.max_tokens': options.maxTokens, ...(address && { 'server.address': address }) } };
+      const request = { system: 'anthropic', model: options.model, ...(options.credentialId && { credentialId: options.credentialId }), attributes: { 'gen_ai.request.max_tokens': options.maxTokens, ...(address && { 'server.address': address }) } };
       return (await traceChat(request, () => call(input), describeReply)).turn;
     },
   };
@@ -186,7 +205,7 @@ export function anthropicModel(options: { model: string; effort: Effort; maxToke
         toolCalls,
         stopReason: response.stop_reason ?? 'end_turn',
         raw: { provider: 'anthropic', content: response.content },
-        usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
+        usage: anthropicUsage(response.usage),
       },
       model: response.model,
     };
@@ -219,6 +238,8 @@ interface OllamaReply {
 /** A user message for Ollama: images go in `images`; PDFs and text files are read and added to the text (Ollama has no document input). */
 export async function toOllamaUser(message: Extract<AgentMessage, { role: 'user' }>): Promise<OllamaMessage> {
   const files = message.attachments ?? [];
+  const media = files.find((file) => file.kind === 'audio' || file.kind === 'video');
+  if (media) throw new Error(`Ollama models can’t take ${media.kind} input${media.fileName ? ` (${media.fileName})` : ''}`);
   const images = files.filter((file) => file.kind === 'image').map((file) => file.data);
   const documents: string[] = [];
   for (const file of files) {
@@ -408,9 +429,11 @@ export interface OpenAiConnection {
   official: boolean;
   headers: Record<string, string>;
   attributes: Attributes;
+  /** The saved credential the connection was built from (caps per credential), when the runner tagged it. */
+  credentialId?: string;
 }
 
-export function openAiConnection(credentials: JsonObject | undefined): OpenAiConnection {
+export function openAiConnection(credentials: JsonObject | undefined, credentialId = credentialIdOf(credentials)): OpenAiConnection {
   const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
   const base = (text(credentials?.baseUrl) || OPENAI_BASE_URL).replace(/\/+$/, '');
   const url = parseUrl(base);
@@ -432,6 +455,7 @@ export function openAiConnection(credentials: JsonObject | undefined): OpenAiCon
       ...(organization && { 'openai-organization': organization }),
     },
     attributes: { 'server.address': url.hostname, ...(url.port && { 'server.port': Number(url.port) }) },
+    ...(credentialId && { credentialId }),
   };
 }
 
@@ -517,7 +541,9 @@ export async function openAiModels(connection: OpenAiConnection, fetcher?: Fetch
 export type OpenAiContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } }
-  | { type: 'file'; file: { filename: string; file_data: string } };
+  | { type: 'file'; file: { filename: string; file_data: string } }
+  | { type: 'input_audio'; input_audio: { data: string; format: 'wav' | 'mp3' } }
+  | { type: 'video_url'; video_url: { url: string } };
 
 export type OpenAiMessage =
   | { role: 'system'; content: string }
@@ -535,7 +561,7 @@ interface ChatCompletion {
     };
     finish_reason?: string | null;
   }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } | null };
 }
 
 export interface OpenAiChatOptions {
@@ -552,7 +578,8 @@ export interface OpenAiChatResult {
   finishReason: string;
   refusal?: string;
   model?: string;
-  usage: { inputTokens: number; outputTokens: number };
+  /** `inputTokens` is OpenAI's `prompt_tokens`, which already counts the cached ones (`prompt_tokens_details.cached_tokens`). */
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number };
 }
 
 /** A user message's files as OpenAI content parts. */
@@ -560,6 +587,11 @@ export function openAiParts(text: string, attachments: ModelAttachment[]): OpenA
   const parts: OpenAiContentPart[] = [];
   for (const file of attachments) {
     if (file.kind === 'image') parts.push({ type: 'image_url', image_url: { url: `data:${file.mimeType};base64,${file.data}` } });
+    else if (file.kind === 'audio') {
+      const format = audioFormat(file);
+      if (!format) throw new Error(`Audio input takes wav or mp3, not ${file.mimeType}`);
+      parts.push({ type: 'input_audio', input_audio: { data: file.data, format } });
+    } else if (file.kind === 'video') parts.push({ type: 'video_url', video_url: { url: `data:${file.mimeType};base64,${file.data}` } });
     else if (file.mimeType === 'application/pdf') parts.push({ type: 'file', file: { filename: file.fileName ?? 'document.pdf', file_data: `data:application/pdf;base64,${file.data}` } });
     else parts.push({ type: 'text', text: `<document${file.fileName ? ` name="${file.fileName.replace(/"/g, "'")}"` : ''}>\n${attachmentText(file)}\n</document>` });
   }
@@ -613,9 +645,9 @@ export async function openAiChat(
     ? () => openAiStream(connection, body, extra.onToken!, extra.signal, extra.fetcher)
     : () => openAiRequest<ChatCompletion>(connection, '/chat/completions', { body, ...(extra.signal && { signal: extra.signal }), ...(extra.fetcher && { fetcher: extra.fetcher }) });
   return traceChat(
-    { system: connection.system, model: options.model, attributes },
+    { system: connection.system, model: options.model, ...(connection.credentialId && { credentialId: connection.credentialId }), attributes },
     async () => parseCompletion(connection, await request()),
-    (result) => ({ responseModel: result.model, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, finishReasons: [result.finishReason] }),
+    (result) => ({ responseModel: result.model, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, cacheReadTokens: result.usage.cacheReadTokens, finishReasons: [result.finishReason] }),
   );
 }
 
@@ -625,7 +657,7 @@ interface CompletionChunk {
     delta?: { content?: string | null; refusal?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> };
     finish_reason?: string | null;
   }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } | null } | null;
   error?: { message?: string };
 }
 
@@ -676,7 +708,7 @@ async function openAiStream(connection: OpenAiConnection, body: Record<string, u
     }
     if (chunk.error) throw new OpenAiApiError(`${connection.label}: ${chunk.error.message ?? 'stream error'}`, 500);
     model ??= chunk.model;
-    if (chunk.usage) usage = { prompt_tokens: chunk.usage.prompt_tokens, completion_tokens: chunk.usage.completion_tokens };
+    if (chunk.usage) usage = { prompt_tokens: chunk.usage.prompt_tokens, completion_tokens: chunk.usage.completion_tokens, prompt_tokens_details: chunk.usage.prompt_tokens_details };
     const choice = chunk.choices?.[0];
     if (!choice) continue;
     const delta = choice.delta ?? {};
@@ -733,7 +765,11 @@ function parseCompletion(connection: OpenAiConnection, completion: ChatCompletio
     finishReason,
     ...(message.refusal && { refusal: message.refusal }),
     ...(completion.model && { model: completion.model }),
-    usage: { inputTokens: completion.usage?.prompt_tokens ?? 0, outputTokens: completion.usage?.completion_tokens ?? 0 },
+    usage: {
+      inputTokens: completion.usage?.prompt_tokens ?? 0,
+      outputTokens: completion.usage?.completion_tokens ?? 0,
+      ...(completion.usage?.prompt_tokens_details?.cached_tokens && { cacheReadTokens: completion.usage.prompt_tokens_details.cached_tokens }),
+    },
   };
 }
 
@@ -758,7 +794,7 @@ export async function openAiEmbeddings(
   options: { dimensions?: number; signal?: AbortSignal } = {},
 ): Promise<{ vectors: number[][]; model?: string; inputTokens?: number }> {
   return traceEmbeddings(
-    { system: connection.system, model, attributes: connection.attributes },
+    { system: connection.system, model, ...(connection.credentialId && { credentialId: connection.credentialId }), attributes: connection.attributes },
     async () => {
       const reply = await openAiRequest<{ model?: string; data?: Array<{ index?: number; embedding?: unknown }>; usage?: { prompt_tokens?: number } }>(connection, '/embeddings', {
         body: { model, input, ...(options.dimensions && { dimensions: options.dimensions }) },

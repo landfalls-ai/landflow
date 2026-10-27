@@ -13,6 +13,14 @@ import type { Workflow } from '@landflow/engine';
 import type { ClusterInstance } from '../../shared/cluster';
 import type { ExecutionRecord } from '../../shared/types';
 
+/** A worker takes one low-priority job (when one waits) after this many of the other priorities. */
+export const LOW_EVERY = 8;
+
+/** The order a worker reads the priorities in; `sinceLow` counts the jobs taken since a low one. */
+export function priorityOrder(sinceLow: number): Array<'high' | 'normal' | 'low'> {
+  return sinceLow >= LOW_EVERY ? ['low', 'high', 'normal'] : ['high', 'normal', 'low'];
+}
+
 /** Engine options a job carries (the serializable part of ExecuteWorkflowOptions: start, partial and resume state). */
 export type JobEngineOptions = Record<string, unknown>;
 
@@ -30,6 +38,11 @@ export interface QueueJob {
   /** The graph it runs. */
   workflow: Workflow;
   engine: JobEngineOptions;
+  /**
+   * The workflow's priority setting (absent: normal). Jobs wait in one stream per priority; a worker reads high first, then
+   * normal, then low, except that after `LOW_EVERY` jobs of the others it takes a low one first (so low is never starved).
+   */
+  priority?: 'high' | 'normal' | 'low';
   /** The instance that waits for the result: events, replies and the outcome go to its inbox. */
   origin?: string;
   /** Send every engine event to the origin (a caller with onEvent: the editor, a streaming webhook or chat). */
@@ -81,7 +94,7 @@ export interface Coordinator {
   // ---- job queue ------------------------------------------------------------
   /** Add a job; resolves with its id. */
   enqueue(job: QueueJob): Promise<string>;
-  /** Up to `count` new jobs for `consumer`, waiting up to `blockMs` for the first. */
+  /** Up to `count` new jobs for `consumer` (higher priorities first, see `QueueJob.priority`), waiting up to `blockMs` for the first. */
   take(consumer: string, count: number, blockMs: number): Promise<Delivery[]>;
   /** Done with a job: it leaves the queue. */
   ack(id: string): Promise<void>;

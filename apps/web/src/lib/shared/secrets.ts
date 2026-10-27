@@ -110,8 +110,19 @@ export interface EnvironmentSettings {
   credentialMap?: CredentialMapping[];
   /** Data tables (ids) whose rows promotion copies to the target (opt-in per table; schemas travel either way). */
   rowTables?: string[];
+  /**
+   * Per opted-in table (by id): merge its rows into the target's by key columns (insert new, update changed, optionally
+   * delete the ones missing) instead of replacing them. The merge travels in the rows file, so the target applies it.
+   */
+  rowMerge?: Record<string, RowMerge>;
   /** `$secrets` references for promoted credentials' secret fields (left empty in the target otherwise). */
   secretMappings?: CredentialSecretMapping[];
+}
+
+/** How a promoted table's rows meet the target's: matched by `keys`, new ones inserted, changed ones updated, and with `deleteMissing` the rest deleted. */
+export interface RowMerge {
+  keys: string[];
+  deleteMissing?: boolean;
 }
 
 /** GET /api/environment */
@@ -127,7 +138,7 @@ export interface EnvironmentView {
   publishOnPull: PullPublishMode;
   credentialMap: Array<CredentialMapping & { credentialName?: string }>;
   /** Tables whose rows promotion copies, with their names (a deleted table has none). */
-  rowTables: Array<{ id: string; name?: string }>;
+  rowTables: Array<{ id: string; name?: string; merge?: RowMerge }>;
   secretMappings: CredentialSecretMapping[];
   sourceControl: boolean;
 }

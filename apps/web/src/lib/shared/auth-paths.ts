@@ -56,6 +56,10 @@ export const PUBLIC_ROUTES = [
   '/api/plugins/announce',
   // Slack Events API and Interactivity (agent channels, approval buttons): verified with the app's signing secret.
   '/api/slack',
+  // Microsoft Teams (Bot Framework) messages: the bearer JWT is validated against the bot registration's OpenID metadata.
+  '/api/teams',
+  // Approve / reject links of approval emails: signed, single-use tokens in the URL.
+  '/api/approvals/email',
   // SCIM 2.0 provisioning (Okta, Entra ID): a bearer API key with the `scim` scope, checked by the routes.
   '/scim/v2',
 ] as const;

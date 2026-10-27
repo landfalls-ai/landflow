@@ -56,15 +56,21 @@ separate from the **AI Agent** node, which runs inside a workflow.
     collection, the embeddings model (Ollama with an optional query prefix, or OpenAI-compatible
     with a credential), passages per search and vector or hybrid search. The agent only reads:
     fill the collection with a workflow, a vector store node in **Insert Documents** mode with
-    the same store, collection and embeddings model (Default Data Loader, optional text
-    splitter), triggered by hand, on a schedule or by a webhook. The timeline shows searches with
+    the same store, collection and embeddings model (Default Data Loader in **Load Binary Files**
+    mode for PDFs, DOCX and the like, optional text splitter), triggered by hand, on a schedule
+    or by a webhook. A saved knowledge base also takes uploads directly: the tool's dialog has a
+    **Documents** list where a PDF, DOCX, text, Markdown, HTML, CSV or JSON file (up to 25 MB) is
+    read, split, embedded and added to the collection (metadata `documentId`, `fileName`, `page`,
+    `chunk`), and a document can be deleted again (`GET/POST/DELETE
+    /api/agents/:id/knowledge/:toolId/documents`). The store must be one that supports deletion
+    by metadata (all three do). The timeline shows searches with
     the vector store's icon. In the workflow editor the same collection is reachable from an AI
     Agent with the vector store in **Retrieve Documents (As Tool)** mode.
   - **Require approval** on any capability pauses the run before that tool executes (below).
 - **Memory.** Session memory is always on: the session keeps the transcript, and the model
   sees its last 30 user turns. **Cross-session memory** adds a `remember` tool. The saved facts
   (at most 50 per agent and user) are put into the system prompt of that user's later sessions.
-  A user is "you" in the test chat, `telegram:<id>` in Telegram, `slack:<member id>` in Slack, `workflow:<id>` from a workflow,
+  A user is "you" in the test chat, `telegram:<id>` in Telegram, `slack:<member id>` in Slack, `teams:<Entra object id>` in Teams, `workflow:<id>` from a workflow,
   and `schedule:<id>` for a schedule.
 - **Triggers** (published version only):
   - **Schedules:** hourly, daily, weekly, monthly, or a five-field cron, in a time zone.
@@ -75,9 +81,25 @@ separate from the **AI Agent** node, which runs inside a workflow.
     Trigger and replies with its Telegram node, so the bot token stays in the vault. Like the
     workflow trigger, the first poll only sets a baseline. A bot can have only one poller, so
     don't also use its token in an active Telegram Trigger workflow.
-  - **Slack channel:** a `messaging.slackApi` credential with the bot token and the app's
-    **Signing Secret**, *Private* (allowed member ids `U…`) or *Public*, and *Reply in thread*
-    (default on). See [Slack](#slack) for the app setup.
+  - **Slack channel:** a `messaging.slackApi` credential (bot token) or a `messaging.slackOAuth2Api`
+    one (Connect installs the app) with the app's **Signing Secret**, *Private* (allowed member ids
+    `U…`) or *Public*, *Reply in thread* (default on) and *Slash commands* (default on). See
+    [Slack](#slack) for the app setup.
+  - **Microsoft Teams channel:** a `core.microsoftBotApi` credential (the Azure Bot's app id and
+    client secret), *Private* (allowed Entra object ids) or *Public*. See
+    [Microsoft Teams](#microsoft-teams).
+- **Guardrails** (Build tab). The same checks as the Guardrails node (PII, secret keys,
+  keywords, URLs, prompt injection, moderation, custom regex), set per stage:
+  - **Input**: runs on the user's message before the model sees it.
+  - **Output**: runs on the final answer only (not on text between tool calls).
+
+  Each stage has an action. **Block** checks the text (the model-based checks use the agent's
+  own model) and, when something is found, answers with the stage's *reply* (a default is used
+  if empty); a blocked input never reaches the model and the run ends `completed`. **Sanitize**
+  replaces what the pattern checks find (redacted or masked) and goes on; model-based checks
+  are skipped. A check that cannot run fails closed: the text is blocked. The transcript keeps
+  the cleaned text, and a blocked user message is stored as *[Message withheld by an input
+  guardrail]*.
 - **Settings:**
 
   | Setting | Default | Meaning |
@@ -89,6 +111,7 @@ separate from the **AI Agent** node, which runs inside a workflow.
   | Daily token limit | 0 (off) | stop the agent's runs once it used this many tokens today (all sessions, instance time zone) |
   | Daily cost limit | 0 (off) | the same in estimated US dollars |
   | Monthly cost limit | 0 (off) | estimated US dollars this calendar month |
+  | Approver emails | none | addresses that get approve / reject links when a run waits for approval ([below](#approvals-by-email)) |
 
   The usage limits count every model call the agent makes (sub-agents and tools that call models
   included) at the prices of Settings → AI prices. A run that reaches one stops with the reason
@@ -118,17 +141,21 @@ the run continues: approved calls execute, and denied ones return *"The user rej
 call to X. STOP what you are doing and wait for the user…"* (n8n's wording). Some models
 retry anyway, so a call to a just-denied tool in the very next turn is refused without asking
 again, and the model has to reply. In Slack the approval calls are posted in the thread
-with **Approve** / **Reject** buttons. Runs that nobody
+with **Approve** / **Reject** buttons, in Teams as an Adaptive Card with the same two actions,
+and with *Approver emails* set also as email links ([below](#approvals-by-email)). Runs that nobody
 watches (schedules, Telegram, workflows, sub-agents) never pause. Approval tools are refused
 there with an explanation the model can pass on.
 
-**Sessions** are saved under `.data/agent-sessions/`, at most 200 per agent. Each one keeps:
+**Sessions** are saved under `.data/agent-sessions/` (agents under `.data/agents/`, memories under `.data/agent-memory/`),
+or with `LANDFLOW_CONFIG_STORE=database` (the default in queue mode) in the `agent_definitions`, `agent_sessions` and
+`agent_memory` tables (migration 1881; existing files are imported once), so every main and worker sees the same
+agents. At most 200 sessions are kept per agent. Each one keeps:
 - the model transcript;
-- the UI timeline (user, assistant, tool, notice and error entries, upserted by id while streaming);
+- the UI timeline (user, assistant, tool, notice, guardrail and error entries, upserted by id while streaming; a guardrail entry names the stage, whether it blocked or sanitized, and the violations with masked matches, and appears only when something was found);
 - token usage;
-- one trace id per run.
+- one trace id per run (guardrail checks are `landflow.guardrails` spans with a `landflow.guardrails.stage` attribute, for every check).
 
-The **Sessions** tab lists them by source (`test`, `schedule`, `telegram`, `slack`, `workflow`, `agent`).
+The **Sessions** tab lists them by source (`test`, `schedule`, `telegram`, `slack`, `teams`, `workflow`, `agent`).
 Only one run can be active per session.
 
 ## From workflows
@@ -161,7 +188,7 @@ The **Evaluations** tab grades the agent's conversations online, with an LLM jud
 
 The **AI Agent** node gets the same grading per node, under **AI Agent grading** on the workflow's
 Evaluations tab (judge default: the node's chat model; evaluation and debug runs are skipped).
-Offline evaluations of workflows (test cases from a Data Table) are described in the README's
+Offline evaluations of workflows (test cases from a Data Table or an uploaded CSV/JSON file, scheduled runs and score alerts) are described in the README's
 Evaluations section. Scores live in `online_eval_scores` (the last 2,000 per agent).
 
 ## Slack
@@ -171,11 +198,17 @@ An agent answers in Slack through a Slack app of your own:
 1. Create an app at <https://api.slack.com/apps>, add the bot scopes `app_mentions:read`,
    `chat:write` and `im:history`, and install it in the workspace.
 2. Save a **Slack API** credential with the **Bot User OAuth Token** (`xoxb-…`) and the app's
-   **Signing Secret** (Basic Information). Landflow refuses Slack requests it can't verify.
+   **Signing Secret** (Basic Information), or a **Slack OAuth2 API** credential: add the
+   redirect URL its dialog shows under *OAuth & Permissions*, **Connect** installs the app and the
+   host stores and renews the bot token (fill in the Signing Secret there too). Either type works
+   for channels, slash commands, approval buttons and the AI Agent node's Slack approvals.
+   Landflow refuses Slack requests it can't verify.
 3. Add a Slack channel to the agent, pick the credential and publish. The channel shows two URLs:
    - **Event Subscriptions** → Request URL `<LANDFLOW_PUBLIC_URL>/api/slack/events/<agentId>/<channelId>`,
      bot events `app_mention` and `message.im`;
-   - **Interactivity & Shortcuts** → Request URL `<LANDFLOW_PUBLIC_URL>/api/slack/interactions`.
+   - **Interactivity & Shortcuts** → Request URL `<LANDFLOW_PUBLIC_URL>/api/slack/interactions`;
+   - **Slash Commands** (optional) → create a command such as `/ask` with Request URL
+     `<LANDFLOW_PUBLIC_URL>/api/slack/commands/<agentId>/<channelId>`.
 
 How it behaves:
 - Every request is checked against the signing secret (HMAC-SHA256 of `v0:<timestamp>:<body>`,
@@ -193,8 +226,84 @@ How it behaves:
   *Waiting*) until every call is decided, in Slack or in the editor's chat panel / execution view
   (`POST /api/executions/:id/approvals`).
 
+**Slash commands.** `/ask what changed today?` runs the agent with the text:
+- The request is signed like events (signing secret, timestamp skew) and is acknowledged at once
+  with an empty `200`: Slack allows 3 seconds. The agent's answer is posted to the command's
+  `response_url` (`in_channel`, headed "`@you` ran `/ask …`"; no bot token or channel membership is
+  needed). Long answers go out as several messages.
+- There is **one session per user and Slack channel** (`slack:<member id>`; follow-ups keep the
+  context, *Start a new session after* applies); `/ask new` (or `reset`) starts over.
+- Private channels refuse people who aren't allowed (a private reply); an empty command answers
+  with usage; *Slash commands* off answers "turned off"; a repeated `trigger_id` is ignored.
+- Tools that need approval are posted with the same Approve / Reject buttons, also on the
+  response URL: the click's own `response_url` replaces the message and carries on the answer.
+
 The routes are public (no Landflow session); the signing secret is what authenticates Slack.
-Tested against a fake Slack Web API (`apps/web/test/slack.test.ts`).
+Tested against a fake Slack Web API (`apps/web/test/slack.test.ts`, `agent-channels.test.ts`).
+
+## Microsoft Teams
+
+An agent answers in Teams as a Bot Framework bot of your own:
+
+1. In Azure create an **Azure Bot** (single or multi tenant; or a Teams Developer Portal bot),
+   note its **Microsoft App ID** and create a **client secret**; add the *Microsoft Teams*
+   channel to the bot.
+2. Save a **Microsoft Bot (Teams)** credential (`core.microsoftBotApi`) with the app id and the
+   secret (*Tenant ID* for single-tenant bots; *Test connection* asks the Microsoft identity
+   platform for a bot token).
+3. Add a Teams channel to the agent, pick the credential and publish. The channel shows the
+   endpoint to set as the bot's **Messaging endpoint**:
+   `<LANDFLOW_PUBLIC_URL>/api/teams/messages/<agentId>/<channelId>` (HTTPS, reachable from the internet).
+4. Install the bot in Teams (a personal chat, a team or a group chat) and talk to it.
+
+How it behaves:
+- Every request carries a bearer JWT. Landflow loads the registration's OpenID metadata
+  (`https://login.botframework.com/v1/.well-known/openidconfiguration`) and its JWKS, and accepts
+  an RS256 token of a published key whose issuer is the metadata's, whose audience is the bot's app
+  id, that is within its `nbf`/`exp` (five minutes of leeway) and whose `serviceurl` claim equals the
+  activity's `serviceUrl`. Anything else is a `401`. The metadata URL is a credential field, so a
+  test double can stand in; keys are cached for a day and fetched again when a new `kid` shows up.
+- Messages are acknowledged at once and answered through the activity's `serviceUrl`
+  (`POST /v3/conversations/<id>/activities/<activityId>`) with a bot token (client credentials,
+  scope `https://api.botframework.com/.default`, cached until a minute before it expires). The
+  `@mention` is stripped; `/new` starts a new conversation. Each Teams conversation (a chat, or a
+  thread in a channel) is one session; repeated activity ids are ignored.
+- Tools that need approval are posted as an **Adaptive Card** (1.4) with two `Action.Execute`
+  buttons (Universal Actions), **Approve** and **Reject**. A click arrives as an `adaptiveCard/action`
+  invoke: Landflow checks the channel's allow list and that the call still waits, answers the invoke
+  at once with the card that replaces the clicked one (who decided what, no buttons), and continues
+  the run in the conversation in the background. Someone the channel doesn't allow, or a second
+  click, gets a message back instead and decides nothing. Each button falls back to an
+  `Action.Submit` with the same data for hosts without Universal Actions; that click comes back as a
+  message whose `value` is the data, and the card is replaced through the Bot Connector.
+- Private channels list Entra object ids (`aadObjectId`) or Teams user ids.
+
+The endpoint is public (no Landflow session); the JWT is what authenticates Teams. Tested against a
+fake OpenID metadata, JWKS, token endpoint and Bot Connector (`apps/web/test/agent-channels.test.ts`).
+Files and proactive messages are not handled.
+
+## Approvals by email
+
+Tools that need approval can reach people as an email with **Approve** and **Reject** links, sent
+over the host's SMTP (`LANDFLOW_SMTP_*`, the same settings as invites and alerts):
+- **Agents:** Settings → *Approver emails*. Whenever a run stops for approvals (the test chat,
+  Slack, Teams), each address gets one email per waiting call.
+- **AI Agent node:** *Ask In: Email* with *Approver Emails*; the execution waits (status *Waiting*)
+  and resumes on the first decision, which can also still come from the chat panel or the
+  execution view. A node without SMTP or addresses fails with a message that says so.
+
+The links are `<LANDFLOW_PUBLIC_URL>/api/approvals/email/<token>`: a token is `<payload>.<HMAC>`
+(HMAC-SHA256 under a key derived from the vault key; payload: the call, the decision, the address it
+was sent to, the expiry, 24 hours or `LANDFLOW_APPROVAL_EMAIL_TTL_HOURS`). They are **single use**:
+the approve and reject links of one call and address share a group, and whoever uses one first
+spends the group (`approval_email_used`, migration 1830, a primary-key insert, so it holds across
+processes); a decision that fails (the call was decided meanwhile) frees the link. Opening a link only
+shows a confirmation page, because mail scanners fetch links; its button POSTs and decides. A tampered
+or expired link is refused (`400`, `410`), a spent one answers `409`. The decider is recorded as
+`email:<address>`, and when the run belonged to a Slack or Teams conversation the answer is
+delivered there. The Slack message or Teams card keeps its buttons (a later click is answered
+"already decided"). Tested with a captured transport (`apps/web/test/agent-channels.test.ts`) and
+through the infra Mailpit (`apps/web/test/approval-email-mailpit.test.ts`, skipped when it isn't up).
 
 ## API
 
@@ -207,9 +316,13 @@ Tested against a fake Slack Web API (`apps/web/test/slack.test.ts`).
 | `POST /api/agents/:id/chat` | `{ message, sessionId? }` → SSE of `AgentStreamEvent` (draft, source `test`) |
 | `POST /api/agents/:id/sessions/:sid/approvals` | `{ callId, approved }` → the same SSE stream once the run resumes |
 | `POST /api/slack/events/:agentId/:channelId` | Slack Events API of the agent's Slack channel (signed by Slack) |
+| `POST /api/slack/commands/:agentId/:channelId` | Slack slash commands of the agent's Slack channel (signed by Slack; answered on the `response_url`) |
 | `POST /api/slack/interactions` | Slack interactivity: the Approve / Reject buttons of agents and AI Agent nodes (signed by Slack) |
+| `POST /api/teams/messages/:agentId/:channelId` | Bot Framework messaging endpoint of the agent's Teams channel (bearer JWT validated) |
+| `GET/POST /api/approvals/email/:token` | the links of approval emails: GET confirms, POST decides once (signed token) |
 | `GET /api/insights/ai-usage?agentId=` | the agent's tokens and estimated cost: totals, per model, per day, `today` and `month` |
-| `GET /api/agents/:id/sessions`, `GET/DELETE /api/agents/:id/sessions/:sid` | session list / full session |
+| `GET /api/agents/:id/sessions`, `GET/DELETE /api/agents/:id/sessions/:sid` | session list / full session (`feedback`: the thumbs up / down per reply) |
+| `GET /api/agents/:id/sessions/:sid/feedback`, `PUT` `{ entryId, rating: 'up' \| 'down' \| null, comment? }` | read / set the rating of one assistant reply (the Sessions tab's thumbs). A thumbs down on an agent with online grading enabled grades that reply (README, "Hosted chat and widget") |
 | `GET /api/agents/models?provider&credentialId&baseUrl` | `{ options: ModelOption[], error? }` |
 | `GET /api/agents/workflow-tools` | workflows with `eligible` and the `reason` when they aren't |
 | `GET/PUT /api/agents/:id/evaluations` | online grading: `{ report: OnlineEvalReport }` (settings, scores, trend); `PUT` changes the settings |
@@ -244,12 +357,12 @@ in [`apps/web/src/lib/shared/agents.ts`](../apps/web/src/lib/shared/agents.ts).
 
 ## Limits and next steps
 
-- **Channels.** Telegram and Slack, text messages only (no files from chat apps yet). Discord,
-  Microsoft Teams and Linear channels would follow the same pattern; Slack slash commands and
-  modals aren't handled.
-- **Knowledge.** Knowledge bases are filled by workflows: the builder can't upload documents
-  yet, and the data loader reads item text, not files. No web search capability; an HTTP
-  Request node can stand in. Guardrails are a workflow node, not yet an agent setting.
+- **Channels.** Telegram, Slack (events, slash commands) and Microsoft Teams, text messages only (no
+  files from chat apps yet). Discord and Linear channels would follow the same pattern; Slack modals
+  aren't handled, and a Teams bot only answers (no proactive messages).
+- **Knowledge.** Knowledge bases take uploads in the builder or are filled by workflows (the data
+  loader reads files too). No web search capability; an HTTP Request node can stand in. The test
+  chat takes no file uploads (the hosted chat of a workflow does).
 - **Cost and limits.** Daily token and cost limits and a monthly cost limit per agent, plus the
-  session token budget; no per-model routing yet. Runs and schedules are single-process, like
-  the workflow scheduler.
+  session token budget; no per-model routing yet. Schedules and channel pollers run on the
+  leader in queue mode; a run happens in the process that took the message (no worker hand-off).

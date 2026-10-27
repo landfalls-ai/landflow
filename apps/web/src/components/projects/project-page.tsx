@@ -16,6 +16,7 @@ import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { timeAgo } from '@/lib/client/format';
 import type { UserView } from '@/lib/shared/auth';
 import { PROJECT_ROLES, projectRoleCan, resourceCan, type ProjectDetail, type ProjectRole, type ResourceKind, type ResourceOwnership } from '@/lib/shared/projects';
+import type { ProjectMcpView } from '@/lib/shared/mcp';
 import { EMPTY_NODE_POLICY, PROJECT_APPROVER_LABELS, type ProjectApprovers, type ProjectSettingsView, type ScopedNodePolicy } from '@/lib/shared/project-policy';
 import { ScopedNodeList } from '@/components/governance/scoped-node-list';
 import { VariablesSettings } from '@/components/settings/variables-settings';
@@ -29,7 +30,7 @@ import { ProtectedGate } from '@/components/shell/protected-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { FieldLabel, Input, Select, Textarea } from '@/components/ui/inputs';
+import { FieldLabel, Input, Select, Switch, Textarea } from '@/components/ui/inputs';
 import { MenuItem, Popover } from '@/components/ui/popover';
 import { DeleteProjectDialog, describeCounts } from './project-dialogs';
 import { MoveToProjectDialog, RESOURCE_PATH, ShareDialog } from './share-dialog';
@@ -370,6 +371,7 @@ function ProjectSettings({ project, onChanged }: { project: ProjectDetail; onCha
           <p className="mt-1 text-[12px] text-t3">To work with others, share workflows and credentials with them, or move them to a team project.</p>
         </Card>
         <GovernanceCard project={project} />
+        <McpCard project={project} />
       </div>
     );
   }
@@ -483,6 +485,8 @@ function ProjectSettings({ project, onChanged }: { project: ProjectDetail; onCha
 
       <GovernanceCard project={project} />
 
+      <McpCard project={project} />
+
       {manage && (
         <Card className="flex items-center gap-3 border-rdbd">
           <span className="min-w-0 flex-1">
@@ -496,6 +500,54 @@ function ProjectSettings({ project, onChanged }: { project: ProjectDetail; onCha
       )}
       {deleting && <DeleteProjectDialog project={project} onClose={() => setDeleting(false)} onDeleted={() => router.push('/projects')} />}
     </div>
+  );
+}
+
+/** The project's own MCP server (the instance MCP server scoped to it, lib/server/mcp/project-servers.ts) and its gateway route. */
+function McpCard({ project }: { project: ProjectDetail }) {
+  const [view, setView] = useState<ProjectMcpView>();
+  const [saving, setSaving] = useState(false);
+  const base = `/api/projects/${encodeURIComponent(project.id)}/mcp`;
+  useEffect(() => {
+    api<ProjectMcpView>(base)
+      .then(setView)
+      .catch((e: Error) => toast.error(e.message));
+  }, [base]);
+  if (!view) return <Card className="h-24 animate-pulse-soft">{null}</Card>;
+  const toggle = async (gateway: boolean) => {
+    setSaving(true);
+    try {
+      setView(await api<ProjectMcpView>(base, { method: 'PATCH', json: { gateway } }));
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Card className="space-y-3">
+      <div>
+        <div className="text-[13px] font-semibold text-t1">MCP server</div>
+        <p className="text-[12px] text-t3">
+          The instance MCP server (Settings → MCP) limited to this project: coding agents list, change and run only this project’s workflows, and what they create goes into it. Connect to{' '}
+          <code className="font-mono text-[12px] text-t1" data-testid="project-mcp-path">
+            {view.path}
+          </code>{' '}
+          with the instance access token, or use a Landflow MCP token made for this project.
+          {!view.instanceEnabled && ' The instance MCP server is off, so it answers nothing yet.'}
+        </p>
+      </div>
+      <div className="flex items-start gap-2">
+        <Switch checked={view.gateway} onChange={(on) => void toggle(on)} disabled={!view.canEdit || saving} label="Register on the MCP gateway" />
+        <div>
+          <div className="text-[13px] font-semibold text-t1">Register on the MCP gateway</div>
+          <p className="text-[12px] text-t3">
+            The gateway sync adds a route for this project’s server{view.gatewayPath ? <> at <code className="font-mono text-[12px] text-t1">{view.gatewayPath}</code></> : ''} (signed-in agents act as themselves, within this project).
+          </p>
+        </div>
+      </div>
+      {!view.canEdit && <p className="text-[12px] text-t3">The project’s admins change this.</p>}
+    </Card>
   );
 }
 
@@ -514,6 +566,7 @@ function GovernanceCard({ project }: { project: ProjectDetail }) {
   const [view, setView] = useState<ProjectSettingsView>();
   const [nodes, setNodes] = useState<ScopedNodePolicy>(EMPTY_NODE_POLICY);
   const [approvers, setApprovers] = useState<ProjectApprovers>('default');
+  const [fourEyes, setFourEyes] = useState(false);
   const [saving, setSaving] = useState(false);
   const [version, setVersion] = useState(0);
   const base = `/api/projects/${encodeURIComponent(project.id)}/settings`;
@@ -521,6 +574,7 @@ function GovernanceCard({ project }: { project: ProjectDetail }) {
     setView(next);
     setNodes(next.settings.nodes);
     setApprovers(next.settings.approvers);
+    setFourEyes(next.settings.fourEyes);
     setVersion((v) => v + 1);
   };
   useEffect(() => {
@@ -530,11 +584,11 @@ function GovernanceCard({ project }: { project: ProjectDetail }) {
   }, [base]);
   if (!view) return <Card className="h-24 animate-pulse-soft">{null}</Card>;
   const editable = view.canEdit;
-  const dirty = JSON.stringify({ nodes, approvers }) !== JSON.stringify({ nodes: view.settings.nodes, approvers: view.settings.approvers });
+  const dirty = JSON.stringify({ nodes, approvers, fourEyes }) !== JSON.stringify({ nodes: view.settings.nodes, approvers: view.settings.approvers, fourEyes: view.settings.fourEyes });
   const save = async () => {
     setSaving(true);
     try {
-      show(await api<ProjectSettingsView>(base, { method: 'PATCH', json: { nodes, approvers } }));
+      show(await api<ProjectSettingsView>(base, { method: 'PATCH', json: { nodes, approvers, fourEyes } }));
       toast.success('Project governance saved');
     } catch (e) {
       toast.error((e as Error).message);
@@ -553,6 +607,13 @@ function GovernanceCard({ project }: { project: ProjectDetail }) {
         </p>
       </div>
       <ScopedNodeList key={version} value={nodes} onChange={setNodes} catalog={view} disabled={!editable} offLabel="Everything the instance allows" allowLabel="Only these" />
+      <div className="flex items-start gap-2">
+        <Switch checked={fourEyes} onChange={setFourEyes} disabled={!editable} label="Four-eyes for this project’s workflows" />
+        <div>
+          <div className="text-[13px] font-semibold text-t1">Four-eyes for this project’s workflows</div>
+          <p className="text-[12px] text-t3">Publishing, rolling back and promoting its workflows to another environment need someone else’s approval, even when the instance doesn’t ask for it. Who approves follows the setting below.</p>
+        </div>
+      </div>
       {project.type === 'team' && (
         <div>
           <FieldLabel>Who approves publish requests</FieldLabel>

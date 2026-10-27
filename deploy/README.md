@@ -4,7 +4,7 @@ Two independent Compose projects:
 
 | Project | File | What |
 |---|---|---|
-| `landflow-infra` | [`compose.infra.yml`](compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`), Vector as a SIEM receiver (profile `siem`), LocalStack for AWS Secrets Manager (profile `aws`); the transport layer's brokers, one profile each (`kafka`, `rabbitmq`, `nats`, `mqtt`, `artemis`, `pulsar`, `pubsub`, `servicebus`) and agentgateway as the MCP gateway (`mcp-gateway`): see [Message brokers and the MCP gateway](#message-brokers-and-the-mcp-gateway) |
+| `landflow-infra` | [`compose.infra.yml`](compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`), Vector as a SIEM receiver (profile `siem`), LocalStack for AWS Secrets Manager (profile `aws`), a throwaway SSH Git server for Source control (profile `git`); the transport layer's brokers, one profile each (`kafka`, `rabbitmq`, `nats`, `mqtt`, `artemis`, `pulsar`, `pubsub`, `servicebus`) and agentgateway as the MCP gateway (`mcp-gateway`): see [Message brokers and the MCP gateway](#message-brokers-and-the-mcp-gateway) |
 | `landflow` | [`compose.yml`](compose.yml) | Landflow itself as images: the host (Next.js standalone), the seven plugins, which announce themselves to the host, and the sandboxed [code runner](#code-runner) for the Code node |
 | `landflow-queue` | [`compose.queue.yml`](compose.queue.yml) | Landflow in [queue mode with high availability](#queue-mode-two-mains-two-workers): two mains behind a load balancer and two workers, on the infra stack's Postgres, Valkey and MinIO |
 
@@ -85,6 +85,7 @@ All credentials are **for local development and tests only**.
 | GreenMail 2.1 SMTP (`mail`) | `localhost:53025` | `greenmail:3025` | none; delivers to GreenMail's own mailboxes |
 | Vector syslog (`siem`) | `localhost:55514` (TCP and UDP) | `siem:5514` | none; RFC 5424, octet counting or newline framing |
 | Vector HTTP (`siem`) | http://localhost:55080/ | `siem:8080` | none; JSON lines (signature headers kept as fields, not checked) |
+| OpenSSH + git (`git`) | `ssh://git@127.0.0.1:52222/srv/git/<repo>.git` (`LANDFLOW_GIT_SSH_PORT`) | `git-ssh:22` | key login only (no passwords): the keys `infra/git/gen-keys.sh` writes to `infra/git/keys/` (git-ignored); repositories live in the `git-ssh-repos` volume, host keys in `git-ssh-host` |
 | LocalStack 4.9 (`aws`) | http://localhost:54566 | `localstack:4566` | any access key (use dummy ones, e.g. `test` / `test`), region `us-east-1`; Secrets Manager and SQS only, in memory |
 | Kafka 4.3 KRaft (`kafka`) | `localhost:59092` | `kafka:9092` | none (PLAINTEXT); share groups on (`share.version=1`), topics auto-created with 3 partitions |
 | RabbitMQ 4.4 (`rabbitmq`) | AMQP `localhost:55672`, management http://localhost:55673 | `rabbitmq:5672`, `rabbitmq:15672` | `landflow` / `landflow-dev-only`, vhost `/` |
@@ -151,6 +152,7 @@ with a resync button; `GET /api/mcp/gateway`, `POST /api/mcp/gateway/sync` (owne
 | `LANDFLOW_MCP_GATEWAY_HOST_URL` | How the gateway reaches this host. Dev (gateway in Docker, host on the Mac): default `http://host.docker.internal:3000`. A compose or Kubernetes sidecar shares the host's network namespace: `http://127.0.0.1:3000` (set in `compose.yml`, `compose.queue.yml`, `k8s/base/host`) |
 | `LANDFLOW_MCP_GATEWAY_SECRET` | Sent by every target as `x-landflow-gateway` (`backendAuth`); without it the sync writes nothing (the host would refuse every call) |
 | `LANDFLOW_MCP_GATEWAY_ROUTES` | `on` (default): besides the shared `/mcp`, one route per plugin at `/mcp/plugins/<name>` (that plugin alone, tools unprefixed) and `/mcp/plugins/<name>/server-card` (proxied to the host's Server Card with the client's own bearer). `off`: targets only |
+| `LANDFLOW_MCP_GATEWAY_ACCEPT_IDP` | Default: when `LANDFLOW_OIDC_ISSUER` is set and the route policies check Landflow's tokens, each route also accepts the identity provider's access tokens (agentgateway `jwtAuth` with two providers, the provider's keys inline; docs/mcp-gateway.md "Two issuers on one route"). `off`: Landflow's issuer only. Static versions: `mcp-gateway/config.tokens-idp.yaml` with `compose.tokens-idp.yml`, and `k8s/components/gateway-landflow-tokens-idp` |
 | `LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES` | A JSON object merged into each per-plugin route's `policies`. **agentgateway applies `mcp.policies.mcpAuthentication` of the base config to `/mcp` only, not to extra routes**, so with sign-in on, put the same `mcpAuthentication` here (`{"mcpAuthentication":{...}}`), or a per-plugin route sees no caller identity and lists no tools |
 
 **Target names** are the plugin ids when they already fit agentgateway's rule (lowercase letters, digits, `-`, `.`; every
@@ -344,7 +346,7 @@ python3 deploy/scripts/queue-e2e.py      # load spread, a killed worker, a kille
 |---|---|---|
 | `lb` | http://localhost:53080 | round robin over the mains, skipping one that is down for 5 s; a browser sticks to one main (cookie `landflow_main`; the `x-landflow-main` header says which one answered). A stand-in for your load balancer: [`queue/lb.mjs`](queue/lb.mjs) |
 | `main-1`, `main-2` | http://localhost:53081, http://localhost:53082 | UI, API, webhooks. `main-1` creates the owner (`owner@landflow.test` / `landflow-dev-only`); `main-2` and the workers start once it is healthy |
-| `worker-1`, `worker-2` | http://localhost:55691/healthz, http://localhost:55692/healthz (`/metrics` too) | 10 runs at once each (`LANDFLOW_WORKER_CONCURRENCY`) |
+| `worker-1`, `worker-2` | http://localhost:55691/healthz, http://localhost:55692/healthz (`/metrics` too) | 10 runs at once each (`LANDFLOW_WORKER_CONCURRENCY`); jobs are taken high, normal, low from three streams (`jobs:high`, `jobs`, `jobs:low`) by the workflow's Priority, with one low job after every eight others |
 | `text-toolkit` | not published | registers through the load balancer; the mains keep its address in Postgres and the workers call it directly |
 
 Every process shares the database `landflow_queue` (`LANDFLOW_QUEUE_DATABASE`), the Valkey key prefix `landflow-queue`, the `landflow-queue_landflow-queue-data` volume at `/data` (agent files, one insights rollup per process; credentials and settings files are in the database, imported once from `/data` on the first start: `LANDFLOW_CONFIG_STORE`), the encryption key and file-link secret (development values; `LANDFLOW_QUEUE_ENCRYPTION_KEY`, `LANDFLOW_QUEUE_BINARY_SECRET`) and the binary store: MinIO's `landflow` bucket under `queue/`, with the endpoint (`http://minio:9000`) and keys set explicitly, so the AWS default credential chain is never used. Traces: `LANDFLOW_QUEUE_OTLP_ENDPOINT=http://jaeger:4318` (with the `observability` profile); a run's trace goes from the main that took the webhook to the worker that ran it.
@@ -369,7 +371,17 @@ docker compose -f deploy/compose.sentinel.yml kill valkey-primary      # then: s
 (cd apps/web && LANDFLOW_INTEGRATION=sentinel npx vitest run test/valkey-sentinel.integration.test.ts)
 ```
 
-Valkey Cluster is not supported: the queue's stream and the multi-key Lua scripts would need one hash tag, so one node anyway (README, "Why not Valkey Cluster").
+**Valkey Cluster**: `LANDFLOW_VALKEY_CLUSTER=host:port,…` (README, "Valkey Cluster"). Every key carries one hash tag, so the queue lives on one slot: failover, not scale-out. The infra stack's `valkey-cluster` profile starts six nodes (three primaries, three replicas; ports 56411–56416 on 127.0.0.1, announcing `valkey-cluster-N`) and a one-shot `valkey-cluster-init`. From the Mac the announced names don't resolve, so map them:
+
+```bash
+COMPOSE_BAKE=false docker compose -f deploy/compose.infra.yml --profile valkey-cluster up -d --wait
+(cd apps/web && LANDFLOW_INTEGRATION=valkey-cluster npx vitest run test/valkey-cluster.integration.test.ts)   # stops the slot's owner under a main and a worker
+# the queue stack, on the infra network, reaches the nodes by their announced names:
+LANDFLOW_QUEUE_VALKEY_CLUSTER=valkey-cluster-1:6379,valkey-cluster-2:6379 docker compose -f deploy/compose.queue.yml up -d --wait
+# remove: docker compose -f deploy/compose.infra.yml --profile valkey-cluster rm -sfv valkey-cluster-1 valkey-cluster-2 valkey-cluster-3 valkey-cluster-4 valkey-cluster-5 valkey-cluster-6 valkey-cluster-init   (not `down -v`)
+```
+
+`LANDFLOW_VALKEY_CLUSTER_NAT=valkey-cluster-1:6379=127.0.0.1:56411,…` maps the announced addresses to the ones you can reach. Sentinel and Cluster together are refused at start.
 
 **Marketplace node plugins** install on either main and run in every main and worker (each its own child process). The containers have no `/app/packages`, so a plugin needing `@landflow/sdk` links can't be prepared there; plain JavaScript, Python and Go plugins can. A local marketplace path needs `LANDFLOW_QUEUE_MARKETPLACE_ALLOW_LOCAL=1` at `up` time.
 
@@ -377,13 +389,14 @@ Day to day: **Settings → Workers** on either main shows the leader, the queue 
 
 ## Code runner
 
-The Code node runs JavaScript in-process (`node:vm` inside the host: quick, but not isolated) or in the **code runner** ([`services/code-runner`](../services/code-runner)), which also runs Python. Every snippet gets a fresh child process (Node for JavaScript, CPython with the standard library only for Python) with an empty environment and its own temporary work directory, deleted afterwards. The host posts the items, the outputs of the nodes the snippet names (`$('Node')`, `_('Node')`), `$vars` and the execution and workflow data to `POST /v1/run` with the shared secret in `x-landflow-runner-secret`; it gets back the items, the `console.log`/`print` output and errors with line numbers (`TypeError: … [line 3, for item 0]`). `GET /health` needs no secret; `GET /v1/info` shows versions, limits and the isolation the runner found.
+The Code node runs JavaScript in-process (`node:vm` inside the host: quick, but not isolated) or in the **code runner** ([`services/code-runner`](../services/code-runner)), which also runs Python. Every snippet gets a fresh child process (Node for JavaScript, CPython with the standard library only for Python) with an empty environment and its own temporary work directory, deleted afterwards. The host posts the items, the outputs of the nodes the snippet names (`$('Node')`, `_('Node')`), `$vars` and the execution and workflow data to `POST /v1/run` with the shared secret in `x-landflow-runner-secret`; it gets back the items, the `console.log`/`print` output and errors with line numbers (`TypeError: … [line 3, for item 0]`). Files cross the same protocol, because the sandbox has no network: the request's `binary` carries the bytes of the input files (base64, by `"<item>:<property>"`; only when the code reads them, up to the cap, with `binarySkipped` giving the reason for any left out), and a file the snippet creates comes back as `binary.<name>.data` (base64) for the host to store in its binary store (filesystem or S3). The runner caps the files a snippet creates at `CODE_RUNNER_MAX_BINARY_BYTES` (6 MiB, `LANDFLOW_CODE_RUNNER_MAX_BINARY_BYTES` in compose; a request can only lower it), and the request size (`CODE_RUNNER_MAX_REQUEST_BYTES`, 32 MB) and output cap (10 MB) still apply: raise them together when you raise this one. `GET /health` needs no secret; `GET /v1/info` shows versions, limits and the isolation the runner found.
 
 | Host setting | |
 |---|---|
 | `LANDFLOW_CODE_RUNNER_URL` | `http://code-runner:7300` in compose (set already), `http://127.0.0.1:53300` for the Docker runner from the dev server, `http://127.0.0.1:7300` for one started with pnpm |
 | `LANDFLOW_CODE_RUNNER_SECRET` | the runner's `CODE_RUNNER_SECRET` (compose: `LANDFLOW_CODE_RUNNER_SECRET`, default `landflow-code-runner-dev-only`) |
 | `LANDFLOW_CODE_IN_PROCESS` | `false`: no in-process JavaScript on this host, so every Code node needs the runner. The dockerised host sets it |
+| `LANDFLOW_CODE_BINARY_MAX_BYTES` | files a Code node reads and creates (`this.helpers.getBinaryDataBuffer` / `prepareBinaryData`), each way, 6 MiB by default |
 
 With a runner configured, Code nodes on **Run In: Default** use it; **Sandbox** and **In-process** (JavaScript only) pin one. Python always runs in the runner and fails with "Python code needs the code runner, and this host has none" without one. The host reads these on every run, but environment variables only change on a restart.
 
@@ -465,12 +478,14 @@ Connections default to the ports and credentials above (database `landflow_test`
 
 ## Integration tests (Email Trigger, IMAP)
 
-`apps/web/test/email-imap.test.ts` (the node: baseline, mark read, move, manual runs, IDLE) and `test/email-imap-host.test.ts` (a published workflow polled by the host, attachments in the run's binary scope, IDLE starting a run) run against GreenMail. They are skipped unless `LANDFLOW_INTEGRATION` includes `imap`.
+`apps/web/test/email-imap.test.ts` (the node: baseline, mark read, move, manual runs, Search Criteria, raw `.eml` output, IDLE) and `test/email-imap-host.test.ts` (a published workflow polled by the host, attachments in the run's binary scope, IDLE starting a run) run against GreenMail. They are skipped unless `LANDFLOW_INTEGRATION` includes `imap`.
 
 ```bash
 docker compose -f deploy/compose.infra.yml --profile mail up -d --wait greenmail
 (cd apps/web && LANDFLOW_INTEGRATION=imap npx vitest run test/email-imap.test.ts test/email-imap-host.test.ts)
 ```
+
+The Search Criteria parser has its own offline tests (`test/imap-search.test.ts`). GreenMail's FROM/TO search matches a whole address rather than a fragment, so the live criteria use full addresses.
 
 Each test file uses a fresh mailbox (`<name>-<time>@landflow.test`), delivered over GreenMail's SMTP port. `LANDFLOW_GREENMAIL_HOST`, `LANDFLOW_GREENMAIL_IMAP_PORT` and `LANDFLOW_GREENMAIL_SMTP_PORT` point the tests (and the compose ports) elsewhere. GreenMail keeps mail in memory, so a restart empties it.
 
@@ -498,7 +513,10 @@ diff, and overlays for the differences between clusters. A Helm chart would add 
 | `k8s/components/gateway-httproute` | optional: the same routes as a Gateway API `HTTPRoute` (use it or `gateway-ingress`, not both) |
 | `k8s/components/gateway-landflow-tokens` | optional: sign-in at the gateway sidecar with Landflow-issued MCP tokens (no identity provider): replaces the sidecar's ConfigMap, a template to edit for your URLs |
 | `k8s/overlays/orbstack-ingress`, `orbstack-gateway-api` | the OrbStack overlay plus `gateway-ingress` or `gateway-httproute`, and `gateway-landflow-tokens`, for a Traefik in `landflow-ingress` |
-| `k8s/examples/keda/` | KEDA `ScaledObject`s per broker (not in any overlay): "Autoscaling with KEDA" below |
+| `k8s/components/queue-mode` | optional, on top of `postgres`, `valkey` and `minio`: the host as two mains (`RollingUpdate`, the pod name as `LANDFLOW_INSTANCE_ID`, data in an `emptyDir`), a `landflow-worker` Deployment (`node worker.mjs`, `/healthz` probes, SIGTERM drain), PodDisruptionBudgets for both, and a Secret `landflow-queue` with dev-only values |
+| `k8s/components/minio` | optional: MinIO and a bucket-creating start script, for the binary store in queue mode |
+| `k8s/overlays/orbstack-queue` | the OrbStack overlay plus `postgres`, `valkey`, `minio` and `queue-mode`: "Queue mode on Kubernetes" below |
+| `k8s/examples/keda/` | KEDA `ScaledObject`s per broker, and `queue-workers.yaml` for the queue workers (not in any overlay): "Autoscaling with KEDA" below |
 | `k8s/examples/envoy-gateway/` | a `BackendTrafficPolicy` with long timeouts for the HTTPRoute, for Envoy Gateway |
 
 For another cluster, copy the overlay: set the namespace, the image registry and tags (`images:`), real Secrets
@@ -695,6 +713,20 @@ A call over the emulator is about 40 ms (two peek-locked hops with a SQL write e
 message in a raw `@azure/service-bus` round trip), and the 40-operation pace caps it near 10 to 20 calls/s. Expect that, not
 production numbers; a real namespace has neither.
 
+### Queue mode on Kubernetes
+
+`k8s/overlays/orbstack-queue` runs Landflow in queue mode (README, "Queue mode, workers and high availability"): two mains (`landflow-host`), two workers (`landflow-worker`), Postgres, Valkey and MinIO. Build the images as above (the worker runs the host image), then:
+
+```bash
+kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-queue
+kubectl --context orbstack -n landflow-dev get pods        # 2 host pods (2/2), 2 workers, postgres, valkey, minio
+kubectl --context orbstack -n landflow-dev port-forward svc/landflow-host 3000:3000     # Settings → Workers shows the leader and both workers
+```
+
+Workers restart two or three times while Postgres starts (they exit when the database isn't reachable yet) and then settle. Deleting a worker pod drains it (SIGTERM, up to `LANDFLOW_WORKER_SHUTDOWN_SECONDS`, 30, inside the 60 s grace period); what doesn't finish continues on the other worker. The PodDisruptionBudgets keep one main and one worker up during node drains. With `external-services` instead of `postgres` and `valkey`, patch `DATABASE_URL` and `LANDFLOW_VALKEY_URL` on `landflow-worker` as well as on the host (the component patches only the host). Checked on OrbStack: both mains and both workers came up, a leader was elected, 24 webhook runs through the Service all succeeded (13 on one worker), and a deleted worker pod exited cleanly on SIGTERM.
+
+To go back to the plain overlay: `kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack`, then delete what only the queue overlay made (`deploy/landflow-worker`, `deploy/minio`, `deploy/valkey`, `statefulset/postgres`, their Services, the `minio-start` ConfigMap, the Secrets `landflow-queue`, `landflow-minio`, `landflow-postgres`, both PodDisruptionBudgets and the `data-postgres-0` PVC).
+
 ### Brokers on Kubernetes
 
 `k8s/overlays/orbstack-brokers` is the OrbStack overlay plus Kafka (KRaft), RabbitMQ, NATS with JetStream and Valkey in
@@ -861,6 +893,7 @@ If you joined the networks with `compose.infra-link.yml`, pass it to `down` as w
 - **Jaeger** stores traces in memory.
 - **Mailpit** stands in for MailHog: same SMTP and web UI roles, native arm64, and its store survives restarts.
 - **Vector** (profile `siem`) receives Landflow's audit log streaming (Settings → Audit log → SIEM streaming: Syslog to `siem:5514` or `localhost:55514`, or HTTP JSON lines to `http://siem:8080/`) and prints each event as JSON: `docker compose -f deploy/compose.infra.yml logs -f siem`. It also appends them to `/var/lib/vector/audit-<date>.log` in the `siem-data` volume. Config: `infra/vector/vector.yaml`.
+- **OpenSSH + git** (profile `git`, `git-ssh` service) is a Git server for trying Settings → Source control over SSH with a *SSH private key* credential, and for the live SSH test. Run `deploy/infra/git/gen-keys.sh` once (it writes dev-only keys to `infra/git/keys/`, none of them used anywhere else), then `docker compose -f deploy/compose.infra.yml --profile git up -d --wait git-ssh`. Create a bare repository in it with `docker exec landflow-infra-git-ssh-1 sh -c 'git init --bare /srv/git/demo.git && chown -R git /srv/git'`, make a *SSH private key* credential from `infra/git/keys/id_ed25519` (or the passphrase key), set the repository to `ssh://git@127.0.0.1:52222/srv/git/demo.git`, press **Fetch host key** and **Pin these keys** (the server's host key is generated at first start and kept in the `git-ssh-host` volume), then Push. `LANDFLOW_INTEGRATION=git-ssh npx vitest run test/source-control-git.test.ts` (in `apps/web`) runs a push with the credential's key, the refusal of a changed host key and a passphrase key against it. The server only listens on `127.0.0.1`.
 - **LocalStack** (profile `aws`) stands in for AWS Secrets Manager: Settings → External secrets → AWS Secrets Manager with the endpoint `http://localhost:54566` (or `http://localstack:4566` from the app stack) and dummy access keys. `LANDFLOW_INTEGRATION=aws npx vitest run test/secrets-aws.integration.test.ts` (in `apps/web`) runs the provider against it with the shared AWS config and credentials files turned off. Secrets are gone after a restart.
 - **GreenMail** is there because Mailpit has no IMAP: it is the mailbox the Email Trigger (IMAP) reads. Mail sent to its SMTP port lands in its own mailboxes, not in Mailpit.
 - Keycloak's realm is imported only when the realm doesn't exist yet. After editing `infra/keycloak/landflow-realm.json`, run `down -v` on the infra stack (or delete the realm in the admin console) and start it again.

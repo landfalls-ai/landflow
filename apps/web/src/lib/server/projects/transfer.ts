@@ -9,6 +9,7 @@
 import { personalProjectId, type ResourceKind, type TransferTarget } from '../../shared/projects';
 import { authDb } from '../auth/db';
 import { deleteUser, getUser } from '../auth/users';
+import { dataTables } from '../datatables';
 import { folders } from '../folders';
 import { forgetProjectSettings } from '../governance/scopes';
 import { localTemplates } from '../templates/store';
@@ -53,6 +54,21 @@ export function moveResource(kind: ResourceKind, id: string, projectId: string, 
   });
 }
 
+/** Data table names are unique per project: a table moving in with a name the project already has becomes `name 2`, `name 3`… */
+function renameForProject(tableId: string, projectId: string) {
+  const service = dataTables();
+  const table = service.storage.getTable(tableId);
+  if (!table) return;
+  const taken = new Set(service.inProject(service.listTables(), projectId).filter((t) => t.id !== tableId).map((t) => t.name.toLowerCase()));
+  if (!taken.has(table.name.toLowerCase())) return;
+  for (let i = 2; ; i++) {
+    const name = `${table.name} ${i}`;
+    if (taken.has(name.toLowerCase())) continue;
+    service.renameTable(tableId, name);
+    return;
+  }
+}
+
 /**
  * Move everything `fromProjectId` owns, and the shares made to it, to `toProjectId` (inside the caller's transaction):
  * its resources, its folders (so its workflows keep them), its variables (keys the target has already stay the
@@ -61,6 +77,7 @@ export function moveResource(kind: ResourceKind, id: string, projectId: string, 
 function moveAll(fromProjectId: string, toProjectId: string, options: { includeUnassigned?: boolean; actorId?: string } = {}): Partial<Record<ResourceKind, number>> {
   const moved: Partial<Record<ResourceKind, number>> = {};
   for (const { kind, id } of resourcesIn(fromProjectId)) {
+    if (kind === 'dataTable') renameForProject(id, toProjectId);
     setHomeProject(kind, id, toProjectId);
     moved[kind] = (moved[kind] ?? 0) + 1;
   }

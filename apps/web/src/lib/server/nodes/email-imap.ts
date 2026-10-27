@@ -1,17 +1,21 @@
 /**
  * Email Trigger (IMAP): a poll trigger (docs/protocol.md §8) that emits one item per new message in a mailbox, with
- * from / to / subject / text / html / headers and, optionally, the attachments as binary files. The poll state is the
+ * from / to / subject / text / html / headers and, optionally, the attachments as binary files and the raw RFC 822 source
+ * (a `.eml` file, a `raw` string). Search Criteria (IMAP SEARCH text, parsed in imap-search.ts) narrows what is emitted. The poll state is the
  * mailbox's UIDVALIDITY and the highest UID seen: the first poll after publishing only records it, later polls emit
  * what arrived since, oldest first, then mark the messages read, move them, or leave them. With "Listen" set to IDLE
  * the host also keeps a connection open (lib/server/imap-idle.ts) and polls as soon as the server announces new mail.
  */
 import { defineCredentialType, defineNode, NodeOperationError, pollIntervalProperty, type IExecuteContext } from '@landflow/sdk';
 import type { BinaryRef, JsonObject, NodeItem } from '@landflow/protocol';
-import { ImapFlow, type ImapFlowOptions } from 'imapflow';
+import { ImapFlow, type ImapFlowOptions, type SearchObject } from 'imapflow';
+import { andSearch, ImapSearchError, parseImapSearch } from './imap-search';
 import { simpleParser, type AddressObject, type ParsedMail } from 'mailparser';
 
 /** Messages one poll emits at most; the rest follow on the next poll. */
 export const MAX_MESSAGES_PER_POLL = 50;
+/** The raw source goes into the item's json (`raw`) up to this size; above it the field says why it is missing. */
+export const MAX_RAW_JSON_BYTES = 5 * 1024 * 1024;
 /** Messages a manual run (Execute in the editor) shows. */
 const MANUAL_MESSAGES = 5;
 
@@ -104,10 +108,15 @@ export interface MessageOptions {
   mailbox: string;
   downloadAttachments: boolean;
   attachmentPrefix: string;
+  /** Store the RFC 822 source as a binary `.eml` file (property `rawProperty`). */
+  rawEml?: boolean;
+  rawProperty?: string;
+  /** Put the RFC 822 source in json as `raw`. */
+  rawJson?: boolean;
 }
 
 /** A parsed message as the trigger's item; attachments are stored as binary files when asked to. */
-export async function messageItem(ctx: Pick<IExecuteContext, 'helpers'>, uid: number, parsed: ParsedMail, flags: string[], options: MessageOptions): Promise<NodeItem> {
+export async function messageItem(ctx: Pick<IExecuteContext, 'helpers'>, uid: number, parsed: ParsedMail, flags: string[], options: MessageOptions, source?: Uint8Array): Promise<NodeItem> {
   const headers: JsonObject = {};
   for (const [name, value] of parsed.headers) headers[name] = headerValue(value);
   const attachments = parsed.attachments ?? [];
@@ -143,6 +152,16 @@ export async function messageItem(ctx: Pick<IExecuteContext, 'helpers'>, uid: nu
     attachments: listed,
   };
   if (parsed.inReplyTo) json.inReplyTo = parsed.inReplyTo;
+  if (source && options.rawEml) {
+    const property = options.rawProperty || 'eml';
+    // Held to the same limits as an attachment: prepareBinaryData refuses what the binary store would.
+    binary[property] = await ctx.helpers.prepareBinaryData(Buffer.from(source), `message-${uid}.eml`, 'message/rfc822');
+    json.rawBinaryProperty = property;
+  }
+  if (source && options.rawJson) {
+    if (source.byteLength <= MAX_RAW_JSON_BYTES) json.raw = Buffer.from(source).toString('utf8');
+    else json.rawSkipped = `The message is ${source.byteLength} bytes, over the ${MAX_RAW_JSON_BYTES} byte limit for the raw field; use the .eml binary output`;
+  }
   return Object.keys(binary).length ? { json, binary } : { json };
 }
 
@@ -197,6 +216,9 @@ export const emailReadImapNode = defineNode({
       },
       { name: 'moveTo', displayName: 'Folder', type: 'string', default: 'Processed', required: true, displayOptions: { show: { postProcessAction: ['move'] } }, description: 'Created when missing' },
       { name: 'downloadAttachments', displayName: 'Download Attachments', type: 'boolean', default: false, description: 'Attach the files to the item as binary data (attachment_0, attachment_1, …)' },
+      { name: 'rawEml', displayName: 'Output Raw Email (.eml)', type: 'boolean', default: false, description: 'Attach the whole message (RFC 822 source) as a binary .eml file' },
+      { name: 'rawProperty', displayName: 'Raw Email Property', type: 'string', default: 'eml', displayOptions: { show: { rawEml: [true] } }, description: 'Binary property name of the .eml file' },
+      { name: 'rawJson', displayName: 'Include Raw Source in JSON', type: 'boolean', default: false, description: 'Add the RFC 822 source as a string field `raw` (messages over 5 MB leave it out)' },
       {
         name: 'options',
         displayName: 'Options',
@@ -204,7 +226,17 @@ export const emailReadImapNode = defineNode({
         default: {},
         placeholder: 'Add option',
         values: [
-          { name: 'onlyUnseen', displayName: 'Only Unread', type: 'boolean', default: true, description: 'Skip new messages that are already read' },
+          { name: 'onlyUnseen', displayName: 'Only Unread', type: 'boolean', default: true, description: 'Skip new messages that are already read. Off: read and unread alike, narrowed by the search criteria' },
+          {
+            name: 'searchCriteria',
+            displayName: 'Search Criteria',
+            type: 'string',
+            default: '',
+            placeholder: 'FROM "billing" SINCE 1-Oct-2026 NOT SUBJECT "spam"',
+            typeOptions: { rows: 2 },
+            description:
+              'IMAP SEARCH keys that new messages must also match (ANDed with Only Unread): FROM, TO, CC, BCC, SUBJECT, BODY, TEXT, HEADER <field> <value>, KEYWORD, UNKEYWORD, SINCE/BEFORE/ON and SENTSINCE/SENTBEFORE/SENTON (1-Oct-2026 or 2026-10-01), LARGER/SMALLER (bytes), UID, ANSWERED, FLAGGED, DELETED, DRAFT (and the UN- forms), NOT, OR and parentheses. Quote values with spaces. Messages that do not match are skipped for good',
+          },
           { name: 'attachmentPrefix', displayName: 'Attachment Prefix', type: 'string', default: 'attachment_', description: 'Binary property names: <prefix>0, <prefix>1, …' },
         ],
       },
@@ -227,8 +259,24 @@ export const emailReadImapNode = defineNode({
       mailbox,
       downloadAttachments: ctx.getNodeParameter<boolean>('downloadAttachments', 0, false) === true,
       attachmentPrefix: String(options.attachmentPrefix ?? 'attachment_') || 'attachment_',
+      rawEml: ctx.getNodeParameter<boolean>('rawEml', 0, false) === true,
+      rawProperty: String(ctx.getNodeParameter('rawProperty', 0, 'eml') || 'eml').trim() || 'eml',
+      rawJson: ctx.getNodeParameter<boolean>('rawJson', 0, false) === true,
     };
     const onlyUnseen = options.onlyUnseen !== false;
+    const criteriaText = String(options.searchCriteria ?? '').trim();
+    let criteria: SearchObject | undefined;
+    try {
+      if (criteriaText) criteria = parseImapSearch(criteriaText);
+    } catch (error) {
+      if (error instanceof ImapSearchError) throw new NodeOperationError(error.message, { description: 'Fix the Search Criteria option: it takes IMAP SEARCH keys such as FROM "billing" SINCE 1-Oct-2026 NOT SUBJECT "spam".' });
+      throw error;
+    }
+    /** The user's criteria ANDed with the unread filter and, for polls, the UIDs after the last one seen. */
+    const query = (...extra: SearchObject[]): SearchObject => {
+      const all = andSearch([...(criteria ? [criteria] : []), ...(onlyUnseen ? [{ seen: false }] : []), ...extra]);
+      return Object.keys(all).length ? all : { all: true };
+    };
     if (action === 'move' && !moveTo) throw new NodeOperationError('Enter the folder to move processed messages to');
 
     const client = imapClient(credential);
@@ -254,7 +302,7 @@ export const emailReadImapNode = defineNode({
 
         if (ctx.mode !== 'poll') {
           // Editor run: the latest few messages, oldest first; flags, folders and the poll state stay as they are.
-          const all = (await client.search(onlyUnseen ? { seen: false } : { all: true }, { uid: true })) || [];
+          const all = (await client.search(query(), { uid: true })) || [];
           return await fetchItems(ctx, client, all.slice(-MANUAL_MESSAGES), messageOptions);
         }
         if (!state || state.uidValidity !== uidValidity) {
@@ -264,7 +312,7 @@ export const emailReadImapNode = defineNode({
         }
         const lastUid = Number(state.lastUid) || 0;
         if (top <= lastUid) return [];
-        const found = ((await client.search({ uid: `${lastUid + 1}:*`, ...(onlyUnseen && { seen: false }) }, { uid: true })) || [])
+        const found = ((await client.search(query({ uid: `${lastUid + 1}:*` }), { uid: true })) || [])
           .filter((uid) => uid > lastUid)
           .sort((a, b) => a - b);
         const batch = found.slice(0, MAX_MESSAGES_PER_POLL);
@@ -292,7 +340,7 @@ async function fetchItems(ctx: IExecuteContext, client: ImapFlow, uids: number[]
   for await (const message of client.fetch(uids, { uid: true, flags: true, source: true }, { uid: true })) {
     if (!message.source) continue;
     const parsed = await simpleParser(message.source, { skipImageLinks: true });
-    items.push(await messageItem(ctx, message.uid, parsed, [...(message.flags ?? [])], options));
+    items.push(await messageItem(ctx, message.uid, parsed, [...(message.flags ?? [])], options, message.source));
   }
   return items.sort((a, b) => Number(a.json.uid) - Number(b.json.uid));
 }

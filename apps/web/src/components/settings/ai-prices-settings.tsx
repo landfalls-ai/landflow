@@ -22,10 +22,21 @@ interface Row {
   model: string;
   input: string;
   output: string;
+  /** Empty = the input price. */
+  cacheRead: string;
+  cacheWrite: string;
 }
 
 let nextKey = 1;
-const toRow = (price: ModelPrice): Row => ({ key: nextKey++, provider: price.provider, model: price.model, input: String(price.input), output: String(price.output) });
+const toRow = (price: ModelPrice): Row => ({
+  key: nextKey++,
+  provider: price.provider,
+  model: price.model,
+  input: String(price.input),
+  output: String(price.output),
+  cacheRead: price.cacheRead === undefined ? '' : String(price.cacheRead),
+  cacheWrite: price.cacheWrite === undefined ? '' : String(price.cacheWrite),
+});
 const usd = (value: number) => `$${value.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
 
 /** The rows as prices, or the first problem. */
@@ -35,17 +46,21 @@ function parse(rows: Row[]): { prices: ModelPrice[] } | { error: string } {
   for (const row of rows) {
     const provider = row.provider.trim().toLowerCase();
     const model = row.model.trim();
-    if (!provider && !model && !row.input.trim() && !row.output.trim()) continue;
+    if (!provider && !model && !row.input.trim() && !row.output.trim() && !row.cacheRead.trim() && !row.cacheWrite.trim()) continue;
     if (!provider || !model) return { error: 'Every override needs a provider and a model' };
     const input = Number(row.input);
     const output = Number(row.output);
     if (row.input.trim() === '' || row.output.trim() === '' || !Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) {
       return { error: `${provider}/${model}: prices are USD per million tokens, 0 or more` };
     }
+    const cache = (text: string) => (text.trim() === '' ? undefined : Number(text));
+    const cacheRead = cache(row.cacheRead);
+    const cacheWrite = cache(row.cacheWrite);
+    if ([cacheRead, cacheWrite].some((value) => value !== undefined && (!Number.isFinite(value) || value < 0))) return { error: `${provider}/${model}: cache prices are USD per million tokens, 0 or more (or empty for the input price)` };
     const id = `${provider}/${model.toLowerCase()}`;
     if (seen.has(id)) return { error: `${provider}/${model} is listed twice` };
     seen.add(id);
-    prices.push({ provider, model, input, output });
+    prices.push({ provider, model, input, output, ...(cacheRead !== undefined && { cacheRead }), ...(cacheWrite !== undefined && { cacheWrite }) });
   }
   return { prices };
 }
@@ -113,18 +128,25 @@ export function AiPricesSettings() {
         </div>
         <p className="mb-3 text-[12px] leading-relaxed text-t3">
           USD per million tokens. Your prices win over the built-in ones. A model id also prices the ids that start with it (<code className="font-mono">claude-sonnet-5-5</code>{' '}
-          prices <code className="font-mono">claude-sonnet-5-5-20261001</code>). Ollama and other local models cost $0 unless you price them here — e.g. to count
-          electricity or hardware. Costs are estimates; your provider’s bill is what counts.
+          prices <code className="font-mono">claude-sonnet-5-5-20261001</code>). Cache read and write prices apply to the cached part of the prompt (Anthropic cache reads and
+          writes, OpenAI cached input); empty means the input price. Ollama and other local models cost $0 unless you price them here — e.g. to count electricity or hardware. Costs
+          are estimates; your provider’s bill is what counts.
         </p>
         {rows.length ? (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] border-collapse text-[13px]">
+            <table className="w-full min-w-[720px] border-collapse text-[13px]">
               <thead>
                 <tr className="text-left text-[12px] text-t2">
                   <th className="pb-1.5 pr-2 font-semibold">Provider</th>
                   <th className="pb-1.5 pr-2 font-semibold">Model (or prefix)</th>
                   <th className="pb-1.5 pr-2 text-right font-semibold">Input $/M</th>
                   <th className="pb-1.5 pr-2 text-right font-semibold">Output $/M</th>
+                  <th className="pb-1.5 pr-2 text-right font-semibold" title="Cached input read (Anthropic cache read, OpenAI cached input)">
+                    Cache read $/M
+                  </th>
+                  <th className="pb-1.5 pr-2 text-right font-semibold" title="Tokens written to Anthropic's cache">
+                    Cache write $/M
+                  </th>
                   <th className="w-8" />
                 </tr>
               </thead>
@@ -142,6 +164,12 @@ export function AiPricesSettings() {
                     </td>
                     <td className="py-1 pr-2">
                       <Input value={row.output} onChange={(e) => set(row.key, { output: e.target.value })} disabled={!admin} inputMode="decimal" aria-label="Output price" className={`${cell} w-24 text-right`} />
+                    </td>
+                    <td className="py-1 pr-2">
+                      <Input value={row.cacheRead} onChange={(e) => set(row.key, { cacheRead: e.target.value })} disabled={!admin} inputMode="decimal" placeholder="= input" aria-label="Cache read price" className={`${cell} w-24 text-right`} />
+                    </td>
+                    <td className="py-1 pr-2">
+                      <Input value={row.cacheWrite} onChange={(e) => set(row.key, { cacheWrite: e.target.value })} disabled={!admin} inputMode="decimal" placeholder="= input" aria-label="Cache write price" className={`${cell} w-24 text-right`} />
                     </td>
                     <td className="py-1">
                       {admin && (
@@ -190,13 +218,15 @@ export function AiPricesSettings() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[520px] border-collapse text-[13px]">
+          <table className="w-full min-w-[640px] border-collapse text-[13px]">
             <thead>
               <tr className="border-b border-hair text-left text-[12px] text-t2">
                 <th className="h-8 pr-2 font-semibold">Provider</th>
                 <th className="h-8 pr-2 font-semibold">Model</th>
                 <th className="h-8 pr-2 text-right font-semibold">Input</th>
                 <th className="h-8 pr-2 text-right font-semibold">Output</th>
+                <th className="h-8 pr-2 text-right font-semibold">Cache read</th>
+                <th className="h-8 pr-2 text-right font-semibold">Cache write</th>
                 <th className="w-24" />
               </tr>
             </thead>
@@ -209,6 +239,8 @@ export function AiPricesSettings() {
                     <td className={`py-1.5 pr-2 font-mono text-[12px] ${replaced ? 'text-t3 line-through' : 'text-t1'}`}>{price.model}</td>
                     <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{usd(price.input)}</td>
                     <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{usd(price.output)}</td>
+                    <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{price.cacheRead === undefined ? '—' : usd(price.cacheRead)}</td>
+                    <td className="py-1.5 pr-2 text-right font-mono text-[12px] tabular-nums text-t2">{price.cacheWrite === undefined ? '—' : usd(price.cacheWrite)}</td>
                     <td className="py-1 text-right">
                       {admin && !replaced && (
                         <Button size="sm" variant="ghost" onClick={() => add(price)} title="Copy into your prices to change it">
@@ -222,7 +254,7 @@ export function AiPricesSettings() {
               })}
               {!defaults.length && (
                 <tr>
-                  <td colSpan={5} className="py-4 text-center text-[12px] text-t3">
+                  <td colSpan={7} className="py-4 text-center text-[12px] text-t3">
                     No built-in price matches “{filter}”.
                   </td>
                 </tr>

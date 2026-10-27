@@ -183,8 +183,8 @@ describe('where the Code node runs', () => {
     expect(python.error?.description).toContain('LANDFLOW_CODE_RUNNER_URL');
     expect((await run(codeNode, { ...where, runIn: 'sandbox' })).error?.message).toBe('Run In: Sandbox needs the code runner, and this host has none');
     // Python never runs in-process, whatever Run In says.
-    expect(() => placeCode('python', 'inProcess', { url: 'http://runner', inProcess: true, timeoutMs: 1000 })).not.toThrow();
-    expect(placeCode('python', 'inProcess', { url: 'http://runner', inProcess: true, timeoutMs: 1000 })).toBe('sandbox');
+    expect(() => placeCode('python', 'inProcess', { url: 'http://runner', inProcess: true, timeoutMs: 1000, binaryMaxBytes: 1000 })).not.toThrow();
+    expect(placeCode('python', 'inProcess', { url: 'http://runner', inProcess: true, timeoutMs: 1000, binaryMaxBytes: 1000 })).toBe('sandbox');
   });
 
   it('reads its settings from the environment', () => {
@@ -193,8 +193,10 @@ describe('where the Code node runs', () => {
       secret: 's',
       inProcess: false,
       timeoutMs: 120_000,
+      binaryMaxBytes: 6 * 1024 * 1024,
     });
-    expect(codeRunnerSettings({})).toEqual({ inProcess: true, timeoutMs: 120_000 });
+    expect(codeRunnerSettings({})).toEqual({ inProcess: true, timeoutMs: 120_000, binaryMaxBytes: 6 * 1024 * 1024 });
+    expect(codeRunnerSettings({ LANDFLOW_CODE_BINARY_MAX_BYTES: '1000' }).binaryMaxBytes).toBe(1000);
   });
 });
 

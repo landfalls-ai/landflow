@@ -52,9 +52,9 @@ import {
   WORKFLOWS_DIR,
   type SyncFile,
 } from '../sync/format';
-import { git, resolvedTokenFor, sourceControlView, SourceControlError } from '../sync/git';
+import { git, gitAuthFor, sourceControlView, SourceControlError } from '../sync/git';
 import { unifiedDiff } from './diff';
-import { branchOf, currentEnvironment, ENVIRONMENT_NAME, EnvironmentError, rowTableIds, secretMappingsFor } from './settings';
+import { branchOf, currentEnvironment, ENVIRONMENT_NAME, EnvironmentError, rowMergeSettings, rowTableIds, secretMappingsFor } from './settings';
 
 export const PROMOTED_FROM = 'Landflow-Promoted-From';
 export const PROMOTED_COMMIT = 'Landflow-Promoted-Commit';
@@ -304,8 +304,7 @@ export function promoteEnvironment(input: PromoteInput): Promise<PromotionResult
   if (sourceBranch === targetBranch) throw new EnvironmentError(`${sourceEnvironment} and ${targetEnvironment} use the same branch (${sourceBranch}): give them their own in Settings → Environments`);
 
   return exclusive(async () => {
-    const { token } = await resolvedTokenFor(config);
-    const auth = { token, username: config.username };
+    const auth = await gitAuthFor(config);
     const cwd = promoteDir();
     const remoteUrl = existsSync(join(cwd, '.git'))
       ? await git(['remote', 'get-url', 'origin'], { cwd }).then(
@@ -475,7 +474,11 @@ export function promoteEnvironment(input: PromoteInput): Promise<PromotionResult
           .listRows(table.id, { sortBy: 'id', sortDirection: 'asc' })
           .rows.map((row) => Object.fromEntries(columns.filter((c) => row[c] !== undefined).map((c) => [c, row[c]])));
         const path = rowsPathFor(schemaPath);
-        const content = stringify({ id: table.id, name: table.name, rows });
+        const merge = rowMergeSettings()[table.id];
+        // A merge needs its key columns in the table (a column dropped since the setting was saved turns it into a replace, with a warning).
+        const usable = merge?.keys.every((k) => columns.includes(k));
+        if (merge && !usable) warnings.push(`Data table “${table.name}”: the merge key columns (${merge.keys.join(', ')}) aren’t all columns any more: its rows replace the target’s`);
+        const content = stringify({ id: table.id, name: table.name, ...(merge && usable && { merge: { keys: merge.keys, ...(merge.deleteMissing && { deleteMissing: true }) } }), rows });
         const before = targetByPath.get(path)?.content;
         next.set(path, content);
         tablePreview.push({ id: table.id, name: table.name, path, rows: rows.length, status: before === undefined ? 'added' : before === content ? 'unchanged' : 'modified' });

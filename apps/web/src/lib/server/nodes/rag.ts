@@ -4,15 +4,17 @@
  * - Embeddings Ollama / Embeddings OpenAI (`ai_embedding`);
  * - Default Data Loader (`ai_document`), with an optional text splitter of its own;
  * - Recursive Character and Token Text Splitters (`ai_textSplitter`);
- * - Reranker (LLM) (`ai_reranker`), scoring passages with an attached chat model;
+ * - Reranker (LLM) (`ai_reranker`), scoring passages with an attached chat model, and Reranker (Cohere), Cohere's
+ *   `/v2/rerank` (or a compatible server);
  * - Question and Answer Chain: a root node that answers from what a retriever finds.
  * The vector stores that use them are in vector-stores.ts.
  */
-import { defineNode, NodeOperationError, type ILoadOptionsContext, type JsonObject, type NodeItem, type PropertyOption } from '@landflow/sdk';
+import { defineNode, NodeOperationError, type ILoadOptionsContext, type ISupplyDataContext, type JsonObject, type NodeItem, type PropertyOption } from '@landflow/sdk';
 import type { AiDocument, Embeddings, LanguageModel, Retriever, TextSplitter } from '@landflow/engine';
 import { ollamaEmbeddings, openAiCompatibleEmbeddings } from '../rag/embeddings';
+import { FileLoadError, type FileInput } from '../rag/files';
 import { loadDocuments, metadataEntries } from '../rag/loader';
-import { llmReranker } from '../rag/rerank';
+import { cohereReranker, llmReranker } from '../rag/rerank';
 import { CODE_SEPARATORS, recursiveCharacterSplit, tokenSplit } from '../rag/splitters';
 import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY } from './fallback';
 import { openAiConnection, openAiModels } from './models';
@@ -160,6 +162,26 @@ export const embeddingsOpenAiNode = defineNode({
 // Document loader
 // ---------------------------------------------------------------------------
 
+/** The files of input item `i` named by the loader's “Binary Fields” (none named: all of them). */
+async function binaryFiles(ctx: ISupplyDataContext, items: NodeItem[], i: number): Promise<FileInput[]> {
+  const binary = items[i]?.binary ?? {};
+  const wanted = String(ctx.getNodeParameter('binaryField', i, 'data') ?? '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const keys = wanted.length ? wanted : Object.keys(binary);
+  if (!keys.length) throw new NodeOperationError(`Item ${i} has no binary files`, { itemIndex: i, description: 'Send files with the items (a Read/Write Files, HTTP Request or Form node), or use another loader mode.' });
+  const files: FileInput[] = [];
+  for (const key of keys) {
+    const ref = binary[key];
+    if (!ref) throw new NodeOperationError(`Item ${i} has no binary field “${key}”`, { itemIndex: i, description: `It has: ${Object.keys(binary).join(', ') || 'no binary data'}.` });
+    // The loader's context reads the files of the items it loads (the vector store's input).
+    const bytes = await ctx.helpers.getBinaryDataBuffer(i, key);
+    files.push({ bytes, fileName: ref.fileName ?? key, ...(ref.mimeType && { mimeType: ref.mimeType }) });
+  }
+  return files;
+}
+
 export const defaultDataLoaderNode = defineNode({
   description: {
     ...subnode,
@@ -183,7 +205,17 @@ export const defaultDataLoaderNode = defineNode({
         options: [
           { name: 'Load All Input Data', value: 'allInputData', description: 'Each item’s fields become “key: value” lines' },
           { name: 'Load Specific Data', value: 'expressionData', description: 'One value per item, usually an expression' },
+          { name: 'Load Binary Files', value: 'binaryData', description: 'The items’ files: PDF, DOCX, text, Markdown, HTML, CSV or JSON' },
         ],
+      },
+      {
+        name: 'binaryField',
+        displayName: 'Binary Fields',
+        type: 'string',
+        default: 'data',
+        placeholder: 'e.g. data, attachment_0',
+        displayOptions: { show: { jsonMode: ['binaryData'] } },
+        description: 'Which binary fields to read, comma-separated. Empty: every file of the item. Each chunk keeps the file name and, where the file has pages, the page',
       },
       {
         name: 'jsonData',
@@ -232,24 +264,30 @@ export const defaultDataLoaderNode = defineNode({
           },
         ],
       },
-      { name: 'binaryNotice', displayName: 'Files (PDF, DOCX…) can be loaded once binary data lands; until then, extract the text first.', type: 'notice', default: '' },
     ],
   },
   async supplyData(ctx) {
-    const mode = ctx.getNodeParameter<'allInputData' | 'expressionData'>('jsonMode') ?? 'allInputData';
+    const mode = ctx.getNodeParameter<'allInputData' | 'expressionData' | 'binaryData'>('jsonMode') ?? 'allInputData';
     const custom = ctx.getNodeParameter('textSplittingMode') === 'custom';
     const [splitter] = custom ? ((await ctx.getInputConnectionData?.<TextSplitter>('ai_textSplitter')) ?? []) : [];
     if (custom && !splitter) {
       throw new NodeOperationError('No text splitter connected', { description: 'Attach a text splitter to the Default Data Loader, or set “Text Splitting” to Simple.' });
     }
     return {
-      load: (items: NodeItem[]): Promise<AiDocument[]> =>
-        loadDocuments(items, {
-          mode,
-          data: (i) => ctx.getNodeParameter('jsonData', i),
-          metadata: (i) => metadataEntries(ctx.getNodeParameter<{ metadata?: unknown }>('options', i)?.metadata),
-          split: splitter ? (text) => splitter.splitText(text) : async (text) => recursiveCharacterSplit(text, { chunkSize: 1000, chunkOverlap: 200 }),
-        }),
+      async load(items: NodeItem[]): Promise<AiDocument[]> {
+        try {
+          return await loadDocuments(items, {
+            mode,
+            data: (i) => ctx.getNodeParameter('jsonData', i),
+            files: (i) => binaryFiles(ctx, items, i),
+            metadata: (i) => metadataEntries(ctx.getNodeParameter<{ metadata?: unknown }>('options', i)?.metadata),
+            split: splitter ? (text) => splitter.splitText(text) : async (text) => recursiveCharacterSplit(text, { chunkSize: 1000, chunkOverlap: 200 }),
+          });
+        } catch (error) {
+          if (error instanceof FileLoadError) throw new NodeOperationError(error.message, { ...(error.description && { description: error.description }) });
+          throw error;
+        }
+      },
     };
   },
 });
@@ -413,6 +451,51 @@ export const llmRerankerNode = defineNode({
       topK: Number(ctx.getNodeParameter('topN')) || 4,
       ...(options.instructions && { instructions: options.instructions }),
       ...(options.maxCharacters && { maxCharacters: Number(options.maxCharacters) }),
+    });
+  },
+});
+
+export const cohereRerankerNode = defineNode({
+  description: {
+    ...subnode,
+    name: 'rerankerCohere',
+    displayName: 'Reranker (Cohere)',
+    description: 'Re-order retrieved documents with Cohere’s rerank API (or a Cohere-compatible server)',
+    supplies: 'ai_reranker',
+    categories: ['AI', 'Rerankers'],
+    icon: 'lucide:arrow-down-wide-narrow',
+    color: '#39594d',
+    subtitle: '{{model}}',
+    keywords: ['rerank', 'reranker', 'cohere', 'relevance', 'rag', 'cross-encoder', 'jina', 'vllm'],
+    credentials: [{ name: 'cohereApi', required: true }],
+    inputs: [],
+    outputs: [{ type: 'ai_reranker', displayName: 'Reranker' }],
+    properties: [
+      { name: 'model', displayName: 'Model', type: 'string', default: 'rerank-v3.5', description: 'rerank-v3.5, rerank-english-v3.0, rerank-multilingual-v3.0, or the model your compatible server serves' },
+      { name: 'topN', displayName: 'Top N', type: 'number', default: 4, typeOptions: { minValue: 1 }, description: 'Documents to keep (the vector store’s Limit, when smaller, wins)' },
+      {
+        name: 'options',
+        displayName: 'Options',
+        type: 'collection',
+        default: {},
+        placeholder: 'Add option',
+        values: [
+          { name: 'maxTokensPerDoc', displayName: 'Max Tokens per Document', type: 'number', default: 4096, typeOptions: { minValue: 1 }, description: 'Longer passages are cut by the API' },
+          { name: 'keepOrderOnFailure', displayName: 'Keep Order on Failure', type: 'boolean', default: false, description: 'When the call fails, return the documents in retrieval order instead of failing the search' },
+        ],
+      },
+    ],
+  },
+  supplyData(ctx) {
+    const credential = ctx.getCredentials<{ apiKey?: string; baseUrl?: string }>('cohereApi');
+    const options = ctx.getNodeParameter<{ maxTokensPerDoc?: number; keepOrderOnFailure?: boolean }>('options') ?? {};
+    return cohereReranker({
+      ...(credential?.baseUrl && { baseUrl: credential.baseUrl }),
+      ...(credential?.apiKey && { apiKey: credential.apiKey }),
+      model: String(ctx.getNodeParameter('model') || 'rerank-v3.5'),
+      topK: Number(ctx.getNodeParameter('topN')) || 4,
+      ...(options.maxTokensPerDoc && { maxTokensPerDoc: Number(options.maxTokensPerDoc) }),
+      ...(options.keepOrderOnFailure && { keepOrderOnFailure: true }),
     });
   },
 });

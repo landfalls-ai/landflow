@@ -7,13 +7,17 @@
  *   the run's execution id and reach the trigger item as binary `data0`, `data1`…
  * - Transcripts of public chats are kept per workflow and session in `chat_messages` (migration 401) for
  *   "Load Previous Session".
- * - Allowed origins (CORS) and Basic Auth are the trigger's; the widget can't send Basic Auth, so a chat with Basic
- *   Auth works on its hosted page only.
+ * - Allowed origins (CORS) and Basic Auth are the trigger's; the widget shows a sign-in form for a chat with Basic Auth
+ *   and sends the credentials as an Authorization header (allowed over CORS), keeping them for the page session only.
+ * - Each answer can be rated (thumbs up or down, a comment): lib/server/chat-feedback.ts, POST /chat/<key>/feedback.
+ * - The trigger's Custom CSS styles the hosted page and the widget's shadow root, after `sanitizeCustomCss`.
  */
 import { timingSafeEqual } from 'node:crypto';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { JsonObject, NodeItem } from '@landflow/protocol';
 import { storeBinary } from './binary/access';
+import type { FeedbackRating } from '../shared/chat-feedback';
+import { feedbackBySession } from './chat-feedback';
 import { database } from './db';
 import { productionWorkflows } from './publish';
 
@@ -60,7 +64,43 @@ export interface PublicChatConfig {
   allowFileUploads: boolean;
   allowedFilesMimeTypes: string;
   allowedOrigins: string[];
+  /** The trigger's Custom CSS, sanitized (see `sanitizeCustomCss`). */
+  customCss: string;
   basicAuth?: { user: string; password: string };
+}
+
+/** Longest Custom CSS kept (characters). */
+export const MAX_CUSTOM_CSS = 20_000;
+
+/**
+ * Custom CSS of a public chat, made safe to serve to visitors: no `@import`, `@charset`, `@namespace`, no `url()` except
+ * small inline `data:image/…;base64` images (so nothing is fetched from another site, and nothing leaks the visitor's
+ * address), no `image-set()`/`src()`/`element()`, no legacy script hooks (`expression()`, `behavior`, `-moz-binding`,
+ * `javascript:`), no comments and no `<`. CSS escapes (`\75 rl(`) are decoded first so they can't hide any of that.
+ * Longer than `MAX_CUSTOM_CSS` characters: cut there.
+ */
+export function sanitizeCustomCss(input: string): string {
+  let css = input.slice(0, MAX_CUSTOM_CSS * 2);
+  // Escapes → the characters they stand for (those that could break out of a string or rule are dropped).
+  css = css.replace(/\\([0-9a-fA-F]{1,6})\s?|\\([^\n0-9a-fA-F])/g, (_m, hex: string | undefined, other: string | undefined) => {
+    const char = hex ? String.fromCodePoint(Math.min(parseInt(hex, 16) || 0xfffd, 0x10ffff)) : (other ?? '');
+    return /["'\\{}();<>@/*\u0000]/.test(char) ? '' : char;
+  });
+  css = css.replace(/\/\*[\s\S]*?(\*\/|$)/g, ' ').replace(/<!--|-->/g, ' ');
+  let previous: string;
+  do {
+    previous = css;
+    css = css
+      .replace(/@(import|charset|namespace)\b[^;{}]*;?/gi, '')
+      .replace(/url\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/gi, (_m, a?: string, b?: string, c?: string) => {
+        const target = (a ?? b ?? c ?? '').trim();
+        return /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,[a-z0-9+/=]+$/i.test(target) ? `url("${target}")` : 'none';
+      })
+      .replace(/(?:-webkit-)?(?:image-set|cross-fade)\s*\([^)]*\)?|(?<![\w-])(?:src|element)\s*\([^)]*\)?|expression\s*\([^)]*\)?/gi, 'none')
+      .replace(/javascript:|-moz-binding|(?<![\w-])behavior\s*:/gi, 'none')
+      .replace(/[<>]/g, '');
+  } while (css !== previous);
+  return css.trim().slice(0, MAX_CUSTOM_CSS);
 }
 
 const text = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback);
@@ -88,6 +128,7 @@ export function chatConfig(workflow: Workflow, node: WorkflowNode): PublicChatCo
       .split(',')
       .map((origin) => origin.trim().replace(/\/+$/, ''))
       .filter(Boolean),
+    customCss: sanitizeCustomCss(text(p.customCss)),
     ...(p.authentication === 'basicAuth' && { basicAuth: { user: text(p.basicAuthUser), password: text(p.basicAuthPassword) } }),
   };
 }
@@ -121,7 +162,7 @@ export function corsHeaders(config: Pick<PublicChatConfig, 'allowedOrigins'>, or
   return {
     'access-control-allow-origin': config.allowedOrigins.includes('*') ? '*' : origin,
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': 'content-type, accept',
+    'access-control-allow-headers': 'content-type, accept, authorization',
     'access-control-max-age': '600',
     vary: 'Origin',
   };
@@ -164,6 +205,10 @@ export interface ChatMessage {
   text: string;
   at: string;
   files?: Array<{ fileName: string; mimeType: string }>;
+  /** An answer: the execution that wrote it, which the feedback buttons rate. */
+  executionId?: string;
+  /** The rating it got, if any. */
+  feedback?: { rating: FeedbackRating; comment?: string };
 }
 
 const SESSION = /^[\w.:-]{1,128}$/;
@@ -175,14 +220,23 @@ export function loadTranscript(workflowId: string, sessionId: string): ChatMessa
     workflowId,
     sessionId,
   );
+  const ratings = feedbackBySession(workflowId, sessionId);
   return rows.map((row) => {
-    let files: ChatMessage['files'];
+    let data: { files?: ChatMessage['files']; executionId?: string } = {};
     try {
-      files = row.data ? (JSON.parse(row.data) as { files?: ChatMessage['files'] }).files : undefined;
+      data = row.data ? (JSON.parse(row.data) as typeof data) : {};
     } catch {
-      files = undefined;
+      data = {};
     }
-    return { role: row.role === 'assistant' ? 'assistant' : 'user', text: row.text, at: row.at, ...(files?.length && { files }) };
+    const rated = data.executionId ? ratings.get(data.executionId) : undefined;
+    return {
+      role: row.role === 'assistant' ? 'assistant' : 'user',
+      text: row.text,
+      at: row.at,
+      ...(data.files?.length && { files: data.files }),
+      ...(data.executionId && { executionId: data.executionId }),
+      ...(rated && { feedback: { rating: rated.rating, ...(rated.comment && { comment: rated.comment }) } }),
+    };
   });
 }
 
@@ -200,7 +254,7 @@ export function appendTranscript(workflowId: string, sessionId: string, messages
         role: message.role,
         text: message.text.slice(0, 100_000),
         at: message.at,
-        data: message.files?.length ? JSON.stringify({ files: message.files }) : null,
+        data: message.files?.length || message.executionId ? JSON.stringify({ ...(message.files?.length && { files: message.files }), ...(message.executionId && { executionId: message.executionId }) }) : null,
       });
     }
     // Keep the newest messages only.

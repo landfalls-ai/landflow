@@ -30,6 +30,8 @@ import {
   toStoredToken,
   verifyState,
 } from './oauth2';
+import { prepareMcpAuthorization } from '../mcp/oauth';
+import { mcpUrlBlocked } from '../governance/policy';
 import { CredentialError, credentials, resolveOAuth2Secrets } from './vault';
 
 const stateKey = () => credentials.deriveKey('oauth2.state');
@@ -56,10 +58,19 @@ function cookie(name: string, value: string, maxAge: number, request: Request): 
  * Start a Connect flow: where to send the browser, and the cookie that ties the callback to it. The client fields may
  * read `$secrets` (here, at the code exchange, refreshes and client credentials grants: `resolveOAuth2Secrets`).
  */
-export async function startAuthorization(credentialId: string, request: Request, now = Date.now()): Promise<{ url: string; cookie: string }> {
+export async function startAuthorization(credentialId: string, request: Request, now = Date.now(), fetchImpl: typeof fetch = fetch): Promise<{ url: string; cookie: string }> {
+  const redirectUri = oauth2RedirectUrl(request);
+  // An MCP server's credential: find the authorization server and a client first (RFC 9728, 8414, 7591: lib/server/mcp/oauth.ts).
+  const mcp = credentials.mcpOAuth(credentialId);
+  if (mcp) {
+    const form = await resolveOAuth2Secrets(mcp.form);
+    const blocked = mcpUrlBlocked(mcp.serverUrl);
+    if (blocked) throw new OAuth2Error(blocked);
+    const meta = await prepareMcpAuthorization({ serverUrl: mcp.serverUrl, clientId: form.clientId, clientSecret: form.clientSecret, scope: form.scope, redirectUri, ...(mcp.meta && { meta: mcp.meta }) }, fetchImpl);
+    credentials.saveMcpOAuthMeta(credentialId, meta as unknown as JsonObject);
+  }
   const config = await resolveOAuth2Secrets(credentials.oauth2(credentialId).config);
   const nonce = newNonce();
-  const redirectUri = oauth2RedirectUrl(request);
   const state = signState(stateKey(), { c: credentialId, n: nonce, r: redirectUri, e: now + STATE_TTL_MS });
   const codeChallenge = config.grantType === 'pkce' ? pkceChallenge(pkceVerifier(pkceKey(), nonce)) : undefined;
   return { url: authorizationUrl(config, { redirectUri, state, ...(codeChallenge && { codeChallenge }) }), cookie: cookie(stateCookieName(nonce), '1', STATE_TTL_MS / 1000, request) };

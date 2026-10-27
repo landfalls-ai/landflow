@@ -13,7 +13,7 @@ import { recordAudit } from '@/lib/server/audit';
 export const dynamic = 'force-dynamic';
 
 // `publish` (file, all or none; additive): what the pull does with publication, defaulting to Settings → Environments' choice.
-const bodySchema = z.object({ dryRun: z.boolean().default(false), prune: z.boolean().default(false), force: z.boolean().default(false), publish: z.enum(['file', 'all', 'none']).optional() });
+const bodySchema = z.object({ dryRun: z.boolean().default(false), prune: z.boolean().default(false), force: z.boolean().default(false), publish: z.enum(['file', 'all', 'none']).optional(), updateCredentials: z.boolean().optional() });
 
 export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, bodySchema);

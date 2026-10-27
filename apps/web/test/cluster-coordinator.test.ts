@@ -168,6 +168,60 @@ for (const make of backends) {
       await main.ack(again.id);
     });
 
+    it('hands out high-priority jobs first, then normal, then low, and still takes a low one after a run of the others', async () => {
+      const main = backend.connect();
+      const worker = backend.connect();
+      await main.enqueue(job('p_low_1', { priority: 'low' }));
+      await main.enqueue(job('p_normal_1'));
+      await main.enqueue(job('p_high_1', { priority: 'high' }));
+      await main.enqueue(job('p_normal_2', { priority: 'normal' }));
+      await main.enqueue(job('p_high_2', { priority: 'high' }));
+      expect(await main.queueStats()).toEqual({ waiting: 5, active: 0 });
+      const first = await worker.take('worker-p', 3, 100);
+      expect(first.map((d) => d.job.executionId)).toEqual(['p_high_1', 'p_high_2', 'p_normal_1']);
+      const second = await worker.take('worker-p', 5, 100);
+      expect(second.map((d) => d.job.executionId)).toEqual(['p_normal_2', 'p_low_1']);
+      expect(await main.queueStats()).toEqual({ waiting: 0, active: 5 });
+      for (const delivery of [...first, ...second]) await main.ack(delivery.id);
+      expect(await main.queueStats()).toEqual({ waiting: 0, active: 0 });
+
+      // A steady stream of high jobs does not starve a low one: it goes first after LOW_EVERY (8) others.
+      await main.enqueue(job('s_low', { priority: 'low' }));
+      for (let n = 0; n < 12; n++) await main.enqueue(job(`s_high_${n}`, { priority: 'high' }));
+      const order: string[] = [];
+      for (let n = 0; n < 13; n++) {
+        const [one] = await worker.take('worker-p', 1, 100);
+        order.push(one.job.executionId);
+        await main.ack(one.id);
+      }
+      expect(order.indexOf('s_low')).toBe(8);
+      expect(order.slice(0, 8)).toEqual(Array.from({ length: 8 }, (_, n) => `s_high_${n}`));
+    });
+
+    it('keeps the priority of a job that goes back, is touched, or is taken over from a dead worker', async () => {
+      const main = backend.connect();
+      const dead = backend.connect();
+      const alive = backend.connect();
+      await main.enqueue(job('r_high', { priority: 'high' }));
+      await main.enqueue(job('r_low', { priority: 'low' }));
+      const lost = await dead.take('worker-dead', 2, 100);
+      expect(lost.map((d) => d.job.executionId)).toEqual(['r_high', 'r_low']);
+      await dead.touch('worker-dead', lost.map((d) => d.id));
+      await backend.advance(600);
+      const taken = await alive.claimStalled('worker-alive', 300, 5);
+      expect(taken.map((d) => d.job.executionId).sort()).toEqual(['r_high', 'r_low']);
+      // Back to the queue: still in its priority's stream (high before normal).
+      await alive.requeue(taken.find((d) => d.job.executionId === 'r_high')!);
+      await main.enqueue(job('r_normal'));
+      const next = await alive.take('worker-alive', 1, 100);
+      expect(next[0].job.executionId).toBe('r_high');
+      for (const delivery of [...next, ...taken.filter((d) => d.job.executionId === 'r_low')]) await main.ack(delivery.id);
+      const [normal] = await alive.take('worker-alive', 1, 100);
+      expect(normal.job.executionId).toBe('r_normal');
+      await main.ack(normal.id);
+      expect(await main.queueStats()).toEqual({ waiting: 0, active: 0 });
+    });
+
     it('keeps leases and claims: set if absent, renew or delete only while holding them, expire', async () => {
       const one = backend.connect();
       const two = backend.connect();

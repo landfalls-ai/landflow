@@ -10,6 +10,7 @@
    "name": "landflow-sdk-go",
    "version": "0.2.0"
   },
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGItYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNjQ3NDhiIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzMzNDE1NSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtZGItYmcpIi8+CiAgPHBhdGggZD0iTTEzIDE0djIwYzAgMi41IDQuOSA0LjUgMTEgNC41czExLTIgMTEtNC41VjE0IiBmaWxsPSIjZmZmIi8+CiAgPGVsbGlwc2UgY3g9IjI0IiBjeT0iMTQiIHJ4PSIxMSIgcnk9IjQuNSIgZmlsbD0iI2UyZThmMCIvPgogIDxwYXRoIGQ9Ik0xMyAyMC43YzAgMi41IDQuOSA0LjUgMTEgNC41czExLTIgMTEtNC41TTEzIDI3LjRjMCAyLjUgNC45IDQuNSAxMSA0LjVzMTEtMiAxMS00LjUiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzQ3NTU2OSIgc3Ryb2tlLXdpZHRoPSIxLjgiLz4KPC9zdmc+Cg==",
   "color": "#475569",
   "author": "Landflow"
  },
@@ -24,6 +25,7 @@
     "Data & Storage",
     "Development"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGItcGctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNGE4M2I1Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzMzNjc5MSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtZGItcGctYmcpIi8+CiAgPHBhdGggZD0iTTEwIDE1djE4YzAgMi4zIDQuMyA0LjIgOS41IDQuMlMyOSAzNS4zIDI5IDMzVjE1IiBmaWxsPSIjZmZmIi8+CiAgPGVsbGlwc2UgY3g9IjE5LjUiIGN5PSIxNSIgcng9IjkuNSIgcnk9IjQuMiIgZmlsbD0iI2RiZTdmMyIvPgogIDxwYXRoIGQ9Ik0xMCAyNGMwIDIuMyA0LjMgNC4yIDkuNSA0LjJTMjkgMjYuMyAyOSAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMzM2NzkxIiBzdHJva2Utd2lkdGg9IjEuOCIvPgogIDxwYXRoIGQ9Ik0yOSAxNy41YzUuNS0xLjUgOS41IDEuNSA5LjUgNi41IDAgMy42LTIuMyA1LjYtNC42IDcuMy0xLjYgMS4yLTIuNCAyLjgtMiA1LjIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjMzLjYiIGN5PSIyMS42IiByPSIxLjUiIGZpbGw9IiNmZmYiLz4KPC9zdmc+Cg==",
    "color": "#336791",
    "subtitle": "{{operation}}",
    "inputs": [
@@ -72,7 +74,8 @@
        "name": "Select",
        "value": "select",
        "description": "Select rows from a table",
-       "action": "Select rows from a table"
+       "action": "Select rows from a table",
+       "idempotent": true
       },
       {
        "name": "Update",
@@ -87,7 +90,7 @@
      "displayName": "Query",
      "type": "string",
      "default": "",
-     "description": "The SQL to run. Put values in $1, $2, \u2026 placeholders and list them in Options \u2192 Query Parameters instead of writing them into the SQL.",
+     "description": "The SQL to run. Put values in $1, $2, … placeholders and list them in Options → Query Parameters instead of writing them into the SQL.",
      "placeholder": "SELECT id, name FROM orders WHERE status = $1 AND total > $2",
      "required": true,
      "typeOptions": {
@@ -500,7 +503,7 @@
        "displayName": "Query Parameters",
        "type": "string",
        "default": "",
-       "description": "Values for the $1, $2, \u2026 placeholders: a comma-separated list, or an expression returning an array such as {{ [$json.status, $json.total] }}",
+       "description": "Values for the $1, $2, … placeholders: a comma-separated list, or an expression returning an array such as {{ [$json.status, $json.total] }}",
        "placeholder": "e.g. paid, 100"
       },
       {
@@ -532,6 +535,51 @@
       "show": {
        "operation": [
         "executeQuery"
+       ]
+      }
+     }
+    },
+    {
+     "name": "binaryOptions",
+     "displayName": "Binary Data",
+     "type": "collection",
+     "default": {},
+     "description": "Read bytea / BLOB columns into binary files, or write them from the input item's binary files",
+     "placeholder": "Add binary option",
+     "values": [
+      {
+       "name": "inputColumns",
+       "displayName": "Columns From Binary Files",
+       "type": "string",
+       "default": "",
+       "description": "Insert, Insert or Update and Update: column=binary property pairs; the column gets the file's bytes (a bare column name reads the property of the same name)",
+       "placeholder": "avatar=data, contract=pdf"
+      },
+      {
+       "name": "outputColumns",
+       "displayName": "Columns to Return as Files",
+       "type": "string",
+       "default": "",
+       "description": "Select, Execute Query and the rows writes return: column=binary property pairs; the column leaves the JSON and becomes a binary file on the item",
+       "placeholder": "avatar=photo"
+      },
+      {
+       "name": "fileNameColumn",
+       "displayName": "File Name Column",
+       "type": "string",
+       "default": "",
+       "description": "Column of the same row that holds the file name of the returned files",
+       "placeholder": "filename"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "select",
+        "executeQuery",
+        "insert",
+        "upsert",
+        "update"
        ]
       }
      }
@@ -587,7 +635,7 @@
     }
    ],
    "usableAsTool": true,
-   "toolDescription": "Read or change data in a PostgreSQL database. Set `operation`: `select` reads rows of `table` (up to `limit`), `executeQuery` runs the SQL in `query` (use $1, $2, \u2026 placeholders for values), `insert` / `upsert` / `update` write the other arguments as columns of `table` (fields that are not columns are ignored), and `deleteTable` deletes rows matching the node's configured conditions.",
+   "toolDescription": "Read or change data in a PostgreSQL database. Set `operation`: `select` reads rows of `table` (up to `limit`), `executeQuery` runs the SQL in `query` (use $1, $2, … placeholders for values), `insert` / `upsert` / `update` write the other arguments as columns of `table` (fields that are not columns are ignored), and `deleteTable` deletes rows matching the node's configured conditions.",
    "toolInputSchema": {
     "properties": {
      "limit": {
@@ -646,6 +694,7 @@
     "Data & Storage",
     "Development"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGItbXktYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMGE5M2IwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzAwNzU4RiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtZGItbXktYmcpIi8+CiAgPHBhdGggZD0iTTEwIDE4djE1YzAgMi4zIDQuMyA0LjIgOS41IDQuMlMyOSAzNS4zIDI5IDMzVjE4IiBmaWxsPSIjZmZmIi8+CiAgPGVsbGlwc2UgY3g9IjE5LjUiIGN5PSIxOCIgcng9IjkuNSIgcnk9IjQuMiIgZmlsbD0iI2Q0ZWVmNCIvPgogIDxwYXRoIGQ9Ik0xMCAyNS41YzAgMi4zIDQuMyA0LjIgOS41IDQuMnM5LjUtMS45IDkuNS00LjIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwNzU4RiIgc3Ryb2tlLXdpZHRoPSIxLjgiLz4KICA8cGF0aCBkPSJNMjIgMTIuNWMzLjUtNC4yIDEwLjUtNS4yIDE1LjUtMS42IDEuNiAxLjIgMi41IDIuOCAyLjUgNC42LTIuMi0xLjYtNC42LTItNy0xLjIgMS42IDEuOCAyIDQuMiAxLjEgNi42LTEuMi0yLjYtMy42LTQuNC02LjYtNC44IiBmaWxsPSJub25lIiBzdHJva2U9IiNmOGIyM2MiIHN0cm9rZS13aWR0aD0iMi40IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
    "color": "#00758F",
    "subtitle": "{{operation}}",
    "inputs": [
@@ -694,7 +743,8 @@
        "name": "Select",
        "value": "select",
        "description": "Select rows from a table",
-       "action": "Select rows from a table"
+       "action": "Select rows from a table",
+       "idempotent": true
       },
       {
        "name": "Update",
@@ -709,7 +759,7 @@
      "displayName": "Query",
      "type": "string",
      "default": "",
-     "description": "The SQL to run. Put values in ? placeholders and list them in Options \u2192 Query Parameters instead of writing them into the SQL.",
+     "description": "The SQL to run. Put values in ? placeholders and list them in Options → Query Parameters instead of writing them into the SQL.",
      "placeholder": "SELECT id, name FROM orders WHERE status = ? AND total > ?",
      "required": true,
      "typeOptions": {
@@ -1129,6 +1179,51 @@
      }
     },
     {
+     "name": "binaryOptions",
+     "displayName": "Binary Data",
+     "type": "collection",
+     "default": {},
+     "description": "Read bytea / BLOB columns into binary files, or write them from the input item's binary files",
+     "placeholder": "Add binary option",
+     "values": [
+      {
+       "name": "inputColumns",
+       "displayName": "Columns From Binary Files",
+       "type": "string",
+       "default": "",
+       "description": "Insert, Insert or Update and Update: column=binary property pairs; the column gets the file's bytes (a bare column name reads the property of the same name)",
+       "placeholder": "avatar=data, contract=pdf"
+      },
+      {
+       "name": "outputColumns",
+       "displayName": "Columns to Return as Files",
+       "type": "string",
+       "default": "",
+       "description": "Select, Execute Query and the rows writes return: column=binary property pairs; the column leaves the JSON and becomes a binary file on the item",
+       "placeholder": "avatar=photo"
+      },
+      {
+       "name": "fileNameColumn",
+       "displayName": "File Name Column",
+       "type": "string",
+       "default": "",
+       "description": "Column of the same row that holds the file name of the returned files",
+       "placeholder": "filename"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "select",
+        "executeQuery",
+        "insert",
+        "upsert",
+        "update"
+       ]
+      }
+     }
+    },
+    {
      "name": "options",
      "displayName": "Options",
      "type": "collection",
@@ -1213,6 +1308,7 @@
     "Data & Storage",
     "Development"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGItc2wtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjM2E5YmUwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzBGODBDQyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtZGItc2wtYmcpIi8+CiAgPHBhdGggZD0iTTkgMjJ2MTJjMCAyLjEgMy44IDMuOCA4LjUgMy44UzI2IDM2LjEgMjYgMzRWMjIiIGZpbGw9IiNmZmYiLz4KICA8ZWxsaXBzZSBjeD0iMTcuNSIgY3k9IjIyIiByeD0iOC41IiByeT0iMy44IiBmaWxsPSIjZDZlYmY4Ii8+CiAgPHBhdGggZD0iTTM4LjUgOC41Yy03LjUgMS42LTEzLjIgNy40LTE1LjQgMTUuNkwyMC41IDM2bDQtOC42YzYuNi0xIDExLjUtNS42IDEzLjYtMTIuMy44LTIuNCAxLTQuNi40LTYuNloiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMzUuMiAxMi42Yy0zLjYgMy42LTYuOCA4LjYtOS4yIDE0LjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzBGODBDQyIgc3Ryb2tlLXdpZHRoPSIxLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K",
    "color": "#0F80CC",
    "subtitle": "{{operation}}",
    "inputs": [
@@ -1261,7 +1357,8 @@
        "name": "Select",
        "value": "select",
        "description": "Select rows from a table",
-       "action": "Select rows from a table"
+       "action": "Select rows from a table",
+       "idempotent": true
       },
       {
        "name": "Update",
@@ -1276,7 +1373,7 @@
      "displayName": "Query",
      "type": "string",
      "default": "",
-     "description": "The SQL to run. Put values in ? placeholders and list them in Options \u2192 Query Parameters instead of writing them into the SQL.",
+     "description": "The SQL to run. Put values in ? placeholders and list them in Options → Query Parameters instead of writing them into the SQL.",
      "placeholder": "SELECT id, name FROM orders WHERE status = ? AND total > ?",
      "required": true,
      "typeOptions": {
@@ -1696,6 +1793,51 @@
      }
     },
     {
+     "name": "binaryOptions",
+     "displayName": "Binary Data",
+     "type": "collection",
+     "default": {},
+     "description": "Read bytea / BLOB columns into binary files, or write them from the input item's binary files",
+     "placeholder": "Add binary option",
+     "values": [
+      {
+       "name": "inputColumns",
+       "displayName": "Columns From Binary Files",
+       "type": "string",
+       "default": "",
+       "description": "Insert, Insert or Update and Update: column=binary property pairs; the column gets the file's bytes (a bare column name reads the property of the same name)",
+       "placeholder": "avatar=data, contract=pdf"
+      },
+      {
+       "name": "outputColumns",
+       "displayName": "Columns to Return as Files",
+       "type": "string",
+       "default": "",
+       "description": "Select, Execute Query and the rows writes return: column=binary property pairs; the column leaves the JSON and becomes a binary file on the item",
+       "placeholder": "avatar=photo"
+      },
+      {
+       "name": "fileNameColumn",
+       "displayName": "File Name Column",
+       "type": "string",
+       "default": "",
+       "description": "Column of the same row that holds the file name of the returned files",
+       "placeholder": "filename"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "select",
+        "executeQuery",
+        "insert",
+        "upsert",
+        "update"
+       ]
+      }
+     }
+    },
+    {
      "name": "options",
      "displayName": "Options",
      "type": "collection",
@@ -1805,6 +1947,7 @@
     "Data & Storage",
     "Development"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGItcmQtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZWM1YTRlIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI0RDMzgyRCIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtZGItcmQtYmcpIi8+CiAgPHBhdGggZD0iTTI0IDI2LjUgMzggMzJsLTE0IDUuNUwxMCAzMloiIGZpbGw9IiNmZmYiIG9wYWNpdHk9Ii41NSIvPgogIDxwYXRoIGQ9Ik0yNCAxOC41IDM4IDI0bC0xNCA1LjVMMTAgMjRaIiBmaWxsPSIjZmZmIiBvcGFjaXR5PSIuOCIvPgogIDxwYXRoIGQ9Ik0yNCAxMC41IDM4IDE2bC0xNCA1LjVMMTAgMTZaIiBmaWxsPSIjZmZmIi8+CiAgPHBhdGggZD0ibTIxIDE0LjYgMi40IDEuNC0yLjQgMS40TTI3IDE0LjYgMjQuNiAxNmwyLjQgMS40IiBmaWxsPSJub25lIiBzdHJva2U9IiNEQzM4MkQiIHN0cm9rZS13aWR0aD0iMS40IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
    "color": "#DC382D",
    "subtitle": "{{operation}}",
    "inputs": [
@@ -1835,7 +1978,8 @@
        "name": "Get",
        "value": "get",
        "description": "Get the value of a key",
-       "action": "Get the value of a key"
+       "action": "Get the value of a key",
+       "idempotent": true
       },
       {
        "name": "Increment",
@@ -1847,19 +1991,22 @@
        "name": "Info",
        "value": "info",
        "description": "Return information about the server",
-       "action": "Return information about the server"
+       "action": "Return information about the server",
+       "idempotent": true
       },
       {
        "name": "Keys",
        "value": "keys",
        "description": "Return keys matching a pattern",
-       "action": "Return keys matching a pattern"
+       "action": "Return keys matching a pattern",
+       "idempotent": true
       },
       {
        "name": "List Length",
        "value": "llen",
        "description": "Return the length of a list",
-       "action": "Return the length of a list"
+       "action": "Return the length of a list",
+       "idempotent": true
       },
       {
        "name": "Pop",
@@ -1977,7 +2124,7 @@
      "displayName": "Value Is JSON",
      "type": "boolean",
      "default": true,
-     "description": "Whether the hash value is a JSON object; otherwise \u201cfield value field value \u2026\u201d",
+     "description": "Whether the hash value is a JSON object; otherwise “field value field value …”",
      "displayOptions": {
       "show": {
        "keyType": [
@@ -2181,7 +2328,7 @@
        "displayName": "Dot Notation",
        "type": "boolean",
        "default": true,
-       "description": "Whether a property name like a.b sets the nested field b of a, instead of a field called \u201ca.b\u201d"
+       "description": "Whether a property name like a.b sets the nested field b of a, instead of a field called “a.b”"
       }
      ],
      "displayOptions": {
@@ -2272,6 +2419,7 @@
     "Data & Storage",
     "Development"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGItcG9zdGdyZXMtdHJnLWJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzRhODNiNSIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMzMzY3OTEiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSJ1cmwoI2xmLWRiLXBvc3RncmVzLXRyZy1iZykiLz4KICA8cGF0aCBkPSJNMTAgMTR2MThjMCAyLjMgNC4zIDQuMiA5LjUgNC4yUzI5IDM0LjMgMjkgMzJWMTQiIGZpbGw9IiNmZmYiLz4KICA8ZWxsaXBzZSBjeD0iMTkuNSIgY3k9IjE0IiByeD0iOS41IiByeT0iNC4yIiBmaWxsPSIjZGJlN2YzIi8+CiAgPHBhdGggZD0iTTEwIDIzYzAgMi4zIDQuMyA0LjIgOS41IDQuMlMyOSAyNS4zIDI5IDIzIiBmaWxsPSJub25lIiBzdHJva2U9IiMzMzY3OTEiIHN0cm9rZS13aWR0aD0iMS44Ii8+CiAgPHBhdGggZD0iTTE4LjUgMjkuNWg0TTIwLjUgMjcuNXY0IiBzdHJva2U9IiMzMzY3OTEiIHN0cm9rZS13aWR0aD0iMS44IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIzNCIgY3k9IjMzIiByPSI5IiBmaWxsPSIjZmJiZjI0Ii8+CiAgPHBhdGggZD0iTTM1LjUgMjYuNSAzMCAzNGg0bC0xLjUgNS41TDM4IDMyaC00WiIgZmlsbD0iIzFmMjkzNyIvPgo8L3N2Zz4K",
    "color": "#336791",
    "subtitle": "New rows in {{table}}",
    "inputs": [],
@@ -2395,6 +2543,7 @@
     "Data & Storage",
     "Development"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGItc3FsaXRlLXRyZy1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiMzYTliZTAiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMEY4MENDIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kYi1zcWxpdGUtdHJnLWJnKSIvPgogIDxwYXRoIGQ9Ik0xMCAxNHYxOGMwIDIuMyA0LjMgNC4yIDkuNSA0LjJTMjkgMzQuMyAyOSAzMlYxNCIgZmlsbD0iI2ZmZiIvPgogIDxlbGxpcHNlIGN4PSIxOS41IiBjeT0iMTQiIHJ4PSI5LjUiIHJ5PSI0LjIiIGZpbGw9IiNkNmViZjgiLz4KICA8cGF0aCBkPSJNMTAgMjNjMCAyLjMgNC4zIDQuMiA5LjUgNC4yUzI5IDI1LjMgMjkgMjMiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzBGODBDQyIgc3Ryb2tlLXdpZHRoPSIxLjgiLz4KICA8cGF0aCBkPSJNMTguNSAyOS41aDRNMjAuNSAyNy41djQiIHN0cm9rZT0iIzBGODBDQyIgc3Ryb2tlLXdpZHRoPSIxLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjM0IiBjeT0iMzMiIHI9IjkiIGZpbGw9IiNmYmJmMjQiLz4KICA8cGF0aCBkPSJNMzUuNSAyNi41IDMwIDM0aDRsLTEuNSA1LjVMMzggMzJoLTRaIiBmaWxsPSIjMWYyOTM3Ii8+Cjwvc3ZnPgo=",
    "color": "#0F80CC",
    "subtitle": "New rows in {{table}}",
    "inputs": [],
@@ -2487,7 +2636,7 @@
   {
    "name": "postgres",
    "displayName": "Postgres",
-   "description": "A PostgreSQL server (also Supabase, Neon, RDS, CockroachDB\u2026)",
+   "description": "A PostgreSQL server (also Supabase, Neon, RDS, CockroachDB…)",
    "documentationUrl": "https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-PARAMKEYWORDS",
    "properties": [
     {

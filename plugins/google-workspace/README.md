@@ -31,9 +31,9 @@ full URL instead.
 | **Google Sheets Trigger** (`google.googleSheetsTrigger`) | poll trigger, Row Added, default every 60 s | Document, Sheet (empty: the first) |
 | **Gmail** (`google.gmail`) | Message → Send, Reply, Get, Get Many, Add Labels, Remove Labels, Mark as Read, Mark as Unread | Send/Reply: To, Subject, Email Type (Text/HTML), Message; Options: Attachments, CC, BCC, Reply To, Sender Name, Reply to Sender Only ([attachments](#gmail-attachments)). Get Many: Return All / Limit, Simplify, Filters (Search, Read Status, Sender, labels, include spam and trash) |
 | **Gmail Trigger** (`google.gmailTrigger`) | poll trigger, new emails, default every 60 s | Same Filters as Get Many, Simplify |
-| **Google Drive** (`google.googleDrive`) | File → Upload, Download, Delete · File/Folder → Search · Folder → Create | Upload: text or base64 content (≤ 5 MB, multipart upload), parent folder, MIME type. Download: ≤ 10 MB into the item as `content` (`encoding` `utf8` for text, else `base64`); Docs, Sheets, Slides and Drawings are exported as text, CSV, text and PNG. Delete trashes unless Delete Permanently. Search by name or with a raw Drive query, filtered by folder, files/folders, MIME types, trash |
+| **Google Drive** (`google.googleDrive`) | File → Upload, Download, Export, Delete · File/Folder → Search · Folder → Create | Upload: text, base64 or **a binary file of the item** (≤ 5 MB in one multipart request, bigger files streamed through a resumable session), parent folder, MIME type ([files](#drive-and-files)). Download: ≤ 10 MB into the item as `content` (`encoding` `utf8` for text, else `base64`), or **Return Content As → Binary File** (streamed, no size limit); Docs, Sheets, Slides and Drawings are exported as text, CSV, text and PNG. Export converts a Google file to PDF, Word, Excel, OpenDocument, EPUB, HTML (zip), PowerPoint, PNG… as a binary file. Delete trashes unless Delete Permanently. Search by name or with a raw Drive query, filtered by folder, files/folders, MIME types, trash |
 | **Google Calendar** (`google.googleCalendar`) | Event → Create, Delete, Get, Get Many, Update | Calendar picker (`calendarList`). Start/End as ISO 8601: with an offset as given, without one in the event's Time Zone or the calendar's. All Day uses dates (a same-day end becomes the next day, as the API's end date is exclusive). Additional/Update Fields: summary, description, location, attendees, time zone, send updates. Get Many: After/Before, order by start time or updated, search, single events, show deleted |
-| **Google Docs** (`google.googleDocs`) | Document → Create, Get, Update | Create in a folder (moved there through Drive). Get returns `{documentId, title, content}` with the text of paragraphs, tables and the table of contents (Simplify off: the raw document). Update applies Actions in one `batchUpdate`: Insert (at the end) and Replace All (match case optional) and returns `occurrencesChanged` |
+| **Google Docs** (`google.googleDocs`) | Document → Create, Get, Update, Export | Create in a folder (moved there through Drive). Get returns `{documentId, title, content}` with the text of paragraphs, tables and the table of contents (Simplify off: the raw document). Update applies Actions in one `batchUpdate`: Insert (at the end) and Replace All (match case optional) and returns `occurrencesChanged`. Export returns the document as a binary file (docx, pdf, odt, rtf, txt, html zip, epub, md) |
 
 ### Google Sheets
 
@@ -49,6 +49,17 @@ unformatted values (numbers stay numbers) and formatted dates.
 - **Get Row(s)**: every non-empty row, or the rows matching Filters (column = value, combined with AND or OR); the first
   match only unless Options → Return All Matches.
 - **Clear** empties the sheet, optionally keeping the header row. **Create** makes a spreadsheet with named sheets.
+
+### Drive and files
+
+Drive, Sheets, Docs and Gmail move files as binary data (`item.binary`, [docs/protocol.md §11](../../docs/protocol.md#11-binary-data)):
+
+- **Drive → Upload** → Content From **Binary File** (property name `data` by default) uploads the item's file. The name defaults to the file's name and the MIME type to the file's type. Files up to 5 MB go in one multipart request; bigger ones are streamed to Drive through a resumable upload session without being held in memory.
+- **Drive → Download** → Return Content As **Binary File** stores the bytes in the host's binary store (`outputBinaryField`, default `data`); the JSON keeps `id`, `name`, `mimeType` and `size`. A Google file is exported to its text form (Export has the other formats).
+- **Drive → Export**, **Google Sheets → Document → Export** and **Google Docs → Document → Export** convert a Google file through `files.export`. Sheets: xlsx, ods, csv, tsv, pdf, html (zip); Docs: docx, pdf, odt, rtf, txt, html (zip), epub, md; Drive adds pptx, odp, png, jpg and svg. The file name defaults to the Google file's title plus the extension. Google caps exports at 10 MB.
+- **Gmail → Get / Get Many** → **Download Attachments** puts each attachment under `attachment_0`, `attachment_1`… (the prefix is an option) on the message's item.
+
+The fake Google server used by the tests (`internal/fakegoogle`) serves resumable uploads, `files.export` for every format and Gmail attachment ids.
 
 ### Gmail attachments
 
@@ -171,11 +182,11 @@ kinds (MQTT, AMQP 1.0, SQS, Pub/Sub, Pulsar, Service Bus) are not linked in, bec
 **`maxConcurrency`** (calls running node code at once, shared by every face) defaults to **10**: Google API quotas are per user and per minute (Sheets, Gmail, Drive and Calendar answer 429 above them), so ten calls in flight keep one instance well under them. `LANDFLOW_MAX_CONCURRENCY`
 overrides it. Past that, as many calls again wait for a slot; beyond that HTTP answers 429 and gRPC `RESOURCE_EXHAUSTED` (`capacity`).
 
-**`idempotent`**: the read operations (Gmail Get and Get Many, Calendar Get and Get Many, Docs Get, Drive Search and Download, Sheets Get Row(s)) are `idempotent: true`, so a broker may deliver them twice and MCP lists them with `idempotentHint`. Everything that writes, sends or deletes (including label changes and Update) stays at most once, and the two triggers are pollers that hold their own cursor.
+**`idempotent`**: the read operations (Gmail Get and Get Many, Calendar Get and Get Many, Docs Get and Export, Drive Search, Download and Export, Sheets Get Row(s) and Export) are `idempotent: true`, so a broker may deliver them twice and MCP lists them with `idempotentHint`. Everything that writes, sends or deletes (including label changes and Update) stays at most once, and the two triggers are pollers that hold their own cursor.
 
 ## MCP
 
-Every operation is also an MCP tool on `http://127.0.0.1:7106/mcp`, named `<node>_<resource>_<operation>`: `gmail_message_send`, `gmail_message_getAll`, `googleSheets_sheet_read`, `googleSheets_sheet_append`, `googleDrive_file_download`, `googleCalendar_event_create`, `googleDocs_document_get`… (19 writes and 8 reads; the triggers are not tools). Through the host (`/api/mcp/plugins/google`) or the gateway, credentials come from the caller's grant.
+Every operation is also an MCP tool on `http://127.0.0.1:7106/mcp`, named `<node>_<resource>_<operation>`: `gmail_message_send`, `gmail_message_getAll`, `googleSheets_sheet_read`, `googleSheets_sheet_append`, `googleDrive_file_download`, `googleDrive_file_export`, `googleCalendar_event_create`, `googleDocs_document_get`… (19 writes and 11 reads; the triggers are not tools). Through the host (`/api/mcp/plugins/google`) or the gateway, credentials come from the caller's grant.
 The face listens on loopback with no token. In a container (`LANDFLOW_LISTEN_HOST=0.0.0.0`, as the image sets) it needs
 `LANDFLOW_MCP_TOKEN` or stays off with a log line; the Kubernetes manifest and compose set `LANDFLOW_MCP=off`, since agents reach plugins
 through the host's per-plugin endpoints and the gateway. Without Landflow, as a local MCP server over stdio:
@@ -239,7 +250,7 @@ main.go                 plugin info, nodes, Serve (ports 7106 / 7206)
 auth.go                 credential types, JWT and refresh grants, token cache, credential tests
 client.go               API hosts, base URL override, requests, 401 retry, error mapping, pagination
 params.go               shared properties and parameter helpers
-sheets.go, sheets_trigger.go, gmail.go, gmail_mime.go, gmail_trigger.go, drive.go, calendar.go, docs.go
+sheets.go, sheets_trigger.go, gmail.go, gmail_mime.go, gmail_trigger.go, drive.go, drive_binary.go, calendar.go, docs.go
 icons/                  original SVG icons
 internal/fakegoogle/    the fake Google used by the tests and cmd/fakegoogle
 cmd/fakegoogle/         the fake as a standalone server

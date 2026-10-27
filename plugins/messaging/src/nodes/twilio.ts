@@ -6,7 +6,7 @@
  * once over a broker: an SMS never goes out twice); Get and List are `idempotent: true`.
  */
 import { defineCredentialType, defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type JsonValue, type PropertyDescriptor } from '@landflow/sdk';
-import { baseUrl, countApiError, countSent, fetchJson, mapItems, requireString, sleepUnless, statusClass, unsupported, type ApiContext, type ApiResponse } from '../shared';
+import { apiError, baseUrl, countApiError, countSent, fetchJson, ItemWithFiles, mapItems, requireString, sleepUnless, statusClass, unsupported, type ApiContext, type ApiResponse } from '../shared';
 
 export interface TwilioCredentials extends JsonObject {
   authType: 'authToken' | 'apiKey';
@@ -241,6 +241,7 @@ export const twilioApi = defineCredentialType<TwilioCredentials>({
 const MESSAGE_SENDS = ['send', 'sendMms', 'sendWhatsApp'];
 const message = (operations: string[], extra: Record<string, string[]> = {}) => ({ show: { resource: ['message'], operation: operations, ...extra } });
 const call = (operations: string[], extra: Record<string, string[]> = {}) => ({ show: { resource: ['call'], operation: operations, ...extra } });
+const recording = (operations: string[]) => ({ show: { resource: ['recording'], operation: operations } });
 
 /** One output item of a Message operation (Twilio's Message resource, the fields agents and workflows use most). */
 const MESSAGE_SCHEMA: JsonObject = {
@@ -290,7 +291,7 @@ const CALL_SCHEMA: JsonObject = {
   required: ['sid', 'to', 'from', 'status'],
 };
 
-const listProperties = (resource: 'message' | 'call'): PropertyDescriptor[] => [
+const listProperties = (resource: 'message' | 'call' | 'recording'): PropertyDescriptor[] => [
   {
     name: 'returnAll',
     displayName: 'Return All',
@@ -341,6 +342,19 @@ export const Twilio = defineNode({
         options: [
           { name: 'Message', value: 'message' },
           { name: 'Call', value: 'call' },
+          { name: 'Recording', value: 'recording' },
+        ],
+      },
+      {
+        name: 'operation',
+        displayName: 'Operation',
+        type: 'options',
+        noDataExpression: true,
+        default: 'download',
+        displayOptions: { show: { resource: ['recording'] } },
+        options: [
+          { name: 'Download', value: 'download', description: 'Download a call recording (MP3 or WAV) into item.binary', action: 'Download a recording', idempotent: true },
+          { name: 'List', value: 'list', description: 'List recordings, newest first, optionally of one call', action: 'List recordings', idempotent: true },
         ],
       },
       {
@@ -369,6 +383,7 @@ export const Twilio = defineNode({
           { name: 'Send MMS', value: 'sendMms', description: 'Send a message with media attachments (US and Canada)', action: 'Send an MMS', idempotent: false },
           { name: 'Send WhatsApp', value: 'sendWhatsApp', description: 'Send a WhatsApp message from a WhatsApp-enabled sender', action: 'Send a WhatsApp message', idempotent: false },
           { name: 'Get', value: 'get', description: 'Fetch one message by SID', action: 'Get a message', idempotent: true },
+          { name: 'Get Media', value: 'getMedia', description: 'Download the files of a received MMS or WhatsApp message into item.binary (one item per file)', action: 'Get message media', idempotent: true },
           { name: 'List', value: 'list', description: 'List messages, newest first, filtered by To, From and date sent', action: 'List messages', idempotent: true },
         ],
       },
@@ -446,8 +461,48 @@ export const Twilio = defineNode({
         required: true,
         default: '',
         placeholder: 'SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-        displayOptions: message(['get']),
+        displayOptions: message(['get', 'getMedia']),
       },
+      // --- Message: get media ---
+      {
+        name: 'binaryPropertyName',
+        displayName: 'Binary Field',
+        type: 'string',
+        default: 'data',
+        displayOptions: { show: { resource: ['message', 'recording'], operation: ['getMedia', 'download'] } },
+        description: 'The item.binary field for the downloaded file',
+      },
+      // --- Recording ---
+      {
+        name: 'recordingSid',
+        displayName: 'Recording SID',
+        type: 'string',
+        required: true,
+        default: '',
+        placeholder: 'RExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+        displayOptions: recording(['download']),
+      },
+      {
+        name: 'recordingFormat',
+        displayName: 'Format',
+        type: 'options',
+        default: 'mp3',
+        displayOptions: recording(['download']),
+        options: [
+          { name: 'MP3', value: 'mp3' },
+          { name: 'WAV', value: 'wav' },
+        ],
+      },
+      {
+        name: 'recordingCallSid',
+        displayName: 'Call SID',
+        type: 'string',
+        default: '',
+        placeholder: 'CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+        displayOptions: recording(['list']),
+        description: 'Only the recordings of this call; empty: all',
+      },
+      ...listProperties('recording'),
       // --- Message: list ---
       ...listProperties('message'),
       {
@@ -609,6 +664,20 @@ export const Twilio = defineNode({
             bounds,
           );
         }
+        if (operation === 'getMedia') return downloadMessageMedia(ctx, api, credentials, account, i, bounds);
+        throw unsupported(resource, operation);
+      }
+
+      if (resource === 'recording') {
+        if (operation === 'download') {
+          const sid = requireString(ctx, 'recordingSid', 'Recording SID', i);
+          const format = ctx.getNodeParameter<string>('recordingFormat', i, 'mp3') === 'wav' ? 'wav' : 'mp3';
+          const file = await twilioDownload(api, credentials, `${account}/Recordings/${encodeURIComponent(sid)}.${format}`, bounds);
+          return fileItem(ctx, i, { sid, format }, file, `${sid}.${format}`, format === 'wav' ? 'audio/wav' : 'audio/mpeg');
+        }
+        if (operation === 'list') {
+          return listAll<JsonObject>(api, credentials, `${account}/Recordings.json`, 'recordings', { CallSid: String(ctx.getNodeParameter('recordingCallSid', i, '') ?? '').trim() || undefined }, listLimit(), bounds);
+        }
         throw unsupported(resource, operation);
       }
 
@@ -711,4 +780,55 @@ async function sendMessage(
   const result = await twilioCall<JsonObject>(api, credentials, 'POST', `${account}/Messages.json`, body, bounds);
   countSent(api, 'twilio', operation);
   return result;
+}
+
+/** The binary field named by the node's Binary Field parameter. */
+const binaryField = (ctx: IExecuteContext, i: number) => String(ctx.getNodeParameter('binaryPropertyName', i, 'data') || 'data').trim();
+
+async function fileItem(ctx: IExecuteContext, i: number, json: JsonObject, file: Response, fileName: string, fallbackType: string): Promise<ItemWithFiles> {
+  const type = file.headers.get('content-type')?.split(';')[0].trim();
+  const ref = await ctx.helpers.prepareBinaryData(file.body!, fileName, type && type !== 'application/octet-stream' ? type : fallbackType);
+  return new ItemWithFiles(json, { [binaryField(ctx, i)]: ref });
+}
+
+/**
+ * GET a media file (a recording, a message's media). Twilio answers a media URL with a redirect to a CDN; fetch follows it
+ * and drops the Authorization header on the way to another origin, so the credentials never reach the CDN.
+ */
+async function twilioDownload(api: ApiContext, credentials: TwilioCredentials, path: string, bounds: CallBounds): Promise<Response> {
+  const url = `${baseUrl(credentials.baseUrl, TWILIO_DEFAULT_BASE_URL)}${path}`;
+  let response: Response;
+  try {
+    response = await api.http(url, { headers: { authorization: authorization(credentials) }, signal: AbortSignal.any([...(bounds.signal ? [bounds.signal] : []), AbortSignal.timeout(300_000)]) });
+  } catch (error) {
+    if (error instanceof NodeOperationError) throw error;
+    throw apiError(api, 'twilio', 'Twilio', undefined, `the file download failed: ${(error as Error).message}`, undefined, 'network');
+  }
+  if (!response.ok || !response.body) {
+    const body = await response.text().catch(() => '');
+    let error: TwilioError | undefined;
+    try {
+      error = JSON.parse(body) as TwilioError;
+    } catch {
+      error = undefined;
+    }
+    throw twilioError(api, { status: response.status, ok: false, headers: response.headers, body: error, text: body });
+  }
+  return response;
+}
+
+/** The media of a message: list `/Messages/{sid}/Media.json`, then one item per file with the bytes in item.binary. */
+async function downloadMessageMedia(ctx: IExecuteContext, api: ApiContext, credentials: TwilioCredentials, account: string, i: number, bounds: CallBounds): Promise<ItemWithFiles[]> {
+  const sid = requireString(ctx, 'messageSid', 'Message SID', i);
+  const media = await listAll<JsonObject>(api, credentials, `${account}/Messages/${encodeURIComponent(sid)}/Media.json`, 'media_list', {}, Infinity, bounds);
+  const items: ItemWithFiles[] = [];
+  for (const entry of media) {
+    const mediaSid = String(entry.sid ?? '');
+    const contentType = String(entry.content_type ?? 'application/octet-stream');
+    // `uri` is the .json description; the file itself is the same path without the extension.
+    const path = typeof entry.uri === 'string' && entry.uri ? entry.uri.replace(/\.json$/, '') : `${account}/Messages/${encodeURIComponent(sid)}/Media/${encodeURIComponent(mediaSid)}`;
+    const file = await twilioDownload(api, credentials, path, bounds);
+    items.push(await fileItem(ctx, i, entry, file, mediaSid, contentType));
+  }
+  return items;
 }

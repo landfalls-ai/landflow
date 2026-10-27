@@ -235,6 +235,16 @@ all constant-time: `verify_github_signature`, `verify_stripe_signature(secret, b
 `verify_slack_signature(secret, body, timestamp, signature)`, `verify_hmac_sha256(secret, payload, signature,
 prefix=..., encoding=...)`, `safe_equal`, and `github_signature` / `stripe_signature` / `slack_signature` for tests.
 
+### JWTs for GitHub Apps (`landflow_sdk.jwt`)
+
+A service that authenticates the *client* with a signed token (GitHub Apps) needs RS256. `landflow_sdk.jwt` does it in pure standard
+library Python, no `cryptography`: `rs256_sign(private_key_pem, payload, headers=None)` returns a compact JWS, and
+`github_app_jwt(app_id, private_key_pem, now=None)` the app JWT (`iss` = app id, `iat` = now − 60 s, `exp` = now + 540 s). Keys are PEM,
+PKCS#1 (`RSA PRIVATE KEY`) or PKCS#8 (`PRIVATE KEY`), read with a minimal ASN.1 reader (a single line with `\n` escapes works too;
+encrypted keys are refused with `JwtError`); the signature is EMSA-PKCS1-v1_5 over SHA-256 with `pow(m, d, n)` (not constant-time: for your
+own key on your own host). The productivity plugin's `githubAppApi` credential uses it to mint installation tokens. Tests verify the
+signatures with the `openssl` CLI (skipped without it).
+
 ## Observability
 
 Spans, metrics and logs follow [docs/observability.md](../../docs/observability.md); the same names

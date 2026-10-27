@@ -4,13 +4,15 @@
  * "SAML"): what to give the IdP (entity id, ACS and metadata URLs), what was read from it (SSO and logout URLs,
  * signing certificates and when the first expires), the security settings and the attribute mappings. Assertion
  * encryption is set here: generate or upload the decryption key, copy its certificate for the IdP, and require
- * encrypted assertions (/api/settings/security/saml/encryption).
+ * encrypted assertions (/api/settings/security/saml/encryption). Key rotation with two certificates: stage a next
+ * decryption key (published in our metadata beside the current one), switch over to it, discard the retired one; the
+ * signing certificate and its next one (LANDFLOW_SAML_CERT / _NEXT_CERT) are shown too.
  */
 import { useState } from 'react';
 import { CheckCircle2, CircleSlash, Fingerprint, KeyRound, TriangleAlert, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
-import type { SamlEncryptionView, SamlSecurityView } from '@/lib/shared/auth';
+import type { SamlEncryptionView, SamlKeyInfo, SamlSecurityView } from '@/lib/shared/auth';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -53,6 +55,31 @@ function Mapping({ map, empty }: { map: Record<string, string>; empty: string })
 }
 
 const ENCRYPTION_API = '/api/settings/security/saml/encryption';
+
+/** A certificate kept for rotation: subject, expiry, fingerprint and a copy button for the IdP. */
+function KeyLine({ info, hint }: { info: SamlKeyInfo; hint: string }) {
+  const expires = info.validTo ? new Date(info.validTo) : undefined;
+  return (
+    <div className="space-y-0.5">
+      <div className="flex flex-wrap items-center gap-2 text-t1">
+        <KeyRound className="size-3.5 text-t3" />
+        <span className="break-all">{info.subject ?? 'Certificate'}</span>
+        <Badge tone="muted">{info.source === 'env' ? 'from the environment' : info.source === 'generated' ? 'generated here' : 'uploaded'}</Badge>
+      </div>
+      <div className="text-[12px] text-t3">
+        {expires && <span className={expires.getTime() - Date.now() < 30 * 86_400_000 ? 'text-warn' : undefined}>valid until {expires.toLocaleDateString()} · </span>}
+        <span className="break-all font-mono text-[11px]">{info.fingerprint}</span>
+        {info.retiredAt && <span> · retired {new Date(info.retiredAt).toLocaleDateString()}</span>}
+      </div>
+      {info.error && <div className="text-[12px] text-rd">{info.error}</div>}
+      {info.certificate && (
+        <div className="flex items-center gap-1 text-[12px] text-t2">
+          {hint} <CopyButton text={info.certificate} label="Copy certificate" />
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Encrypted assertions: the decryption key's certificate, generate / upload / remove, and "require encrypted". */
 function AssertionEncryption({ initial }: { initial: SamlEncryptionView }) {
@@ -113,6 +140,52 @@ function AssertionEncryption({ initial }: { initial: SamlEncryptionView }) {
               />
               Require encrypted assertions <span className="text-t3">(refuse responses whose assertion isn’t encrypted)</span>
             </label>
+          )}
+          {view.configured && (view.next || view.previous || !view.fromEnv) && (
+            <div className="space-y-2 rounded-[10px] border border-hair bg-sf2 p-3">
+              <div className="text-[12px] font-medium text-t1">Key rotation</div>
+              {view.next ? (
+                <div className="space-y-1.5">
+                  <div className="text-[12px] text-t3">Next key: published in our metadata beside the current one, and responses decrypt with either.</div>
+                  <KeyLine info={view.next} hint="Give the IdP this certificate too, then switch over" />
+                  {view.next.source !== 'env' && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Button size="sm" variant="primary" loading={busy === 'switch'} onClick={() => void call('switch', { method: 'POST', json: { action: 'switch' } }, 'Switched over: the next key is the current one now')}>
+                        Switch over
+                      </Button>
+                      <Button size="sm" variant="ghost" loading={busy === 'discard-next'} onClick={() => void call('discard-next', { method: 'POST', json: { action: 'discard', slot: 'next' } }, 'Next key discarded')}>
+                        Discard
+                      </Button>
+                    </div>
+                  )}
+                  {view.next.source === 'env' && (
+                    <p className="text-[11px] text-t3">
+                      Set by <Env>LANDFLOW_SAML_DECRYPTION_NEXT_KEY</Env> and <Env>LANDFLOW_SAML_DECRYPTION_NEXT_CERT</Env>; swap them into the current pair there when the IdP has moved.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                !view.fromEnv && (
+                  <div className="space-y-1.5">
+                    <p className="text-[12px] text-t3">Stage a second key before the current certificate expires: give the IdP its certificate, then switch over without a gap.</p>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Button size="sm" loading={busy === 'generate-next'} onClick={() => void call('generate-next', { method: 'POST', json: { action: 'generate', slot: 'next' } }, 'Next key generated — give the IdP its certificate')}>
+                        <KeyRound className="size-3.5" /> Generate next key
+                      </Button>
+                    </div>
+                  </div>
+                )
+              )}
+              {view.previous && (
+                <div className="space-y-1.5 border-t border-hair pt-2">
+                  <div className="text-[12px] text-t3">Retired key: no longer in our metadata, but it still decrypts what the IdP encrypted to it.</div>
+                  <KeyLine info={view.previous} hint="Retired certificate" />
+                  <Button size="sm" variant="ghost" loading={busy === 'discard-previous'} onClick={() => void call('discard-previous', { method: 'POST', json: { action: 'discard', slot: 'previous' } }, 'Retired key discarded')}>
+                    Discard the retired key
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
           {view.fromEnv ? (
             <p className="text-[11px] text-t3">
@@ -251,6 +324,25 @@ export function SamlSettings({ saml }: { saml?: SamlSecurityView }) {
             {saml.idpCerts} {expires && <span className={expiringSoon ? 'text-warn' : 'text-t3'}>(first expires {expires.toLocaleDateString()})</span>}
           </Row>
           <Row label="Signatures">{saml.wantAssertionsSigned ? 'Assertions must be signed' : 'The response or its assertion must be signed'}</Row>
+          {saml.signing && (
+            <Row label="Our signing key">
+              <div className="space-y-2">
+                <KeyLine info={saml.signing.current} hint="In our metadata; the IdP verifies our requests with it" />
+                {saml.signing.next ? (
+                  <>
+                    <div className="text-[12px] text-t3">
+                      Next certificate, published beside it (<Env>LANDFLOW_SAML_NEXT_CERT</Env>). When the IdP has it, move the next key and certificate into <Env>LANDFLOW_SAML_PRIVATE_KEY</Env> and <Env>LANDFLOW_SAML_CERT</Env>.
+                    </div>
+                    <KeyLine info={saml.signing.next} hint="Give the IdP this certificate too" />
+                  </>
+                ) : (
+                  <div className="text-[11px] text-t3">
+                    To rotate it, set <Env>LANDFLOW_SAML_NEXT_CERT</Env> to the next certificate: our metadata publishes both.
+                  </div>
+                )}
+              </div>
+            </Row>
+          )}
           {saml.encryption && <AssertionEncryption initial={saml.encryption} />}
           <Row label="Clock skew">{saml.clockSkewSeconds} s</Row>
           <Row label="Button">{saml.label}</Row>

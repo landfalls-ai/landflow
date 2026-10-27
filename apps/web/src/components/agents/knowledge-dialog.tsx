@@ -2,10 +2,12 @@
 /**
  * Build tab → Capabilities → Add knowledge base: a vector store collection the agent searches with a
  * tool. Documents get in through a workflow (a vector store node in “Insert Documents” mode with the
- * same store, collection and embeddings model); this dialog only points the agent at them.
+ * same store, collection and embeddings model), or are uploaded here (PDF, DOCX, text, Markdown, HTML, CSV,
+ * JSON): they go through the loader, a splitter and the embeddings model into the collection.
  */
-import { useState } from 'react';
-import { BookOpen } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { BookOpen, FileText, Loader2, Trash2, Upload } from 'lucide-react';
+import { toast } from 'sonner';
 import type { KnowledgeBaseToolConfig } from '@/lib/shared/agents';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { Button } from '../ui/button';
@@ -29,7 +31,7 @@ export function KnowledgeTile({ size = 32 }: { size?: number }) {
   );
 }
 
-export function KnowledgeDialog({ tool, onSave, onClose }: { tool?: KnowledgeBaseToolConfig; onSave: (tool: KnowledgeBaseToolConfig) => void; onClose: () => void }) {
+export function KnowledgeDialog({ agentId, tool, onSave, onClose }: { agentId?: string; tool?: KnowledgeBaseToolConfig; onSave: (tool: KnowledgeBaseToolConfig) => void; onClose: () => void }) {
   const [value, setValue] = useState<KnowledgeBaseToolConfig>(
     () =>
       tool ?? {
@@ -74,7 +76,7 @@ export function KnowledgeDialog({ tool, onSave, onClose }: { tool?: KnowledgeBas
     >
       <div className="space-y-4">
         <p className="rounded-[10px] border border-hair bg-wl px-3 py-2.5 text-[12px] leading-snug text-t2">
-          Fill it with a workflow: a vector store node in <b>Insert Documents</b> mode with the same store and collection, a Default Data Loader and the same
+          Upload documents below once the knowledge base is saved, or fill it with a workflow: a vector store node in <b>Insert Documents</b> mode with the same store and collection, a Default Data Loader and the same
           embeddings model as below.
         </p>
         <div className="grid grid-cols-2 gap-3">
@@ -156,6 +158,11 @@ export function KnowledgeDialog({ tool, onSave, onClose }: { tool?: KnowledgeBas
             </Select>
           </Field>
         </div>
+        {tool && agentId ? (
+          <DocumentsPanel agentId={agentId} tool={tool} />
+        ) : (
+          <p className="text-[12px] text-t3">Save the knowledge base, then open it again to upload documents.</p>
+        )}
         <ToggleRow
           title="Require approval"
           description="Pause before every search until someone approves it."
@@ -164,5 +171,95 @@ export function KnowledgeDialog({ tool, onSave, onClose }: { tool?: KnowledgeBas
         />
       </div>
     </Dialog>
+  );
+}
+
+interface DocumentRow {
+  documentId: string;
+  fileName: string;
+  chunks: number;
+  pages?: number;
+  uploadedAt?: string;
+}
+
+/** Uploaded documents of a saved knowledge base: list, upload (several at once) and delete. */
+function DocumentsPanel({ agentId, tool }: { agentId: string; tool: KnowledgeBaseToolConfig }) {
+  const base = `/api/agents/${agentId}/knowledge/${tool.id}/documents`;
+  const input = useRef<HTMLInputElement>(null);
+  const [rows, setRows] = useState<DocumentRow[] | null>(null);
+  const [other, setOther] = useState(0);
+  const [problem, setProblem] = useState<string>();
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const response = await fetch(base);
+    const body = (await response.json().catch(() => ({}))) as { documents?: DocumentRow[]; otherChunks?: number; error?: string };
+    if (!response.ok) {
+      setProblem(body.error ?? 'Could not list the documents');
+      setRows([]);
+      return;
+    }
+    setProblem(undefined);
+    setRows(body.documents ?? []);
+    setOther(body.otherChunks ?? 0);
+  }, [base]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const upload = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setBusy(true);
+    const form = new FormData();
+    for (const file of files) form.append('file', file);
+    try {
+      const response = await fetch(base, { method: 'POST', body: form });
+      const body = (await response.json().catch(() => ({}))) as { documents?: DocumentRow[]; failed?: Array<{ fileName: string; error: string }>; error?: string };
+      if (body.documents?.length) toast.success(`Added ${body.documents.length} document${body.documents.length === 1 ? '' : 's'}`);
+      for (const failure of body.failed ?? []) toast.error(`${failure.fileName}: ${failure.error}`);
+      if (body.error) toast.error(body.error);
+      await load();
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = '';
+    }
+  };
+
+  const remove = async (row: DocumentRow) => {
+    const response = await fetch(`${base}?documentId=${encodeURIComponent(row.documentId)}`, { method: 'DELETE' });
+    if (!response.ok) toast.error(`Could not delete ${row.fileName}`);
+    await load();
+  };
+
+  return (
+    <div className="space-y-2 rounded-[10px] border border-hair p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-[13px] font-medium text-t1">Documents</div>
+          <div className="text-[11.5px] text-t3">PDF, DOCX, text, Markdown, HTML, CSV or JSON, up to 25 MB each</div>
+        </div>
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => input.current?.click()}>
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+          {busy ? 'Embedding…' : 'Upload'}
+        </Button>
+        <input ref={input} type="file" multiple hidden accept=".pdf,.docx,.txt,.md,.markdown,.html,.htm,.csv,.json,text/*,application/pdf,application/json" onChange={(e) => void upload(e.target.files)} />
+      </div>
+      {problem && <p className="text-[12px] text-red-600">{problem}</p>}
+      {rows?.length === 0 && !problem && <p className="text-[12px] text-t3">No uploaded documents yet.</p>}
+      {rows?.map((row) => (
+        <div key={row.documentId} className="flex items-center gap-2 rounded-[8px] bg-wl px-2.5 py-1.5 text-[12.5px]">
+          <FileText className="size-3.5 shrink-0 text-t3" />
+          <span className="min-w-0 flex-1 truncate">{row.fileName}</span>
+          <span className="shrink-0 text-t3">
+            {row.pages ? `${row.pages} pages · ` : ''}
+            {row.chunks} chunks
+          </span>
+          <button type="button" aria-label={`Delete ${row.fileName}`} className="text-t3 hover:text-red-600" onClick={() => void remove(row)}>
+            <Trash2 className="size-3.5" />
+          </button>
+        </div>
+      ))}
+      {other > 0 && <p className="text-[11.5px] text-t3">{other} more chunks were inserted by workflows.</p>}
+    </div>
   );
 }

@@ -60,6 +60,13 @@ export interface SourceControlConfig {
   credentialId?: string;
   /** HTTPS user name sent with the token (GitHub accepts any; GitLab wants `oauth2`). */
   username: string;
+  /**
+   * SSH remotes: a saved credential holding the private key (an "SSH private key" credential, or any one with a PEM key
+   * in `privateKey`; optional `passphrase`). Without one, ssh uses the host account's keys.
+   */
+  sshCredentialId?: string;
+  /** SSH remotes with a credential: the pinned host keys (`known_hosts` lines). The connection is refused for any other key. */
+  knownHosts?: string;
   authorName: string;
   authorEmail: string;
   /** Write variable values into variables.json (default: names only). */
@@ -80,6 +87,10 @@ export interface SourceControlView {
   /** Where the token comes from: the credential, LANDFLOW_GIT_TOKEN, or nowhere (public or local repositories). */
   tokenSource: 'credential' | 'env' | 'none';
   credentialName?: string;
+  /** The SSH key credential's name (SSH remotes). */
+  sshCredentialName?: string;
+  /** How the repository is reached. */
+  transport?: 'local' | 'https' | 'ssh';
   /** The working copy under the data directory. */
   workingCopy: string;
   lastPush?: SourceControlRun;
@@ -101,4 +112,43 @@ export interface SourceControlPushResult {
 export interface SourceControlPullResult extends SyncApplyResult {
   commit: string;
   branch: string;
+}
+
+/** POST /api/source-control/host-keys: the host keys an SSH server presents, to pin after checking their fingerprints. */
+export interface HostKeyScan {
+  host: string;
+  port: number;
+  keys: Array<{ type: string; fingerprint: string; line: string }>;
+  /** The `known_hosts` text to save as the pinned host keys. */
+  knownHosts: string;
+}
+
+/** One commit that touched a workflow's file (GET /api/workflows/:id/git-history). */
+export interface GitHistoryEntry {
+  commit: string;
+  shortCommit: string;
+  author: string;
+  email: string;
+  at: string;
+  subject: string;
+  /** The file's path in the repository at that commit (relative to the repository root). */
+  path: string;
+}
+
+export interface GitHistory {
+  branch: string;
+  /** The workflow's file on the branch now (absent when it was never pushed). */
+  path?: string;
+  commits: GitHistoryEntry[];
+  /** The branch isn't in the repository yet. */
+  branchMissing?: boolean;
+}
+
+/** GET /api/workflows/:id/git-history/:commit?path= */
+export interface GitCommitDetail extends GitHistoryEntry {
+  body: string;
+  /** Unified diff of the workflow's file in that commit. */
+  diff: string;
+  /** The workflow as that commit has it (absent when the commit deleted the file). */
+  workflow?: { name: string; nodes: number; active: boolean };
 }

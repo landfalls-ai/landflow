@@ -114,6 +114,25 @@ describe('rate limits', () => {
     expect(events.some((e) => e.type === 'node.log' && e.message.startsWith('Rate limit (1 per 0.15 s): waited'))).toBe(true);
   });
 
+  it('shares a credential’s limit between different nodes and runs, next to their own', async () => {
+    const limiter = new RateLimiter();
+    const events: ExecutionEvent[] = [];
+    const credentialRateLimits = (n: WorkflowNode) => (n.credentials?.api ? [{ key: `credential:${n.credentials.api.id}`, name: n.credentials.api.name, limit: { limit: 1, intervalSeconds: 0.15 } }] : []);
+    const withCredential = (id: string, type: string) => node(id, type, { credentials: { api: { id: 'cred_1', name: 'Shared API' } } });
+    // Two different nodes use the same credential: the second waits for the first's turn.
+    const workflow = chain(node('T', 'trigger'), withCredential('C1', 'counter'), withCredential('C2', 'counter'));
+    const result = await executeWorkflow({ workflow, resolver, executionId: 'k1', mode: 'trigger', rateLimiter: limiter, credentialRateLimits, onEvent: (e) => events.push(e) });
+    const gap = Number(result.runData.C2[0].outputs[0][0].json.at) - Number(result.runData.C1[0].outputs[0][0].json.at);
+    expect(gap).toBeGreaterThanOrEqual(120);
+    expect(events.some((e) => e.type === 'node.log' && e.nodeId === 'C2' && e.message.startsWith('Rate limit of credential "Shared API" (1 per 0.15 s): waited'))).toBe(true);
+    // Another run shares the same window; a node without the credential is not held.
+    const other = chain(node('T', 'trigger'), node('Free', 'counter'), withCredential('C3', 'counter'));
+    const started = Date.now();
+    const second = await executeWorkflow({ workflow: { ...other, id: 'other' }, resolver, executionId: 'k2', mode: 'trigger', rateLimiter: limiter, credentialRateLimits });
+    expect(second.status).toBe('success');
+    expect(Number(second.runData.Free[0].outputs[0][0].json.at) - started).toBeLessThan(100);
+  });
+
   it('stops waiting when the run is canceled', async () => {
     const limiter = new RateLimiter();
     const workflow = chain(node('T', 'trigger'), node('C1', 'counter', { rateLimit: { limit: 1, intervalSeconds: 60 } }));

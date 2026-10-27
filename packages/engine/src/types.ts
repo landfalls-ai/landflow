@@ -108,6 +108,12 @@ export interface WorkflowSettings {
   timeSavedMinutes?: number;
   /** Most production runs going at once (waiting runs don't count). Manual runs and sub-executions bypass it. */
   concurrencyLimit?: number;
+  /**
+   * How soon the workflow's production runs get a turn when something is scarce: the slots when the instance caps its runs
+   * (`LANDFLOW_MAX_RUNS`) and, in queue mode, the workers (jobs of higher priorities are taken first, without starving low ones).
+   * Default `normal`.
+   */
+  priority?: 'high' | 'normal' | 'low';
   /** One run at a time, waiting runs included. */
   singleton?: boolean;
   /** A trigger run over the limit (or while the singleton runs): wait in a FIFO queue (default) or be skipped. */
@@ -480,6 +486,19 @@ export interface ExecuteWorkflowOptions {
   streaming?: boolean;
   /** Enforces `node.rateLimit` (default: one limiter shared by every run in the process). */
   rateLimiter?: RateLimiterLike;
+  /**
+   * Rate limits of the credentials a node uses (a limit set on the credential itself, shared by every node and run that uses it):
+   * each is waited for after the node's own, under its `key`, with the same limiter.
+   */
+  credentialRateLimits?: (node: WorkflowNode) => CredentialRateLimit[];
+}
+
+export interface CredentialRateLimit {
+  /** The limiter key shared by every user of the credential. */
+  key: string;
+  /** What the log line calls it. */
+  name: string;
+  limit: NodeRateLimit;
 }
 
 /** What the executor needs from a rate limiter: wait for a turn under `key`; resolves with the milliseconds waited. */

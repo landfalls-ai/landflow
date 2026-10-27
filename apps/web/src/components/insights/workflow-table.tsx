@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { InsightsWorkflowRow } from '@/lib/shared/platform';
-import { formatCost, formatTokens, type AiUsageTotals } from '@/lib/shared/ai-usage';
+import { formatCache, formatCost, formatTokens, type AiUsageTotals } from '@/lib/shared/ai-usage';
 import { formatMinutes, formatRate, formatRunTime } from './format';
 
 type SortKey = 'name' | 'runs' | 'failed' | 'failureRate' | 'avgDurationMs' | 'cost' | 'timeSavedMinutes' | 'minutesSavedPerRun';
@@ -90,7 +90,8 @@ function MinutesEditor({ row, onSaved }: { row: InsightsWorkflowRow; onSaved: ()
 /** Estimated AI cost, tokens and calls in the title. */
 function CostCell({ usage }: { usage?: AiUsageTotals }) {
   if (!usage?.calls) return <td className="px-4 py-2.5 text-right font-mono tabular-nums text-t3">—</td>;
-  const title = `${formatTokens(usage.inputTokens)} input + ${formatTokens(usage.outputTokens)} output tokens in ${usage.calls.toLocaleString()} model call${usage.calls === 1 ? '' : 's'}`;
+  const cache = formatCache(usage);
+  const title = `${formatTokens(usage.inputTokens)} input${cache ? ` (cached: ${cache})` : ''} + ${formatTokens(usage.outputTokens)} output tokens in ${usage.calls.toLocaleString()} model call${usage.calls === 1 ? '' : 's'}`;
   return (
     <td className="px-4 py-2.5 text-right font-mono tabular-nums text-t1" title={title}>
       {formatCost(usage.cost)}

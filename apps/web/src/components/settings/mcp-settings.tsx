@@ -115,6 +115,11 @@ function GatewaySignIn({ signIn, status }: { signIn: NonNullable<McpStatusView['
   return (
     <>
       <Badge tone="success">on</Badge> {whose}
+      {signIn.alsoIssuer && (
+        <>
+          {' '}and {signIn.alsoIssuer === status.identityProvider?.issuer ? 'the identity provider’s tokens' : <span className="font-mono">{signIn.alsoIssuer}</span>}
+        </>
+      )}
       {signIn.mode === 'optional' && <span className="text-t3"> — a call without a token is anonymous (no tools), a bad token gets 401</span>}
     </>
   );
@@ -202,7 +207,7 @@ function GatewaySyncStatus({ canManage }: { canManage: boolean }) {
         <div className="mt-2 flex flex-wrap gap-1.5" data-testid="mcp-gateway-targets">
           {shown.map((t) => (
             <Badge key={`${t.kind}:${t.name}`} tone={TARGET_STATE_TONE[t.state]} className="font-mono font-medium" title={`${t.kind} ${t.name} (${t.label}): ${t.state}`} data-server-kind={t.serverKind}>
-              {t.serverKind === 'plugin' ? t.name : `${t.serverKind === 'instance' ? 'instance' : 'workflow'}: ${t.name}`} · {t.state}
+              {t.serverKind === 'plugin' ? t.name : `${t.serverKind}: ${t.name}`} · {t.state}
             </Badge>
           ))}
         </div>
@@ -272,12 +277,19 @@ function IssueToken({ onCancel, onIssued }: { onCancel: () => void; onIssued: (t
   const [label, setLabel] = useState('');
   const [scopes, setScopes] = useState<McpTokenScope[]>([...MCP_TOKEN_SCOPES]);
   const [days, setDays] = useState('30');
+  const [projectId, setProjectId] = useState('');
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api<{ projects: Array<{ id: string; name: string }> }>('/api/projects')
+      .then((r) => setProjects(r.projects))
+      .catch(() => setProjects([]));
+  }, []);
   const toggle = (scope: McpTokenScope) => setScopes((s) => (s.includes(scope) ? s.filter((x) => x !== scope) : [...s, scope]));
   const submit = async () => {
     setBusy(true);
     try {
-      const r = await api<{ token: string; record: McpTokenView }>('/api/mcp/tokens', { method: 'POST', json: { label, scopes, expiresInDays: Number(days) || 30 } });
+      const r = await api<{ token: string; record: McpTokenView }>('/api/mcp/tokens', { method: 'POST', json: { label, scopes, expiresInDays: Number(days) || 30, ...(projectId && { projectId }) } });
       onIssued(r.token, r.record);
     } catch (e) {
       toast.error((e as Error).message);
@@ -301,6 +313,20 @@ function IssueToken({ onCancel, onIssued }: { onCancel: () => void; onIssued: (t
         <div>
           <FieldLabel>Expires in (days, 1–365)</FieldLabel>
           <Input type="number" min={1} max={365} value={days} onChange={(e) => setDays(e.target.value)} />
+        </div>
+        <div className="sm:col-span-2">
+          <FieldLabel>Project (optional)</FieldLabel>
+          <div className="max-w-[360px]">
+            <Select value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Project">
+              <option value="">Every project I can see</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <p className="mt-1 text-[12px] text-t3">A project token makes the instance MCP server (coding agents) list and change only that project’s workflows. The plugin endpoints are not affected.</p>
         </div>
         <div className="sm:col-span-2">
           <FieldLabel>Scopes</FieldLabel>
@@ -440,6 +466,7 @@ function TokensCard({ canManage, onToken }: { canManage: boolean; onToken: (toke
                     <code className="font-mono text-[11px] font-normal text-t3">…{t.hint}</code>
                     {st && <Badge tone={st.tone}>{st.label}</Badge>}
                     {all && t.userName && <Badge tone="muted">{t.userName}</Badge>}
+                    {t.projectId && <Badge tone="accent" title={`Scoped to the project ${t.projectName ?? t.projectId}`}>project: {t.projectName ?? t.projectId}</Badge>}
                   </div>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {t.scopes.map((scope) => (

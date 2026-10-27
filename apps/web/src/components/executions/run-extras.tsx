@@ -5,9 +5,12 @@
  * Also the links between Execute Workflow parents and their sub-executions: "Sub-execution of …" on a child, and
  * "Waiting on N of M sub-workflows" with a link to each child on a parent that waits for them.
  */
-import { Ban, Check, CornerLeftUp, Hourglass, Layers, Sparkles, X } from 'lucide-react';
+import { useState } from 'react';
+import { Ban, Check, CornerLeftUp, Hourglass, Layers, Sparkles, ThumbsDown, ThumbsUp, X } from 'lucide-react';
+import { api } from '@/lib/client/api';
+import type { ChatFeedback, FeedbackRating } from '@/lib/shared/chat-feedback';
 import { waitedChildren } from '@/lib/client/run-data';
-import { formatCost, formatTokens, type ExecutionAiUsage } from '@/lib/shared/ai-usage';
+import { formatCache, formatCost, formatTokens, type ExecutionAiUsage } from '@/lib/shared/ai-usage';
 import type { ExecutionRecord } from '@/lib/shared/types';
 import { Popover } from '../ui/popover';
 
@@ -45,6 +48,11 @@ export function AiUsageChip({ usage }: { usage: ExecutionAiUsage | undefined }) 
             </div>
           ))}
         </div>
+        {formatCache(usage) && (
+          <div className="text-t3" title="Parts of the input served from the provider’s cache (cheaper) or written to it, priced with the cache prices in Settings → AI prices">
+            Cached input: {formatCache(usage)}
+          </div>
+        )}
         {usage.models.length > 0 && (
           <table className="w-full tabular-nums">
             <thead>
@@ -62,7 +70,9 @@ export function AiUsageChip({ usage }: { usage: ExecutionAiUsage | undefined }) 
                     <span className="text-t3">{m.provider}/</span>
                     {m.model}
                   </td>
-                  <td className="py-1 text-right">{formatTokens(m.inputTokens)}</td>
+                  <td className="py-1 text-right" title={formatCache(m) ? `Cached: ${formatCache(m)}` : undefined}>
+                    {formatTokens(m.inputTokens)}
+                  </td>
                   <td className="py-1 text-right">{formatTokens(m.outputTokens)}</td>
                   <td className="py-1 text-right">{formatCost(m.cost)}</td>
                 </tr>
@@ -71,6 +81,56 @@ export function AiUsageChip({ usage }: { usage: ExecutionAiUsage | undefined }) 
           </table>
         )}
         <p className="leading-snug text-t3">This execution’s own calls; sub-workflows list theirs. Costs are estimates from Settings → AI prices.</p>
+      </div>
+    </Popover>
+  );
+}
+
+/** The thumbs up/down a chat answer got (hosted chat, widget); a click shows the comment and lets an editor change or take back the rating. */
+export function FeedbackChip({ executionId, feedback }: { executionId: string; feedback: ChatFeedback | undefined }) {
+  const [current, setCurrent] = useState<ChatFeedback | undefined>(feedback);
+  const [busy, setBusy] = useState(false);
+  const rate = async (rating: FeedbackRating | null) => {
+    setBusy(true);
+    try {
+      const r = await api<{ feedback: ChatFeedback | null }>(`/api/executions/${executionId}/feedback`, { method: 'PUT', json: { rating, ...(rating && current?.comment && { comment: current.comment }) } });
+      setCurrent(r.feedback ?? undefined);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!current) return null;
+  const Icon = current.rating === 'up' ? ThumbsUp : ThumbsDown;
+  return (
+    <Popover
+      align="start"
+      className="w-[300px] p-3"
+      trigger={({ open, toggle }) => (
+        <button
+          onClick={toggle}
+          aria-expanded={open}
+          title={`The person chatting rated this answer ${current.rating === 'up' ? 'good' : 'bad'}${current.comment ? `: ${current.comment}` : ''}`}
+          className={`flex items-center gap-1 rounded-full px-2 text-[12px] transition-opacity hover:opacity-80 ${current.rating === 'up' ? 'bg-[color-mix(in_oklab,var(--gn)_14%,transparent)] text-gn' : 'bg-[color-mix(in_oklab,var(--rd)_14%,transparent)] text-rd'}`}
+        >
+          <Icon className="size-3" /> {current.rating === 'up' ? 'Thumbs up' : 'Thumbs down'}
+        </button>
+      )}
+    >
+      <div className="space-y-2 text-[12px]">
+        <div className="text-[13px] font-semibold text-t1">Chat feedback</div>
+        {current.comment ? <p className="whitespace-pre-wrap rounded-[8px] border border-hair bg-wl px-2 py-1.5 text-t1 [overflow-wrap:anywhere]">{current.comment}</p> : <p className="text-t3">No comment.</p>}
+        <div className="flex items-center gap-2">
+          <button disabled={busy} onClick={() => void rate('up')} className="flex items-center gap-1 rounded-full border border-hair px-2 py-0.5 text-t2 hover:text-t1 disabled:opacity-50">
+            <ThumbsUp className="size-3" /> Good
+          </button>
+          <button disabled={busy} onClick={() => void rate('down')} className="flex items-center gap-1 rounded-full border border-hair px-2 py-0.5 text-t2 hover:text-t1 disabled:opacity-50">
+            <ThumbsDown className="size-3" /> Bad
+          </button>
+          <button disabled={busy} onClick={() => void rate(null)} className="ml-auto text-t3 hover:text-t1 disabled:opacity-50">
+            Remove
+          </button>
+        </div>
+        <p className="leading-snug text-t3">Given by {current.source === 'chat' ? 'the hosted chat or widget' : current.source === 'editor' ? 'the editor' : 'the API'} on {new Date(current.updatedAt).toLocaleString()}.</p>
       </div>
     </Popover>
   );

@@ -30,6 +30,7 @@ import { folders } from '../folders';
 import { forgetWorkflow } from '../publish';
 import { publishOrRequest } from '../governance/approvals';
 import { registry } from '../plugins/registry';
+import { defaultProjectId, homeProjectId, setHomeProject } from '../projects/store';
 import { workflowSchema } from '../schemas';
 import { store } from '../store';
 import { MAX_KEY_LENGTH, MAX_VALUE_LENGTH, VARIABLE_KEY, variables } from '../variables';
@@ -116,6 +117,11 @@ export interface PlanOptions {
    * unpublishes those it turns off; `all` publishes every one (publish on pull); `none` saves drafts only.
    */
   publish?: 'file' | 'all' | 'none';
+  /**
+   * Credentials the files define that this instance already has: update their non-secret fields to the file's (and set a
+   * secret field to a `$secrets` reference the file gives). Secret values are never touched. Default: leave them as they are.
+   */
+  updateCredentials?: boolean;
 }
 
 interface Operation {
@@ -163,6 +169,29 @@ function resolveCredentials(doc: Record<string, unknown>, saved: SyncCredential[
   return { ...doc, nodes };
 }
 
+/**
+ * A credential the instance has, whose definition in the files differs: update the fields the definition names. A secret
+ * field changes only to a `$secrets` reference (never a value, neither from the file nor to the file), so the instance's own
+ * secrets stay; a literal value in a secret field of the file is dropped with a warning.
+ */
+function planCredentialUpdate(credential: { name: string; type: string; data?: Record<string, unknown>; secretFields?: string[] }, saved: SyncCredential[], add: (stage: number, change: SyncChange, run: () => unknown) => void, warnings: string[]) {
+  const target = saved.find((c) => c.type === credential.type && c.name === credential.name) ?? saved.find((c) => c.id === mappedCredential(credential.type, credential.name) && c.type === credential.type);
+  if (!target?.id) return;
+  const current = vault.definition(target.id);
+  if (!current) return;
+  const secret = new Set([...(credential.secretFields ?? []), ...current.secretFields]);
+  const patch: Record<string, unknown> = {};
+  const dropped: string[] = [];
+  for (const [key, value] of Object.entries(credential.data ?? {})) {
+    if (secret.has(key) && !hasSecretReference(value)) dropped.push(key);
+    else if (JSON.stringify(current.data[key] ?? null) !== JSON.stringify(value)) patch[key] = value;
+  }
+  if (dropped.length) warnings.push(`${CREDENTIALS_FILE}: credential “${credential.name}”: ${dropped.join(', ')} ${dropped.length === 1 ? 'holds a value' : 'hold values'} instead of a $secrets reference: left as it is on this instance`);
+  if (!Object.keys(patch).length) return;
+  const id = target.id;
+  add(2.5, { kind: 'credential', action: 'update', id, name: credential.name, path: CREDENTIALS_FILE, fields: Object.keys(patch).sort() }, () => vault.update(id, { data: patch }));
+}
+
 /** Top-level fields that differ between two workflow documents. */
 function changedFields(before: Record<string, unknown>, after: Record<string, unknown>): string[] {
   const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])];
@@ -183,6 +212,22 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
   const folderIds = new Map<string, string>();
   const wantedFolders = new Set<string>();
   const instanceFolders = new Map(state.folders.map((f) => [f.id, f]));
+  /** The project a folder is in after this plan: an existing folder's own, a new one's from its parent or from the workflows filed in it. */
+  const folderProjects = new Map<string, string | undefined>();
+  // A new top-level folder goes to the project its workflows are in (by the ids in their files); with none known, the default project.
+  const projectOfDir = new Map<string, Map<string, number>>();
+  for (const file of desired.workflows) {
+    const workflowId = typeof file.doc.id === 'string' ? file.doc.id : undefined;
+    if (!file.dir || !workflowId || !store.getWorkflow(workflowId)) continue;
+    const project = homeProjectId('workflow', workflowId);
+    if (!project) continue;
+    for (let dir: string | undefined = file.dir; dir; dir = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : undefined) {
+      const votes = projectOfDir.get(dir) ?? new Map<string, number>();
+      votes.set(project, (votes.get(project) ?? 0) + 1);
+      projectOfDir.set(dir, votes);
+    }
+  }
+  const workflowsProject = (dir: string) => [...(projectOfDir.get(dir) ?? [])].sort((a, b) => b[1] - a[1])[0]?.[0];
   for (const folder of desired.folders) {
     const parentId = folder.parentDir ? folderIds.get(folder.parentDir) : undefined;
     const name = folder.name.trim();
@@ -206,10 +251,17 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
     const path = `${folder.dir}/.folder.json`;
     const folderId = id;
     if (!existing) {
-      add(0, { kind: 'folder', action: 'create', id, name, path }, () => folders.create({ id: folderId, name, ...(parentId && { parentId }) }));
+      const projectId = parentId ? folderProjects.get(parentId) : workflowsProject(folder.dir);
+      folderProjects.set(folderId, parentId ? folderProjects.get(parentId) : (projectId ?? defaultProjectId()));
+      add(0, { kind: 'folder', action: 'create', id, name, path }, () => folders.create({ id: folderId, name, ...(parentId ? {} : projectId && { projectId }), ...(parentId && { parentId }) }));
     } else {
-      const fields = [...(existing.name !== name ? ['name'] : []), ...((existing.parentId ?? undefined) !== parentId ? ['parent'] : [])];
-      if (fields.length) add(0, { kind: 'folder', action: 'update', id, name, path, fields }, () => folders.update(folderId, { name, parentId: parentId ?? null }));
+      folderProjects.set(folderId, folders.projectOf(existing));
+      // A folder only moves into a folder of its own project: otherwise it keeps its parent, with a warning.
+      const crossesProjects = Boolean(parentId) && folderProjects.get(parentId!) !== folders.projectOf(existing);
+      if (crossesProjects && (existing.parentId ?? undefined) !== parentId) warnings.push(`${path}: stays where it is: the parent directory is another project’s folder`);
+      const moves = !crossesProjects && (existing.parentId ?? undefined) !== parentId;
+      const fields = [...(existing.name !== name ? ['name'] : []), ...(moves ? ['parent'] : [])];
+      if (fields.length) add(0, { kind: 'folder', action: 'update', id, name, path, fields }, () => folders.update(folderId, { name, ...(moves && { parentId: parentId ?? null }) }));
     }
   }
   const depth = (id: string) => {
@@ -244,8 +296,9 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
       columnNames.add(column.name.toLowerCase());
     }
     if (table.id && !ID.test(table.id)) errors.push(`${table.path}: invalid id ${JSON.stringify(table.id)}`);
+    // By id; else by name among the default project's tables (names are unique per project, and Git sync makes its tables there).
     const existing =
-      (table.id && instanceTables.get(table.id)) || state.dataTables.find((t) => !matchedTables.has(t.id) && t.name.toLowerCase() === name.toLowerCase() && (!table.id || !instanceTables.has(table.id)));
+      (table.id && instanceTables.get(table.id)) || dataTables().inProject(state.dataTables, undefined).find((t) => !matchedTables.has(t.id) && t.name.toLowerCase() === name.toLowerCase() && (!table.id || !instanceTables.has(table.id)));
     if (!existing) {
       const id = table.id ?? idForPath('dt', table.path);
       plannedTables.set(table.path, { id, name, columns: table.columns, exists: false });
@@ -305,8 +358,52 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
         current = [];
       }
     }
-    if (known.exists && cells(current) === cells(rows)) continue;
     const tableId = known.id;
+    // Opted in to merging: match by the key columns, insert new rows, update changed ones, delete missing ones when asked.
+    if (file.merge) {
+      const keyColumns = file.merge.keys;
+      const missingKeys = keyColumns.filter((k) => !columns.includes(k));
+      if (missingKeys.length) {
+        errors.push(`${file.path}: the merge key column${missingKeys.length === 1 ? '' : 's'} ${missingKeys.map((k) => `“${k}”`).join(', ')} ${missingKeys.length === 1 ? 'isn’t a column' : 'aren’t columns'} of ${known.name}`);
+        continue;
+      }
+      const keyOf = (row: Record<string, unknown>) => JSON.stringify(keyColumns.map((k) => row[k] ?? null));
+      const incoming = new Map<string, Record<string, unknown>>();
+      let duplicate: string | undefined;
+      for (const row of rows) {
+        const key = keyOf(row);
+        if (keyColumns.some((k) => row[k] === undefined || row[k] === null || row[k] === '')) duplicate ??= 'a row has an empty key';
+        else if (incoming.has(key)) duplicate ??= `two rows have the key ${key}`;
+        incoming.set(key, row);
+      }
+      const existing = new Map<string, Array<Record<string, unknown>>>();
+      for (const row of current) existing.set(keyOf(row), [...(existing.get(keyOf(row)) ?? []), row]);
+      const ambiguous = [...existing.entries()].find(([key, list]) => list.length > 1 && incoming.has(key));
+      if (duplicate || ambiguous) {
+        errors.push(`${file.path}: can’t merge rows into ${known.name} by ${keyColumns.join(', ')}: ${duplicate ?? `more than one row here has the key ${ambiguous![0]}`}`);
+        continue;
+      }
+      const inserts = [...incoming.entries()].filter(([key]) => !existing.has(key)).map(([, row]) => row);
+      const updates = [...incoming.entries()].flatMap(([key, row]) => {
+        const here = existing.get(key)?.[0];
+        if (!here) return [];
+        const changed = Object.fromEntries(columns.filter((c) => row[c] !== undefined && JSON.stringify(row[c] ?? null) !== JSON.stringify(here[c] ?? null)).map((c) => [c, row[c]]));
+        return Object.keys(changed).length ? [{ id: here.id as number, values: changed }] : [];
+      });
+      const removals = file.merge.deleteMissing ? current.filter((row) => !incoming.has(keyOf(row))) : [];
+      if (!inserts.length && !updates.length && !removals.length) continue;
+      const summary = [`merge by ${keyColumns.join(', ')}`, `+${inserts.length} new`, `~${updates.length} changed`, ...(file.merge.deleteMissing ? [`-${removals.length} deleted`] : [])];
+      add(1.7, { kind: 'tableRows', action: current.length ? 'update' : 'create', id: tableId, name: known.name, path: file.path, fields: summary }, () => {
+        const tables = dataTables();
+        tables.transaction(tableId, () => {
+          for (const update of updates) tables.updateRow(tableId, update.id, update.values);
+          if (inserts.length) tables.insertRows(tableId, inserts);
+          if (removals.length) tables.deleteRows(tableId, { ids: removals.map((row) => row.id as number) });
+        });
+      });
+      continue;
+    }
+    if (known.exists && cells(current) === cells(rows)) continue;
     add(1.7, { kind: 'tableRows', action: known.exists && current.length ? 'update' : 'create', id: tableId, name: known.name, path: file.path, fields: [`${rows.length} row${rows.length === 1 ? '' : 's'}`] }, () => {
       const tables = dataTables();
       tables.transaction(tableId, () => {
@@ -359,7 +456,10 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
   for (const credential of desired.credentials) {
     if (!credential.data && !credential.secretFields) continue;
     const { name, type } = credential;
-    if (present(type, name)) continue;
+    if (present(type, name)) {
+      if (options.updateCredentials) planCredentialUpdate(credential, state.credentials, add, warnings);
+      continue;
+    }
     if (!name.trim() || name.length > 200) {
       errors.push(`${CREDENTIALS_FILE}: credential names are 1 to 200 characters`);
       continue;
@@ -406,8 +506,14 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
       errors.push(`${file.path}: ${issue?.path.join('.') || 'workflow'}: ${issue?.message}`);
       continue;
     }
-    const folderId = file.dir ? folderIds.get(file.dir) : undefined;
+    let folderId = file.dir ? folderIds.get(file.dir) : undefined;
     const existing = instanceWorkflows.get(id);
+    // A workflow only goes in a folder of its own project: one already here stays where it is, with a warning.
+    const folderProject = folderId ? folderProjects.get(folderId) : undefined;
+    if (existing && folderId && folderProject !== homeProjectId('workflow', id)) {
+      warnings.push(`${file.path}: stays ${existing.folderId ? 'in its folder' : 'at the top level'}: the folder “${file.dir}” belongs to another project than the workflow`);
+      folderId = existing.folderId;
+    }
     // Fields the API doesn't write (timestamps, publication state) stay as they are.
     const kept = Object.fromEntries(Object.entries(existing ?? {}).filter(([key]) => !keys.includes(key) && key !== 'folderId' && key !== 'id'));
     const { folderId: _ignored, ...data } = parsed.data as Workflow;
@@ -415,6 +521,8 @@ export function planSync(files: SyncFile[], options: PlanOptions = {}): SyncPlan
     const name = next.name;
     // Save a draft (keeping the instance's activation), then publish it or unpublish to match the file.
     const save = async () => {
+      // A new workflow filed in a folder of another project is made in that project.
+      if (!existing && folderProject && folderProject !== defaultProjectId()) setHomeProject('workflow', id, folderProject);
       store.saveWorkflow({ ...next, active: Boolean(existing?.active) });
       const publish = options.publish ?? 'file';
       // Through the four-eyes gate (Settings → Governance): with it on, Git sync asks for approval instead of publishing.
@@ -501,6 +609,34 @@ export async function applySync(files: SyncFile[], options: PlanOptions & { dryR
   }
   result.hashes = renderState(currentState(), { workflowKeys: workflowKeys() }).hashes;
   return result;
+}
+
+/**
+ * Put one workflow back as a file (from Git history) has it: saved as a new draft, its folder and activation as they
+ * are, credentials matched by name and type. Nothing is published. Throws when the file isn't a valid workflow.
+ */
+export function restoreWorkflow(workflowId: string, content: string, path = 'workflow.json'): { workflow: Workflow; warnings: string[] } {
+  const existing = store.getWorkflow(workflowId);
+  if (!existing) throw new Error('Workflow not found');
+  let doc: unknown;
+  try {
+    doc = JSON.parse(content);
+  } catch {
+    throw new Error(`${path} isn’t valid JSON`);
+  }
+  if (!isObject(doc)) throw new Error(`${path} isn’t a workflow`);
+  const warnings: string[] = [];
+  const resolved = resolveCredentials(doc, currentState().credentials, path, warnings);
+  const parsed = workflowSchema.safeParse({ ...resolved, id: workflowId });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new Error(`${path}: ${issue?.path.join('.') || 'workflow'}: ${issue?.message}`);
+  }
+  const keys = workflowKeys();
+  const kept = Object.fromEntries(Object.entries(existing).filter(([key]) => !keys.includes(key) && key !== 'folderId' && key !== 'id'));
+  const { folderId: _ignored, ...data } = parsed.data as Workflow;
+  const saved = store.saveWorkflow({ ...kept, ...data, id: workflowId, active: Boolean(existing.active), ...(existing.folderId && { folderId: existing.folderId }) } as Workflow);
+  return { workflow: saved, warnings: [...new Set(warnings)] };
 }
 
 /** The canonical text of one workflow's file (the CLI's `export`). */

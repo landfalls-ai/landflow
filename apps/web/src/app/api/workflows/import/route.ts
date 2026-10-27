@@ -8,7 +8,9 @@ import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { importWorkflowJson } from '@/lib/server/n8n-import';
-import { createInProject, projectParam, targetProject } from '@/lib/server/projects/http';
+import { withOwnership } from '@/lib/server/projects';
+import { createInProject, projectParam, routeActor, targetProject } from '@/lib/server/projects/http';
+import { credentials } from '@/lib/server/credentials/vault';
 import { registry } from '@/lib/server/plugins/registry';
 import { workflowSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
@@ -36,7 +38,7 @@ export const POST = handler(async (request: Request) => {
   const descriptors = new Map(registry.nodeTypes().map((t) => [t.type, t.descriptor]));
   let result: ReturnType<typeof importWorkflowJson>;
   try {
-    result = importWorkflowJson(data, { resolveType: (type) => descriptors.get(type) });
+    result = importWorkflowJson(data, { resolveType: (type) => descriptors.get(type), credentials: withOwnership(routeActor(), 'credential', credentials.list(), projectParam(request)).map((c) => ({ id: c.id, name: c.name, type: c.type })) });
   } catch (caught) {
     return error((caught as Error).message);
   }

@@ -105,6 +105,8 @@ export interface PublishRequestView {
   comment?: string;
   /** Why it went stale (the draft or the live version changed) or why the approved publish failed. */
   reason?: string;
+  /** A scheduled publish's request: approving it only clears the schedule; it goes live at this time (ISO). */
+  scheduledFor?: string;
   /** For the viewer: may approve or reject it, may withdraw it. */
   canApprove?: boolean;
   canCancel?: boolean;

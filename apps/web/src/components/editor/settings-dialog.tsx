@@ -209,6 +209,7 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
     for (const key of ['saveSuccessfulExecutions', 'saveFailedExecutions', 'saveManualExecutions'] as const) if (settings[key] === true) delete settings[key];
     if (!settings.concurrencyLimit && !settings.singleton) delete settings.concurrencyOverflow;
     if (settings.concurrencyOverflow === 'queue') delete settings.concurrencyOverflow;
+    if (settings.priority === 'normal') delete settings.priority;
     if (!limited || settings.concurrencyOverflow === 'skip') delete settings.concurrencyQueueSize;
     if (!settings.retryMaxAttempts) delete settings.retryBaseDelaySeconds;
     setSaving(true);
@@ -410,6 +411,17 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
               />
               <span className="pointer-events-none absolute right-4.5 top-1/2 -translate-y-1/2 text-[12px] text-t3">runs</span>
             </div>
+          </Field>
+          <Field
+            id="wf-priority"
+            label="Priority"
+            hint="Which runs get a turn first when places are scarce: when the instance caps its runs (LANDFLOW_MAX_RUNS) and, in queue mode, which jobs workers take first. Low runs are not starved."
+          >
+            <Select id="wf-priority" value={draft.priority ?? 'normal'} onChange={(e) => patch({ priority: e.target.value as 'high' | 'normal' | 'low' })}>
+              <option value="high">High</option>
+              <option value="normal">Normal</option>
+              <option value="low">Low</option>
+            </Select>
           </Field>
           <ToggleRow
             title="Run one at a time (singleton)"

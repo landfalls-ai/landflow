@@ -4,11 +4,12 @@
  * shows when, how many nodes and what changed against the version before; the
  * selected version is previewed on a read-only canvas, and Restore saves it as
  * a new version (the current state stays in the history). The published version
- * (what production triggers run) is marked; publishing an older one rolls back.
+ * (what production triggers run) is marked; publishing an older one rolls back. A version can also be scheduled to
+ * go live at a chosen time (./publish-schedules); versions with a schedule waiting say so.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { create } from 'zustand';
-import { History, Loader2, Rocket, RotateCcw, X } from 'lucide-react';
+import { CalendarClock, History, Loader2, Rocket, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -20,6 +21,7 @@ import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { SectionLabel } from '../ui/inputs';
 import { publishVersion, toastApprovalRequested } from './publish-control';
+import { ScheduleForm, ScheduleRows, useSchedules } from './publish-schedules';
 import { useEditor } from './store';
 
 export const useVersionHistory = create<{ open: boolean; setOpen: (open: boolean) => void }>((set) => ({ open: false, setOpen: (open) => set({ open }) }));
@@ -71,6 +73,8 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
   const [publishedId, setPublishedId] = useState<string>();
   const [publishing, setPublishing] = useState<'confirm' | 'busy'>();
   const [error, setError] = useState<string>();
+  const [schedulingOpen, setSchedulingOpen] = useState(false);
+  const { schedules, reload: reloadSchedules } = useSchedules(workflowId, open);
   const close = useCallback(() => useVersionHistory.getState().setOpen(false), []);
 
   const loadList = useCallback(async () => {
@@ -98,6 +102,7 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
     let cancelled = false;
     setConfirming(false);
     setPublishing(undefined);
+    setSchedulingOpen(false);
     api<{ version: WorkflowVersion }>(`/api/workflows/${workflowId}/versions/${selectedId}`)
       .then(({ version: v }) => !cancelled && setVersion(v))
       .catch((e: Error) => !cancelled && toast.error(`Could not load the version: ${e.message}`));
@@ -194,6 +199,11 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
                   <span className="text-[13px] font-semibold text-t1">Version {v.number}</span>
                   {i === 0 && <Badge tone={dirty ? 'muted' : 'success'}>{dirty ? 'last saved' : 'current'}</Badge>}
                   {v.restoredFrom && <Badge tone="neutral">restored</Badge>}
+                  {schedules?.some((s) => s.versionId === v.id && (s.status === 'pending' || s.status === 'awaiting_approval')) && (
+                    <Badge tone="muted" title="A publish of this version is scheduled">
+                      scheduled
+                    </Badge>
+                  )}
                   {v.id === publishedId && (
                     <Badge tone="accent" title="Production triggers run this version">
                       published
@@ -252,6 +262,11 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
                   <Rocket className="size-3.5" /> {version.id === publishedId ? 'Published' : 'Publish this version'}
                 </Button>
               ))}
+            {version && !confirming && !publishing && version.id !== publishedId && (
+              <Button size="sm" variant="outline" onClick={() => setSchedulingOpen((o) => !o)} title="Publish this version at a chosen time" aria-expanded={schedulingOpen}>
+                <CalendarClock className="size-3.5" /> Schedule…
+              </Button>
+            )}
             {version &&
               !publishing &&
               (confirming ? (
@@ -275,6 +290,25 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
               <X className="size-4" />
             </Button>
           </div>
+          {version && (schedulingOpen || (schedules ?? []).some((s) => s.versionId === version.id)) && (
+            <div className="flex shrink-0 flex-col gap-2 border-b border-hair bg-sf2 px-4 py-2">
+              {schedulingOpen && (
+                <div className="max-w-[420px]">
+                  <ScheduleForm
+                    workflowId={workflowId}
+                    action="publish"
+                    versionId={version.id}
+                    label="Schedule publish"
+                    onScheduled={() => {
+                      setSchedulingOpen(false);
+                      void reloadSchedules();
+                    }}
+                  />
+                </div>
+              )}
+              <ScheduleRows schedules={schedules ?? []} workflowId={workflowId} onChanged={() => void reloadSchedules()} onlyVersion={version.id} />
+            </div>
+          )}
           <div className="relative min-h-0 flex-1">
             {preview ? (
               <ExecutionCanvas key={version?.id} workflow={preview} nodeTypes={nodeTypes} runData={NO_RUN_DATA} />

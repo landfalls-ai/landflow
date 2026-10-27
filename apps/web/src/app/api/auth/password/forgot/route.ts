@@ -16,9 +16,9 @@ const schema = z.object({ email: z.string().trim().email('Enter a valid email ad
 export const POST = handler(async (request: Request) => {
   const ip = clientIp(request);
   const limit = formLimit();
-  const check = limit.check(ip);
+  const check = await limit.check(ip);
   if (!check.ok) return error('Too many attempts. Try again later.', 429, { retryAfter: check.retryAfter });
-  limit.hit(ip);
+  await limit.hit(ip);
   const body = await parseBody(request, schema);
   if (!body.ok) return body.response;
   if (!mailConfigured()) return error('This Landflow can’t send email. Ask an admin for a password reset link (Settings → Users).', 503);

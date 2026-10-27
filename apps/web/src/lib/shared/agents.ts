@@ -3,6 +3,7 @@
  * Types shared by the API routes and the React client. No runtime imports.
  */
 import type { AgentMessage } from '@landflow/engine';
+import type { GuardrailsConfig, Replacement } from '../server/guardrails';
 
 export type { AgentMessage };
 
@@ -137,9 +138,15 @@ export interface AgentSchedule {
 /** A chat app the published agent answers in. */
 export interface AgentChannel {
   id: string;
-  /** telegram: polled through the messaging plugin; slack: Events API at /api/slack/events/<agentId>/<channelId>. */
-  type: 'telegram' | 'slack';
-  /** telegram: messaging.telegramApi; slack: messaging.slackApi (bot token, and the signing secret that verifies events). */
+  /**
+   * telegram: polled through the messaging plugin; slack: Events API at /api/slack/events/<agentId>/<channelId> and slash
+   * commands at /api/slack/commands/<agentId>/<channelId>; teams: Bot Framework messaging endpoint at /api/teams/messages/<agentId>/<channelId>.
+   */
+  type: 'telegram' | 'slack' | 'teams';
+  /**
+   * telegram: messaging.telegramApi; slack: messaging.slackApi or messaging.slackOAuth2Api (bot token, and the signing secret that
+   * verifies events); teams: core.microsoftBotApi (app id and password of the bot registration).
+   */
   credential: CredentialRef;
   access: 'private' | 'public';
   /** Private: Telegram user ids or usernames, or Slack member ids (U…), allowed to talk to the agent. */
@@ -149,6 +156,8 @@ export interface AgentChannel {
   enabled: boolean;
   /** Slack: answer in a thread under the message (default), else in the channel. */
   threadReplies?: boolean;
+  /** Slack: answer slash commands (default on); the app's command points at /api/slack/commands/<agentId>/<channelId>. */
+  slashCommands?: boolean;
 }
 
 export interface AgentSettings {
@@ -164,6 +173,31 @@ export interface AgentSettings {
   dailyTokenLimit?: number;
   dailyCostLimit?: number;
   monthlyCostLimit?: number;
+  /** Addresses that get approve / reject links by email (host SMTP) whenever a run waits for a tool approval. */
+  approvalEmails?: string[];
+}
+
+/**
+ * Checks on what goes into or comes out of the agent (the Guardrails node's checks: PII, secret keys, keywords, URLs,
+ * prompt injection, moderation, custom). `block` answers with `reply` instead (the input never reaches the model, the
+ * output never reaches the person); `sanitize` replaces what the pattern checks find (PII, secrets, keywords, URLs) and
+ * goes on. Checks that need a model (injection with the model, moderation, custom) only run in `block` rules.
+ */
+export interface AgentGuardrail {
+  enabled: boolean;
+  action: 'block' | 'sanitize';
+  /** block: what the person gets instead; the builder writes it. */
+  reply: string;
+  /** sanitize: `redact` puts <EMAIL_ADDRESS>, `mask` keeps the last characters. */
+  replacement?: Replacement;
+  checks: GuardrailsConfig;
+}
+
+export interface AgentGuardrails {
+  /** Applied to each user message before the model sees it. */
+  input?: AgentGuardrail;
+  /** Applied to the final answer before it is sent. */
+  output?: AgentGuardrail;
 }
 
 /** Everything that decides how the agent behaves: the draft, and each published version. */
@@ -180,6 +214,7 @@ export interface AgentConfig {
   channels: AgentChannel[];
   memory: { crossSession: boolean };
   settings: AgentSettings;
+  guardrails?: AgentGuardrails;
 }
 
 export interface AgentVersion {
@@ -220,7 +255,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = { maxIterations: 12, toolCo
 // Sessions
 // ---------------------------------------------------------------------------
 
-export type SessionSource = 'test' | 'schedule' | 'telegram' | 'slack' | 'workflow' | 'agent' | 'api';
+export type SessionSource = 'test' | 'schedule' | 'telegram' | 'slack' | 'teams' | 'workflow' | 'agent' | 'api';
 export type SessionStatus = 'idle' | 'running' | 'awaiting_approval' | 'error';
 export type ToolKind = 'node' | 'workflow' | 'agent' | 'skill' | 'memory';
 
@@ -249,6 +284,18 @@ export type TimelineEntry =
       executionId?: string;
       childAgentId?: string;
       childSessionId?: string;
+      at: string;
+    }
+  /** An input or output guardrail that blocked or sanitized the text (nothing is shown when the text passed). */
+  | {
+      id: string;
+      type: 'guardrail';
+      stage: 'input' | 'output';
+      action: 'blocked' | 'sanitized';
+      /** What was found; matches are masked. */
+      violations: Array<{ check: string; type: string; match?: string; confidence?: number; reason?: string }>;
+      /** blocked: the reply that went out instead. */
+      reply?: string;
       at: string;
     }
   | { id: string; type: 'error'; message: string; at: string }

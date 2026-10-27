@@ -69,9 +69,9 @@ export function scopedTable(ref: string, scope: TableScope | undefined): DataTab
   return scope.actor && !filterVisible(scope.actor, 'dataTable', [table]).length ? undefined : table;
 }
 
-/** A table name not taken on this instance (names are unique): `name`, else `name 2`, `name 3`… */
-export function freeTableName(name: string): string {
-  const taken = new Set(dataTables().listTables().map((t) => t.name.toLowerCase()));
+/** A table name not taken in `projectId` (names are unique per project): `name`, else `name 2`, `name 3`… */
+export function freeTableName(name: string, projectId?: string): string {
+  const taken = new Set(dataTables().inProject(dataTables().listTables(), projectId).map((t) => t.name.toLowerCase()));
   if (!taken.has(name.toLowerCase())) return name;
   for (let i = 2; ; i++) if (!taken.has(`${name} ${i}`.toLowerCase())) return `${name} ${i}`;
 }

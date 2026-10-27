@@ -1,6 +1,6 @@
 /**
- * PATCH /api/settings/audit/destinations/:id `{ name?, enabled?, config? }` — change a SIEM destination (empty
- * secret fields keep their saved value). DELETE removes it and drops what is still queued for it. Owners and admins.
+ * PATCH /api/settings/audit/destinations/:id `{ name?, enabled?, config?, scope? }` — change a SIEM destination (empty
+ * secret fields keep their saved value; `scope` `{ projectIds, instance }` limits it to those projects' events, `null` sends everything again). DELETE removes it and drops what is still queued for it. Owners and admins.
  */
 import { recordAudit } from '@/lib/server/audit';
 import { AuditDestinationError, auditDestinations, destinationPatchSchema } from '@/lib/server/audit/destinations';
@@ -15,7 +15,7 @@ export const PATCH = handler(async (request: Request, { params }: Ctx) => {
   if (!body.ok) return body.response;
   try {
     const destination = auditDestinations.update(id, body.data);
-    recordAudit({ action: 'settings.update', target: { type: 'audit_destination', id, name: destination.name }, summary: `Changed the audit destination “${destination.name}”`, details: { kind: destination.kind, enabled: destination.enabled, fields: Object.keys(body.data.config ?? {}).join(',') || undefined } });
+    recordAudit({ action: 'settings.update', target: { type: 'audit_destination', id, name: destination.name }, summary: `Changed the audit destination “${destination.name}”`, details: { kind: destination.kind, enabled: destination.enabled, scoped: Boolean(destination.scope), fields: Object.keys(body.data.config ?? {}).join(',') || undefined } });
     return json({ destination });
   } catch (caught) {
     if (caught instanceof AuditDestinationError) return error(caught.message, caught.status);

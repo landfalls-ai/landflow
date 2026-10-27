@@ -17,7 +17,11 @@ export type Language = 'javascript' | 'python';
 /** n8n's Code node modes: `all` = "Run once for all items", `each` = "Run once for each item". */
 export type RunMode = 'all' | 'each';
 
-/** An n8n/Landflow item. Only `json` is read; `pairedItem` and `binary` are passed through when the snippet keeps them. */
+/**
+ * An n8n/Landflow item. Only `json` is read; `pairedItem` and `binary` are passed through when the snippet keeps them.
+ * A file the snippet creates (`prepareBinaryData`) comes back as `binary.<name> = { data: <base64>, mimeType, fileName,
+ * fileExtension, fileSize }`; the host stores it in its binary store.
+ */
 export interface RunItem {
   json: Record<string, unknown>;
   pairedItem?: unknown;
@@ -44,6 +48,15 @@ export interface RunRequest {
   timezone?: string;
   /** Wall-clock limit; capped at the runner's own limit. */
   timeoutMs?: number;
+  /**
+   * The bytes of input files, base64, by `"<item index>:<property>"` (`this.helpers.getBinaryDataBuffer(i, 'data')`,
+   * `_helpers.get_binary_data_buffer`). The sandbox has no network, so the host sends the files it reads.
+   */
+  binary?: Record<string, string>;
+  /** Input files the host left out (too large for the cap), by the same keys, with the reason the snippet reads. */
+  binarySkipped?: Record<string, string>;
+  /** Cap on the files a snippet creates with `prepareBinaryData` (all together); lowered to the runner's own limit. */
+  maxBinaryBytes?: number;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -85,6 +98,8 @@ export interface RunnerLimits {
   memoryMb: number;
   maxOutputBytes: number;
   fileSizeMb: number;
+  /** Files a snippet creates (all together), before base64. */
+  maxBinaryBytes: number;
 }
 
 export interface RunnerInfo {

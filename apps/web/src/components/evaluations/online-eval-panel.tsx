@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowDownRight, ArrowUpRight, ExternalLink, Flag, Gauge, Save } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, ExternalLink, Flag, Gauge, Save, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { timeAgo } from '@/lib/client/format';
 import type { AgentModel, ModelProvider } from '@/lib/shared/agents';
@@ -285,6 +285,11 @@ function ScoreRow({ score, lowScore, link }: { score: OnlineEvalScore; lowScore:
           <span className={cn('block text-[12px] text-t3', !open && 'truncate')}>{score.reasoning}</span>
         </span>
         <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-t3">
+          {score.userFeedback && (
+            <span title={`The person rated this reply thumbs ${score.userFeedback.rating}${score.userFeedback.comment ? `: ${score.userFeedback.comment}` : ''}`} className={score.userFeedback.rating === 'up' ? 'text-gn' : 'text-rd'}>
+              {score.userFeedback.rating === 'up' ? <ThumbsUp className="size-3" /> : <ThumbsDown className="size-3" />}
+            </span>
+          )}
           {score.flagged && <Flag className="size-3 text-rd" />}
           {timeAgo(score.createdAt)}
         </span>

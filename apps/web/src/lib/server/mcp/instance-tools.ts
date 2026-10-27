@@ -22,6 +22,8 @@ import { isProtectedEnvironment } from '../environments/settings';
 import { store } from '../store';
 import { startTrigger } from '../telemetry';
 import { canResource, creationProject, filterVisible, resourceDenial, type Actor } from '../projects/access';
+import { getProject } from '../projects/store';
+import { inScope, type McpScope } from './project-servers';
 import { createIn } from '../projects/http';
 import type { ResourceAction } from '../../shared/projects';
 import { MCP_SERVER_VERSION, textResult } from './server';
@@ -37,6 +39,9 @@ How to build one:
 Credentials can't be created here: nodes that need one get it chosen in the editor (the workflow's url).
 
 ${PARAMETER_FORMATS}`;
+
+const SCOPE_NOTE = (project: string) =>
+  `This server is scoped to the project “${project}”: it lists, reads, changes and runs only that project's workflows, and new workflows are created in it. Other workflows do not exist here.`;
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 
@@ -146,10 +151,15 @@ function startNode(workflow: Workflow, ref?: string) {
  * `resourceCan`), and what they create goes to their personal project. Without one (the instance access token) the
  * server acts for the instance and checks nothing, as before.
  */
-export function instanceServer(actor?: Actor): McpServer {
-  const server = new McpServer({ name: 'landflow', title: 'Landflow', version: MCP_SERVER_VERSION }, { instructions: INSTRUCTIONS });
-  /** The refusal for `actor` doing `action` with a workflow, or undefined when allowed (a workflow they cannot see is "not found"). */
+export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
+  const project = scope && getProject(scope.projectId);
+  const server = new McpServer(
+    { name: 'landflow', title: project ? `Landflow · ${project.name}` : 'Landflow', version: MCP_SERVER_VERSION },
+    { instructions: project ? `${SCOPE_NOTE(project.name)}\n\n${INSTRUCTIONS}` : INSTRUCTIONS },
+  );
+  /** The refusal for `actor` doing `action` with a workflow, or undefined when allowed (a workflow they cannot see is "not found"; neither is one outside the project this server is scoped to). */
   const denied = (id: string, action: ResourceAction): CallToolResult | undefined => {
+    if (!inScope(scope, id)) return failure(`Workflow ${id} not found`);
     if (!actor) return undefined;
     const why = resourceDenial(actor, 'workflow', id, action);
     return why ? failure(why.status === 404 ? `Workflow ${id} not found` : why.message) : undefined;
@@ -170,6 +180,7 @@ export function instanceServer(actor?: Actor): McpServer {
     async ({ query, active, limit }) => {
       const q = query?.trim().toLowerCase();
       const list = (actor ? filterVisible(actor, 'workflow', store.workflowSummaries()) : store.workflowSummaries())
+        .filter((w) => inScope(scope, w.id))
         .filter((w) => (active === undefined || w.active === active) && (!q || [w.name, w.description ?? '', ...w.tags].some((text) => text.toLowerCase().includes(q))));
       return json({
         total: list.length,
@@ -219,7 +230,8 @@ export function instanceServer(actor?: Actor): McpServer {
       // Governance: activation may need approval (four-eyes) or be refused (node policy); see lib/server/governance/saves.ts.
       const id = `wf_${nanoid(10)}`;
       const { workflow: saved, extras } = createIn(
-        actor ? creationProject(actor) : undefined,
+        // A scoped server creates in its project (the actor needs to be allowed to create there); an unscoped one in the actor's personal project.
+        scope ? (actor ? creationProject(actor, scope.projectId) : scope.projectId) : actor ? creationProject(actor) : undefined,
         'workflow',
         () => governedSave({ ...parsed.data, id } as Workflow, undefined, (w) => store.saveWorkflow(w), { by: currentActorId(), source: 'mcp' }),
         (created) => created.workflow.id,
@@ -423,7 +435,7 @@ export function instanceServer(actor?: Actor): McpServer {
       const max = limit ?? 20;
       const all: ExecutionSummary[] = [...liveExecutions(workflowId), ...store.listExecutions({ workflowId, limit: status ? Number.POSITIVE_INFINITY : max })];
       const seen = new Set<string>();
-      const list = all.filter((e) => !seen.has(e.id) && seen.add(e.id) && (!status || e.status === status) && (!actor || canResource(actor, 'workflow', e.workflowId, 'read'))).slice(0, max);
+      const list = all.filter((e) => !seen.has(e.id) && seen.add(e.id) && (!status || e.status === status) && (!actor || canResource(actor, 'workflow', e.workflowId, 'read')) && inScope(scope, e.workflowId)).slice(0, max);
       return json({
         executions: list.map((e) => ({
           id: e.id,
@@ -449,7 +461,7 @@ export function instanceServer(actor?: Actor): McpServer {
     },
     async ({ id, includeData }) => {
       const record = liveExecution(id) ?? store.getExecution(id);
-      if (record && denied(record.workflowId, 'read')) return failure(`Execution ${id} not found`);
+      if (record && (denied(record.workflowId, 'read') || !inScope(scope, record.workflowId))) return failure(`Execution ${id} not found`);
       return record ? json(executionDigest(record, Boolean(includeData))) : failure(`Execution ${id} not found`);
     },
   );

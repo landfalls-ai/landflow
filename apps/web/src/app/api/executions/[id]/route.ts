@@ -1,3 +1,4 @@
+import { executionFeedback } from '@/lib/server/chat-feedback';
 import { error, handler, json } from '@/lib/server/http';
 import { cancelExecution, cancelQueuedExecution, cancelWaitingExecution, liveExecution } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
@@ -15,7 +16,9 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { resumeState: _state, ...execution } = found;
   // The trace link is built here, so LANDFLOW_TRACE_URL stays a plain server setting.
   const link = traceUrl(execution.traceId);
-  return json({ execution, ...(link && { traceUrl: link }) });
+  // A chat answer's thumbs up/down (hosted chat, widget, editor).
+  const chatFeedback = executionFeedback(id);
+  return json({ execution: { ...execution, ...(chatFeedback && { chatFeedback }) }, ...(link && { traceUrl: link }) });
 });
 
 /** DELETE cancels a running, waiting or queued execution, or removes a finished one from history. */

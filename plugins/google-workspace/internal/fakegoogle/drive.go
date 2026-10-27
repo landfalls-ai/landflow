@@ -147,6 +147,9 @@ func (s *Server) export(w http.ResponseWriter, f *File, mimeType string) {
 				out += strings.Join(cells, ",") + "\n"
 			}
 		}
+	case strings.HasPrefix(f.MimeType, "application/vnd.google-apps.") && mimeType != "":
+		// Any other conversion: stand-in bytes that name the source and the format.
+		out = "FAKE-EXPORT[" + f.ID + " -> " + mimeType + "]\x00\xff"
 	default:
 		writeError(w, http.StatusBadRequest, "Export only supports Docs Editors files.")
 		return
@@ -267,8 +270,12 @@ func splitTop(s, sep string) []string {
 
 // upload handles uploadType=multipart (metadata part, then content part).
 func (s *Server) upload(w http.ResponseWriter, r *http.Request, body []byte) {
+	if r.URL.Query().Get("uploadType") == "resumable" {
+		s.resumableUpload(w, r, body)
+		return
+	}
 	if r.Method != http.MethodPost || r.URL.Query().Get("uploadType") != "multipart" {
-		writeError(w, http.StatusBadRequest, "only uploadType=multipart is supported")
+		writeError(w, http.StatusBadRequest, "only uploadType=multipart and resumable are supported")
 		return
 	}
 	mt, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -307,4 +314,47 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, body []byte) {
 	f := &File{ID: s.id("file"), Name: meta.Name, MimeType: mimeType, Parents: meta.Parents, Content: content, Modified: time.Now()}
 	s.Files[f.ID] = f
 	writeJSON(w, http.StatusOK, fileJSON(f))
+}
+
+// resumableUpload handles uploadType=resumable: a POST with the metadata
+// answers a session URL (Location), a single PUT to it stores the content.
+func (s *Server) resumableUpload(w http.ResponseWriter, r *http.Request, body []byte) {
+	q := r.URL.Query()
+	switch r.Method {
+	case http.MethodPost:
+		var meta struct {
+			Name     string   `json:"name"`
+			MimeType string   `json:"mimeType"`
+			Parents  []string `json:"parents"`
+		}
+		if err := json.Unmarshal(body, &meta); err != nil || meta.Name == "" {
+			writeError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if meta.MimeType == "" {
+			meta.MimeType = r.Header.Get("X-Upload-Content-Type")
+		}
+		if meta.Parents == nil {
+			meta.Parents = []string{"root"}
+		}
+		if s.sessions == nil {
+			s.sessions = map[string]*File{}
+		}
+		id := s.id("session")
+		s.sessions[id] = &File{Name: meta.Name, MimeType: meta.MimeType, Parents: meta.Parents}
+		w.Header().Set("Location", "http://"+r.Host+"/upload/drive/v3/files?uploadType=resumable&upload_id="+id)
+		w.WriteHeader(http.StatusOK)
+	case http.MethodPut:
+		f := s.sessions[q.Get("upload_id")]
+		if f == nil {
+			writeError(w, http.StatusNotFound, "Unknown upload session")
+			return
+		}
+		delete(s.sessions, q.Get("upload_id"))
+		f.ID, f.Content, f.Modified = s.id("file"), body, time.Now()
+		s.Files[f.ID] = f
+		writeJSON(w, http.StatusOK, fileJSON(f))
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "unsupported resumable call")
+	}
 }

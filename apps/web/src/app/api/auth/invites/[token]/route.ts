@@ -28,9 +28,9 @@ const schema = z.object({
 export const POST = handler(async (request: Request, { params }: Ctx) => {
   const ip = clientIp(request);
   const limit = formLimit();
-  const check = limit.check(ip);
+  const check = await limit.check(ip);
   if (!check.ok) return error('Too many attempts. Try again later.', 429, { retryAfter: check.retryAfter });
-  limit.hit(ip);
+  await limit.hit(ip);
   const invite = findToken('invite', (await params).token);
   if (!invite) return error(GONE, 404);
   const body = await parseBody(request, schema);

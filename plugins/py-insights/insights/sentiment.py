@@ -7,6 +7,7 @@ from typing import Any
 
 from landflow_sdk import Node, NodeOperationError
 
+from .files import attach_result_file, binary_source_properties, flag, read_text, result_file_properties
 from .text import INTENSIFIERS, LEXICON, NEGATION_WINDOW, NEGATORS, get_path, set_path, tokenize
 
 ALPHA = 15.0  # normalization constant: score = raw / sqrt(raw^2 + ALPHA), as in VADER
@@ -72,7 +73,9 @@ class Sentiment(Node):
                 "default": "text",
                 "required": True,
                 "description": "Field holding the text to score (dot paths allowed)",
+                "displayOptions": {"show": {"fromBinary": [False]}},
             },
+            *binary_source_properties("Text From Binary File", "Read the text from a binary text file on the item (TXT, MD, CSV, ...) instead of a field"),
             {
                 "name": "outputField",
                 "displayName": "Output Field",
@@ -80,19 +83,21 @@ class Sentiment(Node):
                 "default": "sentiment",
                 "description": "Field that receives {score, label, matched}",
             },
+            *result_file_properties("Attach a CSV with one row per item (index, score, label, matched words) as a binary file"),
         ],
     }
 
     def execute(self, ctx):
         items = ctx.get_input_data()
         out = []
+        rows = []
         counts = {"positive": 0, "neutral": 0, "negative": 0}
         # A child span of the SDK's `plugin.execute py-insights.sentiment` server span.
         with ctx.span("insights.sentiment.score", {"insights.items": len(items)}) as span:
             for i, item in enumerate(items):
                 field = str(ctx.get_node_parameter("field", i) or "text")
                 output_field = str(ctx.get_node_parameter("outputField", i) or "sentiment")
-                text = get_path(item["json"], field)
+                text = read_text(ctx, i) if flag(ctx, "fromBinary", i) else get_path(item["json"], field)
                 if text is None:
                     raise NodeOperationError(
                         f"Item {i} has no field '{field}'",
@@ -103,8 +108,10 @@ class Sentiment(Node):
                 counts[result["label"]] += 1
                 data = dict(item["json"])
                 set_path(data, output_field, result)
-                out.append({"json": data})
+                out.append({"json": data, **({"binary": item["binary"]} if item.get("binary") else {})})
+                rows.append([i, result["score"], result["label"], " | ".join(result["matched"])])
             span.set_attributes({f"insights.sentiment.{label}": n for label, n in counts.items()})
+        attach_result_file(ctx, out, ["item", "score", "label", "matched"], rows, "sentiment.csv")
         # Custom metric: Prometheus `insights_sentiment_labels_total{insights_sentiment_label=...}` on GET /metrics.
         labels = ctx.metrics.counter("insights.sentiment.labels", "{item}", "Items scored, by sentiment label")
         for label, n in counts.items():

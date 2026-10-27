@@ -1,6 +1,6 @@
-import { defineNode, pollIntervalProperty, type JsonObject, type NodeItem } from '@landflow/sdk';
+import { defineNode, pollIntervalProperty, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
 import { METRICS, type ApiContext } from '../shared';
-import { telegramCall, type TelegramCredentials } from './telegram';
+import { telegramCall, telegramDownload, type TelegramCredentials } from './telegram';
 
 interface Update extends JsonObject {
   update_id: number;
@@ -39,6 +39,49 @@ export function updateToItem(update: Update): NodeItem {
   };
 }
 
+/** Message fields that carry a file; a photo is a list of sizes (the last is the largest). */
+const FILE_KEYS = ['photo', 'document', 'video', 'audio', 'voice', 'video_note', 'animation', 'sticker'];
+/** The cloud Bot API serves downloads up to 20 MB. */
+const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+
+/** The file of an update's message: its type and Bot API `file_id` (callback queries carry none). */
+export function fileOf(item: NodeItem): { kind: string; fileId: string; fileSize?: number } | undefined {
+  const message = item.json.message as JsonObject | null;
+  if (!message) return undefined;
+  for (const kind of FILE_KEYS) {
+    const value = message[kind] as JsonObject | JsonObject[] | undefined;
+    const file = Array.isArray(value) ? value[value.length - 1] : value;
+    if (file && typeof file.file_id === 'string') return { kind, fileId: file.file_id, ...(typeof file.file_size === 'number' && { fileSize: file.file_size }) };
+  }
+  return undefined;
+}
+
+/**
+ * Download the photo / document / voice… of each item into `item.binary.data`. A file that can't be fetched (too big for
+ * the cloud API, expired) must not lose the update, so the item keeps its JSON and gets `file_error` instead.
+ */
+async function withFiles(ctx: IExecuteContext, api: ApiContext, credentials: TelegramCredentials, items: NodeItem[]): Promise<NodeItem[]> {
+  const out: NodeItem[] = [];
+  for (const item of items) {
+    const file = fileOf(item);
+    if (!file) {
+      out.push(item);
+      continue;
+    }
+    try {
+      if (file.fileSize !== undefined && file.fileSize > MAX_DOWNLOAD_BYTES) throw new Error(`the file is ${(file.fileSize / 1024 / 1024).toFixed(1)} MB; the cloud Bot API serves up to 20 MB`);
+      const { path, response } = await telegramDownload(api, credentials, file.fileId);
+      const type = response.headers.get('content-type');
+      const ref = await ctx.helpers.prepareBinaryData(response.body!, path.split('/').pop(), type && !/octet-stream/i.test(type) ? type : undefined);
+      out.push({ ...item, json: { ...item.json, file_type: file.kind }, binary: { data: ref } });
+    } catch (error) {
+      ctx.logger.warn(`telegram trigger could not download a ${file.kind}: ${(error as Error).message}`);
+      out.push({ ...item, json: { ...item.json, file_type: file.kind, file_error: (error as Error).message } });
+    }
+  }
+  return out;
+}
+
 export const TelegramTrigger = defineNode({
   description: {
     name: 'telegramTrigger',
@@ -72,6 +115,14 @@ export const TelegramTrigger = defineNode({
         ],
       },
       {
+        name: 'downloadFiles',
+        displayName: 'Download Files',
+        type: 'boolean',
+        default: false,
+        description:
+          'Whether to download the photo (largest size), document, video, audio, voice, video note, animation or sticker of a message into item.binary.data (up to 20 MB on the cloud Bot API). A file that fails leaves file_error in the item',
+      },
+      {
         name: 'notice',
         displayName:
           'Polls getUpdates, so the bot must have no webhook (Telegram answers 409 otherwise: call deleteWebhook first). Only one poller per bot. Execute in the editor shows up to 5 recent updates without consuming them.',
@@ -87,12 +138,14 @@ export const TelegramTrigger = defineNode({
     const matches = (update: Update) => all || Object.keys(update).some((key) => key !== 'update_id' && selected.includes(key));
     // Telegram filters server-side too; [] means "the default set". Not sent in manual mode, which must not change anything.
     const allowed_updates = all ? [] : selected;
+    const download = ctx.getNodeParameter<boolean>('downloadFiles', 0, false) === true;
+    const finish = (items: NodeItem[]) => (download ? withFiles(ctx, api, credentials, items) : items);
     const getUpdates = (params: JsonObject) => telegramCall<Update[]>(api, credentials, 'getUpdates', { timeout: 0, ...params });
 
     if (ctx.mode === 'manual') {
       // No offset: nothing is confirmed, so the next scheduled poll still sees these updates.
       const recent = await getUpdates({ limit: PAGE_SIZE });
-      return recent.filter(matches).slice(-MANUAL_ITEMS).map(updateToItem);
+      return finish(recent.filter(matches).slice(-MANUAL_ITEMS).map(updateToItem));
     }
 
     if (ctx.isFirstPoll()) {
@@ -121,6 +174,6 @@ export const TelegramTrigger = defineNode({
         .add(found.length, { service: 'telegram' });
       ctx.logger.info(`telegram trigger found ${found.length} new update(s)`, { 'landflow.poll.items': found.length });
     }
-    return found.map(updateToItem);
+    return finish(found.map(updateToItem));
   },
 });

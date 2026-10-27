@@ -35,6 +35,7 @@ import { AppIcon, NodeIcon } from '../ui/icon';
 import { Textarea } from '../ui/inputs';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
 import { CapabilitiesCard } from './capabilities-card';
+import { GuardrailsCard } from './guardrails-card';
 import { Dialog, Field } from './dialog';
 import { ModelCard } from './model-card';
 import { EvaluationsTab } from './evaluations-tab';
@@ -600,6 +601,7 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
                 <div id="section-capabilities" className="scroll-mt-20 space-y-4">
                   <CapabilitiesCard agentId={agentId} config={draft} update={update} />
                 </div>
+                <GuardrailsCard config={draft} update={update} />
               </div>
             )}
             {tab === 'sessions' && <SessionsTab agentId={agentId} sessionId={sessionId} onOpen={(id) => go('sessions', id)} childHref={childHref} />}

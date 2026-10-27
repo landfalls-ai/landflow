@@ -1,0 +1,50 @@
+{
+  "name": "Support bot",
+  "documentStores": [
+    {
+      "id": "store-1",
+      "name": "Help center",
+      "description": "Public help articles",
+      "loaders": "[{\"id\":\"l1\",\"loaderId\":\"pdfFile\",\"loaderName\":\"Handbook PDF\",\"loaderConfig\":{\"metadata\":\"{\\\"team\\\":\\\"support\\\"}\"},\"splitterId\":\"recursiveCharacterTextSplitter\",\"splitterName\":\"Recursive Character Text Splitter\",\"splitterConfig\":{\"chunkSize\":800,\"chunkOverlap\":100}},{\"id\":\"l2\",\"loaderId\":\"plainText\",\"loaderName\":\"FAQ\",\"loaderConfig\":{\"text\":\"Returns take 30 days.\"}}]",
+      "vectorStoreConfig": "{\"name\":\"postgres\",\"config\":{\"tableName\":\"help_chunks\",\"host\":\"db.internal\",\"credential\":\"flowise-cred-pg\"}}",
+      "embeddingConfig": "{\"name\":\"openAIEmbeddings\",\"config\":{\"modelName\":\"text-embedding-3-small\",\"credential\":\"flowise-cred-openai\"}}"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "documentStoreVS_0",
+      "position": { "x": 400, "y": 200 },
+      "type": "customNode",
+      "data": { "id": "documentStoreVS_0", "name": "documentStoreVS", "label": "Document Store (Vector)", "version": 1, "inputs": { "selectedStore": "store-1", "topK": 5 } }
+    },
+    {
+      "id": "chatOpenAI_0",
+      "position": { "x": 400, "y": -100 },
+      "type": "customNode",
+      "data": { "id": "chatOpenAI_0", "name": "chatOpenAI", "label": "ChatOpenAI", "version": 8, "credential": "flowise-cred-openai", "inputs": { "modelName": "gpt-4o-mini" } }
+    },
+    {
+      "id": "retrievalQAChain_0",
+      "position": { "x": 800, "y": 100 },
+      "type": "customNode",
+      "data": { "id": "retrievalQAChain_0", "name": "retrievalQAChain", "label": "Retrieval QA Chain", "version": 2, "inputs": {} }
+    },
+    {
+      "id": "documentStoreVS_1",
+      "position": { "x": 400, "y": 500 },
+      "type": "customNode",
+      "data": { "id": "documentStoreVS_1", "name": "documentStoreVS", "label": "Unknown store", "version": 1, "inputs": { "selectedStore": "store-404" } }
+    },
+    {
+      "id": "retrievalQAChain_1",
+      "position": { "x": 800, "y": 500 },
+      "type": "customNode",
+      "data": { "id": "retrievalQAChain_1", "name": "retrievalQAChain", "label": "Second Chain", "version": 2, "inputs": {} }
+    }
+  ],
+  "edges": [
+    { "id": "e0", "source": "documentStoreVS_0", "sourceHandle": "documentStoreVS_0-output-retriever-BaseRetriever", "target": "retrievalQAChain_0", "targetHandle": "retrievalQAChain_0-input-vectorStoreRetriever-BaseRetriever" },
+    { "id": "e1", "source": "chatOpenAI_0", "sourceHandle": "chatOpenAI_0-output-chatOpenAI-ChatOpenAI", "target": "retrievalQAChain_0", "targetHandle": "retrievalQAChain_0-input-model-BaseChatModel" },
+    { "id": "e2", "source": "documentStoreVS_1", "sourceHandle": "documentStoreVS_1-output-retriever-BaseRetriever", "target": "retrievalQAChain_1", "targetHandle": "retrievalQAChain_1-input-vectorStoreRetriever-BaseRetriever" }
+  ]
+}

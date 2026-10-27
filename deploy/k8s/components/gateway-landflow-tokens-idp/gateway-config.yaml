@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# The sidecar's base config (../../base/host/mcp-gateway-config.yaml) with sign-in for two issuers: Landflow-issued MCP tokens and an
+# identity provider's access tokens (docs/mcp-gateway.md "Two issuers on one route"). agentgateway's `mcpAuthentication` names one
+# issuer, so the policy is a `jwtAuth` with a provider each; a call with no token is anonymous (no grants, an empty tool list) and a
+# token from another issuer is 401. Replace the issuer, audience and JWKS URLs below with the ones in your overlay (this file is a
+# template: it uses the orbstack-ingress host http://landflow.localhost, and Keycloak's realm `landflow` at
+# http://keycloak.landflow.localhost). Tokens of the identity provider need `aud` = the gateway's /mcp URL. The JWKS are fetched at
+# startup, so an unreachable one stops the gateway: the identity provider has to be up before the pod starts. The host's gateway sync
+# puts the same two providers on the per-plugin routes when LANDFLOW_OIDC_ISSUER is set (see kustomization.yaml).
+config:
+  adminAddr: "127.0.0.1:15000"
+  storage:
+    mode: hybrid
+  database:
+    url: sqlite:///data/agentgateway.db
+  logging:
+    level: info
+gateways:
+  default:
+    port: 4000
+mcp:
+  gateways: default
+  prefixMode: always
+  failureMode: failOpen
+  statefulMode: stateless
+  server:
+    name: landflow-mcp-gateway
+    version: dev
+    title: Landflow
+    instructions: Every installed Landflow plugin as MCP tools. Tool names are <plugin>_<resource>_<operation>.
+  targets: []
+  policies:
+    jwtAuth:
+      mode: optional
+      providers:
+        - issuer: http://landflow.localhost
+          audiences: [http://landflow.localhost/mcp]
+          jwks:
+            url: http://127.0.0.1:3000/api/mcp/jwks
+        - issuer: http://keycloak.landflow.localhost/realms/landflow
+          audiences: [http://landflow.localhost/mcp]
+          jwks:
+            url: http://keycloak.landflow-dev.svc.cluster.local:8080/realms/landflow/protocol/openid-connect/certs

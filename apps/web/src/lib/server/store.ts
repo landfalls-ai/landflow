@@ -213,6 +213,7 @@ class Store {
       this.db.delete('execution_steps', { execution_id: id });
       this.db.delete('execution_checkpoints', { execution_id: id });
       this.db.delete('retries', { execution_id: id });
+      this.db.delete('chat_feedback', { id: `execution:${id}` });
       return deleted;
     });
     executionDeletedListeners.forEach((listener) => listener(id));

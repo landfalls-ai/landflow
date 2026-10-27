@@ -15,6 +15,33 @@ import type { WorkflowSettings } from '@landflow/engine';
 
 export const DEFAULT_QUEUE_SIZE = 100;
 
+/** Run priorities (workflow setting `priority`): which runs get a turn first when slots or workers are scarce. */
+export type RunPriority = NonNullable<WorkflowSettings['priority']>;
+export const PRIORITIES: readonly RunPriority[] = ['high', 'normal', 'low'];
+
+export function priorityOf(settings: WorkflowSettings | undefined): RunPriority {
+  return settings?.priority === 'high' || settings?.priority === 'low' ? settings.priority : 'normal';
+}
+
+/**
+ * Waiting runs start in priority order, but a lower one is not starved: each priority delays a run's place in line by this
+ * much (a high run goes ahead of normal runs queued up to 15 s earlier and low ones up to 60 s earlier; a low run that has
+ * waited 60 s longer than the newest high one goes first).
+ */
+export const PRIORITY_DELAY_MS: Record<RunPriority, number> = { high: 0, normal: 15_000, low: 60_000 };
+
+/** Where a queued run stands: its queue time plus its priority's delay (smaller starts first). */
+export const queueOrder = (queuedAtMs: number, priority: RunPriority) => queuedAtMs + PRIORITY_DELAY_MS[priority];
+
+/** The modes the instance-wide run cap counts and holds back (agent tool runs are left out: their caller holds a slot). */
+export const CAPPED_MODES = new Set<ExecutionMode>(['webhook', 'trigger', 'poll']);
+
+/** `LANDFLOW_MAX_RUNS`: production runs (webhooks, schedules, polls, public chats) this process runs at once; 0 or unset = no cap. */
+export function maxRuns(env: Record<string, string | undefined> = process.env): number {
+  const value = Math.floor(Number(env.LANDFLOW_MAX_RUNS));
+  return value > 0 ? value : 0;
+}
+
 /** The modes a concurrency limit applies to. */
 export const LIMITED_MODES = new Set<ExecutionMode>(['webhook', 'trigger', 'poll', 'tool']);
 

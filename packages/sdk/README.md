@@ -204,6 +204,9 @@ const repoEvents: INodeType = {
   `verifySlackSignature(secret, body, timestamp, signature)`, `verifyHmacSha256({ secret, payload, signature, prefix,
   encoding })`, the matching `githubSignature` / `stripeSignature` / `slackSignature` for tests, and `safeEqual`. All
   compare in constant time; Stripe and Slack refuse timestamps older than 5 minutes.
+- JWTs: `rs256Sign(privateKeyPem, payload, headers?)` and `githubAppJwt(appId, privateKeyPem, now?)` (`iss` = app id, `iat` = now − 60 s, `exp` = now + 540 s) sign with
+  `node:crypto` (PKCS#1 or PKCS#8 PEM) for services that authenticate the client with a token, GitHub Apps first. Python has the same
+  (`landflow_sdk.jwt`) and Go (`landflow.GitHubAppJWT`).
 
 ## Transports and bindings
 

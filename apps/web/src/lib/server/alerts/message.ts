@@ -26,6 +26,11 @@ export interface AlertNotice {
     waitingSince?: string;
     waitingFor?: string;
   };
+  /**
+   * Alerts that are not about one run (failure rate, plugins, AI cost, evaluations): the monitor writes the message.
+   * `workflow` then names what it is about (a workflow, `Plugin x`, `AI usage`…).
+   */
+  custom?: { subject: string; facts: NoticeFact[]; recovery?: boolean };
   /** A throttle window's held-back alerts. */
   digest?: { count: number; minutes: number; since: string; lastError?: string; lastExecutionUrl?: string };
   /** Sent with "Send test". */
@@ -33,6 +38,12 @@ export interface AlertNotice {
   /** Where all the workflow's executions are listed. */
   executionsUrl: string;
   at: string;
+}
+
+export interface NoticeFact {
+  label: string;
+  value: string;
+  url?: string;
 }
 
 const MAX_ERROR = 1_000;
@@ -104,6 +115,26 @@ export function digestNotice(
   };
 }
 
+/** An alert a monitor wrote itself; the last fact with a `url` is the link ("Open …"). */
+export function customNotice(input: {
+  event: AlertEvent;
+  rule: { id: string; name: string };
+  about: { id: string; name: string };
+  subject: string;
+  facts: NoticeFact[];
+  link: string;
+  recovery?: boolean;
+}): AlertNotice {
+  return {
+    event: input.event,
+    rule: { id: input.rule.id, name: input.rule.name },
+    workflow: input.about,
+    custom: { subject: input.subject, facts: [...input.facts, { label: 'Open', value: input.link, url: input.link }], ...(input.recovery && { recovery: true }) },
+    executionsUrl: input.link,
+    at: new Date().toISOString(),
+  };
+}
+
 /** What "Send test" sends: a made-up failure, marked as a test. */
 export function testNotice(): AlertNotice {
   const now = new Date().toISOString();
@@ -118,12 +149,23 @@ export function testNotice(): AlertNotice {
   };
 }
 
-const VERB: Record<AlertEvent, string> = { failed: 'Failed', timedOut: 'Timed out', retriesExhausted: 'Failed after retries', waiting: 'Waiting' };
+const VERB: Record<AlertEvent, string> = {
+  failed: 'Failed',
+  timedOut: 'Timed out',
+  retriesExhausted: 'Failed after retries',
+  waiting: 'Waiting',
+  failureRate: 'High failure rate',
+  pluginOffline: 'Plugin offline',
+  pluginOnline: 'Plugin back online',
+  costThreshold: 'AI cost',
+  evaluationScore: 'Evaluation score',
+};
 
 /** One line: the subject of an email, the first line elsewhere. */
 export function subjectOf(notice: AlertNotice): string {
   const name = notice.workflow.name;
   if (notice.test) return 'Test alert from Landflow';
+  if (notice.custom) return notice.custom.subject;
   if (notice.digest) {
     const what = notice.event === 'waiting' ? 'runs waiting too long' : notice.digest.count === 1 ? 'more failure' : 'more failures';
     return `${name}: ${notice.digest.count} ${what} in the last ${durationText(notice.digest.minutes * 60_000)}`;
@@ -135,8 +177,9 @@ export function subjectOf(notice: AlertNotice): string {
 }
 
 /** The facts, as label/value pairs (the link last). */
-export function factsOf(notice: AlertNotice): { label: string; value: string; url?: string }[] {
-  const facts: { label: string; value: string; url?: string }[] = [{ label: 'Workflow', value: notice.workflow.name }];
+export function factsOf(notice: AlertNotice): NoticeFact[] {
+  if (notice.custom) return notice.custom.facts;
+  const facts: NoticeFact[] = [{ label: 'Workflow', value: notice.workflow.name }];
   const execution = notice.execution;
   if (notice.digest) {
     if (notice.digest.lastError) facts.push({ label: 'Latest error', value: notice.digest.lastError });
@@ -150,6 +193,9 @@ export function factsOf(notice: AlertNotice): { label: string; value: string; ur
   if (execution) facts.push({ label: 'Execution', value: execution.url, url: execution.url });
   return facts;
 }
+
+/** The link's text: "Open execution", "Open executions" (a digest), or the monitor's own link. */
+const linkText = (notice: AlertNotice) => (notice.custom ? 'Open in Landflow' : notice.digest ? 'Open executions' : 'Open execution');
 
 const footer = (notice: AlertNotice) => (notice.test ? 'Sent from Settings → Alerts.' : `Alert rule “${notice.rule.name}” · Landflow`);
 
@@ -168,13 +214,13 @@ export function htmlOf(notice: AlertNotice): string {
         }</td></tr>`,
     )
     .join('');
-  const link = notice.digest ? notice.executionsUrl : notice.execution?.url;
+  const link = notice.digest || notice.custom ? notice.executionsUrl : notice.execution?.url;
   return `<!doctype html><html><body style="margin:0;padding:24px;background:#f6f6f4;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1c1c1a">
 <div style="max-width:560px;margin:0 auto;background:#fff;border:1px solid #e6e6e1;border-radius:16px;padding:28px">
-<div style="font-weight:700;font-size:13px;letter-spacing:.02em;color:#b42318">LANDFLOW ALERT</div>
+<div style="font-weight:700;font-size:13px;letter-spacing:.02em;color:${notice.custom?.recovery ? '#067647' : '#b42318'}">LANDFLOW ${notice.custom?.recovery ? 'RECOVERY' : 'ALERT'}</div>
 <h1 style="font-size:18px;margin:12px 0 14px">${escapeHtml(subjectOf(notice))}</h1>
 <table style="border-collapse:collapse">${rows}</table>
-${link ? `<p style="margin:20px 0 0"><a href="${escapeHtml(link)}" style="display:inline-block;background:#1c1c1a;color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:999px">${notice.digest ? 'Open executions' : 'Open execution'}</a></p>` : ''}
+${link ? `<p style="margin:20px 0 0"><a href="${escapeHtml(link)}" style="display:inline-block;background:#1c1c1a;color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:999px">${linkText(notice)}</a></p>` : ''}
 <p style="font-size:12px;color:#777;margin:18px 0 0">${escapeHtml(footer(notice))}</p>
 </div></body></html>`;
 }
@@ -194,7 +240,7 @@ export function slackPayload(notice: AlertNotice) {
       { type: 'header', text: { type: 'plain_text', text: subjectOf(notice).slice(0, 150), emoji: true } },
       { type: 'section', fields: fields.slice(0, 10).map((fact) => ({ type: 'mrkdwn', text: `*${fact.label}*\n${slackEscape(fact.value)}` })) },
       ...(error ? [{ type: 'section', text: { type: 'mrkdwn', text: `*${error.label}*\n\`\`\`${slackEscape(error.value).slice(0, 2_900)}\`\`\`` } }] : []),
-      ...(link ? [{ type: 'section', text: { type: 'mrkdwn', text: `<${link.url}|${notice.digest ? 'Open executions' : 'Open execution'}>` } }] : []),
+      ...(link ? [{ type: 'section', text: { type: 'mrkdwn', text: `<${link.url}|${linkText(notice)}>` } }] : []),
       { type: 'context', elements: [{ type: 'mrkdwn', text: slackEscape(footer(notice)) }] },
     ],
   };
@@ -210,6 +256,7 @@ export function webhookPayload(notice: AlertNotice) {
     workflow: notice.workflow,
     ...(notice.execution && { execution: notice.execution }),
     ...(notice.digest && { digest: notice.digest }),
+    ...(notice.custom && { details: Object.fromEntries(notice.custom.facts.filter((fact) => !fact.url).map((fact) => [fact.label, fact.value])), ...(notice.custom.recovery && { recovery: true }) }),
     executionsUrl: notice.executionsUrl,
     ...(notice.test && { test: true }),
     sentAt: notice.at,
@@ -220,8 +267,61 @@ export function webhookPayload(notice: AlertNotice) {
 export function telegramText(notice: AlertNotice): string {
   const esc = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const lines = factsOf(notice).map((fact) =>
-    fact.url ? `<a href="${esc(fact.url)}">${notice.digest ? 'Open executions' : 'Open execution'}</a>` : fact.label === 'Error' || fact.label === 'Latest error' ? `<b>${esc(fact.label)}</b>\n<pre>${esc(fact.value)}</pre>` : `<b>${esc(fact.label)}:</b> ${esc(fact.value)}`,
+    fact.url ? `<a href="${esc(fact.url)}">${linkText(notice)}</a>` : fact.label === 'Error' || fact.label === 'Latest error' ? `<b>${esc(fact.label)}</b>\n<pre>${esc(fact.value)}</pre>` : `<b>${esc(fact.label)}:</b> ${esc(fact.value)}`,
   );
   // Errors are clipped to 1,000 characters, so this stays under Telegram's 4,096 (cutting it could break a tag).
   return [`<b>${esc(subjectOf(notice))}</b>`, '', ...lines].join('\n');
+}
+
+/** A Microsoft Teams message: an Adaptive Card (the Workflows webhook and the legacy incoming webhook both take this attachment). */
+export function teamsPayload(notice: AlertNotice) {
+  const facts = factsOf(notice);
+  const link = facts.find((fact) => fact.url);
+  const error = facts.find((fact) => fact.label === 'Error' || fact.label === 'Latest error');
+  const rows = facts.filter((fact) => !fact.url && fact !== error);
+  const recovery = notice.custom?.recovery;
+  return {
+    type: 'message',
+    attachments: [
+      {
+        contentType: 'application/vnd.microsoft.card.adaptive',
+        contentUrl: null,
+        content: {
+          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+          type: 'AdaptiveCard',
+          version: '1.4',
+          msteams: { width: 'Full' },
+          body: [
+            { type: 'TextBlock', text: subjectOf(notice).slice(0, 300), weight: 'Bolder', size: 'Medium', wrap: true, color: notice.test ? 'Default' : recovery ? 'Good' : 'Attention' },
+            { type: 'FactSet', facts: rows.slice(0, 12).map((fact) => ({ title: fact.label, value: fact.value.slice(0, 500) })) },
+            ...(error ? [{ type: 'TextBlock', text: error.value.slice(0, 1_000), wrap: true, fontType: 'Monospace', isSubtle: true }] : []),
+            { type: 'TextBlock', text: footer(notice), size: 'Small', isSubtle: true, wrap: true },
+          ],
+          ...(link && { actions: [{ type: 'Action.OpenUrl', title: linkText(notice), url: link.url }] }),
+        },
+      },
+    ],
+  };
+}
+
+/** A Discord webhook body: one embed (red for an alert, green for a recovery). Discord limits: 256 / 1024 / 4096 characters, 25 fields. */
+export function discordPayload(notice: AlertNotice) {
+  const facts = factsOf(notice);
+  const link = facts.find((fact) => fact.url);
+  const error = facts.find((fact) => fact.label === 'Error' || fact.label === 'Latest error');
+  const fields = facts.filter((fact) => !fact.url && fact !== error);
+  return {
+    username: 'Landflow',
+    embeds: [
+      {
+        title: subjectOf(notice).slice(0, 256),
+        ...(link && { url: link.url }),
+        color: notice.test ? 0x6b7280 : notice.custom?.recovery ? 0x067647 : 0xb42318,
+        ...(error && { description: `\`\`\`\n${error.value.replace(/```/g, "'''").slice(0, 1_500)}\n\`\`\`` }),
+        fields: fields.slice(0, 25).map((fact) => ({ name: fact.label.slice(0, 256), value: fact.value.slice(0, 1_024) || '-', inline: fact.value.length <= 40 })),
+        footer: { text: footer(notice).slice(0, 2_048) },
+        timestamp: notice.at,
+      },
+    ],
+  };
 }

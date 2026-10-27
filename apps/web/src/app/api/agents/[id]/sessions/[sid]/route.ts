@@ -1,5 +1,6 @@
 import { isRunning } from '@/lib/server/agents/runtime';
 import { agentStore } from '@/lib/server/agents/store';
+import { listAgentFeedback } from '@/lib/server/chat-feedback';
 import { error, handler, json } from '@/lib/server/http';
 import { traceUrl } from '@/lib/server/telemetry';
 
@@ -17,7 +18,7 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
       return link ? [[traceId, link]] : [];
     }),
   );
-  return json({ session, traceUrls });
+  return json({ session, traceUrls, feedback: listAgentFeedback(id, sid) });
 });
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {

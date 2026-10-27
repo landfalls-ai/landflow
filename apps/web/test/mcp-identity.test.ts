@@ -497,7 +497,8 @@ describe('the catalog: server.json, the registry API, Server Cards, PRM', () => 
     process.env.LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES = JSON.stringify({ mcpAuthentication: { mode: 'optional', issuer: INSTANCE, audiences: [`${GATEWAY}/mcp`], jwks: { url: `${INSTANCE}/api/mcp/jwks` } } });
     try {
       const signedIn = (await (await statusRoute.GET(req('/api/mcp/status'))).json()) as { gateway: { signIn?: { issuer: string; mode: string } } };
-      expect(signedIn.gateway.signIn).toEqual({ issuer: INSTANCE, mode: 'optional' });
+      // An identity provider is configured, so the sync also lets its tokens in (docs/mcp-gateway.md "Two issuers on one route").
+      expect(signedIn.gateway.signIn).toEqual({ issuer: INSTANCE, mode: 'optional', alsoIssuer: idpIssuer });
     } finally {
       delete process.env.LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES;
     }

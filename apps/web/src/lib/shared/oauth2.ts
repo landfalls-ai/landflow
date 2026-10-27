@@ -6,6 +6,9 @@
 /** The generic OAuth2 credential type of the core plugin; plugin types extend it with `extends: ['oAuth2Api']`. */
 export const OAUTH2_CREDENTIAL = 'core.oAuth2Api';
 
+/** The credential of an OAuth-protected MCP server (RFC 9728 discovery, dynamic client registration, `resource`): it extends the generic type. */
+export const MCP_OAUTH2_CREDENTIAL = 'core.mcpOAuth2Api';
+
 /** Where providers send the browser back after consent. Public (the sign-in guard lets it through); the state is signed. */
 export const OAUTH2_CALLBACK_PATH = '/api/oauth2/callback';
 
@@ -140,5 +143,30 @@ export const OAUTH2_PRESETS: OAuth2Preset[] = [
     },
     docsUrl: 'https://discord.com/developers/applications',
     hint: 'Add the redirect URL under OAuth2 in your application. Bots in servers use a bot token (Discord Bot API credential) instead.',
+  },
+  {
+    id: 'hubspot',
+    name: 'HubSpot',
+    values: {
+      authUrl: 'https://app.hubspot.com/oauth/authorize',
+      accessTokenUrl: 'https://api.hubapi.com/oauth/v1/token',
+      scope: 'oauth crm.objects.contacts.read crm.objects.contacts.write crm.objects.deals.read crm.objects.deals.write',
+      authentication: 'body',
+    },
+    docsUrl: 'https://developers.hubspot.com/docs/api/oauth-quickstart-guide',
+    hint: 'Create a public app (Developer account → Apps) and add the redirect URL. HubSpot access tokens last 30 minutes; Landflow refreshes them.',
+  },
+  {
+    id: 'airtable',
+    name: 'Airtable',
+    values: {
+      authUrl: 'https://airtable.com/oauth2/v1/authorize',
+      accessTokenUrl: 'https://airtable.com/oauth2/v1/token',
+      scope: 'data.records:read data.records:write schema.bases:read user.email:read',
+      authentication: 'header',
+      userInfoUrl: 'https://api.airtable.com/v0/meta/whoami',
+    },
+    docsUrl: 'https://airtable.com/create/oauth',
+    hint: 'Register an OAuth integration and add the redirect URL. Airtable requires PKCE; access tokens last 60 minutes and refresh tokens rotate.',
   },
 ];

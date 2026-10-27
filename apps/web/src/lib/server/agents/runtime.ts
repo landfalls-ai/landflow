@@ -19,9 +19,12 @@ import type {
   TokenUsage,
 } from '../../shared/agents';
 import { agentScope, isUsageCapError, runInUsageScope } from '../ai-usage';
+import { currentActorId } from '../auth/context';
 import { bus } from '../bus';
+import { notifyApprovalEmails } from '../approval-email';
 import { singleton } from '../singleton';
 import { activeTraceIds, logger, recordAgentTokens, recordApproval, traceAgentRun, traceToolCall, traceUrl } from '../telemetry';
+import { applyGuardrail, guardrailEntry, ruleActive } from './guardrails';
 import { agentModel } from './models';
 import { agentStore, configOf } from './store';
 import { buildToolset, type BuiltTool, type ToolContext } from './tools';
@@ -171,7 +174,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   };
 
   // Token & cost tracking: the run's model calls count for this agent, under its usage limits (and any caller's caps).
-  const usage = agentScope({ agentId: agent.id, agentName: config.name, sessionId: session.id, settings: config.settings });
+  const userId = currentActorId();
+  const usage = agentScope({ agentId: agent.id, agentName: config.name, sessionId: session.id, settings: config.settings, ...(userId && { userId }) });
   try {
     return await runInUsageScope(usage, () => traceAgentRun(
       {
@@ -189,14 +193,31 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         session.status = 'running';
         const link = traceUrl(traceId);
         emit({ type: 'run.started', sessionId: session.id, ...(traceId && { traceId }), ...(link && { traceUrl: link }) });
+        let blockedReply: string | undefined;
         if (request.message !== undefined) {
-          const text = request.message.trim();
-          if (session.timeline.every((e) => e.type !== 'user')) session.title = text.slice(0, 80) || session.title;
-          session.messages.push({ role: 'user', content: text });
-          upsert({ id: entryId(), type: 'user', text, at: now(), ...(session.source !== 'test' && { from: session.userId }) });
+          let text = request.message.trim();
+          // Input guardrail: the model never sees a blocked message; a sanitized one reaches it (and the session) cleaned.
+          const rule = config.guardrails?.input;
+          const checked = ruleActive(rule) ? await applyGuardrail(rule, 'input', text, { model: () => agentModel(config.model), signal: request.signal, log: (m) => logger.warn(m) }) : undefined;
+          const from = session.source !== 'test' ? { from: session.userId } : {};
+          if (checked?.action === 'blocked') {
+            blockedReply = checked.text;
+            const withheld = '[Message withheld by an input guardrail]';
+            if (session.timeline.every((e) => e.type !== 'user')) session.title = 'Blocked message';
+            session.messages.push({ role: 'user', content: withheld }, { role: 'assistant', text: blockedReply, toolCalls: [] });
+            upsert({ id: entryId(), type: 'user', text: withheld, at: now(), ...from });
+            upsert(guardrailEntry(entryId(), 'input', checked, now()));
+            upsert({ id: entryId(), type: 'assistant', text: blockedReply, at: now(), model: 'guardrail' });
+          } else {
+            if (checked?.action === 'sanitized') text = checked.text;
+            if (session.timeline.every((e) => e.type !== 'user')) session.title = text.slice(0, 80) || session.title;
+            session.messages.push({ role: 'user', content: text });
+            upsert({ id: entryId(), type: 'user', text, at: now(), ...from });
+            if (checked?.action === 'sanitized') upsert(guardrailEntry(entryId(), 'input', checked, now()));
+          }
         }
         session = agentStore.saveSession(session);
-        const result = await loop();
+        const result = blockedReply !== undefined ? { reason: 'completed' as const, reply: blockedReply } : await loop();
         session.status = result.reason === 'awaiting_approval' ? 'awaiting_approval' : result.reason === 'error' ? 'error' : 'idle';
         session = agentStore.saveSession(session);
         logger.info('agent run finished', {
@@ -207,6 +228,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           'landflow.agent.end_reason': result.reason,
         });
         emit({ type: 'run.finished', sessionId: session.id, status: session.status, reason: result.reason, usage: session.usage, ...(result.reply !== undefined && { reply: result.reply }) });
+        // Approvals by email: the addresses in the agent's settings get approve / reject links for each call that waits.
+        if (result.reason === 'awaiting_approval' && config.settings.approvalEmails?.length) void notifyApprovalEmails(agent, session, config.settings.approvalEmails);
         return { session, reason: result.reason, usage: session.usage, ...(result.reply !== undefined && { reply: result.reply }) };
       },
     ));
@@ -274,9 +297,22 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       const usage = turn.usage ?? { inputTokens: 0, outputTokens: 0 };
       session.usage = { inputTokens: session.usage.inputTokens + usage.inputTokens, outputTokens: session.usage.outputTokens + usage.outputTokens };
       recordAgentTokens({ agentId: agent.id, agentName: config.name }, usage);
-      session.messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls, ...(turn.raw && { raw: turn.raw }) });
-      if (turn.text.trim()) upsert({ id: entryId(), type: 'assistant', text: turn.text, at: now(), model: `${model.provider}/${model.model}`, usage });
-      if (!turn.toolCalls.length) return { reason: 'completed', reply: turn.text };
+      // Output guardrail: only the final answer is checked; a blocked or sanitized one replaces it in the transcript too.
+      let answer = turn.text;
+      let changed = false;
+      const outRule = config.guardrails?.output;
+      if (!turn.toolCalls.length && ruleActive(outRule)) {
+        const checked = await applyGuardrail(outRule, 'output', answer, { model: async () => model, signal: request.signal, log: (m) => logger.warn(m) });
+        if (checked.action !== 'pass') {
+          upsert(guardrailEntry(entryId(), 'output', checked, now()));
+          answer = checked.text;
+          changed = true;
+        }
+      }
+      // `raw` replays the provider's own blocks (the original text), so a changed answer drops it.
+      session.messages.push({ role: 'assistant', text: answer, toolCalls: turn.toolCalls, ...(turn.raw && !changed && { raw: turn.raw }) });
+      if (answer.trim()) upsert({ id: entryId(), type: 'assistant', text: answer, at: now(), model: `${model.provider}/${model.model}`, usage });
+      if (!turn.toolCalls.length) return { reason: 'completed', reply: answer };
       const denied = justDenied;
       justDenied = new Set();
 

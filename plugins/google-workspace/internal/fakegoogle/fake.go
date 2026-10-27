@@ -57,6 +57,7 @@ type Server struct {
 	Documents    map[string]*Document
 
 	tokens   map[string]tokenInfo
+	sessions map[string]*File // open resumable Drive uploads
 	failures []failure
 	nextID   int
 }

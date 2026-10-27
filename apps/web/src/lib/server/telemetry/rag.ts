@@ -100,8 +100,8 @@ export interface GuardrailsResult {
 }
 
 /** One Guardrails check of a text in a `guardrails.check` span; counts in `landflow.guardrails.checks` by result. */
-export function traceGuardrails<T extends GuardrailsResult>(info: { mode: string; checks: string[] }, fn: () => Promise<T>): Promise<T> {
-  return withSpan('guardrails.check', { attributes: { 'landflow.guardrails.mode': info.mode, 'landflow.guardrails.checks': info.checks } }, async (span) => {
+export function traceGuardrails<T extends GuardrailsResult>(info: { mode: string; checks: string[]; stage?: string }, fn: () => Promise<T>): Promise<T> {
+  return withSpan('guardrails.check', { attributes: { 'landflow.guardrails.mode': info.mode, 'landflow.guardrails.checks': info.checks, ...(info.stage && { 'landflow.guardrails.stage': info.stage }) } }, async (span) => {
     const result = await fn();
     const failed = [...new Set(result.violations.map((v) => v.check))];
     span.setAttributes({ 'landflow.guardrails.passed': result.passed, 'landflow.guardrails.violations': result.violations.length, 'landflow.guardrails.failed': failed });

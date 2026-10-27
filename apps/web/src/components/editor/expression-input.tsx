@@ -21,6 +21,8 @@ export const ExpressionDataContext = createContext<CompletionData | undefined>(u
 export interface ParamScope {
   workflowId?: string;
   projectId?: string;
+  /** The agent being edited: pickers of project-scoped things list its project's. */
+  agentId?: string;
 }
 export const ParamScopeContext = createContext<ParamScope | undefined>(undefined);
 

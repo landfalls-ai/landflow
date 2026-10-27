@@ -43,7 +43,7 @@ import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
 import { ExecutionCanvas } from './execution-canvas';
 import { useExecutions } from './executions-shell';
 import { MODE_META, RERUN_LABEL, canRetry, deleteExecution, startRerun, startRetry, type RerunBody, type RetryBody } from './meta';
-import { AiUsageChip, BufferedChip, ParentChip, SubWorkflowWait, waitedChildren } from './run-extras';
+import { AiUsageChip, BufferedChip, FeedbackChip, ParentChip, SubWorkflowWait, waitedChildren } from './run-extras';
 
 const HEIGHT_KEY = 'landflow-logs-height';
 const COLLAPSED_KEY = 'landflow-logs-collapsed';
@@ -504,6 +504,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
               <ParentChip parentId={record.parentExecutionId} onOpen={open} />
               <BufferedChip buffered={record.buffered} />
               <AiUsageChip usage={record.aiUsage} />
+              <FeedbackChip key={record.executionId} executionId={record.executionId} feedback={record.chatFeedback} />
             </div>
           </div>
 

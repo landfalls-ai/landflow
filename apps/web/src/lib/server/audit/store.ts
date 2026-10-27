@@ -4,7 +4,7 @@
  * transaction, so an event that is stored is also chained and queued for every destination. Reads: filtered (a project
  * admin's reads limited to their projects, ./access), newest first, with an opaque cursor for the next page.
  */
-import type { AuditEvent, AuditFilters, AuditOutcome, AuditPage, AuditValue } from '../../shared/audit';
+import type { AuditDestinationScope, AuditEvent, AuditFilters, AuditOutcome, AuditPage, AuditValue } from '../../shared/audit';
 import type { Database, SqlValue } from '../db';
 import { parse } from '../db/rows';
 import { auditDb, chainsAtInsert, kickSealer, linkEvent, pruneChain, pruneChainInPostgres } from './chain';
@@ -98,9 +98,18 @@ export function fromRow(row: AuditRow): AuditEvent {
   };
 }
 
-/** Destinations that receive new events. */
-export function enabledDestinationIds(db: Database = database()): string[] {
-  return db.all<{ id: string }>('SELECT id FROM audit_destinations WHERE enabled = 1').map((row) => row.id);
+/** Whether a destination with this scope (absent: everything) receives an event of `projectId` (absent: an instance-wide event). */
+export function inScope(scope: AuditDestinationScope | undefined, projectId: string | null | undefined): boolean {
+  if (!scope) return true;
+  return projectId ? scope.projectIds.includes(projectId) : scope.instance;
+}
+
+/** Destinations that receive an event of `projectId` (all of them when omitted): enabled ones whose scope takes it. */
+export function enabledDestinationIds(db: Database = database(), projectId?: string | null): string[] {
+  return db
+    .all<{ id: string; data: string }>('SELECT id, data FROM audit_destinations WHERE enabled = 1')
+    .filter((row) => projectId === undefined || inScope(parse<{ scope?: AuditDestinationScope }>(row.data)?.scope, projectId))
+    .map((row) => row.id);
 }
 
 /**
@@ -109,7 +118,7 @@ export function enabledDestinationIds(db: Database = database()): string[] {
  * Sets `event.chain` when it was chained here. Returns how many destinations it was queued for.
  */
 export function insertEvent(event: AuditEvent, db: Database = database()): number {
-  const destinations = enabledDestinationIds(db);
+  const destinations = enabledDestinationIds(db, event.projectId ?? null);
   const atInsert = chainsAtInsert(db);
   const row = db.transaction(() => {
     const stored = atInsert ? linkEvent(db, toRow(event)) : toRow(event);

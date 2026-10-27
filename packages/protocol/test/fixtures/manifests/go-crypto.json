@@ -21,6 +21,7 @@
       "description": "Hash a field with SHA-256, SHA-1, SHA-512 or MD5",
       "version": 1,
       "kind": "action",
+      "idempotent": true,
       "categories": [
         "Crypto"
       ],
@@ -153,6 +154,7 @@
       "description": "Add a random UUID (v4) to every item, or generate new items holding UUIDs",
       "version": 1,
       "kind": "action",
+      "idempotent": true,
       "categories": [
         "Crypto"
       ],
@@ -254,6 +256,7 @@
       "description": "Encode a field to Base64 or decode it back to text",
       "version": 1,
       "kind": "action",
+      "idempotent": true,
       "categories": [
         "Crypto"
       ],
@@ -281,13 +284,13 @@
             {
               "name": "Encode",
               "value": "encode",
-              "description": "Text \u2192 Base64",
+              "description": "Text → Base64",
               "action": "Encode a field to Base64"
             },
             {
               "name": "Decode",
               "value": "decode",
-              "description": "Base64 \u2192 text",
+              "description": "Base64 → text",
               "action": "Decode a Base64 field"
             }
           ]
@@ -305,7 +308,7 @@
           "displayName": "URL-Safe Alphabet",
           "type": "boolean",
           "default": false,
-          "description": "Use - and _ instead of + and / and drop the padding (RFC 4648 \u00a75)",
+          "description": "Use - and _ instead of + and / and drop the padding (RFC 4648 §5)",
           "displayOptions": {
             "show": {
               "operation": [
@@ -337,6 +340,7 @@
       "description": "Decode a JWT's header and payload (the signature is not verified)",
       "version": 1,
       "kind": "action",
+      "idempotent": true,
       "categories": [
         "Crypto"
       ],
@@ -355,7 +359,7 @@
       "properties": [
         {
           "name": "notice",
-          "displayName": "The signature is NOT verified. Decoded claims can be forged \u2014 never use them on their own for authentication or authorization decisions.",
+          "displayName": "The signature is NOT verified. Decoded claims can be forged — never use them on their own for authentication or authorization decisions.",
           "type": "notice",
           "default": ""
         },

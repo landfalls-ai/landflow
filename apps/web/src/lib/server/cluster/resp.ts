@@ -7,6 +7,11 @@
  * checks with ROLE that it reached the primary, and reconnects when the server turns out to be a replica (a READONLY
  * error: a failover demoted it) or when told to (`reconnect()`, on the sentinels' `+switch-master`).
  *
+ * Cluster (`cluster: true`, with `resolve` giving the owner of the one hash slot every key lives in): a MOVED, CLUSTERDOWN or
+ * TRYAGAIN reply makes the client ask again where the slot is (`askCluster`) and send the command once more; an ASK reply is
+ * followed once on a short-lived connection (ASKING, then the command). Blocking reads and pub/sub run on the slot's owner
+ * too (a published message reaches every node's subscribers over the cluster bus).
+ *
  * Replies: simple strings and bulk strings as strings (UTF-8), integers as numbers, nil as null, arrays as arrays; an
  * error reply rejects the call with a RespError. A command sent while the connection is down waits for the reconnect
  * (bounded queue); `timeoutMs` rejects a call that got no reply in time (blocking reads pass 0).
@@ -117,6 +122,8 @@ export interface RespOptions {
   subscriber?: boolean;
   /** Calls kept while disconnected (default 10 000); more are rejected at once. */
   maxQueued?: number;
+  /** Valkey Cluster: follow MOVED / ASK / CLUSTERDOWN replies (needs `resolve`). */
+  cluster?: boolean;
 }
 
 interface Pending {
@@ -140,6 +147,9 @@ export function parseValkeyUrl(url: string): { host: string; port: number; tls: 
     ...(db && Number.isInteger(Number(db)) && { db: Number(db) }),
   };
 }
+
+/** Replies that mean "ask the cluster where the slot is now" (the connection is dropped, the call tried again). */
+const CLUSTER_RETRY = /^(MOVED|CLUSTERDOWN|TRYAGAIN)$/;
 
 type MessageHandler = (message: string, channel: string) => void;
 
@@ -168,12 +178,34 @@ export class RespClient extends EventEmitter {
 
   /** Send a command; resolves with its reply. */
   call(...args: RespArg[]): Promise<RespValue> {
-    return this.send(args, this.options.timeoutMs ?? 10_000);
+    return this.dispatch(args, this.options.timeoutMs ?? 10_000);
   }
 
   /** A command with its own timeout (0 = none, for blocking reads). */
   callWithTimeout(timeoutMs: number, ...args: RespArg[]): Promise<RespValue> {
-    return this.send(args, timeoutMs);
+    return this.dispatch(args, timeoutMs);
+  }
+
+  /** `send`, and in cluster mode the redirects: the connection was dropped on MOVED, so the retry goes to the slot's new owner. */
+  private async dispatch(args: RespArg[], timeoutMs: number): Promise<RespValue> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.send(args, timeoutMs);
+      } catch (error) {
+        if (!this.options.cluster || !(error instanceof RespError) || attempt >= 4) throw error;
+        const [kind, , where] = error.message.split(' ');
+        if (kind === 'ASK' && where) {
+          // The slot is moving: ask the target once (not for blocking or subscribed connections).
+          const address = parseRespAddress(where);
+          const replies = await oneShot(address, [['ASKING'], [...args]], { tls: this.target.tls, timeoutMs: timeoutMs || undefined });
+          const reply = replies[1];
+          if (reply instanceof RespError) throw reply;
+          return reply;
+        }
+        if (!CLUSTER_RETRY.test(kind)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+      }
+    }
   }
 
   private send(args: RespArg[], timeoutMs: number): Promise<RespValue> {
@@ -327,8 +359,8 @@ export class RespClient extends EventEmitter {
       const pending = this.inflight.shift();
       if (!pending) continue;
       this.settle(pending, value instanceof RespError ? value : { value });
-      // A replica now (a failover demoted this server): find the primary again.
-      if (value instanceof RespError && value.message.startsWith('READONLY') && this.options.resolve) this.socket?.destroy();
+      // A replica now (a failover demoted this server), or the slot lives elsewhere (Cluster): find the owner again.
+      if (value instanceof RespError && this.options.resolve && (value.message.startsWith('READONLY') || (this.options.cluster && CLUSTER_RETRY.test(value.message.split(' ')[0])))) this.socket?.destroy();
     }
   }
 
@@ -503,8 +535,8 @@ export async function askSentinels(options: SentinelOptions): Promise<RespAddres
   throw new Error(`No sentinel named the primary "${options.masterName}" (${errors.join('; ')})`);
 }
 
-/** `host:port,host:port` (IPv6 in brackets; port default 26379). */
-export function parseSentinels(text: string | undefined): RespAddress[] {
+/** `host:port,host:port` (IPv6 in brackets; port default 26379, or `defaultPort`). */
+export function parseSentinels(text: string | undefined, defaultPort = 26379): RespAddress[] {
   return (text ?? '')
     .split(',')
     .map((part) => part.trim())
@@ -512,6 +544,99 @@ export function parseSentinels(text: string | undefined): RespAddress[] {
     .map((part) => {
       const match = /^\[([^\]]+)\](?::(\d+))?$/.exec(part) ?? /^([^:]+)(?::(\d+))?$/.exec(part);
       if (!match) throw new Error(`Not a sentinel address: ${part} (use host:port)`);
-      return { host: match[1], port: Number(match[2] ?? 26379) };
+      return { host: match[1], port: Number(match[2] ?? defaultPort) };
     });
+}
+
+/** One `host:port` (IPv6 in brackets). */
+export function parseRespAddress(text: string): RespAddress {
+  const [address] = parseSentinels(text, 6379);
+  if (!address) throw new Error(`Not an address: ${text}`);
+  return address;
+}
+
+// ---------------------------------------------------------------------------
+// Cluster
+// ---------------------------------------------------------------------------
+
+export interface ClusterOptions {
+  /** Seed nodes (any of the cluster's nodes; the list grows with the masters found). */
+  nodes: RespAddress[];
+  username?: string;
+  password?: string;
+  tls?: boolean;
+  /** Address translation for clusters that announce addresses a client can't reach (NAT, port mappings): `announced -> reachable`, keyed `host:port`. */
+  natMap?: Record<string, RespAddress>;
+  /** Per node asked (default 2 s). */
+  timeoutMs?: number;
+}
+
+const CRC16 = (() => {
+  const table = new Uint16Array(256);
+  for (let i = 0; i < 256; i++) {
+    let crc = i << 8;
+    for (let bit = 0; bit < 8; bit++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    table[i] = crc;
+  }
+  return table;
+})();
+
+/** The cluster's hash slot of a key: CRC16 (XMODEM) mod 16384 of the text inside the first non-empty `{…}`, else of the whole key. */
+export function hashSlot(key: string): number {
+  const open = key.indexOf('{');
+  const close = open >= 0 ? key.indexOf('}', open + 1) : -1;
+  const tag = open >= 0 && close > open + 1 ? key.slice(open + 1, close) : key;
+  let crc = 0;
+  for (const byte of Buffer.from(tag)) crc = ((crc << 8) & 0xffff) ^ CRC16[((crc >> 8) ^ byte) & 0xff];
+  return crc % 16384;
+}
+
+/** The master that owns `slot`, from `CLUSTER SLOTS` of the first node that answers (the answering node moves to the front). */
+export async function askCluster(options: ClusterOptions, slot: number): Promise<RespAddress> {
+  const errors: string[] = [];
+  const { nodes } = options;
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    const auth: RespArg[][] = options.password ? [options.username ? ['AUTH', options.username, options.password] : ['AUTH', options.password]] : [];
+    try {
+      const replies = await oneShot(node, [...auth, ['CLUSTER', 'SLOTS']], { tls: options.tls, timeoutMs: options.timeoutMs });
+      const failed = replies.find((reply) => reply instanceof RespError);
+      if (failed) throw failed;
+      const ranges = replies.at(-1);
+      if (!Array.isArray(ranges)) throw new Error('no slot map');
+      let owner: RespAddress | undefined;
+      for (const range of ranges) {
+        if (!Array.isArray(range) || range.length < 3) continue;
+        const master = range[2];
+        if (!Array.isArray(master)) continue;
+        // An empty or unknown host means "the node you asked".
+        const host = String(master[0] ?? '');
+        const found = translate({ host: host && host !== '?' ? host : node.host, port: Number(master[1]) }, options.natMap);
+        if (!nodes.some((n) => n.host === found.host && n.port === found.port)) nodes.push(found);
+        if (slot >= Number(range[0]) && slot <= Number(range[1])) owner = found;
+      }
+      if (!owner) throw new Error(`no node serves slot ${slot} (the cluster is not fully covered yet)`);
+      if (i > 0) nodes.unshift(...nodes.splice(i, 1));
+      return owner;
+    } catch (error) {
+      errors.push(`${node.host}:${node.port}: ${(error as Error).message}`);
+    }
+  }
+  throw new Error(`No cluster node answered where slot ${slot} lives (${errors.join('; ')})`);
+}
+
+function translate(address: RespAddress, natMap: ClusterOptions['natMap']): RespAddress {
+  return natMap?.[`${address.host}:${address.port}`] ?? address;
+}
+
+/** `announced:port=reachable:port,…` (LANDFLOW_VALKEY_CLUSTER_NAT). */
+export function parseClusterNat(text: string | undefined): Record<string, RespAddress> {
+  const map: Record<string, RespAddress> = {};
+  for (const part of (text ?? '').split(',').map((p) => p.trim()).filter(Boolean)) {
+    const [from, to, ...rest] = part.split('=');
+    if (!from || !to || rest.length) throw new Error(`Not an address mapping: ${part} (use announced-host:port=reachable-host:port)`);
+    const source = parseRespAddress(from);
+    map[`${source.host}:${source.port}`] = parseRespAddress(to);
+  }
+  return map;
 }

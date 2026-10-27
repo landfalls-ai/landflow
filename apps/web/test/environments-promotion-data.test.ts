@@ -335,3 +335,110 @@ describe('four-eyes on promotion', () => {
     expect((await promote({ target: 'staging' }, alice)).body).toMatchObject({ promoted: true });
   });
 });
+
+describe('merging rows and updating credentials on pull', () => {
+  const putSettings = (body: Record<string, unknown>) => as(undefined, async () => read<EnvironmentView>(await use(dev).environment.PUT(json('/api/environment', 'PUT', body))));
+  const stagingRows = () => use(staging).dataTables().listRows(countries, { sortBy: 'id', sortDirection: 'asc' }).rows.map((r) => [r.code, r.rate]);
+
+  it('a table opted in to a merge keeps the target’s other rows, inserts new and updates changed ones', async () => {
+    const saved = await putSettings({ rowMerge: { Countries: { keys: ['code'] } } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.rowTables).toEqual([{ id: countries, name: 'Countries', merge: { keys: ['code'] } }]);
+    // Key columns must exist.
+    expect((await putSettings({ rowMerge: { Countries: { keys: ['nope'] } } })).status).toBe(400);
+
+    const m = use(dev);
+    m.dataTables().updateRows(countries, { conditions: [{ column: 'code', operator: 'eq', value: 'FR' }] }, { rate: 20 });
+    m.dataTables().insertRows(countries, [{ code: 'NL', rate: 22 }]);
+    await push('Rates changed');
+    const preview = await promote({ target: 'staging', dryRun: true });
+    expect(preview.body.tables).toEqual([expect.objectContaining({ name: 'Countries', status: 'modified' })]);
+    expect((await promote({ target: 'staging' })).body.promoted).toBe(true);
+    expect(JSON.parse(branchFile('data-tables/countries.rows.json')).merge).toEqual({ keys: ['code'] });
+
+    // Staging has its own row (XX) and a local edit to DE: the merge leaves XX alone and takes the source's values.
+    const s = use(staging);
+    s.dataTables().insertRows(countries, [{ code: 'XX', rate: 0 }]);
+    s.dataTables().updateRows(countries, { conditions: [{ column: 'code', operator: 'eq', value: 'DE' }] }, { rate: 5 });
+    const dry = await pull({ dryRun: true });
+    expect(dry.body.changes.find((c) => c.kind === 'tableRows')).toMatchObject({ action: 'update', fields: ['merge by code', expect.stringMatching(/^\+\d+ new$/), expect.stringMatching(/^~\d+ changed$/)] });
+    expect((await pull()).body.errors).toEqual([]);
+    expect(stagingRows()).toEqual(expect.arrayContaining([['FR', 20], ['DE', 19], ['NL', 22], ['XX', 0]]));
+    expect(stagingRows().length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('delete missing removes the target’s rows the source lacks; a duplicate key refuses the merge', async () => {
+    expect((await putSettings({ rowMerge: { Countries: { keys: ['code'], deleteMissing: true } } })).status).toBe(200);
+    await push('Merge with delete');
+    expect((await promote({ target: 'staging' })).body.promoted).toBe(true);
+    const dry = await pull({ dryRun: true });
+    expect(dry.body.changes.find((c) => c.kind === 'tableRows')).toMatchObject({ fields: ['merge by code', '+0 new', '~0 changed', '-1 deleted'] });
+    expect((await pull()).body.errors).toEqual([]);
+    expect(stagingRows().map((r) => r[0]).sort()).toEqual(use(dev).dataTables().listRows(countries, { sortBy: 'id', sortDirection: 'asc' }).rows.map((r) => r.code as string).sort());
+
+    const s = use(staging);
+    s.dataTables().insertRows(countries, [{ code: 'FR', rate: 1 }]);
+    const refused = s.sync.planSync([
+      { path: 'landflow-sync.json', content: '{ "format": "landflow-sync/v1" }\n' },
+      { path: 'data-tables/countries.schema.json', content: JSON.stringify({ id: countries, name: 'Countries', columns: [{ name: 'code', type: 'string' }, { name: 'rate', type: 'number' }] }) },
+      { path: 'data-tables/countries.rows.json', content: JSON.stringify({ id: countries, name: 'Countries', merge: { keys: ['code'] }, rows: [{ code: 'FR', rate: 2 }] }) },
+    ]);
+    expect(refused.errors.join('\n')).toMatch(/can’t merge rows into Countries by code: more than one row here has the key/);
+    s.dataTables().deleteRows(countries, { conditions: [{ column: 'rate', operator: 'eq', value: 1 }] });
+    // Back to replacing: no key columns.
+    expect((await putSettings({ rowMerge: {} })).status).toBe(200);
+  });
+
+  it('updates a credential the target already has only when asked, never its secret', async () => {
+    const m = use(dev);
+    const key = m.credentials.list().find((c) => c.name === 'API key')!;
+    m.credentials.update(key.id, { data: { name: 'X-New-Key' } });
+    await push('Header renamed');
+    expect((await promote({ target: 'staging' })).body.promoted).toBe(true);
+
+    const s = use(staging);
+    const stagingKey = s.credentials.list().find((c) => c.name === 'API key')!;
+    // Staging filled its secret in earlier; a plain pull leaves the credential as it is.
+    const plain = await pull({ dryRun: true });
+    expect(plain.body.changes.filter((c) => c.kind === 'credential')).toEqual([]);
+    const asked = await pull({ dryRun: true, updateCredentials: true });
+    expect(asked.body.changes.filter((c) => c.kind === 'credential')).toEqual([expect.objectContaining({ action: 'update', name: 'API key', fields: ['name'] })]);
+    expect((await pull({ updateCredentials: true })).body.errors).toEqual([]);
+    expect(s.credentials.get(stagingKey.id)!.data).toMatchObject({ name: 'X-New-Key' });
+    expect(s.credentials.testData('core.httpHeaderAuth', {}, stagingKey.id).value).toBe('staging-secret-333333');
+    // A literal in a secret field of the file is dropped with a warning, even when updating.
+    const plan = s.sync.planSync(
+      [
+        { path: 'landflow-sync.json', content: '{ "format": "landflow-sync/v1" }\n' },
+        { path: 'credentials.json', content: JSON.stringify({ credentials: [{ name: 'API key', type: 'core.httpHeaderAuth', data: { name: 'X-New-Key', value: 'literal-secret-555555' }, secretFields: ['value'] }] }) },
+      ],
+      { updateCredentials: true },
+    );
+    expect(plan.changes.filter((c) => c.kind === 'credential')).toEqual([]);
+    expect(plan.warnings.join('\n')).toMatch(/“API key”: value holds a value instead of a \$secrets reference: left as it is on this instance/);
+  });
+});
+
+describe('per-project four-eyes on promotion', () => {
+  it('a promotion that changes a workflow of a project asking for four-eyes becomes a request, even with the instance’s setting off', async () => {
+    const m = use(dev);
+    const { createTeamProject, setHomeProject } = await import('@/lib/server/projects/store');
+    const { updateProjectSettings } = await import('@/lib/server/governance/scopes');
+    const projectId = createTeamProject({ name: 'Careful team' }).id;
+    setHomeProject('workflow', 'wf_calls', projectId);
+    m.store.saveWorkflow({ ...m.store.getWorkflow('wf_calls')!, name: 'Calls v2' });
+    await push('Rename');
+    // Neither the instance nor the project asks: promotes at once.
+    const direct = await promote({ target: 'staging', dryRun: true }, alice);
+    expect(direct.status).toBe(200);
+    updateProjectSettings(projectId, { fourEyes: true });
+    const asked = await promote({ target: 'staging', workflows: ['wf_calls'] }, alice);
+    expect(asked.status).toBe(202);
+    expect(asked.body.approvalRequired).toBe(true);
+    // Bob approves (an admin, not the requester) and it promotes what was previewed.
+    const approved = await decide('approve', asked.body.request!.id, bob);
+    expect(approved.status).toBe(200);
+    expect(approved.body.result?.promoted).toBe(true);
+    updateProjectSettings(projectId, { fourEyes: false });
+  });
+});

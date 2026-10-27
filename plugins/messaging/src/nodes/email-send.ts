@@ -1,6 +1,6 @@
-import { defineCredentialType, defineNode, NodeOperationError, type JsonObject, type SpanFunction } from '@landflow/sdk';
+import { defineCredentialType, defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type SpanFunction } from '@landflow/sdk';
 import { clientSpan, countApiError, countSent, mapItems, requireString, statusClass, type ApiContext } from '../shared';
-import { sendMail, SmtpError, verifySmtp, type MailOptions, type PhaseRunner, type SmtpConfig } from '../smtp';
+import { sendMail, SmtpError, verifySmtp, type MailAttachment, type MailOptions, type PhaseRunner, type SmtpConfig } from '../smtp';
 
 export interface SmtpCredentials extends JsonObject {
   host: string;
@@ -54,6 +54,26 @@ function toNodeError(api: ApiContext, error: unknown, config: SmtpConfig): NodeO
   countApiError(api, 'email', error.code ? statusClass(error.code) : error.kind);
   const description = hint(error, config);
   return new NodeOperationError(error.message, description ? { description } : {});
+}
+
+const names = (value: unknown) => [...new Set(String(value ?? '').split(',').map((n) => n.trim()).filter(Boolean))];
+
+/** The item's files named in Attachments (sent as attachments) and Inline Files (Content-ID = the property name). */
+async function attachmentsOf(ctx: IExecuteContext, options: JsonObject, i: number): Promise<MailAttachment[]> {
+  const files: MailAttachment[] = [];
+  for (const [list, inline] of [[names(options.attachments), false], [names(options.inlineFiles), true]] as const) {
+    for (const property of list) {
+      const ref = ctx.helpers.assertBinaryData(i, property);
+      const content = await ctx.helpers.getBinaryDataBuffer(i, property);
+      files.push({
+        fileName: ref.fileName || `${property}.${ref.fileExtension ?? 'bin'}`,
+        mimeType: ref.mimeType,
+        content,
+        ...(inline && { contentId: property }),
+      });
+    }
+  }
+  return files;
 }
 
 /** `smtp.connect`, `smtp.ehlo`, `smtp.starttls`, `smtp.auth`, `smtp.envelope`, `smtp.data`, `smtp.quit` child spans. */
@@ -117,7 +137,7 @@ export const EmailSend = defineNode({
   description: {
     name: 'emailSend',
     displayName: 'Send Email',
-    description: 'Send an email through any SMTP server (text, HTML or both)',
+    description: 'Send an email through any SMTP server (text, HTML or both, with files from item.binary attached)',
     version: 1,
     kind: 'action',
     categories: ['Communication'],
@@ -169,6 +189,22 @@ export const EmailSend = defineNode({
           { name: 'bccEmail', displayName: 'BCC Email', type: 'string', default: '', description: 'Comma-separated; not visible to other recipients' },
           { name: 'replyTo', displayName: 'Reply To', type: 'string', default: '', description: 'Where replies go, if not to From' },
           {
+            name: 'attachments',
+            displayName: 'Attachments',
+            type: 'string',
+            default: '',
+            placeholder: 'data, invoice',
+            description: 'Comma-separated names of the item’s binary properties to attach (item.binary.<name>)',
+          },
+          {
+            name: 'inlineFiles',
+            displayName: 'Inline Files',
+            type: 'string',
+            default: '',
+            placeholder: 'logo',
+            description: 'Comma-separated binary properties embedded in the HTML: reference one as <img src="cid:logo"> (the Content-ID is the property name)',
+          },
+          {
             name: 'allowUnauthorizedCerts',
             displayName: 'Ignore SSL Issues (Insecure)',
             type: 'boolean',
@@ -196,6 +232,8 @@ export const EmailSend = defineNode({
         ...(format !== 'html' && { text: String(ctx.getNodeParameter('text', i, '') ?? '') }),
         ...(format !== 'text' && { html: String(ctx.getNodeParameter('html', i, '') ?? '') }),
       };
+      const attachments = await attachmentsOf(ctx, options, i);
+      if (attachments.length) mail.attachments = attachments;
       try {
         const result = await clientSpan(ctx, 'smtp.send', spanAttributes(config), async (span) => {
           const sent = await sendMail(config, mail, phases(ctx.span));

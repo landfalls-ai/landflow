@@ -166,7 +166,7 @@ export const chatTrigger = defineNode({
         noDataExpression: true,
         options: [
           { name: 'None', value: 'none' },
-          { name: 'Basic Auth', value: 'basicAuth', description: 'The browser asks for a user name and password (hosted page only, not the widget)' },
+          { name: 'Basic Auth', value: 'basicAuth', description: 'The hosted page asks for a user name and password, and the widget shows a sign-in form' },
         ],
         displayOptions: whenPublic,
       },
@@ -205,6 +205,18 @@ export const chatTrigger = defineNode({
         noDataExpression: true,
         placeholder: 'https://example.com, https://app.example.com',
         description: 'Sites that may embed the widget or call the chat API, comma-separated. * allows any.',
+        displayOptions: whenPublic,
+      },
+      {
+        name: 'customCss',
+        displayName: 'Custom CSS',
+        type: 'string',
+        default: '',
+        noDataExpression: true,
+        typeOptions: { rows: 6 },
+        placeholder: '.lf { --accent: #0ea5e9; }\n.msg.bot { border-radius: 4px; }',
+        description:
+          'Styles for the hosted page and the widget (applied inside its shadow root). Hooks: .lf (variables --bg --fg --muted --line --bubble --accent --accent-fg), .panel, header, .log, .msg.bot, .msg.user, .toggle, form, textarea, .send. No @import and no url() except small inline data: images; at most 20,000 characters.',
         displayOptions: whenPublic,
       },
     ],

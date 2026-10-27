@@ -23,6 +23,9 @@ type call struct {
 	itemParams []map[string]any
 	// continueOnFail is the node's "On Error: Continue" setting.
 	continueOnFail bool
+	// binary are the items' files by item; access is the host's binary API.
+	binary []map[string]landflow.BinaryRef
+	access *landflow.BinaryAccess
 }
 
 func (c call) request() *landflow.ExecuteRequest {
@@ -34,10 +37,14 @@ func (c call) request() *landflow.ExecuteRequest {
 		Protocol: landflow.ProtocolVersion, ExecutionID: "ex", WorkflowID: "wf", Mode: mode,
 		Node:       landflow.NodeRef{ID: "n", Name: "N", Type: "databases." + c.node, TypeVersion: 1},
 		Parameters: c.params, Credentials: c.creds, PollState: c.state,
-		Inputs: [][]landflow.Item{{}}, ContinueOnFail: c.continueOnFail,
+		Inputs: [][]landflow.Item{{}}, ContinueOnFail: c.continueOnFail, BinaryAccess: c.access,
 	}
 	for i, it := range c.items {
-		req.Inputs[0] = append(req.Inputs[0], landflow.Item{JSON: it})
+		item := landflow.Item{JSON: it}
+		if i < len(c.binary) {
+			item.Binary = c.binary[i]
+		}
+		req.Inputs[0] = append(req.Inputs[0], item)
 		p := c.params
 		if i < len(c.itemParams) && c.itemParams[i] != nil {
 			p = c.itemParams[i]

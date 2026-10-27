@@ -15,7 +15,7 @@ import type { StickyNote, Workflow, WorkflowConnection, WorkflowGroup, WorkflowN
 import { normalizeGroups } from '../shared/groups';
 import type { ImportReport } from '../shared/types';
 import { parseCron } from './agents/cron';
-import { convertFlowiseWorkflow, isFlowiseDocument } from './flowise-import';
+import { convertFlowiseWorkflow, documentStoreAsFlow, flowiseDocumentStoreOf, isFlowiseDocument } from './flowise-import';
 
 /** Rule outputs of core.switch (SWITCH_OUTPUTS in nodes/flow.ts); its fallback output comes after them. */
 const SWITCH_OUTPUTS = 4;
@@ -32,6 +32,8 @@ type Params = Record<string, unknown>;
 export interface ImportOptions {
   /** Descriptor of a registered node type: default versions, port checks and "only if registered" mappings. */
   resolveType?: (type: string) => NodeDescriptor | undefined;
+  /** The saved credentials (no secrets): the Flowise importer fills a node's slot when exactly one credential has the type it needs. */
+  credentials?: Array<{ id: string; name: string; type: string }>;
 }
 
 export interface ImportResult {
@@ -1842,6 +1844,8 @@ function unwrap(input: unknown): Params {
  * readable Error for anything else.
  */
 export function importWorkflowJson(input: unknown, options: ImportOptions = {}): ImportResult {
+  const store = flowiseDocumentStoreOf(input);
+  if (store) return convertFlowiseWorkflow(documentStoreAsFlow(store), options);
   const doc = unwrap(input);
   if (isFlowiseDocument(doc)) return convertFlowiseWorkflow(doc, options);
   const nodes = list(doc.nodes);

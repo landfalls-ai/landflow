@@ -7,6 +7,8 @@
 #   docker compose -f deploy/compose.infra.yml --profile siem up -d siem                     # + Vector (syslog + HTTP audit log receiver)
 #   docker compose -f deploy/compose.infra.yml --profile aws up -d localstack                # + LocalStack (AWS Secrets Manager)
 #   docker compose -f deploy/compose.infra.yml --profile kafka --profile rabbitmq --profile nats up -d   # + tier 1 brokers
+#   docker compose -f deploy/compose.infra.yml --profile git up -d git-ssh                    # + throwaway SSH Git server (run infra/git/gen-keys.sh first)
+#   docker compose -f deploy/compose.infra.yml --profile valkey-cluster up -d --wait         # + a 6-node Valkey Cluster (3 primaries, 3 replicas) on 127.0.0.1:56411-56416
 #   ... profiles mqtt, artemis, pulsar, pubsub, servicebus (tier 2 brokers), mcp-gateway (agentgateway)
 #
 # Ports, credentials and URLs: deploy/README.md. Defaults live here; deploy/.env overrides them.
@@ -19,6 +21,18 @@ x-healthcheck: &healthcheck
   timeout: 5s
   retries: 30
   start_period: 10s
+
+x-valkey-cluster-node: &valkey-cluster-node
+  image: valkey/valkey:8-alpine
+  profiles: [valkey-cluster]
+  restart: unless-stopped
+  # Anonymous volume: a node that is stopped and started again keeps its cluster identity (`down -v` removes it).
+  volumes: [/data]
+  healthcheck:
+    test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+    interval: 2s
+    timeout: 3s
+    retries: 30
 
 services:
   postgres:
@@ -224,6 +238,78 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://127.0.0.1:4566/_localstack/health | grep -Eq 'secretsmanager.: .(available|running)'"]
       <<: *healthcheck
+
+  # ------------------------------------------------------------------ Valkey Cluster (README "Queue mode ... Valkey Cluster")
+  # Six nodes (three primaries, each with a replica), no persistence beyond the cluster's own node file, for LANDFLOW_VALKEY_CLUSTER and its test
+  # (LANDFLOW_INTEGRATION=valkey-cluster). The nodes announce their container host names, which only resolve inside the
+  # landflow-infra network; from this machine map them to the published ports with
+  #   LANDFLOW_VALKEY_CLUSTER=127.0.0.1:56411,127.0.0.1:56412,127.0.0.1:56413
+  #   LANDFLOW_VALKEY_CLUSTER_NAT=valkey-cluster-1:6379=127.0.0.1:56411,valkey-cluster-2:6379=127.0.0.1:56412,...
+  # (in a container on landflow-infra: LANDFLOW_VALKEY_CLUSTER=valkey-cluster-1:6379,valkey-cluster-2:6379,valkey-cluster-3:6379).
+  valkey-cluster-1:
+    <<: *valkey-cluster-node
+    hostname: valkey-cluster-1
+    command: ["valkey-server", "--port", "6379", "--cluster-enabled", "yes", "--cluster-config-file", "/data/nodes.conf", "--cluster-node-timeout", "3000", "--cluster-announce-hostname", "valkey-cluster-1", "--cluster-preferred-endpoint-type", "hostname", "--appendonly", "no", "--save", ""]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:56411:6379"
+
+  valkey-cluster-2:
+    <<: *valkey-cluster-node
+    hostname: valkey-cluster-2
+    command: ["valkey-server", "--port", "6379", "--cluster-enabled", "yes", "--cluster-config-file", "/data/nodes.conf", "--cluster-node-timeout", "3000", "--cluster-announce-hostname", "valkey-cluster-2", "--cluster-preferred-endpoint-type", "hostname", "--appendonly", "no", "--save", ""]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:56412:6379"
+
+  valkey-cluster-3:
+    <<: *valkey-cluster-node
+    hostname: valkey-cluster-3
+    command: ["valkey-server", "--port", "6379", "--cluster-enabled", "yes", "--cluster-config-file", "/data/nodes.conf", "--cluster-node-timeout", "3000", "--cluster-announce-hostname", "valkey-cluster-3", "--cluster-preferred-endpoint-type", "hostname", "--appendonly", "no", "--save", ""]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:56413:6379"
+
+  valkey-cluster-4:
+    <<: *valkey-cluster-node
+    hostname: valkey-cluster-4
+    command: ["valkey-server", "--port", "6379", "--cluster-enabled", "yes", "--cluster-config-file", "/data/nodes.conf", "--cluster-node-timeout", "3000", "--cluster-announce-hostname", "valkey-cluster-4", "--cluster-preferred-endpoint-type", "hostname", "--appendonly", "no", "--save", ""]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:56414:6379"
+
+  valkey-cluster-5:
+    <<: *valkey-cluster-node
+    hostname: valkey-cluster-5
+    command: ["valkey-server", "--port", "6379", "--cluster-enabled", "yes", "--cluster-config-file", "/data/nodes.conf", "--cluster-node-timeout", "3000", "--cluster-announce-hostname", "valkey-cluster-5", "--cluster-preferred-endpoint-type", "hostname", "--appendonly", "no", "--save", ""]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:56415:6379"
+
+  valkey-cluster-6:
+    <<: *valkey-cluster-node
+    hostname: valkey-cluster-6
+    command: ["valkey-server", "--port", "6379", "--cluster-enabled", "yes", "--cluster-config-file", "/data/nodes.conf", "--cluster-node-timeout", "3000", "--cluster-announce-hostname", "valkey-cluster-6", "--cluster-preferred-endpoint-type", "hostname", "--appendonly", "no", "--save", ""]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:56416:6379"
+
+  valkey-cluster-init:
+    # Joins the six nodes into one cluster the first time (a no-op once cluster_state is ok), then exits.
+    image: valkey/valkey:8-alpine
+    profiles: [valkey-cluster]
+    restart: "no"
+    depends_on:
+      valkey-cluster-1: { condition: service_healthy }
+      valkey-cluster-2: { condition: service_healthy }
+      valkey-cluster-3: { condition: service_healthy }
+      valkey-cluster-4: { condition: service_healthy }
+      valkey-cluster-5: { condition: service_healthy }
+      valkey-cluster-6: { condition: service_healthy }
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if valkey-cli -h valkey-cluster-1 cluster info | grep -q cluster_state:ok; then echo cluster already formed; exit 0; fi
+        nodes=""
+        for i in 1 2 3 4 5 6; do nodes="$$nodes $$(getent hosts valkey-cluster-$$i | awk '{ print $$1 }'):6379"; done
+        valkey-cli --cluster create $$nodes --cluster-replicas 1 --cluster-yes
+        until valkey-cli -h valkey-cluster-1 cluster info | grep -q cluster_state:ok; do sleep 1; done
+        echo cluster ready
 
   # ------------------------------------------------------------------ message brokers (docs/transports.md), one profile each
   # Development brokers for the transport layer, bound to 127.0.0.1 on 5xxxx ports. Credentials are dev-only; see
@@ -462,6 +548,24 @@ services:
     volumes:
       - mcp-gateway-data:/data
 
+  git-ssh:
+    # A throwaway SSH Git server (user `git`, key login only) for Settings → Source control's SSH tests. Dev only:
+    # run infra/git/gen-keys.sh first; its public keys are the authorized keys. Bound to 127.0.0.1.
+    image: alpine:3.22
+    profiles: [git]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_GIT_SSH_PORT:-52222}:22"
+    volumes:
+      - ./infra/git/entrypoint.sh:/entrypoint.sh:ro
+      - ./infra/git/keys:/keys:ro
+      - git-ssh-host:/etc/ssh/hostkeys
+      - git-ssh-repos:/srv/git
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
+      <<: *healthcheck
+
 networks:
   default:
     # Fixed name so the app stack can join it (compose.infra-link.yml).
@@ -484,3 +588,5 @@ volumes:
   pubsub-data:
   servicebus-sql-data:
   mcp-gateway-data:
+  git-ssh-host:
+  git-ssh-repos:

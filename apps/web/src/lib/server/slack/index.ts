@@ -2,7 +2,7 @@
  * Slack on the host side: the Web API calls Landflow makes itself (agent channel replies, approval
  * messages), verification of the requests Slack sends (Events API, Interactivity), and the Block Kit of
  * the approval buttons. The bot token, the Web API base URL and the signing secret come from a
- * `messaging.slackApi` credential (the messaging plugin's), so a test double works through `baseUrl`.
+ * `messaging.slackApi` or `messaging.slackOAuth2Api` credential (the messaging plugin's), so a test double works through `baseUrl`.
  *
  * Request verification (https://api.slack.com/authentication/verifying-requests-from-slack): HMAC-SHA256
  * of `v0:<X-Slack-Request-Timestamp>:<raw body>` with the signing secret, compared in constant time with
@@ -10,10 +10,14 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { JsonObject } from '@landflow/protocol';
+import { freshCredentials } from '../credentials/oauth2-runtime';
 import { credentials } from '../credentials/vault';
 import { singleton } from '../singleton';
 
 export const SLACK_CREDENTIAL = 'messaging.slackApi';
+/** The OAuth2 variant (Connect installs the app and stores the bot token): same fields, the host renews the token. */
+export const SLACK_OAUTH2_CREDENTIAL = 'messaging.slackOAuth2Api';
+export const SLACK_CREDENTIAL_TYPES = [SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL] as const;
 export const SLACK_API = 'https://slack.com/api';
 /** Slack refuses request timestamps further off than this. */
 export const MAX_SKEW_SECONDS = 300;
@@ -33,14 +37,31 @@ export function slackCredential(data: JsonObject | undefined): SlackCredential {
   return { accessToken, baseUrl: (text(data?.baseUrl) || SLACK_API).replace(/\/+$/, ''), ...(text(data?.signingSecret) && { signingSecret: text(data?.signingSecret) }) };
 }
 
-/** The credential behind a saved reference (its fields may read `$secrets`, resolved here). */
-export const slackCredentialFor = async (ref: { id: string; name: string }) => slackCredential(await credentials.dataWithSecrets(ref, SLACK_CREDENTIAL));
+/** The Slack credential type a node's credentials (or an agent channel's reference) hold: the token type or the OAuth2 one. */
+export function slackRefOf(held: Record<string, { id: string; name: string }> | undefined): { ref: { id: string; name: string }; type: string } | undefined {
+  for (const type of SLACK_CREDENTIAL_TYPES) {
+    const ref = held?.[type] ?? held?.[type.split('.')[1]];
+    if (ref) return { ref, type };
+  }
+  return undefined;
+}
+
+/**
+ * The credential behind a saved reference (either Slack type; its fields may read `$secrets`, resolved here). An OAuth2
+ * credential's bot token is renewed first when it is about to expire.
+ */
+export async function slackCredentialFor(ref: { id: string; name: string }): Promise<SlackCredential> {
+  const type = credentials.list().find((summary) => summary.id === ref.id)?.type ?? SLACK_CREDENTIAL;
+  if (!(SLACK_CREDENTIAL_TYPES as readonly string[]).includes(type)) throw new Error(`Credential "${ref.name}" is a ${type}, not a Slack credential`);
+  const fresh = await freshCredentials({ slack: credentials.dataFor(ref, type) });
+  return slackCredential(fresh!.slack);
+}
 
 /** Every Slack credential with a signing secret (Interactivity requests are checked against each). */
 export async function slackCredentialsWithSecret(): Promise<Array<{ id: string; name: string; credential: SlackCredential }>> {
   const all = await Promise.all(
     credentials.list().map(async (summary) => {
-      if (summary.type !== SLACK_CREDENTIAL) return [];
+      if (!(SLACK_CREDENTIAL_TYPES as readonly string[]).includes(summary.type)) return [];
       try {
         const credential = await slackCredentialFor(summary);
         return credential.signingSecret ? [{ id: summary.id, name: summary.name, credential }] : [];
@@ -93,6 +114,26 @@ export async function postMessage(credential: SlackCredential, message: { channe
   return first;
 }
 
+/**
+ * Post to a slash command's or button's `response_url` (https://api.slack.com/interactivity/handling#message_responses): the
+ * request's own authorization, good for five answers within 30 minutes, so no bot token (or channel membership) is needed.
+ * Long text goes out as several messages.
+ */
+export async function postResponseUrl(url: string, message: { text: string; blocks?: JsonObject[]; response_type?: 'in_channel' | 'ephemeral'; replace_original?: boolean }, signal?: AbortSignal): Promise<void> {
+  if (!/^https?:\/\//i.test(url)) throw new Error('The response_url is not an http(s) URL');
+  const parts = message.blocks ? [message.text] : split(message.text);
+  for (const [index, part] of parts.entries()) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+      // Only the first part may replace the original message.
+      body: JSON.stringify({ ...message, text: part, ...(index > 0 && { replace_original: false }) }),
+      signal: signal ?? AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new SlackApiError('response_url', `HTTP ${response.status}`);
+  }
+}
+
 export async function updateMessage(credential: SlackCredential, message: { channel: string; ts: string; text: string; blocks?: JsonObject[] }) {
   await slackCall(credential, 'chat.update', { channel: message.channel, ts: message.ts, text: message.text, ...(message.blocks && { blocks: message.blocks }) });
 }
@@ -138,7 +179,8 @@ export const REJECT_ACTION = 'landflow_reject';
 /** What a button carries back (its `value`, JSON): a workflow execution's or an agent session's tool call. */
 export type ApprovalTarget =
   | { t: 'wf'; e: string; c: string }
-  | { t: 'agent'; a: string; ch: string; s: string; c: string; th?: string };
+  // `cmd` (the Slack channel id) marks a slash command's session: its messages go through response URLs, not the bot token.
+  | { t: 'agent'; a: string; ch: string; s: string; c: string; th?: string; cmd?: string };
 
 const preview = (input: unknown) => {
   const text = JSON.stringify(input ?? {}, null, 2);

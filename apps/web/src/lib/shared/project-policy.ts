@@ -32,6 +32,11 @@ export const PROJECT_APPROVER_LABELS: Record<ProjectApprovers, string> = {
 export interface ProjectSettings {
   nodes: ScopedNodePolicy;
   approvers: ProjectApprovers;
+  /**
+   * Publishing and promoting this project's workflows needs a second person's approval, whatever the instance says
+   * (as the workflow's own policy does for one workflow). Who approves follows `approvers`.
+   */
+  fourEyes: boolean;
   updatedAt?: string;
   updatedBy?: string;
 }
@@ -45,7 +50,7 @@ export interface WorkflowPolicy {
 }
 
 export const EMPTY_NODE_POLICY: ScopedNodePolicy = { mode: 'off', plugins: [], types: [] };
-export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = { nodes: EMPTY_NODE_POLICY, approvers: 'default' };
+export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = { nodes: EMPTY_NODE_POLICY, approvers: 'default', fourEyes: false };
 export const DEFAULT_WORKFLOW_POLICY: WorkflowPolicy = { fourEyes: false, nodes: EMPTY_NODE_POLICY };
 
 /** GET /api/projects/<id>/settings */

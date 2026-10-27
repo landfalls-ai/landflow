@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minio-start
+  labels: { app.kubernetes.io/name: minio, app.kubernetes.io/part-of: landflow }
+data:
+  # deploy/infra/minio/start.sh: the server plus the bucket, created on every start; the readiness probe waits for it.
+  start.sh: |
+    #!/bin/sh
+    set -eu
+    rm -f /tmp/landflow-ready
+    minio server /data --address :9000 --console-address :9001 &
+    server=$!
+    trap 'kill -TERM "$server" 2>/dev/null || true' TERM INT
+    until curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/ready; do
+      kill -0 "$server" 2>/dev/null || exit 1
+      sleep 0.5
+    done
+    mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+    mc mb --ignore-existing "local/${LANDFLOW_BUCKET:-landflow}"
+    touch /tmp/landflow-ready
+    wait "$server" || true
+    wait "$server" 2>/dev/null || true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  labels: { app.kubernetes.io/name: minio, app.kubernetes.io/part-of: landflow }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: minio }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: minio, app.kubernetes.io/part-of: landflow }
+    spec:
+      containers:
+        - name: minio
+          image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/landflow/start.sh"]
+          ports:
+            - { name: s3, containerPort: 9000 }
+            - { name: console, containerPort: 9001 }
+          env:
+            - { name: LANDFLOW_BUCKET, value: landflow }
+            - name: MINIO_ROOT_USER
+              valueFrom: { secretKeyRef: { name: landflow-minio, key: access-key-id } }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: landflow-minio, key: secret-access-key } }
+          readinessProbe:
+            exec: { command: [test, -f, /tmp/landflow-ready] }
+            periodSeconds: 3
+            failureThreshold: 20
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 1Gi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: start, mountPath: /landflow, readOnly: true }
+      volumes:
+        - name: data
+          emptyDir: { sizeLimit: 2Gi }
+        - name: start
+          configMap: { name: minio-start }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  labels: { app.kubernetes.io/name: minio, app.kubernetes.io/part-of: landflow }
+spec:
+  selector: { app.kubernetes.io/name: minio }
+  ports:
+    - { name: s3, port: 9000, targetPort: s3 }
+    - { name: console, port: 9001, targetPort: console }

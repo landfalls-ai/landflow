@@ -3,7 +3,7 @@
  * row per test case (`evaluation_cases`), and the online grading settings and scores per agent or AI Agent node
  * (`online_eval_configs`, `online_eval_scores`). Synchronous, like the rest of the store.
  */
-import type { EvaluationCase, EvaluationRunSummary, OnlineEvalConfig, OnlineEvalScore } from '../../shared/evaluations';
+import type { EvaluationCase, EvaluationFile, EvaluationRunSummary, EvaluationSchedule, OnlineEvalConfig, OnlineEvalScore } from '../../shared/evaluations';
 import { DEFAULT_ONLINE_EVAL } from '../../shared/evaluations';
 import { database } from '../db';
 import { parse } from '../db/rows';
@@ -27,8 +27,24 @@ export function saveRun(run: EvaluationRunSummary) {
     status: run.status,
     started_at: run.startedAt,
     finished_at: run.finishedAt ?? null,
+    heartbeat_at: new Date().toISOString(),
     data: JSON.stringify(run),
   });
+}
+
+/** A running evaluation's process is alive (saved every few seconds while it runs). */
+export function touchRun(id: string) {
+  const run = getRun(id);
+  if (run?.status === 'running') saveRun(run);
+}
+
+/** Runs still marked running whose process hasn't been heard from since `olderThanMs` ago (no heartbeat: judged by their start). */
+export function staleRunning(olderThanMs: number, now = Date.now()): EvaluationRunSummary[] {
+  const cutoff = now - olderThanMs;
+  return db()
+    .all<{ data: string; heartbeat_at: string | null; started_at: string }>('SELECT data, heartbeat_at, started_at FROM evaluation_runs WHERE status = ? ORDER BY started_at', 'running')
+    .filter((row) => Date.parse(row.heartbeat_at ?? row.started_at) < cutoff)
+    .flatMap((row) => parse<EvaluationRunSummary>(row.data) ?? []);
 }
 
 export function getRun(id: string): EvaluationRunSummary | undefined {
@@ -163,4 +179,44 @@ export function scoreTotals(target: string): { total: number; average?: number; 
 
 export function deleteScores(target: string): number {
   return db().delete('online_eval_scores', { target });
+}
+
+// ---------------------------------------------------------------------------
+// File dataset and schedule (migration 1822)
+// ---------------------------------------------------------------------------
+
+/** What `evaluation_settings.data` holds for a workflow. */
+export interface EvaluationSettings {
+  /** The uploaded file: its metadata and where the bytes are (the binary store). */
+  file?: EvaluationFile & { binaryId: string };
+  schedule?: EvaluationSchedule;
+}
+
+export function getSettings(workflowId: string): EvaluationSettings {
+  return parse<EvaluationSettings>(db().get<{ data: string }>('SELECT data FROM evaluation_settings WHERE workflow_id = ?', workflowId)?.data) ?? {};
+}
+
+export function saveSettings(workflowId: string, settings: EvaluationSettings) {
+  const scope = settings.file ? settings.file.binaryId.split('.')[0] : null;
+  if (!settings.file && !settings.schedule) {
+    db().delete('evaluation_settings', { workflow_id: workflowId });
+    return;
+  }
+  db().upsert('evaluation_settings', { workflow_id: workflowId, scope, data: JSON.stringify(settings), updated_at: new Date().toISOString() });
+}
+
+/** Workflows with a schedule switched on. */
+export function scheduledWorkflows(): Array<{ workflowId: string; schedule: EvaluationSchedule }> {
+  return db()
+    .all<{ workflow_id: string; data: string }>('SELECT workflow_id, data FROM evaluation_settings')
+    .flatMap((row) => {
+      const schedule = parse<EvaluationSettings>(row.data)?.schedule;
+      return schedule?.enabled ? [{ workflowId: row.workflow_id, schedule }] : [];
+    });
+}
+
+/** Whether a binary scope holds a file dataset of a workflow that still exists (the orphan sweep keeps those). */
+export function isDatasetScope(scope: string, workflowExists: (workflowId: string) => boolean): boolean {
+  const row = db().get<{ workflow_id: string }>('SELECT workflow_id FROM evaluation_settings WHERE scope = ?', scope);
+  return Boolean(row && workflowExists(row.workflow_id));
 }

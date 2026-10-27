@@ -611,6 +611,27 @@ describe('test MCP Server Trigger', () => {
     await expect(mcpClient('tm-basic')).rejects.toMatchObject({ status: 404 });
   });
 
+  it('serves the editor’s resources and prompts on the test URL; a dynamic read is a manual run', async () => {
+    const content = { resources: { items: [{ uri: 'doc://a', name: 'A', source: 'text', text: 'static' }, { uri: 'doc://b', name: 'B', source: 'text', text: 'dyn {{ $json.resource }}' }] }, prompts: { items: [{ name: 'p', arguments: 'x', source: 'text', text: 'got {{ $json.arguments.x }}' }] } };
+    const started = await startListening(tools('wf_tm_content', 'tm-content', content), 'MCP');
+    if (!started.ok) throw new Error(started.error);
+    const abort = new AbortController();
+    const listening = readEvents(listenerStream(started.listener, abort.signal), abort);
+    await listening.next('listening');
+    const client = await mcpClient('tm-content');
+    expect((await client.listResources()).resources.map((r) => r.uri)).toEqual(['doc://a', 'doc://b']);
+    expect((await client.listPrompts()).prompts.map((p) => p.name)).toEqual(['p']);
+    expect((await client.readResource({ uri: 'doc://a' })).contents[0]).toMatchObject({ text: 'static' });
+    expect(results(listening)).toHaveLength(0);
+    expect((await client.readResource({ uri: 'doc://b' })).contents[0]).toMatchObject({ text: 'dyn doc://b' });
+    expect((await client.getPrompt({ name: 'p', arguments: { x: '1' } })).messages[0].content).toMatchObject({ text: 'got 1' });
+    await vi.waitFor(() => expect(results(listening)).toHaveLength(2));
+    expect(results(listening).every((r) => r.status === 'success')).toBe(true);
+    await client.close();
+    listening.stop();
+    await listening.closed;
+  });
+
   it('listens 120 s past the last request, and times out when none comes', async () => {
     const started = await startListening(tools('wf_tm_deadline', 'tm-deadline'), 'MCP');
     if (!started.ok) throw new Error(started.error);

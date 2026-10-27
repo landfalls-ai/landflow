@@ -5,12 +5,17 @@
  * embeddings, loaders, splitters, vector stores) and a Chat Trigger as the entry. Prompt templates are merged
  * into their chain, a vector store that both ingests and retrieves is split into an insert node (run by a Manual
  * Trigger, like Flowise's Upsert button) and a retrieval node, and a Retriever Tool becomes its store's tool mode.
- * Agentflow v2's start, agent and LLM nodes map with their inline model, tools and memory. Anything else becomes
- * a disabled No Operation placeholder, as in the n8n importer, and everything is reported back.
+ * Agentflow v2's start, agent and LLM nodes map with their inline model, tools and memory. Custom JS Function nodes
+ * become Code nodes (Flowise's `$flow` and input variables defined above the original code). Document stores become a
+ * loader + splitter + embeddings + vector store chain when their definition is in the file (a store export, or a
+ * `documentStores` list next to a chatflow), else a retrieval node on the store's collection. Flowise credentials map to
+ * Landflow credential slots by type, and are assigned when exactly one saved credential of that type exists. Anything
+ * else becomes a disabled No Operation placeholder, as in the n8n importer, and everything is reported back.
  *
  * Pure: no file system or registry access. `resolveType` gives the registered descriptors (defaults, versions).
  */
 import { nanoid } from 'nanoid';
+import { SUPPORTED_FILES } from './rag/files';
 import { defaultVersionOf, withPropertyDefaults, type ConnectionType } from '@landflow/protocol';
 import type { StickyNote, Workflow, WorkflowConnection, WorkflowNode } from '@landflow/engine';
 import type { ImportReport } from '../shared/types';
@@ -31,6 +36,8 @@ export interface FlowiseNode {
     category?: string;
     inputs?: Params;
     credential?: string;
+    /** Input anchors; the credential one lists the Flowise credential types the component takes. */
+    inputParams?: Array<{ name?: string; type?: string; credentialNames?: string[] }>;
   };
 }
 
@@ -43,7 +50,7 @@ export interface FlowiseEdge {
 }
 
 /** What a Flowise component is to the converter; sub-node roles name the Landflow connection type they supply. */
-type Role = 'model' | 'memory' | 'tool' | 'embedding' | 'loader' | 'splitter' | 'vectorStore' | 'retrieverTool' | 'prompt' | 'chain' | 'agent' | 'flow';
+type Role = 'model' | 'memory' | 'tool' | 'embedding' | 'loader' | 'splitter' | 'vectorStore' | 'retrieverTool' | 'prompt' | 'chain' | 'agent' | 'flow' | 'function';
 
 const SUPPLIES: Partial<Record<Role, ConnectionType>> = {
   model: 'ai_languageModel',
@@ -72,7 +79,24 @@ interface Mapping {
   role: Role;
   to: string;
   convert?: (ctx: Ctx) => Conversion;
+  /** The Flowise credential type the component takes when its export doesn't say (`inputParams`). */
+  credential?: string;
 }
+
+/** A Flowise credential type → the Landflow credential type and the slot (a node's credential requirement) it fills. */
+export const FLOWISE_CREDENTIALS: Record<string, { type: string; slot: string; note?: string }> = {
+  openAIApi: { type: 'core.openAiApi', slot: 'openAiApi' },
+  azureOpenAIApi: { type: 'core.openAiApi', slot: 'openAiApi', note: 'Azure OpenAI: the credential needs the deployment’s base URL.' },
+  groqApi: { type: 'core.openAiApi', slot: 'openAiApi', note: 'Groq: use an OpenAI API credential with https://api.groq.com/openai/v1.' },
+  mistralAIApi: { type: 'core.openAiApi', slot: 'openAiApi', note: 'Mistral: use an OpenAI API credential with https://api.mistral.ai/v1.' },
+  deepseekApi: { type: 'core.openAiApi', slot: 'openAiApi', note: 'DeepSeek: use an OpenAI API credential with https://api.deepseek.com/v1.' },
+  openRouterApi: { type: 'core.openAiApi', slot: 'openAiApi', note: 'OpenRouter: use an OpenAI API credential with https://openrouter.ai/api/v1.' },
+  localAIApi: { type: 'core.openAiApi', slot: 'openAiApi', note: 'LocalAI: use an OpenAI API credential with your server’s base URL.' },
+  anthropicApi: { type: 'core.anthropicApi', slot: 'anthropicApi' },
+  PostgresApi: { type: 'core.postgres', slot: 'postgres' },
+  postgresApi: { type: 'core.postgres', slot: 'postgres' },
+  cohereApi: { type: 'core.cohereApi', slot: 'cohereApi' },
+};
 
 const CHAT_INPUT = '{{ $json.chatInput }}';
 const STICKY_SIZE = [40, 4000] as const;
@@ -252,6 +276,9 @@ const loaderMetadata = (inputs: Params) => {
   return isObject(metadata) ? Object.entries(metadata).map(([name, v]) => ({ name, value: text(v) })) : [];
 };
 
+/** Loaders of files: the Default Data Loader reads those from binary fields (PDF, DOCX, text, CSV, JSON…). */
+const FILE_LOADERS = new Set(['pdfFile', 'docxFile', 'csvFile', 'jsonFile', 'jsonlinesFile', 'textFile', 'folderFiles']);
+
 /** Document loaders → the Default Data Loader: inline text is kept; files and web pages have to be fed in as items. */
 const loader = (ctx: Ctx): Conversion => {
   const component = ctx.node.data?.name ?? '';
@@ -262,14 +289,19 @@ const loader = (ctx: Ctx): Conversion => {
     if (upload) data = upload.text.length > 20_000 ? `${upload.text.slice(0, 20_000)}` : upload.text;
     if (upload && upload.text.length > 20_000) ctx.warn(`${ctx.name}: the text file was cut at 20,000 characters; feed long files in through items.`);
   }
-  if (data === undefined) {
+  if (data === undefined && component === 'documentStore') {
+    ctx.warn(`${ctx.name}: the Flowise document store ${text(value(ctx.inputs, 'selectedStore'))} isn't defined in the file; feed its content in as items (or load it with a loader from the original source).`);
+  } else if (data === undefined && FILE_LOADERS.has(component)) {
+    ctx.warn(`${ctx.name}: Flowise loaded ${component}; the file isn't in the export. Feed it in as a binary file before the insert (HTTP Request, Read/Write Files or a form upload): the loader reads ${SUPPORTED_FILES}.`);
+  } else if (data === undefined) {
     const source = text(value(ctx.inputs, 'url')) || component;
     ctx.warn(`${ctx.name}: Flowise loaded ${source}; that content isn't in the export. Feed it in as items before the insert (e.g. HTTP Request or Read/Write Files + Extract From File).`);
   }
   const metadata = loaderMetadata(ctx.inputs);
   return {
     parameters: {
-      jsonMode: data === undefined ? 'allInputData' : 'expressionData',
+      jsonMode: data !== undefined ? 'expressionData' : FILE_LOADERS.has(component) ? 'binaryData' : 'allInputData',
+      ...(data === undefined && FILE_LOADERS.has(component) && { binaryField: '' }),
       ...(data !== undefined && { jsonData: data }),
       textSplittingMode: ctx.connected('textSplitter') ? 'custom' : 'simple',
       ...(metadata.length && { options: { metadata: { metadataValues: metadata } } }),
@@ -304,12 +336,12 @@ const tokenSplitter = (ctx: Ctx): Conversion => ({
 });
 
 /** Vector stores: the collection is the Flowise node (insert and retrieval share it); the mode is set per use later. */
-const memoryVectorStore = (ctx: Ctx): Conversion => ({ parameters: { collection: ctx.node.id, topK: whole(value(ctx.inputs, 'topK'), 4, 1, 100) } });
+const memoryVectorStore = (ctx: Ctx): Conversion => ({ parameters: { collection: text(value(ctx.inputs, 'collection')) || ctx.node.id, topK: whole(value(ctx.inputs, 'topK'), 4, 1, 100) } });
 
 const postgresVectorStore = (ctx: Ctx): Conversion => {
   const host = text(value(ctx.inputs, 'host'));
   ctx.warn(`${ctx.name}: choose a Postgres credential${host ? ` for ${host}` : ''}; Landflow keeps its own table layout, so documents Flowise stored have to be inserted again.`);
-  return { parameters: { tableName: text(value(ctx.inputs, 'tableName')) || 'documents', collection: 'flowise', topK: whole(value(ctx.inputs, 'topK'), 4, 1, 100) } };
+  return { parameters: { tableName: text(value(ctx.inputs, 'tableName')) || 'documents', collection: text(value(ctx.inputs, 'collection')) || 'flowise', topK: whole(value(ctx.inputs, 'topK'), 4, 1, 100) } };
 };
 
 const chatTrigger = (ctx: Ctx): Conversion => {
@@ -345,19 +377,227 @@ const agentflowLlm = (ctx: Ctx): Conversion => {
 const flowVariables = (template: string) => template.replace(/\{\{\s*question\s*\}\}/g, '{{ $json.chatInput }}');
 
 // ---------------------------------------------------------------------------
+// Custom JS Function → Code
+// ---------------------------------------------------------------------------
+
+/** A Flowise input variable's value as a JavaScript expression of the Code node (item `$json`). */
+function variableExpression(raw: unknown, name: string, ctx: Ctx, notes: string[]): string {
+  const value = text(raw).trim();
+  if (!value) return 'undefined';
+  if (/^\{\{\s*question\s*\}\}$/.test(value)) return '$json.chatInput';
+  if (/^\{\{\s*(chat_?history|history)\s*\}\}$/i.test(value)) {
+    notes.push(`$${name} was the chat history; it is an empty list here (an AI Agent keeps conversations in its memory).`);
+    return '[]';
+  }
+  const vars = /^\{\{\s*\$vars\.([\w$]+)\s*\}\}$/.exec(value);
+  if (vars) return `$vars.${vars[1]}`;
+  if (isReference(value)) {
+    notes.push(`$${name} came from another node's output in Flowise; it reads that node's output field (the nodes are connected in order).`);
+    return '($json.output ?? $json.text ?? $json.response)';
+  }
+  if (/\{\{\s*question\s*\}\}/.test(value)) {
+    ctx.warn(`${ctx.name}: $${name} mixes text with the question; it is a template string over $json.chatInput.`);
+    return `\`${value.replace(/[`\\]/g, '\\$&').replace(/\$\{/g, '\\${').replace(/\{\{\s*question\s*\}\}/g, '${$json.chatInput}')}\``;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Flowise's Custom JS Function (a function body that `return`s a value; input variables are `$name`, the run is `$flow`)
+ * → a Code node in "once for each item" mode: `$flow` and the variables are defined above the original code, which stays
+ * as it was inside an async function, and its result goes to `output` next to the item's fields. What the Code node can't
+ * offer (`$flow.state`, `require`) is listed in the node's notes and the report.
+ */
+const customFunction =
+  (codeKey: string, variablesKey: string) =>
+  (ctx: Ctx): Conversion => {
+    const code = text(value(ctx.inputs, codeKey)).replace(/\r\n/g, '\n').trimEnd();
+    if (!code.trim()) ctx.warn(`${ctx.name}: the function had no code; the Code node returns its input unchanged.`);
+    const notes: string[] = [];
+    const declarations = list(json(ctx.inputs[variablesKey])).flatMap((entry) => {
+      const raw = text(entry.variableName).trim().replace(/^\$/, '');
+      if (!raw) return [];
+      const name = raw.replace(/[^\w$]/g, '_');
+      if (name !== raw) notes.push(`The variable “${raw}” is $${name} here.`);
+      return [`const $${name} = ${variableExpression(entry.variableValue, name, ctx, notes)};`];
+    });
+    const unsupported: Array<[RegExp, string]> = [
+      [/\$flow\.state\b/, '$flow.state (agentflow state) has no equivalent: it is an empty object here'],
+      [/\$flow\.(chatHistory|rawOutput|apiMessage)\b/, '$flow.chatHistory, $flow.rawOutput and $flow.apiMessage are not available'],
+      [/\$flow\.chatflowId\b/, '$flow.chatflowId is an empty string'],
+      [/\brequire\s*\(|\bimport\s*\(/, 'require() / import() of Flowise’s allowed dependencies may not be available in the sandbox; check the code runs'],
+      [/\bprocess\.env\b/, 'process.env is not available in the sandbox: use $vars (Settings → Variables)'],
+    ];
+    for (const [pattern, note] of unsupported) if (pattern.test(code)) notes.push(note);
+    for (const note of notes) if (!/^The variable/.test(note) && !/^\$[\w$]+ (was|came)/.test(note)) ctx.warn(`${ctx.name}: ${note}.`);
+    const body = code.split('\n').map((line) => (line ? `  ${line}` : line)).join('\n');
+    const converted = [
+      `// Converted from the Flowise Custom JS Function “${ctx.name}”. $flow and the input variables come first; the original code is the function.`,
+      `const $flow = { input: $json.chatInput ?? '', sessionId: $json.sessionId ?? '', chatId: $json.sessionId ?? '', chatflowId: '', state: {}, chatHistory: [] };`,
+      ...declarations,
+      'const flowiseFunction = async () => {',
+      body,
+      '};',
+      'const output = await flowiseFunction();',
+      'return { ...$json, output };',
+    ].join('\n');
+    return { parameters: { language: 'javascript', mode: 'each', codeEach: converted }, ...(notes.length && { notes: `Imported from Flowise.\n${notes.map((n) => `- ${n}`).join('\n')}` }) };
+  };
+
+// ---------------------------------------------------------------------------
+// Document stores
+// ---------------------------------------------------------------------------
+
+/** A document store the file doesn't define: retrieval on a collection named after it (the collection may already exist). */
+const documentStoreReference = (ctx: Ctx): Conversion => {
+  const store = text(value(ctx.inputs, 'selectedStore')).trim();
+  const collection = store || ctx.node.id;
+  ctx.warn(
+    `${ctx.name}: the Flowise document store ${store ? `“${store}” ` : ''}isn't defined in the file, so this node reads the collection “${collection}” of Landflow's SQLite store. Fill it with a loader, splitter and embeddings (or point the node at the store that already holds it) and attach the embeddings model it was filled with.`,
+  );
+  return { parameters: { collection, topK: whole(value(ctx.inputs, 'topK'), 4, 1, 100) } };
+};
+
+/** A Flowise document store as an export writes it (the Document Store page's API: loaders and configs are JSON text). */
+export interface FlowiseDocumentStore {
+  id?: string;
+  name?: string;
+  description?: string;
+  loaders?: unknown;
+  vectorStoreConfig?: unknown;
+  embeddingConfig?: unknown;
+}
+
+/** Whether a parsed document is a document store export rather than a chatflow. */
+export function isFlowiseDocumentStore(doc: Params): boolean {
+  return !Array.isArray(doc.nodes) && (Array.isArray(json(doc.loaders)) || isObject(json(doc.vectorStoreConfig)) || isObject(json(doc.embeddingConfig))) && (typeof doc.name === 'string' || typeof doc.id === 'string');
+}
+
+/** `{ name, config }` of a store's embeddingConfig / vectorStoreConfig. */
+const configOf = (raw: unknown): { name: string; config: Params } | undefined => {
+  const parsed = json(raw);
+  return isObject(parsed) && typeof parsed.name === 'string' ? { name: parsed.name, config: isObject(parsed.config) ? parsed.config : {} } : undefined;
+};
+
+/** The vector store components a document store's `vectorStoreConfig.name` maps to; the rest use Landflow's SQLite store. */
+const STORE_COMPONENTS: Record<string, string> = { postgres: 'postgres', memoryVectorStore: 'memoryVectorStore', simpleStore: 'memoryVectorStore' };
+
+/**
+ * Expand each document store the nodes refer to into the Flowise nodes of its chain, so the ordinary conversion makes
+ * the loader, splitter, embeddings and vector store (and the Upsert trigger): the `documentStoreVS` node becomes the
+ * store's vector store with an embeddings node and one loader (with its splitter) per loader of the store; a
+ * `documentStore` loader node becomes the store's loaders. Stores that aren't defined stay references.
+ */
+function expandDocumentStores(raws: FlowiseNode[], edges: FlowiseEdge[], stores: FlowiseDocumentStore[], warn: (message: string) => void): { raws: FlowiseNode[]; edges: FlowiseEdge[] } {
+  const byKey = new Map<string, FlowiseDocumentStore>();
+  for (const store of stores) for (const key of [store.id, store.name]) if (key) byKey.set(key, store);
+  const outRaws: FlowiseNode[] = [];
+  const outEdges: FlowiseEdge[] = [...edges];
+  const virtual = (id: string, name: string, label: string, inputs: Params, at?: FlowiseNode['position']): FlowiseNode => ({ id, position: at, data: { id, name, label, inputs } });
+  const link = (source: string, target: string, input: string) => outEdges.push({ source, sourceHandle: `${source}-output-x-X`, target, targetHandle: `${target}-input-${input}-X` });
+  /** The store's loaders as nodes (each with its splitter) feeding `target`'s `document` input. */
+  const addLoaders = (store: FlowiseDocumentStore, base: FlowiseNode, target: string | undefined) => {
+    const loaders = list(json(store.loaders));
+    loaders.forEach((entry, i) => {
+      const loaderName = text(entry.loaderId);
+      const config = isObject(json(entry.loaderConfig)) ? (json(entry.loaderConfig) as Params) : {};
+      const id = `${base.id}__loader${i}`;
+      const label = text(entry.loaderName) || loaderName || `Loader ${i + 1}`;
+      if (!FLOWISE_TYPE_MAP[loaderName]) warn(`${text(store.name) || base.id}: the loader “${loaderName}” has no Landflow equivalent; it reads items like a Default Data Loader.`);
+      outRaws.push(virtual(id, FLOWISE_TYPE_MAP[loaderName]?.role === 'loader' ? loaderName : 'plainText', label, FLOWISE_TYPE_MAP[loaderName]?.role === 'loader' ? config : {}, { x: (base.position?.x ?? 0) - 380, y: (base.position?.y ?? 0) + i * 160 - 200 }));
+      const splitterName = text(entry.splitterId);
+      if (splitterName && FLOWISE_TYPE_MAP[splitterName]?.role === 'splitter') {
+        const splitterId = `${id}__splitter`;
+        outRaws.push(virtual(splitterId, splitterName, text(entry.splitterName) || splitterName, isObject(json(entry.splitterConfig)) ? (json(entry.splitterConfig) as Params) : {}, { x: (base.position?.x ?? 0) - 700, y: (base.position?.y ?? 0) + i * 160 - 200 }));
+        link(splitterId, id, 'textSplitter');
+      }
+      if (target) link(id, target, 'document');
+    });
+    return loaders.length;
+  };
+
+  for (const raw of raws) {
+    const name = raw.data?.name;
+    if (name !== 'documentStoreVS' && name !== 'documentStore') {
+      outRaws.push(raw);
+      continue;
+    }
+    const inputs = isObject(raw.data?.inputs) ? raw.data!.inputs! : {};
+    const key = text(inputs.selectedStore).trim();
+    const store = key ? byKey.get(key) : undefined;
+    if (!store) {
+      outRaws.push(raw);
+      continue;
+    }
+    const storeName = text(store.name) || key;
+    if (name === 'documentStore') {
+      // The loader form: the store's own loaders replace it (edges that left it leave each of them).
+      const outgoing = edges.filter((e) => e.source === raw.id);
+      const count = addLoaders(store, raw, undefined);
+      for (let i = 0; i < count; i++) for (const edge of outgoing) outEdges.push({ ...edge, source: `${raw.id}__loader${i}`, sourceHandle: `${raw.id}__loader${i}-output-x-X` });
+      for (const edge of outgoing) outEdges.splice(outEdges.indexOf(edge), 1);
+      if (!count) outRaws.push(raw);
+      continue;
+    }
+    // The vector store form: the store's vector store, embeddings and loaders.
+    const vector = configOf(store.vectorStoreConfig);
+    const component = vector ? (STORE_COMPONENTS[vector.name] ?? 'sqliteVectorStore') : 'sqliteVectorStore';
+    if (vector && !STORE_COMPONENTS[vector.name]) warn(`${storeName}: Flowise kept it in ${vector.name}; Landflow has no store for that, so it uses its SQLite store (documents are inserted again by “Upsert documents”).`);
+    const vectorInputs: Params = { ...(vector?.config ?? {}), collection: storeName, ...(inputs.topK !== undefined && { topK: inputs.topK }) };
+    outRaws.push({ ...raw, data: { ...raw.data, name: component, label: raw.data?.label ?? storeName, inputs: vectorInputs, ...(vector?.config.credential ? { credential: String(vector.config.credential) } : {}) } });
+    const embedding = configOf(store.embeddingConfig);
+    if (embedding && FLOWISE_TYPE_MAP[embedding.name]?.role === 'embedding') {
+      const id = `${raw.id}__embeddings`;
+      outRaws.push(virtual(id, embedding.name, embedding.name, embedding.config, { x: (raw.position?.x ?? 0) - 380, y: (raw.position?.y ?? 0) + 200 }));
+      if (embedding.config.credential) outRaws[outRaws.length - 1].data!.credential = String(embedding.config.credential);
+      link(id, raw.id, 'embeddings');
+    } else warn(`${storeName}: its embeddings (${embedding?.name ?? 'none set'}) have no Landflow equivalent; attach an embeddings sub-node.`);
+    if (!addLoaders(store, raw, raw.id)) warn(`${storeName}: the store has no loaders in the file; the node reads the collection as it is.`);
+  }
+  return { raws: outRaws, edges: outEdges };
+}
+
+/** The document store a parsed or textual import is, when it is one (a document store export instead of a chatflow). */
+export function flowiseDocumentStoreOf(input: unknown): FlowiseDocumentStore | undefined {
+  let value = input;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  if (Array.isArray(value) && value.length === 1) value = value[0];
+  return isObject(value) && isFlowiseDocumentStore(value) ? (value as FlowiseDocumentStore) : undefined;
+}
+
+/** A document store export as a Flowise chatflow of its own: a vector store with its embeddings, loaders and splitters. */
+export function documentStoreAsFlow(store: FlowiseDocumentStore): Params {
+  const id = 'documentStore_0';
+  const label = text(store.name) || 'Document store';
+  return {
+    name: label,
+    description: text(store.description),
+    documentStores: [store],
+    nodes: [{ id, position: { x: 600, y: 0 }, data: { id, name: 'documentStoreVS', label, inputs: { selectedStore: text(store.id) || label } } }],
+    edges: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The component map
 // ---------------------------------------------------------------------------
 
 const MODELS: Record<string, Mapping> = {
-  chatOpenAI: { role: 'model', to: 'core.openAiChatModel', convert: chatOpenAI },
-  chatOpenAICustom: { role: 'model', to: 'core.openAiChatModel', convert: compatible('This OpenAI-compatible model') },
-  azureChatOpenAI: { role: 'model', to: 'core.openAiChatModel', convert: compatible('Azure OpenAI') },
-  chatLocalAI: { role: 'model', to: 'core.openAiChatModel', convert: compatible('LocalAI') },
-  groqChat: { role: 'model', to: 'core.openAiChatModel', convert: compatible('Groq') },
-  chatMistralAI: { role: 'model', to: 'core.openAiChatModel', convert: compatible('Mistral') },
-  chatDeepseek: { role: 'model', to: 'core.openAiChatModel', convert: compatible('DeepSeek') },
-  chatOpenRouter: { role: 'model', to: 'core.openAiChatModel', convert: compatible('OpenRouter') },
-  chatAnthropic: { role: 'model', to: 'core.anthropicChatModel', convert: chatAnthropic },
+  chatOpenAI: { role: 'model', to: 'core.openAiChatModel', convert: chatOpenAI, credential: 'openAIApi' },
+  chatOpenAICustom: { role: 'model', to: 'core.openAiChatModel', convert: compatible('This OpenAI-compatible model'), credential: 'openAIApi' },
+  azureChatOpenAI: { role: 'model', to: 'core.openAiChatModel', convert: compatible('Azure OpenAI'), credential: 'azureOpenAIApi' },
+  chatLocalAI: { role: 'model', to: 'core.openAiChatModel', convert: compatible('LocalAI'), credential: 'localAIApi' },
+  groqChat: { role: 'model', to: 'core.openAiChatModel', convert: compatible('Groq'), credential: 'groqApi' },
+  chatMistralAI: { role: 'model', to: 'core.openAiChatModel', convert: compatible('Mistral'), credential: 'mistralAIApi' },
+  chatDeepseek: { role: 'model', to: 'core.openAiChatModel', convert: compatible('DeepSeek'), credential: 'deepseekApi' },
+  chatOpenRouter: { role: 'model', to: 'core.openAiChatModel', convert: compatible('OpenRouter'), credential: 'openRouterApi' },
+  chatAnthropic: { role: 'model', to: 'core.anthropicChatModel', convert: chatAnthropic, credential: 'anthropicApi' },
   chatOllama: { role: 'model', to: 'core.ollamaChatModel', convert: chatOllama },
   ollama: { role: 'model', to: 'core.ollamaChatModel', convert: chatOllama },
 };
@@ -390,7 +630,7 @@ export const FLOWISE_TYPE_MAP: Record<string, Mapping> = {
   retrieverTool: { role: 'retrieverTool', to: '' },
   promptTemplate: { role: 'prompt', to: '' },
   chatPromptTemplate: { role: 'prompt', to: '' },
-  openAIEmbeddings: { role: 'embedding', to: 'core.embeddingsOpenAi', convert: embeddingsOpenAI },
+  openAIEmbeddings: { role: 'embedding', to: 'core.embeddingsOpenAi', convert: embeddingsOpenAI, credential: 'openAIApi' },
   ollamaEmbedding: { role: 'embedding', to: 'core.embeddingsOllama', convert: embeddingsOllama },
   plainText: { role: 'loader', to: 'core.documentDefaultDataLoader', convert: loader },
   textFile: { role: 'loader', to: 'core.documentDefaultDataLoader', convert: loader },
@@ -408,7 +648,13 @@ export const FLOWISE_TYPE_MAP: Record<string, Mapping> = {
   htmlToMarkdownTextSplitter: { role: 'splitter', to: 'core.textSplitterRecursiveCharacterTextSplitter', convert: splitter('html') },
   tokenTextSplitter: { role: 'splitter', to: 'core.textSplitterTokenSplitter', convert: tokenSplitter },
   memoryVectorStore: { role: 'vectorStore', to: 'core.vectorStoreInMemory', convert: memoryVectorStore },
-  postgres: { role: 'vectorStore', to: 'core.vectorStorePGVector', convert: postgresVectorStore },
+  postgres: { role: 'vectorStore', to: 'core.vectorStorePGVector', convert: postgresVectorStore, credential: 'PostgresApi' },
+  // Flowise document stores: the vector store of a store defined elsewhere (expanded to its chain when the definition is known).
+  documentStoreVS: { role: 'vectorStore', to: 'core.vectorStoreSqlite', convert: documentStoreReference },
+  sqliteVectorStore: { role: 'vectorStore', to: 'core.vectorStoreSqlite', convert: (ctx) => ({ parameters: { collection: text(value(ctx.inputs, 'collection')) || ctx.node.id, topK: whole(value(ctx.inputs, 'topK'), 4, 1, 100) } }) },
+  documentStore: { role: 'loader', to: 'core.documentDefaultDataLoader', convert: loader },
+  customFunction: { role: 'function', to: 'core.code', convert: customFunction('javascriptFunction', 'functionInputVariables') },
+  customFunctionAgentflow: { role: 'flow', to: 'core.code', convert: customFunction('customFunctionJavascriptFunction', 'customFunctionInputVariables') },
   startAgentflow: { role: 'flow', to: 'core.chatTrigger', convert: chatTrigger },
   agentAgentflow: { role: 'flow', to: 'core.aiAgent', convert: agentflowAgent },
   llmAgentflow: { role: 'flow', to: 'core.chainLlm', convert: agentflowLlm },
@@ -470,8 +716,16 @@ export function convertFlowiseWorkflow(doc: Params, options: ImportOptions = {})
   const report: ImportReport = { format: 'flowise', mapped: [], placeholders: [], stickyNotes: 0, connections: 0, warnings: [] };
   const warn = (message: string) => report.warnings.push(message);
   const descriptorOf = (type: string) => options.resolveType?.(type);
-  const raws = list(doc.nodes).filter((n): n is Params & FlowiseNode => typeof n.id === 'string' && isObject(n.data)) as FlowiseNode[];
-  const edges = list(doc.edges).filter((e): e is Params & FlowiseEdge => typeof e.source === 'string' && typeof e.target === 'string') as FlowiseEdge[];
+  // Document stores defined next to the chatflow (`documentStores`, or Flowise's export-all `DocumentStore`) expand to their chains.
+  const stores = list(doc.documentStores ?? doc.DocumentStore) as FlowiseDocumentStore[];
+  const expanded = expandDocumentStores(
+    list(doc.nodes).filter((n): n is Params & FlowiseNode => typeof n.id === 'string' && isObject(n.data)) as FlowiseNode[],
+    list(doc.edges).filter((e): e is Params & FlowiseEdge => typeof e.source === 'string' && typeof e.target === 'string') as FlowiseEdge[],
+    stores,
+    warn,
+  );
+  const raws = expanded.raws;
+  const edges = expanded.edges;
   const rawById = new Map(raws.map((n) => [n.id, n]));
   const component = (id: string) => rawById.get(id)?.data?.name ?? '';
   const mappingOf = (id: string) => FLOWISE_TYPE_MAP[component(id)];
@@ -490,6 +744,40 @@ export function convertFlowiseWorkflow(doc: Params, options: ImportOptions = {})
   };
   const position = (raw: FlowiseNode, dx = 0, dy = 0): [number, number] => [Math.round(num(raw.position?.x, 0)) + dx, Math.round(num(raw.position?.y, 0)) + dy];
   const labelOf = (raw: FlowiseNode) => text(raw.data?.label) || text(raw.data?.name) || raw.id;
+
+  /** Whether the Flowise node pointed at a saved credential (its id is all an export holds). */
+  const hasCredential = (raw: FlowiseNode) => Boolean(raw.data?.credential || (isObject(raw.data?.inputs) && raw.data!.inputs!.credential));
+
+  /**
+   * The Flowise credential of a component → the credential slot of its Landflow node, by type: the component's
+   * `inputParams` name the Flowise credential types (else the map's default), FLOWISE_CREDENTIALS gives the Landflow type
+   * and slot. With exactly one saved credential of that type (`options.credentials`) the slot is filled; otherwise it's
+   * reported to choose (several) or create (none). Keys and passwords never come along in an export.
+   */
+  const attachCredential = (raw: FlowiseNode, node: WorkflowNode, mapping: Mapping, reference = hasCredential(raw)) => {
+    const named = raw.data?.inputParams?.find((param) => param.type === 'credential' || param.name === 'credential')?.credentialNames?.find((n) => FLOWISE_CREDENTIALS[n]);
+    const flowise = named ?? mapping.credential;
+    if (!reference && !(flowise && FLOWISE_CREDENTIALS[flowise])) return;
+    const target = flowise ? FLOWISE_CREDENTIALS[flowise] : undefined;
+    const declared = target ? (descriptorOf(node.type)?.credentials?.some((c) => c.name === target.slot) ?? true) : false;
+    if (!target || !declared) {
+      if (reference) warn(`${node.name}: credential dropped — pick a saved credential in the node.`);
+      return;
+    }
+    const candidates = (options.credentials ?? []).filter((c) => c.type === target.type);
+    const assigned = candidates.length === 1 ? candidates[0] : undefined;
+    if (assigned) node.credentials = { ...node.credentials, [target.slot]: { id: assigned.id, name: assigned.name } };
+    else if (reference) warn(`${node.name}: credential dropped — pick a saved credential in the node.`);
+    if (target.note) warn(`${node.name}: ${target.note}`);
+    (report.credentials ??= []).push({
+      node: node.name,
+      flowise: flowise!,
+      type: target.type,
+      slot: target.slot,
+      status: assigned ? 'assigned' : candidates.length ? 'choose' : 'create',
+      ...(assigned && { credential: assigned.name }),
+    });
+  };
 
   /** Add a Landflow node of `type` (registered defaults filled in). */
   const addNode = (type: string, name: string, at: [number, number], parameters: Params, extra: Partial<WorkflowNode> = {}): WorkflowNode => {
@@ -528,8 +816,8 @@ export function convertFlowiseWorkflow(doc: Params, options: ImportOptions = {})
     if (STICKY.has(name)) continue;
     const mapping = FLOWISE_TYPE_MAP[name];
     const label = labelOf(raw);
-    if (raw.data?.credential || (isObject(raw.data?.inputs) && raw.data!.inputs!.credential)) warn(`${label}: credential dropped — pick a saved credential in the node.`);
     if (!mapping) {
+      if (hasCredential(raw)) warn(`${label}: credential dropped — pick a saved credential in the node.`);
       const node = addNode('core.noOp', label, position(raw), {}, { disabled: true, notes: `Placeholder for the Flowise node ${name} (v${raw.data?.version ?? 1}), which Landflow doesn't have. Original inputs: ${clip(JSON.stringify(raw.data?.inputs ?? {}))}` });
       built.set(raw.id, node);
       placeholders.add(raw.id);
@@ -541,6 +829,7 @@ export function convertFlowiseWorkflow(doc: Params, options: ImportOptions = {})
     const node = addNode(mapping.to, label, position(raw), converted.parameters, converted.notes ? { notes: converted.notes } : {});
     built.set(raw.id, node);
     report.mapped.push({ name: node.name, from: name, to: mapping.to });
+    attachCredential(raw, node, mapping);
   }
 
   // 2. Prompt templates are merged into the chains they feed.
@@ -578,8 +867,9 @@ export function convertFlowiseWorkflow(doc: Params, options: ImportOptions = {})
     const embeddings = into(raw.id).filter((e) => mappingOf(e.source)?.role === 'embedding' && built.has(e.source));
     const documents = into(raw.id).filter((e) => mappingOf(e.source)?.role === 'loader' && built.has(e.source));
     if (!embeddings.length) warn(`${label}: no embeddings were connected in Flowise; attach an embeddings sub-node.`);
-    const uses: Array<{ mode: 'insert' | 'retrieve' | 'retrieve-as-tool'; consumers: WorkflowNode[]; extra?: Params; name: string; at: [number, number] }> = [];
-    if (documents.length) uses.push({ mode: 'insert', consumers: [], name: uses.length ? `${label} (insert)` : label, at: position(raw, 0, -260) });
+    const uses: Array<{ mode: 'insert' | 'retrieve' | 'retrieve-as-tool'; consumers: WorkflowNode[]; extra?: Params; name: string; at: [number, number]; document?: FlowiseEdge }> = [];
+    // Landflow's vector store takes one document loader: each loader gets an insert node of its own on the same collection.
+    documents.forEach((document, d) => uses.push({ mode: 'insert', consumers: [], name: d ? `${label} (insert ${d + 1})` : label, at: position(raw, 0, -260 - d * 120), document }));
     const chains = outOf(raw.id).map((e) => built.get(e.target)).filter((n): n is WorkflowNode => n?.type === 'core.chainRetrievalQa');
     if (chains.length) uses.push({ mode: 'retrieve', consumers: chains, name: label, at: position(raw) });
     for (const toolEdge of outOf(raw.id).filter((e) => mappingOf(e.target)?.role === 'retrieverTool')) {
@@ -602,16 +892,17 @@ export function convertFlowiseWorkflow(doc: Params, options: ImportOptions = {})
     if (!uses.length) uses.push({ mode: 'insert', consumers: [], name: label, at: position(raw) });
     // Names: the first use keeps the store's label; an insert next to a retriever is "<label> (insert)".
     if (uses.length > 1 && uses[0].mode === 'insert') uses[0].name = `${label} (insert)`;
+    if (documents.length > 1) uses.slice(1, documents.length).forEach((use, d) => (use.name = `${label} (insert ${d + 2})`));
 
     uses.forEach((use, i) => {
       const parameters: Params = { ...shared, mode: use.mode, ...(use.mode === 'insert' ? { clearStore: false } : { topK }), ...use.extra };
       const node = addNode(mapping.to, use.name, use.at, parameters);
+      attachCredential(raw, node, mapping);
       if (i === 0) built.set(raw.id, node);
       if (use.mode !== 'retrieve-as-tool') report.mapped.push({ name: node.name, from: component(raw.id), to: mapping.to });
       for (const edge of embeddings) connect('ai_embedding', built.get(edge.source)!.id, node.id);
       if (use.mode === 'insert') {
-        for (const edge of documents.slice(0, 1)) connect('ai_document', built.get(edge.source)!.id, node.id);
-        if (documents.length > 1) warn(`${label}: Landflow's vector store takes one document loader; only “${labelOf(rawById.get(documents[0].source)!)}” was connected.`);
+        if (use.document) connect('ai_document', built.get(use.document.source)!.id, node.id);
         upsertTrigger ??= addNode('core.manualTrigger', 'Upsert documents', [Math.round(num(raw.position?.x, 0)) - 320, Math.round(num(raw.position?.y, 0)) - 260], {});
         connect('main', upsertTrigger.id, node.id);
       }
@@ -642,6 +933,13 @@ export function convertFlowiseWorkflow(doc: Params, options: ImportOptions = {})
       continue;
     }
     if (component(edge.target) === 'chainTool' && (sourceMapping?.role === 'chain' || sourceMapping?.role === 'agent')) continue;
+    // A Custom JS Function runs in the main flow, between the chat message and the chains and agents it feeds (or is fed by).
+    const inFlow = (role?: Role) => role === 'function' || role === 'chain' || role === 'agent' || role === 'flow';
+    if ((sourceMapping?.role === 'function' || targetMapping?.role === 'function') && inFlow(sourceMapping?.role) && inFlow(targetMapping?.role)) {
+      connect('main', source.id, target.id, outputIndexOf(edge));
+      if (sourceMapping?.role === 'function') warn(`${label}: the function's result is in {{ $json.output }}; use it in ${target.name}'s prompt if it should see it.`);
+      continue;
+    }
     const type = sourceMapping && SUPPLIES[sourceMapping.role];
     const input = inputOf(edge);
     if (!type) {
@@ -671,6 +969,7 @@ export function convertFlowiseWorkflow(doc: Params, options: ImportOptions = {})
     if (model) {
       const converted = model.convert!({ node: raw, name: `${node.name} model`, inputs: config, warn, connected: () => false });
       const sub = addNode(model.to, `${node.name} Model`, position(raw, -40, 220), converted.parameters);
+      attachCredential({ ...raw, data: { ...raw.data, inputs: {}, credential: config.FLOWISE_CREDENTIAL_ID ? String(config.FLOWISE_CREDENTIAL_ID) : undefined } }, sub, model, Boolean(config.FLOWISE_CREDENTIAL_ID));
       connect('ai_languageModel', sub.id, node.id);
       report.mapped.push({ name: sub.name, from: modelName, to: model.to });
     } else warn(`${node.name}: the model “${modelName || 'none'}” has no Landflow chat model; attach one.`);
@@ -696,20 +995,30 @@ export function convertFlowiseWorkflow(doc: Params, options: ImportOptions = {})
     }
   }
 
-  // 6. Chatflows have no trigger: the chat message goes to the chains and agents whose output nobody consumes.
+  // 6. Chatflows have no trigger: the chat message goes to the chains, agents and functions whose output nobody consumes
+  //    (through the functions that feed them: the message enters at the start of that line).
   const hasFlowStart = raws.some((raw) => component(raw.id) === 'startAgentflow');
   if (!hasFlowStart) {
     const endings = raws.filter((raw) => {
       const role = mappingOf(raw.id)?.role;
-      return (role === 'chain' || role === 'agent') && built.has(raw.id) && !outOf(raw.id).some((e) => built.has(e.target) || mappingOf(e.target)?.role === 'retrieverTool');
+      return (role === 'chain' || role === 'agent' || role === 'function') && built.has(raw.id) && !outOf(raw.id).some((e) => built.has(e.target) || mappingOf(e.target)?.role === 'retrieverTool');
     });
+    const headsOf = (id: string, visited = new Set<string>()): string[] => {
+      if (visited.has(id)) return [];
+      visited.add(id);
+      const incoming = connections.filter((c) => c.type === 'main' && c.target === id).map((c) => c.source);
+      return incoming.length ? incoming.flatMap((source) => headsOf(source, visited)) : [id];
+    };
     const tooled = raws.filter((raw) => ['chain', 'agent'].includes(mappingOf(raw.id)?.role ?? '') && outOf(raw.id).some((e) => component(e.target) === 'chainTool'));
     for (const raw of tooled) warn(`${labelOf(raw)}: it ran inside a Chain Tool in Flowise; it has no trigger here until it moves to its own workflow.`);
     if (endings.length) {
       const first = endings[0];
       const trigger = addNode('core.chatTrigger', 'When chat message received', [Math.round(num(first.position?.x, 0)) - 380, Math.round(num(first.position?.y, 0))], {});
-      for (const raw of endings) connect('main', trigger.id, built.get(raw.id)!.id);
-      if (endings.length > 1) warn(`The chat message goes to ${endings.length} chains or agents (${endings.map(labelOf).join(', ')}); Flowise answered with one of them.`);
+      // Heads first: connecting as we go would make the trigger a head of the next line.
+      const heads = new Set(endings.flatMap((raw) => headsOf(built.get(raw.id)!.id)));
+      heads.delete(trigger.id);
+      for (const head of heads) connect('main', trigger.id, head);
+      if (heads.size > 1) warn(`The chat message goes to ${heads.size} chains, agents or functions (${[...heads].map((id) => nodes.find((n) => n.id === id)?.name).join(', ')}); Flowise answered with one of them.`);
     } else if (!upsertTrigger) {
       warn('No chain or agent was found to answer chat messages; add a Chat Trigger where the conversation starts.');
     }

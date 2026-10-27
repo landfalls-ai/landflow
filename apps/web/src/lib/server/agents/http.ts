@@ -6,6 +6,14 @@ import { logger } from '../telemetry';
 
 const ref = z.object({ id: z.string(), name: z.string() });
 
+const guardrailRule = z.object({
+  enabled: z.boolean(),
+  action: z.enum(['block', 'sanitize']),
+  reply: z.string().max(5_000),
+  replacement: z.enum(['redact', 'mask']).optional(),
+  checks: z.object({}).passthrough(),
+});
+
 /** A draft or an imported config: the builder owns the shape, the store fills what's missing. */
 export const agentConfigSchema = z
   .object({
@@ -27,8 +35,9 @@ export const agentConfigSchema = z
     skills: z.array(z.object({ id: z.string(), name: z.string(), whenToUse: z.string(), instructions: z.string().max(65_536) }).passthrough()).optional(),
     tools: z.array(z.object({ id: z.string(), type: z.enum(['node', 'workflow', 'agent', 'mcp', 'knowledge']) }).passthrough()).optional(),
     schedules: z.array(z.object({ id: z.string(), prompt: z.string(), frequency: z.enum(['hourly', 'daily', 'weekly', 'monthly', 'cron']) }).passthrough()).optional(),
-    channels: z.array(z.object({ id: z.string(), type: z.enum(['telegram', 'slack']), credential: ref }).passthrough()).optional(),
+    channels: z.array(z.object({ id: z.string(), type: z.enum(['telegram', 'slack', 'teams']), credential: ref }).passthrough()).optional(),
     memory: z.object({ crossSession: z.boolean() }).optional(),
+    guardrails: z.object({ input: guardrailRule.optional(), output: guardrailRule.optional() }).optional(),
     settings: z
       .object({
         maxIterations: z.number().int().min(1).max(200),
@@ -38,6 +47,7 @@ export const agentConfigSchema = z
         dailyTokenLimit: z.number().int().min(0),
         dailyCostLimit: z.number().min(0),
         monthlyCostLimit: z.number().min(0),
+        approvalEmails: z.array(z.string().max(320)).max(20),
       })
       .partial()
       .optional(),

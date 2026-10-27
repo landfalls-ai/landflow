@@ -1,5 +1,5 @@
-import { defineCredentialType, defineNode, NodeOperationError, type JsonObject, type PropertyOption } from '@landflow/sdk';
-import { apiError, baseUrl, countSent, fetchJson, jsonParameter, mapItems, requireString, unsupported, type ApiContext } from '../shared';
+import { defineCredentialType, defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type PropertyOption } from '@landflow/sdk';
+import { apiError, baseUrl, countSent, fetchJson, ItemWithFiles, jsonParameter, mapItems, requireString, unsupported, type ApiContext } from '../shared';
 
 export interface WhatsAppCredentials extends JsonObject {
   accessToken: string;
@@ -27,16 +27,65 @@ function hint(status: number, error: GraphError | undefined): string | undefined
 
 /** Graph API call; errors arrive as `{ error: { message, code, error_data } }`. */
 async function graphCall<T = any>(api: ApiContext, credentials: WhatsAppCredentials, method: string, path: string, body?: JsonObject): Promise<T> {
+  return graphResponse<T>(api, credentials, method, path, body && { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
+}
+
+async function graphResponse<T>(api: ApiContext, credentials: WhatsAppCredentials, method: string, path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetchJson(api, 'whatsapp', 'WhatsApp', `${baseUrl(credentials.baseUrl, DEFAULT_BASE_URL)}${path}`, {
     method,
-    headers: { authorization: `Bearer ${credentials.accessToken}`, ...(body && { 'content-type': 'application/json' }) },
-    ...(body && { body: JSON.stringify(body) }),
+    ...init,
+    headers: { authorization: `Bearer ${credentials.accessToken}`, ...(init.headers as Record<string, string> | undefined) },
   });
   if (response.ok && response.body !== undefined) return response.body as T;
   const error = response.body?.error as GraphError | undefined;
   const detail = error?.message ? `${error.message}${error.code ? ` (code ${error.code})` : ''}` : response.text.slice(0, 200) || `HTTP ${response.status}`;
   throw apiError(api, 'whatsapp', 'WhatsApp', response.status, detail, hint(response.status, error));
 }
+
+/** POST /{phone-number-id}/media: the item's file as multipart/form-data; answers `{ id }`, the media ID to send by. */
+async function uploadMedia(ctx: IExecuteContext, api: ApiContext, credentials: WhatsAppCredentials, sender: string, i: number): Promise<{ id: string; fileName: string; mimeType: string }> {
+  const property = String(ctx.getNodeParameter('binaryPropertyName', i, 'data') || 'data').trim();
+  const ref = ctx.helpers.assertBinaryData(i, property);
+  const bytes = await ctx.helpers.getBinaryDataBuffer(i, property);
+  const fileName = ref.fileName || `${property}.${ref.fileExtension ?? 'bin'}`;
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', ref.mimeType);
+  form.append('file', new Blob([new Uint8Array(bytes)], { type: ref.mimeType }), fileName);
+  const result = await graphResponse<JsonObject>(api, credentials, 'POST', `/${encodeURIComponent(sender)}/media`, { body: form, signal: AbortSignal.timeout(300_000) });
+  if (typeof result.id !== 'string') throw new NodeOperationError('WhatsApp returned no media ID for the upload', { itemIndex: i });
+  return { id: result.id, fileName, mimeType: ref.mimeType };
+}
+
+/** GET /{media-id} for the temporary URL, then the bytes from it (the URL needs the access token too) into item.binary. */
+async function downloadMedia(ctx: IExecuteContext, api: ApiContext, credentials: WhatsAppCredentials, i: number): Promise<ItemWithFiles | JsonObject> {
+  const mediaId = requireString(ctx, 'mediaId', 'Media ID', i);
+  const info = await graphCall<JsonObject>(api, credentials, 'GET', `/${encodeURIComponent(mediaId)}`);
+  if (!ctx.getNodeParameter<boolean>('download', i, true)) return info;
+  if (typeof info.url !== 'string') throw new NodeOperationError('WhatsApp returned no download URL for this media', { itemIndex: i, description: 'Media IDs expire after 30 days; the URL itself after 5 minutes.' });
+  let response: Response;
+  try {
+    response = await api.http(info.url, { headers: { authorization: `Bearer ${credentials.accessToken}` }, signal: AbortSignal.timeout(300_000) });
+  } catch (error) {
+    throw apiError(api, 'whatsapp', 'WhatsApp', undefined, `the media download failed: ${(error as Error).message}`, undefined, 'network');
+  }
+  if (!response.ok || !response.body) throw apiError(api, 'whatsapp', 'WhatsApp', response.status, 'the media download failed', response.status === 404 ? 'The media was deleted or expired; ask for a fresh media ID.' : undefined);
+  const mimeType = typeof info.mime_type === 'string' ? info.mime_type : response.headers.get('content-type') || undefined;
+  const extension = mimeType ? EXTENSIONS[mimeType.split(';')[0].trim()] : undefined;
+  const ref = await ctx.helpers.prepareBinaryData(response.body, extension ? `${mediaId}.${extension}` : mediaId, mimeType);
+  const property = String(ctx.getNodeParameter('binaryPropertyName', i, 'data') || 'data').trim();
+  return new ItemWithFiles(info, { [property]: ref });
+}
+
+/** File name extensions for the types the Cloud API supports (the download carries no file name). */
+const EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'audio/aac': 'aac', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3', 'audio/amr': 'amr',
+  'audio/ogg': 'ogg', 'video/mp4': 'mp4', 'video/3gpp': '3gp', 'application/pdf': 'pdf', 'text/plain': 'txt',
+  'application/msword': 'doc', 'application/vnd.ms-excel': 'xls', 'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+};
 
 function phoneNumbers(api: ApiContext, credentials: WhatsAppCredentials) {
   const account = String(credentials.businessAccountId ?? '').trim();
@@ -90,7 +139,7 @@ export const WhatsApp = defineNode({
   description: {
     name: 'whatsApp',
     displayName: 'WhatsApp Business Cloud',
-    description: 'Send WhatsApp text, media (by URL) and template messages through the Cloud API',
+    description: 'Send WhatsApp text, media (by URL, by uploading an item file or by media ID) and template messages, and download received media, through the Cloud API',
     version: 1,
     kind: 'action',
     categories: ['Communication'],
@@ -114,7 +163,22 @@ export const WhatsApp = defineNode({
         type: 'options',
         noDataExpression: true,
         default: 'message',
-        options: [{ name: 'Message', value: 'message' }],
+        options: [
+          { name: 'Message', value: 'message' },
+          { name: 'Media', value: 'media' },
+        ],
+      },
+      {
+        name: 'operation',
+        displayName: 'Operation',
+        type: 'options',
+        noDataExpression: true,
+        default: 'upload',
+        displayOptions: { show: { resource: ['media'] } },
+        options: [
+          { name: 'Upload', value: 'upload', description: 'Upload an item file; returns the media ID to send by', action: 'Upload media' },
+          { name: 'Get', value: 'get', description: 'Download received media by its ID into item.binary', action: 'Get media', idempotent: true },
+        ],
       },
       {
         name: 'operation',
@@ -134,6 +198,7 @@ export const WhatsApp = defineNode({
         type: 'options',
         required: true,
         default: '',
+        displayOptions: { hide: { resource: ['media'], operation: ['get'] } },
         typeOptions: { loadOptionsMethod: 'getPhoneNumbers' },
         description: 'The business phone number to send from (its phone number ID)',
       },
@@ -143,6 +208,7 @@ export const WhatsApp = defineNode({
         type: 'string',
         required: true,
         default: '',
+        displayOptions: { show: { resource: ['message'] } },
         placeholder: '+15551234567',
         description: 'International format with country code',
       },
@@ -178,14 +244,68 @@ export const WhatsApp = defineNode({
         description: 'Whether to render a preview of the first URL in the text',
       },
       {
+        name: 'mediaSource',
+        displayName: 'Media Source',
+        type: 'options',
+        default: 'link',
+        displayOptions: send({ messageType: MEDIA_TYPES }),
+        options: [
+          { name: 'URL', value: 'link', description: 'A public HTTPS URL WhatsApp downloads from' },
+          { name: 'Binary File', value: 'binary', description: 'Upload the item’s file to WhatsApp first (POST /media), then send it by ID' },
+          { name: 'Media ID', value: 'id', description: 'An ID from an earlier upload or an incoming message' },
+        ],
+      },
+      {
         name: 'mediaLink',
         displayName: 'Media URL',
         type: 'string',
         required: true,
         default: '',
         placeholder: 'https://example.com/file.pdf',
-        displayOptions: send({ messageType: MEDIA_TYPES }),
+        displayOptions: send({ messageType: MEDIA_TYPES, mediaSource: ['link'] }),
         description: 'Public HTTPS URL WhatsApp downloads the media from',
+      },
+      {
+        name: 'mediaId',
+        displayName: 'Media ID',
+        type: 'string',
+        required: true,
+        default: '',
+        displayOptions: send({ messageType: MEDIA_TYPES, mediaSource: ['id'] }),
+        description: 'The ID of uploaded or received media',
+      },
+      {
+        name: 'mediaId',
+        displayName: 'Media ID',
+        type: 'string',
+        required: true,
+        default: '',
+        displayOptions: { show: { resource: ['media'], operation: ['get'] } },
+        description: 'The ID of received media (messages webhook: messages[].image.id and similar)',
+      },
+      {
+        name: 'binaryPropertyName',
+        displayName: 'Input Binary Field',
+        type: 'string',
+        default: 'data',
+        displayOptions: send({ messageType: MEDIA_TYPES, mediaSource: ['binary'] }),
+        description: 'The item file to upload (item.binary.<name>); images up to 5 MB, audio and video 16 MB, documents 100 MB',
+      },
+      {
+        name: 'binaryPropertyName',
+        displayName: 'Binary Field',
+        type: 'string',
+        default: 'data',
+        displayOptions: { show: { resource: ['media'] } },
+        description: 'The item.binary field to upload, or to put the downloaded file in',
+      },
+      {
+        name: 'download',
+        displayName: 'Download File',
+        type: 'boolean',
+        default: true,
+        displayOptions: { show: { resource: ['media'], operation: ['get'] } },
+        description: 'Whether to put the file in item.binary (limit 100 MB); off: only its URL, type and size',
       },
       {
         name: 'mediaCaption',
@@ -248,7 +368,13 @@ export const WhatsApp = defineNode({
     return mapItems(ctx, async (i) => {
       const resource = ctx.getNodeParameter<string>('resource', i);
       const operation = ctx.getNodeParameter<string>('operation', i);
-      if (resource !== 'message') throw unsupported(resource, operation);
+      if (resource !== 'message' && resource !== 'media') throw unsupported(resource, operation);
+      if (resource === 'media') {
+        if (operation === 'get') return downloadMedia(ctx, api, credentials, i);
+        if (operation !== 'upload') throw unsupported(resource, operation);
+        const uploaded = await uploadMedia(ctx, api, credentials, requireString(ctx, 'phoneNumberId', 'Sender Phone Number', i), i);
+        return { mediaId: uploaded.id, fileName: uploaded.fileName, mimeType: uploaded.mimeType };
+      }
       const sender = requireString(ctx, 'phoneNumberId', 'Sender Phone Number', i);
       const to = requireString(ctx, 'recipientPhoneNumber', "Recipient's Phone Number", i).replace(/[\s()-]/g, '');
       const message: JsonObject = { messaging_product: 'whatsapp', recipient_type: 'individual', to };
@@ -259,11 +385,19 @@ export const WhatsApp = defineNode({
           message.type = 'text';
           message.text = { body: requireString(ctx, 'textBody', 'Text Body', i), preview_url: ctx.getNodeParameter<boolean>('previewUrl', i, false) === true };
         } else if (MEDIA_TYPES.includes(type)) {
-          const media: JsonObject = { link: requireString(ctx, 'mediaLink', 'Media URL', i) };
+          const source = ctx.getNodeParameter<string>('mediaSource', i, 'link');
+          let media: JsonObject;
+          let uploadedName: string | undefined;
+          if (source === 'binary') {
+            const uploaded = await uploadMedia(ctx, api, credentials, sender, i);
+            media = { id: uploaded.id };
+            uploadedName = uploaded.fileName;
+          } else if (source === 'id') media = { id: requireString(ctx, 'mediaId', 'Media ID', i) };
+          else media = { link: requireString(ctx, 'mediaLink', 'Media URL', i) };
           const caption = String(ctx.getNodeParameter('mediaCaption', i, '') ?? '');
           if (caption && type !== 'audio') media.caption = caption;
           const filename = String(ctx.getNodeParameter('mediaFilename', i, '') ?? '');
-          if (filename && type === 'document') media.filename = filename;
+          if (type === 'document' && (filename || uploadedName)) media.filename = filename || uploadedName!;
           message.type = type;
           message[type] = media;
         } else {

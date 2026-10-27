@@ -1,7 +1,8 @@
 /**
  * POST /api/environment/pull — `{ dryRun?, prune?, force?, publish? }`: pull this environment's branch (Settings →
  * Source control) and apply it, like /api/source-control/pull. `publish` (file, all or none) defaults to the
- * environment's publish-on-pull setting. Promoted credentials map by name or by Settings → Environments' mappings.
+ * environment's publish-on-pull setting. Promoted credentials map by name or by Settings → Environments' mappings;
+ * `updateCredentials` also updates the non-secret fields of credentials this instance already has (never secret values).
  */
 import { z } from 'zod';
 import { currentPrincipal } from '@/lib/server/auth';
@@ -11,7 +12,7 @@ import { SourceControlError } from '@/lib/server/sync/git';
 
 export const dynamic = 'force-dynamic';
 
-const bodySchema = z.strictObject({ dryRun: z.boolean().default(false), prune: z.boolean().default(false), force: z.boolean().default(false), publish: z.enum(PUBLISH_MODES).optional() });
+const bodySchema = z.strictObject({ dryRun: z.boolean().default(false), prune: z.boolean().default(false), force: z.boolean().default(false), publish: z.enum(PUBLISH_MODES).optional(), updateCredentials: z.boolean().optional() });
 
 export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, bodySchema);

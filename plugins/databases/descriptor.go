@@ -186,6 +186,29 @@ func (n sqlNode) Description() landflow.NodeDescriptor {
 			DisplayOptions: &landflow.DisplayOptions{Show: show("operation", "executeQuery")},
 		},
 		landflow.PropertyDescriptor{
+			Name: "binaryOptions", DisplayName: "Binary Data", Type: landflow.PropCollection, Default: map[string]any{}, Placeholder: "Add binary option",
+			Description: "Read bytea / BLOB columns into binary files, or write them from the input item's binary files",
+			Values: []landflow.PropertyDescriptor{
+				{
+					Name: "inputColumns", DisplayName: "Columns From Binary Files", Type: landflow.PropString, Default: "",
+					Placeholder: "avatar=data, contract=pdf",
+					Description: "Insert, Insert or Update and Update: column=binary property pairs; the column gets the file's bytes " +
+						"(a bare column name reads the property of the same name)",
+				},
+				{
+					Name: "outputColumns", DisplayName: "Columns to Return as Files", Type: landflow.PropString, Default: "",
+					Placeholder: "avatar=photo",
+					Description: "Select, Execute Query and the rows writes return: column=binary property pairs; the column leaves the JSON " +
+						"and becomes a binary file on the item",
+				},
+				{
+					Name: "fileNameColumn", DisplayName: "File Name Column", Type: landflow.PropString, Default: "",
+					Placeholder: "filename", Description: "Column of the same row that holds the file name of the returned files",
+				},
+			},
+			DisplayOptions: &landflow.DisplayOptions{Show: show("operation", "select", "executeQuery", "insert", "upsert", "update")},
+		},
+		landflow.PropertyDescriptor{
 			Name: "options", DisplayName: "Options", Type: landflow.PropCollection, Default: map[string]any{}, Placeholder: "Add option",
 			Values: []landflow.PropertyDescriptor{
 				{

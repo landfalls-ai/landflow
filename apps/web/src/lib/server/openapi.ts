@@ -306,6 +306,8 @@ const schemas: Record<string, Json> = {
       lastUsedAt: { type: 'string', format: 'date-time' },
       userId: { type: 'string' },
       userName: { type: 'string' },
+      projectId: { type: 'string', description: 'Set when the token is scoped to a project: the instance MCP server then lists and changes only that project’s workflows' },
+      projectName: { type: 'string' },
     },
     ['id', 'label', 'hint', 'scopes', 'createdAt', 'expiresAt', 'userId'],
   ),
@@ -601,6 +603,40 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'getExecution',
     summary: 'Get an execution with its run data',
     responses: { 200: reply('The execution (and a trace link when LANDFLOW_TRACE_URL is set)', object({ execution: ref('ExecutionRecord'), traceUrl: { type: 'string' } }, ['execution'])), 404: notFound },
+  });
+  add('get', '/api/executions/{id}/feedback', {
+    tag: 'Executions',
+    id: 'getExecutionFeedback',
+    summary: 'The thumbs up/down a chat answer got',
+    responses: { 200: reply('The feedback, or null when unrated', object({ feedback: { type: 'object', nullable: true, additionalProperties: true } }, ['feedback'])), 404: notFound },
+  });
+  add('put', '/api/executions/{id}/feedback', {
+    tag: 'Executions',
+    id: 'rateExecution',
+    summary: 'Rate a chat answer (thumbs up or down, optional comment)',
+    description: 'The same rating the hosted chat and the widget give (POST /chat/<key>/feedback). `rating: null` takes it back. Online evaluations grade answers rated down and show the rating next to their score.',
+    body: jsonBody(object({ rating: { type: 'string', enum: ['up', 'down'], nullable: true }, comment: { type: 'string', maxLength: 2000 } }, ['rating'])),
+    responses: { 200: reply('The feedback now on the answer', object({ feedback: { type: 'object', nullable: true, additionalProperties: true } }, ['feedback'])), 404: notFound },
+  });
+  add('get', '/api/workflows/{id}/chat-feedback', {
+    tag: 'Executions',
+    id: 'listChatFeedback',
+    summary: 'A workflow’s chat feedback',
+    description: 'Thumbs up/down and comments on the answers of its hosted chat, widget and editor, newest first, with the totals. Filters: `rating`, `sessionId`, `limit` (up to 500).',
+    responses: { 200: reply('The feedback', object({ feedback: array({ type: 'object', additionalProperties: true }), up: { type: 'integer' }, down: { type: 'integer' } }, ['feedback', 'up', 'down'])), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/sessions/{sid}/feedback', {
+    tag: 'Executions',
+    id: 'getAgentSessionFeedback',
+    summary: 'Ratings of an agent session’s replies',
+    responses: { 200: reply('The ratings', object({ feedback: array({ type: 'object', additionalProperties: true }) }, ['feedback'])), 404: notFound },
+  });
+  add('put', '/api/agents/{id}/sessions/{sid}/feedback', {
+    tag: 'Executions',
+    id: 'rateAgentReply',
+    summary: 'Rate an agent reply (thumbs up or down, optional comment)',
+    body: jsonBody(object({ entryId: { type: 'string', description: 'The id of an assistant entry of the session’s timeline' }, rating: { type: 'string', enum: ['up', 'down'], nullable: true }, comment: { type: 'string', maxLength: 2000 } }, ['entryId', 'rating'])),
+    responses: { 200: reply('The feedback now on the reply', object({ feedback: { type: 'object', nullable: true, additionalProperties: true } }, ['feedback'])), 404: notFound },
   });
   add('delete', '/api/executions/{id}', {
     tag: 'Executions',
@@ -963,6 +999,37 @@ function paths(): Record<string, Record<string, Json>> {
       ),
     },
   });
+  const signedHead = object(
+    {
+      format: { type: 'string', enum: ['landflow.audit.head/1'] },
+      payload: { type: 'string', description: 'The exact JSON text that was signed: `{ format, seq, hash, eventId?, at?, signedAt, keyId, instance? }`' },
+      algorithm: { type: 'string', enum: ['Ed25519'] },
+      keyId: { type: 'string', description: 'First 16 hex characters of the SHA-256 of the public key (SPKI DER)' },
+      signature: { type: 'string', description: 'Base64 Ed25519 signature of the payload’s UTF-8 bytes' },
+      publicKey: { type: 'string', description: 'SPKI PEM; verifiers pin the key they trust instead of relying on this one' },
+    },
+    ['format', 'payload', 'algorithm', 'keyId', 'signature', 'publicKey'],
+  );
+  add('get', '/api/audit/head', {
+    tag: 'Audit',
+    id: 'getAuditHead',
+    summary: 'The audit chain’s newest signed head',
+    description:
+      'The chain’s newest link (sequence number and hash) signed with an Ed25519 key, and the public keys that ever signed. The leader signs on a schedule (Settings → Audit log → Integrity) after verifying the whole chain; copies are anchored to an S3 bucket or a webhook. `landflow audit verify --head <file> --public-key <pem>` checks the signature offline. `head` is null before the first signature.',
+    responses: {
+      200: reply(
+        'The head and keys',
+        object({ head: { ...signedHead, nullable: true }, signedAt: { type: 'string', format: 'date-time' }, anchoredAt: { type: 'string', format: 'date-time' }, keys: array(object({ keyId: { type: 'string' }, publicKey: { type: 'string' }, createdAt: { type: 'string', format: 'date-time' } }, ['keyId', 'publicKey', 'createdAt'])) }, ['head', 'keys']),
+      ),
+    },
+  });
+  add('post', '/api/settings/audit/anchoring/run', {
+    tag: 'Audit',
+    id: 'signAuditHead',
+    summary: 'Sign the audit chain’s head now and anchor it',
+    description: 'Verifies the whole chain, signs its newest link (a new signature only when the chain moved) and copies unanchored heads to the configured S3 bucket and webhook. 409 when the chain is broken (nothing is signed) or has no events. Audited as `audit.sign_head`.',
+    responses: { 200: reply('The signed head', object({ head: signedHead, signedAt: { type: 'string', format: 'date-time' }, created: { type: 'boolean' }, anchored: { type: 'boolean' }, anchoredAt: { type: 'string', nullable: true }, anchorError: { type: 'string', nullable: true } }, ['head', 'created'])) },
+  });
   const publishRequest = object(
     {
       id: { type: 'string' },
@@ -1008,6 +1075,60 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Reject a publish request',
     body: jsonBody(object({ comment: { type: 'string', maxLength: 2000 } }), undefined, false),
     responses: { 200: reply('The request', object({ request: publishRequest }, ['request'])), 404: notFound, 409: errorRef('Already decided') },
+  });
+  const scheduledPublish = object(
+    {
+      id: { type: 'string' },
+      workflowId: { type: 'string' },
+      action: { type: 'string', enum: ['publish', 'unpublish'] },
+      versionId: { type: 'string' },
+      versionNumber: { type: 'integer' },
+      runAt: { type: 'string', format: 'date-time' },
+      status: { type: 'string', enum: ['awaiting_approval', 'pending', 'running', 'done', 'requested', 'failed', 'canceled'] },
+      note: { type: 'string' },
+      requestId: { type: 'string', description: 'The four-eyes publish request that approves it' },
+      result: { type: 'string' },
+    },
+    ['id', 'workflowId', 'action', 'runAt', 'status'],
+  );
+  add('get', '/api/workflows/{id}/schedules', {
+    tag: 'Workflows',
+    id: 'listScheduledPublishes',
+    summary: 'List a workflow’s scheduled publishes',
+    description: 'Waiting ones first, then the recent ones that ran, failed or were canceled.',
+    responses: { 200: reply('The schedules', object({ schedules: array(scheduledPublish) }, ['schedules'])), 404: notFound },
+  });
+  add('post', '/api/workflows/{id}/schedules', {
+    tag: 'Workflows',
+    id: 'schedulePublish',
+    summary: 'Publish or unpublish at a chosen time',
+    description:
+      'Same as `at` on `POST /api/workflows/{id}/publish` and `/unpublish`. The leader (queue mode) or the host runs it through the one publish code, so governance and the audit log apply. With four-eyes publishing on, a publish request is filed and its approval releases the schedule, which goes live at `at`.',
+    body: jsonBody(
+      object({ action: { type: 'string', enum: ['publish', 'unpublish'] }, at: { type: 'string', format: 'date-time', description: 'ISO 8601, in the future (at most a year ahead)' }, versionId: { type: 'string', description: 'The saved version to publish (default: the saved draft)' }, note: { type: 'string', maxLength: 2000 } }, ['action', 'at']),
+    ),
+    responses: { 201: reply('The schedule', object({ scheduled: scheduledPublish }, ['scheduled'])), 404: notFound, 422: errorRef('Nodes the governance policy does not allow') },
+  });
+  add('get', '/api/workflows/{id}/git-history', {
+    tag: 'Workflows',
+    id: 'workflowGitHistory',
+    summary: 'The Git commits that touched a workflow’s file',
+    description: 'Settings → Source control’s branch, fetched first. `GET …/git-history/{commit}?path=` is one commit’s diff; `POST …/git-history/{commit}/restore { path }` saves that version as a new draft (nothing is published).',
+    responses: { 200: reply('The commits, newest first', object({ branch: { type: 'string' }, path: { type: 'string' }, commits: array(object({ commit: { type: 'string' }, author: { type: 'string' }, at: { type: 'string' }, subject: { type: 'string' }, path: { type: 'string' } })) }, ['branch', 'commits'])), 404: notFound, 409: errorRef('Source control is not set up') },
+  });
+  add('post', '/api/source-control/host-keys', {
+    tag: 'Workflows',
+    id: 'scanSshHostKeys',
+    summary: 'Fetch an SSH server’s host keys to pin',
+    body: jsonBody(object({ repository: { type: 'string' } }, ['repository'])),
+    responses: { 200: reply('Keys with SHA256 fingerprints and the known_hosts text', object({ host: { type: 'string' }, port: { type: 'integer' }, knownHosts: { type: 'string' }, keys: array(object({ type: { type: 'string' }, fingerprint: { type: 'string' } })) }, ['knownHosts'])) },
+  });
+  add('delete', '/api/workflows/{id}/schedules/{scheduleId}', {
+    tag: 'Workflows',
+    id: 'cancelScheduledPublish',
+    summary: 'Cancel a scheduled publish',
+    description: 'Who scheduled it, or an owner or admin. Withdraws its approval request. 409 once it ran.',
+    responses: { 200: reply('The canceled schedule', object({ scheduled: scheduledPublish }, ['scheduled'])), 403: errorRef('Not allowed'), 404: notFound, 409: errorRef('Already ran or canceled') },
   });
 
   // ---- trigger URLs (public: each trigger checks its callers) and listening for test events ----
@@ -1206,6 +1327,24 @@ function paths(): Record<string, Record<string, Json>> {
       404: reply('The plugin is not installed or not exposed to agents', jsonRpc),
     },
   });
+  add('post', '/api/mcp/projects/{id}', {
+    tag: 'MCP',
+    id: 'callProjectMcp',
+    summary: 'Talk to one project’s MCP server',
+    description:
+      'The instance MCP server (`/api/mcp`: build, validate and run workflows) scoped to one project: it lists, reads, changes and runs only that project’s workflows and creates new ones in it. Off while the instance server is off (Settings → MCP). Callers: the instance access token, a Landflow MCP token (one scoped to another project gets 403), an identity provider token, an API key, or the bundled gateway.',
+    public: true,
+    pathParams: { id: 'The project id' },
+    body: jsonBody(jsonRpc),
+    responses: {
+      200: reply('The JSON-RPC response', jsonRpc),
+      401: reply('No acceptable credential', jsonRpc),
+      403: reply('The server is off, or the token is scoped to another project', jsonRpc),
+      404: reply('No such project', jsonRpc),
+    },
+  });
+  add('get', '/api/projects/{id}/mcp', { tag: 'MCP', id: 'getProjectMcp', summary: 'A project’s MCP server', description: 'Where the project’s scoped instance MCP server is served and whether its gateway route is registered.', pathParams: { id: 'The project id' }, responses: { 200: reply('The state', { type: 'object', additionalProperties: true }), 404: notFound } });
+  add('patch', '/api/projects/{id}/mcp', { tag: 'MCP', id: 'updateProjectMcp', summary: 'Register a project’s MCP server on the gateway', description: 'Project admins (and instance owners and admins). `gateway: true` makes the gateway sync add `/mcp/projects/<name>` (while the instance server is on).', pathParams: { id: 'The project id' }, body: jsonBody(object({ gateway: { type: 'boolean' } }, ['gateway'])), responses: { 200: reply('The state', { type: 'object', additionalProperties: true }), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound } });
   add('get', '/api/mcp/tools', {
     tag: 'MCP',
     id: 'listMcpTools',
@@ -1220,7 +1359,7 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'issueMcpToken',
     summary: 'Issue an MCP token',
     description: 'A signed JWT for MCP clients (the gateway or the host’s MCP endpoints), returned once as `token`. Default scopes: all; default expiry: 30 days.',
-    body: jsonBody(object({ label: { type: 'string', minLength: 1, maxLength: 100 }, scopes: { ...array(ref('McpTokenScope')), minItems: 1 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 365 } }, ['label'])),
+    body: jsonBody(object({ label: { type: 'string', minLength: 1, maxLength: 100 }, scopes: { ...array(ref('McpTokenScope')), minItems: 1 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 365 }, projectId: { type: 'string', description: 'Scope the token to this project (the instance MCP server)' } }, ['label'])),
     responses: { 201: reply('The token, shown once', object({ token: { type: 'string' }, record: ref('McpToken') }, ['token', 'record'])), 400: invalid },
   });
   add('get', '/api/mcp/tokens/{id}', { tag: 'MCP', id: 'getMcpToken', summary: 'One of your MCP tokens', responses: { 200: reply('The token’s record', object({ record: ref('McpToken') }, ['record'])), 404: notFound } });
@@ -1235,6 +1374,7 @@ function paths(): Record<string, Record<string, Json>> {
   add('get', '/api/mcp/approvals', { tag: 'MCP', id: 'listMcpApprovals', summary: 'MCP tool calls waiting for a person', description: 'The approvals of destructive (or, per grant, every) MCP tool calls that the signed-in user may answer: pending ones and the last day’s answers. Calls from clients that support MCP elicitation are asked through the client instead (lib/server/mcp/approvals.ts).', responses: { 200: reply('The approvals', object({ approvals: array({ type: 'object', additionalProperties: true }) }, ['approvals'])) } });
   add('post', '/api/mcp/approvals/{id}', { tag: 'MCP', id: 'decideMcpApproval', summary: 'Approve or deny an MCP tool call', description: 'Owners, admins, the user the agent acts for and members of a project they share. An approval is good for one repeat of the same call (same tool, same arguments, same caller) for ten minutes.', body: jsonBody(object({ approve: { type: 'boolean' } }, ['approve'])), responses: { 200: reply('Answered', object({ approval: { type: 'object', additionalProperties: true } }, ['approval'])), 403: errorRef('Not yours to answer'), 404: notFound, 409: errorRef('Already answered'), 410: errorRef('Expired') } });
   add('get', '/api/mcp/files/{id}', { tag: 'MCP', id: 'downloadMcpFile', summary: 'A file of an MCP tool result', description: 'The target of a `resource_link` in a tool result: a URL the host signed (`exp`, `t`, `c`, `sig` query parameters), valid until `exp` (LANDFLOW_MCP_FILE_URL_TTL_SECONDS, default 900). No session; 403 for a wrong signature, 410 once expired.', public: true, responses: { 200: { description: 'The bytes', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 403: errorRef('Invalid signature'), 404: notFound, 410: errorRef('Expired') } });
+  add('get', '/api/binary/{id}', { tag: 'Executions', id: 'getBinary', summary: 'The bytes of a stored file', description: 'A file of an execution (`item.binary.<name>.id`) with its Content-Type, size and name; `?download=1` makes it an attachment. Plugins send their `binaryAccess` token as a Bearer token. Answers single HTTP `Range` requests (`bytes=a-b`, `a-`, `-n`) with 206 and `Content-Range`, so video and audio can seek; 416 with `Content-Range: bytes */<size>` when unsatisfiable. Multi-range or malformed headers (and any `If-Range`) get the whole file as 200. Every response carries `Accept-Ranges: bytes`. `HEAD` answers the same headers.', query: [{ name: 'download', description: '`1`: Content-Disposition attachment', schema: { type: 'string' } }], headers: [{ name: 'Range', description: 'One byte range: `bytes=0-99`, `bytes=100-`, `bytes=-500`', schema: { type: 'string' } }], responses: { 200: { description: 'The whole file', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 206: { description: 'The requested part (`Content-Range: bytes a-b/size`)', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 403: errorRef('The token can’t read that file'), 404: notFound, 416: errorRef('Range not satisfiable (`Content-Range: bytes */size`)') } });
   add('get', '/api/mcp/status', { tag: 'MCP', id: 'mcpStatus', summary: 'The MCP gateway and identity configuration', description: 'What Settings → MCP shows: the gateway mode and URL, whether the gateway secret is set, the identity provider, the registry namespace.', responses: { 200: reply('The configuration', { type: 'object' }) } });
   add('get', '/api/mcp/jwks', { tag: 'MCP', id: 'mcpJwks', summary: 'The JWKS of Landflow-issued MCP tokens', description: 'Public. The gateway (agentgateway) validates Landflow-issued tokens against it.', public: true, responses: { 200: reply('RFC 7517 key set', object({ keys: array({ type: 'object' }) }, ['keys'])) } });
   add('get', '/api/mcp/registry/v0.1/servers', {

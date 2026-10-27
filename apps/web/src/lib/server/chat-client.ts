@@ -7,7 +7,10 @@
  * `data-workflow` is the trigger's Path or the workflow id. The widget renders in a shadow root (the page's styles
  * don't leak in), talks to /chat/<key>/config, /chat/<key>/session and POST /chat/<key> on the script's own origin
  * (CORS: the trigger's Allowed Origins), keeps the session id in localStorage, streams replies (SSE), shows tool
- * calls as they run, and attaches files when the trigger allows uploads.
+ * calls as they run, and attaches files when the trigger allows uploads. For a chat with Basic Auth it shows a sign-in
+ * form and sends the credentials as an Authorization header (kept in sessionStorage: gone when the tab closes). Each
+ * answer has thumbs up/down buttons (a thumbs down also asks for an optional comment), and the trigger's Custom CSS
+ * (sanitized by the server) is added to the shadow root after the built-in styles.
  */
 
 const STYLE = `
@@ -50,6 +53,19 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .send:disabled { opacity: .5; cursor: default; }
 .attach { background: var(--bubble); color: var(--fg); }
 .picked { padding: 0 14px 8px; font-size: 12px; color: var(--muted); }
+.fb { align-self: flex-start; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: -4px; }
+.thumb { border: 1px solid transparent; background: transparent; border-radius: 8px; padding: 2px 7px; cursor: pointer; font: inherit; font-size: 13px; color: var(--muted); opacity: .7; }
+.thumb:hover, .thumb.on { opacity: 1; background: var(--bubble); border-color: var(--line); }
+.fbnote { display: flex; gap: 6px; align-items: center; width: 100%; }
+.fbnote input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font: inherit; font-size: 12.5px; color: var(--fg); background: var(--bg); }
+.fb [hidden] { display: none; }
+.thanks { font-size: 12px; color: var(--muted); }
+.signin { display: flex; flex-direction: column; align-items: stretch; gap: 10px; padding: 18px; border-top: 0; }
+.signin p { margin: 0; color: var(--muted); }
+.signin input { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font: inherit; color: var(--fg); background: var(--bg); }
+.signin input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.signin button { border: 0; border-radius: 10px; height: 40px; background: var(--accent); color: var(--accent-fg); font: inherit; font-weight: 600; cursor: pointer; }
+.signin .err { color: #b91c1c; font-size: 13px; }
 `;
 
 const CLIENT = `(function () {
@@ -60,6 +76,7 @@ const CLIENT = `(function () {
   var mode = script.getAttribute('data-mode') === 'fullscreen' ? 'fullscreen' : 'window';
   var base = new URL(script.src, location.href).origin + '/chat/' + encodeURIComponent(key);
   var storageKey = 'landflow-chat:' + key;
+  var authKey = 'landflow-chat-auth:' + key;
   var STYLE = __STYLE__;
 
   function el(tag, attrs, children) {
@@ -83,6 +100,19 @@ const CLIENT = `(function () {
   }
   function store(value) { try { if (value) localStorage.setItem(storageKey, value); else localStorage.removeItem(storageKey); } catch (e) {} }
   function stored() { try { return localStorage.getItem(storageKey); } catch (e) { return null; } }
+  /** The Basic Auth header, once someone signed in (the page session only: sessionStorage, never localStorage). */
+  var authHeader = (function () { try { return sessionStorage.getItem(authKey) || ''; } catch (e) { return ''; } })();
+  function setAuth(value) { authHeader = value || ''; try { if (authHeader) sessionStorage.setItem(authKey, authHeader); else sessionStorage.removeItem(authKey); } catch (e) {} }
+  function basic(user, password) { return 'Basic ' + btoa(unescape(encodeURIComponent(user + ':' + password))); }
+  /** fetch against this chat, with the Authorization header when signed in (same-origin cookies only, never other sites'). */
+  function request(path, options) {
+    options = options || {};
+    var headers = options.headers || {};
+    if (authHeader) headers.authorization = authHeader;
+    options.headers = headers;
+    options.credentials = 'same-origin';
+    return fetch(base + path, options);
+  }
   function newId() { return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/[^\\w-]/g, ''); }
 
   var host = el('div', { 'data-landflow-chat': key });
@@ -96,7 +126,12 @@ const CLIENT = `(function () {
   var sessionId = stored() || newId();
   var busy = false;
   var picked = [];
-  var log, input, sendButton, fileInput, pickedLine, titleNode, subtitleNode;
+  var log, input, sendButton, fileInput, pickedLine, titleNode, subtitleNode, panelNode;
+  var customStyle = null;
+  function applyCss(css) {
+    if (!customStyle) { customStyle = el('style'); root.appendChild(customStyle); }
+    customStyle.textContent = css || '';
+  }
 
   function scroll() { log.scrollTop = log.scrollHeight; }
   function bubble(role, text, files) {
@@ -113,15 +148,50 @@ const CLIENT = `(function () {
     scroll();
     return node;
   }
+  /** Thumbs up/down under an answer; a thumbs down offers a comment. Pressing the chosen thumb again takes the rating back. */
+  function feedbackRow(executionId, current) {
+    var rating = current && current.rating || null;
+    var up = el('button', { class: 'thumb', type: 'button', title: 'Good answer', 'aria-label': 'Good answer', text: '\ud83d\udc4d' });
+    var down = el('button', { class: 'thumb', type: 'button', title: 'Bad answer', 'aria-label': 'Bad answer', text: '\ud83d\udc4e' });
+    var field = el('input', { type: 'text', maxlength: '2000', placeholder: 'Tell us more (optional)', 'aria-label': 'Comment' });
+    var thanks = el('span', { class: 'thanks' });
+    var note = el('div', { class: 'fbnote' }, [field, el('button', { class: 'thumb', type: 'button', text: 'Send', onclick: function () { send(rating, field.value); } })]);
+    var row = el('div', { class: 'fb' }, [up, down, thanks, note]);
+    function paint() {
+      up.className = 'thumb' + (rating === 'up' ? ' on' : '');
+      down.className = 'thumb' + (rating === 'down' ? ' on' : '');
+      up.setAttribute('aria-pressed', String(rating === 'up'));
+      down.setAttribute('aria-pressed', String(rating === 'down'));
+      note.hidden = true;
+    }
+    function send(value, comment) {
+      var body = { sessionId: sessionId, executionId: executionId, rating: value };
+      if (comment) body.comment = comment;
+      request('/feedback', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); rating = value; paint(); thanks.textContent = value ? 'Thanks for the feedback' : ''; })
+        .catch(function () { thanks.textContent = 'Could not send feedback'; });
+    }
+    function choose(value) {
+      if (rating === value) return send(null);
+      send(value);
+      if (value === 'down') { note.hidden = false; field.focus(); }
+    }
+    up.addEventListener('click', function () { choose('up'); });
+    down.addEventListener('click', function () { choose('down'); });
+    paint();
+    log.appendChild(row);
+    scroll();
+    return row;
+  }
   function setBusy(value) { busy = value; sendButton.disabled = value; }
 
   function start() {
     log.innerHTML = '';
     (config.initialMessages || []).forEach(function (text) { bubble('bot', text); });
     if (!config.loadPreviousSession || !stored()) return;
-    fetch(base + '/session?sessionId=' + encodeURIComponent(sessionId), { credentials: 'omit' })
+    request('/session?sessionId=' + encodeURIComponent(sessionId))
       .then(function (r) { return r.ok ? r.json() : { messages: [] }; })
-      .then(function (data) { (data.messages || []).forEach(function (m) { bubble(m.role === 'assistant' ? 'bot' : 'user', m.text, m.files); }); })
+      .then(function (data) { (data.messages || []).forEach(function (m) { bubble(m.role === 'assistant' ? 'bot' : 'user', m.text, m.files); if (m.role === 'assistant' && m.executionId) feedbackRow(m.executionId, m.feedback); }); })
       .catch(function () {});
   }
 
@@ -174,11 +244,12 @@ const CLIENT = `(function () {
       body = JSON.stringify({ sessionId: sessionId, message: text });
       headers['content-type'] = 'application/json';
     }
-    var reply = null, streamed = '', tools = {};
+    var reply = null, streamed = '', tools = {}, answerId = '';
     function replyNode() { if (!reply) { typing.remove(); reply = bubble('bot', ''); } return reply; }
-    fetch(base, { method: 'POST', body: body, headers: headers, credentials: 'omit' })
+    request('', { method: 'POST', body: body, headers: headers })
       .then(function (response) {
         var type = response.headers.get('content-type') || '';
+        if (response.status === 401) { setAuth(''); showSignIn(null, 'Your sign-in no longer works. Sign in again.'); throw new Error('Sign in to use this chat'); }
         if (!response.ok && type.indexOf('json') >= 0) return response.json().then(function (data) { throw new Error(data.error || ('HTTP ' + response.status)); });
         if (!response.ok) throw new Error('HTTP ' + response.status);
         if (type.indexOf('event-stream') >= 0 || type.indexOf('ndjson') >= 0) {
@@ -190,6 +261,7 @@ const CLIENT = `(function () {
               if (known) { known.className = 'tool ' + state; known.textContent = (state === 'failed' ? 'Failed: ' : state === 'approval' ? 'Waiting for approval: ' : 'Used ') + chunk.tool.name; }
               else tools[chunk.tool.id] = toolLine(chunk.tool.name, state);
             } else if (chunk.type === 'done') {
+              if (chunk.executionId) answerId = chunk.executionId;
               if (chunk.status === 'error') throw new Error((chunk.error && chunk.error.message) || 'Something went wrong');
               var output = typeof chunk.output === 'string' ? chunk.output : '';
               if (output) { streamed = output; replyNode().innerHTML = render(output); }
@@ -197,16 +269,56 @@ const CLIENT = `(function () {
             }
           });
         }
-        return response.json().then(function (data) { replyNode().innerHTML = render(typeof data.output === 'string' ? data.output : JSON.stringify(data.output)); });
+        return response.json().then(function (data) { if (data.executionId) answerId = data.executionId; replyNode().innerHTML = render(typeof data.output === 'string' ? data.output : JSON.stringify(data.output)); });
       })
       .catch(function (error) { typing.remove(); bubble('error', error.message || 'Could not reach the chat'); })
-      .then(function () { typing.remove(); setBusy(false); scroll(); input.focus(); });
+      .then(function () { typing.remove(); if (reply && answerId) feedbackRow(answerId); setBusy(false); scroll(); input.focus(); });
+  }
+
+  var inner = null;
+  var signInfo = null;
+  /** The panel (and the bubble that opens it, in window mode), created once; returns its emptied content area. */
+  function frame() {
+    if (inner) { inner.textContent = ''; return inner; }
+    inner = el('div', { class: 'inner', style: 'display:flex;flex-direction:column;height:100%;min-height:0' });
+    var panel = el('div', { class: 'panel' }, [inner]);
+    if (mode === 'window') {
+      panel.hidden = true;
+      var icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+      var toggle = el('button', { class: 'toggle', type: 'button', 'aria-label': 'Open chat', html: icon, onclick: function () { panel.hidden = !panel.hidden; if (!panel.hidden && input) input.focus(); } });
+      wrap.appendChild(toggle);
+      if (script.getAttribute('data-open') === 'true') panel.hidden = false;
+    }
+    wrap.appendChild(panel);
+    return inner;
+  }
+
+  /** The sign-in form of a chat with Basic Auth: the credentials go out as an Authorization header, nothing else. */
+  function showSignIn(info, message) {
+    signInfo = info || signInfo || config || {};
+    if (signInfo.customCss) applyCss(signInfo.customCss);
+    var area = frame();
+    var user = el('input', { type: 'text', autocomplete: 'username', placeholder: 'User', 'aria-label': 'User' });
+    var pass = el('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Password', 'aria-label': 'Password' });
+    var err = el('div', { class: 'err', role: 'alert', text: message || '' });
+    var form = el('form', { class: 'signin', onsubmit: function (e) {
+      e.preventDefault();
+      if (!user.value) return;
+      setAuth(basic(user.value, pass.value));
+      load(function (text) { err.textContent = text; pass.value = ''; });
+    } }, [el('p', { text: 'Sign in to use this chat.' }), user, pass, err, el('button', { type: 'submit', text: 'Sign in' })]);
+    area.appendChild(el('header', {}, [el('div', { class: 'titles' }, [el('h1', { text: signInfo.title || 'Sign in' }), signInfo.subtitle ? el('p', { text: signInfo.subtitle }) : null])]));
+    area.appendChild(form);
+    if (mode === 'fullscreen') document.title = signInfo.title || document.title;
+    setTimeout(function () { user.focus(); }, 0);
   }
 
   function build() {
     titleNode = el('h1', { text: config.title || '' });
     subtitleNode = config.subtitle ? el('p', { text: config.subtitle }) : null;
     var reset = el('button', { type: 'button', text: 'New chat', title: 'Start a new conversation', onclick: function () { sessionId = newId(); store(null); start(); } });
+    var buttons = [reset];
+    if (authHeader) buttons.push(el('button', { type: 'button', text: 'Sign out', title: 'Forget the password', onclick: function () { setAuth(''); showSignIn(signInfo || config); } }));
     log = el('div', { class: 'log', role: 'log', 'aria-live': 'polite' });
     input = el('textarea', { rows: '1', placeholder: config.inputPlaceholder || 'Type your question…', 'aria-label': 'Message' });
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) send(e); });
@@ -222,32 +334,32 @@ const CLIENT = `(function () {
       controls.unshift(el('button', { class: 'attach', type: 'button', title: 'Attach files', 'aria-label': 'Attach files', text: '📎', onclick: function () { fileInput.click(); } }), fileInput);
     }
     controls.push(sendButton);
-    var panel = el('div', { class: 'panel' }, [
-      el('div', { class: 'inner', style: 'display:flex;flex-direction:column;height:100%;min-height:0' }, [
-        el('header', {}, [el('div', { class: 'titles' }, [titleNode, subtitleNode]), reset]),
-        log,
-        pickedLine,
-        el('form', { onsubmit: send }, controls),
-      ]),
-    ]);
-    if (mode === 'window') {
-      panel.hidden = true;
-      var icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
-      var toggle = el('button', { class: 'toggle', type: 'button', 'aria-label': 'Open chat', html: icon, onclick: function () { panel.hidden = !panel.hidden; if (!panel.hidden) input.focus(); } });
-      wrap.appendChild(toggle);
-      if (script.getAttribute('data-open') === 'true') panel.hidden = false;
-    } else document.title = config.title || document.title;
-    wrap.appendChild(panel);
+    var area = frame();
+    [el('header', {}, [el('div', { class: 'titles' }, [titleNode, subtitleNode]), el('div', { style: 'display:flex;gap:6px' }, buttons)]), log, pickedLine, el('form', { onsubmit: send }, controls)].forEach(function (node) { area.appendChild(node); });
+    if (mode === 'fullscreen') document.title = config.title || document.title;
+    applyCss(config.customCss);
     start();
   }
 
-  fetch(base + '/config', { credentials: 'omit' })
-    .then(function (r) { if (!r.ok) throw new Error('This chat is not available'); return r.json(); })
-    .then(function (data) { config = data; build(); })
-    .catch(function (error) {
-      if (mode === 'fullscreen') wrap.appendChild(el('div', { class: 'panel' }, [el('div', { class: 'log' }, [el('div', { class: 'msg error', text: error.message })])]));
-      else console.warn('Landflow chat:', error.message);
-    });
+  /** Load the config; a 401 means Basic Auth: show the sign-in form (onFail gets the message when a sign-in attempt failed). */
+  function load(onFail) {
+    request('/config')
+      .then(function (r) {
+        if (r.status === 401) {
+          return r.json().catch(function () { return {}; }).then(function (data) {
+            if (authHeader) { setAuth(''); if (onFail) { onFail('Wrong user or password'); return; } }
+            showSignIn(data, '');
+          });
+        }
+        if (!r.ok) throw new Error('This chat is not available');
+        return r.json().then(function (data) { config = data; build(); });
+      })
+      .catch(function (error) {
+        if (mode === 'fullscreen') wrap.appendChild(el('div', { class: 'panel' }, [el('div', { class: 'log' }, [el('div', { class: 'msg error', text: error.message })])]));
+        else console.warn('Landflow chat:', error.message);
+      });
+  }
+  load();
 })();
 `;
 

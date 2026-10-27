@@ -529,6 +529,11 @@ description, so another gateway would only need another generator.
   and checks each token's signature (JWKS), issuer and audience (the gateway's URL).
 - **The authorization server is the instance's identity provider**, the one Landflow's SSO sign-in already uses:
   Keycloak in the dev stack, or Okta, Entra, Auth0 and others through agentgateway's provider presets.
+- **Both at once** (agentgateway 1.6): `mcpAuthentication` takes one issuer, so when the instance has an identity provider the
+  sync puts a `jwtAuth` with two providers (Landflow's issuer and the identity provider's, with its keys written inline) on
+  each route instead, and a token from either signs in; an unknown issuer is 401. No RFC 8693 token exchange is needed. The
+  price is the gateway's own `WWW-Authenticate` challenge and metadata document, which only `mcpAuthentication` produces
+  (`LANDFLOW_MCP_GATEWAY_ACCEPT_IDP=off` keeps the single issuer; verified in docs/mcp-gateway.md "Two issuers on one route").
 - **Without an identity provider**, Landflow issues MCP tokens itself: ES256 JWTs, created in Settings → MCP like API
   keys (shown once, with an expiry and a last-used time; issue and revoke at `/api/mcp/tokens`), with keys at
   `/api/mcp/jwks` and audiences `<instance>/api/mcp` and `<gateway>/mcp`. The gateway validates them the same way.
@@ -606,11 +611,29 @@ description, so another gateway would only need another generator.
 The same sync registers Landflow's other MCP servers (built in wave T6): the instance server (when Settings → MCP has it
 on) as `landflow-mcp` at `/mcp/landflow`, and each published workflow's enabled MCP Server Trigger as `wf-<path>` at
 `/mcp/workflows/<name>`, removed when they go, so every MCP server in Landflow sits behind one URL. A signed-in gateway
-caller runs as that Landflow user under their project access; an anonymous one meets the trigger's own authentication. External servers
+caller runs as that Landflow user under their project access; an anonymous one meets the trigger's own authentication. A
+project's admins can add that project's instance server too (`/mcp/projects/<name>`, target `project-<id>` (normalized like a plugin's); the
+project's MCP card): the same tools as the instance server, limited to that project, with a protected resource document of
+its own. Direct, `/api/mcp/projects/<id>` is the same server, and a Landflow MCP token issued for a project is scoped the same
+way at any URL (403 at another project's). External servers
 that an admin adds get routes of their own: agentgateway does no MCP version translation (it forwards `server/discover`
 and the client's protocol version to every target as is), so one older server in the shared endpoint would break
 2026-07-28 clients for every plugin. The host's endpoints therefore speak 2026-07-28 natively, and external servers
 keep their own routes.
+
+### Landflow as an MCP client: OAuth, resources and prompts
+
+The other direction of the same spec. The MCP Client, MCP Client Tool and agents' MCP servers reach servers that sign users
+in with an **MCP OAuth2 API** credential (`core.mcpOAuth2Api`, extending `oAuth2Api`, so the Connect popup, the status, the
+encrypted token and its renewal are the generic ones). Connect (`apps/web/src/lib/server/mcp/oauth.ts`) asks the server
+(`401` with `WWW-Authenticate: Bearer resource_metadata=…`, else `/.well-known/oauth-protected-resource`) for its protected
+resource metadata (RFC 9728), reads the authorization server's metadata (RFC 8414, then OpenID Connect discovery), registers
+Landflow dynamically (RFC 7591) unless the credential names a client, and signs in with authorization code and PKCE
+(S256 required). The `resource` parameter (RFC 8707) goes on the authorization and every token request. Discovery results
+and the registered client live in the credential's sealed `oauthMeta`. The token is renewed before expiry and once after a
+401 (an agent's tool call renews it by force and goes on). The clients also list and read resources and list and get prompts
+(MCP Client operations; `list_resources`, `read_resource`, `list_prompts`, `get_prompt` as agent tools). The MCP Server
+Trigger serves resources and prompts defined on the trigger (static text, an expression, or a sub-workflow).
 
 ### Swapping the gateway
 

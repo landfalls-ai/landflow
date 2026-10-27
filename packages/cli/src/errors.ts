@@ -20,6 +20,8 @@ export const EXIT = {
   timeout: 7,
   /** Four-eyes publishing: the publish, rollback or unpublish is a request waiting for another person's approval. */
   approvalPending: 8,
+  /** `audit verify`: the audit log's hash chain is broken, or a signed head doesn't check out. */
+  integrity: 9,
 } as const;
 
 export type ErrorCode =
@@ -39,6 +41,8 @@ export type ErrorCode =
   | 'timeout'
   /** The host recorded a publish request instead of publishing (four-eyes); `details.request` is the request. */
   | 'approval_pending'
+  /** The audit log's chain or a signed head failed verification; `details` holds the report. */
+  | 'integrity_failed'
   /** A bug in the CLI. */
   | 'internal';
 
@@ -58,6 +62,7 @@ const EXIT_FOR: Record<ErrorCode, number> = {
   sync_failed: EXIT.error,
   timeout: EXIT.timeout,
   approval_pending: EXIT.approvalPending,
+  integrity_failed: EXIT.integrity,
   internal: EXIT.error,
 };
 

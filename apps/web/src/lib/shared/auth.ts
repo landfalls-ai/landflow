@@ -209,6 +209,8 @@ export interface SamlSecurityView {
   jit: boolean;
   /** Encrypted assertions: our decryption certificate (lib/server/auth/saml-keys.ts). */
   encryption?: SamlEncryptionView;
+  /** Signing key rotation: the certificate we sign requests with and the next one (LANDFLOW_SAML_CERT / _NEXT_CERT), both in our metadata. */
+  signing?: { current: SamlKeyInfo; next?: SamlKeyInfo };
   error?: string;
 }
 
@@ -227,6 +229,22 @@ export interface SamlEncryptionView {
   /** PEM, to give the IdP (it is also in our metadata). */
   certificate?: string;
   createdAt?: string;
+  error?: string;
+  /** Rotation: the next certificate, published in our metadata beside this one; the IdP can encrypt to either. */
+  next?: SamlKeyInfo;
+  /** The retired certificate after a switch-over: its key still decrypts, our metadata no longer offers it. */
+  previous?: SamlKeyInfo;
+}
+
+/** A certificate kept for key rotation (the key never leaves the server). */
+export interface SamlKeyInfo {
+  source: 'generated' | 'uploaded' | 'env';
+  subject?: string;
+  validTo?: string;
+  fingerprint?: string;
+  certificate?: string;
+  createdAt?: string;
+  retiredAt?: string;
   error?: string;
 }
 

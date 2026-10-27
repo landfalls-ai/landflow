@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { can, type Action } from '@/lib/shared/auth';
 import { useViewer } from '@/components/auth/viewer';
 import { PageBody, PageHeader } from '@/components/shell/page-header';
+import { AiCapsSettings } from '@/components/settings/ai-caps-settings';
 import { AiPricesSettings } from '@/components/settings/ai-prices-settings';
 import { AlertsSettings } from '@/components/settings/alerts-settings';
 import { ApiDocs } from '@/components/settings/api-docs';
@@ -27,7 +28,7 @@ const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint:
   { id: 'general', label: 'General', icon: SlidersHorizontal, hint: 'Time zone and execution retention' },
   { id: 'variables', label: 'Variables', icon: Braces, hint: '$vars for expressions' },
   { id: 'alerts', label: 'Alerts', icon: BellRing, hint: 'Email, Slack or webhook on failures' },
-  { id: 'ai-prices', label: 'AI prices', icon: CircleDollarSign, hint: 'Token prices for AI cost tracking' },
+  { id: 'ai-prices', label: 'AI prices', icon: CircleDollarSign, hint: 'Token prices and usage caps for AI' },
   { id: 'mcp', label: 'MCP', icon: Plug, hint: 'Let coding agents build workflows' },
   { id: 'users', label: 'Users', icon: Users, hint: 'Invite people, change roles', role: 'users:manage' },
   { id: 'api-keys', label: 'API keys', icon: KeyRound, hint: 'For scripts, CI and the CLI' },
@@ -47,7 +48,12 @@ const BODIES: Record<string, () => React.ReactNode> = {
   general: () => <GeneralSettings />,
   variables: () => <VariablesSettings />,
   alerts: () => <AlertsSettings />,
-  'ai-prices': () => <AiPricesSettings />,
+  'ai-prices': () => (
+    <div className="space-y-4">
+      <AiPricesSettings />
+      <AiCapsSettings />
+    </div>
+  ),
   mcp: () => <McpSettings />,
   users: () => <UsersSettings />,
   'api-keys': () => <ApiKeysSettings />,

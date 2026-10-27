@@ -58,18 +58,42 @@ function compile(code: string): vm.Script {
   return script;
 }
 
-function accessor(items: NodeItem[], itemIndex: number) {
+/**
+ * `$input` and `$('Node')`: n8n's accessors over a list of items, as expressions and the Code node see them.
+ * `.item` follows the current item by position (the same index in the other node's output, the first item when it
+ * has fewer); `itemMatching(i)` is the item of the other node that matches input item `i`, by the same rule.
+ * `items` undefined is a node that has not run: `isExecuted` is false and reading anything else throws.
+ */
+export function nodeAccessor(name: string | undefined, items: NodeItem[] | undefined, currentIndex: () => number) {
+  const list = () => {
+    if (!items) throw new Error(`Node "${name}" has not run yet (or produced no output)`);
+    return items;
+  };
   return {
-    all: () => items,
-    first: () => items[0],
-    last: () => items[items.length - 1],
+    all: () => list(),
+    first: () => list()[0],
+    last: () => list()[list().length - 1],
+    itemMatching(index: number) {
+      const matched = list()[index];
+      if (!matched) throw new Error(`Node "${name}" has no item matching input item ${index}`);
+      return matched;
+    },
     get item() {
-      return items[itemIndex] ?? items[0];
+      return list()[currentIndex()] ?? list()[0];
     },
     get json() {
-      return (items[itemIndex] ?? items[0])?.json;
+      return (list()[currentIndex()] ?? list()[0])?.json;
     },
+    get binary() {
+      return (list()[currentIndex()] ?? list()[0])?.binary;
+    },
+    isExecuted: items !== undefined,
   };
+}
+
+/** `$node['Name']` / `$node.Name`: the node's first item as `json` and `binary`, and all its `items`. */
+export function legacyNodeData(items: NodeItem[] | undefined) {
+  return items ? { json: items[0]?.json, binary: items[0]?.binary, items } : undefined;
 }
 
 export class ExpressionResolver {
@@ -81,8 +105,7 @@ export class ExpressionResolver {
       {},
       {
         get: (_target, name: string) => {
-          const items = data.nodeOutputs[name];
-          return items ? { json: items[0]?.json, items } : undefined;
+          return legacyNodeData(data.nodeOutputs[name]);
         },
       },
     );
@@ -94,11 +117,7 @@ export class ExpressionResolver {
       $vars: Object.freeze({ ...data.variables }),
       $secrets: secretsSandbox(data.secrets),
       $fromAI: (key: string, _description?: string, _type?: string, fallback?: unknown) => data.toolArgs?.[key] ?? fallback ?? '',
-      $: (name: string) => {
-        const items = data.nodeOutputs[name];
-        if (!items) throw new Error(`Node "${name}" has not run yet (or produced no output)`);
-        return accessor(items, this.sandbox.$itemIndex as number);
-      },
+      $: (name: string) => nodeAccessor(name, data.nodeOutputs[name], () => this.sandbox.$itemIndex as number),
     };
     this.context = vm.createContext(this.sandbox);
   }
@@ -107,7 +126,7 @@ export class ExpressionResolver {
     const item = this.data.items[itemIndex];
     this.sandbox.$itemIndex = itemIndex;
     this.sandbox.$json = item?.json ?? {};
-    this.sandbox.$input = accessor(this.data.items, itemIndex);
+    this.sandbox.$input = nodeAccessor(undefined, this.data.items, () => itemIndex);
     this.sandbox.$now = new Date();
     this.sandbox.$today = new Date(new Date().toDateString());
   }

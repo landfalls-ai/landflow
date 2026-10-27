@@ -4,8 +4,9 @@
  * outcome, time, text), newest first and paged by cursor, with CSV and JSON export of the same filter and "Verify
  * chain" (the hash chain, GET /api/audit/verify); how long events are kept and whether credential use in runs is
  * recorded; and SIEM streaming: syslog (RFC 5424 over UDP, TCP or TLS), HTTP JSON lines (signed, or Datadog and
- * Elasticsearch presets) and Splunk HEC, each with "Send test event" and its outbox, and a client certificate for
- * receivers that want mTLS. Owners and admins only (the `audit:read` action); `AuditLog` alone, fixed to one project,
+ * Elasticsearch presets) and Splunk HEC, each with "Send test event" and its outbox, a client certificate for
+ * receivers that want mTLS, and a scope (every event, or chosen projects' events plus, optionally, instance events); and
+ * Integrity: the Ed25519 key and the signed chain head, Sign now, and where signed heads are anchored (S3, webhook). Owners and admins only (the `audit:read` action); `AuditLog` alone, fixed to one project,
  * is the project page's Audit log tab for project admins.
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -18,11 +19,15 @@ import { can } from '@/lib/shared/auth';
 import {
   AUDIT_ACTIONS,
   AUDIT_DESTINATION_KINDS,
+  type AuditAnchoringSettings,
+  type AuditAnchoringView,
   type AuditChainReport,
   type AuditDelivery,
   type AuditDestination,
   type AuditDestinationConfig,
   type AuditDestinationKind,
+  type AuditDestinationScope,
+  type AuditHeadView,
   type AuditEvent,
   type AuditOutcome,
   type AuditPage,
@@ -494,10 +499,68 @@ function TlsFields({ config, set, initial }: { config: AuditDestinationConfig; s
   );
 }
 
+/** Which events a destination gets: everything, or chosen projects' events (plus the instance-wide ones when asked). */
+function ScopeFields({ scope, onChange }: { scope: AuditDestinationScope | null; onChange: (next: AuditDestinationScope | null) => void }) {
+  const viewer = useViewer();
+  const { projects } = useProjects();
+  const chosen = new Set(scope?.projectIds ?? []);
+  const toggle = (id: string) => onChange({ instance: scope?.instance ?? false, projectIds: chosen.has(id) ? [...chosen].filter((p) => p !== id) : [...chosen, id] });
+  return (
+    <div className="space-y-2">
+      <FieldLabel>Events sent</FieldLabel>
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Events sent">
+        {[
+          { id: 'all', label: 'Every event' },
+          { id: 'projects', label: 'Chosen projects' },
+        ].map((option) => {
+          const active = (option.id === 'all') === (scope === null);
+          return (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onChange(option.id === 'all' ? null : (scope ?? { projectIds: [], instance: true }))}
+              className={cn('flex h-8 items-center rounded-full border px-3 text-[12px] transition-colors', active ? 'border-ac bg-acdim font-semibold text-t1' : 'border-hair text-t2 hover:border-ac hover:text-ac')}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+      {scope && (
+        <div className="space-y-1.5 rounded-[10px] border border-hair bg-sf px-3 py-2.5">
+          <label className="flex items-center gap-2 text-[12px] text-t1">
+            <input type="checkbox" checked={scope.instance} onChange={(e) => onChange({ ...scope, instance: e.target.checked })} />
+            Instance events <span className="text-t3">(sign-ins, users, settings, plugins: events that belong to no project)</span>
+          </label>
+          <div className="max-h-40 space-y-1 overflow-y-auto">
+            {(projects ?? []).map((project) => (
+              <label key={project.id} className="flex items-center gap-2 text-[12px] text-t1">
+                <input type="checkbox" checked={chosen.has(project.id)} onChange={() => toggle(project.id)} />
+                {projectLabel(project, viewer?.id)}
+              </label>
+            ))}
+            {!projects?.length && <div className="text-[12px] text-t3">No projects to choose from.</div>}
+          </div>
+          <div className="text-[11px] text-t3">Applies to events recorded from now on; events already queued still go out.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function scopeSummary(scope: AuditDestinationScope): string {
+  const parts = [`${scope.projectIds.length} project${scope.projectIds.length === 1 ? '' : 's'}`];
+  if (scope.instance) parts.push('instance events');
+  return parts.join(' + ');
+}
+
 function DestinationEditor({ initial, onSaved, onCancel }: { initial?: AuditDestination; onSaved: (destination: AuditDestination) => void; onCancel: () => void }) {
   const [kind, setKind] = useState<AuditDestinationKind>(initial?.kind ?? 'syslog');
   const [name, setName] = useState(initial?.name ?? '');
   const [config, setConfig] = useState<AuditDestinationConfig>(initial?.config ?? { protocol: 'tcp', port: 514 });
+  const [scope, setScope] = useState<AuditDestinationScope | null>(initial?.scope ?? null);
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState<string>();
   const set = (next: Partial<AuditDestinationConfig>) => setConfig((c) => ({ ...c, ...next }));
@@ -517,8 +580,8 @@ function DestinationEditor({ initial, onSaved, onCancel }: { initial?: AuditDest
     const clean = Object.fromEntries(Object.entries(config).filter(([, v]) => v !== '' && v !== undefined && !(typeof v === 'number' && Number.isNaN(v))));
     try {
       const { destination } = initial
-        ? await api<{ destination: AuditDestination }>(`/api/settings/audit/destinations/${initial.id}`, { method: 'PATCH', json: { name, config: clean } })
-        : await api<{ destination: AuditDestination }>('/api/settings/audit/destinations', { method: 'POST', json: { name: name || AUDIT_DESTINATION_KINDS.find((k) => k.id === kind)!.label, kind, config: clean } });
+        ? await api<{ destination: AuditDestination }>(`/api/settings/audit/destinations/${initial.id}`, { method: 'PATCH', json: { name, config: clean, scope } })
+        : await api<{ destination: AuditDestination }>('/api/settings/audit/destinations', { method: 'POST', json: { name: name || AUDIT_DESTINATION_KINDS.find((k) => k.id === kind)!.label, kind, config: clean, ...(scope && { scope }) } });
       toast.success(initial ? `Saved ${destination.name}` : 'Destination added — send a test event to check it');
       onSaved(destination);
     } catch (error) {
@@ -683,6 +746,7 @@ function DestinationEditor({ initial, onSaved, onCancel }: { initial?: AuditDest
           {config.url?.trim().startsWith('https:') && <TlsFields config={config} set={set} initial={initial} />}
         </>
       )}
+      <ScopeFields scope={scope} onChange={setScope} />
       {problem && <div className="text-[12px] text-rd">{problem}</div>}
       <div className="flex items-center gap-2">
         <Button size="sm" variant="primary" onClick={() => void save()} loading={saving}>
@@ -693,6 +757,144 @@ function DestinationEditor({ initial, onSaved, onCancel }: { initial?: AuditDest
         </Button>
       </div>
     </div>
+  );
+}
+
+/** Integrity: the Ed25519 key, the newest signed chain head and where signed heads are anchored (S3, webhook). */
+function IntegrityCard({ admin }: { admin: boolean }) {
+  const [head, setHead] = useState<AuditHeadView>();
+  const [view, setView] = useState<AuditAnchoringView>();
+  const [draft, setDraft] = useState<AuditAnchoringSettings & { s3Secret?: string; hookSecret?: string }>();
+  const [busy, setBusy] = useState<string>();
+  const [problem, setProblem] = useState<string>();
+
+  const load = useCallback(async () => {
+    try {
+      const [h, v] = await Promise.all([api<AuditHeadView>('/api/audit/head'), api<AuditAnchoringView>('/api/settings/audit/anchoring')]);
+      setHead(h);
+      setView(v);
+      setDraft((d) => d ?? v.settings);
+    } catch (e) {
+      setProblem((e as Error).message);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!view || !draft) return problem ? <div className="text-[12px] text-rd">{problem}</div> : null;
+  const key = head?.keys.at(-1);
+  const payload = head?.head ? (JSON.parse(head.head.payload) as { seq: number; hash: string }) : undefined;
+  const set = (patch: Partial<AuditAnchoringSettings>) => setDraft((d) => d && { ...d, ...patch });
+
+  const save = async () => {
+    setBusy('save');
+    setProblem(undefined);
+    try {
+      const { s3Secret, hookSecret, ...settings } = draft;
+      const s3 = settings.s3?.bucket?.trim() ? { ...settings.s3, ...(s3Secret && { secretAccessKey: s3Secret }) } : null;
+      const webhook = settings.webhook?.url?.trim() ? { url: settings.webhook.url, ...(hookSecret && { secret: hookSecret }) } : null;
+      const next = await api<AuditAnchoringView>('/api/settings/audit/anchoring', { method: 'PUT', json: { enabled: settings.enabled, intervalMinutes: settings.intervalMinutes, s3, webhook } });
+      setView(next);
+      setDraft(next.settings);
+      toast.success('Saved');
+    } catch (e) {
+      setProblem((e as Error).message);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+  const act = async (what: 'run' | 'rotate') => {
+    setBusy(what);
+    try {
+      if (what === 'run') {
+        const result = await api<{ created: boolean; anchored: boolean; anchorError: string | null }>('/api/settings/audit/anchoring/run', { method: 'POST' });
+        if (result.anchorError) toast.error(`Signed, but anchoring failed: ${result.anchorError}`);
+        else toast.success(result.created ? 'Signed the chain head' : 'The head was already signed');
+      } else {
+        const { key: next } = await api<{ key: { keyId: string } }>('/api/settings/audit/anchoring/rotate-key', { method: 'POST' });
+        toast.success(`New signing key ${next.keyId}: pin its public key wherever you verify`);
+      }
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+  const hasSecret = (name: string) => view.secretsSet.includes(name);
+
+  return (
+    <section className="space-y-2.5">
+      <SectionLabel>Integrity</SectionLabel>
+      <Card className="space-y-3.5 p-4">
+        <p className="text-[12px] text-t3">
+          The hash chain shows changes inside the log; a signed head pins its newest link from outside. The leader checks the whole chain and signs its head with an Ed25519 key on a schedule, and copies each signed head to the places
+          below, so a rewritten log can’t also rewrite them. Check one offline with <code className="font-mono">landflow audit verify --head head.json --public-key key.pem</code>.
+        </p>
+        <div className="space-y-1 text-[12px] text-t2">
+          <div>
+            Signing key: {key ? <code className="font-mono">{key.keyId}</code> : <span className="text-t3">created at the first signature</span>}
+            {key && (
+              <button type="button" className="ml-2 text-ac hover:underline" onClick={() => void navigator.clipboard.writeText(key.publicKey).then(() => toast.success('Public key copied'))}>
+                Copy public key
+              </button>
+            )}
+          </div>
+          <div>
+            Newest signed head:{' '}
+            {payload && view.latest ? (
+              <>
+                #{payload.seq} <code className="font-mono">{payload.hash.slice(0, 12)}…</code>, signed {timeAgo(view.latest.signedAt)}
+                {view.latest.anchoredAt ? `, anchored ${timeAgo(view.latest.anchoredAt)}` : view.latest.anchorError ? <span className="text-rd"> — not anchored: {view.latest.anchorError}</span> : ', not anchored'}
+              </>
+            ) : (
+              <span className="text-t3">none yet</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-[13px] text-t1">
+          <Switch checked={draft.enabled} onChange={(value) => set({ enabled: value })} disabled={!admin} label="Sign the chain head on a schedule" />
+          Sign the chain head every
+          <Input className="w-20" type="number" min={1} value={draft.intervalMinutes} onChange={(e) => set({ intervalMinutes: Math.max(1, Number(e.target.value) || 60) })} disabled={!admin} /> minutes
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-2">
+            <FieldLabel>S3 or MinIO bucket</FieldLabel>
+            <Input value={draft.s3?.bucket ?? ''} onChange={(e) => set({ s3: { ...draft.s3, bucket: e.target.value } })} placeholder="bucket (empty: no S3 anchor)" disabled={!admin} />
+            <Input value={draft.s3?.endpoint ?? ''} onChange={(e) => set({ s3: { ...draft.s3!, endpoint: e.target.value } })} placeholder="endpoint (MinIO: http://minio:9000)" disabled={!admin || !draft.s3?.bucket} />
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={draft.s3?.region ?? ''} onChange={(e) => set({ s3: { ...draft.s3!, region: e.target.value } })} placeholder="region (us-east-1)" disabled={!admin || !draft.s3?.bucket} />
+              <Input value={draft.s3?.prefix ?? ''} onChange={(e) => set({ s3: { ...draft.s3!, prefix: e.target.value } })} placeholder="prefix (audit-heads/)" disabled={!admin || !draft.s3?.bucket} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={draft.s3?.accessKeyId ?? ''} onChange={(e) => set({ s3: { ...draft.s3!, accessKeyId: e.target.value } })} placeholder="access key id" disabled={!admin || !draft.s3?.bucket} />
+              <Input type="password" autoComplete="off" value={draft.s3Secret ?? ''} onChange={(e) => setDraft((d) => d && { ...d, s3Secret: e.target.value })} placeholder={hasSecret('s3.secretAccessKey') ? 'Saved — leave empty to keep' : 'secret access key'} disabled={!admin || !draft.s3?.bucket} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <FieldLabel>Webhook</FieldLabel>
+            <Input value={draft.webhook?.url ?? ''} onChange={(e) => set({ webhook: { ...draft.webhook, url: e.target.value } })} placeholder="https://… (empty: no webhook)" disabled={!admin} />
+            <Input type="password" autoComplete="off" value={draft.hookSecret ?? ''} onChange={(e) => setDraft((d) => d && { ...d, hookSecret: e.target.value })} placeholder={hasSecret('webhook.secret') ? 'Saved — leave empty to keep' : 'signing secret (optional)'} disabled={!admin || !draft.webhook?.url} />
+            <div className="text-[11px] text-t3">POSTs <code className="font-mono">{'{ event: "audit.head", head }'}</code> with <code className="font-mono">X-Landflow-Signature</code> when a secret is set.</div>
+          </div>
+        </div>
+        {problem && <div className="text-[12px] text-rd">{problem}</div>}
+        {admin && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="primary" onClick={() => void save()} loading={busy === 'save'}>
+              Save
+            </Button>
+            <Button size="sm" onClick={() => void act('run')} loading={busy === 'run'} title="Verify the chain, sign its head and copy it to the anchors now">
+              <ShieldCheck className="size-3.5" /> Sign and anchor now
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => void act('rotate')} loading={busy === 'rotate'} title="Start a new signing key (the old one stays valid for older heads)">
+              <RotateCw className="size-3.5" /> Rotate key
+            </Button>
+          </div>
+        )}
+      </Card>
+    </section>
   );
 }
 
@@ -799,6 +1001,8 @@ export function AuditSettings() {
         </section>
       )}
 
+      {view && <IntegrityCard admin={admin} />}
+
       {view && (
         <section className="space-y-2.5">
           <div className="flex items-center gap-3">
@@ -837,6 +1041,7 @@ export function AuditSettings() {
                       <span className="truncate text-[13px] font-semibold text-t1">{destination.name}</span>
                       <Badge tone="muted">{AUDIT_DESTINATION_KINDS.find((k) => k.id === destination.kind)?.label}</Badge>
                       {!destination.enabled && <Badge tone="neutral">Paused</Badge>}
+                      {destination.scope && <Badge tone="muted">{scopeSummary(destination.scope)}</Badge>}
                     </div>
                     <div className="truncate text-[12px] text-t3">{destinationTarget(destination)}</div>
                     <DeliveryLine destination={destination} />

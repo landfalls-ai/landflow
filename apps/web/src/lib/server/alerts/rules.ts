@@ -45,7 +45,7 @@ export function inScope(scope: AlertScope, workflowId: string, tags: readonly st
  * `includeManual`). Sub-executions are left to their parent, debug and evaluation runs are never alerted.
  */
 export function watches(rule: AlertRule, record: ExecutionRecord, workflow?: Pick<Workflow, 'tags'>): boolean {
-  if (!rule.enabled || !rule.channelIds.length) return false;
+  if (!rule.enabled || !rule.channelIds.length || (rule.kind ?? 'runs') !== 'runs') return false;
   if (record.debug || record.evaluation || record.parentExecutionId) return false;
   if (MANUAL_MODES.has(record.mode) && !rule.includeManual) return false;
   return inScope(rule.workflows, record.workflowId, workflow?.tags ?? record.workflow?.tags);

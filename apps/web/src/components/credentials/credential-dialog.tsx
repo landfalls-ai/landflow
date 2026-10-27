@@ -118,6 +118,9 @@ export function CredentialDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Rate limit (calls per interval, shared by every node and run that uses the credential); empty = none.
+  const [rateCalls, setRateCalls] = useState('');
+  const [rateSeconds, setRateSeconds] = useState('60');
   const info = types.find((t) => t.type === type);
 
   useEffect(() => {
@@ -128,6 +131,8 @@ export function CredentialDialog({
         setType(credential.type);
         setName(credential.name);
         setValues(credential.data);
+        setRateCalls(credential.rateLimit ? String(credential.rateLimit.limit) : '');
+        setRateSeconds(credential.rateLimit ? String(credential.rateLimit.intervalSeconds) : '60');
       })
       .catch((e: Error) => setError(e.message));
   }, [credentialId]);
@@ -181,10 +186,17 @@ export function CredentialDialog({
   const persist = async (): Promise<CredentialDetail | undefined> => {
     if (!type) return undefined;
     setError(undefined);
+    const calls = Math.floor(Number(rateCalls));
+    const seconds = Number(rateSeconds);
+    if (rateCalls.trim() && (!(calls >= 1) || !(seconds >= 0.1))) {
+      setError('The rate limit needs at least 1 call per interval of at least 0.1 seconds (or leave the calls empty for no limit).');
+      return undefined;
+    }
+    const rateLimit = rateCalls.trim() ? { limit: calls, intervalSeconds: seconds } : null;
     try {
       const { credential } = existing
-        ? await api<{ credential: CredentialDetail }>(`/api/credentials/${existing.id}`, { method: 'PATCH', json: { name, data: values } })
-        : await api<{ credential: CredentialDetail }>(`/api/credentials${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`, { method: 'POST', json: { name, type, data: values } });
+        ? await api<{ credential: CredentialDetail }>(`/api/credentials/${existing.id}`, { method: 'PATCH', json: { name, data: values, rateLimit } })
+        : await api<{ credential: CredentialDetail }>(`/api/credentials${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`, { method: 'POST', json: { name, type, data: values, ...(rateLimit && { rateLimit }) } });
       await useCredentialStore.getState().refresh();
       return credential;
     } catch (e) {
@@ -278,6 +290,18 @@ export function CredentialDialog({
                     Start the plugin that publishes <span className="font-mono">{existing.type}</span> to edit or test this credential. Nodes keep using it in the meantime.
                   </div>
                 )
+              )}
+              {info && (
+                <div>
+                  <FieldLabel>Rate limit</FieldLabel>
+                  <div className="flex items-center gap-2 text-[13px] text-t2">
+                    <Input className="w-24" inputMode="numeric" value={rateCalls} onChange={(e) => setRateCalls(e.target.value)} placeholder="No limit" aria-label="Calls per interval" />
+                    <span>calls per</span>
+                    <Input className="w-20" inputMode="decimal" value={rateSeconds} onChange={(e) => setRateSeconds(e.target.value)} aria-label="Interval in seconds" />
+                    <span>seconds</span>
+                  </div>
+                  <p className="mt-1 text-[12px] text-t3">Shared by every node and run that uses this credential (and across processes in queue mode). Calls over it wait their turn instead of failing.</p>
+                </div>
               )}
               {test && test !== 'running' && (
                 <div

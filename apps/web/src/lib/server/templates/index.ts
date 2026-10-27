@@ -33,7 +33,7 @@ import {
 import { normalizeGroups } from '../../shared/groups';
 import type { Workflow, WorkflowNode } from '../../shared/types';
 import { credentials as vault } from '../credentials/vault';
-import { freeTableName, tableInProject } from '../datatables/projects';
+import { tableInProject } from '../datatables/projects';
 import { dataTables } from '../datatables/service';
 import { folders } from '../folders';
 import { scopeFor, workflowViolations } from '../governance/policy';
@@ -348,13 +348,13 @@ export async function useTemplate(id: string, request: UseTemplateRequest, hooks
   const tableIds = new Map<string, string>();
   const createdTables: string[] = [];
   for (const table of detail.dataTables) {
-    // The project's table of that name is reused; another project's isn't (names are unique: the new one gets a number).
-    const existing = dataTables().findTable(table.name);
+    // The project's table of that name is reused; another project's isn't (names are unique per project: it makes its own).
+    const existing = dataTables().findTable(table.name, hooks.projectId);
     if (existing && (hooks.projectId === undefined || tableInProject(existing.id, hooks.projectId))) {
       tableIds.set(table.name, existing.id);
       continue;
     }
-    const created = hooks.createTable(() => dataTables().createTable({ name: freeTableName(table.name), columns: table.columns }));
+    const created = hooks.createTable(() => dataTables().createTable({ name: table.name, columns: table.columns, projectId: hooks.projectId }));
     tableIds.set(table.name, created.id);
     createdTables.push(created.name);
   }

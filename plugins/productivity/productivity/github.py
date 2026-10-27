@@ -12,18 +12,28 @@ from urllib.parse import quote
 
 from landflow_sdk import CredentialType, Node, NodeOperationError, poll_interval_property, verify_github_signature
 
+from .github_app import GITHUB_APP_API, PERMISSIONS_HINT, GitHubApi, github_api, test_github_app  # noqa: F401
 from .common import (
     Api,
     api_error,
+    authentication_property,
+    binary_input,
+    binary_name_property,
+    binary_out,
     collection,
+    content_type_of,
+    credential_requirements,
     count_new_items,
     count_written,
+    download,
     item_errors,
     items_of,
     limit_of,
     operation_property,
+    oauth2_properties,
     out,
     outs,
+    pick_credentials,
     resource_property,
     return_all_properties,
     split_list,
@@ -37,19 +47,24 @@ MAX_POLL_PAGES = 10
 _NEXT_RE = re.compile(r'<([^>]+)>\s*;\s*rel="?next"?')
 
 
-def github_api(ctx: Any, creds: dict[str, Any]) -> Api:
-    return Api(ctx, "github", creds.get("baseUrl") or "https://api.github.com", {
-        "Authorization": f"Bearer {creds.get('accessToken', '')}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    })
-
-
 def test_github(data: dict[str, Any], ctx: Any) -> tuple[bool, str]:
     ok, reason, me = test_call(github_api(ctx, data), "/user")
     if not ok:
         return False, reason or "GitHub rejected the token"
     return True, f"authenticated as {me.get('login')}" if isinstance(me, dict) else "authenticated"
+
+
+#: The third Authentication option of the GitHub nodes: ``(display name, value, credential type)``.
+APP_AUTHENTICATION = [("GitHub App", "githubApp", "githubAppApi")]
+
+
+def github_credentials(ctx: Any, authentication: Any = None) -> dict[str, Any]:
+    """The node's GitHub credential (token, OAuth2 or GitHub App); ``github_api`` turns an app's into installation tokens."""
+    return pick_credentials(ctx, "githubApi", "githubOAuth2Api", authentication, extra=APP_AUTHENTICATION)
+
+
+def github_requirements() -> list[dict[str, Any]]:
+    return credential_requirements("githubApi", "githubOAuth2Api", extra=APP_AUTHENTICATION)
 
 
 GITHUB_API = CredentialType(
@@ -61,6 +76,23 @@ GITHUB_API = CredentialType(
     properties=[
         {"name": "accessToken", "displayName": "Access Token", "type": "string", "required": True,
          "typeOptions": {"password": True}, "placeholder": "ghp_… / github_pat_…"},
+        {"name": "baseUrl", "displayName": "API Base URL", "type": "string", "default": "https://api.github.com",
+         "description": "GitHub Enterprise Server: https://<host>/api/v3"},
+    ],
+)
+
+
+GITHUB_OAUTH2_API = CredentialType(
+    name="githubOAuth2Api",
+    display_name="GitHub OAuth2 API",
+    documentation_url="https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps",
+    description="Sign in with GitHub: register an OAuth App (Settings, Developer settings), add the redirect URL shown below, then Connect. "
+                "For GitHub Enterprise use the host's URLs for Authorization and Access Token and its /api/v3 base URL.",
+    test=test_github,
+    extends=["oAuth2Api"],
+    properties=[
+        *oauth2_properties("https://github.com/login/oauth/authorize", "https://github.com/login/oauth/access_token", "repo read:user admin:repo_hook",
+                           user_info_url="https://api.github.com/user"),
         {"name": "baseUrl", "displayName": "API Base URL", "type": "string", "default": "https://api.github.com",
          "description": "GitHub Enterprise Server: https://<host>/api/v3"},
     ],
@@ -84,6 +116,8 @@ def paginate(api: Api, path: str, params: dict[str, Any], limit: int | None, kee
         query = None  # the next link carries the query string
         pages += 1
         body = resp.json
+        if isinstance(body, dict) and isinstance(body.get("repositories"), list):  # /installation/repositories
+            body = body["repositories"]
         found.extend(entry for entry in (body if isinstance(body, list) else []) if keep is None or keep(entry))
         if (limit is not None and len(found) >= limit) or (max_pages and pages >= max_pages):
             break
@@ -116,8 +150,9 @@ class RepositoryPicker:
 
     def load_options(self, method, parameters, ctx=None):
         if method == "getRepositories":
-            api = github_api(ctx, ctx.get_credentials("githubApi"))
-            repos, _ = paginate(api, "/user/repos", {"sort": "updated"}, None, max_pages=5)
+            api = github_api(ctx, github_credentials(ctx, (parameters or {}).get("authentication")))
+            # A GitHub App installation has no user: it lists the repositories it was installed on.
+            repos, _ = paginate(api, "/installation/repositories" if api.app else "/user/repos", {} if api.app else {"sort": "updated"}, None, max_pages=5)
             return [{"name": "Enter Owner and Name", "value": ""}] + [
                 {"name": r.get("full_name"), "value": r.get("full_name"), "description": r.get("description")} for r in repos if isinstance(r, dict)
             ]
@@ -156,7 +191,7 @@ class GitHub(RepositoryPicker, Node):
     description = {
         "name": "github",
         "displayName": "GitHub",
-        "description": "Create, edit, comment on and list issues; get repositories, releases and files",
+        "description": "Create, edit, comment on and list issues; get repositories, releases and files; upload and download files and release assets",
         "version": 1,
         "kind": "action",
         "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
@@ -167,19 +202,32 @@ class GitHub(RepositoryPicker, Node):
         "documentationUrl": "https://docs.github.com/en/rest",
         "inputs": [{"type": "main"}],
         "outputs": [{"type": "main"}],
-        "credentials": [{"name": "githubApi", "required": True}],
+        "credentials": github_requirements(),
         "usableAsTool": True,
         "toolDescription": (
             "Work with a GitHub repository (`owner`, `repository`). Issues: `create` (`title`, `body`), `get` / `edit` / "
             "`createComment` by `issueNumber`, `getAll` (filters by state and labels). Also get the repository, list "
-            "releases, or read a file's text (`filePath`)."
+            "releases, or read a file's text (`filePath`). Files and release assets move as binary data on the item: Download File, "
+            "Create or Update File, Download Asset, Upload Asset, Download Archive."
         ),
         "keywords": ["github", "git", "issues", "repository", "release", "code"],
         "properties": [
+            authentication_property("Access Token", APP_AUTHENTICATION),
             resource_property([("File", "file"), ("Issue", "issue"), ("Release", "release"), ("Repository", "repository")], "issue"),
-            operation_property("file", [("Get", "get", "Get a file", True)], "get"),
-            operation_property("release", [("Get Many", "getAll", "Get many releases", True)], "getAll"),
-            operation_property("repository", [("Get", "get", "Get a repository", True)], "get"),
+            operation_property("file", [
+                ("Create or Update", "createOrUpdate", "Create or update a file from binary data"),
+                ("Download", "download", "Download a file as binary data", True),
+                ("Get", "get", "Get a file", True),
+            ], "get"),
+            operation_property("release", [
+                ("Download Asset", "downloadAsset", "Download a release asset as binary data", True),
+                ("Get Many", "getAll", "Get many releases", True),
+                ("Upload Asset", "uploadAsset", "Upload binary data as a release asset"),
+            ], "getAll"),
+            operation_property("repository", [
+                ("Download Archive", "downloadArchive", "Download a zip or tar archive as binary data", True),
+                ("Get", "get", "Get a repository", True),
+            ], "get"),
             operation_property("issue", [
                 ("Create", "create", "Create an issue"),
                 ("Create Comment", "createComment", "Create a comment on an issue"),
@@ -238,13 +286,37 @@ class GitHub(RepositoryPicker, Node):
                 "name": "fileOptions", "displayName": "Options", "type": "collection", "default": {}, "placeholder": "Add option",
                 "displayOptions": {"show": {"resource": ["file"]}},
                 "values": [{"name": "reference", "displayName": "Reference", "type": "string", "default": "",
-                            "description": "Branch, tag or commit (default branch when empty)"}],
+                            "description": "Branch, tag or commit (default branch when empty); Create or Update commits to this branch"}],
             },
+            {"name": "commitMessage", "displayName": "Commit Message", "type": "string", "default": "", "placeholder": "Add report",
+             "description": "Defaults to 'Create <path>' or 'Update <path>'", "displayOptions": {"show": {"resource": ["file"], "operation": ["createOrUpdate"]}}},
+            binary_name_property("binaryPropertyName", "Input Binary Field", {"resource": ["file", "release"], "operation": ["createOrUpdate", "uploadAsset"]},
+                                 "Name of the binary property that holds the file to send"),
+            binary_name_property("outputBinaryName", "Output Binary Field", {"operation": ["download", "downloadAsset", "downloadArchive"]},
+                                 "Binary property that receives the downloaded file"),
+            # ---- release assets and repository archives
+            {"name": "releaseRef", "displayName": "Release", "type": "string", "default": "latest", "placeholder": "latest, v1.2.0 or a release id",
+             "description": "A release id, a tag name or 'latest'", "displayOptions": {"show": {"resource": ["release"], "operation": ["downloadAsset", "uploadAsset"]}}},
+            {"name": "assetRef", "displayName": "Asset", "type": "string", "default": "", "required": True, "placeholder": "app.zip or an asset id",
+             "description": "The asset's file name (looked up in the release) or its numeric id",
+             "displayOptions": {"show": {"resource": ["release"], "operation": ["downloadAsset"]}}},
+            {"name": "assetOptions", "displayName": "Options", "type": "collection", "default": {}, "placeholder": "Add option",
+             "displayOptions": {"show": {"resource": ["release"], "operation": ["uploadAsset"]}},
+             "values": [
+                 {"name": "name", "displayName": "Asset Name", "type": "string", "default": "", "description": "Defaults to the binary file's name"},
+                 {"name": "label", "displayName": "Label", "type": "string", "default": "", "description": "Shown instead of the file name in the release"},
+             ]},
+            {"name": "archiveFormat", "displayName": "Format", "type": "options", "default": "zipball",
+             "options": [{"name": "Zip", "value": "zipball"}, {"name": "Tar (gzip)", "value": "tarball"}],
+             "displayOptions": {"show": {"resource": ["repository"], "operation": ["downloadArchive"]}}},
+            {"name": "archiveRef", "displayName": "Reference", "type": "string", "default": "", "placeholder": "main",
+             "description": "Branch, tag or commit (default branch when empty)",
+             "displayOptions": {"show": {"resource": ["repository"], "operation": ["downloadArchive"]}}},
         ],
     }
 
     def execute(self, ctx):
-        api = github_api(ctx, ctx.get_credentials("githubApi"))
+        api = github_api(ctx, github_credentials(ctx, ctx.get_node_parameter("authentication")))
         results = []
         for i, _item in enumerate(items_of(ctx)):
             with item_errors(ctx, results, i):
@@ -256,6 +328,8 @@ class GitHub(RepositoryPicker, Node):
                     results.extend(self._issue(ctx, api, i, repo, operation))
                 elif resource == "repository" and operation == "get":
                     results.append(out(api.get(repo), i))
+                elif resource == "repository" and operation == "downloadArchive":
+                    results.append(self._archive(ctx, api, i, repo))
                 elif resource == "release" and operation == "getAll":
                     limit = limit_of(ctx, i)
                     with ctx.span("github.list", {"github.resource": "release", "landflow.return_all": limit is None}) as span:
@@ -264,6 +338,14 @@ class GitHub(RepositoryPicker, Node):
                     results.extend(outs(releases, i))
                 elif resource == "file" and operation == "get":
                     results.extend(outs(self._file(ctx, api, i, repo), i))
+                elif resource == "file" and operation == "download":
+                    results.append(self._download_file(ctx, api, i, repo))
+                elif resource == "file" and operation == "createOrUpdate":
+                    results.append(out(self._put_file(ctx, api, i, repo), i))
+                elif resource == "release" and operation == "downloadAsset":
+                    results.append(self._download_asset(ctx, api, i, repo))
+                elif resource == "release" and operation == "uploadAsset":
+                    results.append(out(self._upload_asset(ctx, api, i, repo), i))
                 else:
                     raise NodeOperationError(f"Unsupported operation {resource}.{operation}", item_index=i)
         return results
@@ -340,6 +422,112 @@ class GitHub(RepositoryPicker, Node):
             body = {**body, "content": base64.b64encode(raw.content).decode("ascii"), "encoding": "base64"}
         return [decode_file(body or {})]
 
+    # ------------------------------------------------------------ binary data
+
+    @staticmethod
+    def _output_name(ctx, i: int) -> str:
+        return text_param(ctx, "outputBinaryName", i) or "data"
+
+    def _download_file(self, ctx, api: Api, i: int, repo: str) -> dict[str, Any]:
+        """The raw bytes of a file (any size up to 100 MB) as binary data; the JSON is the file's path, size and sha."""
+        path = text_param(ctx, "filePath", i, required=True, label="File Path").strip("/")
+        reference = str(collection(ctx, "fileOptions", i).get("reference") or "").strip()
+        url = f"{repo}/contents/{quote(path)}"
+        params = {"ref": reference} if reference else None
+        meta = api.get(url, params=params)
+        if isinstance(meta, list):
+            raise NodeOperationError(f"'{path}' is a directory; Download needs a file path", item_index=i)
+        meta = meta if isinstance(meta, dict) else {}
+        if meta.get("type") != "file":
+            raise NodeOperationError(f"'{path}' is a {meta.get('type') or 'non-file'}, not a file", item_index=i)
+        if meta.get("encoding") == "base64" and isinstance(meta.get("content"), str):
+            try:
+                content = base64.b64decode(meta["content"])
+            except (binascii.Error, ValueError):
+                raise NodeOperationError(f"GitHub sent undecodable content for '{path}'", item_index=i) from None
+        else:  # over 1 MB the contents API leaves the content out: fetch the raw bytes
+            content = download(api, url, i, headers={"Accept": "application/vnd.github.raw+json"}).content
+        name = str(meta.get("name") or path.rsplit("/", 1)[-1])
+        info = {"path": path, "name": name, "size": len(content), "sha": meta.get("sha"), **({"ref": reference} if reference else {})}
+        return binary_out(ctx, info, i, self._output_name(ctx, i), content, name)
+
+    def _put_file(self, ctx, api: Api, i: int, repo: str) -> dict[str, Any]:
+        """Create the file, or update it when it exists (its blob sha is looked up first), with the bytes of the item's binary file."""
+        path = text_param(ctx, "filePath", i, required=True, label="File Path").strip("/")
+        content, _ref, _name = binary_input(ctx, "binaryPropertyName", i)
+        branch = str(collection(ctx, "fileOptions", i).get("reference") or "").strip()
+        url = f"{repo}/contents/{quote(path)}"
+        existing = api.request("GET", url, params={"ref": branch} if branch else None, expect=(404,))
+        sha = existing.json.get("sha") if existing.status < 400 and isinstance(existing.json, dict) and existing.json.get("type") == "file" else None
+        message = text_param(ctx, "commitMessage", i) or f"{'Update' if sha else 'Create'} {path}"
+        body: dict[str, Any] = {"message": message, "content": base64.b64encode(content).decode("ascii")}
+        if sha:
+            body["sha"] = sha
+        if branch:
+            body["branch"] = branch
+        result = api.call("PUT", url, json=body, timeout=120)
+        count_written(ctx, "github", "update" if sha else "create")
+        return {**(result or {}), "updated": bool(sha)}
+
+    def _release(self, api: Api, repo: str, ref: str, i: int) -> dict[str, Any]:
+        ref = (ref or "latest").strip()
+        if ref == "latest":
+            path = f"{repo}/releases/latest"
+        elif ref.isdigit():
+            path = f"{repo}/releases/{ref}"
+        else:
+            path = f"{repo}/releases/tags/{quote(ref, safe='')}"
+        release = api.get(path)
+        if not isinstance(release, dict):
+            raise NodeOperationError(f"Release '{ref}' not found", item_index=i)
+        return release
+
+    def _download_asset(self, ctx, api: Api, i: int, repo: str) -> dict[str, Any]:
+        """A release asset as binary data: by numeric id, or by file name within the release."""
+        asset_ref = text_param(ctx, "assetRef", i, required=True, label="Asset")
+        if asset_ref.isdigit():
+            asset_id = asset_ref
+        else:
+            release = self._release(api, repo, text_param(ctx, "releaseRef", i), i)
+            match = next((a for a in release.get("assets") or [] if isinstance(a, dict) and a.get("name") == asset_ref), None)
+            if not match:
+                raise NodeOperationError(f"Release '{release.get('tag_name')}' has no asset named '{asset_ref}'", item_index=i)
+            asset_id = str(match["id"])
+        url = f"{repo}/releases/assets/{asset_id}"
+        meta = api.get(url) or {}
+        resp = download(api, url, i, headers={"Accept": "application/octet-stream"})
+        name = str(meta.get("name") or f"asset-{asset_id}")
+        info = {"id": meta.get("id") or int(asset_id), "name": name, "size": len(resp.content), "contentType": meta.get("content_type")}
+        return binary_out(ctx, info, i, self._output_name(ctx, i), resp.content, name, meta.get("content_type") or resp.headers.get("Content-Type"))
+
+    def _upload_asset(self, ctx, api: Api, i: int, repo: str) -> dict[str, Any]:
+        """Upload the item's binary file as an asset of a release (the release's own ``upload_url`` is used, so Enterprise works)."""
+        content, ref, file_name = binary_input(ctx, "binaryPropertyName", i)
+        options = collection(ctx, "assetOptions", i)
+        name = str(options.get("name") or "").strip() or file_name
+        release = self._release(api, repo, text_param(ctx, "releaseRef", i), i)
+        upload_url = str(release.get("upload_url") or "").split("{")[0]
+        if not upload_url:
+            raise NodeOperationError("The release has no upload URL", item_index=i)
+        params = {"name": name, **({"label": options["label"]} if options.get("label") else {})}
+        asset = api.call("POST", upload_url, params=params, data=content, headers={"Content-Type": content_type_of(ref, name)}, timeout=120)
+        count_written(ctx, "github", "upload")
+        return asset or {}
+
+    def _archive(self, ctx, api: Api, i: int, repo: str) -> dict[str, Any]:
+        """The repository's zip or tar archive at a reference, as binary data (GitHub redirects to a download URL)."""
+        kind = str(ctx.get_node_parameter("archiveFormat", i) or "zipball")
+        if kind not in ("zipball", "tarball"):
+            raise NodeOperationError(f"Unknown archive format {kind!r}", item_index=i)
+        reference = text_param(ctx, "archiveRef", i)
+        resp = download(api, f"{repo}/{kind}/{quote(reference, safe='/')}".rstrip("/"), i)
+        suffix = "zip" if kind == "zipball" else "tar.gz"
+        disposition = resp.headers.get("Content-Disposition", "")
+        match = re.search(r'filename="?([^";]+)"?', disposition)
+        name = match.group(1) if match else f"{repo.rsplit('/', 1)[-1]}-{reference or 'default'}.{suffix}".replace("/", "-")
+        info = {"name": name, "size": len(resp.content), **({"ref": reference} if reference else {})}
+        return binary_out(ctx, info, i, self._output_name(ctx, i), resp.content, name, "application/zip" if kind == "zipball" else "application/gzip")
+
 
 # ----------------------------------------------------------------- trigger
 
@@ -365,10 +553,11 @@ class GitHubTrigger(RepositoryPicker, Node):
         "documentationUrl": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
         "inputs": [],
         "outputs": [{"type": "main"}],
-        "credentials": [{"name": "githubApi", "required": True}],
+        "credentials": github_requirements(),
         "keywords": ["github", "issues", "pull request", "release", "poll"],
         "properties": [
             poll_interval_property(60),
+            authentication_property("Access Token", APP_AUTHENTICATION),
             *REPO_PROPERTIES,
             {
                 "name": "event", "displayName": "Event", "type": "options", "default": "newIssue", "noDataExpression": True,
@@ -386,7 +575,7 @@ class GitHubTrigger(RepositoryPicker, Node):
     }
 
     def execute(self, ctx):
-        api = github_api(ctx, ctx.get_credentials("githubApi"))
+        api = github_api(ctx, github_credentials(ctx, ctx.get_node_parameter("authentication")))
         event = ctx.get_node_parameter("event") or "newIssue"
         if event not in EVENTS:
             raise NodeOperationError(f"Unknown event {event!r}")
@@ -463,7 +652,8 @@ WEBHOOK_EVENTS = [
 #: Delivery headers copied into each item (the signature is checked, not passed on).
 DELIVERY_HEADERS = ("x-github-event", "x-github-delivery", "x-github-hook-id", "x-github-hook-installation-target-id",
                     "x-github-hook-installation-target-type", "user-agent", "content-type")
-HOOK_PERMISSION_HINT = "The token needs admin:repo_hook (classic) or Webhooks read and write (fine-grained), and admin access to the repository."
+HOOK_PERMISSION_HINT = ("The token needs admin:repo_hook (classic) or Webhooks read and write (fine-grained), and admin access to the repository. "
+                        "A GitHub App needs the Repository webhooks (read and write) permission and to be installed on the repository.")
 
 
 class GitHubWebhookTrigger(RepositoryPicker, Node):
@@ -484,9 +674,10 @@ class GitHubWebhookTrigger(RepositoryPicker, Node):
         "documentationUrl": "https://docs.github.com/en/webhooks/webhook-events-and-payloads",
         "inputs": [],
         "outputs": [{"type": "main"}],
-        "credentials": [{"name": "githubApi", "required": True}],
+        "credentials": github_requirements(),
         "keywords": ["github", "webhook", "push", "pull request", "issues", "release", "event"],
         "properties": [
+            authentication_property("Access Token", APP_AUTHENTICATION),
             {
                 "name": "webhookNotice", "type": "notice", "default": "",
                 "displayName": "Landflow creates the repository webhook when you publish the workflow and deletes it when you unpublish. "
@@ -526,7 +717,7 @@ class GitHubWebhookTrigger(RepositoryPicker, Node):
         hook_id = ctx.get_static_data().get("webhookId")
         if not hook_id:
             return False
-        api = github_api(ctx, ctx.get_credentials("githubApi"))
+        api = github_api(ctx, github_credentials(ctx, ctx.get_node_parameter("authentication")))
         resp = api.request("GET", f"{self.repo_path(ctx, 0)}/hooks/{hook_id}", expect=(404,))
         if resp.status == 404:
             return False
@@ -534,7 +725,7 @@ class GitHubWebhookTrigger(RepositoryPicker, Node):
         return (hook.get("config") or {}).get("url") == ctx.get_webhook_url() and bool(hook.get("active", True))
 
     def webhook_create(self, ctx):
-        api = github_api(ctx, ctx.get_credentials("githubApi"))
+        api = github_api(ctx, github_credentials(ctx, ctx.get_node_parameter("authentication")))
         repo = self.repo_path(ctx, 0)
         secret = secrets.token_hex(32)
         events = self._events(ctx)
@@ -573,7 +764,7 @@ class GitHubWebhookTrigger(RepositoryPicker, Node):
     def webhook_delete(self, ctx):
         hook_id = ctx.get_static_data().get("webhookId")
         if hook_id:
-            api = github_api(ctx, ctx.get_credentials("githubApi"))
+            api = github_api(ctx, github_credentials(ctx, ctx.get_node_parameter("authentication")))
             resp = api.request("DELETE", f"{self.repo_path(ctx, 0)}/hooks/{hook_id}", expect=(404,))
             if resp.status != 404:
                 count_written(ctx, "github", "webhook.delete")

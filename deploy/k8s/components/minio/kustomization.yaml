@@ -1,0 +1,14 @@
+# Optional: MinIO in the namespace as the S3 binary store for queue mode (components/queue-mode points the mains and workers at it:
+# Service `minio:9000`, bucket `landflow`). The image and start script are the infra stack's (deploy/compose.infra.yml,
+# deploy/infra/minio/start.sh); data is an emptyDir, so a restart loses the files. Development credentials in the generated
+# Secret `landflow-minio`: replace it (or use a real S3 and set the LANDFLOW_S3_* variables yourself) for anything real.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - minio.yaml
+secretGenerator:
+  - name: landflow-minio
+    options: { disableNameSuffixHash: true }
+    literals:
+      - access-key-id=landflow
+      - secret-access-key=landflow-dev-only

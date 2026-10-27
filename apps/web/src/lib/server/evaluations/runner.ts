@@ -1,5 +1,5 @@
 /**
- * Offline evaluation runs: read the Evaluation Trigger's Data Table, start one execution per row (one after
+ * Offline evaluation runs: read the Evaluation Trigger's Data Table (or the uploaded file), start one execution per row (one after
  * the other, mode `manual`, marked with the case so the Evaluation node records into it and Insights leave it
  * out), then sum up the per-case metrics into the run's averages. Runs go on in the background; the API polls.
  */
@@ -9,6 +9,7 @@ import type {
   CaseComparison,
   EvaluationCase,
   EvaluationComparison,
+  EvaluationFile,
   EvaluationRunDetail,
   EvaluationRunSummary,
   EvaluationsOverview,
@@ -17,10 +18,12 @@ import type {
 } from '../../shared/evaluations';
 import type { ExecutionRecord } from '../../shared/types';
 import { dataTables } from '../datatables';
+import { workflowProject } from '../datatables/projects';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { logger } from '../telemetry';
-import { EVALUATION_NODE, evaluationTriggerOf, loadDataset, rowItem, splitRow } from './dataset';
+import { datasetSourceOf, EVALUATION_NODE, expectedColumnIn, evaluationTriggerOf, loadDataset, loadFileDataset, rowItem, splitRow, type Dataset, type DatasetRow } from './dataset';
+import { alertOnEvaluation } from './alerts';
 import * as db from './store';
 
 /** Rows one run may evaluate. */
@@ -49,6 +52,29 @@ export interface StartOptions {
   workflow?: Workflow;
   /** Evaluate at most this many rows (overrides the trigger's limit). */
   maxRows?: number;
+  /** The cases, already read (a file dataset is read asynchronously: `startEvaluationRun`). */
+  dataset?: Dataset;
+  /** What starts it; default a person. */
+  trigger?: 'manual' | 'schedule';
+}
+
+/**
+ * Start an evaluation run of a workflow, reading the file dataset first when the trigger's source is File. The routes and the
+ * schedule use this; `startEvaluation` is the same for Data Tables, synchronously.
+ */
+export async function startEvaluationRun(workflowId: string, options: StartOptions = {}): Promise<EvaluationRunSummary> {
+  const workflow = options.workflow ?? store.getWorkflow(workflowId);
+  const trigger = workflow && evaluationTriggerOf(workflow);
+  if (workflow && trigger && !options.dataset && datasetSourceOf(trigger.parameters) === 'file') {
+    let dataset: Dataset;
+    try {
+      dataset = await loadFileDataset(workflowId, trigger.parameters, { ...(options.maxRows && { maxRows: options.maxRows }) });
+    } catch (error) {
+      throw new EvaluationError((error as Error).message);
+    }
+    return startEvaluation(workflowId, { ...options, workflow, dataset });
+  }
+  return startEvaluation(workflowId, options);
 }
 
 /** Start an evaluation run of a workflow; it goes on in the background. Throws EvaluationError when it can't start. */
@@ -59,13 +85,13 @@ export function startEvaluation(workflowId: string, options: StartOptions = {}):
   if (!trigger) throw new EvaluationError('Add an Evaluation Trigger to the workflow first: it names the Data Table with the test cases.');
   if (runningRun(workflowId)) throw new EvaluationError('An evaluation of this workflow is already running', 409);
 
-  let dataset: ReturnType<typeof loadDataset>;
+  let dataset: Dataset;
   try {
-    dataset = loadDataset(trigger.parameters, { ...(options.maxRows && { maxRows: options.maxRows }) });
+    dataset = options.dataset ?? loadDataset(trigger.parameters, { workflowId, ...(options.maxRows && { maxRows: options.maxRows }) });
   } catch (error) {
     throw new EvaluationError((error as Error).message);
   }
-  if (!dataset.rows.length) throw new EvaluationError(`Data table “${dataset.table.name}” has no rows: add one row per test case.`);
+  if (!dataset.rows.length) throw new EvaluationError(dataset.source === 'file' ? `The file “${dataset.name}” has no rows: add one row per test case.` : `Data table “${dataset.name}” has no rows: add one row per test case.`);
   const rows = dataset.rows.slice(0, MAX_CASES);
 
   const run: EvaluationRunSummary = {
@@ -75,8 +101,10 @@ export function startEvaluation(workflowId: string, options: StartOptions = {}):
     number: db.nextRunNumber(workflowId),
     status: 'running',
     startedAt: new Date().toISOString(),
-    dataTableId: dataset.table.id,
-    dataTableName: dataset.table.name,
+    ...(dataset.source === 'file' && { source: 'file' as const }),
+    dataTableId: dataset.id,
+    dataTableName: dataset.name,
+    ...(options.trigger === 'schedule' && { trigger: 'schedule' as const }),
     total: rows.length,
     completed: 0,
     failed: 0,
@@ -86,17 +114,22 @@ export function startEvaluation(workflowId: string, options: StartOptions = {}):
   rows.forEach((row, index) => db.saveCase({ runId: run.id, index, rowId: row.id, status: 'pending', ...splitRow(row, dataset.expectedColumn), outputs: {}, metrics: {} }));
 
   const controller = new AbortController();
+  const beat = setInterval(() => db.touchRun(run.id), HEARTBEAT_MS);
+  beat.unref?.();
   const done = runCases(run, workflow, trigger.id, rows, controller.signal)
     .catch((error: Error) => {
       logger.error('evaluation run failed', { 'landflow.workflow.id': workflowId, 'landflow.evaluation.run_id': run.id, error: error.message });
       return finish(run.id, 'error', error.message);
     })
-    .finally(() => active.delete(run.id));
+    .finally(() => {
+      clearInterval(beat);
+      active.delete(run.id);
+    });
   active.set(run.id, { controller, done });
   return run;
 }
 
-async function runCases(run: EvaluationRunSummary, workflow: Workflow, triggerId: string, rows: ReturnType<typeof loadDataset>['rows'], signal: AbortSignal) {
+async function runCases(run: EvaluationRunSummary, workflow: Workflow, triggerId: string, rows: DatasetRow[], signal: AbortSignal) {
   const { runWorkflow } = await import('../runner');
   for (const [index, row] of rows.entries()) {
     if (signal.aborted) break;
@@ -175,6 +208,8 @@ function finish(runId: string, status: EvaluationRunSummary['status'], error?: s
     ...(error && { error }),
   });
   if (run) db.pruneRuns(run.workflowId);
+  // Alerts on a falling score (rules of kind "evaluation"); never fails the run.
+  if (next && status === 'success') void alertOnEvaluation(next).catch((error: Error) => logger.warn('evaluation alerts skipped', { 'landflow.evaluation.run_id': runId, error: error.message }));
   return next ?? ({ ...run, status } as EvaluationRunSummary);
 }
 
@@ -183,10 +218,17 @@ function runningRun(workflowId: string): EvaluationRunSummary | undefined {
   return db.listRuns(workflowId, 20).find((run) => run.status === 'running' && active.has(run.id));
 }
 
-/** Runs left `running` by a restart can't go on: they end as errors. */
-export function settleInterrupted(): number {
+/** A running evaluation saves a heartbeat this often; one silent for three times as long belongs to a process that stopped. */
+export const HEARTBEAT_MS = 10_000;
+export const STALE_MS = HEARTBEAT_MS * 3;
+
+/**
+ * Runs left `running` by a restart can't go on: they end as errors. `active` only knows this process's runs, and with several
+ * mains the others' runs are `running` too, so only a run whose heartbeat stopped counts (a restart is noticed after STALE_MS).
+ */
+export function settleInterrupted(now = Date.now()): number {
   let settled = 0;
-  for (const run of db.runsWithStatus('running')) {
+  for (const run of db.staleRunning(STALE_MS, now)) {
     if (active.has(run.id)) continue;
     finish(run.id, 'error', 'The host restarted during the run');
     settled++;
@@ -223,27 +265,33 @@ export function evaluationsOverview(workflow: Workflow): EvaluationsOverview {
   const node = evaluationTriggerOf(workflow);
   let trigger: EvaluationsOverview['trigger'];
   if (node) {
+    const source = datasetSourceOf(node.parameters);
     const ref = String(node.parameters.dataTableId ?? '').trim();
-    const table = ref ? dataTables().findTable(ref) : undefined;
+    const table = source === 'dataTable' && ref ? dataTables().findTable(ref, workflowProject(workflow.id)) : undefined;
     const maxRows = node.parameters.limitRows ? Number(node.parameters.maxRows) || undefined : undefined;
-    let dataset: ReturnType<typeof loadDataset> | undefined;
+    let dataset: Dataset | undefined;
     try {
-      dataset = table ? loadDataset(node.parameters, { maxRows: 1 }) : undefined;
+      dataset = table ? loadDataset(node.parameters, { maxRows: 1, workflowId: workflow.id }) : undefined;
     } catch {
       dataset = undefined;
     }
+    const uploaded = db.getSettings(workflow.id).file;
     trigger = {
       nodeId: node.id,
       nodeName: node.name,
-      ...(ref && { dataTableId: table?.id ?? ref }),
+      source,
+      ...(source === 'dataTable' && ref && { dataTableId: table?.id ?? ref }),
       ...(table && { dataTableName: table.name }),
       ...(dataset && { rows: dataset.total }),
       ...(dataset?.expectedColumn && { expectedColumn: dataset.expectedColumn }),
+      ...(source === 'file' && uploaded && { rows: uploaded.rows, dataTableName: uploaded.fileName, expectedColumn: expectedColumnIn(uploaded.columns, node.parameters.fileExpectedColumn) }),
       ...(maxRows && { maxRows }),
     };
   }
   const hasMetrics = workflow.nodes.some((n) => n.type === EVALUATION_NODE && !n.disabled && n.parameters.operation === 'setMetrics');
-  return { runs: db.listRuns(workflow.id), ...(trigger && { trigger }), hasMetrics };
+  const { binaryId: _binaryId, ...file } = db.getSettings(workflow.id).file ?? ({} as { binaryId?: string });
+  const schedule = db.getSettings(workflow.id).schedule;
+  return { runs: db.listRuns(workflow.id), ...(trigger && { trigger }), ...(Object.keys(file).length && { file: file as EvaluationFile }), ...(schedule && { schedule }), hasMetrics };
 }
 
 // ---------------------------------------------------------------------------

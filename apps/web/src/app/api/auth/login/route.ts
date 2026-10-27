@@ -21,7 +21,7 @@ export const POST = handler(async (request: Request) => {
   const email = normalizeEmail(body.data.email);
   const ip = clientIp(request);
   const limits = loginLimits();
-  const blocked = [limits.email.check(email), limits.ip.check(ip)].find((result) => !result.ok);
+  const blocked = (await Promise.all([limits.email.check(email), limits.ip.check(ip)])).find((result) => !result.ok);
   if (blocked) {
     recordAudit({ action: 'auth.sign_in_failed', outcome: 'denied', actor: 'anonymous', target: { type: 'user', name: email }, summary: `Sign-in for ${email} refused: too many failed attempts`, details: { email, reason: 'rate-limited' } });
     return error('Too many failed sign-ins. Try again later.', 429, { retryAfter: blocked.retryAfter });
@@ -29,14 +29,13 @@ export const POST = handler(async (request: Request) => {
   const user = findUserByEmail(email);
   const ok = await verifyPassword(body.data.password, user?.passwordHash ?? (await dummyHash()));
   if (!user || !user.passwordHash || !ok) {
-    limits.email.hit(email);
-    limits.ip.hit(ip);
+    await Promise.all([limits.email.hit(email), limits.ip.hit(ip)]);
     const reason = user ? (user.passwordHash ? 'password' : 'no-password') : 'unknown-email';
     logger.info('sign-in failed', { 'landflow.auth.reason': reason });
     recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', actor: 'anonymous', target: { type: 'user', ...(user && { id: user.id }), name: email }, summary: `Failed sign-in for ${email}`, details: { email, reason, method: 'password' } });
     return error('Wrong email or password', 401);
   }
-  limits.email.reset(email);
+  await limits.email.reset(email);
   // Deactivated (SCIM): the right password still doesn't sign them in.
   if (user.disabledAt) {
     recordAudit({ action: 'auth.sign_in_failed', outcome: 'denied', actor: 'anonymous', target: { type: 'user', id: user.id, name: email }, summary: `Sign-in for ${email} refused: deactivated`, details: { email, reason: 'deactivated', method: 'password' } });

@@ -172,7 +172,7 @@ function useLiveOptions(nodeType: string, property: PropertyDescriptor, paramete
     load();
     return () => pending.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [method, deps, nodeType, credentialKey, paramScope?.workflowId, paramScope?.projectId]);
+  }, [method, deps, nodeType, credentialKey, paramScope?.workflowId, paramScope?.projectId, paramScope?.agentId]);
   return { method, options, state, error, load };
 }
 

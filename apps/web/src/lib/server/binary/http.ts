@@ -5,7 +5,7 @@
 import { basename } from 'node:path';
 import { baseMimeType, DEFAULT_MIME_TYPE, mimeTypeFromFileName, type BinaryRef, type JsonObject, type JsonValue } from '@landflow/protocol';
 import { binaryLimits, storeBinary } from './access';
-import { BinaryTooLargeError, type StoredBinaryMeta } from './store';
+import { BinaryTooLargeError, type ByteRange, type StoredBinaryMeta } from './store';
 
 /** The token of `Authorization: Bearer …`; undefined without one. */
 export function bearerToken(request: Request): string | undefined {
@@ -60,11 +60,44 @@ export function fileResponseHeaders(meta: Pick<StoredBinaryMeta, 'mimeType' | 'f
   const headers = new Headers({
     'content-type': meta.mimeType || DEFAULT_MIME_TYPE,
     'content-length': String(meta.fileSize),
+    'accept-ranges': 'bytes',
     'content-disposition': contentDisposition(download && !['0', 'false'].includes(download) ? 'attachment' : 'inline', meta.fileName),
     'x-content-type-options': 'nosniff',
     'cache-control': 'private, max-age=3600',
   });
   if (!SAFE_INLINE.test(baseMimeType(meta.mimeType))) headers.set('content-security-policy', "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'");
+  return headers;
+}
+
+/**
+ * The byte range a `Range` header asks of a file of `size` bytes: `bytes=a-b`, `a-` and `-n` (one range only).
+ * `undefined` means serve the whole file (no header, several ranges, a malformed or foreign-unit header, or an
+ * `If-Range` we can't validate: files have no ETag or date); `'unsatisfiable'` means 416.
+ */
+export function parseRange(request: Request, size: number): ByteRange | 'unsatisfiable' | undefined {
+  const header = request.headers.get('range');
+  if (!header || request.headers.has('if-range')) return undefined;
+  const match = /^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$/i.exec(header);
+  if (!match || (!match[1] && !match[2])) return undefined;
+  if (match[1]) {
+    const start = Number(match[1]);
+    const end = match[2] ? Number(match[2]) : Number.POSITIVE_INFINITY;
+    if (end < start) return undefined;
+    return start >= size ? 'unsatisfiable' : { start, end: Math.min(end, size - 1) };
+  }
+  const suffix = Number(match[2]);
+  return suffix === 0 || size === 0 ? 'unsatisfiable' : { start: Math.max(size - suffix, 0), end: size - 1 };
+}
+
+/** Headers of a 206 for `range`, or of the 416 (`range` undefined) of a file of `size` bytes. */
+export function rangeHeaders(headers: Headers, size: number, range?: ByteRange): Headers {
+  if (range) {
+    headers.set('content-range', `bytes ${range.start}-${range.end}/${size}`);
+    headers.set('content-length', String(range.end - range.start + 1));
+  } else {
+    headers.set('content-range', `bytes */${size}`);
+    headers.set('content-length', '0');
+  }
   return headers;
 }
 

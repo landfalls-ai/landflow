@@ -138,9 +138,9 @@ async function messageModel(ctx: IExecuteContext, connection: OpenAiConnection):
     // OpenAI's JSON mode refuses prompts that never mention JSON.
     if (jsonOutput && !messages.some((message) => /json/i.test(String(message.content))))
       messages.unshift({ role: 'system', content: 'Respond with a JSON object.' });
-    const options = ctx.getNodeParameter<{ temperature?: number; maxTokens?: number; passthroughBinaryImages?: boolean; binaryPropertyNames?: string }>('options', i) ?? {};
+    const options = ctx.getNodeParameter<{ temperature?: number; maxTokens?: number; passthroughBinaryImages?: boolean; binaryPropertyNames?: string; audioHandling?: string; transcriptionUrl?: string; transcriptionModel?: string; videoHandling?: string }>('options', i) ?? {};
     // "Include Binary as Input": the item's images and PDFs join the last user message.
-    const attachments = await optionalAttachments(ctx, i, options);
+    const attachments = await optionalAttachments(ctx, i, { ...options, transcriptionUrl: options.transcriptionUrl || connection.base }, { provider: 'openai', model });
     if (attachments) {
       const last = messages.map((m) => m.role).lastIndexOf('user');
       const message = messages[last] as { role: 'user'; content: string };

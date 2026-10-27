@@ -34,10 +34,12 @@ import { mcpDb } from './db';
 import { mcpExposure } from './exposure';
 import { AgentgatewayAdapter, FileGatewayAdapter, type GatewayHealth, type GatewayRoute, type GatewayRouteValue, type GatewayTarget, type GatewayTargetValue, type McpGatewayAdapter } from './gateway-adapters';
 import { pluginTools } from './grants';
-import { CALLER_ISSUER_HEADER, CALLER_SUBJECT_HEADER, CALLER_TOKEN_ID_HEADER, GATEWAY_SECRET_HEADER, gatewayMode, gatewaySecret } from './identity';
+import { getProject } from '../projects/store';
+import { gatewayProjectIds, projectServerPath } from './project-servers';
+import { CALLER_ISSUER_HEADER, CALLER_SUBJECT_HEADER, CALLER_TOKEN_ID_HEADER, GATEWAY_SECRET_HEADER, gatewayMode, gatewaySecret, identityProviderIssuer, identityProviderJwks } from './identity';
 import { CORE_PLUGIN_ID, notifyPluginToolsChanged, PLUGIN_MCP_PATH } from './plugin-servers';
 import { onPublicationChangedAnywhere } from '../publications';
-import { gatewayPublicUrl, mcpJwks, purgeMcpTokens } from './tokens';
+import { gatewayPublicUrl, instanceUrl, mcpJwks, purgeMcpTokens } from './tokens';
 
 export type { GatewayRoute, GatewayTarget, GatewayTargetValue, McpGatewayAdapter } from './gateway-adapters';
 
@@ -137,33 +139,99 @@ export function routePoliciesFor(policies: Record<string, unknown> | undefined, 
 /** The path of a Landflow host's JWKS (app/api/mcp/jwks), after any base path. */
 const HOST_JWKS_PATH = '/api/mcp/jwks';
 
+/** A `jwks: { url }` at a Landflow host's `/api/mcp/jwks`: the key set as JSON text; anything else unchanged. */
+async function inlineJwks<T extends { jwks?: unknown }>(entry: T, jwks: () => Promise<{ keys: unknown[] }>): Promise<T> {
+  const url = (entry.jwks as { url?: unknown } | undefined)?.url;
+  if (typeof url !== 'string') return entry;
+  try {
+    if (!new URL(url).pathname.replace(/\/+$/, '').endsWith(HOST_JWKS_PATH)) return entry;
+  } catch {
+    return entry;
+  }
+  return { ...entry, jwks: JSON.stringify(await jwks()) };
+}
+
 /**
  * Route policies with the host's own keys inline: an `mcpAuthentication.jwks` of `{ url }` at a Landflow `/api/mcp/jwks`
- * becomes the key set as a JSON string, which agentgateway also takes. agentgateway fetches a remote JWKS whenever it loads
- * its config, the routes stored in its database included, and an unreachable one keeps it from starting: with the URL, a
- * gateway restarted while the host is down crash-loops even on a config without sign-in. A rotated key changes the
- * rendered route, which the sync sees as drift and rewrites. Other policies (an identity provider's JWKS) are left as they are.
+ * becomes the key set as a JSON string, which agentgateway also takes (so does each provider of a `jwtAuth`). agentgateway
+ * fetches a remote JWKS whenever it loads its config, the routes stored in its database included, and an unreachable one
+ * keeps it from starting: with the URL, a gateway restarted while the host is down crash-loops even on a config without
+ * sign-in. A rotated key changes the rendered route, which the sync sees as drift and rewrites. Other policies (an identity
+ * provider's JWKS) are left as they are.
  */
 export async function inlineHostJwks(policies: Record<string, unknown> | undefined, jwks: () => Promise<{ keys: unknown[] }>): Promise<Record<string, unknown> | undefined> {
-  const auth = policies?.mcpAuthentication as Record<string, unknown> | undefined;
-  const url = (auth?.jwks as { url?: unknown } | undefined)?.url;
-  if (!policies || !auth || typeof url !== 'string') return policies;
-  let path: string;
-  try {
-    path = new URL(url).pathname.replace(/\/+$/, '');
-  } catch {
-    return policies;
+  if (!policies) return policies;
+  const out = { ...policies };
+  const auth = policies.mcpAuthentication as Record<string, unknown> | undefined;
+  if (auth && typeof auth === 'object') out.mcpAuthentication = await inlineJwks(auth, jwks);
+  const jwt = policies.jwtAuth as { providers?: unknown } | undefined;
+  if (jwt && typeof jwt === 'object' && Array.isArray(jwt.providers)) {
+    out.jwtAuth = { ...jwt, providers: await Promise.all(jwt.providers.map((p) => (p && typeof p === 'object' ? inlineJwks(p as { jwks?: unknown }, jwks) : p))) };
   }
-  if (!path.endsWith(HOST_JWKS_PATH)) return policies;
-  return { ...policies, mcpAuthentication: { ...auth, jwks: JSON.stringify(await jwks()) } };
+  // Nothing to inline: the policies as they came.
+  return out.mcpAuthentication === policies.mcpAuthentication && (out.jwtAuth as { providers?: unknown[] } | undefined)?.providers?.every((p, i) => p === (jwt?.providers as unknown[])[i]) !== false ? policies : out;
+}
+
+/**
+ * LANDFLOW_MCP_GATEWAY_ACCEPT_IDP: `auto` (the default) lets the per-plugin routes take the identity provider's tokens as
+ * well as Landflow's when both are configured, `off` keeps them to the one issuer the route policies name.
+ */
+export function gatewayAcceptsIdentityProvider(): boolean {
+  return process.env.LANDFLOW_MCP_GATEWAY_ACCEPT_IDP?.trim().toLowerCase() !== 'off';
+}
+
+const sameIssuer = (a: unknown, b: unknown) => String(a ?? '').replace(/\/+$/, '') === String(b ?? '').replace(/\/+$/, '');
+
+export interface IdentityProviderOptions {
+  /** The instance URL: the issuer of Landflow's own tokens. */
+  instance: string;
+  /** LANDFLOW_OIDC_ISSUER, when there is one. */
+  idp?: string;
+  /** The provider's current key set as JSON text (undefined: unreachable and never fetched). */
+  idpJwks: () => Promise<string | undefined>;
+  /** Further audiences the provider's tokens may carry (LANDFLOW_MCP_IDP_AUDIENCE). */
+  extraAudiences?: string[];
+}
+
+/**
+ * One route, two issuers (docs/mcp-gateway.md "Two issuers on one route"): agentgateway's `mcpAuthentication` names a
+ * single issuer, but its `jwtAuth` takes a list of providers, each with its own issuer, audiences and keys. When the route
+ * policies check Landflow's tokens (`mcpAuthentication.issuer` = the instance URL) and an identity provider is configured,
+ * the route gets a `jwtAuth` with both providers (Landflow's keys as the policy has them, the provider's inline, so a
+ * gateway restarted while it is down still starts) in place of the `mcpAuthentication`: a token from either issuer signs
+ * in, anything else is 401, and the gateway forwards the validated `iss` and `sub` as before. What it gives up is the
+ * `mcpAuthentication` challenge: a 401 carries no `WWW-Authenticate: Bearer resource_metadata=…`. Policies that already have
+ * a `jwtAuth`, or name another issuer, are left alone, as when the provider's keys can't be fetched.
+ */
+export async function acceptIdentityProvider(policies: Record<string, unknown> | undefined, options: IdentityProviderOptions): Promise<Record<string, unknown> | undefined> {
+  const auth = policies?.mcpAuthentication as Record<string, unknown> | undefined;
+  if (!policies || !auth || typeof auth !== 'object' || policies.jwtAuth || !options.idp || sameIssuer(options.idp, options.instance)) return policies;
+  if (!sameIssuer(auth.issuer, options.instance)) return policies;
+  const jwks = await options.idpJwks();
+  if (!jwks) return policies;
+  const audiences = Array.isArray(auth.audiences) ? (auth.audiences as unknown[]).map(String) : [];
+  const { mcpAuthentication: _single, ...rest } = policies;
+  return {
+    ...rest,
+    jwtAuth: {
+      mode: typeof auth.mode === 'string' ? auth.mode : 'strict',
+      providers: [
+        { issuer: auth.issuer, ...(audiences.length && { audiences }), ...(auth.jwks !== undefined && { jwks: auth.jwks }) },
+        { issuer: options.idp, ...(audiences.length && { audiences: [...new Set([...audiences, ...(options.extraAudiences ?? [])])] }), jwks },
+      ],
+    },
+  };
 }
 
 /** Which kind of MCP server a gateway target stands for. */
-export type ServerKind = 'plugin' | 'instance' | 'workflow';
+export type ServerKind = 'plugin' | 'instance' | 'workflow' | 'project';
 
 /** The owner key (`mcp_gateway_resources.plugin_id`) of the instance server's target, and the prefix of a workflow's (`@workflow:<path>`). */
 export const INSTANCE_KEY = '@instance';
 export const WORKFLOW_KEY_PREFIX = '@workflow:';
+/** The prefix of a project server's owner key (`@project:<projectId>`) and of its path on the gateway. */
+export const PROJECT_KEY_PREFIX = '@project:';
+export const GATEWAY_PROJECT_PATH = '/mcp/projects';
 /** Where the instance server is served on the gateway, and the prefix of a workflow's path there. */
 export const GATEWAY_INSTANCE_PATH = '/mcp/landflow';
 export const GATEWAY_WORKFLOW_PATH = '/mcp/workflows';
@@ -186,14 +254,17 @@ export interface SyncEntry {
 
 /** An MCP server of the host that is not a plugin: the instance server (when it is on), or a workflow's MCP Server Trigger. */
 export interface SyncServer {
-  kind: 'instance' | 'workflow';
+  kind: 'instance' | 'workflow' | 'project';
   /** The trigger's path (`/mcp/<path>`) for a workflow. */
   path?: string;
+  /** The project a `project` server (the instance server scoped to it) is for. */
+  projectId?: string;
   label: string;
 }
 
 /** The name an instance or workflow target has: the same rules as a plugin's ({@link gatewayTargetName}), `wf-` before a trigger path. */
-export const gatewayServerName = (server: SyncServer) => (server.kind === 'instance' ? gatewayTargetName('landflow-mcp') : gatewayTargetName(`wf-${server.path}`));
+export const gatewayServerName = (server: SyncServer) =>
+  server.kind === 'instance' ? gatewayTargetName('landflow-mcp') : server.kind === 'project' ? gatewayTargetName(`project-${server.projectId}`) : gatewayTargetName(`wf-${server.path}`);
 
 export function entryForPlugin(pluginId: string): SyncEntry {
   const name = gatewayTargetName(pluginId);
@@ -203,6 +274,10 @@ export function entryForPlugin(pluginId: string): SyncEntry {
 export function entryForServer(server: SyncServer): SyncEntry {
   const name = gatewayServerName(server);
   if (server.kind === 'instance') return { key: INSTANCE_KEY, kind: 'instance', name, hostPath: '/api/mcp', gatewayPath: GATEWAY_INSTANCE_PATH, label: server.label };
+  if (server.kind === 'project') {
+    const id = server.projectId ?? '';
+    return { key: `${PROJECT_KEY_PREFIX}${id}`, kind: 'project', name, hostPath: projectServerPath(id), gatewayPath: `${GATEWAY_PROJECT_PATH}/${name}`, label: server.label };
+  }
   const path = server.path ?? '';
   return { key: `${WORKFLOW_KEY_PREFIX}${path}`, kind: 'workflow', name, hostPath: `/mcp/${path.split('/').map(encodeURIComponent).join('/')}`, gatewayPath: `${GATEWAY_WORKFLOW_PATH}/${name}`, label: server.label };
 }
@@ -210,6 +285,7 @@ export function entryForServer(server: SyncServer): SyncEntry {
 /** The kind and label of an owned resource whose entry is no longer wanted, from its key. */
 export function describeKey(key: string): { kind: ServerKind; label: string } {
   if (key === INSTANCE_KEY) return { kind: 'instance', label: 'Landflow instance server' };
+  if (key.startsWith(PROJECT_KEY_PREFIX)) return { kind: 'project', label: `Project ${key.slice(PROJECT_KEY_PREFIX.length)}` };
   if (key.startsWith(WORKFLOW_KEY_PREFIX)) return { kind: 'workflow', label: `/mcp/${key.slice(WORKFLOW_KEY_PREFIX.length)}` };
   return { kind: 'plugin', label: key };
 }
@@ -393,7 +469,14 @@ export async function registryPlugins(): Promise<SyncPlugin[]> {
 export async function registryServers(): Promise<SyncServer[]> {
   const [{ mcpAccess }, { productionWorkflows }, { MCP_TRIGGER, mcpTriggerPath }] = await Promise.all([import('./instance'), import('../publish'), import('./trigger')]);
   const out: SyncServer[] = [];
-  if (mcpAccess().enabled) out.push({ kind: 'instance', label: 'Landflow instance server' });
+  if (mcpAccess().enabled) {
+    out.push({ kind: 'instance', label: 'Landflow instance server' });
+    // One route per project whose admins registered it (the instance server scoped to the project).
+    for (const projectId of gatewayProjectIds()) {
+      const project = getProject(projectId);
+      if (project) out.push({ kind: 'project', projectId, label: `Project ${project.name}` });
+    }
+  }
   const seen = new Set<string>();
   for (const workflow of productionWorkflows()) {
     for (const node of workflow.nodes) {
@@ -573,6 +656,14 @@ export class McpGatewaySync {
     return out;
   }
 
+  /** The route policies as rendered: the host's keys inline, and the identity provider accepted next to Landflow's tokens. */
+  private async policies(): Promise<Record<string, unknown> | undefined> {
+    const inlined = await inlineHostJwks(this.routePolicies(), mcpJwks);
+    if (!gatewayAcceptsIdentityProvider()) return inlined;
+    const extraAudiences = process.env.LANDFLOW_MCP_IDP_AUDIENCE?.split(',').map((a) => a.trim()).filter(Boolean);
+    return acceptIdentityProvider(inlined, { instance: instanceUrl(), idp: identityProviderIssuer(), idpJwks: () => identityProviderJwks(), ...(extraAudiences?.length && { extraAudiences }) });
+  }
+
   /** Bring the gateway in step with the registry. Concurrent calls coalesce into one run plus one follow-up. */
   reconcile(): Promise<SyncResult> {
     if (this.inFlight) {
@@ -597,7 +688,7 @@ export class McpGatewaySync {
       this.lastError = 'LANDFLOW_MCP_GATEWAY_SECRET is not set (at least 16 characters): the host would refuse every call from the gateway, so no target is written';
       return { changed: false, upserted: [], removed: [], skipped: this.lastError };
     }
-    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: await inlineHostJwks(this.routePolicies(), mcpJwks), publicUrl: gatewayPublicUrl() };
+    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: await this.policies(), publicUrl: gatewayPublicUrl() };
     const upserted: string[] = [];
     const removed: string[] = [];
     try {
@@ -704,7 +795,7 @@ export class McpGatewaySync {
     base.health = await this.adapter.health();
     const secret = this.secret();
     if (!secret) return base;
-    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: await inlineHostJwks(this.routePolicies(), mcpJwks), publicUrl: gatewayPublicUrl() };
+    const options: RenderOptions = { hostUrl: this.hostUrl(), secret, routePolicies: await this.policies(), publicUrl: gatewayPublicUrl() };
     const wanted = new Map<string, { kind: OwnedKind; pluginId: string; value: unknown; entry: SyncEntry }>();
     for (const entry of await this.desired()) {
       const target = renderEntryTarget(entry, options);

@@ -21,6 +21,7 @@
       "description": "Aggregate a numeric field across all items: count, sum, mean, median, min, max, stdev (sample)",
       "version": 1,
       "kind": "action",
+      "idempotent": true,
       "categories": [
         "Data"
       ],
@@ -63,6 +64,48 @@
           "default": "",
           "placeholder": "e.g. category",
           "description": "Optional field to group by. When set, one item is emitted per group."
+        },
+        {
+          "name": "fromBinary",
+          "displayName": "Rows From Binary File",
+          "type": "boolean",
+          "default": false,
+          "description": "Aggregate the rows of a CSV, TSV, JSON or NDJSON file on each item instead of the item's own fields"
+        },
+        {
+          "name": "binaryPropertyName",
+          "displayName": "Input Binary Field",
+          "type": "string",
+          "default": "data",
+          "description": "Name of the binary property that holds the file (the file node's default is 'data')",
+          "displayOptions": {
+            "show": {
+              "fromBinary": [
+                true
+              ]
+            }
+          }
+        },
+        {
+          "name": "outputFile",
+          "displayName": "Output Result File",
+          "type": "boolean",
+          "default": false,
+          "description": "Attach a CSV of the statistics (one row per group) as a binary file"
+        },
+        {
+          "name": "outputBinaryName",
+          "displayName": "Output Binary Field",
+          "type": "string",
+          "default": "data",
+          "description": "Binary property that receives the CSV file",
+          "displayOptions": {
+            "show": {
+              "outputFile": [
+                true
+              ]
+            }
+          }
         }
       ]
     },
@@ -72,6 +115,7 @@
       "description": "Score the sentiment of a text field (-1..1) with a built-in lexicon",
       "version": 1,
       "kind": "action",
+      "idempotent": true,
       "categories": [
         "AI",
         "Text"
@@ -106,7 +150,35 @@
           "type": "string",
           "default": "text",
           "required": true,
-          "description": "Field holding the text to score (dot paths allowed)"
+          "description": "Field holding the text to score (dot paths allowed)",
+          "displayOptions": {
+            "show": {
+              "fromBinary": [
+                false
+              ]
+            }
+          }
+        },
+        {
+          "name": "fromBinary",
+          "displayName": "Text From Binary File",
+          "type": "boolean",
+          "default": false,
+          "description": "Read the text from a binary text file on the item (TXT, MD, CSV, ...) instead of a field"
+        },
+        {
+          "name": "binaryPropertyName",
+          "displayName": "Input Binary Field",
+          "type": "string",
+          "default": "data",
+          "description": "Name of the binary property that holds the file (the file node's default is 'data')",
+          "displayOptions": {
+            "show": {
+              "fromBinary": [
+                true
+              ]
+            }
+          }
         },
         {
           "name": "outputField",
@@ -114,6 +186,27 @@
           "type": "string",
           "default": "sentiment",
           "description": "Field that receives {score, label, matched}"
+        },
+        {
+          "name": "outputFile",
+          "displayName": "Output Result File",
+          "type": "boolean",
+          "default": false,
+          "description": "Attach a CSV with one row per item (index, score, label, matched words) as a binary file"
+        },
+        {
+          "name": "outputBinaryName",
+          "displayName": "Output Binary Field",
+          "type": "string",
+          "default": "data",
+          "description": "Binary property that receives the CSV file",
+          "displayOptions": {
+            "show": {
+              "outputFile": [
+                true
+              ]
+            }
+          }
         }
       ]
     },
@@ -123,12 +216,13 @@
       "description": "Extract the top-N keywords from a text field, with stopword removal",
       "version": 1,
       "kind": "action",
+      "idempotent": true,
       "categories": [
         "Text"
       ],
       "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtaW4ta2V5d29yZHMtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmFjYzE1Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2Q5NzcwNiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtaW4ta2V5d29yZHMtYmcpIi8+CiAgPHBhdGggZmlsbD0iI2ZmZiIgZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNMTEgMTMuNWEyLjUgMi41IDAgMCAxIDIuNS0yLjVoOS43YTIuNSAyLjUgMCAwIDEgMS43Ny43M0wzNi4zIDIzLjA2YTIuNSAyLjUgMCAwIDEgMCAzLjU0TDI2LjYgMzYuM2EyLjUgMi41IDAgMCAxLTMuNTQgMEwxMS43MyAyNC45N0EyLjUgMi41IDAgMCAxIDExIDIzLjJaTTIwLjMgMTcuNWEyLjggMi44IDAgMSAwLTUuNiAwIDIuOCAyLjggMCAxIDAgNS42IDBaIi8+Cjwvc3ZnPgo=",
       "color": "#fbbf24",
-      "subtitle": "{{mode}} \u00b7 top {{topN}}",
+      "subtitle": "{{mode}} · top {{topN}}",
       "inputs": [
         {
           "type": "main"
@@ -156,7 +250,35 @@
           "type": "string",
           "default": "text",
           "required": true,
-          "description": "Field holding the text (dot paths allowed)"
+          "description": "Field holding the text (dot paths allowed)",
+          "displayOptions": {
+            "show": {
+              "fromBinary": [
+                false
+              ]
+            }
+          }
+        },
+        {
+          "name": "fromBinary",
+          "displayName": "Text From Binary File",
+          "type": "boolean",
+          "default": false,
+          "description": "Read the text from a binary text file on the item (TXT, MD, CSV, ...) instead of a field"
+        },
+        {
+          "name": "binaryPropertyName",
+          "displayName": "Input Binary Field",
+          "type": "string",
+          "default": "data",
+          "description": "Name of the binary property that holds the file (the file node's default is 'data')",
+          "displayOptions": {
+            "show": {
+              "fromBinary": [
+                true
+              ]
+            }
+          }
         },
         {
           "name": "topN",
@@ -240,6 +362,27 @@
           "type": "boolean",
           "default": false,
           "description": "Emit [{keyword, score}] instead of plain strings"
+        },
+        {
+          "name": "outputFile",
+          "displayName": "Output Result File",
+          "type": "boolean",
+          "default": false,
+          "description": "Attach a CSV with one row per keyword (item, rank, keyword, score) as a binary file"
+        },
+        {
+          "name": "outputBinaryName",
+          "displayName": "Output Binary Field",
+          "type": "string",
+          "default": "data",
+          "description": "Binary property that receives the CSV file",
+          "displayOptions": {
+            "show": {
+              "outputFile": [
+                true
+              ]
+            }
+          }
         }
       ]
     }

@@ -155,7 +155,7 @@ describe('the generic OAuth2 credential type', () => {
   it('serves the redirect URL and presets', async () => {
     const body = (await (await oauth2Route.GET(new Request('http://localhost:3000/api/oauth2'))).json()) as { redirectUrl: string; presets: Array<{ id: string }> };
     expect(body.redirectUrl).toBe('http://landflow.test/api/oauth2/callback');
-    expect(body.presets.map((p) => p.id)).toEqual(['google', 'github', 'slack', 'microsoft', 'notion', 'discord']);
+    expect(body.presets.map((p) => p.id)).toEqual(['google', 'github', 'slack', 'microsoft', 'notion', 'discord', 'hubspot', 'airtable']);
   });
 
   it('builds the redirect URL from the request when no public URL is set', () => {

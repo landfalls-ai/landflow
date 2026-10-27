@@ -42,21 +42,25 @@ function int(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 1): n
 
 const off = (value: string | undefined) => ['off', 'false', '0', 'no'].includes((value ?? '').trim().toLowerCase());
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Partial<RunnerConfig> = {}): RunnerConfig {
+/** Settings to replace; `limits` may name only the limits to change. */
+export type RunnerOverrides = Omit<Partial<RunnerConfig>, 'limits'> & { limits?: Partial<RunnerLimits> };
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: RunnerOverrides = {}): RunnerConfig {
   const timeoutMs = int(env, 'CODE_RUNNER_TIMEOUT_MS', 60_000, 100);
   const secret = overrides.secret ?? env.CODE_RUNNER_SECRET ?? env.LANDFLOW_CODE_RUNNER_SECRET ?? '';
   if (!secret.trim()) throw new Error('Set CODE_RUNNER_SECRET (the same value as the host’s LANDFLOW_CODE_RUNNER_SECRET)');
   const builtins = env.CODE_RUNNER_JS_ALLOW_BUILTIN?.trim();
+  const limits: RunnerLimits = {
+    timeoutMs,
+    cpuSeconds: int(env, 'CODE_RUNNER_CPU_SECONDS', Math.ceil(timeoutMs / 1000)),
+    memoryMb: int(env, 'CODE_RUNNER_MEMORY_MB', 256, 16),
+    maxOutputBytes: int(env, 'CODE_RUNNER_MAX_OUTPUT_BYTES', 10 * MB, 1024),
+    fileSizeMb: int(env, 'CODE_RUNNER_FILE_SIZE_MB', 16),
+    maxBinaryBytes: int(env, 'CODE_RUNNER_MAX_BINARY_BYTES', 6 * MB, 1),
+  };
   return {
     host: env.CODE_RUNNER_HOST?.trim() || '127.0.0.1',
     port: int(env, 'CODE_RUNNER_PORT', 7300, 0),
-    limits: {
-      timeoutMs,
-      cpuSeconds: int(env, 'CODE_RUNNER_CPU_SECONDS', Math.ceil(timeoutMs / 1000)),
-      memoryMb: int(env, 'CODE_RUNNER_MEMORY_MB', 256, 16),
-      maxOutputBytes: int(env, 'CODE_RUNNER_MAX_OUTPUT_BYTES', 10 * MB, 1024),
-      fileSizeMb: int(env, 'CODE_RUNNER_FILE_SIZE_MB', 16),
-    },
     concurrency: int(env, 'CODE_RUNNER_CONCURRENCY', Math.min(4, availableParallelism())),
     maxQueue: int(env, 'CODE_RUNNER_QUEUE', 32, 0),
     maxRequestBytes: int(env, 'CODE_RUNNER_MAX_REQUEST_BYTES', 32 * MB, 1024),
@@ -67,6 +71,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     osSandbox: !off(env.CODE_RUNNER_OS_SANDBOX),
     jsAllowBuiltins: builtins ? builtins.split(',').map((name) => name.trim()).filter(Boolean) : DEFAULT_JS_BUILTINS,
     ...overrides,
+    // A partial `limits` override keeps the other limits.
+    limits: { ...limits, ...overrides.limits },
     secret,
   };
 }

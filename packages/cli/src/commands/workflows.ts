@@ -1,4 +1,4 @@
-/** `workflows list/get/create/update/delete/activate/deactivate/publish/unpublish`. */
+/** `workflows list/get/create/update/delete/activate/deactivate/publish/unpublish/schedules/unschedule`, and `publish`/`unpublish` as short forms. */
 import { seg } from '../client';
 import { flag, type Command, type Context } from '../command';
 import { CliError, usage } from '../errors';
@@ -202,48 +202,115 @@ const publicationOf = (result: Json) => {
   };
 };
 
-export const publish: Command = {
-  name: 'workflows publish',
-  summary: 'Publish the saved draft, or a version (--version), so production triggers run it',
-  usage: '<workflow> [--version <versionId>] [--note <text>]',
-  flags: { version: flag.string('Publish this version instead of the draft (a rollback)', 'versionId'), note: flag.string('A note for the publish timeline', 'text') },
+/**
+ * `--at`: a time to publish at: ISO 8601 (`2026-11-02T09:00:00Z`, or local time without a zone) or relative (`+30m`,
+ * `+2h`, `+1d`). Returns the ISO instant.
+ */
+export function parseAt(text: string, now = Date.now()): string {
+  const relative = /^\+(\d+(?:\.\d+)?)\s*(s|m|h|d)$/i.exec(text.trim());
+  const at = relative ? new Date(now + Number(relative[1]) * { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[relative[2].toLowerCase() as 's' | 'm' | 'h' | 'd']) : new Date(text.trim());
+  if (Number.isNaN(at.getTime())) throw usage(`--at “${text}” is not a time: use ISO 8601 (2026-11-02T09:00:00Z) or +30m, +2h, +1d`);
+  if (at.getTime() <= now) throw usage('--at has to be in the future');
+  return at.toISOString();
+}
+
+interface ScheduledView {
+  id: string;
+  action: string;
+  versionNumber?: number;
+  runAt: string;
+  status: string;
+  requestId?: string;
+  note?: string;
+  result?: string;
+}
+
+const scheduleLine = (s: ScheduledView) => `${s.id}  ${s.action}${s.versionNumber ? ` v${s.versionNumber}` : ''}  ${time(s.runAt)}  ${s.status}${s.status === 'awaiting_approval' && s.requestId ? ` (request ${s.requestId})` : ''}`;
+
+const AT_FLAG = flag.string('Schedule it for this time instead (ISO 8601, or +30m, +2h, +1d); four-eyes publishing: it waits for approval first', 'time');
+
+function publishCommand(name: string): Command {
+  return {
+    name,
+    summary: 'Publish the saved draft, or a version (--version), so production triggers run it; --at schedules it',
+    usage: '<workflow> [--version <versionId>] [--note <text>] [--at <time>]',
+    flags: { version: flag.string('Publish this version instead of the draft (a rollback)', 'versionId'), note: flag.string('A note for the publish timeline', 'text'), at: AT_FLAG },
+    args: { min: 1, max: 1 },
+    run: runPublish,
+  };
+}
+
+async function runPublish(ctx: Context) {
+  const workflow = await findWorkflow(ctx.client, ctx.args[0]);
+  const body = { ...(ctx.flags.version ? { versionId: ctx.flags.version } : {}), ...(ctx.flags.note ? { note: ctx.flags.note } : {}) };
+  if (ctx.flags.at) {
+    const { scheduled } = await ctx.client.post<{ scheduled: ScheduledView }>(`/api/workflows/${seg(String(workflow.id))}/publish`, { ...body, at: parseAt(String(ctx.flags.at)) });
+    return { data: { workflowId: String(workflow.id), scheduled }, human: () => `Scheduled publishing “${workflow.name}”${scheduled.versionNumber ? ` (version ${scheduled.versionNumber})` : ''} for ${time(scheduled.runAt)}${scheduled.status === 'awaiting_approval' ? `: waiting for approval first (request ${scheduled.requestId})` : ''}  [${scheduled.id}]` };
+  }
+  let result: Json;
+  try {
+    result = await ctx.client.post<Json>(`/api/workflows/${seg(String(workflow.id))}/publish`, body);
+  } catch (caught) {
+    if (caught instanceof CliError && caught.code === 'not_supported') throw new CliError('not_supported', 'This host has no draft and publish: use `landflow workflows activate`');
+    throw caught;
+  }
+  assertNotPending(result, ctx.flags.version ? 'Publishing a version of' : 'Publishing', workflow);
+  const publication = publicationOf(result);
+  return {
+    data: { workflowId: String(workflow.id), ...publication },
+    human: () => `Published “${workflow.name}”${publication.published?.versionNumber ? ` at version ${publication.published.versionNumber}` : ''}`,
+  };
+}
+
+export const publish = publishCommand('workflows publish');
+export const publishShort = publishCommand('publish');
+
+function unpublishCommand(name: string): Command {
+  return { name, summary: 'Unpublish a workflow: production triggers stop; --at schedules it', usage: '<workflow> [--note <text>] [--at <time>]', flags: { note: flag.string('A note for the publish timeline', 'text'), at: AT_FLAG }, args: { min: 1, max: 1 }, run: runUnpublish };
+}
+
+async function runUnpublish(ctx: Context) {
+  const workflow = await findWorkflow(ctx.client, ctx.args[0]);
+  if (ctx.flags.at) {
+    const { scheduled } = await ctx.client.post<{ scheduled: ScheduledView }>(`/api/workflows/${seg(String(workflow.id))}/unpublish`, { ...(ctx.flags.note ? { note: ctx.flags.note } : {}), at: parseAt(String(ctx.flags.at)) });
+    return { data: { workflowId: String(workflow.id), scheduled }, human: () => `Scheduled unpublishing “${workflow.name}” for ${time(scheduled.runAt)}${scheduled.status === 'awaiting_approval' ? `: waiting for approval first (request ${scheduled.requestId})` : ''}  [${scheduled.id}]` };
+  }
+  let result: Json;
+  try {
+    result = await ctx.client.post<Json>(`/api/workflows/${seg(String(workflow.id))}/unpublish`, ctx.flags.note ? { note: ctx.flags.note } : {});
+  } catch (caught) {
+    if (caught instanceof CliError && caught.code === 'not_supported') throw new CliError('not_supported', 'This host has no draft and publish: use `landflow workflows deactivate`');
+    throw caught;
+  }
+  assertNotPending(result, 'Unpublishing', workflow);
+  return { data: { workflowId: String(workflow.id), ...publicationOf(result) }, human: () => `Unpublished “${workflow.name}”` };
+}
+
+export const unpublish = unpublishCommand('workflows unpublish');
+export const unpublishShort = unpublishCommand('unpublish');
+
+export const schedules: Command = {
+  name: 'workflows schedules',
+  summary: 'List a workflow’s scheduled publishes (waiting ones first)',
+  usage: '<workflow>',
   args: { min: 1, max: 1 },
   async run(ctx) {
     const workflow = await findWorkflow(ctx.client, ctx.args[0]);
-    let result: Json;
-    try {
-      result = await ctx.client.post<Json>(`/api/workflows/${seg(String(workflow.id))}/publish`, { ...(ctx.flags.version ? { versionId: ctx.flags.version } : {}), ...(ctx.flags.note ? { note: ctx.flags.note } : {}) });
-    } catch (caught) {
-      if (caught instanceof CliError && caught.code === 'not_supported') throw new CliError('not_supported', 'This host has no draft and publish: use `landflow workflows activate`');
-      throw caught;
-    }
-    assertNotPending(result, ctx.flags.version ? 'Publishing a version of' : 'Publishing', workflow);
-    const publication = publicationOf(result);
-    return {
-      data: { workflowId: String(workflow.id), ...publication },
-      human: () => `Published “${workflow.name}”${publication.published?.versionNumber ? ` at version ${publication.published.versionNumber}` : ''}`,
-    };
+    const { schedules: rows } = await ctx.client.get<{ schedules: ScheduledView[] }>(`/api/workflows/${seg(String(workflow.id))}/schedules`);
+    return { data: { workflowId: String(workflow.id), schedules: rows }, human: () => (rows.length ? rows.map(scheduleLine).join('\n') : 'No scheduled publishes.') };
   },
 };
 
-export const unpublish: Command = {
-  name: 'workflows unpublish',
-  summary: 'Unpublish a workflow: production triggers stop',
-  usage: '<workflow> [--note <text>]',
-  flags: { note: flag.string('A note for the publish timeline', 'text') },
-  args: { min: 1, max: 1 },
+export const unschedule: Command = {
+  name: 'workflows unschedule',
+  summary: 'Cancel a scheduled publish that has not run',
+  usage: '<workflow> <scheduleId>',
+  args: { min: 2, max: 2 },
   async run(ctx) {
     const workflow = await findWorkflow(ctx.client, ctx.args[0]);
-    let result: Json;
-    try {
-      result = await ctx.client.post<Json>(`/api/workflows/${seg(String(workflow.id))}/unpublish`, ctx.flags.note ? { note: ctx.flags.note } : {});
-    } catch (caught) {
-      if (caught instanceof CliError && caught.code === 'not_supported') throw new CliError('not_supported', 'This host has no draft and publish: use `landflow workflows deactivate`');
-      throw caught;
-    }
-    assertNotPending(result, 'Unpublishing', workflow);
-    return { data: { workflowId: String(workflow.id), ...publicationOf(result) }, human: () => `Unpublished “${workflow.name}”` };
+    const { scheduled } = await ctx.client.delete<{ scheduled: ScheduledView }>(`/api/workflows/${seg(String(workflow.id))}/schedules/${seg(ctx.args[1])}`);
+    return { data: { workflowId: String(workflow.id), scheduled }, human: () => `Canceled ${scheduled.id}` };
   },
 };
 
-export const workflowCommands = [list, get, create, update, remove, activate, deactivate, publish, unpublish];
+export const workflowCommands = [list, get, create, update, remove, activate, deactivate, publish, unpublish, publishShort, unpublishShort, schedules, unschedule];

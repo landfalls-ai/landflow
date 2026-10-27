@@ -8,7 +8,7 @@
  */
 import type { ReactNode } from 'react';
 import { create } from 'zustand';
-import { ArrowRight, Ban, CircleCheck, CircleDashed, FileJson, TriangleAlert } from 'lucide-react';
+import { ArrowRight, Ban, CircleCheck, CircleDashed, FileJson, KeyRound, TriangleAlert } from 'lucide-react';
 import type { ImportReport } from '@/lib/shared/types';
 import { Dialog } from '../agents/dialog';
 import { Button } from '../ui/button';
@@ -119,6 +119,26 @@ export function ImportReportView({ report }: { report: ImportReport }) {
                 <span className="font-semibold text-t1">{b.name}</span>
                 <span className="truncate text-t3">{b.reason}</span>
                 <span className="ml-auto truncate font-mono text-[11px] text-t3">{b.type}</span>
+              </div>
+            ))}
+          </div>
+        </Group>
+      )}
+      {(report.credentials?.length ?? 0) > 0 && (
+        <Group icon={<KeyRound className="size-3.5 text-t2" />} title="Credentials">
+          <p className="text-[12px] leading-snug text-t3">
+            Flowise credentials map to Landflow credential types. A slot is filled when exactly one saved credential has the type; keys never come along in an export, so create or choose the others in the node.
+          </p>
+          <div className="space-y-1">
+            {report.credentials!.map((c, i) => (
+              <div key={`${c.node}-${i}`} className="flex items-center gap-2 rounded-lg border border-hair bg-wl px-2.5 py-1.5 text-[12px]">
+                <span className="font-semibold text-t1">{c.node}</span>
+                <span className="truncate font-mono text-[11px] text-t3">{c.flowise}</span>
+                <ArrowRight className="size-3 shrink-0 text-t3" />
+                <span className="truncate font-mono text-[11px] text-t2">{c.type}</span>
+                <span className={c.status === 'assigned' ? 'ml-auto shrink-0 text-gn' : 'ml-auto shrink-0 text-warn'}>
+                  {c.status === 'assigned' ? `using ${c.credential}` : c.status === 'choose' ? 'choose one' : 'create one'}
+                </span>
               </div>
             ))}
           </div>

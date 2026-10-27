@@ -21,14 +21,23 @@ export const POST = handler(async (request: Request) => {
       /** The workflow being edited (or the project it goes to): pickers of project-scoped things (data tables) list that project's. */
       workflowId: z.string().max(200).optional(),
       projectId: z.string().max(200).optional(),
+      /** The agent being edited: its tools' pickers list its project's data tables. */
+      agentId: z.string().max(200).optional(),
     }),
   );
   if (!body.ok) return body.response;
   const actor = routeActor();
   // The plugin gets the credentials' values: only for credentials the caller may use.
   for (const ref of Object.values(body.data.credentials ?? {})) requireResource(actor, 'credential', ref.id, 'use');
-  const { workflowId, projectId: requested } = body.data;
-  const projectId = workflowId && canResource(actor, 'workflow', workflowId, 'read') ? homeProjectId('workflow', workflowId) : requested && projectRole(actor, requested) ? requested : undefined;
+  const { workflowId, agentId, projectId: requested } = body.data;
+  const projectId =
+    workflowId && canResource(actor, 'workflow', workflowId, 'read')
+      ? homeProjectId('workflow', workflowId)
+      : agentId && canResource(actor, 'agent', agentId, 'read')
+        ? homeProjectId('agent', agentId)
+        : requested && projectRole(actor, requested)
+          ? requested
+          : undefined;
   try {
     const { type, method, parameters } = body.data;
     const resolved = registry.resolve(type);

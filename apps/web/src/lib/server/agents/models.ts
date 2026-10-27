@@ -26,11 +26,11 @@ export async function agentModel(config: AgentModel | undefined): Promise<Langua
       const data = config.credential ? await credentials.dataWithSecrets(config.credential, 'core.anthropicApi') : undefined;
       const apiKey = typeof data?.apiKey === 'string' ? data.apiKey.trim() : '';
       const baseUrl = typeof data?.baseUrl === 'string' ? data.baseUrl.trim() : '';
-      return anthropicModel({ model: config.model, effort: 'medium', maxTokens: 16_000, fallback: true, ...(apiKey && { apiKey, ...(baseUrl && { baseUrl }) }) });
+      return anthropicModel({ model: config.model, effort: 'medium', maxTokens: 16_000, fallback: true, ...(apiKey && { apiKey, ...(baseUrl && { baseUrl }) }), ...(config.credential?.id && { credentialId: config.credential.id }) });
     }
     case 'openai': {
       if (!config.credential) throw new Error('Choose an OpenAI API credential for this agent’s model');
-      return openAiModel(openAiConnection(await credentials.dataWithSecrets(config.credential, 'core.openAiApi')), { model: config.model, ...(temperature !== undefined && { temperature }) });
+      return openAiModel(openAiConnection(await credentials.dataWithSecrets(config.credential, 'core.openAiApi'), config.credential.id), { model: config.model, ...(temperature !== undefined && { temperature }) });
     }
     case 'ollama':
       return ollamaModel({ baseUrl: config.baseUrl?.trim() || OLLAMA_URL, model: config.model, ...(temperature !== undefined && { temperature }) });

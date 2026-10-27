@@ -46,6 +46,13 @@ values masked; the host's **On Error: Continue** setting then keeps the flow goi
   with *Return Rows* off.
 - **Delete**: *Select Rows* conditions. With no conditions the node refuses to run unless **Delete All Rows** is on.
 
+- **Binary data** (*Binary Data* collection, on Select, Execute Query, Insert, Insert or Update and Update): *Columns From
+  Binary Files* (`avatar=photo, contract=pdf`) writes the bytes of the item's binary properties into `bytea` / `BLOB` columns,
+  streaming nothing through the JSON; *Columns to Return as Files* (`avatar=photo`) takes those columns out of the output
+  JSON and attaches them as binary files (small ones inline, bigger ones uploaded to the host's binary store), named from
+  *File Name Column* when set, with the type sniffed from the bytes. Without the options the columns still arrive as base64
+  strings. Redis values are not files and have no binary option.
+
 Column fields inside *Select Rows*, *Sort* and *Columns to Match On* are text fields, not pickers: the editor sends only the
 collection entry (not the node's table) when loading options inside a fixed collection, and does not load multi-select options.
 The names are still checked against the table's real columns (see below).
@@ -121,7 +128,7 @@ rejected, so a typo does not create an empty database). Read-only credentials op
 | floats | number (`NaN` / `Infinity` as strings) |
 | timestamps, dates | RFC 3339 string in UTC (`TIMESTAMP` without zone is read as UTC) |
 | `JSON` / `JSONB` | parsed object or array |
-| `BYTEA`, `BLOB`, binary | base64 string |
+| `BYTEA`, `BLOB`, binary | base64 string, or a binary file with *Columns to Return as Files* |
 | booleans | boolean |
 | everything else | string |
 

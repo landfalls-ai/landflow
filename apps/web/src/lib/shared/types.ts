@@ -105,6 +105,12 @@ export interface CredentialTypeInfo {
   oauth2?: boolean;
 }
 
+/** A rate limit set on a credential. */
+export interface CredentialRateLimitSetting {
+  limit: number;
+  intervalSeconds: number;
+}
+
 export interface CredentialSummary {
   id: string;
   name: string;
@@ -114,6 +120,8 @@ export interface CredentialSummary {
   updatedAt: string;
   /** Workflows with a node that references this credential. */
   usedBy: Array<{ workflowId: string; workflowName: string }>;
+  /** At most `limit` calls per `intervalSeconds` across every node and run that uses it (lib/server/credentials/vault.ts). */
+  rateLimit?: CredentialRateLimitSetting;
   /** OAuth2 credentials: whether they are connected, as whom, and until when (lib/shared/oauth2.ts). */
   oauth2?: import('./oauth2').OAuth2Status;
 }
@@ -224,6 +232,8 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   startedBy?: string;
   /** Status `queued`: how it starts once a slot frees. */
   queued?: QueuedStart;
+  /** Execution GET only: the thumbs up/down this answer got (hosted chat, widget, editor). Not stored with the record. */
+  chatFeedback?: import('./chat-feedback').ChatFeedback;
   /** A run of an offline evaluation (one test case): left out of Insights and production counts. */
   evaluation?: EvaluationRef;
   /** Tokens and estimated cost of the model calls this execution made (lib/server/ai-usage). */
@@ -377,6 +387,18 @@ export interface ImportReport {
   groups?: number;
   connections: number;
   warnings: string[];
+  /** Flowise: the credentials its nodes used, by type, and what happened to each slot. */
+  credentials?: Array<{
+    node: string;
+    /** The Flowise credential type (`openAIApi`). */
+    flowise: string;
+    /** The Landflow credential type and the node's slot it fills. */
+    type: string;
+    slot: string;
+    /** `assigned`: the only saved credential of that type was chosen; `choose`: several exist; `create`: none exists yet. */
+    status: 'assigned' | 'choose' | 'create';
+    credential?: string;
+  }>;
   /** Nodes the governance policy blocks (Settings → Governance): imported, but the workflow can't be published with them. */
   blocked?: Array<{ name: string; type: string; reason: string }>;
 }

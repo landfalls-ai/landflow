@@ -41,7 +41,7 @@ const PY_KEYWORDS = new Set(
 );
 const PY_LITERALS = new Set(['True', 'False', 'None']);
 /** The Python Code node's globals (services/code-runner/child/py_runner.py). */
-export const PY_GLOBALS = new Set(['_json', '_input', '_items', '_item', '_', '_vars', '_execution', '_workflow', '_now', '_today', '_itemIndex', 'self']);
+export const PY_GLOBALS = new Set(['_json', '_input', '_items', '_item', '_', '_vars', '_execution', '_workflow', '_now', '_today', '_itemIndex', '_helpers', 'self']);
 
 // Sticky patterns, matched where the scan is (no slicing: long scripts stay fast).
 const NUMBER = /(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?)[njJ]?/y;

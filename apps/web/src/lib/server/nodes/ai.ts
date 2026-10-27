@@ -1,8 +1,11 @@
 import vm from 'node:vm';
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
 import { toToolName, type AgentMemory, type AgentMessage, type AgentTool, type ToolCall, type ToolResult } from '@landflow/engine';
-import { approvalBlocks, postMessage, SLACK_CREDENTIAL, slackCredential } from '../slack';
-import { BINARY_INPUT_OPTIONS, optionalAttachments, withoutAttachmentData } from './attachments';
+import { credentialIdOf } from '../ai-usage/credential-id';
+import { parseAddresses, sendApprovalEmails } from '../approval-email';
+import { mailConfigured } from '../auth/mail';
+import { approvalBlocks, postMessage, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential } from '../slack';
+import { BINARY_INPUT_OPTIONS, MEMORY_FILE_OPTIONS, optionalAttachments, reattachRemembered, withoutAttachmentData, type MediaOptions } from './attachments';
 import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY, isFallbackModel } from './fallback';
 import { anthropicModel, ollamaModel } from './models';
 
@@ -33,8 +36,13 @@ export const aiAgentNode = defineNode({
       { type: 'ai_tool', displayName: 'Tool' },
     ],
     outputs: main,
-    // Posting approval requests to Slack (the messaging plugin's credential).
-    credentials: [{ name: SLACK_CREDENTIAL, required: true, displayOptions: { show: { approvalChannel: ['slack'] } } }],
+    // Posting approval requests to Slack (the messaging plugin's credential: a bot token or the OAuth2 install).
+    credentials: [
+      { name: SLACK_CREDENTIAL, required: true, displayOptions: { show: { approvalChannel: ['slack'], slackAuthentication: ['accessToken'] } } },
+      { name: SLACK_OAUTH2_CREDENTIAL, required: true, displayOptions: { show: { approvalChannel: ['slack'], slackAuthentication: ['oAuth2'] } } },
+      // Transcribing audio input (“Include Binary as Input”): an OpenAI-compatible /audio/transcriptions endpoint.
+      { name: 'openAiApi', required: false },
+    ],
     properties: [
       {
         name: 'prompt',
@@ -83,8 +91,31 @@ export const aiAgentNode = defineNode({
         options: [
           { name: 'Chat / Execution View', value: 'chat', description: 'Approve or Reject buttons in the editor’s chat panel and the waiting execution' },
           { name: 'Slack', value: 'slack', description: 'A message with Approve and Reject buttons (needs the app’s Interactivity URL)' },
+          { name: 'Email', value: 'email', description: 'An email with signed, single-use Approve and Reject links (the host’s SMTP, LANDFLOW_SMTP_HOST)' },
         ],
         displayOptions: { hide: { requireApproval: ['none'] } },
+      },
+      {
+        name: 'slackAuthentication',
+        displayName: 'Slack Authentication',
+        type: 'options',
+        default: 'accessToken',
+        noDataExpression: true,
+        options: [
+          { name: 'Bot Token', value: 'accessToken' },
+          { name: 'OAuth2 (Installed App)', value: 'oAuth2' },
+        ],
+        displayOptions: { show: { approvalChannel: ['slack'] }, hide: { requireApproval: ['none'] } },
+      },
+      {
+        name: 'approvalEmails',
+        displayName: 'Approver Emails',
+        type: 'string',
+        default: '',
+        required: true,
+        placeholder: 'ana@example.com, ben@example.com',
+        description: 'Each address gets one email per waiting tool call with its own Approve and Reject links; the first decision counts.',
+        displayOptions: { show: { approvalChannel: ['email'] }, hide: { requireApproval: ['none'] } },
       },
       {
         name: 'slackChannel',
@@ -125,6 +156,7 @@ export const aiAgentNode = defineNode({
           { name: 'sessionId', displayName: 'Session Key', type: 'string', default: '{{ $json.sessionId }}', description: 'Memory is kept per session key' },
           { name: 'returnIntermediateSteps', displayName: 'Return Intermediate Steps', type: 'boolean', default: true },
           ...BINARY_INPUT_OPTIONS,
+          ...MEMORY_FILE_OPTIONS,
         ],
       },
     ],
@@ -160,9 +192,14 @@ export const aiAgentNode = defineNode({
         if (!prompt) throw new NodeOperationError('The prompt is empty', { itemIndex: i, description: 'Send a chat message or set “Prompt”.' });
         const sessionId = options.sessionId || 'default';
         const history = memory ? await memory.load(sessionId) : [];
-        const attachments = await optionalAttachments(ctx, i, options);
+        // Memory keeps references to earlier turns' files; the option attaches them again (newest first, up to a size cap).
+        const remembered =
+          options.passthroughBinaryImages && options.rememberedAttachments
+            ? await reattachRemembered(ctx, history, { maxBytes: Math.max(1, Number(options.rememberedAttachmentsMaxMb) || 10) * 1024 * 1024, model, ...options }, i)
+            : history;
+        const attachments = await optionalAttachments(ctx, i, options, model);
         run = {
-          messages: [...history, { role: 'user', content: prompt, ...(attachments && { attachments }) }],
+          messages: [...remembered, { role: 'user', content: prompt, ...(attachments && { attachments }) }],
           steps: [],
           iterations: 0,
           usage: { inputTokens: 0, outputTokens: 0 },
@@ -252,8 +289,8 @@ export const aiAgentNode = defineNode({
 
       if (answer === undefined) answer = `Stopped after ${maxIterations} iterations without a final answer.`;
       send?.({ type: 'end', itemIndex: i });
-      // Memory keeps the files' names, not their bytes.
-      if (memory) await memory.save(run.sessionId, run.messages.map((m, index) => (index >= run.historyLength && m.role === 'user' ? withoutAttachmentData(m) : m)));
+      // Memory keeps the files' names and references, not their bytes.
+      if (memory) await memory.save(run.sessionId, run.messages.map((m) => (m.role === 'user' ? withoutAttachmentData(m) : m)));
       const used = isFallbackModel(model) ? model.lastModel : `${model.provider}/${model.model}`;
       ctx.logger.info(`${used}: ${run.iterations} iteration(s), ${run.steps.length} tool call(s)`);
       out.push({
@@ -273,7 +310,9 @@ export const aiAgentNode = defineNode({
   },
 });
 
-interface AgentOptions {
+interface AgentOptions extends MediaOptions {
+  rememberedAttachments?: boolean;
+  rememberedAttachmentsMaxMb?: number;
   maxIterations?: number;
   sessionId?: string;
   returnIntermediateSteps?: boolean;
@@ -326,8 +365,10 @@ function messagesPushTool(messages: AgentMessage[], results: ToolResult[], calls
 
 interface ApprovalSettings {
   needs: (toolName: string) => boolean;
-  channel: 'chat' | 'slack';
+  channel: 'chat' | 'slack' | 'email';
   slackChannel: string;
+  slackAuthentication: 'accessToken' | 'oAuth2';
+  emails: string[];
   approvers: string[];
   timeoutMinutes: number;
 }
@@ -348,8 +389,10 @@ function approvalSettings(ctx: IExecuteContext, itemIndex: number): ApprovalSett
       .filter(Boolean);
   return {
     needs: (tool) => mode === 'all' || (mode === 'selected' && (names.has(tool) || names.has(tool.replace(/_\d+$/, '')))),
-    channel: mode !== 'none' && String(ctx.getNodeParameter('approvalChannel', itemIndex, 'chat')) === 'slack' ? 'slack' : 'chat',
+    channel: mode === 'none' ? 'chat' : ((['slack', 'email'].find((c) => c === String(ctx.getNodeParameter('approvalChannel', itemIndex, 'chat'))) as 'slack' | 'email' | undefined) ?? 'chat'),
     slackChannel: String(ctx.getNodeParameter('slackChannel', itemIndex, '') ?? '').trim(),
+    slackAuthentication: String(ctx.getNodeParameter('slackAuthentication', itemIndex, 'accessToken')) === 'oAuth2' ? 'oAuth2' : 'accessToken',
+    emails: parseAddresses(ctx.getNodeParameter('approvalEmails', itemIndex, '')),
     approvers: list(ctx.getNodeParameter('slackApprovers', itemIndex, '')),
     timeoutMinutes: Math.max(0, Number(ctx.getNodeParameter('approvalTimeoutMinutes', itemIndex, 0)) || 0),
   };
@@ -373,7 +416,7 @@ async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings:
   };
   if (settings.channel === 'slack') {
     if (!settings.slackChannel) throw new NodeOperationError('Set the Slack channel to post approval requests in', { itemIndex });
-    const credential = slackCredential(ctx.getCredentials<JsonObject>(SLACK_CREDENTIAL));
+    const credential = slackCredential(ctx.getCredentials<JsonObject>(settings.slackAuthentication === 'oAuth2' ? SLACK_OAUTH2_CREDENTIAL : SLACK_CREDENTIAL));
     const messages: JsonObject = {};
     for (const call of calls) {
       const target = { t: 'wf' as const, e: ctx.getExecutionId(), c: call.id };
@@ -386,7 +429,19 @@ async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings:
     }
     approval.slack = { channel: settings.slackChannel, messages, ...(settings.approvers.length && { approvers: settings.approvers }) };
   }
-  ctx.logger.info(`waiting for approval of ${calls.map((c) => c.name).join(', ')}${settings.channel === 'slack' ? ` in Slack ${settings.slackChannel}` : ''}`);
+  if (settings.channel === 'email') {
+    if (!settings.emails.length) throw new NodeOperationError('Set the approver emails to send approval requests to', { itemIndex });
+    if (!mailConfigured()) throw new NodeOperationError('Approvals by email need the host’s SMTP: set LANDFLOW_SMTP_HOST', { itemIndex });
+    const target = (call: ToolCall) => ({ t: 'wf' as const, e: ctx.getExecutionId(), c: call.id });
+    await sendApprovalEmails({
+      to: settings.emails,
+      title: `${node.name} wants to run a tool`,
+      calls: calls.map((call) => ({ tool: call.name, input: call.input, target: target(call) })),
+      ...(settings.timeoutMinutes > 0 && { note: `Unanswered calls are rejected after ${settings.timeoutMinutes} minutes.` }),
+    });
+    approval.email = { to: settings.emails };
+  }
+  ctx.logger.info(`waiting for approval of ${calls.map((c) => c.name).join(', ')}${settings.channel === 'slack' ? ` in Slack ${settings.slackChannel}` : settings.channel === 'email' ? ` by email (${settings.emails.length})` : ''}`);
   ctx.putExecutionToWait({
     resume: 'webhook',
     rerun: true,
@@ -467,6 +522,7 @@ export const anthropicChatModelNode = defineNode({
       maxTokens: Number(ctx.getNodeParameter('maxTokens')),
       fallback: ctx.getNodeParameter<boolean>('fallback'),
       ...(apiKey && { apiKey, ...(baseUrl && { baseUrl }) }),
+      ...(credentialIdOf(credential) && { credentialId: credentialIdOf(credential) }),
     });
   },
 });

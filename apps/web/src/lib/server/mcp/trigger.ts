@@ -7,6 +7,9 @@
  *   the trigger pulls its tools the way an AI Agent does and outputs their names and schemas.
  * - `tools/call` is an execution with mode `mcp`, recorded like any trigger's: the trigger gets
  *   `{ tool, arguments }`, calls the tool (it shows up as a sub-node run) and outputs the result.
+ * - `resources/list` and `prompts/list` read the trigger's `resources` and `prompts` definitions (./trigger-content.ts) and run
+ *   nothing; `resources/read` and `prompts/get` serve static text as it is and run the trigger (an execution with mode `mcp`)
+ *   when the content has an expression or comes from a sub-workflow.
  * - The test URL, /mcp-test/<path>, answers while the editor listens for the trigger (lib/server/test-webhooks.ts): it
  *   serves the tools of the workflow the editor sent (saved or not), and each `tools/call` is a manual test run the
  *   editor shows live. Every request pushes the listener's deadline on.
@@ -15,7 +18,7 @@
  */
 import { context } from '@opentelemetry/api';
 import { nanoid } from 'nanoid';
-import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
+import { McpServer, ProtocolError, ProtocolErrorCode, type CallToolResult } from '@modelcontextprotocol/server';
 import type { JsonObject } from '@landflow/protocol';
 import { executeWorkflow, type ToolSpec, type Workflow, type WorkflowNode } from '@landflow/engine';
 import type { ExecutionRecord } from '../../shared/types';
@@ -33,6 +36,7 @@ import { withAuth } from '../auth/context';
 import { getUser } from '../auth/users';
 import { canResource } from '../projects/access';
 import type { Role } from '../../shared/auth';
+import { isDynamic, promptDefs, resourceDefs, type TriggerPromptDef, type TriggerResourceDef } from './trigger-content';
 import { authenticateMcpRequest, GATEWAY_SECRET_HEADER, McpAuthError, mcpAuthErrorResponse } from './identity';
 import { bearerToken, jsonRpcError, MCP_SERVER_VERSION, methodNotAllowed, sameSecret, serveMcp, textResult, unauthorized } from './server';
 
@@ -136,12 +140,60 @@ export async function callTriggerTool(workflow: Workflow, node: WorkflowNode, na
   }
 }
 
+/** One resource read or prompt use that needs an execution: the trigger's output item, or the failure as an Error. */
+export async function runTriggerContent(workflow: Workflow, node: WorkflowNode, item: JsonObject, listener?: TestListener): Promise<JsonObject> {
+  let record: ExecutionRecord;
+  if (listener) {
+    const { run, started } = runTestEvent(listener, { json: item }, {}, testRunId(listener));
+    const caught = await started;
+    if (caught !== undefined) throw new Error((caught as Error)?.message ?? 'The test run could not start');
+    record = await run;
+  } else {
+    const trigger = startTrigger({ source: 'mcp', workflowId: workflow.id, nodeName: node.name });
+    try {
+      record = await context.with(trigger.context, () => runWorkflow({ workflow, mode: 'mcp', startNodeId: node.id, triggerItems: [{ json: item }] }));
+      trigger.end();
+    } catch (error) {
+      trigger.end(error);
+      throw error;
+    }
+  }
+  if (record.status !== 'success') throw new Error(`${record.error?.message ?? `The workflow ended as ${record.status}`} (execution ${record.executionId})`);
+  return record.runData[node.id]?.filter((run) => run.source === 'main').at(-1)?.outputs[0]?.[0]?.json ?? {};
+}
+
+/** The contents of a resource: static text directly, else from an execution. An unknown URI is the protocol's "resource not found". */
+export async function readTriggerContent(workflow: Workflow, node: WorkflowNode, uri: string, listener?: TestListener) {
+  const def = resourceDefs(node.parameters).find((candidate) => candidate.uri === uri);
+  if (!def) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown resource "${uri}"`);
+  if (!isDynamic(def)) return { contents: [{ uri, mimeType: def.mimeType, text: def.text }] };
+  const output = (await runTriggerContent(workflow, node, { resource: uri }, listener)).resource as JsonObject | undefined;
+  return { contents: [{ uri, mimeType: String(output?.mimeType ?? def.mimeType), text: String(output?.text ?? '') }] };
+}
+
+/** A prompt's messages: static text directly (after the required arguments check), else from an execution. */
+export async function getTriggerPrompt(workflow: Workflow, node: WorkflowNode, name: string, args: Record<string, string>, listener?: TestListener) {
+  const def = promptDefs(node.parameters).find((candidate) => candidate.name === name);
+  if (!def) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown prompt "${name}"`);
+  const missing = def.arguments.filter((a) => a.required && !args[a.name]).map((a) => a.name);
+  if (missing.length) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `The prompt "${name}" needs the argument${missing.length > 1 ? 's' : ''} ${missing.join(', ')}`);
+  const messages = isDynamic(def)
+    ? (((await runTriggerContent(workflow, node, { prompt: name, arguments: args }, listener)).prompt as JsonObject | undefined)?.messages as Array<{ role: 'user' | 'assistant'; text: string }> | undefined) ?? []
+    : [{ role: 'user' as const, text: def.text }];
+  return { ...(def.description && { description: def.description }), messages: messages.map((m) => ({ role: m.role, content: { type: 'text' as const, text: m.text } })) };
+}
+
+const resourceInfo = (def: TriggerResourceDef) => ({ uri: def.uri, name: def.name, ...(def.description && { description: def.description }), mimeType: def.mimeType });
+const promptInfo = (def: TriggerPromptDef) => ({ name: def.name, ...(def.description && { description: def.description }), arguments: def.arguments.map((a) => ({ name: a.name, required: a.required })) });
+
 /** A stateless MCP server for one request to the trigger (`listener`: on its test URL). */
 export function triggerServer(workflow: Workflow, node: WorkflowNode, listener?: TestListener): McpServer {
   const instructions = String(node.parameters.instructions ?? '').trim();
+  const resources = resourceDefs(node.parameters);
+  const prompts = promptDefs(node.parameters);
   const server = new McpServer(
     { name: 'landflow', title: workflow.name, version: MCP_SERVER_VERSION },
-    { capabilities: { tools: {} }, ...(instructions && { instructions }) },
+    { capabilities: { tools: {}, ...(resources.length && { resources: {} }), ...(prompts.length && { prompts: {} }) }, ...(instructions && { instructions }) },
   );
   // Raw JSON schemas, so the low-level handlers rather than registerTool (which takes zod).
   server.server.setRequestHandler('tools/list', async () => ({
@@ -152,6 +204,15 @@ export function triggerServer(workflow: Workflow, node: WorkflowNode, listener?:
     })),
   }));
   server.server.setRequestHandler('tools/call', async (request) => callTriggerTool(workflow, node, request.params.name, request.params.arguments ?? {}, listener));
+  // Resources and prompts defined on the trigger (./trigger-content.ts); a capability is declared only when there are some.
+  if (resources.length) {
+    server.server.setRequestHandler('resources/list', async () => ({ resources: resources.map(resourceInfo) }));
+    server.server.setRequestHandler('resources/read', async (request) => readTriggerContent(workflow, node, request.params.uri, listener));
+  }
+  if (prompts.length) {
+    server.server.setRequestHandler('prompts/list', async () => ({ prompts: prompts.map(promptInfo) }));
+    server.server.setRequestHandler('prompts/get', async (request) => getTriggerPrompt(workflow, node, request.params.name, (request.params.arguments ?? {}) as Record<string, string>, listener));
+  }
   return server;
 }
 

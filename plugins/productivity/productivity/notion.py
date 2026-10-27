@@ -4,23 +4,32 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import quote
 
 from landflow_sdk import CredentialType, Node, NodeOperationError
 
 from .common import (
     Api,
+    authentication_property,
+    binary_input,
+    binary_name_property,
     bool_param,
     chunks,
     collection,
+    content_type_of,
     count_written,
+    credential_requirements,
     fixed_entries,
     item_errors,
     items_of,
     json_param,
     limit_of,
+    multipart,
+    oauth2_properties,
     operation_property,
     out,
     outs,
+    pick_credentials,
     resource_property,
     return_all_properties,
     simplify_property,
@@ -33,15 +42,20 @@ NOTION_VERSION = "2022-06-28"
 PAGE_SIZE = 100  # Notion's maximum page_size
 MAX_CHILDREN = 100  # blocks per append request
 MAX_TEXT = 2000  # characters per rich_text object
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # Notion's single-part file upload limit
 _ID_RE = re.compile(r"([0-9a-f]{32})(?:[?#].*)?$", re.IGNORECASE)
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
 
 def notion_api(ctx: Any, creds: dict[str, Any]) -> Api:
     return Api(ctx, "notion", creds.get("baseUrl") or "https://api.notion.com", {
-        "Authorization": f"Bearer {creds.get('apiKey', '')}",
+        "Authorization": f"Bearer {creds.get('apiKey') or creds.get('accessToken') or ''}",  # internal secret, or the OAuth2 access token
         "Notion-Version": NOTION_VERSION,
     })
+
+
+def notion_credentials(ctx: Any, authentication: Any = None) -> dict[str, Any]:
+    return pick_credentials(ctx, "notionApi", "notionOAuth2Api", authentication)
 
 
 def test_notion(data: dict[str, Any], ctx: Any) -> tuple[bool, str]:
@@ -60,6 +74,23 @@ NOTION_API = CredentialType(
     properties=[
         {"name": "apiKey", "displayName": "Internal Integration Secret", "type": "string", "required": True,
          "typeOptions": {"password": True}, "placeholder": "secret_… / ntn_…"},
+        {"name": "baseUrl", "displayName": "API Base URL", "type": "string", "default": "https://api.notion.com",
+         "description": "Change only for a proxy or a test double"},
+    ],
+)
+
+
+NOTION_OAUTH2_API = CredentialType(
+    name="notionOAuth2Api",
+    display_name="Notion OAuth2 API",
+    documentation_url="https://developers.notion.com/docs/authorization",
+    description="Sign in with Notion: create a public integration, add the redirect URL shown below, then Connect and pick the pages to share. "
+                "Notion has no scopes and its tokens do not expire.",
+    test=test_notion,
+    extends=["oAuth2Api"],
+    properties=[
+        *oauth2_properties("https://api.notion.com/v1/oauth/authorize", "https://api.notion.com/v1/oauth/token", "",
+                           grant_type="authorizationCode", authentication="header", query="owner=user"),
         {"name": "baseUrl", "displayName": "API Base URL", "type": "string", "default": "https://api.notion.com",
          "description": "Change only for a proxy or a test double"},
     ],
@@ -197,7 +228,7 @@ class Notion(Node):
     description = {
         "name": "notion",
         "displayName": "Notion",
-        "description": "Create and query Notion database pages, get, archive and search pages, append blocks",
+        "description": "Create and query Notion database pages, get, archive and search pages, append blocks, upload files from binary data",
         "version": 1,
         "kind": "action",
         "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
@@ -208,20 +239,26 @@ class Notion(Node):
         "documentationUrl": "https://developers.notion.com/reference/intro",
         "inputs": [{"type": "main"}],
         "outputs": [{"type": "main"}],
-        "credentials": [{"name": "notionApi", "required": True}],
+        "credentials": credential_requirements("notionApi", "notionOAuth2Api"),
         "usableAsTool": True,
         "toolDescription": (
             "Work with Notion. Pick `resource` (databasePage, page, block) and `operation`: create a database page "
             "(`databaseId`, `title`), query a database (`databaseId`, optional `filterJson`), get or archive a page "
-            "(`pageId`), search pages (`text`), or append paragraphs to a page (`blockId`, `text`)."
+            "(`pageId`), search pages (`text`), or append paragraphs to a page (`blockId`, `text`). Files uploaded from binary data on the "
+            "item: block `appendFile` adds an image, video, audio, PDF or file block; page `attachFile` adds to a Files property."
         ),
         "keywords": ["notion", "wiki", "database", "page", "notes", "docs"],
         "properties": [
+            authentication_property("Internal Integration Secret"),
             resource_property([("Block", "block"), ("Database Page", "databasePage"), ("Page", "page")], "databasePage"),
             # The default resource's operation comes last: fresh nodes take the last default of a repeated name.
-            operation_property("block", [("Append After", "append", "Append a block")], "append"),
+            operation_property("block", [
+                ("Append After", "append", "Append a block"),
+                ("Append File", "appendFile", "Upload binary data and append it as a file, image, video, audio or PDF block"),
+            ], "append"),
             operation_property("page", [
                 ("Archive", "archive", "Archive a page"),
+                ("Attach File", "attachFile", "Upload binary data into a Files property of a page"),
                 ("Get", "get", "Get a page", True),
                 ("Search", "search", "Search pages", True),
             ], "get"),
@@ -277,7 +314,7 @@ class Notion(Node):
                 "name": "pageId", "displayName": "Page", "type": "string", "default": "", "required": True,
                 "placeholder": "https://www.notion.so/My-page-0123456789abcdef0123456789abcdef",
                 "description": "Page id or URL",
-                "displayOptions": {"show": {"resource": ["page"], "operation": ["archive", "get"]}},
+                "displayOptions": {"show": {"resource": ["page"], "operation": ["archive", "attachFile", "get"]}},
             },
             {
                 "name": "text", "displayName": "Search Text", "type": "string", "default": "",
@@ -295,7 +332,7 @@ class Notion(Node):
                      "options": [{"name": "Newest First", "value": "descending"}, {"name": "Oldest First", "value": "ascending"}]},
                 ],
             },
-            simplify_property({"resource": ["databasePage", "page"], "operation": ["create", "getAll", "get", "archive", "search"]}),
+            simplify_property({"resource": ["databasePage", "page"], "operation": ["create", "getAll", "get", "archive", "attachFile", "search"]}),
             # ---- block
             {
                 "name": "blockId", "displayName": "Page or Block", "type": "string", "default": "", "required": True,
@@ -304,7 +341,7 @@ class Notion(Node):
             },
             {
                 "name": "blockSource", "displayName": "Content", "type": "options", "default": "text",
-                "displayOptions": {"show": {"resource": ["block"]}},
+                "displayOptions": {"show": {"resource": ["block"], "operation": ["append"]}},
                 "options": [
                     {"name": "Paragraph Text", "value": "text", "description": "One paragraph per blank-line separated block of text"},
                     {"name": "Blocks (JSON)", "value": "json", "description": "An array of Notion block objects"},
@@ -312,19 +349,29 @@ class Notion(Node):
             },
             {
                 "name": "blockText", "displayName": "Text", "type": "string", "default": "", "typeOptions": {"rows": 4},
-                "displayOptions": {"show": {"resource": ["block"], "blockSource": ["text"]}},
+                "displayOptions": {"show": {"resource": ["block"], "operation": ["append"], "blockSource": ["text"]}},
             },
             {
                 "name": "blocksJson", "displayName": "Blocks (JSON)", "type": "json", "default": "",
                 "description": "e.g. [{\"type\": \"to_do\", \"to_do\": {\"rich_text\": [{\"text\": {\"content\": \"Ship it\"}}]}}]",
-                "displayOptions": {"show": {"resource": ["block"], "blockSource": ["json"]}},
+                "displayOptions": {"show": {"resource": ["block"], "operation": ["append"], "blockSource": ["json"]}},
             },
+            # ---- file upload
+            binary_name_property("binaryPropertyName", "Input Binary Field", {"operation": ["appendFile", "attachFile"]},
+                                 "Name of the binary property that holds the file to upload (up to 20 MB)"),
+            {"name": "caption", "displayName": "Caption", "type": "string", "default": "",
+             "displayOptions": {"show": {"resource": ["block"], "operation": ["appendFile"]}}},
+            {"name": "propertyName", "displayName": "Files Property", "type": "string", "default": "", "required": True, "placeholder": "Attachments",
+             "description": "Name of the page's Files property", "displayOptions": {"show": {"resource": ["page"], "operation": ["attachFile"]}}},
+            {"name": "replaceFiles", "displayName": "Replace Existing Files", "type": "boolean", "default": False,
+             "description": "Whether to replace the files already in the property instead of adding to them",
+             "displayOptions": {"show": {"resource": ["page"], "operation": ["attachFile"]}}},
         ],
     }
 
     def load_options(self, method, parameters, ctx=None):
         if method == "getDatabases":
-            api = notion_api(ctx, ctx.get_credentials("notionApi"))
+            api = notion_api(ctx, notion_credentials(ctx, (parameters or {}).get("authentication")))
             options, cursor = [], None
             for _ in range(10):
                 body = {"filter": {"property": "object", "value": "database"}, "page_size": PAGE_SIZE}
@@ -340,7 +387,7 @@ class Notion(Node):
         return super().load_options(method, parameters, ctx)
 
     def execute(self, ctx):
-        api = notion_api(ctx, ctx.get_credentials("notionApi"))
+        api = notion_api(ctx, notion_credentials(ctx, ctx.get_node_parameter("authentication")))
         schemas: dict[str, dict[str, Any]] = {}
         results = []
         for i, _item in enumerate(items_of(ctx)):
@@ -365,6 +412,10 @@ class Notion(Node):
                     results.extend(outs(map(shape, self._search(ctx, api, i)), i))
                 elif resource == "block" and operation == "append":
                     results.append(out(self._append(ctx, api, i), i))
+                elif resource == "block" and operation == "appendFile":
+                    results.append(out(self._append_file(ctx, api, i), i))
+                elif resource == "page" and operation == "attachFile":
+                    results.append(out(shape(self._attach_file(ctx, api, i)), i))
                 else:
                     raise NodeOperationError(f"Unsupported operation {resource}.{operation}", item_index=i)
         return results
@@ -455,3 +506,50 @@ class Notion(Node):
             appended.extend(response.get("results") or [])
             count_written(ctx, "notion", "append", len(chunk))
         return {"blockId": block, "appended": len(blocks), "results": appended}
+
+    # ------------------------------------------------------------ file uploads
+
+    @staticmethod
+    def _upload(ctx, api: Api, i: int) -> tuple[str, str, str]:
+        """Notion's file upload API for the item's binary file: create the upload, send the bytes (one multipart part).
+        Returns ``(upload id, file name, MIME type)``; the upload is then attached to a block or a page property."""
+        content, ref, file_name = binary_input(ctx, "binaryPropertyName", i)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise NodeOperationError(f"'{file_name}' is {len(content)} bytes; Notion takes up to {MAX_UPLOAD_BYTES // (1024 * 1024)} MB in one upload", item_index=i)
+        mime = content_type_of(ref, file_name)
+        created = api.call("POST", "/v1/file_uploads", json={"filename": file_name, "content_type": mime}) or {}
+        upload_id = created.get("id")
+        if not upload_id:
+            raise NodeOperationError("Notion did not return a file upload id", item_index=i)
+        body, content_type = multipart({}, [("file", file_name, content, mime)])
+        api.call("POST", f"/v1/file_uploads/{quote(str(upload_id), safe='')}/send", data=body, headers={"Content-Type": content_type}, timeout=120)
+        count_written(ctx, "notion", "upload")
+        return str(upload_id), file_name, mime
+
+    def _append_file(self, ctx, api: Api, i: int) -> dict[str, Any]:
+        block = page_id(ctx.get_node_parameter("blockId", i), "Page or Block", i)
+        upload_id, file_name, mime = self._upload(ctx, api, i)
+        kind = "image" if mime.startswith("image/") else "video" if mime.startswith("video/") else "audio" if mime.startswith("audio/") \
+            else "pdf" if mime == "application/pdf" else "file"
+        caption = text_param(ctx, "caption", i)
+        payload: dict[str, Any] = {"type": "file_upload", "file_upload": {"id": upload_id}}
+        if caption:
+            payload["caption"] = rich_text(caption)
+        response = api.call("PATCH", f"/v1/blocks/{block}/children", json={"children": [{"object": "block", "type": kind, kind: payload}]}) or {}
+        count_written(ctx, "notion", "append")
+        return {"blockId": block, "fileUploadId": upload_id, "fileName": file_name, "blockType": kind, "results": response.get("results") or []}
+
+    def _attach_file(self, ctx, api: Api, i: int) -> dict[str, Any]:
+        page = page_id(ctx.get_node_parameter("pageId", i), "Page", i)
+        prop = text_param(ctx, "propertyName", i, required=True, label="Files Property")
+        upload_id, file_name, _mime = self._upload(ctx, api, i)
+        files: list[Any] = []
+        if not bool_param(ctx, "replaceFiles", i):
+            current = ((api.get(f"/v1/pages/{page}") or {}).get("properties") or {}).get(prop)
+            if not isinstance(current, dict) or current.get("type") != "files":
+                raise NodeOperationError(f"'{prop}' is not a Files property of this page", item_index=i)
+            files = [{k: f[k] for k in ("name", "type", "file", "external") if k in f} for f in current.get("files") or [] if isinstance(f, dict)]
+        files.append({"name": file_name, "type": "file_upload", "file_upload": {"id": upload_id}})
+        updated = api.call("PATCH", f"/v1/pages/{page}", json={"properties": {prop: {"files": files}}}) or {}
+        count_written(ctx, "notion", "update")
+        return updated

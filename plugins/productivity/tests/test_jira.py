@@ -162,7 +162,127 @@ class JiraTests(unittest.TestCase):
     def test_manifest_credentials_follow_version(self):
         jira = next(n for n in self.plugin.manifest()["nodes"] if n["name"] == "jira")
         self.assertEqual([(c["name"], c["displayOptions"]["show"]["jiraVersion"]) for c in jira["credentials"]],
-                         [("jiraSoftwareCloudApi", ["cloud"]), ("jiraSoftwareServerPatApi", ["serverPat"])])
+                         [("jiraSoftwareCloudApi", ["cloud"]), ("jiraSoftwareCloudOAuth2Api", ["cloudOAuth2"]), ("jiraSoftwareServerPatApi", ["serverPat"])])
+
+
+SITE = {"id": "cloud-1111", "url": "https://acme.atlassian.net", "name": "acme", "scopes": ["read:jira-work", "write:jira-work"]}
+OTHER = {"id": "cloud-2222", "url": "https://other.atlassian.net", "name": "other", "scopes": ["read:jira-work"]}
+CONFLUENCE = {"id": "cloud-3333", "url": "https://wiki.atlassian.net", "name": "wiki", "scopes": ["read:confluence-content.all"]}
+
+
+class JiraOAuth2Tests(unittest.TestCase):
+    """Jira Cloud with OAuth2: the cloud id comes from accessible-resources (matched to the site, cached) and calls go to
+    ``/ex/jira/<cloud id>/...`` of Atlassian's gateway (a fake here, set as the credential's API Gateway URL)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.api = FakeApi().__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.api.__exit__()
+
+    def setUp(self):
+        from productivity import jira
+
+        jira._SITES.clear()
+        self.api.reset()
+        self.plugin = make_plugin()
+        self.token = "oauth-access-" + TOKEN
+
+    def creds(self, **extra):
+        return {"jiraSoftwareCloudOAuth2Api": {"accessToken": self.token, "apiBaseUrl": self.api.url, **extra}}
+
+    def run_oauth(self, parameters, **extra):
+        return execute(self.plugin, "jira", {"jiraVersion": "cloudOAuth2", **parameters}, credentials=self.creds(**extra))
+
+    def sites(self, *resources):
+        self.api.route("GET", "/oauth/token/accessible-resources",
+                       lambda r: list(resources) if r["headers"].get("authorization") == f"Bearer {self.token}" else (401, {"message": "Unauthorized"}))
+
+    def test_credential_type_extends_the_generic_oauth2_type_with_atlassians_urls(self):
+        ctype = next(c for c in self.plugin.manifest()["credentialTypes"] if c["name"] == "jiraSoftwareCloudOAuth2Api")
+        self.assertEqual(ctype["extends"], ["oAuth2Api"])
+        self.assertTrue(ctype["testable"])
+        props = {p["name"]: p for p in ctype["properties"]}
+        self.assertEqual(props["authUrl"]["default"], "https://auth.atlassian.com/authorize")
+        self.assertEqual(props["accessTokenUrl"]["default"], "https://auth.atlassian.com/oauth/token")
+        self.assertEqual(props["authQueryParameters"]["default"], "audience=api.atlassian.com&prompt=consent")
+        self.assertEqual(props["grantType"]["default"], "authorizationCode")
+        self.assertIn("offline_access", props["scope"]["default"].split())
+        self.assertIn("read:jira-work", props["scope"]["default"].split())
+        self.assertEqual(props["apiBaseUrl"]["default"], "https://api.atlassian.com")
+
+    def test_calls_go_through_the_gateway_with_the_cloud_id_of_the_matching_site(self):
+        self.sites(OTHER, CONFLUENCE, SITE)
+        self.api.route("GET", "/ex/jira/cloud-1111/rest/api/3/issue/PROJ-1", lambda r: jira_issue("PROJ-1"))
+        response = self.run_oauth({"resource": "issue", "operation": "get", "issueKey": "PROJ-1"}, domain="ACME.atlassian.net/")
+        self.assertEqual(jsons(response)[0]["key"], "PROJ-1")
+        self.assertEqual([r["path"] for r in self.api.requests], ["/oauth/token/accessible-resources", "/ex/jira/cloud-1111/rest/api/3/issue/PROJ-1"])
+        # Bearer, not Basic, on both calls.
+        self.assertEqual({r["headers"]["authorization"] for r in self.api.requests}, {f"Bearer {self.token}"})
+
+    def test_cloud_id_is_cached_per_site_and_token(self):
+        self.sites(OTHER, SITE)
+        self.api.route("GET", "/ex/jira/cloud-1111/rest/api/3/issue/PROJ-1", lambda r: jira_issue("PROJ-1"))
+        self.api.route("GET", "/ex/jira/cloud-2222/rest/api/3/issue/PROJ-1", lambda r: jira_issue("PROJ-1"))
+        params = {"resource": "issue", "operation": "get", "issueKey": "PROJ-1"}
+        for _ in range(3):
+            self.run_oauth(params, domain="https://acme.atlassian.net")
+        self.assertEqual(len(self.api.calls("GET", "/oauth/token/accessible-resources")), 1)
+        # Another site is another lookup; a renewed token too.
+        self.run_oauth(params, domain="https://other.atlassian.net")
+        self.assertEqual(len(self.api.calls("GET", "/oauth/token/accessible-resources")), 2)
+        self.assertEqual(len(self.api.calls("GET", "/ex/jira/cloud-2222/rest/api/3/issue/PROJ-1")), 1)
+        self.token = "renewed-" + TOKEN
+        self.run_oauth(params, domain="https://acme.atlassian.net")
+        self.assertEqual(len(self.api.calls("GET", "/oauth/token/accessible-resources")), 3)
+
+    def test_a_single_jira_site_needs_no_domain_but_several_do(self):
+        self.sites(CONFLUENCE, SITE)
+        self.api.route("POST", "/ex/jira/cloud-1111/rest/api/3/issue/PROJ-1/comment", lambda r: {"id": "c1", "body": r["json"]["body"]})
+        response = self.run_oauth({"resource": "issueComment", "operation": "add", "issueKey": "PROJ-1", "comment": "hi"})
+        self.assertEqual(jsons(response)[0]["body"]["type"], "doc")  # Cloud: ADF
+        self.setUp()
+        self.sites(SITE, OTHER)
+        error = self.run_oauth({"resource": "issue", "operation": "get", "issueKey": "PROJ-1"})["error"]
+        self.assertEqual(error["message"], "This token reaches several Jira sites")
+        self.assertIn("https://other.atlassian.net", error["description"])
+        self.assertEqual(error["itemIndex"], 0)
+
+    def test_a_site_the_token_cannot_reach_names_the_ones_it_can(self):
+        self.sites(SITE)
+        error = self.run_oauth({"resource": "issue", "operation": "get", "issueKey": "PROJ-1"}, domain="https://nope.atlassian.net")["error"]
+        self.assertIn("can't reach the Jira site 'https://nope.atlassian.net'", error["message"])
+        self.assertIn("https://acme.atlassian.net", error["description"])
+        self.setUp()
+        self.sites(CONFLUENCE)
+        self.assertEqual(self.run_oauth({"resource": "issue", "operation": "get", "issueKey": "PROJ-1"})["error"]["message"], "This Atlassian account granted no Jira site to the app")
+
+    def test_a_refused_token_reads_like_a_401_so_the_host_renews_it(self):
+        self.sites(SITE)
+        self.token = "stale"
+        self.api.route("GET", "/oauth/token/accessible-resources", (401, {"message": "Unauthorized"}))
+        error = self.run_oauth({"resource": "issue", "operation": "get", "issueKey": "PROJ-1"})["error"]["message"]
+        self.assertIn("401", error)
+
+    def test_credential_test_and_load_options_and_search_and_attachment_download(self):
+        self.sites(SITE)
+        self.api.route("GET", "/ex/jira/cloud-1111/rest/api/3/myself", {"displayName": "Ada Lovelace"})
+        self.assertEqual(self.plugin.test_credentials("jiraSoftwareCloudOAuth2Api", self.creds()["jiraSoftwareCloudOAuth2Api"]),
+                         {"ok": True, "message": "authenticated as Ada Lovelace"})
+        bad = self.plugin.test_credentials("jiraSoftwareCloudOAuth2Api", {**self.creds()["jiraSoftwareCloudOAuth2Api"], "domain": "https://nope.atlassian.net"})
+        self.assertFalse(bad["ok"])
+        self.assertIn("can't reach", bad["message"])
+        self.api.route("GET", "/ex/jira/cloud-1111/rest/api/3/priority", [{"id": "1", "name": "Highest"}])
+        self.assertEqual(self.plugin.load_options("jira", "getPriorities", {"jiraVersion": "cloudOAuth2"}, self.creds()), [{"name": "Highest", "value": "1"}])
+        self.api.route("POST", "/ex/jira/cloud-1111/rest/api/3/search/jql", {"issues": [jira_issue("PROJ-1")], "isLast": True})
+        found = self.run_oauth({"resource": "issue", "operation": "getAll", "jql": "project = PROJ", "returnAll": True})
+        self.assertEqual([j["key"] for j in jsons(found)], ["PROJ-1"])
+        self.api.route("GET", "/ex/jira/cloud-1111/rest/api/3/attachment/42", {"id": "42", "filename": "a.txt", "mimeType": "text/plain"})
+        self.api.route("GET", "/ex/jira/cloud-1111/rest/api/3/attachment/content/42", (200, b"file body", {"Content-Type": "text/plain"}))
+        got = self.run_oauth({"resource": "issueAttachment", "operation": "get", "attachmentId": "42"})
+        self.assertEqual(got["outputs"][0][0]["binary"]["data"]["fileName"], "a.txt")
 
 
 class AdfTests(unittest.TestCase):

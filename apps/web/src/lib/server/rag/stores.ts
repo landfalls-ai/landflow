@@ -41,6 +41,10 @@ export interface VectorStore {
   /** Best keyword match first; documents without any query term are left out. */
   keywordSearch(collection: string, query: string, k: number, filter?: MetadataFilter): Promise<AiDocument[]>;
   clear(collection: string): Promise<void>;
+  /** The id and metadata of every document of a collection (no text, no embeddings), oldest first. */
+  metadataOf(collection: string): Promise<Array<{ id: string; metadata: JsonObject }>>;
+  /** Delete the documents whose metadata matches `filter`; returns how many went. */
+  deleteWhere(collection: string, filter: MetadataFilter): Promise<number>;
   count(collection: string): Promise<number>;
   collections(): Promise<Array<{ name: string; count: number }>>;
 }
@@ -118,6 +122,19 @@ export class MemoryVectorStore implements VectorStore {
 
   async clear(collection: string) {
     memoryCollections.delete(collection);
+  }
+
+  async metadataOf(collection: string) {
+    return this.records(collection).map((record) => ({ id: record.id, metadata: structuredClone(record.metadata) }));
+  }
+
+  async deleteWhere(collection: string, filter: MetadataFilter) {
+    const records = memoryCollections.get(collection);
+    let removed = 0;
+    for (const record of this.records(collection)) {
+      if (matches(record.metadata, filter) && records?.delete(record.id)) removed++;
+    }
+    return removed;
   }
 
   async count(collection: string) {
@@ -244,6 +261,25 @@ export class SqliteVectorStore implements VectorStore {
 
   async clear(collection: string) {
     this.db.prepare('DELETE FROM vectors WHERE collection = ?').run(collection);
+  }
+
+  async metadataOf(collection: string) {
+    const rows = this.db.prepare('SELECT id, metadata FROM vectors WHERE collection = ? ORDER BY created_at, id').all(collection) as unknown as Array<{ id: string; metadata: string }>;
+    return rows.map((row) => ({ id: row.id, metadata: JSON.parse(row.metadata) as JsonObject }));
+  }
+
+  async deleteWhere(collection: string, filter: MetadataFilter) {
+    const ids = (await this.metadataOf(collection)).filter((row) => matches(row.metadata, filter)).map((row) => row.id);
+    const remove = this.db.prepare('DELETE FROM vectors WHERE collection = ? AND id = ?');
+    this.db.exec('BEGIN');
+    try {
+      for (const id of ids) remove.run(collection, id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return ids.length;
   }
 
   async count(collection: string) {
@@ -424,6 +460,19 @@ export class PgVectorStore implements VectorStore {
   async clear(collection: string) {
     const pool = await this.pool();
     await pool.query(`DELETE FROM ${this.table} WHERE collection = $1`, [collection]);
+  }
+
+  async metadataOf(collection: string) {
+    const pool = await this.pool();
+    const { rows } = await pool.query<{ id: string; metadata: JsonObject }>(`SELECT id, metadata FROM ${this.table} WHERE collection = $1 ORDER BY created_at, id`, [collection]);
+    return rows;
+  }
+
+  async deleteWhere(collection: string, filter: MetadataFilter) {
+    if (!Object.keys(filter).length) return 0;
+    const pool = await this.pool();
+    const result = await pool.query(`DELETE FROM ${this.table} WHERE collection = $1 AND metadata @> $2::jsonb`, [collection, JSON.stringify(filter)]);
+    return result.rowCount ?? 0;
   }
 
   async count(collection: string) {

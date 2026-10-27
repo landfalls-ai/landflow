@@ -9,7 +9,8 @@
   "id": "messaging",
   "name": "Messaging",
   "version": "0.1.0",
-  "description": "Telegram, Slack, Discord, WhatsApp Business Cloud and SMTP email",
+  "description": "Telegram, Slack, Discord, WhatsApp Business Cloud, Twilio (SMS, MMS, WhatsApp, calls) and SMTP email; reachable over HTTP, gRPC, any installed broker and MCP",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtbXNnLWJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzNBQUVFMyIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxQjg2QkQiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSJ1cmwoI2xmLW1zZy1iZykiLz4KICA8cGF0aCBkPSJNMjEgMTBoMTVhNCA0IDAgMCAxIDQgNHY4YTQgNCAwIDAgMS00IDRoLTF2NC41TDI5LjUgMjZIMjFhNCA0IDAgMCAxLTQtNHYtOGE0IDQgMCAwIDEgNC00eiIgZmlsbD0iI2JmZTZmOCIvPgogIDxwYXRoIGQ9Ik0xMiAxOGgxNWE0IDQgMCAwIDEgNCA0djhhNCA0IDAgMCAxLTQgNGgtOGwtNiA1di01aC0xYTQgNCAwIDAgMS00LTR2LThhNCA0IDAgMCAxIDQtNHoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxNC41IiBjeT0iMjYiIHI9IjEuNyIgZmlsbD0iIzIyOUVEOSIvPgogIDxjaXJjbGUgY3g9IjE5LjUiIGN5PSIyNiIgcj0iMS43IiBmaWxsPSIjMjI5RUQ5Ii8+CiAgPGNpcmNsZSBjeD0iMjQuNSIgY3k9IjI2IiByPSIxLjciIGZpbGw9IiMyMjlFRDkiLz4KPC9zdmc+Cg==",
   "color": "#229ED9",
   "author": "Landflow"
  },
@@ -23,6 +24,7 @@
    "categories": [
     "Communication"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdGctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzRBRUU2Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBOEJDMiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtdGctYmcpIi8+CiAgPHBhdGggZD0iTTM5IDExIDkgMjIuNWwxMi41IDR6IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTM5IDExIDIxLjUgMjYuNSAyNSAzOHoiIGZpbGw9IiNkM2YwZmMiIHN0cm9rZT0iI2QzZjBmYyIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMjEuNSAyNi41IDIwIDMzLjVsMy42LTMuNHoiIGZpbGw9IiM5ZmQ4ZjIiIHN0cm9rZT0iIzlmZDhmMiIgc3Ryb2tlLXdpZHRoPSIxLjIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
    "color": "#229ED9",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://core.telegram.org/bots/api",
@@ -37,6 +39,7 @@
     "attachment"
    ],
    "usableAsTool": true,
+   "idempotent": false,
    "toolDescription": "Send a Telegram message, photo, document, audio or video, edit or delete a message, show a chat action, or get chat details. Needs the numeric chat ID or @channelusername.",
    "inputs": [
     {
@@ -93,8 +96,9 @@
       {
        "name": "Get",
        "value": "get",
-       "description": "Get a file\u2019s details and download it into the item",
-       "action": "Get a file"
+       "description": "Get a file’s details and download it into the item",
+       "action": "Get a file",
+       "idempotent": true
       }
      ]
     },
@@ -116,7 +120,8 @@
        "name": "Get",
        "value": "get",
        "description": "Get up-to-date information about a chat",
-       "action": "Get a chat"
+       "action": "Get a chat",
+       "idempotent": true
       }
      ]
     },
@@ -152,13 +157,13 @@
       {
        "name": "Send Chat Action",
        "value": "sendChatAction",
-       "description": "Show \"typing\u2026\" or another status in the chat",
+       "description": "Show \"typing…\" or another status in the chat",
        "action": "Send a chat action"
       },
       {
        "name": "Send Document",
        "value": "sendDocument",
-       "description": "Any file (PDF, CSV, ZIP\u2026)",
+       "description": "Any file (PDF, CSV, ZIP…)",
        "action": "Send a document"
       },
       {
@@ -208,7 +213,7 @@
        ]
       }
      },
-     "description": "The file_id of a document, photo, voice note\u2026 (from the Telegram Trigger or a sent message)"
+     "description": "The file_id of a document, photo, voice note… (from the Telegram Trigger or a sent message)"
     },
     {
      "name": "download",
@@ -669,6 +674,7 @@
    "categories": [
     "Communication"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdGd0LWJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzM0QUVFNiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxQThCQzIiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSJ1cmwoI2xmLXRndC1iZykiLz4KICA8cGF0aCBkPSJNMzQgOSA3LjUgMTlsMTEgMy42eiIgZmlsbD0iI2ZmZiIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjEuNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0zNCA5IDE4LjUgMjIuNmwzLjEgMTAuMnoiIGZpbGw9IiNkM2YwZmMiIHN0cm9rZT0iI2QzZjBmYyIgc3Ryb2tlLXdpZHRoPSIxLjQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMTguNSAyMi42IDE3LjIgMjguOGwzLjItM3oiIGZpbGw9IiM5ZmQ4ZjIiIHN0cm9rZT0iIzlmZDhmMiIgc3Ryb2tlLXdpZHRoPSIxLjEiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIzNSIgY3k9IjM1IiByPSI5IiBmaWxsPSIjZmZmIi8+CiAgPHBhdGggZD0iTTM1IDMwLjJWMzVsMy4yIDIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzFBOEJDMiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
    "color": "#229ED9",
    "subtitle": "every {{pollInterval}}s",
    "documentationUrl": "https://core.telegram.org/bots/api#getupdates",
@@ -720,7 +726,7 @@
       {
        "name": "Message",
        "value": "message",
-       "description": "New incoming message of any kind: text, photo, sticker\u2026"
+       "description": "New incoming message of any kind: text, photo, sticker…"
       },
       {
        "name": "Edited Message",
@@ -739,6 +745,13 @@
      ]
     },
     {
+     "name": "downloadFiles",
+     "displayName": "Download Files",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to download the photo (largest size), document, video, audio, voice, video note, animation or sticker of a message into item.binary.data (up to 20 MB on the cloud Bot API). A file that fails leaves file_error in the item"
+    },
+    {
      "name": "notice",
      "displayName": "Polls getUpdates, so the bot must have no webhook (Telegram answers 409 otherwise: call deleteWebhook first). Only one poller per bot. Execute in the editor shows up to 5 recent updates without consuming them.",
      "type": "notice"
@@ -748,12 +761,13 @@
   {
    "name": "slack",
    "displayName": "Slack",
-   "description": "Send, update and delete Slack messages, list channels, look up users and add reactions",
+   "description": "Send, update and delete Slack messages, upload and download files, list channels, look up users and add reactions",
    "version": 1,
    "kind": "action",
    "categories": [
     "Communication"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtc2xhY2stYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNUUxRjYwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzNCMEYzQyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtc2xhY2stYmcpIi8+CiAgPHBhdGggZD0iTTIwLjUgMTIgMTcuNSAzNk0zMC41IDEyIDI3LjUgMzZNMTMgMTkuNWgyM00xMiAyOC41aDIzIiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNC4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==",
    "color": "#4A154B",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://api.slack.com/methods",
@@ -761,10 +775,14 @@
     "slack",
     "chat",
     "message",
-    "channel"
+    "channel",
+    "file",
+    "upload",
+    "attachment"
    ],
    "usableAsTool": true,
-   "toolDescription": "Send, update or delete a Slack message, get its permalink, list channels, find a user by email, or add an emoji reaction.",
+   "idempotent": false,
+   "toolDescription": "Send, update or delete a Slack message, get its permalink, upload or download a file, list channels, find a user by email, or add an emoji reaction.",
    "inputs": [
     {
      "type": "main"
@@ -778,10 +796,47 @@
    "credentials": [
     {
      "name": "slackApi",
-     "required": true
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "accessToken"
+       ]
+      }
+     }
+    },
+    {
+     "name": "slackOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
     }
    ],
    "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "accessToken",
+     "options": [
+      {
+       "name": "Access Token",
+       "value": "accessToken",
+       "description": "A bot token pasted from the Slack app"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Connect with Slack; the token is renewed for you"
+      }
+     ]
+    },
     {
      "name": "resource",
      "displayName": "Resource",
@@ -792,6 +847,10 @@
       {
        "name": "Channel",
        "value": "channel"
+      },
+      {
+       "name": "File",
+       "value": "file"
       },
       {
        "name": "Message",
@@ -825,7 +884,8 @@
        "name": "Get Many",
        "value": "getAll",
        "description": "Get many channels in the workspace",
-       "action": "Get many channels"
+       "action": "Get many channels",
+       "idempotent": true
       }
      ]
     },
@@ -869,7 +929,37 @@
        "name": "Get by Email",
        "value": "getByEmail",
        "description": "Find a user by email address",
-       "action": "Get a user by email"
+       "action": "Get a user by email",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "upload",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Get a file’s details and download it into the item",
+       "action": "Get a file",
+       "idempotent": true
+      },
+      {
+       "name": "Upload",
+       "value": "upload",
+       "description": "Upload an item file to a channel or thread",
+       "action": "Upload a file"
       }
      ]
     },
@@ -895,7 +985,8 @@
       {
        "name": "Get Permalink",
        "value": "getPermalink",
-       "action": "Get a message permalink"
+       "action": "Get a message permalink",
+       "idempotent": true
       },
       {
        "name": "Send",
@@ -927,6 +1018,151 @@
       }
      },
      "description": "Pick a channel, or set a channel ID (C0123ABCD) with an expression"
+    },
+    {
+     "name": "channelId",
+     "displayName": "Channel",
+     "type": "options",
+     "required": true,
+     "default": "",
+     "typeOptions": {
+      "loadOptionsMethod": "getChannels"
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "upload"
+       ]
+      }
+     },
+     "description": "The channel to share the file in. Pick one, or set a channel ID (C0123ABCD) with an expression"
+    },
+    {
+     "name": "binaryPropertyName",
+     "displayName": "Input Binary Field",
+     "type": "string",
+     "required": true,
+     "default": "data",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "upload"
+       ]
+      }
+     },
+     "description": "The item file to upload (item.binary.<name>)"
+    },
+    {
+     "name": "fileOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "upload"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "fileName",
+       "displayName": "File Name",
+       "type": "string",
+       "default": "",
+       "description": "Default: the item file’s name"
+      },
+      {
+       "name": "title",
+       "displayName": "Title",
+       "type": "string",
+       "default": "",
+       "description": "Default: the file name"
+      },
+      {
+       "name": "initial_comment",
+       "displayName": "Message",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 2
+       },
+       "description": "Text posted with the file"
+      },
+      {
+       "name": "thread_ts",
+       "displayName": "Reply to Thread (ts)",
+       "type": "string",
+       "default": "",
+       "description": "Share the file as a reply in the thread of this message"
+      }
+     ]
+    },
+    {
+     "name": "fileId",
+     "displayName": "File ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "F0123ABCD",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     },
+     "description": "The file’s ID, e.g. from a message event’s files"
+    },
+    {
+     "name": "download",
+     "displayName": "Download",
+     "type": "boolean",
+     "default": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     },
+     "description": "Whether to put the file in item.binary; off: only its details"
+    },
+    {
+     "name": "binaryPropertyName",
+     "displayName": "Put Output File in Field",
+     "type": "string",
+     "default": "data",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "get"
+       ],
+       "download": [
+        true
+       ]
+      }
+     },
+     "description": "The item.binary field for the downloaded file"
     },
     {
      "name": "text",
@@ -1183,6 +1419,219 @@
    ]
   },
   {
+   "name": "slackTrigger",
+   "displayName": "Slack Trigger",
+   "description": "Starts the workflow on Slack events: messages, mentions, reactions, new channels and members, shared files, …",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "appWebhook",
+   "categories": [
+    "Communication"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzRBMTU0QiIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMTkgMTJsLTMgMjRNMzEgMTJsLTMgMjRNMTIgMjBoMjRNMTEgMjhoMjQiLz4KICA8L2c+CiAgPHBhdGggZD0iTTMzIDZsLTUgOGg0bC0zIDcgNy05aC00eiIgZmlsbD0iI0VDQjIyRSIvPgo8L3N2Zz4K",
+   "color": "#4A154B",
+   "subtitle": "{{events}}",
+   "documentationUrl": "https://api.slack.com/apis/events-api",
+   "keywords": [
+    "slack",
+    "trigger",
+    "webhook",
+    "events api",
+    "message",
+    "mention",
+    "reaction",
+    "channel"
+   ],
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "slackApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "accessToken"
+       ]
+      }
+     }
+    },
+    {
+     "name": "slackOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "accessToken",
+     "options": [
+      {
+       "name": "Access Token",
+       "value": "accessToken",
+       "description": "A bot token pasted from the Slack app"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Connect with Slack; the token is renewed for you"
+      }
+     ]
+    },
+    {
+     "name": "notice",
+     "displayName": "Slack has no API to register an Events subscription. Publish the workflow, copy this node's Request URL from the editor's Publish menu (App webhooks) into the Slack app's Event Subscriptions page (Enable Events), and subscribe to the bot events you picked below. The credential's Signing Secret (\"Basic Information\" page) is required: Landflow verifies every call with it and answers Slack's URL verification.",
+     "type": "notice",
+     "default": ""
+    },
+    {
+     "name": "events",
+     "displayName": "Events",
+     "type": "multiOptions",
+     "default": [
+      "app_mention"
+     ],
+     "required": true,
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Any Event",
+       "value": "*",
+       "description": "Every event the Slack app is subscribed to"
+      },
+      {
+       "name": "App Home Opened",
+       "value": "app_home_opened",
+       "description": "A user opened the app's Home or Messages tab"
+      },
+      {
+       "name": "App Mention",
+       "value": "app_mention",
+       "description": "The app was @mentioned in a channel it is in"
+      },
+      {
+       "name": "Channel Created",
+       "value": "channel_created"
+      },
+      {
+       "name": "Channel Renamed",
+       "value": "channel_rename"
+      },
+      {
+       "name": "File Public",
+       "value": "file_public"
+      },
+      {
+       "name": "File Shared",
+       "value": "file_shared"
+      },
+      {
+       "name": "Link Shared",
+       "value": "link_shared",
+       "description": "A link of a domain the app unfurls was posted"
+      },
+      {
+       "name": "Member Joined Channel",
+       "value": "member_joined_channel"
+      },
+      {
+       "name": "Message",
+       "value": "message",
+       "description": "A message in any channel, group or DM the app can see (subscribe to the message.* events)"
+      },
+      {
+       "name": "Reaction Added",
+       "value": "reaction_added"
+      },
+      {
+       "name": "Reaction Removed",
+       "value": "reaction_removed"
+      },
+      {
+       "name": "Team Join",
+       "value": "team_join",
+       "description": "A new member joined the workspace"
+      },
+      {
+       "name": "User Change",
+       "value": "user_change",
+       "description": "A member's profile changed"
+      }
+     ],
+     "description": "The event types that start a run. Choosing Message and App Mention starts two runs for a mention in a channel."
+    },
+    {
+     "name": "watchWorkspace",
+     "displayName": "Watch Whole Workspace",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether events of every channel the app can see start a run; turn it off to limit them to the channels below"
+    },
+    {
+     "name": "channelIds",
+     "displayName": "Channel(s)",
+     "type": "string",
+     "default": "",
+     "placeholder": "C0123456789, C0987654321",
+     "description": "Channel IDs, comma-separated (the channel's \"Copy channel ID\"). Events without a channel (new members, profile changes) do not match.",
+     "displayOptions": {
+      "show": {
+       "watchWorkspace": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "ignoreBots",
+     "displayName": "Ignore Bot Messages",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to skip events written by bots or integrations (bot_id, subtype bot_message) and by this app itself, so a workflow that replies cannot trigger itself"
+    },
+    {
+     "name": "ignoreEdits",
+     "displayName": "Ignore Message Edits and Deletes",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to skip message events of subtype message_changed and message_deleted"
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "tolerance",
+       "displayName": "Signature Tolerance (s)",
+       "type": "number",
+       "default": 300,
+       "typeOptions": {
+        "minValue": 0
+       },
+       "description": "How far the signed request timestamp may be from now before the call is rejected as a replay"
+      }
+     ]
+    }
+   ]
+  },
+  {
    "name": "discord",
    "displayName": "Discord",
    "description": "Send, list, delete and react to Discord messages with a bot, or post through a channel webhook",
@@ -1191,6 +1640,7 @@
    "categories": [
     "Communication"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
    "color": "#5865F2",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://discord.com/developers/docs/resources/message",
@@ -1202,6 +1652,7 @@
     "bot"
    ],
    "usableAsTool": true,
+   "idempotent": false,
    "toolDescription": "Send a Discord message (bot or webhook), list recent messages in a channel, delete a message, or react with an emoji.",
    "inputs": [
     {
@@ -1221,6 +1672,17 @@
       "show": {
        "authentication": [
         "botToken"
+       ]
+      }
+     }
+    },
+    {
+     "name": "discordOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
        ]
       }
      }
@@ -1249,6 +1711,11 @@
        "name": "Bot Token",
        "value": "botToken",
        "description": "Manage messages in any channel the bot can see"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Connect with Discord; add a bot token to message channels"
       },
       {
        "name": "Webhook",
@@ -1304,7 +1771,8 @@
      "displayOptions": {
       "show": {
        "authentication": [
-        "botToken"
+        "botToken",
+        "oAuth2"
        ],
        "resource": [
         "message"
@@ -1321,7 +1789,8 @@
        "name": "Get Many",
        "value": "getAll",
        "description": "Retrieve the latest messages in a channel",
-       "action": "Get many messages"
+       "action": "Get many messages",
+       "idempotent": true
       },
       {
        "name": "React with Emoji",
@@ -1346,7 +1815,8 @@
      "displayOptions": {
       "show": {
        "authentication": [
-        "botToken"
+        "botToken",
+        "oAuth2"
        ]
       }
      },
@@ -1367,7 +1837,8 @@
      "displayOptions": {
       "show": {
        "authentication": [
-        "botToken"
+        "botToken",
+        "oAuth2"
        ]
       }
      },
@@ -1382,7 +1853,8 @@
      "displayOptions": {
       "show": {
        "authentication": [
-        "botToken"
+        "botToken",
+        "oAuth2"
        ],
        "resource": [
         "message"
@@ -1400,11 +1872,12 @@
      "type": "string",
      "required": true,
      "default": "",
-     "placeholder": "\ud83d\udc4d or custom_name:123456789012345678",
+     "placeholder": "👍 or custom_name:123456789012345678",
      "displayOptions": {
       "show": {
        "authentication": [
-        "botToken"
+        "botToken",
+        "oAuth2"
        ],
        "resource": [
         "message"
@@ -1465,7 +1938,8 @@
      "displayOptions": {
       "show": {
        "authentication": [
-        "botToken"
+        "botToken",
+        "oAuth2"
        ],
        "resource": [
         "message"
@@ -1481,6 +1955,14 @@
        "displayName": "Text-to-Speech",
        "type": "boolean",
        "default": false
+      },
+      {
+       "name": "attachments",
+       "displayName": "Attachments",
+       "type": "string",
+       "default": "",
+       "placeholder": "data, chart",
+       "description": "Comma-separated names of the item’s binary properties to upload with the message (up to 10 files, 25 MB in total on most servers)"
       },
       {
        "name": "replyTo",
@@ -1527,6 +2009,14 @@
        "displayName": "Text-to-Speech",
        "type": "boolean",
        "default": false
+      },
+      {
+       "name": "attachments",
+       "displayName": "Attachments",
+       "type": "string",
+       "default": "",
+       "placeholder": "data, chart",
+       "description": "Comma-separated names of the item’s binary properties to upload with the message (up to 10 files, 25 MB in total on most servers)"
       }
      ]
     },
@@ -1538,7 +2028,8 @@
      "displayOptions": {
       "show": {
        "authentication": [
-        "botToken"
+        "botToken",
+        "oAuth2"
        ],
        "resource": [
         "message"
@@ -1562,7 +2053,8 @@
      "displayOptions": {
       "show": {
        "authentication": [
-        "botToken"
+        "botToken",
+        "oAuth2"
        ],
        "operation": [
         "getAll"
@@ -1582,7 +2074,8 @@
      "displayOptions": {
       "show": {
        "authentication": [
-        "botToken"
+        "botToken",
+        "oAuth2"
        ],
        "resource": [
         "message"
@@ -1599,12 +2092,13 @@
   {
    "name": "whatsApp",
    "displayName": "WhatsApp Business Cloud",
-   "description": "Send WhatsApp text, media (by URL) and template messages through the Cloud API",
+   "description": "Send WhatsApp text, media (by URL, by uploading an item file or by media ID) and template messages, and download received media, through the Cloud API",
    "version": 1,
    "kind": "action",
    "categories": [
     "Communication"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtd2EtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzREQjc0Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFEQjk1NSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtd2EtYmcpIi8+CiAgPHBhdGggZD0iTTI0IDEwLjVhMTMuNSAxMy41IDAgMSAxLTYuOSAyNS4xbC02LjYgMS45IDEuOS02LjNBMTMuNSAxMy41IDAgMCAxIDI0IDEwLjV6IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0xOS42IDE3LjhjLjUtLjUgMS4zLS40IDEuNy4ybDEuNSAyLjNjLjMuNS4yIDEuMi0uMiAxLjZsLS44LjhjLjggMS44IDIuMiAzLjIgNCA0bC44LS44Yy40LS40IDEuMS0uNSAxLjYtLjJsMi4zIDEuNWMuNi40LjcgMS4yLjIgMS43bC0xLjEgMS4xYy0uOS45LTIuMyAxLjItMy41LjYtMy4zLTEuNi02LTQuMy03LjYtNy42LS42LTEuMi0uMy0yLjYuNi0zLjV6IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPgo=",
    "color": "#25D366",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages",
@@ -1616,6 +2110,7 @@
     "sms"
    ],
    "usableAsTool": true,
+   "idempotent": false,
    "toolDescription": "Send a WhatsApp message (text, or an image, document, audio or video by URL) or an approved template to a phone number in international format.",
    "inputs": [
     {
@@ -1644,6 +2139,39 @@
       {
        "name": "Message",
        "value": "message"
+      },
+      {
+       "name": "Media",
+       "value": "media"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "upload",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "media"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Upload",
+       "value": "upload",
+       "description": "Upload an item file; returns the media ID to send by",
+       "action": "Upload media"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Download received media by its ID into item.binary",
+       "action": "Get media",
+       "idempotent": true
       }
      ]
     },
@@ -1681,6 +2209,16 @@
      "type": "options",
      "required": true,
      "default": "",
+     "displayOptions": {
+      "hide": {
+       "resource": [
+        "media"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     },
      "typeOptions": {
       "loadOptionsMethod": "getPhoneNumbers"
      },
@@ -1692,6 +2230,13 @@
      "type": "string",
      "required": true,
      "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ]
+      }
+     },
      "placeholder": "+15551234567",
      "description": "International format with country code"
     },
@@ -1777,6 +2322,45 @@
      "description": "Whether to render a preview of the first URL in the text"
     },
     {
+     "name": "mediaSource",
+     "displayName": "Media Source",
+     "type": "options",
+     "default": "link",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "send"
+       ],
+       "messageType": [
+        "image",
+        "document",
+        "audio",
+        "video"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "URL",
+       "value": "link",
+       "description": "A public HTTPS URL WhatsApp downloads from"
+      },
+      {
+       "name": "Binary File",
+       "value": "binary",
+       "description": "Upload the item’s file to WhatsApp first (POST /media), then send it by ID"
+      },
+      {
+       "name": "Media ID",
+       "value": "id",
+       "description": "An ID from an earlier upload or an incoming message"
+      }
+     ]
+    },
+    {
      "name": "mediaLink",
      "displayName": "Media URL",
      "type": "string",
@@ -1796,10 +2380,115 @@
         "document",
         "audio",
         "video"
+       ],
+       "mediaSource": [
+        "link"
        ]
       }
      },
      "description": "Public HTTPS URL WhatsApp downloads the media from"
+    },
+    {
+     "name": "mediaId",
+     "displayName": "Media ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "send"
+       ],
+       "messageType": [
+        "image",
+        "document",
+        "audio",
+        "video"
+       ],
+       "mediaSource": [
+        "id"
+       ]
+      }
+     },
+     "description": "The ID of uploaded or received media"
+    },
+    {
+     "name": "mediaId",
+     "displayName": "Media ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "media"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     },
+     "description": "The ID of received media (messages webhook: messages[].image.id and similar)"
+    },
+    {
+     "name": "binaryPropertyName",
+     "displayName": "Input Binary Field",
+     "type": "string",
+     "default": "data",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "send"
+       ],
+       "messageType": [
+        "image",
+        "document",
+        "audio",
+        "video"
+       ],
+       "mediaSource": [
+        "binary"
+       ]
+      }
+     },
+     "description": "The item file to upload (item.binary.<name>); images up to 5 MB, audio and video 16 MB, documents 100 MB"
+    },
+    {
+     "name": "binaryPropertyName",
+     "displayName": "Binary Field",
+     "type": "string",
+     "default": "data",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "media"
+       ]
+      }
+     },
+     "description": "The item.binary field to upload, or to put the downloaded file in"
+    },
+    {
+     "name": "download",
+     "displayName": "Download File",
+     "type": "boolean",
+     "default": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "media"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     },
+     "description": "Whether to put the file in item.binary (limit 100 MB); off: only its URL, type and size"
     },
     {
      "name": "mediaCaption",
@@ -1901,14 +2590,1273 @@
    ]
   },
   {
-   "name": "emailSend",
-   "displayName": "Send Email",
-   "description": "Send an email through any SMTP server (text, HTML or both)",
+   "name": "twilio",
+   "displayName": "Twilio",
+   "description": "Send SMS, MMS and WhatsApp messages, place calls, and read messages and calls through the Twilio REST API",
    "version": 1,
    "kind": "action",
    "categories": [
     "Communication"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdHctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjRjc0NjRDIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI0QyMUUyNSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtdHctYmcpIi8+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzIi8+CiAgPGNpcmNsZSBjeD0iMTguNSIgY3k9IjE4LjUiIHI9IjMuMiIgZmlsbD0iI2ZmZiIvPgogIDxjaXJjbGUgY3g9IjI5LjUiIGN5PSIxOC41IiByPSIzLjIiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOC41IiBjeT0iMjkuNSIgcj0iMy4yIiBmaWxsPSIjZmZmIi8+CiAgPGNpcmNsZSBjeD0iMjkuNSIgY3k9IjI5LjUiIHI9IjMuMiIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+   "color": "#F22F46",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://www.twilio.com/docs/messaging/api/message-resource",
+   "keywords": [
+    "twilio",
+    "sms",
+    "mms",
+    "whatsapp",
+    "call",
+    "voice",
+    "phone"
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Send an SMS, MMS or WhatsApp message or place a phone call with Twilio, or look up messages and calls. Phone numbers are E.164 (+15551234567).",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "twilioApi",
+     "required": true
+    }
+   ],
+   "idempotent": false,
+   "outputSchema": {
+    "type": "object",
+    "properties": {
+     "sid": {
+      "type": "string",
+      "description": "The message SID (SM… or MM…)"
+     },
+     "account_sid": {
+      "type": "string"
+     },
+     "messaging_service_sid": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "from": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "to": {
+      "type": "string"
+     },
+     "body": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "status": {
+      "type": "string",
+      "description": "queued, sending, sent, delivered, undelivered, failed, received…"
+     },
+     "direction": {
+      "type": "string"
+     },
+     "num_segments": {
+      "type": "string"
+     },
+     "num_media": {
+      "type": "string"
+     },
+     "price": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "price_unit": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "error_code": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "error_message": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "date_created": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "date_updated": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "date_sent": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "uri": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "sid",
+     "to",
+     "status"
+    ]
+   },
+   "properties": [
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "message",
+     "options": [
+      {
+       "name": "Message",
+       "value": "message"
+      },
+      {
+       "name": "Call",
+       "value": "call"
+      },
+      {
+       "name": "Recording",
+       "value": "recording"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "download",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "recording"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Download",
+       "value": "download",
+       "description": "Download a call recording (MP3 or WAV) into item.binary",
+       "action": "Download a recording",
+       "idempotent": true
+      },
+      {
+       "name": "List",
+       "value": "list",
+       "description": "List recordings, newest first, optionally of one call",
+       "action": "List recordings",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "make",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Make",
+       "value": "make",
+       "description": "Place an outbound call that runs TwiML, inline or from a URL",
+       "action": "Make a call",
+       "idempotent": false,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "sid": {
+          "type": "string",
+          "description": "The call SID (CA…)"
+         },
+         "account_sid": {
+          "type": "string"
+         },
+         "from": {
+          "type": "string"
+         },
+         "to": {
+          "type": "string"
+         },
+         "status": {
+          "type": "string",
+          "description": "queued, ringing, in-progress, completed, busy, failed, no-answer, canceled"
+         },
+         "direction": {
+          "type": "string"
+         },
+         "duration": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "price": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "price_unit": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "start_time": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "end_time": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "date_created": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "date_updated": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "uri": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "sid",
+         "to",
+         "from",
+         "status"
+        ]
+       }
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Fetch one call by SID",
+       "action": "Get a call",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "sid": {
+          "type": "string",
+          "description": "The call SID (CA…)"
+         },
+         "account_sid": {
+          "type": "string"
+         },
+         "from": {
+          "type": "string"
+         },
+         "to": {
+          "type": "string"
+         },
+         "status": {
+          "type": "string",
+          "description": "queued, ringing, in-progress, completed, busy, failed, no-answer, canceled"
+         },
+         "direction": {
+          "type": "string"
+         },
+         "duration": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "price": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "price_unit": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "start_time": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "end_time": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "date_created": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "date_updated": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "uri": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "sid",
+         "to",
+         "from",
+         "status"
+        ]
+       }
+      },
+      {
+       "name": "List",
+       "value": "list",
+       "description": "List calls, newest first, filtered by To, From, status and start time",
+       "action": "List calls",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "sid": {
+          "type": "string",
+          "description": "The call SID (CA…)"
+         },
+         "account_sid": {
+          "type": "string"
+         },
+         "from": {
+          "type": "string"
+         },
+         "to": {
+          "type": "string"
+         },
+         "status": {
+          "type": "string",
+          "description": "queued, ringing, in-progress, completed, busy, failed, no-answer, canceled"
+         },
+         "direction": {
+          "type": "string"
+         },
+         "duration": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "price": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "price_unit": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "start_time": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "end_time": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "date_created": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "date_updated": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "uri": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "sid",
+         "to",
+         "from",
+         "status"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "send",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Send SMS",
+       "value": "send",
+       "description": "Send a text message",
+       "action": "Send an SMS",
+       "idempotent": false
+      },
+      {
+       "name": "Send MMS",
+       "value": "sendMms",
+       "description": "Send a message with media attachments (US and Canada)",
+       "action": "Send an MMS",
+       "idempotent": false
+      },
+      {
+       "name": "Send WhatsApp",
+       "value": "sendWhatsApp",
+       "description": "Send a WhatsApp message from a WhatsApp-enabled sender",
+       "action": "Send a WhatsApp message",
+       "idempotent": false
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Fetch one message by SID",
+       "action": "Get a message",
+       "idempotent": true
+      },
+      {
+       "name": "Get Media",
+       "value": "getMedia",
+       "description": "Download the files of a received MMS or WhatsApp message into item.binary (one item per file)",
+       "action": "Get message media",
+       "idempotent": true
+      },
+      {
+       "name": "List",
+       "value": "list",
+       "description": "List messages, newest first, filtered by To, From and date sent",
+       "action": "List messages",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "from",
+     "displayName": "From",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "+15551234567 or MGxxxxxxxx…",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "send",
+        "sendMms",
+        "sendWhatsApp"
+       ]
+      }
+     },
+     "description": "The Twilio phone number (E.164) or a Messaging Service SID (MG…) to send from. For WhatsApp, the WhatsApp-enabled number; the whatsapp: prefix is added for you"
+    },
+    {
+     "name": "to",
+     "displayName": "To",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "+15557654321",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "send",
+        "sendMms",
+        "sendWhatsApp"
+       ]
+      }
+     },
+     "description": "The recipient’s phone number in E.164 format (the whatsapp: prefix is added for WhatsApp)"
+    },
+    {
+     "name": "body",
+     "displayName": "Message",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "typeOptions": {
+      "rows": 3
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "send",
+        "sendWhatsApp"
+       ]
+      }
+     },
+     "description": "The text of the message (up to 1,600 characters; longer texts are split into segments)"
+    },
+    {
+     "name": "body",
+     "displayName": "Message",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "rows": 3
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "sendMms"
+       ]
+      }
+     },
+     "description": "Optional text sent with the media"
+    },
+    {
+     "name": "mediaUrls",
+     "displayName": "Media URLs",
+     "type": "fixedCollection",
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "default": {},
+     "placeholder": "Add Media URL",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "sendMms",
+        "sendWhatsApp"
+       ]
+      }
+     },
+     "description": "Public URLs of the media to attach (up to 10 for MMS, 1 for WhatsApp; 5 MB each). An expression may also give a JSON array or one URL per line",
+     "groups": [
+      {
+       "name": "urls",
+       "displayName": "Media URL",
+       "values": [
+        {
+         "name": "url",
+         "displayName": "URL",
+         "type": "string",
+         "default": "",
+         "placeholder": "https://example.com/picture.jpg"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "additionalFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "send",
+        "sendMms",
+        "sendWhatsApp"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "statusCallback",
+       "displayName": "Status Callback URL",
+       "type": "string",
+       "default": "",
+       "description": "URL Twilio posts delivery status updates to"
+      },
+      {
+       "name": "validityPeriod",
+       "displayName": "Validity Period (s)",
+       "type": "number",
+       "default": 14400,
+       "description": "Seconds the message may stay queued before Twilio gives up (1–14400)"
+      },
+      {
+       "name": "sendAt",
+       "displayName": "Send At",
+       "type": "string",
+       "default": "",
+       "placeholder": "2026-11-01T09:00:00Z",
+       "description": "Schedule the message (ISO 8601, needs a Messaging Service as From)"
+      },
+      {
+       "name": "contentSid",
+       "displayName": "Content Template SID",
+       "type": "string",
+       "default": "",
+       "placeholder": "HXxxxxxxxx…",
+       "description": "WhatsApp: send an approved content template instead of free text"
+      },
+      {
+       "name": "contentVariables",
+       "displayName": "Content Variables",
+       "type": "json",
+       "default": "",
+       "description": "WhatsApp: JSON object of template variables, e.g. {\"1\":\"Ann\"}"
+      }
+     ]
+    },
+    {
+     "name": "messageSid",
+     "displayName": "Message SID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "get",
+        "getMedia"
+       ]
+      }
+     }
+    },
+    {
+     "name": "binaryPropertyName",
+     "displayName": "Binary Field",
+     "type": "string",
+     "default": "data",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message",
+        "recording"
+       ],
+       "operation": [
+        "getMedia",
+        "download"
+       ]
+      }
+     },
+     "description": "The item.binary field for the downloaded file"
+    },
+    {
+     "name": "recordingSid",
+     "displayName": "Recording SID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "RExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "recording"
+       ],
+       "operation": [
+        "download"
+       ]
+      }
+     }
+    },
+    {
+     "name": "recordingFormat",
+     "displayName": "Format",
+     "type": "options",
+     "default": "mp3",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "recording"
+       ],
+       "operation": [
+        "download"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "MP3",
+       "value": "mp3"
+      },
+      {
+       "name": "WAV",
+       "value": "wav"
+      }
+     ]
+    },
+    {
+     "name": "recordingCallSid",
+     "displayName": "Call SID",
+     "type": "string",
+     "default": "",
+     "placeholder": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "recording"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "description": "Only the recordings of this call; empty: all"
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "recording"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "description": "Whether to return all results or only up to a limit"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "recording"
+       ],
+       "operation": [
+        "list"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     },
+     "description": "Max number of results to return"
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "description": "Whether to return all results or only up to a limit"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "list"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     },
+     "description": "Max number of results to return"
+    },
+    {
+     "name": "filters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Filter",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "message"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "to",
+       "displayName": "To",
+       "type": "string",
+       "default": "",
+       "description": "Only messages sent to this number (E.164; whatsapp:+… for WhatsApp)"
+      },
+      {
+       "name": "from",
+       "displayName": "From",
+       "type": "string",
+       "default": "",
+       "description": "Only messages sent from this number"
+      },
+      {
+       "name": "dateSent",
+       "displayName": "Date Sent",
+       "type": "string",
+       "default": "",
+       "placeholder": "YYYY-MM-DD",
+       "description": "Only messages sent on this day (UTC)"
+      },
+      {
+       "name": "dateSentAfter",
+       "displayName": "Date Sent After",
+       "type": "string",
+       "default": "",
+       "placeholder": "YYYY-MM-DD",
+       "description": "Only messages sent after this day (UTC)"
+      },
+      {
+       "name": "dateSentBefore",
+       "displayName": "Date Sent Before",
+       "type": "string",
+       "default": "",
+       "placeholder": "YYYY-MM-DD",
+       "description": "Only messages sent before this day (UTC)"
+      }
+     ]
+    },
+    {
+     "name": "callFrom",
+     "displayName": "From",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "+15551234567",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ],
+       "operation": [
+        "make"
+       ]
+      }
+     },
+     "description": "The Twilio phone number (E.164) that places the call"
+    },
+    {
+     "name": "callTo",
+     "displayName": "To",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "+15557654321",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ],
+       "operation": [
+        "make"
+       ]
+      }
+     },
+     "description": "The phone number to call (E.164), or a SIP address or client identifier"
+    },
+    {
+     "name": "callSource",
+     "displayName": "Instructions",
+     "type": "options",
+     "default": "twiml",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ],
+       "operation": [
+        "make"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "TwiML",
+       "value": "twiml",
+       "description": "TwiML given here"
+      },
+      {
+       "name": "URL",
+       "value": "url",
+       "description": "A URL Twilio fetches TwiML from when the call connects"
+      }
+     ]
+    },
+    {
+     "name": "twiml",
+     "displayName": "TwiML",
+     "type": "string",
+     "required": true,
+     "default": "<Response><Say>Hello from Landflow</Say></Response>",
+     "typeOptions": {
+      "rows": 4
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ],
+       "operation": [
+        "make"
+       ],
+       "callSource": [
+        "twiml"
+       ]
+      }
+     },
+     "description": "The TwiML that runs when the call is answered (up to 4,000 characters)"
+    },
+    {
+     "name": "url",
+     "displayName": "TwiML URL",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "https://example.com/voice.xml",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ],
+       "operation": [
+        "make"
+       ],
+       "callSource": [
+        "url"
+       ]
+      }
+     }
+    },
+    {
+     "name": "callOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ],
+       "operation": [
+        "make"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "statusCallback",
+       "displayName": "Status Callback URL",
+       "type": "string",
+       "default": "",
+       "description": "URL Twilio posts call status updates to"
+      },
+      {
+       "name": "timeout",
+       "displayName": "Ring Timeout (s)",
+       "type": "number",
+       "default": 60,
+       "description": "Seconds to let the phone ring (5–600)"
+      },
+      {
+       "name": "record",
+       "displayName": "Record",
+       "type": "boolean",
+       "default": false,
+       "description": "Whether to record the call"
+      },
+      {
+       "name": "machineDetection",
+       "displayName": "Machine Detection",
+       "type": "options",
+       "default": "",
+       "options": [
+        {
+         "name": "Off",
+         "value": ""
+        },
+        {
+         "name": "Enable",
+         "value": "Enable"
+        },
+        {
+         "name": "Detect Message End",
+         "value": "DetectMessageEnd"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "callSid",
+     "displayName": "Call SID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "description": "Whether to return all results or only up to a limit"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ],
+       "operation": [
+        "list"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     },
+     "description": "Max number of results to return"
+    },
+    {
+     "name": "callFilters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Filter",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "call"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "to",
+       "displayName": "To",
+       "type": "string",
+       "default": "",
+       "description": "Only calls to this number"
+      },
+      {
+       "name": "from",
+       "displayName": "From",
+       "type": "string",
+       "default": "",
+       "description": "Only calls from this number"
+      },
+      {
+       "name": "status",
+       "displayName": "Status",
+       "type": "options",
+       "default": "",
+       "options": [
+        {
+         "name": "Any",
+         "value": ""
+        },
+        {
+         "name": "Queued",
+         "value": "queued"
+        },
+        {
+         "name": "Ringing",
+         "value": "ringing"
+        },
+        {
+         "name": "In Progress",
+         "value": "in-progress"
+        },
+        {
+         "name": "Completed",
+         "value": "completed"
+        },
+        {
+         "name": "Busy",
+         "value": "busy"
+        },
+        {
+         "name": "Failed",
+         "value": "failed"
+        },
+        {
+         "name": "No Answer",
+         "value": "no-answer"
+        },
+        {
+         "name": "Canceled",
+         "value": "canceled"
+        }
+       ]
+      },
+      {
+       "name": "startTime",
+       "displayName": "Start Time",
+       "type": "string",
+       "default": "",
+       "placeholder": "YYYY-MM-DD",
+       "description": "Only calls that started on this day (UTC)"
+      },
+      {
+       "name": "startTimeAfter",
+       "displayName": "Start Time After",
+       "type": "string",
+       "default": "",
+       "placeholder": "YYYY-MM-DD"
+      },
+      {
+       "name": "startTimeBefore",
+       "displayName": "Start Time Before",
+       "type": "string",
+       "default": "",
+       "placeholder": "YYYY-MM-DD"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "emailSend",
+   "displayName": "Send Email",
+   "description": "Send an email through any SMTP server (text, HTML or both, with files from item.binary attached)",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Communication"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZW1haWwtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjN0M4NDkyIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzU2NUQ2OSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtZW1haWwtYmcpIi8+CiAgPHJlY3QgeD0iMTAiIHk9IjE0IiB3aWR0aD0iMjgiIGhlaWdodD0iMjAiIHJ4PSIzLjUiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMTEuOCAxNi44IDI0IDI2bDEyLjItOS4yIiBmaWxsPSJub25lIiBzdHJva2U9IiM2QjcyODAiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
    "color": "#6B7280",
    "subtitle": "{{toEmail}}",
    "documentationUrl": "https://www.rfc-editor.org/rfc/rfc5321",
@@ -1919,6 +3867,7 @@
     "send"
    ],
    "usableAsTool": true,
+   "idempotent": false,
    "toolDescription": "Send an email to one or more comma-separated addresses with a subject and a text and/or HTML body.",
    "inputs": [
     {
@@ -2047,6 +3996,22 @@
        "description": "Where replies go, if not to From"
       },
       {
+       "name": "attachments",
+       "displayName": "Attachments",
+       "type": "string",
+       "default": "",
+       "placeholder": "data, invoice",
+       "description": "Comma-separated names of the item’s binary properties to attach (item.binary.<name>)"
+      },
+      {
+       "name": "inlineFiles",
+       "displayName": "Inline Files",
+       "type": "string",
+       "default": "",
+       "placeholder": "logo",
+       "description": "Comma-separated binary properties embedded in the HTML: reference one as <img src=\"cid:logo\"> (the Content-ID is the property name)"
+      },
+      {
        "name": "allowUnauthorizedCerts",
        "displayName": "Ignore SSL Issues (Insecure)",
        "type": "boolean",
@@ -2062,6 +4027,7 @@
   {
    "name": "telegramApi",
    "displayName": "Telegram API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdGctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzRBRUU2Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBOEJDMiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtdGctYmcpIi8+CiAgPHBhdGggZD0iTTM5IDExIDkgMjIuNWwxMi41IDR6IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTM5IDExIDIxLjUgMjYuNSAyNSAzOHoiIGZpbGw9IiNkM2YwZmMiIHN0cm9rZT0iI2QzZjBmYyIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMjEuNSAyNi41IDIwIDMzLjVsMy42LTMuNHoiIGZpbGw9IiM5ZmQ4ZjIiIHN0cm9rZT0iIzlmZDhmMiIgc3Ryb2tlLXdpZHRoPSIxLjIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
    "documentationUrl": "https://core.telegram.org/bots/features#botfather",
    "properties": [
     {
@@ -2088,6 +4054,7 @@
   {
    "name": "slackApi",
    "displayName": "Slack API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtc2xhY2stYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNUUxRjYwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzNCMEYzQyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtc2xhY2stYmcpIi8+CiAgPHBhdGggZD0iTTIwLjUgMTIgMTcuNSAzNk0zMC41IDEyIDI3LjUgMzZNMTMgMTkuNWgyM00xMiAyOC41aDIzIiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNC4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==",
    "documentationUrl": "https://api.slack.com/authentication/token-types#bot",
    "properties": [
     {
@@ -2098,7 +4065,7 @@
      "typeOptions": {
       "password": true
      },
-     "placeholder": "xoxb-\u2026",
+     "placeholder": "xoxb-…",
      "description": "Bot User OAuth Token from your Slack app (\"OAuth & Permissions\")"
     },
     {
@@ -2116,7 +4083,68 @@
      "typeOptions": {
       "password": true
      },
-     "description": "From the app's \"Basic Information\" page. Needed when Slack calls Landflow: agent channels (Events API) and approval buttons (Interactivity)."
+     "description": "From the app's \"Basic Information\" page. Needed when Slack calls Landflow: agent channels (Events API), approval buttons (Interactivity) and the Slack Trigger (its Request URL goes into Event Subscriptions)."
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "slackOAuth2Api",
+   "displayName": "Slack OAuth2 API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtc2xhY2stYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNUUxRjYwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzNCMEYzQyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtc2xhY2stYmcpIi8+CiAgPHBhdGggZD0iTTIwLjUgMTIgMTcuNSAzNk0zMC41IDEyIDI3LjUgMzZNMTMgMTkuNWgyM00xMiAyOC41aDIzIiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNC4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==",
+   "documentationUrl": "https://api.slack.com/authentication/oauth-v2",
+   "description": "Sign in with Slack: create an app at api.slack.com/apps, add the redirect URL shown below under OAuth & Permissions, add the bot scopes, then Connect. The bot token is renewed for you when token rotation is on. For the Slack Trigger also fill in the Signing Secret, publish the workflow and paste the node's Request URL (editor Publish menu, App webhooks: {public URL}/api/webhook/app/<workflow id>/<node id>) into Event Subscriptions, then subscribe to the bot events and add the matching scopes (app_mentions:read, channels:history, groups:history, im:history, mpim:history, reactions:read, files:read, …). Reinstall the app after changing scopes.",
+   "extends": [
+    "oAuth2Api"
+   ],
+   "properties": [
+    {
+     "name": "grantType",
+     "displayName": "Grant Type",
+     "type": "hidden",
+     "default": "authorizationCode"
+    },
+    {
+     "name": "authUrl",
+     "displayName": "Authorization URL",
+     "type": "hidden",
+     "default": "https://slack.com/oauth/v2/authorize"
+    },
+    {
+     "name": "accessTokenUrl",
+     "displayName": "Access Token URL",
+     "type": "hidden",
+     "default": "https://slack.com/api/oauth.v2.access"
+    },
+    {
+     "name": "authentication",
+     "displayName": "Client Authentication",
+     "type": "hidden",
+     "default": "body"
+    },
+    {
+     "name": "scope",
+     "displayName": "Bot Scopes",
+     "type": "string",
+     "default": "chat:write,channels:read,groups:read,reactions:write,users:read,users:read.email,files:write,files:read",
+     "description": "Comma-separated bot scopes asked for at Connect. Drop the ones your workflows do not need."
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "default": "https://slack.com/api",
+     "description": "Change it only for a proxy or a test double"
+    },
+    {
+     "name": "signingSecret",
+     "displayName": "Signing Secret",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "password": true
+     },
+     "description": "From the app's \"Basic Information\" page. Needed when Slack calls Landflow (agent channels, approval buttons, the Slack Trigger's Events API Request URL)."
     }
    ],
    "testable": true
@@ -2124,6 +4152,7 @@
   {
    "name": "discordBotApi",
    "displayName": "Discord Bot API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
    "documentationUrl": "https://discord.com/developers/docs/topics/oauth2#bots",
    "properties": [
     {
@@ -2134,7 +4163,74 @@
      "typeOptions": {
       "password": true
      },
-     "description": "Developer Portal \u2192 your application \u2192 Bot \u2192 Reset Token"
+     "description": "Developer Portal → your application → Bot → Reset Token"
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "default": "https://discord.com/api/v10",
+     "description": "Change it only for a proxy or a test double"
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "discordOAuth2Api",
+   "displayName": "Discord OAuth2 API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
+   "documentationUrl": "https://discord.com/developers/docs/topics/oauth2",
+   "description": "Sign in with Discord: add the redirect URL shown below under OAuth2 in your application, then Connect. Add a Bot Token to message channels, which only bots can do.",
+   "extends": [
+    "oAuth2Api"
+   ],
+   "properties": [
+    {
+     "name": "grantType",
+     "displayName": "Grant Type",
+     "type": "hidden",
+     "default": "pkce"
+    },
+    {
+     "name": "authUrl",
+     "displayName": "Authorization URL",
+     "type": "hidden",
+     "default": "https://discord.com/oauth2/authorize"
+    },
+    {
+     "name": "accessTokenUrl",
+     "displayName": "Access Token URL",
+     "type": "hidden",
+     "default": "https://discord.com/api/oauth2/token"
+    },
+    {
+     "name": "authentication",
+     "displayName": "Client Authentication",
+     "type": "hidden",
+     "default": "body"
+    },
+    {
+     "name": "userInfoUrl",
+     "displayName": "User Info URL",
+     "type": "hidden",
+     "default": "https://discord.com/api/users/@me"
+    },
+    {
+     "name": "scope",
+     "displayName": "Scope",
+     "type": "string",
+     "default": "identify guilds",
+     "description": "Space-separated scopes asked for at Connect"
+    },
+    {
+     "name": "botToken",
+     "displayName": "Bot Token (optional)",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "password": true
+     },
+     "description": "Developer Portal → your application → Bot → Reset Token. Needed to send, list, delete and react to messages."
     },
     {
      "name": "baseUrl",
@@ -2149,6 +4245,7 @@
   {
    "name": "discordWebhookApi",
    "displayName": "Discord Webhook",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZGlzY29yZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM2QTc2RjUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNDc1MkUwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1kaXNjb3JkLWJnKSIvPgogIDxwYXRoIGQ9Ik0xNCAxMmgyMGE1IDUgMCAwIDEgNSA1djExYTUgNSAwIDAgMS01IDVIMjNsLTcgNS41VjMzaC0yYTUgNSAwIDAgMS01LTVWMTdhNSA1IDAgMCAxIDUtNXoiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOSIgY3k9IjIyLjUiIHI9IjIuNyIgZmlsbD0iIzU4NjVGMiIvPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMjIuNSIgcj0iMi43IiBmaWxsPSIjNTg2NUYyIi8+Cjwvc3ZnPgo=",
    "documentationUrl": "https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks",
    "properties": [
     {
@@ -2159,8 +4256,8 @@
      "typeOptions": {
       "password": true
      },
-     "placeholder": "https://discord.com/api/webhooks/123456789/abcDEF\u2026",
-     "description": "Channel settings \u2192 Integrations \u2192 Webhooks \u2192 Copy Webhook URL. The URL contains its own token"
+     "placeholder": "https://discord.com/api/webhooks/123456789/abcDEF…",
+     "description": "Channel settings → Integrations → Webhooks → Copy Webhook URL. The URL contains its own token"
     }
    ],
    "testable": true
@@ -2168,6 +4265,7 @@
   {
    "name": "whatsAppApi",
    "displayName": "WhatsApp API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtd2EtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzREQjc0Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFEQjk1NSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtd2EtYmcpIi8+CiAgPHBhdGggZD0iTTI0IDEwLjVhMTMuNSAxMy41IDAgMSAxLTYuOSAyNS4xbC02LjYgMS45IDEuOS02LjNBMTMuNSAxMy41IDAgMCAxIDI0IDEwLjV6IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0xOS42IDE3LjhjLjUtLjUgMS4zLS40IDEuNy4ybDEuNSAyLjNjLjMuNS4yIDEuMi0uMiAxLjZsLS44LjhjLjggMS44IDIuMiAzLjIgNCA0bC44LS44Yy40LS40IDEuMS0uNSAxLjYtLjJsMi4zIDEuNWMuNi40LjcgMS4yLjIgMS43bC0xLjEgMS4xYy0uOS45LTIuMyAxLjItMy41LjYtMy4zLTEuNi02LTQuMy03LjYtNy42LS42LTEuMi0uMy0yLjYuNi0zLjV6IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPgo=",
    "documentationUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started",
    "properties": [
     {
@@ -2186,7 +4284,7 @@
      "type": "string",
      "required": true,
      "default": "",
-     "description": "The WhatsApp Business Account ID (WhatsApp Manager \u2192 API Setup)"
+     "description": "The WhatsApp Business Account ID (WhatsApp Manager → API Setup)"
     },
     {
      "name": "baseUrl",
@@ -2199,8 +4297,101 @@
    "testable": true
   },
   {
+   "name": "twilioApi",
+   "displayName": "Twilio API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtdHctYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjRjc0NjRDIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI0QyMUUyNSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtdHctYmcpIi8+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzIi8+CiAgPGNpcmNsZSBjeD0iMTguNSIgY3k9IjE4LjUiIHI9IjMuMiIgZmlsbD0iI2ZmZiIvPgogIDxjaXJjbGUgY3g9IjI5LjUiIGN5PSIxOC41IiByPSIzLjIiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOC41IiBjeT0iMjkuNSIgcj0iMy4yIiBmaWxsPSIjZmZmIi8+CiAgPGNpcmNsZSBjeD0iMjkuNSIgY3k9IjI5LjUiIHI9IjMuMiIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+   "documentationUrl": "https://www.twilio.com/docs/usage/api",
+   "properties": [
+    {
+     "name": "authType",
+     "displayName": "Authenticate With",
+     "type": "options",
+     "default": "authToken",
+     "options": [
+      {
+       "name": "Auth Token",
+       "value": "authToken",
+       "description": "The account’s Auth Token (Console → Account Info)"
+      },
+      {
+       "name": "API Key",
+       "value": "apiKey",
+       "description": "A standard API key SID and secret (Console → Account → API keys & tokens)"
+      }
+     ]
+    },
+    {
+     "name": "accountSid",
+     "displayName": "Account SID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "description": "The account (or subaccount) the messages and calls belong to"
+    },
+    {
+     "name": "authToken",
+     "displayName": "Auth Token",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "typeOptions": {
+      "password": true
+     },
+     "displayOptions": {
+      "show": {
+       "authType": [
+        "authToken"
+       ]
+      }
+     }
+    },
+    {
+     "name": "apiKeySid",
+     "displayName": "API Key SID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "displayOptions": {
+      "show": {
+       "authType": [
+        "apiKey"
+       ]
+      }
+     }
+    },
+    {
+     "name": "apiKeySecret",
+     "displayName": "API Key Secret",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "typeOptions": {
+      "password": true
+     },
+     "displayOptions": {
+      "show": {
+       "authType": [
+        "apiKey"
+       ]
+      }
+     }
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "API Base URL",
+     "type": "string",
+     "default": "https://api.twilio.com",
+     "description": "Advanced: where the 2010-04-01 API lives. Leave the default for Twilio; point it at a proxy, a region (api.dublin.ie1.twilio.com) or the fake Twilio server for tests"
+    }
+   ],
+   "testable": true
+  },
+  {
    "name": "smtp",
    "displayName": "SMTP",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtZW1haWwtYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjN0M4NDkyIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzU2NUQ2OSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9InVybCgjbGYtZW1haWwtYmcpIi8+CiAgPHJlY3QgeD0iMTAiIHk9IjE0IiB3aWR0aD0iMjgiIGhlaWdodD0iMjAiIHJ4PSIzLjUiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMTEuOCAxNi44IDI0IDI2bDEyLjItOS4yIiBmaWxsPSJub25lIiBzdHJva2U9IiM2QjcyODAiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
    "documentationUrl": "https://www.rfc-editor.org/rfc/rfc5321",
    "properties": [
     {

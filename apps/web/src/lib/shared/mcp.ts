@@ -44,6 +44,9 @@ export interface McpTokenView {
   /** The user it acts as (admins see every user's tokens). */
   userId: string;
   userName?: string;
+  /** Set when the token is scoped to a project: the instance MCP server then only sees that project's workflows. */
+  projectId?: string;
+  projectName?: string;
 }
 
 /** Who a grant is for: a user, a SCIM group, everyone in a project, a role, or the holder of one MCP token. */
@@ -88,7 +91,7 @@ export interface McpStatusView {
      * LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES): whose tokens and the mode. Absent: those routes don't sign callers in, so
      * they're anonymous there. The gateway's own `/mcp` route signs in from its config file, which the host can't read.
      */
-    signIn?: { issuer: string; mode: string };
+    signIn?: { issuer: string; mode: string; /** A second issuer the routes accept (the identity provider next to Landflow's tokens). */ alsoIssuer?: string };
   };
   /** This host's URL, the issuer of its MCP tokens. */
   instanceUrl: string;
@@ -109,7 +112,7 @@ export interface McpGatewayTargetView {
   pluginId: string;
   kind: 'mcp.target' | 'traffic.route';
   /** What the target stands for: a plugin, the Landflow instance server, or a published workflow's MCP Server Trigger. */
-  serverKind: 'plugin' | 'instance' | 'workflow';
+  serverKind: 'plugin' | 'instance' | 'workflow' | 'project';
   /** A human label for the target (the plugin id, "Landflow instance server", or the workflow name and path). */
   label: string;
   /** `in-step`: as rendered; `drift`: present but different; `missing`: wanted, absent; `stale`: Landflow's but no longer wanted; `unknown`: the gateway can't be read back (file mode). */
@@ -176,3 +179,15 @@ export interface McpToolsResponse {
 
 /** The result `_meta` key under which a tool call names the execution it ran as. */
 export const MCP_EXECUTION_META_KEY = 'dev.landflow/execution';
+
+/** A project's MCP server (the instance server scoped to the project) as the project's settings show it (GET /api/projects/:id/mcp). */
+export interface ProjectMcpView {
+  /** The instance MCP server is on (Settings → MCP); the project's server answers only then. */
+  instanceEnabled: boolean;
+  /** Where the host serves it: `/api/mcp/projects/<id>`. */
+  path: string;
+  /** Its route on the bundled gateway is registered. */
+  gateway: boolean;
+  gatewayPath?: string;
+  canEdit: boolean;
+}

@@ -4,13 +4,13 @@
  * environment's branch, which then pulls it, with the definitions of the credentials they use (`credentials: false`
  * leaves them out) and the rows of the opted-in tables (`rowTables` overrides Settings → Environments). → PromotionResult
  * with a diff per workflow and file. Conflicts (the target changed a workflow since the last promotion) stop it with 409
- * unless `force`; a dry run only previews. With four-eyes on (Settings → Governance) a promotion is a request for
- * someone else to approve: 202 `{ approvalRequired: true, request }`.
+ * unless `force`; a dry run only previews. With four-eyes on (Settings → Governance, or for a workflow it changes: its policy or
+ * its project's four-eyes setting) a promotion is a request for someone else to approve: 202 `{ approvalRequired: true, request }`.
  */
 import { z } from 'zod';
 import { currentPrincipal } from '@/lib/server/auth';
 import { EnvironmentError, promoteEnvironment } from '@/lib/server/environments';
-import { promotionApprovalRequired, requestPromotion } from '@/lib/server/environments/approvals';
+import { promotionApprovalRequired, promotionNeedsApproval, requestPromotion } from '@/lib/server/environments/approvals';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { SourceControlError } from '@/lib/server/sync/git';
 
@@ -34,7 +34,8 @@ export const POST = handler(async (request: Request) => {
   const user = currentPrincipal()?.user;
   try {
     let result;
-    if (!body.data.dryRun && user && promotionApprovalRequired()) {
+    // Four-eyes: the instance asks for it, or a workflow being changed does (its own policy, or its project's).
+    if (!body.data.dryRun && user && (promotionApprovalRequired() || promotionNeedsApproval(await promoteEnvironment({ ...body.data, dryRun: true })))) {
       const outcome = await requestPromotion(body.data, user);
       if ('request' in outcome) return json({ approvalRequired: true, request: outcome.request }, 202);
       result = outcome.result;

@@ -8,6 +8,7 @@ from typing import Any
 
 from landflow_sdk import Node, NodeOperationError
 
+from .files import attach_result_file, binary_source_properties, flag, read_text, result_file_properties
 from .text import LANGUAGE_NAMES, STOPWORDS, get_path, set_path, stopwords_for, tokenize
 
 MIN_WORD_LENGTH = 3
@@ -62,7 +63,9 @@ class KeywordExtract(Node):
                 "default": "text",
                 "required": True,
                 "description": "Field holding the text (dot paths allowed)",
+                "displayOptions": {"show": {"fromBinary": [False]}},
             },
+            *binary_source_properties("Text From Binary File", "Read the text from a binary text file on the item (TXT, MD, CSV, ...) instead of a field"),
             {
                 "name": "topN",
                 "displayName": "Top N",
@@ -123,6 +126,7 @@ class KeywordExtract(Node):
                 "default": False,
                 "description": "Emit [{keyword, score}] instead of plain strings",
             },
+            *result_file_properties("Attach a CSV with one row per keyword (item, rank, keyword, score) as a binary file"),
         ],
     }
 
@@ -143,7 +147,7 @@ class KeywordExtract(Node):
         docs: list[list[str]] = []
         for i, item in enumerate(items):
             field = str(ctx.get_node_parameter("field", i) or "text")
-            text = get_path(item["json"], field)
+            text = read_text(ctx, i) if flag(ctx, "fromBinary", i) else get_path(item["json"], field)
             if text is None:
                 raise NodeOperationError(
                     f"Item {i} has no field '{field}'",
@@ -158,6 +162,7 @@ class KeywordExtract(Node):
         n_docs = len(docs)
 
         out = []
+        rows = []
         for i, (item, words) in enumerate(zip(items, docs)):
             top_n = _int_param(ctx, "topN", i, 1, 100)
             mode = ctx.get_node_parameter("mode", i)
@@ -180,6 +185,8 @@ class KeywordExtract(Node):
                 value = ranked
             data = dict(item["json"])
             set_path(data, str(ctx.get_node_parameter("outputField", i) or "keywords"), value)
-            out.append({"json": data})
+            out.append({"json": data, **({"binary": item["binary"]} if item.get("binary") else {})})
+            rows.extend([i, rank, w, round(scores[w], 4)] for rank, w in enumerate(ranked, 1))
+        attach_result_file(ctx, out, ["item", "rank", "keyword", "score"], rows, "keywords.csv")
         ctx.logger.info(f"extracted keywords from {len(out)} item(s)")
         return out

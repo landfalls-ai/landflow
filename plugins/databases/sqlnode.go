@@ -399,6 +399,9 @@ func (s *session) mappedValues(ctx *landflow.ExecuteContext, i int, item landflo
 	default:
 		return nil, nil, landflow.ItemError(i, "Unknown data mode %q", mode)
 	}
+	if err := applyBinaryInputs(ctx, i, t, values); err != nil {
+		return nil, nil, err
+	}
 	var cols []string
 	for _, c := range t.cols {
 		if _, ok := values[c.name]; ok {
@@ -436,7 +439,10 @@ func (s *session) executeQuery(ctx *landflow.ExecuteContext) ([]landflow.Item, e
 	switch batching := optionsOf(ctx, 0).StringOr("queryBatching", "single"); batching {
 	case "single":
 		rows, err := s.runQuery(ctx, s.db, ctx, 0)
-		return paired(rows, 0), err
+		if err != nil {
+			return nil, err
+		}
+		return s.files(ctx, rows, 0)
 	case "independently":
 		var out []landflow.Item
 		for i := range itemCount(ctx) {
@@ -448,7 +454,11 @@ func (s *session) executeQuery(ctx *landflow.ExecuteContext) ([]landflow.Item, e
 				}
 				return nil, err
 			}
-			out = append(out, paired(rows, i)...)
+			files, err := s.files(ctx, rows, i)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, files...)
 		}
 		return out, nil
 	case "transaction":
@@ -460,7 +470,11 @@ func (s *session) executeQuery(ctx *landflow.ExecuteContext) ([]landflow.Item, e
 				if err != nil {
 					return i + 1, err
 				}
-				out = append(out, paired(rows, i)...)
+				files, err := s.files(ctx, rows, i)
+				if err != nil {
+					return i + 1, err
+				}
+				out = append(out, files...)
 			}
 			return n, nil
 		})
@@ -564,7 +578,11 @@ func (s *session) selectRows(ctx *landflow.ExecuteContext) ([]landflow.Item, err
 		if err != nil {
 			return nil, dbError(ctx, i, err)
 		}
-		out = append(out, paired(rows, i)...)
+		files, err := s.files(ctx, rows, i)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, files...)
 	}
 	return out, nil
 }
@@ -643,7 +661,7 @@ func (s *session) insert(ctx *landflow.ExecuteContext, upsert bool) ([]landflow.
 				return err
 			}
 			for _, r := range g {
-				out = append(out, landflow.Item{JSON: r.values, PairedItem: &landflow.PairedItem{Item: r.item}})
+				out = append(out, landflow.Item{JSON: withoutBytes(r.values), PairedItem: &landflow.PairedItem{Item: r.item}})
 			}
 			return nil
 		}
@@ -653,7 +671,12 @@ func (s *session) insert(ctx *landflow.ExecuteContext, upsert bool) ([]landflow.
 		}
 		// RETURNING yields the rows in VALUES order.
 		for k, row := range result {
-			out = append(out, landflow.Item{JSON: row, PairedItem: &landflow.PairedItem{Item: g[min(k, len(g)-1)].item}})
+			item := g[min(k, len(g)-1)].item
+			files, err := s.files(ctx, []map[string]any{row}, item)
+			if err != nil {
+				return err
+			}
+			out = append(out, files...)
 		}
 		return nil
 	}
@@ -730,7 +753,11 @@ func (s *session) update(ctx *landflow.ExecuteContext) ([]landflow.Item, error) 
 			if err != nil {
 				return nil, dbError(ctx, i, err)
 			}
-			out = append(out, paired(rows, i)...)
+			files, err := s.files(ctx, rows, i)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, files...)
 			continue
 		}
 		n, err := s.exec(ctx, s.db, st)

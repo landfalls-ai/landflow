@@ -3,7 +3,7 @@
  * Provider-neutral on purpose: an Anthropic, Ollama or remote model sub-node
  * all implement LanguageModel; any node can become an AgentTool.
  */
-import type { JsonObject, NodeItem } from '@landflow/protocol';
+import type { BinaryRef, JsonObject, NodeItem } from '@landflow/protocol';
 
 export interface ToolCall {
   id: string;
@@ -24,14 +24,29 @@ export interface ToolResult {
  * `images`. `data` is base64 without a `data:` prefix.
  */
 export interface ModelAttachment {
-  kind: 'image' | 'document';
+  /** `audio` goes to OpenAI-compatible models as `input_audio` parts (wav, mp3), `video` as `video_url` parts where a server takes them. */
+  kind: 'image' | 'document' | 'audio' | 'video';
   mimeType: string;
   data: string;
+  fileName?: string;
+  /** The stored file it was read from, when it came from an item's binary data (memory keeps it to re-attach the file later). */
+  ref?: BinaryRef;
+}
+
+/** A file a user turn carried, kept by memory instead of its bytes: the reference to read it again. */
+export interface RememberedFile {
+  ref: BinaryRef;
   fileName?: string;
 }
 
 export type AgentMessage =
-  | { role: 'user'; content: string; attachments?: ModelAttachment[] }
+  | {
+      role: 'user';
+      content: string;
+      attachments?: ModelAttachment[];
+      /** What memory keeps of the turn's files (their references, not their bytes), so later turns can attach them again. */
+      files?: RememberedFile[];
+    }
   | {
       role: 'assistant';
       text: string;
@@ -52,7 +67,11 @@ export interface ModelTurn {
   raw?: { provider: string; content: unknown };
   toolCalls: ToolCall[];
   stopReason: string;
-  usage?: { inputTokens: number; outputTokens: number };
+  /**
+   * `inputTokens` counts the whole prompt; `cacheReadTokens` (Anthropic cache reads, OpenAI cached input) and
+   * `cacheWriteTokens` (Anthropic cache writes) are the parts of it served from or written to the provider's cache.
+   */
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number };
 }
 
 export interface LanguageModel {

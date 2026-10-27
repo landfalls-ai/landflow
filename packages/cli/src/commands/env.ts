@@ -202,10 +202,11 @@ export const envPromote: Command = {
 export const envPull: Command = {
   name: 'env pull',
   summary: 'The host pulls its environment’s branch and applies it (publication per the environment’s setting)',
-  usage: '[--dry-run] [--prune] [--force] [--publish file|all|none]',
+  usage: '[--dry-run] [--prune] [--force] [--publish file|all|none] [--update-credentials]',
   flags: {
     'dry-run': flag.boolean('Show the plan, change nothing', 'n'),
     prune: flag.boolean('Delete what the branch has no file for'),
+    'update-credentials': flag.boolean('Also update the non-secret fields of credentials this host already has from the promoted definitions (never secret values)'),
     force: flag.boolean('Apply changes that conflict with edits made on the instance', 'f'),
     publish: flag.string('file: publish what is active in the branch; all: publish every pulled workflow; none: drafts only (default: the environment’s setting)', 'mode'),
   },
@@ -215,7 +216,7 @@ export const envPull: Command = {
     if (publish !== undefined && !PUBLISH.includes(publish)) throw usage(`--publish is one of ${PUBLISH.join(', ')}`);
     const dryRun = Boolean(ctx.flags['dry-run']);
     const response = await ctx.client.request<PullResult>('POST', '/api/environment/pull', {
-      body: { dryRun, prune: Boolean(ctx.flags.prune), force: Boolean(ctx.flags.force), ...(publish && { publish }) },
+      body: { dryRun, prune: Boolean(ctx.flags.prune), force: Boolean(ctx.flags.force), ...(publish && { publish }), ...(ctx.flags['update-credentials'] && { updateCredentials: true }) },
       accept: [400, 409],
     });
     const { error, hashes: _hashes, ...result } = response.body;

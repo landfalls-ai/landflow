@@ -6,8 +6,13 @@
 
 /** Tokens, estimated cost (USD) and number of model calls. */
 export interface AiUsageTotals {
+  /** The whole prompt, cached tokens included. */
   inputTokens: number;
   outputTokens: number;
+  /** Parts of `inputTokens` read from the provider's cache (Anthropic cache reads, OpenAI cached input), priced lower. Absent = none. */
+  cacheReadTokens?: number;
+  /** Parts of `inputTokens` written to Anthropic's cache, priced higher than plain input. */
+  cacheWriteTokens?: number;
   /** Estimated from the price table, in US dollars. */
   cost: number;
   calls: number;
@@ -31,6 +36,10 @@ export interface ModelPrice {
   model: string;
   input: number;
   output: number;
+  /** USD per million cached input tokens read (Anthropic cache reads, OpenAI cached input). Absent = the input price. */
+  cacheRead?: number;
+  /** USD per million tokens written to Anthropic's cache. Absent = the input price. */
+  cacheWrite?: number;
 }
 
 /** GET /api/ai-usage/prices: the built-in defaults and the instance's overrides (Settings → AI prices). */
@@ -53,6 +62,35 @@ export interface AiUsageReport {
   month?: AiUsageTotals;
 }
 
+/** A cap's limits, per day and per month, in tokens or US dollars (0 or absent = none). */
+export interface UsageCapSet {
+  /** The credential's or user's name when the cap was saved, for the error a refused call shows. */
+  name?: string;
+  dayTokens?: number;
+  dayCost?: number;
+  monthTokens?: number;
+  monthCost?: number;
+}
+
+/** Settings → AI usage caps: caps per model credential and per user (who started the run). */
+export interface AiCaps {
+  /** By credential id. */
+  credentials: Record<string, UsageCapSet>;
+  /** By user id. */
+  users: Record<string, UsageCapSet>;
+  /** For every signed-in user without a cap of their own. */
+  allUsers?: UsageCapSet;
+}
+
+/** GET /api/settings/ai-caps: the caps and what each has used in the current day and month. */
+export interface AiCapsView {
+  caps: AiCaps;
+  usage: {
+    credentials: Record<string, { day: AiUsageTotals; month: AiUsageTotals }>;
+    users: Record<string, { day: AiUsageTotals; month: AiUsageTotals }>;
+  };
+}
+
 export const EMPTY_USAGE: AiUsageTotals = { inputTokens: 0, outputTokens: 0, cost: 0, calls: 0 };
 
 /** "$0.0123", "$1.20", "<$0.0001" */
@@ -68,4 +106,12 @@ export function formatTokens(tokens: number): string {
   if (tokens < 10_000) return tokens.toLocaleString('en-US');
   if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(1).replace(/\.0$/, '')}k`;
   return `${(tokens / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M`;
+}
+
+/** "12k read · 3k written", or empty when nothing was cached. */
+export function formatCache(totals: Pick<AiUsageTotals, 'cacheReadTokens' | 'cacheWriteTokens'>): string {
+  const parts: string[] = [];
+  if (totals.cacheReadTokens) parts.push(`${formatTokens(totals.cacheReadTokens)} read`);
+  if (totals.cacheWriteTokens) parts.push(`${formatTokens(totals.cacheWriteTokens)} written`);
+  return parts.join(' · ');
 }

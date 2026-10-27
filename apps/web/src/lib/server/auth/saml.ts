@@ -33,16 +33,17 @@
  * the IdP metadata is cached per process.
  */
 import { X509Certificate } from 'node:crypto';
+import { inflateRawSync } from 'node:zlib';
 import { SAML, ValidateInResponseTo, type CacheProvider, type Profile } from '@node-saml/node-saml';
-import { parseDomFromString, xpath } from '@node-saml/node-saml/lib/xml';
-import type { AssignableRole, SamlSecurityView } from '../../shared/auth';
+import { decryptXml, parseDomFromString, xpath } from '@node-saml/node-saml/lib/xml';
+import type { AssignableRole, SamlKeyInfo, SamlSecurityView } from '../../shared/auth';
 import { describeProjectMap, grantsFor, parseProjectMap, syncManagedMemberships, type ProjectGrant } from '../projects/mapping';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { authDb } from './db';
 import { parseRoleMap } from './oidc';
 import { randomToken, tokenHash } from './passwords';
-import { samlDecryption, samlEncryptionView } from './saml-keys';
+import { samlDecryption, samlDecryptionKeys, samlEncryptionCerts, samlEncryptionView } from './saml-keys';
 import { clearSamlState, dropUserStates, putState, readState, recordReplayIds, takeState } from './saml-state';
 import { DEACTIVATED_MESSAGE, deleteUserSessions } from './sessions';
 import { createUser, findUserByEmail, findUserBySaml, setupRequired, updateUser, type UserPatch, type UserRecord } from './users';
@@ -74,6 +75,8 @@ export interface SamlConfig {
   /** Sign AuthnRequests and LogoutRequests (and publish the certificate in our metadata). */
   privateKey?: string;
   publicCert?: string;
+  /** Key rotation: the certificate of the key that will sign next (LANDFLOW_SAML_NEXT_CERT), published beside `publicCert`. */
+  nextPublicCert?: string;
   clockSkewSeconds: number;
   wantAssertionsSigned: boolean;
   wantResponseSigned: boolean;
@@ -129,6 +132,7 @@ export function samlConfig(): SamlConfig | undefined {
     ...(env('LANDFLOW_SAML_CALLBACK_URL') && { callbackUrl: env('LANDFLOW_SAML_CALLBACK_URL') }),
     ...(pemText(env('LANDFLOW_SAML_PRIVATE_KEY')) && { privateKey: pemText(env('LANDFLOW_SAML_PRIVATE_KEY')) }),
     ...(pemText(env('LANDFLOW_SAML_CERT')) && { publicCert: pemText(env('LANDFLOW_SAML_CERT')) }),
+    ...(pemText(env('LANDFLOW_SAML_NEXT_CERT')) && { nextPublicCert: pemText(env('LANDFLOW_SAML_NEXT_CERT')) }),
     clockSkewSeconds: Number.isFinite(skew) && skew >= 0 ? Math.min(skew, 3600) : DEFAULT_SKEW_S,
     wantAssertionsSigned: flag('LANDFLOW_SAML_WANT_ASSERTIONS_SIGNED', true),
     wantResponseSigned: flag('LANDFLOW_SAML_WANT_RESPONSE_SIGNED', false),
@@ -251,7 +255,7 @@ export async function resolveIdp(config: SamlConfig, force = false): Promise<Idp
  * A node-saml instance for this host and IdP (InResponseTo always checked, unless `inResponseTo` says otherwise), with
  * the decryption key for encrypted assertions when there is one.
  */
-export function samlClient(config: SamlConfig, origin: string, idp: IdpInfo, inResponseTo = ValidateInResponseTo.always, cache: CacheProvider = requestCache()): SAML {
+export function samlClient(config: SamlConfig, origin: string, idp: IdpInfo, inResponseTo = ValidateInResponseTo.always, cache: CacheProvider = requestCache(), decryptionKey?: string): SAML {
   const urls = spUrls(config, origin);
   const decryption = samlDecryption();
   return new SAML({
@@ -275,7 +279,7 @@ export function samlClient(config: SamlConfig, origin: string, idp: IdpInfo, inR
     validateInResponseTo: inResponseTo,
     requestIdExpirationPeriodMs: STATE_TTL_MS,
     cacheProvider: cache,
-    ...(decryption && { decryptionPvk: decryption.key }),
+    ...((decryptionKey ?? decryption?.key) && { decryptionPvk: decryptionKey ?? decryption!.key }),
   });
 }
 
@@ -296,7 +300,24 @@ export function spMetadata(config: SamlConfig, origin: string): string {
     ...(decryption && { decryptionPvk: decryption.key }),
     signatureAlgorithm: 'sha256',
   });
-  return client.generateServiceProviderMetadata(decryption?.cert ?? null, config.publicCert ?? null);
+  const xml = client.generateServiceProviderMetadata(decryption?.cert ?? null, config.privateKey && config.publicCert ? [config.publicCert, ...(config.nextPublicCert ? [config.nextPublicCert] : [])] : null);
+  return withNextEncryptionCert(xml, samlEncryptionCerts().slice(1));
+}
+
+const certBody = (cert: string) => cert.replace(/-----(BEGIN|END) CERTIFICATE-----|\s+/g, '');
+
+/**
+ * Key rotation: node-saml publishes one `use="encryption"` KeyDescriptor, for the current decryption certificate; the
+ * next certificate gets one of its own beside it (a copy of the first with the certificate swapped), so an IdP can
+ * pick either up before the switch-over.
+ */
+function withNextEncryptionCert(xml: string, extra: string[]): string {
+  const block = xml.match(/<(?:\w+:)?KeyDescriptor[^>]*\buse="encryption"[^>]*>[\s\S]*?<\/(?:\w+:)?KeyDescriptor>/)?.[0];
+  if (!block || !extra.length) return xml;
+  const first = block.match(/<(?:\w+:)?X509Certificate>([\s\S]*?)<\/(?:\w+:)?X509Certificate>/)?.[1];
+  if (!first) return xml;
+  const copies = extra.map((cert) => block.replace(first, certBody(cert))).join('');
+  return xml.replace(block, `${block}${copies}`);
 }
 
 // ---- signing in -------------------------------------------------------------------------------------------------
@@ -443,6 +464,40 @@ export async function recordReplay(ids: string[], expiresAt: number, now = Date.
   await recordReplayIds(ids, expiresAt, () => new SamlError(REPLAYED), now);
 }
 
+/**
+ * The key (of `keys`, in order) that decrypts the response's EncryptedAssertion; the first when none does (node-saml then
+ * fails with its usual decryption error), none when there are no keys.
+ */
+async function keyThatDecrypts(samlResponse: string, keys: string[]): Promise<string | undefined> {
+  return keyThatOpens(Buffer.from(samlResponse, 'base64').toString('utf8'), "/*[local-name()='Response']/*[local-name()='EncryptedAssertion']/*[local-name()='EncryptedData']", keys);
+}
+
+/**
+ * The key (of `keys`, in order) that decrypts the `EncryptedData` at `path` in `xml`: an assertion, or the EncryptedID of
+ * an IdP's LogoutRequest (which the IdP may already encrypt to the next certificate). The first when none does.
+ */
+async function keyThatOpens(xml: string, path: string, keys: string[]): Promise<string | undefined> {
+  if (keys.length < 2) return keys[0];
+  try {
+    const doc = await parseDomFromString(xml);
+    const encrypted = xpath.selectElements(doc, path)[0]?.toString();
+    if (!encrypted) return keys[0];
+    for (const key of keys) {
+      try {
+        await decryptXml(encrypted, key);
+        return key;
+      } catch {
+        // Not this one.
+      }
+    }
+  } catch {
+    // Unreadable: node-saml says why.
+  }
+  return keys[0];
+}
+
+const DECRYPTION_FAILURE = /decrypt|EncryptedAssertion|EncryptedKey|xmlenc|oaep|padding|rsa routines|decoding error|unsupported state|authenticate data/i;
+
 /** Readable reasons for node-saml's validation errors. */
 function explain(error: Error): string {
   const message = error.message ?? String(error);
@@ -453,7 +508,7 @@ function explain(error: Error): string {
   if (/InResponseTo/i.test(message)) return 'This SAML response doesn’t answer a sign-in started here, or it timed out. Try again.';
   if (/subject confirmation/i.test(message)) return 'The SAML response has expired or is for another sign-in';
   if (/No decryption key/i.test(message)) return 'The identity provider encrypted the assertion, but this instance has no decryption key (Settings → Security → SAML)';
-  if (/decrypt|EncryptedAssertion|EncryptedKey|xmlenc|oaep|padding|rsa routines|decoding error|unsupported state|authenticate data/i.test(message)) return 'The encrypted SAML assertion can’t be decrypted with this instance’s key (the IdP may have an old certificate)';
+  if (DECRYPTION_FAILURE.test(message)) return 'The encrypted SAML assertion can’t be decrypted with this instance’s key (the IdP may have an old certificate)';
   return `The SAML response was refused: ${message}`;
 }
 
@@ -475,8 +530,13 @@ export async function validateResponse(config: SamlConfig, origin: string, samlR
   let idp = await resolveIdp(config);
   const track = { consumed: false };
   let profile: Profile | null;
+  // Key rotation: an assertion may be encrypted to the current certificate or to the next (or the retired) one. node-saml
+  // takes one key and spends the request id before it decrypts, so the key that opens this one is found first.
+  const decryptionKey = parsed.encrypted ? await keyThatDecrypts(samlResponse, samlDecryptionKeys()) : undefined;
+  const validate = (info: IdpInfo): Promise<{ profile: Profile | null }> =>
+    samlClient(config, origin, info, ValidateInResponseTo.always, requestCache(track), decryptionKey).validatePostResponseAsync({ SAMLResponse: samlResponse });
   try {
-    ({ profile } = await samlClient(config, origin, idp, ValidateInResponseTo.always, requestCache(track)).validatePostResponseAsync({ SAMLResponse: samlResponse }));
+    ({ profile } = await validate(idp));
   } catch (caught) {
     // The IdP may have rotated its key: with metadata, fetch it again once and retry.
     if (config.metadataUrl && /signature/i.test((caught as Error).message ?? '') && !config.idpCerts.length) {
@@ -484,7 +544,7 @@ export async function validateResponse(config: SamlConfig, origin: string, samlR
       if (fresh.certs.join() !== idp.certs.join()) {
         idp = fresh;
         try {
-          ({ profile } = await samlClient(config, origin, idp, ValidateInResponseTo.always, requestCache(track)).validatePostResponseAsync({ SAMLResponse: samlResponse }));
+          ({ profile } = await validate(idp));
         } catch (again) {
           throw new SamlError(explain(again as Error));
         }
@@ -609,6 +669,19 @@ async function validatePostLogoutResponse(config: SamlConfig, origin: string, id
   return result;
 }
 
+const ENCRYPTED_NAME_ID = "/*[local-name()='LogoutRequest']/*[local-name()='EncryptedID']/*[local-name()='EncryptedData']";
+
+/** The XML of an IdP's LogoutRequest: base64 (HTTP-POST) or base64 of raw DEFLATE (HTTP-Redirect); none for a response. */
+function logoutRequestXml(message: { query?: Record<string, string>; body?: Record<string, string> }): string | undefined {
+  try {
+    if (message.body?.SAMLRequest) return Buffer.from(message.body.SAMLRequest, 'base64').toString('utf8');
+    if (message.query?.SAMLRequest) return inflateRawSync(Buffer.from(message.query.SAMLRequest, 'base64')).toString('utf8');
+  } catch {
+    // Unreadable: node-saml says why.
+  }
+  return undefined;
+}
+
 /**
  * A message at /api/auth/saml/logout from the IdP: a LogoutResponse to our LogoutRequest (→ `{ done }`), or a
  * LogoutRequest it started (→ sign that user out of every session, and the URL of our LogoutResponse).
@@ -619,7 +692,9 @@ export async function handleLogoutMessage(
   message: { query?: Record<string, string>; originalQuery?: string; body?: Record<string, string> },
 ): Promise<{ kind: 'response'; relayState?: string } | { kind: 'request'; redirect: string; userId?: string }> {
   const idp = await resolveIdp(config);
-  const client = samlClient(config, origin, idp);
+  const request = logoutRequestXml(message);
+  const decryptionKey = request ? await keyThatOpens(request, ENCRYPTED_NAME_ID, samlDecryptionKeys()) : undefined;
+  const client = samlClient(config, origin, idp, ValidateInResponseTo.always, requestCache(), decryptionKey);
   let result: { profile: Profile | null; loggedOut: boolean };
   try {
     if (message.body?.SAMLRequest) result = await client.validatePostRequestAsync(message.body);
@@ -643,6 +718,16 @@ export async function handleLogoutMessage(
 
 // ---- settings -----------------------------------------------------------------------------------------------------
 
+/** A signing certificate's public details (the key is in the environment, never shown). */
+function signingInfo(cert: string): SamlKeyInfo {
+  try {
+    const x509 = new X509Certificate(cert);
+    return { source: 'env', subject: x509.subject.replace(/\n/g, ', '), validTo: new Date(x509.validTo).toISOString(), fingerprint: x509.fingerprint256, certificate: cert };
+  } catch {
+    return { source: 'env', error: 'The certificate can’t be read' };
+  }
+}
+
 /** Settings → Security: the SAML configuration, with the IdP checked (metadata fetched, certificates read). */
 export async function samlSecurityView(origin: string): Promise<SamlSecurityView> {
   const config = samlConfig();
@@ -664,6 +749,7 @@ export async function samlSecurityView(origin: string): Promise<SamlSecurityView
   if (!config) return base;
   const urls = spUrls(config, origin);
   const view: SamlSecurityView = { ...base, entityId: urls.entityId, acsUrl: urls.acsUrl, metadataUrl: urls.metadataUrl, encryption: samlEncryptionView() };
+  if (config.privateKey && config.publicCert) view.signing = { current: signingInfo(config.publicCert), ...(config.nextPublicCert && { next: signingInfo(config.nextPublicCert) }) };
   try {
     const idp = await resolveIdp(config, true);
     view.idpSsoUrl = idp.entryPoint;

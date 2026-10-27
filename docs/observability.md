@@ -347,9 +347,18 @@ the call may start, then prices and records what it used.
   included. A model id matches exactly, else by the longest prefix (`claude-sonnet-4-6` prices
   `claude-sonnet-4-6-20260101`); a `vendor/` prefix (OpenRouter style) is ignored, and an
   OpenAI-compatible server's model falls back to the other providers' prices. Unknown models cost
-  $0. Costs are estimates: cached-token discounts and batch prices aren't modelled.
+  $0. Costs are estimates: batch prices aren't modelled.
+- **Cached tokens**: a price also has **cache read** and **cache write** columns (USD per million;
+  Settings → AI prices). `inputTokens` is the whole prompt; the cached part is priced at the cache
+  price and the rest at the input price. Anthropic: `cache_read_input_tokens` and
+  `cache_creation_input_tokens` (defaults 0.1x and 1.25x the input price); OpenAI:
+  `prompt_tokens_details.cached_tokens` (explicit cached-input default prices, no write price).
+  A cache price left empty falls back to the input price. Totals carry `cacheReadTokens` and
+  `cacheWriteTokens` (execution view, Insights, `GET /api/insights/ai-usage`), and spans carry
+  `gen_ai.usage.cache_read.input_tokens` and `gen_ai.usage.cache_creation.input_tokens`.
 - **Storage**: one row per call in `ai_usage` (migration 400: time, day in the instance time zone,
-  execution, workflow, agent, session, provider, model, operation, tokens, cost), kept
+  execution, workflow, agent, session, provider, model, operation, tokens, cost; migration 1821 adds
+  `cache_read_tokens`, `cache_write_tokens`, `user_id` (who started the run) and `credential_id`), kept
   `AI_USAGE_RETENTION_DAYS` (default 400). An execution record carries its own totals per model
   (`aiUsage`), earlier segments included when it resumed after a wait; sub-executions keep their
   own. Calls outside executions and agents (the editor assistant, the AI builder) aren't counted.
@@ -363,10 +372,19 @@ the call may start, then prices and records what it used.
   | Max tokens / max cost per execution | Workflow settings → AI usage limits | the execution, its earlier segments and its sub-workflows |
   | Max tokens / max cost per day | Workflow settings → AI usage limits | every execution of the workflow today |
   | Daily token limit, daily and monthly cost limit | Agent → Settings | every run of the agent (sessions, schedules, channels, Message an Agent) |
+  | Tokens or cost per day or month, per model credential | Settings → AI prices → AI usage caps (`GET/PUT /api/settings/ai-caps`) | every call made with the credential, by any workflow or agent |
+  | Tokens or cost per day or month, per user, or one cap for every user | the same | every run the user started (a manual run, an agent session); runs without a user, such as triggers, aren't counted |
 
   A call is refused before it starts once a cap is reached, and a call that takes the total over a
   cap is counted and then stops the run with `UsageCapError`: *AI usage cap reached: this workflow
   today used 40,210 tokens of its 40,000 tokens limit (Workflow settings → AI usage limits)*. The
   workflow run fails on the node that made the call (Model fallbacks don't retry it); an agent run
   ends with the reason `budget` and that notice. Each refusal or stop counts in
-  `landflow.ai.caps_reached`.
+  `landflow.ai.caps_reached`. The credential and user caps read the same message form: *AI usage cap
+  reached: credential “Team OpenAI” today used 2,200 tokens of its 1,500 tokens limit (Settings → AI
+  prices → AI usage caps)*; a zero or empty limit means no cap.
+- **Cost alerts**: an alert rule of kind *AI cost* (Settings → Alerts, a threshold percent, default
+  80) sends a message through its channels when a workflow, agent, credential or user cap reaches the
+  threshold, once per cap per period (day or month; `alert_state`, migration 1820), checked when usage
+  is recorded and by the alerts ticker on the leader. Per-execution caps aren't watched (they have
+  no period).

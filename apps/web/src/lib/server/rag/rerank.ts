@@ -4,6 +4,7 @@
  * re-ordered by that score. A reply that can't be used keeps the retrieval order.
  */
 import type { AiDocument, LanguageModel, Reranker } from '@landflow/engine';
+import { NodeOperationError } from '@landflow/sdk';
 import { generateStructured, type JsonSchema } from '../nodes/structured';
 import { traceRerank } from '../telemetry';
 
@@ -68,4 +69,69 @@ export function rankByScores(documents: AiDocument[], scores: Map<number, number
     .map((doc, index) => ({ doc, index, score: scores.get(index) }))
     .sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || a.index - b.index)
     .map(({ doc, score }) => ({ ...doc, ...(score !== undefined && { score: score / 10 }) }));
+}
+
+export interface CohereRerankerOptions {
+  /** Cohere's API root (default https://api.cohere.com), or a Cohere-compatible server such as vLLM, Jina or a gateway. */
+  baseUrl?: string;
+  apiKey?: string;
+  /** Default rerank-v3.5. */
+  model?: string;
+  topK?: number;
+  /** Cohere's `max_tokens_per_doc`: longer passages are cut. */
+  maxTokensPerDoc?: number;
+  /** A failed call keeps the retrieval order instead of failing the search. */
+  keepOrderOnFailure?: boolean;
+  timeoutMs?: number;
+  fetch?: typeof fetch;
+}
+
+export const COHERE_BASE_URL = 'https://api.cohere.com';
+
+/**
+ * Cohere's rerank API (`POST {base}/v2/rerank`): the passages are scored by a cross-encoder and come back ordered,
+ * each with a `relevance_score` between 0 and 1 (kept as the document's `score`).
+ */
+export function cohereReranker(options: CohereRerankerOptions = {}): Reranker {
+  const base = (options.baseUrl?.trim() || COHERE_BASE_URL).replace(/\/+$/, '');
+  const model = options.model?.trim() || 'rerank-v3.5';
+  const send = options.fetch ?? fetch;
+  return {
+    async rerank(query, documents, rerankOptions) {
+      const keep = Math.max(1, rerankOptions?.topK ?? options.topK ?? documents.length);
+      if (documents.length <= 1) return documents.slice(0, keep);
+      return traceRerank({ method: 'cohere', model, documents: documents.length, topK: keep }, async () => {
+        try {
+          const response = await send(`${base}/v2/rerank`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', accept: 'application/json', ...(options.apiKey && { authorization: `Bearer ${options.apiKey}` }) },
+            body: JSON.stringify({
+              model,
+              query,
+              documents: documents.map((doc) => doc.pageContent),
+              top_n: Math.min(keep, documents.length),
+              ...(options.maxTokensPerDoc && { max_tokens_per_doc: options.maxTokensPerDoc }),
+            }),
+            signal: AbortSignal.any([...(rerankOptions?.signal ? [rerankOptions.signal] : []), AbortSignal.timeout(options.timeoutMs ?? 30_000)]),
+          });
+          if (!response.ok) {
+            const detail = (await response.text().catch(() => '')).slice(0, 300);
+            throw new NodeOperationError(`The reranker answered ${response.status}`, { description: `${base}/v2/rerank${detail ? `: ${detail}` : ''}` });
+          }
+          const data = (await response.json()) as { results?: Array<{ index: number; relevance_score: number }> };
+          if (!Array.isArray(data.results)) throw new NodeOperationError('The reranker’s reply has no results', { description: 'Expected Cohere’s { results: [{ index, relevance_score }] }.' });
+          const ranked = data.results
+            .filter((r) => Number.isInteger(r.index) && r.index >= 0 && r.index < documents.length && typeof r.relevance_score === 'number')
+            .sort((a, b) => b.relevance_score - a.relevance_score)
+            .map((r) => ({ ...documents[r.index], score: r.relevance_score }));
+          return ranked.slice(0, keep);
+        } catch (error) {
+          if (rerankOptions?.signal?.aborted) throw error;
+          if (options.keepOrderOnFailure) return documents.slice(0, keep);
+          if (error instanceof NodeOperationError) throw error;
+          throw new NodeOperationError(`Can’t reach the reranker at ${base}`, { description: (error as Error).message });
+        }
+      });
+    },
+  };
 }

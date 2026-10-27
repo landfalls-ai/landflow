@@ -1,6 +1,6 @@
 # Messaging plugin (`messaging`)
 
-Telegram (with a polling trigger), Slack, Discord, WhatsApp Business Cloud, Twilio (SMS, MMS, WhatsApp, calls) and Send Email
+Telegram (with a polling trigger), Slack (with an Events API trigger), Discord, WhatsApp Business Cloud, Twilio (SMS, MMS, WhatsApp, calls) and Send Email
 (SMTP) for Landflow, written with the TypeScript SDK. It is the pilot for the transport layer (docs/transports.md): the same
 plugin answers over HTTP, gRPC, any installed broker and MCP. Nodes follow n8n's names and resource → operation shape.
 
@@ -23,14 +23,15 @@ keeps the flow going.
 | Node (type) | Resource → operations | Notes |
 |---|---|---|
 | **Telegram** (`messaging.telegram`) | Message → Send Message, Send Photo / Document / Audio / Video (URL or file_id, or **Binary File**: the item's file uploaded as multipart), Edit Message Text, Delete Chat Message, Send Chat Action (typing, upload_photo…) · Chat → Get · File → Get (downloads into `item.binary`) | Additional Fields: caption, file name, parse mode, disable notification, disable link preview, reply to message ID |
-| **Telegram Trigger** (`messaging.telegramTrigger`) | poll trigger, default every 30 s | "Trigger On": `*`, message, edited_message, channel_post, callback_query. See below |
+| **Telegram Trigger** (`messaging.telegramTrigger`) | poll trigger, default every 30 s | "Trigger On": `*`, message, edited_message, channel_post, callback_query; **Download Files** puts an incoming photo / document / audio / video / voice into `item.binary.data`. See below |
 | **Slack** (`messaging.slack`) | Message → Send (`chat.postMessage`: text, optional Block Kit JSON, reply in thread), Update, Delete, Get Permalink · Channel → Get Many (Return All / Limit, cursor pagination, Simplify) · User → Get by Email (`users.lookupByEmail`, Simplify) · Reaction → Add · File → Upload (an item file via `files.getUploadURLExternal` and `files.completeUploadExternal`, shared in a channel or thread with a title and message), Get (`files.info`, downloading `url_private_download` into item.binary) | Channel picker loads `conversations.list` live |
-| **Discord** (`messaging.discord`) | Connection Type **Bot Token**: Message → Send (content, embeds JSON, TTS, reply), Get Many (Return All / Limit, paged with `before`, Simplify), Delete, React with Emoji · **Webhook**: Message → Send (content, username, avatar URL, embeds JSON) | Server and channel pickers (`/users/@me/guilds`, `/guilds/{id}/channels`). A 429 waits `retry_after` (up to 10 s) and retries once |
-| **WhatsApp Business Cloud** (`messaging.whatsApp`) | Message → Send (Message Type: text, or image / document / audio / video **by URL** with caption and filename), Send Template (name, language, components JSON) | Sender phone number picker loads `/{businessAccountId}/phone_numbers` |
-| **Twilio** (`messaging.twilio`) | Message → Send SMS, Send MMS (media URLs), Send WhatsApp (`whatsapp:` is added to From and To), Get, List (To, From, date sent; paged by `next_page_uri`) · Call → Make (inline TwiML or a TwiML URL), Get, List (To, From, status, start time) | Bodies go up form-encoded. From may be a number or a Messaging Service SID (`MG…`). Errors keep Twilio's code (`Twilio API error 400 (code 21211): …`) with a hint for common ones. A 429 waits `Retry-After` (up to 10 s, never past the call's deadline) and retries once. See [Twilio](#twilio) |
-| **Send Email** (`messaging.emailSend`) | From, To (comma-separated, names allowed), Subject, Email Format (Text / HTML / Both), Text, HTML · Options: CC, BCC, Reply To, Ignore SSL Issues | Returns `{ messageId, accepted, rejected, response }` |
+| **Slack Trigger** (`messaging.slackTrigger`) | app webhook trigger (docs/protocol.md §12), Events API | Events (multi-select: message, app_mention, reaction_added / removed, channel_created / rename, member_joined_channel, file_shared / public, team_join, user_change, link_shared, app_home_opened, or Any Event); filters Watch Whole Workspace / Channel(s), Ignore Bot Messages, Ignore Message Edits and Deletes. See [Slack Trigger](#slack-trigger) |
+| **Discord** (`messaging.discord`) | Connection Type **Bot Token**: Message → Send (content, embeds JSON, TTS, reply), Get Many (Return All / Limit, paged with `before`, Simplify), Delete, React with Emoji · **Webhook**: Message → Send (content, username, avatar URL, embeds JSON) · both: option **Attachments** uploads item files with the message (`multipart/form-data`: `payload_json` + `files[n]`, up to 10) | Server and channel pickers (`/users/@me/guilds`, `/guilds/{id}/channels`). A 429 waits `retry_after` (up to 10 s) and retries once |
+| **WhatsApp Business Cloud** (`messaging.whatsApp`) | Message → Send (Message Type: text, or image / document / audio / video with caption and filename; Media Source **URL**, **Binary File** (uploaded to `/{phone-number-id}/media`, then sent by ID) or **Media ID**), Send Template (name, language, components JSON) · Media → Upload (item file → media ID), Get (media ID → temporary URL → bytes into `item.binary`; Download off: details only) | Sender phone number picker loads `/{businessAccountId}/phone_numbers` |
+| **Twilio** (`messaging.twilio`) | Message → Send SMS, Send MMS (media URLs), Send WhatsApp (`whatsapp:` is added to From and To), Get, List (To, From, date sent; paged by `next_page_uri`) · Call → Make (inline TwiML or a TwiML URL), Get, List (To, From, status, start time) · Message → Get Media (the files of a received MMS / WhatsApp message into `item.binary`, one item per file) · Recording → Download (MP3 or WAV into `item.binary`), List (optionally of one call) | Bodies go up form-encoded. From may be a number or a Messaging Service SID (`MG…`). Errors keep Twilio's code (`Twilio API error 400 (code 21211): …`) with a hint for common ones. A 429 waits `Retry-After` (up to 10 s, never past the call's deadline) and retries once. See [Twilio](#twilio) |
+| **Send Email** (`messaging.emailSend`) | From, To (comma-separated, names allowed), Subject, Email Format (Text / HTML / Both), Text, HTML · Options: CC, BCC, Reply To, **Attachments** (comma-separated binary property names), **Inline Files** (binary properties embedded in the HTML as `cid:<property>`), Ignore SSL Issues | Returns `{ messageId, accepted, rejected, response }` |
 
-Where n8n's shape differs from a flat list, n8n wins: WhatsApp "Send Media by URL" is **Send** with a media Message Type,
+Where n8n's shape differs from a flat list, n8n wins: WhatsApp "Send Media" is **Send** with a media Message Type,
 Telegram's Send Chat Action is a Message operation, and Send Email's CC / BCC / Reply To sit under **Options**.
 
 Telegram files (binary data, docs/protocol.md §11): with **Binary File** on, the send operations upload
@@ -38,6 +39,38 @@ Telegram files (binary data, docs/protocol.md §11): with **Binary File** on, th
 larger files are refused before upload unless the credential's Base URL points at a local Bot API server (2000 MB).
 **File → Get** calls getFile and downloads the bytes into `item.binary.data` (the cloud API serves files up to 20 MB);
 turn **Download** off for the details only. Feed it the `file_id` of a document from the Telegram Trigger.
+
+Other files (all use `item.binary`, docs/protocol.md §11; a property that the item lacks fails with its name and the files it has):
+- **Discord** *Attachments* (bot and webhook): comma-separated binary properties, sent as `files[n]` with an `attachments` entry per file; a message may then have no text.
+- **WhatsApp**: *Binary File* uploads with `POST /{phone-number-id}/media` (images up to 5 MB, audio and video 16 MB, documents 100 MB, per Meta) and sends by the returned ID, defaulting the document's file name to the file's. **Media → Get** reads the `url` from `GET /{media-id}` and downloads it with the access token; media IDs live 30 days and the URL 5 minutes. Feed it `messages[].image.id` (and `document`, `audio`, `video`, `sticker`) from an incoming-message webhook.
+- **Twilio** takes MMS media by URL only (the API has no upload), so sending is unchanged. Received media and recordings are files: **Message → Get Media** lists `/Messages/{sid}/Media.json` and downloads each file (Twilio redirects to a CDN; the credentials are not sent there), **Recording → Download** fetches `/Recordings/{sid}.mp3|.wav`.
+
+### Slack Trigger
+
+An app webhook trigger: Slack calls Landflow's `/api/webhook/app/<workflowId>/<nodeId>` URL (public; the node verifies the caller).
+Slack has **no API to register an Events subscription**, so setup has one manual step:
+
+1. Create the Slack app, add the bot scopes for the events you want (`app_mentions:read`, `channels:history`, `groups:history`,
+   `im:history`, `mpim:history`, `reactions:read`, `files:read`, …) and install it. Use a **Slack API** (bot token) or **Slack OAuth2**
+   credential (Connect; the bot token and the token's team are used) and fill in its **Signing Secret** (Basic Information): both
+   credential types have the field, and the trigger refuses to publish without it.
+2. Publish the workflow. `create` calls `auth.test` (a bad token fails here, with the base URL of the credential), stores
+   `{url, teamId, botUserId, team}` in the node's static data and returns; `checkExists` is true while the stored URL is the current one;
+   `delete` clears it. Landflow cannot subscribe for you.
+3. Copy the node's **Request URL** from the editor's Publish menu (App webhooks) into the app's **Event Subscriptions**, turn Enable
+   Events on (Slack sends a signed `url_verification` call, answered with its `challenge`) and subscribe to the bot events you picked.
+
+Each call is verified with `verifySlackSignature` (`X-Slack-Signature` + `X-Slack-Request-Timestamp`, option **Signature Tolerance**,
+default 300 s); a missing, wrong or stale signature, or a credential without a signing secret, gets **401**. After that: `url_verification`
+is answered before any filter; `event_callback` events pass the **Events** selection (a message that mentions the bot is both `message` and
+`app_mention`: select one), **Ignore Message Edits and Deletes** (default on: `message_changed`, `message_deleted`), **Ignore Bot Messages**
+(default on: `bot_id`, subtype `bot_message`, the app's own user), and, unless **Watch Whole Workspace** (default on) is on, **Channel(s)** (IDs,
+comma-separated; matched against `event.channel`, `event.item.channel`, `event.channel.id`, `event.channel_id`). Everything else is answered
+`200 {"ignored": …}` so Slack does not retry. The idempotency key is the `event_id`: Slack's retries (`X-Slack-Retry-Num`, sent when
+it saw no answer within 3 s) start no second run.
+
+Item: `{eventId, eventTime, teamId, apiAppId, type, event, authorizations, channel, user, text, ts, threadTs, raw}` (`raw` is the whole
+envelope, `event` the inner event; `ts` is the event's own timestamp, a reaction's message `ts` for reactions). A manual run outputs nothing.
 
 ### Telegram Trigger
 
@@ -51,6 +84,9 @@ works without a public URL. Poll state is `{ offset }`, the last `update_id` + 1
   latest matching updates. State is unchanged. Updates a running poll has already confirmed are gone from Telegram.
 - Each item is the raw update plus `update_id`, `update_type`, `message`, `chat`, `from` and `text` (the message text or caption;
   for a callback query, the button's data).
+- **Download Files** (off by default): for a message with a photo (largest size), document, video, audio, voice, video note,
+  animation or sticker, the file goes to `item.binary.data` and `file_type` names its kind. Files over 20 MB (the cloud Bot API
+  limit) or no longer available leave the update intact with `file_error` instead of failing the poll.
 - **A bot with a webhook cannot be polled**: Telegram answers 409, which the node reports as "this bot has a webhook set, so
   getUpdates is unavailable", with a pointer to `deleteWebhook`. Only one poller per bot works (also a 409).
 
@@ -58,8 +94,8 @@ works without a public URL. Poll state is `{ offset }`, the last `update_id` + 1
 
 `src/smtp.ts` is a small client: implicit TLS (port 465) or plain + STARTTLS (587/25, unless *Disable STARTTLS*), AUTH PLAIN
 or LOGIN, multi-line replies, EHLO with HELO fallback, dot-stuffing, RFC 2047 encoded headers, quoted-printable bodies,
-`multipart/alternative` for "Both", a `Message-ID`, BCC only in the envelope, and CR/LF stripped from header values. Every
-step has a timeout (30 s), and errors carry the server's reply code: `SMTP AUTH PLAIN rejected: 535 5.7.8 …`. No attachments yet.
+`multipart/alternative` for "Both", attachments (base64, `multipart/mixed`; inline files with a `Content-ID` in `multipart/related`), a `Message-ID`, BCC only in the envelope, and CR/LF stripped from header values. Every
+step has a timeout (30 s), and errors carry the server's reply code: `SMTP AUTH PLAIN rejected: 535 5.7.8 …`. No pipelining or DSN.
 
 ## Credentials
 
@@ -70,11 +106,20 @@ point at a proxy or a test double. Tokens and passwords are `password` fields: m
 |---|---|---|---|
 | `telegramApi` | Access Token, Base URL (`https://api.telegram.org`) | `getMe` → "Authenticated as @bot" | Message [@BotFather](https://t.me/BotFather), `/newbot`, copy the token. Add the bot to groups; users must message it first |
 | `slackApi` | Access Token, Base URL (`https://slack.com/api`) | `auth.test` → team and user | api.slack.com/apps → Create App → OAuth & Permissions → bot scopes `chat:write`, `channels:read`, `groups:read`, `reactions:write`, `users:read`, `users:read.email` (plus `files:write` and `files:read` for files) → Install → copy the **Bot User OAuth Token** (`xoxb-…`). Invite the bot to private channels |
+| `slackOAuth2Api` | extends `oAuth2Api`: Client ID and Secret, Bot Scopes (comma-separated, default `chat:write,channels:read,groups:read,reactions:write,users:read,users:read.email,files:write,files:read`), Base URL, Signing Secret; URLs fixed to Slack's v2 OAuth, authorization code | `auth.test` → team and user | Create the app at api.slack.com/apps, add the redirect URL the dialog shows under OAuth & Permissions → Redirect URLs, then **Connect**. The bot token (`xoxb-…`) is stored by the host and renewed when token rotation is on. Nodes only get the `accessToken`, not the rest of Slack's token response: the **Slack Trigger** reads the team and the bot user with `auth.test`. For the trigger also set the Signing Secret and paste its Request URL (`{public URL}/api/webhook/app/<workflow id>/<node id>`, shown in the Publish menu) into Event Subscriptions |
 | `discordBotApi` | Bot Token, Base URL (`https://discord.com/api/v10`) | `GET /users/@me` | discord.com/developers → New Application → Bot → Reset Token. Invite it with OAuth2 → URL Generator (`bot` scope; View Channels, Send Messages, Read Message History, Add Reactions, Manage Messages) |
+| `discordOAuth2Api` | extends `oAuth2Api`: Client ID and Secret, Scope (`identify guilds`), optional Bot Token, Base URL; URLs fixed to Discord's, PKCE | `GET /users/@me` | Add the redirect URL under OAuth2 in your application, then **Connect**. Discord only lets bots post to channels: enter the Bot Token for message operations, otherwise the access token is sent as a Bearer (enough for the Guilds list) |
 | `discordWebhookApi` | Webhook URL (secret: it embeds its token) | `GET` the webhook URL | Channel settings → Integrations → Webhooks → New Webhook → Copy Webhook URL |
 | `whatsAppApi` | Access Token, Business Account ID, Base URL (`https://graph.facebook.com/v21.0`) | `GET /{businessAccountId}/phone_numbers` | developers.facebook.com → app with the WhatsApp product. API Setup shows the WhatsApp Business Account ID; create a permanent token for a System User (Business Settings) with `whatsapp_business_messaging` and `whatsapp_business_management` |
 | `twilioApi` | Authentication (Auth Token or API Key), Account SID, Auth Token, or API Key SID and Secret, Base URL (`https://api.twilio.com`) | `GET /2010-04-01/Accounts/{sid}.json` → account name and status | console.twilio.com → Account Info: Account SID and Auth Token. Or Account → API keys & tokens → Create API key (the secret is shown once); the Account SID is still needed for the path |
 | `smtp` | User, Password, Host, Port (465), SSL/TLS (on), Disable STARTTLS, Client Host Name | connect, EHLO, (STARTTLS), AUTH, QUIT | Your provider's SMTP settings. Gmail and Outlook need an app password |
+
+**OAuth2 variants.** `slackOAuth2Api` and `discordOAuth2Api` extend the host's generic OAuth2 type (docs/protocol.md §7): the dialog
+shows **Connect**, the host refreshes the token before it expires and, when a node fails with a 401-like error, renews it and runs the
+node again (Slack's `invalid_auth` and `token_expired` answers are worded so the host recognises them). The Slack node has an
+**Authentication** switch (Access Token, the default, or OAuth2); the Discord node's **Connection Type** adds OAuth2 next to Bot Token
+and Webhook. Both nodes take whichever of the two credentials is set when the switch names the other, and read `accessToken` on every
+call without caching it (`pickCredentials` in `src/shared.ts`). Telegram, WhatsApp Cloud, Twilio and SMTP have no OAuth2 for their APIs.
 
 "Ignore SSL Issues" is a Send Email node option (as in n8n), so the credential test always verifies the server certificate.
 

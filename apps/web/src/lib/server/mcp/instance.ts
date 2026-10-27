@@ -9,7 +9,8 @@ import type { McpAccessResponse, McpAccessView } from '../../shared/mcp';
 import { ConfigFile } from '../config-store';
 import { singleton } from '../singleton';
 import { sameSecret, unauthorized, jsonRpcError, bearerToken } from './server';
-import { authenticateMcpRequest, GATEWAY_SECRET_HEADER, McpAuthError, mcpAuthErrorResponse } from './identity';
+import { authenticateMcpRequest, GATEWAY_SECRET_HEADER, McpAuthError, mcpAuthErrorResponse, type McpCaller } from './identity';
+import type { McpScope } from './project-servers';
 import { getUser, type UserRecord } from '../auth/users';
 import type { Actor } from '../projects/access';
 import type { Role } from '../../shared/auth';
@@ -72,31 +73,57 @@ export function verifyMcpToken(token: string | undefined): boolean {
   return Boolean(file.enabled && file.tokenHash && token && sameSecret(hash(token), file.tokenHash));
 }
 
-/** Who is calling the instance server: the instance (its access token: no per-user checks) or a Landflow user the gateway identified. */
-export type InstanceCaller = { kind: 'instance' } | { kind: 'user'; actor: Actor; user: UserRecord; via: string };
+/** Who is calling the instance server: the instance (its access token: no per-user checks) or a Landflow user (their permissions apply). */
+export type InstanceCaller =
+  | { kind: 'instance'; scope?: McpScope }
+  | { kind: 'user'; actor: Actor; user: UserRecord; via: string; scope?: McpScope };
+
+/** The scope a call runs under: the project of the URL, and of a project-scoped token; a token for another project than the URL's is refused (undefined and a `Response`). */
+function scopeOf(projectId: string | undefined, tokenProject: string | undefined): McpScope | undefined | Response {
+  if (projectId && tokenProject && projectId !== tokenProject) return jsonRpcError(403, -32003, 'This MCP token is scoped to another project');
+  const id = projectId ?? tokenProject;
+  return id ? { projectId: id } : undefined;
+}
 
 /**
- * Authenticate a call to /api/mcp. Two ways in:
+ * Authenticate a call to /api/mcp (or /api/mcp/projects/<id>: `projectId`, which scopes the server to that project). Ways in:
  * - the access token from Settings → MCP (`Authorization: Bearer lf_mcp_…`): the instance itself, unchanged;
  * - the bundled gateway: its secret (`x-landflow-gateway`) plus the caller it validated (`x-landflow-caller-*`), mapped to a
  *   Landflow user as for the plugin endpoints. The server then applies that user's permissions (project access, see
  *   ./instance-tools.ts). A call the gateway forwarded without an identity (no sign-in configured there) is refused:
- *   with no user there is no permission to apply, and the access token is for the instance.
+ *   with no user there is no permission to apply, and the access token is for the instance;
+ * - a Landflow MCP token, an identity provider's access token or an API key sent directly: the user they stand for, as
+ *   above. A token issued for a project scopes the server to it wherever it is used.
  * Returns the refusal response otherwise.
  */
-export async function authenticateInstanceRequest(request: Request): Promise<InstanceCaller | Response> {
+export async function authenticateInstanceRequest(request: Request, projectId?: string): Promise<InstanceCaller | Response> {
+  const asUser = (caller: McpCaller): InstanceCaller | Response => {
+    const user = caller.userId ? getUser(caller.userId) : undefined;
+    if (!user || user.disabledAt) return jsonRpcError(403, -32003, caller.viaGateway ? 'The gateway forwarded no known Landflow user for this call: sign in at the gateway with an account that has signed in to Landflow' : 'No known Landflow user for this call');
+    if (!caller.scopes.includes('tools:call')) return jsonRpcError(403, -32003, 'This MCP token has no tools:call scope');
+    const scope = scopeOf(projectId, caller.projectId);
+    if (scope instanceof Response) return scope;
+    return { kind: 'user', actor: { id: user.id, role: user.role as Role }, user, via: `${caller.kind}:${caller.subject}`, ...(scope && { scope }) };
+  };
   if (request.headers.get(GATEWAY_SECRET_HEADER) !== null) {
     try {
-      const caller = await authenticateMcpRequest(request, { pluginId: '' });
-      const user = caller.userId ? getUser(caller.userId) : undefined;
-      if (!user || user.disabledAt) return jsonRpcError(403, -32003, 'The gateway forwarded no known Landflow user for this call: sign in at the gateway with an account that has signed in to Landflow');
-      if (!caller.scopes.includes('tools:call')) return jsonRpcError(403, -32003, 'This MCP token has no tools:call scope');
-      return { kind: 'user', actor: { id: user.id, role: user.role as Role }, user, via: `${caller.kind}:${caller.subject}` };
+      return asUser(await authenticateMcpRequest(request, { pluginId: '', projectId }));
     } catch (error) {
       if (error instanceof McpAuthError) return mcpAuthErrorResponse(error);
       throw error;
     }
   }
-  if (!verifyMcpToken(bearerToken(request))) return unauthorized('Send the access token from Settings → MCP as “Authorization: Bearer <token>”');
-  return { kind: 'instance' };
+  const bearer = bearerToken(request);
+  if (verifyMcpToken(bearer)) return { kind: 'instance', ...(projectId && { scope: { projectId } }) };
+  if (bearer) {
+    // Not the access token: a user's Landflow MCP token, identity provider token or API key.
+    try {
+      const caller = await authenticateMcpRequest(request, { pluginId: '', projectId });
+      if (caller.kind === 'token' || caller.kind === 'idp' || caller.kind === 'apiKey') return asUser(caller);
+    } catch (error) {
+      if (!(error instanceof McpAuthError)) throw error;
+      if (error.status === 403) return mcpAuthErrorResponse(error);
+    }
+  }
+  return unauthorized('Send the access token from Settings → MCP, or a Landflow MCP token, as “Authorization: Bearer <token>”');
 }

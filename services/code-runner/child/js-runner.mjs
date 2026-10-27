@@ -119,19 +119,78 @@ function toItems(result) {
   });
 }
 
-/** `$input`, `$('Node')`: n8n's accessors over a list of items; `.item` follows the current item. */
-function accessor(list, currentIndex) {
+/**
+ * `$input`, `$('Node')`: n8n's accessors over a list of items (the engine's expression accessors, packages/engine
+ * expression.ts, rule for rule); `.item` follows the current item by position. `list` undefined: the node hasn't run,
+ * `isExecuted` is false and reading anything else throws.
+ */
+function accessor(name, list, currentIndex) {
+  const items = () => {
+    if (!list) throw new Error(`Node "${name}" has not run yet (or produced no output)`);
+    return list;
+  };
   return {
-    all: () => list,
-    first: () => list[0],
-    last: () => list[list.length - 1],
+    all: () => items(),
+    first: () => items()[0],
+    last: () => items()[items().length - 1],
+    itemMatching(index) {
+      const matched = items()[index];
+      if (!matched) throw new Error(`Node "${name}" has no item matching input item ${index}`);
+      return matched;
+    },
     get item() {
-      return list[currentIndex()] ?? list[0];
+      return items()[currentIndex()] ?? items()[0];
     },
     get json() {
-      return (list[currentIndex()] ?? list[0])?.json;
+      return (items()[currentIndex()] ?? items()[0])?.json;
     },
-    isExecuted: true,
+    get binary() {
+      return (items()[currentIndex()] ?? items()[0])?.binary;
+    },
+    isExecuted: list !== undefined,
+  };
+}
+
+/** `this.helpers` of the snippet: the input files the host sent, and files created as base64 for the host to store. */
+function binaryHelpers(job, items) {
+  const files = job.binary ?? {};
+  const skipped = job.binarySkipped ?? {};
+  const limit = job.maxBinaryBytes ?? Infinity;
+  let created = 0;
+  const assertBinaryData = (itemIndex, propertyName = 'data') => {
+    const ref = items[itemIndex]?.binary?.[propertyName];
+    if (!ref || typeof ref !== 'object') {
+      const available = Object.keys(items[itemIndex]?.binary ?? {});
+      throw new Error(`Item ${itemIndex} has no binary file "${propertyName}"${available.length ? ` (its files: ${available.join(', ')})` : ''}`);
+    }
+    return ref;
+  };
+  return {
+    assertBinaryData,
+    async getBinaryDataBuffer(itemIndex, propertyName = 'data') {
+      assertBinaryData(itemIndex, propertyName);
+      const key = `${itemIndex}:${propertyName}`;
+      if (skipped[key]) throw new Error(skipped[key]);
+      if (files[key] === undefined) throw new Error(`The bytes of item ${itemIndex}'s file "${propertyName}" were not sent to the code sandbox`);
+      return Buffer.from(files[key], 'base64');
+    },
+    async prepareBinaryData(data, fileName, mimeType) {
+      let bytes;
+      if (typeof data === 'string') bytes = Buffer.from(data);
+      else if (ArrayBuffer.isView(data)) bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+      else if (Object.prototype.toString.call(data) === '[object ArrayBuffer]') bytes = Buffer.from(data);
+      else throw new TypeError('prepareBinaryData needs a Buffer, Uint8Array, ArrayBuffer or string');
+      created += bytes.byteLength;
+      if (created > limit) throw new Error(`Files created by the code are over the ${(limit / 1024 / 1024).toFixed(1).replace(/\.0$/, '')} MB limit (${created} bytes so far)`);
+      const extension = fileName && /\.([A-Za-z0-9]{1,10})$/.exec(fileName)?.[1];
+      return {
+        data: bytes.toString('base64'),
+        ...(mimeType && { mimeType }),
+        ...(fileName && { fileName }),
+        ...(extension && { fileExtension: extension.toLowerCase() }),
+        fileSize: bytes.byteLength,
+      };
+    },
   };
 }
 
@@ -189,14 +248,10 @@ async function main() {
     $execution: job.execution ?? {},
     $workflow: job.workflow ?? {},
     $runIndex: 0,
-    $node: Object.fromEntries(Object.entries(outputs).map(([name, list]) => [name, { json: list[0]?.json, items: list }])),
-    $: (name) => {
-      const list = outputs[name];
-      if (!list) throw new Error(`Node "${name}" has not run yet (or produced no output)`);
-      return accessor(list, currentIndex);
-    },
+    $node: Object.fromEntries(Object.entries(outputs).map(([name, list]) => [name, { json: list[0]?.json, binary: list[0]?.binary, items: list }])),
+    $: (name) => accessor(name, Object.hasOwn(outputs, name) ? outputs[name] : undefined, currentIndex),
     items,
-    $input: accessor(items, currentIndex),
+    $input: accessor(undefined, items, currentIndex),
   });
   const setItem = (index) => {
     current = index;
@@ -217,13 +272,15 @@ async function main() {
   script.runInContext(context);
   const run = context.snippet;
   context.snippet = undefined;
+  // `this` in the snippet, as in n8n: `this.helpers.getBinaryDataBuffer(i, 'data')`, `this.helpers.prepareBinaryData(…)`.
+  const self = { helpers: binaryHelpers(job, items) };
   const output = [];
   if (job.mode === 'each') {
     for (let index = 0; index < items.length; index++) {
       setItem(index);
       let result;
       try {
-        result = await run();
+        result = await run.call(self);
       } catch (error) {
         return finish({ type: 'error', error: describe(error, index) });
       }
@@ -232,7 +289,7 @@ async function main() {
   } else {
     setItem(0);
     try {
-      output.push(...toItems(await run()));
+      output.push(...toItems(await run.call(self)));
     } catch (error) {
       return finish({ type: 'error', error: describe(error) });
     }

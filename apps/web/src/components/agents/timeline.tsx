@@ -2,12 +2,13 @@
 /** A session's timeline: chat bubbles, expandable tool calls, approvals, errors. Shared by the test chat and the Sessions tab. */
 import { useState } from 'react';
 import Link from 'next/link';
-import { Ban, Bot, Check, ChevronRight, Copy, ExternalLink, Hand, Info, Loader2, TriangleAlert, User, Waypoints, X } from 'lucide-react';
+import { Ban, Bot, Check, ChevronRight, Copy, ExternalLink, Hand, Info, Loader2, ShieldAlert, ThumbsDown, ThumbsUp, TriangleAlert, User, Waypoints, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { duration } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import type { TimelineEntry, ToolKind } from '@/lib/shared/agents';
+import type { ChatFeedback, FeedbackRating } from '@/lib/shared/chat-feedback';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { JsonView } from '../ui/json-view';
@@ -226,6 +227,8 @@ export function TimelineView({
   onDecide,
   deciding,
   wide,
+  feedback,
+  onRate,
 }: {
   entries: TimelineEntry[];
   childHref?: (entry: ToolEntry) => string | undefined;
@@ -233,6 +236,9 @@ export function TimelineView({
   deciding?: boolean;
   /** Wider bubbles, for the Sessions tab. */
   wide?: boolean;
+  /** Ratings by assistant entry id, and the handler that rates a reply (null takes it back); both given: thumbs under each reply. */
+  feedback?: Record<string, ChatFeedback>;
+  onRate?: (entryId: string, rating: FeedbackRating | null) => void;
 }) {
   const bubble = wide ? 'max-w-[min(640px,85%)]' : 'max-w-[290px]';
   return (
@@ -259,6 +265,27 @@ export function TimelineView({
                   <div className="whitespace-pre-wrap rounded-xl border border-hair bg-wl px-3 py-2 text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">
                     {entry.text}
                   </div>
+                  {onRate && (
+                    <div className="mt-1 flex items-center gap-1">
+                      {(['up', 'down'] as const).map((rating) => {
+                        const on = feedback?.[entry.id]?.rating === rating;
+                        const Icon = rating === 'up' ? ThumbsUp : ThumbsDown;
+                        return (
+                          <button
+                            key={rating}
+                            onClick={() => onRate(entry.id, on ? null : rating)}
+                            aria-pressed={on}
+                            aria-label={rating === 'up' ? 'Good reply' : 'Bad reply'}
+                            title={rating === 'up' ? 'Good reply' : 'Bad reply'}
+                            className={cn('rounded-md p-1 transition-colors hover:bg-wl', on ? (rating === 'up' ? 'text-gn' : 'text-rd') : 'text-t3 hover:text-t1')}
+                          >
+                            <Icon className="size-3" />
+                          </button>
+                        );
+                      })}
+                      {feedback?.[entry.id]?.comment && <span className="truncate text-[11px] text-t3" title={feedback[entry.id].comment}>“{feedback[entry.id].comment}”</span>}
+                    </div>
+                  )}
                   {(entry.model || entry.usage) && (
                     <div className="mt-1 flex gap-2 font-mono text-[10px] text-t3">
                       {entry.model && <span>{entry.model}</span>}
@@ -289,6 +316,27 @@ export function TimelineView({
                   )}
                 >
                   {entry.message}
+                </div>
+              </div>
+            );
+          case 'guardrail':
+            return (
+              <div key={entry.id} className={cn('pl-[34px]', !wide && 'pr-1')}>
+                <div className="animate-in rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12.5px] leading-snug text-t1">
+                  <div className="flex items-center gap-1.5 font-semibold">
+                    <ShieldAlert className="size-3.5 shrink-0 text-amber-600" />
+                    {entry.stage === 'input' ? 'Input' : 'Output'} guardrail {entry.action}
+                  </div>
+                  <ul className="mt-1 space-y-0.5 text-t2">
+                    {entry.violations.map((v, i) => (
+                      <li key={i} className="[overflow-wrap:anywhere]">
+                        <span className="font-mono text-[11.5px]">{v.check}</span> · {v.type}
+                        {v.match ? <span className="font-mono text-[11.5px]"> {v.match}</span> : null}
+                        {v.confidence !== undefined ? ` (${Math.round(v.confidence * 100)}%)` : ''}
+                        {v.reason ? ` — ${v.reason}` : ''}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               </div>
             );

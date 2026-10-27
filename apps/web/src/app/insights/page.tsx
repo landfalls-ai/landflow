@@ -12,7 +12,7 @@ import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { InsightsPeriod, InsightsReport, InsightsTotals } from '@/lib/shared/platform';
-import { EMPTY_USAGE, formatCost, formatTokens, type AiUsageReport, type AiUsageTotals } from '@/lib/shared/ai-usage';
+import { EMPTY_USAGE, formatCache, formatCost, formatTokens, type AiUsageReport, type AiUsageTotals } from '@/lib/shared/ai-usage';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SectionLabel, Switch } from '@/components/ui/inputs';
@@ -53,6 +53,11 @@ function CostKpi({ usage, index }: { usage?: PeriodUsage; index: number }) {
       <div className="mt-2 truncate text-[12px] text-t3" title={`${total.inputTokens.toLocaleString()} input + ${total.outputTokens.toLocaleString()} output tokens`}>
         {formatTokens(total.inputTokens + total.outputTokens)} tokens · {total.calls.toLocaleString()} model call{total.calls === 1 ? '' : 's'}
       </div>
+      {formatCache(total) && (
+        <div className="mt-0.5 truncate text-[11px] text-t3" title="Input tokens served from the provider’s cache (read) or written to it, priced with the cache prices">
+          cached: {formatCache(total)}
+        </div>
+      )}
     </Card>
   );
 }
@@ -118,6 +123,8 @@ export default function InsightsPage() {
           total.outputTokens += totals.outputTokens;
           total.cost += totals.cost;
           total.calls += totals.calls;
+          if (totals.cacheReadTokens) total.cacheReadTokens = (total.cacheReadTokens ?? 0) + totals.cacheReadTokens;
+          if (totals.cacheWriteTokens) total.cacheWriteTokens = (total.cacheWriteTokens ?? 0) + totals.cacheWriteTokens;
         }
         setUsage({ period, byWorkflow, total });
       })

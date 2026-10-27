@@ -1,0 +1,70 @@
+# Queue mode (README "Queue mode, workers and high availability"): the mains (landflow-host, two replicas, rolling updates),
+# a `landflow-worker` Deployment that runs production runs (`node worker.mjs`, health and metrics on :5690), a
+# PodDisruptionBudget for the workers, and the settings every main and worker must share. Needs, from other components or
+# your own manifests: Postgres (components/postgres or external-services: LANDFLOW_DB, DATABASE_URL), Valkey
+# (components/valkey: `valkey:6379`) and an S3 store (components/minio: `minio:9000`, bucket `landflow`).
+#
+#   components: [../../components/postgres, ../../components/valkey, ../../components/minio, ../../components/queue-mode]
+#
+# What it changes on the host Deployment: replicas 2 with a rolling update (the data directory becomes an emptyDir: queue mode
+# keeps credentials, settings files and agents in Postgres and files in S3), LANDFLOW_EXECUTIONS_MODE=queue, an instance id per
+# pod, the S3 binary store, and one encryption key and file-link secret for every process (the Secret `landflow-queue`,
+# generated here with development values: replace it, and never change the key once credentials are saved).
+#
+# The worker's database and Valkey settings are written for components/postgres and components/valkey (Secret
+# `landflow-postgres`, Service `valkey`): with external-services, patch DATABASE_URL and LANDFLOW_VALKEY_URL on
+# `landflow-worker` to read the Secret `landflow-external` (keys `database-url`, `valkey-url`). Valkey Sentinel or Cluster:
+# add LANDFLOW_VALKEY_SENTINELS or LANDFLOW_VALKEY_CLUSTER to both Deployments (README).
+#
+# Scaling: `kubectl scale deployment/landflow-worker --replicas=N`, or a KEDA ScaledObject on the queue's depth
+# (examples/keda/queue-workers.yaml). Stopping a worker (a scale-down, a rollout, a node drain) is graceful: SIGTERM stops it
+# taking jobs, its runs get LANDFLOW_WORKER_SHUTDOWN_SECONDS (30) to finish and the rest go back on the queue; the pod's
+# terminationGracePeriodSeconds (60) is longer.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - worker.yaml
+  - pdb.yaml
+secretGenerator:
+  - name: landflow-queue
+    options: { disableNameSuffixHash: true }
+    literals:
+      - encryption-key=landflow-queue-dev-only-encryption-key
+      - binary-secret=landflow-queue-dev-only-binary-secret
+patches:
+  - target: { kind: Deployment, name: landflow-host }
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: { name: landflow-host }
+      spec:
+        replicas: 2
+        strategy:
+          type: RollingUpdate
+          rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+        template:
+          spec:
+            containers:
+              - name: host
+                env:
+                  - { name: LANDFLOW_EXECUTIONS_MODE, value: queue }
+                  - name: LANDFLOW_INSTANCE_ID
+                    valueFrom: { fieldRef: { fieldPath: metadata.name } }
+                  - { name: LANDFLOW_BINARY_STORE, value: s3 }
+                  - { name: LANDFLOW_S3_ENDPOINT, value: "http://minio:9000" }
+                  - { name: LANDFLOW_S3_BUCKET, value: landflow }
+                  - { name: LANDFLOW_S3_PREFIX, value: "queue/" }
+                  - { name: LANDFLOW_S3_REGION, value: us-east-1 }
+                  - { name: LANDFLOW_S3_FORCE_PATH_STYLE, value: "true" }
+                  - name: LANDFLOW_S3_ACCESS_KEY_ID
+                    valueFrom: { secretKeyRef: { name: landflow-minio, key: access-key-id } }
+                  - name: LANDFLOW_S3_SECRET_ACCESS_KEY
+                    valueFrom: { secretKeyRef: { name: landflow-minio, key: secret-access-key } }
+                  - name: LANDFLOW_ENCRYPTION_KEY
+                    valueFrom: { secretKeyRef: { name: landflow-queue, key: encryption-key } }
+                  - name: LANDFLOW_BINARY_SECRET
+                    valueFrom: { secretKeyRef: { name: landflow-queue, key: binary-secret } }
+            volumes:
+              - name: data
+                persistentVolumeClaim: null
+                emptyDir: { sizeLimit: 1Gi }

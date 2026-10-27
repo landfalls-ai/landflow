@@ -78,6 +78,8 @@ export interface GuardrailsOptions {
   /** The chat model for the model checks. */
   model?: LanguageModel;
   signal?: AbortSignal;
+  /** Where the check sits (an agent's `input` or `output`), recorded on its span. */
+  stage?: string;
   /** Notes such as a model check that failed. */
   log?: (message: string) => void;
 }
@@ -552,7 +554,7 @@ const counts = (spans: Span[]) => spans.reduce<Record<string, number>>((acc, spa
 export async function runGuardrails(text: string, config: GuardrailsConfig, options: GuardrailsOptions = {}): Promise<GuardrailsOutcome> {
   const mode = options.mode ?? 'check';
   const checks = enabledChecks(config, mode);
-  return traceGuardrails({ mode, checks }, async () => {
+  return traceGuardrails({ mode, checks, ...(options.stage && { stage: options.stage }) }, async () => {
     const reports: CheckReport[] = [];
     const violations: Violation[] = [];
 

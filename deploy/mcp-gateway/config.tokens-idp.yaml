@@ -1,0 +1,56 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# config.tokens.yaml plus the identity provider (Keycloak in the dev stack): the shared /mcp endpoint signs in a token from either
+# issuer, a Landflow-issued MCP token (Settings → MCP) or a Keycloak access token (docs/mcp-gateway.md "Two issuers on one route").
+# agentgateway's `mcpAuthentication` names one issuer; its `jwtAuth` takes a list of providers, so the policy is a `jwtAuth`
+# with one provider each. A call with no token is anonymous (no grants, an empty tool list), a token from any other issuer is
+# 401. The host puts the same two providers on the per-plugin routes (LANDFLOW_OIDC_ISSUER set and the route policies of
+# deploy/.env.example; LANDFLOW_MCP_GATEWAY_ACCEPT_IDP=off keeps them to Landflow's tokens), with both key sets inline.
+# Both JWKS are fetched at startup and an unreachable one is a hard error: start the dev server and the Keycloak profile
+# first (`restart: unless-stopped` retries until they are up). Keycloak's tokens need `aud` = the gateway's /mcp URL (an
+# audience mapper on the client; Keycloak's default audience is `account`) and `iss` = KC_HOSTNAME, as in config.auth.yaml.
+# The gateway no longer serves the protected resource metadata or a WWW-Authenticate challenge (that is `mcpAuthentication`):
+# agents are given a token, from Settings → MCP or from Keycloak.
+config:
+  adminAddr: "0.0.0.0:15000"
+  storage:
+    mode: hybrid
+  database:
+    url: sqlite:///data/agentgateway.db
+  logging:
+    level: info
+frontendPolicies:
+  tracing:
+    host: jaeger:4318
+    protocol: http
+    randomSampling: true
+    resources:
+      service.name: '"landflow-mcp-gateway"'
+gateways:
+  default:
+    port: 4000
+mcp:
+  gateways: default
+  prefixMode: always
+  failureMode: failOpen
+  statefulMode: stateless
+  server:
+    name: landflow-mcp-gateway
+    version: dev
+    title: Landflow
+    instructions: Every installed Landflow plugin as MCP tools. Tool names are <plugin>_<resource>_<operation>.
+  targets: []
+  policies:
+    jwtAuth:
+      mode: optional
+      providers:
+        # Landflow-issued MCP tokens: the dev server on the Mac, as the container sees it.
+        - issuer: http://localhost:3000
+          audiences: [http://127.0.0.1:54000/mcp]
+          jwks:
+            url: http://host.docker.internal:3000/api/mcp/jwks
+        # The identity provider: Keycloak on the infra network (its tokens carry iss = KC_HOSTNAME).
+        - issuer: http://localhost:58080/realms/landflow
+          audiences: [http://127.0.0.1:54000/mcp]
+          jwks:
+            url: http://keycloak:8080/realms/landflow/protocol/openid-connect/certs

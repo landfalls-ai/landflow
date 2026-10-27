@@ -22,6 +22,8 @@ IDEMPOTENT = {
     ("github", "file", "get"), ("github", "release", "getAll"), ("github", "repository", "get"), ("github", "issue", "get"), ("github", "issue", "getAll"),
     ("jira", "issue", "get"), ("jira", "issue", "getAll"),
     ("hubspot", "contact", "get"), ("hubspot", "contact", "search"),
+    ("airtable", "attachment", "download"), ("github", "file", "download"), ("github", "release", "downloadAsset"),
+    ("github", "repository", "downloadArchive"), ("jira", "issueAttachment", "get"), ("jira", "issueAttachment", "getAll"), ("hubspot", "file", "get"),
 }
 CLEAN_ENV = {"LANDFLOW_HTTP_PORT": "", "LANDFLOW_GRPC_PORT": "off", "LANDFLOW_TRANSPORTS": "", "LANDFLOW_MAX_CONCURRENCY": "", "LANDFLOW_REGISTRY_URL": "off",
              "LANDFLOW_ADVERTISE_HOST": "", "LANDFLOW_BIND_HOST": "", "LANDFLOW_MCP": "", "LANDFLOW_MCP_TOKEN": "", "LANDFLOW_MCP_CREDENTIALS": ""}

@@ -30,6 +30,8 @@ x-host-env: &host-env
   LANDFLOW_VALKEY_URL: redis://valkey:6379
   # Valkey Sentinel instead (deploy/compose.sentinel.yml): LANDFLOW_QUEUE_VALKEY_SENTINELS=valkey-sentinel-1:26379,…
   LANDFLOW_VALKEY_SENTINELS: ${LANDFLOW_QUEUE_VALKEY_SENTINELS:-}
+  # Valkey Cluster instead (compose.infra.yml, profile valkey-cluster): LANDFLOW_QUEUE_VALKEY_CLUSTER=valkey-cluster-1:6379,…
+  LANDFLOW_VALKEY_CLUSTER: ${LANDFLOW_QUEUE_VALKEY_CLUSTER:-}
   LANDFLOW_VALKEY_MASTER_NAME: ${LANDFLOW_QUEUE_VALKEY_MASTER_NAME:-mymaster}
   LANDFLOW_QUEUE_PREFIX: ${LANDFLOW_QUEUE_PREFIX:-landflow-queue}
   LANDFLOW_LEADER_TTL_SECONDS: ${LANDFLOW_LEADER_TTL_SECONDS:-10}

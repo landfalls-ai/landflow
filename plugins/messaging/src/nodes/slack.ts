@@ -1,5 +1,5 @@
 import { defineCredentialType, defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type JsonValue, type PropertyOption } from '@landflow/sdk';
-import { apiError, baseUrl, countSent, fetchJson, ItemWithFiles, jsonParameter, mapItems, requireString, unsupported, type ApiContext } from '../shared';
+import { apiError, baseUrl, countSent, fetchJson, ItemWithFiles, jsonParameter, mapItems, oauth2Hidden, pickCredentials, requireString, unsupported, type ApiContext } from '../shared';
 
 export interface SlackCredentials extends JsonObject {
   accessToken: string;
@@ -19,7 +19,10 @@ function hint(body: JsonObject): string | undefined {
     case 'not_authed':
     case 'token_revoked':
     case 'account_inactive':
-      return 'Slack rejected the token. Use the Bot User OAuth Token (xoxb-…) from the app\'s "OAuth & Permissions" page.';
+      return 'Slack rejected the token (unauthorized). Use the Bot User OAuth Token (xoxb-…) from the app\'s "OAuth & Permissions" page, or Connect the Slack OAuth2 credential again.';
+    case 'token_expired':
+      // The host renews an OAuth2 token on this wording and runs the node again (token rotation on).
+      return 'The access token expired (token expired). Slack OAuth2 credentials are renewed with their refresh token; Connect again if that fails.';
     case 'missing_scope':
       return `The token lacks the scope "${body.needed}"${body.provided ? ` (it has: ${body.provided})` : ''}. Add it under "OAuth & Permissions" and reinstall the app.`;
     case 'channel_not_found':
@@ -71,6 +74,12 @@ export async function slackCall<T = any>(
   return body as T;
 }
 
+const CREDENTIAL_TYPES = { token: 'slackApi', oauth2: 'slackOAuth2Api' } as const;
+
+/** The node's Slack credential: the bot token type or the OAuth2 one, by the Authentication parameter (else whichever was sent). */
+export const slackCredentials = (ctx: { getCredentials: IExecuteContext['getCredentials'] }, authentication?: unknown) =>
+  pickCredentials<SlackCredentials>(ctx, authentication, CREDENTIAL_TYPES.token, CREDENTIAL_TYPES.oauth2);
+
 export const slackApi = defineCredentialType<SlackCredentials>({
   name: 'slackApi',
   displayName: 'Slack API',
@@ -93,7 +102,53 @@ export const slackApi = defineCredentialType<SlackCredentials>({
       type: 'string',
       default: '',
       typeOptions: { password: true },
-      description: 'From the app\'s "Basic Information" page. Needed when Slack calls Landflow: agent channels (Events API) and approval buttons (Interactivity).',
+      description: 'From the app\'s "Basic Information" page. Needed when Slack calls Landflow: agent channels (Events API), approval buttons (Interactivity) and the Slack Trigger (its Request URL goes into Event Subscriptions).',
+    },
+  ],
+  async test(data, ctx) {
+    try {
+      const auth = await slackCall<{ team?: string; user?: string }>({ http: ctx.http }, data, 'auth.test');
+      return { ok: true, message: `Authenticated as ${auth.user ?? 'unknown'} in team ${auth.team ?? 'unknown'}` };
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
+  },
+});
+
+/**
+ * Slack OAuth2: extends the host's generic OAuth2 type. Connect runs the v2 consent flow for the bot scopes below and
+ * the host sends the bot token (`xoxb-…`) as `accessToken`, refreshed when token rotation is on.
+ */
+export const slackOAuth2Api = defineCredentialType<SlackCredentials>({
+  name: 'slackOAuth2Api',
+  displayName: 'Slack OAuth2 API',
+  icon: 'file:slack.svg',
+  documentationUrl: 'https://api.slack.com/authentication/oauth-v2',
+  description:
+    'Sign in with Slack: create an app at api.slack.com/apps, add the redirect URL shown below under OAuth & Permissions, add the bot scopes, then Connect. The bot token is renewed for you when token rotation is on. ' +
+    'For the Slack Trigger also fill in the Signing Secret, publish the workflow and paste the node\'s Request URL (editor Publish menu, App webhooks: {public URL}/api/webhook/app/<workflow id>/<node id>) into Event Subscriptions, ' +
+    'then subscribe to the bot events and add the matching scopes (app_mentions:read, channels:history, groups:history, im:history, mpim:history, reactions:read, files:read, …). Reinstall the app after changing scopes.',
+  extends: ['oAuth2Api'],
+  properties: [
+    oauth2Hidden('grantType', 'Grant Type', 'authorizationCode'),
+    oauth2Hidden('authUrl', 'Authorization URL', 'https://slack.com/oauth/v2/authorize'),
+    oauth2Hidden('accessTokenUrl', 'Access Token URL', 'https://slack.com/api/oauth.v2.access'),
+    oauth2Hidden('authentication', 'Client Authentication', 'body'),
+    {
+      name: 'scope',
+      displayName: 'Bot Scopes',
+      type: 'string',
+      default: 'chat:write,channels:read,groups:read,reactions:write,users:read,users:read.email,files:write,files:read',
+      description: 'Comma-separated bot scopes asked for at Connect. Drop the ones your workflows do not need.',
+    },
+    { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: DEFAULT_BASE_URL, description: 'Change it only for a proxy or a test double' },
+    {
+      name: 'signingSecret',
+      displayName: 'Signing Secret',
+      type: 'string',
+      default: '',
+      typeOptions: { password: true },
+      description: 'From the app\'s "Basic Information" page. Needed when Slack calls Landflow (agent channels, approval buttons, the Slack Trigger\'s Events API Request URL).',
     },
   ],
   async test(data, ctx) {
@@ -242,8 +297,22 @@ export const Slack = defineNode({
     toolDescription: 'Send, update or delete a Slack message, get its permalink, upload or download a file, list channels, find a user by email, or add an emoji reaction.',
     inputs: [{ type: 'main' }],
     outputs: [{ type: 'main' }],
-    credentials: [{ name: 'slackApi', required: true }],
+    credentials: [
+      { name: 'slackApi', required: true, displayOptions: { show: { authentication: ['accessToken'] } } },
+      { name: 'slackOAuth2Api', required: true, displayOptions: { show: { authentication: ['oAuth2'] } } },
+    ],
     properties: [
+      {
+        name: 'authentication',
+        displayName: 'Authentication',
+        type: 'options',
+        noDataExpression: true,
+        default: 'accessToken',
+        options: [
+          { name: 'Access Token', value: 'accessToken', description: 'A bot token pasted from the Slack app' },
+          { name: 'OAuth2', value: 'oAuth2', description: 'Connect with Slack; the token is renewed for you' },
+        ],
+      },
       {
         name: 'resource',
         displayName: 'Resource',
@@ -510,7 +579,7 @@ export const Slack = defineNode({
   methods: {
     loadOptions: {
       async getChannels(ctx): Promise<PropertyOption[]> {
-        const credentials = ctx.getCredentials<SlackCredentials>('slackApi');
+        const credentials = slackCredentials(ctx);
         const channels = await listChannels({ http: ctx.http }, credentials, { types: 'public_channel,private_channel', exclude_archived: true }, 2000);
         return channels
           .map((c) => ({ name: `#${c.name}`, value: String(c.id), ...(c.is_private === true && { description: 'private' }) }))
@@ -519,7 +588,7 @@ export const Slack = defineNode({
     },
   },
   async execute(ctx) {
-    const credentials = ctx.getCredentials<SlackCredentials>('slackApi');
+    const credentials = slackCredentials(ctx, ctx.getNodeParameter('authentication', 0, 'accessToken'));
     const api: ApiContext = { http: ctx.http, metrics: ctx.metrics };
     return mapItems(ctx, async (i) => {
       const resource = ctx.getNodeParameter<string>('resource', i);

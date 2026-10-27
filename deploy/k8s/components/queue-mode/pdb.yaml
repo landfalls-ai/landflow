@@ -1,0 +1,20 @@
+# A drain or an upgrade never takes every worker (or every main) down at once.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: landflow-worker
+  labels: { app.kubernetes.io/name: landflow-worker, app.kubernetes.io/part-of: landflow }
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: landflow-worker }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: landflow-host
+  labels: { app.kubernetes.io/name: landflow-host, app.kubernetes.io/part-of: landflow }
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: landflow-host }

@@ -56,6 +56,8 @@ export const chainLlmNode = defineNode({
     keywords: ['llm', 'prompt', 'chain', 'completion', 'chat', 'json', 'structured output'],
     inputs: [{ type: 'main' }, modelInput, FALLBACK_PORT],
     outputs: main,
+    // Transcribing audio input (“Include Binary as Input”): an OpenAI-compatible /audio/transcriptions endpoint.
+    credentials: [{ name: 'openAiApi', required: false }],
     properties: [
       { name: 'prompt', displayName: 'Prompt (User Message)', type: 'string', default: '{{ $json.chatInput }}', required: true, typeOptions: { rows: 4 } },
       {
@@ -91,7 +93,7 @@ export const chainLlmNode = defineNode({
     const out = await perItem(ctx, async (_item, i): Promise<NodeItem> => {
       const prompt = requireText(ctx.getNodeParameter('prompt', i), 'Prompt');
       const system = String(ctx.getNodeParameter('systemMessage', i) ?? '').trim();
-      const attachments = await optionalAttachments(ctx, i, ctx.getNodeParameter<JsonObject>('options', i, {}) ?? {});
+      const attachments = await optionalAttachments(ctx, i, ctx.getNodeParameter<JsonObject>('options', i, {}) ?? {}, model);
       if (ctx.getNodeParameter<boolean>('hasOutputParser', i)) {
         const schema = readSchema(ctx.getNodeParameter('jsonSchema', i));
         const { value, attempts } = await generateStructured(model, {
@@ -147,6 +149,8 @@ export const textClassifierNode = defineNode({
     icon: 'lucide:tags',
     keywords: ['classify', 'categorize', 'label', 'route', 'sentiment', 'intent', 'llm'],
     inputs: [{ type: 'main' }, modelInput, FALLBACK_PORT],
+    // Transcribing audio input (“Include Binary as Input”): an OpenAI-compatible /audio/transcriptions endpoint.
+    credentials: [{ name: 'openAiApi', required: false }],
     outputs: [
       ...Array.from({ length: CLASSIFIER_OUTPUTS }, (_, i) => ({ type: 'main' as const, displayName: String(i) })),
       { type: 'main', displayName: 'Other' },
@@ -224,8 +228,8 @@ export const textClassifierNode = defineNode({
       const names = categories.map((entry) => entry.name);
       const duplicate = names.find((name, index) => names.indexOf(name) !== index);
       if (duplicate) throw new NodeOperationError(`Category “${duplicate}” is listed twice`);
-      const options = ctx.getNodeParameter<{ multiClass?: boolean; fallback?: string; systemPromptTemplate?: string; passthroughBinaryImages?: boolean; binaryPropertyNames?: string }>('options', i) ?? {};
-      const attachments = await optionalAttachments(ctx, i, options);
+      const options = ctx.getNodeParameter<{ multiClass?: boolean; fallback?: string; systemPromptTemplate?: string; passthroughBinaryImages?: boolean; binaryPropertyNames?: string; audioHandling?: string; transcriptionUrl?: string; transcriptionModel?: string; videoHandling?: string }>('options', i) ?? {};
+      const attachments = await optionalAttachments(ctx, i, options, model);
       const text = requireText(ctx.getNodeParameter('inputText', i), 'Text to Classify');
 
       const schema: JsonSchema = {
@@ -315,6 +319,8 @@ export const informationExtractorNode = defineNode({
     keywords: ['extract', 'parse', 'structured', 'entities', 'fields', 'json', 'llm'],
     inputs: [{ type: 'main' }, modelInput, FALLBACK_PORT],
     outputs: main,
+    // Transcribing audio input (“Include Binary as Input”): an OpenAI-compatible /audio/transcriptions endpoint.
+    credentials: [{ name: 'openAiApi', required: false }],
     properties: [
       { name: 'text', displayName: 'Text', type: 'string', default: '{{ $json.text }}', required: true, typeOptions: { rows: 2 } },
       {
@@ -390,8 +396,8 @@ export const informationExtractorNode = defineNode({
         ctx.getNodeParameter('schemaType', i) === 'manual'
           ? readSchema(ctx.getNodeParameter('inputSchema', i))
           : attributesSchema(ctx.getNodeParameter<{ attributes?: Attribute[] }>('attributes', i)?.attributes ?? []);
-      const options = ctx.getNodeParameter<{ systemPromptTemplate?: string; passthroughBinaryImages?: boolean; binaryPropertyNames?: string }>('options', i) ?? {};
-      const attachments = await optionalAttachments(ctx, i, options);
+      const options = ctx.getNodeParameter<{ systemPromptTemplate?: string; passthroughBinaryImages?: boolean; binaryPropertyNames?: string; audioHandling?: string; transcriptionUrl?: string; transcriptionModel?: string; videoHandling?: string }>('options', i) ?? {};
+      const attachments = await optionalAttachments(ctx, i, options, model);
       const { value, attempts } = await generateStructured(model, {
         system: [options.systemPromptTemplate || DEFAULT_EXTRACTOR_PROMPT, formatInstructions(schema)].join('\n\n'),
         prompt: text,

@@ -5,7 +5,8 @@
  *   allow-list of the plugins and node types the project's workflows may use, and who approves its publish requests
  *   (./project-approvers.ts, through `registerApproverCheck`).
  * - **Workflow policy** (`workflow_policies`; the workflow's settings, admins of its project): four-eyes publishing for
- *   this workflow even when the instance doesn't ask for it, and a stricter node allow-list.
+ *   this workflow even when the instance doesn't ask for it, and a stricter node allow-list. A project can ask for
+ *   four-eyes for all its workflows too (`fourEyes` in its settings); publishing and promoting them then need approval.
  *
  * A node must pass the instance's rules, then the project's list, then the workflow's: each level only narrows. The
  * same checks as the instance's run everywhere (saving warns, publishing is refused, a run fails at the node, the node
@@ -33,6 +34,7 @@ export const scopedNodePolicySchema = z.strictObject({ mode: z.enum(['off', 'all
 export const projectSettingsPatchSchema = z.strictObject({
   nodes: scopedNodePolicySchema.partial().optional(),
   approvers: z.enum(['default', 'admins', 'editors', 'instance']).optional(),
+  fourEyes: z.boolean().optional(),
 });
 
 export const workflowPolicyPatchSchema = z.strictObject({
@@ -98,6 +100,7 @@ export function getProjectSettings(projectId: string | undefined): ProjectSettin
   const value: ProjectSettings = {
     nodes: nodePolicy(saved?.nodes),
     approvers: (approvers.success && approvers.data) || 'default',
+    fourEyes: saved?.fourEyes === true,
     ...(typeof saved?.updatedAt === 'string' && { updatedAt: saved.updatedAt }),
     ...(typeof saved?.updatedBy === 'string' && { updatedBy: saved.updatedBy }),
   };
@@ -111,6 +114,7 @@ export function updateProjectSettings(projectId: string, patch: z.infer<typeof p
   const next: ProjectSettings = {
     nodes: nodePolicy(patch.nodes, current.nodes),
     approvers: patch.approvers ?? current.approvers,
+    fourEyes: patch.fourEyes ?? current.fourEyes,
     updatedAt: now,
     ...(by && { updatedBy: by }),
   };
@@ -166,9 +170,12 @@ export function forgetWorkflowPolicy(workflowId: string) {
   caches().workflows.delete(workflowId);
 }
 
-/** Whether `workflowId` asks for four-eyes publishing itself. */
+/** Whether `workflowId` asks for four-eyes publishing itself, or its project does (project settings `fourEyes`). */
 export function workflowRequiresFourEyes(workflowId: string | undefined): boolean {
-  return Boolean(getWorkflowPolicy(workflowId)?.fourEyes);
+  if (!workflowId) return false;
+  if (getWorkflowPolicy(workflowId)?.fourEyes) return true;
+  const projectId = cachedHome(workflowId);
+  return Boolean(projectId && getProjectSettings(projectId).fourEyes);
 }
 
 // ---- scopes ---------------------------------------------------------------------------------------------------

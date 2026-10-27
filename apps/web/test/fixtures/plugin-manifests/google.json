@@ -10,6 +10,7 @@
    "name": "landflow-sdk-go",
    "version": "0.2.0"
   },
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjAuNzUiIHk9IjAuNzUiIHdpZHRoPSI0Ni41IiBoZWlnaHQ9IjQ2LjUiIHJ4PSIxMS4yNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjY2JkNWUxIiBzdHJva2Utd2lkdGg9IjEuNSIvPgogIDxwYXRoIGQ9Ik0xMSAyMlYxNmE1IDUgMCAwIDEgNS01aDZ2MTFaIiBmaWxsPSIjNDI4NUY0Ii8+CiAgPHBhdGggZD0iTTI2IDExaDZhNSA1IDAgMCAxIDUgNXY2SDI2WiIgZmlsbD0iI0VBNDMzNSIvPgogIDxwYXRoIGQ9Ik0zNyAyNnY2YTUgNSAwIDAgMS01IDVoLTZWMjZaIiBmaWxsPSIjRkJCQzA0Ii8+CiAgPHBhdGggZD0iTTIyIDM3aC02YTUgNSAwIDAgMS01LTV2LTZoMTFaIiBmaWxsPSIjMzRBODUzIi8+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMy4yIiBmaWxsPSIjZjhmYWZjIi8+Cjwvc3ZnPgo=",
   "color": "#4285F4",
   "author": "Landflow",
   "homepage": "https://developers.google.com/workspace"
@@ -25,6 +26,7 @@
     "Data & Storage",
     "Productivity"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGOUQ1OCIvPgogIDxwYXRoIGQ9Ik0xNSA5aDEybDggOHYyMGEyIDIgMCAwIDEtMiAySDE1YTIgMiAwIDAgMS0yLTJWMTFhMiAyIDAgMCAxIDItMloiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMjcgOXY2YTIgMiAwIDAgMCAyIDJoNloiIGZpbGw9IiNhN2RjYzIiLz4KICA8cGF0aCBkPSJNMTcuNSAyMi41aDEzdjExaC0xM1ptMCA1LjVoMTNNMjQgMjIuNXYxMSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMEY5RDU4IiBzdHJva2Utd2lkdGg9IjIuMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
    "color": "#0F9D58",
    "subtitle": "{{operation}}: {{resource}}",
    "inputs": [
@@ -88,6 +90,13 @@
        "value": "create",
        "description": "Create a spreadsheet",
        "action": "Create spreadsheet"
+      },
+      {
+       "name": "Export",
+       "value": "export",
+       "description": "Export a spreadsheet as an Excel, OpenDocument, CSV or PDF file",
+       "action": "Export spreadsheet as a file",
+       "idempotent": true
       }
      ],
      "displayOptions": {
@@ -127,7 +136,8 @@
        "name": "Get Row(s)",
        "value": "read",
        "description": "Retrieve one or more rows from a sheet",
-       "action": "Get row(s) in sheet"
+       "action": "Get row(s) in sheet",
+       "idempotent": true
       },
       {
        "name": "Update Row",
@@ -191,6 +201,108 @@
       "show": {
        "operation": [
         "create"
+       ],
+       "resource": [
+        "spreadsheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "exportDocumentId",
+     "displayName": "Spreadsheet ID or URL",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "export"
+       ],
+       "resource": [
+        "spreadsheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "exportFormat",
+     "displayName": "Export As",
+     "type": "options",
+     "default": "xlsx",
+     "options": [
+      {
+       "name": "Excel (.xlsx)",
+       "value": "xlsx"
+      },
+      {
+       "name": "OpenDocument Spreadsheet (.ods)",
+       "value": "ods"
+      },
+      {
+       "name": "CSV (first sheet)",
+       "value": "csv"
+      },
+      {
+       "name": "TSV (first sheet)",
+       "value": "tsv"
+      },
+      {
+       "name": "PDF",
+       "value": "pdf"
+      },
+      {
+       "name": "HTML (zipped)",
+       "value": "html"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "export"
+       ],
+       "resource": [
+        "spreadsheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "outputBinaryField",
+     "displayName": "Output Binary Field",
+     "type": "string",
+     "default": "data",
+     "description": "Name of the binary property that gets the file",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "export"
+       ],
+       "resource": [
+        "spreadsheet"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "fileName",
+       "displayName": "File Name",
+       "type": "string",
+       "default": "",
+       "description": "Defaults to the spreadsheet's name plus the format's extension"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "export"
        ],
        "resource": [
         "spreadsheet"
@@ -529,6 +641,7 @@
     "Data & Storage",
     "Productivity"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGOUQ1OCIvPgogIDxwYXRoIGQ9Ik0xNSA5aDEybDggOHYyMGEyIDIgMCAwIDEtMiAySDE1YTIgMiAwIDAgMS0yLTJWMTFhMiAyIDAgMCAxIDItMloiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMjcgOXY2YTIgMiAwIDAgMCAyIDJoNloiIGZpbGw9IiNhN2RjYzIiLz4KICA8cGF0aCBkPSJNMTcuNSAyMi41aDEzdjExaC0xM1ptMCA1LjVoMTNNMjQgMjIuNXYxMSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMEY5RDU4IiBzdHJva2Utd2lkdGg9IjIuMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
    "color": "#0F9D58",
    "subtitle": "{{event}}",
    "inputs": [],
@@ -649,6 +762,7 @@
    "categories": [
     "Communication"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0VBNDMzNSIvPgogIDxyZWN0IHg9IjkiIHk9IjEzIiB3aWR0aD0iMzAiIGhlaWdodD0iMjIiIHJ4PSIzLjUiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMTEuNSAxNi41IDI0IDI2bDEyLjUtOS41IiBmaWxsPSJub25lIiBzdHJva2U9IiNFQTQzMzUiIHN0cm9rZS13aWR0aD0iMy4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
    "color": "#EA4335",
    "subtitle": "{{operation}}: {{resource}}",
    "inputs": [
@@ -711,13 +825,15 @@
        "name": "Get",
        "value": "get",
        "description": "Get a message",
-       "action": "Get a message"
+       "action": "Get a message",
+       "idempotent": true
       },
       {
        "name": "Get Many",
        "value": "getAll",
        "description": "Get many messages",
-       "action": "Get many messages"
+       "action": "Get many messages",
+       "idempotent": true
       },
       {
        "name": "Mark as Read",
@@ -874,7 +990,7 @@
        "displayName": "Attachments",
        "type": "string",
        "default": "",
-       "description": "Binary properties of the input item to attach, separated by commas (a file from Read Files, HTTP Request, a form upload\u2026)",
+       "description": "Binary properties of the input item to attach, separated by commas (a file from Read Files, HTTP Request, a form upload…)",
        "placeholder": "data, invoice"
       },
       {
@@ -928,7 +1044,7 @@
        "displayName": "Attachments",
        "type": "string",
        "default": "",
-       "description": "Binary properties of the input item to attach, separated by commas (a file from Read Files, HTTP Request, a form upload\u2026)",
+       "description": "Binary properties of the input item to attach, separated by commas (a file from Read Files, HTTP Request, a form upload…)",
        "placeholder": "data, invoice"
       },
       {
@@ -976,6 +1092,45 @@
      "description": "Whether to return a simplified version of the response instead of the raw data",
      "displayOptions": {
       "show": {
+       "operation": [
+        "get",
+        "getAll"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "downloadAttachments",
+     "displayName": "Download Attachments",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to put the message's attachments under the item's binary data (attachment_0, attachment_1…)",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "get",
+        "getAll"
+       ],
+       "resource": [
+        "message"
+       ]
+      }
+     }
+    },
+    {
+     "name": "attachmentPrefix",
+     "displayName": "Attachment Prefix",
+     "type": "string",
+     "default": "attachment_",
+     "description": "Binary properties are named this prefix plus the attachment's number",
+     "displayOptions": {
+      "show": {
+       "downloadAttachments": [
+        true
+       ],
        "operation": [
         "get",
         "getAll"
@@ -1268,6 +1423,7 @@
    "categories": [
     "Communication"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0VBNDMzNSIvPgogIDxyZWN0IHg9IjkiIHk9IjEzIiB3aWR0aD0iMzAiIGhlaWdodD0iMjIiIHJ4PSIzLjUiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMTEuNSAxNi41IDI0IDI2bDEyLjUtOS41IiBmaWxsPSJub25lIiBzdHJva2U9IiNFQTQzMzUiIHN0cm9rZS13aWR0aD0iMy4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==",
    "color": "#EA4335",
    "subtitle": "{{event}}",
    "inputs": [],
@@ -1482,6 +1638,7 @@
    "categories": [
     "Data & Storage"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzFGQTQ2MyIvPgogIDxwYXRoIGQ9Ik0xOS4yIDEwLjVoOS42bDExIDE5LjItNC44IDguM0gxM2wtNC44LTguM1oiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTE5LjIgMTAuNSAzMCAyOS43SDguMk0yOC44IDEwLjUgMTggMjkuN00zNSAzOCAzMCAyOS43IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
    "color": "#1FA463",
    "subtitle": "{{operation}}: {{resource}}",
    "inputs": [
@@ -1551,8 +1708,16 @@
       {
        "name": "Download",
        "value": "download",
-       "description": "Download a file's content",
-       "action": "Download a file"
+       "description": "Download a file's content as text or as a binary file",
+       "action": "Download a file",
+       "idempotent": true
+      },
+      {
+       "name": "Export",
+       "value": "export",
+       "description": "Export a Google Doc, Sheet, Slides or Drawing as a file (PDF, Word, Excel…)",
+       "action": "Export a Google file",
+       "idempotent": true
       },
       {
        "name": "Upload",
@@ -1580,7 +1745,8 @@
        "name": "Search",
        "value": "search",
        "description": "Search files and folders",
-       "action": "Search files and folders"
+       "action": "Search files and folders",
+       "idempotent": true
       }
      ],
      "displayOptions": {
@@ -1618,8 +1784,8 @@
      "displayName": "File Name",
      "type": "string",
      "default": "",
+     "description": "Required unless the content comes from a binary file (it then defaults to that file's name)",
      "placeholder": "report.txt",
-     "required": true,
      "displayOptions": {
       "show": {
        "operation": [
@@ -1664,6 +1830,11 @@
      "default": "text",
      "options": [
       {
+       "name": "Binary File",
+       "value": "binary",
+       "description": "A file of the input item (Read Files, HTTP Request, a form upload, Convert to File…); big files are streamed"
+      },
+      {
        "name": "Text",
        "value": "text",
        "description": "The text below becomes the file"
@@ -1681,6 +1852,26 @@
        ],
        "resource": [
         "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "binaryPropertyName",
+     "displayName": "Input Binary Field",
+     "type": "string",
+     "default": "data",
+     "description": "Name of the input item's binary property that holds the file",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "upload"
+       ],
+       "resource": [
+        "file"
+       ],
+       "uploadFrom": [
+        "binary"
        ]
       }
      }
@@ -1766,7 +1957,166 @@
       "show": {
        "operation": [
         "download",
-        "deleteFile"
+        "deleteFile",
+        "export"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "downloadAs",
+     "displayName": "Return Content As",
+     "type": "options",
+     "default": "json",
+     "options": [
+      {
+       "name": "Text or Base64 (in the JSON)",
+       "value": "json",
+       "description": "`content` in the item, up to 10 MB"
+      },
+      {
+       "name": "Binary File",
+       "value": "binary",
+       "description": "The file under the item's binary data, streamed to the host's store (no size limit)"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "download"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "exportFormat",
+     "displayName": "Export As",
+     "type": "options",
+     "default": "pdf",
+     "options": [
+      {
+       "name": "PDF",
+       "value": "pdf"
+      },
+      {
+       "name": "Word (.docx)",
+       "value": "docx"
+      },
+      {
+       "name": "OpenDocument Text (.odt)",
+       "value": "odt"
+      },
+      {
+       "name": "Rich Text (.rtf)",
+       "value": "rtf"
+      },
+      {
+       "name": "Plain Text (.txt)",
+       "value": "txt"
+      },
+      {
+       "name": "HTML (zipped)",
+       "value": "html"
+      },
+      {
+       "name": "EPUB",
+       "value": "epub"
+      },
+      {
+       "name": "Markdown",
+       "value": "md"
+      },
+      {
+       "name": "Excel (.xlsx)",
+       "value": "xlsx"
+      },
+      {
+       "name": "OpenDocument Spreadsheet (.ods)",
+       "value": "ods"
+      },
+      {
+       "name": "CSV (first sheet)",
+       "value": "csv"
+      },
+      {
+       "name": "TSV (first sheet)",
+       "value": "tsv"
+      },
+      {
+       "name": "PowerPoint (.pptx)",
+       "value": "pptx"
+      },
+      {
+       "name": "OpenDocument Presentation (.odp)",
+       "value": "odp"
+      },
+      {
+       "name": "PNG",
+       "value": "png"
+      },
+      {
+       "name": "JPEG",
+       "value": "jpg"
+      },
+      {
+       "name": "SVG",
+       "value": "svg"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "export"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "outputBinaryField",
+     "displayName": "Output Binary Field",
+     "type": "string",
+     "default": "data",
+     "description": "Name of the binary property that gets the file",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "download",
+        "export"
+       ],
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "fileName",
+       "displayName": "File Name",
+       "type": "string",
+       "default": "",
+       "description": "Defaults to the Google file's name plus the format's extension"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "export"
        ],
        "resource": [
         "file"
@@ -1814,7 +2164,7 @@
       {
        "name": "Advanced Search",
        "value": "query",
-       "description": "A Drive query (name contains 'x' and \u2026)"
+       "description": "A Drive query (name contains 'x' and …)"
       }
      ],
      "displayOptions": {
@@ -2041,7 +2391,7 @@
     }
    ],
    "usableAsTool": true,
-   "toolDescription": "Work with Google Drive files. resource=fileFolder, operation=search finds files by name (queryString) or Drive query syntax; resource=file: upload creates a file from fileContent text, download returns `content` (text, or base64 for binary files, max 10 MB), deleteFile trashes fileId; resource=folder, operation=create makes a folder.",
+   "toolDescription": "Work with Google Drive files. resource=fileFolder, operation=search finds files by name (queryString) or Drive query syntax; resource=file: upload creates a file from fileContent text, download returns `content` (text, or base64 for binary files, max 10 MB) or, with downloadAs=binary, the file as the item's binary data; export converts a Google Doc/Sheet/Slides to a binary file (exportFormat pdf, docx, xlsx…); upload with uploadFrom=binary sends the input item's binary file; deleteFile trashes fileId; resource=folder, operation=create makes a folder.",
    "documentationUrl": "https://developers.google.com/workspace/drive/api/reference/rest/v3",
    "keywords": [
     "files",
@@ -2085,6 +2435,7 @@
    "categories": [
     "Productivity"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzQyODVGNCIvPgogIDxyZWN0IHg9IjEwIiB5PSIxMiIgd2lkdGg9IjI4IiBoZWlnaHQ9IjI2IiByeD0iMy41IiBmaWxsPSIjZmZmIi8+CiAgPHBhdGggZD0iTTEwIDE1LjVBMy41IDMuNSAwIDAgMSAxMy41IDEyaDIxYTMuNSAzLjUgMCAwIDEgMy41IDMuNVYxOUgxMFoiIGZpbGw9IiNjNmRhZmMiLz4KICA8cGF0aCBkPSJNMTcgOXY2TTMxIDl2NiIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0xNiAyNGg0djRoLTRabTYgMGg0djRoLTRabTYgMGg0djRoLTRabS0xMiA2aDR2NGgtNFptNiAwaDR2NGgtNFoiIGZpbGw9IiM0Mjg1RjQiLz4KPC9zdmc+Cg==",
    "color": "#4285F4",
    "subtitle": "{{operation}}: {{resource}}",
    "inputs": [
@@ -2153,13 +2504,15 @@
        "name": "Get",
        "value": "get",
        "description": "Retrieve an event",
-       "action": "Get an event"
+       "action": "Get an event",
+       "idempotent": true
       },
       {
        "name": "Get Many",
        "value": "getAll",
        "description": "Retrieve many events from a calendar",
-       "action": "Get many events"
+       "action": "Get many events",
+       "idempotent": true
       },
       {
        "name": "Update",
@@ -2661,6 +3014,7 @@
    "categories": [
     "Productivity"
    ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzQyODVGNCIvPgogIDxwYXRoIGQ9Ik0xNSA5aDEybDggOHYyMGEyIDIgMCAwIDEtMiAySDE1YTIgMiAwIDAgMS0yLTJWMTFhMiAyIDAgMCAxIDItMloiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMjcgOXY2YTIgMiAwIDAgMCAyIDJoNloiIGZpbGw9IiNjNmRhZmMiLz4KICA8cGF0aCBkPSJNMTggMjNoMTJNMTggMjcuNWgxMk0xOCAzMmg4IiBmaWxsPSJub25lIiBzdHJva2U9IiM0Mjg1RjQiIHN0cm9rZS13aWR0aD0iMi40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==",
    "color": "#4285F4",
    "subtitle": "{{operation}}: {{resource}}",
    "inputs": [
@@ -2723,13 +3077,21 @@
        "name": "Get",
        "value": "get",
        "description": "Get a document",
-       "action": "Get a document"
+       "action": "Get a document",
+       "idempotent": true
       },
       {
        "name": "Update",
        "value": "update",
        "description": "Update a document",
        "action": "Update a document"
+      },
+      {
+       "name": "Export",
+       "value": "export",
+       "description": "Export a document as a Word, PDF, OpenDocument, text or HTML file",
+       "action": "Export a document as a file",
+       "idempotent": true
       }
      ],
      "displayOptions": {
@@ -2793,7 +3155,101 @@
       "show": {
        "operation": [
         "get",
-        "update"
+        "update",
+        "export"
+       ],
+       "resource": [
+        "document"
+       ]
+      }
+     }
+    },
+    {
+     "name": "exportFormat",
+     "displayName": "Export As",
+     "type": "options",
+     "default": "docx",
+     "options": [
+      {
+       "name": "Word (.docx)",
+       "value": "docx"
+      },
+      {
+       "name": "PDF",
+       "value": "pdf"
+      },
+      {
+       "name": "OpenDocument Text (.odt)",
+       "value": "odt"
+      },
+      {
+       "name": "Rich Text (.rtf)",
+       "value": "rtf"
+      },
+      {
+       "name": "Plain Text (.txt)",
+       "value": "txt"
+      },
+      {
+       "name": "HTML (zipped)",
+       "value": "html"
+      },
+      {
+       "name": "EPUB",
+       "value": "epub"
+      },
+      {
+       "name": "Markdown",
+       "value": "md"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "export"
+       ],
+       "resource": [
+        "document"
+       ]
+      }
+     }
+    },
+    {
+     "name": "outputBinaryField",
+     "displayName": "Output Binary Field",
+     "type": "string",
+     "default": "data",
+     "description": "Name of the binary property that gets the file",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "export"
+       ],
+       "resource": [
+        "document"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "values": [
+      {
+       "name": "fileName",
+       "displayName": "File Name",
+       "type": "string",
+       "default": "",
+       "description": "Defaults to the document's title plus the format's extension"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "export"
        ],
        "resource": [
         "document"
@@ -2899,7 +3355,7 @@
     }
    ],
    "usableAsTool": true,
-   "toolDescription": "Work with Google Docs. operation=create makes a document called title; get returns documentURL's text as `content`; update applies actionsUi actions to documentURL: insert appends text at the end, replaceAll replaces every occurrence of text with replaceText.",
+   "toolDescription": "Work with Google Docs. operation=create makes a document called title; get returns documentURL's text as `content`; update applies actionsUi actions to documentURL: insert appends text at the end, replaceAll replaces every occurrence of text with replaceText; export returns documentURL as a binary file (exportFormat docx, pdf, odt, txt…).",
    "documentationUrl": "https://developers.google.com/workspace/docs/api/reference/rest",
    "keywords": [
     "document",
@@ -2939,6 +3395,7 @@
    "name": "googleApi",
    "displayName": "Google Service Account",
    "description": "A service account key. Share spreadsheets, files and calendars with the service account's email; Gmail needs domain-wide delegation (Impersonate a User).",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjAuNzUiIHk9IjAuNzUiIHdpZHRoPSI0Ni41IiBoZWlnaHQ9IjQ2LjUiIHJ4PSIxMS4yNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjY2JkNWUxIiBzdHJva2Utd2lkdGg9IjEuNSIvPgogIDxwYXRoIGQ9Ik0xMSAyMlYxNmE1IDUgMCAwIDEgNS01aDZ2MTFaIiBmaWxsPSIjNDI4NUY0Ii8+CiAgPHBhdGggZD0iTTI2IDExaDZhNSA1IDAgMCAxIDUgNXY2SDI2WiIgZmlsbD0iI0VBNDMzNSIvPgogIDxwYXRoIGQ9Ik0zNyAyNnY2YTUgNSAwIDAgMS01IDVoLTZWMjZaIiBmaWxsPSIjRkJCQzA0Ii8+CiAgPHBhdGggZD0iTTIyIDM3aC02YTUgNSAwIDAgMS01LTV2LTZoMTFaIiBmaWxsPSIjMzRBODUzIi8+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMy4yIiBmaWxsPSIjZjhmYWZjIi8+Cjwvc3ZnPgo=",
    "documentationUrl": "https://developers.google.com/identity/protocols/oauth2/service-account",
    "properties": [
     {
@@ -2954,7 +3411,7 @@
      "displayName": "Private Key",
      "type": "string",
      "description": "private_key from the JSON key file. Escaped \\n sequences and a pasted line without newlines both work, and so does the whole JSON key file.",
-     "placeholder": "-----BEGIN PRIVATE KEY-----\u2026",
+     "placeholder": "-----BEGIN PRIVATE KEY-----…",
      "required": true,
      "typeOptions": {
       "password": true
@@ -2980,7 +3437,7 @@
      "displayName": "API Base URL (advanced)",
      "type": "string",
      "default": "",
-     "description": "Leave empty for Google. When set, it replaces the host of every Google API and keeps the paths (/v4/spreadsheets\u2026, /gmail/v1/\u2026, /drive/v3/\u2026, /calendar/v3/\u2026, /v1/documents\u2026), e.g. for a proxy or a test double.",
+     "description": "Leave empty for Google. When set, it replaces the host of every Google API and keeps the paths (/v4/spreadsheets…, /gmail/v1/…, /drive/v3/…, /calendar/v3/…, /v1/documents…), e.g. for a proxy or a test double.",
      "placeholder": "https://proxy.example.com"
     }
    ],
@@ -2990,6 +3447,7 @@
    "name": "googleOAuth2Api",
    "displayName": "Google OAuth2",
    "description": "Sign in with Google: create an OAuth client (Web application) in Google Cloud, add the redirect URL shown below, then Connect. A refresh token obtained elsewhere (OAuth Playground, gcloud) works too.",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjAuNzUiIHk9IjAuNzUiIHdpZHRoPSI0Ni41IiBoZWlnaHQ9IjQ2LjUiIHJ4PSIxMS4yNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjY2JkNWUxIiBzdHJva2Utd2lkdGg9IjEuNSIvPgogIDxwYXRoIGQ9Ik0xMSAyMlYxNmE1IDUgMCAwIDEgNS01aDZ2MTFaIiBmaWxsPSIjNDI4NUY0Ii8+CiAgPHBhdGggZD0iTTI2IDExaDZhNSA1IDAgMCAxIDUgNXY2SDI2WiIgZmlsbD0iI0VBNDMzNSIvPgogIDxwYXRoIGQ9Ik0zNyAyNnY2YTUgNSAwIDAgMS01IDVoLTZWMjZaIiBmaWxsPSIjRkJCQzA0Ii8+CiAgPHBhdGggZD0iTTIyIDM3aC02YTUgNSAwIDAgMS01LTV2LTZoMTFaIiBmaWxsPSIjMzRBODUzIi8+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMy4yIiBmaWxsPSIjZjhmYWZjIi8+Cjwvc3ZnPgo=",
    "documentationUrl": "https://developers.google.com/identity/protocols/oauth2/web-server",
    "properties": [
     {
@@ -3067,7 +3525,7 @@
      "displayName": "API Base URL (advanced)",
      "type": "string",
      "default": "",
-     "description": "Leave empty for Google. When set, it replaces the host of every Google API and keeps the paths (/v4/spreadsheets\u2026, /gmail/v1/\u2026, /drive/v3/\u2026, /calendar/v3/\u2026, /v1/documents\u2026), e.g. for a proxy or a test double.",
+     "description": "Leave empty for Google. When set, it replaces the host of every Google API and keeps the paths (/v4/spreadsheets…, /gmail/v1/…, /drive/v3/…, /calendar/v3/…, /v1/documents…), e.g. for a proxy or a test double.",
      "placeholder": "https://proxy.example.com"
     }
    ],

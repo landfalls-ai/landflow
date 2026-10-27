@@ -2,7 +2,7 @@
  * A small SMTP client over node:net / node:tls, enough for "Send Email":
  * implicit TLS or STARTTLS, AUTH PLAIN and LOGIN, multi-line replies,
  * dot-stuffing, RFC 2047 encoded headers, multipart/alternative and a
- * Message-ID. No attachments, pipelining or DSN.
+ * Message-ID, attachments (multipart/mixed, inline images by Content-ID in multipart/related). No pipelining or DSN.
  *
  *   const result = await sendMail({ host, port: 465, secure: true, user, password }, { from, to, subject, text });
  *   // { messageId, accepted, rejected, response: '250 2.0.0 OK queued' }
@@ -433,8 +433,17 @@ export interface MailOptions {
   subject?: string;
   text?: string;
   html?: string;
+  attachments?: MailAttachment[];
   date?: Date;
   messageId?: string;
+}
+
+export interface MailAttachment {
+  fileName: string;
+  mimeType: string;
+  content: Uint8Array;
+  /** Set: an inline part the HTML can show with `<img src="cid:...">` (the id without angle brackets). */
+  contentId?: string;
 }
 
 export interface Address {
@@ -575,6 +584,30 @@ function textPart(content: string, subtype: 'plain' | 'html') {
   };
 }
 
+const newBoundary = () => `----=_landflow_${randomBytes(12).toString('hex')}`;
+
+const joinParts = (boundary: string, parts: Array<{ headers: string[]; body: string }>) =>
+  `${parts.map((p) => `--${boundary}\r\n${p.headers.join('\r\n')}\r\n\r\n${p.body}\r\n`).join('')}--${boundary}--\r\n`;
+
+/** A quoted file name parameter; non-ASCII names become RFC 2047 words, which mail clients read. */
+const fileNameParam = (name: string) => `"${encodeHeaderValue(name.replace(/[\r\n]+/g, ' ')).replace(/(["\\])/g, '\\$1')}"`;
+
+/** One attachment: base64 in 76-character lines. */
+function attachmentPart(file: MailAttachment) {
+  const base64 = Buffer.from(file.content.buffer, file.content.byteOffset, file.content.byteLength).toString('base64');
+  const name = fileNameParam(file.fileName);
+  const type = /^[\w.+-]+\/[\w.+-]+$/.test(file.mimeType) ? file.mimeType : 'application/octet-stream';
+  return {
+    headers: [
+      `Content-Type: ${type}; name=${name}`,
+      'Content-Transfer-Encoding: base64',
+      `Content-Disposition: ${file.contentId ? 'inline' : 'attachment'}; filename=${name}`,
+      ...(file.contentId ? [`Content-ID: <${file.contentId.replace(/[<>\s]/g, '')}>`] : []),
+    ],
+    body: base64.replace(/.{1,76}/g, '$&\r\n').replace(/\r\n$/, ''),
+  };
+}
+
 /** RFC 5322 date: "Sun, 25 Oct 2026 10:00:00 +0000". */
 const formatDate = (date: Date) => date.toUTCString().replace(/GMT$/, '+0000');
 
@@ -597,17 +630,34 @@ export function buildMessage(mail: MailOptions, clientName?: string): BuiltMessa
   headers.push(header('Subject', encodeHeaderValue((mail.subject ?? '').replace(/[\r\n]+/g, ' '))));
   headers.push(`Date: ${formatDate(mail.date ?? new Date())}`, `Message-ID: ${messageId}`, 'MIME-Version: 1.0');
 
-  let body: string;
+  // The readable content: one text part, or text + HTML as multipart/alternative.
+  let content: { headers: string[]; body: string };
   if (mail.text !== undefined && mail.html !== undefined) {
-    const boundary = `----=_landflow_${randomBytes(12).toString('hex')}`;
+    const boundary = newBoundary();
     const parts = [textPart(mail.text, 'plain'), textPart(mail.html, 'html')];
-    headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
-    body = `${parts.map((p) => `--${boundary}\r\n${p.headers.join('\r\n')}\r\n\r\n${p.body}\r\n`).join('')}--${boundary}--\r\n`;
+    content = { headers: [`Content-Type: multipart/alternative; boundary="${boundary}"`], body: joinParts(boundary, parts) };
   } else {
-    const part = mail.html !== undefined ? textPart(mail.html, 'html') : textPart(mail.text ?? '', 'plain');
-    headers.push(...part.headers);
-    body = part.body;
+    content = mail.html !== undefined ? textPart(mail.html, 'html') : textPart(mail.text ?? '', 'plain');
   }
+  // Inline files travel with the content (multipart/related), the others after it (multipart/mixed).
+  const inline = (mail.attachments ?? []).filter((a) => a.contentId);
+  const attached = (mail.attachments ?? []).filter((a) => !a.contentId);
+  if (inline.length) {
+    const boundary = newBoundary();
+    content = {
+      headers: [`Content-Type: multipart/related; boundary="${boundary}"`],
+      body: joinParts(boundary, [content, ...inline.map(attachmentPart)]),
+    };
+  }
+  if (attached.length) {
+    const boundary = newBoundary();
+    content = {
+      headers: [`Content-Type: multipart/mixed; boundary="${boundary}"`],
+      body: joinParts(boundary, [content, ...attached.map(attachmentPart)]),
+    };
+  }
+  headers.push(...content.headers);
+  const body = content.body;
 
   const recipients = [...new Set([...to, ...cc, ...bcc].map((a) => a.address))];
   return { raw: `${headers.join('\r\n')}\r\n\r\n${body}`, messageId, envelope: { from: from[0].address, to: recipients } };

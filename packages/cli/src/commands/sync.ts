@@ -319,12 +319,13 @@ export const scStatus: Command = {
 export const scPush: Command = {
   name: 'source-control push',
   summary: 'The host commits its workflows to its Git repository and pushes the branch',
-  usage: '[--message <text>] [--dry-run]',
-  flags: { message: flag.string('The commit message', 'text', 'm'), 'dry-run': flag.boolean('Show what the commit would hold', 'n') },
+  usage: '[--message <text>] [--workflow <id[,id…]>] [--dry-run]',
+  flags: { message: flag.string('The commit message', 'text', 'm'), workflow: flag.string('Commit only these workflows (ids, comma-separated) and their folders', 'ids'), 'dry-run': flag.boolean('Show what the commit would hold', 'n') },
   args: { max: 0 },
   async run(ctx) {
     const result = await ctx.client.post<{ dryRun: boolean; committed: boolean; commit?: string; branch: string; files: Array<{ status: string; path: string }> }>('/api/source-control/push', {
       ...(ctx.flags.message ? { message: ctx.flags.message } : {}),
+      ...(ctx.flags.workflow ? { workflowIds: String(ctx.flags.workflow).split(',').map((id) => id.trim()).filter(Boolean) } : {}),
       dryRun: Boolean(ctx.flags['dry-run']),
     });
     return {

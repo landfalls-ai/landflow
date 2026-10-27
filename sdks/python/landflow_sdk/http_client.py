@@ -150,14 +150,28 @@ def _is_loopback(host: str) -> bool:
     return host in ("localhost", "127.0.0.1", "::1") or host.startswith("127.")
 
 
+class _RedirectHandler(urllib.request.HTTPRedirectHandler):
+    """The default redirect handling, minus credentials: a redirect to another host drops ``Authorization`` and ``Cookie``
+    (a GitHub or Jira file download redirects to a signed URL on a CDN, which refuses a request that also carries a token)."""
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).netloc.lower() != urllib.parse.urlsplit(req.full_url).netloc.lower():
+            for name in ("Authorization", "Cookie", "Proxy-Authorization"):
+                new.headers.pop(name, None)
+                new.headers.pop(name.capitalize(), None)
+                new.unredirected_hdrs.pop(name, None)
+        return new
+
+
 class HttpClient:
     """``request(method, url, headers=, json=, data=, params=, timeout=, verify=)`` plus ``get/post/put/patch/delete/head``."""
 
     def __init__(self, telemetry: Any, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> None:
         self._telemetry = telemetry
         self.timeout = timeout
-        self._direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        self._proxied = urllib.request.build_opener()
+        self._direct = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RedirectHandler)
+        self._proxied = urllib.request.build_opener(_RedirectHandler)
         self._unverified: tuple[urllib.request.OpenerDirector, urllib.request.OpenerDirector] | None = None
 
     def _openers(self, verify: bool) -> tuple[urllib.request.OpenerDirector, urllib.request.OpenerDirector]:
@@ -170,8 +184,8 @@ class HttpClient:
             insecure.verify_mode = ssl.CERT_NONE
             https = urllib.request.HTTPSHandler(context=insecure)
             self._unverified = (
-                urllib.request.build_opener(urllib.request.ProxyHandler({}), https),
-                urllib.request.build_opener(https),
+                urllib.request.build_opener(urllib.request.ProxyHandler({}), https, _RedirectHandler),
+                urllib.request.build_opener(https, _RedirectHandler),
             )
         return self._unverified
 

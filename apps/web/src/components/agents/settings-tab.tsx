@@ -1,7 +1,7 @@
 'use client';
 /** The Settings tab: limits of the agent loop, and usage limits (tokens and estimated cost) with what the agent used so far. */
 import { useEffect, useState } from 'react';
-import { CircleDollarSign, Gauge } from 'lucide-react';
+import { CircleDollarSign, Gauge, Mail } from 'lucide-react';
 import { DEFAULT_AGENT_SETTINGS, type AgentConfig, type AgentSettings } from '@/lib/shared/agents';
 import { formatCost, formatTokens, type AiUsageReport, type AiUsageTotals } from '@/lib/shared/ai-usage';
 import { api } from '@/lib/client/api';
@@ -9,7 +9,7 @@ import { Input } from '../ui/inputs';
 import { Field, Section } from './dialog';
 import type { UpdateConfig } from './util';
 
-type LoopKey = Exclude<keyof AgentSettings, UsageKey>;
+type LoopKey = Exclude<keyof AgentSettings, UsageKey | 'approvalEmails'>;
 type UsageKey = 'dailyTokenLimit' | 'dailyCostLimit' | 'monthlyCostLimit';
 
 const FIELDS: Array<{
@@ -119,6 +119,21 @@ function UsageSummary({ agentId, settings }: { agentId: string; settings: AgentS
   );
 }
 
+/** Addresses that get approve / reject links by email whenever a run waits for a tool approval (the host's SMTP sends them). */
+function ApprovalEmails({ emails, onChange }: { emails: string[]; onChange: (emails: string[]) => void }) {
+  const [draft, setDraft] = useState(emails.join(', '));
+  const commit = () => {
+    const parsed = [...new Set(draft.split(/[,;\s]+/).map((e) => e.trim()).filter(Boolean))];
+    onChange(parsed);
+    setDraft(parsed.join(', '));
+  };
+  return (
+    <Field id="setting-approvalEmails" label="Approver emails" hint="Comma-separated. Each address gets one email per waiting tool call with signed Approve and Reject links (single use). Needs the host's SMTP (LANDFLOW_SMTP_HOST).">
+      <Input id="setting-approvalEmails" value={draft} placeholder="ana@example.com, ben@example.com" onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
+    </Field>
+  );
+}
+
 export function SettingsTab({ config, update, agentId }: { config: AgentConfig; update: UpdateConfig; agentId?: string }) {
   return (
     <div className="space-y-4">
@@ -176,6 +191,9 @@ export function SettingsTab({ config, update, agentId }: { config: AgentConfig; 
           ))}
         </div>
         <p className="mt-3 text-[12px] leading-snug text-t3">Costs are estimates from the price table in Settings → AI prices; local models such as Ollama count as free unless priced there.</p>
+      </Section>
+      <Section icon={<Mail className="size-4" />} title="Approvals by email" description="Besides the chat that asked, tools that need approval can be approved or rejected from a link in an email.">
+        <ApprovalEmails emails={config.settings.approvalEmails ?? []} onChange={(emails) => update((c) => ({ ...c, settings: { ...c.settings, approvalEmails: emails } }))} />
       </Section>
     </div>
   );

@@ -1,4 +1,4 @@
-import { defineCredentialType, defineNode, NodeOperationError, registerSecrets, type JsonObject, type JsonValue, type PropertyOption } from '@landflow/sdk';
+import { defineCredentialType, defineNode, NodeOperationError, registerSecrets, type IExecuteContext, type JsonObject, type JsonValue, type PropertyOption } from '@landflow/sdk';
 import {
   apiError,
   baseUrl,
@@ -7,6 +7,8 @@ import {
   fetchJson,
   jsonParameter,
   mapItems,
+  oauth2Hidden,
+  pickCredentials,
   requireString,
   sleep,
   unsupported,
@@ -15,7 +17,10 @@ import {
 } from '../shared';
 
 export interface DiscordBotCredentials extends JsonObject {
+  /** Bot API credential: always set. OAuth2 credential: empty unless entered, for the calls only a bot can make. */
   botToken: string;
+  /** OAuth2 credential: the user's access token from Connect (fresh on every call); absent on the bot credential. */
+  accessToken: string;
   baseUrl: string;
 }
 
@@ -55,11 +60,42 @@ function discordError(api: ApiContext, response: ApiResponse) {
   return apiError(api, 'discord', 'Discord', response.status, detail, description);
 }
 
-async function botCall<T = any>(api: ApiContext, credentials: DiscordBotCredentials, method: string, path: string, body?: JsonObject): Promise<T> {
+interface UploadFile {
+  bytes: Uint8Array;
+  fileName: string;
+  mimeType: string;
+}
+
+/** A JSON body, or with files multipart/form-data: `payload_json` plus `files[n]` (attachments[] ties each to a file name). */
+function requestBody(body: JsonObject | undefined, files: UploadFile[] = []): { headers: Record<string, string>; body?: BodyInit } {
+  if (!body) return { headers: {} };
+  if (!files.length) return { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+  const form = new FormData();
+  const attachments = files.map((file, id) => ({ id, filename: file.fileName }));
+  form.append('payload_json', JSON.stringify({ ...body, attachments }));
+  files.forEach((file, id) => form.append(`files[${id}]`, new Blob([new Uint8Array(file.bytes)], { type: file.mimeType }), file.fileName));
+  return { headers: {}, body: form };
+}
+
+/** The item's files named by the Attachments option (comma-separated binary properties). */
+async function uploadFiles(ctx: IExecuteContext, options: JsonObject, i: number): Promise<UploadFile[]> {
+  const files: UploadFile[] = [];
+  for (const property of [...new Set(String(options.attachments ?? '').split(',').map((n) => n.trim()).filter(Boolean))]) {
+    const ref = ctx.helpers.assertBinaryData(i, property);
+    const bytes = await ctx.helpers.getBinaryDataBuffer(i, property);
+    files.push({ bytes, fileName: ref.fileName || `${property}.${ref.fileExtension ?? 'bin'}`, mimeType: ref.mimeType });
+  }
+  if (files.length > 10) throw new NodeOperationError('Discord takes at most 10 files per message', { itemIndex: i });
+  return files;
+}
+
+async function botCall<T = any>(api: ApiContext, credentials: DiscordBotCredentials, method: string, path: string, body?: JsonObject, files?: UploadFile[]): Promise<T> {
+  const payload = requestBody(body, files);
   const response = await discordFetch(api, `${baseUrl(credentials.baseUrl, DEFAULT_BASE_URL)}${path}`, {
     method,
-    headers: { authorization: `Bot ${credentials.botToken}`, ...(body && { 'content-type': 'application/json' }) },
-    ...(body && { body: JSON.stringify(body) }),
+    headers: { authorization: credentials.botToken ? `Bot ${credentials.botToken}` : `Bearer ${credentials.accessToken}`, ...payload.headers },
+    ...(payload.body && { body: payload.body }),
+    ...(files?.length && { signal: AbortSignal.timeout(300_000) }),
   });
   if (!response.ok) throw discordError(api, response);
   return response.body as T;
@@ -70,7 +106,7 @@ async function botCall<T = any>(api: ApiContext, credentials: DiscordBotCredenti
  * redacts; the token segment is registered too, so it never shows up in a span or
  * log even when the URL carries extra query parameters.
  */
-async function webhookCall<T = any>(api: ApiContext, credentials: DiscordWebhookCredentials, method: string, body?: JsonObject): Promise<T> {
+async function webhookCall<T = any>(api: ApiContext, credentials: DiscordWebhookCredentials, method: string, body?: JsonObject, files?: UploadFile[]): Promise<T> {
   let url: URL;
   try {
     url = new URL(String(credentials.webhookUrl ?? '').trim());
@@ -80,9 +116,11 @@ async function webhookCall<T = any>(api: ApiContext, credentials: DiscordWebhook
   const release = registerSecrets(url.pathname.split('/').filter(Boolean).slice(-1));
   try {
     if (method === 'POST') url.searchParams.set('wait', 'true');
+    const payload = requestBody(body, files);
     const response = await discordFetch(api, url.toString(), {
       method,
-      ...(body && { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      ...(payload.body && { headers: payload.headers, body: payload.body }),
+      ...(files?.length && { signal: AbortSignal.timeout(300_000) }),
     });
     if (!response.ok) throw discordError(api, response);
     return response.body as T;
@@ -116,6 +154,51 @@ export const discordBotApi = defineCredentialType<DiscordBotCredentials>({
     }
   },
 });
+
+/**
+ * Discord OAuth2: extends the host's generic OAuth2 type. Connect signs a Discord user in (scopes `identify guilds`),
+ * the host sends the user's `accessToken`, refreshed before it expires. Discord lets only bots post to channels, so
+ * the optional Bot Token is what channel calls use; without it the node sends the access token as a Bearer, which
+ * covers the user-level reads (Guilds).
+ */
+export const discordOAuth2Api = defineCredentialType<DiscordBotCredentials>({
+  name: 'discordOAuth2Api',
+  displayName: 'Discord OAuth2 API',
+  icon: 'file:discord.svg',
+  documentationUrl: 'https://discord.com/developers/docs/topics/oauth2',
+  description:
+    'Sign in with Discord: add the redirect URL shown below under OAuth2 in your application, then Connect. Add a Bot Token to message channels, which only bots can do.',
+  extends: ['oAuth2Api'],
+  properties: [
+    oauth2Hidden('grantType', 'Grant Type', 'pkce'),
+    oauth2Hidden('authUrl', 'Authorization URL', 'https://discord.com/oauth2/authorize'),
+    oauth2Hidden('accessTokenUrl', 'Access Token URL', 'https://discord.com/api/oauth2/token'),
+    oauth2Hidden('authentication', 'Client Authentication', 'body'),
+    oauth2Hidden('userInfoUrl', 'User Info URL', 'https://discord.com/api/users/@me'),
+    { name: 'scope', displayName: 'Scope', type: 'string', default: 'identify guilds', description: 'Space-separated scopes asked for at Connect' },
+    {
+      name: 'botToken',
+      displayName: 'Bot Token (optional)',
+      type: 'string',
+      default: '',
+      typeOptions: { password: true },
+      description: 'Developer Portal → your application → Bot → Reset Token. Needed to send, list, delete and react to messages.',
+    },
+    { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: DEFAULT_BASE_URL, description: 'Change it only for a proxy or a test double' },
+  ],
+  async test(data, ctx) {
+    try {
+      const me = await botCall<{ username?: string }>({ http: ctx.http }, data, 'GET', '/users/@me');
+      return { ok: true, message: `Authenticated as ${me.username ?? 'unknown'}` };
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
+  },
+});
+
+/** The node's Discord credential: bot token or OAuth2, by the Connection Type (else whichever was sent). */
+const discordCredentials = (ctx: { getCredentials: IExecuteContext['getCredentials'] }, authentication?: unknown) =>
+  pickCredentials<DiscordBotCredentials>(ctx, authentication, 'discordBotApi', 'discordOAuth2Api');
 
 export const discordWebhookApi = defineCredentialType<DiscordWebhookCredentials>({
   name: 'discordWebhookApi',
@@ -171,7 +254,7 @@ function simplifyMessage(message: JsonObject): JsonObject {
 const MESSAGE_CHANNEL_TYPES = new Set([0, 2, 5]);
 const PAGE_SIZE = 100;
 
-const bot = (operation: string[]) => ({ show: { authentication: ['botToken'], resource: ['message'], operation } });
+const bot = (operation: string[]) => ({ show: { authentication: ['botToken', 'oAuth2'], resource: ['message'], operation } });
 
 export const Discord = defineNode({
   description: {
@@ -194,6 +277,7 @@ export const Discord = defineNode({
     outputs: [{ type: 'main' }],
     credentials: [
       { name: 'discordBotApi', required: true, displayOptions: { show: { authentication: ['botToken'] } } },
+      { name: 'discordOAuth2Api', required: true, displayOptions: { show: { authentication: ['oAuth2'] } } },
       { name: 'discordWebhookApi', required: true, displayOptions: { show: { authentication: ['webhook'] } } },
     ],
     properties: [
@@ -205,6 +289,7 @@ export const Discord = defineNode({
         default: 'botToken',
         options: [
           { name: 'Bot Token', value: 'botToken', description: 'Manage messages in any channel the bot can see' },
+          { name: 'OAuth2', value: 'oAuth2', description: 'Connect with Discord; add a bot token to message channels' },
           { name: 'Webhook', value: 'webhook', description: 'Post to one channel through its webhook URL' },
         ],
       },
@@ -232,7 +317,7 @@ export const Discord = defineNode({
         type: 'options',
         noDataExpression: true,
         default: 'send',
-        displayOptions: { show: { authentication: ['botToken'], resource: ['message'] } },
+        displayOptions: { show: { authentication: ['botToken', 'oAuth2'], resource: ['message'] } },
         options: [
           { name: 'Delete', value: 'deleteMessage', action: 'Delete a message' },
           { name: 'Get Many', value: 'getAll', description: 'Retrieve the latest messages in a channel', action: 'Get many messages', idempotent: true },
@@ -246,7 +331,7 @@ export const Discord = defineNode({
         type: 'options',
         default: '',
         typeOptions: { loadOptionsMethod: 'getGuilds' },
-        displayOptions: { show: { authentication: ['botToken'] } },
+        displayOptions: { show: { authentication: ['botToken', 'oAuth2'] } },
         description: 'The server whose channels are listed below',
       },
       {
@@ -256,7 +341,7 @@ export const Discord = defineNode({
         required: true,
         default: '',
         typeOptions: { loadOptionsMethod: 'getChannels', loadOptionsDependsOn: ['guildId'] },
-        displayOptions: { show: { authentication: ['botToken'] } },
+        displayOptions: { show: { authentication: ['botToken', 'oAuth2'] } },
         description: 'Pick a channel of the server, or set a channel ID with an expression',
       },
       {
@@ -305,6 +390,14 @@ export const Discord = defineNode({
         values: [
           { name: 'tts', displayName: 'Text-to-Speech', type: 'boolean', default: false },
           {
+            name: 'attachments',
+            displayName: 'Attachments',
+            type: 'string',
+            default: '',
+            placeholder: 'data, chart',
+            description: 'Comma-separated names of the item’s binary properties to upload with the message (up to 10 files, 25 MB in total on most servers)',
+          },
+          {
             name: 'replyTo',
             displayName: 'Reply To Message ID',
             type: 'string',
@@ -324,6 +417,14 @@ export const Discord = defineNode({
           { name: 'username', displayName: 'Username', type: 'string', default: '', description: "Override the webhook's default name" },
           { name: 'avatar_url', displayName: 'Avatar URL', type: 'string', default: '', description: "Override the webhook's default avatar" },
           { name: 'tts', displayName: 'Text-to-Speech', type: 'boolean', default: false },
+          {
+            name: 'attachments',
+            displayName: 'Attachments',
+            type: 'string',
+            default: '',
+            placeholder: 'data, chart',
+            description: 'Comma-separated names of the item’s binary properties to upload with the message (up to 10 files, 25 MB in total on most servers)',
+          },
         ],
       },
       {
@@ -340,7 +441,7 @@ export const Discord = defineNode({
         type: 'number',
         default: 50,
         typeOptions: { minValue: 1, numberPrecision: 0 },
-        displayOptions: { show: { authentication: ['botToken'], operation: ['getAll'], returnAll: [false] } },
+        displayOptions: { show: { authentication: ['botToken', 'oAuth2'], operation: ['getAll'], returnAll: [false] } },
         description: 'Max number of results to return',
       },
       {
@@ -356,13 +457,13 @@ export const Discord = defineNode({
   methods: {
     loadOptions: {
       async getGuilds(ctx): Promise<PropertyOption[]> {
-        const guilds = await botCall<JsonObject[]>({ http: ctx.http }, ctx.getCredentials<DiscordBotCredentials>('discordBotApi'), 'GET', '/users/@me/guilds');
+        const guilds = await botCall<JsonObject[]>({ http: ctx.http }, discordCredentials(ctx), 'GET', '/users/@me/guilds');
         return guilds.map((g) => ({ name: String(g.name), value: String(g.id) })).sort((a, b) => a.name.localeCompare(b.name));
       },
       async getChannels(ctx): Promise<PropertyOption[]> {
         const guildId = String(ctx.getNodeParameter('guildId', '') ?? '');
         if (!guildId) return [];
-        const credentials = ctx.getCredentials<DiscordBotCredentials>('discordBotApi');
+        const credentials = discordCredentials(ctx);
         const channels = await botCall<JsonObject[]>({ http: ctx.http }, credentials, 'GET', `/guilds/${encodeURIComponent(guildId)}/channels`);
         return channels
           .filter((c) => MESSAGE_CHANNEL_TYPES.has(Number(c.type)))
@@ -382,19 +483,20 @@ export const Discord = defineNode({
         if (operation !== 'send') throw unsupported('message', operation);
         const content = String(ctx.getNodeParameter('content', i, '') ?? '');
         const embeds = embedsParameter(ctx.getNodeParameter('embeds', i, ''));
-        if (!content && !embeds) throw new NodeOperationError('Set Message or Embeds', { itemIndex: i });
         const options = ctx.getNodeParameter<JsonObject>('options', i, {}) ?? {};
+        const files = await uploadFiles(ctx, options, i);
+        if (!content && !embeds && !files.length) throw new NodeOperationError('Set Message or Embeds', { itemIndex: i });
         const body: JsonObject = { content, ...(embeds && { embeds }) };
         if (options.username) body.username = String(options.username);
         if (options.avatar_url) body.avatar_url = String(options.avatar_url);
         if (options.tts === true) body.tts = true;
-        const message = await webhookCall<JsonObject>(api, credentials, 'POST', body);
+        const message = await webhookCall<JsonObject>(api, credentials, 'POST', body, files);
         countSent(api, 'discord', 'webhookSend');
         return message;
       });
     }
 
-    const credentials = ctx.getCredentials<DiscordBotCredentials>('discordBotApi');
+    const credentials = discordCredentials(ctx, authentication);
     return mapItems(ctx, async (i) => {
       const resource = ctx.getNodeParameter<string>('resource', i);
       const operation = ctx.getNodeParameter<string>('operation', i);
@@ -406,12 +508,13 @@ export const Discord = defineNode({
         case 'send': {
           const content = String(ctx.getNodeParameter('content', i, '') ?? '');
           const embeds = embedsParameter(ctx.getNodeParameter('embeds', i, ''));
-          if (!content && !embeds) throw new NodeOperationError('Set Message or Embeds', { itemIndex: i });
           const options = ctx.getNodeParameter<JsonObject>('options', i, {}) ?? {};
+          const files = await uploadFiles(ctx, options, i);
+          if (!content && !embeds && !files.length) throw new NodeOperationError('Set Message or Embeds', { itemIndex: i });
           const body: JsonObject = { content, ...(embeds && { embeds }) };
           if (options.tts === true) body.tts = true;
           if (options.replyTo) body.message_reference = { message_id: String(options.replyTo), fail_if_not_exists: false };
-          const message = await botCall<JsonObject>(api, credentials, 'POST', `/channels/${channel}/messages`, body);
+          const message = await botCall<JsonObject>(api, credentials, 'POST', `/channels/${channel}/messages`, body, files);
           countSent(api, 'discord', operation);
           return message;
         }

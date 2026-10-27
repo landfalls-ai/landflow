@@ -25,6 +25,7 @@ import { sameSecret } from '../auth/passwords';
 import { sessionUser } from '../auth/sessions';
 import { findUserByOidc, type UserRecord } from '../auth/users';
 import { singleton } from '../singleton';
+import { logger } from '../telemetry';
 import { effectiveTool, effectiveTools, effectiveTrigger, effectiveTriggers, pluginTools, type EffectiveTool, type EffectiveTrigger } from './grants';
 import { gatewayPublicUrl, instanceUrl, looksLikeLandflowMcpToken, mcpResourceRoot, parseTokenScopes, resolveTokenSubject, unverifiedClaims, verifyMcpToken } from './tokens';
 
@@ -37,6 +38,8 @@ export interface McpCaller {
   /** Token scopes (lib/shared/mcp.ts); everything for sessions, API keys and identity provider tokens. */
   scopes: string[];
   tokenId?: string;
+  /** The project a Landflow MCP token is scoped to (the instance server then shows only that project's workflows). */
+  projectId?: string;
   viaGateway: boolean;
 }
 
@@ -82,12 +85,13 @@ export function identityProviderIssuer(): string | undefined {
 const normalizeIssuer = (iss: string | undefined) => (iss ?? '').trim().replace(/\/+$/, '');
 
 /** The URL of an MCP resource on this host: a plugin's endpoint, or the MCP root. */
-export function mcpResourceUrl(resource: { pluginId?: string }): string {
+export function mcpResourceUrl(resource: { pluginId?: string; projectId?: string }): string {
+  if (resource.projectId) return `${mcpResourceRoot()}/projects/${encodeURIComponent(resource.projectId)}`;
   return resource.pluginId ? `${mcpResourceRoot()}/plugins/${encodeURIComponent(resource.pluginId)}` : mcpResourceRoot();
 }
 
 /** The protected resource metadata URL (RFC 9728 §3: `/.well-known/oauth-protected-resource` + the resource's path). */
-export function protectedResourceMetadataUrl(resource: { pluginId?: string }): string {
+export function protectedResourceMetadataUrl(resource: { pluginId?: string; projectId?: string }): string {
   const path = new URL(mcpResourceUrl(resource)).pathname;
   return `${instanceUrl()}/.well-known/oauth-protected-resource${path}`;
 }
@@ -96,7 +100,7 @@ export function protectedResourceMetadataUrl(resource: { pluginId?: string }): s
  * The protected resource metadata document (RFC 9728) of an MCP resource: the authorization servers are the identity
  * provider (when configured) and this host (Landflow-issued tokens; its "authorization server" is Settings → MCP).
  */
-export function protectedResourceMetadata(resource: { pluginId?: string }): Record<string, unknown> {
+export function protectedResourceMetadata(resource: { pluginId?: string; projectId?: string }): Record<string, unknown> {
   const idp = identityProviderIssuer();
   return {
     resource: mcpResourceUrl(resource),
@@ -104,7 +108,7 @@ export function protectedResourceMetadata(resource: { pluginId?: string }): Reco
     jwks_uri: `${instanceUrl()}/api/mcp/jwks`,
     scopes_supported: ALL_SCOPES,
     bearer_methods_supported: ['header'],
-    resource_name: resource.pluginId ? `Landflow plugin ${resource.pluginId}` : 'Landflow MCP',
+    resource_name: resource.projectId ? `Landflow project ${resource.projectId}` : resource.pluginId ? `Landflow plugin ${resource.pluginId}` : 'Landflow MCP',
     resource_documentation: 'https://github.com/landflow/landflow/blob/main/docs/transports.md',
     mcp_protocol_version: '2025-06-18',
     resource_type: 'mcp-server',
@@ -112,13 +116,13 @@ export function protectedResourceMetadata(resource: { pluginId?: string }): Reco
 }
 
 /** The audiences a direct bearer token may carry for `resource`: the resource itself, the MCP root, the instance, the gateway. */
-export function acceptedAudiences(resource: { pluginId?: string }): string[] {
+export function acceptedAudiences(resource: { pluginId?: string; projectId?: string }): string[] {
   const gateway = gatewayPublicUrl();
   const extra = process.env.LANDFLOW_MCP_IDP_AUDIENCE?.split(',').map((s) => s.trim()).filter(Boolean) ?? [];
   return [...new Set([mcpResourceUrl(resource), mcpResourceRoot(), instanceUrl(), ...(gateway ? [`${gateway}/mcp`, gateway] : []), ...extra])];
 }
 
-const bearerChallenge = (resource: { pluginId?: string }) => `Bearer resource_metadata="${protectedResourceMetadataUrl(resource)}"`;
+const bearerChallenge = (resource: { pluginId?: string; projectId?: string }) => `Bearer resource_metadata="${protectedResourceMetadataUrl(resource)}"`;
 
 // ---- the identity provider's tokens -------------------------------------------------
 
@@ -173,10 +177,41 @@ export async function verifyIdpToken(token: string, issuer: string, audiences: s
   }
 }
 
+/** The last key sets fetched for the gateway, by issuer: kept when the provider can't be reached for a while. */
+const gatewayKeyCache = () => singleton('mcp-idp-gateway-jwks', () => new Map<string, { jwks: string; at: number }>());
+const GATEWAY_JWKS_TTL_MS = 60_000;
+
+/**
+ * The identity provider's current key set as the JSON text agentgateway takes as `jwks` (the gateway sync writes it inline
+ * into per-plugin routes, so a gateway restarted while the provider is down still starts, and a rotated key reaches it within
+ * a sync tick). Fetched through the discovery document, cached for a minute; when the provider can't be reached the last
+ * key set is used, and undefined when there never was one.
+ */
+export async function identityProviderJwks(issuer = identityProviderIssuer()): Promise<string | undefined> {
+  if (!issuer) return undefined;
+  const cache = gatewayKeyCache();
+  const hit = cache.get(issuer);
+  if (hit && Date.now() - hit.at < GATEWAY_JWKS_TTL_MS) return hit.jwks;
+  try {
+    const { jwks_uri } = await idpDiscovery(issuer);
+    const response = await fetch(jwks_uri, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json' } });
+    if (!response.ok) throw new Error(`the key set answered ${response.status}`);
+    const body = (await response.json()) as { keys?: unknown[] };
+    if (!Array.isArray(body.keys) || !body.keys.length) throw new Error('the key set has no keys');
+    const jwks = JSON.stringify({ keys: body.keys });
+    cache.set(issuer, { jwks, at: Date.now() });
+    return jwks;
+  } catch (error) {
+    logger.warn('mcp: the identity provider’s keys could not be fetched for the gateway', { issuer, error: (error as Error).message });
+    return hit?.jwks;
+  }
+}
+
 /** Forget cached discovery documents and key sets (tests). */
 export function resetIdentityCaches() {
   idpCaches().discovery.clear();
   idpCaches().jwks.clear();
+  gatewayKeyCache().clear();
 }
 
 // ---- resolving callers ---------------------------------------------------------------
@@ -199,7 +234,7 @@ function gatewayCaller(issuer: string | undefined, subject: string | undefined, 
   if (iss === instanceUrl()) {
     const found = resolveTokenSubject(subject, jti);
     if (!found) return { ...anonymous, subject };
-    return userCaller('gateway', found.user, { issuer: iss, viaGateway: true, scopes: found.record?.scopes ?? ALL_SCOPES, ...(found.record && { tokenId: found.record.id }) });
+    return userCaller('gateway', found.user, { issuer: iss, viaGateway: true, scopes: found.record?.scopes ?? ALL_SCOPES, ...(found.record && { tokenId: found.record.id }), ...(found.record?.projectId && { projectId: found.record.projectId }) });
   }
   const idp = identityProviderIssuer();
   if (idp && iss === idp) {
@@ -218,7 +253,7 @@ function bearerOf(request: Request): string | undefined {
  * Who is calling `resource`. Throws McpAuthError (401 with a bearer challenge; 403 for a caller that is known but
  * refused, such as a deactivated user). Never throws for an anonymous gateway call: that caller just has no grants.
  */
-export async function authenticateMcpRequest(request: Request, resource: { pluginId: string }): Promise<McpCaller> {
+export async function authenticateMcpRequest(request: Request, resource: { pluginId: string; projectId?: string }): Promise<McpCaller> {
   const challenge = bearerChallenge(resource);
 
   // 1. The gateway: the secret, then the identity it validated.
@@ -246,7 +281,7 @@ export async function authenticateMcpRequest(request: Request, resource: { plugi
         const reasons: Record<typeof checked.reason, string> = { invalid: 'Invalid MCP token', expired: 'This MCP token has expired', revoked: 'This MCP token was revoked', audience: 'This MCP token is not for this resource (aud)', user: 'The token’s user is deactivated' };
         throw new McpAuthError(reasons[checked.reason], checked.reason === 'user' ? 403 : 401, challenge);
       }
-      return userCaller('token', checked.user, { issuer: instanceUrl(), scopes: parseTokenScopes(checked.claims.scope), tokenId: checked.record.id });
+      return userCaller('token', checked.user, { issuer: instanceUrl(), scopes: parseTokenScopes(checked.claims.scope), tokenId: checked.record.id, ...(checked.record.projectId && { projectId: checked.record.projectId }) });
     }
     const idp = identityProviderIssuer();
     if (idp && normalizeIssuer(claims.iss) === idp) {

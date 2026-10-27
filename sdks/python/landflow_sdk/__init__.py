@@ -28,6 +28,7 @@ from .errors import (
 )
 from .http_client import HttpClient, HttpError, HttpResponse
 from .icons import MAX_ICON_BYTES, icon_file
+from .jwt import JwtError, github_app_jwt, rs256_sign
 from .logs import LogFormatter, configure_logging
 from .mcp import DEFAULT_MCP_PATH, LIST_OPTIONS_TOOL, McpBinding, McpFace, is_loopback_host, load_mcp_credentials, mcp_available, mcp_mode
 from .mcp_tools import gateway_tool_name, mcp_tools_from_manifest, tool_call_to_parameters, without_binding
@@ -78,6 +79,7 @@ __all__ = [
     "HttpBinding",
     "HttpError",
     "HttpResponse",
+    "JwtError",
     "LoadOptionsContext",
     "LogFormatter",
     "MAX_ICON_BYTES",
@@ -104,12 +106,14 @@ __all__ = [
     "configure_logging",
     "current_span",
     "file_type_of",
+    "github_app_jwt",
     "github_signature",
     "hmac_sha256",
     "icon_file",
     "mime_type_from_file_name",
     "poll_interval_property",
     "registry_proof",
+    "rs256_sign",
     "safe_equal",
     "serve",
     "slack_signature",

@@ -9,6 +9,7 @@ from typing import Any
 
 from landflow_sdk import Node, NodeOperationError
 
+from .files import attach_result_file, binary_source_properties, flag, read_rows, result_file_properties
 from .text import get_path
 
 
@@ -80,11 +81,15 @@ class FieldStats(Node):
                 "placeholder": "e.g. category",
                 "description": "Optional field to group by. When set, one item is emitted per group.",
             },
+            *binary_source_properties("Rows From Binary File", "Aggregate the rows of a CSV, TSV, JSON or NDJSON file on each item instead of the item's own fields"),
+            *result_file_properties("Attach a CSV of the statistics (one row per group) as a binary file"),
         ],
     }
 
     def execute(self, ctx):
         items = ctx.get_input_data()
+        if flag(ctx, "fromBinary", 0):  # the rows of each item's file are the data: one pseudo-item per row
+            items = [{"json": row} for i in range(len(items)) for row in read_rows(ctx, i)]
         field = str(ctx.get_node_parameter("field", 0) or "").strip()
         group_by = str(ctx.get_node_parameter("groupBy", 0) or "").strip()
         if not field:
@@ -110,7 +115,9 @@ class FieldStats(Node):
             if items and not bucket["values"]:
                 ctx.logger.warn(f"no numeric values found in '{field}' across {len(items)} item(s)")
             ctx.logger.info(f"aggregated {len(bucket['values'])} value(s) of '{field}' from {len(items)} item(s)")
-            return [{"json": {"field": field, **summarize(bucket["values"]), "skipped": bucket["skipped"]}}]
+            result = [{"json": {"field": field, **summarize(bucket["values"]), "skipped": bucket["skipped"]}}]
+            self._attach(ctx, result)
+            return result
 
         out = []
         for bucket in groups.values():
@@ -125,5 +132,12 @@ class FieldStats(Node):
                     }
                 }
             )
+        self._attach(ctx, out)
         ctx.logger.info(f"aggregated '{field}' from {len(items)} item(s) into {len(out)} group(s) by '{group_by}'")
         return out
+
+    @staticmethod
+    def _attach(ctx, out: list[dict[str, Any]]) -> None:
+        """The ``outputFile`` option: one CSV row per output item."""
+        columns = list(dict.fromkeys(key for item in out for key in item["json"]))
+        attach_result_file(ctx, out, columns, [[item["json"].get(c) for c in columns] for item in out], "stats.csv")

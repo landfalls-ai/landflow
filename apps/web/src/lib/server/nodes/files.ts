@@ -1,7 +1,7 @@
 /**
  * The file nodes, with n8n's names and parameters: Read/Write Files from Disk (only inside LANDFLOW_FILES_DIR,
- * default `<data dir>/files`), Extract from File (CSV, HTML tables, JSON, PDF text, text, XLSX, or the file as a
- * base64 string) and Convert to File (CSV, HTML table, JSON, text, or a base64 string as a file). Files travel as
+ * default `<data dir>/files`), Extract from File (CSV, HTML tables, JSON, PDF text, text, XLSX, ODS, or the file as a
+ * base64 string) and Convert to File (CSV, HTML table, XLSX, ODS, JSON, text, or a base64 string as a file). Files travel as
  * `item.binary.<property>` refs; the bytes stay in the binary store.
  */
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -11,7 +11,7 @@ import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { defineNode, NodeOperationError, type JsonObject, type JsonValue, type NodeItem, type PropertyDescriptor } from '@landflow/sdk';
 import { extensionFromMimeType, mimeTypeFromFileName, type BinaryRef } from '@landflow/protocol';
-import { htmlTables, parseCsv, readXlsx, rowsToItems, toCsv, toHtmlTable, type RowOptions } from '../binary/formats';
+import { htmlTables, parseCsv, readOds, readXlsx, rowsToItems, sheetsOf, toCsv, toHtmlTable, toOds, toXlsx, type RowOptions } from '../binary/formats';
 import { dataDir } from '../db';
 import { getPath } from './paths';
 
@@ -292,7 +292,7 @@ function decodeText(bytes: Uint8Array, encoding = 'utf-8', itemIndex?: number): 
   }
 }
 
-const SPREADSHEET = ['csv', 'html', 'xlsx'];
+const SPREADSHEET = ['csv', 'html', 'xlsx', 'ods'];
 
 type ExtractOptions = RowOptions & {
   delimiter?: string;
@@ -349,10 +349,10 @@ export const extractFromFileNode = defineNode({
     ...FILES,
     name: 'extractFromFile',
     displayName: 'Extract from File',
-    description: 'Turn a file into items: CSV, XLSX and HTML table rows, JSON, PDF or plain text',
+    description: 'Turn a file into items: CSV, XLSX, ODS and HTML table rows, JSON, PDF or plain text',
     icon: 'lucide:file-output',
     subtitle: '{{operation}}',
-    keywords: ['extract', 'parse', 'csv', 'xlsx', 'excel', 'spreadsheet', 'pdf', 'json', 'text', 'html', 'table', 'base64', 'file'],
+    keywords: ['extract', 'parse', 'csv', 'xlsx', 'ods', 'openoffice', 'libreoffice', 'excel', 'spreadsheet', 'pdf', 'json', 'text', 'html', 'table', 'base64', 'file'],
     properties: [
       {
         name: 'operation',
@@ -366,6 +366,7 @@ export const extractFromFileNode = defineNode({
           { name: 'Extract From JSON', value: 'fromJson', description: 'The parsed JSON in one field' },
           { name: 'Extract From PDF', value: 'pdf', description: 'The text of a PDF (no OCR for scanned pages)' },
           { name: 'Extract From Text File', value: 'text', description: 'The text in one field' },
+          { name: 'Extract From ODS', value: 'ods', description: 'One item per row of an OpenDocument sheet' },
           { name: 'Extract From XLSX', value: 'xlsx', description: 'One item per row of a sheet' },
           { name: 'Move File to Base64 String', value: 'binaryToPropery', description: 'The file as a base64 string in one field' },
         ],
@@ -393,7 +394,7 @@ export const extractFromFileNode = defineNode({
           { name: 'maxRowCount', displayName: 'Max Number of Rows to Load', type: 'number', default: -1, description: '-1: all', displayOptions: { show: { '/operation': SPREADSHEET } } },
           { name: 'relaxQuotes', displayName: 'Relax Quotes', type: 'boolean', default: false, description: 'Accept stray quotes in unquoted fields', displayOptions: { show: { '/operation': ['csv'] } } },
           { ...encodingProperty(), displayOptions: { show: { '/operation': ['csv', 'html', 'fromJson', 'text'] } } },
-          { name: 'sheetName', displayName: 'Sheet Name', type: 'string', default: '', description: 'Default: the first sheet', displayOptions: { show: { '/operation': ['xlsx'] } } },
+          { name: 'sheetName', displayName: 'Sheet Name', type: 'string', default: '', description: 'Default: the first sheet', displayOptions: { show: { '/operation': ['xlsx', 'ods'] } } },
           { name: 'rawData', displayName: 'Raw Data', type: 'boolean', default: false, description: 'Keep dates as Excel serial numbers', displayOptions: { show: { '/operation': ['xlsx'] } } },
           { name: 'joinPages', displayName: 'Join Pages', type: 'boolean', default: true, description: 'One text for the whole document; off: one entry per page', displayOptions: { show: { '/operation': ['pdf'] } } },
           { name: 'maxPages', displayName: 'Max Pages', type: 'number', default: 0, description: '0: all', displayOptions: { show: { '/operation': ['pdf'] } } },
@@ -431,6 +432,7 @@ export const extractFromFileNode = defineNode({
         let rows: JsonValue[][];
         try {
           if (operation === 'xlsx') rows = readXlsx(bytes, options).rows;
+          else if (operation === 'ods') rows = readOds(bytes, options).rows;
           else if (operation === 'csv') rows = parseCsv(decodeText(bytes, options.encoding, i), { delimiter: options.delimiter?.replace(/\\t/g, '\t'), relaxQuotes: options.relaxQuotes });
           else {
             const tables = htmlTables(decodeText(bytes, options.encoding, i));
@@ -500,9 +502,17 @@ type ConvertOptions = {
   addBOM?: boolean;
   mimeType?: string;
   dataIsBase64?: boolean;
+  columns?: string;
+  sheetName?: string;
+  sheetNameField?: string;
+  dates?: boolean;
 };
 
-const ALL_ITEMS = ['csv', 'html'];
+const ALL_ITEMS = ['csv', 'html', 'xlsx', 'ods'];
+const SPREADSHEET_MIME: Record<string, string> = {
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ods: 'application/vnd.oasis.opendocument.spreadsheet',
+};
 
 /** The bytes of a base64 string; a `data:` URI also gives its type. */
 function base64Bytes(value: string): { bytes: Buffer; mimeType?: string } {
@@ -517,10 +527,10 @@ export const convertToFileNode = defineNode({
     ...FILES,
     name: 'convertToFile',
     displayName: 'Convert to File',
-    description: 'Turn items into a file: CSV, HTML table, JSON, text, or a base64 string as a file',
+    description: 'Turn items into a file: CSV, XLSX, ODS, HTML table, JSON, text, or a base64 string as a file',
     icon: 'lucide:file-input',
     subtitle: '{{operation}}',
-    keywords: ['convert', 'file', 'csv', 'json', 'text', 'html', 'base64', 'export', 'download', 'binary'],
+    keywords: ['convert', 'file', 'csv', 'xlsx', 'ods', 'excel', 'spreadsheet', 'json', 'text', 'html', 'base64', 'export', 'download', 'binary'],
     properties: [
       {
         name: 'operation',
@@ -531,6 +541,8 @@ export const convertToFileNode = defineNode({
         options: [
           { name: 'Convert to CSV', value: 'csv', description: 'All items as the rows of one CSV file' },
           { name: 'Convert to HTML', value: 'html', description: 'All items as the rows of an HTML table' },
+          { name: 'Convert to ODS', value: 'ods', description: 'All items as the rows of an OpenDocument spreadsheet' },
+          { name: 'Convert to XLSX', value: 'xlsx', description: 'All items as the rows of an Excel workbook' },
           { name: 'Convert to JSON', value: 'toJson', description: 'Items as a JSON file' },
           { name: 'Convert to Text File', value: 'toText', description: 'A field’s text as a file, per item' },
           { name: 'Move Base64 String to File', value: 'toBinary', description: 'A field’s base64 string (or data: URI) as a file, per item' },
@@ -569,6 +581,18 @@ export const convertToFileNode = defineNode({
           { name: 'fileName', displayName: 'File Name', type: 'string', default: '', placeholder: 'e.g. report.csv' },
           { name: 'delimiter', displayName: 'Delimiter', type: 'string', default: ',', displayOptions: { show: { '/operation': ['csv'] } } },
           { name: 'headerRow', displayName: 'Header Row', type: 'boolean', default: true, displayOptions: { show: { '/operation': ALL_ITEMS } } },
+          { name: 'columns', displayName: 'Columns', type: 'string', default: '', placeholder: 'e.g. name, email, created', description: 'The columns in this order, comma separated. Default: the keys of the items, the first item’s first', displayOptions: { show: { '/operation': ['xlsx', 'ods'] } } },
+          { name: 'sheetName', displayName: 'Sheet Name', type: 'string', default: 'Sheet1', description: 'Also names the items that have no value in “Sheet Name From Field”', displayOptions: { show: { '/operation': ['xlsx', 'ods'] } } },
+          {
+            name: 'sheetNameField',
+            displayName: 'Sheet Name From Field',
+            type: 'string',
+            default: '',
+            placeholder: 'e.g. region or customer.country',
+            description: 'One sheet per value of this field (dot notation reaches into objects), in order of first appearance',
+            displayOptions: { show: { '/operation': ['xlsx', 'ods'] } },
+          },
+          { name: 'dates', displayName: 'Dates as Date Cells', type: 'boolean', default: true, description: 'Write ISO dates and date-times (2024-01-20, 2024-01-20T10:30:00Z) as spreadsheet dates, not text', displayOptions: { show: { '/operation': ['xlsx', 'ods'] } } },
           { name: 'format', displayName: 'Pretty Print', type: 'boolean', default: false, displayOptions: { show: { '/operation': ['toJson'] } } },
           {
             name: 'encoding',
@@ -595,6 +619,13 @@ export const convertToFileNode = defineNode({
     if (ALL_ITEMS.includes(operation) || (operation === 'toJson' && ctx.getNodeParameter<string>('mode', 0, 'once') !== 'each')) {
       const options = optionsOf(0);
       const rows = items.map((item) => item.json);
+      if (operation === 'xlsx' || operation === 'ods') {
+        const sheets = sheetsOf(rows, options);
+        const write = operation === 'xlsx' ? toXlsx : toOds;
+        const fileName = options.fileName?.trim() || `data.${operation}`;
+        const ref = await prepare(write(sheets, { headerRow: options.headerRow, dates: options.dates }), fileName, SPREADSHEET_MIME[operation]);
+        return [[{ json: {}, binary: { [output(0)]: ref }, pairedItem: { item: 0 } }]];
+      }
       let text: string;
       let fallbackName: string;
       if (operation === 'csv') {

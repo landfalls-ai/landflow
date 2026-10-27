@@ -20,7 +20,7 @@ import {
   type ListObjectsV2CommandOutput,
 } from '@aws-sdk/client-s3';
 import { DEFAULT_MIME_TYPE, type BinaryRef } from '@landflow/protocol';
-import { byteCounter, newBinaryId, refOf, SCOPE, splitBinaryId, toNodeStream, type BinarySource, type BinaryStore, type PutOptions, type StoredBinaryMeta } from './store';
+import { byteCounter, newBinaryId, refOf, SCOPE, splitBinaryId, toNodeStream, type BinarySource, type BinaryStore, type ByteRange, type PutOptions, type StoredBinaryMeta } from './store';
 
 export interface S3BinaryStoreOptions {
   bucket: string;
@@ -140,12 +140,15 @@ export class S3BinaryStore implements BinaryStore {
     }
   }
 
-  async open(id: string): Promise<{ meta: StoredBinaryMeta; stream: Readable } | undefined> {
+  async open(id: string, range?: ByteRange): Promise<{ meta: StoredBinaryMeta; stream: Readable } | undefined> {
     const key = this.key(id);
     if (!key) return undefined;
     try {
-      const object = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
-      return { meta: metaOf(object), stream: object.Body as Readable };
+      const object = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key, ...(range && { Range: `bytes=${range.start}-${range.end}` }) }));
+      const meta = metaOf(object);
+      // A ranged GetObject reports the part's length; the file's size is the total in Content-Range.
+      const total = range && /\/(\d+)$/.exec(object.ContentRange ?? '')?.[1];
+      return { meta: total ? { ...meta, fileSize: Number(total) } : meta, stream: object.Body as Readable };
     } catch (error) {
       if (isNotFound(error)) return undefined;
       throw error;

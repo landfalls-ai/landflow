@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import type { AgentSession, SessionSource, SessionStatus, SessionSummary } from '@/lib/shared/agents';
+import type { ChatFeedback, FeedbackRating } from '@/lib/shared/chat-feedback';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
@@ -20,6 +21,7 @@ const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Ton
   schedule: { label: 'Schedule', icon: Clock, tone: 'neutral' },
   telegram: { label: 'Telegram', icon: Send, tone: 'neutral' },
   slack: { label: 'Slack', icon: MessagesSquare, tone: 'neutral' },
+  teams: { label: 'Teams', icon: MessagesSquare, tone: 'neutral' },
   workflow: { label: 'Workflow', icon: Workflow, tone: 'neutral' },
   agent: { label: 'Agent', icon: Bot, tone: 'neutral' },
   api: { label: 'API', icon: Code, tone: 'neutral' },
@@ -69,14 +71,16 @@ function SessionDetail({
   const [session, setSession] = useState<AgentSession>();
   const [traceUrls, setTraceUrls] = useState<Record<string, string>>();
   const [error, setError] = useState<string>();
+  const [feedback, setFeedback] = useState<Record<string, ChatFeedback>>({});
   const [confirm, setConfirm] = useState(false);
   const [deciding, setDeciding] = useState(false);
   const run = useAgentRun(agentId, session, traceUrls);
 
   const load = useCallback(
     () =>
-      api<{ session: AgentSession; traceUrls?: Record<string, string> }>(`/api/agents/${agentId}/sessions/${sessionId}`)
+      api<{ session: AgentSession; traceUrls?: Record<string, string>; feedback?: ChatFeedback[] }>(`/api/agents/${agentId}/sessions/${sessionId}`)
         .then((r) => {
+          setFeedback(Object.fromEntries((r.feedback ?? []).flatMap((f) => (f.entryId ? [[f.entryId, f]] : []))));
           setTraceUrls(r.traceUrls);
           setSession(r.session);
           setError(undefined);
@@ -105,6 +109,15 @@ function SessionDetail({
       setDeciding(false);
       void load();
       onChanged();
+    }
+  };
+
+  const rate = async (entryId: string, rating: FeedbackRating | null) => {
+    try {
+      await api(`/api/agents/${agentId}/sessions/${sessionId}/feedback`, { method: 'PUT', json: { entryId, rating } });
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message);
     }
   };
 
@@ -213,6 +226,8 @@ function SessionDetail({
                 onDecide={(callId, approved) => void decide(callId, approved)}
                 deciding={deciding}
                 wide
+                feedback={feedback}
+                onRate={(entryId, rating) => void rate(entryId, rating)}
               />
             ) : (
               <EmptyState compact title="Nothing happened in this session yet" />

@@ -22,6 +22,7 @@ import {
   type RowPage,
   type RowQuery,
 } from '../../shared/data-tables';
+import { defaultProjectId, homeProjects } from '../projects/store';
 import { singleton } from '../singleton';
 import { parseCsv, toCsv } from './csv';
 import { SqlDataTableStorage } from './sql-storage';
@@ -145,19 +146,35 @@ export class DataTablesService {
     return table;
   }
 
-  /** A table by id, or by name (case-insensitive) — what a node parameter may hold. */
-  findTable(idOrName: string): DataTable | undefined {
+  /**
+   * A table by id, or by name (case-insensitive) — what a node parameter may hold. Names are unique per project, so
+   * `projectId` (the project of whoever asks) picks its table when other projects have one of that name too.
+   */
+  findTable(idOrName: string, projectId?: string): DataTable | undefined {
     const key = String(idOrName ?? '').trim();
     if (!key) return undefined;
-    return this.storage.getTable(key) ?? this.storage.listTables().find((t) => t.name.toLowerCase() === key.toLowerCase());
+    const byId = this.storage.getTable(key);
+    if (byId) return byId;
+    const named = this.storage.listTables().filter((t) => t.name.toLowerCase() === key.toLowerCase());
+    return (projectId && this.inProject(named, projectId)[0]) || named[0];
   }
 
-  /** `id`: keep a given id (Git sync creates tables under the ids in its files, so Data Table nodes keep pointing at them). */
-  createTable(input: { name: string; columns?: Array<{ name: string; type: string }>; id?: string }): DataTable {
+  /** The tables of `tables` that live in `projectId` (a table without a project row lives in the default project). */
+  inProject<T extends { id: string }>(tables: T[], projectId: string | undefined): T[] {
+    const homes = homeProjects('dataTable');
+    const fallback = defaultProjectId();
+    return tables.filter((t) => (homes.get(t.id) ?? fallback) === (projectId ?? fallback));
+  }
+
+  /**
+   * `id`: keep a given id (Git sync creates tables under the ids in its files, so Data Table nodes keep pointing at them).
+   * `projectId`: the project the table will live in, where its name must be free (the default project when omitted).
+   */
+  createTable(input: { name: string; columns?: Array<{ name: string; type: string }>; id?: string; projectId?: string }): DataTable {
     const tables = this.storage.listTables();
     if (tables.length >= MAX_TABLES) throw new DataTableError(`At most ${MAX_TABLES} data tables`);
     if (input.id !== undefined && (!/^[\w-]+$/.test(input.id) || this.storage.getTable(input.id))) throw new DataTableError(`Data table id "${input.id}" is invalid or taken`, 409);
-    const name = this.checkTableName(input.name, tables);
+    const name = this.checkTableName(input.name, this.inProject(tables, input.projectId));
     const columns: DataTableColumn[] = [];
     for (const column of input.columns ?? []) columns.push(this.checkColumn(columns, column));
     if (columns.length > MAX_COLUMNS) throw new DataTableError(`At most ${MAX_COLUMNS} columns`);
@@ -169,7 +186,7 @@ export class DataTablesService {
 
   renameTable(id: string, name: string): DataTable {
     const table = this.getTable(id);
-    const checked = this.checkTableName(name, this.storage.listTables(), id);
+    const checked = this.checkTableName(name, this.inProject(this.storage.listTables(), homeProjects('dataTable').get(id)), id);
     this.storage.saveTable({ ...table, name: checked, updatedAt: now() });
     return this.getTable(id);
   }
@@ -362,7 +379,7 @@ export class DataTablesService {
     const name = String(raw ?? '').trim();
     if (!name) throw new DataTableError('Enter a name for the table');
     if (name.length > MAX_NAME) throw new DataTableError(`Table names are at most ${MAX_NAME} characters`);
-    if (tables.some((t) => t.id !== exceptId && t.name.toLowerCase() === name.toLowerCase())) throw new DataTableError(`A data table named “${name}” already exists`, 409);
+    if (tables.some((t) => t.id !== exceptId && t.name.toLowerCase() === name.toLowerCase())) throw new DataTableError(`A data table named “${name}” already exists in this project`, 409);
     return name;
   }
 

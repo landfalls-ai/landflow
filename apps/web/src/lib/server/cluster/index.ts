@@ -24,6 +24,7 @@ import type { EditLockView } from '../../shared/auth';
 import type { ClusterStatus } from '../../shared/cluster';
 import { editLocks } from '../auth/edit-locks';
 import { bus, setBusRelay, type BusEvent } from '../bus';
+import { priorityOf } from '../concurrency';
 import { credentials } from '../credentials/vault';
 import { database } from '../db';
 import { emitTablesChanged, onTablesChanged, refreshRows, replicating, type TablesChanged } from '../db/replication';
@@ -137,16 +138,18 @@ async function start(config: ClusterConfig, options: StartClusterOptions): Promi
   const state = clusterState();
   const coordinator =
     options.coordinator ??
-    (process.env.LANDFLOW_VALKEY_URL === 'memory' ? new MemoryCoordinator() : new ValkeyCoordinator(config.valkeyUrl, config.prefix, config.instanceId, { sentinel: config.sentinel }));
+    (process.env.LANDFLOW_VALKEY_URL === 'memory' ? new MemoryCoordinator() : new ValkeyCoordinator(config.valkeyUrl, config.prefix, config.instanceId, { sentinel: config.sentinel, cluster: config.cluster }));
   if (coordinator instanceof ValkeyCoordinator) {
     try {
-      await coordinator.ping(config.sentinel ? 15_000 : 5_000);
+      await coordinator.ping(config.sentinel || config.cluster ? 15_000 : 5_000);
     } catch (error) {
       await coordinator.close().catch(() => {});
-      const where = config.sentinel
+      const where = config.cluster
+        ? `through the cluster nodes ${config.cluster.nodes.map((n) => `${n.host}:${n.port}`).join(', ')}`
+        : config.sentinel
         ? `through the sentinels ${config.sentinel.sentinels.map((s) => `${s.host}:${s.port}`).join(', ')} (primary "${config.sentinel.masterName}")`
         : `at ${redact(config.valkeyUrl)}`;
-      throw new ClusterConfigError(`Queue mode can't reach Valkey ${where}: ${(error as Error).message}. Set LANDFLOW_VALKEY_URL${config.sentinel ? ' and LANDFLOW_VALKEY_SENTINELS' : ''}.`);
+      throw new ClusterConfigError(`Queue mode can't reach Valkey ${where}: ${(error as Error).message}. Set LANDFLOW_VALKEY_URL${config.sentinel ? ' and LANDFLOW_VALKEY_SENTINELS' : ''}${config.cluster ? ' and LANDFLOW_VALKEY_CLUSTER' : ''}.`);
     }
   }
   const relay = new Relay(coordinator, config.instanceId);
@@ -495,7 +498,7 @@ export async function adoptOrphans(coordinator: Coordinator): Promise<number> {
       continue;
     }
     logger.info('cluster: a run whose process stopped goes to a worker', { 'landflow.execution.id': id });
-    const job: QueueJob = { executionId: id, workflowId: fresh.workflowId, expect: 'running', record: fresh, workflow: workflow as Workflow, engine: {}, enqueuedAt: new Date().toISOString() };
+    const job: QueueJob = { executionId: id, workflowId: fresh.workflowId, expect: 'running', ...(priorityOf((workflow as Workflow).settings) !== 'normal' && { priority: priorityOf((workflow as Workflow).settings) }), record: fresh, workflow: workflow as Workflow, engine: {}, enqueuedAt: new Date().toISOString() };
     await coordinator.set(`job:${id}`, clusterState().config.instanceId, DAY_MS);
     await coordinator.enqueue(job);
   }

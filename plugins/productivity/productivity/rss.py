@@ -15,13 +15,16 @@ from email.utils import parsedate_to_datetime
 from html.entities import name2codepoint
 from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import unquote, urlsplit
 from xml.parsers import expat
 
 from landflow_sdk import Node, NodeOperationError, poll_interval_property
+from landflow_sdk.binary import extension_from_mime_type
 
 from .common import collection, count_api_error, count_new_items, item_errors, items_of, out, split_list, text_param
 
 MAX_FEED_BYTES = 10 * 1024 * 1024
+DEFAULT_ENCLOSURE_MB = 25
 SNIPPET_CHARS = 300
 SEEN_KEEP = 200
 SEEN_MAX = 1000
@@ -382,6 +385,31 @@ def read_feed(ctx: Any, url: str, custom_fields: list[str] | None = None, item_i
     return items
 
 
+def download_enclosure(ctx: Any, enclosure: dict[str, Any], max_bytes: int, item_index: int | None = None) -> tuple[bytes, str, str | None]:
+    """GET an item's enclosure (podcast audio, an attached image or document) -> ``(bytes, file name, MIME type)``. No credentials are sent."""
+    url = str(enclosure.get("url") or "")
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        raise NodeOperationError(f"Enclosure URL must start with http:// or https://, got {url!r}", item_index=item_index)
+    declared = str(enclosure.get("length") or "")
+    if declared.isdigit() and int(declared) > max_bytes:
+        raise NodeOperationError(f"The enclosure is {declared} bytes; the limit is {max_bytes // (1024 * 1024)} MB", item_index=item_index)
+    try:
+        resp = ctx.http.request("GET", url, headers={"Accept": "*/*"}, timeout=120)
+    except NodeOperationError as exc:
+        count_api_error(ctx, "rss", None)
+        raise NodeOperationError(f"Could not download the enclosure: {exc.message}", item_index=item_index) from None
+    if resp.status >= 400:
+        count_api_error(ctx, "rss", resp.status)
+        raise NodeOperationError(f"Enclosure request failed (HTTP {resp.status}{' ' + resp.reason if resp.reason else ''})", item_index=item_index)
+    if len(resp.content) > max_bytes:
+        raise NodeOperationError(f"The enclosure is larger than {max_bytes // (1024 * 1024)} MB", item_index=item_index)
+    mime = str(enclosure.get("type") or "").split(";")[0].strip() or resp.headers.get("Content-Type", "").split(";")[0].strip() or None
+    name = unquote(urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]) or "enclosure"
+    if "." not in name and extension_from_mime_type(mime):
+        name = f"{name}.{extension_from_mime_type(mime)}"
+    return resp.content, name, mime
+
+
 # -------------------------------------------------------------------- nodes
 
 
@@ -389,7 +417,7 @@ class RssFeedRead(Node):
     description = {
         "name": "rssFeedRead",
         "displayName": "RSS Read",
-        "description": "Read the items of an RSS 2.0, RSS 1.0 (RDF) or Atom feed",
+        "description": "Read the items of an RSS 2.0, RSS 1.0 (RDF) or Atom feed, optionally downloading the enclosures as binary files",
         "version": 1,
         "kind": "action",
         "idempotent": True,  # only reads a feed
@@ -415,6 +443,12 @@ class RssFeedRead(Node):
                     {"name": "customFields", "displayName": "Custom Fields", "type": "string", "default": "",
                      "placeholder": "media:thumbnail, itunes:duration",
                      "description": "Comma-separated extra elements to read from each item (prefix:name for namespaced ones)"},
+                    {"name": "downloadEnclosures", "displayName": "Download Enclosures", "type": "boolean", "default": False,
+                     "description": "Whether to download each item's enclosure (podcast audio, image, document) into a binary property of its item"},
+                    {"name": "binaryPropertyName", "displayName": "Put Enclosure in Field", "type": "string", "default": "data",
+                     "description": "Binary property that receives the enclosure (when Download Enclosures is on)"},
+                    {"name": "maxEnclosureMb", "displayName": "Max Enclosure Size (MB)", "type": "number", "default": DEFAULT_ENCLOSURE_MB,
+                     "typeOptions": {"minValue": 1}, "description": "An enclosure bigger than this is an error"},
                 ],
             },
         ],
@@ -425,8 +459,24 @@ class RssFeedRead(Node):
         for i, _item in enumerate(items_of(ctx)):
             with item_errors(ctx, results, i):
                 url = text_param(ctx, "url", i, required=True, label="URL")
-                custom = split_list(collection(ctx, "options", i).get("customFields"))
-                results.extend(out(entry, i) for entry in read_feed(ctx, url, custom, i))
+                options = collection(ctx, "options", i)
+                custom = split_list(options.get("customFields"))
+                entries = read_feed(ctx, url, custom, i)
+                if str(options.get("downloadEnclosures")).lower() not in ("true", "1", "yes", "on"):
+                    results.extend(out(entry, i) for entry in entries)
+                    continue
+                prop = str(options.get("binaryPropertyName") or "").strip() or "data"
+                try:
+                    max_bytes = max(1, int(float(options.get("maxEnclosureMb") or DEFAULT_ENCLOSURE_MB) * 1024 * 1024))
+                except (TypeError, ValueError):
+                    raise NodeOperationError("'Max Enclosure Size (MB)' must be a number", item_index=i) from None
+                with ctx.span("rss.enclosures", {"landflow.items": len(entries)}):
+                    for entry in entries:
+                        item = out(entry, i)
+                        if isinstance(entry.get("enclosure"), dict) and entry["enclosure"].get("url"):
+                            content, name, mime = download_enclosure(ctx, entry["enclosure"], max_bytes, i)
+                            item["binary"] = {prop: ctx.prepare_binary_data(content, name, mime)}
+                        results.append(item)
         return results
 
 

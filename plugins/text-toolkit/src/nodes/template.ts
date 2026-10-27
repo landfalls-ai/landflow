@@ -40,13 +40,57 @@ export class Template implements INodeType {
         typeOptions: { rows: 4 },
       },
       { name: 'outputField', displayName: 'Output Field', type: 'string', default: 'rendered' },
+      {
+        name: 'asFile',
+        displayName: 'Also Output as File',
+        type: 'boolean',
+        default: false,
+        description: 'Whether to also store the rendered text as a binary file (item.binary), e.g. to attach it to an email or upload it',
+      },
+      {
+        name: 'binaryPropertyName',
+        displayName: 'Binary Field',
+        type: 'string',
+        default: 'data',
+        displayOptions: { show: { asFile: [true] } },
+        description: 'The item.binary field for the file',
+      },
+      {
+        name: 'fileName',
+        displayName: 'File Name',
+        type: 'string',
+        default: 'rendered.txt',
+        displayOptions: { show: { asFile: [true] } },
+      },
+      {
+        name: 'mimeType',
+        displayName: 'MIME Type',
+        type: 'string',
+        default: 'text/plain',
+        placeholder: 'text/html',
+        displayOptions: { show: { asFile: [true] } },
+        description: 'text/html, text/csv, application/json, text/markdown…; the text is stored as UTF-8',
+      },
     ],
   };
 
-  execute(ctx: IExecuteContext) {
-    return ctx.getInputData().map((item, i) => {
+  async execute(ctx: IExecuteContext) {
+    const out = [];
+    for (const [i, item] of ctx.getInputData().entries()) {
       const template = ctx.getNodeParameter<string>('template', i).replace(/\[\[\s*([^\]]+?)\s*\]\]/g, '{{$1}}');
-      return { json: { ...item.json, [ctx.getNodeParameter<string>('outputField', i)]: render(template, item.json) } };
-    });
+      const text = render(template, item.json);
+      const json = { ...item.json, [ctx.getNodeParameter<string>('outputField', i)]: text };
+      if (!ctx.getNodeParameter<boolean>('asFile', i, false)) {
+        out.push({ json });
+        continue;
+      }
+      const fileName = String(ctx.getNodeParameter('fileName', i, 'rendered.txt') || 'rendered.txt').trim();
+      const mimeType = String(ctx.getNodeParameter('mimeType', i, 'text/plain') || 'text/plain').trim();
+      const property = String(ctx.getNodeParameter('binaryPropertyName', i, 'data') || 'data').trim();
+      const ref = await ctx.helpers.prepareBinaryData(Buffer.from(text, 'utf8'), fileName, mimeType);
+      // The item's other files stay; the new one replaces a file of the same name.
+      out.push({ json, binary: { ...item.binary, [property]: ref } });
+    }
+    return out;
   }
 }

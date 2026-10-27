@@ -58,7 +58,7 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/mcp/gateway')) return read ? { scope: 'any' } : { scope: 'admin', action: 'mcp:manage' };
   // Audit log: reading (and exporting) needs `audit:read`: owners and admins read every event, project admins their
   // projects' (the route limits it, lib/server/audit/access.ts). Verifying the hash chain, its settings and SIEM destinations are admin-only.
-  if (path === '/api/audit/verify') return { scope: 'audit:read', action: 'audit:read' };
+  if (path === '/api/audit/verify' || path === '/api/audit/head') return { scope: 'audit:read', action: 'audit:read' };
   if (under('/api/audit')) return { scope: 'audit:read' };
   if (under('/api/settings/audit')) return { scope: 'admin', action: read ? 'audit:read' : 'settings:manage' };
   // Four-eyes publish requests: builders list, ask and decide (who may approve is checked by lib/server/governance).

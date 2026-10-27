@@ -5,6 +5,8 @@
  *   LANDFLOW_INTEGRATION=imap npx vitest run test/email-imap.test.ts
  *
  * GreenMail runs with authentication disabled: any login works, and SMTP delivery to an address creates its mailbox.
+
+ * (GreenMail's FROM/TO search matches a whole address, not a fragment: the live criteria use full addresses.)
  * LANDFLOW_GREENMAIL_HOST / _IMAP_PORT / _SMTP_PORT override 127.0.0.1:53143 and :53025.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -18,7 +20,7 @@ import type { BinaryRef } from '@landflow/protocol';
 import { hostBinaryClient, setBinaryStore } from '@/lib/server/binary/access';
 import { FilesystemBinaryStore, readAll } from '@/lib/server/binary/store';
 import { corePlugin } from '@/lib/server/nodes';
-import { closeQuietly, emailReadImapNode, imapClient, imapCredential, messageItem, type ImapCredential } from '@/lib/server/nodes/email-imap';
+import { closeQuietly, emailReadImapNode, MAX_RAW_JSON_BYTES, imapClient, imapCredential, messageItem, type ImapCredential } from '@/lib/server/nodes/email-imap';
 
 const enabled = Boolean(process.env.LANDFLOW_INTEGRATION?.split(',').includes('imap'));
 const HOST = process.env.LANDFLOW_GREENMAIL_HOST ?? '127.0.0.1';
@@ -52,6 +54,12 @@ describe('Email Trigger (IMAP): items', () => {
     const node = corePlugin.nodes.find((n) => n.description.name === 'emailReadImap');
     expect(node?.description).toMatchObject({ kind: 'trigger', triggerSource: 'poll', displayName: 'Email Trigger (IMAP)', credentials: [{ name: 'imap', required: true }] });
     expect(node?.description.properties[0]).toMatchObject({ name: 'pollInterval', type: 'number', default: 60 });
+    const props = node?.description.properties ?? [];
+    expect(props.find((p) => p.name === 'rawEml')).toMatchObject({ type: 'boolean', default: false });
+    expect(props.find((p) => p.name === 'rawProperty')).toMatchObject({ default: 'eml', displayOptions: { show: { rawEml: [true] } } });
+    expect(props.find((p) => p.name === 'rawJson')).toMatchObject({ type: 'boolean', default: false });
+    const optionNames = (props.find((p) => p.name === 'options') as { values?: { name: string; default?: unknown }[] }).values?.map((v) => v.name);
+    expect(optionNames).toEqual(['onlyUnseen', 'searchCriteria', 'attachmentPrefix']);
     expect(corePlugin.credentialTypes?.some((c) => c.name === 'imap')).toBe(true);
     expect(imapCredential.properties.find((p) => p.name === 'password')?.typeOptions?.password).toBe(true);
   });
@@ -88,6 +96,13 @@ describe('Email Trigger (IMAP): items', () => {
     const ref = item.binary?.attachment_0 as BinaryRef;
     expect(ref).toMatchObject({ fileName: 'report.csv', mimeType: 'text/csv' });
     expect(Buffer.from(await readAll((await store.open(ref.id!))!.stream)).toString()).toBe(CSV);
+
+    const rawItem = await messageItem({ helpers } as never, 8, parsed, [], { mailbox: 'INBOX', downloadAttachments: false, attachmentPrefix: 'attachment_', rawEml: true, rawProperty: 'eml', rawJson: true }, Buffer.from(raw));
+    expect(rawItem.json.raw).toBe(raw);
+    expect(rawItem.binary?.eml).toMatchObject({ fileName: 'message-8.eml', mimeType: 'message/rfc822' });
+    const big = await messageItem({ helpers } as never, 9, parsed, [], { mailbox: 'INBOX', downloadAttachments: false, attachmentPrefix: 'attachment_', rawJson: true }, Buffer.alloc(MAX_RAW_JSON_BYTES + 1));
+    expect(big.json.raw).toBeUndefined();
+    expect(String(big.json.rawSkipped)).toContain('byte limit');
 
     const listed = await messageItem({ helpers } as never, 7, parsed, [], { mailbox: 'INBOX', downloadAttachments: false, attachmentPrefix: 'attachment_' });
     expect(listed.binary).toBeUndefined();
@@ -230,6 +245,56 @@ describe.skipIf(!enabled)('Email Trigger (IMAP) against GreenMail', () => {
     expect((await poll({ postProcessAction: 'nothing' })).map((i) => i.json.subject)).toEqual(['Fourth']);
     expect((await mailbox('INBOX')).find((m) => m.subject === 'Fourth')?.flags.includes('\\Seen')).toBe(false);
   }, 30_000);
+
+  it('Search Criteria narrows what a poll emits, ANDed with Only Unread, without re-emitting old messages', async () => {
+    await poll(); // catch up
+    await deliver('Invoice from billing', { from: 'Billing <billing@landflow.test>' });
+    await deliver('Cheap spam offer', { from: 'Billing <billing@landflow.test>' });
+    await deliver('Weekly digest');
+    const items = await poll({ postProcessAction: 'nothing', options: { searchCriteria: 'FROM "billing@landflow.test" NOT SUBJECT "spam" SINCE 1-Oct-2026' } });
+    expect(items.map((i) => i.json.subject)).toEqual(['Invoice from billing']);
+    // Skipped messages are not emitted later; the baseline moved past them.
+    expect(await poll({ postProcessAction: 'nothing', options: { searchCriteria: 'FROM "billing@landflow.test"' } })).toEqual([]);
+
+    // OR, with unread only off: a message that is already read still matches.
+    await deliver('Alpha', { from: 'Aa <aa@landflow.test>' });
+    await deliver('Beta', { from: 'Bb <bb@landflow.test>' });
+    await deliver('Gamma', { from: 'Cc <cc@landflow.test>' });
+    const some = await poll({ postProcessAction: 'read', options: { onlyUnseen: false, searchCriteria: 'OR FROM aa@landflow.test FROM bb@landflow.test' } });
+    expect(some.map((i) => i.json.subject)).toEqual(['Alpha', 'Beta']);
+    await poll({ postProcessAction: 'nothing' }); // Gamma
+
+    // A manual run applies the criteria too; HEADER, LARGER, KEYWORD and a repeated key all compile.
+    const manual = await poll({ options: { onlyUnseen: false, searchCriteria: 'HEADER X-Landflow-Test yes LARGER 10 SUBJECT "invoice" SUBJECT "billing" NOT KEYWORD nothing-here' } }, 'manual');
+    expect(manual.map((i) => i.json.subject)).toEqual(['Invoice from billing']);
+    expect(await poll({ options: { onlyUnseen: false, searchCriteria: 'LARGER 100000000' } }, 'manual')).toEqual([]);
+  }, 60_000);
+
+  it('a bad Search Criteria fails the run with the parser message', async () => {
+    await expect(poll({ options: { searchCriteria: 'FROM "billing" SINCE tomorrow' } })).rejects.toThrow(/SINCE needs a date/);
+    await expect(poll({ options: { searchCriteria: 'FROM a\r\nA1 LOGOUT' } })).rejects.toThrow(/Search criteria/);
+  }, 30_000);
+
+  it('outputs the raw source as a .eml file and as a raw string', async () => {
+    await deliver('Raw one', { attachment: { name: 'report.csv', content: CSV } });
+    const items = await poll({ postProcessAction: 'nothing', rawEml: true, rawJson: true });
+    expect(items.map((i) => i.json.subject)).toEqual(['Raw one']);
+    const ref = items[0].binary?.eml as BinaryRef;
+    expect(ref).toMatchObject({ fileName: `message-${items[0].json.uid}.eml`, mimeType: 'message/rfc822' });
+    const eml = Buffer.from(await readAll((await store.open(ref.id!))!.stream)).toString();
+    expect(eml).toContain('Subject: Raw one');
+    expect(eml).toContain(Buffer.from(CSV).toString('base64'));
+    expect(items[0].json.raw).toBe(eml);
+    expect(items[0].json.rawBinaryProperty).toBe('eml');
+    expect((await simpleParser(eml)).subject).toBe('Raw one');
+
+    await deliver('Raw two');
+    const named = await poll({ postProcessAction: 'nothing', rawEml: true, rawProperty: 'source' });
+    expect(Object.keys(named[0].binary ?? {})).toEqual(['source']);
+    expect(named[0].json.raw).toBeUndefined();
+    await deliver('Plain');
+    expect((await poll({ postProcessAction: 'nothing' }))[0].binary).toBeUndefined();
+  }, 60_000);
 
   it('IDLE: the server announces new mail on an open connection', async () => {
     const client = imapClient(credential, { autoIdleDelay: 300 });

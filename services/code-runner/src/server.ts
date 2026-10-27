@@ -7,7 +7,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { loadConfig, type RunnerConfig } from './config';
+import { loadConfig, type RunnerConfig, type RunnerOverrides } from './config';
 import { describeIsolation, probeIsolation, type Isolation } from './isolation';
 import { SECRET_HEADER, type RunnerInfo, type RunRequest } from './protocol';
 import { runSnippet } from './sandbox';
@@ -66,7 +66,7 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 
 function parseRequest(body: unknown): RunRequest {
   if (!isObject(body)) throw new HttpError(400, 'The body must be a JSON object');
-  const { language, mode, code, items, nodeOutputs, variables, execution, workflow, node, timezone, timeoutMs } = body;
+  const { language, mode, code, items, nodeOutputs, variables, execution, workflow, node, timezone, timeoutMs, binary, binarySkipped, maxBinaryBytes } = body;
   if (language !== 'javascript' && language !== 'python') throw new HttpError(400, '"language" must be "javascript" or "python"');
   if (mode !== 'all' && mode !== 'each') throw new HttpError(400, '"mode" must be "all" or "each"');
   if (typeof code !== 'string') throw new HttpError(400, '"code" must be a string');
@@ -77,6 +77,11 @@ function parseRequest(body: unknown): RunRequest {
   if (nodeOutputs !== undefined && !isObject(nodeOutputs)) throw new HttpError(400, '"nodeOutputs" must be an object of item lists');
   if (variables !== undefined && !isObject(variables)) throw new HttpError(400, '"variables" must be an object');
   if (timeoutMs !== undefined && (typeof timeoutMs !== 'number' || timeoutMs <= 0)) throw new HttpError(400, '"timeoutMs" must be a positive number');
+  const strings = (value: unknown, name: string) => {
+    if (!isObject(value) || !Object.values(value).every((entry) => typeof entry === 'string')) throw new HttpError(400, `"${name}" must be an object of strings`);
+    return value as Record<string, string>;
+  };
+  if (maxBinaryBytes !== undefined && (typeof maxBinaryBytes !== 'number' || maxBinaryBytes <= 0)) throw new HttpError(400, '"maxBinaryBytes" must be a positive number');
   return {
     language,
     mode,
@@ -89,6 +94,9 @@ function parseRequest(body: unknown): RunRequest {
     ...(isObject(node) && typeof node.name === 'string' && { node: { name: node.name } }),
     ...(typeof timezone === 'string' && timezone && { timezone }),
     ...(typeof timeoutMs === 'number' && { timeoutMs }),
+    ...(binary !== undefined && { binary: strings(binary, 'binary') }),
+    ...(binarySkipped !== undefined && { binarySkipped: strings(binarySkipped, 'binarySkipped') }),
+    ...(typeof maxBinaryBytes === 'number' && { maxBinaryBytes }),
   };
 }
 
@@ -117,7 +125,7 @@ function gate(concurrency: number, maxQueue: number) {
 }
 
 /** Starts a runner. `overrides` replace settings from the environment (tests pass a secret, a port of 0, limits). */
-export async function startCodeRunner(overrides: Partial<RunnerConfig> = {}, env: NodeJS.ProcessEnv = process.env): Promise<CodeRunner> {
+export async function startCodeRunner(overrides: RunnerOverrides = {}, env: NodeJS.ProcessEnv = process.env): Promise<CodeRunner> {
   const config = loadConfig(env, overrides);
   const isolation = await probeIsolation(config);
   const slots = gate(config.concurrency, config.maxQueue);

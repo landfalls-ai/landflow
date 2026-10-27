@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import quote
 
@@ -9,16 +10,26 @@ from landflow_sdk import CredentialType, Node, NodeOperationError
 
 from .common import (
     Api,
+    authentication_property,
+    binary_input,
+    binary_name_property,
+    binary_out,
     bool_param,
     collection,
+    content_type_of,
     count_written,
+    credential_requirements,
+    download,
     fixed_entries,
     item_errors,
     items_of,
     limit_of,
+    multipart,
+    oauth2_properties,
     operation_property,
     out,
     outs,
+    pick_credentials,
     resource_property,
     return_all_properties,
     simplify_property,
@@ -33,7 +44,11 @@ CONTACTS = "/crm/v3/objects/contacts"
 
 
 def hubspot_api(ctx: Any, creds: dict[str, Any]) -> Api:
-    return Api(ctx, "hubspot", creds.get("baseUrl") or "https://api.hubapi.com", {"Authorization": f"Bearer {creds.get('appToken', '')}"})
+    return Api(ctx, "hubspot", creds.get("baseUrl") or "https://api.hubapi.com", {"Authorization": f"Bearer {creds.get('appToken') or creds.get('accessToken') or ''}"})
+
+
+def hubspot_credentials(ctx: Any, authentication: Any = None) -> dict[str, Any]:
+    return pick_credentials(ctx, "hubspotAppToken", "hubspotOAuth2Api", authentication)
 
 
 def test_hubspot(data: dict[str, Any], ctx: Any) -> tuple[bool, str]:
@@ -50,6 +65,24 @@ HUBSPOT_APP_TOKEN = CredentialType(
     properties=[
         {"name": "appToken", "displayName": "App Token", "type": "string", "required": True,
          "typeOptions": {"password": True}, "placeholder": "pat-na1-…"},
+        {"name": "baseUrl", "displayName": "API Base URL", "type": "string", "default": "https://api.hubapi.com",
+         "description": "Change only for a proxy or a test double"},
+    ],
+)
+
+
+HUBSPOT_OAUTH2_API = CredentialType(
+    name="hubspotOAuth2Api",
+    display_name="HubSpot OAuth2 API",
+    documentation_url="https://developers.hubspot.com/docs/api/oauth-quickstart-guide",
+    description="Sign in with HubSpot: create a public app in a developer account, add the redirect URL shown below, then Connect. "
+                "HubSpot access tokens last 30 minutes; Landflow renews them with the refresh token.",
+    test=test_hubspot,
+    extends=["oAuth2Api"],
+    properties=[
+        *oauth2_properties("https://app.hubspot.com/oauth/authorize", "https://api.hubapi.com/oauth/v1/token",
+                           "oauth crm.objects.contacts.read crm.objects.contacts.write crm.objects.deals.read crm.objects.deals.write",
+                           grant_type="authorizationCode"),
         {"name": "baseUrl", "displayName": "API Base URL", "type": "string", "default": "https://api.hubapi.com",
          "description": "Change only for a proxy or a test double"},
     ],
@@ -96,7 +129,7 @@ class HubSpot(Node):
     description = {
         "name": "hubspot",
         "displayName": "HubSpot",
-        "description": "Create or update, get and search HubSpot contacts; create deals",
+        "description": "Create or update, get and search HubSpot contacts; create deals; upload and download files",
         "version": 1,
         "kind": "action",
         "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
@@ -107,16 +140,22 @@ class HubSpot(Node):
         "documentationUrl": "https://developers.hubspot.com/docs/api/crm/understanding-the-crm",
         "inputs": [{"type": "main"}],
         "outputs": [{"type": "main"}],
-        "credentials": [{"name": "hubspotAppToken", "required": True}],
+        "credentials": credential_requirements("hubspotAppToken", "hubspotOAuth2Api"),
         "usableAsTool": True,
         "toolDescription": (
             "Work with HubSpot CRM. Contacts: `upsert` by `email` (with optional names, phone, company), `get` by "
             "`contactId`, `search` with property filters. Deals: `create` with `dealName`, `stage`, `amount` and "
-            "optional `associatedContactIds`."
+            "optional `associatedContactIds`. Files (Files API, needs the `files` scope): `upload` stores the item's binary file "
+            "(`binaryPropertyName`) in the file manager, `get` returns a file's details by `fileId` and can download it as binary data."
         ),
         "keywords": ["hubspot", "crm", "contact", "deal", "sales", "lead"],
         "properties": [
-            resource_property([("Contact", "contact"), ("Deal", "deal")], "contact"),
+            authentication_property("App Token"),
+            resource_property([("Contact", "contact"), ("Deal", "deal"), ("File", "file")], "contact"),
+            operation_property("file", [
+                ("Get", "get", "Get a file, optionally downloading it as binary data", True),
+                ("Upload", "upload", "Upload binary data to the file manager"),
+            ], "upload"),
             operation_property("deal", [("Create", "create", "Create a deal")], "create"),
             operation_property("contact", [
                 ("Create or Update", "upsert", "Create or update a contact"),
@@ -169,6 +208,30 @@ class HubSpot(Node):
                 ],
             },
             simplify_property({**CONTACT, "operation": ["upsert", "get", "search"]}, "Whether to return the id and the properties as flat fields"),
+            # ---- file
+            binary_name_property("binaryPropertyName", "Input Binary Field", {"resource": ["file"], "operation": ["upload"]},
+                                 "Name of the binary property that holds the file to upload"),
+            {
+                "name": "fileOptions", "displayName": "Options", "type": "collection", "default": {}, "placeholder": "Add option",
+                "displayOptions": {"show": {"resource": ["file"], "operation": ["upload"]}},
+                "values": [
+                    {"name": "folderPath", "displayName": "Folder Path", "type": "string", "default": "", "placeholder": "/landflow/reports",
+                     "description": "Folder in the file manager (created when missing); the root when empty"},
+                    {"name": "fileName", "displayName": "File Name", "type": "string", "default": "", "description": "Defaults to the binary file's name"},
+                    {"name": "access", "displayName": "Access", "type": "options", "default": "PRIVATE",
+                     "options": [{"name": "Private", "value": "PRIVATE"}, {"name": "Public, Indexable", "value": "PUBLIC_INDEXABLE"},
+                                 {"name": "Public, Not Indexable", "value": "PUBLIC_NOT_INDEXABLE"}]},
+                    {"name": "overwrite", "displayName": "Overwrite", "type": "boolean", "default": False,
+                     "description": "Whether to replace a file with the same name in the folder"},
+                ],
+            },
+            {"name": "fileId", "displayName": "File ID", "type": "string", "default": "", "required": True,
+             "displayOptions": {"show": {"resource": ["file"], "operation": ["get"]}}},
+            {"name": "download", "displayName": "Download File", "type": "boolean", "default": False,
+             "description": "Whether to put the file's content in a binary property of the item",
+             "displayOptions": {"show": {"resource": ["file"], "operation": ["get"]}}},
+            binary_name_property("outputBinaryName", "Output Binary Field", {"resource": ["file"], "operation": ["get"], "download": [True]},
+                                 "Binary property that receives the file"),
             # ---- deal create
             {"name": "dealName", "displayName": "Deal Name", "type": "string", "default": "", "required": True,
              "displayOptions": {"show": {**DEAL, "operation": ["create"]}}},
@@ -203,7 +266,7 @@ class HubSpot(Node):
 
     def load_options(self, method, parameters, ctx=None):
         if method in ("getDealPipelines", "getDealStages"):
-            api = hubspot_api(ctx, ctx.get_credentials("hubspotAppToken"))
+            api = hubspot_api(ctx, hubspot_credentials(ctx, (parameters or {}).get("authentication")))
             pipelines = sorted((api.get("/crm/v3/pipelines/deals") or {}).get("results") or [], key=lambda p: p.get("displayOrder") or 0)
             if method == "getDealPipelines":
                 return [{"name": p.get("label"), "value": p.get("id")} for p in pipelines]
@@ -219,7 +282,7 @@ class HubSpot(Node):
         return super().load_options(method, parameters, ctx)
 
     def execute(self, ctx):
-        api = hubspot_api(ctx, ctx.get_credentials("hubspotAppToken"))
+        api = hubspot_api(ctx, hubspot_credentials(ctx, ctx.get_node_parameter("authentication")))
         results = []
         for i, _item in enumerate(items_of(ctx)):
             with item_errors(ctx, results, i):
@@ -236,11 +299,51 @@ class HubSpot(Node):
                     results.append(out(shape(record or {}), i))
                 elif resource == "contact" and operation == "search":
                     results.extend(outs(map(shape, self._search(ctx, api, i)), i))
+                elif resource == "file" and operation == "upload":
+                    results.append(out(self._upload_file(ctx, api, i), i))
+                elif resource == "file" and operation == "get":
+                    results.append(self._get_file(ctx, api, i))
                 elif resource == "deal" and operation == "create":
                     results.append(out(shape(self._create_deal(ctx, api, i)), i))
                 else:
                     raise NodeOperationError(f"Unsupported operation {resource}.{operation}", item_index=i)
         return results
+
+    # ------------------------------------------------------------ files
+
+    @staticmethod
+    def _upload_file(ctx, api: Api, i: int) -> dict[str, Any]:
+        """Files API: ``POST /files/v3/files`` (multipart: the file, ``options`` JSON, the folder)."""
+        content, ref, file_name = binary_input(ctx, "binaryPropertyName", i)
+        options = collection(ctx, "fileOptions", i)
+        name = str(options.get("fileName") or "").strip() or file_name
+        fields = {
+            "options": json.dumps({"access": options.get("access") or "PRIVATE", "overwrite": bool(options.get("overwrite")),
+                                   "duplicateValidationStrategy": "NONE", "duplicateValidationScope": "EXACT_FOLDER"}),
+            "folderPath": str(options.get("folderPath") or "").strip() or "/",
+            "fileName": name,
+        }
+        body, content_type = multipart(fields, [("file", name, content, content_type_of(ref, name))])
+        uploaded = api.call("POST", "/files/v3/files", data=body, headers={"Content-Type": content_type}, timeout=120) or {}
+        count_written(ctx, "hubspot", "upload")
+        return uploaded
+
+    @staticmethod
+    def _get_file(ctx, api: Api, i: int) -> dict[str, Any]:
+        file_id = text_param(ctx, "fileId", i, required=True, label="File ID")
+        meta = api.get(f"/files/v3/files/{quote(file_id, safe='')}") or {}
+        if not bool_param(ctx, "download", i):
+            return out(meta, i)
+        url = meta.get("url")
+        if str(meta.get("access") or "").upper() == "PRIVATE" or not url:  # a private file is fetched through a short-lived signed URL
+            signed = api.get(f"/files/v3/files/{quote(file_id, safe='')}/signed-url") or {}
+            url = signed.get("url") or url
+        if not url:
+            raise NodeOperationError(f"HubSpot returned no download URL for file {file_id}", item_index=i)
+        resp = download(api, url, i, auth=False)
+        name = f"{meta.get('name') or file_id}{('.' + meta['extension']) if meta.get('extension') and not str(meta.get('name') or '').endswith('.' + meta['extension']) else ''}"
+        mime = resp.headers.get("Content-Type", "").split(";")[0].strip() or None
+        return binary_out(ctx, meta, i, text_param(ctx, "outputBinaryName", i) or "data", resp.content, name, mime)
 
     # ------------------------------------------------------------ operations
 

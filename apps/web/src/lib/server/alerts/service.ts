@@ -3,19 +3,25 @@
  * which checks the rules and sends through their channels. A rule's throttle allows one alert per workflow per
  * window; the alerts it holds back go out as one digest when the window ends, and a new window starts if there were
  * any (so a workflow failing every minute sends one message per window, not sixty). A ticker (every 30 s) sends due
- * digests and alerts on runs that have been waiting too long (once per run and rule).
+ * digests and alerts on runs that have been waiting too long (once per run and rule), and evaluates the rules of the
+ * other kinds (monitors.ts: failure rate, plugins offline; ../ai-usage/alerts.ts: AI cost; evaluation scores are sent
+ * when a run finishes, ../evaluations/alerts.ts). In queue mode the service runs on the leader only.
  *
  * A channel gets one message per run even when several rules match. Sending never fails the run: errors are logged
  * and shown on the channel (its last delivery).
  */
 import type { Workflow } from '@landflow/engine';
-import type { AlertDelivery, AlertEvent, AlertRule } from '../../shared/alerts';
+import { DEFAULT_PLUGIN_GRACE_SECONDS, type AlertDelivery, type AlertEvent, type AlertRule, type AlertRuleKind } from '../../shared/alerts';
 import type { ExecutionRecord } from '../../shared/types';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { logger } from '../telemetry';
+import { checkCosts } from '../ai-usage/alerts';
+import { onUsageRecorded } from '../ai-usage/notify';
+import { bus } from '../bus';
 import { sendThrough } from './channels';
 import { digestNotice, noticeFor, testNotice, type AlertNotice } from './message';
+import { checkFailureRates, checkPlugins, noteRegistryEvent } from './monitors';
 import { eventsOf, headlineEvent, matchingEvents, waitedTooLong, watches } from './rules';
 import { AlertError, alertStore } from './store';
 
@@ -24,6 +30,8 @@ const TICK_MS = 30_000;
 export const alerts = singleton('alerts', () => {
   let timer: ReturnType<typeof setInterval> | undefined;
   let ticking: Promise<void> | undefined;
+  let unsubscribe: (() => void) | undefined;
+  const pluginTimers = new Set<ReturnType<typeof setTimeout>>();
 
   /** Send through a rule's channels (skipping those in `skip`, which collects the ones used). */
   async function dispatch(rule: AlertRule, notice: AlertNotice, skip = new Set<string>()): Promise<void> {
@@ -110,7 +118,7 @@ export const alerts = singleton('alerts', () => {
 
   /** Alert on runs waiting longer than a rule allows, once per run and rule. */
   async function checkWaiting(now: number) {
-    const rules = alertStore.rules().filter((rule) => rule.enabled && rule.events.includes('waiting') && rule.channelIds.length);
+    const rules = alertStore.rules().filter((rule) => (rule.kind ?? 'runs') === 'runs' && rule.enabled && rule.events.includes('waiting') && rule.channelIds.length);
     const waiting = store.waitingExecutions();
     alertStore.pruneWaitingSent(new Set(waiting.map((record) => record.executionId)));
     if (!rules.length) return;
@@ -120,19 +128,58 @@ export const alerts = singleton('alerts', () => {
     }
   }
 
+  /** The time-based rules (monitors.ts, ../ai-usage/alerts.ts) send through the rule's channels. */
+  const send = (rule: AlertRule, notice: AlertNotice) => dispatch(rule, notice);
+
   async function tick(now = Date.now()) {
     if (ticking) return ticking;
     ticking = (async () => {
+      // Each check on its own: one failing never skips the others.
+      const checks: Array<[string, () => Promise<void>]> = [
+        ['digests', () => sendDigests(now)],
+        ['waiting runs', () => checkWaiting(now)],
+        ['failure rates', () => checkFailureRates(now, send)],
+        ['plugins', () => checkPlugins(now, send)],
+        ['AI cost', () => checkCosts(now, send)],
+      ];
       try {
-        await sendDigests(now);
-        await checkWaiting(now);
-      } catch (error) {
-        logger.warn('alert check failed', { error: (error as Error).message });
+        for (const [what, check] of checks) {
+          try {
+            await check();
+          } catch (error) {
+            logger.warn('alert check failed', { check: what, error: (error as Error).message });
+          }
+        }
       } finally {
         ticking = undefined;
       }
     })();
     return ticking;
+  }
+
+  /**
+   * The plugin registry's events (other processes' too, relayed in queue mode): a plugin going offline is checked again
+   * once the shortest grace period of a plugin rule has passed, one that returned right away (a recovery message).
+   */
+  function watchRegistry() {
+    unsubscribe?.();
+    unsubscribe = bus.subscribe((event) => {
+      if (event.channel !== 'registry') return;
+      noteRegistryEvent(event.event, Date.parse(event.at) || Date.now());
+      if (event.event.type === 'plugin.offline') {
+        const rules = alertStore.rules().filter((rule) => rule.kind === 'plugin' && rule.enabled);
+        if (!rules.length) return;
+        const grace = Math.min(...rules.map((rule) => rule.plugins?.graceSeconds ?? DEFAULT_PLUGIN_GRACE_SECONDS));
+        const timer = setTimeout(() => {
+          pluginTimers.delete(timer);
+          void tick();
+        }, grace * 1_000 + 250);
+        timer.unref?.();
+        pluginTimers.add(timer);
+      } else if (event.event.type === 'plugin.updated' || event.event.type === 'plugin.registered') {
+        void tick();
+      }
+    });
   }
 
   return {
@@ -141,11 +188,29 @@ export const alerts = singleton('alerts', () => {
       if (timer) return;
       timer = setInterval(() => void tick(), TICK_MS);
       timer.unref?.();
+      watchRegistry();
+      onUsageRecorded(() => void tick());
     },
 
     stop() {
       if (timer) clearInterval(timer);
       timer = undefined;
+      unsubscribe?.();
+      unsubscribe = undefined;
+      onUsageRecorded(undefined);
+      for (const pending of pluginTimers) clearTimeout(pending);
+      pluginTimers.clear();
+    },
+
+    /**
+     * Send what a monitor wrote through the channels of every enabled rule of `kind` (AI cost, evaluation scores): `build`
+     * returns the notice for a rule, or nothing when the rule has nothing to say.
+     */
+    async broadcast(kind: AlertRuleKind, build: (rule: AlertRule) => AlertNotice | undefined | Promise<AlertNotice | undefined>): Promise<void> {
+      for (const rule of alertStore.rules().filter((candidate) => candidate.kind === kind && candidate.enabled && candidate.channelIds.length)) {
+        const notice = await build(rule);
+        if (notice) await dispatch(rule, notice);
+      }
     },
 
     /** Send due digests and waiting alerts now (the ticker's work; tests call it with a clock). */

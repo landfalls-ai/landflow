@@ -231,6 +231,27 @@ func (SendMessage) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, err
   `landflow.RedactString(ctx, s)` applies the same masking to your own strings. The error message
   returned to the host is not changed.
 
+### GitHub App authentication
+
+A service that authenticates the *client* with a signed token (GitHub Apps) needs RS256. The SDK does it with `crypto/rsa`, no
+dependency, and behaves like `landflow_sdk.jwt` (Python) and `githubAppJwt` (`@landflow/sdk`):
+
+```go
+jwt, err := landflow.GitHubAppJWT(creds.String("appId"), creds.String("privateKey"), time.Now())
+// iss = app id, iat = now - 60 s, exp = now + 540 s
+
+tokens := landflow.NewGitHubAppTokens(landflow.GitHubAppConfig{
+	AppID: appID, PrivateKey: key, InstallationID: installationID, // BaseURL for GitHub Enterprise Server
+})
+resp, err := tokens.Do(req) // sets the installation token; on a 401 mints a new one and retries once
+```
+
+`ParseRSAPrivateKey` reads PKCS#1 (`RSA PRIVATE KEY`) and PKCS#8 (`PRIVATE KEY`) PEMs, and tolerates a key pasted into a
+single-line field (literal `\n`) or whose line breaks collapsed into spaces. Encrypted keys, non-RSA keys and RSA keys under 2048
+bits are refused with a readable error. `Token(ctx, fresh)` mints through `POST /app/installations/{id}/access_tokens` and caches
+the token until a minute before its `expires_at`; `RS256Sign` signs any payload. Installation discovery (by repository) is left to
+the plugin.
+
 ## Binary data
 
 Items carry files under `Item.Binary`, keyed by a property name (`"data"` for a single file), as

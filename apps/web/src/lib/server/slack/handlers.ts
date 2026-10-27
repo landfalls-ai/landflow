@@ -6,6 +6,9 @@
  *   direct messages (`message` with `channel_type: im`) run the published agent and the reply goes back in the
  *   message's thread (each thread is a session). Retries (`X-Slack-Retry-Num`) and repeated event ids are
  *   ignored, and the event is acknowledged at once: Slack wants a 200 within 3 seconds.
+ * - Slash commands, per agent channel: POST /api/slack/commands/<agentId>/<channelId>. Signed like events; acknowledged at once
+ *   (Slack wants a response within 3 seconds) and answered later by posting the agent's reply to the command's `response_url`.
+ *   One session per user and Slack channel; `/<command> new` starts over.
  * - Interactivity: POST /api/slack/interactions. The approval buttons of AI Agent nodes (workflow executions)
  *   and of agents answering in Slack. Checked against every Slack credential's signing secret; the
  *   credential that verifies must be the one that posted the buttons.
@@ -13,6 +16,7 @@
  * Tools that need approval pause the agent and post Approve / Reject buttons in the thread; the click decides
  * (lib/server/agents/runtime.ts `decide`) and the run continues.
  */
+import type { JsonObject } from '@landflow/protocol';
 import type { Agent, AgentChannel } from '../../shared/agents';
 import { allowed } from '../agents/triggers';
 import { decide, newSession, runAgent, type RunResult } from '../agents/runtime';
@@ -26,12 +30,14 @@ import {
   APPROVE_ACTION,
   approvalBlocks,
   decidedBlocks,
+  escape,
   inBackground,
   parseTarget,
   postMessage,
+  postResponseUrl,
   REJECT_ACTION,
-  SLACK_CREDENTIAL,
   slackCredentialFor,
+  slackRefOf,
   slackCredentialsWithSecret,
   updateMessage,
   verifySlackRequest,
@@ -136,16 +142,24 @@ async function answer(agent: Agent, version: number, channel: AgentChannel, cred
   }
   session ??= newSession(agent, { source: 'slack', userId: `slack:${event.user}`, version, conversationKey: key, title: text.slice(0, 80) });
   const result = await runAgent({ agent, session, message: text, approvals: 'ask', rootTrace: true });
-  await deliver(agent, channel, credential, chat, threadTs, result);
+  await deliver(agent, channel, threadPost(credential, chat, threadTs), chat, threadTs, result);
 }
 
+/** Where a run's outcome goes: a thread or channel through the bot token, or a slash command's `response_url`. */
+type Post = (message: { text: string; blocks?: JsonObject[] }) => Promise<unknown>;
+
+const threadPost =
+  (credential: SlackCredential, chat: string, threadTs: string | undefined): Post =>
+  (message) =>
+    postMessage(credential, { channel: chat, threadTs, ...message });
+
 /** Post the run's outcome: the reply, or one Approve / Reject message per call that waits. */
-async function deliver(agent: Agent, channel: AgentChannel, credential: SlackCredential, chat: string, threadTs: string | undefined, result: RunResult) {
+async function deliver(agent: Agent, channel: AgentChannel, post: Post, chat: string, threadTs: string | undefined, result: RunResult, command = false) {
   if (result.reason === 'awaiting_approval' && result.session.pending) {
     const name = agent.published?.config.name ?? agent.name;
     for (const call of result.session.pending.calls.filter((c) => !c.decision)) {
-      const target: ApprovalTarget = { t: 'agent', a: agent.id, ch: channel.id, s: result.session.id, c: call.callId, ...(threadTs && { th: threadTs }) };
-      await postMessage(credential, { channel: chat, threadTs, text: `${name}: approve ${call.tool}?`, blocks: approvalBlocks({ title: `${name} wants to run a tool`, tool: call.tool, input: call.input, target }) });
+      const target: ApprovalTarget = { t: 'agent', a: agent.id, ch: channel.id, s: result.session.id, c: call.callId, ...(threadTs && { th: threadTs }), ...(command && { cmd: chat }) };
+      await post({ text: `${name}: approve ${call.tool}?`, blocks: approvalBlocks({ title: `${name} wants to run a tool`, tool: call.tool, input: call.input, target }) });
     }
     return;
   }
@@ -156,7 +170,92 @@ async function deliver(agent: Agent, channel: AgentChannel, credential: SlackCre
       : result.reason === 'max_iterations'
         ? 'I couldn’t finish that within my step limit. Try a narrower request.'
         : 'Something went wrong while answering. Please try again.');
-  await postMessage(credential, { channel: chat, threadTs, text: reply });
+  await post({ text: reply });
+}
+
+/** After an approval decided elsewhere (an emailed link) resumed a Slack session: the answer goes back where the conversation is. */
+export async function deliverResumedSlack(agent: Agent, outcome: RunResult) {
+  const [kind, channelId, chat, threadTs] = (outcome.session.conversationKey ?? '').split(':');
+  const channel = agentChannel(agent.id, channelId ?? '')?.channel;
+  if ((kind !== 'slack' && kind !== 'slackcmd') || !channel || !chat) return;
+  const credential = await slackCredentialFor(channel.credential);
+  await deliver(agent, channel, threadPost(credential, chat, kind === 'slack' ? threadTs : undefined), chat, kind === 'slack' ? threadTs : undefined, outcome, kind === 'slackcmd');
+}
+
+/** POST /api/slack/commands/<agentId>/<channelId>: a slash command (form-encoded) of the Slack app. */
+export async function handleSlackCommand(request: Request, agentId: string, channelId: string): Promise<Response> {
+  const raw = await request.text();
+  const found = agentChannel(agentId, channelId);
+  if (!found) return error('No published agent has this Slack channel', 404);
+  let credential: SlackCredential;
+  try {
+    credential = await slackCredentialFor(found.channel.credential);
+  } catch (caught) {
+    return error((caught as Error).message, 500);
+  }
+  if (!credential.signingSecret) return error('Set the Signing Secret on the Slack credential: Landflow refuses unverified Slack requests', 401);
+  const verified = verifySlackRequest(credential.signingSecret, request.headers, raw);
+  if (!verified.ok) return error(verified.reason, 401);
+
+  const form = new URLSearchParams(raw);
+  const command = form.get('command') ?? '/ask';
+  const text = (form.get('text') ?? '').trim();
+  const user = form.get('user_id') ?? '';
+  const chat = form.get('channel_id') ?? '';
+  const responseUrl = form.get('response_url') ?? '';
+  const ephemeral = (message: string) => json({ response_type: 'ephemeral', text: message });
+  if (!user || !chat || !/^https?:\/\//i.test(responseUrl)) return error('Not a Slack slash command request', 400);
+  if (!found.channel.enabled || found.channel.slashCommands === false) return ephemeral('Slash commands are turned off for this agent.');
+  if (!allowed(found.channel, { id: user })) {
+    logger.warn('slack command from a user not on the allow list', { 'gen_ai.agent.id': agentId, 'landflow.slack.user': user });
+    return ephemeral('Sorry, this agent only talks to people its owner allowed.');
+  }
+  // Slack does not retry commands, but a double submit or a proxy retry carries the same trigger id.
+  if (!firstTime(form.get('trigger_id') ?? undefined)) return new Response(null, { status: 200 });
+  if (!text) return ephemeral(`Ask me something: \`${command} <your question>\`. \`${command} new\` starts a new conversation.`);
+
+  // Acknowledge now (Slack gives 3 seconds); the answer follows on the response_url.
+  inBackground(
+    () => answerCommand(found.agent, found.version, found.channel, { command, text, user, chat, responseUrl }),
+    async (caught) => {
+      logger.warn('slack command failed', { 'gen_ai.agent.id': agentId, error: (caught as Error).message });
+      await postResponseUrl(responseUrl, { response_type: 'ephemeral', text: 'Something went wrong while answering. Please try again.' }).catch(() => undefined);
+    },
+  );
+  return new Response(null, { status: 200 });
+}
+
+interface CommandCall {
+  command: string;
+  text: string;
+  user: string;
+  chat: string;
+  responseUrl: string;
+}
+
+/** One session per user and Slack channel: follow-up commands keep the context. */
+async function answerCommand(agent: Agent, version: number, channel: AgentChannel, call: CommandCall) {
+  const key = `slackcmd:${channel.id}:${call.chat}:${call.user}`;
+  const userId = `slack:${call.user}`;
+  if (['new', 'reset'].includes(call.text.toLowerCase())) {
+    agentStore.saveSession(newSession(agent, { source: 'slack', userId, version, conversationKey: key, title: 'New conversation' }));
+    await postResponseUrl(call.responseUrl, { response_type: 'ephemeral', text: 'Started a new conversation.' });
+    return;
+  }
+  let session = agentStore.findConversation(agent.id, key);
+  const idleMinutes = channel.newSessionAfterMinutes;
+  if (session && idleMinutes > 0 && Date.now() - Date.parse(session.updatedAt) > idleMinutes * 60_000) session = undefined;
+  if (session && session.version !== version) session = { ...session, version };
+  if (session?.status === 'awaiting_approval') {
+    await postResponseUrl(call.responseUrl, { response_type: 'ephemeral', text: 'I’m waiting for an approval of my last request first.' });
+    return;
+  }
+  session ??= newSession(agent, { source: 'slack', userId, version, conversationKey: key, title: call.text.slice(0, 80) });
+  const result = await runAgent({ agent, session, message: call.text, approvals: 'ask', rootTrace: true });
+  // The command is not echoed into the channel by Slack: say who asked what, then answer.
+  const heading = `<@${call.user}> ran \`${escape(call.command)} ${escape(call.text.length > 200 ? `${call.text.slice(0, 200)}…` : call.text)}\``;
+  const post: Post = (message) => postResponseUrl(call.responseUrl, { response_type: 'in_channel', ...message, ...(message.blocks ? {} : { text: `${heading}\n${message.text}` }) });
+  await deliver(agent, channel, post, call.chat, undefined, result, true);
 }
 
 interface InteractionPayload {
@@ -166,6 +265,7 @@ interface InteractionPayload {
   container?: { channel_id?: string; message_ts?: string; thread_ts?: string };
   message?: { ts?: string; thread_ts?: string };
   actions?: Array<{ action_id?: string; value?: string }>;
+  response_url?: string;
 }
 
 /** POST /api/slack/interactions */
@@ -191,7 +291,7 @@ export async function handleSlackInteraction(request: Request): Promise<Response
   const chat = payload.container?.channel_id ?? payload.channel?.id;
   const ts = payload.container?.message_ts ?? payload.message?.ts;
   inBackground(
-    () => (target.t === 'wf' ? decideWorkflow(target, approved, user, verifiedBy) : decideAgent(target, approved, user, verifiedBy, chat, ts)),
+    () => (target.t === 'wf' ? decideWorkflow(target, approved, user, verifiedBy) : decideAgent(target, approved, user, verifiedBy, chat, ts, payload.response_url)),
     (caught) => logger.warn('slack approval failed', { error: (caught as Error).message }),
   );
   return new Response(null, { status: 200 });
@@ -202,7 +302,7 @@ async function decideWorkflow(target: Extract<ApprovalTarget, { t: 'wf' }>, appr
   const record = store.getExecution(target.e);
   const approval = pendingApproval(record) ?? (record?.wait?.data?.approval as { nodeName?: string; nodeId?: string } | undefined);
   const node = record?.workflow?.nodes.find((n) => n.id === approval?.nodeId || n.name === approval?.nodeName);
-  const ref = node?.credentials?.[SLACK_CREDENTIAL];
+  const ref = slackRefOf(node?.credentials)?.ref;
   if (record && ref && !verifiedBy.has(ref.id)) throw new Error('The approval was signed by another Slack app than the one that asked');
   try {
     const outcome = await decideApproval(target.e, target.c, approved, { ...(user && { slackUser: user }) });
@@ -220,6 +320,7 @@ async function decideAgent(
   verifiedBy: Set<string>,
   chat: string | undefined,
   ts: string | undefined,
+  responseUrl: string | undefined,
 ) {
   const found = agentChannel(target.a, target.ch);
   if (!found || !verifiedBy.has(found.channel.credential.id)) throw new Error('The approval does not belong to a Slack channel of a published agent');
@@ -231,16 +332,18 @@ async function decideAgent(
   const session = agentStore.getSession(target.s);
   const call = session?.pending?.calls.find((c) => c.callId === target.c);
   if (!session || !call) return;
-  if (chat && ts) {
-    const name = found.agent.published?.config.name ?? found.agent.name;
-    await updateMessage(credential, {
-      channel: chat,
-      ts,
-      text: `${call.tool}: ${approved ? 'approved' : 'rejected'}`,
-      blocks: decidedBlocks({ title: `${name} wants to run a tool`, tool: call.tool, input: call.input, approved, ...(user && { user }) }),
-    }).catch((caught: Error) => logger.warn('could not update the Slack approval message', { error: caught.message }));
+  const name = found.agent.published?.config.name ?? found.agent.name;
+  const decidedMessage = { text: `${call.tool}: ${approved ? 'approved' : 'rejected'}`, blocks: decidedBlocks({ title: `${name} wants to run a tool`, tool: call.tool, input: call.input, approved, ...(user && { user }) }) };
+  // An approval asked inside a slash command's session answers through the click's own response_url: the bot may not be in that channel.
+  const viaUrl = target.cmd && responseUrl;
+  if (viaUrl) {
+    await postResponseUrl(responseUrl, { replace_original: true, ...decidedMessage }).catch((caught: Error) => logger.warn('could not update the Slack approval message', { error: caught.message }));
+  } else if (chat && ts) {
+    await updateMessage(credential, { channel: chat, ts, ...decidedMessage }).catch((caught: Error) => logger.warn('could not update the Slack approval message', { error: caught.message }));
   }
   const outcome = await decide(found.agent, target.s, target.c, approved, { ...(user && { by: `slack:${user}` }) });
-  if (outcome.status === 'resumed' && chat) await deliver(found.agent, found.channel, credential, chat, target.th, outcome);
+  if (outcome.status !== 'resumed' || !chat) return;
+  const post: Post = viaUrl ? (message) => postResponseUrl(responseUrl, { response_type: 'in_channel', ...message }) : threadPost(credential, chat, target.th);
+  await deliver(found.agent, found.channel, post, chat, target.th, outcome, Boolean(target.cmd));
 }
 

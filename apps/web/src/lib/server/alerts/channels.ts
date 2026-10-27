@@ -1,11 +1,11 @@
 /**
  * Sending one alert through one channel. Email goes through the host's SMTP settings (lib/server/auth/mail, the
- * LANDFLOW_SMTP_* variables invites use), one message per address; Slack through an incoming webhook; a webhook
+ * LANDFLOW_SMTP_* variables invites use), one message per address; Slack, Microsoft Teams (an Adaptive Card) and Discord (an embed) through their webhooks; a webhook
  * channel POSTs JSON signed with HMAC-SHA256 (`X-Landflow-Signature: sha256=<hex of HMAC(secret, "<timestamp>.<body>")>`,
  * `X-Landflow-Timestamp` in seconds); Telegram through a saved Telegram API credential's bot. Each returns what the
  * receiver said and throws an Error with the reason when it refused.
  *
- * External secrets: the Telegram credential's fields and the channel's Slack webhook URL, webhook URL and signing
+ * External secrets: the Telegram credential's fields and the channel's Slack, Teams and Discord webhook URL, webhook URL and signing
  * secret may read `{{ $secrets.<provider>.<name> }}`, resolved right before sending (same cache and redaction as
  * credential fields in nodes); a reason that would quote a resolved value is redacted.
  */
@@ -16,7 +16,7 @@ import { credentials } from '../credentials/vault';
 import { redactText } from '../secrets/redact';
 import { resolveSecretFields } from '../secrets/resolve';
 import { emailAddresses } from './store';
-import { htmlOf, slackPayload, subjectOf, telegramText, textOf, webhookPayload, type AlertNotice } from './message';
+import { discordPayload, htmlOf, slackPayload, subjectOf, teamsPayload, telegramText, textOf, webhookPayload, type AlertNotice } from './message';
 
 const TIMEOUT_MS = 10_000;
 const TELEGRAM_CREDENTIAL = 'messaging.telegramApi';
@@ -69,6 +69,21 @@ async function sendSlack(config: AlertChannelConfig, notice: AlertNotice): Promi
   return `Slack answered ${(await response.text().catch(() => '')).trim().slice(0, 60) || response.status}`;
 }
 
+async function sendTeams(config: AlertChannelConfig, notice: AlertNotice): Promise<string> {
+  if (!config.webhookUrl) throw new Error('No Microsoft Teams webhook URL');
+  const response = await post(config.webhookUrl, JSON.stringify(teamsPayload(notice)), {}, 'Microsoft Teams');
+  // A Workflows webhook answers 202 Accepted; the legacy incoming webhook 200 with "1". Both are in the 2xx range.
+  if (!response.ok) throw await refusal(response, 'Microsoft Teams');
+  return `Microsoft Teams accepted it (HTTP ${response.status})`;
+}
+
+async function sendDiscord(config: AlertChannelConfig, notice: AlertNotice): Promise<string> {
+  if (!config.webhookUrl) throw new Error('No Discord webhook URL');
+  const response = await post(config.webhookUrl, JSON.stringify(discordPayload(notice)), {}, 'Discord');
+  if (!response.ok) throw await refusal(response, 'Discord');
+  return `Discord accepted it (HTTP ${response.status})`;
+}
+
 async function sendWebhook(config: AlertChannelConfig, notice: AlertNotice): Promise<string> {
   if (!config.url) throw new Error('No webhook URL');
   const body = JSON.stringify(webhookPayload(notice));
@@ -116,6 +131,10 @@ export async function sendThrough(channel: SendableChannel, notice: AlertNotice)
         return await sendWebhook(resolved.config, notice);
       case 'telegram':
         return await sendTelegram(resolved, notice);
+      case 'teams':
+        return await sendTeams(resolved.config, notice);
+      case 'discord':
+        return await sendDiscord(resolved.config, notice);
     }
   } catch (error) {
     throw new Error(redactText((error as Error).message));

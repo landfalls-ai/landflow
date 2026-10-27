@@ -12,6 +12,7 @@ consumes and change `name`, the target and the channel names for another plugin.
 | `rabbitmq.yaml` | RabbitMQ | `rabbitmq` (AMQP, `QueueLength`) | messages ready in the plugin's quorum queue |
 | `jetstream.yaml` | NATS JetStream | `nats-jetstream` | `num_pending` of the plugin's durable pull consumer |
 | `valkey.yaml` | Valkey / Redis Streams | `redis-streams` | pending entries of the plugin's consumer group |
+| `queue-workers.yaml` | Valkey (queue mode) | `redis-streams` | lag and pending entries of the job streams, scaling `landflow-worker` (not a plugin) |
 
 ```sh
 kubectl --context orbstack apply -f deploy/k8s/examples/keda/jetstream.yaml      # needs KEDA and components/brokers

@@ -199,14 +199,20 @@ async function sendFile(ctx: IExecuteContext, api: ApiContext, credentials: Tele
   return telegramUpload<JsonObject>(api, credentials, operation, params, spec.field, { bytes, fileName, mimeType: ref.mimeType });
 }
 
-/** getFile, then the bytes from {baseUrl}/file/bot{token}/{file_path} into item.binary. */
-async function getFile(ctx: IExecuteContext, api: ApiContext, credentials: TelegramCredentials, i: number): Promise<JsonObject | ItemWithFiles> {
-  const file = await telegramCall<JsonObject>(api, credentials, 'getFile', { file_id: requireString(ctx, 'fileId', 'File ID', i) });
-  if (!ctx.getNodeParameter<boolean>('download', i, true)) return file;
+/** getFile, then the bytes from {baseUrl}/file/bot{token}/{file_path}: the file's details and the download response. */
+export async function telegramDownload(api: ApiContext, credentials: TelegramCredentials, fileId: string, itemIndex?: number): Promise<{ file: JsonObject; path: string; response: Response }> {
+  const file = await telegramCall<JsonObject>(api, credentials, 'getFile', { file_id: fileId });
   const path = typeof file.file_path === 'string' ? file.file_path : '';
-  if (!path) throw new NodeOperationError('Telegram gave no download path for this file', { itemIndex: i, description: 'The cloud Bot API lets bots download files up to 20 MB.' });
+  if (!path) throw new NodeOperationError('Telegram gave no download path for this file', { itemIndex, description: 'The cloud Bot API lets bots download files up to 20 MB.' });
   const url = `${baseUrl(credentials.baseUrl, DEFAULT_BASE_URL)}/file/bot${credentials.accessToken}/${path.split('/').map(encodeURIComponent).join('/')}`;
-  const response = await fetchFile(api, url);
+  return { file, path, response: await fetchFile(api, url) };
+}
+
+/** getFile, then the bytes into item.binary. */
+async function getFile(ctx: IExecuteContext, api: ApiContext, credentials: TelegramCredentials, i: number): Promise<JsonObject | ItemWithFiles> {
+  const fileId = requireString(ctx, 'fileId', 'File ID', i);
+  if (!ctx.getNodeParameter<boolean>('download', i, true)) return telegramCall<JsonObject>(api, credentials, 'getFile', { file_id: fileId });
+  const { file, path, response } = await telegramDownload(api, credentials, fileId, i);
   const type = response.headers.get('content-type');
   const ref = await ctx.helpers.prepareBinaryData(response.body!, path.split('/').pop(), type && !/octet-stream/i.test(type) ? type : undefined);
   const property = String(ctx.getNodeParameter('binaryPropertyName', i, 'data') || 'data').trim();

@@ -22,6 +22,12 @@ export interface StoredBinaryMeta {
   createdAt: string;
 }
 
+/** An inclusive byte range of a file (`start` ≤ `end` < size). */
+export interface ByteRange {
+  start: number;
+  end: number;
+}
+
 export interface PutOptions {
   /** Reject (and keep nothing) once the bytes pass this size. */
   maxBytes?: number;
@@ -33,8 +39,8 @@ export interface BinaryStore {
   put(scope: string, data: BinarySource, meta: { mimeType?: string; fileName?: string }, options?: PutOptions): Promise<BinaryRef>;
   /** A file's metadata, or undefined when there is none. */
   head(id: string): Promise<StoredBinaryMeta | undefined>;
-  /** A file's bytes as a stream, or undefined when there is none. */
-  open(id: string): Promise<{ meta: StoredBinaryMeta; stream: Readable } | undefined>;
+  /** A file's bytes as a stream (just `range` of them when given; `meta` always describes the whole file), or undefined when there is none. */
+  open(id: string, range?: ByteRange): Promise<{ meta: StoredBinaryMeta; stream: Readable } | undefined>;
   /** Delete every file of a scope; resolves with how many went. */
   deleteScope(scope: string): Promise<number>;
   /** Every scope, with the time of its newest file (for the orphan sweep). */
@@ -128,9 +134,9 @@ export class FilesystemBinaryStore implements BinaryStore {
     }
   }
 
-  async open(id: string): Promise<{ meta: StoredBinaryMeta; stream: Readable } | undefined> {
+  async open(id: string, range?: ByteRange): Promise<{ meta: StoredBinaryMeta; stream: Readable } | undefined> {
     const meta = await this.head(id);
-    return meta ? { meta, stream: createReadStream(this.paths(id)!.file) } : undefined;
+    return meta ? { meta, stream: createReadStream(this.paths(id)!.file, range && { start: range.start, end: range.end }) } : undefined;
   }
 
   async deleteScope(scope: string): Promise<number> {

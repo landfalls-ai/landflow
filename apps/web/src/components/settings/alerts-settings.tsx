@@ -6,7 +6,7 @@
  * often (one alert per workflow per window, the rest as a digest). Admins change them; everyone else sees them.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { BellRing, Check, Mail, MessageSquare, Pencil, Plus, Search, Send, Trash2, TriangleAlert, Webhook, X } from 'lucide-react';
+import { BellRing, Check, Mail, MessageCircle, MessageSquare, Pencil, Plus, Search, Send, Trash2, TriangleAlert, Users, Webhook, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -15,6 +15,10 @@ import { can } from '@/lib/shared/auth';
 import {
   ALERT_CHANNEL_KINDS,
   ALERT_EVENTS,
+  ALERT_RULE_KINDS,
+  DEFAULT_COST_THRESHOLD_PERCENT,
+  DEFAULT_FAILURE_RATE,
+  DEFAULT_PLUGIN_GRACE_SECONDS,
   DEFAULT_THROTTLE_MINUTES,
   DEFAULT_WAITING_MINUTES,
   type AlertChannel,
@@ -23,10 +27,11 @@ import {
   type AlertDelivery,
   type AlertEvent,
   type AlertRule,
+  type AlertRuleKind,
   type AlertScope,
   type AlertsView,
 } from '@/lib/shared/alerts';
-import type { WorkflowSummary } from '@/lib/shared/types';
+import type { PluginSummary, WorkflowSummary } from '@/lib/shared/types';
 import { useViewer } from '@/components/auth/viewer';
 import { useCredentials } from '@/components/credentials/use-credentials';
 import { Card } from '@/components/shell/page-header';
@@ -35,7 +40,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { FieldLabel, Input, SectionLabel, Select, Switch } from '@/components/ui/inputs';
 
-const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send };
+const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send, teams: Users, discord: MessageCircle };
 const THROTTLES = [
   { value: 0, label: 'Every alert' },
   { value: 5, label: 'At most one per 5 min' },
@@ -53,6 +58,8 @@ function channelTarget(channel: AlertChannel, telegramName?: string): string {
     case 'email':
       return channel.config.to ?? '';
     case 'slack':
+    case 'teams':
+    case 'discord':
       return channel.secretsSet.includes('webhookUrl') ? 'Incoming webhook (saved)' : 'No webhook URL';
     case 'webhook':
       return `${channel.config.url ?? ''}${channel.secretsSet.includes('secret') ? ' · signed' : ''}`;
@@ -136,7 +143,7 @@ function ChannelEditor({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)]">
         <div>
           <FieldLabel>Name</FieldLabel>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 'email' ? 'Ops team' : kind === 'slack' ? '#alerts' : kind === 'telegram' ? 'On-call chat' : 'Incident tool'} autoFocus />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 'email' ? 'Ops team' : kind === 'slack' ? '#alerts' : kind === 'telegram' ? 'On-call chat' : kind === 'teams' ? 'Ops channel' : kind === 'discord' ? '#incidents' : 'Incident tool'} autoFocus />
         </div>
         {kind === 'email' && (
           <div>
@@ -144,15 +151,23 @@ function ChannelEditor({
             <Input value={config.to ?? ''} onChange={(e) => set({ to: e.target.value })} placeholder="ops@example.com, Jane <jane@example.com>" />
           </div>
         )}
-        {kind === 'slack' && (
+        {(kind === 'slack' || kind === 'teams' || kind === 'discord') && (
           <div>
-            <FieldLabel>Incoming webhook URL</FieldLabel>
+            <FieldLabel>{kind === 'slack' ? 'Incoming webhook URL' : kind === 'teams' ? 'Webhook URL (Workflows or incoming webhook)' : 'Webhook URL'}</FieldLabel>
             <Input
               type="password"
               autoComplete="off"
               value={config.webhookUrl ?? ''}
               onChange={(e) => set({ webhookUrl: e.target.value })}
-              placeholder={saved('webhookUrl') ? 'Saved — leave empty to keep it' : 'https://hooks.slack.com/services/…'}
+              placeholder={
+                saved('webhookUrl')
+                  ? 'Saved — leave empty to keep it'
+                  : kind === 'slack'
+                    ? 'https://hooks.slack.com/services/…'
+                    : kind === 'teams'
+                      ? 'https://prod-00.westeurope.logic.azure.com/workflows/…'
+                      : 'https://discord.com/api/webhooks/…'
+              }
             />
           </div>
         )}
@@ -205,6 +220,12 @@ function ChannelEditor({
         </p>
       )}
       {kind === 'slack' && <p className="text-[12px] text-t3">In Slack: create an app → Incoming Webhooks → Add New Webhook to Workspace, pick the channel, copy the URL.</p>}
+      {kind === 'teams' && (
+        <p className="text-[12px] text-t3">
+          In Teams: the channel’s ⋯ menu → Workflows → “Post to a channel when a webhook request is received”, then copy the URL. Alerts arrive as an Adaptive Card. The older incoming-webhook connectors work too.
+        </p>
+      )}
+      {kind === 'discord' && <p className="text-[12px] text-t3">In Discord: Channel settings → Integrations → Webhooks → New Webhook → Copy Webhook URL. Alerts arrive as an embed.</p>}
       {problem && <div className="text-[12px] text-rd">{problem}</div>}
       <div className="flex items-center gap-2">
         <Button size="sm" variant="primary" onClick={() => void save()} loading={saving}>
@@ -307,6 +328,7 @@ function RuleEditor({
   const [draft, setDraft] = useState<RuleDraft>(
     () =>
       initial ?? {
+        kind: 'runs',
         name: '',
         enabled: true,
         workflows: { mode: 'all' },
@@ -316,26 +338,67 @@ function RuleEditor({
       },
   );
   const [waiting, setWaiting] = useState(String(initial?.waitingMinutes ?? DEFAULT_WAITING_MINUTES));
+  const [rate, setRate] = useState({
+    minRuns: String(initial?.failureRate?.minRuns ?? DEFAULT_FAILURE_RATE.minRuns),
+    percent: String(initial?.failureRate?.percent ?? DEFAULT_FAILURE_RATE.percent),
+    windowMinutes: String(initial?.failureRate?.windowMinutes ?? DEFAULT_FAILURE_RATE.windowMinutes),
+  });
+  const [pluginIds, setPluginIds] = useState<string[]>(initial?.plugins?.ids ?? []);
+  const [grace, setGrace] = useState(String(initial?.plugins?.graceSeconds ?? DEFAULT_PLUGIN_GRACE_SECONDS));
+  const [recovery, setRecovery] = useState(initial?.plugins?.notifyRecovery ?? true);
+  const [threshold, setThreshold] = useState(String(initial?.cost?.thresholdPercent ?? DEFAULT_COST_THRESHOLD_PERCENT));
+  const [score, setScore] = useState({ metric: initial?.evaluation?.metric ?? '', below: initial?.evaluation?.below === undefined ? '' : String(initial.evaluation.below), dropPercent: initial?.evaluation?.dropPercent === undefined ? '' : String(initial.evaluation.dropPercent) });
+  const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [saving, setSaving] = useState(false);
+  const kind: AlertRuleKind = draft.kind ?? 'runs';
+  useEffect(() => {
+    if (kind !== 'plugin') return;
+    api<{ plugins: PluginSummary[] }>('/api/plugins')
+      .then((result) => setPlugins(result.plugins.filter((plugin) => plugin.transport !== 'in-process')))
+      .catch(() => setPlugins([]));
+  }, [kind]);
   const [problem, setProblem] = useState<string>();
   const patch = (next: Partial<RuleDraft>) => setDraft((d) => ({ ...d, ...next }));
   const toggle = <T,>(list: T[], value: T) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
 
   const save = async () => {
     setProblem(undefined);
-    if (!draft.events.length) return setProblem('Pick at least one event');
+    if (kind === 'runs' && !draft.events.length) return setProblem('Pick at least one event');
     if (!draft.channelIds.length) return setProblem('Pick at least one channel');
-    if (draft.workflows.mode === 'ids' && !draft.workflows.ids?.length) return setProblem('Pick at least one workflow');
-    if (draft.workflows.mode === 'tags' && !draft.workflows.tags?.length) return setProblem('Enter at least one tag');
+    const scoped = kind === 'runs' || kind === 'failureRate' || kind === 'evaluation';
+    if (scoped && draft.workflows.mode === 'ids' && !draft.workflows.ids?.length) return setProblem('Pick at least one workflow');
+    if (scoped && draft.workflows.mode === 'tags' && !draft.workflows.tags?.length) return setProblem('Enter at least one tag');
     const minutes = Number(waiting);
-    if (draft.events.includes('waiting') && !(Number.isInteger(minutes) && minutes >= 1)) return setProblem('Waiting minutes must be a whole number of at least 1');
-    const { shortcutFor: _shortcut, ...fields } = draft;
-    const body = {
+    if (kind === 'runs' && draft.events.includes('waiting') && !(Number.isInteger(minutes) && minutes >= 1)) return setProblem('Waiting minutes must be a whole number of at least 1');
+    const { shortcutFor: _shortcut, failureRate: _rate, plugins: _plugins, cost: _cost, evaluation: _evaluation, ...fields } = draft;
+    const body: Record<string, unknown> = {
       ...fields,
-      name: draft.name.trim() || 'Failure alert',
-      ...(draft.events.includes('waiting') ? { waitingMinutes: minutes } : {}),
+      kind,
+      name: draft.name.trim() || ALERT_RULE_KINDS.find((k) => k.id === kind)?.label || 'Alert',
+      ...(kind === 'runs' && draft.events.includes('waiting') ? { waitingMinutes: minutes } : {}),
       includeManual: Boolean(draft.includeManual),
     };
+    if (kind === 'failureRate') {
+      const limits = { minRuns: Number(rate.minRuns), percent: Number(rate.percent), windowMinutes: Number(rate.windowMinutes) };
+      if (!(Number.isInteger(limits.minRuns) && limits.minRuns >= 1)) return setProblem('Minimum runs must be a whole number of at least 1');
+      if (!(limits.percent >= 0 && limits.percent <= 100)) return setProblem('The failure rate is a percentage from 0 to 100');
+      if (!(Number.isInteger(limits.windowMinutes) && limits.windowMinutes >= 1 && limits.windowMinutes <= 1_440)) return setProblem('The window is 1 to 1,440 minutes');
+      body.failureRate = limits;
+    } else if (kind === 'plugin') {
+      const seconds = Number(grace);
+      if (!(Number.isInteger(seconds) && seconds >= 0)) return setProblem('The grace period is a whole number of seconds');
+      body.plugins = { ...(pluginIds.length && { ids: pluginIds }), graceSeconds: seconds, notifyRecovery: recovery };
+    } else if (kind === 'cost') {
+      const percent = Number(threshold);
+      if (!(percent >= 1 && percent <= 100)) return setProblem('The threshold is a percentage from 1 to 100');
+      body.cost = { thresholdPercent: percent };
+    } else if (kind === 'evaluation') {
+      const below = score.below.trim() === '' ? undefined : Number(score.below);
+      const drop = score.dropPercent.trim() === '' ? undefined : Number(score.dropPercent);
+      if ((below !== undefined && !Number.isFinite(below)) || (drop !== undefined && !(drop > 0 && drop <= 100))) return setProblem('Enter a minimum score and/or a drop between 0 and 100 percent');
+      if (below === undefined && drop === undefined) return setProblem('Set a minimum score, a drop in percent, or both');
+      body.evaluation = { ...(score.metric.trim() && { metric: score.metric.trim() }), ...(below !== undefined && { below }), ...(drop !== undefined && { dropPercent: drop }) };
+    }
     setSaving(true);
     try {
       const view = initial
@@ -353,13 +416,111 @@ function RuleEditor({
   return (
     <div className="space-y-3.5 border-b border-hair bg-sf2 px-4 py-3.5 last:border-b-0 animate-fade-up">
       <div>
-        <FieldLabel>Name</FieldLabel>
-        <Input value={draft.name} onChange={(e) => patch({ name: e.target.value })} placeholder="Production failures" autoFocus />
+        <FieldLabel>Alert on</FieldLabel>
+        <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Rule type">
+          {ALERT_RULE_KINDS.map((k) => (
+            <button
+              key={k.id}
+              type="button"
+              role="radio"
+              aria-checked={kind === k.id}
+              title={k.hint}
+              onClick={() => patch({ kind: k.id })}
+              className={cn('h-7 rounded-full border px-3 text-[12px] transition-colors', kind === k.id ? 'border-ac bg-acdim font-semibold text-t1' : 'border-hair text-t2 hover:border-ac hover:text-ac')}
+            >
+              {k.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[11px] text-t3">{ALERT_RULE_KINDS.find((k) => k.id === kind)?.hint}.</p>
       </div>
       <div>
-        <FieldLabel>Workflows</FieldLabel>
-        <ScopeEditor scope={draft.workflows} onChange={(workflows) => patch({ workflows })} workflows={workflows} />
+        <FieldLabel>Name</FieldLabel>
+        <Input value={draft.name} onChange={(e) => patch({ name: e.target.value })} placeholder={ALERT_RULE_KINDS.find((k) => k.id === kind)?.label} autoFocus />
       </div>
+      {(kind === 'runs' || kind === 'failureRate' || kind === 'evaluation') && (
+        <div>
+          <FieldLabel>Workflows</FieldLabel>
+          <ScopeEditor scope={draft.workflows} onChange={(workflows) => patch({ workflows })} workflows={workflows} />
+        </div>
+      )}
+      {kind === 'failureRate' && (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-[12px] text-t2">
+            Alert when at least
+            <Input value={rate.minRuns} onChange={(e) => setRate({ ...rate, minRuns: e.target.value })} inputMode="numeric" className="h-7 w-16 text-center" aria-label="Minimum runs" />
+            runs started in the last
+            <Input value={rate.windowMinutes} onChange={(e) => setRate({ ...rate, windowMinutes: e.target.value })} inputMode="numeric" className="h-7 w-20 text-center" aria-label="Window in minutes" />
+            minutes and more than
+            <Input value={rate.percent} onChange={(e) => setRate({ ...rate, percent: e.target.value })} inputMode="decimal" className="h-7 w-16 text-center" aria-label="Failure percent" />% of them failed
+          </div>
+          <p className="text-[11px] text-t3">Counted per workflow over production runs (editor, debug and evaluation runs and runs with a retry still to come are left out). One alert per workflow per window; if it still fails when the window ends, the next one follows.</p>
+          <label className="flex items-center gap-2 text-[12px] text-t2">
+            <Switch checked={Boolean(draft.includeManual)} onChange={(includeManual) => patch({ includeManual })} label="Include editor runs" />
+            Count runs started from the editor too
+          </label>
+        </div>
+      )}
+      {kind === 'plugin' && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2 text-[12px] text-t2">
+            Alert when a plugin has been offline for more than
+            <Input value={grace} onChange={(e) => setGrace(e.target.value)} inputMode="numeric" className="h-7 w-20 text-center" aria-label="Grace period in seconds" />
+            seconds
+          </div>
+          <p className="text-[11px] text-t3">A restart announces again within seconds and never alerts. Built-in nodes never go offline.</p>
+          <div>
+            <div className="mb-1 text-[11px] text-t3">Plugins to watch {pluginIds.length ? '' : '(none picked: all of them)'}</div>
+            <div className="flex flex-wrap gap-1.5">
+              {plugins.map((plugin) => (
+                <button
+                  key={plugin.id}
+                  type="button"
+                  aria-pressed={pluginIds.includes(plugin.id)}
+                  onClick={() => setPluginIds(toggle(pluginIds, plugin.id))}
+                  className={cn('h-7 rounded-full border px-3 text-[12px] transition-colors', pluginIds.includes(plugin.id) ? 'border-ac bg-acdim font-semibold text-t1' : 'border-hair text-t2 hover:border-ac hover:text-ac')}
+                >
+                  {plugin.info.name || plugin.id}
+                </button>
+              ))}
+              {!plugins.length && <span className="text-[12px] text-t3">No external plugin registered right now.</span>}
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-[12px] text-t2">
+            <Switch checked={recovery} onChange={setRecovery} label="Tell me when it is back" />
+            Send a message when the plugin is back online
+          </label>
+        </div>
+      )}
+      {kind === 'cost' && (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-[12px] text-t2">
+            Alert when usage reaches
+            <Input value={threshold} onChange={(e) => setThreshold(e.target.value)} inputMode="decimal" className="h-7 w-16 text-center" aria-label="Threshold percent" />% of any cap, once per day or month
+          </div>
+          <p className="text-[11px] text-t3">Caps watched: a workflow’s daily limits (Workflow settings), an agent’s daily and monthly limits, and the caps per credential and per user (Settings → AI prices). The alert goes out before the cap stops runs.</p>
+        </div>
+      )}
+      {kind === 'evaluation' && (
+        <div className="space-y-1.5">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div>
+              <FieldLabel>Metric (empty: every metric)</FieldLabel>
+              <Input value={score.metric} onChange={(e) => setScore({ ...score, metric: e.target.value })} placeholder="correctness" />
+            </div>
+            <div>
+              <FieldLabel>Average below</FieldLabel>
+              <Input value={score.below} onChange={(e) => setScore({ ...score, below: e.target.value })} inputMode="decimal" placeholder="0.8" />
+            </div>
+            <div>
+              <FieldLabel>Or dropped by more than (%)</FieldLabel>
+              <Input value={score.dropPercent} onChange={(e) => setScore({ ...score, dropPercent: e.target.value })} inputMode="decimal" placeholder="10" />
+            </div>
+          </div>
+          <p className="text-[11px] text-t3">Checked when an evaluation run finishes: a metric’s average against the minimum, and against the previous finished run of the same workflow. Runs started by hand or by the schedule both count.</p>
+        </div>
+      )}
+      {kind === 'runs' && (
       <div>
         <FieldLabel>Alert when</FieldLabel>
         <div className="flex flex-wrap gap-1.5">
@@ -385,6 +546,7 @@ function RuleEditor({
         )}
         <p className="mt-1.5 text-[11px] text-t3">“Failed” covers timeouts and exhausted retries too; a run with an automatic retry still to come never alerts.</p>
       </div>
+      )}
       <div>
         <FieldLabel>Send to</FieldLabel>
         <div className="flex flex-wrap gap-1.5">
@@ -405,6 +567,7 @@ function RuleEditor({
           {!channels.length && <span className="text-[12px] text-t3">Add a channel first.</span>}
         </div>
       </div>
+      {kind === 'runs' && (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <FieldLabel>How often</FieldLabel>
@@ -423,6 +586,7 @@ function RuleEditor({
           <span>Also alert on runs started from the editor (manual and chat test runs)</span>
         </label>
       </div>
+      )}
       {problem && <div className="text-[12px] text-rd">{problem}</div>}
       <div className="flex items-center gap-2">
         <Button size="sm" variant="primary" onClick={() => void save()} loading={saving}>
@@ -443,6 +607,26 @@ function scopeText(scope: AlertScope, workflows: WorkflowSummary[]): string {
   }
   if (scope.mode === 'tags') return `Tagged ${(scope.tags ?? []).join(', ')}`;
   return 'All workflows';
+}
+
+/** What a rule watches, in a line. */
+function ruleSummary(rule: AlertRule, workflows: WorkflowSummary[]): string {
+  switch (rule.kind ?? 'runs') {
+    case 'failureRate': {
+      const { minRuns, percent, windowMinutes } = { ...DEFAULT_FAILURE_RATE, ...rule.failureRate };
+      return `${scopeText(rule.workflows, workflows)} · failure rate > ${percent}% of ≥ ${minRuns} runs in ${windowMinutes} min`;
+    }
+    case 'plugin':
+      return `${rule.plugins?.ids?.length ? `${rule.plugins.ids.length} plugin${rule.plugins.ids.length === 1 ? '' : 's'}` : 'All plugins'} offline > ${rule.plugins?.graceSeconds ?? DEFAULT_PLUGIN_GRACE_SECONDS} s${rule.plugins?.notifyRecovery === false ? '' : ' (and back online)'}`;
+    case 'cost':
+      return `AI usage at ${rule.cost?.thresholdPercent ?? DEFAULT_COST_THRESHOLD_PERCENT}% of a cap`;
+    case 'evaluation': {
+      const { metric, below, dropPercent } = rule.evaluation ?? {};
+      return `${scopeText(rule.workflows, workflows)} · ${metric || 'any metric'}${below !== undefined ? ` < ${below}` : ''}${dropPercent ? ` or down > ${dropPercent}%` : ''}`;
+    }
+    default:
+      return `${scopeText(rule.workflows, workflows)} · ${rule.events.map((e) => (e === 'waiting' ? `Waiting > ${rule.waitingMinutes ?? DEFAULT_WAITING_MINUTES} min` : EVENT_LABEL[e])).join(', ')}`;
+  }
 }
 
 export function AlertsSettings() {
@@ -649,8 +833,8 @@ export function AlertsSettings() {
                     )}
                   </div>
                   <div className="truncate text-[12px] text-t3">
-                    {scopeText(rule.workflows, workflows)} · {rule.events.map((e) => (e === 'waiting' ? `Waiting > ${rule.waitingMinutes ?? DEFAULT_WAITING_MINUTES} min` : EVENT_LABEL[e])).join(', ')} →{' '}
-                    {rule.channelIds.map((id) => channelName(id) ?? 'deleted channel').join(', ') || 'no channel'} · {THROTTLES.find((t) => t.value === rule.throttleMinutes)?.label.toLowerCase() ?? `≤ 1 per ${rule.throttleMinutes} min`}
+                    {ruleSummary(rule, workflows)} → {rule.channelIds.map((id) => channelName(id) ?? 'deleted channel').join(', ') || 'no channel'}
+                    {(rule.kind ?? 'runs') === 'runs' ? ` · ${THROTTLES.find((t) => t.value === rule.throttleMinutes)?.label.toLowerCase() ?? `≤ 1 per ${rule.throttleMinutes} min`}` : ''}
                     {rule.includeManual ? ' · incl. editor runs' : ''}
                   </div>
                 </div>

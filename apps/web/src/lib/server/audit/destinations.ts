@@ -5,11 +5,13 @@
  * credentials key and never leave the server; a PATCH that leaves one empty keeps the saved value (a PATCH without
  * `clientCert` drops the client certificate and its key). Syslog over TLS and HTTPS destinations can trust a private
  * CA and present a client certificate (mTLS); the certificate and key are checked to belong together when saved.
- * Disabling a destination stops queueing new events for it (queued ones wait); deleting it drops its outbox.
+ * Disabling a destination stops queueing new events for it (queued ones wait); deleting it drops its outbox. A destination's `scope`
+ * (migration-free: part of its data) limits it to chosen projects' events, plus instance-wide ones when `instance` is true; without
+ * one it receives everything. The scope is applied when an event is queued (./store), so changing it affects new events only.
  */
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { AUDIT_SECRET_FIELDS, type AuditDelivery, type AuditDestination, type AuditDestinationConfig, type AuditDestinationKind } from '../../shared/audit';
+import { AUDIT_SECRET_FIELDS, type AuditDelivery, type AuditDestination, type AuditDestinationScope, type AuditDestinationConfig, type AuditDestinationKind } from '../../shared/audit';
 import { certificateInfo, keyPairProblem, pemCertificates } from '../auth/x509';
 import { credentials } from '../credentials/vault';
 import { database } from '../db';
@@ -36,6 +38,8 @@ interface Row {
 
 interface Data {
   config: AuditDestinationConfig;
+  /** Which events it receives (absent: every event). */
+  scope?: AuditDestinationScope;
   lastDelivery?: AuditDelivery;
 }
 
@@ -66,13 +70,28 @@ const configSchema = z.strictObject({
   tags: z.string().max(1_000).optional(),
 });
 
+/** The projects a destination receives events of, and whether it also gets instance-wide events; `null` means every event. */
+const scopeSchema = z.strictObject({ projectIds: z.array(z.string().trim().min(1).max(100)).max(500), instance: z.boolean() });
+
 export const destinationCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   kind: z.enum(['syslog', 'http', 'splunk']),
   enabled: z.boolean().default(true),
   config: configSchema.default({}),
+  scope: scopeSchema.nullable().optional(),
 });
-export const destinationPatchSchema = z.object({ name: z.string().trim().min(1).max(120), enabled: z.boolean(), config: configSchema }).partial();
+export const destinationPatchSchema = z.object({ name: z.string().trim().min(1).max(120), enabled: z.boolean(), config: configSchema, scope: scopeSchema.nullable() }).partial();
+
+/** A scope with its project ids checked and de-duplicated; `null` or absent: no scope (every event). */
+function checkedScope(scope: z.infer<typeof scopeSchema> | null | undefined): AuditDestinationScope | undefined {
+  if (!scope) return undefined;
+  const projectIds = [...new Set(scope.projectIds)];
+  const known = new Set(projectIds.length ? database().all<{ id: string }>(`SELECT id FROM projects WHERE id IN (${projectIds.map(() => '?').join(', ')})`, ...projectIds).map((row) => row.id) : []);
+  const unknown = projectIds.filter((id) => !known.has(id));
+  if (unknown.length) throw new AuditDestinationError(`Unknown project${unknown.length === 1 ? '' : 's'}: ${unknown.join(', ')}`);
+  if (!projectIds.length && !scope.instance) throw new AuditDestinationError('Choose at least one project, or instance events: a destination with neither would receive nothing');
+  return { projectIds, instance: scope.instance };
+}
 
 function httpUrl(value: string | undefined, what: string): string {
   if (!value?.trim()) throw new AuditDestinationError(`Enter the ${what}`);
@@ -199,6 +218,7 @@ function view(row: Row, stats?: OutboxStats): AuditDestination {
     enabled: Boolean(Number(row.enabled)),
     config: Object.fromEntries(Object.entries(data.config).filter(([k]) => !SECRET.has(k))) as AuditDestinationConfig,
     secretsSet: Object.keys(data.config).filter((k) => SECRET.has(k) && (data.config as Record<string, unknown>)[k]),
+    ...(data.scope && { scope: data.scope }),
     ...(cert && { clientCertificate: cert }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -234,9 +254,10 @@ export const auditDestinations = {
   create(input: z.infer<typeof destinationCreateSchema>): AuditDestination {
     const config = checked(input.kind, input.config);
     if (input.kind === 'splunk' && !config.token) throw new AuditDestinationError('Enter the HEC token');
+    const scope = checkedScope(input.scope);
     const now = new Date().toISOString();
     const id = `adst_${nanoid(12)}`;
-    database().upsert('audit_destinations', { id, name: input.name, kind: input.kind, enabled: input.enabled, created_at: now, updated_at: now, data: JSON.stringify({ config: seal(config) } satisfies Data) });
+    database().upsert('audit_destinations', { id, name: input.name, kind: input.kind, enabled: input.enabled, created_at: now, updated_at: now, data: JSON.stringify({ config: seal(config), ...(scope && { scope }) } satisfies Data) });
     return this.get(id)!;
   },
 
@@ -255,6 +276,9 @@ export const auditDestinations = {
       }
       config = seal(checked(row.kind, merged));
     }
+    // A new scope applies to events recorded from now on; what is queued stays queued.
+    const scope = patch.scope === undefined ? data.scope : checkedScope(patch.scope);
+    const { scope: _old, ...rest } = data;
     database().upsert('audit_destinations', {
       id,
       name: patch.name ?? row.name,
@@ -262,7 +286,7 @@ export const auditDestinations = {
       enabled: patch.enabled ?? Boolean(Number(row.enabled)),
       created_at: row.created_at,
       updated_at: new Date().toISOString(),
-      data: JSON.stringify({ ...data, config } satisfies Data),
+      data: JSON.stringify({ ...rest, config, ...(scope && { scope }) } satisfies Data),
     });
     return this.get(id)!;
   },

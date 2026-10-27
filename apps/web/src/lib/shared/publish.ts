@@ -59,3 +59,44 @@ export interface PublishResult extends PublicationStatus {
   /** Triggers that could not be registered or removed (the publish itself went through; the host retries). */
   triggerErrors: Array<{ nodeName: string; message: string }>;
 }
+
+/** Where a scheduled publish stands. */
+export type ScheduledPublishStatus =
+  /** Four-eyes publishing: a publish request has to be approved first; the time passes meanwhile. */
+  | 'awaiting_approval'
+  /** Waiting for its time (approved already, when four-eyes publishing is on). */
+  | 'pending'
+  | 'running'
+  | 'done'
+  /** Its time came with four-eyes publishing on and no approval: it became a publish request (`requestId`). */
+  | 'requested'
+  | 'failed'
+  | 'canceled';
+
+/** A publish or unpublish at a chosen time (lib/server/publish-schedule.ts): GET/POST /api/workflows/:id/schedules. */
+export interface ScheduledPublish {
+  id: string;
+  workflowId: string;
+  workflowName?: string;
+  action: 'publish' | 'unpublish';
+  /** The saved version a publish puts live. */
+  versionId?: string;
+  versionNumber?: number;
+  /** When it runs (ISO). */
+  runAt: string;
+  status: ScheduledPublishStatus;
+  note?: string;
+  createdBy?: string;
+  createdByName?: string;
+  createdAt: string;
+  /** The four-eyes publish request that approves it. */
+  requestId?: string;
+  finishedAt?: string;
+  /** What happened: the error of a failed one, why one was canceled, or "already live". */
+  result?: string;
+}
+
+/** 202 from POST /api/workflows/:id/publish and /unpublish with `at`. */
+export interface ScheduledPublishResponse {
+  scheduled: ScheduledPublish;
+}

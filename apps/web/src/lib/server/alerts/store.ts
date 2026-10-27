@@ -5,7 +5,7 @@
  */
 import { hasSecretReference } from '@landflow/engine';
 import { nanoid } from 'nanoid';
-import { ALERT_SECRET_FIELDS, type AlertChannel, type AlertChannelConfig, type AlertChannelKind, type AlertDelivery, type AlertRule } from '../../shared/alerts';
+import { ALERT_SECRET_FIELDS, DEFAULT_COST_THRESHOLD_PERCENT, DEFAULT_FAILURE_RATE, DEFAULT_PLUGIN_GRACE_SECONDS, RULE_KIND_EVENTS, type AlertChannel, type AlertChannelConfig, type AlertChannelKind, type AlertDelivery, type AlertRule } from '../../shared/alerts';
 import { credentials } from '../credentials/vault';
 import { database } from '../db';
 
@@ -67,6 +67,8 @@ const FIELDS: Record<AlertChannelKind, (keyof AlertChannelConfig)[]> = {
   slack: ['webhookUrl'],
   webhook: ['url', 'secret'],
   telegram: ['credentialId', 'chatId'],
+  teams: ['webhookUrl'],
+  discord: ['webhookUrl'],
 };
 
 const parse = <T>(text: string, fallback: T): T => {
@@ -114,6 +116,14 @@ function checkedConfig(kind: AlertChannelKind, config: AlertChannelConfig): Aler
       if (!kept.webhookUrl) throw new AlertError('Enter the Slack incoming webhook URL');
       // A `{{ $secrets.<provider>.<name> }}` reference is resolved when sending (./channels.ts).
       if (!hasSecretReference(kept.webhookUrl)) kept.webhookUrl = httpUrl(kept.webhookUrl, 'Slack webhook URL');
+      break;
+    case 'teams':
+      if (!kept.webhookUrl) throw new AlertError('Enter the Microsoft Teams webhook URL (a Workflows webhook or an incoming webhook)');
+      if (!hasSecretReference(kept.webhookUrl)) kept.webhookUrl = httpUrl(kept.webhookUrl, 'Microsoft Teams webhook URL');
+      break;
+    case 'discord':
+      if (!kept.webhookUrl) throw new AlertError('Enter the Discord webhook URL (Channel settings → Integrations → Webhooks)');
+      if (!hasSecretReference(kept.webhookUrl)) kept.webhookUrl = httpUrl(kept.webhookUrl, 'Discord webhook URL');
       break;
     case 'webhook':
       if (!kept.url) throw new AlertError('Enter the URL to POST to');
@@ -163,6 +173,38 @@ function ruleView(row: RuleRow): AlertRule {
 }
 
 export type RuleInput = Omit<AlertRule, 'id' | 'createdAt' | 'updatedAt'>;
+
+/**
+ * A rule as it is saved: a rule of another kind alerts on its own events and keeps only its own settings (with defaults
+ * filled in); an evaluation rule needs a score or a drop to compare against.
+ */
+function normalizedRule(rule: AlertRule): AlertRule {
+  const { failureRate, plugins, cost, evaluation, ...rest } = rule;
+  const kind = rule.kind ?? 'runs';
+  if (kind === 'runs') {
+    const { kind: _kind, ...runs } = rest;
+    return runs as AlertRule;
+  }
+  const { waitingMinutes: _waiting, ...others } = rest;
+  const base = { ...others, kind, events: RULE_KIND_EVENTS[kind] };
+  switch (kind) {
+    case 'failureRate':
+      return { ...base, failureRate: { ...DEFAULT_FAILURE_RATE, ...failureRate } };
+    case 'plugin': {
+      const ids = (plugins?.ids ?? []).map((id) => id.trim()).filter(Boolean);
+      return { ...base, plugins: { ...(ids.length && { ids }), graceSeconds: plugins?.graceSeconds ?? DEFAULT_PLUGIN_GRACE_SECONDS, notifyRecovery: plugins?.notifyRecovery ?? true } };
+    }
+    case 'cost':
+      return { ...base, cost: { thresholdPercent: cost?.thresholdPercent ?? DEFAULT_COST_THRESHOLD_PERCENT } };
+    case 'evaluation': {
+      const below = evaluation?.below !== undefined && Number.isFinite(evaluation.below) ? evaluation.below : undefined;
+      const dropPercent = evaluation?.dropPercent && evaluation.dropPercent > 0 ? evaluation.dropPercent : undefined;
+      if (below === undefined && dropPercent === undefined) throw new AlertError('Set a minimum score, a drop in percent, or both');
+      const metric = evaluation?.metric?.trim();
+      return { ...base, evaluation: { ...(metric && { metric }), ...(below !== undefined && { below }), ...(dropPercent !== undefined && { dropPercent }) } };
+    }
+  }
+}
 
 export const alertStore = {
   channels(): AlertChannel[] {
@@ -265,7 +307,7 @@ export const alertStore = {
     if (!name) throw new AlertError('Enter a name');
     const unknown = rule.channelIds.find((channelId) => !this.channel(channelId));
     if (unknown) throw new AlertError(`Alert channel ${unknown} not found`);
-    const { id, enabled, createdAt, updatedAt, ...data } = rule;
+    const { id, enabled, createdAt, updatedAt, ...data } = normalizedRule(rule);
     database().upsert('alert_rules', { id, name, enabled: enabled ? 1 : 0, created_at: createdAt, updated_at: updatedAt, data: JSON.stringify({ ...data, name }) });
   },
 
@@ -274,6 +316,7 @@ export const alertStore = {
     return db.transaction(() => {
       db.delete('alert_throttle', { rule_id: id });
       db.delete('alert_waiting_sent', { rule_id: id });
+      for (const { key } of this.states(id)) db.delete('alert_state', { rule_id: id, key });
       return db.delete('alert_rules', { id }) > 0;
     });
   },
@@ -306,6 +349,28 @@ export const alertStore = {
         suppressed: Number(row.suppressed),
         data: parse<ThrottleData>(row.data, { workflowName: row.workflow_id, since: row.window_until, minutes: 0 }),
       }));
+  },
+
+  /** What a time-based rule remembers under `key` (see monitors.ts), with when it lapses. */
+  state<T>(ruleId: string, key: string): { data: T; expiresAt?: string } | undefined {
+    const row = database().get<{ data: string; expires_at: string | null }>('SELECT data, expires_at FROM alert_state WHERE rule_id = ? AND key = ?', ruleId, key);
+    return row && { data: parse<T>(row.data, {} as T), ...(row.expires_at && { expiresAt: row.expires_at }) };
+  },
+
+  setState(ruleId: string, key: string, data: unknown, expiresAt?: string) {
+    database().upsert('alert_state', { rule_id: ruleId, key, expires_at: expiresAt ?? null, data: JSON.stringify(data), updated_at: new Date().toISOString() });
+  },
+
+  clearState(ruleId: string, key: string) {
+    database().delete('alert_state', { rule_id: ruleId, key });
+  },
+
+  /** All of a rule's remembered keys that start with `prefix`. */
+  states<T>(ruleId: string, prefix = ''): Array<{ key: string; data: T; expiresAt?: string }> {
+    return database()
+      .all<{ key: string; data: string; expires_at: string | null }>('SELECT key, data, expires_at FROM alert_state WHERE rule_id = ?', ruleId)
+      .filter((row) => row.key.startsWith(prefix))
+      .map((row) => ({ key: row.key, data: parse<T>(row.data, {} as T), ...(row.expires_at && { expiresAt: row.expires_at }) }));
   },
 
   /** Mark "waiting too long" as sent for an execution; false when it was already. */

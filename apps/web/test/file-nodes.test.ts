@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runNode, type ExecuteRequest, type INodeType, type JsonObject, type NodeItem } from '@landflow/sdk';
 import type { BinaryRef } from '@landflow/protocol';
 import { hostBinaryClient, setBinaryStore } from '@/lib/server/binary/access';
-import { htmlTables, parseCsv, readXlsx, readZip, rowsToItems, toCsv } from '@/lib/server/binary/formats';
+import { htmlTables, parseCsv, readOds, readXlsx, readZip, rowsToItems, sheetTitle, toCsv, writeZip } from '@/lib/server/binary/formats';
 import { FilesystemBinaryStore, readAll } from '@/lib/server/binary/store';
 import { httpRequestNode, setNode } from '@/lib/server/nodes/data';
 import { convertToFileNode, extractFromFileNode, globToRegExp, readWriteFileNode, resolveInFilesDir } from '@/lib/server/nodes/files';
@@ -383,6 +383,140 @@ describe('Convert to File', () => {
     expect(invalid.error?.message).toMatch(/isn’t base64/);
     const missing = await exec(convertToFileNode, { operation: 'toText', sourceProperty: 'nope', binaryPropertyName: 'data' }, [{ json: {} }]);
     expect(missing.error?.message).toMatch(/no field “nope”/);
+  });
+});
+
+describe('Convert to File: XLSX and ODS', () => {
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const ODS_MIME = 'application/vnd.oasis.opendocument.spreadsheet';
+  const rows: JsonObject[] = [
+    { name: 'Ada <Lovelace> & "co"', n: 1.5, big: 12345678901, ok: true, born: '2024-01-20', at: '2024-01-20T10:30:15Z', note: 'line one\nline two', pad: '  spaced  out ', code: '007' },
+    { name: 'Zoë 日本語 😀', n: -3, ok: false, nothing: null, empty: '', tags: ['a', 'b'], nested: { k: 1 } },
+    { name: 'bell\u0007', n: 0 },
+  ];
+  const expected = [
+    { name: 'Ada <Lovelace> & "co"', n: 1.5, big: 12345678901, ok: true, born: '2024-01-20', at: '2024-01-20T10:30:15.000Z', note: 'line one\nline two', pad: '  spaced  out ', code: '007' },
+    { name: 'Zoë 日本語 😀', n: -3, ok: false, tags: '["a","b"]', nested: '{"k":1}' },
+    { name: 'bell', n: 0 },
+  ];
+  const input = rows.map((json) => ({ json }));
+  const back = async (operation: 'xlsx' | 'ods', file: BinaryRef, options: Record<string, unknown> = {}) =>
+    (await ok(extractFromFileNode, { operation, binaryPropertyName: 'data', options }, [{ json: {}, binary: { data: file } }])).map((i) => i.json);
+
+  for (const [operation, mime] of [['xlsx', XLSX_MIME], ['ods', ODS_MIME]] as const) {
+    describe(operation, () => {
+      it('round-trips typed values, special characters and empty cells', async () => {
+        const [file] = await ok(convertToFileNode, { operation, binaryPropertyName: 'data', options: {} }, input);
+        expect(file.binary?.data).toMatchObject({ fileName: `data.${operation}`, mimeType: mime, fileExtension: operation });
+        const bytes = await bytesOf(file.binary!.data);
+        expect(bytes.subarray(0, 2).toString()).toBe('PK');
+        expect(await back(operation, file.binary!.data)).toEqual(expected);
+      });
+
+      it('leaves out the header row, keeps the order of a given column list', async () => {
+        const [file] = await ok(convertToFileNode, { operation, binaryPropertyName: 'data', options: { headerRow: false, columns: ' n , name ', fileName: 'plain' } }, input);
+        expect(file.binary?.data).toMatchObject({ fileName: 'plain', mimeType: mime });
+        expect(await back(operation, file.binary!.data, { headerRow: false })).toEqual([
+          { row: [1.5, 'Ada <Lovelace> & "co"'] },
+          { row: [-3, 'Zoë 日本語 😀'] },
+          { row: [0, 'bell'] },
+        ]);
+        const [listed] = await ok(convertToFileNode, { operation, binaryPropertyName: 'data', options: { columns: 'ok, name' } }, input);
+        const keys = (await back(operation, listed.binary!.data)).map((r) => Object.keys(r));
+        expect(keys).toEqual([['ok', 'name'], ['ok', 'name'], ['name']]);
+      });
+
+      it('names the sheet, or splits items into one sheet per field value', async () => {
+        const data = [
+          { json: { region: 'EU', v: 1 } },
+          { json: { region: 'US', v: 2 } },
+          { json: { region: 'EU', v: 3 } },
+          { json: { v: 4 } },
+          { json: { region: 'a/b:c*[d]?', v: 5 } },
+          { json: { region: 'eu', v: 6 } },
+        ];
+        const [single] = await ok(convertToFileNode, { operation, binaryPropertyName: 'data', options: { sheetName: 'Report' } }, data);
+        const read = operation === 'xlsx' ? readXlsx : readOds;
+        expect(read(await bytesOf(single.binary!.data)).sheetNames).toEqual(['Report']);
+        const [multi] = await ok(convertToFileNode, { operation, binaryPropertyName: 'data', options: { sheetNameField: 'region', sheetName: 'Rest' } }, data);
+        const bytes = await bytesOf(multi.binary!.data);
+        expect(read(bytes).sheetNames).toEqual(['EU', 'US', 'Rest', 'a b c  d', 'eu_2']);
+        expect(await back(operation, multi.binary!.data, { sheetName: 'EU' })).toEqual([{ region: 'EU', v: 1 }, { region: 'EU', v: 3 }]);
+        expect(await back(operation, multi.binary!.data, { sheetName: 'Rest' })).toEqual([{ v: 4 }]);
+        expect(await back(operation, multi.binary!.data, { sheetName: 'eu_2' })).toEqual([{ region: 'eu', v: 6 }]);
+      });
+
+      it('writes dates as text when asked, and an empty sheet for no items', async () => {
+        const [text] = await ok(convertToFileNode, { operation, binaryPropertyName: 'data', options: { dates: false } }, [{ json: { d: '2024-01-20', f: '2024-02-30' } }]);
+        expect(await back(operation, text.binary!.data)).toEqual([{ d: '2024-01-20', f: '2024-02-30' }]);
+        const [dates] = await ok(convertToFileNode, { operation, binaryPropertyName: 'data', options: {} }, [{ json: { d: '2024-01-20', f: '2024-02-30', t: '2024-01-20 08:00' } }]);
+        expect(await back(operation, dates.binary!.data)).toEqual([{ d: '2024-01-20', f: '2024-02-30', t: '2024-01-20T08:00:00.000Z' }]);
+        const [none] = await ok(convertToFileNode, { operation, binaryPropertyName: 'data', options: {} }, []);
+        expect(await back(operation, none.binary!.data)).toEqual([]);
+      });
+    });
+  }
+
+  it('XLSX is a valid package: parts, relationships, styles, escaped names', async () => {
+    const [file] = await ok(convertToFileNode, { operation: 'xlsx', binaryPropertyName: 'data', options: { sheetName: 'Q&A <1>' } }, input);
+    const zip = readZip(await bytesOf(file.binary!.data));
+    expect([...zip.keys()]).toEqual(expect.arrayContaining(['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels', 'xl/styles.xml', 'xl/worksheets/sheet1.xml']));
+    expect(zip.get('xl/workbook.xml')!().toString()).toContain('name="Q&amp;A &lt;1&gt;"');
+    const sheet = zip.get('xl/worksheets/sheet1.xml')!().toString();
+    expect(sheet).toContain('<c r="A1" t="inlineStr" s="3">');
+    expect(sheet).toContain('<c r="D2" t="b"><v>1</v></c>');
+    expect(sheet).not.toContain('\u0007');
+    const raw = readXlsx(await bytesOf(file.binary!.data), { rawData: true }).rows[1];
+    expect(raw[4]).toBe(45311); // 2024-01-20
+    expect(raw[5]).toBeCloseTo(45311.4376736, 6); // 10:30:15
+  });
+
+  it('ODS stores the mimetype first, uncompressed', async () => {
+    const [file] = await ok(convertToFileNode, { operation: 'ods', binaryPropertyName: 'data', options: {} }, input);
+    const bytes = await bytesOf(file.binary!.data);
+    expect(bytes.readUInt32LE(0)).toBe(0x04034b50);
+    expect(bytes.readUInt16LE(8)).toBe(0);
+    expect(bytes.subarray(30, 30 + 8 + 'application/vnd.oasis.opendocument.spreadsheet'.length).toString()).toBe('mimetypeapplication/vnd.oasis.opendocument.spreadsheet');
+    expect(readZip(bytes).get('content.xml')!().toString()).toContain('office:value-type="date"');
+  });
+
+  it('writes columns past Z and many rows', async () => {
+    const wide = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`c${i}`, i]));
+    const [file] = await ok(convertToFileNode, { operation: 'xlsx', binaryPropertyName: 'data', options: {} }, [{ json: wide }]);
+    expect(await back('xlsx', file.binary!.data)).toEqual([wide]);
+    expect(readZip(await bytesOf(file.binary!.data)).get('xl/worksheets/sheet1.xml')!().toString()).toContain('r="AD1"');
+  });
+
+  it('cleans sheet names and writes a readable ZIP', () => {
+    expect(sheetTitle("'a[b]:c'", 'x')).toBe('a b  c');
+    expect(sheetTitle('', 'Sheet1')).toBe('Sheet1');
+    expect(sheetTitle('x'.repeat(40))).toHaveLength(31);
+    const zip = readZip(writeZip([{ name: 'a.txt', data: Buffer.from('hello '.repeat(100)) }, { name: 'ü.bin', data: Buffer.from([1, 2, 3]), store: true }]));
+    expect(zip.get('a.txt')!().toString()).toBe('hello '.repeat(100));
+    expect([...zip.get('ü.bin')!()]).toEqual([1, 2, 3]);
+  });
+
+  it('reads ODS as LibreOffice writes it: repeated cells and rows, spaces, tabs, covered cells, times', () => {
+    const NSO = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"';
+    const content = `<?xml version="1.0"?><office:document-content ${NSO}><office:body><office:spreadsheet>
+      <table:table table:name="Data"><table:table-column table:number-columns-repeated="3"/>
+        <table:table-row table:number-rows-repeated="2"><table:table-cell table:number-columns-repeated="1048576"/></table:table-row>
+        <table:table-row><table:table-cell table:number-columns-repeated="1"/><table:table-cell office:value-type="string"><text:p>a</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>b</text:p></table:table-cell></table:table-row>
+        <table:table-row><table:table-cell/><table:table-cell office:value-type="float" office:value="2"><text:p>2.00</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>x<text:s text:c="3"/>y<text:tab/>z</text:p><text:p>two <text:span>lines</text:span></text:p></table:table-cell></table:table-row>
+        <table:table-row><table:table-cell/><table:table-cell office:value-type="time" office:time-value="PT10H05M09S"/><table:table-cell table:number-columns-repeated="2" office:value-type="percentage" office:value="0.5"/></table:table-row>
+        <table:table-row table:number-rows-repeated="1048000"><table:table-cell table:number-columns-repeated="1048576"/></table:table-row>
+      </table:table><table:table table:name="Two"><table:table-row><table:table-cell office:value-type="boolean" office:boolean-value="true"/></table:table-row></table:table>
+    </office:spreadsheet></office:body></office:document-content>`;
+    const file = writeZip([
+      { name: 'mimetype', data: Buffer.from('application/vnd.oasis.opendocument.spreadsheet'), store: true },
+      { name: 'content.xml', data: Buffer.from(content) },
+    ]);
+    const sheet = readOds(file);
+    expect(sheet.sheetNames).toEqual(['Data', 'Two']);
+    expect(sheet.rows).toEqual([['a', 'b'], [2, 'x   y\tz\ntwo lines'], ['10:05:09', 0.5, 0.5]]);
+    expect(readOds(file, { sheetName: 'Two' }).rows).toEqual([[true]]);
+    expect(() => readOds(file, { sheetName: 'No' })).toThrow(/“Data”, “Two”/);
+    expect(() => readOds(XLSX)).toThrow(/no content\.xml/);
   });
 });
 

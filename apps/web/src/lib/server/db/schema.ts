@@ -943,6 +943,214 @@ export const MIGRATIONS: Migration[] = [
       { table: 'execution_checkpoints', column: 'base_outputs', definition: 'TEXT' },
     ],
   },
+  // 1820–1829 (wave 6): alert monitors' state, cached-token and per-user/credential AI usage.
+  {
+    version: 1820,
+    name: 'alert_state',
+    statements: [
+      // What the time-based alert rules remember between ticks (lib/server/alerts/monitors.ts): the window a failure-rate alert
+      // was sent for, a plugin's offline spell, the period a cost threshold was reported for, the evaluation run last checked.
+      `CREATE TABLE IF NOT EXISTS alert_state (
+        rule_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        expires_at TEXT,
+        data TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (rule_id, key)
+      )`,
+    ],
+  },
+  {
+    version: 1821,
+    name: 'ai_usage_cache_user_credential',
+    statements: [
+      `CREATE INDEX IF NOT EXISTS ai_usage_user ON ai_usage (user_id, day)`,
+      `CREATE INDEX IF NOT EXISTS ai_usage_credential ON ai_usage (credential_id, day)`,
+    ],
+    addColumns: [
+      // Cached input tokens (a part of input_tokens): Anthropic cache reads and writes, OpenAI cached input.
+      { table: 'ai_usage', column: 'cache_read_tokens', definition: 'BIGINT NOT NULL DEFAULT 0' },
+      { table: 'ai_usage', column: 'cache_write_tokens', definition: 'BIGINT NOT NULL DEFAULT 0' },
+      // Who started the run and which model credential made the call (caps per user and per credential).
+      { table: 'ai_usage', column: 'user_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'credential_id', definition: 'TEXT' },
+    ],
+  },
+  {
+    version: 1822,
+    name: 'evaluation_settings',
+    statements: [
+      // Per workflow: the uploaded file dataset (its bytes are in the binary store under `scope`) and the evaluation schedule (lib/server/evaluations).
+      `CREATE TABLE IF NOT EXISTS evaluation_settings (
+        workflow_id TEXT PRIMARY KEY,
+        scope TEXT,
+        data TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS evaluation_settings_scope ON evaluation_settings (scope)`,
+    ],
+  },
+  // 1830–1839 (wave 6, triggers and agent channels): approval emails.
+  {
+    version: 1830,
+    name: 'approval_email_used',
+    statements: [
+      // The approve / reject links of approval emails are signed and carry everything they need; this table only makes them single-use:
+      // one row per link group (an approve and a reject link of one tool call share the group), inserted by whoever uses a link first
+      // (lib/server/approval-email.ts). `expires_at` lets old rows go.
+      `CREATE TABLE IF NOT EXISTS approval_email_used (
+        group_id TEXT PRIMARY KEY,
+        decision TEXT NOT NULL,
+        email TEXT NOT NULL,
+        used_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 1840,
+    name: 'scheduled_publishes',
+    statements: [
+      // Publish or unpublish a saved version at a chosen time (lib/server/publish-schedule.ts). `request_id` is the four-eyes publish request that approves it.
+      `CREATE TABLE IF NOT EXISTS scheduled_publishes (
+        id TEXT PRIMARY KEY,
+        workflow_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        version_id TEXT,
+        run_at TEXT NOT NULL,
+        status TEXT NOT NULL,
+        note TEXT,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        request_id TEXT,
+        finished_at TEXT,
+        result TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS scheduled_publishes_workflow ON scheduled_publishes (workflow_id, run_at)`,
+      `CREATE INDEX IF NOT EXISTS scheduled_publishes_due ON scheduled_publishes (status, run_at)`,
+    ],
+  },
+  // 1860–1869 (wave 6, chat and rate limits): chat feedback, credential rate limits.
+  {
+    version: 1860,
+    name: 'chat_feedback',
+    statements: [
+      // Thumbs up/down (and a comment) on an answer: of a hosted chat or widget (an execution of a public Chat trigger workflow),
+      // of the editor, or of an agent session (lib/server/chat-feedback.ts). One row per answer: `id` is `execution:<id>` or
+      // `agent:<session>:<entry>`.
+      `CREATE TABLE IF NOT EXISTS chat_feedback (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        workflow_id TEXT,
+        execution_id TEXT,
+        agent_id TEXT,
+        session_id TEXT,
+        entry_id TEXT,
+        rating TEXT NOT NULL,
+        comment TEXT,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS chat_feedback_workflow ON chat_feedback (workflow_id, updated_at)`,
+      `CREATE INDEX IF NOT EXISTS chat_feedback_agent ON chat_feedback (agent_id, session_id)`,
+      `CREATE INDEX IF NOT EXISTS chat_feedback_execution ON chat_feedback (execution_id)`,
+    ],
+  },
+  {
+    version: 1861,
+    name: 'credential_rate_limit',
+    statements: [],
+    // A rate limit set on a credential (JSON {limit, intervalSeconds}); not secret, so it sits next to the sealed data (lib/server/credentials/vault.ts).
+    addColumns: [{ table: 'credentials', column: 'rate_limit', definition: 'TEXT' }],
+  },
+  // 1870–1879 (wave 6, MCP): the instance MCP server per project (lib/server/mcp/project-servers.ts).
+  {
+    version: 1870,
+    name: 'mcp_token_project',
+    statements: [],
+    // A Landflow MCP token scoped to one project: the instance MCP server then lists and changes only that project's workflows.
+    addColumns: [{ table: 'mcp_tokens', column: 'project_id', definition: 'TEXT' }],
+  },
+  {
+    version: 1871,
+    name: 'mcp_project_servers',
+    statements: [
+      // Projects whose scoped MCP server (/api/mcp/projects/<id>) the gateway sync registers a route for.
+      `CREATE TABLE IF NOT EXISTS mcp_project_servers (
+        project_id TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+    ],
+  },
+  // 1880–1889 (wave 6, queue mode at scale and the audit log): evaluation run heartbeats, agents in the database, audit signing.
+  {
+    version: 1880,
+    name: 'evaluation_run_heartbeat',
+    statements: [],
+    // A running evaluation's process saves this every few seconds, so another main doesn't take it for one a restart interrupted
+    // (lib/server/evaluations/runner.ts `settleInterrupted`).
+    addColumns: [{ table: 'evaluation_runs', column: 'heartbeat_at', definition: 'TEXT' }],
+  },
+  {
+    version: 1881,
+    name: 'agents_in_database',
+    statements: [
+      // Agents, their sessions and cross-session memories when LANDFLOW_CONFIG_STORE=database (the default in queue mode):
+      // `data` is the document the files hold (agents/, agent-sessions/, agent-memory/), imported once (lib/server/agents/store.ts).
+      `CREATE TABLE IF NOT EXISTS agent_definitions (
+        id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        data TEXT NOT NULL
+      )`,
+      // `summary` is the SessionSummary (the list needs no timeline); `conversation_key` finds a channel conversation's session.
+      `CREATE TABLE IF NOT EXISTS agent_sessions (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        conversation_key TEXT,
+        updated_at TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        data TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS agent_sessions_agent ON agent_sessions (agent_id, updated_at)`,
+      `CREATE INDEX IF NOT EXISTS agent_sessions_conversation ON agent_sessions (agent_id, conversation_key)`,
+      // One row per agent and user: the notes the agent remembers across sessions (a JSON array).
+      `CREATE TABLE IF NOT EXISTS agent_memory (
+        agent_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (agent_id, user_id)
+      )`,
+    ],
+  },
+  {
+    version: 1882,
+    name: 'audit_signed_heads',
+    statements: [
+      // Ed25519 keys that sign the audit chain's head (lib/server/audit/signing.ts): the public key (SPKI PEM) and the private key
+      // sealed with the credentials key. A retired key stays so older heads verify.
+      `CREATE TABLE IF NOT EXISTS audit_signing_keys (
+        key_id TEXT PRIMARY KEY,
+        public_key TEXT NOT NULL,
+        private_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        retired_at TEXT
+      )`,
+      // Signed heads, one per chain sequence number (the envelope as JSON), and whether they reached the anchor stores.
+      `CREATE TABLE IF NOT EXISTS audit_heads (
+        seq BIGINT PRIMARY KEY,
+        signed_at TEXT NOT NULL,
+        key_id TEXT NOT NULL,
+        envelope TEXT NOT NULL,
+        anchored_at TEXT,
+        anchor_error TEXT
+      )`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -974,11 +1182,13 @@ export const TABLES = {
   evaluation_runs: ['id'],
   evaluation_cases: ['run_id', 'idx'],
   online_eval_configs: ['target'],
+  evaluation_settings: ['workflow_id'],
   online_eval_scores: ['id'],
   alert_channels: ['id'],
   alert_rules: ['id'],
   alert_throttle: ['rule_id', 'workflow_id'],
   alert_waiting_sent: ['rule_id', 'execution_id'],
+  alert_state: ['rule_id', 'key'],
   projects: ['id'],
   project_members: ['project_id', 'user_id'],
   project_resources: ['kind', 'resource_id'],
@@ -1014,6 +1224,15 @@ export const TABLES = {
   mcp_approvals: ['id'],
   mcp_trigger_subs: ['sub_key'],
   mcp_trigger_events: ['sub_key', 'id'],
+  mcp_project_servers: ['project_id'],
+  scheduled_publishes: ['id'],
+  approval_email_used: ['group_id'],
+  chat_feedback: ['id'],
+  agent_definitions: ['id'],
+  agent_sessions: ['id'],
+  agent_memory: ['agent_id', 'user_id'],
+  audit_signing_keys: ['key_id'],
+  audit_heads: ['seq'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

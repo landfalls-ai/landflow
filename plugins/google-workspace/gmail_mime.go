@@ -303,3 +303,23 @@ func (m *gmailMessage) date() string {
 	}
 	return raw
 }
+
+// attachmentParts returns the parts of the MIME tree that are files: a file
+// name and either an attachment id or inline data.
+func (m *gmailMessage) attachmentParts() []*gmailPart {
+	var out []*gmailPart
+	var walk func(p *gmailPart)
+	walk = func(p *gmailPart) {
+		if p == nil {
+			return
+		}
+		if p.Filename != "" && (p.Body.AttachmentID != "" || p.Body.Data != "") {
+			out = append(out, p)
+		}
+		for _, child := range p.Parts {
+			walk(child)
+		}
+	}
+	walk(m.Payload)
+	return out
+}

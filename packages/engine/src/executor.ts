@@ -94,6 +94,7 @@ import type {
   ResumeStackEntry,
   ResumeState,
   RunCheckpoint,
+  NodeRateLimit,
   RunSource,
   WorkflowConnection,
   WorkflowNode,
@@ -332,21 +333,30 @@ class WorkflowRun {
     return `${this.options.executionId}:${node.id}:${next}`;
   }
 
-  /** `node.rateLimit`: wait for a turn (logged when it had to wait: the entry is returned for the NodeRun). Aborts with the run. */
+  /**
+   * `node.rateLimit`, then the rate limits of the credentials the node uses: wait for a turn at each (logged when it had to
+   * wait: the entry is returned for the NodeRun). Aborts with the run.
+   */
   private async throttle(node: WorkflowNode): Promise<LogEntry | undefined> {
-    const limit = node.rateLimit;
-    if (!limit || !(Number(limit.limit) > 0) || !(Number(limit.intervalSeconds) > 0)) return undefined;
-    const limiter = this.options.rateLimiter ?? sharedRateLimiter();
-    let waited: number;
-    try {
-      waited = await limiter.acquire(`${this.options.workflow.id}:${node.id}`, limit, this.signal);
-    } catch (error) {
-      if (this.signal?.aborted) throw this.abortError();
-      throw error;
+    const limits: Array<{ key: string; limit: NodeRateLimit; label: string }> = [];
+    if (node.rateLimit) limits.push({ key: `${this.options.workflow.id}:${node.id}`, limit: node.rateLimit, label: 'Rate limit' });
+    for (const credential of this.options.credentialRateLimits?.(node) ?? []) limits.push({ key: credential.key, limit: credential.limit, label: `Rate limit of credential "${credential.name}"` });
+    let entry: LogEntry | undefined;
+    for (const { key, limit, label } of limits) {
+      if (!(Number(limit.limit) > 0) || !(Number(limit.intervalSeconds) > 0)) continue;
+      const limiter = this.options.rateLimiter ?? sharedRateLimiter();
+      let waited: number;
+      try {
+        waited = await limiter.acquire(key, limit, this.signal);
+      } catch (error) {
+        if (this.signal?.aborted) throw this.abortError();
+        throw error;
+      }
+      if (waited < 50) continue;
+      const line: LogEntry = { level: 'info', message: `${label} (${limit.limit} per ${limit.intervalSeconds} s): waited ${(waited / 1000).toFixed(1)} s` };
+      this.emit({ type: 'node.log', executionId: this.options.executionId, nodeId: node.id, level: line.level, message: line.message, at: now() });
+      entry = entry ? { ...entry, message: `${entry.message}\n${line.message}` } : line;
     }
-    if (waited < 50) return undefined;
-    const entry: LogEntry = { level: 'info', message: `Rate limit (${limit.limit} per ${limit.intervalSeconds} s): waited ${(waited / 1000).toFixed(1)} s` };
-    this.emit({ type: 'node.log', executionId: this.options.executionId, nodeId: node.id, level: entry.level, message: entry.message, at: now() });
     return entry;
   }
 

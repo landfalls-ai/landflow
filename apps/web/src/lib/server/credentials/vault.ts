@@ -18,9 +18,9 @@ import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nanoid } from 'nanoid';
 import { isPropertyVisible, splitType, withPropertyDefaults, type CredentialTypeDescriptor, type JsonObject, type NodeDescriptor } from '@landflow/protocol';
-import type { WorkflowNode } from '@landflow/engine';
-import { OAUTH2_CREDENTIAL } from '../../shared/oauth2';
-import type { CredentialDetail, CredentialSummary } from '../../shared/types';
+import type { CredentialRateLimit, WorkflowNode } from '@landflow/engine';
+import { MCP_OAUTH2_CREDENTIAL, OAUTH2_CREDENTIAL } from '../../shared/oauth2';
+import type { CredentialDetail, CredentialRateLimitSetting, CredentialSummary } from '../../shared/types';
 import { configStoreKind, importOnce, onConfigChanged, writeJsonFile } from '../config-store';
 import { database, type Database } from '../db';
 import { registry } from '../plugins/registry';
@@ -33,6 +33,7 @@ import {
   ACCOUNT_FIELD,
   clientCredentialsToken,
   ERROR_FIELD,
+  META_FIELD,
   isExpiring,
   nodeTokenFields,
   oauth2Config,
@@ -60,8 +61,19 @@ export interface StoredCredential {
   /** Names of the fields that were secret when saved, so they stay masked while the plugin is offline. */
   secretFields: string[];
   data: Sealed;
+  /** At most `limit` calls per `intervalSeconds` across every node and run using it (kept in the clear: it is not secret). */
+  rateLimit?: CredentialRateLimitSetting;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A rate limit as saved: a whole number of calls, an interval of 0.1 s to a day; anything else is no limit. */
+export function cleanRateLimit(value: unknown): CredentialRateLimitSetting | undefined {
+  const v = value as Partial<CredentialRateLimitSetting> | null | undefined;
+  const limit = Math.floor(Number(v?.limit));
+  const intervalSeconds = Number(v?.intervalSeconds);
+  if (!(limit >= 1) || !(intervalSeconds >= 0.1)) return undefined;
+  return { limit: Math.min(limit, 100_000), intervalSeconds: Math.min(intervalSeconds, 86_400) };
 }
 
 export class CredentialError extends Error {
@@ -150,6 +162,7 @@ type CredentialRow = {
   type: string;
   secret_fields: string;
   data: string;
+  rate_limit?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -160,6 +173,7 @@ const credentialRow = (credential: StoredCredential): CredentialRow => ({
   type: credential.type,
   secret_fields: JSON.stringify(credential.secretFields ?? []),
   data: JSON.stringify(credential.data),
+  rate_limit: credential.rateLimit ? JSON.stringify(credential.rateLimit) : null,
   created_at: credential.createdAt,
   updated_at: credential.updatedAt,
 });
@@ -187,7 +201,7 @@ export class CredentialTable implements CredentialBackend {
     this.dirty = false;
     return db.all<CredentialRow>('SELECT * FROM credentials').flatMap((row) => {
       try {
-        return [{ id: row.id, name: row.name, type: row.type, secretFields: JSON.parse(row.secret_fields) as string[], data: JSON.parse(row.data) as Sealed, createdAt: row.created_at, updatedAt: row.updated_at }];
+        return [{ id: row.id, name: row.name, type: row.type, secretFields: JSON.parse(row.secret_fields) as string[], data: JSON.parse(row.data) as Sealed, ...(cleanRateLimit(row.rate_limit && JSON.parse(row.rate_limit)) && { rateLimit: cleanRateLimit(JSON.parse(row.rate_limit!)) }), createdAt: row.created_at, updatedAt: row.updated_at }];
       } catch {
         return [];
       }
@@ -318,8 +332,8 @@ export class CredentialVault {
   }
 
   private summary(credential: StoredCredential, usedBy: Map<string, CredentialSummary['usedBy']>): CredentialSummary {
-    const { id, name, type, createdAt, updatedAt } = credential;
-    return { id, name, type, createdAt, updatedAt, usedBy: usedBy.get(id) ?? [], ...this.oauth2StatusOf(credential) };
+    const { id, name, type, createdAt, updatedAt, rateLimit } = credential;
+    return { id, name, type, createdAt, updatedAt, usedBy: usedBy.get(id) ?? [], ...(rateLimit && { rateLimit }), ...this.oauth2StatusOf(credential) };
   }
 
   /** core.oAuth2Api, a type extending it, or (its plugin offline) a credential that holds a token. */
@@ -370,7 +384,7 @@ export class CredentialVault {
    * `options.id` keeps a given id (a promoted definition, planned before it is created); `options.partial` skips the
    * required-field check (a promoted definition comes without its secrets, which are filled in on this instance).
    */
-  create(input: { name: string; type: string; data: JsonObject }, options: { id?: string; partial?: boolean } = {}): CredentialDetail {
+  create(input: { name: string; type: string; data: JsonObject; rateLimit?: CredentialRateLimitSetting | null }, options: { id?: string; partial?: boolean } = {}): CredentialDetail {
     const info = registry.credentialType(input.type);
     if (!info) throw new CredentialError(`Unknown credential type "${input.type}" — is its plugin running?`);
     if (options.id && this.credentials.has(options.id)) throw new CredentialError(`A credential with id ${options.id} exists already`, 409);
@@ -383,6 +397,7 @@ export class CredentialVault {
       type: input.type,
       secretFields: secretNames(info.descriptor),
       data: this.seal(data),
+      ...(cleanRateLimit(input.rateLimit) && { rateLimit: cleanRateLimit(input.rateLimit) }),
       createdAt: now,
       updatedAt: now,
     };
@@ -418,7 +433,7 @@ export class CredentialVault {
    * Fields in `data` replace the saved ones. A secret left empty keeps its saved
    * value (the form never receives it); `null` clears a field.
    */
-  update(id: string, input: { name?: string; data?: Record<string, unknown> }): CredentialDetail {
+  update(id: string, input: { name?: string; data?: Record<string, unknown>; rateLimit?: CredentialRateLimitSetting | null }): CredentialDetail {
     const credential = this.credentials.get(id);
     if (!credential) throw new CredentialError('Credential not found', 404);
     const descriptor = registry.credentialType(credential.type)?.descriptor;
@@ -429,9 +444,30 @@ export class CredentialVault {
       credential.secretFields = [...new Set([...credential.secretFields, ...secretNames(descriptor)])];
     }
     if (input.name?.trim()) credential.name = input.name.trim();
+    // null (or a limit of 0) takes the rate limit off.
+    if (input.rateLimit !== undefined) {
+      const limit = cleanRateLimit(input.rateLimit);
+      if (limit) credential.rateLimit = limit;
+      else delete credential.rateLimit;
+    }
     credential.updatedAt = new Date().toISOString();
     this.persist({ saved: credential });
     return this.get(id)!;
+  }
+
+  /**
+   * The rate limits of the credentials a node uses, for the engine (`credentialRateLimits`): the limiter key is the credential's id, so
+   * every node and run using it shares one window (across processes in queue mode).
+   */
+  rateLimitsFor(node: Pick<WorkflowNode, 'credentials'>): CredentialRateLimit[] {
+    const refs = Object.values(node.credentials ?? {});
+    if (!refs.length) return [];
+    const seen = new Set<string>();
+    return refs.flatMap((ref) => {
+      const credential = seen.has(ref.id) ? undefined : this.credentials.get(ref.id);
+      seen.add(ref.id);
+      return credential?.rateLimit ? [{ key: `credential:${credential.id}`, name: credential.name, limit: credential.rateLimit }] : [];
+    });
   }
 
   delete(id: string): boolean {
@@ -539,6 +575,26 @@ export class CredentialVault {
     return { name: credential.name, type: credential.type, config: oauth2Config(data), ...(token && { token }) };
   }
 
+  /**
+   * An MCP server's OAuth credential (core.mcpOAuth2Api): the server URL, the flow settings the form holds (without what
+   * discovery found) and what discovery found, for the Connect route. Undefined for any other credential.
+   */
+  mcpOAuth(id: string): { serverUrl: string; form: OAuth2Config; meta?: JsonObject } | undefined {
+    const { credential, data } = this.oauth2Credential(id);
+    if (credential.type !== MCP_OAUTH2_CREDENTIAL) return undefined;
+    const meta = data[META_FIELD];
+    const { [META_FIELD]: _meta, ...form } = data;
+    return { serverUrl: typeof data.serverUrl === 'string' ? data.serverUrl.trim() : '', form: oauth2Config(form), ...(meta && typeof meta === 'object' && !Array.isArray(meta) && { meta }) };
+  }
+
+  /** Keep what discovery and client registration found (it survives Disconnect: the registered client is reused). */
+  saveMcpOAuthMeta(id: string, meta: JsonObject) {
+    const { credential } = this.oauth2Credential(id);
+    this.writeOAuth2(credential, (data) => {
+      data[META_FIELD] = meta;
+    });
+  }
+
   /** The data of the credential the host handed to a node, when it is an OAuth2 credential's. */
   oauth2Origin(data: object): string | undefined {
     return oauthOrigins.get(data);
@@ -578,7 +634,7 @@ export class CredentialVault {
   disconnectOAuth2(id: string): CredentialDetail {
     const { credential } = this.oauth2Credential(id);
     this.writeOAuth2(credential, (data) => {
-      for (const field of RESERVED_FIELDS) delete data[field];
+      for (const field of RESERVED_FIELDS) if (field !== META_FIELD) delete data[field];
     });
     return this.get(id)!;
   }

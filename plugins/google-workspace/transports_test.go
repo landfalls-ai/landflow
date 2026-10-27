@@ -43,8 +43,8 @@ func names(m map[string]bool, want bool) string {
 	return strings.Join(out, ",")
 }
 
-const googleReads = "gmail_message_get,gmail_message_getAll,googleCalendar_event_get,googleCalendar_event_getAll,googleDocs_document_get," +
-	"googleDrive_fileFolder_search,googleDrive_file_download,googleSheets_sheet_read"
+const googleReads = "gmail_message_get,gmail_message_getAll,googleCalendar_event_get,googleCalendar_event_getAll,googleDocs_document_export,googleDocs_document_get," +
+	"googleDrive_fileFolder_search,googleDrive_file_download,googleDrive_file_export,googleSheets_sheet_read,googleSheets_spreadsheet_export"
 
 // Reads and lookups are idempotent; every write, send and delete stays at most once.
 func TestOnlyReadOperationsAreIdempotent(t *testing.T) {
@@ -65,7 +65,7 @@ func TestOnlyReadOperationsAreIdempotent(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	want := "googleCalendar.get,googleCalendar.getAll,googleDocs.get,googleDrive.download,googleDrive.search,gmail.get,gmail.getAll,googleSheets.read"
+	want := "googleCalendar.get,googleCalendar.getAll,googleDocs.export,googleDocs.get,googleDrive.download,googleDrive.export,googleDrive.search,gmail.get,gmail.getAll,googleSheets.export,googleSheets.read"
 	wantSorted := strings.Split(want, ",")
 	sort.Strings(wantSorted)
 	if strings.Join(got, ",") != strings.Join(wantSorted, ",") {

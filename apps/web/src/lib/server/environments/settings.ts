@@ -108,6 +108,11 @@ export function rowTableIds(): string[] {
   return readEnvironmentSettings().rowTables ?? [];
 }
 
+/** The merge settings of the tables whose rows promotion copies (by table id). */
+export function rowMergeSettings(): Record<string, { keys: string[]; deleteMissing?: boolean }> {
+  return readEnvironmentSettings().rowMerge ?? {};
+}
+
 /** The `$secrets` references for promoted credentials' secret fields (for promotions to `target`). */
 export function secretMappingsFor(target: string): CredentialSecretMapping[] {
   return (readEnvironmentSettings().secretMappings ?? []).filter((m) => !m.environment || m.environment === target);

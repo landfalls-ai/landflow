@@ -1,0 +1,37 @@
+# Queue-mode workers (components/queue-mode): scale `landflow-worker` on the depth of the job queue in Valkey.
+#   The queue is three Redis Streams per install, `<prefix>:jobs` (normal), `<prefix>:jobs:high` and `<prefix>:jobs:low`, each read by the
+#   consumer group `workers` (the prefix is LANDFLOW_QUEUE_PREFIX, default `landflow`; on a Valkey Cluster it is `{<prefix>}`, the hash tag).
+#   lagCount:               entries not yet delivered to any worker (the backlog); one replica per LANDFLOW_WORKER_CONCURRENCY (10) of them.
+#   pendingEntriesCount:    entries delivered and not acknowledged = runs in flight; a worker holds at most 10. Scale up before they all run at once.
+#   Several triggers: KEDA scales to the largest answer. `normal` and `high` are enough for most installs; add `jobs:low` the same way.
+#   Scaling down is graceful (the worker finishes or re-queues its runs, terminationGracePeriodSeconds 60), but keep a floor of
+#   minReplicaCount: 1 so a run that arrives has a worker, and don't let the cooldown be shorter than your longest runs.
+#   address:                a name KEDA can resolve from its own namespace: the Service's full DNS name (`valkey` of components/valkey).
+# Not part of any overlay: KEDA is not installed by these manifests, so this example was not applied (KEDA is not installed on the OrbStack test cluster).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: landflow-worker-queue
+  namespace: landflow-dev
+  labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: autoscaling }
+spec:
+  scaleTargetRef:
+    name: landflow-worker
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  cooldownPeriod: 300
+  triggers:
+    - type: redis-streams
+      metadata:
+        address: valkey.landflow-dev.svc.cluster.local:6379
+        stream: landflow:jobs
+        consumerGroup: workers
+        pendingEntriesCount: "8"
+        lagCount: "10"
+    - type: redis-streams
+      metadata:
+        address: valkey.landflow-dev.svc.cluster.local:6379
+        stream: landflow:jobs:high
+        consumerGroup: workers
+        pendingEntriesCount: "8"
+        lagCount: "5"

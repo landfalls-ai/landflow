@@ -161,6 +161,12 @@ func (GmailNode) Description() landflow.NodeDescriptor {
 						Description: "Whether to reply to the sender only or to every recipient of the original message"},
 				}},
 			simplifyProperty(show("message", "get", "getAll")),
+			{Name: "downloadAttachments", DisplayName: "Download Attachments", Type: landflow.PropBoolean, Default: false,
+				Description:    "Whether to put the message's attachments under the item's binary data (attachment_0, attachment_1…)",
+				DisplayOptions: show("message", "get", "getAll")},
+			{Name: "attachmentPrefix", DisplayName: "Attachment Prefix", Type: landflow.PropString, Default: "attachment_",
+				Description:    "Binary properties are named this prefix plus the attachment's number",
+				DisplayOptions: with(show("message", "get", "getAll"), "downloadAttachments", true)},
 			paging[0],
 			paging[1],
 			gmailFilters(show("message", "getAll")),
@@ -188,10 +194,18 @@ func (GmailNode) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, error
 			results, err = one(g.send(i))
 		case "reply":
 			results, err = one(g.reply(i))
-		case "get":
-			results, err = one(g.get(i))
-		case "getAll":
-			results, err = g.getMany(i)
+		case "get", "getAll":
+			if ctx.ParamBool("downloadAttachments", i, false) {
+				var got []landflow.Item
+				if got, err = g.getWithAttachments(i, operation == "getAll"); err == nil {
+					out = append(out, got...)
+					continue
+				}
+			} else if operation == "get" {
+				results, err = one(g.get(i))
+			} else {
+				results, err = g.getMany(i)
+			}
 		case "addLabels", "removeLabels", "markAsRead", "markAsUnread":
 			results, err = one(g.modify(i, operation))
 		default:
@@ -459,6 +473,78 @@ func (g *gmailRun) get(i int) (map[string]any, error) {
 	}
 	if g.ctx.ParamBool("simple", i, true) {
 		return m.simplify(), nil
+	}
+	return raw, nil
+}
+
+// getWithAttachments is get or getAll with each message's attachments stored
+// as binary files (attachment_0, attachment_1…) on its item.
+func (g *gmailRun) getWithAttachments(i int, many bool) ([]landflow.Item, error) {
+	var msgs []*gmailMessage
+	var raws []map[string]any
+	if many {
+		query := gmailListQuery(asMap(g.ctx.Param("filters", i)))
+		refs, err := listMessages(g.ctx, g.c, query, limitFor(g.ctx, i, 50))
+		if err != nil {
+			return nil, err
+		}
+		if msgs, raws, err = fetchMessages(g.ctx, g.c, refs); err != nil {
+			return nil, err
+		}
+	} else {
+		id, err := requireParam(g.ctx, "messageId", "Message ID", i)
+		if err != nil {
+			return nil, err
+		}
+		m, raw, err := getMessageRaw(g.ctx, g.c, id, "full")
+		if err != nil {
+			return nil, err
+		}
+		msgs, raws = []*gmailMessage{m}, []map[string]any{raw}
+	}
+	simple := g.ctx.ParamBool("simple", i, true)
+	prefix := g.ctx.ParamString("attachmentPrefix", i, "attachment_")
+	var out []landflow.Item
+	for k, m := range msgs {
+		result := raws[k]
+		if simple {
+			result = m.simplify()
+		}
+		files := map[string]landflow.BinaryRef{}
+		for n, part := range m.attachmentParts() {
+			data, err := g.attachmentBytes(m.ID, part)
+			if err != nil {
+				return nil, err
+			}
+			ref, err := g.ctx.PrepareBinary(data, part.Filename, part.MimeType)
+			if err != nil {
+				return nil, err
+			}
+			files[prefix+strconv.Itoa(n)] = ref
+		}
+		item := landflow.Item{JSON: result, PairedItem: &landflow.PairedItem{Item: i}}
+		if len(files) > 0 {
+			item.Binary = files
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// attachmentBytes returns an attachment's bytes: inline in the part, or from
+// the attachments endpoint.
+func (g *gmailRun) attachmentBytes(messageID string, part *gmailPart) ([]byte, error) {
+	var att struct {
+		Data string `json:"data"`
+	}
+	if part.Body.AttachmentID == "" {
+		att.Data = part.Body.Data
+	} else if err := g.c.do(g.ctx, apiGmail, http.MethodGet, gmailMessages+"/"+url.PathEscape(messageID)+"/attachments/"+url.PathEscape(part.Body.AttachmentID), nil, nil, &att); err != nil {
+		return nil, err
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(att.Data, "="))
+	if err != nil {
+		return nil, userError("Gmail returned an attachment that is not base64url.", "Attachment %q is unreadable: %v", part.Filename, err)
 	}
 	return raw, nil
 }

@@ -17,11 +17,16 @@ export interface ModelCall {
   provider: string;
   model: string;
   operation: 'chat' | 'embeddings';
+  /** The model credential the call was made with (caps per credential); absent for the host's own keys and local models. */
+  credentialId?: string;
 }
 
 export interface MeteredCall extends ModelCall {
+  /** The whole prompt, cached tokens included. */
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
   cost: number;
 }
 
@@ -39,8 +44,10 @@ export interface UsageLimit {
 
 /** Prices calls and stores them; shared by a scope tree (children inherit their root's meter). */
 export interface UsageMeter {
-  cost(call: ModelCall & { inputTokens: number; outputTokens: number }): number;
+  cost(call: ModelCall & { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }): number;
   record(call: MeteredCall, scope: UsageScope): void;
+  /** Caps that depend on the call itself (the credential it uses) or on who started the run (Settings → AI usage caps). */
+  callLimits?(call: ModelCall, scope: UsageScope): UsageLimit[];
 }
 
 export interface UsageScopeInfo {
@@ -48,6 +55,8 @@ export interface UsageScopeInfo {
   workflowId?: string;
   agentId?: string;
   sessionId?: string;
+  /** Who started the run (a signed-in user), for the caps per user. */
+  userId?: string;
 }
 
 /** Thrown when a cap is reached: the call is refused (or, once over the cap, the run stops after it). */
@@ -68,6 +77,8 @@ export const isUsageCapError = (error: unknown): error is UsageCapError => (erro
 const add = (totals: AiUsageTotals, call: MeteredCall) => {
   totals.inputTokens += call.inputTokens;
   totals.outputTokens += call.outputTokens;
+  if (call.cacheReadTokens) totals.cacheReadTokens = (totals.cacheReadTokens ?? 0) + call.cacheReadTokens;
+  if (call.cacheWriteTokens) totals.cacheWriteTokens = (totals.cacheWriteTokens ?? 0) + call.cacheWriteTokens;
   totals.cost += call.cost;
   totals.calls += 1;
 };
@@ -112,15 +123,15 @@ export class UsageScope {
     return [...this.models.values()].sort((a, b) => b.cost - a.cost || b.inputTokens + b.outputTokens - (a.inputTokens + a.outputTokens));
   }
 
-  /** Throw when any cap up the chain is already reached. */
-  check(when: 'before' | 'after') {
-    for (const scope of this.chain()) {
-      for (const limit of scope.limits) {
-        if (!(limit.max > 0)) continue;
-        const used = limit.used();
-        if (when === 'before' ? used >= limit.max : used > limit.max) throw new UsageCapError(limit, used);
-      }
-    }
+  /** Throw when any cap up the chain, or any cap that applies to this call (its credential, who started the run), is already reached. */
+  check(when: 'before' | 'after', call?: ModelCall) {
+    const reached = (limit: UsageLimit) => {
+      if (!(limit.max > 0)) return;
+      const used = limit.used();
+      if (when === 'before' ? used >= limit.max : used > limit.max) throw new UsageCapError(limit, used);
+    };
+    for (const scope of this.chain()) for (const limit of scope.limits) reached(limit);
+    if (call) for (const limit of this.meter?.callLimits?.(call, this) ?? []) reached(limit);
   }
 
   /** Count a finished call on the chain and hand it to the meter. */
@@ -148,21 +159,25 @@ export function runInUsageScope<T>(scope: UsageScope, fn: () => T): T {
 
 /** Before a model call: refuse it when a cap is reached. Outside any scope, nothing to check. */
 export function beforeModelCall(call: ModelCall) {
-  void call;
-  currentUsageScope()?.check('before');
+  currentUsageScope()?.check('before', call);
 }
 
 /**
  * After a model call: price it, record it, and throw when it went over a cap (the run stops there with a
  * clear error; the call's result is lost, but it is counted). Returns the estimated cost.
  */
-export function afterModelCall(call: ModelCall & { inputTokens?: number; outputTokens?: number }): number | undefined {
+export function afterModelCall(call: ModelCall & { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number }): number | undefined {
   const scope = currentUsageScope();
   const meter = scope?.meter;
   if (!scope || !meter) return undefined;
-  const tokens = { inputTokens: Math.max(0, Math.round(call.inputTokens ?? 0)), outputTokens: Math.max(0, Math.round(call.outputTokens ?? 0)) };
+  const count = (value: number | undefined) => Math.max(0, Math.round(value ?? 0));
+  const inputTokens = count(call.inputTokens);
+  // The cached parts are parts of the prompt: never more than it.
+  const cacheReadTokens = Math.min(count(call.cacheReadTokens), inputTokens);
+  const cacheWriteTokens = Math.min(count(call.cacheWriteTokens), inputTokens - cacheReadTokens);
+  const tokens = { inputTokens, outputTokens: count(call.outputTokens), cacheReadTokens, cacheWriteTokens };
   const metered: MeteredCall = { ...call, ...tokens, cost: meter.cost({ ...call, ...tokens }) };
   scope.add(metered);
-  scope.check('after');
+  scope.check('after', call);
   return metered.cost;
 }

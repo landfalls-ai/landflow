@@ -187,8 +187,8 @@ describe('Flowise import: component families', () => {
     const upload = `data:text/plain;base64,${Buffer.from('Hello from a file').toString('base64')},filename:notes.txt`;
     expect(single('textFile', { txtFile: upload }).node('X').parameters).toMatchObject({ jsonMode: 'expressionData', jsonData: 'Hello from a file', textSplittingMode: 'simple' });
     const pdf = single('pdfFile', { pdfFile: 'data:application/pdf;base64,JVBERi0=' });
-    expect(pdf.node('X').parameters).toMatchObject({ jsonMode: 'allInputData' });
-    expect(pdf.report.warnings[0]).toMatch(/Flowise loaded pdfFile; that content isn't in the export/);
+    expect(pdf.node('X').parameters).toMatchObject({ jsonMode: 'binaryData', binaryField: '' });
+    expect(pdf.report.warnings[0]).toMatch(/Flowise loaded pdfFile; the file isn't in the export. Feed it in as a binary file/);
     expect(single('cheerioWebScraper', { url: 'https://example.com/docs' }).report.warnings[0]).toMatch(/Flowise loaded https:\/\/example.com\/docs/);
   });
 
@@ -250,6 +250,201 @@ describe('Flowise import: agentflow v2', () => {
   });
 });
 
+const credentials = (...entries: Array<[string, string, string]>) => entries.map(([id, name, type]) => ({ id, name, type }));
+const importWith = (doc: unknown, saved: ReturnType<typeof credentials> = []) => {
+  const { workflow, report } = importWorkflowJson(doc, { resolveType, credentials: saved });
+  const parsed = workflowSchema.safeParse(workflow);
+  expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+  const node = (name: string) => {
+    const found = workflow.nodes.find((n) => n.name === name);
+    if (!found) throw new Error(`no node ${name} (have ${workflow.nodes.map((n) => n.name).join(', ')})`);
+    return found;
+  };
+  const edges = (from: string, to: string) => workflow.connections.filter((c) => c.source === node(from).id && c.target === node(to).id);
+  return { workflow, report, node, edges };
+};
+
+describe('Flowise import: credentials', () => {
+  const chatflow = fixture('conversation-chain.json');
+
+  it('reports the slot a credential maps to; nothing is assigned when no saved credential has the type', () => {
+    const { report, node } = importWith(chatflow);
+    expect(report.credentials).toEqual([{ node: 'ChatOpenAI', flowise: 'openAIApi', type: 'core.openAiApi', slot: 'openAiApi', status: 'create' }]);
+    expect(node('ChatOpenAI').credentials).toBeUndefined();
+    expect(report.warnings).toContain('ChatOpenAI: credential dropped — pick a saved credential in the node.');
+  });
+
+  it('fills the slot when exactly one saved credential has the type', () => {
+    const { report, node } = importWith(chatflow, credentials(['cred_1', 'Work OpenAI', 'core.openAiApi'], ['cred_2', 'Anthropic', 'core.anthropicApi']));
+    expect(node('ChatOpenAI').credentials).toEqual({ openAiApi: { id: 'cred_1', name: 'Work OpenAI' } });
+    expect(report.credentials).toEqual([{ node: 'ChatOpenAI', flowise: 'openAIApi', type: 'core.openAiApi', slot: 'openAiApi', status: 'assigned', credential: 'Work OpenAI' }]);
+    expect(report.warnings.some((w) => w.includes('credential dropped'))).toBe(false);
+  });
+
+  it('asks to choose when several credentials have the type', () => {
+    const { report, node } = importWith(chatflow, credentials(['a', 'One', 'core.openAiApi'], ['b', 'Two', 'core.openAiApi']));
+    expect(node('ChatOpenAI').credentials).toBeUndefined();
+    expect(report.credentials?.[0]).toMatchObject({ status: 'choose' });
+  });
+
+  it('maps the credential types of compatible providers, Anthropic and Postgres, using inputParams when the export has them', () => {
+    const { report, node } = importWith(
+      {
+        ...flow([
+          { id: 'groq', name: 'groqChat', label: 'Groq', inputs: { modelName: 'llama-3.3-70b' } },
+          { id: 'claude', name: 'chatAnthropic', label: 'Claude', inputs: { modelName: 'claude-sonnet-4-5' } },
+          { id: 'pg', name: 'postgres', label: 'PG store', inputs: { tableName: 'docs' } },
+        ]),
+      },
+      credentials(['o', 'Groq key', 'core.openAiApi'], ['n', 'Claude', 'core.anthropicApi'], ['p', 'DB', 'core.postgres']),
+    );
+    // No Flowise credential id on these: the component's default type still maps the slot.
+    expect(node('Groq').credentials).toEqual({ openAiApi: { id: 'o', name: 'Groq key' } });
+    expect(node('Claude').credentials).toEqual({ anthropicApi: { id: 'n', name: 'Claude' } });
+    expect(node('PG store').credentials).toEqual({ postgres: { id: 'p', name: 'DB' } });
+    expect(report.credentials?.map((c) => [c.node, c.flowise, c.status])).toEqual([
+      ['Groq', 'groqApi', 'assigned'],
+      ['Claude', 'anthropicApi', 'assigned'],
+      ['PG store', 'PostgresApi', 'assigned'],
+    ]);
+    expect(report.warnings).toContain('Groq: Groq: use an OpenAI API credential with https://api.groq.com/openai/v1.');
+    const named = flow([{ id: 'm', name: 'chatOpenAI', label: 'Custom named', inputs: {} }]);
+    (named.nodes[0].data as Record<string, unknown>).credential = 'x';
+    (named.nodes[0].data as Record<string, unknown>).inputParams = [{ name: 'credential', type: 'credential', credentialNames: ['azureOpenAIApi'] }];
+    expect(importWith(named).report.credentials?.[0]).toMatchObject({ flowise: 'azureOpenAIApi', type: 'core.openAiApi' });
+  });
+
+  it('never carries a credential id or secret into the workflow', () => {
+    const { workflow } = importWith(chatflow, credentials(['cred_1', 'Work OpenAI', 'core.openAiApi']));
+    expect(JSON.stringify(workflow)).not.toContain('cred-openai-1');
+  });
+});
+
+describe('Flowise import: Custom JS Functions', () => {
+  const { workflow, report, node, edges } = importWith(fixture('custom-function.json'));
+  const code = String(node('Custom JS Function').parameters.codeEach);
+
+  it('becomes a Code node (JavaScript, once per item) wrapping the original code', () => {
+    expect(node('Custom JS Function')).toMatchObject({ type: 'core.code', parameters: { language: 'javascript', mode: 'each' } });
+    expect(code).toContain('const flowiseFunction = async () => {\n  const text = $flow.input.toUpperCase();');
+    expect(code).toContain('  return `${$greeting} ${$city} (${$limit}) ${text}`;');
+    expect(code).toMatch(/return \{ \.\.\.\$json, output \};$/);
+    expect(report.mapped).toContainEqual({ name: 'Custom JS Function', from: 'customFunction', to: 'core.code' });
+  });
+
+  it('translates $flow and the input variables', () => {
+    expect(code).toContain("const $flow = { input: $json.chatInput ?? '', sessionId: $json.sessionId ?? ''");
+    expect(code).toContain('const $city = $json.chatInput;');
+    expect(code).toContain('const $greeting = `Hello, ${$json.chatInput}!`;');
+    expect(code).toContain('const $limit = "5";');
+    expect(code).toContain('const $key = $vars.apiKey;');
+    expect(code).toContain('const $history = [];');
+    expect(String(node('Lookup').parameters.codeEach)).toContain('const $previous = ($json.output ?? $json.text ?? $json.response);');
+  });
+
+  it('says what could not be translated', () => {
+    expect(report.warnings).toContain('Custom JS Function: $flow.state (agentflow state) has no equivalent: it is an empty object here.');
+    expect(report.warnings).toContain('Custom JS Function: process.env is not available in the sandbox: use $vars (Settings → Variables).');
+    expect(node('Custom JS Function').notes).toMatch(/\$history was the chat history/);
+    expect(node('Custom JS Function').notes).toMatch(/process\.env/);
+  });
+
+  it('sits in the main flow: the chat message enters at the function, which feeds the chain and the next function', () => {
+    expect(edges('When chat message received', 'Custom JS Function')).toHaveLength(1);
+    expect(edges('When chat message received', 'Conversation Chain')).toHaveLength(0);
+    expect(edges('When chat message received', 'When chat message received')).toHaveLength(0);
+    expect(edges('Custom JS Function', 'Conversation Chain')).toMatchObject([{ type: 'main' }]);
+    expect(edges('Custom JS Function', 'Lookup')).toMatchObject([{ type: 'main' }]);
+    expect(edges('ChatOpenAI', 'Conversation Chain')).toMatchObject([{ type: 'ai_languageModel' }]);
+    expect(report.warnings.some((w) => w.includes('the function\'s result is in {{ $json.output }}'))).toBe(true);
+    expect(workflow.connections.every((c) => c.source !== c.target)).toBe(true);
+  });
+
+  it('actually runs in the Code node: the converted snippet returns the function’s value', async () => {
+    const { run } = await import('./helpers');
+    const { codeNode } = await import('@/lib/server/nodes/code');
+    const result = await run(codeNode, { ...node('Custom JS Function').parameters, codeEach: code.replace('process.env.TOKEN', 'undefined') }, [{ chatInput: 'paris', sessionId: 's1' }]);
+    expect(result.error).toBeUndefined();
+    expect(result.json()[0]).toMatchObject({ chatInput: 'paris', output: 'Hello, paris! paris (5) PARIS' });
+  });
+});
+
+describe('Flowise import: document stores', () => {
+  const sampleCreds = credentials(['o', 'OpenAI', 'core.openAiApi']);
+
+  it('a store defined next to the chatflow becomes loaders + splitter + embeddings + vector store, and a retriever on the same collection', () => {
+    const { workflow, report, node, edges } = importWith(fixture('document-store-chatflow.json'), sampleCreds);
+    expect(workflow.name).toBe('Support bot');
+    // Embeddings and loaders from the store's definition.
+    expect(node('openAIEmbeddings')).toMatchObject({ type: 'core.embeddingsOpenAi', parameters: { model: 'text-embedding-3-small' }, credentials: { openAiApi: { id: 'o' } } });
+    expect(node('Handbook PDF')).toMatchObject({ type: 'core.documentDefaultDataLoader', parameters: { jsonMode: 'binaryData', textSplittingMode: 'custom' } });
+    expect(node('FAQ').parameters).toMatchObject({ jsonMode: 'expressionData', jsonData: 'Returns take 30 days.' });
+    expect(node('Recursive Character Text Splitter').parameters).toMatchObject({ chunkSize: 800, chunkOverlap: 100 });
+    expect(edges('Recursive Character Text Splitter', 'Handbook PDF')).toMatchObject([{ type: 'ai_textSplitter' }]);
+    // One insert node per loader on the store's collection; the Upsert trigger runs them.
+    expect(node('Document Store (Vector) (insert)').parameters).toMatchObject({ mode: 'insert', collection: 'Help center', tableName: 'help_chunks' });
+    expect(node('Document Store (Vector) (insert 2)').parameters).toMatchObject({ mode: 'insert', collection: 'Help center' });
+    expect(edges('Handbook PDF', 'Document Store (Vector) (insert)')).toMatchObject([{ type: 'ai_document' }]);
+    expect(edges('FAQ', 'Document Store (Vector) (insert 2)')).toMatchObject([{ type: 'ai_document' }]);
+    expect(edges('Upsert documents', 'Document Store (Vector) (insert)')).toHaveLength(1);
+    expect(edges('Upsert documents', 'Document Store (Vector) (insert 2)')).toHaveLength(1);
+    expect(edges('openAIEmbeddings', 'Document Store (Vector) (insert 2)')).toMatchObject([{ type: 'ai_embedding' }]);
+    // Retrieval.
+    expect(node('Document Store (Vector)')).toMatchObject({ type: 'core.vectorStorePGVector', parameters: { mode: 'retrieve', collection: 'Help center', topK: 5 } });
+    expect(edges('Document Store (Vector)', 'Retrieval QA Chain')).toMatchObject([{ type: 'ai_retriever' }]);
+    expect(edges('openAIEmbeddings', 'Document Store (Vector)')).toMatchObject([{ type: 'ai_embedding' }]);
+    // The Postgres credential: two exist in a real setup, none here.
+    expect(report.credentials).toContainEqual(expect.objectContaining({ node: 'Document Store (Vector)', type: 'core.postgres', status: 'create' }));
+    expect(workflow.nodes.filter((n) => n.type === 'core.documentDefaultDataLoader')).toHaveLength(2);
+  });
+
+  it('a store the file doesn’t define stays a reference to a collection, with a warning', () => {
+    const { node, edges, report } = importWith(fixture('document-store-chatflow.json'));
+    expect(node('Unknown store')).toMatchObject({ type: 'core.vectorStoreSqlite', parameters: { mode: 'retrieve', collection: 'store-404' } });
+    expect(edges('Unknown store', 'Second Chain')).toMatchObject([{ type: 'ai_retriever' }]);
+    expect(report.warnings.find((w) => w.startsWith('Unknown store: the Flowise document store “store-404” isn\'t defined'))).toContain('reads the collection “store-404”');
+  });
+
+  it('a document store export alone becomes an insert chain run by a Manual Trigger', () => {
+    const { workflow, report, node, edges } = importWith(fixture('document-store.json'));
+    expect(report.format).toBe('flowise');
+    expect(workflow.name).toBe('Product manuals');
+    expect(workflow.nodes.map((n) => n.type).sort()).toEqual(['core.documentDefaultDataLoader', 'core.embeddingsOllama', 'core.manualTrigger', 'core.textSplitterTokenSplitter', 'core.vectorStoreSqlite']);
+    expect(node('Product manuals').parameters).toMatchObject({ mode: 'insert', collection: 'Product manuals' });
+    expect(node('ollamaEmbedding').parameters).toMatchObject({ model: 'nomic-embed-text', baseUrl: 'http://localhost:11434' });
+    expect(node('Token Splitter').parameters).toMatchObject({ chunkSize: 400, chunkOverlap: 40 });
+    expect(node('Manual').parameters).toMatchObject({ jsonMode: 'binaryData', textSplittingMode: 'custom', options: { metadata: { metadataValues: [{ name: 'kind', value: 'manual' }] } } });
+    expect(edges('Upsert documents', 'Product manuals')).toHaveLength(1);
+    expect(edges('Manual', 'Product manuals')).toMatchObject([{ type: 'ai_document' }]);
+    expect(report.warnings).toContain('Product manuals: Flowise kept it in chroma; Landflow has no store for that, so it uses its SQLite store (documents are inserted again by “Upsert documents”).');
+  });
+
+  it('accepts the store export as JSON text or a one-element list, and a loader node that refers to a store', () => {
+    const store = fixture('document-store.json');
+    expect(importWith(JSON.stringify(store)).workflow.name).toBe('Product manuals');
+    expect(importWith([store]).workflow.name).toBe('Product manuals');
+    // The loader form (Document Store (Loader)) feeding a vector store: replaced by the store's loaders.
+    const doc = {
+      documentStores: [store],
+      ...flow(
+        [
+          { id: 'documentStore_0', name: 'documentStore', label: 'Stored docs', inputs: { selectedStore: 'store-9' } },
+          { id: 'openAIEmbeddings_0', name: 'openAIEmbeddings', label: 'Embeddings', inputs: {} },
+          { id: 'memoryVectorStore_0', name: 'memoryVectorStore', label: 'Copy', inputs: {} },
+        ],
+        [['documentStore_0', 'memoryVectorStore_0', 'document'], ['openAIEmbeddings_0', 'memoryVectorStore_0', 'embeddings']],
+      ),
+    };
+    const { node, edges } = importWith(doc);
+    expect(node('Manual').type).toBe('core.documentDefaultDataLoader');
+    expect(edges('Manual', 'Copy')).toMatchObject([{ type: 'ai_document' }]);
+    // Without the definition the loader reads items and says so.
+    const missing = importWith({ ...doc, documentStores: [] });
+    expect(missing.node('Stored docs').parameters).toMatchObject({ jsonMode: 'allInputData' });
+    expect(missing.report.warnings.some((w) => w.includes('document store store-9 isn\'t defined in the file'))).toBe(true);
+  });
+});
+
 describe('Flowise import over the route', () => {
   it('POST /api/workflows/import detects the format and saves the workflow', async () => {
     Object.assign(process.env, { LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' });
@@ -262,5 +457,18 @@ describe('Flowise import over the route', () => {
     expect(body.report.format).toBe('flowise');
     expect(body.workflow).toMatchObject({ name: 'Bike shop chat', id: expect.stringMatching(/^wf_/) });
     expect(body.workflow.nodes.map((n: { type: string }) => n.type).sort()).toEqual(['core.chainLlm', 'core.chatTrigger', 'core.openAiChatModel', 'core.simpleMemory']);
+    expect(body.report.credentials).toEqual([expect.objectContaining({ node: 'ChatOpenAI', type: 'core.openAiApi', slot: 'openAiApi' })]);
+  });
+
+  it('assigns the only saved credential of the type, and imports a document store export', async () => {
+    const { credentials: vault } = await import('@/lib/server/credentials/vault');
+    const saved = vault.create({ name: 'Route OpenAI', type: 'core.openAiApi', data: { apiKey: 'sk-route', baseUrl: 'http://127.0.0.1:1/v1' } });
+    const { POST } = await import('@/app/api/workflows/import/route');
+    const response = await POST(new Request('http://localhost/api/workflows/import', { method: 'POST', body: JSON.stringify({ data: fixture('conversation-chain.json'), create: false }) }));
+    const body = await response.json();
+    expect(body.workflow.nodes.find((n: { name: string }) => n.name === 'ChatOpenAI').credentials).toEqual({ openAiApi: { id: saved.id, name: 'Route OpenAI' } });
+    expect(body.report.credentials[0]).toMatchObject({ status: 'assigned', credential: 'Route OpenAI' });
+    const store = await POST(new Request('http://localhost/api/workflows/import', { method: 'POST', body: JSON.stringify({ data: fixture('document-store.json'), create: false }) }));
+    expect((await store.json()).workflow.name).toBe('Product manuals');
   });
 });

@@ -45,7 +45,7 @@ describe('manifest', () => {
   function check(manifest: PluginManifest) {
     expect(manifestSchema.safeParse(manifest).success).toBe(true);
     expect(manifest.plugin).toMatchObject({ id: 'messaging', name: 'Messaging', color: '#229ED9', language: 'typescript' });
-    expect(manifest.nodes.map((n) => n.name)).toEqual(['telegram', 'telegramTrigger', 'slack', 'discord', 'whatsApp', 'twilio', 'emailSend']);
+    expect(manifest.nodes.map((n) => n.name)).toEqual(['telegram', 'telegramTrigger', 'slack', 'slackTrigger', 'discord', 'whatsApp', 'twilio', 'emailSend']);
     for (const icon of [manifest.plugin.icon, ...manifest.nodes.map((n) => n.icon), ...(manifest.credentialTypes ?? []).map((c) => c.icon)]) {
       expect(icon).toMatch(/^data:image\/svg\+xml;base64,/);
     }
@@ -53,7 +53,9 @@ describe('manifest', () => {
     expect(manifest.credentialTypes?.map((c) => [c.name, c.testable])).toEqual([
       ['telegramApi', true],
       ['slackApi', true],
+      ['slackOAuth2Api', true],
       ['discordBotApi', true],
+      ['discordOAuth2Api', true],
       ['discordWebhookApi', true],
       ['whatsAppApi', true],
       ['twilioApi', true],
@@ -78,22 +80,28 @@ describe('manifest', () => {
       'slack.get',
       'slack.getPermalink',
       'discord.getAll',
+      'whatsApp.get',
+      'twilio.download',
+      'twilio.list',
       'twilio.get',
       'twilio.list',
       'twilio.get',
+      'twilio.getMedia',
       'twilio.list',
     ]);
     // Every secret field is masked.
     for (const type of manifest.credentialTypes ?? []) {
       for (const property of type.properties) {
-        if (/token|password|webhookUrl/i.test(property.name)) expect(property.typeOptions?.password).toBe(true);
+        if (property.type !== 'hidden' && /token|password|webhookUrl/i.test(property.name)) expect(property.typeOptions?.password).toBe(true);
       }
     }
     expect(manifest.nodes.find((n) => n.name === 'discord')?.credentials).toEqual([
       { name: 'discordBotApi', required: true, displayOptions: { show: { authentication: ['botToken'] } } },
+      { name: 'discordOAuth2Api', required: true, displayOptions: { show: { authentication: ['oAuth2'] } } },
       { name: 'discordWebhookApi', required: true, displayOptions: { show: { authentication: ['webhook'] } } },
     ]);
     expect(manifest.nodes.find((n) => n.name === 'telegramTrigger')).toMatchObject({ kind: 'trigger', triggerSource: 'poll' });
+    expect(manifest.nodes.find((n) => n.name === 'slackTrigger')).toMatchObject({ kind: 'trigger', triggerSource: 'appWebhook' });
   }
 
   it('is valid over HTTP, icons inlined', async () => {

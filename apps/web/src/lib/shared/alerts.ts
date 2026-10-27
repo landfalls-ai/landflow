@@ -3,14 +3,40 @@
  * the API (lib/server/alerts, /api/settings/alerts) and Settings → Alerts. No runtime imports beyond plain data.
  */
 
-export type AlertChannelKind = 'email' | 'slack' | 'webhook' | 'telegram';
+export type AlertChannelKind = 'email' | 'slack' | 'webhook' | 'telegram' | 'teams' | 'discord';
 
 /**
  * What a rule reacts to. `failed`: a production run ended in error (after its last automatic retry); `timedOut`: it
  * failed by the workflow or a node timing out; `retriesExhausted`: an automatic retry failed and none is left;
  * `waiting`: a run has been waiting (for a form, a webhook, an approval…) longer than the rule's minutes.
+ * The rest belong to rules of another kind (`AlertRuleKind`): `failureRate`, `pluginOffline` (and its recovery),
+ * `costThreshold` and `evaluationScore`.
  */
-export type AlertEvent = 'failed' | 'timedOut' | 'retriesExhausted' | 'waiting';
+export type AlertEvent = 'failed' | 'timedOut' | 'retriesExhausted' | 'waiting' | 'failureRate' | 'pluginOffline' | 'pluginOnline' | 'costThreshold' | 'evaluationScore';
+
+/**
+ * What a rule watches. `runs` (the default): single runs that failed or waited too long (the `events`);
+ * `failureRate`: a workflow's share of failed runs over a window; `plugin`: plugins going offline (and back);
+ * `cost`: AI usage reaching a share of a cap (Settings → AI usage caps, workflow and agent limits);
+ * `evaluation`: a metric's average on an evaluation run falling below a score or dropping against the run before.
+ */
+export type AlertRuleKind = 'runs' | 'failureRate' | 'plugin' | 'cost' | 'evaluation';
+
+export const ALERT_RULE_KINDS: readonly { id: AlertRuleKind; label: string; hint: string }[] = [
+  { id: 'runs', label: 'Failed runs', hint: 'Each run that failed, timed out or waited too long' },
+  { id: 'failureRate', label: 'Failure rate', hint: 'More than a share of a workflow’s runs failed within a window' },
+  { id: 'plugin', label: 'Plugin offline', hint: 'A plugin went offline and stayed offline past a grace period (and when it is back)' },
+  { id: 'cost', label: 'AI cost', hint: 'AI usage reached a share of a cap, before the cap stops runs' },
+  { id: 'evaluation', label: 'Evaluation score', hint: 'A metric’s average fell below a score or dropped against the previous run' },
+];
+
+/** The event a non-`runs` rule alerts on (its `events`). */
+export const RULE_KIND_EVENTS: Record<Exclude<AlertRuleKind, 'runs'>, AlertEvent[]> = {
+  failureRate: ['failureRate'],
+  plugin: ['pluginOffline', 'pluginOnline'],
+  cost: ['costThreshold'],
+  evaluation: ['evaluationScore'],
+};
 
 export const ALERT_EVENTS: readonly { id: AlertEvent; label: string; hint: string }[] = [
   { id: 'failed', label: 'Failed', hint: 'A run ended in error (after its last automatic retry)' },
@@ -24,13 +50,15 @@ export const ALERT_CHANNEL_KINDS: readonly { id: AlertChannelKind; label: string
   { id: 'slack', label: 'Slack', hint: 'An incoming webhook URL of a Slack app' },
   { id: 'webhook', label: 'Webhook', hint: 'A signed JSON POST to any URL' },
   { id: 'telegram', label: 'Telegram', hint: 'A saved Telegram API credential and a chat ID' },
+  { id: 'teams', label: 'Microsoft Teams', hint: 'A Workflows (or incoming) webhook URL; sends an Adaptive Card' },
+  { id: 'discord', label: 'Discord', hint: 'A channel webhook URL; sends an embed' },
 ];
 
 /** Channel settings; secret ones (`webhookUrl`, `secret`) never come back from the API, `secretsSet` lists those set. */
 export interface AlertChannelConfig {
   /** email: comma-separated addresses. */
   to?: string;
-  /** slack: the incoming webhook URL (secret). */
+  /** slack, teams, discord: the incoming webhook URL (secret). */
   webhookUrl?: string;
   /** webhook: where to POST. */
   url?: string;
@@ -85,6 +113,19 @@ export interface AlertRule {
   channelIds: string[];
   /** At most one alert per workflow in this many minutes; the rest go out as one digest when it ends. 0 = every one. */
   throttleMinutes: number;
+  /** What the rule watches; absent = `runs`. */
+  kind?: AlertRuleKind;
+  /** `failureRate`: alert when at least `minRuns` runs started in the last `windowMinutes` and more than `percent` % failed; once per window. */
+  failureRate?: { minRuns: number; percent: number; windowMinutes: number };
+  /**
+   * `plugin`: plugins to watch (none = all, builtin ones never go offline), how long one must stay offline before an alert
+   * (a restart takes seconds), and whether to say when it is back.
+   */
+  plugins?: { ids?: string[]; graceSeconds: number; notifyRecovery: boolean };
+  /** `cost`: alert once per period when usage reaches this share of any cap (default 80). */
+  cost?: { thresholdPercent: number };
+  /** `evaluation`: a metric (none = every metric) whose average fell below `below` (0–1 scores) or by more than `dropPercent` % against the run before. */
+  evaluation?: { metric?: string; below?: number; dropPercent?: number };
   /** Made by a workflow's Settings → "Notify on failure": the workflow it belongs to. */
   shortcutFor?: string;
   createdAt: string;
@@ -106,3 +147,7 @@ export interface WorkflowAlertView {
 
 export const DEFAULT_THROTTLE_MINUTES = 10;
 export const DEFAULT_WAITING_MINUTES = 60;
+
+export const DEFAULT_FAILURE_RATE = { minRuns: 5, percent: 50, windowMinutes: 15 };
+export const DEFAULT_PLUGIN_GRACE_SECONDS = 120;
+export const DEFAULT_COST_THRESHOLD_PERCENT = 80;

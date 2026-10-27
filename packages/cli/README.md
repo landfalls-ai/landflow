@@ -45,6 +45,10 @@ Workflows are named by id or by exact name (case-insensitive; an ambiguous name 
 | `variables list`, `variables set <key> <value>`, `variables set <key> --value-file <file\|->`, `variables delete <key>` | `$vars` |
 | `sync pull\|push\|status\|diff [--dir d]` | Git sync, below |
 | `source-control status\|push\|pull` | the host's own Git (Settings → Source control): `push [-m msg] [--dry-run]`, `pull [--dry-run] [--prune] [--force]` |
+| `audit verify` | the host checks the audit log's hash chain (every event's hash and link, the newest against its head record): exit 0 when intact, exit 9 (`integrity_failed`, the report in `error.details`) when broken |
+| `audit verify --head <file> [--public-key <pem file>]` | checks a signed chain head offline, without the host: the Ed25519 signature over the exact payload text, against the key you pinned (without `--public-key` it proves only that the head is consistent); exit 9 when it doesn't check out. Accepts a head file from `audit head --out`, a copy anchored in S3 or at a webhook, or the whole `audit head --json` document |
+| `audit head [--out file]` | the newest signed head (`head`, `signedAt`, `anchoredAt`, `keys`); exit 3 before the first signature |
+| `audit key [--out file]` | the public keys that signed heads; `--out` saves the current one as PEM, to pin for `audit verify --public-key` |
 | `env status` | the host's environment (`LANDFLOW_ENVIRONMENT`), whether it is protected, its branch, the environments it promotes to, publish on pull and credential mappings |
 | `env promote <environment> [--workflow w]… [--from env] [--rows table]… [--no-rows] [--no-credentials] [--dry-run] [--diff] [--force] [--prune] [-m msg]` | copy workflows from this environment's branch (or `--from`'s) to another's: all, or the `--workflow`s (id or name), with the definitions of the credentials they use (no secret values; `--no-credentials` leaves them out) and the rows of the tables opted in on the host (`--rows` names them for this promotion, `--no-rows` sends none); `--dry-run --diff` previews with unified diffs; a workflow edited on the target branch since the last promotion is a conflict (exit 5, the preview in `error.details`) unless `--force`; `--prune` (all workflows only) removes what the source no longer has; with four-eyes on, the promotion waits for another owner or admin (exit 8, the request in `error.details.request`) |
 | `env pull [--dry-run] [--prune] [--force] [--publish file\|all\|none]` | apply this environment's branch, like `source-control pull`; `--publish` defaults to the environment's publish on pull (`file`: what the files say) |
@@ -95,6 +99,7 @@ With `--json` a command prints exactly one document on stdout, nothing on stderr
 | 6 | the host can't be reached | `network` |
 | 7 | `--wait` gave up | `timeout` (`details: { executionId, status }`) |
 | 8 | waiting for approval | `approval_pending`: four-eyes publishing is on, so `workflows publish`, `unpublish`, `activate` and `deactivate` recorded a request another person approves (Settings → Governance); `status: 202`, `details: { workflowId, request }` with the request's `id`, `kind` and `status: "pending"`; `env promote` made a promotion request (Settings → Environments → Promotion requests), `details: { request }` with its `id`, `source`, `target` and `status: "pending"` |
+| 9 | integrity check failed | `integrity_failed`: `audit verify` found the hash chain broken (`details` is the chain report with `brokenAt`) or `audit verify --head` found a signed head that doesn't verify (`details: { verified: false, reason }`) |
 
 `sync diff --exit-code` and `sync status --exit-code` exit 1 with `ok: true` when there are differences.
 

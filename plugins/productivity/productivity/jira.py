@@ -1,9 +1,11 @@
-"""Jira Software: issues (create, get, search, update, transition) and comments, on Cloud (REST v3) or Server / Data Center (REST v2)."""
+"""Jira Software: issues (create, get, search, update, transition) and comments, on Cloud (REST v3, with an API token or OAuth2) or Server / Data Center (REST v2)."""
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
+import time
 from typing import Any
 from urllib.parse import quote
 
@@ -11,12 +13,18 @@ from landflow_sdk import CredentialType, Node, NodeOperationError
 
 from .common import (
     Api,
+    binary_name_property,
+    binary_out,
     bool_param,
     collection,
     count_written,
+    download,
     item_errors,
     items_of,
+    content_type_of,
     limit_of,
+    multipart,
+    oauth2_properties,
     operation_property,
     out,
     outs,
@@ -30,8 +38,12 @@ from .common import (
 )
 
 PAGE_SIZE = 100
-CLOUD, SERVER = "cloud", "serverPat"
-CREDENTIAL_FOR = {CLOUD: "jiraSoftwareCloudApi", SERVER: "jiraSoftwareServerPatApi"}
+CLOUD, SERVER, CLOUD_OAUTH2 = "cloud", "serverPat", "cloudOAuth2"
+CREDENTIAL_FOR = {CLOUD: "jiraSoftwareCloudApi", SERVER: "jiraSoftwareServerPatApi", CLOUD_OAUTH2: "jiraSoftwareCloudOAuth2Api"}
+ATLASSIAN_API = "https://api.atlassian.com"
+# The cloud id of a site never changes, but which sites a token reaches does: answers are kept an hour per (gateway, site, token).
+SITE_TTL = 3600.0
+_SITES: dict[tuple[str, str, str], tuple[float, str]] = {}
 
 
 def normalize_domain(domain: Any) -> str:
@@ -50,6 +62,48 @@ def server_api(ctx: Any, creds: dict[str, Any]) -> Api:
     return Api(ctx, "jira", normalize_domain(creds.get("domain")), {"Authorization": f"Bearer {creds.get('personalAccessToken', '')}", "Accept": "application/json"})
 
 
+def _host(url: Any) -> str:
+    return re.sub(r"^https?://", "", normalize_domain(url), flags=re.IGNORECASE).split("/")[0].lower()
+
+
+def cloud_id(ctx: Any, creds: dict[str, Any], api_base: str) -> str:
+    """The cloud id of the Jira site an OAuth2 token reaches: ``GET /oauth/token/accessible-resources`` lists the sites (and the
+    products) the user granted, and the credential's Domain picks one (a token with a single Jira site needs no Domain)."""
+    token = str(creds.get("accessToken") or "")
+    domain = _host(creds.get("domain"))
+    key = (api_base, domain, hashlib.sha256(token.encode()).hexdigest()[:16])
+    cached = _SITES.get(key)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
+    api = Api(ctx, "jira", api_base, {"Authorization": f"Bearer {token}", "Accept": "application/json"})
+    resources = api.get("/oauth/token/accessible-resources") or []
+    # Confluence and the like share the list: only sites granted a Jira scope count (no scopes listed: keep it).
+    sites = [r for r in resources if isinstance(r, dict) and r.get("id") and (not r.get("scopes") or any("jira" in str(s) for s in r["scopes"]))]
+    if not sites:
+        raise NodeOperationError("This Atlassian account granted no Jira site to the app", description="Connect again and choose a Jira site on the consent screen.")
+    if domain:
+        match = [r for r in sites if _host(r.get("url")) == domain]
+        if not match:
+            names = ", ".join(str(r.get("url") or r.get("name")) for r in sites)
+            raise NodeOperationError(f"The token can't reach the Jira site {creds.get('domain')!r}", description=f"Sites it can reach: {names}. Set the credential's Site to one of them.")
+        site = match[0]
+    elif len(sites) == 1:
+        site = sites[0]
+    else:
+        names = ", ".join(str(r.get("url") or r.get("name")) for r in sites)
+        raise NodeOperationError("This token reaches several Jira sites", description=f"Set the credential's Site to one of: {names}.")
+    if len(_SITES) > 256:
+        _SITES.clear()
+    _SITES[key] = (time.monotonic() + SITE_TTL, str(site["id"]))
+    return str(site["id"])
+
+
+def cloud_oauth2_api(ctx: Any, creds: dict[str, Any]) -> Api:
+    """Jira Cloud with an OAuth2 token: calls go through Atlassian's gateway, ``/ex/jira/<cloud id>/rest/api/3/...``."""
+    api_base = str(creds.get("apiBaseUrl") or ATLASSIAN_API).strip().rstrip("/")
+    return Api(ctx, "jira", f"{api_base}/ex/jira/{cloud_id(ctx, creds, api_base)}", {"Authorization": f"Bearer {creds.get('accessToken', '')}", "Accept": "application/json"})
+
+
 def _test(api: Api, path: str) -> tuple[bool, str]:
     if not api.base_url:
         return False, "Set the Jira domain, e.g. https://your-domain.atlassian.net"
@@ -61,6 +115,13 @@ def _test(api: Api, path: str) -> tuple[bool, str]:
 
 def test_cloud(data: dict[str, Any], ctx: Any) -> tuple[bool, str]:
     return _test(cloud_api(ctx, data), "/rest/api/3/myself")
+
+
+def test_cloud_oauth2(data: dict[str, Any], ctx: Any) -> tuple[bool, str]:
+    try:
+        return _test(cloud_oauth2_api(ctx, data), "/rest/api/3/myself")
+    except NodeOperationError as exc:
+        return False, exc.message
 
 
 def test_server(data: dict[str, Any], ctx: Any) -> tuple[bool, str]:
@@ -96,15 +157,37 @@ JIRA_SERVER_PAT_API = CredentialType(
 )
 
 
+JIRA_CLOUD_OAUTH2_API = CredentialType(
+    name="jiraSoftwareCloudOAuth2Api",
+    display_name="Jira SW Cloud OAuth2 API",
+    documentation_url="https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/",
+    description="Sign in with Atlassian: create an OAuth 2.0 (3LO) app in the developer console, add the redirect URL shown below and the Jira API "
+                "permissions, then Connect. Calls go through api.atlassian.com; the Site picks the Jira site when the account has several.",
+    test=test_cloud_oauth2,
+    extends=["oAuth2Api"],
+    properties=[
+        *oauth2_properties("https://auth.atlassian.com/authorize", "https://auth.atlassian.com/oauth/token",
+                           "read:jira-work write:jira-work read:jira-user offline_access", grant_type="authorizationCode",
+                           query="audience=api.atlassian.com&prompt=consent",
+                           scope_help="Space-separated; offline_access gives the refresh token (the host renews the token for you)"),
+        {"name": "domain", "displayName": "Site", "type": "string", "default": "", "placeholder": "https://your-domain.atlassian.net",
+         "description": "The Jira site to use. Empty: the only Jira site the account granted (several: this is required)."},
+        {"name": "apiBaseUrl", "displayName": "API Gateway URL", "type": "string", "default": ATLASSIAN_API,
+         "description": "Change only for a proxy or a test double"},
+    ],
+)
+
+
 class Jira:
     """One Jira deployment: the API client plus the REST version and the description format."""
 
     def __init__(self, ctx: Any, version: str) -> None:
         if version not in CREDENTIAL_FOR:
             raise NodeOperationError(f"Unknown Jira version {version!r}")
-        self.cloud = version == CLOUD
+        self.cloud = version in (CLOUD, CLOUD_OAUTH2)
         creds = ctx.get_credentials(CREDENTIAL_FOR[version])
-        self.api = cloud_api(ctx, creds) if self.cloud else server_api(ctx, creds)
+        # OAuth2 (the host sends a fresh accessToken on every call): through Atlassian's gateway, the site's cloud id resolved and cached.
+        self.api = cloud_oauth2_api(ctx, creds) if version == CLOUD_OAUTH2 else cloud_api(ctx, creds) if self.cloud else server_api(ctx, creds)
         self.rest = "/rest/api/3" if self.cloud else "/rest/api/2"
 
     def text(self, value: str) -> Any:
@@ -201,7 +284,7 @@ class JiraNode(Node):
     description = {
         "name": "jira",
         "displayName": "Jira Software",
-        "description": "Create, get, search, update and transition Jira issues, and add comments",
+        "description": "Create, get, search, update and transition Jira issues, add comments, and upload and download attachments",
         "version": 1,
         "kind": "action",
         "idempotent": False,  # creates, updates, archives and comments are at most once over a broker; the read operations opt in below
@@ -214,21 +297,29 @@ class JiraNode(Node):
         "outputs": [{"type": "main"}],
         "credentials": [
             {"name": "jiraSoftwareCloudApi", "required": True, "displayOptions": {"show": {"jiraVersion": [CLOUD]}}},
+            {"name": "jiraSoftwareCloudOAuth2Api", "required": True, "displayOptions": {"show": {"jiraVersion": [CLOUD_OAUTH2]}}},
             {"name": "jiraSoftwareServerPatApi", "required": True, "displayOptions": {"show": {"jiraVersion": [SERVER]}}},
         ],
         "usableAsTool": True,
         "toolDescription": (
             "Work with Jira issues. `getAll` searches with a JQL query in `jql`; `get` / `update` / `transition` take an "
             "`issueKey` like PROJ-123; `create` needs `project` and `issueType` ids and a `summary`; comments are added "
-            "with resource `issueComment`, operation `add` and the `comment` text."
+            "with resource `issueComment`, operation `add` and the `comment` text. Attachments (resource `issueAttachment`) are read from or "
+            "written to binary data on the item: `add` uploads the file in `binaryPropertyName` to `attachmentIssueKey`, `get` downloads by "
+            "`attachmentId`, `getAll` lists an issue's attachments (`download` fetches the files)."
         ),
         "keywords": ["jira", "atlassian", "issue", "ticket", "bug", "jql", "sprint"],
         "properties": [
             {
                 "name": "jiraVersion", "displayName": "Jira Version", "type": "options", "default": CLOUD, "noDataExpression": True,
-                "options": [{"name": "Cloud", "value": CLOUD}, {"name": "Server / Data Center (PAT)", "value": SERVER}],
+                "options": [{"name": "Cloud", "value": CLOUD}, {"name": "Cloud (OAuth2)", "value": CLOUD_OAUTH2}, {"name": "Server / Data Center (PAT)", "value": SERVER}],
             },
-            resource_property([("Issue", "issue"), ("Issue Comment", "issueComment")], "issue"),
+            resource_property([("Issue", "issue"), ("Issue Attachment", "issueAttachment"), ("Issue Comment", "issueComment")], "issue"),
+            operation_property("issueAttachment", [
+                ("Add", "add", "Add attachments to an issue from binary data"),
+                ("Get", "get", "Download an attachment as binary data", True),
+                ("Get Many", "getAll", "Get the attachments of an issue", True),
+            ], "add"),
             operation_property("issueComment", [("Add", "add", "Add a comment")], "add"),
             operation_property("issue", [
                 ("Create", "create", "Create an issue"),
@@ -283,6 +374,18 @@ class JiraNode(Node):
                 ],
             },
             simplify_property({**ISSUE, "operation": ["get", "getAll"]}),
+            # ---- attachments
+            {"name": "attachmentIssueKey", "displayName": "Issue Key", "type": "string", "default": "", "required": True, "placeholder": "PROJ-123",
+             "displayOptions": {"show": {"resource": ["issueAttachment"], "operation": ["add", "getAll"]}}},
+            binary_name_property("binaryPropertyName", "Input Binary Field", {"resource": ["issueAttachment"], "operation": ["add"]},
+                                 "Binary property (or comma-separated properties) that hold the files to attach"),
+            {"name": "attachmentId", "displayName": "Attachment ID", "type": "string", "default": "", "required": True,
+             "displayOptions": {"show": {"resource": ["issueAttachment"], "operation": ["get"]}}},
+            {"name": "download", "displayName": "Download Files", "type": "boolean", "default": False,
+             "description": "Whether to download each attachment's content into a binary property of its item",
+             "displayOptions": {"show": {"resource": ["issueAttachment"], "operation": ["getAll"]}}},
+            binary_name_property("outputBinaryName", "Output Binary Field", {"resource": ["issueAttachment"], "operation": ["get", "getAll"]},
+                                 "Binary property that receives the file (Get Many: used when Download Files is on)"),
             # ---- comment
             {"name": "comment", "displayName": "Comment", "type": "string", "default": "", "required": True, "typeOptions": {"rows": 4},
              "displayOptions": {"show": {"resource": ["issueComment"], "operation": ["add"]}}},
@@ -344,6 +447,12 @@ class JiraNode(Node):
                     results.append(out(self._update(ctx, jira, i), i))
                 elif resource == "issue" and operation == "transition":
                     results.append(out(self._transition(ctx, jira, i), i))
+                elif resource == "issueAttachment" and operation == "add":
+                    results.extend(outs(self._attach(ctx, jira, i), i))
+                elif resource == "issueAttachment" and operation == "get":
+                    results.append(self._download_attachment(ctx, jira, i))
+                elif resource == "issueAttachment" and operation == "getAll":
+                    results.extend(self._attachments(ctx, jira, i))
                 elif resource == "issueComment" and operation == "add":
                     key = self._key(ctx, i)
                     comment = text_param(ctx, "comment", i, required=True, label="Comment")
@@ -355,6 +464,41 @@ class JiraNode(Node):
         return results
 
     # ------------------------------------------------------------ operations
+
+    @staticmethod
+    def _attach(ctx, jira: Jira, i: int) -> list[dict[str, Any]]:
+        """POST the item's binary files to ``/issue/{key}/attachments`` (multipart, ``X-Atlassian-Token: no-check``)."""
+        key = text_param(ctx, "attachmentIssueKey", i, required=True, label="Issue Key")
+        names = split_list(ctx.get_node_parameter("binaryPropertyName", i)) or ["data"]
+        files: list[tuple[str, str, bytes, str]] = []
+        for name in names:
+            ref = ctx.assert_binary_data(i, name)
+            file_name = str(ref.get("fileName") or f"{name}.{ref.get('fileExtension') or 'bin'}")
+            files.append(("file", file_name, ctx.get_binary_bytes(i, name), content_type_of(ref, file_name)))
+        body, content_type = multipart({}, files)  # one "file" part per attachment: Jira takes repeated parts of the same name
+        attachments = jira.api.call("POST", f"{jira.rest}/issue/{quote(key, safe='')}/attachments", data=body, timeout=120,
+                                    headers={"X-Atlassian-Token": "no-check", "Content-Type": content_type})
+        count_written(ctx, "jira", "attach", len(files))
+        return attachments if isinstance(attachments, list) else [attachments or {}]
+
+    def _download_attachment(self, ctx, jira: Jira, i: int) -> dict[str, Any]:
+        attachment_id = text_param(ctx, "attachmentId", i, required=True, label="Attachment ID")
+        meta = jira.api.get(f"{jira.rest}/attachment/{quote(attachment_id, safe='')}") or {}
+        return self._attachment_item(ctx, jira, i, meta, attachment_id)
+
+    def _attachment_item(self, ctx, jira: Jira, i: int, meta: dict[str, Any], attachment_id: str) -> dict[str, Any]:
+        resp = download(jira.api, f"{jira.rest}/attachment/content/{quote(str(attachment_id), safe='')}", i)
+        name = str(meta.get("filename") or f"attachment-{attachment_id}")
+        mime = meta.get("mimeType") or resp.headers.get("Content-Type", "").split(";")[0].strip() or None
+        return binary_out(ctx, meta or {"id": attachment_id, "filename": name}, i, text_param(ctx, "outputBinaryName", i) or "data", resp.content, name, mime)
+
+    def _attachments(self, ctx, jira: Jira, i: int) -> list[dict[str, Any]]:
+        key = text_param(ctx, "attachmentIssueKey", i, required=True, label="Issue Key")
+        issue = jira.api.get(f"{jira.rest}/issue/{quote(key, safe='')}", params={"fields": "attachment"}) or {}
+        attachments = [a for a in (issue.get("fields") or {}).get("attachment") or [] if isinstance(a, dict)]
+        if not bool_param(ctx, "download", i):
+            return outs(attachments, i)
+        return [self._attachment_item(ctx, jira, i, meta, str(meta.get("id"))) for meta in attachments]
 
     @staticmethod
     def _key(ctx, i: int) -> str:

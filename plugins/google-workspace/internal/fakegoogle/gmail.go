@@ -155,6 +155,19 @@ func (s *Server) gmail(w http.ResponseWriter, r *http.Request, segs []string, bo
 			return
 		}
 		writeJSON(w, http.StatusOK, messageJSON(m, r.URL.Query().Get("format"), r.URL.Query()["metadataHeaders"]))
+	case len(segs) == 4 && segs[2] == "attachments" && r.Method == http.MethodGet:
+		m := s.message(segs[1])
+		if m == nil {
+			writeError(w, http.StatusNotFound, "Requested entity was not found.")
+			return
+		}
+		n := 0
+		data, ok := attachmentData(m.Payload, segs[3], &n)
+		if !ok {
+			writeError(w, http.StatusNotFound, "Invalid attachment token")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"size": len(data), "data": data})
 	case len(segs) == 3 && segs[2] == "modify" && r.Method == http.MethodPost:
 		m := s.message(segs[1])
 		if m == nil {
@@ -281,9 +294,54 @@ func messageJSON(m *Message, format string, metadataHeaders []string) map[string
 		}
 		out["payload"] = map[string]any{"mimeType": m.Payload["mimeType"], "headers": headers}
 	default:
-		out["payload"] = m.Payload
+		out["payload"], _ = withAttachmentIDs(m.Payload, 0)
 	}
 	return out
+}
+
+// withAttachmentIDs copies a payload tree, moving the data of file parts
+// (those with a filename) behind attachment ids "att-N" like the real API.
+func withAttachmentIDs(part map[string]any, n int) (map[string]any, int) {
+	out := map[string]any{}
+	for k, v := range part {
+		out[k] = v
+	}
+	if name, _ := part["filename"].(string); name != "" {
+		if body, ok := part["body"].(map[string]any); ok {
+			moved := map[string]any{"size": body["size"], "attachmentId": "att-" + strconv.Itoa(n)}
+			out["body"] = moved
+			n++
+		}
+	}
+	if kids, ok := part["parts"].([]any); ok {
+		copied := make([]any, len(kids))
+		for k, kid := range kids {
+			copied[k], n = withAttachmentIDs(kid.(map[string]any), n)
+		}
+		out["parts"] = copied
+	}
+	return out, n
+}
+
+// attachmentData finds the data of attachment "att-N" in a payload tree.
+func attachmentData(part map[string]any, id string, n *int) (string, bool) {
+	if name, _ := part["filename"].(string); name != "" {
+		if body, ok := part["body"].(map[string]any); ok {
+			if "att-"+strconv.Itoa(*n) == id {
+				data, _ := body["data"].(string)
+				return data, true
+			}
+			*n++
+		}
+	}
+	if kids, ok := part["parts"].([]any); ok {
+		for _, kid := range kids {
+			if data, ok := attachmentData(kid.(map[string]any), id, n); ok {
+				return data, true
+			}
+		}
+	}
+	return "", false
 }
 
 // sendMessage stores a sent message, parsing its raw MIME into a payload.
@@ -396,7 +454,14 @@ func buildPart(h textproto.MIMEHeader, body []byte, text *string) map[string]any
 			headers = append(headers, header(k, v))
 		}
 	}
-	part := map[string]any{"mimeType": mt, "filename": "", "headers": headers}
+	filename := ""
+	if _, dp, err := mime.ParseMediaType(h.Get("Content-Disposition")); err == nil {
+		filename = dp["filename"]
+	}
+	if filename == "" {
+		filename = params["name"]
+	}
+	part := map[string]any{"mimeType": mt, "filename": filename, "headers": headers}
 	if strings.HasPrefix(mt, "multipart/") {
 		var parts []any
 		mr := multipart.NewReader(bytes.NewReader(body), params["boundary"])

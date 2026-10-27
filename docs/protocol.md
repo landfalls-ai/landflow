@@ -302,6 +302,15 @@ defaults), and the credential dialog shows **Connect**:
   **once**; the whole call is repeated. So a plugin should use `accessToken` as is and, when the API answers 401,
   fail with a message that says so (e.g. `Gmail API error 401: …`) rather than retrying with the same token.
   When renewing fails, the node fails with "… could not be renewed — reconnect it in Credentials".
+- **Token or OAuth2 on one node** (the pattern of every shipped OAuth2 variant): the node lists both types in
+  `credentials`, each with `displayOptions.show.authentication` (`accessToken` the default, so existing workflows keep
+  working, and `oAuth2`), and an `authentication` options property. At run time the plugin takes the credential the
+  `authentication` parameter names and, when only the other one was sent (a load-options call or a webhook method does
+  not see the parameter), that one. It reads `accessToken` from the data on every call and caches nothing: the host
+  sends a renewed token with each call. Shipped: `slackOAuth2Api`, `discordOAuth2Api` (messaging), `githubOAuth2Api`,
+  `notionOAuth2Api`, `airtableOAuth2Api`, `hubspotOAuth2Api` (productivity), `googleOAuth2Api` (google). The Slack OAuth2 type also
+  serves the Slack Trigger: the bot token is the `accessToken`, the team comes from `auth.test`. (`githubAppApi` is not OAuth2: the
+  plugin signs an app JWT with `landflow_sdk.jwt` and mints installation tokens itself.)
 
 ## 8. Polling triggers
 
@@ -501,7 +510,12 @@ timestamped schemes, a tolerance (default 300 s) against replays:
 A JSON `response` is written as `{ status, json }` in TypeScript and Python (`JSONReply(status, v)` in Go): the SDK
 serializes it and sets `content-type`. The GitHub Webhook Trigger in `plugins/productivity` (Python) is a complete
 example: it registers a repository hook with a random secret, verifies `X-Hub-Signature-256`, answers GitHub's
-`ping`, and deduplicates redeliveries by `X-GitHub-Delivery`.
+`ping`, and deduplicates redeliveries by `X-GitHub-Delivery`. The same plugin's **Stripe Trigger** registers a webhook endpoint
+(Stripe returns its signing secret once, kept in the static data), verifies `Stripe-Signature` with a tolerance and uses the event id
+as idempotency key. The messaging plugin's **Slack Trigger** (TypeScript) shows a service that cannot register a subscription by API:
+`create` only verifies the credential (`auth.test`) and remembers the URL, the user pastes the Request URL into the Slack app's Event
+Subscriptions, and `webhook` verifies `X-Slack-Signature` with the credential's signing secret, answers `url_verification` and
+deduplicates Slack's retries by `event_id`.
 
 ## 13. Kubernetes discovery and registry proofs
 
@@ -1120,6 +1134,19 @@ agents ("Expose to agents", on by default) and have at least one tool; it reacts
   2025-11-25 natively. A signed-in gateway caller runs as that Landflow user under their project access (a workflow's
   trigger needs run access to the workflow); an anonymous gateway caller meets the trigger's own authentication (`none`
   passes; `bearer` answers 401, since the gateway does not forward the client's `Authorization`).
+- **One project's server.** `/api/mcp/projects/<projectId>` is the instance server limited to that project (list, get,
+  update, validate, execute and executions only for its workflows; create lands there), with its own protected resource
+  metadata at `/.well-known/oauth-protected-resource/api/mcp/projects/<projectId>` and the audience `<instance>/api/mcp/projects/<id>`
+  (plus the gateway's `/mcp/projects/<name>`). A Landflow MCP token issued for a project (`mcp_tokens.project_id`, migration
+  1870; the issuer needs a role in the project) is scoped the same way at `/api/mcp` and 403s at another project's URL. A
+  project's admins turn the gateway route on (`mcp_project_servers`, migration 1871; `GET/PATCH /api/projects/:id/mcp`,
+  audited as `project.settings.update`): the sync then registers target `project-<id>` at `/mcp/projects/<name>`
+  while the instance server is on.
+- **Two issuers on a route.** agentgateway's `mcpAuthentication` takes one issuer; its `jwtAuth` takes several providers. When
+  an identity provider is configured, the sync writes a `jwtAuth` with Landflow's and the provider's issuer (the provider's
+  keys inline) on each route in place of `mcpAuthentication` (`LANDFLOW_MCP_GATEWAY_ACCEPT_IDP=off` to keep one). The gateway
+  then sends no `WWW-Authenticate` challenge of its own. Verified live against agentgateway 1.6.0 (docs/mcp-gateway.md "Two
+  issuers on one route"); no token exchange is involved, and `inlineHostJwks` still inlines Landflow's JWKS inside `providers`.
 
 ### 15.5 Grants
 
@@ -1153,6 +1180,32 @@ There are **no implicit grants**: owners and admins may browse every tool in Set
 grant. A tool with no applicable grant is not listed and cannot be called; a tool whose node needs a credential type
 the grant does not bind is listed but answers `isError: true` naming the missing type. The agent never sees a credential: the host binds it on the way to the
 plugin, over whatever transport the selector picks.
+
+### 15.7 Landflow as an MCP client: OAuth, resources and prompts
+
+- **Authorization.** An MCP server that signs users in is reached with a `core.mcpOAuth2Api` credential (authentication
+  `mcpOAuth2` on the MCP Client, MCP Client Tool and an agent's MCP server; the node gets `Authorization: Bearer <accessToken>`).
+  Connect probes the endpoint, follows `WWW-Authenticate: Bearer resource_metadata` (or the well-known paths) to the protected
+  resource metadata (RFC 9728; none: the server is its own authorization server), reads the authorization server metadata
+  (RFC 8414 with the issuer's path inserted, then OpenID Connect discovery; `issuer` must match; PKCE S256 required when
+  `code_challenge_methods_supported` is given), uses the credential's client or registers one (RFC 7591, public client,
+  repeated when the redirect URL changes), and runs authorization code with PKCE. `resource` (RFC 8707, the metadata's
+  `resource` when it names the server, else the endpoint URL) is sent on the authorization request and on every token request,
+  refreshes included. Scope: the credential's, else the challenge's, else the metadata's `scopes_supported`. The discovery result
+  is stored as the credential's `oauthMeta` (sealed with the rest); MCP URLs outside the governance allow-list are refused.
+  A 401 renews the token once and retries (the node wrapper `withFreshTokens`; an agent's MCP tools renew by force).
+- **Resources and prompts, client side.** MCP Client operations `callTool`, `listResources`, `readResource`, `listPrompts` and
+  `getPrompt`; agents get `list_resources`, `read_resource`, `list_prompts` and `get_prompt` as tools when the MCP Client Tool's
+  (or the agent server's) **Also Offer** asks for them. Binary contents are reported by size.
+- **Resources and prompts, server side.** The MCP Server Trigger's `resources` (uri, name, description, mimeType) and `prompts`
+  (name, description, arguments, `?` marks an optional one) parameters. Each has `text` or a sub-workflow (`core.workflowTrigger`
+  workflow, called as for Execute Workflow: published version in production, caller policy checked). The server declares the
+  `resources` and `prompts` capabilities only when some are defined. `resources/list` and `prompts/list` run nothing. Static text
+  is served as it is; an expression in the text (`$json.resource`, `$json.arguments.<name>`; only the requested item's text is
+  evaluated) or a sub-workflow makes `resources/read` and `prompts/get` an execution with mode `mcp` whose trigger item is
+  `{ resource }` or `{ prompt, arguments }` (a manual run on the test URL). A sub-workflow gets `{ uri }` or `{ name, arguments }`
+  and answers with `text` (a prompt may answer `messages: [{ role, text }]`). An unknown URI or prompt, or a missing required
+  argument, is an invalid-params error.
 
 ### 15.6 Triggers as resources
 

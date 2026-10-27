@@ -18,6 +18,35 @@ export interface EvaluationRef {
   rowId?: number;
 }
 
+/** Where an evaluation's test cases come from: a Data Table, or a CSV or JSON file uploaded to the workflow's evaluation. */
+export type EvaluationSource = 'dataTable' | 'file';
+
+/** The file dataset of a workflow's evaluation (stored in the binary store). */
+export interface EvaluationFile {
+  fileName: string;
+  fileSize: number;
+  format: 'csv' | 'json';
+  /** Test cases in the file. */
+  rows: number;
+  columns: string[];
+  uploadedAt: string;
+}
+
+/** A cron on the Evaluations tab: the evaluation runs by itself. */
+export interface EvaluationSchedule {
+  enabled: boolean;
+  /** Five fields (minute hour day-of-month month day-of-week), or six with seconds first. */
+  cron: string;
+  /** IANA zone; default the workflow's, else the instance's. */
+  timezone?: string;
+  /** Evaluate at most this many rows (the trigger's own limit applies too). */
+  maxRows?: number;
+  lastRunAt?: string;
+  lastRunId?: string;
+  /** Why the last scheduled start did not happen. */
+  lastError?: string;
+}
+
 export type EvaluationRunStatus = 'running' | 'success' | 'error' | 'canceled';
 export type EvaluationCaseStatus = 'pending' | 'running' | 'success' | 'error' | 'canceled';
 
@@ -41,8 +70,12 @@ export interface EvaluationRunSummary {
   durationMs?: number;
   /** The workflow version the cases ran on. */
   versionId?: string;
+  /** `dataTable` (default) or `file`: an uploaded CSV or JSON file; then `dataTableId` is `file:<binary id>` and `dataTableName` the file name. */
+  source?: EvaluationSource;
   dataTableId: string;
   dataTableName: string;
+  /** What started the run: a person (default) or the schedule on the Evaluations tab. */
+  trigger?: 'manual' | 'schedule';
   /** Cases in the run, and how many finished (either way) or failed. */
   total: number;
   completed: number;
@@ -81,7 +114,11 @@ export interface EvaluationRunDetail extends EvaluationRunSummary {
 export interface EvaluationsOverview {
   runs: EvaluationRunSummary[];
   /** The workflow's Evaluation Trigger, when it has one. */
-  trigger?: { nodeId: string; nodeName: string; dataTableId?: string; dataTableName?: string; rows?: number; expectedColumn?: string; maxRows?: number };
+  trigger?: { nodeId: string; nodeName: string; source: EvaluationSource; dataTableId?: string; dataTableName?: string; rows?: number; expectedColumn?: string; maxRows?: number };
+  /** The uploaded file dataset (used when the trigger's source is File). */
+  file?: EvaluationFile;
+  /** The schedule, when set. */
+  schedule?: EvaluationSchedule;
   /** Whether an Evaluation node in "Set Metrics" mode is on the canvas (without one, runs only collect outputs). */
   hasMetrics: boolean;
 }
@@ -167,6 +204,8 @@ export interface OnlineEvalScore {
   workflowId?: string;
   nodeId?: string;
   executionId?: string;
+  /** The thumbs up/down (and comment) the person gave the graded reply, when they did (chat feedback). */
+  userFeedback?: { rating: 'up' | 'down'; comment?: string };
 }
 
 export interface OnlineEvalTrendPoint {

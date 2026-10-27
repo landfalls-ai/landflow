@@ -6,11 +6,12 @@
  * unpublished changes; the menu unpublishes and lists where app webhook triggers stand. Older versions are published
  * (rolled back to) from the version history. With four-eyes publishing on (Settings → Governance), Publish and Unpublish
  * ask for approval instead (202 `approvalRequired`), and the menu lists the workflow's pending requests to approve,
- * reject or withdraw.
+ * reject or withdraw. The menu also schedules a publish or unpublish for a later time (./publish-schedules) and lists
+ * and cancels what is scheduled.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { create } from 'zustand';
-import { AlertTriangle, ChevronDown, CircleOff, Rocket, Webhook } from 'lucide-react';
+import { AlertTriangle, CalendarClock, ChevronDown, CircleOff, Rocket, Webhook } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -22,6 +23,7 @@ import { Button } from '../ui/button';
 import { Textarea } from '../ui/inputs';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
 import { useEditLock } from './edit-lock';
+import { ScheduleForm, ScheduleRows, useSchedules } from './publish-schedules';
 import { useEditor } from './store';
 
 interface PublicationStore {
@@ -79,6 +81,8 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
   const requestsChanged = usePublication((s) => s.requests);
   const { list: requests, reload: reloadRequests } = usePublishRequests({ workflowId });
   const pending = requests?.requests ?? [];
+  const { schedules, reload: reloadSchedules } = useSchedules(workflowId);
+  const [scheduling, setScheduling] = useState(false);
   useEffect(() => {
     if (requestsChanged) void reloadRequests();
   }, [requestsChanged, reloadRequests]);
@@ -192,10 +196,36 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
               <Button variant="primary" onClick={() => void publish(close)} loading={busy === 'publish'} disabled={Boolean(published && !changes)}>
                 <Rocket className="size-3.5" /> {dirty ? 'Save and publish' : published && !changes ? 'Up to date' : `Publish version ${status?.draft?.versionNumber ?? ''}`.trim()}
               </Button>
+              {scheduling ? (
+                <ScheduleForm
+                  workflowId={workflowId}
+                  action="publish"
+                  note={note}
+                  label="Schedule publish"
+                  beforeSchedule={async () => !useEditor.getState().dirty || onSave()}
+                  onScheduled={() => {
+                    setScheduling(false);
+                    setNote('');
+                    void reloadSchedules();
+                    void reloadRequests();
+                  }}
+                />
+              ) : (
+                <Button variant="ghost" size="sm" onClick={() => setScheduling(true)}>
+                  <CalendarClock className="size-3.5" /> Publish at a chosen time…
+                </Button>
+              )}
               <div className="text-[11px] leading-snug text-t3">
                 Manual runs in the editor use the draft. Roll back from the version history.{requests?.fourEyes.enabled && ' Publishing needs someone else’s approval.'}
               </div>
             </div>
+            {(schedules ?? []).some((s) => s.status === 'pending' || s.status === 'awaiting_approval' || s.status === 'failed') && (
+              <>
+                <MenuSeparator />
+                <MenuLabel>Scheduled</MenuLabel>
+                <ScheduleRows schedules={(schedules ?? []).filter((s) => s.status !== 'done' && s.status !== 'canceled')} workflowId={workflowId} onChanged={() => void reloadSchedules()} className="px-2.5 pb-1" />
+              </>
+            )}
             {pending.length > 0 && (
               <>
                 <MenuSeparator />
@@ -231,6 +261,9 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
             {published && (
               <>
                 <MenuSeparator />
+                <div className="px-2.5 pb-1.5">
+                  <ScheduleForm workflowId={workflowId} action="unpublish" label="Unpublish at" onScheduled={() => void reloadSchedules()} />
+                </div>
                 <MenuItem danger onClick={() => void unpublish(close)} disabled={busy === 'unpublish'}>
                   <CircleOff /> Unpublish
                 </MenuItem>
