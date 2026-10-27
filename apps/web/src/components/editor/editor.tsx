@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Background, BackgroundVariant, ControlButton, Controls, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, type OnConnectEnd, type OnEdgesChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -36,7 +36,7 @@ import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
 import { WorkflowTabs } from '../shell/workflow-tabs';
 import { prefetchFailure, useAssistant } from './assistant';
-import { focusSpotlight, Spotlight } from './spotlight';
+import { focusSpotlight, Spotlight, SpotlightActivity } from './spotlight';
 import { ChatPanel, type ChatApproval, type ChatChunk, type ChatFile, type ChatOutcome } from './chat-panel';
 import { parseClipboard, type ClipboardData } from './clipboard';
 import { FlowEdgeView } from './flow-edge';
@@ -325,8 +325,29 @@ async function sendDebug(executionId: string | undefined, command: DebugCommand)
 function EmptyCanvas() {
   const empty = useEditor((s) => s.nodes.length === 0 && s.stickies.length === 0 && s.groups.length === 0);
   const nodeTypes = useEditor((s) => s.nodeTypes);
+  const drafting = useAssistant((s) => s.drafting);
   const { fitView } = useReactFlow();
   if (!empty) return null;
+  // Spotlight is drafting the flow: a placeholder of what is coming, not the ways to start.
+  if (drafting) {
+    return (
+      <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center pb-24">
+        <div className="flex animate-fade-up flex-col items-center gap-5">
+          <div className="flex items-center">
+            {[0, 1, 2, 3].map((i) => (
+              <Fragment key={i}>
+                {i > 0 && <span className="w-10 border-t-2 border-dashed border-bd" />}
+                <span className="size-16 animate-pulse-soft rounded-[18px] border-2 border-dashed border-bd bg-sf" style={{ animationDelay: `${i * 180}ms` }} />
+              </Fragment>
+            ))}
+          </div>
+          <span className="flex items-center gap-2 text-[13px] text-t2">
+            <Loader2 className="size-3.5 animate-spin text-viz-7" /> Spotlight is drafting the flow from the node catalog…
+          </span>
+        </div>
+      </div>
+    );
+  }
   const templates = TEMPLATES.filter((t) => t.nodes.every((n) => nodeTypes[n.type]?.available));
   return (
     <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-8 overflow-y-auto pb-16">
@@ -675,6 +696,11 @@ export function Editor({ workflowId }: { workflowId: string }) {
     return () => useEditor.setState({ run: undefined });
   }, [runCommand]);
 
+  useEffect(() => {
+    useEditor.setState({ save });
+    return () => useEditor.setState({ save: undefined });
+  }, [save]);
+
   const stop = () => {
     stopListening();
     const { debugging: inDebug, executionId } = useEditor.getState();
@@ -794,6 +820,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
               <Canvas onSave={() => void save()} />
               <EmptyCanvas />
               <CanvasToolbar />
+              <SpotlightActivity />
               {/* One dock at the bottom: run controls, then Spotlight. The side padding keeps clear of zoom and the minimap.
                   When the canvas is narrow (a side panel open), Spotlight wraps to its own line above the run controls. */}
               <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 pl-14 pr-[232px]">

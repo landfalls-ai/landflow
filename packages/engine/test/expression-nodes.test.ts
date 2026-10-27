@@ -28,4 +28,9 @@ describe("$('Node') in expressions", () => {
     expect(() => at("$('Nowhere').first()")).toThrow('Node "Nowhere" has not run yet');
     expect(() => at("$('Customers').itemMatching(9)")).toThrow('no item matching input item 9');
   });
+
+  it("says what to use when an expression reads the Code node's items", () => {
+    expect(at('$input.all().map((i) => i.json.n).join()')).toBe('0,1');
+    expect(() => at('items.map((i) => i.json.n)')).toThrow('items is not defined (an expression sees the current item as $json; $input.all() gives every item)');
+  });
 });

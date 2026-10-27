@@ -1,7 +1,8 @@
 /**
  * One chat message to the editor assistant (Spotlight in the editor). The
  * reply streams as SSE, one event per step: `text`, `tool` (activity),
- * `proposal` (validated changes), then `done`, or `error`.
+ * `proposal` (validated changes), then `done`, or `error`. `session` marks a
+ * request from Spotlight's test-and-fix session.
  */
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
@@ -28,6 +29,8 @@ const Body = z.object({
   workflowId: z.string().max(200).optional(),
   /** What the user tagged in the message: node ids on the canvas, node type ids. */
   mentions: z.object({ nodes: z.array(z.string().max(200)).max(20), types: z.array(z.string().max(200)).max(20) }).partial().optional(),
+  /** From Spotlight's test-and-fix session: a request for a fix to a failed run, or whether a run did what was asked. */
+  session: z.enum(['fix', 'review']).optional(),
 });
 
 export const POST = handler(async (request: Request) => {

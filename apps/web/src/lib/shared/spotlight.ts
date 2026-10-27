@@ -13,7 +13,7 @@ export interface SpotlightNode {
   agent: boolean;
   /** For an agent: a chat model is connected. */
   hasModel: boolean;
-  /** Has a main connection out. */
+  /** Has a connection out: a main one, or to an agent as its model, memory or a tool. */
   outgoing: boolean;
   /** Its last run failed. */
   failed: boolean;
@@ -56,9 +56,12 @@ export interface Bubble {
 const has = (ctx: SpotlightContext, type: string) => ctx.types.some((t) => t.type === type);
 const quote = (name: string) => `“${name}”`;
 
+/** The bubble that starts a test-and-fix session instead of asking something. */
+export const TEST_BUBBLE = 'test';
+
 const ask = (id: string, label: string, send = true): Bubble => ({ id, label, kind: 'ask', text: label, caret: label.length, send });
 
-/** Where the flow ends: the right-most node with nothing connected out. */
+/** Where the flow ends: the right-most node with nothing connected out (an agent's tools connect to the agent). */
 function lastNode(ctx: SpotlightContext): SpotlightNode | undefined {
   return ctx.nodes.filter((n) => !n.outgoing).sort((a, b) => b.x - a.x)[0];
 }
@@ -81,6 +84,8 @@ function phrases(ctx: SpotlightContext): Bubble[] {
   const selected = ctx.nodes.find((n) => n.id === ctx.selectedId);
   if (selected) out.push(ask(`explain-${selected.id}`, `Explain ${quote(selected.name)}`));
   if (!ctx.nodes.some((n) => n.trigger)) out.push(ask('trigger', 'Add a trigger that starts this workflow'));
+  // Not a question: Spotlight runs the workflow and, while a run fails, fixes it (see testUntilItRuns).
+  else out.push({ ...ask(TEST_BUBBLE, 'Test it and fix what fails'), send: false });
   const last = selected && !selected.outgoing ? selected : lastNode(ctx);
   if (last) out.push(ask(`after-${last.id}`, `After ${quote(last.name)}, `, false));
   out.push(ask('explain', 'What does this workflow do?'));

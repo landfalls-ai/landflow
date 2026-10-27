@@ -2,9 +2,10 @@
 import { memo } from 'react';
 import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
-import { CircleDot, Copy, Play, Power, Settings2, SkipForward, Trash2 } from 'lucide-react';
+import { CircleDot, Copy, Loader2, Play, Power, Settings2, SkipForward, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isCompact, NodeTile } from '../canvas/node-tile';
+import { useAssistant } from './assistant';
 import { useEditor, type FlowNode } from './store';
 
 function ToolbarButton({
@@ -47,6 +48,8 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   const pinned = useEditor((s) => Boolean(s.pinData[id]));
   const running = useEditor((s) => s.running);
   const fresh = useEditor((s) => s.lastAddedId === id);
+  // Spotlight's test-and-fix session is asking for a fix to this node.
+  const fixing = useAssistant((s) => s.fixing === id);
   const asTool = useEditor((s) => s.edges.some((e) => e.source === id && e.data?.connectionType === 'ai_tool'));
   const connectedOutputs = useEditor(
     useShallow((s) => s.edges.filter((e) => e.source === id && e.data?.connectionType === 'main').map((e) => e.sourceHandle ?? 'main:0')),
@@ -75,6 +78,11 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       onToggleBreakpoint={() => toggleBreakpoint(id)}
       fresh={fresh}
     >
+      <NodeToolbar isVisible={fixing && !selected} position={Position.Top} offset={compact ? 12 : 14}>
+        <span className="flex animate-pop items-center gap-1 rounded-full border border-acbd bg-sf px-2 py-0.5 text-[11px] font-semibold text-viz-7 shadow-pop">
+          <Loader2 className="size-3 animate-spin" /> Spotlight is fixing this
+        </span>
+      </NodeToolbar>
       <NodeToolbar isVisible={selected} position={Position.Top} offset={compact ? 12 : 14}>
         <div className="flex animate-in items-center gap-0.5 rounded-full border border-hair bg-sf p-0.5 shadow-pop">
           <ToolbarButton title="Open (double-click)" onClick={() => openNode(id)}>

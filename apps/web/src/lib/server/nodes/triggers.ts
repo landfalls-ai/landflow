@@ -257,10 +257,10 @@ export const scheduleTrigger = defineNode({
         default: 'rules',
         noDataExpression: true,
         options: [
-          { name: 'Rules', value: 'rules', description: 'Intervals at times of day, weekdays, days of the month, or cron' },
+          { name: 'Rules', value: 'rules', description: 'At a time of day (daily at 9:00), on weekdays, on days of the month, or cron' },
           { name: 'Every N Seconds', value: 'seconds', description: 'Counted from activation' },
           { name: 'Every N Minutes', value: 'minutes', description: 'Counted from activation' },
-          { name: 'Every N Hours', value: 'hours', description: 'Counted from activation' },
+          { name: 'Every N Hours', value: 'hours', description: 'Counted from activation, not at a time of day' },
         ],
       },
       { name: 'every', displayName: 'Every', type: 'number', default: 5, noDataExpression: true, typeOptions: { minValue: 1 }, displayOptions: { show: { unit: ['seconds', 'minutes', 'hours'] } } },

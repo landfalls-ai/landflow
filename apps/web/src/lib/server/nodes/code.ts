@@ -75,8 +75,8 @@ export const codeNode = defineNode({
         type: 'options',
         default: 'all',
         options: [
-          { name: 'Run once for all items', value: 'all' },
-          { name: 'Run once for each item', value: 'each' },
+          { name: 'Run once for all items', value: 'all', description: 'One run with every item in `items`: to combine, count or sort them' },
+          { name: 'Run once for each item', value: 'each', description: 'One run per item, with that item as `$json`: it can’t see the other items' },
         ],
       },
       {

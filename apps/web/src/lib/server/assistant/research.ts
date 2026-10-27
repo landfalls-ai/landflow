@@ -27,7 +27,8 @@ function describeProperty(p: PropertyDescriptor, parameters?: Record<string, unk
   const parts = [`${p.name} (${p.type}${p.required ? ', required' : ''})`];
   if (p.displayName !== p.name) parts.push(`“${p.displayName}”`);
   if (p.description) parts.push(`— ${p.description.slice(0, 160)}`);
-  if (p.options?.length) parts.push(`options: ${p.options.slice(0, 12).map((o) => `${JSON.stringify(o.value)}${o.name !== String(o.value) ? ` (${o.name})` : ''}`).join(', ')}`);
+  const option = (o: NonNullable<PropertyDescriptor['options']>[number]) => [o.name !== String(o.value) && o.name, o.description?.slice(0, 120)].filter(Boolean).join(': ');
+  if (p.options?.length) parts.push(`options: ${p.options.slice(0, 12).map((o) => `${JSON.stringify(o.value)}${option(o) ? ` (${option(o)})` : ''}`).join(', ')}`);
   if (p.default !== undefined && p.default !== '' && !(typeof p.default === 'object' && !Object.keys(p.default as object).length)) parts.push(`default ${json(p.default, 120)}`);
   const when = conditions(p.displayOptions?.show, p.displayOptions?.hide);
   if (when) parts.push(`shown when ${when}`);

@@ -47,8 +47,19 @@ describe('Spotlight bubbles', () => {
     // Nothing wrong: where the flow ends, then a question about the whole.
     const calm = flow();
     calm.nodes[2].hasModel = true;
-    expect(idleBubbles(calm).map((b) => b.label)).toEqual(['After “Support agent”, ', 'What does this workflow do?']);
+    expect(idleBubbles(calm).map((b) => b.label)).toEqual(['Test it and fix what fails', 'After “Support agent”, ', 'What does this workflow do?']);
+    expect(idleBubbles(calm)[0]).toMatchObject({ id: 'test', send: false });
     expect(idleBubbles({ ...calm, nodes: calm.nodes.map((n) => ({ ...n, trigger: false })) })[0].label).toBe('Add a trigger that starts this workflow');
+  });
+
+  it('ends the flow at the last step, not at an agent’s tool', () => {
+    // A tool connects to its agent, so it has a connection out.
+    const ctx: SpotlightContext = {
+      nodes: [node('a', 'Chat message', { trigger: true, outgoing: true }), node('b', 'Agent', { agent: true, hasModel: true, outgoing: true, x: 280 }), node('c', 'Reply', { x: 560 }), node('d', 'Slugify', { x: 700, outgoing: true })],
+      types: TYPES,
+    };
+    expect(idleBubbles(ctx).map((b) => b.label)).toContain('After “Reply”, ');
+    expect(idleBubbles({ ...ctx, selectedId: 'd' }).map((b) => b.label)).toContain('After “Reply”, ');
   });
 
   it('completes an @ mention of a node on the canvas, spaces included', () => {

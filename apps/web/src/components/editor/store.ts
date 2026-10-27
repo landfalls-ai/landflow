@@ -153,6 +153,8 @@ interface EditorState {
   viewing?: ViewedExecution;
   /** Set by <Editor>; lets nodes and panels start runs. */
   run?: (command: RunCommand) => void;
+  /** Set by <Editor>: save the draft (false when it couldn't). Spotlight saves before it publishes. */
+  save?: () => Promise<boolean>;
   /** Execution whose data is on the canvas (the live run, or one opened from history). */
   executionId?: string;
   executionStartedAt?: number;

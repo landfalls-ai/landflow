@@ -64,7 +64,9 @@ export const PARAMETER_FORMATS = `Parameter formats:
 - core.set (add or change fields): {"mode":"manual","fields":{"values":[{"name":"greeting","type":"string","value":"Hi {{ $json.name }}"}]},"includeOtherFields":true}
 - core.if / core.filter: {"conditions":{"condition":[{"left":"{{ $json.score }}","operator":"gt","right":"0.5"}]},"combinator":"and"}. Operators: equals, notEquals, contains, notContains, startsWith, gt, gte, lt, lte, regex, isEmpty, isNotEmpty, isTrue, isFalse.
 - core.code per item: {"mode":"each","codeEach":"return { ...$json, total: $json.a + $json.b };"}. For all items at once: {"mode":"all","code":"return items.map((item) => ({ ...item.json }));"}
-- core.merge waits for both inputs: {"mode":"append"}. Connect the two branches to it.`;
+- core.merge waits for both inputs: {"mode":"append"}. Connect the two branches to it.
+- core.aggregate, one item with a list of each field's values: {"aggregate":"aggregateIndividualFields","fieldsToAggregate":{"fieldToAggregate":[{"fieldToAggregate":"title"}]}} puts out {"title":["…","…"]}.
+- core.schedule at a time of day ("every morning at 9"): {"unit":"rules","rule":{"interval":[{"field":"days","daysInterval":1,"triggerAtHour":9,"triggerAtMinute":0}]}}. Weekdays at 9: {"unit":"rules","rule":{"interval":[{"field":"cronExpression","expression":"0 9 * * 1-5"}]}}. "unit":"hours" with "every" counts from when the workflow is activated, not from a time of day.`;
 
 const SYSTEM = `You design workflows for Landflow, an n8n-like automation tool. Reply with JSON only, matching the schema.
 

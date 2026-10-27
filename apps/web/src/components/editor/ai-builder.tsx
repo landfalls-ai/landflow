@@ -78,6 +78,8 @@ export function useBuildFlow() {
       const template: FlowTemplate = { id: 'ai', title: draft.name, description: prompt, icon: 'lucide:sparkles', color: 'var(--viz-7)', nodes: layout(draft), edges: draft.edges, pinData: draft.pinData };
       state.applyTemplate(template, { x: right, y: top });
       if (/^untitled/i.test(state.name) || !state.name) state.setMeta({ name: draft.name });
+      // What it was drafted from: Spotlight's "Test and fix" checks a run against it.
+      if (!state.description?.trim()) state.setMeta({ description: prompt });
       setTimeout(() => fitView({ padding: 0.25, duration: 600, maxZoom: 1.1 }), 60);
       return { name: draft.name, nodes: draft.nodes.length, model: draft.model, durationMs: draft.durationMs, dropped: draft.dropped.length, pinned: Boolean(draft.pinData && Object.keys(draft.pinData).length) };
     } finally {

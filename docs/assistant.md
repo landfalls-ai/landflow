@@ -3,7 +3,7 @@
 The workflow editor has an AI assistant with two faces on one backend:
 
 - **After-run suggestions**: once a node has run, a "✨ Suggestions" card in its panel offers fixes for errors, parameter tweaks, data-quality notes and the next node to add. Each comes with **Apply** and **Dismiss**.
-- **Spotlight**: a bar floating at the bottom of the canvas, next to Execute workflow. Bubbles above it suggest what to ask and complete what you type. The builder chat behind it researches the node catalog, node docs, the workflow and the last run, then **proposes** changes. You review each proposal as a diff and apply it.
+- **Spotlight**: a bar floating at the bottom of the canvas, next to Execute workflow. Bubbles above it suggest what to ask and complete what you type. The builder chat behind it researches the node catalog, node docs, the workflow and the last run, then **proposes** changes. You review each proposal as a diff and apply it. **Test and fix** runs the workflow and has failures fixed until a run passes, then offers to publish it.
 
 The assistant never edits a workflow by itself. Everything it suggests is a list of [edit operations](#edit-operations) that the server checks against the live registry. The editor applies them only when you click Apply, as one step with an **Undo** in the toast. Applying doesn't save; Save does.
 
@@ -35,12 +35,14 @@ The reply is checked with zod, and each suggestion's ops are validated. Suggesti
 
 Spotlight is the one AI surface in the editor: a bar at the bottom of the canvas, beside the run controls (on a narrow canvas, with the chat or another side panel open, it moves to its own line above them). Click it or press **⌘I**. Its conversation opens above the bar and lasts while the workflow is open. ✎ starts over; the chevron or **esc** hides it, and **Apply** hides it too so the change shows on the canvas (the toast has **Undo**). A count on the bar's conversation button shows proposals not yet applied or dismissed.
 
+While Spotlight works on its own (drafting a flow, then [testing and fixing](#test-and-fix) it), the conversation steps aside so the flow stays in view. A card at the top left of the canvas shows what Spotlight is doing (*Drafting the flow*, *Testing and fixing*, *Fixing “Join Titles”*) and one line per step: each test run, each fix applied, the reply to a review. ⤢ shows the whole conversation, and ⤡ (or **esc**) puts it back in the card. The node a fix is being asked for carries a *Spotlight is fixing this* badge. When the work is over, the conversation comes back with the session folded into one line (*Test and fix · 5 runs · 4 fixes applied*, which opens on a click) and the outcome below it.
+
 **Bubbles.** Small suggestions float above the bar. They come from `lib/shared/spotlight.ts`, with no model call, so they change as you type:
 
 | When | Bubbles |
 |---|---|
 | The canvas is empty | Starters for the triggers the workflow may use: *When a webhook is called, …*, *Every morning at 9, …*, *Answer chat messages with an AI agent*, *Fetch a JSON API and keep the items where …* |
-| The box is empty and focused | At most three, most urgent first: *Why did “X” fail?*, *Connect a chat model to “Agent”*, *Explain “Selected node”*, *Add a trigger that starts this workflow*, *After “Last node”, …*, *What does this workflow do?* |
+| The box is empty and focused | At most three, most urgent first: *Why did “X” fail?*, *Connect a chat model to “Agent”*, *Explain “Selected node”*, *Add a trigger that starts this workflow* (or, when there is one, *Test it and fix what fails*, which starts [Test and fix](#test-and-fix)), *After “Last node”, …*, *What does this workflow do?* |
 | The box is empty, not focused | Only a failure: *Why did “X” fail?*, and *Fix: …* once the after-run suggestions for the failed node are ready |
 | Typing `@` | Nodes on the canvas by name (spaces allowed): choosing one inserts `@Node name` |
 | Typing a word | Node types this workflow may use, by name, keyword or plugin (`sla` → Slack, Slack Trigger), and, when the word is all there is, the whole step: *Add Slack after “Selected node”* (else the last node) |
@@ -50,7 +52,7 @@ A bubble that ends in “…” fills the box to finish; a complete question or 
 
 **Context.** The selected node shows as a chip in the bar; × leaves it out of the next message. Tagged nodes and node types go with the message as `mentions` (ids, not text), and the server adds them to the prompt: a tag the workflow can't use is dropped.
 
-**Empty canvas.** The first message on an empty canvas drafts the whole flow in one go with the flow builder (`/api/ai/build`), lays it out and pins test data on the trigger. One ⌘Z undoes it. Later messages go to the builder chat.
+**Empty canvas.** The first message on an empty canvas drafts the whole flow in one go with the flow builder (`/api/ai/build`), lays it out and pins test data on the trigger. One ⌘Z undoes it. While it drafts, the canvas shows a placeholder instead of the templates. The message becomes the workflow's description (when it has none), and the reply ends with **Test and fix**. Later messages go to the builder chat.
 
 ### The builder chat
 
@@ -75,10 +77,35 @@ Each card has **Apply** and **Dismiss**. When a reply has two or more open propo
 
 Local models sometimes write a tool call as text (`<function=propose_changes><parameter=…>`) instead of a structured call. The chat reads those back as calls.
 
-Three more guards cover what local models get wrong (all in `lib/server/assistant/chat.ts`):
+More guards cover what local models get wrong (all in `lib/server/assistant/chat.ts`):
 - **Made-up ids**: a parameter named like an id (`channelId`, `sheetId`, `id`…) whose value appears nowhere in the conversation, the workflow, its run data or the node type's own options is left out of the proposal, and the card lists it as left for the user to fill in. The prompt also says not to invent ids, channels, addresses, URLs or keys.
 - **"It has been added"**: in a reply that proposed something, sentences that say the change was made ("has been added", "I've updated…", "The workflow now has…", "is ready to…") are dropped, because nothing changes until Apply. Lists keep their lines; if nothing is left, the reply says to review the card and click Apply.
+- **Made-up ids in the text**: an id the proposal left out as made up (an id-like token: a capital letter, 9 or more capitals, digits, `_` or `-`, with a digit) is removed from the reply's text as well; in brackets it goes, elsewhere it becomes "the right id".
+- **Repeats**: a sentence the reply already said earlier in the message (the same words, or six or more content words of which 80% were said before) is dropped, and a proposal identical to an earlier one in the reply is skipped.
+- **Echoed notes**: the model sometimes copies the notes it gets in the history (`[Proposed “…”: applied]`, `[Test run 2 failed: …]`) into its reply; those lines are removed. More wordings of "it's done" count as claims too: "was set up", "will now", "now sends …".
 - **Tool-call parse errors**: Ollama parses tool calls itself, and some samples fail its parser (qwen3-coder's XML: `XML syntax error … element <parameter> closed by </function>`, a 500). The Ollama adapter retries those up to twice, and in a stream only while nothing has been shown yet. This also covers the AI Agent on an Ollama model.
+
+### Test and fix
+
+**Test and fix** (`components/editor/test-session.ts`) runs the workflow and, while a run doesn't pass, has the assistant fix it and runs it again. It starts from the button at the end of an empty-canvas draft, or from the *Test it and fix what fails* bubble on any workflow with a trigger. Starting it is your go-ahead for the fixes: each is applied as it comes, with its own Undo. Spotlight's stop button (or ■ on its card) ends the session; a run already going finishes.
+
+Each round:
+1. Runs the workflow, as Execute workflow does, and adds a line: *Test run 2 · failed at “Join Titles”: No fields to aggregate*, or *no errors: 4 steps, 1 item reached “Join Titles”*.
+2. Judges the run (`checkRun`, `lib/shared/run-check.ts`). A run passes when the execution succeeded, no node failed, and items reached the end of a branch. A run where every branch ended with no items stopped somewhere, which is more often a bug than not, so it doesn't pass.
+3. Looks for steps that run but don't do the job. Some do nothing (`hollowSteps`): an If or Filter without conditions (it keeps every item), a Set in manual mode with no fields. Some repeat every result (`multipliedSteps`): a Code node in "each" mode that put out several items for each one it got (10 in, 100 out), because its code handled all the items each time. Drafted flows often have both.
+4. When the run failed or a step is hollow, asks the assistant for a fix: what failed, the fixes already tried, and the node it happened at as the selected node. The request is a fresh conversation (the run data is in the context) with `session: "fix"`.
+5. When the run passed and the workflow has a goal (its description: an empty-canvas draft sets it to your message), asks whether the result does what was asked (`session: "review"`). The request carries what the last step put out (its first items), so the assistant compares that with each part of the goal, then fixes what doesn't match or says that it does.
+6. Applies what the assistant proposed and goes round again, up to **4 fixes**.
+
+With `session` set, the chat route tells the model that Spotlight applies the proposal and runs again by itself, drops "click Apply", "run it again" and lines that are only a JSON object (a tool call written as text) from the reply, and sends a fix request that proposed nothing back to the model once.
+
+It stops when:
+- a run passes and the review has nothing to change (or 4 fixes are spent and the last run passed): **Ready for production**;
+- 4 fixes are spent and the run still fails: Spotlight says so and names the node whose panel shows what happened;
+- a run can't be judged: the trigger waits for a test event (pin test data on it or send one), the run waits (a Wait node, a form or an approval), or it was canceled;
+- the assistant has no fix for a failed run, or its fix no longer fits the canvas.
+
+**Ready for production.** The card says what publishing does: with a trigger that starts the workflow on its own (a schedule, a webhook, an app trigger), the published version runs from then on; a workflow that only starts by hand is just recorded. **Publish to production** saves the draft if needed and publishes it, or files a publish request when the workflow needs [four-eyes approval](features/audit-and-governance.md). **Not now** leaves it as a draft. Nothing is published without that click.
 
 ## Edit operations
 
@@ -112,7 +139,7 @@ The server runs it against the registry's available node types. The editor runs 
 | Route | Body | Response |
 |---|---|---|
 | `POST /api/assistant/suggest` | `{ workflow, workflowId?, nodeId, run: RunDigest, model? }` | `{ suggestions: [{ id, kind, title, detail, confidence, ops, dropped?, warnings? }], model, durationMs, skipped? }` · 404 for an unknown node, 502 when the model fails |
-| `POST /api/assistant/chat` | `{ messages: [{ role, content }], workflow, workflowId?, selectedNodeId?, runs?: { [nodeId]: RunDigest }, mentions?: { nodes?: string[], types?: string[] }, model? }` | SSE, one event per step: `text {text}`, `tool {name, label, ok}`, `proposal {id, summary, ops, dropped, warnings}`, then `done {model, durationMs, steps, usage}` or `error {message}` |
+| `POST /api/assistant/chat` | `{ messages: [{ role, content }], workflow, workflowId?, selectedNodeId?, runs?: { [nodeId]: RunDigest }, mentions?: { nodes?: string[], types?: string[] }, session?: fix\|review, model? }` (`session`: a [Test and fix](#test-and-fix) request) | SSE, one event per step: `text {text}`, `tool {name, label, ok}`, `proposal {id, summary, ops, dropped, warnings}`, then `done {model, durationMs, steps, usage}` or `error {message}` |
 | `POST /api/assistant/feedback` | `{ kind: fix\|param\|data\|next\|proposal, action: applied\|dismissed }` | `{ ok: true }` (feeds the metrics below) |
 
 `RunDigest` is `{ status, durationMs, error?, inputs: [{ count, sample }], outputs: [{ count, sample }], logs? }`. `sample` holds the first 3 items' JSON, with long strings, arrays and deep objects clipped. The editor builds digests with `digestRun()`, so full run data never leaves the browser.
@@ -149,8 +176,11 @@ The server runs it against the registry's available node types. The editor runs 
 | `lib/server/assistant/scope.ts` | `allowedTypes`: the node types a workflow may use |
 | `lib/shared/spotlight.ts` | Spotlight's bubbles: starters, attention first, `@` mentions, node types, sentence completion |
 | `lib/server/telemetry/assistant.ts` | spans and instruments |
+| `lib/shared/run-check.ts` | `checkRun` (did a test run pass), `hollowSteps` (steps that do nothing) and `multipliedSteps` (per-item code that repeats every result) |
 | `components/editor/assistant.ts` | client stores: suggestion cache, chat conversation, `applyChanges` with undo |
-| `components/editor/suggestions-card.tsx`, `spotlight.tsx` | the after-run card, and Spotlight (bar, bubbles, conversation, proposal cards) |
+| `components/editor/test-session.ts` | Test and fix: `testUntilItRuns`, `productionNote`, `publishToProduction` |
+| `components/editor/suggestions-card.tsx`, `spotlight.tsx` | the after-run card, and Spotlight (bar, bubbles, conversation, proposal cards, the activity card while it works) |
 | `components/editor/ai-builder.tsx` | `useBuildFlow`: the empty canvas's one-shot flow draft |
 | `apps/web/test/assistant.test.ts` | ops, suggestion parsing and the chat loop with scripted models |
 | `apps/web/test/spotlight.test.ts` | the bubbles |
+| `apps/web/test/run-check.test.ts` | what passes a test run, and hollow steps |

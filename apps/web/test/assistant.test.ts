@@ -5,7 +5,7 @@ import type { NodeTypeInfo } from '@/lib/shared/types';
 import type { GenerateInput } from '@/lib/server/nodes/models';
 import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
-import { recoverToolCalls, runChat, withoutAppliedClaims, withoutInventedIds, MAX_STEPS, type ChatEvent } from '@/lib/server/assistant/chat';
+import { recoverToolCalls, runChat, withoutApplyRequests, withoutAppliedClaims, withoutEchoedNotes, withoutInventedIds, withoutMadeUpIds, withoutRepeats, MAX_STEPS, type ChatEvent } from '@/lib/server/assistant/chat';
 import { registryLookup, validateOps } from '@/lib/server/assistant/ops';
 import { searchNodes } from '@/lib/server/assistant/research';
 import { suggestAfterRun } from '@/lib/server/assistant/suggest';
@@ -378,6 +378,38 @@ describe('builder chat', () => {
     expect(withoutAppliedClaims(steps)).toBe(steps);
     expect(withoutAppliedClaims('Done.\n\n1. Added a Slack node after Reply.\n2. Pick a channel in it.')).toBe('Done.\n\n2. Pick a channel in it.');
     expect(withoutAppliedClaims('This adds a Slack message after Filter; click Apply, then pick a credential.')).toBe('This adds a Slack message after Filter; click Apply, then pick a credential.');
+    // "Will now" and "now posts" describe the change as made too.
+    expect(withoutAppliedClaims('The workflow will now post the answer to Slack after Reply. You need to:\n1. Click Apply.')).toBe('You need to:\n1. Click Apply.');
+    expect(withoutAppliedClaims('It now posts to Slack. Pick a channel.')).toBe('Pick a channel.');
+    expect(withoutAppliedClaims('The error was fixed by replacing the code. The Join Titles node now uses one list.\nRun it.')).toBe('Run it.');
+  });
+
+  it('drops copied history notes, exact repeats and, in a test session, requests to apply or run', () => {
+    expect(withoutEchoedNotes('Let me fix it.\n[Proposed “Replace Create Message”: applied]\nDone.')).toBe('Let me fix it.\nDone.');
+    expect(withoutRepeats('The workflow is not yet producing the output. Adding a node.', 'The workflow is not yet producing the output.')).toBe('Adding a node.');
+    expect(withoutApplyRequests('Switched the mode to all. To complete the fix, please click the Apply button. Then run the workflow again.')).toBe('Switched the mode to all.');
+    expect(withoutApplyRequests('I changed the mode to all.\n\nPlease apply the proposed change to fix the workflow.')).toBe('I changed the mode to all.');
+    expect(withoutApplyRequests('The output matches your request.\n\n{"error": "No change needed"}\n\nNo changes are needed.')).toBe('The output matches your request.\n\nNo changes are needed.');
+  });
+
+  it('never repeats a made-up id in its text, and keeps ids the user gave', () => {
+    // An id left out of a proposal, in brackets or not, and an id-like token nobody mentioned.
+    expect(withoutMadeUpIds('2. Fill in the Slack channel ID (C057L43652P) in the new Slack Message node', '', ['C057L43652P'])).toBe('2. Fill in the Slack channel ID in the new Slack Message node');
+    expect(withoutMadeUpIds('Post to C057N3842P9, then check it.', 'the workflow')).toBe('Post to the right id, then check it.');
+    expect(withoutMadeUpIds('Post to “C0ABCDEF12” as asked.', 'user: use channel C0ABCDEF12')).toBe('Post to “C0ABCDEF12” as asked.');
+    // Short words and plain capitals are not ids.
+    expect(withoutMadeUpIds('Use SHA256 or HTTPS, as in ISO8601.', '')).toBe('Use SHA256 or HTTPS, as in ISO8601.');
+  });
+
+  it('leaves out what a reply says twice around a tool call', async () => {
+    const first = 'The Hash node is a tool for the agent that hashes text using the SHA-256 algorithm. It is connected to the Agent as one of its tools, so when the agent needs to hash something, it can use this tool.';
+    const again = 'The Hash node hashes text for the agent using the SHA-256 algorithm. It is connected to the Agent as a tool, so when the agent needs to hash something, it can use this tool. It has no input connections of its own: the agent invokes it.';
+    expect(withoutRepeats(again, first)).toBe('It has no input connections of its own: the agent invokes it.');
+    expect(withoutRepeats('Short again.', 'Short again.')).toBe('Short again.');
+    const { model } = scripted([{ text: first, toolCalls: [{ id: 'c1', name: 'get_workflow', input: {} }] }, { text: again }]);
+    const events: ChatEvent[] = [];
+    await runChat({ messages: [{ role: 'user', content: 'What does Hash do?' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
+    expect(events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text)).toEqual([first, 'It has no input connections of its own: the agent invokes it.']);
   });
 
   it('leaves out ids nobody gave, and keeps ones the user or the workflow did', async () => {
@@ -385,7 +417,7 @@ describe('builder chat', () => {
     const { model, calls } = scripted([
       { toolCalls: [{ id: 'c1', name: 'propose_changes', input: save('Save', 'dt_k3J9xQ2mPz') }] },
       { toolCalls: [{ id: 'c2', name: 'propose_changes', input: save('Save given', 'dt_given42') }] },
-      { text: 'Pick the table on the card.' },
+      { text: 'Pick the table on the card (dt_k3J9xQ2mPz); dt_given42 is set.' },
     ]);
     const events: ChatEvent[] = [];
     await runChat({ messages: [{ role: 'user', content: 'Save the items, to table dt_given42 if it helps' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
@@ -396,6 +428,8 @@ describe('builder chat', () => {
     expect(given.ops[0]).toMatchObject({ parameters: { operation: 'insert', dataTableId: 'dt_given42' } });
     expect(given.dropped.join()).not.toContain('nobody gave');
     expect((calls[1].messages.at(-1) as { results: Array<{ content: string }> }).results[0].content).toContain('dataTableId of “Save”: an id nobody gave');
+    // Nor does the text repeat the made-up one.
+    expect(events.at(-2)).toEqual({ type: 'text', text: 'Pick the table on the card; dt_given42 is set.' });
     // Expressions, other parameters and a value the node type itself offers are left alone.
     const offered = () => JSON.stringify([{ name: 'modelId', default: 'gpt-5-mini' }]);
     expect(withoutInventedIds([{ op: 'setParameters', node: 'A', parameters: { sheetId: '{{ $json.sheet }}', name: 'X9Y8Z7W6V5', modelId: 'gpt-5-mini' } }], '', offered).invented).toEqual([]);

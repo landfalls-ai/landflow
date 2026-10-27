@@ -73,6 +73,8 @@ In the editor, Ask is the builder chat: the same ops (`lib/shared/assistant-ops.
 ([assistant.md](assistant.md#spotlight)) is this bar for one page. Its bubbles (`lib/shared/spotlight.ts`) are the
 first version of Go and `@`: they complete canvas nodes and the node types the workflow may use, and suggest what to ask,
 without a model call. The chat it sends to uses only the node types the workflow allows (`assistant/scope.ts`).
+**Also built:** [Test and fix](assistant.md#test-and-fix), which runs the workflow, has failures fixed until a run passes,
+and then offers to publish it. While it works, the conversation waits in a card at the side of the canvas.
 
 ## 3. The action layer
 
@@ -203,7 +205,8 @@ of the editor-only ones.
 1. **Spotlight replaces the editor's Assistant panel.** Decided and built: in the editor, Spotlight is the builder chat
    with the same ops, diff and undo, and the Assistant panel, its header button and the toolbar's AI builder are gone.
 2. **No auto-apply by default.** An opt-in per user for create and update kinds only; never for run, publish, delete or
-   secret.
+   secret. Test and fix is the one exception so far: starting a session is the opt-in for the fixes it applies to the
+   draft (each with Undo). It runs only test runs, and publishing still waits for a click.
 3. **Local model by default**, as the assistant; hosted models through the existing overrides.
 4. **HTTP routes move onto the catalog later**, one area at a time, after Spotlight and MCP.
 5. **The navigation change is phase 4**, after ⌘K makes every page reachable.

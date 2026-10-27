@@ -167,9 +167,9 @@ export const useSuggestions = create<SuggestionsState>((set, get) => ({
   },
 }));
 
-/** After a failed run, have the failed node's suggestions ready before its panel is opened. */
+/** After a failed run, have the failed node's suggestions ready before its panel is opened (a test-and-fix session asks itself). */
 export function prefetchFailure() {
-  if (!readAutoSuggest()) return;
+  if (!readAutoSuggest() || useAssistant.getState().testing) return;
   const { runs } = useEditor.getState();
   const failed = Object.entries(runs).find(([, list]) => latestMain(list)?.status === 'error');
   if (failed) useSuggestions.getState().request(failed[0], latestMain(failed[1])!);
@@ -194,12 +194,34 @@ export interface ToolActivity {
   ok: boolean;
 }
 
-/** One block of an assistant reply, in the order it streamed. */
-export type ReplyPart = { kind: 'text'; text: string } | { kind: 'tool'; tool: ToolActivity } | { kind: 'proposal'; proposal: Proposal };
+/** A run of a test-and-fix session (./test-session.ts). */
+export interface TestRun {
+  round: number;
+  state: 'running' | 'passed' | 'failed';
+  summary?: string;
+}
 
+/** A button in the conversation: start a test-and-fix session, or publish what passed. */
+export interface ReplyAction {
+  action: 'test' | 'publish';
+  state?: 'done' | 'dismissed';
+  /** Test: what the workflow is for (the description it was drafted from), to check a passing run against. */
+  goal?: string;
+}
+
+/** One block of an assistant reply, in the order it streamed. */
+export type ReplyPart =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; tool: ToolActivity }
+  | { kind: 'proposal'; proposal: Proposal }
+  | { kind: 'run'; run: TestRun }
+  | ({ kind: 'action' } & ReplyAction);
+
+/** `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line. */
 export type ChatItem =
-  | { id: string; role: 'user'; text: string }
-  | { id: string; role: 'assistant'; parts: ReplyPart[]; done?: { model: string; durationMs: number; steps: number }; error?: string };
+  /** `auto`: written by a test-and-fix session, not typed. */
+  | { id: string; role: 'user'; text: string; auto?: boolean; testId?: string }
+  | { id: string; role: 'assistant'; parts: ReplyPart[]; done?: { model: string; durationMs: number; steps: number }; error?: string; testId?: string };
 
 type StreamEvent =
   | { type: 'text'; text: string }
@@ -213,6 +235,16 @@ export interface SendOptions {
   mentions?: { nodes: string[]; types: string[] };
   /** Leave the selected node out of the context (its chip was removed). */
   withoutSelection?: boolean;
+  /** Sent by a test-and-fix session: shown as a note, not as something the user typed. */
+  auto?: boolean;
+  /** The node to put in the context as if selected (the one a test run failed at). */
+  nodeId?: string;
+  /** Send without the earlier turns: a test-and-fix session's requests carry what they need (the run is in the context). */
+  fresh?: boolean;
+  /** A test-and-fix session's request: for a fix (a reply that proposes nothing is sent back once), or a review. */
+  session?: 'fix' | 'review';
+  /** The test-and-fix session the request belongs to. */
+  testId?: string;
 }
 
 interface AssistantState {
@@ -222,6 +254,17 @@ interface AssistantState {
   items: ChatItem[];
   pending: boolean;
   abort?: AbortController;
+  /** A test-and-fix session is running (./test-session.ts); aborting it stops the session. */
+  testing?: AbortController;
+  /** The flow builder is drafting a flow on the empty canvas. */
+  drafting: boolean;
+  /** The node a test-and-fix session is asking a fix for: the canvas marks it. */
+  fixing?: string;
+  /**
+   * While Spotlight works on its own (drafting, testing and fixing), the conversation waits in a card at the side of the
+   * canvas so the flow stays in view; true shows it in full instead.
+   */
+  detail: boolean;
   setOpen(open: boolean): void;
   /** Start over when another workflow is opened. */
   bind(workflowId: string): void;
@@ -231,6 +274,8 @@ interface AssistantState {
   stop(): void;
   reset(): void;
   setProposalState(itemId: string, proposalId: string, state: 'applied' | 'dismissed'): void;
+  /** Change the parts of one reply (a test-and-fix session adds and updates its runs; buttons record what was chosen). */
+  updateParts(itemId: string, fn: (parts: ReplyPart[]) => ReplyPart[]): void;
 }
 
 /** What the model sees of earlier turns: the text, plus a note of each proposal and whether it was applied. */
@@ -241,6 +286,7 @@ function historyOf(items: ChatItem[]) {
       .map((part) => {
         if (part.kind === 'text') return part.text;
         if (part.kind === 'proposal') return `[Proposed “${part.proposal.summary}”: ${part.proposal.state ?? 'not applied yet'}]`;
+        if (part.kind === 'run' && part.run.state !== 'running') return `[Test run ${part.run.round} ${part.run.state}: ${part.run.summary ?? ''}]`;
         return '';
       })
       .filter(Boolean)
@@ -253,6 +299,8 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   open: false,
   items: [],
   pending: false,
+  drafting: false,
+  detail: false,
 
   setOpen(open) {
     set({ open });
@@ -261,7 +309,8 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   bind(workflowId) {
     if (get().workflowId === workflowId) return;
     get().abort?.abort();
-    set({ workflowId, items: [], pending: false, abort: undefined });
+    get().testing?.abort();
+    set({ workflowId, items: [], pending: false, abort: undefined, testing: undefined, fixing: undefined, detail: false });
     useSuggestions.getState().clear();
   },
 
@@ -269,10 +318,11 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     const message = text.trim();
     if (!message || get().pending) return;
     const editor = useEditor.getState();
-    const user: ChatItem = { id: nanoid(8), role: 'user', text: message };
-    const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [] };
+    const group = options.testId ? { testId: options.testId } : {};
+    const user: ChatItem = { id: nanoid(8), role: 'user', text: message, ...(options.auto && { auto: true }), ...group };
+    const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [], ...group };
     const abort = new AbortController();
-    const messages = historyOf([...get().items, user]);
+    const messages = historyOf(options.fresh ? [user] : [...get().items, user]);
     set((s) => ({ open: true, items: [...s.items, user, reply], pending: true, abort }));
     const patch = (fn: (item: Extract<ChatItem, { role: 'assistant' }>) => Partial<Extract<ChatItem, { role: 'assistant' }>>) =>
       set((s) => ({ items: s.items.map((item) => (item.id === reply.id && item.role === 'assistant' ? { ...item, ...fn(item) } : item)) }));
@@ -283,9 +333,10 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           messages,
           workflow: editor.toWorkflow(),
           workflowId: editor.workflowId,
-          selectedNodeId: options.withoutSelection ? undefined : (editor.openNodeId ?? editor.nodes.find((n) => n.selected)?.id),
+          selectedNodeId: options.nodeId ?? (options.withoutSelection ? undefined : (editor.openNodeId ?? editor.nodes.find((n) => n.selected)?.id)),
           runs: runDigests(),
           ...(options.mentions && { mentions: options.mentions }),
+          ...(options.session && { session: options.session }),
         },
         (_event, data) => {
           const event = data as StreamEvent;
@@ -312,12 +363,14 @@ export const useAssistant = create<AssistantState>((set, get) => ({
 
   stop() {
     get().abort?.abort();
-    set({ pending: false, abort: undefined });
+    get().testing?.abort();
+    set({ pending: false, abort: undefined, testing: undefined, fixing: undefined });
   },
 
   reset() {
     get().abort?.abort();
-    set({ items: [], pending: false, abort: undefined });
+    get().testing?.abort();
+    set({ items: [], pending: false, abort: undefined, testing: undefined, fixing: undefined, detail: false });
   },
 
   setProposalState(itemId, proposalId, state) {
@@ -328,5 +381,9 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           : item,
       ),
     }));
+  },
+
+  updateParts(itemId, fn) {
+    set((s) => ({ items: s.items.map((item) => (item.id === itemId && item.role === 'assistant' ? { ...item, parts: fn(item.parts) } : item)) }));
   },
 }));

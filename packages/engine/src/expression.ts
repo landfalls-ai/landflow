@@ -136,7 +136,10 @@ export class ExpressionResolver {
     try {
       return compile(code.trim()).runInContext(this.context, { timeout: 250 });
     } catch (error) {
-      throw new ExpressionError((error as Error).message, code.trim());
+      const message = (error as Error).message;
+      // The Code node's `items` isn't here: say what an expression has instead.
+      const hint = /^items is not defined$/.test(message) ? ' (an expression sees the current item as $json; $input.all() gives every item)' : '';
+      throw new ExpressionError(message + hint, code.trim());
     }
   }
 
