@@ -67,6 +67,10 @@ how to run it and how to change it. The [project README](../README.md) has the q
 **Reviews, plans and research**
 
 - [ui-review.md](ui-review.md): a screen-by-screen comparison of the UI with n8n.
+- [spotlight.md](spotlight.md): a new Home, the ⌘K Spotlight assistant and the action layer every AI or MCP change goes
+  through (a plan, not built).
+- [ux-simplification.md](ux-simplification.md): what each screen asks of the user, and how to make it simpler (a plan,
+  not built).
 - [harnesses.md](harnesses.md): running Landflow agents inside Claude Code and other harnesses (a plan, parked; only
   its spike was run).
 - [research/01-n8n-node-interface.md](research/01-n8n-node-interface.md),

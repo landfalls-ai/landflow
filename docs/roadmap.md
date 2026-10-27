@@ -9,7 +9,9 @@ research report is in `reports/Workflow platform feature gaps.md`, with the note
 
 The work goes in waves. Each wave ends with the web tests passing, a clean type check and a
 check in Chrome, and this file is updated as items land. The Claude Code harness plan
-([harnesses.md](harnesses.md)) is parked and not part of this list.
+([harnesses.md](harnesses.md)) is parked and not part of this list. Neither are the Spotlight plan
+([spotlight.md](spotlight.md)) and the simplification review ([ux-simplification.md](ux-simplification.md)), which wait
+on the decisions listed in spotlight.md.
 
 ## Wave 1: runs that can wait, flow building blocks, organisation, built-in data
 
