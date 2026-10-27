@@ -300,6 +300,13 @@ export async function* readLines(body: ReadableStream<Uint8Array>): AsyncGenerat
   if (buffer) yield buffer;
 }
 
+/**
+ * Ollama parses a model's tool calls itself, and some samples fail its parser (qwen3-coder's XML: "XML syntax error on
+ * line 8: element <parameter> closed by </function>", a 500). Another sample usually parses, so those are retried.
+ */
+const TOOL_PARSE_ERROR = /XML syntax error|error parsing tool call|failed to parse tool call/i;
+const TOOL_PARSE_RETRIES = 2;
+
 export function ollamaModel(options: { baseUrl: string; model: string; temperature?: number }): LanguageModel {
   const base = options.baseUrl.replace(/\/+$/, '');
   const url = parseUrl(base);
@@ -335,53 +342,70 @@ export function ollamaModel(options: { baseUrl: string; model: string; temperatu
         for (const result of message.results) wire.push({ role: 'tool', content: result.content, tool_name: result.name });
       }
     }
-    let response: Response;
-    try {
-      response = await fetch(`${base}/api/chat`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: options.model,
-          messages: wire,
-          stream: Boolean(onToken),
-          ...(tools.length && {
-            tools: tools.map((tool) => ({
-              type: 'function',
-              function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
-            })),
-          }),
-          ...(options.temperature !== undefined && { options: { temperature: options.temperature } }),
-          ...(responseFormat === 'json' && { format: 'json' }),
-        }),
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000),
-      });
-    } catch (error) {
-      throw new NodeOperationError(`Cannot reach Ollama at ${base}`, { description: (error as Error).message });
-    }
-    if (!response.ok) throw new NodeOperationError(`Ollama error ${response.status}`, { description: await response.text() });
+    const body = JSON.stringify({
+      model: options.model,
+      messages: wire,
+      stream: Boolean(onToken),
+      ...(tools.length && {
+        tools: tools.map((tool) => ({
+          type: 'function',
+          function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
+        })),
+      }),
+      ...(options.temperature !== undefined && { options: { temperature: options.temperature } }),
+      ...(responseFormat === 'json' && { format: 'json' }),
+    });
+    const retry = (detail: string, attempt: number) => attempt <= TOOL_PARSE_RETRIES && !signal?.aborted && TOOL_PARSE_ERROR.test(detail);
     let data: OllamaReply & { message: NonNullable<OllamaReply['message']> };
-    if (onToken && response.body) {
-      // NDJSON: one object per line with a content delta (and tool calls, in one of them); the last has done, the counts and the reason.
-      const visible = thinkFilter();
-      let content = '';
-      const toolCalls: NonNullable<OllamaReply['message']>['tool_calls'] = [];
-      let last: OllamaReply = {};
-      for await (const line of readLines(response.body)) {
-        if (!line.trim()) continue;
-        const part = JSON.parse(line) as OllamaReply;
-        if (part.error) throw new NodeOperationError('Ollama error', { description: part.error });
-        const delta = part.message?.content ?? '';
-        if (delta) {
-          content += delta;
-          const shown = visible(delta);
-          if (shown) onToken(shown);
-        }
-        if (part.message?.tool_calls?.length) toolCalls.push(...part.message.tool_calls);
-        last = part;
+    attempts: for (let attempt = 1; ; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(`${base}/api/chat`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000),
+        });
+      } catch (error) {
+        throw new NodeOperationError(`Cannot reach Ollama at ${base}`, { description: (error as Error).message });
       }
-      data = { ...last, message: { content, tool_calls: toolCalls } };
-    } else {
-      data = (await response.json()) as typeof data;
+      if (!response.ok) {
+        const detail = await response.text();
+        if (retry(detail, attempt)) continue;
+        throw new NodeOperationError(`Ollama error ${response.status}`, { description: detail });
+      }
+      if (onToken && response.body) {
+        // NDJSON: one object per line with a content delta (and tool calls, in one of them); the last has done, the counts and the reason.
+        const visible = thinkFilter();
+        let content = '';
+        let shownAny = false;
+        const toolCalls: NonNullable<OllamaReply['message']>['tool_calls'] = [];
+        let last: OllamaReply = {};
+        for await (const line of readLines(response.body)) {
+          if (!line.trim()) continue;
+          const part = JSON.parse(line) as OllamaReply;
+          if (part.error) {
+            // Only while nothing reached the user: a retry after visible text would repeat it.
+            if (!shownAny && !toolCalls.length && retry(part.error, attempt)) continue attempts;
+            throw new NodeOperationError('Ollama error', { description: part.error });
+          }
+          const delta = part.message?.content ?? '';
+          if (delta) {
+            content += delta;
+            const shown = visible(delta);
+            if (shown) {
+              shownAny = true;
+              onToken(shown);
+            }
+          }
+          if (part.message?.tool_calls?.length) toolCalls.push(...part.message.tool_calls);
+          last = part;
+        }
+        data = { ...last, message: { content, tool_calls: toolCalls } };
+      } else {
+        data = (await response.json()) as typeof data;
+      }
+      break;
     }
     const text = stripThinking(data.message.content ?? '');
     const toolCalls = (data.message.tool_calls ?? []).map((call, index) => ({

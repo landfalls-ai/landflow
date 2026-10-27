@@ -54,7 +54,7 @@ function renameTarget(dir: string, name: string, day: string): string {
 
 /** Import whatever JSON data files `dir` still has into `db`, then rename them. */
 export function importJsonData(db: Database, dir: string, now = new Date()): ImportSummary {
-  const present = IMPORTED_PATHS.filter((name) => existsSync(join(dir, name)));
+  const present = IMPORTED_PATHS.filter((name) => existsSync(/*turbopackIgnore: true*/ join(/*turbopackIgnore: true*/ dir, name)));
   const summary: ImportSummary = { counts: {}, renamed: [], skipped: [] };
   if (!present.length) return summary;
   const count = (kind: string, inserted: boolean) => {

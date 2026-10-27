@@ -20,9 +20,12 @@ export { Database, openSqlite, openSqliteConnection, migrateSqlite, type DbKind,
 export { importJsonData, type ImportSummary } from './import';
 export { LATEST_VERSION, MIGRATIONS, TABLES, type Migration, type TableName } from './schema';
 
-/** LANDFLOW_DATA_DIR, else `.data` in the working directory. */
+/**
+ * LANDFLOW_DATA_DIR, else `.data` in the working directory. The comment keeps Turbopack from tracing the folder as a
+ * server file: it would watch the live database and rebuild on every write in `next dev`.
+ */
 export function dataDir(): string {
-  return process.env.LANDFLOW_DATA_DIR ?? join(process.cwd(), '.data');
+  return process.env.LANDFLOW_DATA_DIR ?? join(/*turbopackIgnore: true*/ process.cwd(), '.data');
 }
 
 /** Which database this process uses (LANDFLOW_DB, default sqlite). */

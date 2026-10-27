@@ -33,7 +33,7 @@ The reply is checked with zod, and each suggestion's ops are validated. Suggesti
 
 ## Spotlight
 
-Spotlight is the one AI surface in the editor: a bar at the bottom of the canvas, beside the run controls. Click it or press **⌘I**. Its conversation opens above the bar and lasts while the workflow is open. ✎ starts over; the chevron or **esc** hides it, and **Apply** hides it too so the change shows on the canvas (the toast has **Undo**). A count on the bar's conversation button shows proposals not yet applied or dismissed.
+Spotlight is the one AI surface in the editor: a bar at the bottom of the canvas, beside the run controls (on a narrow canvas, with the chat or another side panel open, it moves to its own line above them). Click it or press **⌘I**. Its conversation opens above the bar and lasts while the workflow is open. ✎ starts over; the chevron or **esc** hides it, and **Apply** hides it too so the change shows on the canvas (the toast has **Undo**). A count on the bar's conversation button shows proposals not yet applied or dismissed.
 
 **Bubbles.** Small suggestions float above the bar. They come from `lib/shared/spotlight.ts`, with no model call, so they change as you type:
 
@@ -74,6 +74,11 @@ Later proposals in the same reply build on earlier ones. If you apply only a lat
 Each card has **Apply** and **Dismiss**. When a reply has two or more open proposals, **Apply all** applies them in one step with one undo. Earlier turns go back to the model as text, with a note on each proposal: `[Proposed "…": applied | dismissed | not applied yet]`.
 
 Local models sometimes write a tool call as text (`<function=propose_changes><parameter=…>`) instead of a structured call. The chat reads those back as calls.
+
+Three more guards cover what local models get wrong (all in `lib/server/assistant/chat.ts`):
+- **Made-up ids**: a parameter named like an id (`channelId`, `sheetId`, `id`…) whose value appears nowhere in the conversation, the workflow, its run data or the node type's own options is left out of the proposal, and the card lists it as left for the user to fill in. The prompt also says not to invent ids, channels, addresses, URLs or keys.
+- **"It has been added"**: in a reply that proposed something, sentences that say the change was made ("has been added", "I've updated…", "The workflow now has…", "is ready to…") are dropped, because nothing changes until Apply. Lists keep their lines; if nothing is left, the reply says to review the card and click Apply.
+- **Tool-call parse errors**: Ollama parses tool calls itself, and some samples fail its parser (qwen3-coder's XML: `XML syntax error … element <parameter> closed by </function>`, a 500). The Ollama adapter retries those up to twice, and in a stream only while nothing has been shown yet. This also covers the AI Agent on an Ollama model.
 
 ## Edit operations
 

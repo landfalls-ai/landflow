@@ -151,7 +151,7 @@ export class MemoryVectorStore implements VectorStore {
 // ---------------------------------------------------------------------------
 
 /** The host's data directory (LANDFLOW_DATA_DIR, default apps/web/.data). */
-const dataDir = () => process.env.LANDFLOW_DATA_DIR ?? join(process.cwd(), '.data');
+const dataDir = () => process.env.LANDFLOW_DATA_DIR ?? join(/*turbopackIgnore: true*/ process.cwd(), '.data');
 
 export const defaultSqlitePath = () => join(dataDir(), 'vectors.sqlite');
 

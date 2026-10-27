@@ -111,6 +111,7 @@ How to work:
 - To fix a node's input, prefer changing the node's own parameters (read a field the items have). To put a node between two nodes, use addNode with "before": "<the later node>".
 - ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
 - Expressions read the current item with "{{ $json.field }}" and other nodes with "{{ $('Node name').item.json.field }}".
+- Never make up ids, channels, email addresses, URLs or keys the user didn't give: leave those parameters empty and say the user fills them in.
 - After proposing, say in one or two sentences what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied or made. Don't repeat the ops in prose.
 - When no change is needed, just answer. Be brief and concrete: your text shows in a small panel at the bottom of the canvas, so one to three short sentences, no headings or lists unless asked.
 - Use only node types from the catalog below and search_nodes; anything else is not installed, offline or not allowed in this workflow.
@@ -130,6 +131,67 @@ function opsArgument(value: unknown): unknown {
 }
 
 const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
+
+const ID_PARAMETER = /^id$|[a-z]Ids?$/;
+
+/**
+ * An id the conversation, the workflow, its runs and the node type's own options never mention (a Slack channel, a
+ * sheet, a user) can only have been made up: local models write plausible ones. Those parameters are left out, so the
+ * user fills them in. `typeText` gives the node type's properties for an op (defaults and fixed options are known).
+ */
+export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => ''): { ops: unknown; invented: string[] } {
+  if (!Array.isArray(ops)) return { ops, invented: [] };
+  const invented: string[] = [];
+  const clean = (op: Record<string, unknown>, node: unknown, parameters: unknown) => {
+    if (!parameters || typeof parameters !== 'object') return parameters;
+    const out = { ...(parameters as Record<string, unknown>) };
+    for (const [key, value] of Object.entries(out)) {
+      if (!ID_PARAMETER.test(key) || typeof value !== 'string' || !value.trim() || value.includes('{{') || known.includes(value) || typeText(op).includes(JSON.stringify(value))) continue;
+      delete out[key];
+      invented.push(`${key} of “${String(node)}”: an id nobody gave, left for the user to fill in`);
+    }
+    return out;
+  };
+  const cleaned = ops.map((op) => {
+    if (!op || typeof op !== 'object') return op;
+    const o = op as Record<string, unknown>;
+    if (o.op === 'addNode') return { ...o, parameters: clean(o, o.name ?? o.type, o.parameters) };
+    if (o.op === 'setParameters') return { ...o, parameters: clean(o, o.node, o.parameters) };
+    return op;
+  });
+  return { ops: cleaned, invented };
+}
+
+const DONE = 'updated|added|applied|inserted|connected|removed|deleted|changed|modified|created|configured|replaced|renamed';
+// A sentence may open with a past tense ("Added a Slack node"), not with "Set up", which is also an instruction.
+const APPLIED_CLAIM = new RegExp(
+  `^(?:${DONE})\\b|\\b(?:has|have) (?:now )?been (?:${DONE}|set up|made)\\b|\\bI(?:'ve| have)?(?: just| now)? (?:${DONE}|set up|made)\\b|\\bis now (?:connected|added|configured|in place)\\b|\\bis (?:now )?ready to\\b|\\bnow (?:has|have|contains|includes)\\b`,
+  'i',
+);
+const LIST_MARKER = /^\s*(?:\d+[.)]|[-*•])\s*/;
+
+/**
+ * Local models sometimes say a proposed change "has been added" although nothing changes until the user clicks Apply.
+ * In a reply that proposed something those sentences are dropped, so the panel never says a change was made. Lines
+ * and list items keep their layout; a list number stays with its item.
+ */
+export function withoutAppliedClaims(text: string): string {
+  let dropped = false;
+  const lines = text.split('\n');
+  const kept = lines.map((line) => {
+    const sentences = line.split(/(?<=[^\d\s][.!?])\s+/);
+    const left = sentences.filter((sentence) => !APPLIED_CLAIM.test(sentence.replace(LIST_MARKER, '')));
+    if (left.length !== sentences.length) dropped = true;
+    return left.join(' ');
+  });
+  if (!dropped) return text;
+  const out = kept
+    .filter((line, i) => line.trim() || !lines[i].trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return out || 'Review the change on the card, then click Apply to make it.';
+}
 
 /**
  * Local models (qwen3-coder in particular) sometimes write a tool call as text,
@@ -167,6 +229,9 @@ export async function runChat(input: ChatInput): Promise<void> {
   let working = input.workflow;
   /** Whether an incomplete proposal was already sent back to the model in this reply. */
   let sentBack = false;
+  let proposed = false;
+  /** What the user and the editor said, for telling a given id from a made-up one. */
+  const known = () => [...input.messages.map((m) => m.content), JSON.stringify(working), JSON.stringify(runs)].join('\n');
   const usage = { inputTokens: 0, outputTokens: 0 };
 
   const nodeByName = (name: string) => working.nodes.find((n) => n.name === name) ?? working.nodes.find((n) => n.name.toLowerCase() === name.toLowerCase() || n.id === name);
@@ -214,9 +279,15 @@ export async function runChat(input: ChatInput): Promise<void> {
       }
       case 'propose_changes': {
         const summary = shorten(String(args.summary ?? '').trim() || 'Proposed change', 140);
-        const validated = validateOps(working, opsArgument(args.ops), lookup);
+        const typeText = (op: Record<string, unknown>) => {
+          const type = op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type;
+          const info = types.find((t) => t.type === type);
+          return info ? JSON.stringify(info.descriptor.properties) : '';
+        };
+        const { ops: proposedOps, invented } = withoutInventedIds(opsArgument(args.ops), known(), typeText);
+        const validated = validateOps(working, proposedOps, lookup);
         if (!validated.ops.length) {
-          const why = validated.dropped.length ? validated.dropped.join('; ') : 'no changes given';
+          const why = [...validated.dropped, ...invented].join('; ') || 'no changes given';
           return result(`Nothing could be proposed: ${why}. Fix the ops (check names, type ids and parameters) and call propose_changes again.`, `Proposal rejected: ${shorten(why, 80)}`, false);
         }
         // Proposing the same thing twice (it happens with local models) changes nothing the second time.
@@ -235,11 +306,12 @@ export async function runChat(input: ChatInput): Promise<void> {
           );
         }
         working = validated.workflow;
-        const dropped = [...validated.dropped, ...validated.ignored];
+        const dropped = [...validated.dropped, ...validated.ignored, ...invented];
         const notes = dropped.length ? ` Left out: ${dropped.join('; ')}.` : '';
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
         const shown = result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied.`, `Proposed ${count}`);
         onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: validated.warnings });
+        proposed = true;
         recordSuggestions(['proposal']);
         return shown;
       }
@@ -258,7 +330,8 @@ export async function runChat(input: ChatInput): Promise<void> {
       usage.inputTokens += turn.usage?.inputTokens ?? 0;
       usage.outputTokens += turn.usage?.outputTokens ?? 0;
       const { text, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text);
-      if (text.trim()) onEvent({ type: 'text', text: text.trim() });
+      const proposing = proposed || calls.some((call) => call.name === 'propose_changes');
+      if (text.trim()) onEvent({ type: 'text', text: proposing ? withoutAppliedClaims(text.trim()) : text.trim() });
       history.push({ role: 'assistant', text, toolCalls: calls, ...(turn.raw && { raw: turn.raw }) });
       finished = !calls.length;
       if (finished) break;

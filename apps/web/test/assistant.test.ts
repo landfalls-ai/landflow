@@ -5,7 +5,7 @@ import type { NodeTypeInfo } from '@/lib/shared/types';
 import type { GenerateInput } from '@/lib/server/nodes/models';
 import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
-import { recoverToolCalls, runChat, MAX_STEPS, type ChatEvent } from '@/lib/server/assistant/chat';
+import { recoverToolCalls, runChat, withoutAppliedClaims, withoutInventedIds, MAX_STEPS, type ChatEvent } from '@/lib/server/assistant/chat';
 import { registryLookup, validateOps } from '@/lib/server/assistant/ops';
 import { searchNodes } from '@/lib/server/assistant/research';
 import { suggestAfterRun } from '@/lib/server/assistant/suggest';
@@ -336,6 +336,8 @@ describe('builder chat', () => {
       dropped: ['connect “d” → “Nowhere”: no node “Nowhere”'],
     });
     expect(events.at(-1)).toMatchObject({ type: 'done', model: 'test/scripted', steps: 4 });
+    // "Added a Remove Duplicates node" is not true until the user clicks Apply, so that sentence is left out.
+    expect(events.at(-2)).toEqual({ type: 'text', text: 'Run it to check.' });
 
     // The system prompt carries the workflow and the selected node; tool results go back to the model.
     expect(calls[0].system).toContain('The user has “Code” selected');
@@ -363,6 +365,47 @@ describe('builder chat', () => {
     expect(system).toMatch(/Apps and plugins this workflow can use[^\n]*\n- Built in: /);
     expect(system).toContain('The user tagged in the message:\n- the node “Code” (core.code)\n- the node type If (core.if)');
     expect(system).not.toContain('the node type Remove Duplicates');
+  });
+
+  it('never says a proposed change was made, and leaves answers without a proposal alone', () => {
+    expect(withoutAppliedClaims('The Slack node has been added after Filter. Pick a Slack credential before running it.')).toBe('Pick a Slack credential before running it.');
+    expect(withoutAppliedClaims("I've updated the filter so it keeps paid orders.")).toBe('Review the change on the card, then click Apply to make it.');
+    expect(withoutAppliedClaims('Connected Webhook to Format reply.\nIt is now connected to Slack too.')).toBe('Review the change on the card, then click Apply to make it.');
+    expect(withoutAppliedClaims('The workflow is ready to post replies to Slack. Then run the workflow to test it.')).toBe('Then run the workflow to test it.');
+    expect(withoutAppliedClaims('The workflow now has a Slack node after Reply. You still need to:\n1. Click Apply.')).toBe('You still need to:\n1. Click Apply.');
+    // Lists keep their lines; "Set up …" is an instruction.
+    const steps = 'You need to:\n1. Click Apply on the card.\n2. Set up a Slack credential.\n3. Run the workflow.';
+    expect(withoutAppliedClaims(steps)).toBe(steps);
+    expect(withoutAppliedClaims('Done.\n\n1. Added a Slack node after Reply.\n2. Pick a channel in it.')).toBe('Done.\n\n2. Pick a channel in it.');
+    expect(withoutAppliedClaims('This adds a Slack message after Filter; click Apply, then pick a credential.')).toBe('This adds a Slack message after Filter; click Apply, then pick a credential.');
+  });
+
+  it('leaves out ids nobody gave, and keeps ones the user or the workflow did', async () => {
+    const save = (name: string, dataTableId: string) => ({ summary: 'Save rows', ops: [{ op: 'addNode', type: 'core.dataTable', name, after: 'Code', parameters: { operation: 'insert', dataTableId } }] });
+    const { model, calls } = scripted([
+      { toolCalls: [{ id: 'c1', name: 'propose_changes', input: save('Save', 'dt_k3J9xQ2mPz') }] },
+      { toolCalls: [{ id: 'c2', name: 'propose_changes', input: save('Save given', 'dt_given42') }] },
+      { text: 'Pick the table on the card.' },
+    ]);
+    const events: ChatEvent[] = [];
+    await runChat({ messages: [{ role: 'user', content: 'Save the items, to table dt_given42 if it helps' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
+    const [made, given] = events.filter((e) => e.type === 'proposal') as Array<Extract<ChatEvent, { type: 'proposal' }>>;
+    expect(made.dropped).toContain('dataTableId of “Save”: an id nobody gave, left for the user to fill in');
+    expect(made.ops[0]).toMatchObject({ op: 'addNode', parameters: { operation: 'insert' } });
+    expect((made.ops[0] as { parameters: object }).parameters).not.toHaveProperty('dataTableId');
+    expect(given.ops[0]).toMatchObject({ parameters: { operation: 'insert', dataTableId: 'dt_given42' } });
+    expect(given.dropped.join()).not.toContain('nobody gave');
+    expect((calls[1].messages.at(-1) as { results: Array<{ content: string }> }).results[0].content).toContain('dataTableId of “Save”: an id nobody gave');
+    // Expressions, other parameters and a value the node type itself offers are left alone.
+    const offered = () => JSON.stringify([{ name: 'modelId', default: 'gpt-5-mini' }]);
+    expect(withoutInventedIds([{ op: 'setParameters', node: 'A', parameters: { sheetId: '{{ $json.sheet }}', name: 'X9Y8Z7W6V5', modelId: 'gpt-5-mini' } }], '', offered).invented).toEqual([]);
+  });
+
+  it('keeps an answer that proposed nothing as written', async () => {
+    const { model } = scripted([{ text: 'The Set node has been updated in Landflow 0.2: it now keeps other fields.' }]);
+    const events: ChatEvent[] = [];
+    await runChat({ messages: [{ role: 'user', content: 'What changed in Set?' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
+    expect(events[0]).toEqual({ type: 'text', text: 'The Set node has been updated in Landflow 0.2: it now keeps other fields.' });
   });
 
   it('sends an incomplete change back once, then shows it with its warnings', async () => {

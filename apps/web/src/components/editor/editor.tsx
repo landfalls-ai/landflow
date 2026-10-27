@@ -794,8 +794,9 @@ export function Editor({ workflowId }: { workflowId: string }) {
               <Canvas onSave={() => void save()} />
               <EmptyCanvas />
               <CanvasToolbar />
-              {/* One dock at the bottom: run controls, then Spotlight. The side padding keeps clear of zoom and the minimap. */}
-              <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex items-end justify-center gap-2 pl-14 pr-[232px]">
+              {/* One dock at the bottom: run controls, then Spotlight. The side padding keeps clear of zoom and the minimap.
+                  When the canvas is narrow (a side panel open), Spotlight wraps to its own line above the run controls. */}
+              <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 pl-14 pr-[232px]">
                 <ExecuteBar
                   running={running}
                   breakpoints={breakpoints.length}

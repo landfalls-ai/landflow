@@ -24,7 +24,7 @@ const FILES = { kind: 'action' as const, version: 1, categories: ['Data'], color
 
 /** Where Read/Write Files from Disk may read and write: LANDFLOW_FILES_DIR, default `<data dir>/files`. */
 export function filesDir(): string {
-  return resolve(process.env.LANDFLOW_FILES_DIR?.trim() || join(dataDir(), 'files'));
+  return resolve(/*turbopackIgnore: true*/ process.env.LANDFLOW_FILES_DIR?.trim() || join(dataDir(), 'files'));
 }
 
 const inside = (root: string, path: string) => {
@@ -36,7 +36,7 @@ const inside = (root: string, path: string) => {
 async function realRoot(): Promise<string> {
   const root = filesDir();
   await mkdir(root, { recursive: true });
-  return realpath(root);
+  return realpath(/*turbopackIgnore: true*/ root);
 }
 
 /**

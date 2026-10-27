@@ -90,6 +90,9 @@ sidebar. (M, phase 4 of [spotlight.md](spotlight.md#delivery).)
   line that says what each is for ("Optional: OpenAI API, to transcribe audio input"). Required fields first, the rest
   under "More options". Error text names the cause and offers the fix as a button ("Reconnect Stripe prod"), not "check
   your credentials".
+- **Done (2026-10-27):** the node panel, its credential section, the MCP server dialog and the assistant's node docs
+  evaluate display rules with defaults filled in, as the server does, so "Ask In" and "Approval Timeout" hide while
+  Tools Requiring Approval is None.
 
 ### Node creator (medium, S)
 

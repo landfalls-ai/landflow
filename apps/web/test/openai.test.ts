@@ -296,6 +296,20 @@ describe('other adapters', () => {
     expect((await model.generate(hello)).text).toBe('plain text');
     expect(fake.last('/api/chat')!.body).not.toHaveProperty('format');
   });
+
+  it('Ollama retries a sample its tool-call parser rejected, at most twice, and nothing else', async () => {
+    const sent = (model: string) => fake.requests.filter((r) => r.path === '/api/chat' && r.body.model === model).length;
+    expect((await ollamaModel({ baseUrl: fake.origin, model: 'xml-once' }).generate(hello)).text).toBe('plain text');
+    expect(sent('xml-once')).toBe(2);
+    // In a stream, before anything was shown.
+    const tokens: string[] = [];
+    expect((await ollamaModel({ baseUrl: fake.origin, model: 'xml-stream-once' }).generate({ ...hello, onToken: (t) => tokens.push(t) })).text).toBe('plain text');
+    expect(sent('xml-stream-once')).toBe(2);
+    await expect(ollamaModel({ baseUrl: fake.origin, model: 'xml-always' }).generate(hello)).rejects.toMatchObject({ message: 'Ollama error 500', description: expect.stringContaining('XML syntax error') });
+    expect(sent('xml-always')).toBe(3);
+    await expect(ollamaModel({ baseUrl: fake.origin, model: 'ollama-broken' }).generate(hello)).rejects.toMatchObject({ message: 'Ollama error 500' });
+    expect(sent('ollama-broken')).toBe(1);
+  });
 });
 
 describe('AI Agent with the OpenAI Chat Model', () => {

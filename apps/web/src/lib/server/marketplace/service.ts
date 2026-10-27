@@ -492,7 +492,7 @@ async function startHere(installed: InstalledPlugin) {
     return Boolean(marker && marker.revision === revision && (!record.contentHash || marker.contentHash === record.contentHash));
   };
   let dir = record.dir;
-  if (!existsSync(dir) || !matches(dir)) {
+  if (!existsSync(/*turbopackIgnore: true*/ dir) || !matches(dir)) {
     dir = join(instanceDir(), installed.plugin.replace(/[^\w.-]/g, '_'));
     if (!matches(dir)) {
       await downloadPlugin(readerFor(record.source ?? installed.source), dir);

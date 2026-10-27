@@ -18,8 +18,9 @@ import { serve, type ServeResult } from '../src/serve';
 import { createTelemetry } from '../src/telemetry';
 import { mcpRequest } from './mcp-client';
 
-// Stream T2-D's port range: 7460–7479.
-const HTTP_PORT = 7464;
+// Stream T2-D's port range: 7460–7479. One port per server: fetch keeps idle connections per origin, and a request to a
+// port whose earlier server just stopped can go out on its closed connection ("fetch failed").
+const PORT = { off: 7464, refused: 7465, noToken: 7467, token: 7468, loopback: 7469 };
 const TOKEN = 'mcp-test-token';
 
 const api = defineCredentialType({
@@ -174,38 +175,38 @@ describe('the face over a dispatcher', () => {
 describe('serve() and /mcp', () => {
   it('is off with LANDFLOW_MCP=off and when the port is not loopback and no token is set (the plugin still serves)', async () => {
     process.env.LANDFLOW_MCP = 'off';
-    const off = await serve(plugin, { http: HTTP_PORT, host: '127.0.0.1', registryUrl: false, telemetry: await quietTelemetry() });
+    const off = await serve(plugin, { http: PORT.off, host: '127.0.0.1', registryUrl: false, telemetry: await quietTelemetry() });
     running.push(off);
     expect(off.transports).toEqual(['http']);
     expect(off.mcp).toBeUndefined();
-    expect((await fetch(`http://127.0.0.1:${HTTP_PORT}/mcp`, { method: 'POST' })).status).toBe(404);
-    expect(((await (await fetch(`http://127.0.0.1:${HTTP_PORT}/.well-known/landflow`)).json()) as { endpoints: { mcp?: string } }).endpoints.mcp).toBeUndefined();
+    expect((await fetch(`http://127.0.0.1:${PORT.off}/mcp`, { method: 'POST' })).status).toBe(404);
+    expect(((await (await fetch(`http://127.0.0.1:${PORT.off}/.well-known/landflow`)).json()) as { endpoints: { mcp?: string } }).endpoints.mcp).toBeUndefined();
     await off.stop();
     running.pop();
 
     delete process.env.LANDFLOW_MCP;
     const lines: string[] = [];
     const telemetry = await createTelemetry({ pluginId: 'mcpdemo', env: { OTEL_SDK_DISABLED: 'true' }, logWriter: (line) => lines.push(line) });
-    const noToken = await serve(plugin, { http: HTTP_PORT, registryUrl: false, telemetry });
+    const noToken = await serve(plugin, { http: PORT.noToken, registryUrl: false, telemetry });
     running.push(noToken);
     expect(noToken.transports).toEqual(['http']);
     expect(lines.some((line) => /MCP face not started/.test(line) && /LANDFLOW_MCP_TOKEN/.test(line))).toBe(true);
-    expect((await fetch(`http://127.0.0.1:${HTTP_PORT}/mcp`, { method: 'POST' })).status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${PORT.noToken}/mcp`, { method: 'POST' })).status).toBe(404);
 
     process.env.LANDFLOW_TRANSPORTS = 'http,mcp';
-    await expect(serve(plugin, { http: HTTP_PORT + 1, registryUrl: false, telemetry: await quietTelemetry() })).rejects.toThrow(/names "mcp" but the MCP face is MCP face not started/);
+    await expect(serve(plugin, { http: PORT.refused, registryUrl: false, telemetry: await quietTelemetry() })).rejects.toThrow(/names "mcp" but the MCP face is MCP face not started/);
   });
 
   it('serves /mcp with a token on a non-loopback host: 401 without it, both protocol revisions with it, spans carry mcp.tool.name', async () => {
     process.env.LANDFLOW_MCP_TOKEN = TOKEN;
     process.env.LANDFLOW_MCP_CREDENTIALS = JSON.stringify({ demoApi: { accessToken: 'secret-token' } });
     const exporter = new InMemorySpanExporter();
-    const result = await serve(plugin, { http: HTTP_PORT, registryUrl: false, telemetry: await quietTelemetry(exporter) });
+    const result = await serve(plugin, { http: PORT.token, registryUrl: false, telemetry: await quietTelemetry(exporter) });
     running.push(result);
     expect(result.transports).toEqual(['http', 'mcp']);
     expect(result.mcp?.tools.map((t) => t.name)).toEqual(['greet', 'free', LIST_OPTIONS_TOOL]);
-    const url = `http://127.0.0.1:${HTTP_PORT}/mcp`;
-    expect(((await (await fetch(`http://127.0.0.1:${HTTP_PORT}/.well-known/landflow`)).json()) as { endpoints: { mcp?: string } }).endpoints.mcp).toBe('/mcp');
+    const url = `http://127.0.0.1:${PORT.token}/mcp`;
+    expect(((await (await fetch(`http://127.0.0.1:${PORT.token}/.well-known/landflow`)).json()) as { endpoints: { mcp?: string } }).endpoints.mcp).toBe('/mcp');
 
     const unauthorized = await mcpRequest(url, 'tools/list', {});
     expect(unauthorized.status).toBe(401);
@@ -234,9 +235,9 @@ describe('serve() and /mcp', () => {
   });
 
   it('needs no token on loopback, and the request stream closing cancels the call', async () => {
-    const result = await serve(plugin, { http: HTTP_PORT, host: '127.0.0.1', registryUrl: false, telemetry: await quietTelemetry() });
+    const result = await serve(plugin, { http: PORT.loopback, host: '127.0.0.1', registryUrl: false, telemetry: await quietTelemetry() });
     running.push(result);
-    const url = `http://127.0.0.1:${HTTP_PORT}/mcp`;
+    const url = `http://127.0.0.1:${PORT.loopback}/mcp`;
     const listed = await mcpRequest(url, 'tools/list', {});
     expect(listed.status).toBe(200);
     expect((listed.body?.result as { tools: { name: string }[] }).tools.map((t) => t.name)).toEqual(['greet', 'free']);

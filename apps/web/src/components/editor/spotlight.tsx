@@ -243,6 +243,20 @@ export function Spotlight() {
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   };
   useEffect(resize, [draft]);
+  // Also when the box changes width (a side panel opens, the dock wraps): the wrapped placeholder counts in scrollHeight.
+  useEffect(() => {
+    const el = input.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      resize();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setText = (text: string, at = text.length) => {
     setDraft(text);
@@ -338,7 +352,7 @@ export function Spotlight() {
   const placeholder = empty ? 'Describe the workflow you want…' : 'Ask, or describe a change…  @ tags a node';
 
   return (
-    <div className="pointer-events-auto relative w-full min-w-0 max-w-[540px]">
+    <div className="pointer-events-auto relative min-w-[min(300px,100%)] max-w-[540px] flex-[1_1_300px]">
       <div className="pointer-events-none absolute inset-x-0 bottom-full mb-2 flex flex-col gap-2">
         {showConversation && <Conversation live={live} status={busy ? 'Drafting the flow from the node catalog…' : undefined} />}
         {bubbles.length > 0 && (

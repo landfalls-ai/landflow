@@ -5,7 +5,7 @@
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { Braces, CornerDownRight, Info, List, Loader2, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react';
-import { changeParameter, isPropertyVisible } from '@landflow/protocol';
+import { changeParameter, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { NodeItem, PropertyDescriptor } from '@/lib/shared/types';
@@ -583,7 +583,9 @@ export function ParamForm({
   /** The workflow being edited: its project's data tables in pickers, its $vars in previews. */
   scope?: ParamScope;
 }) {
-  const visible = properties.filter((p) => isPropertyVisible(p, values));
+  // Display rules see unset parameters at their defaults, as the fields show them (and as the server reads them).
+  const effective = useMemo(() => withPropertyDefaults(properties, values), [properties, values]);
+  const visible = properties.filter((p) => isPropertyVisible(p, effective));
   // Suggestions for expressions: the input's fields, and nodes that ran upstream with a sample of their output.
   const completionData = useMemo<CompletionData>(() => {
     const names = [...new Set([...(preview?.nodeNames ?? []), ...Object.keys(preview?.nodeOutputs ?? {})])];
@@ -595,7 +597,7 @@ export function ParamForm({
     <ScopeContext.Provider value={scope}>
     <PreviewContext.Provider value={preview}>
       <CredentialsContext.Provider value={credentials}>
-        <RootValuesContext.Provider value={values}>
+        <RootValuesContext.Provider value={effective}>
           <div className="space-y-4">
             {visible.map((property) => {
               const change = (v: unknown) => onChange(changeParameter(properties, values, property.name, v));

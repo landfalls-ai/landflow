@@ -22,6 +22,17 @@ docker compose -f deploy/compose.infra.yml up -d --wait   # Postgres, Valkey, Ma
 [deployment.md, "Using the infra from the dev server on the host"](deployment.md#using-the-infra-from-the-dev-server-on-the-host)
 shows how to point the dev server at the infra stack.
 
+**If `next dev` reloads in a loop** (the browser console repeats "[Fast Refresh] rebuilding", the server log repeats "✓ Compiled",
+and the editor freezes) while no source file changes, Turbopack's persistent dev cache in `apps/web/.next/dev` is stale: stop
+the dev server, delete `apps/web/.next/dev` (build output only, never `.data`) and start it again. The hot-reload socket
+(`/_next/hmr`) then shows a `restart` for the entry chunk list on every request. Next.js keeps this cache on by default
+(`turbopackFileSystemCacheForDev`).
+
+Server code that reads files from a path known only at run time takes a `/*turbopackIgnore: true*/` comment on that
+argument, as in `join(/*turbopackIgnore: true*/ process.cwd(), '.data')` (`lib/server/db/index.ts`). Without it,
+Turbopack traces the whole project into the server bundle, including the live database, and `next build` warns "Dynamic
+filesystem access causes tracing of the whole project".
+
 ## Where to start reading
 
 1. [architecture.md](architecture.md): the processes, a run from trigger to result, every subsystem and a code map.

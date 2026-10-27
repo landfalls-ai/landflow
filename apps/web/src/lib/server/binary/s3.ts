@@ -103,8 +103,8 @@ export class S3BinaryStore implements BinaryStore {
       if (spool) {
         spool.end();
         await spool.done;
-        length = (await stat(spool.path)).size;
-        body = createReadStream(spool.path);
+        length = (await stat(/*turbopackIgnore: true*/ spool.path)).size;
+        body = createReadStream(/*turbopackIgnore: true*/ spool.path);
       } else {
         body = Buffer.concat(chunks);
         length = body.length;

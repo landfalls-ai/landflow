@@ -99,7 +99,7 @@ const methods = singleton('vault-auth-methods', () => {
       if (!jwt) {
         const path = str(config, 'jwtPath') || '/var/run/secrets/kubernetes.io/serviceaccount/token';
         try {
-          jwt = readFileSync(path, 'utf8').trim();
+          jwt = readFileSync(/*turbopackIgnore: true*/ path, 'utf8').trim();
         } catch {
           throw new SecretProviderError(`No service account token at ${path} (is the host running in a pod?)`);
         }

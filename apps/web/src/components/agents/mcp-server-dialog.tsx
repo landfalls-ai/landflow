@@ -6,7 +6,7 @@
  */
 import { useState } from 'react';
 import { Plug, TriangleAlert } from 'lucide-react';
-import { defaultParameters, isPropertyVisible } from '@landflow/protocol';
+import { defaultParameters, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import type { McpServerToolConfig } from '@/lib/shared/agents';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { NodeCredentials } from '../credentials/node-credentials';
@@ -43,7 +43,7 @@ export function McpServerDialog({
   );
   const set = (patch: Partial<McpServerToolConfig>) => setValue((v) => ({ ...v, ...patch }));
   const properties = (info?.descriptor.properties ?? []).filter((p) => p.type !== 'notice');
-  const requirements = (info?.descriptor.credentials ?? []).filter((c) => isPropertyVisible(c, value.parameters));
+  const requirements = (info?.descriptor.credentials ?? []).filter((c) => isPropertyVisible(c, withPropertyDefaults(info?.descriptor.properties ?? [], value.parameters)));
   const valid = Boolean(value.name.trim() && String(value.parameters.endpointUrl ?? '').trim());
 
   return (

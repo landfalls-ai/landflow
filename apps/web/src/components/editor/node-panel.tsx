@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, ChevronLeft, ChevronRight, CircleDot, Pause, PencilLine, Pin, PinOff, Play, SkipForward, X } from 'lucide-react';
-import { isPropertyVisible } from '@landflow/protocol';
+import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { duration, languageMeta } from '@/lib/client/format';
 import type { NodeItem, NodeRun } from '@/lib/shared/types';
@@ -140,6 +140,8 @@ export function NodePanel() {
   if (!node || !openNodeId) return null;
   const descriptor = info?.descriptor;
   const wf = node.data.wf;
+  // A credential can depend on a parameter (one per auth method); an unset one counts at its default.
+  const credentialRequirements = descriptor?.credentials?.filter((c) => isPropertyVisible(c, withPropertyDefaults(descriptor.properties, wf.parameters))) ?? [];
   const update = (patch: Parameters<ReturnType<typeof useEditor.getState>['updateNode']>[1]) => useEditor.getState().updateNode(openNodeId, patch);
   const isTrigger = descriptor?.kind === 'trigger';
   const isSubnode = descriptor?.kind === 'subnode';
@@ -316,11 +318,11 @@ export function NodePanel() {
                     <PollStatus workflowId={workflowId} nodeId={openNodeId} active={workflowActive} dirty={dirty} interval={Number(wf.parameters.pollInterval ?? 60)} />
                   )}
                   <TriggerUrl type={wf.type} parameters={wf.parameters} active={workflowActive} dirty={dirty || unpublished} nodeId={openNodeId} />
-                  {descriptor?.credentials?.some((c) => isPropertyVisible(c, wf.parameters)) ? (
+                  {credentialRequirements.length ? (
                     <NodeCredentials
                       nodeType={wf.type}
                       workflowId={workflowId || undefined}
-                      requirements={descriptor.credentials.filter((c) => isPropertyVisible(c, wf.parameters))}
+                      requirements={credentialRequirements}
                       value={wf.credentials}
                       onChange={(credentials) => update({ credentials })}
                     />

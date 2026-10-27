@@ -4,7 +4,7 @@
  * outline and a keyword search over the node catalog. No model calls here;
  * suggest.ts and the chat tools turn these into prompt text.
  */
-import { isPropertyVisible } from '@landflow/protocol';
+import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import type { RunDigest } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow, WorkflowNode } from '@/lib/shared/types';
 import { registry } from '../plugins/registry';
@@ -49,7 +49,8 @@ export function nodeDocs(info: NodeTypeInfo, parameters?: Record<string, unknown
   if (d.credentials?.length) lines.push(`Credentials: ${d.credentials.map((c) => `${c.name}${c.required ? ' (required)' : ''}`).join(', ')}.`);
   if (d.documentationUrl) lines.push(`Docs: ${d.documentationUrl}`);
   const properties = d.properties.filter((p) => p.type !== 'notice');
-  lines.push(properties.length ? 'Parameters:' : 'No parameters.', ...properties.map((p) => describeProperty(p, parameters)));
+  const effective = parameters && withPropertyDefaults(d.properties, parameters);
+  lines.push(properties.length ? 'Parameters:' : 'No parameters.', ...properties.map((p) => describeProperty(p, effective)));
   return lines.join('\n');
 }
 

@@ -104,6 +104,13 @@ export async function startFakeOpenAi(options: { apiKey?: string; chat?: (body: 
       });
     }
     if (path === '/api/chat') {
+      // Ollama's qwen3-coder tool-call parser failing on a sample: "xml-once" fails its first request, "xml-always" every
+      // one; "xml-stream-once" fails inside its first stream; "ollama-broken" is any other server error.
+      const tries = requests.filter((r) => r.path === path && r.body?.model === body.model).length;
+      const xml = 'XML syntax error on line 8: element <parameter> closed by </function>';
+      if (body.model === 'xml-always' || (body.model === 'xml-once' && tries === 1)) return send(500, { error: xml });
+      if (body.model === 'xml-stream-once' && tries === 1) return send(200, `${JSON.stringify({ error: xml })}\n`);
+      if (body.model === 'ollama-broken') return send(500, { error: 'model runner has unexpectedly stopped' });
       return send(200, {
         model: body.model,
         message: { role: 'assistant', content: body.format === 'json' ? '{"ok": true}' : 'plain text' },

@@ -4,7 +4,7 @@ Part of the [Landflow docs](../README.md); the [feature map](../README.md#featur
 
 The **AI Agent** is a root node with typed sub-node ports (`ai_languageModel` required/max 1, `ai_memory`, `ai_tool`), following n8n's cluster nodes. Models are provider-neutral `LanguageModel` adapters:
 
-- **Ollama Chat Model** works locally with no API key, and its model list loads live via `loadOptions`.
+- **Ollama Chat Model** works locally with no API key, and its model list loads live via `loadOptions`. When Ollama's own tool-call parser rejects a sample (a 500 such as qwen3-coder's `XML syntax error`), the call is retried up to twice.
 - **Anthropic Chat Model** defaults to `claude-opus-5-5` with effort control and server-side refusal fallback. It uses `ANTHROPIC_API_KEY` or an `ant auth login` profile, and replays Claude's content blocks verbatim across tool turns.
 
 **Any `usableAsTool` node becomes a tool, including remote plugins in any language.** The tool schema comes from the plugin's `toolInputSchema`, from n8n-style `{{ $fromAI('key', 'description', 'type') }}` placeholders, or from a heuristic. Tool calls in a turn run concurrently, and each call is recorded as its own sub-node run, so tool nodes light up on the canvas and the timeline shows model, tool and memory calls.
