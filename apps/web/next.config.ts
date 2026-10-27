@@ -36,6 +36,8 @@ const nextConfig: NextConfig = {
     '@google-cloud/pubsub',
   ],
   devIndicators: false,
+  // No persistent Turbopack cache for `next dev`: a stale one in .next/dev/cache made the browser reload in a loop.
+  experimental: { turbopackFileSystemCacheForDev: false },
   // Docker image (deploy/docker/host.Dockerfile): a self-contained server in .next/standalone.
   ...(process.env.LANDFLOW_NEXT_OUTPUT === 'standalone' && { output: 'standalone' as const }),
 };
