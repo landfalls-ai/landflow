@@ -17,7 +17,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Feature | Page | Contract or deeper doc |
 |---|---|---|
 | Editor: canvas, node creator, runs, pinned data, debugging, versions, templates; importing from n8n and Flowise | [features/editor.md](features/editor.md) | [ui-review.md](ui-review.md) |
-| Editor assistant: suggestions after a run, builder chat | [assistant.md](assistant.md) | |
+| Editor assistant: suggestions after a run, Spotlight (the builder chat) | [assistant.md](assistant.md) | |
 | Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes, debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
 | Plugins: the node interface in each SDK, autodiscovery, branding | [plugins.md](plugins.md) | [protocol.md](protocol.md) |
 | Transports: HTTP, gRPC, ten brokers, Auto, the claim check, MCP faces | [transports.md](transports.md) | [protocol.md](protocol.md) §14–15 |
@@ -68,7 +68,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 
 - [ui-review.md](ui-review.md): a screen-by-screen comparison of the UI with n8n.
 - [spotlight.md](spotlight.md): a new Home, the ⌘K Spotlight assistant and the action layer every AI or MCP change goes
-  through (a plan, not built).
+  through (a plan; Spotlight in the editor is built, see [assistant.md](assistant.md#spotlight)).
 - [ux-simplification.md](ux-simplification.md): what each screen asks of the user, and how to make it simpler (a plan,
   not built).
 - [harnesses.md](harnesses.md): running Landflow agents inside Claude Code and other harnesses (a plan, parked; only

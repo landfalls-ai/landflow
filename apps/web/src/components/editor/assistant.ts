@@ -2,7 +2,7 @@
 /**
  * Client side of the editor assistant (docs/assistant.md): applying proposed
  * ops to the canvas with an undo, after-run suggestions cached per run, and
- * the builder chat's conversation, kept while the editor is open.
+ * Spotlight's conversation, kept while the editor is open.
  */
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
@@ -149,7 +149,7 @@ export const useSuggestions = create<SuggestionsState>((set, get) => ({
     const update = (patch: Partial<SuggestionEntry>) =>
       set((s) => ({ entries: { ...s.entries, [key]: { ...(s.entries[key] ?? { status: 'loading', handled: {} }), ...patch } } }));
     update({ status: 'loading', error: undefined, handled: {} });
-    api<SuggestResult>('/api/assistant/suggest', { method: 'POST', json: { workflow: editor.toWorkflow(), nodeId, run: digestRun(run) } })
+    api<SuggestResult>('/api/assistant/suggest', { method: 'POST', json: { workflow: editor.toWorkflow(), workflowId: editor.workflowId, nodeId, run: digestRun(run) } })
       .then((result) => update({ status: 'done', result }))
       .catch((e: Error) => update({ status: 'error', error: e.message }));
   },
@@ -176,7 +176,7 @@ export function prefetchFailure() {
 }
 
 // ---------------------------------------------------------------------------
-// Builder chat
+// Spotlight's conversation (the builder chat)
 // ---------------------------------------------------------------------------
 
 export interface Proposal {
@@ -208,7 +208,15 @@ type StreamEvent =
   | { type: 'done'; model: string; durationMs: number; steps: number }
   | { type: 'error'; message: string };
 
+export interface SendOptions {
+  /** What the user tagged with Spotlight's bubbles: node ids on the canvas, node type ids. */
+  mentions?: { nodes: string[]; types: string[] };
+  /** Leave the selected node out of the context (its chip was removed). */
+  withoutSelection?: boolean;
+}
+
 interface AssistantState {
+  /** The conversation is shown above Spotlight's bar. */
   open: boolean;
   workflowId?: string;
   items: ChatItem[];
@@ -217,7 +225,9 @@ interface AssistantState {
   setOpen(open: boolean): void;
   /** Start over when another workflow is opened. */
   bind(workflowId: string): void;
-  send(text: string): Promise<void>;
+  send(text: string, options?: SendOptions): Promise<void>;
+  /** Add turns that didn't come from the chat (a flow the builder drafted, a fix from after-run suggestions). */
+  append(items: ChatItem[]): void;
   stop(): void;
   reset(): void;
   setProposalState(itemId: string, proposalId: string, state: 'applied' | 'dismissed'): void;
@@ -255,7 +265,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     useSuggestions.getState().clear();
   },
 
-  async send(text) {
+  async send(text, options = {}) {
     const message = text.trim();
     if (!message || get().pending) return;
     const editor = useEditor.getState();
@@ -272,8 +282,10 @@ export const useAssistant = create<AssistantState>((set, get) => ({
         {
           messages,
           workflow: editor.toWorkflow(),
-          selectedNodeId: editor.openNodeId ?? editor.nodes.find((n) => n.selected)?.id,
+          workflowId: editor.workflowId,
+          selectedNodeId: options.withoutSelection ? undefined : (editor.openNodeId ?? editor.nodes.find((n) => n.selected)?.id),
           runs: runDigests(),
+          ...(options.mentions && { mentions: options.mentions }),
         },
         (_event, data) => {
           const event = data as StreamEvent;
@@ -292,6 +304,10 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     } finally {
       if (get().abort === abort) set({ pending: false, abort: undefined });
     }
+  },
+
+  append(items) {
+    set((s) => ({ open: true, items: [...s.items, ...items] }));
   },
 
   stop() {

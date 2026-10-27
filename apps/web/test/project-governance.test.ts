@@ -5,8 +5,8 @@
  * - a project's node allow-list: saving warns, publishing is refused (422), a run fails at the node with where to
  *   change it, the node creator (`/api/node-types?workflowId=`) marks them blocked; other projects are untouched; only
  *   the project's admins change it (audited);
- * - a workflow's own policy: a stricter list than its project's, and four-eyes publishing for that workflow while the
- *   instance has it off; only admins of its project change it;
+ * - a workflow's own policy: a stricter list than its project's (the editor assistant builds only from it), and
+ *   four-eyes publishing for that workflow while the instance has it off; only admins of its project change it;
  * - who approves a project's publish requests: its admins, its admins and editors, or instance owners and admins;
  * - IPv6 addresses, CIDR ranges and `[addr]:port` in the HTTP Request host list.
  */
@@ -42,6 +42,7 @@ const publishRoute = await import('@/app/api/workflows/[id]/publish/route');
 const policyRoute = await import('@/app/api/workflows/[id]/policy/route');
 const settingsRoute = await import('@/app/api/projects/[id]/settings/route');
 const nodeTypesRoute = await import('@/app/api/node-types/route');
+const { allowedTypes } = await import('@/lib/server/assistant/scope');
 const approveRoute = await import('@/app/api/publish-requests/[id]/approve/route');
 
 registry.registerBuiltin(corePlugin);
@@ -221,6 +222,9 @@ describe('a workflow’s own policy', () => {
     expect(nodeError(record, 'Set')?.description).toMatch(/Workflow settings → Governance/);
     expect((await publish(bob, workflow.id)).status).toBe(422);
     expect((await nodeTypes(bob, `?workflowId=${workflow.id}`)).find((t) => t.type === 'core.set')?.blocked).toMatch(/this workflow’s list/);
+    // The editor assistant (Spotlight) builds only from what the workflow allows; without the workflow, the instance's list.
+    expect(allowedTypes(workflow.id, bob).map((t) => t.type)).toEqual(['core.manualTrigger']);
+    expect(allowedTypes(undefined, bob).some((t) => t.type === 'core.set')).toBe(true);
 
     // Switching it off removes the policy.
     expect((await putPolicy(alice, workflow.id, { nodes: { mode: 'off', types: [] } })).body.policy).toMatchObject({ fourEyes: false, nodes: { mode: 'off' } });

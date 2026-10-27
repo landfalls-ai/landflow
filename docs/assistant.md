@@ -3,11 +3,13 @@
 The workflow editor has an AI assistant with two faces on one backend:
 
 - **After-run suggestions**: once a node has run, a "✨ Suggestions" card in its panel offers fixes for errors, parameter tweaks, data-quality notes and the next node to add. Each comes with **Apply** and **Dismiss**.
-- **Builder chat**: a chat panel on the right of the editor. It researches the node catalog, node docs, the workflow and the last run, then **proposes** changes. You review each proposal as a diff and apply it.
+- **Spotlight**: a bar floating at the bottom of the canvas, next to Execute workflow. Bubbles above it suggest what to ask and complete what you type. The builder chat behind it researches the node catalog, node docs, the workflow and the last run, then **proposes** changes. You review each proposal as a diff and apply it.
 
 The assistant never edits a workflow by itself. Everything it suggests is a list of [edit operations](#edit-operations) that the server checks against the live registry. The editor applies them only when you click Apply, as one step with an **Undo** in the toast. Applying doesn't save; Save does.
 
 By default the assistant runs on the local builder model: Ollama at `OLLAMA_URL` with `LANDFLOW_BUILDER_MODEL` (`qwen3-coder:30b`). These are the same settings as "Describe a workflow".
+
+The assistant only uses the node types the workflow may use: those online, minus what governance blocks for the instance, the workflow's project and the workflow itself (`lib/server/assistant/scope.ts`, the same filter as the node creator).
 
 ## After-run suggestions
 
@@ -29,9 +31,28 @@ One request makes one model call with JSON output (`responseFormat: 'json'`). Th
 
 The reply is checked with zod, and each suggestion's ops are validated. Suggestions are ranked fix first, then by confidence. Duplicates (the same change twice) are dropped, and at most 3 are kept.
 
-## Builder chat
+## Spotlight
 
-Open it with **✨ Assistant** in the editor header or **⌘I**. The conversation lasts while the workflow is open. **New chat** (✎) starts over. On the empty canvas, the "Describe a workflow" box still drafts a whole flow in one shot (`/api/ai/build`). Once you've typed something, **Continue in chat** sends the same prompt to the chat instead.
+Spotlight is the one AI surface in the editor: a bar at the bottom of the canvas, beside the run controls. Click it or press **⌘I**. Its conversation opens above the bar and lasts while the workflow is open. ✎ starts over; the chevron or **esc** hides it, and **Apply** hides it too so the change shows on the canvas (the toast has **Undo**). A count on the bar's conversation button shows proposals not yet applied or dismissed.
+
+**Bubbles.** Small suggestions float above the bar. They come from `lib/shared/spotlight.ts`, with no model call, so they change as you type:
+
+| When | Bubbles |
+|---|---|
+| The canvas is empty | Starters for the triggers the workflow may use: *When a webhook is called, …*, *Every morning at 9, …*, *Answer chat messages with an AI agent*, *Fetch a JSON API and keep the items where …* |
+| The box is empty and focused | At most three, most urgent first: *Why did “X” fail?*, *Connect a chat model to “Agent”*, *Explain “Selected node”*, *Add a trigger that starts this workflow*, *After “Last node”, …*, *What does this workflow do?* |
+| The box is empty, not focused | Only a failure: *Why did “X” fail?*, and *Fix: …* once the after-run suggestions for the failed node are ready |
+| Typing `@` | Nodes on the canvas by name (spaces allowed): choosing one inserts `@Node name` |
+| Typing a word | Node types this workflow may use, by name, keyword or plugin (`sla` → Slack, Slack Trigger), and, when the word is all there is, the whole step: *Add Slack after “Selected node”* (else the last node) |
+| Typing the start of a suggestion | The rest of the sentence |
+
+A bubble that ends in “…” fills the box to finish; a complete question or step sends at once. **Tab** takes the first (or highlighted) bubble, **↑ ↓** move between them, **Enter** sends. *Fix: …* puts the suggestion in the conversation as a proposal card.
+
+**Context.** The selected node shows as a chip in the bar; × leaves it out of the next message. Tagged nodes and node types go with the message as `mentions` (ids, not text), and the server adds them to the prompt: a tag the workflow can't use is dropped.
+
+**Empty canvas.** The first message on an empty canvas drafts the whole flow in one go with the flow builder (`/api/ai/build`), lays it out and pins test data on the trigger. One ⌘Z undoes it. Later messages go to the builder chat.
+
+### The builder chat
 
 Each message sends the conversation so far, the current workflow (`toWorkflow()`, saved or not), the selected node and a digest of every node's last main run. The server runs a tool-calling loop of at most **8 model calls** per message:
 
@@ -85,11 +106,13 @@ The server runs it against the registry's available node types. The editor runs 
 
 | Route | Body | Response |
 |---|---|---|
-| `POST /api/assistant/suggest` | `{ workflow, nodeId, run: RunDigest, model? }` | `{ suggestions: [{ id, kind, title, detail, confidence, ops, dropped?, warnings? }], model, durationMs, skipped? }` · 404 for an unknown node, 502 when the model fails |
-| `POST /api/assistant/chat` | `{ messages: [{ role, content }], workflow, selectedNodeId?, runs?: { [nodeId]: RunDigest }, model? }` | SSE, one event per step: `text {text}`, `tool {name, label, ok}`, `proposal {id, summary, ops, dropped, warnings}`, then `done {model, durationMs, steps, usage}` or `error {message}` |
+| `POST /api/assistant/suggest` | `{ workflow, workflowId?, nodeId, run: RunDigest, model? }` | `{ suggestions: [{ id, kind, title, detail, confidence, ops, dropped?, warnings? }], model, durationMs, skipped? }` · 404 for an unknown node, 502 when the model fails |
+| `POST /api/assistant/chat` | `{ messages: [{ role, content }], workflow, workflowId?, selectedNodeId?, runs?: { [nodeId]: RunDigest }, mentions?: { nodes?: string[], types?: string[] }, model? }` | SSE, one event per step: `text {text}`, `tool {name, label, ok}`, `proposal {id, summary, ops, dropped, warnings}`, then `done {model, durationMs, steps, usage}` or `error {message}` |
 | `POST /api/assistant/feedback` | `{ kind: fix\|param\|data\|next\|proposal, action: applied\|dismissed }` | `{ ok: true }` (feeds the metrics below) |
 
 `RunDigest` is `{ status, durationMs, error?, inputs: [{ count, sample }], outputs: [{ count, sample }], logs? }`. `sample` holds the first 3 items' JSON, with long strings, arrays and deep objects clipped. The editor builds digests with `digestRun()`, so full run data never leaves the browser.
+
+`workflowId` (the saved workflow being edited) limits proposals to the node types it allows; without it, the instance's governance list applies. `mentions` are node ids on the canvas and node type ids the user tagged.
 
 `model` overrides the default model:
 - a bare Ollama model name;
@@ -118,7 +141,11 @@ The server runs it against the registry's available node types. The editor runs 
 | `lib/server/assistant/suggest.ts` | `suggestAfterRun` |
 | `lib/server/assistant/chat.ts` | `runChat`, the tool loop |
 | `lib/server/assistant/model.ts` | default and override models |
+| `lib/server/assistant/scope.ts` | `allowedTypes`: the node types a workflow may use |
+| `lib/shared/spotlight.ts` | Spotlight's bubbles: starters, attention first, `@` mentions, node types, sentence completion |
 | `lib/server/telemetry/assistant.ts` | spans and instruments |
 | `components/editor/assistant.ts` | client stores: suggestion cache, chat conversation, `applyChanges` with undo |
-| `components/editor/suggestions-card.tsx`, `assistant-panel.tsx` | the card and the chat panel |
+| `components/editor/suggestions-card.tsx`, `spotlight.tsx` | the after-run card, and Spotlight (bar, bubbles, conversation, proposal cards) |
+| `components/editor/ai-builder.tsx` | `useBuildFlow`: the empty canvas's one-shot flow draft |
 | `apps/web/test/assistant.test.ts` | ops, suggestion parsing and the chat loop with scripted models |
+| `apps/web/test/spotlight.test.ts` | the bubbles |

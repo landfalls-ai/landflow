@@ -1,12 +1,13 @@
 /**
- * One chat message to the editor assistant. The reply streams as SSE, one
- * event per step: `text`, `tool` (activity), `proposal` (validated changes),
- * then `done`, or `error`.
+ * One chat message to the editor assistant (Spotlight in the editor). The
+ * reply streams as SSE, one event per step: `text`, `tool` (activity),
+ * `proposal` (validated changes), then `done`, or `error`.
  */
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
 import { runChat, type ChatEvent } from '@/lib/server/assistant/chat';
 import { errorText } from '@/lib/server/assistant/model';
+import { allowedTypes } from '@/lib/server/assistant/scope';
 import { handler, parseBody, sseHeaders } from '@/lib/server/http';
 import { runDigestSchema, workflowSchema } from '@/lib/server/schemas';
 import { traceparentHeader } from '@/lib/server/telemetry';
@@ -23,12 +24,17 @@ const Body = z.object({
   selectedNodeId: z.string().optional(),
   runs: z.record(z.string(), runDigestSchema).optional(),
   model: z.string().max(100).optional(),
+  /** The saved workflow being edited: proposals then use only the node types its project and its own lists allow. */
+  workflowId: z.string().max(200).optional(),
+  /** What the user tagged in the message: node ids on the canvas, node type ids. */
+  mentions: z.object({ nodes: z.array(z.string().max(200)).max(20), types: z.array(z.string().max(200)).max(20) }).partial().optional(),
 });
 
 export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
-  const { workflow, ...rest } = parsed.data;
+  const { workflow, workflowId, ...rest } = parsed.data;
+  const types = allowedTypes(workflowId);
   const encoder = new TextEncoder();
   const abort = new AbortController();
   request.signal.addEventListener('abort', () => abort.abort());
@@ -43,7 +49,7 @@ export const POST = handler(async (request: Request) => {
         }
       };
       try {
-        await runChat({ ...rest, workflow: { id: 'draft', ...workflow } as Workflow, signal: abort.signal, onEvent: send });
+        await runChat({ ...rest, types, workflow: { id: workflowId ?? 'draft', ...workflow } as Workflow, signal: abort.signal, onEvent: send });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', message: errorText(caught) });
       } finally {

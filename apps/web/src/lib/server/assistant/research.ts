@@ -89,6 +89,16 @@ export function searchNodes(query: string, types: NodeTypeInfo[] = availableType
     .slice(0, limit);
 }
 
+/** One line per plugin with its node names: what a workflow can be built from, at a glance. */
+export function catalogSummary(types: NodeTypeInfo[] = availableTypes()): string {
+  const byPlugin = new Map<string, string[]>();
+  for (const t of types) {
+    const plugin = t.pluginId === 'core' ? 'Built in' : t.pluginName;
+    byPlugin.set(plugin, [...(byPlugin.get(plugin) ?? []), t.descriptor.displayName]);
+  }
+  return [...byPlugin].map(([plugin, names]) => `- ${plugin}: ${names.slice(0, 12).join(', ')}${names.length > 12 ? ` and ${names.length - 12} more` : ''}`).join('\n');
+}
+
 /** One line per available node type: the menu a model picks "next node" ideas from. */
 export function catalogIndex(types: NodeTypeInfo[] = availableTypes()): string {
   return types

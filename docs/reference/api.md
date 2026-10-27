@@ -42,7 +42,7 @@ scope, an admin role) is set in `apps/web/src/lib/server/auth/policy.ts`. The pu
 | `POST /api/executions/stop-all` | abort every running execution, cancel waiting and queued ones, drop pending automatic retries → `{ running, waiting, queued, retries }` |
 | `POST /api/executions/:id/debug` | debugger: step / continue / stop, breakpoints |
 | `POST /api/ai/build` | `{ prompt }` → a validated flow draft from the local model |
-| `POST /api/assistant/suggest`, `POST /api/assistant/chat`, `POST /api/assistant/feedback` | editor assistant: after-run suggestions, the builder chat (SSE) and apply/dismiss feedback ([docs/assistant.md](../assistant.md#api)) |
+| `POST /api/assistant/suggest`, `POST /api/assistant/chat`, `POST /api/assistant/feedback` | editor assistant: after-run suggestions, Spotlight's builder chat (SSE; `workflowId` limits it to the node types the workflow allows, `mentions` carries tagged nodes and types) and apply/dismiss feedback ([docs/assistant.md](../assistant.md#api)) |
 | `POST /api/expressions/preview` | resolve an expression against sample items (the parameter editor's preview) |
 | `GET/POST /api/plugins`, `PATCH/DELETE /api/plugins/:id`, `POST /api/plugins/:id/refresh`, `POST /api/plugins/scan` | registry |
 | `POST/DELETE /api/plugins/announce` | plugin self-registration |

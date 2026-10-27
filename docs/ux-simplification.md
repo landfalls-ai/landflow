@@ -74,6 +74,9 @@ sidebar. (M, phase 4 of [spotlight.md](spotlight.md#delivery).)
   One bottom toolbar (Run ▾ with Debug, Add, zoom); the minimap only above about 25 nodes; the sidebar collapses to
   icons; fit keeps labels at least 12 px. Spotlight is the one AI surface, and "Describe a workflow" on an empty canvas
   becomes its first prompt. Runs where a branch produced 0 items show amber, not green.
+- **Done (2026-10-27):** Spotlight is the one AI surface in the editor, a bar beside the run controls at the bottom of the
+  canvas ([assistant.md](assistant.md#spotlight)). The Assistant header button, the side panel, the toolbar's AI builder
+  button and the empty canvas's prompt box are gone, so the top bar has 11 controls and the canvas toolbar 4.
 
 ### Node panel (high impact, S)
 

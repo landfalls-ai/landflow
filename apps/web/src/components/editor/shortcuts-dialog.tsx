@@ -38,7 +38,7 @@ const GROUPS: Array<{ title: string; keys: Array<[string, string]> }> = [
     title: 'Editor',
     keys: [
       ['⌘ S', 'Save'],
-      ['⌘ I', 'Assistant'],
+      ['⌘ I', 'Spotlight: ask, or describe a change'],
       ['{{', 'Start an expression (with autocomplete)'],
       ['⌃ Space', 'Show expression suggestions'],
       ['?', 'This list'],

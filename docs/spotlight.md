@@ -1,6 +1,9 @@
 # Spotlight, Home 2.0 and the action layer (plan)
 
-Status: **plan**, written 2026-10-27 at commit 493177a. Nothing here is built yet. An interactive version with UI
+Status: **in progress**. Written 2026-10-27 at commit 493177a. **Spotlight in the editor is built** (2026-10-27): the bar at
+the bottom of the canvas with suggestion bubbles, `@` mentions and node-type completion, replacing the Assistant panel;
+[assistant.md](assistant.md#spotlight) documents it. The new Home, Spotlight on the other pages and the action layer are
+still a plan. An interactive version with UI
 mockups is the artifact <https://claude.ai/artifact/3FPJ1Ci3Jb8K3oJfjcvV8F> (private to the owner). The screen-by-screen
 simplification review that goes with it is [ux-simplification.md](ux-simplification.md).
 
@@ -66,7 +69,10 @@ audit event id. Credential values never pass through the agent: a `secret` actio
 posts straight to the vault.
 
 In the editor, Ask is the builder chat: the same ops (`lib/shared/assistant-ops.ts`), diff and undo as
-[assistant.md](assistant.md) describes. After-run suggestions stay.
+[assistant.md](assistant.md) describes. After-run suggestions stay. **Built:** the editor's Spotlight
+([assistant.md](assistant.md#spotlight)) is this bar for one page. Its bubbles (`lib/shared/spotlight.ts`) are the
+first version of Go and `@`: they complete canvas nodes and the node types the workflow may use, and suggest what to ask,
+without a model call. The chat it sends to uses only the node types the workflow allows (`assistant/scope.ts`).
 
 ## 3. The action layer
 
@@ -194,8 +200,8 @@ of the editor-only ones.
 
 ## Decisions (recommendations)
 
-1. **Spotlight replaces the editor's Assistant panel.** In the editor, Ask is the builder chat with the same ops, diff
-   and undo. Two AI surfaces with different habits is the alternative.
+1. **Spotlight replaces the editor's Assistant panel.** Decided and built: in the editor, Spotlight is the builder chat
+   with the same ops, diff and undo, and the Assistant panel, its header button and the toolbar's AI builder are gone.
 2. **No auto-apply by default.** An opt-in per user for create and update kinds only; never for run, publish, delete or
    secret.
 3. **Local model by default**, as the assistant; hosted models through the existing overrides.

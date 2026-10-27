@@ -347,6 +347,24 @@ describe('builder chat', () => {
     expect(rejected.results[0].isError).toBe(true);
   });
 
+  it('tells the model which plugins it may use and what the user tagged', async () => {
+    const { model, calls } = scripted([{ text: 'Code runs JavaScript on each item.' }]);
+    const allowed = types.filter((t) => t.type !== 'core.removeDuplicates');
+    await runChat({
+      messages: [{ role: 'user', content: 'What does @Code do, and should I use Remove Duplicates?' }],
+      workflow: workflow(),
+      model,
+      types: allowed,
+      // A tagged type the workflow may not use, and a node that isn't there, are left out.
+      mentions: { nodes: ['b', 'ghost'], types: ['core.if', 'core.removeDuplicates'] },
+      onEvent: () => {},
+    });
+    const system = calls[0].system ?? '';
+    expect(system).toMatch(/Apps and plugins this workflow can use[^\n]*\n- Built in: /);
+    expect(system).toContain('The user tagged in the message:\n- the node “Code” (core.code)\n- the node type If (core.if)');
+    expect(system).not.toContain('the node type Remove Duplicates');
+  });
+
   it('sends an incomplete change back once, then shows it with its warnings', async () => {
     const dangling = { summary: 'Unhook Code', ops: [{ op: 'disconnect', from: 'Start', to: 'Code' }] };
     const { model, calls } = scripted([

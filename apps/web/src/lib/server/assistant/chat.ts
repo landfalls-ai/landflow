@@ -13,7 +13,7 @@ import { PARAMETER_FORMATS } from '../flow-builder';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
 import { assistantModel, modelLabel } from './model';
 import { registryLookup, validateOps } from './ops';
-import { availableTypes, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
+import { availableTypes, catalogSummary, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 
 export const MAX_STEPS = 8;
 
@@ -36,7 +36,10 @@ export interface ChatInput {
   /** Last main run of each node, by node id. */
   runs?: Record<string, RunDigest>;
   model?: string | LanguageModel;
+  /** The node types proposals may use (default: every type online). The route passes the workflow's allowed ones. */
   types?: NodeTypeInfo[];
+  /** Nodes (by id) and node types the user tagged in the message with Spotlight's bubbles. */
+  mentions?: { nodes?: string[]; types?: string[] };
   signal?: AbortSignal;
   onEvent: (event: ChatEvent) => void;
 }
@@ -109,7 +112,8 @@ How to work:
 - ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
 - Expressions read the current item with "{{ $json.field }}" and other nodes with "{{ $('Node name').item.json.field }}".
 - After proposing, say in one or two sentences what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied or made. Don't repeat the ops in prose.
-- When no change is needed, just answer. Be brief and concrete.
+- When no change is needed, just answer. Be brief and concrete: your text shows in a small panel at the bottom of the canvas, so one to three short sentences, no headings or lists unless asked.
+- Use only node types from the catalog below and search_nodes; anything else is not installed, offline or not allowed in this workflow.
 
 ${PARAMETER_FORMATS}`;
 
@@ -167,10 +171,16 @@ export async function runChat(input: ChatInput): Promise<void> {
 
   const nodeByName = (name: string) => working.nodes.find((n) => n.name === name) ?? working.nodes.find((n) => n.name.toLowerCase() === name.toLowerCase() || n.id === name);
   const selected = input.selectedNodeId && working.nodes.find((n) => n.id === input.selectedNodeId);
+  const tagged = [
+    ...(input.mentions?.nodes ?? []).flatMap((id) => working.nodes.filter((n) => n.id === id)).map((n) => `- the node “${n.name}” (${n.type})`),
+    ...(input.mentions?.types ?? []).flatMap((type) => types.filter((t) => t.type === type)).map((t) => `- the node type ${t.descriptor.displayName} (${t.type}): ${t.descriptor.description.slice(0, 120)}`),
+  ];
   const system = [
     SYSTEM,
+    `\nApps and plugins this workflow can use (search_nodes for the rest):\n${catalogSummary(types)}`,
     `\nThe editor now:\n${workflowOutline(working, runs)}`,
     selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types)}` : '',
+    tagged.length ? `\nThe user tagged in the message:\n${tagged.join('\n')}` : '',
   ].join('\n');
 
   const execute = async (call: ToolCall): Promise<ToolResult> => {

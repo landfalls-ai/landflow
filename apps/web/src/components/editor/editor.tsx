@@ -14,7 +14,6 @@ import {
   Play,
   Plus,
   Redo2,
-  Sparkles,
   Square,
   StepForward,
   StickyNote,
@@ -36,9 +35,8 @@ import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
 import { WorkflowTabs } from '../shell/workflow-tabs';
-import { AiBuilder, AiBuilderPopover } from './ai-builder';
 import { prefetchFailure, useAssistant } from './assistant';
-import { AssistantPanel } from './assistant-panel';
+import { focusSpotlight, Spotlight } from './spotlight';
 import { ChatPanel, type ChatApproval, type ChatChunk, type ChatFile, type ChatOutcome } from './chat-panel';
 import { parseClipboard, type ClipboardData } from './clipboard';
 import { FlowEdgeView } from './flow-edge';
@@ -202,7 +200,8 @@ function Canvas({ onSave }: { onSave: () => void }) {
         state.run?.({ kind: e.shiftKey ? 'debug' : 'run' });
       } else if (mod && e.key === 'i') {
         e.preventDefault();
-        useAssistant.getState().setOpen(!useAssistant.getState().open);
+        if (useAssistant.getState().items.length) useAssistant.getState().setOpen(true);
+        focusSpotlight();
       } else if (e.key === 'F8' && state.paused) {
         e.preventDefault();
         void sendDebug(state.executionId, 'continue');
@@ -343,9 +342,9 @@ function EmptyCanvas() {
           or press <Kbd>N</Kbd>
         </span>
       </button>
-      <div className="pointer-events-auto w-full max-w-[640px] animate-fade-up px-6" style={{ animationDelay: '80ms' }}>
-        <AiBuilder />
-      </div>
+      <button onClick={focusSpotlight} className="pointer-events-auto -mt-4 animate-fade-up text-[12.5px] text-t3 transition-colors hover:text-t1" style={{ animationDelay: '80ms' }}>
+        or describe it to Spotlight below <Kbd>⌘I</Kbd>
+      </button>
       {templates.length > 0 && (
         <div className="pointer-events-auto flex w-full max-w-[880px] flex-col items-center gap-3 px-6">
           <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">or start from a template</div>
@@ -380,7 +379,6 @@ function CanvasToolbar() {
   const { fitView } = useReactFlow();
   const hasNodes = useEditor((s) => s.nodes.length > 0);
   const creatorOpen = useEditor((s) => Boolean(s.palette));
-  const [aiOpen, setAiOpen] = useState(false);
   const { screenToFlowPosition } = useReactFlow();
   const addNote = () => {
     const pane = document.querySelector('.react-flow')?.getBoundingClientRect();
@@ -391,7 +389,6 @@ function CanvasToolbar() {
   const button = 'grid size-9 place-items-center text-t2 transition-colors hover:bg-acdim hover:text-t1';
   return (
     <>
-      <AiBuilderPopover open={aiOpen && hasNodes} onClose={() => setAiOpen(false)} />
       <div className="absolute right-3 top-3 z-20 flex animate-fade-up flex-col overflow-hidden rounded-xl border border-hair bg-sf shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
         <button title="Add node (N)" aria-label="Add node" onClick={() => useEditor.getState().openPalette({})} className={button}>
           <Plus className="size-4" />
@@ -401,14 +398,6 @@ function CanvasToolbar() {
         </button>
         {hasNodes && (
           <>
-            <button
-              title="Build with AI: describe steps to add"
-              aria-label="Build with AI"
-              onClick={() => setAiOpen((o) => !o)}
-              className={cn(button, 'border-t border-hair', aiOpen && 'bg-acdim')}
-            >
-              <Sparkles className="size-4 text-viz-7" />
-            </button>
             <button
               title="Tidy up (⇧⌥T)"
               aria-label="Tidy up"
@@ -525,7 +514,6 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const debugging = useEditor((s) => s.debugging);
   const breakpoints = useEditor((s) => s.breakpoints);
   const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.wf.type === 'core.chatTrigger'));
-  const assistantOpen = useAssistant((s) => s.open);
   const readOnly = useEditLock((s) => s.readOnly);
   const { takeOver } = useEditLockSync(workflowId, loaded);
   // A waiting run on the canvas keeps its waiting mark current and shows the rest once it resumes.
@@ -781,14 +769,6 @@ export function Editor({ workflowId }: { workflowId: string }) {
           <div className="ml-auto flex items-center gap-2">
             <PublishControl workflowId={workflowId} onSave={save} />
             <Button
-              variant={assistantOpen ? 'outline' : 'ghost'}
-              onClick={() => useAssistant.getState().setOpen(!assistantOpen)}
-              title="Assistant: build and fix this workflow with AI (⌘I)"
-              aria-pressed={assistantOpen}
-            >
-              <Sparkles className="size-3.5 text-viz-7" /> Assistant
-            </Button>
-            <Button
               variant="ghost"
               size="icon"
               onClick={() => useVersionHistory.getState().setOpen(true)}
@@ -814,21 +794,24 @@ export function Editor({ workflowId }: { workflowId: string }) {
               <Canvas onSave={() => void save()} />
               <EmptyCanvas />
               <CanvasToolbar />
-              <ExecuteBar
-                running={running}
-                breakpoints={breakpoints.length}
-                hasChat={hasChatTrigger}
-                chatOpen={chatOpen}
-                onRun={() => void runCommand({ kind: 'run' })}
-                onDebug={() => void runCommand({ kind: 'debug' })}
-                onStop={stop}
-                onChat={() => setChatOpen((o) => !o)}
-              />
+              {/* One dock at the bottom: run controls, then Spotlight. The side padding keeps clear of zoom and the minimap. */}
+              <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex items-end justify-center gap-2 pl-14 pr-[232px]">
+                <ExecuteBar
+                  running={running}
+                  breakpoints={breakpoints.length}
+                  hasChat={hasChatTrigger}
+                  chatOpen={chatOpen}
+                  onRun={() => void runCommand({ kind: 'run' })}
+                  onDebug={() => void runCommand({ kind: 'debug' })}
+                  onStop={stop}
+                  onChat={() => setChatOpen((o) => !o)}
+                />
+                <Spotlight />
+              </div>
             </div>
             <EditorLogs />
           </div>
           <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} onSend={sendChat} onDecide={decideChat} />
-          <AssistantPanel />
           <NodeCreator />
         </div>
         <NodePanel />
@@ -840,7 +823,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
   );
 }
 
-/** n8n's big "Execute workflow" button, bottom centre, with Debug beside it. */
+/** n8n's big "Execute workflow" button, bottom centre next to Spotlight, with Debug beside it. */
 function ExecuteBar(props: {
   running: boolean;
   breakpoints: number;
@@ -857,8 +840,7 @@ function ExecuteBar(props: {
   if (empty) return null;
   const { running, breakpoints, hasChat, chatOpen, onRun, onDebug, onStop, onChat } = props;
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center">
-      <div className="pointer-events-auto flex animate-fade-up items-center gap-2 rounded-full border border-hair bg-sf/90 p-1.5 shadow-pop backdrop-blur">
+    <div className="pointer-events-auto flex shrink-0 animate-fade-up items-center gap-2 rounded-full border border-hair bg-sf/90 p-1.5 shadow-pop backdrop-blur">
         {listening ? (
           <ListeningBar />
         ) : running ? (
@@ -890,7 +872,6 @@ function ExecuteBar(props: {
             <MessageCircle className="size-3.5 text-viz-7" /> {chatOpen ? 'Hide chat' : 'Open chat'}
           </Button>
         )}
-      </div>
     </div>
   );
 }
