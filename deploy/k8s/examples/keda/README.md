@@ -4,7 +4,7 @@ One example per broker, each scaling the `plugin-text-toolkit` Deployment on the
 (`landflow.v1.plugin.<pluginId>`, docs/protocol.md §14.2). They are examples, not part of any overlay: KEDA is not installed by
 these manifests, and **only one ScaledObject may target a Deployment**, so apply the one that matches the broker the plugin
 consumes and change `name`, the target and the channel names for another plugin. How to read them, and how the numbers relate to
-`maxConcurrency` and the spill-over rule: `deploy/README.md` ("Autoscaling with KEDA").
+`maxConcurrency` and the spill-over rule: [docs/deployment.md, "Autoscaling with KEDA"](../../../../docs/deployment.md#autoscaling-with-keda).
 
 | File | Broker | KEDA trigger | Metric |
 |---|---|---|---|

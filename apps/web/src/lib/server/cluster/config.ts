@@ -1,5 +1,5 @@
 /**
- * Queue mode and high availability settings, from the environment (README "Queue mode, workers and high availability").
+ * Queue mode and high availability settings, from the environment (docs/features/engine.md "Queue mode, workers and high availability").
  *
  * - `LANDFLOW_EXECUTIONS_MODE`: `regular` (default: every run in the process that started it, one host per database)
  *   or `queue` (mains enqueue production runs on Valkey, workers run them; several mains elect a leader).

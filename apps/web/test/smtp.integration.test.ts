@@ -1,5 +1,5 @@
 /**
- * Invites and password resets through a real SMTP server: Mailpit from the infra stack (deploy/README.md), SMTP on
+ * Invites and password resets through a real SMTP server: Mailpit from the infra stack (docs/deployment.md), SMTP on
  * 127.0.0.1:51025, its API on http://127.0.0.1:58025. The messages are read back from Mailpit's API and their links
  * followed. Run with LANDFLOW_INTEGRATION=smtp (LANDFLOW_TEST_SMTP_PORT / LANDFLOW_TEST_MAILPIT_URL to point elsewhere).
  */

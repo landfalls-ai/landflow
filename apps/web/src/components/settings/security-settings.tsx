@@ -2,7 +2,7 @@
 /**
  * Settings → Security (owners and admins): how sign-in is configured. Single sign-on (OIDC) with a live discovery
  * check and the redirect URL to register, email for invites and resets, session length, the plugin registry secret and
- * metrics access. Read-only: all of it comes from environment variables (README "Authentication").
+ * metrics access. Read-only: all of it comes from environment variables (docs/features/authentication.md).
  */
 import { useEffect, useState } from 'react';
 import { CheckCircle2, CircleSlash, KeyRound, Mail, ShieldCheck, TriangleAlert } from 'lucide-react';

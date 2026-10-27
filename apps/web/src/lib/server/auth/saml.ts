@@ -11,7 +11,7 @@
  * (the decrypted assertion's signature and id are checked like a plain one's); "Require encrypted assertions" refuses
  * the rest.
  *
- * Configuration (env, like OIDC; README "SAML"): the IdP comes from LANDFLOW_SAML_IDP_METADATA_URL (fetched and
+ * Configuration (env, like OIDC; docs/features/authentication.md): the IdP comes from LANDFLOW_SAML_IDP_METADATA_URL (fetched and
  * cached for an hour) and/or LANDFLOW_SAML_ENTRY_POINT, LANDFLOW_SAML_IDP_ISSUER and LANDFLOW_SAML_IDP_CERT (PEM or
  * base64; several separated by commas or `|` for key rotation). Our entity id is LANDFLOW_SAML_ISSUER (default
  * `<public URL>/api/auth/saml/metadata`, which serves our metadata), the ACS `<public URL>/api/auth/saml/acs`.

@@ -188,8 +188,8 @@ The **Evaluations** tab grades the agent's conversations online, with an LLM jud
 
 The **AI Agent** node gets the same grading per node, under **AI Agent grading** on the workflow's
 Evaluations tab (judge default: the node's chat model; evaluation and debug runs are skipped).
-Offline evaluations of workflows (test cases from a Data Table or an uploaded CSV/JSON file, scheduled runs and score alerts) are described in the README's
-Evaluations section. Scores live in `online_eval_scores` (the last 2,000 per agent).
+Offline evaluations of workflows (test cases from a Data Table or an uploaded CSV/JSON file, scheduled runs and score alerts) are described in
+[Evaluations](features/ai.md#evaluations). Scores live in `online_eval_scores` (the last 2,000 per agent).
 
 ## Slack
 
@@ -322,7 +322,7 @@ through the infra Mailpit (`apps/web/test/approval-email-mailpit.test.ts`, skipp
 | `GET/POST /api/approvals/email/:token` | the links of approval emails: GET confirms, POST decides once (signed token) |
 | `GET /api/insights/ai-usage?agentId=` | the agent's tokens and estimated cost: totals, per model, per day, `today` and `month` |
 | `GET /api/agents/:id/sessions`, `GET/DELETE /api/agents/:id/sessions/:sid` | session list / full session (`feedback`: the thumbs up / down per reply) |
-| `GET /api/agents/:id/sessions/:sid/feedback`, `PUT` `{ entryId, rating: 'up' \| 'down' \| null, comment? }` | read / set the rating of one assistant reply (the Sessions tab's thumbs). A thumbs down on an agent with online grading enabled grades that reply (README, "Hosted chat and widget") |
+| `GET /api/agents/:id/sessions/:sid/feedback`, `PUT` `{ entryId, rating: 'up' \| 'down' \| null, comment? }` | read / set the rating of one assistant reply (the Sessions tab's thumbs). A thumbs down on an agent with online grading enabled grades that reply ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)) |
 | `GET /api/agents/models?provider&credentialId&baseUrl` | `{ options: ModelOption[], error? }` |
 | `GET /api/agents/workflow-tools` | workflows with `eligible` and the `reason` when they aren't |
 | `GET/PUT /api/agents/:id/evaluations` | online grading: `{ report: OnlineEvalReport }` (settings, scores, trend); `PUT` changes the settings |

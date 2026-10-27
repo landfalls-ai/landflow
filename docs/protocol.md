@@ -794,7 +794,7 @@ plugin serves it; the host keeps the hash it learned from the announce or the la
 
 Most brokers keep messages on disk and an `ExecuteRequest` carries decrypted credentials, so every event is encrypted
 end to end and signed. Nothing here depends on the broker's own security (TLS and per-plugin broker users are still
-recommended; `deploy/README.md` has an example per broker).
+recommended; [deployment.md](deployment.md#message-brokers-and-the-mcp-gateway) has an example per broker).
 
 - **Secret.** One shared secret, `LANDFLOW_TRANSPORT_SECRET` (falling back to `LANDFLOW_REGISTRY_SECRET`), known to the
   host and to every plugin; a plugin without it cannot start a messaging binding, a host without it never uses a

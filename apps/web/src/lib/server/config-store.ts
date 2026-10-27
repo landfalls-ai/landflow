@@ -1,5 +1,5 @@
 /**
- * Where credentials and the data directory's settings files live (README "Queue mode, workers and high availability").
+ * Where credentials and the data directory's settings files live (docs/features/engine.md "Queue mode, workers and high availability").
  *
  * - `files` (the default outside queue mode): credentials.json, mcp.json, marketplaces.json, skill-library.json and
  *   agent-channels.json in LANDFLOW_DATA_DIR, exactly as before.

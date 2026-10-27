@@ -22,7 +22,7 @@
  * (leader + epoch, slots + FIFO, instances + their info), which Cluster only allows within one hash slot, so the prefix
  * becomes a hash tag (`{landflow}:jobs`, `{landflow}:k:…`): every key lives on the one node that owns that slot, and the
  * connections (commands, pub/sub, blocking reads) go to that node, ask the cluster again on MOVED / CLUSTERDOWN and follow
- * its failovers. That makes managed cluster-mode Valkey work; it can't scale the queue out (README).
+ * its failovers. That makes managed cluster-mode Valkey work; it can't scale the queue out (docs/limitations.md).
  */
 import { createHash } from 'node:crypto';
 import { priorityOrder, type AdmitResult, type Coordinator, type Delivery, type InstanceInfo, type Leadership, type QueueJob, type SlotRule } from './coordinator';

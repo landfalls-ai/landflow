@@ -1,4 +1,4 @@
-# Queue mode (README "Queue mode, workers and high availability"): the mains (landflow-host, two replicas, rolling updates),
+# Queue mode (docs/features/engine.md "Queue mode, workers and high availability"): the mains (landflow-host, two replicas, rolling updates),
 # a `landflow-worker` Deployment that runs production runs (`node worker.mjs`, health and metrics on :5690), a
 # PodDisruptionBudget for the workers, and the settings every main and worker must share. Needs, from other components or
 # your own manifests: Postgres (components/postgres or external-services: LANDFLOW_DB, DATABASE_URL), Valkey
@@ -14,7 +14,7 @@
 # The worker's database and Valkey settings are written for components/postgres and components/valkey (Secret
 # `landflow-postgres`, Service `valkey`): with external-services, patch DATABASE_URL and LANDFLOW_VALKEY_URL on
 # `landflow-worker` to read the Secret `landflow-external` (keys `database-url`, `valkey-url`). Valkey Sentinel or Cluster:
-# add LANDFLOW_VALKEY_SENTINELS or LANDFLOW_VALKEY_CLUSTER to both Deployments (README).
+# add LANDFLOW_VALKEY_SENTINELS or LANDFLOW_VALKEY_CLUSTER to both Deployments (docs/features/engine.md).
 #
 # Scaling: `kubectl scale deployment/landflow-worker --replicas=N`, or a KEDA ScaledObject on the queue's depth
 # (examples/keda/queue-workers.yaml). Stopping a worker (a scale-down, a rollout, a node drain) is graceful: SIGTERM stops it

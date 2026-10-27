@@ -1,7 +1,7 @@
 # Architecture
 
 How Landflow is put together: the processes, what each one owns, how a run moves through them, and where the code
-lives. Each section links to the document that has the details. The [README](../README.md) describes the features;
+lives. Each section links to the document that has the details. The [feature pages](README.md#feature-map) describe what it does;
 this page describes the machinery under them.
 
 - [The pieces](#the-pieces)
@@ -302,7 +302,7 @@ See [agents.md](agents.md) and [assistant.md](assistant.md).
 
 The Code node runs JavaScript or Python either in process (a `node:vm` context of the host, not isolated) or in the code
 runner: a separate service that starts a fresh process per run, with n8n's globals, no network, a read-only root, resource
-limits and a shared secret for its callers ([deploy/README.md, "Code runner"](../deploy/README.md#code-runner)).
+limits and a shared secret for its callers ([deployment.md, "Code runner"](deployment.md#code-runner)).
 Both paths give the code the same `$('Node')` helpers (the expression engine's accessors, `packages/engine/src/expression.ts`) and the same file helpers (`this.helpers.getBinaryDataBuffer` / `prepareBinaryData`): in process they use the context's binary client, and the runner, having no network, receives input file bytes in the request and returns created files as base64 for the host to store.
 
 ## Observability
@@ -322,7 +322,7 @@ AI usage and every plugin; logs carry the trace id. `/api/metrics` serves Promet
 | Infrastructure | `deploy/compose.infra.yml`: Postgres, Valkey (and a six-node Valkey Cluster, profile `valkey-cluster`), MinIO, Mailpit, Keycloak, OpenBao, LocalStack, Jaeger, MySQL, GreenMail, a Git SSH server (profile `git`), every broker (one profile each), agentgateway |
 | Kubernetes | `deploy/k8s`: a base (the host with its gateway sidecar and a namespaced Role, seven plugins), components (Postgres, Valkey, MinIO, the brokers, broker transports, queue mode, Ingress, Gateway API routes, gateway sign-in with one or two issuers, cluster-wide discovery) and overlays for OrbStack (`orbstack`, `orbstack-brokers`, `orbstack-queue`…); KEDA examples scale plugins on broker backlog and workers on the queue's |
 
-See [deploy/README.md](../deploy/README.md) for every stack and how each was checked.
+See [deployment.md](deployment.md) for every stack and how each was checked.
 
 ## Where the code is
 
@@ -338,5 +338,9 @@ plugins/                  the bundled plugins (and transport-bench for benchmark
 services/code-runner/     the Code node sandbox
 services/landflow-bridge/ broker kinds for Go and Python plugins without a native driver
 deploy/                   compose stacks, Dockerfiles, Kubernetes manifests, the gateway config, scripts
-docs/                     the protocol, transports, MCP gateway, agents, observability, roadmap
+docs/                     every document (index: docs/README.md): features/, reference/, the protocol, transports,
+                          deployment, development, limitations, roadmap
 ```
+
+[development.md](development.md) has a finer table of where to start reading in each area, the conventions and every
+test command.

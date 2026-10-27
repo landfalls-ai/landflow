@@ -41,7 +41,7 @@ func integration(t *testing.T, service string) {
 			return
 		}
 	}
-	t.Skipf("set LANDFLOW_INTEGRATION=%s (or all) to run against a real server; see deploy/README.md", service)
+	t.Skipf("set LANDFLOW_INTEGRATION=%s (or all) to run against a real server; see docs/deployment.md", service)
 }
 
 func itEnv(name, fallback string) string {

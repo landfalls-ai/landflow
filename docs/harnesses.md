@@ -298,7 +298,7 @@ Sessions show harness tool calls and diffs.
 | `components/agents/builder.tsx` | "…" menu item *Open in Claude Code* (next to *Export JSON*) |
 | `components/agents/sessions-tab.tsx`, `timeline.tsx` | the `harness` source label; tool entries marked *approved in Claude Code* |
 | `test/harness.test.ts` | below |
-| `docs/harnesses.md`, `docs/agents.md`, README | usage, API rows |
+| `docs/harnesses.md`, `docs/agents.md`, `docs/features/ai.md` | usage, API rows |
 
 **Tests:**
 - tokens: the file holds hashes only; verify, revoke and the wrong agent;

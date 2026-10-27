@@ -235,7 +235,7 @@ export const isEmulatorConnectionString = (connectionString: string) => /(^|;)\s
 export function missingHint(config: Pick<ServiceBusConfig, 'emulator'>, queue?: string): string {
   if (!config.emulator) return 'create it, or turn on createEntities with a key that has Manage rights';
   const arg = queue ? ` ${queue.includes('.v1.plugin.') ? `--plugin ${queue.slice(queue.indexOf('.v1.plugin.') + '.v1.plugin.'.length)}` : `--queue ${queue}`}` : '';
-  return `the emulator has no management API: run deploy/scripts/servicebus-config.py${arg}, then recreate the emulator (docs: deploy/README.md "Service Bus entities")`;
+  return `the emulator has no management API: run deploy/scripts/servicebus-config.py${arg}, then recreate the emulator (docs: docs/deployment.md "Service Bus entities")`;
 }
 
 const codeOf = (error: unknown) => (error as { code?: string })?.code ?? '';
@@ -243,7 +243,7 @@ const codeOf = (error: unknown) => (error as { code?: string })?.code ?? '';
 /**
  * Pauses between the attempts of an operation the namespace pushed back on (`ServiceBusy`, error 50002 "being throttled", a timeout or a
  * dropped link): 8 retries, 200 ms doubling to 2 s, about 11 s in all. The client library's own retry is off (`maxRetries: 0`) because on
- * `ServiceBusy` it sleeps 10 s per attempt and the emulator's throttle episodes last 1 to 7 s (docs: deploy/README.md "Throttling").
+ * `ServiceBusy` it sleeps 10 s per attempt and the emulator's throttle episodes last 1 to 7 s (docs: docs/deployment.md "Throttling").
  */
 export const RETRY_BACKOFF_MS = [200, 400, 800, 1_600, 2_000, 2_000, 2_000, 2_000];
 const TRANSIENT_CODES = new Set(['ServiceBusy', 'ServiceTimeout', 'ServiceCommunicationProblem', 'ConnectionLost']);

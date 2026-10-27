@@ -3,7 +3,7 @@
  * only), each in a fresh, locked-down child process.
  *
  *   CODE_RUNNER_SECRET=… pnpm --filter code-runner dev        # http://127.0.0.1:7300, OS limits only
- *   docker compose -p landflow -f deploy/compose.yml up -d code-runner   # the real boundary: see deploy/README.md
+ *   docker compose -p landflow -f deploy/compose.yml up -d code-runner   # the real boundary: see docs/deployment.md
  *
  * Settings: config.ts (CODE_RUNNER_*). Isolation layers: isolation.ts.
  */

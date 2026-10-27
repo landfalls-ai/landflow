@@ -10,7 +10,7 @@
 #
 # Broker faces: the image carries @landflow/transports and the broker client libraries (they are dependencies of the
 # plugin, the driver modules import them lazily). Which faces run is up to LANDFLOW_TRANSPORTS (default http,grpc) plus
-# LANDFLOW_<KIND>_URL; see deploy/README.md "Plugins and transports".
+# LANDFLOW_<KIND>_URL; see docs/deployment.md "Plugins and transports".
 #
 # It serves HTTP and gRPC and announces itself to LANDFLOW_REGISTRY_URL with
 # LANDFLOW_ADVERTISE_HOST in its endpoints (set both when you run it; see deploy/compose.yml).

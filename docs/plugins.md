@@ -1,0 +1,44 @@
+# Writing plugins
+
+Every node in Landflow, built in or not, is a plugin node: a JSON descriptor plus an `execute` behaviour, served by a
+process the host finds on its own. This page shows the interface in each SDK and how the host discovers plugins. The
+wire contract is [protocol.md](protocol.md); the SDKs' own guides are [packages/sdk](../packages/sdk/README.md)
+(TypeScript), [sdks/go](../sdks/go/README.md) and [sdks/python](../sdks/python/README.md); the example and integration
+plugins are under [`plugins/`](../plugins). Brokers and MCP faces are in [transports.md](transports.md), and installing
+plugins from a marketplace is in [marketplace.md](marketplace.md). Part of the [Landflow docs](README.md).
+
+## The node interface
+
+The **methodology**: every node implements one interface. The descriptor is plain JSON, so any language can produce it.
+
+```ts
+interface INodeType {
+  description: NodeDescriptor;                     // name, kind, ports, properties, icon, usableAsTool…
+  execute?(ctx: IExecuteContext): ExecuteResult;   // items in → items out (one array per output)
+  supplyData?(ctx): unknown;                       // sub-nodes: supply a model / tool / memory (in-process)
+  methods?: { loadOptions?: Record<string, (ctx) => PropertyOption[]> };
+}
+```
+
+| | TypeScript | Python | Go |
+|---|---|---|---|
+| Interface | `class X implements INodeType` / `defineNode({...})` | `class X(Node)` (ABC) | `Description()` + `Execute()` |
+| Serve | `serve(plugin, { http, grpc })` | `serve(plugin, http_port=, grpc_port=)` | `landflow.Serve(ctx, p, ServeOptions{...})` |
+| Params | `ctx.getNodeParameter(name, i)` | `ctx.get_node_parameter(name, i)` | `ctx.ParamString(name, i, def)` |
+| Errors | `NodeOperationError` | `NodeOperationError` | `landflow.ItemError(...)` |
+
+Plugins publish their own branding: `icon: 'file:icons/x.svg'` in the plugin or node descriptor is read by the SDK and sent as a `data:` URL (SVG or PNG, up to 64 KB). A hex `color` tints the plugin's segment in the node creator and its nodes on the canvas.
+
+Descriptor fields mirror n8n's `INodeTypeDescription` / `INodeProperties`: 13 property types, `displayOptions`, `typeOptions.loadOptionsMethod`, typed ports with `required`/`maxConnections`. The editor renders every plugin's UI from its descriptor, so plugins need no frontend code. Full spec: **[docs/protocol.md](protocol.md)**.
+
+## Autodiscovery
+
+| Source | How |
+|---|---|
+| **Announce** (push) | Plugin `POST /api/plugins/announce` (or gRPC `RegistryService.Announce` on `:7070`) with a 30 s lease, then heartbeats every 10 s; `SIGTERM` withdraws. Each announce carries the process's random `instanceId`, so a plugin restarted with the same version (new nodes in development) has its manifest pulled again without **Refresh** |
+| **Static** | `LANDFLOW_PLUGINS=http://host:7101,grpc://host:7203` |
+| **Scan** (pull) | Probes `LANDFLOW_SCAN_HOSTS × LANDFLOW_SCAN_PORTS` (default `127.0.0.1:7100-7299`) with TCP, then `/.well-known/landflow`, then gRPC `Health`; runs at startup and from the UI |
+| **Built-in** | the host's `core` plugin, registered in-process through the same interface |
+| **Kubernetes** (pull) | `LANDFLOW_PLUGIN_DISCOVERY=kubernetes`: Services labelled `landflow.dev/plugin=true` in `LANDFLOW_K8S_NAMESPACES` (`*` for every namespace, with a ClusterRole), gRPC port from the `landflow.dev/grpc-port` annotation or a port named `grpc`; registered while a pod is ready, offline at zero ready pods, removed with the Service; calls are spread over the ready pods, the manifest pulled once through the Service ([protocol §13](protocol.md#13-kubernetes-discovery-and-registry-proofs)) |
+
+Every manifest is validated against the zod/JSON Schema before its nodes become available. A plugin can expose HTTP and gRPC at once (brokers follow: `docs/transports.md`). The host chooses the transport per call through a selector (`lib/server/transports`): the plugin's **transport policy** (Settings → Plugins) is **Auto** by default (gRPC first, then HTTP, then brokers), can be **pinned** to one transport or limited to an **allow-list**, with an objective (`balanced`, `latency`, `throughput`); it lives in the database (`plugin_transport_policies`), so every main and worker in queue mode makes the same choice. The Plugins page shows each plugin's transports with their live state, the current choice and why (`pinned`, `only`, `auto.latency`…), and every `plugin.rpc` span carries `landflow.transport` and `landflow.transport.reason`. **Settings → Transports** lists the installed transport kinds and the broker connections (`/api/transports`, `/api/transports/connections`; secrets encrypted like credentials; `LANDFLOW_TRANSPORT_<KIND>_URL` adds a read-only one). Expired leases turn a plugin offline: its nodes grey out and saved workflows still open.

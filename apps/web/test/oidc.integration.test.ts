@@ -1,5 +1,5 @@
 /**
- * Single sign-on against the real Keycloak from the infra stack (deploy/README.md, profile `auth`): the sign-in route
+ * Single sign-on against the real Keycloak from the infra stack (docs/deployment.md, profile `auth`): the sign-in route
  * redirects to Keycloak, the test fills in Keycloak's own login form with fetch and cookies like a browser, and the
  * callback route exchanges the code. alice (realm role landflow-admin) becomes an admin, bob (landflow-editor) a
  * member. Run with LANDFLOW_INTEGRATION=oidc and Keycloak at http://localhost:58080 (LANDFLOW_TEST_OIDC_ISSUER).

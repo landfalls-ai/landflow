@@ -1,5 +1,5 @@
 /**
- * SAML sign-in against the real Keycloak from the infra stack (deploy/README.md, profile `auth`; SAML client
+ * SAML sign-in against the real Keycloak from the infra stack (docs/deployment.md, profile `auth`; SAML client
  * `http://localhost:3000/api/auth/saml/metadata` in the `landflow` realm): our login route sends the AuthnRequest,
  * the test fills in Keycloak's login form with fetch and cookies like a browser, takes the auto-submitting form with
  * the signed SAMLResponse and posts it to our ACS route. The IdP comes from Keycloak's metadata. alice (realm role

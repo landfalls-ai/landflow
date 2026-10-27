@@ -1,0 +1,182 @@
+# Developing Landflow
+
+How to work on Landflow: set it up, find your way around the code, follow its conventions and check a change. Part of
+the [Landflow docs](README.md).
+
+## Setup
+
+You need Node 22 or later with pnpm 10, Go 1.26, Python 3.11 or later, and Docker (OrbStack on this machine) for the
+infra stack and the images.
+
+```bash
+pnpm install
+(cd plugins/py-insights && ./setup.sh)        # .venv with the Python SDK, gRPC, MCP and broker extras
+(cd plugins/productivity && ./setup.sh)       # the same for the Python integrations
+pnpm dev:all                                  # host on :3000 + the seven plugins (7101–7107 HTTP, 7201–7207 gRPC)
+docker compose -f deploy/compose.infra.yml up -d --wait   # Postgres, Valkey, Mailpit, MinIO, OpenBao (optional)
+```
+
+`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases` runs one plugin, and
+`pnpm worker` runs a queue-mode worker. The host keeps its data in `apps/web/.data` (SQLite, `credentials.json`,
+`encryption.key`). Don't edit those files by hand: use the UI, the API or the [CLI](features/cli.md).
+[deployment.md, "Using the infra from the dev server on the host"](deployment.md#using-the-infra-from-the-dev-server-on-the-host)
+shows how to point the dev server at the infra stack.
+
+## Where to start reading
+
+1. [architecture.md](architecture.md): the processes, a run from trigger to result, every subsystem and a code map.
+2. The feature page for the area you are changing ([index](README.md#feature-map)).
+3. The contract docs for what crosses a process boundary: [protocol.md](protocol.md) (plugins),
+   [transports.md](transports.md) (brokers and MCP), [observability.md](observability.md) (spans, metrics, logs).
+4. The code, from the entry points:
+
+| Area | Start at |
+|---|---|
+| API routes | `apps/web/src/app/api/**/route.ts` (one file per route; the comment at the top says what it does and who may call it) |
+| Running a workflow | `apps/web/src/lib/server/runner.ts`, then `packages/engine/src/executor.ts` |
+| Storage | `apps/web/src/lib/server/store.ts`, `db/schema.ts` (migrations), `config-store.ts` (credentials and settings documents) |
+| Plugins | `apps/web/src/lib/server/plugins/` (registry, clients, Kubernetes discovery), `transports/` (choosing a transport, broker connections), `packages/protocol` (wire contract) |
+| Queue mode | `apps/web/src/lib/server/cluster/` (coordinator, leader, dispatch, workers, Valkey) |
+| Auth and governance | `apps/web/src/lib/server/auth/` (sessions, API keys, `policy.ts`, OIDC, SAML), `audit/`, `governance/`, `projects/` |
+| AI | `apps/web/src/lib/server/nodes/` (AI Agent and sub-nodes), `agents/`, `rag/`, `evaluations/`, `mcp/` |
+| UI | `apps/web/src/app/**/page.tsx`, `apps/web/src/components/` |
+| SDKs | `packages/sdk` (TypeScript), `sdks/go`, `sdks/python`; each has a README |
+
+## Conventions
+
+- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order; the highest so far is 1882. One SQL text runs
+  on SQLite and Postgres (TEXT, BIGINT, DOUBLE PRECISION, JSON in TEXT, `ON CONFLICT` upserts); set `postgres` only when
+  the dialects must differ. Never edit a shipped migration: add one. A column that a shipped `CREATE TABLE` gained
+  later goes in `addColumns`. A new table also goes in `TABLES` (its primary key) in the same file.
+- **Routes** wrap their body in `handler()` and answer with `json()` or `error()` from `lib/server/http.ts`, and
+  validate bodies with `parseBody()` and a zod schema (shared ones are in `lib/server/schemas.ts`). Who may call a route
+  is decided once in `lib/server/auth/policy.ts`, before the handler runs: add a line there for anything that isn't a
+  plain read. Public API routes get an entry in `lib/server/openapi.ts`; `test/openapi.test.ts` checks that every
+  listed path exists.
+- **Tests** live next to their package (`apps/web/test`, `packages/*/test`, `*_test.go`, `sdks/python/tests`). Route
+  tests import the handler and call it with a `Request`; `test/setup.ts` signs those calls in as a synthetic owner, and
+  the auth tests turn that off with `disableTestAuth()`. Tests that need a real service skip themselves unless
+  `LANDFLOW_INTEGRATION` names it (below), so the default run stays offline.
+- **Comments** say why, at the top of each file and above anything surprising. Match the density of the surrounding
+  code.
+- **Docs move with the code.** A change to a feature updates its page under [features/](README.md#feature-map) (or
+  [reference/](reference/api.md) for routes and environment variables), [limitations.md](limitations.md) when it adds
+  or removes a limit, and [roadmap.md](roadmap.md) when it closes or opens an item.
+- **Local only.** Everything runs on this machine: the OrbStack Docker engine and its Kubernetes cluster (context
+  `orbstack`, namespace `landflow-dev`). Never deploy to or push images to a cloud account. Build with
+  `COMPOSE_BAKE=false` (the default buildx builder belongs to another project) and build cluster images with
+  `docker --context orbstack buildx build --builder orbstack --load`. AWS calls go to LocalStack at
+  `http://127.0.0.1:54566` with dummy keys and `AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null`, so
+  `~/.aws` is never read. Use only the development credentials in `deploy/.env.example`.
+
+## Verification
+
+Every suite, from the repository root. All of them run offline.
+
+```bash
+(cd apps/web && npx vitest run)                    # the host: routes, store, runner, auth, AI, queue mode on fakes…
+pnpm typecheck                                     # every TypeScript package
+for p in protocol transports engine sdk cli; do (cd packages/$p && npx vitest run); done
+(cd services/code-runner && npx vitest run)
+for p in messaging text-toolkit; do (cd plugins/$p && npx vitest run); done
+(cd sdks/go && go test ./...)
+(cd sdks/go/transport && go test -race -count=1 -run Claim .)
+for k in kafka amqp nats valkey mqtt amqp1 sqs pubsub pulsar servicebus; do (cd sdks/go/transport/$k && go test ./...); done
+(cd services/landflow-bridge && go test ./...)
+for p in go-crypto google-workspace databases; do (cd plugins/$p && go test ./...); done
+plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests
+(cd plugins/py-insights && .venv/bin/python -m unittest discover -s tests)
+(cd plugins/productivity && .venv/bin/python -m unittest discover -s tests)
+deploy/scripts/smoke.sh code                       # the dockerised code runner: health + network/file-system isolation
+```
+
+`pnpm test` runs the TypeScript packages' suites in one go. After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
+`pnpm gen:proto` (re-embeds the proto and regenerates the JSON Schema).
+
+### Recorded plugin manifests
+
+Some tests read the bundled plugins' manifests from fixtures. When a plugin's nodes change, re-record them with the
+plugins running (`pnpm dev:all`, or the `pnpm plugin:*` scripts):
+
+```bash
+node packages/protocol/scripts/record-manifests.mjs    # writes packages/protocol/test/fixtures/manifests and apps/web/test/fixtures/plugin-manifests
+(cd packages/protocol && npx vitest run -u test/mcp-tools.test.ts)   # then refresh the MCP tool-list snapshot they feed
+```
+
+The script drops `transports` and `maxConcurrency`, which depend on how the plugin was started, not on its code.
+
+### Live broker suites
+
+The transport drivers' conformance and cross-language suites run against the infra stack's brokers when their
+variables are set (start the brokers with the profiles in
+[deployment.md, "Message brokers and the MCP gateway"](deployment.md#message-brokers-and-the-mcp-gateway)):
+
+| Variable | Value on the infra stack |
+|---|---|
+| `LANDFLOW_TEST_KAFKA` | `127.0.0.1:59092` |
+| `LANDFLOW_TEST_AMQP` | `amqp://landflow:<password>@127.0.0.1:55672` (RabbitMQ) |
+| `LANDFLOW_TEST_NATS` | `nats://127.0.0.1:54222` |
+| `LANDFLOW_TEST_VALKEY` | `redis://127.0.0.1:56379` |
+| `LANDFLOW_TEST_MQTT` | `mqtt://127.0.0.1:51883` |
+| `LANDFLOW_TEST_AMQP1` | `amqp://landflow:<password>@127.0.0.1:55674` (Artemis) |
+| `LANDFLOW_TEST_SQS` | `http://127.0.0.1:54566` (LocalStack; set the two AWS file variables to `/dev/null`) |
+| `LANDFLOW_TEST_PUBSUB` | `127.0.0.1:58085` (emulator; unset `GOOGLE_APPLICATION_CREDENTIALS`) |
+| `LANDFLOW_TEST_PULSAR`, `LANDFLOW_TEST_PULSAR_ADMIN` | `pulsar://127.0.0.1:56650`, `http://127.0.0.1:58180` |
+| `LANDFLOW_TEST_SERVICEBUS` | `sb://127.0.0.1:55675` (emulator) |
+| `LANDFLOW_TEST_CLAIM_S3` | `http://127.0.0.1:59000` (MinIO, for the claim check; keys in `LANDFLOW_CLAIM_ACCESS_KEY_ID` and `LANDFLOW_CLAIM_SECRET_ACCESS_KEY`) |
+
+Passwords and keys are the development values in `deploy/.env.example`. With those set:
+
+```bash
+(cd packages/transports && npx vitest run src/drivers test/claim.test.ts test/claim-live.test.ts)
+for k in kafka amqp nats valkey mqtt amqp1 sqs pubsub pulsar servicebus; do (cd sdks/go/transport/$k && go test -count=1 ./...); done
+(cd packages/sdk && npx vitest run test/live-brokers.test.ts)
+(cd sdks/go/transport/testdata/live-brokers && go test -count=1 -run TestCrossLanguage ./...)
+(cd services/landflow-bridge && go test -count=1 . -run TestLiveBrokers)
+plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests -p 'test_transport_*live.py'
+python3 deploy/scripts/servicebus-config.py --check   # the Service Bus emulator has the entities the tests use
+```
+
+### Integration tests (`LANDFLOW_INTEGRATION`)
+
+The host's tests against real services are skipped unless `LANDFLOW_INTEGRATION` (a comma-separated list) names them.
+Start the matching infra services first ([deployment.md](deployment.md)), then run the files from `apps/web`, e.g.
+`LANDFLOW_INTEGRATION=postgres,ollama npx vitest run test/pgvector.test.ts test/rag-live.test.ts`.
+
+| Flag | Needs | Test files |
+|---|---|---|
+| `postgres` | the infra Postgres, database `landflow_test` (or `LANDFLOW_PG_URL`, `LANDFLOW_TEST_DATABASE_URL`) | `pgvector.test.ts`, `postgres.test.ts` (the store, schema `landflow_runtime_test`), `projects-migration.test.ts`, `project-folders-variables.test.ts` |
+| `queue` | the infra Valkey (`LANDFLOW_TEST_VALKEY_URL`, under a throwaway key prefix) and Postgres | `cluster-coordinator.test.ts` (coordinator, leader election, stalled-job takeover, relay), `cluster-postgres.test.ts` (processes following each other's writes, schema `landflow_queue_test`), `config-store-postgres.test.ts` (credentials and settings shared by two processes, in a database it creates and drops), `audit-chain.postgres.test.ts` (the hash chain sealed by two processes at once, SAML state shared by mains), `transports.postgres.test.ts` |
+| `sentinel` | `deploy/compose.sentinel.yml` | `valkey-sentinel.integration.test.ts` (the primary is killed; a run in flight and new runs finish on the promoted replica) |
+| `valkey-cluster` | the infra `valkey-cluster` profile | `valkey-cluster.integration.test.ts` |
+| `oidc` | Keycloak (`auth` profile) | `oidc.integration.test.ts` (fills in its login form as alice and bob) |
+| `saml` | Keycloak (`auth` profile) | `saml.integration.test.ts` (role and project mapping, replay, single logout, encrypted assertions) |
+| `oauth2` | Keycloak (`auth` profile) | `oauth2-keycloak.test.ts` (Connect, refresh, revocation, client credentials), `mcp-oauth-keycloak.test.ts` (OAuth for MCP servers) |
+| `smtp` | Mailpit | `smtp.integration.test.ts` (invites, password resets), `alerts-smtp.test.ts` (failure alert emails) |
+| `imap` | GreenMail (`mail` profile) | `email-imap.test.ts`, `email-imap-host.test.ts` (the Email Trigger) |
+| `s3` | MinIO | `binary-store.test.ts` (the S3 binary store) |
+| `git-ssh` | the `git` profile, after `deploy/infra/git/gen-keys.sh` | `source-control-git.test.ts` (push and pull over SSH with host-key pinning) |
+| `secrets` | OpenBao at `http://127.0.0.1:58200` | `secrets-openbao.integration.test.ts` (token and AppRole auth, set up idempotently through the API; lease renewal; a run whose credential reads a secret). The other providers are tested against local fakes |
+| `aws` | LocalStack (`aws` profile) at `http://127.0.0.1:54566` (`LANDFLOW_LOCALSTACK_PORT`, `LANDFLOW_LOCALSTACK_URL`) | `secrets-aws.integration.test.ts` (access keys and environment auth, a `{environment}` prefix, JSON and plain secrets, redaction; the endpoint must be loopback, the keys are dummies and `~/.aws` is never read) |
+| `audit-anchor` | MinIO; must be the only flag | `audit-integrity.test.ts` (signed heads in a real bucket) |
+| `k8s` | the OrbStack cluster, namespace `landflow-dev`, the plugin image built locally | `kubernetes.integration.test.ts` (discovery, scale to 0 and back, calls spread over two pods) |
+| `ollama` | Ollama at `OLLAMA_URL` with nomic-embed-text and qwen3-coder:30b | `rag-live.test.ts`, `evaluations-live.test.ts` (qwen3-coder as the judge), `ollama-streaming-live.test.ts` |
+
+`cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.
+
+Run the Postgres-backed files one at a time: they take an advisory lock per database, so two of them in parallel can
+fail (`postgres.test.ts` passes alone). Two more live tests use no flag: `approval-email-mailpit.test.ts` runs whenever
+Mailpit answers, and `mcp-gateway-two-issuers.test.ts` runs its gateway checks when
+`LANDFLOW_TEST_AGENTGATEWAY_IMAGE` is set (and its Keycloak part when Keycloak is up).
+
+The databases plugin has its own: `cd plugins/databases && LANDFLOW_INTEGRATION=postgres,redis go test -count=1 -run
+Integration -v .` (`all` adds MySQL); see
+[deployment.md, "Integration tests (databases plugin)"](deployment.md#integration-tests-databases-plugin).
+
+### On the cluster
+
+After deploying an overlay ([deployment.md, "Kubernetes"](deployment.md#kubernetes)), check it through a
+port-forward: `kubectl --context orbstack -n landflow-dev port-forward svc/landflow-host 53000:3000`, sign in as the
+development owner, and read `GET /api/plugins` (every plugin `online`, with its transports), `GET /api/mcp/gateway`
+(the gateway sync in step, no drift) and `GET /api/transports`. Queue mode on the cluster has its own end-to-end check
+in [deployment.md, "Queue mode on Kubernetes"](deployment.md#queue-mode-on-kubernetes).

@@ -1,5 +1,5 @@
 /**
- * Agents, their sessions and cross-session memories. Where they live (../config-store.ts, README "Queue mode, workers and
+ * Agents, their sessions and cross-session memories. Where they live (../config-store.ts, docs/features/engine.md "Queue mode, workers and
  * high availability"):
  *
  * - `files` (the default outside queue mode): one JSON document each under LANDFLOW_DATA_DIR (agents/, agent-sessions/,

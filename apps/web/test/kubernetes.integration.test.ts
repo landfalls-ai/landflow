@@ -11,7 +11,7 @@
  *   pulled per pod, and scaled back to 1 the gone pod gets no more calls;
  * - deleting the Service removes it.
  *
- * Needs the image built locally (deploy/README.md, "Kubernetes") and the namespace. Everything it creates is labelled
+ * Needs the image built locally (docs/deployment.md, "Kubernetes") and the namespace. Everything it creates is labelled
  * with a run id, discovery only looks at that run's Services, and afterAll deletes them.
  *
  *   (cd apps/web && LANDFLOW_INTEGRATION=k8s npx vitest run test/kubernetes.integration.test.ts)

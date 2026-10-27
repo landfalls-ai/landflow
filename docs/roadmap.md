@@ -56,7 +56,7 @@ Three streams in parallel, split by the files they own.
 - Execution retention by count and by age.
 - **Insights**: runs, failure rate and duration per workflow over time.
 
-**D. Docker (OrbStack)**, running alongside streams A–C. ✅ Done; see [deploy/README.md](../deploy/README.md).
+**D. Docker (OrbStack)**, running alongside streams A–C. ✅ Done; see [deployment.md](deployment.md).
 - `deploy/compose.infra.yml` holds the infrastructure the later waves build and test against:
   - Postgres with pgvector;
   - Valkey;
@@ -75,7 +75,7 @@ Three streams in parallel, split by the files they own.
 ## Wave 1.5: a durable runtime
 
 Wave 1 makes the store the system of record for waits and approvals, so the runtime comes
-before sign-in and AI. ✅ Done; see the README's Durable runtime section.
+before sign-in and AI. ✅ Done; see [Durable runtime](features/engine.md#durable-runtime).
 - A SQLite store, with Postgres as an option (Docker infra). The JSON files stay as an import
   and export format. ✅ Done: `<data dir>/landflow.db` in WAL mode with versioned migrations,
   workflows, executions, poll state, versions, folders, settings, variables, waits and Data
@@ -104,15 +104,15 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   two people don't edit the same workflow at once. ✅ Done: setup page or `LANDFLOW_OWNER_*`,
   scrypt passwords, hashed expiring sessions, sign-in rate limits, one `can()` role check, invites
   and password resets by email (Mailpit) or as links to copy, an edit lock with take-over, and
-  `createdBy` / `updatedBy` / `startedBy`; see the README, "Authentication".
+  `createdBy` / `updatedBy` / `startedBy`; see [Authentication](features/authentication.md).
 - Scoped API keys and a documented public API. ✅ Done: `lf_…` keys with scopes and expiry,
   stored hashed; OpenAPI 3.1 at `/api/openapi.json` and Settings → API docs.
 - Free OIDC login (Keycloak in Docker). n8n charges for it. ✅ Done: authorization code + PKCE,
   just-in-time users, role mapping from a claim, tested against the infra stack's Keycloak.
 - A sandboxed Code node running out of process in a locked-down container, with JavaScript and
   Python. ✅ Done: the code runner service, one fresh child process per run with n8n's globals,
-  on an internal Docker network with a read-only root; see [deploy/README.md](../deploy/README.md),
-  "Code runner". Syntax highlighting and `$json`/`_json` completions in the code editor ✅ (Wave 5).
+  on an internal Docker network with a read-only root; see [deployment.md,
+  "Code runner"](deployment.md#code-runner). Syntax highlighting and `$json`/`_json` completions in the code editor ✅ (Wave 5).
   Wave 6 ✅: `$('Node')` and the other expression accessors in both Code node paths; line numbers, bracket
   matching and find/replace in the editor.
 - OAuth2 *Connect* buttons for credentials. ✅ Done: a generic OAuth2 API credential with
@@ -133,15 +133,15 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   deleted with their execution, `/api/binary` with per-call tokens for plugins, helpers in the
   three SDKs, the file nodes (CSV, XLSX, HTML, JSON, text, PDF text, base64), HTTP Request file
   responses and multipart bodies, webhook and form uploads, Respond to Webhook files, Gmail
-  attachments, Telegram and Slack uploads and downloads, and a Binary tab in the run view; see the README's
-  "Files and binary data". Wave 6 ✅: Google Drive, Gmail, database bytea/BLOB columns and the messaging,
+  attachments, Telegram and Slack uploads and downloads, and a Binary tab in the run view; see
+  [Files and binary data](features/files.md). Wave 6 ✅: Google Drive, Gmail, database bytea/BLOB columns and the messaging,
   text-toolkit, productivity and py-insights files on the protocol's binary data; binary in the Code node (both
   paths); `Range` requests on `/api/binary` (206/416, disk and S3); XLSX and ODS writing.
 - Failure alerts by email or chat, without writing an error workflow. ✅ Done: Settings → Alerts
   with email (the host's SMTP settings), Slack, signed webhook and Telegram channels with a test
   send; rules by workflow, tag and event (failed, timed out, retries exhausted, waiting too long);
   one alert per workflow per window with a digest of the rest; and a "Notify on failure" switch in
-  a workflow's settings; see the README's Durable runtime section. Wave 6 ✅: Microsoft Teams and
+  a workflow's settings; see [Durable runtime](features/engine.md#durable-runtime). Wave 6 ✅: Microsoft Teams and
   Discord channels, alerts on a workflow's failure rate and on plugins going offline.
 
 ## Wave 2b: safe deploys and outside agents
@@ -175,13 +175,12 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   variables) with one JSON document per command and fixed exit codes; `landflow sync pull/push/
   status/diff` over a `landflow-sync/v1` directory (one directory per folder, stable key order,
   credentials by name and type), with conflict checks both ways; and Settings → Source control,
-  which commits and pushes or pulls and applies a branch; see the README's "CLI" and "Git sync".
+  which commits and pushes or pulls and applies a branch; see [CLI](features/cli.md) and [Git sync](features/git-sync.md).
   Wave 6 ✅: per-workflow push, a history view with restore, and SSH keys from a credential
   (`core.sshPrivateKey`, host key pinned), checked against the infra stack's Git SSH server.
 - **MCP Server Trigger** (a workflow serves tools over MCP), **MCP Client Tool** (an agent uses
   an MCP server), and an instance-level MCP server so coding agents can build and run workflows.
-  ✅ Done, with an MCP Client node and MCP servers as an agent capability; see the README's MCP
-  section; a test URL for the trigger ✅ (Wave 5). Wave 6 ✅: OAuth for MCP servers (protected resource and
+  ✅ Done, with an MCP Client node and MCP servers as an agent capability; see [MCP](features/ai.md#mcp); a test URL for the trigger ✅ (Wave 5). Wave 6 ✅: OAuth for MCP servers (protected resource and
   authorization server metadata, dynamic client registration, PKCE, resource indicators; `core.mcpOAuth2Api`),
   resources and prompts in the MCP Client, the MCP Client Tool and the MCP Server Trigger.
 
@@ -195,7 +194,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   - knowledge bases for agents.
 
   ✅ Done, with OpenAI-compatible embeddings, a token splitter, an LLM reranker and a Question and
-  Answer Chain; see the README's RAG section. Wave 6 ✅: files (PDF, DOCX…) in the data loader, a
+  Answer Chain; see [Retrieval (RAG)](features/ai.md#retrieval-rag). Wave 6 ✅: files (PDF, DOCX…) in the data loader, a
   Cohere reranker, uploading documents to an agent's knowledge base from the builder.
 - Streamed replies, a hosted chat page and an embeddable widget for the Chat trigger. ✅ Done:
   the Anthropic, OpenAI-compatible and Ollama adapters stream tokens, the AI Agent and the chains
@@ -203,7 +202,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   and Webhook triggers have a "Streaming" response mode (SSE or NDJSON, n8n's chunk format). A
   public Chat trigger serves `/chat/<path>` (title, initial messages, Basic Auth, previous
   sessions, file uploads) and `<script src="/chat/widget.js" data-workflow="…">` on other sites,
-  with allowed origins checked; see the README's "Hosted chat and widget". Wave 6 ✅: Basic Auth
+  with allowed origins checked; see [Hosted chat and widget](features/ai.md#hosted-chat-and-widget). Wave 6 ✅: Basic Auth
   from the widget, chat feedback (thumbs up/down), sanitized custom CSS under a content security policy.
 - Guardrails node (PII, prompt injection, moderation). ✅ Done, after n8n's: check (Pass/Fail) or
   sanitize, plus secret keys, keywords, URL allow-lists, topical alignment and custom checks. Not
@@ -241,12 +240,12 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
 - Debounce, batching and rate limits. ✅ Done: a trigger's Debounce (per-key quiet window, last
   or all events, max wait) and Batch (size or timeout) hold production events in SQLite and start
   one run for them (re-armed after a restart; webhooks answer 202), and every node has a Rate
-  limit next to its retry settings (calls per interval, queued across runs); see the README's
-  "Debounce, batching and rate limits". Wave 6 ✅: rate limits per credential, run priorities (high,
+  limit next to its retry settings (calls per interval, queued across runs); see
+  [Debounce, batching and rate limits](features/engine.md#debounce-batching-and-rate-limits). Wave 6 ✅: rate limits per credential, run priorities (high,
   normal, low; in queue mode three Valkey streams, a low run after every eight, aging after 15 s and 60 s).
 - A Flowise importer, since Flowise has shut down. ✅ Done: chatflows and agentflows (v2) through
-  the same import dialog and report as n8n, detected by shape; see the README's "Importing from
-  n8n and Flowise". Wave 6 ✅: Flowise credentials, custom JS functions as Code nodes, document stores.
+  the same import dialog and report as n8n, detected by shape; see [Importing from
+  n8n and Flowise](features/editor.md#importing-from-n8n-and-flowise). Wave 6 ✅: Flowise credentials, custom JS functions as Code nodes, document stores.
 
 ## Wave 4: operations and teams
 
@@ -264,7 +263,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   single-host override, and S3/MinIO is the binary store (a warning for the filesystem). OTel
   metrics and a read-only Settings → Workers; `deploy/compose.queue.yml` runs two mains behind a
   load balancer and two workers, with `deploy/scripts/queue-e2e.py` (load spread, a killed worker,
-  a killed leader). See the README, "Queue mode, workers and high availability". Wave 5 ✅: plugin
+  a killed leader). See [Queue mode, workers and high availability](features/engine.md#queue-mode-workers-and-high-availability). Wave 5 ✅: plugin
   restarts with the same version reach workers; marketplace node plugins run in every main and
   worker; credentials and settings files live in the database (`LANDFLOW_CONFIG_STORE`, default in
   queue mode, each file imported once; migration 1300); Valkey Sentinel (`LANDFLOW_VALKEY_SENTINELS`,
@@ -289,7 +288,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   transaction, leased, retried with backoff, kept past retention until delivered): syslog RFC 5424
   over UDP, TCP and TLS, HTTP JSON lines signed with HMAC, Datadog and Elasticsearch presets and
   Splunk HEC, with **Send test event**; tested against fake receivers, and the infra stack's `siem`
-  profile runs a Vector receiver. See the README, "Audit log and SIEM streaming". Wave 5 ✅: events
+  profile runs a Vector receiver. See [Audit log and governance](features/audit-and-governance.md). Wave 5 ✅: events
   carry their target's project (filter, and project admins read and export their projects' events
   on the project page), mTLS client certificates for syslog over TLS and HTTPS destinations, and a
   SHA-256 hash chain (migration 1500; sealed in order under an advisory lock on Postgres) checked by
@@ -304,8 +303,8 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   `{{ $secrets.<provider>.<name>[.<key>] }}` (with **Use secret** and autocomplete), resolved at run
   time in the host or a worker with a short cache, never stored in executions or checkpoints, and
   redacted from outputs, errors and logs. Tested against the infra stack's OpenBao
-  (`LANDFLOW_INTEGRATION=secrets`) and local fakes of the others; see the README, "External secrets
-  and environments". Wave 5 ✅: `$secrets` in node parameters behind Settings → External secrets →
+  (`LANDFLOW_INTEGRATION=secrets`) and local fakes of the others; see [External secrets
+  and environments](features/secrets-and-environments.md). Wave 5 ✅: `$secrets` in node parameters behind Settings → External secrets →
   **Allow in node parameters** (off by default; host and workers; values redacted from everything
   kept; names autocompleted), in the OAuth2 Connect client fields, and in the credentials Landflow
   uses itself (agents' models and channels, alert channels, the Git token); a misspelled key in a
@@ -336,7 +335,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   sign-in (signed assertions, replay protection, just-in-time users, role and project mapping,
   single logout; tested against the infra stack's Keycloak) and SCIM 2.0 provisioning (Users and
   Groups for Okta and Entra ID, deactivation, group-to-role and group-to-project mapping, a
-  scim-only token). See the README, "Authentication". Wave 5 ✅: folders and variables per project
+  scim-only token). See [Authentication](features/authentication.md). Wave 5 ✅: folders and variables per project
   (`$vars` reads the project's value first, then the instance's), a per-project node allow-list,
   the Data Table node and its pickers limited to the workflow's project, webhook and MCP trigger
   auth credentials checked against the project (migrations 1400, 1401); encrypted SAML assertions
@@ -358,7 +357,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   around nodes (`⌘G` / `⇧⌘G`, context menu) that move their nodes, resize, rename, recolour,
   collapse (edges merged per neighbour) and take nodes in and out by dragging, saved in
   `workflow.groups` (the engine ignores them) and handled by undo, copy and paste, duplicate,
-  import and export, version diffs and Git sync. See the README, "Building and debugging a flow".
+  import and export, version diffs and Git sync. See [Building and debugging a flow](features/editor.md).
   Wave 5 ✅: templates belong to a project or the whole instance (a project picker on the library),
   edit in place (and replace the workflow from a saved one), remote results 30 at a time with
   **Load more**; nested groups (`parentId`, kept through undo, clipboard, import/export, diffs and
@@ -374,7 +373,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   publish, rollback and unpublish become requests that someone else approves or rejects (no
   self-approval; any builder or admins only), go stale when the draft or the live version changes,
   notify approvers by email and alert channels, are audited, and show in the editor's Publish menu;
-  the CLI exits 8 (`approval_pending`). See the README, "Governance". Wave 5 ✅: a project picks
+  the CLI exits 8 (`approval_pending`). See [Audit log and governance](features/audit-and-governance.md). Wave 5 ✅: a project picks
   who approves its requests (its admins, admins and editors, or instance admins), a workflow can
   require four-eyes and a stricter node allow-list on its own, and the HTTP host allow-list takes
   IPv6 addresses, CIDR ranges and `[addr]:port`.
@@ -385,7 +384,7 @@ before sign-in and AI. ✅ Done; see the README's Durable runtime section.
   back, a deleted Service removes it; the registry secret is proven with an HMAC challenge in the
   three SDKs; kustomize manifests in `deploy/k8s/` (the host with a namespaced Role, the seven
   plugins, optional Postgres and Valkey) and an integration test (`LANDFLOW_INTEGRATION=k8s`); see
-  [deploy/README.md](../deploy/README.md), "Kubernetes". Wave 5 ✅: calls spread over the ready pods
+  [deployment.md, "Kubernetes"](deployment.md#kubernetes). Wave 5 ✅: calls spread over the ready pods
   behind a Service, fewest in flight first (`LANDFLOW_K8S_SPREAD`), and `LANDFLOW_K8S_NAMESPACES=*`
   watches every namespace (the `cluster-discovery` component: a read-only ClusterRole).
 

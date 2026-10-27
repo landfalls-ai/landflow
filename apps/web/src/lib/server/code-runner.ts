@@ -15,7 +15,7 @@ export type { Language, RunRequest, RunResponse };
 
 /** protocol.ts's SECRET_HEADER (a type-only import keeps the runner package out of the host bundle). */
 const SECRET_HEADER = 'x-landflow-runner-secret';
-const DOCS = 'see deploy/README.md, "Code runner"';
+const DOCS = 'see docs/deployment.md, "Code runner"';
 
 export interface CodeRunnerSettings {
   /** Without a trailing slash; undefined when no runner is configured. */

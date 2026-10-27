@@ -1,6 +1,6 @@
 'use client';
 /**
- * Settings → Security → SAML (owners and admins): the SAML 2.0 sign-in configuration from the environment (README
+ * Settings → Security → SAML (owners and admins): the SAML 2.0 sign-in configuration from the environment (docs/features/authentication.md,
  * "SAML"): what to give the IdP (entity id, ACS and metadata URLs), what was read from it (SSO and logout URLs,
  * signing certificates and when the first expires), the security settings and the attribute mappings. Assertion
  * encryption is set here: generate or upload the decryption key, copy its certificate for the IdP, and require

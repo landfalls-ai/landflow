@@ -1,4 +1,4 @@
-# Valkey with Sentinel (README "Queue mode, workers and high availability"): a primary, a replica and three sentinels
+# Valkey with Sentinel (docs/features/engine.md "Queue mode, workers and high availability"): a primary, a replica and three sentinels
 # that promote the replica when the primary stops answering, for queue mode without a single Valkey to lose.
 #
 #   docker compose -f deploy/compose.infra.yml up -d          # the landflow-infra network

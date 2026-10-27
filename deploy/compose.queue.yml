@@ -1,4 +1,4 @@
-# Queue mode with high availability (README "Queue mode, workers and high availability"): two mains behind a small
+# Queue mode with high availability (docs/features/engine.md "Queue mode, workers and high availability"): two mains behind a small
 # load balancer, two workers and the text-toolkit plugin, on the infra stack's Postgres, Valkey and MinIO.
 #
 #   docker compose -f deploy/compose.infra.yml up -d                    # Postgres, Valkey, MinIO + the landflow-infra network
@@ -19,7 +19,7 @@
 #   LANDFLOW_QUEUE_MARKETPLACE_ALLOW_LOCAL=1.
 #
 # Development values throughout (dev passwords, a fixed encryption key): don't expose these ports. Details:
-# deploy/README.md "Queue mode (two mains, two workers)".
+# docs/deployment.md "Queue mode (two mains, two workers)".
 
 name: landflow-queue
 

@@ -5,7 +5,7 @@
 #   docker compose -f deploy/compose.yml -f deploy/compose.infra-link.yml up -d   # + join the infra network
 #
 # Builds use the repository root as context (see deploy/docker/*.Dockerfile and /.dockerignore).
-# Settings: deploy/.env (see .env.example). Details: deploy/README.md.
+# Settings: deploy/.env (see .env.example). Details: docs/deployment.md.
 
 name: landflow
 
@@ -89,7 +89,7 @@ services:
       LANDFLOW_CODE_RUNNER_URL: http://code-runner:7300
       LANDFLOW_CODE_RUNNER_SECRET: ${LANDFLOW_CODE_RUNNER_SECRET:-landflow-code-runner-dev-only}
       LANDFLOW_CODE_IN_PROCESS: ${LANDFLOW_CODE_IN_PROCESS:-false}
-      # Sign-in (README "Authentication"): boot creates this owner when the data volume has no user yet, so the stack
+      # Sign-in (docs/features/authentication.md): boot creates this owner when the data volume has no user yet, so the stack
       # (and deploy/scripts/smoke.sh) can sign in. Development values: set your own, or blank both to use /setup.
       LANDFLOW_OWNER_EMAIL: ${LANDFLOW_OWNER_EMAIL-owner@landflow.test}
       LANDFLOW_OWNER_PASSWORD: ${LANDFLOW_OWNER_PASSWORD-landflow-dev-only}

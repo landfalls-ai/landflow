@@ -620,7 +620,7 @@ func missingHint(emulator bool, queue string) string {
 			arg = " --queue " + queue
 		}
 	}
-	return "the emulator has no management API: run deploy/scripts/servicebus-config.py" + arg + ", then recreate the emulator (docs: deploy/README.md \"Service Bus entities\")"
+	return "the emulator has no management API: run deploy/scripts/servicebus-config.py" + arg + ", then recreate the emulator (docs: docs/deployment.md \"Service Bus entities\")"
 }
 
 // adminError names the entity when an administration call is refused for lack of the Manage right.
