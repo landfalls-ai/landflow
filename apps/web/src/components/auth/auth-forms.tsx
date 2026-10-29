@@ -84,7 +84,7 @@ export function LoginForm({ next, oidcLabel, samlLabel, initialError, smtp }: { 
     window.location.assign(next);
   });
   return (
-    <form onSubmit={submit} className="space-y-3.5">
+    <form method="post" onSubmit={submit} className="space-y-3.5">
       {(oidcLabel || samlLabel) && (
         <>
           {oidcLabel && (
@@ -136,7 +136,7 @@ export function SetupForm() {
     window.location.assign('/');
   });
   return (
-    <form onSubmit={submit} className="space-y-3.5">
+    <form method="post" onSubmit={submit} className="space-y-3.5">
       <Field label="Name">
         <Input name="name" autoComplete="name" required autoFocus value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
@@ -171,7 +171,7 @@ export function InviteForm({ token }: { token: string }) {
   if (loadError) return <ErrorBox message={loadError} />;
   if (!invite) return <div className="h-40 rounded-xl bg-sf2 animate-pulse-soft" />;
   return (
-    <form onSubmit={submit} className="space-y-3.5">
+    <form method="post" onSubmit={submit} className="space-y-3.5">
       <p className="text-[13px] leading-relaxed text-t2">
         {invite.invitedBy ? `${invite.invitedBy} invited you to join as ` : 'You are invited to join as '}
         <span className="font-semibold text-t1">{invite.role === 'admin' ? 'an admin' : 'a member'}</span>. You’ll sign in as{' '}
@@ -214,7 +214,7 @@ export function ForgotForm({ smtp }: { smtp: boolean }) {
     );
   }
   return (
-    <form onSubmit={submit} className="space-y-3.5">
+    <form method="post" onSubmit={submit} className="space-y-3.5">
       <Field label="Email">
         <Input type="email" name="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
       </Field>
@@ -244,6 +244,7 @@ export function ResetForm({ token }: { token: string }) {
   if (!account) return <div className="h-40 rounded-xl bg-sf2 animate-pulse-soft" />;
   return (
     <form
+      method="post"
       onSubmit={(e) => {
         if (password !== confirm) {
           e.preventDefault();

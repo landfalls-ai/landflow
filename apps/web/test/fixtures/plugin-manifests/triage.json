@@ -1,0 +1,783 @@
+{
+ "protocol": "landflow.plugin/v1",
+ "plugin": {
+  "language": "typescript",
+  "sdk": {
+   "name": "landflow-sdk-typescript",
+   "version": "0.2.0"
+  },
+  "id": "triage",
+  "name": "Alert Triage",
+  "version": "0.1.0",
+  "description": "Normalise alerts, extract IOCs, parse phishing e-mail, apply approved triage rules and a fail-open decision gate",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBkOTQ4OCIvPgogIDxwYXRoIGQ9Ik0xMSAxM2gyNkwyOCAyNXY5bC04IDRWMjV6IiBmaWxsPSIjZmZmIi8+CiAgPGNpcmNsZSBjeD0iMTUiIGN5PSIzNyIgcj0iMiIgZmlsbD0iIzk5ZjZlNCIvPjxjaXJjbGUgY3g9IjMzIiBjeT0iMzciIHI9IjIiIGZpbGw9IiM5OWY2ZTQiLz4KPC9zdmc+Cg==",
+  "color": "#0d9488",
+  "author": "Landflow"
+ },
+ "nodes": [
+  {
+   "name": "normalizeAlert",
+   "displayName": "Normalize Alert",
+   "description": "Turn an Alertmanager, Grafana, Datadog, CloudWatch, Sentry or Wazuh alert into one canonical alert",
+   "version": 1,
+   "kind": "action",
+   "idempotent": true,
+   "categories": [
+    "Security",
+    "Developer Tools"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBlYTVlOSIvPgogIDxwYXRoIGQ9Ik0xMSAxM2gyNkwyOCAyNXY5bC04IDRWMjV6IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPgo=",
+   "color": "#0ea5e9",
+   "subtitle": "{{format}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "format",
+     "displayName": "Format",
+     "type": "options",
+     "default": "auto",
+     "description": "The shape of the incoming payload. Auto tries every known format and fails if none fits",
+     "options": [
+      {
+       "name": "Auto-detect",
+       "value": "auto"
+      },
+      {
+       "name": "Prometheus Alertmanager",
+       "value": "alertmanager",
+       "description": "Webhook v4: one alert per entry of alerts[]"
+      },
+      {
+       "name": "Grafana Alerting",
+       "value": "grafana",
+       "description": "Unified alerting webhook"
+      },
+      {
+       "name": "Datadog",
+       "value": "datadog",
+       "description": "Webhook with the default payload template"
+      },
+      {
+       "name": "AWS CloudWatch (SNS)",
+       "value": "cloudwatch",
+       "description": "Alarm delivered through SNS, Message as a JSON string"
+      },
+      {
+       "name": "Sentry",
+       "value": "sentry",
+       "description": "Issue alert / issue webhook"
+      },
+      {
+       "name": "Wazuh",
+       "value": "wazuh",
+       "description": "Integration alert JSON"
+      },
+      {
+       "name": "Generic",
+       "value": "generic",
+       "description": "Map the fields yourself with dot paths"
+      }
+     ]
+    },
+    {
+     "name": "genericSource",
+     "displayName": "Source Name",
+     "type": "string",
+     "default": "generic",
+     "description": "Goes into alert.source and the dedup key",
+     "displayOptions": {
+      "show": {
+       "format": [
+        "generic"
+       ]
+      }
+     }
+    },
+    {
+     "name": "titlePath",
+     "displayName": "Title Path",
+     "type": "string",
+     "default": "title",
+     "placeholder": "alert.name",
+     "displayOptions": {
+      "show": {
+       "format": [
+        "generic"
+       ]
+      }
+     }
+    },
+    {
+     "name": "severityPath",
+     "displayName": "Severity Path",
+     "type": "string",
+     "default": "severity",
+     "placeholder": "alert.level",
+     "displayOptions": {
+      "show": {
+       "format": [
+        "generic"
+       ]
+      }
+     }
+    },
+    {
+     "name": "servicePath",
+     "displayName": "Service Path",
+     "type": "string",
+     "default": "service",
+     "placeholder": "target.service",
+     "displayOptions": {
+      "show": {
+       "format": [
+        "generic"
+       ]
+      }
+     }
+    },
+    {
+     "name": "idPath",
+     "displayName": "ID Path",
+     "type": "string",
+     "default": "id",
+     "displayOptions": {
+      "show": {
+       "format": [
+        "generic"
+       ]
+      }
+     }
+    },
+    {
+     "name": "descriptionPath",
+     "displayName": "Description Path",
+     "type": "string",
+     "default": "description",
+     "displayOptions": {
+      "show": {
+       "format": [
+        "generic"
+       ]
+      }
+     }
+    },
+    {
+     "name": "statusPath",
+     "displayName": "Status Path",
+     "type": "string",
+     "default": "status",
+     "description": "resolved, ok, recovered and closed count as resolved; anything else is firing",
+     "displayOptions": {
+      "show": {
+       "format": [
+        "generic"
+       ]
+      }
+     }
+    },
+    {
+     "name": "fingerprintPath",
+     "displayName": "Fingerprint Path",
+     "type": "string",
+     "default": "",
+     "description": "Optional. Without one the dedup key is a hash of source, title and service",
+     "displayOptions": {
+      "show": {
+       "format": [
+        "generic"
+       ]
+      }
+     }
+    },
+    {
+     "name": "environmentPath",
+     "displayName": "Environment Path",
+     "type": "string",
+     "default": "environment",
+     "displayOptions": {
+      "show": {
+       "format": [
+        "generic"
+       ]
+      }
+     }
+    },
+    {
+     "name": "severityMap",
+     "displayName": "Severity Map",
+     "type": "json",
+     "default": "{}",
+     "description": "Overrides the built-in mapping, raw value (lower case) to sev1-sev4: {\"p2\": \"sev1\", \"12\": \"sev2\"}. Built-in: critical/fatal/P1 = sev1, high/error/P2 = sev2, warning/medium/P3 = sev3, info/low/P4/P5 = sev4; Wazuh level 13-15 = sev1, 10-12 = sev2, 7-9 = sev3, 0-6 = sev4; Sentry fatal = sev1, error = sev2, warning = sev3",
+     "typeOptions": {
+      "language": "json"
+     }
+    },
+    {
+     "name": "defaultSeverity",
+     "displayName": "Default Severity",
+     "type": "options",
+     "default": "sev3",
+     "description": "Used when the source gives no severity or one that is not recognised",
+     "options": [
+      {
+       "name": "sev1",
+       "value": "sev1"
+      },
+      {
+       "name": "sev2",
+       "value": "sev2"
+      },
+      {
+       "name": "sev3",
+       "value": "sev3"
+      },
+      {
+       "name": "sev4",
+       "value": "sev4"
+      }
+     ]
+    },
+    {
+     "name": "includeRaw",
+     "displayName": "Keep Raw Payload",
+     "type": "boolean",
+     "default": true,
+     "description": "Keep the original payload under alert.raw"
+    }
+   ]
+  },
+  {
+   "name": "extractIocs",
+   "displayName": "Extract IOCs",
+   "description": "Find IPs, domains, URLs, e-mails, file hashes and CVE ids in an alert, refanging defanged input first",
+   "version": 1,
+   "kind": "action",
+   "idempotent": true,
+   "categories": [
+    "Security",
+    "Developer Tools"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI2Y1OWUwYiIvPgogIDxjaXJjbGUgY3g9IjIxIiBjeT0iMjEiIHI9IjkiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI0Ii8+CiAgPHBhdGggZD0iTTI4IDI4bDkgOSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K",
+   "color": "#f59e0b",
+   "subtitle": "{{fields}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Extract indicators of compromise (IPv4/IPv6, domains, URLs, e-mails, MD5/SHA-1/SHA-256, CVE ids) from the input JSON. Defanged values such as hxxp://evil[.]com are refanged first.",
+   "properties": [
+    {
+     "name": "fields",
+     "displayName": "Fields",
+     "type": "string",
+     "default": "",
+     "placeholder": "alert.title, alert.description, alert.raw",
+     "description": "Comma-separated dot paths to search. Empty searches the whole item"
+    },
+    {
+     "name": "types",
+     "displayName": "Indicator Types",
+     "type": "multiOptions",
+     "default": [
+      "ipv4",
+      "ipv6",
+      "domain",
+      "url",
+      "email",
+      "md5",
+      "sha1",
+      "sha256",
+      "cve"
+     ],
+     "options": [
+      {
+       "name": "IPv4",
+       "value": "ipv4"
+      },
+      {
+       "name": "IPv6",
+       "value": "ipv6"
+      },
+      {
+       "name": "Domain",
+       "value": "domain"
+      },
+      {
+       "name": "URL",
+       "value": "url"
+      },
+      {
+       "name": "E-mail",
+       "value": "email"
+      },
+      {
+       "name": "MD5",
+       "value": "md5"
+      },
+      {
+       "name": "SHA-1",
+       "value": "sha1"
+      },
+      {
+       "name": "SHA-256",
+       "value": "sha256"
+      },
+      {
+       "name": "CVE",
+       "value": "cve"
+      }
+     ]
+    },
+    {
+     "name": "dropPrivate",
+     "displayName": "Drop Private IPs",
+     "type": "boolean",
+     "default": false,
+     "description": "Leave out private, loopback, link-local and reserved addresses. They are flagged private: true either way"
+    },
+    {
+     "name": "defangValues",
+     "displayName": "Defang Values",
+     "type": "boolean",
+     "default": false,
+     "description": "Put the defanged form (hxxp://evil[.]com) in `value` too, so the output is safe to paste into chat. The `defanged` field is always there"
+    },
+    {
+     "name": "splitItems",
+     "displayName": "One Item per IOC",
+     "type": "boolean",
+     "default": false,
+     "description": "Emit one item per indicator under `ioc`. An item without indicators emits nothing"
+    }
+   ]
+  },
+  {
+   "name": "parseEmail",
+   "displayName": "Parse Email",
+   "description": "Parse a reported phishing e-mail (.eml or raw text): headers, SPF/DKIM/DMARC, bodies, URLs and attachment hashes",
+   "version": 1,
+   "kind": "action",
+   "idempotent": true,
+   "categories": [
+    "Security",
+    "Developer Tools"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzhiNWNmNiIvPgogIDxyZWN0IHg9IjEwIiB5PSIxNCIgd2lkdGg9IjI4IiBoZWlnaHQ9IjIwIiByeD0iMyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNSIvPgogIDxwYXRoIGQ9Ik0xMSAxNmwxMyAxMCAxMy0xMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNSIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
+   "color": "#8b5cf6",
+   "subtitle": "{{source}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "source",
+     "displayName": "Email From",
+     "type": "options",
+     "default": "field",
+     "options": [
+      {
+       "name": "JSON Field",
+       "value": "field",
+       "description": "Raw RFC 822 text in a field"
+      },
+      {
+       "name": "Binary File",
+       "value": "binary",
+       "description": "A .eml file in a binary property"
+      }
+     ]
+    },
+    {
+     "name": "field",
+     "displayName": "Field",
+     "type": "string",
+     "default": "email",
+     "displayOptions": {
+      "show": {
+       "source": [
+        "field"
+       ]
+      }
+     },
+     "description": "Dot-free item field holding the raw message"
+    },
+    {
+     "name": "binaryPropertyName",
+     "displayName": "Input Binary Field",
+     "type": "string",
+     "default": "data",
+     "displayOptions": {
+      "show": {
+       "source": [
+        "binary"
+       ]
+      }
+     }
+    },
+    {
+     "name": "outputField",
+     "displayName": "Output Field",
+     "type": "string",
+     "default": "email"
+    },
+    {
+     "name": "attachmentsAsBinary",
+     "displayName": "Emit Attachments as Binary",
+     "type": "boolean",
+     "default": false,
+     "description": "Add every attachment to the item as a file (attachment_0, attachment_1…). The JSON always lists name, type, size and SHA-256"
+    },
+    {
+     "name": "binaryPrefix",
+     "displayName": "Binary Field Prefix",
+     "type": "string",
+     "default": "attachment_",
+     "displayOptions": {
+      "show": {
+       "attachmentsAsBinary": [
+        true
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "triageRules",
+   "displayName": "Triage Rules",
+   "description": "Ordered, person-approved rules that send an alert to Bypass, Noise, Ask or on to Evaluate",
+   "version": 1,
+   "kind": "action",
+   "idempotent": true,
+   "categories": [
+    "Security",
+    "Developer Tools"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzEwYjk4MSIvPgogIDxwYXRoIGQ9Ik0xMiAxNWgyNE0xMiAyNGgyNE0xMiAzM2gyNCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjE4IiBjeT0iMTUiIHI9IjMuNSIgZmlsbD0iI2ZmZiIvPjxjaXJjbGUgY3g9IjMwIiBjeT0iMjQiIHI9IjMuNSIgZmlsbD0iI2ZmZiIvPjxjaXJjbGUgY3g9IjIyIiBjeT0iMzMiIHI9IjMuNSIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+   "color": "#10b981",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main",
+     "displayName": "Bypass"
+    },
+    {
+     "type": "main",
+     "displayName": "Noise"
+    },
+    {
+     "type": "main",
+     "displayName": "Ask"
+    },
+    {
+     "type": "main",
+     "displayName": "Evaluate"
+    }
+   ],
+   "properties": [
+    {
+     "name": "severityField",
+     "displayName": "Severity Field",
+     "type": "string",
+     "default": "alert.severity"
+    },
+    {
+     "name": "bypassSeverities",
+     "displayName": "Always Open For Severity",
+     "type": "multiOptions",
+     "default": [
+      "sev1"
+     ],
+     "description": "Checked before any rule. sev1 always bypasses, even if you clear it here",
+     "options": [
+      {
+       "name": "sev1",
+       "value": "sev1"
+      },
+      {
+       "name": "sev2",
+       "value": "sev2"
+      },
+      {
+       "name": "sev3",
+       "value": "sev3"
+      },
+      {
+       "name": "sev4",
+       "value": "sev4"
+      }
+     ]
+    },
+    {
+     "name": "rules",
+     "displayName": "Rules",
+     "type": "fixedCollection",
+     "typeOptions": {
+      "multipleValues": true
+     },
+     "default": {},
+     "placeholder": "Add Rule",
+     "description": "Checked in order; the first rule that matches wins. A Noise rule needs the name of the person who approved it",
+     "groups": [
+      {
+       "name": "rule",
+       "displayName": "Rule",
+       "values": [
+        {
+         "name": "name",
+         "displayName": "Name",
+         "type": "string",
+         "default": "",
+         "placeholder": "Nightly backup job failures"
+        },
+        {
+         "name": "action",
+         "displayName": "Action",
+         "type": "options",
+         "default": "ask",
+         "options": [
+          {
+           "name": "Always Open",
+           "value": "open",
+           "description": "Send to Bypass: a room opens"
+          },
+          {
+           "name": "Ask On-call",
+           "value": "ask",
+           "description": "Send to Ask"
+          },
+          {
+           "name": "Noise",
+           "value": "noise",
+           "description": "Send to Noise. Needs Approved By"
+          }
+         ]
+        },
+        {
+         "name": "match",
+         "displayName": "Match",
+         "type": "options",
+         "default": "all",
+         "options": [
+          {
+           "name": "All conditions",
+           "value": "all"
+          },
+          {
+           "name": "Any condition",
+           "value": "any"
+          }
+         ]
+        },
+        {
+         "name": "conditions",
+         "displayName": "Conditions",
+         "type": "fixedCollection",
+         "typeOptions": {
+          "multipleValues": true
+         },
+         "default": {},
+         "placeholder": "Add Condition",
+         "groups": [
+          {
+           "name": "condition",
+           "displayName": "Condition",
+           "values": [
+            {
+             "name": "path",
+             "displayName": "Field",
+             "type": "string",
+             "default": "",
+             "placeholder": "alert.labels.alertname"
+            },
+            {
+             "name": "operator",
+             "displayName": "Operator",
+             "type": "options",
+             "default": "equals",
+             "options": [
+              {
+               "name": "Equals",
+               "value": "equals"
+              },
+              {
+               "name": "Not Equals",
+               "value": "notEquals"
+              },
+              {
+               "name": "Contains",
+               "value": "contains"
+              },
+              {
+               "name": "Matches Regex",
+               "value": "regex",
+               "description": "A pattern, or /pattern/flags"
+              },
+              {
+               "name": "Is In List",
+               "value": "in",
+               "description": "Comma-separated, or a JSON array"
+              },
+              {
+               "name": "Exists",
+               "value": "exists"
+              },
+              {
+               "name": "Does Not Exist",
+               "value": "notExists"
+              }
+             ]
+            },
+            {
+             "name": "value",
+             "displayName": "Value",
+             "type": "string",
+             "default": ""
+            }
+           ]
+          }
+         ]
+        },
+        {
+         "name": "approvedBy",
+         "displayName": "Approved By",
+         "type": "string",
+         "default": "",
+         "placeholder": "ana@example.com",
+         "description": "The person who reviewed this rule. Required for Noise"
+        },
+        {
+         "name": "approvedAt",
+         "displayName": "Approved At",
+         "type": "string",
+         "default": "",
+         "placeholder": "2026-10-01T09:00:00Z"
+        },
+        {
+         "name": "expiresAt",
+         "displayName": "Expires At",
+         "type": "string",
+         "default": "",
+         "placeholder": "2026-12-01T00:00:00Z",
+         "description": "Optional. After this time the rule is skipped"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "triageDecision",
+   "displayName": "Triage Decision",
+   "description": "The policy gate after the AI verdict: open a room, attach to an open one or ask on-call. It cannot drop an alert",
+   "version": 1,
+   "kind": "action",
+   "idempotent": true,
+   "categories": [
+    "Security",
+    "Developer Tools"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI2VmNDQ0NCIvPgogIDxwYXRoIGQ9Ik0yNCAxMHYxME0yNCAyMEwxMyAzNk0yNCAyMGwxMSAxNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjI0IiBjeT0iMTAiIHI9IjMuNSIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+   "color": "#ef4444",
+   "subtitle": "{{mode}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main",
+     "displayName": "Open"
+    },
+    {
+     "type": "main",
+     "displayName": "Attach"
+    },
+    {
+     "type": "main",
+     "displayName": "Ask"
+    }
+   ],
+   "properties": [
+    {
+     "name": "mode",
+     "displayName": "Mode",
+     "type": "options",
+     "default": "shadow",
+     "description": "Shadow opens a room for everything and only records what Enforce would have done. Run Shadow first",
+     "options": [
+      {
+       "name": "Shadow",
+       "value": "shadow"
+      },
+      {
+       "name": "Enforce",
+       "value": "enforce"
+      }
+     ]
+    },
+    {
+     "name": "verdictField",
+     "displayName": "Verdict Field",
+     "type": "string",
+     "default": "verdict",
+     "description": "Dot path to the AI verdict: an object, or JSON text (markdown code fences are fine). `output` is used when this is empty"
+    },
+    {
+     "name": "minConfidence",
+     "displayName": "Minimum Confidence",
+     "type": "number",
+     "default": 0.7,
+     "typeOptions": {
+      "minValue": 0,
+      "maxValue": 1,
+      "numberPrecision": 2
+     },
+     "description": "Below this the alert goes to Ask"
+    },
+    {
+     "name": "existingRoomField",
+     "displayName": "Existing Room Field",
+     "type": "string",
+     "default": "group.dedupKey",
+     "description": "Dot path to the dedup key of an open room for this alert. Empty means there is none"
+    },
+    {
+     "name": "severityField",
+     "displayName": "Severity Field",
+     "type": "string",
+     "default": "alert.severity"
+    }
+   ]
+  }
+ ]
+}

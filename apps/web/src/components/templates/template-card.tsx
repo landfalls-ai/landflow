@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Ban, Globe, HardDrive, KeyRound, PackageX } from 'lucide-react';
+import { Ban, Globe, HardDrive, KeyRound, PackageX, Store } from 'lucide-react';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { TEMPLATE_CATEGORIES, type TemplateSummary } from '@/lib/shared/templates';
 import type { NodeTypeInfo } from '@/lib/shared/types';
@@ -48,8 +48,14 @@ export function ProblemBadge({ template }: { template: Pick<TemplateSummary, 'us
   );
 }
 
-/** Saved templates: the project they belong to, or instance-wide. */
-export function SourceBadge({ template, remoteLabel }: { template: Pick<TemplateSummary, 'source' | 'projectId' | 'projectName'>; remoteLabel?: string }) {
+/** Saved templates: the project they belong to, or instance-wide; a marketplace plugin's flows say which plugin. */
+export function SourceBadge({ template, remoteLabel }: { template: Pick<TemplateSummary, 'source' | 'projectId' | 'projectName' | 'origin'>; remoteLabel?: string }) {
+  if (template.origin)
+    return (
+      <Badge tone="accent" title={`A flow of the “${template.origin.plugin}” plugin from the ${template.origin.marketplace} marketplace. Uninstalling the plugin removes it.`}>
+        <Store className="size-3" /> <span className="max-w-[120px] truncate">{template.origin.plugin}</span>
+      </Badge>
+    );
   if (template.source === 'local')
     return (
       <Badge tone="accent" title={template.projectId ? `Saved in the “${template.projectName ?? template.projectId}” project` : 'Saved here, for the whole instance'}>

@@ -76,6 +76,22 @@ exports[`mapping every bundled plugin manifest > google > matches the snapshot o
 ]
 `;
 
+exports[`mapping every bundled plugin manifest > landfall > matches the snapshot of its tool list 1`] = `
+[
+  "heartbeat_ping ro=0 d=0 i=0 [heartbeatName]",
+  "incident_declare ro=0 d=0 i=0 [title,severity,description]",
+  "incident_get ro=1 d=0 i=1 [incidentId,throughSeq]",
+  "incident_getAll ro=1 d=0 i=1 [returnAll,limit,filters]",
+  "incident_openManually ro=0 d=0 i=0 [title,severity,entityHint]",
+  "incident_openFromAlert ro=0 d=0 i=0 [title,severity,additionalFields]",
+  "incident_recover ro=0 d=0 i=0 [title,severity,dedupKey,additionalFields]",
+  "remediation_recordAppliedExternally ro=0 d=0 i=0 [incidentId,sourceSeq,additionalFields]",
+  "timeline_addEvent ro=0 d=0 i=0 [incidentId,eventType,payload]",
+  "timeline_addNote ro=0 d=0 i=0 [incidentId,text]",
+  "timeline_getEvents ro=1 d=0 i=1 [incidentId,returnAll,limit,eventOptions]",
+]
+`;
+
 exports[`mapping every bundled plugin manifest > messaging > matches the snapshot of its tool list 1`] = `
 [
   "telegram_chat_get ro=1 d=0 i=1 [chatId]",
@@ -181,5 +197,29 @@ exports[`mapping every bundled plugin manifest > text-toolkit > matches the snap
 [
   "slugify ro=0 d=0 i=1 [field,outputField,separator]",
   "changeCase ro=0 d=0 i=1 [field,case,inPlace,outputField]",
+]
+`;
+
+exports[`mapping every bundled plugin manifest > threat-intel > matches the snapshot of its tool list 1`] = `
+[
+  "virusTotal_ip_get ro=1 d=0 i=1 [ip,simple]",
+  "virusTotal_domain_get ro=1 d=0 i=1 [domain,simple]",
+  "virusTotal_url_get ro=1 d=0 i=1 [url,simple]",
+  "virusTotal_file_get ro=1 d=0 i=1 [hash,simple]",
+  "abuseIpDb_ip_check ro=1 d=0 i=1 [ip,maxAgeInDays,verbose]",
+  "greyNoise_ip_get ro=1 d=0 i=1 [ip]",
+  "urlscan_scan_search ro=1 d=0 i=1 [query,size,simple]",
+  "urlscan_scan_getResult ro=1 d=0 i=1 [uuid,simple]",
+  "shodan_host_get ro=1 d=0 i=1 [ip,simple]",
+  "shodan_dns_lookup ro=1 d=0 i=1 [hostnames]",
+  "alienVaultOtx_indicator_get ro=1 d=0 i=1 [indicatorType,indicator,simple]",
+  "misp_attribute_search ro=1 d=0 i=1 [value,type,tags,last,limit,simple]",
+  "iocEnrich ro=1 d=0 i=1 [iocPath,typePath,valuePath,iocsPath,services,cacheTtl,options]",
+]
+`;
+
+exports[`mapping every bundled plugin manifest > triage > matches the snapshot of its tool list 1`] = `
+[
+  "extractIocs ro=0 d=0 i=1 [fields,types,dropPrivate,defangValues,splitItems]",
 ]
 `;

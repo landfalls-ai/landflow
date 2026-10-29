@@ -1,0 +1,202 @@
+/** Realistic payloads, one per supported source. */
+export const alertmanager = {
+  receiver: 'landflow-webhook',
+  status: 'firing',
+  alerts: [
+    {
+      status: 'firing',
+      labels: { alertname: 'HighErrorRate', severity: 'critical', service: 'checkout', namespace: 'prod', env: 'production', pod: 'checkout-7d9f8-abcde', job: 'checkout' },
+      annotations: { summary: 'Checkout 5xx rate above 5%', description: '5xx ratio is 12% for 10m', runbook_url: 'https://runbooks.example.com/checkout-5xx', dashboard_url: 'javascript:alert(1)' },
+      startsAt: '2026-10-28T09:15:00.000Z',
+      endsAt: '0001-01-01T00:00:00Z',
+      generatorURL: 'https://prometheus.example.com/graph?g0.expr=rate%28http_errors%5B5m%5D%29',
+      fingerprint: '3a1f6c2b9d8e7f40',
+    },
+    {
+      status: 'resolved',
+      labels: { alertname: 'DiskAlmostFull', severity: 'warning', instance: 'db-1.example.com:9100', job: 'node' },
+      annotations: { summary: 'Disk 91% full on db-1' },
+      startsAt: '2026-10-28T07:00:00.000Z',
+      endsAt: '2026-10-28T09:20:00.000Z',
+      generatorURL: 'https://prometheus.example.com/graph?g0.expr=disk',
+      fingerprint: 'b2c4d6e8f0a1b3c5',
+    },
+  ],
+  groupLabels: { alertname: 'HighErrorRate' },
+  commonLabels: {},
+  commonAnnotations: {},
+  externalURL: 'https://alertmanager.example.com',
+  version: '4',
+  groupKey: '{}:{alertname="HighErrorRate"}',
+  truncatedAlerts: 0,
+};
+
+export const grafana = {
+  receiver: 'landflow',
+  status: 'firing',
+  orgId: 1,
+  alerts: [
+    {
+      status: 'firing',
+      labels: { alertname: 'P95 latency high', grafana_folder: 'Payments', severity: 'high', service: 'payments-api', environment: 'prod' },
+      annotations: { summary: 'p95 latency above 800ms', description: 'Payments API p95 is 1.2s', runbook_url: 'https://runbooks.example.com/payments-latency' },
+      startsAt: '2026-10-28T10:00:00Z',
+      endsAt: '0001-01-01T00:00:00Z',
+      generatorURL: 'https://grafana.example.com/alerting/grafana/abc123/view',
+      fingerprint: 'f00dfeedcafe1234',
+      silenceURL: 'https://grafana.example.com/alerting/silence/new?alertmanager=grafana',
+      dashboardURL: 'https://grafana.example.com/d/payments',
+      panelURL: 'https://grafana.example.com/d/payments?viewPanel=4',
+      valueString: '[ var=A value=1.2 ]',
+    },
+  ],
+  groupLabels: { alertname: 'P95 latency high' },
+  commonLabels: { alertname: 'P95 latency high' },
+  externalURL: 'https://grafana.example.com/',
+  version: '1',
+  groupKey: '{}:{alertname="P95 latency high"}',
+  title: '[FIRING:1] P95 latency high',
+  state: 'alerting',
+  message: '**Firing**',
+};
+
+export const datadog = {
+  id: '7234567890123456789',
+  last_updated_date: '1761645600000',
+  event_type: 'query_alert_monitor',
+  title: '[Triggered on {host:web-3}] CPU is high on web-3',
+  date: '1761645600000',
+  org: { id: '123456', name: 'Example Org' },
+  body: '%%% CPU above 95% for 10 minutes @pagerduty %%%',
+  text_only_msg: 'CPU above 95% for 10 minutes',
+  alert_transition: 'Triggered',
+  alert_id: '987654',
+  alert_metric: 'system.cpu.user',
+  alert_priority: 'P2',
+  alert_scope: 'host:web-3',
+  alert_status: 'Triggered',
+  alert_title: 'CPU is high on web-3',
+  alert_type: 'error',
+  hostname: 'web-3',
+  priority: 'P2',
+  tags: 'env:prod,service:web,team:platform,host:web-3',
+  link: 'https://app.datadoghq.com/monitors/987654',
+  snapshot: 'https://p.datadoghq.com/snapshot/view/dd-snapshots/abc.png',
+};
+
+const cloudWatchMessage = {
+  AlarmName: 'orders-lambda-errors',
+  AlarmDescription: 'Errors in the orders function [sev2]',
+  AWSAccountId: '000000000000',
+  NewStateValue: 'ALARM',
+  NewStateReason: 'Threshold Crossed: 1 datapoint [14.0] was greater than the threshold (5.0).',
+  StateChangeTime: '2026-10-28T11:30:00.000+0000',
+  Region: 'US East (N. Virginia)',
+  AlarmArn: 'arn:aws:cloudwatch:us-east-1:000000000000:alarm:orders-lambda-errors',
+  OldStateValue: 'OK',
+  Trigger: {
+    MetricName: 'Errors',
+    Namespace: 'AWS/Lambda',
+    Statistic: 'SUM',
+    Dimensions: [{ value: 'orders', name: 'FunctionName' }],
+    Period: 60,
+    EvaluationPeriods: 1,
+    ComparisonOperator: 'GreaterThanThreshold',
+    Threshold: 5.0,
+  },
+};
+
+export const cloudwatch = {
+  Type: 'Notification',
+  MessageId: '22b80b92-fdea-4c2c-8f9d-bdfb0c7bf324',
+  TopicArn: 'arn:aws:sns:us-east-1:000000000000:alarms',
+  Subject: 'ALARM: "orders-lambda-errors" in US East (N. Virginia)',
+  Message: JSON.stringify(cloudWatchMessage),
+  Timestamp: '2026-10-28T11:30:01.000Z',
+};
+export const cloudwatchOk = { ...cloudwatch, Message: JSON.stringify({ ...cloudWatchMessage, AlarmDescription: 'Errors in the orders function', NewStateValue: 'OK', OldStateValue: 'ALARM' }) };
+
+export const sentry = {
+  action: 'triggered',
+  installation: { uuid: 'a1b2c3' },
+  data: {
+    event: {
+      event_id: 'e1f2a3b4c5d64e7f8a9b0c1d2e3f4a5b',
+      issue_id: '4501234567',
+      title: "TypeError: Cannot read properties of undefined (reading 'id')",
+      culprit: 'app/cart/checkout.js in handleSubmit',
+      level: 'error',
+      platform: 'javascript',
+      environment: 'production',
+      project: 'storefront',
+      release: 'storefront@2.14.0',
+      tags: [['environment', 'production'], ['browser', 'Chrome 129'], ['release', 'storefront@2.14.0']],
+      web_url: 'https://sentry.example.com/organizations/acme/issues/4501234567/events/e1f2a3b4/',
+      datetime: '2026-10-28T12:05:00Z',
+    },
+    triggered_rule: 'High priority issues',
+  },
+  actor: { type: 'application', id: 'sentry', name: 'Sentry' },
+};
+
+export const wazuh = {
+  timestamp: '2026-10-28T13:00:12.345+0000',
+  rule: { level: 12, description: 'sshd: brute force trying to get access to the system.', id: '5763', mitre: { id: ['T1110'] }, firedtimes: 4, groups: ['syslog', 'sshd', 'authentication_failures'] },
+  agent: { id: '003', name: 'bastion-1', ip: '10.0.4.12' },
+  manager: { name: 'wazuh-manager' },
+  id: '1761656412.4521',
+  full_log: 'Oct 28 13:00:11 bastion-1 sshd[2211]: Failed password for root from 203.0.113.77 port 52144 ssh2',
+  decoder: { name: 'sshd' },
+  data: { srcip: '198.51.100.23', srcuser: 'root' },
+  location: '/var/log/auth.log',
+};
+
+export const generic = { name: 'Queue depth', level: 'P1', owner: { svc: 'billing' }, ref: 'q-77', state: 'open' };
+
+/** The host Webhook node's item: the payload sits under body. */
+export const webhook = (body: unknown) => ({ headers: { 'content-type': 'application/json' }, params: {}, query: {}, body });
+
+export const EML = [
+  'Return-Path: <bounce@mailer.evil-news.example>',
+  'Received: from mail.evil-news.example (mail.evil-news.example [203.0.113.50])',
+  '\tby mx.corp.example with ESMTPS id abc123; Tue, 28 Oct 2026 08:00:05 +0000',
+  'Received: from localhost (localhost [127.0.0.1]) by mail.evil-news.example; Tue, 28 Oct 2026 08:00:01 +0000',
+  'Authentication-Results: mx.corp.example;',
+  '\tspf=fail (sender IP is 203.0.113.50) smtp.mailfrom=bounce@mailer.evil-news.example;',
+  '\tdkim=none (message not signed);',
+  '\tdmarc=fail action=quarantine header.from=paypa1-secure.example',
+  'From: =?UTF-8?B?UGF5UGFsIFN1cHBvcnQ=?= <support@paypa1-secure.example>',
+  'To: "Ana Lopez" <ana@corp.example>, bob@corp.example',
+  'Reply-To: collect@freemail.example',
+  'Subject: =?UTF-8?Q?Urgent:_verify_your_account_=E2=80=93_action_required?=',
+  'Date: Tue, 28 Oct 2026 08:00:00 +0000',
+  'Message-ID: <20261028080000.1234@mailer.evil-news.example>',
+  'MIME-Version: 1.0',
+  'Content-Type: multipart/mixed; boundary="MIXED-1"',
+  '',
+  'This is a multi-part message in MIME format.',
+  '--MIXED-1',
+  'Content-Type: multipart/alternative; boundary="ALT-1"',
+  '',
+  '--ALT-1',
+  'Content-Type: text/plain; charset="utf-8"',
+  'Content-Transfer-Encoding: quoted-printable',
+  '',
+  'Dear customer, your account is on hold. Verify at https://paypa1-secure.example/verify?id=3D42=',
+  '&t=3Dabc. Caf=C3=A9 team.',
+  '--ALT-1',
+  'Content-Type: text/html; charset="utf-8"',
+  'Content-Transfer-Encoding: base64',
+  '',
+  Buffer.from('<html><body><p>Verify <a href="https://paypa1-secure.example/verify?id=42&amp;t=abc">here</a> now.</p><img src="https://track.evil-news.example/p.gif"></body></html>').toString('base64'),
+  '--ALT-1--',
+  '--MIXED-1',
+  'Content-Type: application/pdf; name="invoice.pdf"',
+  'Content-Disposition: attachment; filename="invoice.pdf"',
+  'Content-Transfer-Encoding: base64',
+  '',
+  Buffer.from('%PDF-1.4 fake pdf bytes').toString('base64'),
+  '--MIXED-1--',
+  '',
+].join('\r\n');
+export const EML_ATTACHMENT_SHA256 = '' as string; // computed in the test from the bytes

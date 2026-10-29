@@ -3,7 +3,9 @@
  * marketplace entry combines with plugin.json) into what Landflow can use: agents, skills, a
  * Landflow node-plugin manifest, and the components that don't run here yet.
  */
-import type { ClaudeAgentFile, ClaudeSkillFile, NodePluginManifest, PluginDetail, UnsupportedComponent } from '../../shared/marketplace';
+import type { z } from 'zod';
+import type { ClaudeAgentFile, ClaudeSkillFile, MarketplaceFlow, NodePluginManifest, PluginDetail, UnsupportedComponent } from '../../shared/marketplace';
+import { fileSchema } from '../templates/schema';
 import { asText, parseFrontmatter, stringList } from './frontmatter';
 import type { RepoFile, RepoReader } from './reader';
 import { joinRelative } from './sources';
@@ -13,12 +15,20 @@ const MAX_SKILLS = 100;
 const MAX_REFERENCES = 30;
 const MAX_REFERENCE_BYTES = 128 * 1024;
 const MAX_REFERENCES_TOTAL = 1024 * 1024;
+const MAX_FLOWS = 50;
+const MAX_FLOW_BYTES = 1024 * 1024;
 const TEXT_FILE = /\.(md|markdown|txt|json|ya?ml|toml|csv|xml|html?|rst)$/i;
 
 /** A marketplace.json plugin entry, as listed. */
 export type MarketplaceEntry = Record<string, unknown> & { name: string; source?: unknown };
 
-type Loaded = Pick<PluginDetail, 'manifest' | 'agents' | 'skills' | 'unsupported' | 'nodePlugin' | 'readme' | 'warnings'>;
+type Loaded = Pick<PluginDetail, 'manifest' | 'agents' | 'skills' | 'unsupported' | 'nodePlugin' | 'flows' | 'readme' | 'warnings'>;
+
+/** A flow file a plugin ships, parsed (a Landflow template file). */
+export interface FlowFile {
+  path: string;
+  file: z.infer<typeof fileSchema>;
+}
 
 const paths = (value: unknown): string[] => (typeof value === 'string' ? [value] : Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
 
@@ -113,6 +123,70 @@ const serverNames = (value: unknown): string[] => {
   const map = (value as Record<string, unknown>).mcpServers ?? value;
   return map && typeof map === 'object' ? Object.keys(map as object) : [];
 };
+
+/** What the plugin page lists for a flow (`needs` is filled in against this instance's nodes by the caller). */
+export function flowSummary({ path, file }: FlowFile): MarketplaceFlow {
+  const nodes = Array.isArray(file.template.workflow.nodes) ? (file.template.workflow.nodes as Array<{ type?: unknown }>) : [];
+  const nodeTypes = [...new Set(nodes.map((n) => n?.type).filter((t): t is string => typeof t === 'string'))];
+  return {
+    path,
+    name: file.template.name,
+    description: file.template.description,
+    categories: file.template.categories,
+    nodeTypes,
+    nodeCount: nodes.length,
+    credentials: file.template.credentials.filter((c) => !c.optional).map((c) => c.name),
+    needs: [],
+  };
+}
+
+/** One flow file, read and checked (the share page reads just the one it shows). */
+export async function readFlow(reader: RepoReader, path: string): Promise<FlowFile['file']> {
+  const parsed = fileSchema.safeParse(JSON.parse(await reader.text(path, MAX_FLOW_BYTES)));
+  if (!parsed.success) throw new Error(`not a Landflow template file (${parsed.error.issues[0]?.path.join('.') || 'file'}: ${parsed.error.issues[0]?.message})`);
+  return parsed.data;
+}
+
+/**
+ * The flows a plugin ships: `flows/*.json` (not for a plugin at the marketplace root), plus the files or folders
+ * plugin.json's or the entry's `flows` lists. Each must be a Landflow template file; others are warnings.
+ */
+export async function loadFlows(
+  reader: RepoReader,
+  entry: MarketplaceEntry,
+  fromMarketplaceRoot = false,
+  known?: { files: RepoFile[]; pluginJson?: Record<string, unknown> },
+): Promise<{ flows: FlowFile[]; warnings: string[] }> {
+  const warnings: string[] = [];
+  const files = known?.files ?? (await reader.list());
+  const has = (path: string) => files.some((f) => f.path === path);
+  const pluginJson = known ? known.pluginJson : has('.claude-plugin/plugin.json') ? await readJson(reader, '.claude-plugin/plugin.json', warnings) : undefined;
+  const json = (dir: string) => under(files, dir).filter((f) => /\.json$/i.test(f.path) && !f.path.slice(dir.length + 1).includes('/'));
+  const picked = new Map<string, RepoFile>();
+  if (!fromMarketplaceRoot) for (const f of json('flows')) picked.set(f.path, f);
+  for (const listed of [...paths(pluginJson?.flows), ...paths(entry.flows)].map((p) => joinRelative('', p))) {
+    const file = files.find((f) => f.path === listed);
+    const inDir = json(listed);
+    if (file) picked.set(file.path, file);
+    else if (inDir.length) inDir.forEach((f) => picked.set(f.path, f));
+    else warnings.push(`Flow not found: ${listed}`);
+  }
+  const list = [...picked.values()].sort((a, b) => a.path.localeCompare(b.path));
+  if (list.length > MAX_FLOWS) warnings.push(`Only the first ${MAX_FLOWS} of ${list.length} flows are read`);
+  const flows: FlowFile[] = [];
+  for (const f of list.slice(0, MAX_FLOWS)) {
+    if ((f.size ?? 0) > MAX_FLOW_BYTES) {
+      warnings.push(`${f.path}: larger than 1 MB, skipped`);
+      continue;
+    }
+    try {
+      flows.push({ path: f.path, file: await readFlow(reader, f.path) });
+    } catch (error) {
+      warnings.push(`${f.path}: ${(error as Error).message}`);
+    }
+  }
+  return { flows, warnings };
+}
 
 /**
  * @param fromMarketplaceRoot the entry's source is the marketplace root (`"./"`), where an entry's
@@ -242,9 +316,14 @@ export async function loadPlugin(reader: RepoReader, entry: MarketplaceEntry, fr
     if (!nodePlugin) warnings.push('landflow.plugin.json needs an "id" (lowercase, dashes) and a "start" command (argv array)');
   }
 
+  // ---- flows: Landflow template files, added to Templates on install
+  const loadedFlows = await loadFlows(reader, entry, fromMarketplaceRoot, { files, pluginJson });
+  warnings.push(...loadedFlows.warnings);
+  const flows = loadedFlows.flows.map(flowSummary);
+
   let readme: string | undefined;
   const readmePath = files.find((f) => /^readme\.md$/i.test(f.path))?.path;
   if (readmePath) readme = await reader.text(readmePath, 64 * 1024).catch(() => undefined);
 
-  return { manifest, agents, skills, unsupported, ...(nodePlugin && { nodePlugin }), ...(readme && { readme }), warnings };
+  return { manifest, agents, skills, unsupported, ...(nodePlugin && { nodePlugin }), flows, ...(readme && { readme }), warnings };
 }

@@ -1,0 +1,252 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Triage digest",
+    "description": "Every morning, a Slack summary of the last day of alert triage: how many alerts, what happened to them, who decided (rules, AI, fail-open), on-call answers, and every alert shadow mode would have held back.",
+    "categories": [
+      "security",
+      "incident-response"
+    ],
+    "credentials": [
+      {
+        "id": "slack",
+        "type": "messaging.slackApi",
+        "name": "Slack bot",
+        "description": "A bot token (xoxb-…) with chat:write, invited to the on-call channel."
+      }
+    ],
+    "setup": [
+      "Use it with **Alert triage → Landfall war room**: it reads the same **Triage decisions** table.",
+      "Pick the **Slack bot** and set the channel in **Post digest**.",
+      "Before you switch triage to **Enforce**, read a week of digests: the shadow-mode section lists every alert Enforce would have held."
+    ],
+    "dataTables": [
+      {
+        "name": "Triage decisions",
+        "columns": [
+          {
+            "name": "received_at",
+            "type": "date"
+          },
+          {
+            "name": "source",
+            "type": "string"
+          },
+          {
+            "name": "dedup_key",
+            "type": "string"
+          },
+          {
+            "name": "title",
+            "type": "string"
+          },
+          {
+            "name": "severity",
+            "type": "string"
+          },
+          {
+            "name": "service",
+            "type": "string"
+          },
+          {
+            "name": "environment",
+            "type": "string"
+          },
+          {
+            "name": "outcome",
+            "type": "string"
+          },
+          {
+            "name": "would_have",
+            "type": "string"
+          },
+          {
+            "name": "decided_by",
+            "type": "string"
+          },
+          {
+            "name": "verdict",
+            "type": "string"
+          },
+          {
+            "name": "confidence",
+            "type": "number"
+          },
+          {
+            "name": "reasons",
+            "type": "string"
+          },
+          {
+            "name": "summary",
+            "type": "string"
+          },
+          {
+            "name": "url",
+            "type": "string"
+          },
+          {
+            "name": "entity_hints",
+            "type": "string"
+          },
+          {
+            "name": "answer",
+            "type": "string"
+          },
+          {
+            "name": "answer_why",
+            "type": "string"
+          },
+          {
+            "name": "landfall",
+            "type": "string"
+          },
+          {
+            "name": "room_url",
+            "type": "string"
+          }
+        ]
+      }
+    ],
+    "workflow": {
+      "name": "Triage digest",
+      "description": "Every morning, a Slack summary of the last day of alert triage: how many alerts, what happened to them, who decided (rules, AI, fail-open), on-call answers, and every alert shadow mode would have held back.",
+      "nodes": [
+        {
+          "id": "every",
+          "name": "Every morning",
+          "type": "core.schedule",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {
+            "unit": "rules",
+            "rule": {
+              "interval": [
+                {
+                  "field": "days",
+                  "daysInterval": 1,
+                  "triggerAtHour": 9,
+                  "triggerAtMinute": 0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "rows",
+          "name": "Last 24 hours",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "position": [
+            280,
+            0
+          ],
+          "parameters": {
+            "operation": "get",
+            "dataTableId": "Triage decisions",
+            "matchType": "allConditions",
+            "returnAll": true,
+            "filters": {
+              "conditions": [
+                {
+                  "keyName": "received_at",
+                  "condition": "gte",
+                  "keyValue": "{{ new Date(Date.now() - 24 * 3600 * 1000).toISOString() }}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "all",
+          "name": "Collect",
+          "type": "core.aggregate",
+          "typeVersion": 1,
+          "position": [
+            560,
+            0
+          ],
+          "parameters": {
+            "aggregate": "aggregateAllItemData",
+            "destinationFieldName": "rows"
+          },
+          "alwaysOutputData": true
+        },
+        {
+          "id": "count",
+          "name": "Count",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            840,
+            0
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// What triage did in the last day, and where shadow mode disagreed with what Enforce would do.\nconst rows = items[0]?.json.rows ?? [];\nconst count = (list, key) => list.reduce((m, r) => ({ ...m, [r[key] || '-']: (m[r[key] || '-'] ?? 0) + 1 }), {});\nconst by = (key) => count(rows, key);\nconst held = rows.filter((r) => r.would_have && r.would_have !== 'open');\nconst line = (counts) => Object.entries(counts).map(([k, n]) => `${k} ${n}`).join(' · ') || 'none';\nconst text = [\n  `*Triage, last 24 hours:* ${rows.length} alert${rows.length === 1 ? '' : 's'}`,\n  `Outcome: ${line(by('outcome'))}`,\n  `Decided by: ${line(by('decided_by'))}`,\n  held.length ? `Shadow mode: Enforce would have held ${held.length} (${line(count(held, 'would_have'))}):\\n` + held.slice(0, 10).map((r) => `• ${r.title} (${r.severity}): ${r.would_have}, ${r.reasons}`).join('\\n') : 'Shadow mode: Enforce agreed with every room.',\n  rows.some((r) => r.answer) ? `On-call answered ${rows.filter((r) => r.answer).length} question(s): ${line(by('answer'))}` : '',\n].filter(Boolean).join('\\n');\nreturn [{ json: { text, total: rows.length, held: held.length } }];"
+          }
+        },
+        {
+          "id": "post",
+          "name": "Post digest",
+          "type": "messaging.slack",
+          "typeVersion": 1,
+          "position": [
+            1120,
+            0
+          ],
+          "parameters": {
+            "resource": "message",
+            "operation": "post",
+            "channelId": "#on-call",
+            "text": "{{ $json.text }}"
+          },
+          "credentials": {
+            "slackApi": {
+              "id": "slack",
+              "name": "Slack bot"
+            }
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "every",
+          "sourceIndex": 0,
+          "target": "rows",
+          "targetIndex": 0
+        },
+        {
+          "id": "c2",
+          "type": "main",
+          "source": "rows",
+          "sourceIndex": 0,
+          "target": "all",
+          "targetIndex": 0
+        },
+        {
+          "id": "c3",
+          "type": "main",
+          "source": "all",
+          "sourceIndex": 0,
+          "target": "count",
+          "targetIndex": 0
+        },
+        {
+          "id": "c4",
+          "type": "main",
+          "source": "count",
+          "sourceIndex": 0,
+          "target": "post",
+          "targetIndex": 0
+        }
+      ]
+    }
+  }
+}

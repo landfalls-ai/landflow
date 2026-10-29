@@ -1,0 +1,39 @@
+{
+  "name": "landflow-soc",
+  "owner": { "name": "Landflow" },
+  "metadata": {
+    "description": "Landflow Ops & SOC: alert triage, Landfall war rooms and threat intel, as node plugins with ready-made flows."
+  },
+  "plugins": [
+    {
+      "name": "triage",
+      "source": "./plugins/triage",
+      "description": "Alert triage that decides whether an alert deserves a war room: normalize Alertmanager, Grafana, Datadog, CloudWatch, Sentry and Wazuh alerts, extract IOCs, parse reported emails, rules people approve, and a fail-open triage decision. Flows: alert and phishing triage into Landfall, and a daily digest.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "security",
+      "keywords": ["triage", "alerts", "soc", "incident", "ioc", "phishing", "landfall"],
+      "flows": ["./flows/alert-triage-to-landfall.json", "./flows/phishing-report-triage.json", "./flows/triage-digest.json"]
+    },
+    {
+      "name": "landfall",
+      "source": "./plugins/landfall",
+      "description": "Landfall nodes: open, attach and recover incidents from alerts, declare rooms, read and add to timelines, record fixes applied outside Landfall, heartbeats, and a trigger for opened and ended rooms. Flows: workflow failures and a heartbeat into Landfall, and lessons from closed rooms.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "incident-response",
+      "keywords": ["landfall", "incident", "war room", "on-call", "heartbeat"],
+      "flows": ["./flows/landflow-failures-to-landfall.json", "./flows/landflow-heartbeat.json", "./flows/learn-from-closed-rooms.json"]
+    },
+    {
+      "name": "threat-intel",
+      "source": "./plugins/threat-intel",
+      "description": "Read-only threat intel in Go: VirusTotal, AbuseIPDB, GreyNoise, urlscan.io, Shodan, AlienVault OTX and MISP, plus IOC Enrich, which asks all of them at once with a cache and one verdict. Flow: an IOC lookup API.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "security",
+      "keywords": ["threat intel", "ioc", "virustotal", "abuseipdb", "greynoise", "urlscan", "shodan", "otx", "misp"],
+      "flows": ["./flows/ioc-lookup.json"]
+    }
+  ]
+}

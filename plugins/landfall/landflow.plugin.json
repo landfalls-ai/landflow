@@ -1,0 +1,5 @@
+{
+  "id": "landfall",
+  "runtime": "node",
+  "start": ["tsx", "src/main.ts"]
+}

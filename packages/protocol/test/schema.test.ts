@@ -15,7 +15,7 @@ const minimal = (): PluginManifest => ({
 
 describe('manifest schema: backward compatible', () => {
   it('still validates every bundled plugin manifest (no new field is required)', () => {
-    expect(bundled.length).toBe(7);
+    expect(bundled.length).toBe(10);
     for (const manifest of bundled) expect(parseManifest(manifest), manifest.plugin.id).toMatchObject({ ok: true });
   });
 

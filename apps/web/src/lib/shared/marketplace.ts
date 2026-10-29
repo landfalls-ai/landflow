@@ -1,9 +1,10 @@
 /**
  * Marketplaces (docs/marketplace.md): Claude Code plugin marketplaces whose agents and skills
  * install as Landflow agents and library skills, plus Landflow node plugins the host runs.
- * Types shared by the API routes and the React client. No runtime imports.
+ * Types shared by the API routes and the React client (and `flowLink`). No runtime imports.
  */
 import type { AgentSkill } from './agents';
+import type { TemplateDetail } from './templates';
 
 /** Where a marketplace's `.claude-plugin/marketplace.json` comes from. */
 export type MarketplaceLocation =
@@ -51,7 +52,60 @@ export interface CatalogPlugin {
   unsupportedReason?: string;
   /** The entry declares a Landflow node plugin (`landflow` field). */
   landflow: boolean;
+  /** Flows the entry lists (`flows` field); the plugin's `flows/` folder may hold more, counted once it is read. */
+  flows: number;
   installed: boolean;
+}
+
+/**
+ * A flow a plugin ships: a Landflow template file (`landflow/template`, version 1) under `flows/`, or listed in the
+ * entry's or plugin.json's `flows`. Installing the plugin adds it to Templates, instance-wide.
+ */
+export interface MarketplaceFlow {
+  /** The file inside the plugin. */
+  path: string;
+  name: string;
+  description: string;
+  categories: string[];
+  /** Distinct node types it uses. */
+  nodeTypes: string[];
+  nodeCount: number;
+  /** Credential slots it asks for when used. */
+  credentials: string[];
+  /** Node types neither on this instance nor from this plugin's own node plugin: the template says "Needs a plugin". */
+  needs: string[];
+  /** Its share page (`flowLink`), filled in with `needs`. */
+  link?: string;
+}
+
+/** A flow's contents as its share page shows them: Templates' view of the file, nothing saved. */
+export type FlowPreview = Pick<TemplateDetail, 'name' | 'description' | 'categories' | 'credentials' | 'setup' | 'dataTables' | 'workflow' | 'nodeTypes' | 'nodeCount' | 'problems'>;
+
+/**
+ * GET /api/marketplaces/:id/plugins/:name/flow?path= — one flow for its share page, read only (no run, no test; the
+ * page installs the plugin). `:id` is the marketplace's id or its name, so a link works on every instance that added
+ * the same marketplace.
+ */
+export interface MarketplaceFlowView {
+  marketplace: Pick<MarketplaceSummary, 'id' | 'name' | 'description' | 'owner' | 'location'>;
+  plugin: CatalogPlugin;
+  flow: MarketplaceFlow;
+  template: FlowPreview;
+  /** All the plugin's flows (this one included), for the page's list. */
+  flows: Array<Pick<MarketplaceFlow, 'path' | 'name'>>;
+  /** The plugin is installed: the template this flow became, where "Use template" is. */
+  templateId?: string;
+  /** This page's link (see `flowLink`). */
+  link: string;
+}
+
+/**
+ * A flow's share link: `/marketplace/flows/<marketplace name>/<plugin>/<path in the plugin>`, plus `?source=` (what
+ * "Add marketplace" takes) so an instance that hasn't added the marketplace can offer to.
+ */
+export function flowLink(marketplace: string, plugin: string, path: string, source?: string): string {
+  const parts = [marketplace, plugin, ...path.split('/').filter(Boolean)].map(encodeURIComponent).join('/');
+  return `/marketplace/flows/${parts}${source ? `?source=${encodeURIComponent(source)}` : ''}`;
 }
 
 export interface Catalog {
@@ -118,6 +172,7 @@ export interface PluginDetail {
   skills: ClaudeSkillFile[];
   unsupported: UnsupportedComponent[];
   nodePlugin?: NodePluginManifest;
+  flows: MarketplaceFlow[];
   readme?: string;
   /** Things that didn't load (a skill without SKILL.md, a file too large…). */
   warnings: string[];
@@ -144,6 +199,8 @@ export interface InstalledPlugin {
   installedAt: string;
   agents: Array<{ id: string; name: string }>;
   skills: Array<{ id: string; name: string }>;
+  /** Templates made from the plugin's flows (instance-wide); uninstall deletes them. */
+  templates?: Array<{ id: string; name: string }>;
   unsupported: UnsupportedComponent[];
   nodePlugin?: {
     pluginId: string;

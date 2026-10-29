@@ -1,0 +1,81 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Landflow failures → Landfall",
+    "description": "When a workflow fails, open (or attach to) a Landfall incident with the workflow, the failing node, the error and a link to the execution.",
+    "categories": [
+      "incident-response",
+      "it-ops"
+    ],
+    "credentials": [
+      {
+        "id": "landfall",
+        "type": "landfall.landfallApi",
+        "name": "Landfall",
+        "description": "Base URL, org slug, an lf_key_ API key, the remote-source ingest token and its connection ID."
+      }
+    ],
+    "setup": [
+      "Pick the **Landfall** credential (a remote-source connection: base URL, org slug, API key, ingest token, connection ID).",
+      "Make this the error workflow of the workflows that matter: their **Settings → Error workflow**.",
+      "Repeat failures of the same node attach to the open room (the dedup key is workflow and node), so a flapping workflow is one room, not twenty."
+    ],
+    "dataTables": [],
+    "workflow": {
+      "name": "Landflow failures → Landfall",
+      "description": "When a workflow fails, open (or attach to) a Landfall incident with the workflow, the failing node, the error and a link to the execution.",
+      "nodes": [
+        {
+          "id": "failed",
+          "name": "Error Trigger",
+          "type": "core.errorTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {}
+        },
+        {
+          "id": "open",
+          "name": "Open in Landfall",
+          "type": "landfall.landfall",
+          "typeVersion": 1,
+          "position": [
+            280,
+            0
+          ],
+          "parameters": {
+            "resource": "incident",
+            "operation": "openFromAlert",
+            "title": "{{ $json.workflow.name }} failed",
+            "severity": "sev3",
+            "additionalFields": {
+              "dedupKey": "landflow:{{ $json.workflow.id }}:{{ $json.execution.lastNodeExecuted }}",
+              "entityHints": "service:landflow, workflow:{{ $json.workflow.name }}",
+              "summary": "“{{ $json.workflow.name }}” failed at {{ $json.execution.lastNodeExecuted }}: {{ $json.execution.error.message }}",
+              "url": "{{ $json.execution.url }}"
+            }
+          },
+          "credentials": {
+            "landfallApi": {
+              "id": "landfall",
+              "name": "Landfall"
+            }
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "failed",
+          "sourceIndex": 0,
+          "target": "open",
+          "targetIndex": 0
+        }
+      ]
+    }
+  }
+}

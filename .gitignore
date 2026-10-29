@@ -12,5 +12,6 @@ __pycache__/
 plugins/go-crypto/go-crypto
 plugins/databases/databases
 plugins/google-workspace/google-workspace
+plugins/threat-intel/threat-intel
 .DS_Store
 .otel/

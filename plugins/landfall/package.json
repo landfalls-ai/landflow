@@ -1,0 +1,23 @@
+{
+  "name": "@landflow/plugin-landfall",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Landfall for Landflow: open, attach and recover Landfall incidents, read rooms, record fixes applied outside Landfall, heartbeats, and a Landfall Trigger.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "fake-landfall": "tsx test/fake-landfall.ts"
+  },
+  "dependencies": {
+    "@landflow/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "vitest": "^5.0.5",
+    "@landflow/protocol": "workspace:*"
+  }
+}

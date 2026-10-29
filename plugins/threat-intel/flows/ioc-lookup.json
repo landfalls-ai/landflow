@@ -1,0 +1,150 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "IOC lookup API",
+    "description": "A small read-only endpoint for analysts and other tools: POST an IP, domain, URL or hash and get one verdict across VirusTotal, AbuseIPDB, GreyNoise and urlscan.io.",
+    "categories": [
+      "security"
+    ],
+    "credentials": [
+      {
+        "id": "alertWebhook",
+        "type": "core.httpHeaderAuth",
+        "name": "Webhook secret",
+        "description": "A header name and secret your senders put on every request (for example Authorization: Bearer …)."
+      },
+      {
+        "id": "virustotal",
+        "type": "threat-intel.virusTotalApi",
+        "name": "VirusTotal",
+        "description": "A VirusTotal API key.",
+        "optional": true
+      },
+      {
+        "id": "abuseipdb",
+        "type": "threat-intel.abuseIpDbApi",
+        "name": "AbuseIPDB",
+        "description": "An AbuseIPDB API key.",
+        "optional": true
+      },
+      {
+        "id": "greynoise",
+        "type": "threat-intel.greyNoiseApi",
+        "name": "GreyNoise",
+        "description": "A GreyNoise key (the community API works without one).",
+        "optional": true
+      },
+      {
+        "id": "urlscan",
+        "type": "threat-intel.urlscanApi",
+        "name": "urlscan.io",
+        "description": "A urlscan.io API key.",
+        "optional": true
+      }
+    ],
+    "setup": [
+      "Add the threat intel keys you have to **Enrich**: each service runs only with its credential.",
+      "POST `{ \"ioc\": \"1.2.3.4\" }` (or `{ \"iocs\": [\"evil.example\", \"…\"] }`) to the webhook with the **Webhook secret** header; the answer is the verdict, score, reasons and each service’s result.",
+      "Lookups are cached for an hour; private and reserved addresses are never sent out."
+    ],
+    "dataTables": [],
+    "workflow": {
+      "name": "IOC lookup API",
+      "description": "A small read-only endpoint for analysts and other tools: POST an IP, domain, URL or hash and get one verdict across VirusTotal, AbuseIPDB, GreyNoise and urlscan.io.",
+      "nodes": [
+        {
+          "id": "hook",
+          "name": "Look up an IOC",
+          "type": "core.webhook",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {
+            "path": "ioc-lookup",
+            "method": "POST",
+            "authentication": "headerAuth",
+            "respond": "responseNode"
+          },
+          "credentials": {
+            "httpHeaderAuth": {
+              "id": "alertWebhook",
+              "name": "Webhook secret"
+            }
+          }
+        },
+        {
+          "id": "enrich",
+          "name": "Enrich",
+          "type": "threat-intel.iocEnrich",
+          "typeVersion": 1,
+          "position": [
+            280,
+            0
+          ],
+          "parameters": {
+            "iocPath": "body.ioc",
+            "iocsPath": "body.iocs",
+            "cacheTtl": 3600,
+            "options": {
+              "keepInput": false,
+              "outputField": "result"
+            }
+          },
+          "credentials": {
+            "virusTotalApi": {
+              "id": "virustotal",
+              "name": "VirusTotal"
+            },
+            "abuseIpDbApi": {
+              "id": "abuseipdb",
+              "name": "AbuseIPDB"
+            },
+            "greyNoiseApi": {
+              "id": "greynoise",
+              "name": "GreyNoise"
+            },
+            "urlscanApi": {
+              "id": "urlscan",
+              "name": "urlscan.io"
+            }
+          }
+        },
+        {
+          "id": "reply",
+          "name": "Respond",
+          "type": "core.respondToWebhook",
+          "typeVersion": 1,
+          "position": [
+            560,
+            0
+          ],
+          "parameters": {
+            "respondWith": "json",
+            "responseBody": "{{ JSON.stringify($json.result) }}"
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "hook",
+          "sourceIndex": 0,
+          "target": "enrich",
+          "targetIndex": 0
+        },
+        {
+          "id": "c2",
+          "type": "main",
+          "source": "enrich",
+          "sourceIndex": 0,
+          "target": "reply",
+          "targetIndex": 0
+        }
+      ]
+    }
+  }
+}

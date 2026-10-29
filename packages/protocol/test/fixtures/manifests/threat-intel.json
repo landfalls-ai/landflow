@@ -1,0 +1,1673 @@
+{
+  "protocol": "landflow.plugin/v1",
+  "plugin": {
+    "id": "threat-intel",
+    "name": "Threat Intel",
+    "version": "0.1.0",
+    "description": "Look up IPs, domains, URLs and file hashes in VirusTotal, AbuseIPDB, GreyNoise, urlscan.io, Shodan, AlienVault OTX and MISP, or enrich them all at once with IOC Enrich.",
+    "language": "go",
+    "sdk": {
+      "name": "landflow-sdk-go",
+      "version": "0.2.0"
+    },
+    "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+    "color": "#0F766E",
+    "author": "Landflow"
+  },
+  "nodes": [
+    {
+      "name": "virusTotal",
+      "displayName": "VirusTotal",
+      "description": "Look up an IP address, domain, URL or file hash in VirusTotal",
+      "version": 1,
+      "kind": "action",
+      "idempotent": true,
+      "categories": [
+        "Security"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "color": "#0F766E",
+      "subtitle": "{{operation}}: {{resource}}",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "default": "ip",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "IP Address",
+              "value": "ip"
+            },
+            {
+              "name": "Domain",
+              "value": "domain"
+            },
+            {
+              "name": "URL",
+              "value": "url"
+            },
+            {
+              "name": "File",
+              "value": "file"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "get",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Get",
+              "value": "get",
+              "description": "Get the reputation of this indicator",
+              "action": "Get IP address report",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "ip"
+              ]
+            }
+          }
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "get",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Get",
+              "value": "get",
+              "description": "Get the reputation of this indicator",
+              "action": "Get domain report",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "domain"
+              ]
+            }
+          }
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "get",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Get",
+              "value": "get",
+              "description": "Get the reputation of this indicator",
+              "action": "Get URL report",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "url"
+              ]
+            }
+          }
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "get",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Get",
+              "value": "get",
+              "description": "Get the reputation of this indicator",
+              "action": "Get file report",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "file"
+              ]
+            }
+          }
+        },
+        {
+          "name": "ip",
+          "displayName": "IP Address",
+          "type": "string",
+          "default": "",
+          "description": "IPv4 or IPv6 address",
+          "placeholder": "8.8.8.8",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "get"
+              ],
+              "resource": [
+                "ip"
+              ]
+            }
+          }
+        },
+        {
+          "name": "domain",
+          "displayName": "Domain",
+          "type": "string",
+          "default": "",
+          "description": "Domain name",
+          "placeholder": "example.com",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "get"
+              ],
+              "resource": [
+                "domain"
+              ]
+            }
+          }
+        },
+        {
+          "name": "url",
+          "displayName": "URL",
+          "type": "string",
+          "default": "",
+          "description": "The full URL; it is encoded as VirusTotal's URL identifier (base64url without padding)",
+          "placeholder": "https://example.com/path",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "get"
+              ],
+              "resource": [
+                "url"
+              ]
+            }
+          }
+        },
+        {
+          "name": "hash",
+          "displayName": "File Hash",
+          "type": "string",
+          "default": "",
+          "description": "MD5, SHA-1 or SHA-256",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "get"
+              ],
+              "resource": [
+                "file"
+              ]
+            }
+          }
+        },
+        {
+          "name": "simple",
+          "displayName": "Simplify",
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to return {malicious, suspicious, harmless, undetected, reputation, lastAnalysisDate, link} instead of the full report"
+        }
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Look up an indicator in VirusTotal (read only). resource=ip needs ip, domain needs domain, url needs url and file needs hash (MD5, SHA-1 or SHA-256); operation=get. Returns how many engines flag it (malicious, suspicious, harmless, undetected), its reputation and a link; simple=false returns the full report.",
+      "documentationUrl": "https://docs.virustotal.com/reference/overview",
+      "keywords": [
+        "threat intel",
+        "ioc",
+        "security",
+        "soc",
+        "reputation",
+        "virustotal",
+        "vt",
+        "ip",
+        "domain",
+        "url",
+        "hash",
+        "file",
+        "malware"
+      ],
+      "credentials": [
+        {
+          "name": "virusTotalApi",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "abuseIpDb",
+      "displayName": "AbuseIPDB",
+      "description": "Check an IP address against AbuseIPDB's abuse reports",
+      "version": 1,
+      "kind": "action",
+      "idempotent": true,
+      "categories": [
+        "Security"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "color": "#0F766E",
+      "subtitle": "{{operation}}: {{resource}}",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "default": "ip",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "IP Address",
+              "value": "ip"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "check",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Check",
+              "value": "check",
+              "description": "Check the abuse reports of an IP address",
+              "action": "Check an IP address",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "ip"
+              ]
+            }
+          }
+        },
+        {
+          "name": "ip",
+          "displayName": "IP Address",
+          "type": "string",
+          "default": "",
+          "description": "IPv4 or IPv6 address",
+          "placeholder": "8.8.8.8",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "check"
+              ],
+              "resource": [
+                "ip"
+              ]
+            }
+          }
+        },
+        {
+          "name": "maxAgeInDays",
+          "displayName": "Max Age in Days",
+          "type": "number",
+          "default": 30,
+          "description": "Only reports newer than this count (1-365)",
+          "typeOptions": {
+            "minValue": 1,
+            "maxValue": 365,
+            "numberPrecision": 0
+          },
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "check"
+              ],
+              "resource": [
+                "ip"
+              ]
+            }
+          }
+        },
+        {
+          "name": "verbose",
+          "displayName": "Verbose",
+          "type": "boolean",
+          "default": false,
+          "description": "Whether to include the individual reports (reportedAt, comment, categories…)",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "check"
+              ],
+              "resource": [
+                "ip"
+              ]
+            }
+          }
+        }
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Check an IP address in AbuseIPDB (read only): resource=ip, operation=check, ip, optional maxAgeInDays (1-365, default 30) and verbose (adds the report list). Returns abuseConfidenceScore (0-100), totalReports, country, ISP and usage type.",
+      "documentationUrl": "https://docs.abuseipdb.com/#check-endpoint",
+      "keywords": [
+        "threat intel",
+        "ioc",
+        "security",
+        "soc",
+        "reputation",
+        "abuseipdb",
+        "abuse",
+        "ip",
+        "blacklist"
+      ],
+      "credentials": [
+        {
+          "name": "abuseIpDbApi",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "greyNoise",
+      "displayName": "GreyNoise",
+      "description": "Look up an IP address in GreyNoise's Community API: is it internet background noise or a known benign service?",
+      "version": 1,
+      "kind": "action",
+      "idempotent": true,
+      "categories": [
+        "Security"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "color": "#0F766E",
+      "subtitle": "{{operation}}: {{resource}}",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "default": "ip",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "IP Address",
+              "value": "ip"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "get",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Get",
+              "value": "get",
+              "description": "Look up an IP address in the Community API",
+              "action": "Look up an IP address",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "ip"
+              ]
+            }
+          }
+        },
+        {
+          "name": "ip",
+          "displayName": "IP Address",
+          "type": "string",
+          "default": "",
+          "description": "IPv4 address",
+          "placeholder": "8.8.8.8",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "get"
+              ],
+              "resource": [
+                "ip"
+              ]
+            }
+          }
+        }
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Look up an IP address in GreyNoise Community (read only): resource=ip, operation=get, ip. Returns noise (it scans the internet), riot (a known benign service), classification (benign, malicious or unknown), name and last_seen. seen=false means GreyNoise has never observed the IP, which is a normal answer.",
+      "documentationUrl": "https://docs.greynoise.io/reference/get_v3-community-ip",
+      "keywords": [
+        "threat intel",
+        "ioc",
+        "security",
+        "soc",
+        "reputation",
+        "greynoise",
+        "noise",
+        "riot",
+        "scanner",
+        "ip"
+      ],
+      "credentials": [
+        {
+          "name": "greyNoiseApi"
+        }
+      ]
+    },
+    {
+      "name": "urlscan",
+      "displayName": "urlscan.io",
+      "description": "Search urlscan.io's existing scans and read a scan result",
+      "version": 1,
+      "kind": "action",
+      "idempotent": true,
+      "categories": [
+        "Security"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "color": "#0F766E",
+      "subtitle": "{{operation}}: {{resource}}",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "default": "scan",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Scan",
+              "value": "scan"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "search",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Search",
+              "value": "search",
+              "description": "Search existing scans",
+              "action": "Search scans",
+              "idempotent": true
+            },
+            {
+              "name": "Get Result",
+              "value": "getResult",
+              "description": "Get the result of a scan by its UUID",
+              "action": "Get a scan result",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "scan"
+              ]
+            }
+          }
+        },
+        {
+          "name": "query",
+          "displayName": "Query",
+          "type": "string",
+          "default": "",
+          "description": "urlscan.io search query",
+          "placeholder": "domain:example.com",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "search"
+              ],
+              "resource": [
+                "scan"
+              ]
+            }
+          }
+        },
+        {
+          "name": "size",
+          "displayName": "Size",
+          "type": "number",
+          "default": 20,
+          "description": "Max number of results to return",
+          "typeOptions": {
+            "minValue": 1,
+            "maxValue": 1000,
+            "numberPrecision": 0
+          },
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "search"
+              ],
+              "resource": [
+                "scan"
+              ]
+            }
+          }
+        },
+        {
+          "name": "uuid",
+          "displayName": "Scan UUID",
+          "type": "string",
+          "default": "",
+          "description": "The scan's UUID",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "getResult"
+              ],
+              "resource": [
+                "scan"
+              ]
+            }
+          }
+        },
+        {
+          "name": "simple",
+          "displayName": "Simplify",
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to return a compact summary instead of urlscan.io's full JSON",
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "scan"
+              ]
+            }
+          }
+        }
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Read urlscan.io scans (read only, never submits a scan). resource=scan; operation=search needs query (urlscan search syntax, for example domain:example.com or ip:\"1.2.3.4\") and optional size; operation=getResult needs uuid and returns the page, verdicts (score, malicious, categories) and a link.",
+      "documentationUrl": "https://urlscan.io/docs/api/",
+      "keywords": [
+        "threat intel",
+        "ioc",
+        "security",
+        "soc",
+        "reputation",
+        "urlscan",
+        "scan",
+        "url",
+        "domain",
+        "phishing"
+      ],
+      "credentials": [
+        {
+          "name": "urlscanApi",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "shodan",
+      "displayName": "Shodan",
+      "description": "Look up what Shodan knows about an IP address, or resolve hostnames",
+      "version": 1,
+      "kind": "action",
+      "idempotent": true,
+      "categories": [
+        "Security"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "color": "#0F766E",
+      "subtitle": "{{operation}}: {{resource}}",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "default": "host",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Host",
+              "value": "host"
+            },
+            {
+              "name": "DNS",
+              "value": "dns"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "get",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Get",
+              "value": "get",
+              "description": "Get the information Shodan has about an IP address",
+              "action": "Get a host",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "host"
+              ]
+            }
+          }
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "lookup",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Resolve",
+              "value": "lookup",
+              "description": "Resolve hostnames to IP addresses",
+              "action": "Resolve hostnames",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "dns"
+              ]
+            }
+          }
+        },
+        {
+          "name": "ip",
+          "displayName": "IP Address",
+          "type": "string",
+          "default": "",
+          "description": "IPv4 or IPv6 address",
+          "placeholder": "8.8.8.8",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "get"
+              ],
+              "resource": [
+                "host"
+              ]
+            }
+          }
+        },
+        {
+          "name": "simple",
+          "displayName": "Simplify",
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to return {ip, found, hostnames, domains, org, isp, country, os, ports, vulns, tags, lastUpdate, link} instead of Shodan's full banner data",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "get"
+              ],
+              "resource": [
+                "host"
+              ]
+            }
+          }
+        },
+        {
+          "name": "hostnames",
+          "displayName": "Hostnames",
+          "type": "string",
+          "default": "",
+          "description": "Comma-separated hostnames",
+          "placeholder": "example.com,www.example.com",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "lookup"
+              ],
+              "resource": [
+                "dns"
+              ]
+            }
+          }
+        }
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Query Shodan (read only). resource=host, operation=get, ip: open ports, services, vulnerabilities, hostnames, organisation and tags for the IP (found=false when Shodan has no data). resource=dns, operation=lookup, hostnames (comma-separated): the IP address of each hostname.",
+      "documentationUrl": "https://developer.shodan.io/api",
+      "keywords": [
+        "threat intel",
+        "ioc",
+        "security",
+        "soc",
+        "reputation",
+        "shodan",
+        "ports",
+        "exposure",
+        "dns",
+        "host",
+        "ip"
+      ],
+      "credentials": [
+        {
+          "name": "shodanApi",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "alienVaultOtx",
+      "displayName": "AlienVault OTX",
+      "description": "Look up an indicator in AlienVault OTX and see the threat pulses that mention it",
+      "version": 1,
+      "kind": "action",
+      "idempotent": true,
+      "categories": [
+        "Security"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "color": "#0F766E",
+      "subtitle": "{{operation}}: {{resource}}",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "default": "indicator",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Indicator",
+              "value": "indicator"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "get",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Get",
+              "value": "get",
+              "description": "Get the general section of an indicator",
+              "action": "Get an indicator",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "indicator"
+              ]
+            }
+          }
+        },
+        {
+          "name": "indicatorType",
+          "displayName": "Indicator Type",
+          "type": "options",
+          "default": "IPv4",
+          "options": [
+            {
+              "name": "IPv4",
+              "value": "IPv4"
+            },
+            {
+              "name": "IPv6",
+              "value": "IPv6"
+            },
+            {
+              "name": "Domain",
+              "value": "domain"
+            },
+            {
+              "name": "Hostname",
+              "value": "hostname"
+            },
+            {
+              "name": "URL",
+              "value": "url"
+            },
+            {
+              "name": "File Hash",
+              "value": "file"
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "get"
+              ],
+              "resource": [
+                "indicator"
+              ]
+            }
+          }
+        },
+        {
+          "name": "indicator",
+          "displayName": "Indicator",
+          "type": "string",
+          "default": "",
+          "description": "The IP address, domain, hostname, URL or file hash (MD5, SHA-1 or SHA-256)",
+          "placeholder": "8.8.8.8",
+          "required": true,
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "get"
+              ],
+              "resource": [
+                "indicator"
+              ]
+            }
+          }
+        },
+        {
+          "name": "simple",
+          "displayName": "Simplify",
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to return {indicator, type, found, pulseCount, pulses, reputation, country, asn, link} instead of OTX's full general section",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "get"
+              ],
+              "resource": [
+                "indicator"
+              ]
+            }
+          }
+        }
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Look up an indicator in AlienVault OTX (read only): resource=indicator, operation=get, indicatorType (IPv4, IPv6, domain, hostname, url or file) and indicator. Returns the pulse count and names, reputation, country and ASN for the general section; found=false when OTX has no record.",
+      "documentationUrl": "https://otx.alienvault.com/api",
+      "keywords": [
+        "threat intel",
+        "ioc",
+        "security",
+        "soc",
+        "reputation",
+        "otx",
+        "alienvault",
+        "pulse",
+        "ioc",
+        "indicator"
+      ],
+      "credentials": [
+        {
+          "name": "otxApi",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "misp",
+      "displayName": "MISP",
+      "description": "Search the attributes of your own MISP instance for an indicator",
+      "version": 1,
+      "kind": "action",
+      "idempotent": true,
+      "categories": [
+        "Security"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "color": "#0F766E",
+      "subtitle": "{{operation}}: {{resource}}",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "resource",
+          "displayName": "Resource",
+          "type": "options",
+          "default": "attribute",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Attribute",
+              "value": "attribute"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "type": "options",
+          "default": "search",
+          "noDataExpression": true,
+          "options": [
+            {
+              "name": "Search",
+              "value": "search",
+              "description": "Search attributes with restSearch",
+              "action": "Search attributes",
+              "idempotent": true
+            }
+          ],
+          "displayOptions": {
+            "show": {
+              "resource": [
+                "attribute"
+              ]
+            }
+          }
+        },
+        {
+          "name": "value",
+          "displayName": "Value",
+          "type": "string",
+          "default": "",
+          "description": "The indicator to find, such as an IP, domain, URL or hash",
+          "placeholder": "198.51.100.7",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "search"
+              ],
+              "resource": [
+                "attribute"
+              ]
+            }
+          }
+        },
+        {
+          "name": "type",
+          "displayName": "Type",
+          "type": "string",
+          "default": "",
+          "description": "An attribute type, or several separated by commas",
+          "placeholder": "ip-dst",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "search"
+              ],
+              "resource": [
+                "attribute"
+              ]
+            }
+          }
+        },
+        {
+          "name": "tags",
+          "displayName": "Tags",
+          "type": "string",
+          "default": "",
+          "description": "Only attributes with these tags, separated by commas",
+          "placeholder": "tlp:white",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "search"
+              ],
+              "resource": [
+                "attribute"
+              ]
+            }
+          }
+        },
+        {
+          "name": "last",
+          "displayName": "Last",
+          "type": "string",
+          "default": "",
+          "description": "Only attributes newer than this age",
+          "placeholder": "7d",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "search"
+              ],
+              "resource": [
+                "attribute"
+              ]
+            }
+          }
+        },
+        {
+          "name": "limit",
+          "displayName": "Limit",
+          "type": "number",
+          "default": 50,
+          "description": "Max number of attributes to return",
+          "typeOptions": {
+            "minValue": 1,
+            "maxValue": 1000,
+            "numberPrecision": 0
+          },
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "search"
+              ],
+              "resource": [
+                "attribute"
+              ]
+            }
+          }
+        },
+        {
+          "name": "simple",
+          "displayName": "Simplify",
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to return compact attributes ({id, eventId, type, category, value, toIds, timestamp, comment, tags, eventInfo, link}) instead of MISP's full JSON",
+          "displayOptions": {
+            "show": {
+              "operation": [
+                "search"
+              ],
+              "resource": [
+                "attribute"
+              ]
+            }
+          }
+        }
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Search a MISP instance's attributes (read only): resource=attribute, operation=search, with at least one of value (an IP, domain, URL or hash; use % as a wildcard), type (for example ip-dst, domain, md5), tags (comma-separated), last (age, for example 7d or 12h), and optional limit. Returns the matching attributes with their event and tags.",
+      "documentationUrl": "https://www.misp-project.org/openapi/#tag/Attributes/operation/restSearchAttributes",
+      "keywords": [
+        "threat intel",
+        "ioc",
+        "security",
+        "soc",
+        "reputation",
+        "misp",
+        "ioc",
+        "attribute",
+        "threat sharing",
+        "event"
+      ],
+      "credentials": [
+        {
+          "name": "mispApi",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "iocEnrich",
+      "displayName": "IOC Enrich",
+      "description": "Enrich IPs, domains, URLs and file hashes with every threat-intel service you attach, and get one verdict",
+      "version": 1,
+      "kind": "action",
+      "idempotent": true,
+      "categories": [
+        "Security"
+      ],
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "color": "#0F766E",
+      "subtitle": "threat intel verdict",
+      "inputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "main"
+        }
+      ],
+      "properties": [
+        {
+          "name": "iocPath",
+          "displayName": "IOC Field",
+          "type": "string",
+          "default": "ioc",
+          "description": "Dot path to the item's IOC: an object {type, value} or a plain string. Used when the item has no IOCs array.",
+          "placeholder": "alert.ioc"
+        },
+        {
+          "name": "typePath",
+          "displayName": "Type Field",
+          "type": "string",
+          "default": "type",
+          "description": "Dot path to the IOC type (ip, domain, url or hash; empty or auto detects it). Used when the item has no IOC object."
+        },
+        {
+          "name": "valuePath",
+          "displayName": "Value Field",
+          "type": "string",
+          "default": "value",
+          "description": "Dot path to the IOC value. Used when the item has no IOC object."
+        },
+        {
+          "name": "iocsPath",
+          "displayName": "IOCs Array Field",
+          "type": "string",
+          "default": "iocs",
+          "description": "Dot path to an array of IOCs ({type, value} objects or plain strings). When the item has one, it wins over the single IOC fields."
+        },
+        {
+          "name": "services",
+          "displayName": "Services",
+          "type": "multiOptions",
+          "default": [
+            "virustotal",
+            "abuseipdb",
+            "greynoise",
+            "urlscan",
+            "shodan",
+            "otx",
+            "misp"
+          ],
+          "description": "Which services may be asked. A service also needs its credential attached to this node (GreyNoise's key is optional but the credential is not).",
+          "options": [
+            {
+              "name": "VirusTotal",
+              "value": "virustotal",
+              "description": "IP, domain, URL, hash"
+            },
+            {
+              "name": "AbuseIPDB",
+              "value": "abuseipdb",
+              "description": "IP"
+            },
+            {
+              "name": "GreyNoise",
+              "value": "greynoise",
+              "description": "IP"
+            },
+            {
+              "name": "urlscan.io",
+              "value": "urlscan",
+              "description": "IP, domain, URL"
+            },
+            {
+              "name": "Shodan",
+              "value": "shodan",
+              "description": "IP"
+            },
+            {
+              "name": "AlienVault OTX",
+              "value": "otx",
+              "description": "IP, domain, URL, hash"
+            },
+            {
+              "name": "MISP",
+              "value": "misp",
+              "description": "IP, domain, URL, hash"
+            }
+          ]
+        },
+        {
+          "name": "cacheTtl",
+          "displayName": "Cache TTL (Seconds)",
+          "type": "number",
+          "default": 3600,
+          "description": "How long a service's answer is reused for the same IOC, so a burst of alerts does not spend the API quota. 0 turns the cache off. The cache lives in the plugin process; failed lookups are never cached.",
+          "typeOptions": {
+            "minValue": 0,
+            "numberPrecision": 0
+          }
+        },
+        {
+          "name": "options",
+          "displayName": "Options",
+          "type": "collection",
+          "default": {},
+          "placeholder": "Add Option",
+          "values": [
+            {
+              "name": "enrichAll",
+              "displayName": "Enrich Every Array Element",
+              "type": "boolean",
+              "default": true,
+              "description": "When the item has an IOCs array, enrich every element (off: only the first)"
+            },
+            {
+              "name": "concurrency",
+              "displayName": "Concurrency",
+              "type": "number",
+              "default": 4,
+              "description": "How many service calls run at once (1-10)",
+              "typeOptions": {
+                "minValue": 1,
+                "maxValue": 10,
+                "numberPrecision": 0
+              }
+            },
+            {
+              "name": "maliciousThreshold",
+              "displayName": "Malicious From Score",
+              "type": "number",
+              "default": 70,
+              "description": "The overall verdict is malicious when the highest service score reaches this (or a service says malicious)",
+              "typeOptions": {
+                "minValue": 1,
+                "maxValue": 100,
+                "numberPrecision": 0
+              }
+            },
+            {
+              "name": "suspiciousThreshold",
+              "displayName": "Suspicious From Score",
+              "type": "number",
+              "default": 30,
+              "description": "The overall verdict is suspicious when the highest service score reaches this",
+              "typeOptions": {
+                "minValue": 1,
+                "maxValue": 100,
+                "numberPrecision": 0
+              }
+            },
+            {
+              "name": "outputField",
+              "displayName": "Output Field",
+              "type": "string",
+              "default": "threatIntel",
+              "description": "The item field that receives the result"
+            },
+            {
+              "name": "keepInput",
+              "displayName": "Keep Input Fields",
+              "type": "boolean",
+              "default": true,
+              "description": "Whether the output item keeps the input item's fields next to the result"
+            }
+          ]
+        }
+      ],
+      "usableAsTool": true,
+      "toolDescription": "Enrich indicators of compromise with threat intelligence (read only). Give value (and type: ip, domain, url or hash; detected when omitted) or an iocs array of {type, value}. Asks every configured service that supports the type and returns threatIntel: verdict (malicious, suspicious, clean or unknown), score (0-100 or null), reasons and one result per service. Private, reserved and loopback IPs are skipped.",
+      "toolInputSchema": {
+        "properties": {
+          "iocs": {
+            "description": "Several indicators at once",
+            "items": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "ip",
+                    "domain",
+                    "url",
+                    "hash"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "type": {
+            "description": "What value is; detected when omitted",
+            "enum": [
+              "ip",
+              "domain",
+              "url",
+              "hash"
+            ],
+            "type": "string"
+          },
+          "value": {
+            "description": "The IP address, domain, URL or file hash (defanged forms such as hxxp://evil[.]com are accepted)",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "toolAnnotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "keywords": [
+        "ioc",
+        "enrich",
+        "threat intel",
+        "triage",
+        "soc",
+        "reputation",
+        "verdict",
+        "virustotal",
+        "abuseipdb"
+      ],
+      "credentials": [
+        {
+          "name": "virusTotalApi"
+        },
+        {
+          "name": "abuseIpDbApi"
+        },
+        {
+          "name": "greyNoiseApi"
+        },
+        {
+          "name": "urlscanApi"
+        },
+        {
+          "name": "shodanApi"
+        },
+        {
+          "name": "otxApi"
+        },
+        {
+          "name": "mispApi"
+        }
+      ]
+    }
+  ],
+  "credentialTypes": [
+    {
+      "name": "virusTotalApi",
+      "displayName": "VirusTotal API",
+      "description": "A VirusTotal API key (v3), sent as the x-apikey header. The free key is rate limited; see the plugin README.",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "documentationUrl": "https://docs.virustotal.com/reference/overview",
+      "properties": [
+        {
+          "name": "apiKey",
+          "displayName": "API Key",
+          "type": "string",
+          "default": "",
+          "description": "From your VirusTotal profile",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          }
+        },
+        {
+          "name": "baseUrl",
+          "displayName": "API Base URL",
+          "type": "string",
+          "default": "",
+          "description": "Replaces the service's host for every call and keeps the paths",
+          "placeholder": "https://misp.example.org"
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "abuseIpDbApi",
+      "displayName": "AbuseIPDB API",
+      "description": "An AbuseIPDB v2 API key, sent as the Key header.",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "documentationUrl": "https://docs.abuseipdb.com/",
+      "properties": [
+        {
+          "name": "apiKey",
+          "displayName": "API Key",
+          "type": "string",
+          "default": "",
+          "description": "From your AbuseIPDB account",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          }
+        },
+        {
+          "name": "baseUrl",
+          "displayName": "API Base URL",
+          "type": "string",
+          "default": "",
+          "description": "Replaces the service's host for every call and keeps the paths",
+          "placeholder": "https://misp.example.org"
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "greyNoiseApi",
+      "displayName": "GreyNoise API",
+      "description": "A GreyNoise API key, sent as the key header. Optional: the Community API answers without one at a lower rate limit. IOC Enrich runs GreyNoise only when this credential is attached to the node.",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "documentationUrl": "https://docs.greynoise.io/reference/get_v3-community-ip",
+      "properties": [
+        {
+          "name": "apiKey",
+          "displayName": "API Key",
+          "type": "string",
+          "default": "",
+          "description": "Leave empty to use the keyless Community API",
+          "typeOptions": {
+            "password": true
+          }
+        },
+        {
+          "name": "baseUrl",
+          "displayName": "API Base URL",
+          "type": "string",
+          "default": "",
+          "description": "Replaces the service's host for every call and keeps the paths",
+          "placeholder": "https://misp.example.org"
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "urlscanApi",
+      "displayName": "urlscan.io API",
+      "description": "A urlscan.io API key, sent as the API-Key header. Landflow only searches and reads results; it never submits a scan.",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "documentationUrl": "https://urlscan.io/docs/api/",
+      "properties": [
+        {
+          "name": "apiKey",
+          "displayName": "API Key",
+          "type": "string",
+          "default": "",
+          "description": "From your urlscan.io profile",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          }
+        },
+        {
+          "name": "baseUrl",
+          "displayName": "API Base URL",
+          "type": "string",
+          "default": "",
+          "description": "Replaces the service's host for every call and keeps the paths",
+          "placeholder": "https://misp.example.org"
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "shodanApi",
+      "displayName": "Shodan API",
+      "description": "A Shodan API key, sent as the key query parameter.",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "documentationUrl": "https://developer.shodan.io/api",
+      "properties": [
+        {
+          "name": "apiKey",
+          "displayName": "API Key",
+          "type": "string",
+          "default": "",
+          "description": "From your Shodan account",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          }
+        },
+        {
+          "name": "baseUrl",
+          "displayName": "API Base URL",
+          "type": "string",
+          "default": "",
+          "description": "Replaces the service's host for every call and keeps the paths",
+          "placeholder": "https://misp.example.org"
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "otxApi",
+      "displayName": "AlienVault OTX API",
+      "description": "An AlienVault OTX API key, sent as the X-OTX-API-KEY header.",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "documentationUrl": "https://otx.alienvault.com/api",
+      "properties": [
+        {
+          "name": "apiKey",
+          "displayName": "API Key",
+          "type": "string",
+          "default": "",
+          "description": "From your OTX account settings",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          }
+        },
+        {
+          "name": "baseUrl",
+          "displayName": "API Base URL",
+          "type": "string",
+          "default": "",
+          "description": "Replaces the service's host for every call and keeps the paths",
+          "placeholder": "https://misp.example.org"
+        }
+      ],
+      "testable": true
+    },
+    {
+      "name": "mispApi",
+      "displayName": "MISP API",
+      "description": "A self-hosted MISP: its base URL and an auth key, sent as the Authorization header.",
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBGNzY2RSIvPgogIDxwYXRoIGQ9Ik0yMiA4IDM1IDEyLjh2OS40YzAgNy4yLTUgMTIuNi0xMyAxNS44LTgtMy4yLTEzLTguNi0xMy0xNS44di05LjRaIiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9Ii4xOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjIyIiBjeT0iMjIiIHI9IjYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJtMjcgMjcgOC41IDguNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "documentationUrl": "https://www.misp-project.org/openapi/",
+      "properties": [
+        {
+          "name": "baseUrl",
+          "displayName": "API Base URL",
+          "type": "string",
+          "default": "",
+          "description": "Replaces the service's host for every call and keeps the paths",
+          "placeholder": "https://misp.example.org",
+          "required": true
+        },
+        {
+          "name": "apiKey",
+          "displayName": "Auth Key",
+          "type": "string",
+          "default": "",
+          "description": "The user's automation key",
+          "required": true,
+          "typeOptions": {
+            "password": true
+          }
+        },
+        {
+          "name": "allowUnverifiedTls",
+          "displayName": "Allow Unverified TLS",
+          "type": "boolean",
+          "default": false,
+          "description": "Skip TLS certificate verification, for a lab MISP with a self-signed certificate. Leave off in production."
+        }
+      ],
+      "testable": true
+    }
+  ]
+}

@@ -14,11 +14,13 @@ import type {
   InstalledPlugin,
   InstallResult,
   LibrarySkill,
+  MarketplaceFlowView,
   MarketplaceLocation,
   MarketplaceSummary,
   PluginDetail,
   ResolvedSource,
 } from '../../shared/marketplace';
+import { flowLink } from '../../shared/marketplace';
 import { agentStore } from '../agents/store';
 import { onConfigChanged } from '../config-store';
 import { clusterActive, clusterState } from '../cluster/state';
@@ -27,8 +29,10 @@ import { logger } from '../telemetry';
 import { traceMarketplace } from '../telemetry/marketplace';
 import { agentFromClaude, skillFromClaude } from './map';
 import { commandLine, contentHash, downloadPlugin, freePort, nodePlugins, portFree, readInstallMarker, writeInstallMarker, type SupervisedPlugin } from './node-plugins';
-import { loadPlugin, type MarketplaceEntry } from './plugin';
-import { clearTreeCache, fetchJson, fetchLimited, readerFor } from './reader';
+import { importTemplate, previewTemplate } from '../templates';
+import { localTemplates } from '../templates/store';
+import { loadFlows, loadPlugin, readFlow, type MarketplaceEntry } from './plugin';
+import { clearTreeCache, FetchError, fetchJson, fetchLimited, readerFor } from './reader';
 import { locationLabel, parseMarketplaceInput, resolveSource, sourceLabel } from './sources';
 import { marketplaceStore, PRESETS, type StoredMarketplace } from './store';
 
@@ -69,6 +73,10 @@ function summarize(m: StoredMarketplace): MarketplaceSummary {
 const marketplaceName = (m: StoredMarketplace) => m.name ?? m.id;
 const installedId = (plugin: string, m: StoredMarketplace) => `${plugin}@${marketplaceName(m)}`;
 
+/** What "Add marketplace" takes to add `location` again elsewhere; none for a directory on this host. */
+const shareSource = (location: MarketplaceLocation) =>
+  location.kind === 'github' ? `${location.owner}/${location.repo}${location.ref ? `@${location.ref}` : ''}` : location.kind === 'url' ? location.url : undefined;
+
 function getMarketplace(id: string): StoredMarketplace {
   const m = marketplaceStore.marketplace(id);
   if (!m) throw new MarketplaceError('Marketplace not found', 404);
@@ -104,6 +112,16 @@ function parseManifest(json: Record<string, unknown>) {
 }
 
 const details = new Map<string, { at: number; detail: PluginDetail }>();
+
+/**
+ * A flow's node types: on this instance, from this plugin's own node plugin once installed, or still needed. Worked out
+ * on every read, not cached with the detail, since installing another plugin changes it.
+ */
+function withNeeds(detail: PluginDetail): PluginDetail {
+  const known = new Set(registry.nodeTypes().map((t) => t.type));
+  const own = detail.nodePlugin ? `${detail.nodePlugin.id}.` : undefined;
+  return { ...detail, flows: detail.flows.map((flow) => ({ ...flow, needs: flow.nodeTypes.filter((type) => !known.has(type) && !(own && type.startsWith(own))) })) };
+}
 
 export const marketplace = {
   list(): MarketplaceSummary[] {
@@ -174,6 +192,7 @@ export const marketplace = {
         supported: source.kind !== 'unsupported',
         ...(source.kind === 'unsupported' && { unsupportedReason: source.reason }),
         landflow: Boolean(entry.landflow),
+        flows: Array.isArray(entry.flows) ? entry.flows.length : 0,
         installed: installed.has(installedId(entry.name, m)),
       };
     });
@@ -185,7 +204,7 @@ export const marketplace = {
   async detail(id: string, name: string, fresh = false): Promise<PluginDetail> {
     const key = `${id}:${name}`;
     const cached = details.get(key);
-    if (!fresh && cached && Date.now() - cached.at < DETAIL_TTL_MS) return { ...cached.detail, plugin: { ...cached.detail.plugin, installed: Boolean(marketplaceStore.installedOne(installedId(name, getMarketplace(id)))) } };
+    if (!fresh && cached && Date.now() - cached.at < DETAIL_TTL_MS) return withNeeds({ ...cached.detail, plugin: { ...cached.detail.plugin, installed: Boolean(marketplaceStore.installedOne(installedId(name, getMarketplace(id)))) } });
     const catalog = await this.catalog(id);
     const plugin = catalog.plugins.find((p) => p.name === name);
     const m = getMarketplace(id);
@@ -195,9 +214,38 @@ export const marketplace = {
     if (source.kind === 'unsupported') throw new MarketplaceError(`Can’t install “${name}”: ${source.reason}`, 422);
     const fromRoot = typeof entry.source === 'string' && (entry.source === '.' || entry.source === './');
     const loaded = await traceMarketplace('detail', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name }, () => loadPlugin(readerFor(source), entry, fromRoot));
-    const detail: PluginDetail = { marketplaceId: id, plugin, source, ...loaded };
+    const flows = loaded.flows.map((flow) => ({ ...flow, needs: [], link: flowLink(marketplaceName(m), name, flow.path, shareSource(m.location)) }));
+    const detail: PluginDetail = { marketplaceId: id, plugin, source, ...loaded, flows };
     details.set(key, { at: Date.now(), detail });
-    return detail;
+    return withNeeds(detail);
+  },
+
+  /** One flow of a plugin for its share page, read only. `ref` is the marketplace's id or name; `path` the file in the plugin. */
+  async flow(ref: string, name: string, path: string): Promise<MarketplaceFlowView> {
+    const m = marketplaceStore.marketplace(ref) ?? marketplaceStore.marketplaces().find((x) => x.name === ref);
+    if (!m) throw new MarketplaceError(`The marketplace “${ref}” isn’t added on this instance`, 404, { missing: 'marketplace' });
+    const detail = await this.detail(m.id, name);
+    const flow = detail.flows.find((f) => f.path === path);
+    if (!flow) throw new MarketplaceError(`No flow “${path}” in ${name}`, 404);
+    let file;
+    try {
+      file = await readFlow(readerFor(detail.source), path);
+    } catch (error) {
+      if (error instanceof FetchError) throw error;
+      throw new MarketplaceError(`${path}: ${(error as Error).message}`, 422);
+    }
+    const pluginKey = installedId(name, m);
+    const template = localTemplates.list().find((t) => t.origin?.installedId === pluginKey && t.origin.path === path);
+    const { id, name: marketplaceTitle, description, owner, location } = summarize(m);
+    return {
+      marketplace: { id, name: marketplaceTitle, ...(description && { description }), ...(owner && { owner }), location },
+      plugin: detail.plugin,
+      flow,
+      template: previewTemplate(file),
+      flows: detail.flows.map((f) => ({ path: f.path, name: f.name })),
+      ...(template && { templateId: template.id }),
+      link: flowLink(marketplaceName(m), name, path, shareSource(location)),
+    };
   },
 
   async install(id: string, name: string, options: { confirm?: boolean } = {}): Promise<InstallResult | InstallConfirmation> {
@@ -206,7 +254,7 @@ export const marketplace = {
     if (marketplaceStore.installedOne(pluginKey)) throw new MarketplaceError(`${pluginKey} is already installed`, 409);
     const detail = await this.detail(id, name, true);
     const { nodePlugin } = detail;
-    if (!detail.agents.length && !detail.skills.length && !nodePlugin) {
+    if (!detail.agents.length && !detail.skills.length && !nodePlugin && !detail.flows.length) {
       const parts = detail.unsupported.map((u) => `${u.kind} (${u.items.length})`).join(', ');
       throw new MarketplaceError(`Nothing in “${name}” runs in Landflow yet${parts ? `: it only has ${parts}` : ''}`, 422, { unsupported: detail.unsupported });
     }
@@ -225,6 +273,7 @@ export const marketplace = {
     return traceMarketplace('install', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name, 'landflow.marketplace.node_plugin': Boolean(nodePlugin) }, async () => {
       const createdAgents: Array<{ id: string; name: string }> = [];
       const createdSkills: LibrarySkill[] = [];
+      const createdTemplates: Array<{ id: string; name: string }> = [];
       const pluginDir = nodePlugin ? join(marketplaceStore.dir, 'plugins', name.replace(/[^\w.-]/g, '_')) : undefined;
       const logFile = join(marketplaceStore.dir, 'logs', `${name.replace(/[^\w.-]/g, '_')}.log`);
       try {
@@ -266,6 +315,17 @@ export const marketplace = {
           const created = agentStore.create(agentFromClaude(agent, { pluginId: pluginKey, skills: detail.skills.map(skillFromClaude) }));
           createdAgents.push({ id: created.id, name: created.name });
         }
+        if (detail.flows.length) {
+          // Read again rather than trust the cached detail: the files are what gets installed.
+          const entry = m.entries?.find((e) => e.name === name);
+          const fromRoot = typeof entry?.source === 'string' && (entry.source === '.' || entry.source === './');
+          const { flows } = await loadFlows(readerFor(detail.source), entry ?? { name }, fromRoot);
+          for (const flow of flows) {
+            const origin = { kind: 'marketplace' as const, installedId: pluginKey, plugin: name, marketplace: marketplaceName(m), path: flow.path };
+            const template = importTemplate(flow.file, pluginKey, undefined, undefined, origin);
+            createdTemplates.push({ id: template.id, name: template.name });
+          }
+        }
         const installed: InstalledPlugin = {
           id: pluginKey,
           plugin: name,
@@ -277,6 +337,7 @@ export const marketplace = {
           installedAt: at,
           agents: createdAgents,
           skills: createdSkills.map((s) => ({ id: s.id, name: s.name })),
+          ...(createdTemplates.length && { templates: createdTemplates }),
           unsupported: detail.unsupported,
           ...(nodeRecord && { nodePlugin: nodeRecord }),
         };
@@ -286,6 +347,7 @@ export const marketplace = {
           'landflow.marketplace.plugin': pluginKey,
           'landflow.marketplace.agents': createdAgents.length,
           'landflow.marketplace.skills': createdSkills.length,
+          'landflow.marketplace.flows': createdTemplates.length,
           'landflow.marketplace.node_plugin': nodeRecord?.pluginId ?? 'none',
         });
         return { installed: withStatus(installed), notSupported: detail.unsupported, warnings: detail.warnings };
@@ -293,6 +355,7 @@ export const marketplace = {
         // Roll back whatever was created.
         for (const agent of createdAgents) agentStore.delete(agent.id);
         marketplaceStore.removeSkills(createdSkills.map((s) => s.id));
+        for (const template of createdTemplates) localTemplates.delete(template.id);
         if (pluginDir) {
           await stopOne(pluginKey);
           rmSync(pluginDir, { recursive: true, force: true });
@@ -312,10 +375,12 @@ export const marketplace = {
       }
       const agents = installed.agents.filter((a) => agentStore.delete(a.id)).length;
       marketplaceStore.removeSkills(installed.skills.map((s) => s.id));
+      // The plugin's flows; workflows made from them stay (they are the users' now).
+      const templates = (installed.templates ?? []).filter((t) => localTemplates.delete(t.id)).length;
       marketplaceStore.removeInstalled(pluginKey);
       if (installed.nodePlugin) announceNodePlugins();
-      logger.info('marketplace plugin uninstalled', { 'landflow.marketplace.plugin': pluginKey, 'landflow.marketplace.agents': agents });
-      return { removed: { agents, skills: installed.skills.length, nodePlugin: Boolean(installed.nodePlugin) } };
+      logger.info('marketplace plugin uninstalled', { 'landflow.marketplace.plugin': pluginKey, 'landflow.marketplace.agents': agents, 'landflow.marketplace.flows': templates });
+      return { removed: { agents, skills: installed.skills.length, nodePlugin: Boolean(installed.nodePlugin), ...(installed.templates?.length && { flows: templates }) } };
     });
   },
 

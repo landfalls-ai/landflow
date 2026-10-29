@@ -1,0 +1,77 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Landflow heartbeat → Landfall",
+    "description": "A dead man’s switch: Landflow pings a Landfall heartbeat every 5 minutes, so Landfall pages someone when the automation itself goes quiet.",
+    "categories": [
+      "incident-response",
+      "it-ops"
+    ],
+    "credentials": [
+      {
+        "id": "heartbeat",
+        "type": "landfall.landfallHeartbeatApi",
+        "name": "Landfall heartbeat",
+        "description": "Base URL, org slug and the heartbeat token Landfall gave you."
+      }
+    ],
+    "setup": [
+      "In Landfall, add a heartbeat named `landflow` (or change **Ping Landfall**), with a grace period above 5 minutes.",
+      "Pick the **Landfall heartbeat** credential with that heartbeat’s token, and publish the workflow.",
+      "If Landflow stops (or its scheduler does), the pings stop and Landfall opens the incident."
+    ],
+    "dataTables": [],
+    "workflow": {
+      "name": "Landflow heartbeat → Landfall",
+      "description": "A dead man’s switch: Landflow pings a Landfall heartbeat every 5 minutes, so Landfall pages someone when the automation itself goes quiet.",
+      "nodes": [
+        {
+          "id": "every",
+          "name": "Every 5 minutes",
+          "type": "core.schedule",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {
+            "unit": "minutes",
+            "every": 5
+          }
+        },
+        {
+          "id": "ping",
+          "name": "Ping Landfall",
+          "type": "landfall.landfall",
+          "typeVersion": 1,
+          "position": [
+            280,
+            0
+          ],
+          "parameters": {
+            "resource": "heartbeat",
+            "operation": "ping",
+            "heartbeatName": "landflow"
+          },
+          "credentials": {
+            "landfallHeartbeatApi": {
+              "id": "heartbeat",
+              "name": "Landfall heartbeat"
+            }
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "every",
+          "sourceIndex": 0,
+          "target": "ping",
+          "targetIndex": 0
+        }
+      ]
+    }
+  }
+}

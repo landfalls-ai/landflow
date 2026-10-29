@@ -1,6 +1,6 @@
 # Roadmap: closing the gaps with other workflow platforms
 
-Status: **all waves landed** (started and finished 2026-10-25; Wave 5, closing Wave 4's "Not yet" lists and the gaps the follow-ups left, landed 2026-10-26; Wave 6, closing every remaining "Not yet", landed 2026-10-27; what remains is listed under "Wave 6" below). The list comes from a pass over Landflow's code and
+Status: **all waves landed** (started and finished 2026-10-25; Wave 5, closing Wave 4's "Not yet" lists and the gaps the follow-ups left, landed 2026-10-26; Wave 6, closing every remaining "Not yet", landed 2026-10-27; what remains is listed under "Wave 6" below). Alert triage with Landfall and the flow marketplace landed 2026-10-29 (its own section below). The list comes from a pass over Landflow's code and
 from research on n8n, Zapier, Make, Power Automate, the developer-first engines (Temporal,
 Inngest, Trigger.dev, Windmill, Pipedream, Activepieces, Node-RED, Kestra), the AI-native
 builders (Dify, Langflow, Flowise, Gumloop, Lindy) and team and operations features. The
@@ -518,9 +518,47 @@ heartbeats), 1881 (agents in the database), 1882 (audit signing keys and signed 
   standalone agents' test chat takes no file uploads; a Respond to
   Webhook reply built from a secret isn't redacted (by design); MCP subscriptions need a 2026-07-28 client.
 
+## Alert triage, Landfall and the flow marketplace (built 2026-10-29)
+
+Decide whether an alert is a real incident, and only then open a war room in Landfall
+([triage.md](triage.md)); share and install flows through the marketplace ([marketplace.md](marketplace.md#flows)).
+No migrations: a template's marketplace origin is kept in its document.
+
+- **Plugins.** `triage` (TypeScript): Normalize Alert (Alertmanager, Grafana, Datadog, CloudWatch, Sentry, Wazuh, any
+  JSON), Extract IOCs, Parse Email (SPF/DKIM/DMARC, mismatches, links, attachment hashes), Triage Rules and Triage
+  Decision, with the safety rules in the nodes: fail open, sev1 never held, the AI can't drop an alert, only people
+  approve noise rules, Shadow before Enforce. `landfall` (TypeScript): incidents (open from an alert with a dedup key,
+  recover, open manually, declare, get), timelines, remediation records, heartbeats, a polling trigger, and a
+  remote-source face that answers Landfall's health probes. `threat-intel` (Go): VirusTotal, AbuseIPDB, GreyNoise,
+  urlscan.io, Shodan, AlienVault OTX, MISP and IOC Enrich (all at once, cached, one verdict).
+- **Flows.** Alert triage → Landfall war room, phishing report triage, the triage digest, Landflow failures → Landfall,
+  the Landflow heartbeat, learning from closed rooms, and the IOC lookup API. The repository's own
+  `.claude-plugin/marketplace.json` (`landflow-soc`) lists the plugins and their flows.
+- **Marketplace.** Plugins ship flows (`flows/*.json`, or a `flows` list); installing adds them to Templates with
+  their origin and uninstalling removes them. Each flow has a read-only share page (the canvas, notes, setup,
+  credentials, what else it needs, **Install plugin**, a share link that can add the marketplace on another
+  instance). Go node plugins from this repository build against the host's `sdks/go`.
+- **Tests.** The plugins' suites (Landfall against a fake Landfall, threat intel against `httptest` fakes), the host's
+  marketplace tests for flows, share views, install and uninstall, and `plugin-flows.test.ts`, which validates every
+  shipped flow against the recorded manifests.
+- Checked live on a scratch host: the repository's marketplace added from this checkout, the three plugins installed
+  (with the confirmation, the Go build, the supervisor), **Use template** and publish, then alerts against the fake
+  Landfall. A critical alert opened a room, its repeat attached, its resolution recovered it. A plain JSON warning with
+  the model unreachable failed open and opened a room, and its repeat attached. Uninstall removed the flows' templates
+  and left the workflow.
+- Bugs found and fixed: a flow's `needs` was cached with the plugin detail for 10 minutes, so the share page kept
+  asking for plugins already installed; Normalize Alert's Auto threw on a payload it didn't recognise (dropping the
+  alert) and now reads it as Generic; the flows stopped when threat intel or the model failed, and now continue to the
+  fail-open decision; the sign-in, setup, invite and password forms had no `method`, so a submit before the page
+  hydrated was a GET with the email and password in the URL (now `post`, with a test).
+- What remains: the Landfall and threat intel calls are checked against fakes, not the live services; share pages need
+  sign-in; runbooks aren't built from closed rooms yet.
+
 ## Planned next
 
-Nothing is scheduled after the transport plan. The follow-ups above are the next candidates.
+**Runbooks from Landfall war rooms.** After a room closes, turn what the responders did (the timeline, the remediation
+records, the "Room outcomes" rows) into a dedicated runbook in Landflow: a workflow with the steps, the approvals it
+needs, and a link back from Landfall's alerts of the same kind. The other follow-ups above are candidates too.
 
 ## Not planned
 

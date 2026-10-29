@@ -24,6 +24,7 @@ import {
   type TemplateDataTable,
   type TemplateDetail,
   type TemplateFile,
+  type TemplateOrigin,
   type TemplateProblem,
   type TemplateSource,
   type TemplateSummary,
@@ -31,6 +32,7 @@ import {
   type UseTemplateResult,
 } from '../../shared/templates';
 import { normalizeGroups } from '../../shared/groups';
+import type { FlowPreview } from '../../shared/marketplace';
 import type { Workflow, WorkflowNode } from '../../shared/types';
 import { credentials as vault } from '../credentials/vault';
 import { tableInProject } from '../datatables/projects';
@@ -478,9 +480,12 @@ export function updateTemplate(id: string, patch: UpdateTemplateInput, actor?: A
   return localDetail(updated, actor);
 }
 
-/** Import a template file (from "Export"): kept as a local template, its references checked against its slots. */
-export function importTemplate(data: unknown, author?: string, actor?: Actor, requestedProject?: string | null): TemplateDetail {
-  const projectId = templateProject(actor, requestedProject);
+/**
+ * Import a template file (from "Export"): kept as a local template, its references checked against its slots.
+ * `origin`: a marketplace plugin's flow, removed again when the plugin is uninstalled.
+ */
+/** A template file's contents as a template keeps them: a checked, portable workflow, credentials as slots. */
+function fromFile(data: unknown) {
   let raw = data;
   if (typeof raw === 'string') {
     try {
@@ -496,20 +501,27 @@ export function importTemplate(data: unknown, author?: string, actor?: Actor, re
   const base = portable(source, template.name, template.description);
   const declared = template.credentials.filter((slot, i, all) => all.findIndex((s) => s.id === slot.id) === i);
   const { nodes, slots } = slotCredentials(base, declared);
-  return localDetail(
-    localTemplates.create({
-      name: template.name,
-      description: template.description,
-      categories: categoriesOf(template.categories),
-      credentials: slots,
-      setup: template.setup.map((s) => s.trim()).filter(Boolean),
-      dataTables: template.dataTables,
-      workflow: { ...base, nodes },
-      ...(author && { author }),
-      ...(projectId && { projectId }),
-    }),
-    actor,
-  );
+  return {
+    name: template.name,
+    description: template.description,
+    categories: categoriesOf(template.categories),
+    credentials: slots,
+    setup: template.setup.map((s) => s.trim()).filter(Boolean),
+    dataTables: template.dataTables,
+    workflow: { ...base, nodes },
+  };
+}
+
+export function importTemplate(data: unknown, author?: string, actor?: Actor, requestedProject?: string | null, origin?: TemplateOrigin): TemplateDetail {
+  const projectId = templateProject(actor, requestedProject);
+  const parts = fromFile(data);
+  return localDetail(localTemplates.create({ ...parts, ...(author && { author }), ...(projectId && { projectId }), ...(origin && { origin }) }), actor);
+}
+
+/** A template file as its page would show it, without saving it (a marketplace flow's share page). */
+export function previewTemplate(data: unknown): FlowPreview {
+  const { name, description, categories, credentials, setup, dataTables, workflow, nodeTypes, nodeCount, problems } = finish({ id: '', source: 'local', ...fromFile(data) });
+  return { name, description, categories, credentials, setup, dataTables, workflow, nodeTypes, nodeCount, problems };
 }
 
 /** A template as an export file (any source). */

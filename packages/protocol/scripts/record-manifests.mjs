@@ -25,6 +25,9 @@ const plugins = {
   productivity: 'http://127.0.0.1:7105',
   google: 'http://127.0.0.1:7106',
   databases: 'http://127.0.0.1:7107',
+  landfall: 'http://127.0.0.1:7108',
+  triage: 'http://127.0.0.1:7109',
+  'threat-intel': 'http://127.0.0.1:7110',
 };
 for (const arg of process.argv.slice(2)) {
   const [name, url] = arg.split('=');

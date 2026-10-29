@@ -22,6 +22,10 @@
     "plugin:productivity": "cd plugins/productivity && (test -x .venv/bin/python && .venv/bin/python main.py || python3 main.py)",
     "plugin:google": "cd plugins/google-workspace && go run .",
     "plugin:databases": "cd plugins/databases && go run .",
+    "plugin:landfall": "pnpm --filter @landflow/plugin-landfall start",
+    "plugin:triage": "pnpm --filter @landflow/plugin-triage start",
+    "plugin:threat-intel": "cd plugins/threat-intel && go run .",
+    "fake-landfall": "pnpm --filter @landflow/plugin-landfall fake-landfall",
     "dev:all": "concurrently -k -n web,ts,py,go,msg,prod,google,db -c magenta,blue,yellow,cyan,green,red,white,gray \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\""
   },
   "devDependencies": {

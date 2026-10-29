@@ -1,30 +1,32 @@
 'use client';
 /**
- * A plugin's detail drawer: what it contains (agents, skills, a node plugin, what doesn't run in
+ * A plugin's detail drawer: what it contains (agents, skills, a node plugin, flows, what doesn't run in
  * Landflow yet), its README, and Install / Uninstall. A node plugin runs code on this machine, so
  * installing one first shows what will run and from where.
  */
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
-import { ArrowUpRight, Bot, Check, ExternalLink, Package, Sparkles, TriangleAlert, X } from 'lucide-react';
+import { ArrowUpRight, Bot, Check, ExternalLink, Eye, Package, Sparkles, TriangleAlert, Workflow, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
 import type { InstallConfirmation, InstalledPlugin, InstallResult, PluginDetail } from '@/lib/shared/marketplace';
 import { Badge, Chip } from '../ui/badge';
 import { Button } from '../ui/button';
+import { CopyButton } from '../ui/copy-button';
 import { SectionLabel } from '../ui/inputs';
 import { UNSUPPORTED_LABEL } from './use-marketplace';
 
 const MODEL_LABEL: Record<string, string> = { sonnet: 'Sonnet', opus: 'Opus', haiku: 'Haiku', inherit: 'Sonnet (inherit)' };
 
-export function ContentsBadges({ detail }: { detail: Pick<PluginDetail, 'agents' | 'skills' | 'nodePlugin' | 'unsupported'> }) {
+export function ContentsBadges({ detail }: { detail: Pick<PluginDetail, 'agents' | 'skills' | 'nodePlugin' | 'unsupported'> & { flows?: PluginDetail['flows'] } }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {detail.agents.length > 0 && <Badge tone="accent">Agents {detail.agents.length}</Badge>}
       {detail.skills.length > 0 && <Badge tone="success">Skills {detail.skills.length}</Badge>}
       {detail.nodePlugin && <Badge tone="warning">Node plugin</Badge>}
+      {(detail.flows?.length ?? 0) > 0 && <Badge tone="accent">Flows {detail.flows!.length}</Badge>}
       {detail.unsupported.length > 0 && (
         <Badge tone="muted" title="These parts of the plugin don't run in Landflow yet">
           Unsupported: {detail.unsupported.map((u) => UNSUPPORTED_LABEL[u.kind] ?? u.kind).join(', ')}
@@ -86,8 +88,8 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
       const { installed } = await api<{ installed: InstalledPlugin[] }>('/api/marketplaces/installed');
       const match = installed.find((p) => p.plugin === detail.plugin.name && p.marketplaceId === marketplaceId)?.id;
       if (!match) throw new Error('This plugin is no longer installed');
-      const { removed } = await api<{ removed: { agents: number; skills: number; nodePlugin: boolean } }>(`/api/marketplaces/installed/${encodeURIComponent(match)}`, { method: 'DELETE' });
-      toast.success(`Uninstalled: removed ${removed.agents} agent(s), ${removed.skills} skill(s)${removed.nodePlugin ? ' and the node plugin' : ''}`);
+      const { removed } = await api<{ removed: { agents: number; skills: number; nodePlugin: boolean; flows?: number } }>(`/api/marketplaces/installed/${encodeURIComponent(match)}`, { method: 'DELETE' });
+      toast.success(`Uninstalled: removed ${removed.agents} agent(s), ${removed.skills} skill(s)${removed.flows ? `, ${removed.flows} flow template(s)` : ''}${removed.nodePlugin ? ' and the node plugin' : ''}`);
       setResult(undefined);
       onChanged();
       await load();
@@ -99,7 +101,7 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
   };
 
   const plugin = detail?.plugin;
-  const runnable = detail && (detail.agents.length > 0 || detail.skills.length > 0 || detail.nodePlugin);
+  const runnable = detail && (detail.agents.length > 0 || detail.skills.length > 0 || detail.nodePlugin || detail.flows.length > 0);
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex justify-end bg-overlay animate-in" onMouseDown={onClose}>
@@ -231,6 +233,43 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
                 </section>
               )}
 
+              {detail.flows.length > 0 && (
+                <section>
+                  <SectionLabel className="mb-2">Flows → Templates</SectionLabel>
+                  <div className="flex flex-col divide-y divide-hair overflow-hidden rounded-xl border border-hair">
+                    {detail.flows.map((flow) => (
+                      <div key={flow.path} className="flex gap-3 px-3.5 py-2.5">
+                        <Workflow className="mt-0.5 size-4 shrink-0 text-ac" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-[13px] font-semibold text-t1">{flow.name}</span>
+                            <Chip>
+                              {flow.nodeCount} node{flow.nodeCount === 1 ? '' : 's'}
+                            </Chip>
+                            {flow.link && (
+                              <span className="ml-auto flex shrink-0 items-center gap-0.5">
+                                <Link href={flow.link} onClick={onClose} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] text-t2 hover:bg-acdim hover:text-ac">
+                                  <Eye className="size-3.5" /> View
+                                </Link>
+                                <CopyButton text={`${window.location.origin}${flow.link}`} label="Copy share link" />
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-t2">{flow.description}</p>
+                          {flow.credentials.length > 0 && <p className="mt-1 truncate text-[11px] text-t3">Asks for: {flow.credentials.join(', ')}</p>}
+                          {flow.needs.length > 0 && (
+                            <p className="mt-1 text-[11px] text-warn" title={flow.needs.join(', ')}>
+                              Needs nodes from: {[...new Set(flow.needs.map((type) => type.split('.')[0]))].join(', ')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-t3">Installing adds them to Templates for the whole instance; uninstalling removes them. Workflows made from them stay. View opens a read-only page you can share.</p>
+                </section>
+              )}
+
               {detail.unsupported.length > 0 && (
                 <section>
                   <SectionLabel className="mb-2">Not supported in Landflow yet</SectionLabel>
@@ -318,6 +357,15 @@ function InstallSummary({ result }: { result: InstallResult }) {
         </div>
       )}
       {installed.skills.length > 0 && <div className="mt-1 text-[12px] text-t1">Added to the skill library: {installed.skills.map((s) => s.name).join(', ')}</div>}
+      {(installed.templates?.length ?? 0) > 0 && (
+        <div className="mt-1 text-[12px] text-t1">
+          Added to{' '}
+          <Link href="/templates" className="text-ac hover:underline">
+            Templates
+          </Link>
+          : {installed.templates!.map((t) => t.name).join(', ')}
+        </div>
+      )}
       {installed.nodePlugin && (
         <div className="mt-1 text-[12px] text-t1">
           Node plugin <span className="font-mono">{installed.nodePlugin.pluginId}</span> {installed.nodePlugin.status?.state ?? 'starting'} on port {installed.nodePlugin.port} — watch it come online in{' '}

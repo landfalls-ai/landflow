@@ -140,6 +140,30 @@ export function linkSdk(dir: string): boolean {
   return others;
 }
 
+const GO_SDK_MODULE = 'github.com/landflow/landflow/sdks/go';
+
+/**
+ * Go plugins reach the SDK (and its transport modules) through `replace` directives with paths relative to the repo,
+ * like `=> ../../sdks/go`, which point nowhere once the plugin is downloaded. Point them at the host's own `sdks/go`.
+ * Returns how many directives changed.
+ */
+export function linkGoSdk(dir: string): number {
+  const root = repoRoot();
+  const modPath = join(dir, 'go.mod');
+  if (!root || !existsSync(modPath)) return 0;
+  let changed = 0;
+  const pattern = new RegExp(`(${GO_SDK_MODULE.replace(/[.]/g, '\\.')})((?:/[\\w.-]+)*)(\\s+(?:v[\\w.+-]+\\s+)?=>\\s+)(\\S+)`, 'g');
+  const text = readFileSync(modPath, 'utf8').replace(pattern, (whole, module: string, sub: string, arrow: string, target: string) => {
+    if (!target.startsWith('.')) return whole;
+    const local = join(root, 'sdks', 'go', ...sub.split('/').filter(Boolean));
+    if (!existsSync(local)) return whole;
+    changed++;
+    return `${module}${sub}${arrow}${local}`;
+  });
+  if (changed) writeFileSync(modPath, text);
+  return changed;
+}
+
 function hostTsx(): string | undefined {
   const root = repoRoot();
   if (!root) return undefined;
@@ -350,6 +374,7 @@ export const nodePlugins = singleton('marketplace-node-plugins', () => {
         } catch {}
       };
       const needsNpm = spec.manifest.runtime === 'node' ? linkSdk(spec.dir) : false;
+      if (spec.manifest.runtime === 'go' && linkGoSdk(spec.dir)) log('pointed go.mod at the host’s sdks/go');
       const install = installCommand(spec.manifest, needsNpm);
       if (!install) return undefined;
       log(`$ ${commandLine(install)}`);

@@ -1,0 +1,6 @@
+{
+  "id": "threat-intel",
+  "runtime": "go",
+  "install": ["go", "build", "-o", "threat-intel", "."],
+  "start": ["./threat-intel"]
+}

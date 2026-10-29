@@ -15,6 +15,8 @@ export const TEMPLATE_CATEGORIES = [
   { id: 'support', name: 'Support' },
   { id: 'engineering', name: 'Engineering' },
   { id: 'productivity', name: 'Productivity' },
+  { id: 'security', name: 'Security' },
+  { id: 'incident-response', name: 'Incident response' },
 ] as const;
 
 export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number]['id'];
@@ -23,6 +25,17 @@ export const isTemplateCategory = (value: unknown): value is TemplateCategory =>
 
 /** `builtin`: ships with Landflow. `local`: saved on this instance. `remote`: from LANDFLOW_TEMPLATES_URL. */
 export type TemplateSource = 'builtin' | 'local' | 'remote';
+
+/** Where a saved template came from, when not "Save as template" or an import: a marketplace plugin's flow. */
+export interface TemplateOrigin {
+  kind: 'marketplace';
+  /** The installed plugin (`<plugin>@<marketplace>`), whose uninstall removes the template. */
+  installedId: string;
+  plugin: string;
+  marketplace: string;
+  /** The flow file inside the plugin. */
+  path: string;
+}
 
 /**
  * A credential the template needs. The template's nodes point at it with `credentials[key].id = slot.id`; using the
@@ -76,6 +89,8 @@ export interface TemplateSummary {
   projectName?: string;
   /** The viewer may edit or delete it (editors of its project; owners and admins for instance-wide ones). */
   canEdit?: boolean;
+  /** Saved templates a marketplace plugin installed (its flows). */
+  origin?: TemplateOrigin;
 }
 
 export interface TemplateDetail extends TemplateSummary {

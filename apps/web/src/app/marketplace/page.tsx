@@ -49,6 +49,7 @@ function PluginTile({ plugin, index, onOpen }: { plugin: CatalogPlugin; index: n
       <div className="mt-auto flex flex-wrap gap-1.5">
         {plugin.category && <Chip>{plugin.category}</Chip>}
         {plugin.landflow && <Badge tone="warning">Node plugin</Badge>}
+        {plugin.flows > 0 && <Badge tone="accent">Flows {plugin.flows}</Badge>}
         {!plugin.supported && (
           <Badge tone="muted" title={plugin.unsupportedReason}>
             Unsupported source

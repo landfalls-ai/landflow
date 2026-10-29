@@ -3,7 +3,7 @@
  * install / uninstall bookkeeping against a fake GitHub, and a supervised node plugin built with
  * the SDK from a local fixture.
  */
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -13,9 +13,13 @@ import { parseFrontmatter, stringList } from '@/lib/server/marketplace/frontmatt
 import { agentFromClaude, mapModel, skillFromClaude } from '@/lib/server/marketplace/map';
 import { loadPlugin, parseAgentFile, parseNodeManifest, plainDescription } from '@/lib/server/marketplace/plugin';
 import { clearTreeCache, readerFor } from '@/lib/server/marketplace/reader';
+import { linkGoSdk } from '@/lib/server/marketplace/node-plugins';
+import { corePlugin } from '@/lib/server/nodes';
+import { registry } from '@/lib/server/plugins/registry';
 import { marketplace } from '@/lib/server/marketplace/service';
 import { parseMarketplaceInput, resolveSource } from '@/lib/server/marketplace/sources';
 import { marketplaceStore } from '@/lib/server/marketplace/store';
+import { localTemplates } from '@/lib/server/templates/store';
 import type { InstallConfirmation, InstallResult } from '@/lib/shared/marketplace';
 
 describe('frontmatter', () => {
@@ -158,6 +162,7 @@ const REPO: Record<string, string> = {
       { name: 'mcp-only', source: './plugins/mcp-only', description: 'Just an MCP server' },
       { name: 'npm-thing', source: { source: 'npm', package: 'x' } },
       { name: 'node-tools', source: './plugins/node-tools', description: 'Nodes', landflow: { id: 'acme-nodes', start: ['tsx', 'main.ts'] } },
+      { name: 'soc-flows', source: './plugins/soc-flows', description: 'Triage flows', category: 'security', flows: ['./flows/triage.json', './extra'] },
     ],
   }),
   'plugins/reviewers/.claude-plugin/plugin.json': JSON.stringify({ name: 'reviewers', version: '1.2.0' }),
@@ -173,7 +178,19 @@ const REPO: Record<string, string> = {
   'plugins/mcp-only/.mcp.json': JSON.stringify({ github: { type: 'http', url: 'https://example.com/mcp' } }),
   'plugins/node-tools/landflow.plugin.json': JSON.stringify({ id: 'acme-nodes', start: ['tsx', 'main.ts'] }),
   'plugins/node-tools/main.ts': 'console.log("hi")',
+  'plugins/soc-flows/flows/triage.json': flowFile('Alert triage', ['core.webhook', 'acme-soc.decide'], [{ id: 'soc', name: 'SOC API', type: 'core.httpHeaderAuth' }]),
+  'plugins/soc-flows/flows/broken.json': JSON.stringify({ kind: 'landflow/template', version: 1, template: { name: '' } }),
+  'plugins/soc-flows/extra/digest.json': flowFile('Triage digest', ['core.schedule']),
+  'plugins/soc-flows/extra/nested/skip.json': flowFile('Not read', ['core.schedule']),
 };
+
+/** A Landflow template file whose workflow is a chain of `types`; the last node uses the credential slots. */
+function flowFile(name: string, types: string[], credentials: Array<{ id: string; name: string; type: string }> = []) {
+  const uses = Object.fromEntries(credentials.map((c) => [c.type, { id: c.id, name: c.name }]));
+  const nodes = types.map((type, i) => ({ id: `n${i}`, name: `Node ${i}`, type, position: [i * 200, 0], parameters: {}, ...(i === types.length - 1 && credentials.length && { credentials: uses }) }));
+  const connections = nodes.slice(1).map((n, i) => ({ id: `c${i}`, type: 'main', source: nodes[i].id, sourceIndex: 0, target: n.id, targetIndex: 0 }));
+  return JSON.stringify({ kind: 'landflow/template', version: 1, template: { name, description: `${name} flow`, categories: ['security', 'incident-response'], credentials, workflow: { name, nodes, connections } } });
+}
 
 const requests: string[] = [];
 
@@ -207,14 +224,16 @@ describe('install and uninstall', () => {
   it('adds a marketplace and lists its catalog', async () => {
     const added = await marketplace.add('acme/tools');
     id = added.id;
-    expect(added).toMatchObject({ name: 'acme-tools', owner: 'Acme', plugins: 5 });
+    expect(added).toMatchObject({ name: 'acme-tools', owner: 'Acme', plugins: 6 });
     await expect(marketplace.add('https://github.com/acme/tools')).rejects.toThrow(/Already added/);
     const catalog = await marketplace.catalog(id);
-    expect(catalog.categories).toEqual(['development']);
+    expect(catalog.categories).toEqual(['development', 'security']);
     const byName = Object.fromEntries(catalog.plugins.map((p) => [p.name, p]));
     expect(byName.reviewers).toMatchObject({ supported: true, installed: false, sourceLabel: './plugins/reviewers' });
     expect(byName['npm-thing']).toMatchObject({ supported: false, unsupportedReason: expect.stringContaining('npm') });
     expect(byName['node-tools'].landflow).toBe(true);
+    expect(byName['soc-flows'].flows).toBe(2);
+    expect(byName.reviewers.flows).toBe(0);
   });
 
   it('reads what a plugin contains', async () => {
@@ -256,6 +275,67 @@ describe('install and uninstall', () => {
     const confirm = (await marketplace.install(id, 'node-tools')) as InstallConfirmation;
     expect(confirm).toMatchObject({ needsConfirmation: true, command: 'tsx main.ts', repository: 'github.com/acme/tools/plugins/node-tools' });
     expect(marketplace.installed().map((p) => p.id)).toEqual(['reviewers@acme-tools', 'writing-skills@acme-tools']);
+  });
+
+  it('reads the flows a plugin ships and what each still needs', async () => {
+    registry.registerBuiltin(corePlugin);
+    const detail = await marketplace.detail(id, 'soc-flows');
+    expect(detail.flows.map((f) => f.path)).toEqual(['extra/digest.json', 'flows/triage.json']);
+    expect(detail.flows[1]).toMatchObject({ name: 'Alert triage', nodeCount: 2, nodeTypes: ['core.webhook', 'acme-soc.decide'], credentials: ['SOC API'], needs: ['acme-soc.decide'] });
+    expect(detail.flows[0].needs).toEqual([]);
+    // An invalid file is a warning, not a flow; a nested folder isn't read.
+    expect(detail.warnings).toEqual([expect.stringContaining('flows/broken.json: not a Landflow template file')]);
+    // Once another plugin provides the node, the cached detail says so too.
+    const types = registry.nodeTypes();
+    const installed = vi.spyOn(registry, 'nodeTypes').mockReturnValue([...types, { ...types[0], type: 'acme-soc.decide' }]);
+    try {
+      expect((await marketplace.detail(id, 'soc-flows')).flows[1].needs).toEqual([]);
+    } finally {
+      installed.mockRestore();
+    }
+    expect((await marketplace.detail(id, 'soc-flows')).flows[1].needs).toEqual(['acme-soc.decide']);
+  });
+
+  it('shows one flow read only for its share page, by marketplace name or id', async () => {
+    const view = await marketplace.flow('acme-tools', 'soc-flows', 'flows/triage.json');
+    expect(view.marketplace).toMatchObject({ id, name: 'acme-tools' });
+    expect(view.link).toBe('/marketplace/flows/acme-tools/soc-flows/flows/triage.json?source=acme%2Ftools');
+    expect(view.flows.map((f) => f.name)).toEqual(['Triage digest', 'Alert triage']);
+    expect(view.template).toMatchObject({ name: 'Alert triage', nodeCount: 2, credentials: [{ id: 'soc', name: 'SOC API', nodes: ['Node 1'] }] });
+    expect(view.template.workflow.connections).toHaveLength(1);
+    expect(view.templateId).toBeUndefined();
+    expect((await marketplace.flow(id, 'soc-flows', 'extra/digest.json')).template.name).toBe('Triage digest');
+    expect((await marketplace.detail(id, 'soc-flows')).flows[0].link).toBe('/marketplace/flows/acme-tools/soc-flows/extra/digest.json?source=acme%2Ftools');
+    await expect(marketplace.flow('nope', 'soc-flows', 'flows/triage.json')).rejects.toMatchObject({ status: 404, body: { missing: 'marketplace' } });
+    await expect(marketplace.flow(id, 'soc-flows', 'flows/broken.json')).rejects.toMatchObject({ status: 404 });
+    await expect(marketplace.flow(id, 'soc-flows', '../x.json')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('serves the share page’s data over HTTP', async () => {
+    const route = await import('@/app/api/marketplaces/[id]/plugins/[name]/flow/route');
+    const call = (ref: string, query: string) => route.GET(new Request(`http://localhost/api/marketplaces/${ref}/plugins/soc-flows/flow${query}`), { params: Promise.resolve({ id: ref, name: 'soc-flows' }) });
+    const ok = await call('acme-tools', '?path=flows%2Ftriage.json');
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { flow: { template: { name: string } } }).flow.template.name).toBe('Alert triage');
+    expect((await call('acme-tools', '')).status).toBe(400);
+    const missing = await call('elsewhere', '?path=flows%2Ftriage.json');
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({ missing: 'marketplace' });
+  });
+
+  it('installs a flows-only plugin as templates and removes them on uninstall', async () => {
+    const result = (await marketplace.install(id, 'soc-flows')) as InstallResult;
+    expect((await marketplace.flow('acme-tools', 'soc-flows', 'flows/triage.json')).templateId).toBe(result.installed.templates![1].id);
+    expect(result.installed.templates?.map((t) => t.name)).toEqual(['Triage digest', 'Alert triage']);
+    const templates = result.installed.templates!.map((t) => localTemplates.get(t.id)!);
+    expect(templates[1]).toMatchObject({
+      author: 'soc-flows@acme-tools',
+      categories: ['security', 'incident-response'],
+      origin: { kind: 'marketplace', installedId: 'soc-flows@acme-tools', plugin: 'soc-flows', marketplace: 'acme-tools', path: 'flows/triage.json' },
+    });
+    expect(templates[1].projectId).toBeUndefined();
+    expect(await marketplace.uninstall('soc-flows@acme-tools')).toEqual({ removed: { agents: 0, skills: 0, nodePlugin: false, flows: 2 } });
+    for (const t of result.installed.templates!) expect(localTemplates.get(t.id)).toBeUndefined();
   });
 
   it('uninstalls exactly what the install created', async () => {
@@ -312,6 +392,27 @@ await serve(plugin, { http: 1 });
     delete process.env.LANDFLOW_MARKETPLACE_REGISTRY_URL;
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it('points a Go plugin’s relative SDK replace at the host’s copy', () => {
+    write(
+      'go-tools/go.mod',
+      `module example.com/go-tools
+
+go 1.22
+
+require github.com/landflow/landflow/sdks/go v0.0.0
+
+replace github.com/landflow/landflow/sdks/go => ../../sdks/go
+replace example.com/other => ../other
+`,
+    );
+    expect(linkGoSdk(join(root, 'go-tools'))).toBe(1);
+    const mod = readFileSync(join(root, 'go-tools', 'go.mod'), 'utf8');
+    expect(mod).toMatch(/replace github\.com\/landflow\/landflow\/sdks\/go => \/.+\/sdks\/go\n/);
+    expect(mod).toContain('replace example.com/other => ../other');
+    expect(linkGoSdk(join(root, 'go-tools'))).toBe(0);
+    expect(linkGoSdk(join(root, 'echo'))).toBe(0);
+  });
 
   it('reads a local plugin directory', async () => {
     const loaded = await loadPlugin(readerFor({ kind: 'local', root, path: 'echo' }), { name: 'echo-nodes' });

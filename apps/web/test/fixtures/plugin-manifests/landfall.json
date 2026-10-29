@@ -1,0 +1,1092 @@
+{
+ "protocol": "landflow.plugin/v1",
+ "plugin": {
+  "language": "typescript",
+  "sdk": {
+   "name": "landflow-sdk-typescript",
+   "version": "0.2.0"
+  },
+  "id": "landfall",
+  "name": "Landfall",
+  "version": "0.1.0",
+  "description": "Landfall incident response: open, attach and recover incidents from alerts, read rooms, add events and notes, record fixes applied outside Landfall, heartbeats and a trigger; reachable over HTTP, gRPC, any installed broker and MCP",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzNCNUI3QSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMzAgMTRhOCA4IDAgMSAwLTUgMTQuMiIvPgogICAgPHBhdGggZD0iTTMwIDE0YzUgMCA4IDMgOCA2LjVTMzUgMjcgMzAgMjciLz4KICAgIDxwYXRoIGQ9Ik0xNCAzNGgyME0xOCAzOWgxNCIvPgogIDwvZz4KPC9zdmc+Cg==",
+  "color": "#3B5B7A",
+  "author": "Landflow"
+ },
+ "nodes": [
+  {
+   "name": "landfall",
+   "displayName": "Landfall",
+   "description": "Open, attach and recover Landfall incidents from alerts, read rooms and timelines, add events and notes, record fixes applied outside Landfall and ping heartbeats",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Development",
+    "Communication"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzNCNUI3QSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMzAgMTRhOCA4IDAgMSAwLTUgMTQuMiIvPgogICAgPHBhdGggZD0iTTMwIDE0YzUgMCA4IDMgOCA2LjVTMzUgMjcgMzAgMjciLz4KICAgIDxwYXRoIGQ9Ik0xNCAzNGgyME0xOCAzOWgxNCIvPgogIDwvZz4KPC9zdmc+Cg==",
+   "color": "#3B5B7A",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://landfalls.ai",
+   "keywords": [
+    "landfall",
+    "incident",
+    "war room",
+    "alert",
+    "oncall",
+    "runbook",
+    "heartbeat"
+   ],
+   "usableAsTool": true,
+   "idempotent": false,
+   "toolDescription": "Landfall incident response: open an incident from an alert (deduplicated by dedupKey) or recover it, declare an incident, read an incident's state, list incidents, read or append timeline events and notes, record that a suggested remediation was applied outside Landfall, and ping a heartbeat.",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "landfallApi",
+     "required": true,
+     "displayOptions": {
+      "hide": {
+       "resource": [
+        "heartbeat"
+       ]
+      }
+     }
+    },
+    {
+     "name": "landfallHeartbeatApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "heartbeat"
+       ]
+      }
+     }
+    }
+   ],
+   "properties": [
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "incident",
+     "options": [
+      {
+       "name": "Heartbeat",
+       "value": "heartbeat"
+      },
+      {
+       "name": "Incident",
+       "value": "incident"
+      },
+      {
+       "name": "Remediation",
+       "value": "remediation"
+      },
+      {
+       "name": "Timeline",
+       "value": "timeline"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "openFromAlert",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Declare",
+       "value": "declare",
+       "description": "Declare an incident (POST /incidents)",
+       "action": "Declare an incident"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Get the folded state of an incident",
+       "action": "Get an incident",
+       "idempotent": true
+      },
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "description": "List incidents",
+       "action": "Get many incidents",
+       "idempotent": true
+      },
+      {
+       "name": "Open Manually",
+       "value": "openManually",
+       "description": "Open a room through the manual trigger route (never suppressed, no dedup)",
+       "action": "Open an incident manually"
+      },
+      {
+       "name": "Open From Alert",
+       "value": "openFromAlert",
+       "description": "Send an alert to Landfall; it opens a room, attaches to an open one with the same dedup key, or ignores it",
+       "action": "Open an incident from an alert"
+      },
+      {
+       "name": "Recover",
+       "value": "recover",
+       "description": "Send the recovery of an alert; Landfall records it but never closes the room",
+       "action": "Send an alert recovery"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getEvents",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "timeline"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Add Event",
+       "value": "addEvent",
+       "description": "Append an event; expectedSeq is read for you and retried once on a conflict",
+       "action": "Add a timeline event"
+      },
+      {
+       "name": "Add Note",
+       "value": "addNote",
+       "description": "Post a chat message in the room",
+       "action": "Add a note"
+      },
+      {
+       "name": "Get Events",
+       "value": "getEvents",
+       "description": "Read timeline events",
+       "action": "Get timeline events",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "recordAppliedExternally",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "remediation"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Record Applied Externally",
+       "value": "recordAppliedExternally",
+       "description": "Record that a suggested fix was applied outside Landfall",
+       "action": "Record a fix applied outside Landfall"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "ping",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "heartbeat"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Ping",
+       "value": "ping",
+       "description": "Ping a heartbeat so Landfall knows the job is alive",
+       "action": "Ping a heartbeat"
+      }
+     ]
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "openFromAlert",
+        "recover",
+        "openManually"
+       ]
+      }
+     }
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "declare"
+       ]
+      }
+     },
+     "description": "Optional; Landfall names the room when empty"
+    },
+    {
+     "name": "severity",
+     "displayName": "Severity",
+     "type": "options",
+     "default": "sev3",
+     "options": [
+      {
+       "name": "Sev1 (critical)",
+       "value": "sev1"
+      },
+      {
+       "name": "Sev2 (major)",
+       "value": "sev2"
+      },
+      {
+       "name": "Sev3 (minor)",
+       "value": "sev3"
+      },
+      {
+       "name": "Sev4 (low)",
+       "value": "sev4"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "openFromAlert",
+        "recover"
+       ]
+      }
+     },
+     "description": "Landfall proposes this severity; a person confirms it in the room"
+    },
+    {
+     "name": "severity",
+     "displayName": "Severity",
+     "type": "options",
+     "default": "",
+     "options": [
+      {
+       "name": "Not Set",
+       "value": ""
+      },
+      {
+       "name": "Sev1 (critical)",
+       "value": "sev1"
+      },
+      {
+       "name": "Sev2 (major)",
+       "value": "sev2"
+      },
+      {
+       "name": "Sev3 (minor)",
+       "value": "sev3"
+      },
+      {
+       "name": "Sev4 (low)",
+       "value": "sev4"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "declare",
+        "openManually"
+       ]
+      }
+     }
+    },
+    {
+     "name": "dedupKey",
+     "displayName": "Dedup Key",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "recover"
+       ]
+      }
+     },
+     "description": "The dedupKey the alert was opened with"
+    },
+    {
+     "name": "description",
+     "displayName": "Description",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "rows": 3
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "declare"
+       ]
+      }
+     }
+    },
+    {
+     "name": "entityHint",
+     "displayName": "Entity Hint",
+     "type": "string",
+     "default": "",
+     "placeholder": "service:checkout",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "openManually"
+       ]
+      }
+     }
+    },
+    {
+     "name": "additionalFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "openFromAlert"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "dedupKey",
+       "displayName": "Dedup Key",
+       "type": "string",
+       "default": "",
+       "description": "The alert identity. A repeat with the same key while the room is open attaches to it"
+      },
+      {
+       "name": "entityHints",
+       "displayName": "Entity Hints",
+       "type": "string",
+       "default": "",
+       "placeholder": "service:checkout, env:prod",
+       "description": "Comma- or line-separated key:value hints that tell Landfall which entity this is"
+      },
+      {
+       "name": "summary",
+       "displayName": "Summary",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 3
+       }
+      },
+      {
+       "name": "url",
+       "displayName": "URL",
+       "type": "string",
+       "default": "",
+       "description": "A link back to the alert"
+      },
+      {
+       "name": "occurredAt",
+       "displayName": "Occurred At",
+       "type": "dateTime",
+       "default": "",
+       "description": "When the alert fired (default: now, on Landfall's side)"
+      },
+      {
+       "name": "connectionId",
+       "displayName": "Connection ID",
+       "type": "string",
+       "default": "",
+       "description": "Overrides the credential's Connection ID"
+      }
+     ]
+    },
+    {
+     "name": "additionalFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "recover"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "entityHints",
+       "displayName": "Entity Hints",
+       "type": "string",
+       "default": "",
+       "placeholder": "service:checkout, env:prod",
+       "description": "Comma- or line-separated key:value hints that tell Landfall which entity this is"
+      },
+      {
+       "name": "summary",
+       "displayName": "Summary",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 3
+       }
+      },
+      {
+       "name": "url",
+       "displayName": "URL",
+       "type": "string",
+       "default": "",
+       "description": "A link back to the alert"
+      },
+      {
+       "name": "occurredAt",
+       "displayName": "Occurred At",
+       "type": "dateTime",
+       "default": "",
+       "description": "When the alert fired (default: now, on Landfall's side)"
+      },
+      {
+       "name": "connectionId",
+       "displayName": "Connection ID",
+       "type": "string",
+       "default": "",
+       "description": "Overrides the credential's Connection ID"
+      }
+     ]
+    },
+    {
+     "name": "incidentId",
+     "displayName": "Incident ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     },
+     "description": "The incident's id (the `id` of an incident item, or incidentId of an Open from Alert result)"
+    },
+    {
+     "name": "throughSeq",
+     "displayName": "Through Seq",
+     "type": "number",
+     "default": -1,
+     "typeOptions": {
+      "minValue": -1,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "get"
+       ]
+      }
+     },
+     "description": "State as of this timeline seq (-1: the latest)"
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     },
+     "description": "Whether to return all results or only up to a limit"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 200,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "getAll"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     },
+     "description": "Max number of results to return"
+    },
+    {
+     "name": "filters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Filter",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "incident"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "status",
+       "displayName": "Status",
+       "type": "options",
+       "default": "open",
+       "options": [
+        {
+         "name": "Open",
+         "value": "open"
+        },
+        {
+         "name": "Closed",
+         "value": "closed"
+        },
+        {
+         "name": "All",
+         "value": "all"
+        }
+       ]
+      },
+      {
+       "name": "q",
+       "displayName": "Search",
+       "type": "string",
+       "default": "",
+       "description": "Free-text search over incidents"
+      }
+     ]
+    },
+    {
+     "name": "incidentId",
+     "displayName": "Incident ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "timeline"
+       ],
+       "operation": [
+        "getEvents",
+        "addEvent",
+        "addNote"
+       ]
+      }
+     },
+     "description": "The incident's id (the `id` of an incident item, or incidentId of an Open from Alert result)"
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "timeline"
+       ],
+       "operation": [
+        "getEvents"
+       ]
+      }
+     },
+     "description": "Whether to return every event after Since Seq or only up to a limit"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 500,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "timeline"
+       ],
+       "operation": [
+        "getEvents"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     },
+     "description": "Max number of events. Landfall returns the newest ones, in ascending order"
+    },
+    {
+     "name": "eventOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "timeline"
+       ],
+       "operation": [
+        "getEvents"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "sinceSeq",
+       "displayName": "Since Seq",
+       "type": "number",
+       "default": 0,
+       "typeOptions": {
+        "minValue": 0,
+        "numberPrecision": 0
+       },
+       "description": "Only events with a seq greater than this"
+      },
+      {
+       "name": "beforeSeq",
+       "displayName": "Before Seq",
+       "type": "number",
+       "default": 0,
+       "typeOptions": {
+        "minValue": 0,
+        "numberPrecision": 0
+       },
+       "description": "Only events with a seq below this (page backwards)"
+      }
+     ]
+    },
+    {
+     "name": "eventType",
+     "displayName": "Event Type",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "chat.message",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "timeline"
+       ],
+       "operation": [
+        "addEvent"
+       ]
+      }
+     },
+     "description": "Landfall refuses agent.step, incident.triggered, severity.proposed and a few other server-owned types"
+    },
+    {
+     "name": "payload",
+     "displayName": "Payload (JSON)",
+     "type": "json",
+     "default": "{}",
+     "typeOptions": {
+      "rows": 6
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "timeline"
+       ],
+       "operation": [
+        "addEvent"
+       ]
+      }
+     }
+    },
+    {
+     "name": "text",
+     "displayName": "Text",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "typeOptions": {
+      "rows": 3
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "timeline"
+       ],
+       "operation": [
+        "addNote"
+       ]
+      }
+     },
+     "description": "Posted as a chat.message event, as the member who owns the API key"
+    },
+    {
+     "name": "incidentId",
+     "displayName": "Incident ID",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "remediation"
+       ],
+       "operation": [
+        "recordAppliedExternally"
+       ]
+      }
+     },
+     "description": "The incident's id (the `id` of an incident item, or incidentId of an Open from Alert result)"
+    },
+    {
+     "name": "sourceSeq",
+     "displayName": "Source Seq",
+     "type": "number",
+     "required": true,
+     "default": 0,
+     "typeOptions": {
+      "minValue": 0,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "remediation"
+       ],
+       "operation": [
+        "recordAppliedExternally"
+       ]
+      }
+     },
+     "description": "The seq of the remediation.proposed (or edge.action.proposed) event that was applied"
+    },
+    {
+     "name": "additionalFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "remediation"
+       ],
+       "operation": [
+        "recordAppliedExternally"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "remediationId",
+       "displayName": "Remediation ID",
+       "type": "string",
+       "default": "",
+       "description": "Landfall fills it in from the suggestion when empty"
+      },
+      {
+       "name": "action",
+       "displayName": "Action",
+       "type": "string",
+       "default": "",
+       "description": "What was done, one line (up to 500 characters)"
+      },
+      {
+       "name": "note",
+       "displayName": "Note",
+       "type": "string",
+       "default": "",
+       "typeOptions": {
+        "rows": 3
+       },
+       "description": "A note or ticket link (up to 1000 characters)"
+      }
+     ]
+    },
+    {
+     "name": "heartbeatName",
+     "displayName": "Heartbeat Name",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "heartbeat"
+       ],
+       "operation": [
+        "ping"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "landfallTrigger",
+   "displayName": "Landfall Trigger",
+   "description": "Starts the workflow when Landfall opens an incident, an incident ends, or a room gets timeline events (polls the Landfall API, no public URL needed)",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "poll",
+   "categories": [
+    "Development",
+    "Communication"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzNCNUI3QSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMzAgMTRhOCA4IDAgMSAwLTUgMTQuMiIvPgogICAgPHBhdGggZD0iTTMwIDE0YzUgMCA4IDMgOCA2LjVTMzUgMjcgMzAgMjciLz4KICA8L2c+CiAgPHBhdGggZD0iTTI3IDI5bC01IDhoNGwtMiA2IDctOWgtNHoiIGZpbGw9IiNmZmYiLz4KPC9zdmc+Cg==",
+   "color": "#3B5B7A",
+   "subtitle": "every {{pollInterval}}s",
+   "documentationUrl": "https://landfalls.ai",
+   "keywords": [
+    "landfall",
+    "incident",
+    "war room",
+    "trigger",
+    "timeline"
+   ],
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "landfallApi",
+     "required": true
+    }
+   ],
+   "properties": [
+    {
+     "name": "pollInterval",
+     "displayName": "Poll Interval (seconds)",
+     "type": "number",
+     "default": 30,
+     "description": "How often to check for new events while the workflow is active",
+     "noDataExpression": true,
+     "typeOptions": {
+      "minValue": 10,
+      "numberPrecision": 0
+     }
+    },
+    {
+     "name": "events",
+     "displayName": "Trigger On",
+     "type": "multiOptions",
+     "default": [
+      "incidentOpened"
+     ],
+     "options": [
+      {
+       "name": "New Incident",
+       "value": "incidentOpened",
+       "description": "An incident with a number above the last one seen"
+      },
+      {
+       "name": "Incident Ended",
+       "value": "incidentEnded",
+       "description": "An incident seen open now has an ended status (resolved, closed, mitigated, recovered, done, archived)"
+      },
+      {
+       "name": "New Timeline Events",
+       "value": "timelineEvent",
+       "description": "New events in open rooms"
+      }
+     ]
+    },
+    {
+     "name": "eventTypes",
+     "displayName": "Event Types",
+     "type": "string",
+     "default": "",
+     "placeholder": "remediation.proposed, status.changed",
+     "description": "For New Timeline Events: a comma-separated list of event types to emit (empty: all)"
+    },
+    {
+     "name": "notice",
+     "displayName": "The first poll sets a baseline and emits nothing. Timelines are read for at most 20 open incidents per poll (the longest unread first) and 200 incidents are tracked. Execute in the editor shows up to 5 recent items and changes nothing.",
+     "type": "notice"
+    }
+   ]
+  }
+ ],
+ "credentialTypes": [
+  {
+   "name": "landfallApi",
+   "displayName": "Landfall API (lf_key_…)",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzNCNUI3QSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMzAgMTRhOCA4IDAgMSAwLTUgMTQuMiIvPgogICAgPHBhdGggZD0iTTMwIDE0YzUgMCA4IDMgOCA2LjVTMzUgMjcgMzAgMjciLz4KICAgIDxwYXRoIGQ9Ik0xNCAzNGgyME0xOCAzOWgxNCIvPgogIDwvZz4KPC9zdmc+Cg==",
+   "documentationUrl": "https://landfalls.ai",
+   "properties": [
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "https://your-landfall-api.example",
+     "description": "The Landfall API, without /o/<slug>. Use the fake (http://127.0.0.1:7398) for local runs"
+    },
+    {
+     "name": "orgSlug",
+     "displayName": "Org Slug",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "description": "The organization in /o/<slug>/…"
+    },
+    {
+     "name": "apiKey",
+     "displayName": "API Key",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "placeholder": "lf_key_…",
+     "description": "A Landfall API key (lf_key_…); it acts as the member who owns it. This is not a Landflow lf_ key"
+    },
+    {
+     "name": "ingestToken",
+     "displayName": "Ingest Token",
+     "type": "string",
+     "typeOptions": {
+      "password": true
+     },
+     "default": "",
+     "description": "Only for Open from Alert and Recover (POST /triggers). The token of the organization's remote-source connection"
+    },
+    {
+     "name": "connectionId",
+     "displayName": "Connection ID",
+     "type": "string",
+     "default": "",
+     "description": "The organization's remote-source connection id, sent as connectionId by Open from Alert and Recover"
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "landfallHeartbeatApi",
+   "displayName": "Landfall Heartbeat",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzNCNUI3QSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMzAgMTRhOCA4IDAgMSAwLTUgMTQuMiIvPgogICAgPHBhdGggZD0iTTMwIDE0YzUgMCA4IDMgOCA2LjVTMzUgMjcgMzAgMjciLz4KICAgIDxwYXRoIGQ9Ik0xNCAzNGgyME0xOCAzOWgxNCIvPgogIDwvZz4KPC9zdmc+Cg==",
+   "documentationUrl": "https://landfalls.ai",
+   "properties": [
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "https://your-landfall-api.example"
+    },
+    {
+     "name": "orgSlug",
+     "displayName": "Org Slug",
+     "type": "string",
+     "required": true,
+     "default": ""
+    },
+    {
+     "name": "token",
+     "displayName": "Heartbeat Token",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "description": "The heartbeat ping token (sent as a bearer token)"
+    }
+   ],
+   "testable": true
+  }
+ ]
+}

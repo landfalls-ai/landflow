@@ -24,7 +24,8 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | MCP gateway (agentgateway): sync, identity, tokens | [mcp-gateway.md](mcp-gateway.md) | [transports.md](transports.md) |
 | AI: AI Agent and sub-nodes, hosted chat and widget, RAG, guardrails, evaluations, MCP | [features/ai.md](features/ai.md) | |
 | Standalone agents: skills, capabilities, channels (Telegram, Slack, Teams), schedules, memory | [agents.md](agents.md) | |
-| Marketplace: Claude Code plugin marketplaces as agents, skills and node plugins | [marketplace.md](marketplace.md) | |
+| Marketplace: Claude Code plugin marketplaces as agents, skills, node plugins and flows; flow share pages | [marketplace.md](marketplace.md) | |
+| Alert triage and Landfall war rooms: the triage, Landfall and threat-intel plugins and their flows | [triage.md](triage.md) | each plugin's README |
 | Integrations: messaging, productivity, Google Workspace, databases | [features/integrations.md](features/integrations.md) | each plugin's README |
 | Files and binary data | [features/files.md](features/files.md) | [protocol.md](protocol.md) §11 |
 | Settings, variables, data tables, insights | [features/settings-and-data.md](features/settings-and-data.md) | |
@@ -94,6 +95,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | [services/landflow-bridge](../services/landflow-bridge/README.md) | broker kinds for plugins whose SDK lacks a driver |
 | [plugins/text-toolkit](../plugins/text-toolkit/README.md), [py-insights](../plugins/py-insights/README.md), [go-crypto](../plugins/go-crypto/README.md) | the example plugins, one per SDK |
 | [plugins/messaging](../plugins/messaging/README.md), [productivity](../plugins/productivity/README.md), [google-workspace](../plugins/google-workspace/README.md), [databases](../plugins/databases/README.md) | the integration plugins |
+| [plugins/triage](../plugins/triage/README.md), [landfall](../plugins/landfall/README.md), [threat-intel](../plugins/threat-intel/README.md) | the triage plugins ([triage.md](triage.md)) |
 | [deploy/k8s/examples/keda](../deploy/k8s/examples/keda/README.md) | KEDA autoscaling examples |
 | [sdks/go/transport/testdata/live-brokers](../sdks/go/transport/testdata/live-brokers/README.md), [live](../sdks/go/transport/testdata/live/README.md) | the cross-language broker checks |
 

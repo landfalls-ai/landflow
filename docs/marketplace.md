@@ -5,13 +5,15 @@ The Marketplace page installs plugins from Claude Code
 Anthropic's official one. Landflow turns each plugin's Claude Code **agents** into Landflow
 [agents](agents.md) and its **skills** into a skill library. A plugin can also be a
 **Landflow node plugin**: the host downloads it, runs it and supervises the process, and it
-announces itself to the registry like any other plugin.
+announces itself to the registry like any other plugin. And it can ship **flows**: workflow
+templates that installing adds to Templates, each with a read-only [share page](#share-pages).
 
 | A plugin contains | In Landflow |
 |---|---|
 | `agents/*.md` (frontmatter `name`, `description`, `model`, `tools`, `color`; the body is the system prompt) | one agent per file (draft, unpublished), with all of the plugin's skills attached |
 | `skills/<name>/SKILL.md` (+ `references/`) | a library skill (`GET /api/skills`), and a skill on each agent from the same plugin |
 | `landflow.plugin.json`, or a `landflow` field in the marketplace entry | a node plugin the host runs (see below) |
+| `flows/*.json`, plus the files or folders a `flows` list names | a template per flow, for the whole instance ([Flows](#flows)) |
 | `commands/`, `hooks/`, `.mcp.json`, `.lsp.json`, `output-styles/`, `bin/`, `monitors/`, `workflows/` | listed as **not supported yet** in the detail drawer and the install result; never installed silently |
 
 ## Using it
@@ -31,10 +33,11 @@ announces itself to the registry like any other plugin.
   - badges: Agents N, Skills N, Node plugin, Unsupported: …;
   - the agents with their model and the Claude Code tools that don't map;
   - the skills with their reference counts;
+  - the flows, each with its node icons, **View** (its share page) and a copy-link button;
   - unsupported components, notes, the README;
   - **Install**.
-- **Installed.** What each install created: links to its agents, its skills, and for node
-  plugins the process state, port, restarts, **Logs** and **Restart**. **Uninstall** asks first,
+- **Installed.** What each install created: links to its agents, its skills, its flows' templates,
+  and for node plugins the process state, port, restarts, **Logs** and **Restart**. **Uninstall** asks first,
   then deletes exactly what the install created. That includes agents you edited since; other
   agents are never touched.
 - **Skill library.** Every installed skill with its *when to use* line, references and full
@@ -54,6 +57,42 @@ announces itself to the registry like any other plugin.
 
 Other files in a skill folder (scripts, assets, examples) aren't used. The drawer says how many
 there are.
+
+## Flows
+
+A flow is a Landflow template file: the JSON a template's **Export** downloads and
+`POST /api/templates` `{ data }` imports (see the templates library in [the editor](features/editor.md)). A plugin ships
+them in `flows/*.json`; a `flows` array in `plugin.json` or in the marketplace entry adds other
+files or folders. A plugin at the marketplace root (`"source": "./"`) reads only the listed ones.
+At most 50 files are read, 1 MB each; a file that isn't a valid template is a warning in the
+drawer, not an error.
+
+- **Detail.** Each flow lists its name, description, categories, node types and credential
+  types, and `needs`: the node types its own plugin doesn't provide and this instance doesn't
+  have, so you know which other plugins to install first.
+- **Install** imports each flow as a template with an `origin` (the installed plugin, the
+  marketplace and the file). Templates from a marketplace show the plugin on their card and link
+  back to the share page. They belong to the whole instance, not a project.
+- **Uninstall** deletes those templates. Workflows already made from them stay; they are yours.
+
+## Share pages
+
+`/marketplace/flows/<marketplace>/<plugin>/<path>` shows one flow without installing it:
+
+- the canvas, read only: click a node for its notes and parameters, nothing runs or tests;
+- the description, setup steps, credentials and data tables, as the template page shows them;
+- what else it needs ("Also needs nodes from …") and anything this instance blocks;
+- the plugin's other flows.
+
+**Install plugin** opens the plugin's drawer, with the usual confirmation for a node plugin.
+Once installed, **Open template** goes to the template, where **Use template** creates the
+workflow. **Copy share link** copies the page's URL.
+
+The link carries `?source=` (`owner/repo[@ref]` or the marketplace URL; nothing for a local one).
+On an instance that hasn't added that marketplace, the page says so, and owners and admins get
+**Add <source>**, which only adds it: nothing is installed until they choose. `<marketplace>`
+may be the marketplace's id or its name, so a link works on any instance that added the same
+marketplace. The page needs a signed-in member (`workflows:read`); it isn't public.
 
 ## Marketplace format support
 
@@ -124,7 +163,10 @@ What installing does:
    npm, so their dependencies are rewritten to `file:` links to the host's `packages/`, and
    symlinked into `node_modules`. If the plugin has other dependencies and no `install`, the
    host runs `npm install --omit=dev --no-audit --no-fund --ignore-scripts`. The timeout is
-   5 minutes.
+   5 minutes. For `runtime: "go"`, `replace` directives in `go.mod` that point
+   `github.com/landflow/landflow/sdks/go` (and its transport modules) at a relative path are
+   pointed at the host's `sdks/go`, so a plugin from this repository builds with its `install`
+   (`go build`).
 4. **Runs** `start` as a child process of the host:
    - `cwd` is the plugin directory;
    - `LANDFLOW_HTTP_PORT` gets a free port in 7250–7299, inside the default scan range
@@ -185,10 +227,11 @@ variables above. It does **not** get the host's API keys, `LANDFLOW_ENCRYPTION_K
 | `GET /api/marketplaces/:id` | the catalog `{ marketplace, plugins: CatalogPlugin[], categories }` (fetches on first open) |
 | `POST /api/marketplaces/:id/refresh` | `{ marketplace }` |
 | `DELETE /api/marketplaces/:id` | `{ ok }`. `409` while plugins from it are installed; `400` for the built-in one |
-| `GET /api/marketplaces/:id/plugins/:name[?fresh=1]` | `{ plugin: PluginDetail }`: manifest, agents, skills, unsupported, nodePlugin, readme, warnings |
+| `GET /api/marketplaces/:id/plugins/:name[?fresh=1]` | `{ plugin: PluginDetail }`: manifest, agents, skills, unsupported, nodePlugin, flows (`MarketplaceFlow[]`, each with `needs` and `link`), readme, warnings |
+| `GET /api/marketplaces/:id/plugins/:name/flow?path=` | `{ flow: MarketplaceFlowView }` for the share page: the flow as a template preview (nothing saved), the plugin's other flows, `templateId` once installed, and `link`. `:id` may be the marketplace's name. `400` without `path`; `404` for an unknown flow, and `404 { missing: "marketplace" }` when the marketplace isn't added |
 | `POST /api/marketplaces/:id/plugins/:name/install` `{ confirm? }` | `201 InstallResult` `{ installed, notSupported, warnings }`. `409 InstallConfirmation` for a node plugin without `confirm`. `422` when nothing in it runs in Landflow, or for an unsupported source |
 | `GET /api/marketplaces/installed` | `{ installed }`, with node-plugin process status |
-| `DELETE /api/marketplaces/installed/:pluginId` | `{ removed: { agents, skills, nodePlugin } }` (`pluginId` = `name@marketplace`, URL-encoded) |
+| `DELETE /api/marketplaces/installed/:pluginId` | `{ removed: { agents, skills, nodePlugin, flows? } }` (`pluginId` = `name@marketplace`, URL-encoded; `flows` counts the templates removed) |
 | `GET /api/marketplaces/installed/:pluginId/logs` | `{ lines }` |
 | `POST /api/marketplaces/installed/:pluginId/restart` | `{ installed }` |
 | `GET /api/skills` | `{ skills: LibrarySkill[] }` (an `AgentSkill` plus `source` and `installedAt`) |
@@ -202,6 +245,7 @@ All of it lives under `LANDFLOW_DATA_DIR` (default `apps/web/.data`):
 - `marketplaces.json`: the added marketplaces with their cached entries, and the installed
   plugins with the ids of what each install created;
 - `skill-library.json`;
+- the flows' templates, in the database with the other imported templates;
 - `marketplace/plugins/<name>/` and `marketplace/logs/<name>.log` for node plugins.
 
 ## Telemetry
@@ -225,3 +269,5 @@ All of it lives under `LANDFLOW_DATA_DIR` (default `apps/web/.data`):
 - `npm install` runs with `--ignore-scripts` by default. A plugin's own `install` command can
   still do anything; the confirmation shows it.
 - URL marketplaces fetch whatever http(s) URL you enter, from the host.
+- **Flows are data until used.** Installing one only adds a template. Its nodes run when someone
+  creates a workflow from it and activates or runs it, with the credentials they pick.

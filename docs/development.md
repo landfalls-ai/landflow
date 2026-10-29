@@ -89,12 +89,12 @@ Every suite, from the repository root. All of them run offline.
 pnpm typecheck                                     # every TypeScript package
 for p in protocol transports engine sdk cli; do (cd packages/$p && npx vitest run); done
 (cd services/code-runner && npx vitest run)
-for p in messaging text-toolkit; do (cd plugins/$p && npx vitest run); done
+for p in messaging text-toolkit landfall triage; do (cd plugins/$p && npx vitest run); done
 (cd sdks/go && go test ./...)
 (cd sdks/go/transport && go test -race -count=1 -run Claim .)
 for k in kafka amqp nats valkey mqtt amqp1 sqs pubsub pulsar servicebus; do (cd sdks/go/transport/$k && go test ./...); done
 (cd services/landflow-bridge && go test ./...)
-for p in go-crypto google-workspace databases; do (cd plugins/$p && go test ./...); done
+for p in go-crypto google-workspace databases threat-intel; do (cd plugins/$p && go test ./...); done
 plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests
 (cd plugins/py-insights && .venv/bin/python -m unittest discover -s tests)
 (cd plugins/productivity && .venv/bin/python -m unittest discover -s tests)
@@ -115,6 +115,11 @@ node packages/protocol/scripts/record-manifests.mjs    # writes packages/protoco
 ```
 
 The script drops `transports` and `maxConcurrency`, which depend on how the plugin was started, not on its code.
+
+The triage, Landfall and threat-intel plugins aren't in `dev:all`; start them with `pnpm plugin:triage`,
+`plugin:landfall` and `plugin:threat-intel` before recording. `apps/web/test/plugin-flows.test.ts` checks every
+`plugins/*/flows/*.json` against these manifests and the repository's `.claude-plugin/marketplace.json`, so a node change
+that breaks a shipped flow fails there.
 
 ### Live broker suites
 

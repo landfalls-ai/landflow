@@ -2,7 +2,7 @@
 /** Installed plugins: what each install created, node-plugin processes, and Uninstall. */
 import { useState } from 'react';
 import Link from 'next/link';
-import { Bot, Package, RefreshCw, ScrollText, Sparkles } from 'lucide-react';
+import { Bot, Package, RefreshCw, ScrollText, Sparkles, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
@@ -76,6 +76,11 @@ function InstalledRow({ plugin, onChanged }: { plugin: InstalledPlugin; onChange
                 <Sparkles className="size-3" /> {skill.name}
               </span>
             ))}
+            {plugin.templates?.map((template) => (
+              <Link key={template.id} href={`/templates/${template.id}`} className="inline-flex items-center gap-1 rounded-full border border-acbd bg-acdim px-2.5 py-px text-ac hover:underline">
+                <Workflow className="size-3" /> {template.name}
+              </Link>
+            ))}
             {plugin.unsupported.length > 0 && (
               <span className="text-[11px] text-t3" title={plugin.unsupported.map((u) => `${u.kind}: ${u.items.join(', ')}`).join('\n')}>
                 not installed: {plugin.unsupported.map((u) => UNSUPPORTED_LABEL[u.kind] ?? u.kind).join(', ')}
@@ -107,6 +112,7 @@ function InstalledRow({ plugin, onChanged }: { plugin: InstalledPlugin; onChange
             <>
               <span className="max-w-[220px] text-right text-[11px] leading-snug text-t3">
                 Deletes {plugin.agents.length} agent{plugin.agents.length === 1 ? '' : 's'} (with your edits) and {plugin.skills.length} skill{plugin.skills.length === 1 ? '' : 's'}
+                {plugin.templates?.length ? `, ${plugin.templates.length} flow template${plugin.templates.length === 1 ? '' : 's'}` : ''}
                 {plugin.nodePlugin ? ', stops the node plugin' : ''}
               </span>
               <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>

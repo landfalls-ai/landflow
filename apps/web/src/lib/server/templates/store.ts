@@ -5,7 +5,7 @@
  * change it) or is instance-wide (no project: every builder sees it; owners and admins publish and change those).
  */
 import { nanoid } from 'nanoid';
-import type { TemplateCategory, TemplateCredentialSlot, TemplateDataTable } from '../../shared/templates';
+import type { TemplateCategory, TemplateCredentialSlot, TemplateDataTable, TemplateOrigin } from '../../shared/templates';
 import type { Workflow } from '../../shared/types';
 import { projectsDb } from '../projects/db';
 
@@ -22,6 +22,8 @@ export interface LocalTemplate {
   author?: string;
   /** The project it belongs to; none = instance-wide. */
   projectId?: string;
+  /** A marketplace plugin's flow (kept in `data`, so no column). */
+  origin?: TemplateOrigin;
   createdAt: string;
   updatedAt: string;
 }

@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { timeAgo } from '@/lib/client/format';
+import { flowLink } from '@/lib/shared/marketplace';
 import type { TemplateDetail } from '@/lib/shared/templates';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { Markdown } from '@/components/canvas/markdown';
@@ -33,7 +34,7 @@ import { downloadTemplate, useNodeTypeMap, useTemplateDetail } from './use-templ
 
 const NO_RUN_DATA = {};
 
-function Credentials({ template }: { template: TemplateDetail }) {
+export function Credentials({ template }: { template: Pick<TemplateDetail, 'credentials'> }) {
   const { types } = useCredentials();
   if (!template.credentials.length) return <p className="text-[12px] text-t3">None: this template runs without credentials.</p>;
   return (
@@ -51,6 +52,55 @@ function Credentials({ template }: { template: TemplateDetail }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** The aside's setup steps, credentials and data tables (the template page and a marketplace flow's share page). */
+export function TemplateSetupCards({ template }: { template: Pick<TemplateDetail, 'setup' | 'credentials' | 'dataTables'> }) {
+  return (
+    <>
+      <Card className="flex flex-col gap-2.5">
+        <SectionLabel>Setup</SectionLabel>
+        {template.setup.length ? (
+          <ol className="flex flex-col gap-2.5">
+            {template.setup.map((step, i) => (
+              <li key={i} className="flex gap-2.5">
+                <span className="grid size-5 shrink-0 place-items-center rounded-full border border-acbd bg-acdim font-mono text-[11px] font-semibold text-ac">{i + 1}</span>
+                <Markdown text={step} className="min-w-0 flex-1 text-[12px] leading-snug text-t2" />
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="text-[12px] text-t3">No setup steps: use it and run it.</p>
+        )}
+      </Card>
+      <Card className="flex flex-col gap-2.5">
+        <SectionLabel>
+          <span className="inline-flex items-center gap-1.5">
+            <KeyRound className="size-3.5" /> Credentials
+          </span>
+        </SectionLabel>
+        <Credentials template={template} />
+      </Card>
+      {template.dataTables.length > 0 && (
+        <Card className="flex flex-col gap-2.5">
+          <SectionLabel>
+            <span className="inline-flex items-center gap-1.5">
+              <Table2 className="size-3.5" /> Data tables
+            </span>
+          </SectionLabel>
+          <ul className="flex flex-col gap-1.5 text-[12px]">
+            {template.dataTables.map((t) => (
+              <li key={t.name}>
+                <span className="font-semibold text-t1">{t.name}</span>
+                <span className="text-t3"> · {t.columns.map((c) => c.name).join(', ') || 'no columns'}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[11px] text-t3">Created when you use the template, unless a table with that name exists.</p>
+        </Card>
+      )}
+    </>
   );
 }
 
@@ -205,6 +255,14 @@ export function TemplateView({ id }: { id: string }) {
               ]
                 .filter(Boolean)
                 .join(' · ')}
+              {template.origin && (
+                <>
+                  {' · '}
+                  <Link href={flowLink(template.origin.marketplace, template.origin.plugin, template.origin.path)} className="text-ac hover:underline">
+                    View in the marketplace
+                  </Link>
+                </>
+              )}
             </div>
           </Card>
           {template.report && (
@@ -217,47 +275,7 @@ export function TemplateView({ id }: { id: string }) {
 
         <aside className="flex min-w-0 flex-col gap-4">
           <Problems template={template} types={types} />
-          <Card className="flex flex-col gap-2.5">
-            <SectionLabel>Setup</SectionLabel>
-            {template.setup.length ? (
-              <ol className="flex flex-col gap-2.5">
-                {template.setup.map((step, i) => (
-                  <li key={i} className="flex gap-2.5">
-                    <span className="grid size-5 shrink-0 place-items-center rounded-full border border-acbd bg-acdim font-mono text-[11px] font-semibold text-ac">{i + 1}</span>
-                    <Markdown text={step} className="min-w-0 flex-1 text-[12px] leading-snug text-t2" />
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="text-[12px] text-t3">No setup steps: use it and run it.</p>
-            )}
-          </Card>
-          <Card className="flex flex-col gap-2.5">
-            <SectionLabel>
-              <span className="inline-flex items-center gap-1.5">
-                <KeyRound className="size-3.5" /> Credentials
-              </span>
-            </SectionLabel>
-            <Credentials template={template} />
-          </Card>
-          {template.dataTables.length > 0 && (
-            <Card className="flex flex-col gap-2.5">
-              <SectionLabel>
-                <span className="inline-flex items-center gap-1.5">
-                  <Table2 className="size-3.5" /> Data tables
-                </span>
-              </SectionLabel>
-              <ul className="flex flex-col gap-1.5 text-[12px]">
-                {template.dataTables.map((t) => (
-                  <li key={t.name}>
-                    <span className="font-semibold text-t1">{t.name}</span>
-                    <span className="text-t3"> · {t.columns.map((c) => c.name).join(', ') || 'no columns'}</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="text-[11px] text-t3">Created when you use the template, unless a table with that name exists.</p>
-            </Card>
-          )}
+          <TemplateSetupCards template={template} />
         </aside>
       </PageBody>
       {using && <UseTemplateDialog template={template} folderId={folder} projectId={project ?? template.projectId} onClose={() => setUsing(false)} />}
