@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
-import type { Catalog, InstalledPlugin, LibrarySkill, MarketplaceSummary } from '@/lib/shared/marketplace';
+import type { ExploreResult, InstalledPlugin, LibrarySkill, MarketplaceSummary } from '@/lib/shared/marketplace';
 
 export interface Preset {
   id: string;
@@ -29,32 +29,27 @@ export function useMarketplaces() {
   return { ...data, error, reload };
 }
 
-/** One marketplace's catalog; the server fetches it on first open. */
-export function useCatalog(id: string | undefined) {
-  const [catalog, setCatalog] = useState<Catalog>();
-  const [loading, setLoading] = useState(false);
+/** Every added marketplace at once (GET /api/marketplaces/explore); `version` reloads it after an install or refresh. */
+export function useExplore(version: number) {
+  const [explore, setExplore] = useState<ExploreResult>();
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
-  const load = useCallback(
-    async (refresh = false) => {
-      if (!id) return;
-      setLoading(true);
-      setError(undefined);
-      try {
-        if (refresh) await api(`/api/marketplaces/${id}/refresh`, { method: 'POST' });
-        setCatalog(await api<Catalog>(`/api/marketplaces/${id}`));
-      } catch (e) {
-        setError((e as Error).message);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [id],
-  );
   useEffect(() => {
-    setCatalog(undefined);
-    void load();
-  }, [load]);
-  return { catalog: catalog?.marketplace.id === id ? catalog : undefined, loading, error, load };
+    let live = true;
+    setLoading(true);
+    api<ExploreResult>('/api/marketplaces/explore')
+      .then((r) => {
+        if (!live) return;
+        setExplore(r);
+        setError(undefined);
+      })
+      .catch((e: Error) => live && setError(e.message))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [version]);
+  return { explore, loading, error };
 }
 
 export function useSkillLibrary(version: number) {

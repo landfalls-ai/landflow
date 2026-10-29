@@ -5,6 +5,7 @@
  */
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { existsSync } from 'node:fs';
+import { createServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -13,14 +14,14 @@ import { parseFrontmatter, stringList } from '@/lib/server/marketplace/frontmatt
 import { agentFromClaude, mapModel, skillFromClaude } from '@/lib/server/marketplace/map';
 import { loadPlugin, parseAgentFile, parseNodeManifest, plainDescription } from '@/lib/server/marketplace/plugin';
 import { clearTreeCache, readerFor } from '@/lib/server/marketplace/reader';
-import { linkGoSdk } from '@/lib/server/marketplace/node-plugins';
+import { linkGoSdk, portFree } from '@/lib/server/marketplace/node-plugins';
 import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
 import { marketplace } from '@/lib/server/marketplace/service';
 import { parseMarketplaceInput, resolveSource } from '@/lib/server/marketplace/sources';
 import { marketplaceStore } from '@/lib/server/marketplace/store';
 import { localTemplates } from '@/lib/server/templates/store';
-import type { InstallConfirmation, InstallResult } from '@/lib/shared/marketplace';
+import type { ExploreResult, InstallConfirmation, InstallResult } from '@/lib/shared/marketplace';
 
 describe('frontmatter', () => {
   it('reads Claude Code agent files', () => {
@@ -323,6 +324,30 @@ describe('install and uninstall', () => {
     expect(await missing.json()).toMatchObject({ missing: 'marketplace' });
   });
 
+  it('explores every marketplace at once: plugins, the Landflow plugins’ flows, and what couldn’t be read', async () => {
+    const route = await import('@/app/api/marketplaces/explore/route');
+    const response = await route.GET(new Request('http://localhost/api/marketplaces/explore'));
+    expect(response.status).toBe(200);
+    const result = (await response.json()) as ExploreResult;
+    const acme = result.plugins.filter((p) => p.marketplace.id === id);
+    expect(acme.map((p) => p.name)).toEqual(['reviewers', 'writing-skills', 'mcp-only', 'npm-thing', 'node-tools', 'soc-flows']);
+    const byName = Object.fromEntries(acme.map((p) => [p.name, p]));
+    // A marketplace this small has every supported plugin read; an unsupported source isn't.
+    expect(byName.reviewers).toMatchObject({ installed: true, marketplace: { id, name: 'acme-tools' }, read: { agents: 2, skills: 1 } });
+    expect(byName['node-tools'].read).toMatchObject({ nodePlugin: { id: 'acme-nodes', runtime: 'node' }, agents: 0, skills: 0 });
+    expect(byName['npm-thing'].read).toBeUndefined();
+    expect(byName['node-tools'].registered).toBeUndefined();
+    expect(result.flows.map((f) => [f.plugin, f.name])).toEqual([
+      ['soc-flows', 'Triage digest'],
+      ['soc-flows', 'Alert triage'],
+    ]);
+    expect(result.flows[1]).toMatchObject({ marketplace: { id, name: 'acme-tools' }, pluginInstalled: false, needs: ['acme-soc.decide'], link: '/marketplace/flows/acme-tools/soc-flows/flows/triage.json?source=acme%2Ftools' });
+    expect(result.flows[1].templateId).toBeUndefined();
+    expect(result.categories).toEqual(['development', 'security']);
+    // The official marketplace can't be fetched here: reported, not fatal.
+    expect(result.errors).toEqual([expect.objectContaining({ marketplaceId: 'mk_anthropic_official' })]);
+  });
+
   it('installs a flows-only plugin as templates and removes them on uninstall', async () => {
     const result = (await marketplace.install(id, 'soc-flows')) as InstallResult;
     expect((await marketplace.flow('acme-tools', 'soc-flows', 'flows/triage.json')).templateId).toBe(result.installed.templates![1].id);
@@ -334,6 +359,7 @@ describe('install and uninstall', () => {
       origin: { kind: 'marketplace', installedId: 'soc-flows@acme-tools', plugin: 'soc-flows', marketplace: 'acme-tools', path: 'flows/triage.json' },
     });
     expect(templates[1].projectId).toBeUndefined();
+    expect((await marketplace.explore()).flows.find((f) => f.path === 'flows/triage.json')).toMatchObject({ pluginInstalled: true, templateId: result.installed.templates![1].id });
     expect(await marketplace.uninstall('soc-flows@acme-tools')).toEqual({ removed: { agents: 0, skills: 0, nodePlugin: false, flows: 2 } });
     for (const t of result.installed.templates!) expect(localTemplates.get(t.id)).toBeUndefined();
   });
@@ -392,6 +418,19 @@ await serve(plugin, { http: 1 });
     delete process.env.LANDFLOW_MARKETPLACE_REGISTRY_URL;
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it('counts a port held on every interface as taken', async () => {
+    // macOS lets 127.0.0.1 bind beside a wildcard listener, so a loopback-only probe handed out busy ports.
+    const held = createServer();
+    await new Promise<void>((done) => held.listen(0, done));
+    const { port } = held.address() as AddressInfo;
+    try {
+      expect(await portFree(port)).toBe(false);
+    } finally {
+      await new Promise((done) => held.close(done));
+    }
+    expect(await portFree(port)).toBe(true);
+  });
 
   it('points a Go plugin’s relative SDK replace at the host’s copy', () => {
     write(

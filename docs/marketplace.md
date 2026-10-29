@@ -20,16 +20,32 @@ templates that installing adds to Templates, each with a read-only [share page](
 
 **Marketplace** in the sidebar has three tabs.
 
-- **Browse.** The marketplace bar lists the added marketplaces. **Anthropic official**
-  (`anthropics/claude-plugins-official`) is built in, and it is fetched the first time you open
-  it, never at startup. **Add marketplace** takes:
+- **Explore.** Everything in one place: the plugins of every added marketplace, the flows of its Landflow plugins,
+  the registry's own plugins and the Templates library. One search covers names, descriptions, authors, keywords and
+  node types. The kind switch has four views:
+  - **All**: a section per kind, each with its first 8 and **Show all**.
+  - **Node plugins**: entries with a `landflow` field or a `landflow.plugin.json`. Once installed, a tile shows the
+    registry's icon, status and node count. The registry's own plugins that no marketplace installed show as
+    **This instance**, and open their card on the Plugins page.
+  - **Workflows**: marketplace flows (opening the share page) and built-in and saved templates. A flow already
+    installed is shown once, as its flow.
+  - **Agents & skills**: the other Claude Code plugins, with their agent and skill counts once read.
+
+  The source chips narrow it to one marketplace, which shows its card with **Refresh** and **Remove**, or to
+  **This instance**. Category chips use readable names (`incident-response` reads *Incident response*). Explore
+  reads every plugin of a marketplace with at most 25 entries (`EXPLORE_READ_ALL`). In a larger one it reads only the
+  Landflow plugins and the entries that list flows. A marketplace or plugin that can't be read is named in a notice,
+  and the rest still shows. **Anthropic official** (`anthropics/claude-plugins-official`) is built in and is fetched
+  the first time Explore opens, never at startup.
+
+  **Add marketplace** takes:
   - `owner/repo`, `owner/repo@ref` or `owner/repo#ref`;
   - a `github.com` URL, including `/tree/<ref>`;
   - a direct `marketplace.json` URL.
 
   It also has preset chips: Anthropic official, and Anthropic Agent Skills (`anthropics/skills`).
   A marketplace is fetched before it is saved, so one that can't be read isn't added.
-  The plugin grid has search and category filters. Clicking a plugin opens the detail drawer:
+  Clicking a marketplace plugin opens the detail drawer:
   - badges: Agents N, Skills N, Node plugin, Unsupported: …;
   - the agents with their model and the Claude Code tools that don't map;
   - the skills with their reference counts;
@@ -224,6 +240,7 @@ variables above. It does **not** get the host's API keys, `LANDFLOW_ENCRYPTION_K
 |---|---|
 | `GET /api/marketplaces` | `{ marketplaces: MarketplaceSummary[], presets, installed: InstalledPlugin[] }` |
 | `POST /api/marketplaces` `{ input }` | `201 { marketplace }`; `409` if already added; `502` if it can't be fetched |
+| `GET /api/marketplaces/explore` | `ExploreResult` `{ plugins: ExplorePlugin[], flows: ExploreFlow[], categories, errors }`: every added marketplace at once. A plugin carries its marketplace, what was read of it (`read`: node plugin id and runtime, agent and skill counts) and, once its node plugin is registered, `registered` (icon, colour, status, node count). A flow carries its plugin, `pluginInstalled` and the `templateId` it became. A marketplace or plugin that fails to load lands in `errors`, and the rest is still returned |
 | `GET /api/marketplaces/:id` | the catalog `{ marketplace, plugins: CatalogPlugin[], categories }` (fetches on first open) |
 | `POST /api/marketplaces/:id/refresh` | `{ marketplace }` |
 | `DELETE /api/marketplaces/:id` | `{ ok }`. `409` while plugins from it are installed; `400` for the built-in one |

@@ -369,7 +369,7 @@ function InstallSummary({ result }: { result: InstallResult }) {
       {installed.nodePlugin && (
         <div className="mt-1 text-[12px] text-t1">
           Node plugin <span className="font-mono">{installed.nodePlugin.pluginId}</span> {installed.nodePlugin.status?.state ?? 'starting'} on port {installed.nodePlugin.port} — watch it come online in{' '}
-          <Link href="/plugins" className="text-ac hover:underline">
+          <Link href={`/plugins?plugin=${encodeURIComponent(installed.nodePlugin.pluginId)}`} className="text-ac hover:underline">
             Plugins
           </Link>
           .

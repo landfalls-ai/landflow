@@ -13,7 +13,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
+import { connect, createServer } from 'node:net';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { NodePluginManifest, NodePluginStatus } from '../../shared/marketplace';
 import { singleton } from '../singleton';
@@ -215,11 +215,29 @@ function pluginEnv(manifest: NodePluginManifest, ports: { http: number; grpc?: n
   };
 }
 
-export const portFree = (port: number) =>
+/** Something takes a connection on the port: a listener on any interface answers on 127.0.0.1 too. */
+const answers = (port: number) =>
+  new Promise<boolean>((done) => {
+    const socket = connect({ port, host: '127.0.0.1' });
+    const finish = (value: boolean) => {
+      socket.destroy();
+      done(value);
+    };
+    socket.setTimeout(500, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
+
+/**
+ * Free when nothing answers on it and it binds on every interface, as the plugins' servers do. Binding 127.0.0.1 alone
+ * isn't proof: on macOS it succeeds while another process holds the port on the wildcard address.
+ */
+export const portFree = async (port: number) =>
+  !(await answers(port)) &&
   new Promise<boolean>((done) => {
     const server = createServer();
     server.once('error', () => done(false));
-    server.listen(port, '127.0.0.1', () => server.close(() => done(true)));
+    server.listen(port, () => server.close(() => done(true)));
   });
 
 export async function freePort(taken: Set<number>): Promise<number> {

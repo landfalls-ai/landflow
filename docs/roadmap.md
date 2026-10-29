@@ -538,6 +538,11 @@ No migrations: a template's marketplace origin is kept in its document.
   their origin and uninstalling removes them. Each flow has a read-only share page (the canvas, notes, setup,
   credentials, what else it needs, **Install plugin**, a share link that can add the marketplace on another
   instance). Go node plugins from this repository build against the host's `sdks/go`.
+- **Plugins page and Explore.** The Plugins page is a grid of small cards (icon, status, node icons) with search and
+  an online/offline filter. A card unfolds on click to its endpoints, transport policy, MCP exposure and nodes, and
+  `?plugin=<id>` links to one. The marketplace's Browse tab became **Explore**: every node plugin, workflow and Claude
+  Code plugin across the added marketplaces and this instance (the registry's plugins, the Templates library), with
+  one search, kinds, sources and categories (`GET /api/marketplaces/explore`).
 - **Tests.** The plugins' suites (Landfall against a fake Landfall, threat intel against `httptest` fakes), the host's
   marketplace tests for flows, share views, install and uninstall, and `plugin-flows.test.ts`, which validates every
   shipped flow against the recorded manifests.
@@ -550,7 +555,9 @@ No migrations: a template's marketplace origin is kept in its document.
   asking for plugins already installed; Normalize Alert's Auto threw on a payload it didn't recognise (dropping the
   alert) and now reads it as Generic; the flows stopped when threat intel or the model failed, and now continue to the
   fail-open decision; the sign-in, setup, invite and password forms had no `method`, so a submit before the page
-  hydrated was a GET with the email and password in the URL (now `post`, with a test).
+  hydrated was a GET with the email and password in the URL (now `post`, with a test). Node plugins could be handed a
+  port another process already held: the free-port probe bound 127.0.0.1 only, which macOS allows beside a wildcard
+  listener. It now also connects to the port and binds every interface (with a test).
 - What remains: the Landfall and threat intel calls are checked against fakes, not the live services; share pages need
   sign-in; runbooks aren't built from closed rooms yet.
 

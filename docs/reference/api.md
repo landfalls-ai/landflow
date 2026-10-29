@@ -46,7 +46,7 @@ scope, an admin role) is set in `apps/web/src/lib/server/auth/policy.ts`. The pu
 | `POST /api/expressions/preview` | resolve an expression against sample items (the parameter editor's preview) |
 | `GET/POST /api/plugins`, `PATCH/DELETE /api/plugins/:id`, `POST /api/plugins/:id/refresh`, `POST /api/plugins/scan` | registry |
 | `POST/DELETE /api/plugins/announce` | plugin self-registration |
-| `/api/marketplaces…`, `/api/skills` | marketplaces, plugin install and uninstall, a flow's share view (`GET /api/marketplaces/:id/plugins/:name/flow?path=`), the skill library: the table in [docs/marketplace.md](../marketplace.md#api) |
+| `/api/marketplaces…`, `/api/skills` | marketplaces, Explore across all of them (`GET /api/marketplaces/explore`), plugin install and uninstall, a flow's share view (`GET /api/marketplaces/:id/plugins/:name/flow?path=`), the skill library: the table in [docs/marketplace.md](../marketplace.md#api) |
 | `GET /api/node-types`, `POST /api/node-types/load-options` | catalog |
 | `GET/POST /api/credentials`, `GET/PATCH/DELETE /api/credentials/:id` | credentials vault (secrets are never returned) |
 | `POST /api/credentials/test` | `{ type, data, id? }` → `{ ok, message, durationMs }`, the plugin's connection test |

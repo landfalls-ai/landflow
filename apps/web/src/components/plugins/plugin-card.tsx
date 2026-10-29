@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { ChevronDown, RefreshCw, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -348,7 +348,66 @@ function LeaseBar({ expiresAt }: { expiresAt?: string }) {
   );
 }
 
-export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChange: (plugins: PluginSummary[]) => void }) {
+/** How many node icons a folded card shows before "+N". */
+const TILE_NODES = 7;
+
+/** A folded card: icon, name, status, two lines of description and the nodes' icons. Clicking it unfolds the card. */
+function PluginTile({ plugin, onToggle }: { plugin: PluginSummary; onToggle: () => void }) {
+  const builtin = plugin.source === 'builtin';
+  const shown = plugin.nodes.slice(0, TILE_NODES);
+  const more = plugin.nodes.length - shown.length;
+  return (
+    <button
+      onClick={onToggle}
+      aria-expanded={false}
+      className="group flex h-full min-w-0 flex-col gap-2.5 rounded-2xl border border-hair bg-sf p-3.5 text-left transition-colors duration-[120ms] hover:border-bd hover:bg-sf2"
+    >
+      <div className="flex w-full min-w-0 items-center gap-2.5">
+        <AppIcon icon={plugin.info.icon} color={plugin.info.color} size={28} />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-baseline gap-1.5">
+            <span className="truncate text-[13px] font-semibold text-t1">{plugin.info.name}</span>
+            <span className="shrink-0 font-mono text-[11px] text-t3">v{plugin.info.version}</span>
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-t3">
+            <StatusDot status={plugin.status} />
+            {plugin.status}
+            <span aria-hidden>·</span>
+            {plugin.nodes.length} {plugin.nodes.length === 1 ? 'node' : 'nodes'}
+          </div>
+        </div>
+        <ChevronDown className="size-3.5 shrink-0 text-t3 transition-colors duration-[120ms] group-hover:text-t1" strokeWidth={1.7} />
+      </div>
+      <p className="line-clamp-2 min-h-[2lh] text-[12px] leading-[1.45] text-t2">{plugin.info.description || <span className="text-t3">No description</span>}</p>
+      <div className="mt-auto flex w-full min-w-0 items-center gap-1">
+        {shown.map((node) => {
+          const color = descriptorColor(node, plugin.info.color);
+          return (
+            <span key={node.name} title={node.displayName} className="grid size-[22px] shrink-0 place-items-center rounded-md border border-hair" style={{ background: `color-mix(in oklab, ${color} 10%, var(--sf))` }}>
+              <NodeIcon icon={node.icon} size={12} strokeWidth={2} style={{ color }} />
+            </span>
+          );
+        })}
+        {more > 0 && <span className="pl-0.5 font-mono text-[11px] text-t3">+{more}</span>}
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          <LanguageBadge language={plugin.info.language} />
+          <TransportBadge transport={builtin ? 'in-process' : plugin.transport} />
+        </span>
+      </div>
+    </button>
+  );
+}
+
+/**
+ * A registry plugin. Folded it is a small tile (`PluginTile`); unfolded it shows the endpoints, the transport policy,
+ * MCP exposure and every node, with refresh and forget.
+ */
+export function PluginCard({ plugin, onChange, expanded = true, onToggle }: { plugin: PluginSummary; onChange: (plugins: PluginSummary[]) => void; expanded?: boolean; onToggle?: () => void }) {
+  if (!expanded && onToggle) return <PluginTile plugin={plugin} onToggle={onToggle} />;
+  return <PluginDetail plugin={plugin} onChange={onChange} onToggle={onToggle} />;
+}
+
+function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; onChange: (plugins: PluginSummary[]) => void; onToggle?: () => void }) {
   const builtin = plugin.source === 'builtin';
   const [busy, setBusy] = useState(false);
   // Discovery sources besides the first one (a plugin can be announced and discovered), and Kubernetes namespaces.
@@ -375,7 +434,7 @@ export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChan
     <div className="overflow-hidden rounded-2xl border border-hair bg-sf">
       {/* header */}
       <div className="flex items-start gap-3 px-4 pb-3 pt-3.5">
-        <AppIcon icon={plugin.info.icon} color={plugin.info.color} size={40} />
+        <AppIcon icon={plugin.info.icon} color={plugin.info.color} size={36} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <h3 className="truncate text-[13px] font-semibold text-t1">{plugin.info.name}</h3>
@@ -401,16 +460,23 @@ export function PluginCard({ plugin, onChange }: { plugin: PluginSummary; onChan
             {plugin.info.sdk && <span className="font-mono text-[11px] text-t3">{plugin.info.sdk.name}</span>}
           </div>
         </div>
-        {!builtin && (
-          <div className="flex shrink-0 items-center gap-0.5">
-            <Button variant="ghost" size="icon-sm" onClick={() => void refresh()} disabled={busy} title="Re-pull manifest" aria-label="Re-pull manifest">
-              <RefreshCw className={cn('size-3.5', busy && 'animate-spin')} strokeWidth={1.7} />
+        <div className="flex shrink-0 items-center gap-0.5">
+          {!builtin && (
+            <>
+              <Button variant="ghost" size="icon-sm" onClick={() => void refresh()} disabled={busy} title="Re-pull manifest" aria-label="Re-pull manifest">
+                <RefreshCw className={cn('size-3.5', busy && 'animate-spin')} strokeWidth={1.7} />
+              </Button>
+              <Button variant="ghost" size="icon-sm" onClick={() => void remove()} title="Forget plugin" aria-label="Forget plugin" className="hover:bg-rddim hover:text-rd">
+                <Trash2 className="size-3.5" strokeWidth={1.7} />
+              </Button>
+            </>
+          )}
+          {onToggle && (
+            <Button variant="ghost" size="icon-sm" onClick={onToggle} aria-expanded title="Fold" aria-label={`Fold ${plugin.info.name}`}>
+              <ChevronUp className="size-3.5" strokeWidth={1.7} />
             </Button>
-            <Button variant="ghost" size="icon-sm" onClick={() => void remove()} title="Forget plugin" aria-label="Forget plugin" className="hover:bg-rddim hover:text-rd">
-              <Trash2 className="size-3.5" strokeWidth={1.7} />
-            </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
       {plugin.info.description && <p className="-mt-1 px-4 pb-3 text-[13px] text-t2">{plugin.info.description}</p>}
 

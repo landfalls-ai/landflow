@@ -10,6 +10,9 @@ import { nanoid } from 'nanoid';
 import type {
   Catalog,
   CatalogPlugin,
+  ExploreFlow,
+  ExplorePlugin,
+  ExploreResult,
   InstallConfirmation,
   InstalledPlugin,
   InstallResult,
@@ -31,13 +34,15 @@ import { agentFromClaude, skillFromClaude } from './map';
 import { commandLine, contentHash, downloadPlugin, freePort, nodePlugins, portFree, readInstallMarker, writeInstallMarker, type SupervisedPlugin } from './node-plugins';
 import { importTemplate, previewTemplate } from '../templates';
 import { localTemplates } from '../templates/store';
-import { loadFlows, loadPlugin, readFlow, type MarketplaceEntry } from './plugin';
+import { loadFlows, loadPlugin, pool, readFlow, type MarketplaceEntry } from './plugin';
 import { clearTreeCache, FetchError, fetchJson, fetchLimited, readerFor } from './reader';
 import { locationLabel, parseMarketplaceInput, resolveSource, sourceLabel } from './sources';
 import { marketplaceStore, PRESETS, type StoredMarketplace } from './store';
 
 const MAX_ENTRIES = 2_000;
 const DETAIL_TTL_MS = 10 * 60_000;
+/** Explore reads every plugin's files in a marketplace this small (and only the Landflow ones in a larger one). */
+const EXPLORE_READ_ALL = 25;
 
 export class MarketplaceError extends Error {
   constructor(
@@ -198,6 +203,54 @@ export const marketplace = {
     });
     const categories = [...new Set(plugins.map((p) => p.category).filter((c): c is string => Boolean(c)))].sort();
     return { marketplace: summarize(m), plugins, categories };
+  },
+
+  /**
+   * Every added marketplace at once. Plugins come from the catalogs (a marketplace not read yet is fetched now); their
+   * files are read only where it is cheap and useful: entries that declare a node plugin or list flows, and every entry
+   * of a marketplace with at most EXPLORE_READ_ALL plugins. A marketplace or plugin that can't be read is skipped and
+   * reported, never fatal.
+   */
+  async explore(): Promise<ExploreResult> {
+    const registered = new Map(registry.list().map((p) => [p.id, p]));
+    const result: ExploreResult = { plugins: [], flows: [], categories: [], errors: [] };
+    const templates = localTemplates.list();
+    for (const m of marketplaceStore.marketplaces()) {
+      let catalog: Catalog;
+      try {
+        catalog = await this.catalog(m.id);
+      } catch (error) {
+        result.errors.push({ marketplaceId: m.id, marketplace: summarize(m).name, message: (error as Error).message });
+        continue;
+      }
+      const ref = { id: m.id, name: catalog.marketplace.name };
+      const readAll = catalog.plugins.length <= EXPLORE_READ_ALL;
+      const entries: ExplorePlugin[] = catalog.plugins.map((plugin) => ({ ...plugin, marketplace: ref }));
+      result.plugins.push(...entries);
+      const flows = await pool(entries, 6, async (entry): Promise<ExploreFlow[]> => {
+        const plugin = entry;
+        if (!plugin.supported || !(readAll || plugin.landflow || plugin.flows > 0)) return [];
+        let detail: PluginDetail;
+        try {
+          detail = await this.detail(m.id, plugin.name);
+        } catch (error) {
+          result.errors.push({ marketplaceId: m.id, marketplace: ref.name, message: `${plugin.name}: ${(error as Error).message}` });
+          return [];
+        }
+        entry.read = { ...(detail.nodePlugin && { nodePlugin: { id: detail.nodePlugin.id, runtime: detail.nodePlugin.runtime } }), agents: detail.agents.length, skills: detail.skills.length };
+        if (detail.flows.length) entry.flows = detail.flows.length;
+        const live = detail.nodePlugin && registered.get(detail.nodePlugin.id);
+        if (live) entry.registered = { ...(live.info.icon && { icon: live.info.icon }), ...(live.info.color && { color: live.info.color }), status: live.status, nodes: live.nodes.length };
+        const pluginKey = installedId(plugin.name, m);
+        return detail.flows.map((flow) => {
+          const template = templates.find((t) => t.origin?.installedId === pluginKey && t.origin.path === flow.path);
+          return { ...flow, marketplace: ref, plugin: plugin.name, ...(plugin.displayName && { pluginDisplayName: plugin.displayName }), pluginInstalled: plugin.installed, ...(template && { templateId: template.id }) };
+        });
+      });
+      result.flows.push(...flows.flat());
+    }
+    result.categories = [...new Set(result.plugins.map((p) => p.category).filter((c): c is string => Boolean(c)))].sort();
+    return result;
   },
 
   /** Read a plugin's files: what it contains and what Landflow would create from it. */

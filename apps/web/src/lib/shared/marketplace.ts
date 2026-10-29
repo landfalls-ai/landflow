@@ -114,6 +114,37 @@ export interface Catalog {
   categories: string[];
 }
 
+/** A plugin in Explore: a catalog entry of any added marketplace, with what Explore read of its files. */
+export interface ExplorePlugin extends CatalogPlugin {
+  marketplace: { id: string; name: string };
+  /** Read from the plugin's files (Explore reads Landflow plugins, and every plugin of a small marketplace). */
+  read?: { nodePlugin?: { id: string; runtime: NodePluginManifest['runtime'] }; agents: number; skills: number };
+  /** Its node plugin as this instance's registry knows it, once installed: the brand icon and live status. */
+  registered?: { icon?: string; color?: string; status: string; nodes: number };
+}
+
+/** A flow in Explore: one marketplace plugin's flow, with where it comes from and the template it became here. */
+export interface ExploreFlow extends MarketplaceFlow {
+  marketplace: { id: string; name: string };
+  plugin: string;
+  pluginDisplayName?: string;
+  pluginInstalled: boolean;
+  /** The template the flow became when its plugin was installed. */
+  templateId?: string;
+}
+
+/**
+ * GET /api/marketplaces/explore — every added marketplace at once: their plugins, the flows of the Landflow plugins
+ * among them, and the marketplaces that couldn't be read. The Templates library and the registry's own plugins are
+ * merged in on the page.
+ */
+export interface ExploreResult {
+  plugins: ExplorePlugin[];
+  flows: ExploreFlow[];
+  categories: string[];
+  errors: Array<{ marketplaceId: string; marketplace: string; message: string }>;
+}
+
 export interface ClaudeAgentFile {
   path: string;
   name: string;
