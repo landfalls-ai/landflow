@@ -4,7 +4,8 @@
  * previews): a tinted frame with its label on top, or, collapsed, a compact box with the name, the node count and the
  * icons of its first nodes. Groups never run: they live in `workflow.groups`, beside the nodes. Colours come from the
  * sticky-note palette, lighter, so a frame stays behind what it holds. On the read-only canvases a collapsed box also
- * sums up how its nodes ran (`status`): a red outline when one failed, blue while one waits, and so on.
+ * sums up how its nodes ran (`status`): a red outline when one failed, blue while one waits, and so on. A composite
+ * (docs/composites.md) adds its type to the header (`badge`) and, collapsed, its named outputs.
  */
 import type { CSSProperties, ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
@@ -35,15 +36,19 @@ export interface GroupFrameViewProps {
   label?: ReactNode;
   /** Buttons at the right end of the header. */
   actions?: ReactNode;
+  /** After the count: a composite's type and how its contract stands. */
+  badge?: ReactNode;
   /** Class of the header, e.g. the editor's drag handle. */
   headerClassName?: string;
   className?: string;
   style?: CSSProperties;
   onHeaderDoubleClick?: () => void;
+  /** In the body: a composite's placeholders for its empty slots. They take the pointer; the rest of the body doesn't. */
+  children?: ReactNode;
 }
 
 /** An expanded group: fills its React Flow node. Only the header takes the pointer; the body lets clicks through to the canvas. */
-export function GroupFrameView({ name, color = 0, count, selected, label, actions, headerClassName, className, style, onHeaderDoubleClick }: GroupFrameViewProps) {
+export function GroupFrameView({ name, color = 0, count, selected, label, actions, badge, headerClassName, className, style, onHeaderDoubleClick, children }: GroupFrameViewProps) {
   const colors = groupColors(color);
   return (
     <div
@@ -61,10 +66,32 @@ export function GroupFrameView({ name, color = 0, count, selected, label, action
         <span className="size-2.5 shrink-0 rounded-full" style={{ background: colors.swatch, boxShadow: `0 0 0 1px ${colors.border}` }} />
         {label ?? <span className="min-w-0 truncate text-[13.5px] font-semibold tracking-[-0.01em]" style={{ color: colors.label }}>{name}</span>}
         <span className="shrink-0 font-mono text-[11px] text-t3">{count}</span>
+        {badge}
         <span className="flex-1" />
         {actions}
       </div>
+      {children}
     </div>
+  );
+}
+
+/** A composite's type in a frame's header: its icon and name, and on the read-only canvases nothing more. */
+export function CompositeBadge({ icon, label, title, tone, children, onClick }: { icon?: string; label: string; title?: string; tone?: 'error' | 'warning' | 'ok'; children?: ReactNode; onClick?: () => void }) {
+  const Tag = onClick ? 'button' : 'span';
+  return (
+    <Tag
+      {...(onClick && { type: 'button' as const, onClick })}
+      title={title}
+      className={cn(
+        'nodrag flex h-6 min-w-0 shrink items-center gap-1.5 rounded-full border bg-sf px-2 text-[11.5px] font-medium text-t2',
+        onClick && 'transition-colors hover:text-t1',
+        tone === 'error' ? 'border-rdbd' : tone === 'warning' ? 'border-warnbd' : 'border-hair',
+      )}
+    >
+      <NodeIcon icon={icon ?? 'lucide:boxes'} size={12} />
+      <span className="truncate">{label}</span>
+      {children}
+    </Tag>
   );
 }
 

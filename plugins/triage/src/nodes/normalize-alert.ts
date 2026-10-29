@@ -14,6 +14,7 @@ export const NormalizeAlert = defineNode({
     kind: 'action',
     idempotent: true,
     categories: ['Security', 'Developer Tools'],
+    capabilities: ['alert.normalize'],
     icon: 'file:normalize-alert.svg',
     color: '#0ea5e9',
     subtitle: '{{format}}',

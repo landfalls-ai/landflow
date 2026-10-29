@@ -6,7 +6,7 @@ import type { EvaluationRef } from './evaluations';
 import type { ExecutionAiUsage } from './ai-usage';
 
 export type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, NodeRun, PauseReason, Transport, Workflow };
-export type { StickyNote, WorkflowConnection, WorkflowGroup, WorkflowNode, WorkflowSettings } from '@landflow/engine';
+export type { GroupComposite, StickyNote, WorkflowConnection, WorkflowGroup, WorkflowNode, WorkflowSettings } from '@landflow/engine';
 export type { CredentialTypeDescriptor, NodeDescriptor, NodeItem, PropertyDescriptor, PortDescriptor, ConnectionType } from '@landflow/protocol';
 
 /** `broker`: the plugin announced itself on a broker's registry channel (docs/transports.md, docs/protocol.md §14.8). */

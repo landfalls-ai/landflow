@@ -18,6 +18,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 |---|---|---|
 | Editor: canvas, node creator, runs, pinned data, debugging, versions, templates; importing from n8n and Flowise | [features/editor.md](features/editor.md) | [ui-review.md](ui-review.md) |
 | Editor assistant: suggestions after a run, Spotlight (the builder chat) | [assistant.md](assistant.md) | |
+| Composite nodes: groups typed by a contract (slots, rules, ports), checked in the editor, run as one step | [composites.md](composites.md) | [protocol.md](protocol.md) §3 |
 | Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes, debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
 | Plugins: the node interface in each SDK, autodiscovery, branding | [plugins.md](plugins.md) | [protocol.md](protocol.md) |
 | Transports: HTTP, gRPC, ten brokers, Auto, the claim check, MCP faces | [transports.md](transports.md) | [protocol.md](protocol.md) §14–15 |
@@ -52,7 +53,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 - [observability.md](observability.md): the OpenTelemetry contract: span names, attributes, metrics, logs.
 
 **Features**: the twelve pages under [features/](#feature-map), plus [plugins.md](plugins.md),
-[assistant.md](assistant.md), [agents.md](agents.md) and [marketplace.md](marketplace.md).
+[assistant.md](assistant.md), [composites.md](composites.md), [agents.md](agents.md) and [marketplace.md](marketplace.md).
 
 **Reference**: [reference/api.md](reference/api.md) (every route), [reference/configuration.md](reference/configuration.md)
 (every host environment variable).

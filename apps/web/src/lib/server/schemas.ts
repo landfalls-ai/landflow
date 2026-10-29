@@ -48,6 +48,16 @@ export const workflowGroupSchema = z.object({
   collapsed: z.boolean().optional(),
   /** Nested groups: the group this one sits in. */
   parentId: z.string().min(1).max(100).optional(),
+  /** A composite (docs/composites.md): the contract it's checked against and which nodes fill its slots. */
+  composite: z
+    .object({
+      type: z.string().min(1).max(200),
+      version: z.number().int().positive(),
+      slots: z.record(z.string().max(100), z.array(z.string().max(100)).max(500)).default({}),
+      params: z.record(z.string(), z.unknown()).optional(),
+      fallback: z.array(z.object({ target: z.string().min(1).max(100), targetIndex: z.number().int().min(0).optional() })).max(50).optional(),
+    })
+    .optional(),
 });
 
 export const workflowSchema = z

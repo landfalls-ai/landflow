@@ -22,13 +22,14 @@ import (
 // the transport. Use Handler() for HTTP, RegisterGRPC/GRPCServer for gRPC, or
 // Serve for both plus announcement.
 type Plugin struct {
-	info      PluginInfo
-	nodes     map[string]*registeredNode
-	order     []string
-	credTypes map[string]*registeredCredType
-	credOrder []string
-	started   time.Time
-	telemetry atomic.Pointer[Telemetry]
+	info       PluginInfo
+	nodes      map[string]*registeredNode
+	order      []string
+	credTypes  map[string]*registeredCredType
+	credOrder  []string
+	composites []CompositeTypeDescriptor
+	started    time.Time
+	telemetry  atomic.Pointer[Telemetry]
 
 	dispatcher atomic.Pointer[Dispatcher]
 	// hints are the manifest's transports and maxConcurrency, set by Serve.
@@ -107,6 +108,8 @@ func BuildPlugin(info PluginInfo, nodes ...Node) (*Plugin, error) {
 	info.IconFS = nil
 	credTypes := info.CredentialTypes
 	info.CredentialTypes = nil
+	composites := info.Composites
+	info.Composites = nil
 
 	var problems []string
 	problems = append(problems, validateInfo(info)...)
@@ -146,6 +149,29 @@ func BuildPlugin(info PluginInfo, nodes ...Node) (*Plugin, error) {
 		}
 		p.credTypes[d.Name] = rc
 		p.credOrder = append(p.credOrder, d.Name)
+	}
+	compKeys := map[string]bool{}
+	for i, c := range composites {
+		label := "composite " + c.Name
+		if c.Name == "" {
+			label = fmt.Sprintf("composites[%d]", i)
+		}
+		normalizeProperties(c.Properties)
+		if icon, err := resolveIcon(c.Icon, icons); err != nil {
+			problems = append(problems, label+": "+err.Error())
+		} else {
+			c.Icon = icon
+		}
+		for _, msg := range validateComposite(c) {
+			problems = append(problems, label+": "+msg)
+		}
+		key := fmt.Sprintf("%s@%d", c.Name, c.Version)
+		if compKeys[key] {
+			problems = append(problems, label+": duplicate composite name and version")
+			continue
+		}
+		compKeys[key] = true
+		p.composites = append(p.composites, c)
 	}
 	for i, n := range nodes {
 		if n == nil {
@@ -202,6 +228,7 @@ func (p *Plugin) Manifest() PluginManifest {
 	for _, name := range p.credOrder {
 		m.CredentialTypes = append(m.CredentialTypes, p.credTypes[name].descriptor)
 	}
+	m.Composites = append(m.Composites, p.composites...)
 	return m
 }
 
@@ -655,6 +682,11 @@ func validateDescriptor(d NodeDescriptor, hasLoader bool) []string {
 		}
 		if !found {
 			add("defaultVersion %d is not one of version %v", d.DefaultVersion, []int(d.Version))
+		}
+	}
+	for _, c := range d.Capabilities {
+		if !capabilityPattern.MatchString(c) {
+			add("capability %q must be a lowercase dotted tag like ioc.enrich", c)
 		}
 	}
 	switch d.Kind {

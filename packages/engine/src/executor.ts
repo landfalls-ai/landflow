@@ -75,7 +75,7 @@ import {
   type Retriever,
   type TextSplitter,
 } from './ai';
-import { ExpressionError, ExpressionResolver } from './expression';
+import { ExpressionError, ExpressionResolver, type ExpressionData } from './expression';
 import { sharedRateLimiter } from './rate-limit';
 import { collectSecretReferences, secretParameterPaths, type SecretValues } from './secrets';
 import { engineMetrics, failSpan, recordedIds, SOURCE_ATTRIBUTE, startChild } from './telemetry';
@@ -91,6 +91,7 @@ import type {
   ResumeKind,
   ResumeOptions,
   CheckpointState,
+  CompositeScope,
   ResumeStackEntry,
   ResumeState,
   RunCheckpoint,
@@ -208,6 +209,10 @@ class WorkflowRun {
   private readonly nodeContexts = new Map<string, Context>();
   /** Sub-node calls started per node and source (their idempotency keys). */
   private readonly subCalls = new Map<string, number>();
+  /** Composite frames each node runs in (docs/composites.md), the innermost first. */
+  private readonly scopesOf = new Map<string, Array<CompositeScope & { inside: Set<string> }>>();
+  /** When the run entered each frame it is in, and with what items. */
+  private readonly scopeEntries = new Map<string, { at: number; items: NodeItem[] }>();
 
   constructor(private readonly options: ExecuteWorkflowOptions) {
     const { workflow } = options;
@@ -224,6 +229,11 @@ class WorkflowRun {
         push(this.incomingSub, connection.target, connection);
         this.subNodeIds.add(connection.source);
       }
+    }
+    const scopes = [...(options.scopes ?? [])].sort((a, b) => a.nodeIds.length - b.nodeIds.length);
+    for (const scope of scopes) {
+      const inside = new Set(scope.nodeIds);
+      for (const id of inside) push(this.scopesOf, id, { ...scope, inside });
     }
     this.stepping = Boolean(options.debug?.stepping);
     const resumed = options.resume?.state;
@@ -533,7 +543,10 @@ class WorkflowRun {
       const stack: StackEntry[] = [];
       const parked: Parked = new Map();
       if (resume) this.restore(resume, stack, parked);
-      else stack.push(...this.startNodes());
+      else {
+        stack.push(...this.startNodes());
+        for (const entry of stack) this.enterScopes(undefined, entry.nodeId, entry.inputs[0] ?? []);
+      }
       this.checkpoint('start', undefined, stack, parked);
 
       while (stack.length || parked.size) {
@@ -549,7 +562,16 @@ class WorkflowRun {
         const entry = stack.pop()!;
         const node = this.nodes.get(entry.nodeId)!;
         await this.pauseIfNeeded(node, entry.inputs);
-        const outputs = await this.runMainNode(node, entry.inputs);
+        let outputs: NodeItem[][];
+        try {
+          this.checkScopeTimeout(node, entry.inputs);
+          outputs = await this.runMainNode(node, entry.inputs);
+        } catch (caught) {
+          // A composite frame that falls back stops there instead of the run.
+          if (!(caught instanceof NodeExecutionError) || !this.fallBack(node, caught, entry, stack, parked)) throw caught;
+          this.lastNodeId = node.id;
+          continue;
+        }
         this.lastNodeId = node.id;
         if (this.pendingWait) {
           suspended = this.suspend(stack, parked);
@@ -635,28 +657,97 @@ class WorkflowRun {
         .sort((a, b) => positionY(this.nodes.get(a.target)) - positionY(this.nodes.get(b.target)));
       for (const connection of targets) {
         if (this.allowed && !this.allowed.has(connection.target)) continue;
-        const target = this.nodes.get(connection.target)!;
-        const connectedInputs = new Set((this.incomingMain.get(target.id) ?? []).map((c) => c.targetIndex));
-        const width = Math.max(...connectedInputs) + 1;
-        if (connectedInputs.size <= 1) {
-          // Also a loop back to an earlier node (Loop Over Items): it simply runs again.
-          const inputs: NodeItem[][] = Array.from({ length: width }, () => []);
-          inputs[connection.targetIndex] = items;
-          next.push({ nodeId: target.id, inputs });
-          continue;
-        }
-        const slots = parked.get(target.id) ?? this.parkedSlots(target.id, width);
-        slots[connection.targetIndex] = items;
-        if ([...connectedInputs].every((index) => slots[index] !== undefined)) {
-          parked.delete(target.id);
-          next.push({ nodeId: target.id, inputs: slots.map((branch) => branch ?? []) });
-        } else {
-          parked.set(target.id, slots);
-        }
+        this.enterScopes(node.id, connection.target, items);
+        this.deliver(connection.target, connection.targetIndex, items, next, parked);
       }
     });
     // LIFO: push in reverse so the first child runs first.
     for (const item of next.reverse()) stack.push(item);
+  }
+
+  /** Hand `items` to input `targetIndex` of a node: queued in `next`, or parked until its other inputs have data. */
+  private deliver(targetId: string, targetIndex: number, items: NodeItem[], next: StackEntry[], parked: Parked) {
+    const connectedInputs = new Set((this.incomingMain.get(targetId) ?? []).map((c) => c.targetIndex)).add(targetIndex);
+    const width = Math.max(...connectedInputs) + 1;
+    if (connectedInputs.size <= 1) {
+      // Also a loop back to an earlier node (Loop Over Items): it simply runs again.
+      const inputs: NodeItem[][] = Array.from({ length: width }, () => []);
+      inputs[targetIndex] = items;
+      next.push({ nodeId: targetId, inputs });
+      return;
+    }
+    const slots = parked.get(targetId) ?? this.parkedSlots(targetId, width);
+    slots[targetIndex] = items;
+    if ([...connectedInputs].every((index) => slots[index] !== undefined)) {
+      parked.delete(targetId);
+      next.push({ nodeId: targetId, inputs: slots.map((branch) => branch ?? []) });
+    } else {
+      parked.set(targetId, slots);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Composite frames (docs/composites.md)
+  // -------------------------------------------------------------------------
+
+  /** Items going from `fromId` (none: the start) to `toId` enter each frame `toId` is in and `fromId` isn't. */
+  private enterScopes(fromId: string | undefined, toId: string, items: NodeItem[]) {
+    for (const scope of this.scopesOf.get(toId) ?? []) {
+      if (fromId && scope.inside.has(fromId)) continue;
+      this.scopeEntries.set(scope.id, { at: Date.now(), items });
+    }
+  }
+
+  /** A node starting in a frame past its timeout fails with it (and the frame's fallback applies). */
+  private checkScopeTimeout(node: WorkflowNode, inputs: NodeItem[][]) {
+    for (const scope of this.scopesOf.get(node.id) ?? []) {
+      const entered = this.scopeEntries.get(scope.id);
+      if (!scope.timeoutSeconds || !entered || Date.now() - entered.at <= scope.timeoutSeconds * 1000) continue;
+      const message = `“${scope.name}” ran past its ${scope.timeoutSeconds} s limit (a ${scope.type} composite)`;
+      const run: NodeRun = { status: 'error', startedAt: new Date().toISOString(), durationMs: 0, source: 'main', inputs, outputs: [], error: { message }, logs: [{ level: 'error', message }] };
+      this.emit({ type: 'node.started', executionId: this.options.executionId, nodeId: node.id, nodeName: node.name, source: 'main', at: now() });
+      this.record(node, run);
+      throw new NodeExecutionError(message, node);
+    }
+  }
+
+  /**
+   * A node failed in a frame that falls back: drop what is still queued inside it and send the items that entered it,
+   * with the error added, to the frame's fallback targets. False when no frame around the node falls back.
+   */
+  private fallBack(node: WorkflowNode, error: NodeExecutionError, entry: StackEntry, stack: StackEntry[], parked: Parked): boolean {
+    const scope = this.scopesOf.get(node.id)?.find((s) => s.onError === 'fallback');
+    if (!scope) return false;
+    for (let i = stack.length - 1; i >= 0; i--) if (scope.inside.has(stack[i].nodeId)) stack.splice(i, 1);
+    for (const id of [...parked.keys()]) if (scope.inside.has(id)) parked.delete(id);
+    const entered = this.scopeEntries.get(scope.id)?.items ?? entry.inputs[0] ?? [];
+    this.scopeEntries.delete(scope.id);
+    const items: NodeItem[] = (entered.length ? entered : [{ json: {} }]).map((item, index) => ({
+      json: { ...item.json, error: { message: error.message, node: node.name, composite: scope.name } },
+      ...(item.binary && { binary: item.binary }),
+      pairedItem: { item: index },
+    }));
+    const targets = (scope.fallback ?? []).filter((f) => this.nodes.has(f.target) && !scope.inside.has(f.target) && (!this.allowed || this.allowed.has(f.target)));
+    const message = `“${scope.name}” fell back${targets.length ? ` to ${targets.map((f) => `“${this.nodes.get(f.target)!.name}”`).join(', ')}` : ' (nothing is connected to its Fallback)'}`;
+    const run = this.runData[node.id]?.at(-1);
+    if (run) run.logs = [...(run.logs ?? []), { level: 'warn', message }];
+    this.span.addEvent('composite.fallback', { 'landflow.composite.id': scope.id, 'landflow.composite.type': scope.type, 'landflow.node.id': node.id, 'landflow.node.name': node.name });
+    const next: StackEntry[] = [];
+    for (const f of targets) {
+      this.enterScopes(node.id, f.target, items);
+      this.deliver(f.target, f.targetIndex, items, next, parked);
+    }
+    for (const item of next.reverse()) stack.push(item);
+    const runIndex = (this.runData[node.id] ?? []).filter((r) => r.source === 'main').length - 1;
+    this.checkpoint(`${node.id}#${Math.max(0, runIndex)}`, node.id, stack, parked);
+    return true;
+  }
+
+  /** `$composite` for a node: the innermost frame it runs in that has properties, else the innermost. */
+  private compositeFor(node: WorkflowNode): ExpressionData['composite'] {
+    const scopes = this.scopesOf.get(node.id);
+    const scope = scopes?.find((s) => s.params) ?? scopes?.[0];
+    return scope && { id: scope.id, name: scope.name, type: scope.type, params: scope.params ?? {} };
   }
 
   // -------------------------------------------------------------------------
@@ -679,6 +770,7 @@ class WorkflowRun {
       ...(this.allowed && { allowed: [...this.allowed] }),
       ...(this.destination && { destination: this.destination }),
       ...(this.rerun && { rerun: [...this.rerun], reusedOutputs: Object.fromEntries(this.reusedOutputs) }),
+      ...(this.scopeEntries.size && { scopeEntries: [...this.scopeEntries].map(([id, e]) => ({ id, at: new Date(e.at).toISOString(), items: e.items })) }),
     };
   }
 
@@ -720,6 +812,7 @@ class WorkflowRun {
     Object.assign(this.latestOutputs, state.nodeOutputs);
     Object.assign(this.nodeState, state.nodeState);
     for (const [nodeId, outputs] of Object.entries(state.reusedOutputs ?? {})) this.reusedOutputs.set(nodeId, outputs);
+    for (const e of state.scopeEntries ?? []) this.scopeEntries.set(e.id, { at: Date.parse(e.at) || Date.now(), items: e.items });
     this.lastNodeId = state.lastNodeId;
     stack.push(...state.stack);
     for (const entry of state.parked) parked.set(entry.nodeId, entry.slots.map((slot) => slot ?? undefined));
@@ -1024,6 +1117,7 @@ class WorkflowRun {
       ...(toolArgs && { toolArgs }),
       ...(this.options.variables && { variables: this.options.variables }),
       ...(secrets && { secrets }),
+      ...(this.scopesOf.has(node.id) && { composite: this.compositeFor(node) }),
     });
     try {
       const parameters = { ...resolver.resolveParameters(node.parameters, 0, skip), ...overrides } as JsonObject;

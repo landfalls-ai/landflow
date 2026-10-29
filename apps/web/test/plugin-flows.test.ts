@@ -31,6 +31,7 @@ for (const file of readdirSync(fixtures)) {
     info: manifest.plugin,
     nodes: manifest.nodes.map((description: unknown) => ({ description, execute: async () => [[]] })),
     credentialTypes: manifest.credentialTypes,
+    composites: manifest.composites,
   } as unknown as IPlugin);
 }
 

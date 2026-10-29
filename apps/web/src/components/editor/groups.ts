@@ -27,10 +27,11 @@ import {
   normalizeGroups,
   parentAt,
   routeEdges,
+  type BoxPorts,
   type GroupLink,
   type Rect,
 } from '@/lib/shared/groups';
-import type { ConnectionType, WorkflowGroup } from '@/lib/shared/types';
+import type { ConnectionType, GroupComposite, WorkflowGroup } from '@/lib/shared/types';
 import type { FlowEdge, FlowNode, StickyFlowNode } from './store';
 
 export { GROUP_HANDLES };
@@ -44,6 +45,8 @@ export interface GroupData extends Record<string, unknown> {
   nodeIds: string[];
   /** The group this one sits in. */
   parentId?: string;
+  /** Typed by a composite (docs/composites.md): its contract, version and slot bindings. */
+  composite?: GroupComposite;
 }
 /** `frame`, not React Flow's built-in `group` type (which comes with its own styles). */
 export type GroupFlowNode = Node<GroupData, 'frame'>;
@@ -75,7 +78,7 @@ export function toFrames(groups: readonly WorkflowGroup[] = []): GroupFlowNode[]
     height: group.height,
     zIndex: GROUP_Z,
     dragHandle: '.lf-frame-handle',
-    data: { name: group.name, color: group.color ?? 0, collapsed: Boolean(group.collapsed), nodeIds: [...group.nodeIds], ...(group.parentId && { parentId: group.parentId }) },
+    data: { name: group.name, color: group.color ?? 0, collapsed: Boolean(group.collapsed), nodeIds: [...group.nodeIds], ...(group.parentId && { parentId: group.parentId }), ...(group.composite && { composite: group.composite }) },
   }));
 }
 
@@ -92,6 +95,7 @@ export function fromFrames(frames: readonly GroupFlowNode[], nodes: readonly Pic
       ...(f.data.color ? { color: f.data.color } : {}),
       ...(f.data.collapsed && { collapsed: true }),
       ...(f.data.parentId && { parentId: f.data.parentId }),
+      ...(f.data.composite && { composite: f.data.composite }),
     })),
     nodes.map((n) => n.id),
   );
@@ -191,9 +195,22 @@ export function groupAround(
   return { frames: growAncestors([...next, frame], id), frame };
 }
 
-/** Frames without these nodes as members (unchanged frames keep their identity). */
+/** Frames without these nodes as members, nor bound to a composite's slots (unchanged frames keep their identity). */
 export function withoutMembers(frames: GroupFlowNode[], ids: ReadonlySet<string>): GroupFlowNode[] {
-  return frames.map((f) => (f.data.nodeIds.some((id) => ids.has(id)) ? withData(f, { nodeIds: f.data.nodeIds.filter((id) => !ids.has(id)) }) : f));
+  return frames.map((f) => (f.data.nodeIds.some((id) => ids.has(id)) || boundTo(f, ids) ? withData(f, { nodeIds: f.data.nodeIds.filter((id) => !ids.has(id)), ...unbound(f, ids) }) : f));
+}
+
+const boundTo = (frame: GroupFlowNode, ids: ReadonlySet<string>) => Boolean(frame.data.composite && Object.values(frame.data.composite.slots).some((bound) => bound.some((id) => ids.has(id))));
+
+/** A composite frame's bindings without these ids (nothing for a plain group). */
+function unbound(frame: GroupFlowNode, ids: ReadonlySet<string>): Partial<GroupData> {
+  const composite = frame.data.composite;
+  if (!composite || !boundTo(frame, ids)) return {};
+  const slots = Object.fromEntries(Object.entries(composite.slots).flatMap(([slot, bound]) => {
+    const kept = bound.filter((id) => !ids.has(id));
+    return kept.length ? [[slot, kept]] : [];
+  }));
+  return { composite: { ...composite, slots } };
 }
 
 /**
@@ -298,6 +315,8 @@ export function adoptNodes(frames: GroupFlowNode[], nodes: readonly FlowNode[], 
       if (f.id === current?.id) return withData(f, { nodeIds: f.data.nodeIds.filter((n) => n !== id) });
       return f;
     });
+    // A node that left a composite (for a group outside it) leaves its slot.
+    if (target?.id !== current?.id) next = next.map((f) => (f.data.composite && boundTo(f, new Set([id])) && !insideOf(next, f.id, target?.id) ? withData(f, unbound(f, new Set([id]))) : f));
     if (target) next = growAncestors(next, target.id);
   }
   return next;
@@ -363,6 +382,11 @@ export function refitFrames(frames: GroupFlowNode[], nodes: readonly FlowNode[])
   return frames.map((f) => fitted.get(f.id)!);
 }
 
+/** Whether group `id` is `outer` or sits somewhere inside it. */
+function insideOf(frames: readonly GroupFlowNode[], outer: string, id: string | undefined): boolean {
+  return Boolean(id && (id === outer || ancestorsOf(linksOf(frames), id).includes(outer)));
+}
+
 function frameRect(frame: GroupFlowNode): Rect {
   return { x: frame.position.x, y: frame.position.y, width: frame.width ?? 0, height: frame.height ?? 0 };
 }
@@ -392,6 +416,7 @@ export function canvasGraph(
   stickies: readonly StickyFlowNode[],
   nodes: readonly FlowNode[],
   edges: readonly FlowEdge[],
+  ports?: BoxPorts,
 ): { nodes: (GroupFlowNode | StickyFlowNode | FlowNode)[]; edges: (FlowEdge | GroupProxyEdge)[] } {
   const links = linksOf(frames);
   const { boxOf, hidden } = collapsedBoxes(links);
@@ -405,7 +430,7 @@ export function canvasGraph(
   if (!boxOf.size) return { nodes: [...shownFrames, ...stickies, ...nodes], edges: edges as FlowEdge[] };
 
   const shownNodes = nodes.map((n) => (boxOf.has(n.id) ? { ...n, hidden: true, selected: false } : n));
-  const routed = routeEdges(edges, boxOf);
+  const routed = routeEdges(edges, boxOf, ports);
   const proxies = routed.routes.map<GroupProxyEdge>((route) => ({
     id: route.id,
     type: 'groupProxy',

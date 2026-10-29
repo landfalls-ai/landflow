@@ -115,6 +115,32 @@ plugin = Plugin("github", "GitHub", "0.1.0", nodes=[ListRepos()], credential_typ
 - Credential values are **redacted** from log lines, span attributes, node logs and error messages
   (password fields, keys that look like secrets, and fields the type does not declare).
 
+## Capabilities and composite types
+
+A node descriptor may carry `"capabilities": ["ioc.enrich"]`: stable contract tags, lowercase words joined by dots,
+validated when the plugin is built. Unlike `categories`, which only group the node creator, a composite slot can select
+nodes by them.
+
+A composite type is a canvas frame with a contract: named slots that accept nodes, ports, rules and an optional starter
+graph. Declare them as descriptor dicts (the wire form) in `Plugin(composites=[...])`. They are validated at startup
+(duplicate slots, `max` below `min`, ports, rules and starter nodes naming unknown slots, starter connections naming
+unknown nodes, identifiers; every problem is listed in one `DescriptorError`) and served as the manifest's `composites`
+over HTTP and gRPC (`GetManifestResponse.composites`).
+
+```python
+Plugin("triage", "Triage", "0.1.0", nodes=[...], composites=[{
+    "name": "aiTriage", "displayName": "AI triage", "description": "Enrich, then decide", "version": 1,
+    "slots": [
+        {"name": "enrich", "displayName": "Enrich", "accepts": {"capability": "ioc.enrich"}, "max": 1},
+        {"name": "decide", "displayName": "Decide", "accepts": {"type": "triage.triageDecision"}},
+    ],
+    "rules": [{"rule": "feeds", "from": "enrich", "to": "decide"}],
+    "outputs": [{"name": "decision", "slot": "decide"}],
+}])
+```
+
+The type's name is local; the host qualifies it as `<pluginId>.<name>`. `landflow_sdk.composites` has the full shape.
+
 ## Binary data
 
 Items carry files under `item["binary"]`, keyed by a property name (`"data"` for a single file). A

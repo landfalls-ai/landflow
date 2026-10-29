@@ -63,8 +63,16 @@ func (g *grpcService) GetManifest(ctx context.Context, _ *pb.GetManifestRequest)
 		}
 		credTypes = append(credTypes, dv)
 	}
+	composites := make([]*pb.DynamicValue, 0, len(m.Composites))
+	for _, c := range m.Composites {
+		dv, err := toDynamic(c)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "encode composite %q: %v", c.Name, err)
+		}
+		composites = append(composites, dv)
+	}
 	return &pb.GetManifestResponse{
-		Protocol: m.Protocol, Plugin: pluginInfoToProto(m.Plugin), Nodes: nodes, CredentialTypes: credTypes,
+		Protocol: m.Protocol, Plugin: pluginInfoToProto(m.Plugin), Nodes: nodes, CredentialTypes: credTypes, Composites: composites,
 		Transports: m.Transports, MaxConcurrency: int32(m.MaxConcurrency),
 	}, nil
 }

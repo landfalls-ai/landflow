@@ -5,16 +5,24 @@
  * colours, collapse, duplicate and ungroup. Collapsed, it is a compact box whose edges carry its nodes' connections
  * (see ./groups.ts canvasGraph); double-click the box to expand it again. Groups nest: the count and the box's icons
  * cover the nodes of the groups inside too.
+ *
+ * A composite frame (docs/composites.md) shows its type in the header with how its contract stands; the badge opens
+ * the contract (./composite-panel.tsx). Empty required slots are drawn as placeholders that open the node creator on
+ * what the slot accepts, and a collapsed composite draws its named outputs. "Composite…" types a plain group.
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { getBezierPath, Handle, NodeResizer, NodeToolbar, Position, type EdgeProps, type NodeProps } from '@xyflow/react';
-import { ChevronsDownUp, ChevronsUpDown, Copy, PencilLine, Ungroup } from 'lucide-react';
+import { Boxes, Check, ChevronsDownUp, ChevronsUpDown, Copy, PencilLine, Plus, Ungroup } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { nodeColor } from '@/lib/client/node-style';
 import { useShallow } from 'zustand/react/shallow';
-import { GROUP_MIN_SIZE, GROUP_NAME_MAX, descendantNodeIds } from '@/lib/shared/groups';
+import { GROUP_MIN_SIZE, GROUP_NAME_MAX, compositePortHandle, descendantNodeIds } from '@/lib/shared/groups';
+import { describeMatcher } from '@/lib/shared/composites';
 import { EdgeLine } from '../canvas/edge-line';
-import { GroupBoxView, GroupFrameView } from '../canvas/group-frame';
+import { CompositeBadge, GroupBoxView, GroupFrameView } from '../canvas/group-frame';
+import { CompositeDialog } from './composite-dialog';
+import { CompositePanel, slotPosition } from './composite-panel';
+import { editorLookup, issueCounts, useCompositeReport } from './composites';
 import { STICKY_COLORS, stickyColors } from '../canvas/sticky-note';
 import { GROUP_HANDLES, linksOf, type GroupProxyEdge } from './groups';
 import { useEditor, type GroupFlowNode } from './store';
@@ -24,10 +32,16 @@ const hiddenHandle = '!size-2 !min-h-0 !min-w-0 !border-0 !bg-transparent opacit
 
 export const GroupNodeView = memo(function GroupNodeView({ id, data, selected }: NodeProps<GroupFlowNode>) {
   const [renaming, setRenaming] = useState(false);
+  const [contract, setContract] = useState(false);
+  const [typing, setTyping] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  const { updateGroup, ungroup, duplicateNode } = useEditor.getState();
+  const { updateGroup, ungroup, duplicateNode, openPalette } = useEditor.getState();
   const nodes = useEditor((s) => s.nodes);
   const nodeTypes = useEditor((s) => s.nodeTypes);
+  const composites = useEditor((s) => s.composites);
+  const report = useCompositeReport(id);
+  const descriptor = report?.descriptor ?? composites.find((c) => c.type === data.composite?.type)?.descriptor;
+  const { errors, warnings } = issueCounts(report);
   // Every node inside, nested groups' included.
   const inside = useEditor(useShallow((s) => descendantNodeIds(linksOf(s.groups), id)));
   const icons = useMemo(
@@ -72,6 +86,45 @@ export const GroupNodeView = memo(function GroupNodeView({ id, data, selected }:
     />
   ) : undefined;
   const toggle = (collapsed: boolean) => updateGroup(id, { collapsed });
+  const lookup = editorLookup(nodeTypes, composites);
+
+  const badge = data.composite ? (
+    <CompositeBadge
+      icon={descriptor?.icon}
+      label={`${descriptor?.displayName ?? data.composite.type} v${data.composite.version}`}
+      tone={errors ? 'error' : warnings || !report?.descriptor ? 'warning' : 'ok'}
+      title={errors ? `${errors} to fix before publishing` : warnings ? `${warnings} warning${warnings === 1 ? '' : 's'}` : report?.descriptor ? 'Contract met' : 'Its contract isn’t available here'}
+      onClick={() => setContract((open) => !open)}
+    >
+      {errors ? (
+        <span className="rounded-full bg-rddim px-1.5 font-mono text-[10.5px] leading-4 text-rd">{errors}</span>
+      ) : warnings ? (
+        <span className="rounded-full bg-warndim px-1.5 font-mono text-[10.5px] leading-4 text-warn">{warnings}</span>
+      ) : report?.descriptor ? (
+        <Check className="size-3 text-gn" />
+      ) : null}
+    </CompositeBadge>
+  ) : undefined;
+  // Required slots nothing fills yet: placeholders along the bottom of the frame.
+  const empty = report?.slots.filter((slot) => slot.filled.length < slot.min && !slot.composite) ?? [];
+  const placeholders = empty.length ? (
+    <div className="pointer-events-auto absolute bottom-3 left-3 flex flex-wrap gap-2">
+      {empty.map((slot, i) => (
+        <button
+          key={slot.name}
+          onClick={(e) => (e.stopPropagation(), openPalette({ slot: { groupId: id, slot: slot.name }, position: slotPosition(id, i) }))}
+          title={slot.description}
+          className="nodrag flex h-[58px] w-[180px] flex-col items-start justify-center gap-0.5 rounded-[14px] border-[1.5px] border-dashed border-rdbd bg-sf/70 px-3 text-left transition-colors hover:border-ac"
+        >
+          <span className="flex items-center gap-1 text-[12px] font-semibold text-t1">
+            <Plus className="size-3" /> {slot.displayName}
+          </span>
+          <span className="line-clamp-1 text-[11px] text-t3">{describeMatcher(slot.accepts, lookup)}</span>
+        </button>
+      ))}
+    </div>
+  ) : undefined;
+  const outputs = data.collapsed ? (report?.outputs ?? []) : [];
 
   return (
     <>
@@ -117,6 +170,14 @@ export const GroupNodeView = memo(function GroupNodeView({ id, data, selected }:
           >
             {data.collapsed ? <ChevronsUpDown className="size-3.5" /> : <ChevronsDownUp className="size-3.5" />}
           </button>
+          <button
+            title={data.composite ? 'Contract' : 'Composite: type this group by a contract, or make a new type from it'}
+            aria-label={data.composite ? 'Open the contract' : 'Make composite'}
+            onClick={(e) => (e.stopPropagation(), data.composite ? setContract(true) : setTyping(true))}
+            className={toolbarButton}
+          >
+            <Boxes className="size-3.5" />
+          </button>
           <button title="Duplicate group and its nodes" aria-label="Duplicate group" onClick={(e) => (e.stopPropagation(), duplicateNode(id))} className={toolbarButton}>
             <Copy className="size-3.5" />
           </button>
@@ -125,6 +186,13 @@ export const GroupNodeView = memo(function GroupNodeView({ id, data, selected }:
           </button>
         </div>
       </NodeToolbar>
+      {report && (
+        // A toolbar sits one above its node: for a frame (far behind) that is under the nodes and frames next to it.
+        <NodeToolbar isVisible={contract} position={Position.Right} offset={14} align="start" style={{ zIndex: 1000 }}>
+          <CompositePanel groupId={id} report={report} onClose={() => setContract(false)} />
+        </NodeToolbar>
+      )}
+      {typing && <CompositeDialog groupId={id} onClose={() => setTyping(false)} />}
       {data.collapsed ? (
         <GroupBoxView
           name={data.name}
@@ -145,6 +213,18 @@ export const GroupNodeView = memo(function GroupNodeView({ id, data, selected }:
           <Handle type="source" position={Position.Right} id={GROUP_HANDLES.out} isConnectable={false} className={hiddenHandle} />
           <Handle type="source" position={Position.Top} id={GROUP_HANDLES.aiOut} isConnectable={false} className={hiddenHandle} />
           <Handle type="target" position={Position.Bottom} id={GROUP_HANDLES.aiIn} isConnectable={false} className={hiddenHandle} />
+          {/* A composite's named outputs: the connections leaving through each are drawn from it. */}
+          {outputs.map((port, i) => {
+            const top = `${((i + 1) / (outputs.length + 1)) * 100}%`;
+            return (
+              <span key={port.name}>
+                <Handle type="source" position={Position.Right} id={compositePortHandle(port.name)} isConnectable={false} style={{ top }} className="!size-2 !min-h-0 !min-w-0 !border-[1.5px] !border-t3 !bg-sf" />
+                <span className="pointer-events-none absolute left-full ml-2.5 -translate-y-1/2 whitespace-nowrap font-mono text-[10px] text-t3" style={{ top }}>
+                  {port.displayName}
+                </span>
+              </span>
+            );
+          })}
         </GroupBoxView>
       ) : (
         <GroupFrameView
@@ -155,12 +235,15 @@ export const GroupNodeView = memo(function GroupNodeView({ id, data, selected }:
           label={label}
           headerClassName="lf-frame-handle cursor-grab active:cursor-grabbing"
           onHeaderDoubleClick={() => setRenaming(true)}
+          badge={badge}
           actions={
             <button title="Collapse" aria-label="Collapse group" onClick={(e) => (e.stopPropagation(), toggle(true))} className={cn(toolbarButton, 'nodrag')}>
               <ChevronsDownUp className="size-3.5" />
             </button>
           }
-        />
+        >
+          {placeholders}
+        </GroupFrameView>
       )}
     </>
   );

@@ -14,6 +14,7 @@
  */
 import { definePlugin } from '@landflow/sdk';
 import { serve } from '@landflow/sdk/serve';
+import { AiTriage } from './composites/ai-triage';
 import { ExtractIocs } from './nodes/extract-iocs';
 import { NormalizeAlert } from './nodes/normalize-alert';
 import { ParseEmail } from './nodes/parse-email';
@@ -31,6 +32,7 @@ export const plugin = definePlugin({
     author: 'Landflow',
   },
   nodes: [NormalizeAlert, ExtractIocs, ParseEmail, TriageRules, TriageDecision],
+  composites: [AiTriage],
   // `file:` icons (plugin and nodes) are inlined from here as data: URLs when the manifest is built.
   iconDir: new URL('../icons/', import.meta.url),
 });

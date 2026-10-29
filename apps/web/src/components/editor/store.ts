@@ -24,6 +24,7 @@ import type { FlowTemplate } from '@/lib/client/templates';
 import type {
   ConnectionType,
   ExecutionEvent,
+  GroupComposite,
   ExecutionRecord,
   ExecutionState,
   NodeItem,
@@ -37,7 +38,8 @@ import type {
 } from '@/lib/shared/types';
 import { STICKY_DEFAULT_CONTENT, STICKY_DEFAULT_SIZE } from '../canvas/sticky-note';
 import { preparePaste, remapReferences, selectionOrigin, serializeSelection, type ClipboardData } from './clipboard';
-import { GROUP_NAME_MAX, descendantGroupIds, descendantNodeIds, normalizeGroups } from '@/lib/shared/groups';
+import { GROUP_NAME_MAX, ancestorsOf, clearSpot, descendantGroupIds, descendantNodeIds, nodeBox, normalizeGroups } from '@/lib/shared/groups';
+import { autoBind, bindSlot, compositeLookup, compositeOfNode, instantiateComposite, unbindSlot, type CompositeFix, type CompositeTypeInfo } from '@/lib/shared/composites';
 import {
   adoptFrames,
   adoptNodes,
@@ -115,6 +117,8 @@ export interface PaletteRequest {
   /** Split this edge: the new node goes between its two ends. */
   insertInto?: string;
   position?: { x: number; y: number };
+  /** Fill a composite's slot (docs/composites.md): offer only the nodes it accepts, put the new one in the frame and bind it. */
+  slot?: { groupId: string; slot: string };
 }
 
 /** What the toolbar, node toolbars and the node panel can ask the editor to run. */
@@ -136,6 +140,8 @@ interface EditorState {
   /** Undo / redo depth, for the toolbar buttons. */
   history: { past: number; future: number };
   nodeTypes: Record<string, NodeTypeInfo>;
+  /** Composite types (GET /api/composites): the contracts composite frames are checked against. */
+  composites: CompositeTypeInfo[];
   dirty: boolean;
   openNodeId?: string;
   palette?: PaletteRequest;
@@ -177,6 +183,7 @@ interface EditorState {
 
   load(workflow: Workflow, nodeTypes: NodeTypeInfo[]): void;
   setNodeTypes(nodeTypes: NodeTypeInfo[]): void;
+  setComposites(composites: CompositeTypeInfo[]): void;
   /** React Flow changes for nodes and notes alike; they are routed by id. */
   onNodesChange(changes: NodeChange<CanvasNode>[]): void;
   onEdgesChange(changes: EdgeChange<FlowEdge>[]): void;
@@ -216,8 +223,14 @@ interface EditorState {
    * removed one. Defaults to the selected groups, else those of the selected nodes.
    */
   ungroup(ids?: string[]): void;
-  /** Rename, recolour, collapse or expand a group. */
-  updateGroup(id: string, patch: Partial<Pick<GroupData, 'name' | 'color' | 'collapsed'>>): void;
+  /** Rename, recolour, collapse or expand a group; type it by a composite, or (`composite: undefined`) make it plain again. */
+  updateGroup(id: string, patch: Partial<Pick<GroupData, 'name' | 'color' | 'collapsed' | 'composite'>>): void;
+  /** A new frame of a composite type at `at` (its top-left corner), with the type's starter nodes. Returns the group id. */
+  insertComposite(type: string, at: { x: number; y: number }): string | undefined;
+  /** Bind a member of a composite to a slot, or (`slot` undefined) to none. */
+  bindSlotOf(groupId: string, id: string, slot?: string): void;
+  /** Apply the fix a composite issue offers. */
+  fixComposite(groupId: string, fix: CompositeFix): void;
   undo(): void;
   redo(): void;
   /** Rename (one undo step per rename: typing coalesces until commitName()), describe, or set the tags (one step per change). */
@@ -436,6 +449,62 @@ export const useEditor = create<EditorState>((set, get) => {
   };
   const newId = (kind: 'node' | 'edge' | 'sticky' | 'group') => `${{ node: 'n', edge: 'e', sticky: 's', group: 'g' }[kind]}_${nanoid(8)}`;
 
+  // ---- composites (docs/composites.md) ----
+  const lookup = () => compositeLookup(get().nodeTypes, get().composites);
+  const withComposite = (groups: GroupFlowNode[], id: string, composite: GroupComposite) => groups.map((g) => (g.id === id ? { ...g, data: { ...g.data, composite } } : g));
+  /** Nodes bound to a locked slot (a type's required core step): they can't be deleted while the frame is typed. */
+  const lockedIds = (): Set<string> => {
+    const locked = new Set<string>();
+    for (const frame of get().groups) {
+      const composite = frame.data.composite;
+      if (!composite) continue;
+      const descriptor = lookup().composite(composite.type, composite.version) ?? lookup().composite(composite.type);
+      for (const slot of descriptor?.slots ?? []) if (slot.locked) composite.slots[slot.name]?.forEach((id) => locked.add(id));
+    }
+    return locked;
+  };
+  /**
+   * A node added for a composite's slot: it joins the frame, is bound to the slot, and is wired the way the type's
+   * `feeds` rules say (a chat model to the reasoner's model input, say).
+   */
+  const fillSlot = (groupId: string, slot: string, nodeId: string) => {
+    const frame = get().groups.find((g) => g.id === groupId);
+    const composite = frame?.data.composite;
+    if (!frame || !composite) return;
+    set((s) => {
+      // It joins the group it was placed in (the frame grows to fit it, like a dropped node); placed elsewhere, the frame takes it.
+      let groups = adoptNodes(s.groups, s.nodes, [nodeId]);
+      const holder = groups.find((g) => g.data.nodeIds.includes(nodeId));
+      const inside = holder && (holder.id === groupId || ancestorsOf(linksOf(groups), holder.id).includes(groupId));
+      if (!inside) groups = groups.map((g) => (g.id === groupId ? { ...g, data: { ...g.data, nodeIds: [...g.data.nodeIds, nodeId] } } : g.id === holder?.id ? { ...g, data: { ...g.data, nodeIds: g.data.nodeIds.filter((n) => n !== nodeId) } } : g));
+      return { groups: withComposite(groups, groupId, bindSlot(composite, slot, nodeId)) };
+    });
+    const descriptor = lookup().composite(composite.type, composite.version) ?? lookup().composite(composite.type);
+    for (const rule of descriptor?.rules ?? []) {
+      if (rule.rule !== 'feeds') continue;
+      const via = rule.via ?? 'main';
+      const pairs =
+        rule.from === slot ? (composite.slots[rule.to] ?? []).map((target) => [nodeId, target]) : rule.to === slot ? (composite.slots[rule.from] ?? []).map((source) => [source, nodeId]) : [];
+      for (const [source, target] of pairs) {
+        if (get().edges.some((e) => e.source === source && e.target === target && e.data?.connectionType === via)) continue;
+        get().onConnect({ source, sourceHandle: handleId(via, 0), target, targetHandle: handleId(via, 0) });
+      }
+    }
+  };
+  /** Nodes that just joined a frame bind to the slot they obviously fill (autoBind) in the composite they're now in. */
+  const bindJoined = (groups: GroupFlowNode[], ids: readonly string[]): GroupFlowNode[] => {
+    if (!groups.some((g) => g.data.composite)) return groups;
+    let next = groups;
+    for (const id of ids) {
+      const s = get();
+      const workflow = { nodes: s.nodes.map((n) => ({ ...n.data.wf, position: [0, 0] as [number, number] })), connections: s.toWorkflow().connections, groups: fromFrames(next, s.nodes) };
+      const frame = compositeOfNode(workflow, id);
+      const bound = frame && autoBind(workflow, frame.id, id, lookup());
+      if (frame && bound) next = withComposite(next, frame.id, bound);
+    }
+    return next;
+  };
+
   return {
   workflowId: '',
   name: '',
@@ -448,6 +517,7 @@ export const useEditor = create<EditorState>((set, get) => {
   groups: [],
   history: { past: 0, future: 0 },
   nodeTypes: {},
+  composites: [],
   dirty: false,
   pinData: {},
   breakpoints: [],
@@ -482,6 +552,10 @@ export const useEditor = create<EditorState>((set, get) => {
     set({ nodeTypes: Object.fromEntries(nodeTypes.map((t) => [t.type, t])) });
   },
 
+  setComposites(composites) {
+    set({ composites });
+  },
+
   onNodesChange(changes) {
     // One undo step per drag or resize gesture; deletes coalesce with the edge removals React Flow sends right after.
     const drag = changes.find((c) => c.type === 'position');
@@ -492,6 +566,11 @@ export const useEditor = create<EditorState>((set, get) => {
     if (resize?.type === 'dimensions') history.resizing = Boolean(resize.resizing);
     if (changes.some((c) => c.type === 'remove')) record('remove', 80);
 
+    // Nodes in a composite's locked slot stay (ungroup the frame, or remove its type, to delete them).
+    if (changes.some((c) => c.type === 'remove')) {
+      const locked = lockedIds();
+      if (locked.size) changes = changes.filter((c) => c.type !== 'remove' || !locked.has(c.id));
+    }
     const stickyIds = new Set(get().stickies.map((n) => n.id));
     const frameIds = new Set(get().groups.map((n) => n.id));
     const isSticky = (c: NodeChange<CanvasNode>) => ('id' in c ? stickyIds.has(c.id) : c.item.type === 'sticky');
@@ -514,7 +593,7 @@ export const useEditor = create<EditorState>((set, get) => {
       let groups = frameChanges.length || moves.frames.length ? applyNodeChanges([...frameChanges, ...moves.frames], s.groups) : s.groups;
       if (removedFrames.size) groups = removeFrames(groups, removedFrames).frames;
       if (removed.size) groups = withoutMembers(groups, removed);
-      if (dropped.length) groups = adoptNodes(groups, nodes, dropped);
+      if (dropped.length) groups = bindJoined(adoptNodes(groups, nodes, dropped), dropped);
       if (droppedFrames.length) groups = adoptFrames(groups, droppedFrames);
       for (const id of resized) groups = refitMembers(groups, nodes, id);
       return {
@@ -638,6 +717,7 @@ export const useEditor = create<EditorState>((set, get) => {
     if (id && split && info.descriptor.inputs.some((p) => p.type === 'main') && info.descriptor.outputs.some((p) => p.type === 'main')) {
       get().onConnect({ source: id, sourceHandle: handleId('main', 0), target: split.target, targetHandle: split.targetHandle ?? handleId('main', 0) });
     }
+    if (id && request.slot) fillSlot(request.slot.groupId, request.slot.slot, id);
     return id;
     });
   },
@@ -797,8 +877,10 @@ export const useEditor = create<EditorState>((set, get) => {
   },
 
   removeNodes(ids) {
+    const locked = lockedIds();
+    const drop = new Set(ids.filter((id) => !locked.has(id)));
+    if (!drop.size) return;
     record();
-    const drop = new Set(ids);
     if (get().breakpoints.some((id) => drop.has(id))) {
       const breakpoints = get().breakpoints.filter((id) => !drop.has(id));
       writeBreakpoints(get().workflowId, breakpoints);
@@ -935,6 +1017,54 @@ export const useEditor = create<EditorState>((set, get) => {
       ...(members && { nodes: s.nodes.map((n) => (members.has(n.id) && n.selected ? { ...n, selected: false } : n)) }),
       dirty: true,
     }));
+  },
+
+  insertComposite(type, at) {
+    const info = get().composites.find((c) => c.type === type);
+    if (!info) return undefined;
+    return batch(() => {
+      const s = get();
+      const groupId = newId('group');
+      const made = instantiateComposite(type, info.descriptor, at, { takenNames: s.nodes.map((n) => n.data.wf.name), newId: () => newId('node'), groupId });
+      // A frame doesn't land on what is already there (or get nested into a frame by it): it moves down until it's clear.
+      const [gx, gy] = made.group.position;
+      const taken = [...s.nodes.map((n) => nodeBox(n.position, n.measured?.width && n.measured.height ? { width: n.measured.width, height: n.measured.height } : undefined)), ...s.groups.map((g) => ({ x: g.position.x, y: g.position.y, width: g.width ?? 0, height: g.height ?? 0 }))];
+      const dy = clearSpot({ x: gx, y: gy, width: made.group.width, height: made.group.height }, taken).y - gy;
+      made.group.position = [gx, gy + dy];
+      for (const n of made.nodes) n.position = [n.position[0], n.position[1] + dy];
+      // The starter gives what it sets; the rest of each node's parameters are its defaults.
+      const nodes = made.nodes.map((n) => {
+        const descriptor = s.nodeTypes[n.type]?.descriptor;
+        return descriptor ? { ...n, typeVersion: info.descriptor.starter?.nodes.find((x) => x.type === n.type)?.typeVersion ?? defaultVersionOf(descriptor), parameters: { ...defaultParameters(descriptor), ...n.parameters } } : n;
+      });
+      const flow = toFlow({ nodes, connections: made.connections.map((c) => ({ ...c, id: newId('edge') })) });
+      const [frame] = toFrames([made.group]);
+      set((s) => ({
+        nodes: [...unselect(s.nodes), ...flow.nodes],
+        edges: [...s.edges, ...flow.edges],
+        stickies: unselect(s.stickies),
+        groups: adoptFrames([...unselect(s.groups), { ...frame, selected: true }], [frame.id]),
+        lastAddedId: flow.nodes.at(-1)?.id ?? s.lastAddedId,
+        dirty: true,
+      }));
+      return groupId;
+    });
+  },
+
+  bindSlotOf(groupId, id, slot) {
+    const composite = get().groups.find((g) => g.id === groupId)?.data.composite;
+    if (!composite) return;
+    record();
+    set((s) => ({ groups: withComposite(s.groups, groupId, slot ? bindSlot(composite, slot, id) : unbindSlot(composite, id)), dirty: true }));
+  },
+
+  fixComposite(groupId, fix) {
+    const composite = get().groups.find((g) => g.id === groupId)?.data.composite;
+    if (!composite) return;
+    if (fix.kind === 'onError') return get().updateNode(fix.nodeId, { onError: fix.value });
+    if (fix.kind === 'unbind') return get().bindSlotOf(groupId, fix.id);
+    record();
+    set((s) => ({ groups: withComposite(s.groups, groupId, { ...composite, version: fix.version }), dirty: true }));
   },
 
   undo() {

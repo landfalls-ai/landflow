@@ -241,7 +241,14 @@ const schemas: Record<string, Json> = {
     },
     ['id', 'type', 'name'],
   ),
-  TemplateProblem: object({ kind: { type: 'string', enum: ['missing', 'blocked'] }, nodeType: { type: 'string' }, message: { type: 'string' } }, ['kind', 'nodeType', 'message']),
+  TemplateProblem: object(
+    {
+      kind: { type: 'string', enum: ['missing', 'blocked', 'contract'], description: '`contract`: a composite frame to fix before publishing (doesn’t stop using the template); `nodeType` is the composite type' },
+      nodeType: { type: 'string' },
+      message: { type: 'string' },
+    },
+    ['kind', 'nodeType', 'message'],
+  ),
   TemplateSummary: object(
     {
       id: { type: 'string', description: 'Built-in ids are slugs, saved ones `tpl_…`, remote ones `n8n-<number>`' },
@@ -255,7 +262,7 @@ const schemas: Record<string, Json> = {
       author: { type: 'string' },
       createdAt: { type: 'string' },
       updatedAt: { type: 'string' },
-      usable: { type: 'boolean', description: 'False when a node type is missing here or blocked by the governance policy' },
+      usable: { type: 'boolean', description: 'False when a node type is missing here or blocked by the governance policy (`contract` problems don’t count)' },
       problems: array(ref('TemplateProblem')),
       projectId: { type: 'string', description: 'Saved templates: the project it belongs to (left out: instance-wide)' },
       projectName: { type: 'string' },
@@ -881,6 +888,40 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Delete a saved template',
     description: 'Built-in and remote templates can’t be deleted.',
     responses: { 200: reply('Deleted', ok), 400: invalid, 404: notFound },
+  });
+  // ---- composite types (docs/composites.md) ----
+  const compositeInfo = object(
+    {
+      type: { type: 'string', description: 'Fully qualified: `triage.aiTriage`, or `local.<name>` for the library saved here' },
+      source: { type: 'object', description: '`{ kind: "plugin", pluginId, pluginName }` or `{ kind: "local", createdBy?, updatedAt }`' },
+      descriptor: { type: 'object', description: 'The newest version: a CompositeTypeDescriptor (docs/protocol.md)' },
+      versions: array({ type: 'integer' }),
+      all: array({ type: 'object' }),
+      available: { type: 'boolean', description: 'Plugin types: the plugin is online' },
+    },
+    ['type', 'source', 'descriptor', 'versions', 'available'],
+  );
+  add('get', '/api/composites', {
+    tag: 'Templates',
+    id: 'listComposites',
+    summary: 'List composite types',
+    description: 'The plugins’ (core’s included) and the library saved on this instance. `all` holds every version’s descriptor when there are several.',
+    responses: { 200: reply('The composite types', object({ composites: array(compositeInfo) }, ['composites'])) },
+  });
+  add('post', '/api/composites', {
+    tag: 'Templates',
+    id: 'saveComposite',
+    summary: 'Save a composite type to the library',
+    description: 'Saved as `local.<name>`; a name already saved gets the next version, so frames built for the older one keep it.',
+    body: jsonBody(object({ descriptor: { type: 'object', description: 'A CompositeTypeDescriptor' } }, ['descriptor'])),
+    responses: { 201: reply('The saved type', object({ composite: compositeInfo }, ['composite'])), 400: invalid },
+  });
+  add('delete', '/api/composites/{type}', {
+    tag: 'Templates',
+    id: 'deleteComposite',
+    summary: 'Delete a library composite type',
+    description: 'Every version of a `local.<name>` type: whoever saved it, or an owner or admin. Frames typed by it keep their nodes.',
+    responses: { 200: reply('Deleted', ok), 400: invalid, 403: errorRef('Someone else saved it'), 404: notFound },
   });
   add('post', '/api/templates/{id}/use', {
     tag: 'Templates',

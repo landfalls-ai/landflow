@@ -17,6 +17,7 @@ import {
   splitType,
   type AnnounceRequest,
   type AnnounceResponse,
+  type CompositeTypeDescriptor,
   type JsonObject,
   type PluginManifest,
   type PropertyOption,
@@ -36,6 +37,7 @@ import { bus } from '../bus';
 import { singleton } from '../singleton';
 import { withSpan, withTransportChoice } from '../telemetry';
 import type { BrokerQueueStats, PluginTransportSummary, TransportChoice, TransportPolicy } from '../../shared/transports';
+import type { CompositeTypeInfo } from '../../shared/composites';
 import { transportAuto, type AutoEndpoint, type AutoSource } from '../transports/auto';
 import { brokerConnections } from '../transports/brokers';
 import { policyFromPreferred, transportPolicies, withWorkflowOverride } from '../transports/policy-store';
@@ -735,6 +737,29 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
         available,
         descriptor,
       }));
+    });
+  }
+
+  /**
+   * The composite types plugins declare (docs/composites.md), fully qualified (`triage.aiTriage`): the newest version
+   * as `descriptor`, every version in `all` (newest first) when there are several.
+   */
+  compositeTypes(): CompositeTypeInfo[] {
+    return [...this.plugins.values()].flatMap((entry) => {
+      const available = this.status(entry) === 'online';
+      const byName = new Map<string, CompositeTypeDescriptor[]>();
+      for (const descriptor of entry.manifest.composites ?? []) byName.set(descriptor.name, [...(byName.get(descriptor.name) ?? []), descriptor]);
+      return [...byName.values()].map((list) => {
+        const all = [...list].sort((a, b) => b.version - a.version);
+        return {
+          type: qualifyType(entry.id, all[0].name),
+          source: { kind: 'plugin' as const, pluginId: entry.id, pluginName: entry.manifest.plugin.name },
+          descriptor: all[0],
+          versions: all.map((d) => d.version),
+          ...(all.length > 1 && { all }),
+          available,
+        };
+      });
     });
   }
 

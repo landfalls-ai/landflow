@@ -61,8 +61,13 @@ export interface TemplateDataTable {
 }
 
 /** Why a template can't be used (or needs attention) on this instance. */
+/**
+ * Why a template can't be used here (`missing`: a node type isn't installed; `blocked`: governance), or what to fix
+ * before publishing what it creates (`contract`: a composite frame breaks its contract, or its type isn't installed;
+ * `nodeType` is then the composite type). `contract` problems don't stop "Use template".
+ */
 export interface TemplateProblem {
-  kind: 'missing' | 'blocked';
+  kind: 'missing' | 'blocked' | 'contract';
   nodeType: string;
   message: string;
 }

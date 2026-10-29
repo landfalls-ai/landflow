@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Ban, ChevronLeft, Download, KeyRound, LayoutTemplate, PackageX, Pencil, Table2, Trash2 } from 'lucide-react';
+import { Ban, Boxes, ChevronLeft, Download, KeyRound, LayoutTemplate, PackageX, Pencil, Table2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
@@ -105,14 +105,14 @@ export function TemplateSetupCards({ template }: { template: Pick<TemplateDetail
 }
 
 function Problems({ template, types }: { template: TemplateDetail; types: Record<string, NodeTypeInfo> }) {
-  if (template.usable) return null;
+  if (template.usable) return <ContractNotes template={template} />;
   return (
     <div role="alert" className="flex flex-col gap-1.5 rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[12px] text-rd">
       <div className="font-semibold">This template can’t be used here</div>
       <ul className="flex flex-col gap-1">
         {template.problems.map((p) => (
           <li key={`${p.kind}:${p.nodeType}`} className="flex items-start gap-1.5">
-            {p.kind === 'blocked' ? <Ban className="mt-0.5 size-3 shrink-0" /> : <PackageX className="mt-0.5 size-3 shrink-0" />}
+            {p.kind === 'blocked' ? <Ban className="mt-0.5 size-3 shrink-0" /> : p.kind === 'contract' ? <Boxes className="mt-0.5 size-3 shrink-0" /> : <PackageX className="mt-0.5 size-3 shrink-0" />}
             <span>
               {p.message}
               {p.kind === 'blocked' && types[p.nodeType]?.blocked ? ` (${types[p.nodeType].blocked})` : ''}
@@ -125,6 +125,25 @@ function Problems({ template, types }: { template: TemplateDetail; types: Record
           ? 'Install the plugin from the Marketplace, then come back.'
           : 'An owner or admin can change this in Settings → Governance; a project’s admins in its Settings tab (Allowed nodes).'}
       </div>
+    </div>
+  );
+}
+
+/** A usable template whose composites need fixing before what it creates can be published (docs/composites.md). */
+function ContractNotes({ template }: { template: TemplateDetail }) {
+  const notes = template.problems.filter((p) => p.kind === 'contract');
+  if (!notes.length) return null;
+  return (
+    <div role="note" className="flex flex-col gap-1.5 rounded-[10px] border border-warnbd bg-warndim px-3 py-2.5 text-[12px] text-warn">
+      <div className="font-semibold">Fix before publishing</div>
+      <ul className="flex flex-col gap-1">
+        {notes.map((p, i) => (
+          <li key={i} className="flex items-start gap-1.5">
+            <Boxes className="mt-0.5 size-3 shrink-0" />
+            <span>{p.message}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

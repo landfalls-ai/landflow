@@ -256,6 +256,9 @@ type NodeDescriptor struct {
 	// Credentials lists the credential types (declared in PluginInfo.CredentialTypes)
 	// this node can use.
 	Credentials []NodeCredentialRequirement `json:"credentials,omitempty"`
+	// Capabilities are stable contract tags ("ioc.enrich"): lowercase words joined by dots. Composite slots
+	// select nodes by them (NodeMatcher.Capability), unlike Categories, which only group the node creator.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // NodeCredentialRequirement names a credential type a node can use, by the
@@ -315,6 +318,9 @@ type PluginInfo struct {
 	// CredentialTypes are the kinds of secrets the plugin's nodes use. NewPlugin
 	// moves them into the manifest's credentialTypes and clears this field.
 	CredentialTypes []CredentialType `json:"-"`
+	// Composites are the plugin's composite types (canvas frames with a contract). NewPlugin validates them and
+	// moves them into the manifest's composites, clearing this field.
+	Composites []CompositeTypeDescriptor `json:"-"`
 }
 
 // PluginManifest is served at GET /landflow/v1/manifest.
@@ -323,6 +329,7 @@ type PluginManifest struct {
 	Plugin          PluginInfo                 `json:"plugin"`
 	Nodes           []NodeDescriptor           `json:"nodes"`
 	CredentialTypes []CredentialTypeDescriptor `json:"credentialTypes,omitempty"`
+	Composites      []CompositeTypeDescriptor  `json:"composites,omitempty"`
 	// Transports lists the binding kinds the plugin was started with
 	// ("http", "grpc", broker kinds, "mcp"); MaxConcurrency is the calls one
 	// instance takes at once (0/absent = unlimited). Hints for the host's

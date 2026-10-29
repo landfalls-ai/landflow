@@ -12,6 +12,7 @@ export const ParseEmail = defineNode({
     kind: 'action',
     idempotent: true,
     categories: ['Security', 'Developer Tools'],
+    capabilities: ['email.parse'],
     icon: 'file:parse-email.svg',
     color: '#8b5cf6',
     subtitle: '{{source}}',

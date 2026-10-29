@@ -79,6 +79,7 @@ message GetManifestResponse {
   // Transport hints (docs/protocol.md §14.1; additive, empty/0 when the plugin predates them):
   repeated string transports = 5;  // faces this process was built with: "http", "grpc", "mcp", "kafka", ...
   int32 max_concurrency = 6;       // calls one instance takes at once; 0 = unknown (the host assumes 16)
+  repeated DynamicValue composites = 7; // each: a CompositeTypeDescriptor JSON object (docs/composites.md)
 }
 
 // ---- Execute ----------------------------------------------------------

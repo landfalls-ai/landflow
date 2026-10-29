@@ -9,6 +9,7 @@ import { nanoid } from 'nanoid';
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { AssistantOp, RunDigest } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
+import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
 import { assistantModel, modelLabel } from './model';
@@ -334,6 +335,7 @@ export async function runChat(input: ChatInput): Promise<void> {
     SYSTEM,
     `\nApps and plugins this workflow can use (search_nodes for the rest):\n${catalogSummary(types)}`,
     `\nThe editor now:\n${workflowOutline(working, runs)}`,
+    working.groups?.some((g) => g.composite) ? `\nComposites (frames typed by a contract: fill their slots with matching nodes, keep their rules):\n${compositeOutline(working)}` : '',
     selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types)}` : '',
     tagged.length ? `\nThe user tagged in the message:\n${tagged.join('\n')}` : '',
     input.session ? `\n${SESSION}` : '',

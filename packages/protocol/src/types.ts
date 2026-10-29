@@ -232,6 +232,11 @@ export interface NodeDescriptor {
   documentationUrl?: string;
   /** Free-form tags for search. */
   keywords?: string[];
+  /**
+   * What the node does, as dotted tags a composite slot can ask for (`ioc.extract`, `ioc.enrich`, `llm.chain`): a
+   * stable contract, unlike `categories`, which only group the node creator. See CompositeTypeDescriptor.
+   */
+  capabilities?: string[];
   /** Credential types this node can use (declared in the manifest's `credentialTypes`). */
   credentials?: NodeCredentialRequirement[];
   /**
@@ -283,6 +288,119 @@ export interface CredentialTypeDescriptor {
 }
 
 // ---------------------------------------------------------------------------
+// Composites
+// ---------------------------------------------------------------------------
+
+/**
+ * What a composite slot accepts. Every field given must match; a list matches any of its values. Matching is on the
+ * node's descriptor, so it works for any plugin's nodes.
+ */
+export interface NodeMatcher {
+  /** Fully-qualified node types: `triage.triageDecision`. */
+  type?: string | string[];
+  kind?: NodeKind | NodeKind[];
+  /** Sub-nodes: what they supply (`ai_languageModel` for a chat model). */
+  supplies?: Exclude<ConnectionType, 'main'> | Array<Exclude<ConnectionType, 'main'>>;
+  /** One of the node's `categories` (case-insensitive). */
+  category?: string | string[];
+  /** One of the node's `capabilities`. */
+  capability?: string | string[];
+  /** The node has an input port of this type: a reasoner is a node with an `ai_languageModel` input. */
+  input?: ConnectionType;
+  /** A composite of this type, nested in the frame, fills the slot instead of a node. */
+  composite?: string | string[];
+  /** Matches when any of these does (combined with the fields above). */
+  anyOf?: NodeMatcher[];
+}
+
+/** A step a composite must (or may) contain. */
+export interface CompositeSlot {
+  /** Identifier, unique in the type. */
+  name: string;
+  displayName: string;
+  description?: string;
+  accepts: NodeMatcher;
+  /** Fewest nodes that fill it; 0 makes it optional. Default 1. */
+  min?: number;
+  /** Most nodes; absent means no limit. */
+  max?: number;
+  /** Its nodes can be configured but not deleted or retyped. */
+  locked?: boolean;
+}
+
+/**
+ * A named edge of the frame. An output carries one output of a slot's node (`slot` + `index`); an input names the slot
+ * whose node takes what comes in from outside (absent: whatever the frame's first nodes are).
+ */
+export interface CompositePort {
+  name: string;
+  displayName?: string;
+  slot?: string;
+  /** Output index on the slot's node. Default 0. */
+  index?: number;
+}
+
+/** A structural rule over the frame, checked with the slots. */
+export type CompositeRule =
+  /** Every node of slot `to` gets a `via` connection (default `main`) from a node of slot `from`. */
+  | { rule: 'feeds'; from: string; to: string; via?: ConnectionType }
+  /** The nodes of these slots have this On error setting (`continue` keeps a frame fail-open). */
+  | { rule: 'onError'; slots: string[]; value: 'stop' | 'continue' }
+  /** Every node the frame's input reaches leads, through main connections inside the frame, to slot `to`. */
+  | { rule: 'reaches'; to: string }
+  /** Main connections leave the frame only through its output ports, and enter only at its input slots. */
+  | { rule: 'sealed' };
+
+/** A node of a composite's starter graph. `slot` binds it; ids are local to the starter. */
+export interface CompositeStarterNode {
+  id: string;
+  name: string;
+  type: string;
+  typeVersion?: number;
+  /** Relative to the frame's top-left corner. */
+  position: [number, number];
+  parameters?: JsonObject;
+  onError?: 'stop' | 'continue';
+  retryOnFail?: boolean;
+  maxTries?: number;
+  slot?: string;
+}
+
+/**
+ * A composite type: a contract for a canvas frame (its slots, ports and rules) plus the starter graph dropped in when
+ * one is inserted. The workflow owns the frame's nodes; the contract is only checked against them, so updating a type
+ * never rewrites anyone's nodes.
+ */
+export interface CompositeTypeDescriptor {
+  /** Local name, unique in the plugin together with `version`: `aiTriage` → `${pluginId}.aiTriage`. */
+  name: string;
+  displayName: string;
+  description: string;
+  /** A plugin may declare several versions of a type; an instance pins the one it was built for. */
+  version: number;
+  icon?: string;
+  /** Accent colour (hex). */
+  color?: string;
+  inputs?: CompositePort[];
+  outputs?: CompositePort[];
+  slots: CompositeSlot[];
+  rules?: CompositeRule[];
+  /** Nodes that fill no slot are allowed unless the type is closed. */
+  closed?: boolean;
+  /**
+   * `fallback`: when a node inside fails (after its retries and without On error → Continue), the run doesn't stop: the
+   * rest of the frame is skipped and the items that entered it, with the error added, go to the frame's fallback
+   * targets (picked in its contract panel, `GroupComposite.fallback`).
+   */
+  onError?: 'stop' | 'fallback';
+  /** Seconds the whole frame may take; past it, a node inside fails (and `fallback` applies). */
+  timeoutSeconds?: number;
+  /** Settings of the whole frame, read inside it as `$composite.params.<name>`. */
+  properties?: PropertyDescriptor[];
+  starter?: { nodes: CompositeStarterNode[]; connections: Array<{ source: string; sourceIndex?: number; target: string; targetIndex?: number; type?: ConnectionType }> };
+}
+
+// ---------------------------------------------------------------------------
 // Manifest
 // ---------------------------------------------------------------------------
 
@@ -306,6 +424,8 @@ export interface PluginManifest {
   plugin: PluginInfo;
   nodes: NodeDescriptor[];
   credentialTypes?: CredentialTypeDescriptor[];
+  /** Composite types: canvas frames with a contract (docs/composites.md). Fully-qualified: `${pluginId}.${name}`. */
+  composites?: CompositeTypeDescriptor[];
   /**
    * The faces this plugin process was built with (`http`, `grpc`, `mcp`, broker kinds; see TRANSPORT_KINDS). A hint
    * for the Plugins page and the selector: an endpoint is used only when it is live, whatever this says. Absent from

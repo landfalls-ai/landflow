@@ -5,6 +5,9 @@
  * happens next?" with categories and one segment per plugin (with the icon
  * the plugin publishes). Picking a node places it, wires it to whatever the
  * panel was opened from, and opens it.
+ *
+ * Composites (docs/composites.md): "What happens next?" lists the composite types (picking one drops a frame with its
+ * starter nodes), and opened from a composite's empty slot the panel offers only the nodes that slot accepts.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useReactFlow } from '@xyflow/react';
@@ -13,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
 import { CATEGORY_COLOR, nodeColor, tint } from '@/lib/client/node-style';
 import type { NodeTypeInfo } from '@/lib/shared/types';
+import { describeMatcher, nodeMatches, type CompositeTypeInfo } from '@/lib/shared/composites';
 import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
 import { useEditor, type PaletteRequest } from './store';
@@ -155,6 +159,16 @@ export function NodeCreator() {
   const nodeTypes = useEditor((s) => s.nodeTypes);
   const hasNodes = useEditor((s) => s.nodes.length > 0);
   const hasTrigger = useEditor((s) => s.nodes.some((n) => s.nodeTypes[n.data.wf.type]?.descriptor.kind === 'trigger'));
+  const composites = useEditor((s) => s.composites);
+  // Opened from a composite's slot: the slot, as its type declares it.
+  const slot = useEditor((s) => {
+    const target = s.palette?.slot;
+    const composite = target && s.groups.find((g) => g.id === target.groupId)?.data.composite;
+    if (!target || !composite) return undefined;
+    const versions = s.composites.find((c) => c.type === composite.type);
+    const descriptor = versions?.all?.find((d) => d.version === composite.version) ?? versions?.descriptor;
+    return descriptor?.slots.find((x) => x.name === target.slot);
+  });
   const { screenToFlowPosition, flowToScreenPosition, setCenter, getZoom } = useReactFlow();
   const [stack, setStack] = useState<View[]>([{ kind: 'root' }]);
   const [direction, setDirection] = useState<'push' | 'pop'>('push');
@@ -225,7 +239,7 @@ export function NodeCreator() {
     if (!request || !mode) return;
     const state = useEditor.getState();
     let effective: PaletteRequest = request;
-    if (mode === 'next' && !request.from) {
+    if (mode === 'next' && !request.from && !request.slot) {
       // Plain "add": chain onto the selected node, or the one added last (n8n does the same).
       const anchor = state.nodes.find((n) => n.selected) ?? state.nodes.find((n) => n.id === state.lastAddedId);
       const outputs = anchor ? (state.nodeTypes[anchor.data.wf.type]?.descriptor.outputs.filter((p) => p.type === 'main').length ?? 0) : 0;
@@ -262,6 +276,39 @@ export function NodeCreator() {
         setCenter(node.position.x + 44, node.position.y + 44, { zoom: getZoom(), duration: 450 });
     }
     if (type.descriptor.kind !== 'subnode' && type.descriptor.properties.length) setTimeout(() => useEditor.getState().openNode(id), 260);
+  };
+
+  /** Drop a frame of a composite type: where the panel was opened, else in the middle of the view. */
+  const chooseComposite = (info: CompositeTypeInfo) => {
+    if (!request) return;
+    const center = screenToFlowPosition({ x: window.innerWidth / 2 - 360, y: window.innerHeight / 2.6 });
+    const at = request.position ?? { x: center.x, y: center.y };
+    const id = useEditor.getState().insertComposite(info.type, at);
+    close();
+    const frame = id && useEditor.getState().groups.find((g) => g.id === id);
+    if (frame) setCenter(frame.position.x + (frame.width ?? 520) / 2, frame.position.y + (frame.height ?? 300) / 2, { zoom: getZoom(), duration: 450 });
+  };
+
+  const compositeRow = (info: CompositeTypeInfo): RowItem => {
+    const color = info.descriptor.color ?? CATEGORY_COLOR.Core;
+    return {
+      key: `composite:${info.type}`,
+      icon: (
+        <IconBox color={color}>
+          <NodeIcon icon={info.descriptor.icon ?? 'lucide:boxes'} size={18} style={{ color }} />
+        </IconBox>
+      ),
+      title: (
+        <span className="flex items-center gap-1.5">
+          {info.descriptor.displayName}
+          <span className="rounded-md border border-hair px-1 text-[10px] font-normal text-t3">composite</span>
+        </span>
+      ),
+      description: info.descriptor.description || `Slots: ${info.descriptor.slots.map((x) => x.displayName).join(', ')}`,
+      meta: <span className="font-mono text-[10px] text-t3">{info.source.kind === 'local' ? 'saved here' : info.source.pluginName}</span>,
+      disabled: !info.available,
+      onSelect: () => chooseComposite(info),
+    };
   };
 
   const nodeRow = (t: NodeTypeInfo, override?: { title: string; description: string }): RowItem => {
@@ -325,6 +372,21 @@ export function NodeCreator() {
     type Section = { label?: string; rows: RowItem[] };
     const out: { title: string; subtitle?: string; header?: ReactNode; sections: Section[] } = { title: '', sections: [] };
     if (!mode) return out;
+    if (slot) {
+      // A composite's slot: what it accepts, triggers aside.
+      const accepted = all.filter((t) => t.descriptor.kind !== 'trigger' && nodeMatches(t.type, t.descriptor, slot.accepts));
+      const shown = query.trim() ? accepted.filter((t) => score(searchText(t), query) > 0) : accepted;
+      out.title = `Add to ${slot.displayName}`;
+      out.subtitle = `Takes ${describeMatcher(slot.accepts)}`;
+      const core = shown.filter((t) => t.pluginId === 'core');
+      if (core.length) out.sections.push({ label: 'Built in', rows: core.map((t) => nodeRow(t)) });
+      for (const seg of segments) {
+        const rows = shown.filter((t) => t.pluginId === seg.pluginId).map((t) => nodeRow(t));
+        if (rows.length) out.sections.push({ label: seg.name, rows });
+      }
+      if (!shown.length) out.sections.push({ rows: [] });
+      return out;
+    }
     const pool = all.filter((t) => fits(t, mode));
 
     if (query.trim()) {
@@ -340,6 +402,10 @@ export function NodeCreator() {
       }
       out.title = mode === 'trigger' ? 'What triggers this workflow?' : 'Search results';
       out.sections = [...groups.entries()].map(([label, rows]) => ({ label, rows }));
+      if (mode === 'next' && view.kind !== 'plugin') {
+        const found = composites.filter((c) => score(`${c.descriptor.displayName} ${c.descriptor.description} ${c.type} composite`, query) > 0);
+        if (found.length) out.sections.unshift({ label: 'Composites', rows: found.map(compositeRow) });
+      }
       return out;
     }
 
@@ -455,6 +521,8 @@ export function NodeCreator() {
     });
     const withActions = segments.map((s) => ({ s, n: s.types.filter((t) => fits(t, 'next')).length })).filter((x) => x.n);
     if (withActions.length) out.sections.push({ label: 'Plugins', rows: withActions.map(({ s, n }) => segmentRow(s, n)) });
+    // Composite types: a frame of steps with a contract (its slots, rules and outputs), from plugins or saved here.
+    if (composites.length) out.sections.push({ label: 'Composites', rows: composites.map(compositeRow) });
     out.sections.push({
       rows: [
         {
@@ -473,7 +541,7 @@ export function NodeCreator() {
     });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, all, segments, view, query]);
+  }, [mode, all, segments, view, query, composites, slot]);
 
   const rows = sections.flatMap((s) => s.rows);
   useEffect(() => {

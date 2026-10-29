@@ -25,6 +25,7 @@ from typing import Any, Callable, Iterable
 
 from ._version import __version__
 from .binary import complete_binary_ref
+from .composites import validate_capabilities, validate_composite
 from .context import CredentialTestContext, ExecuteContext, LoadOptionsContext
 from .credentials import CredentialType, normalize_test_result, secret_values
 from .errors import (
@@ -76,7 +77,9 @@ class Plugin:
     ``color`` is the plugin's brand colour (hex).
 
     ``credential_types`` lists the ``CredentialType``s (or descriptor dicts)
-    the nodes reference in their ``credentials``. ``telemetry`` overrides the
+    the nodes reference in their ``credentials``. ``composites`` lists composite
+    type descriptors (canvas frames with a contract; see ``landflow_sdk.composites``),
+    validated here and served as the manifest's ``composites``. ``telemetry`` overrides the
     ``Telemetry`` built from the environment (tests, embedding).
     """
 
@@ -94,6 +97,7 @@ class Plugin:
         homepage: str | None = None,
         icon_dir: str | os.PathLike[str] | None = None,
         credential_types: Iterable[CredentialType | dict[str, Any]] = (),
+        composites: Iterable[dict[str, Any]] = (),
         telemetry: Telemetry | None = None,
     ) -> None:
         if not isinstance(id, str) or not _PLUGIN_ID_RE.match(id):
@@ -125,6 +129,13 @@ class Plugin:
             if ctype.name in self._credential_types:
                 raise DescriptorError(f"duplicate credential type {ctype.name!r}")
             self._credential_types[ctype.name] = ctype
+
+        self._composites: list[dict[str, Any]] = []
+        for entry in composites:
+            composite = validate_composite(entry)
+            if any(c["name"] == composite["name"] and c["version"] == composite["version"] for c in self._composites):
+                raise DescriptorError(f"duplicate composite {composite['name']!r} version {composite['version']}")
+            self._composites.append(composite)
 
         self._nodes: dict[str, tuple[Node, dict[str, Any]]] = {}
         for entry in nodes:
@@ -194,6 +205,8 @@ class Plugin:
         }
         if self._credential_types:
             manifest["credentialTypes"] = [ctype.descriptor() for ctype in self._credential_types.values()]
+        if self._composites:
+            manifest["composites"] = copy.deepcopy(self._composites)
         return manifest
 
     def manifest(self) -> dict[str, Any]:
@@ -740,6 +753,8 @@ def _validate_descriptor(node: Node, credential_types: set[str] | frozenset[str]
         missing = [m for m in ("webhook_create", "webhook_delete", "webhook") if getattr(type(node), m) is getattr(Node, m)]
         if missing:
             raise DescriptorError(f"{where}: an app webhook trigger must implement {', '.join(missing)}()")
+    if descriptor.get("capabilities") is not None:
+        validate_capabilities(descriptor["capabilities"], where)
     requirements = descriptor.get("credentials")
     if requirements is not None:
         if not isinstance(requirements, list):

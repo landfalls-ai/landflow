@@ -173,6 +173,7 @@ func serviceDescriptor(name, display, description, toolDescription, doc string, 
 		Idempotent:       true,
 		UsableAsTool:     true,
 		ToolDescription:  toolDescription,
+		Capabilities:     []string{"ioc.lookup"},
 		Properties:       props,
 	}
 }

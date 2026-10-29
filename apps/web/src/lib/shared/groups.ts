@@ -52,6 +52,17 @@ export function nodeBox(position: { x: number; y: number }, size: { width: numbe
   return { x: position.x - overhang, y: position.y, width: size.width + overhang * 2, height: size.height + NODE_LABEL.height };
 }
 
+/** Where `rect` fits without covering any of `taken`: moved straight down past what it would cover, `gap` apart. */
+export function clearSpot(rect: Rect, taken: readonly Rect[], gap = 40): { x: number; y: number } {
+  let y = rect.y;
+  for (let i = 0; i < 200; i++) {
+    const hits = taken.filter((r) => r.x < rect.x + rect.width + gap && r.x + r.width + gap > rect.x && r.y < y + rect.height + gap && r.y + r.height + gap > y);
+    if (!hits.length) break;
+    y = Math.max(...hits.map((r) => r.y + r.height)) + gap;
+  }
+  return { x: rect.x, y };
+}
+
 /** A group's frame as a rectangle (its expanded size, also while collapsed). */
 export function frameOf(group: Pick<WorkflowGroup, 'position' | 'width' | 'height'>): Rect {
   return { x: group.position[0], y: group.position[1], width: group.width, height: group.height };
@@ -126,6 +137,7 @@ export function normalizeGroups(groups: readonly WorkflowGroup[] | undefined, no
       height: Math.round(clamp(Number(group.height) || GROUP_MIN_SIZE.height, 40, GROUP_MAX_SIZE)),
       ...(Number.isInteger(group.color) && group.color! > 0 && group.color! <= 9 && { color: group.color }),
       ...(group.collapsed === true && { collapsed: true }),
+      ...(group.composite && typeof group.composite.type === 'string' && group.composite.type && Number.isInteger(group.composite.version) && { composite: group.composite }),
     });
   }
   // Parents: known groups only, no loops. Links are taken in list order, so the one that would close a loop goes.
@@ -140,7 +152,36 @@ export function normalizeGroups(groups: readonly WorkflowGroup[] | undefined, no
     while (at && at !== group.id) at = parents.get(at);
     if (!at) parents.set(group.id, parentId);
   }
-  return parents.size ? out.map((g) => (parents.has(g.id) ? { ...g, parentId: parents.get(g.id) } : g)) : out;
+  const linked = parents.size ? out.map((g) => (parents.has(g.id) ? { ...g, parentId: parents.get(g.id) } : g)) : out;
+  return linked.some((g) => g.composite) ? linked.map((g) => (g.composite ? { ...g, composite: prunedComposite(g, linked, known) } : g)) : linked;
+}
+
+/**
+ * A composite's bindings kept to its members (docs/composites.md): its own nodes, those of plain groups nested in it
+ * and the composites nested directly in it, so a node dragged out of the frame leaves its slot. Fallback targets
+ * must be nodes that exist.
+ */
+function prunedComposite(group: WorkflowGroup, groups: readonly WorkflowGroup[], known: ReadonlySet<string>): NonNullable<WorkflowGroup['composite']> {
+  const members = new Set<string>();
+  const walk = (id: string, seen: Set<string>) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    groups.find((g) => g.id === id)?.nodeIds.forEach((n) => members.add(n));
+    for (const child of groups) {
+      if (child.parentId !== id) continue;
+      if (child.composite) members.add(child.id);
+      else walk(child.id, seen);
+    }
+  };
+  walk(group.id, new Set());
+  const { type, version, slots, params, fallback } = group.composite!;
+  const kept: Record<string, string[]> = {};
+  for (const [slot, ids] of Object.entries(slots && typeof slots === 'object' ? slots : {})) {
+    const live = Array.isArray(ids) ? [...new Set(ids.filter((id) => typeof id === 'string' && members.has(id)))] : [];
+    if (live.length) kept[slot] = live;
+  }
+  const targets = Array.isArray(fallback) ? fallback.filter((f) => f && typeof f.target === 'string' && known.has(f.target)).map((f) => ({ target: f.target, ...(Number.isInteger(f.targetIndex) && f.targetIndex! > 0 && { targetIndex: f.targetIndex }) })) : [];
+  return { type, version, slots: kept, ...(params && typeof params === 'object' && Object.keys(params).length > 0 && { params }), ...(targets.length > 0 && { fallback: targets }) };
 }
 
 /** The group a node belongs to. */
@@ -219,6 +260,15 @@ export function parentAt<T extends Pick<WorkflowGroup, 'id' | 'position' | 'widt
 /** Handles of a collapsed box: main connections in on the left and out on the right, sub-node ones on top and bottom. */
 export const GROUP_HANDLES = { in: 'group:in', out: 'group:out', aiIn: 'group:ai-in', aiOut: 'group:ai-out' } as const;
 
+/** A collapsed composite's named output (docs/composites.md): its handle id. */
+export const compositePortHandle = (port: string) => `composite:out:${port}`;
+
+/**
+ * A collapsed box's named outputs: box id → (`<node id>:<source handle>` → the port's handle). Connections leaving the
+ * box from a port's node and output are drawn from that port; the rest from the box's plain output.
+ */
+export type BoxPorts = ReadonlyMap<string, ReadonlyMap<string, string>>;
+
 /** A connection as the router sees it (the editor's and the read-only canvases' edges both fit). */
 export interface RoutableEdge {
   id: string;
@@ -245,7 +295,7 @@ export interface BoxRoute {
  * collapsed group become one line per box, node and port (however many connections it stands for); those inside one
  * box disappear with it.
  */
-export function routeEdges<E extends RoutableEdge>(edges: readonly E[], boxOf: ReadonlyMap<string, string>): { edges: E[]; routes: BoxRoute[] } {
+export function routeEdges<E extends RoutableEdge>(edges: readonly E[], boxOf: ReadonlyMap<string, string>, ports?: BoxPorts): { edges: E[]; routes: BoxRoute[] } {
   if (!boxOf.size) return { edges: edges as E[], routes: [] };
   const shown: E[] = [];
   const routes = new Map<string, BoxRoute>();
@@ -261,7 +311,8 @@ export function routeEdges<E extends RoutableEdge>(edges: readonly E[], boxOf: R
     const main = type === 'main';
     const source = fromBox ?? edge.source;
     const target = toBox ?? edge.target;
-    const sourceHandle = fromBox ? (main ? GROUP_HANDLES.out : GROUP_HANDLES.aiOut) : (edge.sourceHandle ?? null);
+    const port = fromBox && main ? ports?.get(fromBox)?.get(`${edge.source}:${edge.sourceHandle ?? 'main:0'}`) : undefined;
+    const sourceHandle = fromBox ? (port ?? (main ? GROUP_HANDLES.out : GROUP_HANDLES.aiOut)) : (edge.sourceHandle ?? null);
     const targetHandle = toBox ? (main ? GROUP_HANDLES.in : GROUP_HANDLES.aiIn) : (edge.targetHandle ?? null);
     const id = `proxy:${source}:${sourceHandle}:${target}:${targetHandle}`;
     const existing = routes.get(id);

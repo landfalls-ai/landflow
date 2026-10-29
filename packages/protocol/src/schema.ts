@@ -5,7 +5,7 @@
  * exports them as JSON Schema for the Python/Go SDKs and the docs.
  */
 import { z } from 'zod';
-import type { CredentialTypeDescriptor, NodeDescriptor, PluginManifest, PropertyDescriptor } from './types';
+import type { CompositeTypeDescriptor, CredentialTypeDescriptor, NodeDescriptor, NodeMatcher, PluginManifest, PropertyDescriptor } from './types';
 
 const primitive = z.union([z.string(), z.number(), z.boolean()]);
 
@@ -16,6 +16,10 @@ export const HEX_COLOR = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
 const SUB_NODE_TYPES = ['ai_languageModel', 'ai_tool', 'ai_memory', 'ai_embedding', 'ai_document', 'ai_textSplitter', 'ai_retriever', 'ai_reranker'] as const;
 
 export const connectionTypeSchema = z.enum(['main', ...SUB_NODE_TYPES]);
+
+/** A capability tag: lowercase words joined by dots (`ioc.enrich`, `llm.chain`). */
+export const CAPABILITY = /^[a-z][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*$/;
+const IDENTIFIER = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 const displayOptionsSchema = z.object({
   show: z.record(z.string(), z.array(primitive)).optional(),
@@ -122,6 +126,7 @@ export const nodeDescriptorSchema: z.ZodType<NodeDescriptor> = z.object({
   supplies: z.enum(SUB_NODE_TYPES).optional(),
   documentationUrl: z.string().optional(),
   keywords: z.array(z.string()).optional(),
+  capabilities: z.array(z.string().regex(CAPABILITY, 'a capability is a lowercase dotted tag like ioc.enrich')).optional(),
   credentials: z
     .array(z.object({ name: z.string().min(1), required: z.boolean().optional(), displayOptions: displayOptionsSchema.optional() }))
     .optional(),
@@ -142,6 +147,110 @@ export const credentialTypeSchema: z.ZodType<CredentialTypeDescriptor> = z.objec
   extends: z.array(z.string().min(1)).optional(),
 });
 
+const oneOrMany = <T extends z.ZodTypeAny>(schema: T) => z.union([schema, z.array(schema).min(1)]);
+
+export const nodeMatcherSchema: z.ZodType<NodeMatcher> = z.lazy(() =>
+  z
+    .object({
+      type: oneOrMany(z.string().min(1)).optional(),
+      kind: oneOrMany(z.enum(['trigger', 'action', 'subnode'])).optional(),
+      supplies: oneOrMany(z.enum(SUB_NODE_TYPES)).optional(),
+      category: oneOrMany(z.string().min(1)).optional(),
+      capability: oneOrMany(z.string().regex(CAPABILITY)).optional(),
+      input: connectionTypeSchema.optional(),
+      composite: oneOrMany(z.string().min(1)).optional(),
+      anyOf: z.array(nodeMatcherSchema).min(1).optional(),
+    })
+    .refine((m) => Object.keys(m).length > 0, 'a matcher needs at least one field'),
+);
+
+const compositePortSchema = z.object({
+  name: z.string().regex(IDENTIFIER, 'a port name must be an identifier'),
+  displayName: z.string().optional(),
+  slot: z.string().optional(),
+  index: z.number().int().min(0).optional(),
+});
+
+const compositeRuleSchema = z.discriminatedUnion('rule', [
+  z.object({ rule: z.literal('feeds'), from: z.string().min(1), to: z.string().min(1), via: connectionTypeSchema.optional() }),
+  z.object({ rule: z.literal('onError'), slots: z.array(z.string().min(1)).min(1), value: z.enum(['stop', 'continue']) }),
+  z.object({ rule: z.literal('reaches'), to: z.string().min(1) }),
+  z.object({ rule: z.literal('sealed') }),
+]);
+
+export const compositeTypeSchema: z.ZodType<CompositeTypeDescriptor> = z
+  .object({
+    name: z.string().regex(IDENTIFIER, 'composite name must be an identifier'),
+    displayName: z.string().min(1),
+    description: z.string(),
+    version: z.number().int().positive(),
+    icon: z.string().optional(),
+    color: z.string().regex(HEX_COLOR).optional(),
+    inputs: z.array(compositePortSchema).optional(),
+    outputs: z.array(compositePortSchema).optional(),
+    slots: z
+      .array(
+        z.object({
+          name: z.string().regex(IDENTIFIER, 'a slot name must be an identifier'),
+          displayName: z.string().min(1),
+          description: z.string().optional(),
+          accepts: nodeMatcherSchema,
+          min: z.number().int().min(0).optional(),
+          max: z.number().int().positive().optional(),
+          locked: z.boolean().optional(),
+        }),
+      )
+      .min(1),
+    rules: z.array(compositeRuleSchema).optional(),
+    closed: z.boolean().optional(),
+    onError: z.enum(['stop', 'fallback']).optional(),
+    timeoutSeconds: z.number().positive().optional(),
+    properties: z.array(propertySchema).optional(),
+    starter: z
+      .object({
+        nodes: z.array(
+          z.object({
+            id: z.string().min(1),
+            name: z.string().min(1),
+            type: z.string().min(1),
+            typeVersion: z.number().int().positive().optional(),
+            position: z.tuple([z.number(), z.number()]),
+            parameters: z.record(z.string(), z.any()).optional(),
+            onError: z.enum(['stop', 'continue']).optional(),
+            retryOnFail: z.boolean().optional(),
+            maxTries: z.number().int().positive().optional(),
+            slot: z.string().optional(),
+          }),
+        ),
+        connections: z.array(
+          z.object({ source: z.string().min(1), sourceIndex: z.number().int().min(0).optional(), target: z.string().min(1), targetIndex: z.number().int().min(0).optional(), type: connectionTypeSchema.optional() }),
+        ),
+      })
+      .optional(),
+  })
+  .superRefine((type, ctx) => {
+    const slots = new Set<string>();
+    for (const slot of type.slots) {
+      if (slots.has(slot.name)) ctx.addIssue({ code: 'custom', message: `duplicate slot "${slot.name}"` });
+      slots.add(slot.name);
+      if (slot.max !== undefined && slot.max < (slot.min ?? 1)) ctx.addIssue({ code: 'custom', message: `slot "${slot.name}": max is below min` });
+    }
+    const known = (name: string | undefined, where: string) => {
+      if (name !== undefined && !slots.has(name)) ctx.addIssue({ code: 'custom', message: `${where} names unknown slot "${name}"` });
+    };
+    for (const port of [...(type.inputs ?? []), ...(type.outputs ?? [])]) known(port.slot, `port "${port.name}"`);
+    for (const rule of type.rules ?? []) {
+      if (rule.rule === 'feeds') (known(rule.from, 'a feeds rule'), known(rule.to, 'a feeds rule'));
+      if (rule.rule === 'onError') rule.slots.forEach((slot) => known(slot, 'an onError rule'));
+      if (rule.rule === 'reaches') known(rule.to, 'a reaches rule');
+    }
+    const ids = new Set(type.starter?.nodes.map((n) => n.id));
+    for (const node of type.starter?.nodes ?? []) known(node.slot, `starter node "${node.id}"`);
+    for (const c of type.starter?.connections ?? []) {
+      if (!ids.has(c.source) || !ids.has(c.target)) ctx.addIssue({ code: 'custom', message: `starter connection ${c.source} → ${c.target} names an unknown node` });
+    }
+  });
+
 export const pluginInfoSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, 'plugin id must be lowercase kebab-case'),
   name: z.string().min(1),
@@ -160,6 +269,7 @@ export const manifestSchema: z.ZodType<PluginManifest> = z.object({
   plugin: pluginInfoSchema,
   nodes: z.array(nodeDescriptorSchema),
   credentialTypes: z.array(credentialTypeSchema).optional(),
+  composites: z.array(compositeTypeSchema).optional(),
   transports: z.array(z.string().regex(/^[a-z0-9][a-z0-9._-]*$/, 'a transport kind is lowercase: http, grpc, kafka, …')).optional(),
   maxConcurrency: z.number().int().positive().optional(),
 });

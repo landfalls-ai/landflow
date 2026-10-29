@@ -128,6 +128,8 @@ export interface ManifestMsg {
   plugin: PluginInfoMsg | null;
   nodes: DynamicValueMsg[];
   credentialTypes: DynamicValueMsg[];
+  /** Empty (or absent) when the plugin declares no composite types. */
+  composites?: DynamicValueMsg[];
   /** Empty (or absent) when the plugin predates transport hints. */
   transports?: string[];
   /** 0 (or absent) = unknown. */
@@ -249,6 +251,7 @@ export function manifestToMsg(manifest: PluginManifest): ManifestMsg {
     },
     nodes: manifest.nodes.map((node) => toDynamic(node)),
     credentialTypes: (manifest.credentialTypes ?? []).map((type) => toDynamic(type)),
+    composites: (manifest.composites ?? []).map((type) => toDynamic(type)),
     transports: manifest.transports ?? [],
     maxConcurrency: manifest.maxConcurrency ?? 0,
   };
@@ -275,6 +278,7 @@ export function manifestFromMsg(msg: ManifestMsg): unknown {
       : null,
     nodes: msg.nodes.map((node) => fromDynamic(node, null)),
     ...(msg.credentialTypes?.length && { credentialTypes: msg.credentialTypes.map((type) => fromDynamic(type, null)) }),
+    ...(msg.composites?.length && { composites: msg.composites.map((type) => fromDynamic(type, null)) }),
     ...(msg.transports?.length && { transports: msg.transports }),
     ...(msg.maxConcurrency && { maxConcurrency: msg.maxConcurrency }),
   };

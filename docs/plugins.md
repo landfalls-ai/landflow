@@ -29,6 +29,8 @@ interface INodeType {
 
 Plugins publish their own branding: `icon: 'file:icons/x.svg'` in the plugin or node descriptor is read by the SDK and sent as a `data:` URL (SVG or PNG, up to 64 KB). A hex `color` tints the plugin's segment in the node creator and its nodes on the canvas.
 
+A plugin can also ship **composite types**, contracts for canvas frames built from its nodes and others' (the triage plugin's `triage.aiTriage`), and tag its nodes with `capabilities` (`ioc.enrich`) for their slots to match: `defineComposite` in TypeScript, `PluginInfo.Composites` in Go, `Plugin(composites=[...])` in Python. See [composites.md](composites.md).
+
 Descriptor fields mirror n8n's `INodeTypeDescription` / `INodeProperties`: 13 property types, `displayOptions`, `typeOptions.loadOptionsMethod`, typed ports with `required`/`maxConnections`. The editor renders every plugin's UI from its descriptor, so plugins need no frontend code. Full spec: **[docs/protocol.md](protocol.md)**.
 
 ## Autodiscovery

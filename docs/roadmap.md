@@ -561,6 +561,47 @@ No migrations: a template's marketplace origin is kept in its document.
 - What remains: the Landfall and threat intel calls are checked against fakes, not the live services; share pages need
   sign-in; runbooks aren't built from closed rooms yet.
 
+## Composite nodes (built 2026-10-29)
+
+Groups typed by a contract ([composites.md](composites.md)): a composite type names the slots a frame must or may hold,
+its ports, its rules and how a run treats it. The nodes are copied in once and the contract is linked, so a new version
+of a type never rewrites anyone's nodes. Errors block Publish, warnings don't, Save never is; free nodes are allowed
+unless the type is closed; slots can take nested composites. Migration 1883 (`composite_types`).
+
+- **Protocol and SDKs.** `CompositeTypeDescriptor` (slots with `NodeMatcher`s, ports, the `feeds` / `onError` /
+  `reaches` / `sealed` rules, `closed`, `onError: 'fallback'`, `timeoutSeconds`, `properties`, a starter), node
+  `capabilities`, the manifest's `composites` (gRPC `PluginManifest` field 7). `defineComposite` in the TypeScript SDK,
+  `PluginInfo.Composites` in Go and `Plugin(composites=…)` in Python, each validating them.
+- **Types.** Core's **AI step** (`core.aiStep`), the triage plugin's **AI triage** (`triage.aiTriage`, which the alert
+  triage and phishing flows are now typed by), and this instance's library (`local.<name>`, a version per save). Threat
+  intel's nodes are tagged `ioc.enrich` / `ioc.lookup`, triage's `ioc.extract` and others.
+- **Checks** (`lib/shared/composites.ts`): slots, matchers, rules, closed types, unknown types and versions, each issue
+  with a fix where one exists. The publish gate refuses a version with errors (422), templates list them as `contract`
+  problems, and the editor assistant gets each frame's contract and a warning for an edit that breaks one.
+- **Editor.** Insert from the node creator's Composites section; the frame's badge and contract panel (slots, free
+  members, properties, On failure, rules, issues and fixes, Make plain group); dashed placeholders for empty slots that
+  open the node creator filtered to the slot; auto-binding on drop and unbinding on drag-out; locked slots; collapsed
+  frames with named output handles; copy and paste keeping bindings; **Composite…** on a group to type it or save a new
+  type from it. The Executions canvas and Explore (a Composites kind) show them too.
+- **Engine.** `ExecuteWorkflowOptions.scopes`: a frame whose type falls back stops there instead of the run and sends
+  what entered it, with the error, to its fallback targets; a frame's timeout fails the next node inside past it;
+  `$composite.params` reads the frame's properties. What entered a frame is kept in checkpoints and waits.
+- **API.** `GET/POST /api/composites`, `DELETE /api/composites/:type`.
+- **Tests.** `composites.test.ts` (matching, checks on the shipped flows, binding, instantiating, proposing, scopes),
+  `composite-types.test.ts` (registry, library, routes, the publish gate, the assistant, a run that falls back),
+  `composites-editor.test.ts` (the store's edits), the engine's `composites.test.ts`, and the Go and Python SDK tests.
+- Checked live on the scratch host: triage and threat intel reinstalled, a workflow from the alert triage template
+  opens with its AI triage frame met; deleting its model leaves one error and a placeholder whose node creator lists
+  only chat models, and the model picked joins, binds and wires; the node creator and Explore list both types.
+- Bugs found and fixed: a template saved by `importTemplate` or Save as template stayed behind when building its detail
+  then failed, so a marketplace install that rolled back left it (it is now deleted again, with a test); the contract
+  panel was drawn under the frames and nodes next to it (a node toolbar sits one above its node, and a frame is far
+  behind) and ran past the bottom of the window (it now fits the room below it); an inserted composite landed on what
+  was at the view's centre and was nested into the frame there (it now moves down to clear space, with a test). The
+  Python SDK's `CONNECTION_TYPES` lacked the newer sub-node types.
+- What remains: a governance rule that requires a composite, drawing the fallback as an edge, and composite types in
+  Git sync and environment promotion ([limitations.md](limitations.md)).
+
 ## Planned next
 
 **Runbooks from Landfall war rooms.** After a room closes, turn what the responders did (the timeline, the remediation

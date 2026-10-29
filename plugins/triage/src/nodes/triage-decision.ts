@@ -12,6 +12,7 @@ export const TriageDecision = defineNode({
     kind: 'action',
     idempotent: true,
     categories: ['Security', 'Developer Tools'],
+    capabilities: ['triage.decide'],
     icon: 'file:triage-decision.svg',
     color: '#ef4444',
     subtitle: '{{mode}}',

@@ -192,7 +192,13 @@ export function preparePaste(data: ClipboardData, options: PasteOptions): PasteP
     const nodeIds = (group.nodeIds ?? []).flatMap((id) => (ids[id] && !grouped.has(ids[id]) ? [ids[id]] : []));
     nodeIds.forEach((id) => grouped.add(id));
     const parent = parentId && parentId !== group.id ? groupIds[parentId] : undefined;
-    return { ...structuredClone(group), id: groupIds[group.id], nodeIds, position: move(group.position), ...(parent && { parentId: parent }) };
+    // A composite's slot bindings and fallback targets follow the pasted nodes and groups.
+    const composite = group.composite && {
+      ...structuredClone(group.composite),
+      slots: Object.fromEntries(Object.entries(group.composite.slots ?? {}).map(([slot, bound]) => [slot, bound.flatMap((id) => (ids[id] ?? groupIds[id] ? [ids[id] ?? groupIds[id]] : []))])),
+      ...(group.composite.fallback && { fallback: group.composite.fallback.flatMap((f) => (ids[f.target] ? [{ ...f, target: ids[f.target] }] : [])) }),
+    };
+    return { ...structuredClone(group), id: groupIds[group.id], nodeIds, position: move(group.position), ...(parent && { parentId: parent }), ...(composite && { composite }) };
   });
   const pinData = Object.fromEntries(Object.entries(data.pinData ?? {}).flatMap(([id, items]) => (ids[id] ? [[ids[id], structuredClone(items)]] : [])));
   return { nodes, connections, stickyNotes, groups, pinData, renamed };

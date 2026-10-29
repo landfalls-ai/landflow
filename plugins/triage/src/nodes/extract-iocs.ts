@@ -12,6 +12,7 @@ export const ExtractIocs = defineNode({
     kind: 'action',
     idempotent: true,
     categories: ['Security', 'Developer Tools'],
+    capabilities: ['ioc.extract'],
     icon: 'file:extract-iocs.svg',
     color: '#f59e0b',
     subtitle: '{{fields}}',

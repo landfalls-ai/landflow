@@ -5,6 +5,7 @@
  */
 import { applyOps, parseOps, structuralWarnings, type AssistantOp, type DescriptorLookup } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
+import { newCompositeErrors, serverCompositeLookup } from '../composites';
 import { availableTypes } from './research';
 
 export function registryLookup(types: NodeTypeInfo[] = availableTypes()): DescriptorLookup {
@@ -32,7 +33,14 @@ export function validateOps(workflow: Workflow, raw: unknown, lookup: Descriptor
     ops: result.applied,
     dropped: [...parsed.dropped, ...result.dropped],
     ignored: result.ignored,
-    warnings: structuralWarnings(workflow, result.workflow, lookup),
+    warnings: [...structuralWarnings(workflow, result.workflow, lookup), ...compositeWarnings(workflow, result.workflow, lookup)],
     workflow: result.workflow,
   };
+}
+
+/** What the ops break in the workflow's composites (docs/composites.md), read with the same node descriptors. */
+function compositeWarnings(before: Workflow, after: Workflow, lookup: DescriptorLookup): string[] {
+  if (!after.groups?.some((g) => g.composite)) return [];
+  const { composite } = serverCompositeLookup();
+  return newCompositeErrors(before, after, { node: lookup, composite }).map((issue) => `the composite contract: ${issue.message}`);
 }

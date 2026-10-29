@@ -7,6 +7,7 @@ import { definePlugin } from '@landflow/sdk';
 import { messageAgentNode, workflowTrigger } from './agents';
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
+import { aiStep } from './composites';
 import { anthropicApiCredential, cohereApiCredential, httpBasicAuthCredential, httpBearerAuthCredential, httpHeaderAuthCredential, jwtAuthCredential, openAiApiCredential } from './credentials';
 import { oAuth2ApiCredential } from './oauth2-credential';
 import { mcpOAuth2ApiCredential } from './mcp-oauth-credential';
@@ -114,5 +115,6 @@ export const corePlugin = definePlugin({
     evaluationTrigger,
     evaluationNode,
   ],
+  composites: [aiStep],
   credentialTypes: [openAiApiCredential, anthropicApiCredential, cohereApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, mcpOAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential, microsoftBotCredential, sshPrivateKeyCredential],
 });

@@ -15,6 +15,7 @@ OTLP export needs the ``otel`` extra. Nothing here imports grpcio or opentelemet
 from ._version import __version__
 from .binary import MAX_INLINE_BINARY_BYTES, BinaryClient, file_type_of, mime_type_from_file_name
 from .binding import Binding, BindingContext, BindingInfo, GrpcBinding, HttpBinding
+from .composites import validate_composite
 from .context import CredentialTestContext, ExecuteContext, LoadOptionsContext, NodeLogger
 from .credentials import CredentialType
 from .dispatcher import CallCancelledError, CancelToken, Dispatcher, OverloadedError
@@ -59,6 +60,7 @@ from .telemetry import Span, SpanContext, Telemetry, current_span
 from .webhooks import WebhookContext
 
 __all__ = [
+    "validate_composite",
     "BinaryClient",
     "Binding",
     "BindingContext",

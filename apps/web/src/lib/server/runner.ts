@@ -41,6 +41,7 @@ import { TriggerBuffers, triggerBuffers } from './trigger-buffers';
 import { auditCredentialUse } from './audit';
 import { currentActorId } from './auth/context';
 import { bus } from './bus';
+import { workflowScopes } from './composites';
 import { admission, CAPPED_MODES, hasFreeSlot, LIMITED_MODES, maxRuns, priorityOf, queueOrder, RunSkippedError } from './concurrency';
 import { DuplicateRunError, findIdempotent, rememberIdempotent } from './idempotency';
 import { publishedVersionId } from './publications';
@@ -554,6 +555,7 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
   let checkpointed = false;
   // Token & cost tracking: every model call of this segment counts here, under the workflow's AI usage caps.
   // Caps per user count the runs a signed-in user started (record.startedBy: the editor's Execute, the API, chat), also after a Wait.
+  const scopes = workflowScopes(workflow);
   const usage = executionScope({ executionId, workflowId: workflow.id, settings: workflow.settings, previous: record.aiUsage, ...((record.startedBy ?? currentActorId()) && { userId: (record.startedBy ?? currentActorId())! }) });
   try {
     // $secrets in node parameters (Settings → External secrets): an engine-made text (an expression error) may quote a value.
@@ -575,6 +577,8 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       ...parameterSecretOptions,
       // $vars: read fresh for every run, so a change in Settings applies to the next one.
       variables: variables.forWorkflow(workflow.id),
+      // Composite frames whose type falls back, times out or has properties run as one step (docs/composites.md).
+      ...(scopes && { scopes }),
       resumeUrls: resumeUrls(executionId),
       debug: segment.debug,
       signal,

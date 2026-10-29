@@ -36,7 +36,17 @@ DEFAULT_HEARTBEAT_SECONDS = 10
 
 NODE_KINDS = ("trigger", "action", "subnode")
 TRIGGER_SOURCES = ("manual", "webhook", "schedule", "chat", "poll", "appWebhook")
-CONNECTION_TYPES = ("main", "ai_languageModel", "ai_tool", "ai_memory")
+CONNECTION_TYPES = (
+    "main",
+    "ai_languageModel",
+    "ai_tool",
+    "ai_memory",
+    "ai_embedding",
+    "ai_document",
+    "ai_textSplitter",
+    "ai_retriever",
+    "ai_reranker",
+)
 PROPERTY_TYPES = (
     "string",
     "number",

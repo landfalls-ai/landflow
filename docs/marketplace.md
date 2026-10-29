@@ -22,13 +22,15 @@ templates that installing adds to Templates, each with a read-only [share page](
 
 - **Explore.** Everything in one place: the plugins of every added marketplace, the flows of its Landflow plugins,
   the registry's own plugins and the Templates library. One search covers names, descriptions, authors, keywords and
-  node types. The kind switch has four views:
+  node types. The kind switch has five views:
   - **All**: a section per kind, each with its first 8 and **Show all**.
   - **Node plugins**: entries with a `landflow` field or a `landflow.plugin.json`. Once installed, a tile shows the
     registry's icon, status and node count. The registry's own plugins that no marketplace installed show as
     **This instance**, and open their card on the Plugins page.
   - **Workflows**: marketplace flows (opening the share page) and built-in and saved templates. A flow already
     installed is shown once, as its flow.
+  - **Composites**: the [composite types](composites.md) this instance knows: the plugins' (they come with the plugin)
+    and the ones saved here, which whoever saved them, or an owner or admin, can delete from their tile.
   - **Agents & skills**: the other Claude Code plugins, with their agent and skill counts once read.
 
   The source chips narrow it to one marketplace, which shows its card with **Refresh** and **Remove**, or to

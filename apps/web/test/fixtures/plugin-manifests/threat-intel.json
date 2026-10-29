@@ -262,6 +262,9 @@
      "name": "virusTotalApi",
      "required": true
     }
+   ],
+   "capabilities": [
+    "ioc.lookup"
    ]
   },
   {
@@ -402,6 +405,9 @@
      "name": "abuseIpDbApi",
      "required": true
     }
+   ],
+   "capabilities": [
+    "ioc.lookup"
    ]
   },
   {
@@ -503,6 +509,9 @@
     {
      "name": "greyNoiseApi"
     }
+   ],
+   "capabilities": [
+    "ioc.lookup"
    ]
   },
   {
@@ -666,6 +675,9 @@
      "name": "urlscanApi",
      "required": true
     }
+   ],
+   "capabilities": [
+    "ioc.lookup"
    ]
   },
   {
@@ -832,6 +844,9 @@
      "name": "shodanApi",
      "required": true
     }
+   ],
+   "capabilities": [
+    "ioc.lookup"
    ]
   },
   {
@@ -993,6 +1008,9 @@
      "name": "otxApi",
      "required": true
     }
+   ],
+   "capabilities": [
+    "ioc.lookup"
    ]
   },
   {
@@ -1187,6 +1205,9 @@
      "name": "mispApi",
      "required": true
     }
+   ],
+   "capabilities": [
+    "ioc.lookup"
    ]
   },
   {
@@ -1455,6 +1476,9 @@
     {
      "name": "mispApi"
     }
+   ],
+   "capabilities": [
+    "ioc.enrich"
    ]
   }
  ],

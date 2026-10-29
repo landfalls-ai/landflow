@@ -252,6 +252,38 @@ bits are refused with a readable error. `Token(ctx, fresh)` mints through `POST 
 the token until a minute before its `expires_at`; `RS256Sign` signs any payload. Installation discovery (by repository) is left to
 the plugin.
 
+## Capabilities and composite types
+
+`NodeDescriptor.Capabilities` tags a node with stable contract names, lowercase words joined by dots
+(`"ioc.enrich"`). Unlike `Categories`, which only group the node creator, a composite slot can select nodes by them:
+
+```go
+Capabilities: []string{"ioc.enrich"},
+```
+
+A composite type is a canvas frame with a contract: named slots that accept nodes (`NodeMatcher`), ports, rules and an
+optional starter graph. Declare them in `PluginInfo.Composites`; `NewPlugin` validates them (duplicate slots, `Max`
+below `Min`, ports, rules and starter nodes naming unknown slots, starter connections naming unknown nodes) and serves
+them as the manifest's `composites` over HTTP and gRPC (`GetManifestResponse.composites`). `Min` and `Max` are
+pointers (`landflow.IntPtr`) so an unset value stays off the wire; `NodeMatcher` list fields are `OneOrMany`.
+
+```go
+landflow.NewPlugin(landflow.PluginInfo{
+    ID: "triage", Name: "Triage", Version: "0.1.0",
+    Composites: []landflow.CompositeTypeDescriptor{{
+        Name: "aiTriage", DisplayName: "AI triage", Description: "Enrich, then decide", Version: 1,
+        Slots: []landflow.CompositeSlot{
+            {Name: "enrich", DisplayName: "Enrich", Accepts: landflow.NodeMatcher{Capability: landflow.OneOrMany{"ioc.enrich"}}, Max: landflow.IntPtr(1)},
+            {Name: "decide", DisplayName: "Decide", Accepts: landflow.NodeMatcher{Type: landflow.OneOrMany{"triage.triageDecision"}}},
+        },
+        Rules:   []landflow.CompositeRule{{Rule: "feeds", From: "enrich", To: "decide"}},
+        Outputs: []landflow.CompositePort{{Name: "decision", Slot: "decide"}},
+    }},
+}, nodes...)
+```
+
+The type's name is local; the host qualifies it as `<pluginId>.<name>`. See `composite.go` for every field.
+
 ## Binary data
 
 Items carry files under `Item.Binary`, keyed by a property name (`"data"` for a single file), as

@@ -12,6 +12,7 @@ export const TriageRules = defineNode({
     kind: 'action',
     idempotent: true,
     categories: ['Security', 'Developer Tools'],
+    capabilities: ['triage.rules'],
     icon: 'file:triage-rules.svg',
     color: '#10b981',
     inputs: [{ type: 'main' }],

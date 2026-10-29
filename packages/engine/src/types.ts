@@ -168,6 +168,49 @@ export interface WorkflowGroup {
   collapsed?: boolean;
   /** The group this one sits in (nested groups); `nodeIds` lists only its own nodes, not those of the groups inside it. */
   parentId?: string;
+  /** Typed by a composite: checked against its contract, drawn with its ports, run as one step (docs/composites.md). */
+  composite?: GroupComposite;
+}
+
+/**
+ * A group typed by a composite type. The workflow owns the frame's nodes; this names the contract they are checked
+ * against (the type, pinned to a version) and which of them fill its slots.
+ */
+export interface GroupComposite {
+  /** Fully-qualified composite type: `triage.aiTriage`. */
+  type: string;
+  /** The version of the type the frame was built for. */
+  version: number;
+  /** Slot name → ids of the nodes filling it (for a slot that takes a composite: the nested groups). */
+  slots: Record<string, string[]>;
+  /** Values of the type's properties, read inside the frame as `$composite.params.<name>`. */
+  params?: Record<string, unknown>;
+  /** Where the frame's Fallback output leads (types with `onError: 'fallback'`). */
+  fallback?: Array<{ target: string; targetIndex?: number }>;
+}
+
+/**
+ * A composite frame the engine runs as one step (docs/composites.md): the host derives these from the workflow's
+ * composite groups whose type asks for whole-frame error handling, a timeout or properties.
+ */
+export interface CompositeScope {
+  /** The group id. */
+  id: string;
+  name: string;
+  /** Its composite type. */
+  type: string;
+  /** Every node inside, nested frames' included. */
+  nodeIds: string[];
+  /**
+   * `fallback`: a node inside that fails (and would stop the run) stops the frame instead: what is still queued inside
+   * is dropped and the items that entered the frame, with the error added, go to `fallback`.
+   */
+  onError?: 'stop' | 'fallback';
+  fallback?: Array<{ target: string; targetIndex: number }>;
+  /** Checked when each node inside starts: past it, that node fails with a timeout (and the fallback applies). */
+  timeoutSeconds?: number;
+  /** `$composite.params` inside the frame. */
+  params?: Record<string, unknown>;
 }
 
 export interface Workflow {
@@ -406,6 +449,8 @@ export interface ResumeState {
   /** Partial runs: the nodes that run again, and the reused outputs of the others. */
   rerun?: string[];
   reusedOutputs?: Record<string, NodeItem[][]>;
+  /** Composite frames the run is inside: when it entered each and with what (their fallback gets those items). */
+  scopeEntries?: Array<{ id: string; at: string; items: NodeItem[] }>;
 }
 
 /**
@@ -491,6 +536,8 @@ export interface ExecuteWorkflowOptions {
    * each is waited for after the node's own, under its `key`, with the same limiter.
    */
   credentialRateLimits?: (node: WorkflowNode) => CredentialRateLimit[];
+  /** Composite frames run as one step: their fallback, timeout and `$composite.params` (docs/composites.md). */
+  scopes?: CompositeScope[];
 }
 
 export interface CredentialRateLimit {

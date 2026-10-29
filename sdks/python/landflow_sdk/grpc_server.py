@@ -354,6 +354,7 @@ def manifest_to_proto(manifest: dict[str, Any]) -> pb.GetManifestResponse:
         ),
         nodes=[to_dynamic(node) for node in manifest["nodes"]],
         credential_types=[to_dynamic(ctype) for ctype in manifest.get("credentialTypes") or []],
+        composites=[to_dynamic(composite) for composite in manifest.get("composites") or []],
         transports=list(manifest.get("transports") or []),
         max_concurrency=int(manifest.get("maxConcurrency") or 0),
     )

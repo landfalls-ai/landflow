@@ -113,7 +113,8 @@ SDK environment variables:
   "plugin": { "id": "go-crypto", "name": "Crypto Toolkit", "version": "0.1.0",
               "language": "go", "sdk": { "name": "landflow-sdk-go", "version": "0.1.0" },
               "icon": "data:image/svg+xml;base64,…", "color": "#0d9488", "description": "…" },
-  "nodes": [ /* NodeDescriptor */ ]
+  "nodes": [ /* NodeDescriptor */ ],
+  "composites": [ /* CompositeTypeDescriptor (optional): see "Composite types" below */ ]
 }
 
 // NodeDescriptor (subset of n8n's INodeTypeDescription)
@@ -124,6 +125,7 @@ SDK environment variables:
   "version": 1,                          // or [1, 2]
   "kind": "action",                      // "trigger" | "action" | "subnode"
   "categories": ["Crypto"],
+  "capabilities": ["crypto.hash"],       // optional dotted tags a composite slot can ask for
   "icon": "lucide:fingerprint",          // "lucide:<name>" | "emoji:<char>" | https/data URL (see §6)
   "color": "#22d3ee",
   "subtitle": "{{algorithm}}",
@@ -160,6 +162,16 @@ SDK environment variables:
   "error": null                            // or { "message", "description"?, "itemIndex"? }
 }
 ```
+
+**Composite types** (optional `composites`) are contracts for canvas frames: slots that take nodes matching a
+`NodeMatcher` (by type, kind, what a sub-node supplies, category, **capability**, an input type, or a nested composite),
+ports, rules (`feeds`, `onError`, `reaches`, `sealed`), optional run behaviour (`onError: 'fallback'`,
+`timeoutSeconds`, `properties`) and a starter graph. A type is `<pluginId>.<name>`, and a plugin may list several
+versions of one. Node descriptors' `capabilities` (lowercase dotted tags, `ioc.enrich`) are the stable thing a slot
+matches, where `categories` only group the node creator. The host validates both with the manifest (`compositeTypeSchema`);
+the SDKs validate them first (`defineComposite` in TypeScript, `PluginInfo.Composites` in Go, `Plugin(composites=…)` in
+Python). Over gRPC they travel in `PluginManifest.composites` (field 7), one `DynamicValue` per type. The editor and the
+engine's side of it are in [composites.md](composites.md).
 
 **Files** ride next to an item's JSON as `"binary": { "data": { "id": "ex_….k3J…", "mimeType":
 "application/pdf", "fileName": "report.pdf", "fileSize": 48213, … } }`: references to the host's

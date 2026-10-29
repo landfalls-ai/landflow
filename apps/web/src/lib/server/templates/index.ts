@@ -32,6 +32,7 @@ import {
   type UseTemplateResult,
 } from '../../shared/templates';
 import { normalizeGroups } from '../../shared/groups';
+import { workflowCompositeIssues } from '../composites';
 import type { FlowPreview } from '../../shared/marketplace';
 import type { Workflow, WorkflowNode } from '../../shared/types';
 import { credentials as vault } from '../credentials/vault';
@@ -77,7 +78,7 @@ const descriptorOf = (type: string): NodeDescriptor | undefined => registry.node
 const qualified = (nodeType: string, key: string) => (key.includes('.') ? key : `${nodeType.slice(0, nodeType.indexOf('.'))}.${key}`);
 
 /** Missing node types and the governance policy's objections (with `projectId`, that project's allowed nodes too). */
-export function templateProblems(workflow: Pick<Workflow, 'nodes'>, projectId?: string): TemplateProblem[] {
+export function templateProblems(workflow: Pick<Workflow, 'nodes'> & Partial<Pick<Workflow, 'connections' | 'groups'>>, projectId?: string): TemplateProblem[] {
   const known = registry.nodeTypes();
   const types = new Set(known.map((t) => t.type));
   const problems: TemplateProblem[] = [];
@@ -93,6 +94,12 @@ export function templateProblems(workflow: Pick<Workflow, 'nodes'>, projectId?: 
   }
   for (const violation of workflowViolations(workflow, undefined, scopeFor(projectId ? { projectId } : undefined))) {
     if (!problems.some((p) => p.kind === 'blocked' && p.message === violation.message)) problems.push({ kind: 'blocked', nodeType: violation.nodeType, message: violation.message });
+  }
+  // Composites (docs/composites.md): errors, and types this instance doesn't have, to fix before publishing.
+  for (const issue of workflowCompositeIssues({ nodes: workflow.nodes, connections: workflow.connections ?? [], groups: workflow.groups })) {
+    if (issue.severity !== 'error' && issue.code !== 'unknown-type') continue;
+    const type = workflow.groups?.find((g) => g.id === issue.groupId)?.composite?.type ?? '';
+    problems.push({ kind: 'contract', nodeType: type, message: issue.message });
   }
   return problems;
 }
@@ -165,7 +172,7 @@ function finish(detail: Omit<TemplateDetail, 'usable' | 'problems' | 'nodeTypes'
     nodeTypes: nodeTypesOf(detail.workflow),
     nodeCount: detail.workflow.nodes.length,
     credentials: withSlotNodes(detail.credentials, detail.workflow),
-    usable: !problems.length,
+    usable: !problems.some((p) => p.kind !== 'contract'),
     problems,
   };
 }
@@ -449,7 +456,7 @@ export function saveTemplate(input: SaveTemplateInput, author?: string, actor?: 
     ...(author && { author }),
     ...(projectId && { projectId }),
   });
-  return localDetail(template, actor);
+  return createdDetail(template, actor);
 }
 
 /**
@@ -515,7 +522,20 @@ function fromFile(data: unknown) {
 export function importTemplate(data: unknown, author?: string, actor?: Actor, requestedProject?: string | null, origin?: TemplateOrigin): TemplateDetail {
   const projectId = templateProject(actor, requestedProject);
   const parts = fromFile(data);
-  return localDetail(localTemplates.create({ ...parts, ...(author && { author }), ...(projectId && { projectId }), ...(origin && { origin }) }), actor);
+  return createdDetail(localTemplates.create({ ...parts, ...(author && { author }), ...(projectId && { projectId }), ...(origin && { origin }) }), actor);
+}
+
+/**
+ * The detail of a template just saved. If it can't be built, the template is deleted again: the caller never got its
+ * id, so it couldn't roll it back (a marketplace install that fails removes only the templates it was handed).
+ */
+function createdDetail(template: Parameters<typeof localDetail>[0], actor?: Actor): TemplateDetail {
+  try {
+    return localDetail(template, actor);
+  } catch (error) {
+    localTemplates.delete(template.id);
+    throw error;
+  }
 }
 
 /** A template file as its page would show it, without saving it (a marketplace flow's share page). */

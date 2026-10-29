@@ -13,8 +13,9 @@
  *     }
  *   }
  */
-import { HEX_COLOR } from '@landflow/protocol';
+import { compositeTypeSchema, HEX_COLOR } from '@landflow/protocol';
 import type {
+  CompositeTypeDescriptor,
   ConnectionType,
   CredentialTypeDescriptor,
   ExecutionMode,
@@ -221,6 +222,8 @@ export interface IPlugin {
   readonly nodes: readonly INodeType[];
   /** Credential types the nodes can use (definePlugin's `credentialTypes`). */
   readonly credentialTypes?: readonly CredentialTypeDefinition[];
+  /** Composite types (definePlugin's `composites`, docs/composites.md). */
+  readonly composites?: readonly CompositeTypeDescriptor[];
   /** Directory that relative `file:` icons resolve against (definePlugin's `iconDir`). */
   readonly iconDir?: string;
 }
@@ -269,6 +272,11 @@ export interface PluginDefinition {
   /** Credential types; a type with `test` is served by TestCredentials and marked `testable`. */
   credentialTypes?: CredentialTypeDefinition<any>[];
   /**
+   * Composite types: canvas frames with a contract (slots its nodes must fill, named ports, rules) and a starter
+   * graph. Announced in the manifest; the host checks every frame of that type against it (docs/composites.md).
+   */
+  composites?: CompositeTypeDescriptor[];
+  /**
    * Base for relative `file:` icons on the plugin and its nodes, as a path or a
    * file URL: `new URL('../icons/', import.meta.url)`.
    */
@@ -316,10 +324,20 @@ export function definePlugin(plugin: PluginDefinition): IPlugin {
     names.add(node.description.name);
     validateNode(id, node, credentialNames);
   }
+  const composites = plugin.composites ?? [];
+  const versions = new Set<string>();
+  for (const composite of composites) {
+    const parsed = compositeTypeSchema.safeParse(composite);
+    if (!parsed.success) throw new Error(`Plugin ${id}: composite "${composite.name}": ${parsed.error.issues.map((i) => i.message).join('; ')}`);
+    const key = `${composite.name}@${composite.version}`;
+    if (versions.has(key)) throw new Error(`Plugin ${id}: duplicate composite "${composite.name}" version ${composite.version}`);
+    versions.add(key);
+  }
   const result: IPlugin = {
     info: { language: 'typescript', sdk: { ...SDK_INFO }, ...plugin.info },
     nodes: plugin.nodes,
     ...(credentialTypes.length > 0 && { credentialTypes }),
+    ...(composites.length > 0 && { composites }),
     ...(plugin.iconDir !== undefined && { iconDir: toPath(plugin.iconDir) }),
   };
   // Resolve every icon once now so a missing or oversized file fails at startup, not on the first manifest pull.
@@ -327,6 +345,7 @@ export function definePlugin(plugin: PluginDefinition): IPlugin {
     ['plugin', result.info.icon],
     ...plugin.nodes.map((n): [string, string | undefined] => [`node "${n.description.name}"`, n.description.icon]),
     ...credentialTypes.map((t): [string, string | undefined] => [`credential type "${t.name}"`, t.icon]),
+    ...composites.map((c): [string, string | undefined] => [`composite "${c.name}"`, c.icon]),
   ];
   for (const [label, icon] of icons) {
     try {
@@ -358,7 +377,13 @@ export function buildManifest(plugin: IPlugin): PluginManifest {
     plugin: withIcon(plugin.info),
     nodes: plugin.nodes.map((node) => withIcon(node.description)),
     ...(credentialTypes.length > 0 && { credentialTypes }),
+    ...(plugin.composites?.length && { composites: plugin.composites.map(withIcon) }),
   };
+}
+
+/** Identity helper for a composite type (definePlugin's `composites`), with full type inference. */
+export function defineComposite(composite: CompositeTypeDescriptor): CompositeTypeDescriptor {
+  return composite;
 }
 
 export function collectingLogger(sink: LogEntry[], prefix?: string): ILogger {

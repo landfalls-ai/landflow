@@ -32,7 +32,11 @@ and the score rules in [threat-intel](../plugins/threat-intel/README.md).
 3. **AI triage.** **Extract IOCs** pulls IPs, domains, URLs, emails, hashes and CVEs (refanged, private ones dropped).
    **IOC Enrich** looks them up (an alert without IOCs passes through as *unknown*). Claude returns a verdict
    (`real`, `duplicate`, `unsure` or `noise`), a confidence, reasons, a suggested severity and a two-sentence summary.
-   **Triage Decision** turns that into **Open**, **Attach** or **Ask**.
+   **Triage Decision** turns that into **Open**, **Attach** or **Ask**. These steps sit in an **AI triage** composite
+   frame (`triage.aiTriage`, [composite nodes](composites.md)): the editor checks that the decision is there (it is
+   locked), that the model feeds the reasoner, that enrichment and the reasoner fail open and that every path reaches the
+   decision, and a version that breaks this can't be published. The phishing flow uses the same type, and **AI
+   triage** in the node creator's Composites section starts a new frame with these nodes.
 4. **Record.** Every alert becomes a row in the **Triage decisions** data table: who decided (severity, a rule, the AI,
    or fail-open), the verdict and confidence, the outcome, and in shadow mode what Enforce would have done.
 5. **Act.** *Open* and *Attach* call **Open from Alert** with the dedup key, so a repeat attaches to the open room

@@ -1151,6 +1151,22 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    version: 1883,
+    name: 'composite_types',
+    statements: [
+      // Composite types saved on this instance (lib/server/composites.ts, docs/composites.md), listed as `local.<name>`: one row
+      // per version, `data` the CompositeTypeDescriptor. Frames pin a version, so older ones stay until the type is deleted.
+      `CREATE TABLE IF NOT EXISTS composite_types (
+        name TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (name, version)
+      )`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1233,6 +1249,7 @@ export const TABLES = {
   agent_memory: ['agent_id', 'user_id'],
   audit_signing_keys: ['key_id'],
   audit_heads: ['seq'],
+  composite_types: ['name', 'version'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

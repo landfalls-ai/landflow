@@ -24,7 +24,8 @@ import type { NodeRun, NodeTypeInfo, Workflow, WorkflowNode } from '@/lib/shared
 import { EdgeLine } from '../canvas/edge-line';
 import { handleId, NodeTile } from '../canvas/node-tile';
 import { StickyNoteView } from '../canvas/sticky-note';
-import { GroupBoxView, GroupFrameView } from '../canvas/group-frame';
+import { CompositeBadge, GroupBoxView, GroupFrameView } from '../canvas/group-frame';
+import { useCompositeNames } from '../canvas/composite-names';
 
 type ExecNode = Node<{ wf: Omit<WorkflowNode, 'position'> }, 'exec'>;
 type ExecEdge = Edge<{ connectionType: string }, 'exec'>;
@@ -52,7 +53,7 @@ const ExecStickyView = memo(function ExecStickyView({ data }: NodeProps<ExecStic
 });
 
 /** A canvas group under the notes: a frame, or (collapsed) a box in place of everything inside it. */
-type ExecFrame = Node<{ name: string; color: number; collapsed: boolean; nodeIds: string[]; groups: number }, 'frame'>;
+type ExecFrame = Node<{ name: string; color: number; collapsed: boolean; nodeIds: string[]; groups: number; composite?: { type: string; version: number } }, 'frame'>;
 
 /**
  * The workflow's canvas groups as read-only React Flow nodes, nested ones above their parents. `collapsed` says which
@@ -76,7 +77,7 @@ export function toReadOnlyGroups(workflow: Workflow, collapsed: (id: string, sav
       style: { pointerEvents: 'none' },
       ...(hidden.has(group.id) && { hidden: true }),
       ariaLabel: `Group ${group.name}${closed ? ', collapsed' : ''}`,
-      data: { name: group.name, color: group.color ?? 0, collapsed: closed, nodeIds, groups: descendantGroupIds(groups, group.id).length },
+      data: { name: group.name, color: group.color ?? 0, collapsed: closed, nodeIds, groups: descendantGroupIds(groups, group.id).length, ...(group.composite && { composite: { type: group.composite.type, version: group.composite.version } }) },
     };
   });
 }
@@ -87,12 +88,15 @@ const toggleButton = 'nodrag grid size-5 place-items-center rounded-full text-t2
 const ExecFrameView = memo(function ExecFrameView({ id, data }: NodeProps<ExecFrame>) {
   const ctx = useContext(CanvasContext)!;
   const toggle = () => ctx.toggleGroup(id, !data.collapsed);
+  const names = useCompositeNames(Boolean(data.composite));
+  const composite = data.composite && names[data.composite.type];
   if (!data.collapsed)
     return (
       <GroupFrameView
         name={data.name}
         color={data.color}
         count={data.nodeIds.length}
+        badge={data.composite && <CompositeBadge icon={composite?.icon} label={`${composite?.displayName ?? data.composite.type} v${data.composite.version}`} title="A composite: checked against its type’s contract (docs/composites.md)" />}
         headerClassName="cursor-default"
         actions={
           <button title="Collapse (here only)" aria-label={`Collapse group ${data.name}`} onClick={toggle} className={cn(toggleButton, 'size-6')}>

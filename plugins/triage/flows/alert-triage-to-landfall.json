@@ -936,7 +936,28 @@
           ],
           "width": 1450,
           "height": 592,
-          "color": 4
+          "color": 4,
+          "composite": {
+            "type": "triage.aiTriage",
+            "version": 1,
+            "slots": {
+              "extract": [
+                "iocs"
+              ],
+              "enrich": [
+                "enrich"
+              ],
+              "reasoner": [
+                "verdict"
+              ],
+              "model": [
+                "model"
+              ],
+              "decision": [
+                "decide"
+              ]
+            }
+          }
         },
         {
           "id": "group_3",

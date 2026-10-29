@@ -43,6 +43,7 @@ import { FlowEdgeView } from './flow-edge';
 import { FlowNodeView } from './flow-node';
 import { CanvasMenu, selectForMenu, useCanvasMenu } from './canvas-menu';
 import { GroupNodeView, GroupProxyEdgeView } from './group-node';
+import { boxPorts, loadComposites, useCompositeReports } from './composites';
 import { canvasGraph, type GroupProxyEdge } from './groups';
 import { ImportReportDialog, showImportReport } from './import-report';
 import { NodeCreator } from './node-creator';
@@ -108,8 +109,11 @@ function Canvas({ onSave }: { onSave: () => void }) {
   const flowEdges = useEditor((s) => s.edges);
   const canUndo = useEditor((s) => s.history.past > 0);
   const canRedo = useEditor((s) => s.history.future > 0);
-  // Group frames, then notes, then nodes; collapsed groups hide their nodes and take over their connections.
-  const { nodes, edges } = useMemo<{ nodes: CanvasNode[]; edges: (FlowEdge | GroupProxyEdge)[] }>(() => canvasGraph(groups, stickies, flowNodes, flowEdges), [groups, stickies, flowNodes, flowEdges]);
+  // Group frames, then notes, then nodes; collapsed groups hide their nodes and take over their connections (a
+  // collapsed composite's through its named outputs).
+  const reports = useCompositeReports();
+  const ports = useMemo(() => boxPorts(groups, reports), [groups, reports]);
+  const { nodes, edges } = useMemo<{ nodes: CanvasNode[]; edges: (FlowEdge | GroupProxyEdge)[] }>(() => canvasGraph(groups, stickies, flowNodes, flowEdges, ports), [groups, stickies, flowNodes, flowEdges, ports]);
   // Read-only (someone else holds the edit lock) swaps the store's editing actions, so re-read them.
   const readOnly = useEditLock((s) => s.readOnly);
   const { onNodesChange, onEdgesChange, onConnect, openNode, openPalette } = useEditor.getState();
@@ -551,6 +555,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
       .then(([{ workflow }, { nodeTypes }]) => {
         if (cancelled) return;
         useEditor.getState().load(workflow, nodeTypes);
+        loadComposites();
         setLoaded(true);
         setChatOpen(workflow.nodes.some((n) => n.type === 'core.chatTrigger') && !requested);
         // Show an execution from history if one was asked for, else the last run, so the canvas isn't blank.
@@ -575,6 +580,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
     api<{ nodeTypes: NodeTypeInfo[] }>(`/api/node-types?workflowId=${encodeURIComponent(workflowId)}`)
       .then(({ nodeTypes }) => useEditor.getState().setNodeTypes(nodeTypes))
       .catch(() => {});
+    loadComposites();
     if (event.event.type === 'plugin.registered') toast(event.event.message);
     if (event.event.type === 'plugin.offline') toast.warning(event.event.message);
   });

@@ -32,6 +32,8 @@ export interface ExpressionData {
   variables?: Record<string, string>;
   /** Fetched external secrets for `$secrets` (see ./secrets.ts); without them `$secrets` throws (only credential fields get them). */
   secrets?: SecretValues;
+  /** `$composite`: the composite frame the node runs in (`params` is empty outside one). */
+  composite?: { id: string; name: string; type: string; params: Record<string, unknown> };
 }
 
 export class ExpressionError extends Error {
@@ -115,6 +117,7 @@ export class ExpressionResolver {
       $execution: data.execution,
       $parameter: data.parameters,
       $vars: Object.freeze({ ...data.variables }),
+      $composite: Object.freeze({ ...data.composite, params: Object.freeze({ ...data.composite?.params }) }),
       $secrets: secretsSandbox(data.secrets),
       $fromAI: (key: string, _description?: string, _type?: string, fallback?: unknown) => data.toolArgs?.[key] ?? fallback ?? '',
       $: (name: string) => nodeAccessor(name, data.nodeOutputs[name], () => this.sandbox.$itemIndex as number),

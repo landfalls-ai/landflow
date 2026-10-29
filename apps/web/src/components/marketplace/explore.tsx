@@ -1,19 +1,21 @@
 'use client';
 /**
- * The marketplace's Explore tab: every node plugin, workflow and Claude Code plugin in one place. It merges
- * GET /api/marketplaces/explore (every added marketplace, the Landflow plugins' flows), the registry's own plugins
- * (/api/plugins: those no marketplace installed show as "This instance") and the Templates library (built-in and saved
- * templates; a marketplace flow already installed is shown once, as its flow). One search, a kind switch, a source
- * (all, or one marketplace with its Refresh / Remove) and categories.
+ * The marketplace's Explore tab: every node plugin, workflow, composite type and Claude Code plugin in one place. It
+ * merges GET /api/marketplaces/explore (every added marketplace, the Landflow plugins' flows), the registry's own
+ * plugins (/api/plugins: those no marketplace installed show as "This instance"), the Templates library (built-in and
+ * saved templates; a marketplace flow already installed is shown once, as its flow) and the composite types
+ * (/api/composites: the plugins' and those saved here, docs/composites.md). One search, a kind switch, a source (all, or
+ * one marketplace with its Refresh / Remove) and categories.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Check, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ArrowRight, Boxes, Check, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import type { ExploreFlow, ExplorePlugin, MarketplaceSummary } from '@/lib/shared/marketplace';
+import type { CompositeTypeInfo } from '@/lib/shared/composites';
 import type { NodeTypeInfo, PluginSummary } from '@/lib/shared/types';
 import { TEMPLATE_CATEGORIES, type TemplateSummary } from '@/lib/shared/templates';
 import { TemplateNodeIcons } from '@/components/templates/template-card';
@@ -26,7 +28,7 @@ import { AppIcon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/inputs';
 import { useExplore } from './use-marketplace';
 
-type Kind = 'all' | 'nodes' | 'flows' | 'claude';
+type Kind = 'all' | 'nodes' | 'flows' | 'composites' | 'claude';
 /** A marketplace id, or this instance (registry plugins and the Templates library). */
 const LOCAL = 'local';
 /** How many of each kind "All" shows before "Show all". */
@@ -36,6 +38,7 @@ const KINDS: Array<{ id: Kind; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'nodes', label: 'Node plugins' },
   { id: 'flows', label: 'Workflows' },
+  { id: 'composites', label: 'Composites' },
   { id: 'claude', label: 'Agents & skills' },
 ];
 
@@ -52,13 +55,14 @@ type Item =
   | { kind: 'nodes'; key: string; source: typeof LOCAL; categories: string[]; text: string; local: PluginSummary }
   | { kind: 'flows'; key: string; source: string; categories: string[]; text: string; flow: ExploreFlow }
   | { kind: 'flows'; key: string; source: typeof LOCAL; categories: string[]; text: string; template: TemplateSummary }
+  | { kind: 'composites'; key: string; source: typeof LOCAL; categories: string[]; text: string; composite: CompositeTypeInfo }
   | { kind: 'claude'; key: string; source: string; categories: string[]; text: string; plugin: ExplorePlugin };
 
 const lower = (...parts: Array<string | undefined>) => parts.filter(Boolean).join(' ').toLowerCase();
 
 const isNodePlugin = (p: ExplorePlugin) => Boolean(p.read?.nodePlugin || p.landflow);
 
-function buildItems(plugins: ExplorePlugin[], flows: ExploreFlow[], local: PluginSummary[], templates: TemplateSummary[]): Item[] {
+function buildItems(plugins: ExplorePlugin[], flows: ExploreFlow[], local: PluginSummary[], templates: TemplateSummary[], composites: CompositeTypeInfo[]): Item[] {
   const linked = new Set(plugins.flatMap((p) => (p.read?.nodePlugin ? [p.read.nodePlugin.id] : [])));
   const items: Item[] = [];
   for (const plugin of plugins) {
@@ -76,6 +80,11 @@ function buildItems(plugins: ExplorePlugin[], flows: ExploreFlow[], local: Plugi
   for (const template of templates) {
     if (template.origin) continue;
     items.push({ kind: 'flows', key: `template/${template.id}`, source: LOCAL, categories: template.categories, text: lower(template.name, template.description, template.author, template.nodeTypes.join(' ')), template });
+  }
+  // Composite types this instance knows: what plugins declare (they come with the plugin) and the library saved here.
+  for (const composite of composites) {
+    const d = composite.descriptor;
+    items.push({ kind: 'composites', key: `composite/${composite.type}`, source: LOCAL, categories: [], text: lower(d.displayName, d.description, composite.type, d.slots.map((x) => x.displayName).join(' '), composite.source.kind === 'plugin' ? composite.source.pluginName : 'saved'), composite });
   }
   return items;
 }
@@ -183,6 +192,50 @@ function TemplateTile({ template, types }: { template: TemplateSummary; types: R
   );
 }
 
+function CompositeTile({ composite, onDeleted }: { composite: CompositeTypeInfo; onDeleted: () => void }) {
+  const d = composite.descriptor;
+  const required = d.slots.filter((x) => (x.min ?? 1) > 0).length;
+  const local = composite.source.kind === 'local';
+  const remove = async () => {
+    try {
+      await api(`/api/composites/${encodeURIComponent(composite.type)}`, { method: 'DELETE' });
+      toast.success(`Deleted ${d.displayName}`);
+      onDeleted();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  return (
+    <div className={tileClass} title="Add one from the node creator (Composites), or type a group with it (the group’s Composite… button)">
+      <TileHead
+        icon={<AppIcon icon={d.icon ?? 'boxes'} color={d.color} size={28} />}
+        title={d.displayName}
+        sub={`${composite.source.kind === 'plugin' ? composite.source.pluginName : 'Saved on this instance'} · v${d.version}`}
+        badge={
+          local ? (
+            <button aria-label={`Delete ${d.displayName}`} title="Delete this type (frames typed by it keep their nodes)" onClick={remove} className="grid size-6 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd">
+              <Trash2 className="size-3.5" />
+            </button>
+          ) : (
+            !composite.available && <Badge tone="muted">Plugin offline</Badge>
+          )
+        }
+      />
+      <p className="line-clamp-2 text-[12px] leading-snug text-t2">{d.description || 'No description.'}</p>
+      <div className="mt-auto flex flex-wrap items-center gap-1.5 text-[11px] text-t3">
+        <Badge tone="accent">
+          <Boxes className="size-3" /> Composite
+        </Badge>
+        <span>
+          {d.slots.length} slot{d.slots.length === 1 ? '' : 's'}, {required} required
+        </span>
+        {d.closed && <Chip>Closed</Chip>}
+        <span className="truncate font-mono">{composite.type}</span>
+      </div>
+    </div>
+  );
+}
+
 function ClaudePluginTile({ plugin, onOpen }: { plugin: ExplorePlugin; onOpen: () => void }) {
   const read = plugin.read;
   return (
@@ -213,6 +266,8 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
   const { listing } = useTemplateList('');
   const types = useNodeTypeMap();
   const [local, setLocal] = useState<PluginSummary[]>([]);
+  const [composites, setComposites] = useState<CompositeTypeInfo[]>([]);
+  const [compositesVersion, setCompositesVersion] = useState(0);
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<Kind>('all');
   const [source, setSource] = useState<string>();
@@ -225,10 +280,15 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
       .catch(() => {});
   }, [version]);
   useEffect(() => {
+    api<{ composites: CompositeTypeInfo[] }>('/api/composites')
+      .then((r) => setComposites(r.composites))
+      .catch(() => {});
+  }, [version, compositesVersion]);
+  useEffect(() => {
     if (source && source !== LOCAL && !marketplaces.some((m) => m.id === source)) setSource(undefined);
   }, [marketplaces, source]);
 
-  const items = useMemo(() => (explore ? buildItems(explore.plugins, explore.flows, local, listing?.templates ?? []) : []), [explore, local, listing]);
+  const items = useMemo(() => (explore ? buildItems(explore.plugins, explore.flows, local, listing?.templates ?? [], composites) : []), [explore, local, listing, composites]);
   const inSource = useMemo(() => items.filter((i) => !source || i.source === source), [items, source]);
   const categories = useMemo(() => {
     const byLabel = new Map<string, string>();
@@ -240,7 +300,7 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
     return inSource.filter((i) => (!category || i.categories.some((c) => categoryLabel(c) === category)) && (!q || i.text.includes(q)));
   }, [inSource, query, category]);
   const counts = useMemo(() => {
-    const c: Record<Kind, number> = { all: matching.length, nodes: 0, flows: 0, claude: 0 };
+    const c: Record<Kind, number> = { all: matching.length, nodes: 0, flows: 0, composites: 0, claude: 0 };
     for (const i of matching) c[i.kind]++;
     return c;
   }, [matching]);
@@ -278,6 +338,7 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
   const tile = (item: Item) => {
     if (item.kind === 'nodes') return 'local' in item ? <LocalPluginTile key={item.key} plugin={item.local} /> : <NodePluginTile key={item.key} plugin={item.plugin} onOpen={() => onOpen(item.plugin.marketplace.id, item.plugin.name)} />;
     if (item.kind === 'flows') return 'template' in item ? <TemplateTile key={item.key} template={item.template} types={types} /> : <FlowTile key={item.key} flow={item.flow} types={types} />;
+    if (item.kind === 'composites') return <CompositeTile key={item.key} composite={item.composite} onDeleted={() => setCompositesVersion((v) => v + 1)} />;
     return <ClaudePluginTile key={item.key} plugin={item.plugin} onOpen={() => onOpen(item.plugin.marketplace.id, item.plugin.name)} />;
   };
   const grid = (list: Item[]) => <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-2.5">{list.map(tile)}</div>;

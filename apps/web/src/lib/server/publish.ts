@@ -15,6 +15,7 @@ import type { Workflow } from '@landflow/engine';
 import type { PublicationStatus, PublishResult } from '../shared/publish';
 import type { WorkflowVersion } from '../shared/types';
 import { userNames } from './auth/users';
+import { workflowCompositeIssues } from './composites';
 import { database } from './db';
 import { publishBlockedReason } from './governance/policy';
 import { clearPublication, deletePublications, getPublication, listPublications, publishLog, publishedVersionId, setPublication } from './publications';
@@ -153,6 +154,12 @@ export async function publishVersion(workflowId: string, versionId: string, by?:
   // Settings → Governance: a version with nodes the policy doesn't allow can't go live.
   const blocked = publishBlockedReason(version.workflow);
   if (blocked) throw new PublishError(blocked, 422);
+  // Composites (docs/composites.md): a frame that breaks its contract can't go live; warnings don't stop it.
+  const broken = workflowCompositeIssues(version.workflow).filter((issue) => issue.severity === 'error');
+  if (broken.length) {
+    const listed = broken.slice(0, 3).map((issue) => issue.message).join('; ');
+    throw new PublishError(`This version breaks a composite’s contract, so it can’t be published: ${listed}${broken.length > 3 ? `, and ${broken.length - 3} more` : ''}`, 422);
+  }
   database().transaction(() => {
     setPublication(workflowId, versionId, by, note);
     if (!workflow.active) store.saveWorkflow({ ...workflow, active: true });
