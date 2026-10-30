@@ -1,6 +1,6 @@
 # Roadmap: closing the gaps with other workflow platforms
 
-Status: **all waves landed** (started and finished 2026-10-25; Wave 5, closing Wave 4's "Not yet" lists and the gaps the follow-ups left, landed 2026-10-26; Wave 6, closing every remaining "Not yet", landed 2026-10-27; what remains is listed under "Wave 6" below). Alert triage with Landfall and the flow marketplace landed 2026-10-29 (its own section below). The list comes from a pass over Landflow's code and
+Status: **all waves landed** (started and finished 2026-10-25; Wave 5, closing Wave 4's "Not yet" lists and the gaps the follow-ups left, landed 2026-10-26; Wave 6, closing every remaining "Not yet", landed 2026-10-27; what remains is listed under "Wave 6" below). Spotlight in the editor landed 2026-10-27, and alert triage with Landfall, the flow marketplace and composite nodes landed 2026-10-29 (each has its own section below). [history.md](history.md) lists every change in order, with where each is documented. The list comes from a pass over Landflow's code and
 from research on n8n, Zapier, Make, Power Automate, the developer-first engines (Temporal,
 Inngest, Trigger.dev, Windmill, Pipedream, Activepieces, Node-RED, Kestra), the AI-native
 builders (Dify, Langflow, Flowise, Gumloop, Lindy) and team and operations features. The
@@ -9,9 +9,10 @@ research report is in `reports/Workflow platform feature gaps.md`, with the note
 
 The work goes in waves. Each wave ends with the web tests passing, a clean type check and a
 check in Chrome, and this file is updated as items land. The Claude Code harness plan
-([harnesses.md](harnesses.md)) is parked and not part of this list. Neither are the Spotlight plan
-([spotlight.md](spotlight.md)) and the simplification review ([ux-simplification.md](ux-simplification.md)), which wait
-on the decisions listed in spotlight.md.
+([harnesses.md](harnesses.md)) is parked and not part of this list. Neither are the rest of the Spotlight plan
+([spotlight.md](spotlight.md): the new Home, ⌘K Spotlight across the app and the action layer) and the simplification
+review ([ux-simplification.md](ux-simplification.md)), which wait on the decisions listed in spotlight.md. Spotlight in
+the workflow editor is built (its section below).
 
 ## Wave 1: runs that can wait, flow building blocks, organisation, built-in data
 
@@ -517,6 +518,45 @@ heartbeats), 1881 (agents in the database), 1882 (audit signing keys and signed 
   local cluster); with the identity provider accepted, the gateway's own 401 carries no `WWW-Authenticate` challenge;
   standalone agents' test chat takes no file uploads; a Respond to
   Webhook reply built from a secret isn't redacted (by design); MCP subscriptions need a 2026-07-28 client.
+
+## Spotlight in the editor (built 2026-10-27)
+
+The editor part of the Spotlight plan ([spotlight.md](spotlight.md)): one AI surface in the workflow editor, a bar at
+the bottom of the canvas beside the run controls ([assistant.md](assistant.md#spotlight)). No migrations.
+
+- **The bar.** ⌘I opens it; bubbles above it suggest what to ask (starters on an empty canvas, at most three urgent
+  ones otherwise) and complete what you type: `@` for canvas nodes, node types by name, keyword or plugin, the whole
+  "Add X after Y" step, and the rest of a sentence. The bubbles come from `lib/shared/spotlight.ts`, without a model
+  call. Tagged nodes and types go with the message as ids, and the prompt lists only the node types the workflow may
+  use (online, and allowed by governance). It replaced the Assistant header button, the side panel, the toolbar AI
+  builder and the empty-canvas prompt box.
+- **Drafting.** On an empty canvas the first message drafts the whole flow (`/api/ai/build`), laid out, with test data
+  pinned on the trigger, as one undo step. Later messages go to the builder chat, which proposes changes as cards to
+  review and apply.
+- **Test and fix** (`components/editor/test-session.ts`). It runs the workflow, judges the run (`lib/shared/run-check.ts`:
+  failed nodes, nothing reaching the end, If or Filter steps without conditions, Set steps without fields, Code that
+  repeats every result) and has the assistant fix it, up to 4 fixes. A run that passes is checked against the goal,
+  using what its last step put out. Then **Ready for production** offers to publish, and nothing is published without
+  that click.
+- **While it works**, the conversation steps aside: a card at the top left shows the phase and one line per step, the
+  empty canvas shows a drafting placeholder, the node being fixed carries a badge, and when the work is over the
+  session folds into one line.
+- Bugs found and fixed:
+  - On a narrow canvas the bar was squeezed to about 90 px. The dock now wraps and the bar keeps 300 px.
+  - Replies claimed proposed changes were already made, and invented ids, channels and URLs. Those sentences are now
+    dropped, and id-like parameters nobody gave are left out of proposals.
+  - qwen3-coder's tool calls failed in Ollama's own parser (a 500). They are now retried up to twice, before anything
+    is shown.
+  - Display rules saw saved parameters without their defaults, so hidden fields showed. The node form, the credential
+    section, the MCP server dialog and the assistant's node docs now fill defaults first, as the server does.
+  - Eight file-system calls with paths known only at run time made Turbopack trace the whole project, the live `.data`
+    included. They now carry `/*turbopackIgnore: true*/`.
+  - A stale persistent Turbopack cache made the browser reload in a loop. `next dev` no longer keeps one
+    ([development.md](development.md#setup)).
+  - The SDK's MCP test reused one port across servers.
+- What remains: the local model doesn't always keep replies short, Test and fix can spend its 4 fixes on one node, and
+  its checks are structural ([limitations.md](limitations.md)). The Home, ⌘K across the app and the action layer are
+  still a plan.
 
 ## Alert triage, Landfall and the flow marketplace (built 2026-10-29)
 

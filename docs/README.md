@@ -10,7 +10,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 2. **The feature page** for the area you care about (the [feature map](#feature-map) below).
 3. **[development.md](development.md)**: setup, where to start reading the code, conventions, and every test command.
 4. **[limitations.md](limitations.md)** and **[roadmap.md](roadmap.md)**: what is not there yet, and what each wave
-   built.
+   built. [history.md](history.md) lists every change in order.
 
 ## Feature map
 
@@ -65,6 +65,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 - [development.md](development.md): setup, code tour, conventions, the full verification list, integration flags.
 - [limitations.md](limitations.md): what Landflow does not do yet.
 - [roadmap.md](roadmap.md): the waves, what each built, and what remains.
+- [history.md](history.md): every change in order, the decisions along the way, and where each is documented.
 
 **Reviews, plans and research**
 
@@ -104,4 +105,4 @@ how to run it and how to change it. The [project README](../README.md) has the q
 
 A change updates the page for its feature, [reference/](reference/api.md) for new routes or variables,
 [limitations.md](limitations.md) when it adds or lifts a limit, and [roadmap.md](roadmap.md) when it closes or opens
-an item. New pages go in this index. [development.md](development.md#conventions) has the rest of the conventions.
+an item. Each commit gets a row in [history.md](history.md). New pages go in this index. [development.md](development.md#conventions) has the rest of the conventions.

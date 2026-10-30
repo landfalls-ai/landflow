@@ -11,7 +11,8 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 - `docs/architecture.md`: the processes, a run end to end, every subsystem and a code map.
 - `docs/development.md`: setup, where each area's code starts, conventions, every test command and the
   `LANDFLOW_INTEGRATION` flags.
-- `docs/limitations.md` and `docs/roadmap.md`: what is missing and what each wave built.
+- `docs/limitations.md` and `docs/roadmap.md`: what is missing and what each wave built; `docs/history.md`: every
+  change in order and the decisions along the way.
 - `apps/web/AGENTS.md`: this Next.js version differs from older ones; read its guide in `node_modules/next/dist/docs/`
   before writing Next.js code.
 
@@ -24,7 +25,8 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 - Tests sit next to their package; route tests call handlers directly as a synthetic owner (`apps/web/test/setup.ts`).
   Tests against real services skip unless `LANDFLOW_INTEGRATION` names them.
 - Every change updates its docs: the feature page, `docs/reference/` for routes and variables, `docs/limitations.md`
-  and `docs/roadmap.md` when it adds, closes or lifts something. New pages go in `docs/README.md`.
+  and `docs/roadmap.md` when it adds, closes or lifts something, and each commit gets a row in `docs/history.md`. New
+  pages go in `docs/README.md`.
 
 ## Checking a change
 

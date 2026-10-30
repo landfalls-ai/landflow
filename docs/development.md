@@ -72,7 +72,8 @@ filesystem access causes tracing of the whole project".
   code.
 - **Docs move with the code.** A change to a feature updates its page under [features/](README.md#feature-map) (or
   [reference/](reference/api.md) for routes and environment variables), [limitations.md](limitations.md) when it adds
-  or removes a limit, and [roadmap.md](roadmap.md) when it closes or opens an item.
+  or removes a limit, and [roadmap.md](roadmap.md) when it closes or opens an item. Each commit gets a row in
+  [history.md](history.md).
 - **Local only.** Everything runs on this machine: the OrbStack Docker engine and its Kubernetes cluster (context
   `orbstack`, namespace `landflow-dev`). Never deploy to or push images to a cloud account. Build with
   `COMPOSE_BAKE=false` (the default buildx builder belongs to another project) and build cluster images with
@@ -188,6 +189,42 @@ Mailpit answers, and `mcp-gateway-two-issuers.test.ts` runs its gateway checks w
 The databases plugin has its own: `cd plugins/databases && LANDFLOW_INTEGRATION=postgres,redis go test -count=1 -run
 Integration -v .` (`all` adds MySQL); see
 [deployment.md, "Integration tests (databases plugin)"](deployment.md#integration-tests-databases-plugin).
+
+### Checking a change live
+
+Each feature in [roadmap.md](roadmap.md) was also checked in the running app, on a scratch host that leaves
+`apps/web/.data` alone:
+
+```bash
+LANDFLOW_DATA_DIR=<an empty directory outside the repository> PORT=3100 LANDFLOW_PUBLIC_URL=http://127.0.0.1:3100 \
+LANDFLOW_REGISTRY_GRPC_PORT=off LANDFLOW_SCAN_ON_START=false LANDFLOW_MCP_GATEWAY=off LANDFLOW_PLUGINS= \
+LANDFLOW_MARKETPLACE_ALLOW_LOCAL=1 \
+LANDFLOW_OWNER_EMAIL=<from deploy/.env.example> LANDFLOW_OWNER_PASSWORD=<from deploy/.env.example> \
+  npx next dev --port 3100                      # from apps/web
+```
+
+- **Its own data and ports.** The data directory holds the scratch host's database, credentials and installed plugins,
+  and port 3100 keeps it apart from `pnpm dev` on 3000. The gRPC registry, the startup scan and the bundled gateway are
+  off so it doesn't take the dev host's ports. The owner comes from the development credentials on first start.
+- **Plugins and fakes.** Start the plugins the check needs with the `pnpm plugin:*` scripts. With
+  `LANDFLOW_MARKETPLACE_ALLOW_LOCAL=1`, adding this checkout's absolute path as a marketplace lists the repository's own
+  `landflow-soc` marketplace, so a plugin and its flows install the way a user installs them
+  ([triage.md](triage.md#install)). Outside services are fakes: `pnpm fake-landfall` ([triage.md](triage.md#trying-it-locally)),
+  and the messaging plugin's fakes ([plugins/messaging](../plugins/messaging/README.md)). Nothing reaches a real
+  service.
+- **In the browser**, open `http://localhost:3100`, not `127.0.0.1`. `next dev` blocks its dev resources (`/_next/hmr`)
+  for any origin other than `localhost` unless `allowedDevOrigins` lists it, so hot reload doesn't connect. Use a tab of
+  your own and keep the console open: a check passes with no errors there.
+- **Restart after changing a singleton.** Server objects made with `singleton()` (`lib/server/singleton.ts`: the
+  registry, broker connections and others) live on `globalThis` so that hot reload doesn't duplicate them. A reload
+  therefore keeps the old instance, and a method you add to its class isn't on it ("registry.compositeTypes is not a
+  function"). Stop the dev server and start it again; installed node plugins start again with it.
+- **Through the API**, a script that signs in with the development owner (`POST /api/auth/login`, then the session
+  cookie) can add the marketplace and install plugins. A node plugin's install answers `409` with what it will run until
+  it is sent again with `{ "confirm": true }`. The script can then post alerts to a workflow's webhook and read
+  `GET /api/executions/:id`.
+- **Clean up** what the check created (workflows, templates, installed plugins) through the UI or the API, and stop the
+  processes you started.
 
 ### On the cluster
 

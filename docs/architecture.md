@@ -61,7 +61,7 @@ errors into JSON. The server code under `src/lib/server` is organised by domain:
 |---|---|
 | Runs | `runner.ts` (starts and finishes executions), `waits.ts`, `retries.ts`, `concurrency.ts`, `idempotency.ts`, `sub-executions.ts`, `streaming.ts`, `trigger-buffers.ts` (debounce and batching) |
 | Triggers | `webhooks.ts`, `forms.ts`, `app-webhooks.ts`, `scheduler.ts`, `poller.ts`, `imap-idle.ts`, `chat.ts`, `test-webhooks.ts` |
-| Plugins | `plugins/` (registry, discovery, Kubernetes watch, marketplace), `transports/` (selector, Auto, brokers, policies), `nodes/` (the built-in `core` plugin) |
+| Plugins | `plugins/` (registry, discovery, Kubernetes watch, marketplace), `transports/` (selector, Auto, brokers, policies), `nodes/` (the built-in `core` plugin), `composites.ts` (composite types from the plugins and this instance's library, the checks the publish gate and templates run, the run's scopes) |
 | Data | `db/` (SQLite and Postgres, migrations), `store.ts`, `binary/`, `datatables/`, `versions.ts`, `folders.ts`, `variables.ts`, `config-store.ts` |
 | People and access | `auth/` (sessions, OIDC, SAML, API keys, the `can()` policy), `scim/`, `projects/`, `governance/`, `environments/`, `sync/` (Git), `secrets/` (external secrets), `credentials/`, `audit/` |
 | AI | `agents/`, `assistant/`, `rag/`, `evaluations/`, `ai-usage/`, `guardrails.ts`, `slack/` |
@@ -112,6 +112,11 @@ checkpoint.
 - **In-process nodes** (`in-process.ts`) can wait, keep node state and be cancelled; remote nodes are stateless calls.
 - **Errors and retries** per node (`onError`, `retryOnFail`, timeouts), rate limits per node (`rate-limit.ts`), and the
   hooks the durable runtime uses (checkpoints, step ids `<nodeId>#<runIndex>`, a per-step idempotency key).
+- **Scopes** (`ExecuteWorkflowOptions.scopes`): [composite frames](composites.md#in-a-run) whose type sets a fallback,
+  a timeout or properties. The host builds them from the workflow's groups (`workflowScopes()` in
+  `lib/server/composites.ts`). A node failing inside a frame that falls back stops the frame, not the run, and what
+  entered the frame goes to its fallback targets with the error. `$composite.params` reads the frame's properties.
+  What entered each frame is saved with checkpoints and waits.
 
 ## Plugins, the protocol and the SDKs
 
@@ -120,7 +125,9 @@ A plugin is a process that serves node types. The contract is `landflow.plugin/v
 items out; poll triggers too, with their saved state), `LoadOptions` (pickers), `TestCredentials`, `Health` and the
 app-webhook methods (`WebhookMethod`, `ReceiveWebhook`), over an HTTP binding and a gRPC binding
 (`landflow.plugin.v1.PluginService`). The editor renders every node's UI from its
-descriptor, so a plugin has no frontend code.
+descriptor, so a plugin has no frontend code. A manifest can also carry **composite types** (contracts for a group of
+nodes: slots, ports, rules; [composites.md](composites.md)). The editor and the host check frames against them with the
+same code (`lib/shared/composites.ts`).
 
 ```
    face (HTTP · gRPC · broker · MCP) ─▶ dispatcher ─▶ node
@@ -327,7 +334,9 @@ See [deployment.md](deployment.md) for every stack and how each was checked.
 ## Where the code is
 
 ```
-apps/web/                 the host: src/app (UI pages and API routes), src/components, src/lib/server, test/
+apps/web/                 the host: src/app (UI pages and API routes), src/components, src/lib/server,
+                          src/lib/shared (code the UI and the server both run: types, composite checks, run checks,
+                          Spotlight's bubbles), test/
 packages/engine/          the executor
 packages/protocol/        the wire contract: TypeScript types, zod schemas → JSON Schema, plugin.proto, MCP mapping
 packages/sdk/             the TypeScript plugin SDK
