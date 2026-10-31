@@ -19,7 +19,7 @@ export const plugin = definePlugin({
       name: 'grafana_alertmanager_api_token',
       displayName: 'Grafana Alertmanager API Token',
       description: 'API token for Grafana Alertmanager',
-      fields: [
+      properties: [
         {
           name: 'url',
           displayName: 'Alertmanager URL',
@@ -32,7 +32,6 @@ export const plugin = definePlugin({
           displayName: 'API Token',
           type: 'string',
           required: true,
-          secret: true,
           description: 'API token for authentication'
         }
       ]

@@ -64,7 +64,7 @@ export class GetAlerts implements INodeType {
 
       const alerts = await response.json();
 
-      return items.map((item) => ({
+      return items.map((item: any) => ({
         json: {
           ...item.json,
           alerts: alerts,
