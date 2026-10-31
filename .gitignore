@@ -15,3 +15,6 @@ plugins/google-workspace/google-workspace
 plugins/threat-intel/threat-intel
 .DS_Store
 .otel/
+
+# An agent's own notes (Claude Code's MEMORY.md): never part of the code
+MEMORY.md
