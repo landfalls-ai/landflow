@@ -14,6 +14,7 @@ import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import type { NodeStatus } from '@/lib/client/run-data';
 import type { ConnectionType, NodeTypeInfo, PortDescriptor } from '@/lib/shared/types';
+import { AgentAvatar, type AvatarSource } from '../agents/avatar';
 import { NodeIcon } from '../ui/icon';
 
 export const TILE = 88;
@@ -51,6 +52,19 @@ function indexPorts(ports: PortDescriptor[], parameters: Record<string, unknown>
   return indexedPorts(ports, parameters).filter((p) => p.visible);
 }
 
+const slotLabel = (port: PortDescriptor) => `${port.displayName ?? AI_LABEL[port.type] ?? ''}${port.required ? '*' : ''}`;
+
+/**
+ * How wide an agent-shaped node must be for its sub-node slot labels (11px, about 6px a character) not to touch: slots
+ * sit evenly along the bottom, so the widest neighbouring pair sets the pitch.
+ */
+function slotsWidth(ports: Array<{ port: PortDescriptor }>) {
+  const widths = ports.map(({ port }) => slotLabel(port).length * 6);
+  let pitch = 0;
+  for (let i = 0; i + 1 < widths.length; i++) pitch = Math.max(pitch, (widths[i] + widths[i + 1]) / 2 + 12);
+  return Math.ceil(pitch * (ports.length + 1));
+}
+
 /** Drawn round: sub-nodes, nodes attached as tools, and nodes whose shown outputs all go to root nodes (a vector store in a retrieve mode). */
 export function isCompact(descriptor: NodeTypeInfo['descriptor'] | undefined, parameters: Record<string, unknown>, asTool?: boolean) {
   if (descriptor?.kind === 'subnode' || asTool) return true;
@@ -79,6 +93,8 @@ export interface NodeTileProps {
   onToggleBreakpoint?: () => void;
   /** Just added: pops in. Only the visual frame animates, so handle positions stay measurable. */
   fresh?: boolean;
+  /** The agent the node stands for (Run an Agent's agent, a team's lead): its face replaces the node's icon. */
+  face?: AvatarSource;
   /** Toolbars and overlays rendered inside the node. */
   children?: ReactNode;
 }
@@ -147,6 +163,7 @@ export function NodeTile(props: NodeTileProps) {
     onAddSubnode,
     onToggleBreakpoint,
     fresh,
+    face,
     children,
   } = props;
   const descriptor = info?.descriptor;
@@ -238,10 +255,7 @@ export function NodeTile(props: NodeTileProps) {
           className={cn('!size-2.5 !rotate-45 !rounded-[2px] !border-[1.5px] !bg-sf', missing ? '!border-rd' : '!border-t2')}
         />
         <div className="absolute top-full flex -translate-x-1/2 flex-col items-center pt-2.5" style={{ left }}>
-          <span className={cn('whitespace-nowrap text-[11px]', missing ? 'text-rd' : 'text-t3')}>
-            {port.displayName ?? AI_LABEL[port.type]}
-            {port.required && '*'}
-          </span>
+          <span className={cn('whitespace-nowrap rounded bg-bg px-0.5 text-[11px]', missing ? 'text-rd' : 'text-t3')}>{slotLabel(port)}</span>
           {!readOnly && onAddSubnode && (!port.maxConnections || connected < port.maxConnections) && (
             <button
               title={`Add ${(port.displayName ?? AI_LABEL[port.type]).toLowerCase()}`}
@@ -277,7 +291,7 @@ export function NodeTile(props: NodeTileProps) {
           className={cn('relative flex size-full items-center gap-3 rounded-full bg-sf px-5', frameClasses(status, selected, unavailable), disabled && 'opacity-50', fresh && 'animate-node-in')}
           style={{ background: tint(color, 8) }}
         >
-          <NodeIcon icon={descriptor?.icon} size={isImage ? 30 : 24} style={{ color }} strokeWidth={1.7} className="shrink-0" />
+          {face ? <AgentAvatar agent={face} size={36} round /> : <NodeIcon icon={descriptor?.icon} size={isImage ? 30 : 24} style={{ color }} strokeWidth={1.7} className="shrink-0" />}
           <div className="min-w-0">
             <div className={cn('truncate text-[13px] font-semibold text-t1', disabled && 'line-through')}>{name}</div>
             <div className="truncate text-[11px] text-t3">{subtitle ?? descriptor?.displayName}</div>
@@ -315,7 +329,7 @@ export function NodeTile(props: NodeTileProps) {
           )}
           style={{ background: tint(color, 8) }}
         >
-          <NodeIcon icon={descriptor?.icon} size={isImage ? 34 : 26} style={{ color }} strokeWidth={1.7} />
+          {face ? <AgentAvatar agent={face} size={48} round /> : <NodeIcon icon={descriptor?.icon} size={isImage ? 34 : 26} style={{ color }} strokeWidth={1.7} />}
           <StatusMark status={status} compact />
           {status?.uses && status.uses > 1 && (
             <span className="absolute -bottom-1 -left-2 rounded-full border border-hair bg-sf px-1.5 font-mono text-[10px] text-t2 animate-pop">
@@ -333,7 +347,7 @@ export function NodeTile(props: NodeTileProps) {
   }
 
   // -------------------------------------------------------------- main node
-  const width = wide ? WIDE_TILE : TILE;
+  const width = wide ? Math.max(WIDE_TILE, slotsWidth(aiIn)) : TILE;
   const height = Math.max(TILE, Math.max(mainIn.length, mainOut.length) * 30 + 22);
   return (
     <div className="group relative" style={{ ...style, width, height }}>
@@ -351,13 +365,17 @@ export function NodeTile(props: NodeTileProps) {
         )}
         style={{ background: `linear-gradient(160deg, ${tint(color, 9)}, var(--sf) 70%)` }}
       >
-        <NodeIcon
-          icon={descriptor?.icon}
-          size={wide ? 30 : isImage ? 46 : 38}
-          style={{ color }}
-          strokeWidth={1.6}
-          className="shrink-0 transition-transform duration-200 group-hover:scale-110"
-        />
+        {face ? (
+          <AgentAvatar agent={face} size={wide ? 40 : 54} className="transition-transform duration-200 group-hover:scale-110" />
+        ) : (
+          <NodeIcon
+            icon={descriptor?.icon}
+            size={wide ? 30 : isImage ? 46 : 38}
+            style={{ color }}
+            strokeWidth={1.6}
+            className="shrink-0 transition-transform duration-200 group-hover:scale-110"
+          />
+        )}
         {wide && (
           <div className="min-w-0">
             <div className={cn('truncate text-[14px] font-semibold text-t1', disabled && 'line-through')}>{name}</div>
@@ -390,7 +408,7 @@ export function NodeTile(props: NodeTileProps) {
           className="!h-4 !w-2 !rounded-[3px] !border-0 !bg-t3 transition-colors hover:!bg-ac"
         >
           {port.displayName && mainIn.length > 1 && (
-            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 whitespace-nowrap text-[10px] text-t3">{port.displayName}</span>
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 whitespace-nowrap rounded bg-bg px-0.5 text-[10px] text-t3">{port.displayName}</span>
           )}
         </Handle>
       ))}
@@ -409,9 +427,10 @@ export function NodeTile(props: NodeTileProps) {
             style={{ top: `${((i + 1) / (mainOut.length + 1)) * 100}%` }}
             className="!size-3 !border-[1.5px] !border-t3 !bg-sf transition-colors hover:!border-ac hover:!bg-ac"
           >
-            <span className="pointer-events-none absolute bottom-full left-2.5 mb-px whitespace-nowrap text-[10px] text-t3">
-              {mainOut.length > 1 && port.displayName}
-            </span>
+            {mainOut.length > 1 && port.displayName && (
+              // The canvas colour behind it, so a line leaving another output stays under the words.
+              <span className="pointer-events-none absolute bottom-full left-2.5 z-10 mb-px whitespace-nowrap rounded bg-bg px-0.5 text-[10px] text-t3">{port.displayName}</span>
+            )}
             {open && !readOnly && onAddFromOutput && (
               <span className="absolute left-2.5 top-1/2 flex -translate-y-1/2 items-center">
                 <span className="h-px w-6 bg-bd" />

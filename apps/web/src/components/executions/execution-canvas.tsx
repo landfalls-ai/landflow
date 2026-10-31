@@ -13,7 +13,7 @@
  * with what it waits for on hover.
  */
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Controls, Handle, Position, ReactFlow, ReactFlowProvider, getBezierPath, useNodesState, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
+import { Controls, Handle, Position, ReactFlow, ReactFlowProvider, useNodesState, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -22,6 +22,8 @@ import { edgeCountsOf, statusesOf, summarizeGroupRun, withWaiting, type GroupRun
 import { GROUP_COLLAPSED_SIZE, GROUP_HANDLES, collapsedBoxes, depthOf, descendantGroupIds, descendantNodeIds, routeEdges } from '@/lib/shared/groups';
 import type { NodeRun, NodeTypeInfo, Workflow, WorkflowNode } from '@/lib/shared/types';
 import { EdgeLine } from '../canvas/edge-line';
+import { edgePath, useLane } from '../canvas/edge-path';
+import { useNodeFace } from '../agents/faces';
 import { handleId, NodeTile } from '../canvas/node-tile';
 import { StickyNoteView } from '../canvas/sticky-note';
 import { CompositeBadge, GroupBoxView, GroupFrameView } from '../canvas/group-frame';
@@ -191,6 +193,7 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
   const status = ctx.statuses[id];
   const dimmed = ctx.dimIdle && !status;
   const caption = ctx.captions[id];
+  const face = useNodeFace(wf.type, wf.parameters);
   return (
     <div className={cn('relative cursor-pointer transition-[opacity,filter] duration-300', dimmed && 'opacity-40 grayscale')} title={dimmed ? 'Did not run in this execution' : undefined}>
       <NodeTile
@@ -204,6 +207,7 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
         connectedOutputs={ctx.outputsOf[id]}
         subConnections={ctx.subsOf[id]}
         readOnly
+        face={face}
       />
       {caption && (
         <div
@@ -222,7 +226,8 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
 const ExecEdgeView = memo(function ExecEdgeView({ id, source, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<ExecEdge>) {
   const ctx = useContext(CanvasContext)!;
   const isAi = data?.connectionType !== 'main';
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: isAi ? 0.35 : 0.3 });
+  const ends = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition };
+  const [path, labelX, labelY] = edgePath(ends, isAi, useLane(ends, isAi));
   // Items are on the move into a node that is running now (or out of a sub-node being called).
   const flowing = ctx.running && (isAi ? ctx.active.has(source) : ctx.active.has(target) && Boolean(ctx.statuses[source]));
   return (
@@ -244,7 +249,8 @@ const ExecEdgeView = memo(function ExecEdgeView({ id, source, target, sourceX, s
 const ExecProxyEdgeView = memo(function ExecProxyEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<ExecProxyEdge>) {
   const ctx = useContext(CanvasContext)!;
   const isAi = data?.connectionType !== 'main';
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: isAi ? 0.35 : 0.3 });
+  const ends = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition };
+  const [path, labelX, labelY] = edgePath(ends, isAi, useLane(ends, isAi));
   const edgeIds = data?.edgeIds ?? [];
   const count = edgeIds.reduce((sum, edgeId) => sum + (ctx.edgeCounts[edgeId] ?? 0), 0);
   return (

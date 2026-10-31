@@ -28,6 +28,16 @@ async function create(body: unknown = { name: 'Plugin team', goal: 'Ship it', me
 }
 
 describe('agent team routes', () => {
+  it('shows the face of a Landflow agent a remote member calls on kagent, and still counts it as remote', async () => {
+    const dev = agentStore.create({ name: 'Developer' }).id;
+    agentStore.setKagent(dev, { credential: { id: 'cred_kagent', name: 'kagent' }, name: 'routes-developer' });
+    const team = await create({ name: 'On kagent', members: [members[0], { ...members[1], parameters: { agentUrl: 'http://controller:8083/agents/kagent/routes-developer' } }] });
+    const summary = (await (await list.GET(req('GET'))).json()).teams.find((t: { id: string }) => t.id === team.id);
+    expect(summary).toMatchObject({ agentIds: [lead, dev], remote: 1 });
+    agentStore.setKagent(dev, undefined);
+    await one.DELETE(req('DELETE'), ctx(team.id));
+  });
+
   it('creates, lists, reads, saves and deletes a team', async () => {
     const team = await create();
     expect(team.draft.members).toHaveLength(3);

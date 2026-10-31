@@ -11,7 +11,7 @@
  * what the slot accepts, and a collapsed composite draws its named outputs. "Composite…" types a plain group.
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { getBezierPath, Handle, NodeResizer, NodeToolbar, Position, type EdgeProps, type NodeProps } from '@xyflow/react';
+import { Handle, NodeResizer, NodeToolbar, Position, type EdgeProps, type NodeProps } from '@xyflow/react';
 import { Boxes, Check, ChevronsDownUp, ChevronsUpDown, Copy, PencilLine, Plus, Ungroup } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { nodeColor } from '@/lib/client/node-style';
@@ -19,6 +19,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { GROUP_MIN_SIZE, GROUP_NAME_MAX, compositePortHandle, descendantNodeIds } from '@/lib/shared/groups';
 import { describeMatcher } from '@/lib/shared/composites';
 import { EdgeLine } from '../canvas/edge-line';
+import { edgePath, useLane } from '../canvas/edge-path';
 import { CompositeBadge, GroupBoxView, GroupFrameView } from '../canvas/group-frame';
 import { CompositeDialog } from './composite-dialog';
 import { CompositePanel, slotPosition } from './composite-panel';
@@ -252,7 +253,8 @@ export const GroupNodeView = memo(function GroupNodeView({ id, data, selected }:
 /** A connection to or from a collapsed group: dashed for sub-node ports, labelled when it stands for several. */
 export const GroupProxyEdgeView = memo(function GroupProxyEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<GroupProxyEdge>) {
   const isAi = data?.connectionType !== 'main';
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: isAi ? 0.35 : 0.3 });
+  const ends = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition };
+  const [path, labelX, labelY] = edgePath(ends, isAi, useLane(ends, isAi));
   const count = data?.count ?? 1;
   return (
     <EdgeLine

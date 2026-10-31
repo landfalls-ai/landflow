@@ -71,7 +71,10 @@ export interface TeamSummary {
   /** The root's title. */
   lead?: string;
   published?: { version: number; publishedAt: string };
-  /** The draft's Landflow agents, for the cards' faces (the roster has them), and how many members are remote. */
+  /**
+   * The draft's Landflow agents, for the cards' faces (the roster has them): its agent members and the agents its remote
+   * members run on kagent (`memberAgent`). `remote` counts the members called over A2A.
+   */
   agentIds?: string[];
   remote?: number;
   /** What stops the draft from being published, as `teamIssues` words. */
@@ -86,6 +89,30 @@ export interface OrgNode {
 }
 
 export const rootOf = (config: AgentTeamConfig): TeamMember | undefined => config.members.find((m) => !m.reportsTo);
+
+/**
+ * The kagent agent an A2A address calls: Landflow reaches kagent's controller at `<controller>/agents/<namespace>/<name>`
+ * (`a2aUrlOf`, lib/server/kagent/cluster.ts), so the name is the segment after `/agents/<namespace>/`. Other addresses
+ * name no kagent agent (undefined).
+ */
+export function deploymentOf(agentUrl: unknown): string | undefined {
+  const path = String(agentUrl ?? '')
+    .trim()
+    .replace(/[?#].*$/, '')
+    .replace(/\/+$/, '');
+  const name = /\/agents\/[^/]+\/([^/]+)$/.exec(path)?.[1];
+  return name ? decodeURIComponent(name) : undefined;
+}
+
+/**
+ * The Landflow agent behind a member: an agent member's own, or the agent a remote member calls on kagent (its
+ * address is that agent's on kagent's controller), so a Landflow agent run there keeps its face and name everywhere.
+ */
+export function memberAgent<A extends { id: string; kagent?: string }>(member: TeamMember, agents: readonly A[]): A | undefined {
+  if (member.kind === 'agent') return agents.find((a) => a.id === member.agentId);
+  const name = deploymentOf(member.parameters?.agentUrl);
+  return name ? agents.find((a) => a.kagent === name) : undefined;
+}
 
 export const reportsOf = (config: AgentTeamConfig, memberId: string): TeamMember[] => config.members.filter((m) => m.reportsTo === memberId);
 

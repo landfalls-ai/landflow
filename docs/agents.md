@@ -88,7 +88,10 @@ changes an agent itself. It uses the assistant's model (`LANDFLOW_BUILDER_MODEL`
 
 ### Avatars
 
-An agent's avatar shows on its page, the roster, the test chat, the sub-agent list and the New agent dialog. Click it
+An agent's avatar shows on its page, the roster, the test chat, the sub-agent list and the New agent dialog, and in
+place of the node's icon on the canvases wherever a node stands for the agent: Run an Agent, a Run a Team node whose lead
+it is, and an A2A Agent node that calls it on kagent. Team charts and Run Trace show it for the agent too, also when a
+team calls it on kagent ([agent-teams.md](agent-teams.md#the-chart)). Click it
 on the agent's page to pick one of four kinds:
 
 - **Face**: an illustrated face ([below](#faces)).

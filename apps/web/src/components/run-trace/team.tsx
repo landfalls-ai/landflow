@@ -379,7 +379,7 @@ export function Team({ model, open }: { model: RunModel; open: (o: Open) => void
                           )}
                           style={{ borderColor: actorColor(a) }}
                         >
-                          <span className="size-2.5 shrink-0 rounded-full" style={{ background: actorColor(a) }} />
+                          {a.type === 'agent' ? <Avatar actor={a} size={22} /> : <span className="size-2.5 shrink-0 rounded-full" style={{ background: actorColor(a) }} />}
                           <span className="min-w-0">
                             <span className="block truncate text-[13px] font-semibold">{a.name}</span>
                             <span className="block text-[11px] text-t3">

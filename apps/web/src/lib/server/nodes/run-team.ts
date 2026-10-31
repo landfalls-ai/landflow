@@ -22,16 +22,12 @@ export const runTeamNode = defineNode({
     color: '#a855f7',
     subtitle: '{{teamName}}',
     keywords: ['team', 'agents', 'org chart', 'lead', 'delegate', 'review', 'multi-agent', 'crew', 'run a team'],
-    // Like Run an Agent's ports, all optional: what is connected goes to the lead.
+    // Run an Agent's ports and names (short, so the labels fit under the node), all optional: what is connected goes to the lead.
     inputs: [
       { type: 'main' },
-      {
-        type: 'ai_languageModel',
-        displayName: 'Lead’s Chat Model',
-        maxConnections: 1,
-      },
-      { type: 'ai_memory', displayName: 'Lead’s Memory', maxConnections: 1 },
-      { type: 'ai_tool', displayName: 'Lead’s Tool' },
+      { type: 'ai_languageModel', displayName: 'Chat Model', maxConnections: 1 },
+      { type: 'ai_memory', displayName: 'Memory', maxConnections: 1 },
+      { type: 'ai_tool', displayName: 'Tool' },
     ],
     outputs: [
       { type: 'main', displayName: 'Done' },

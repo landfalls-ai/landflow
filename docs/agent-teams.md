@@ -37,6 +37,9 @@ to** the member's manager first (who may pass them on to a person), or straight 
 
 The team page (`/agents/teams/:id`) draws the team as an indented tree of member cards, one column, so it reads on a
 phone: face, title, what it does, and chips for **Reports to**, **Reviews**, **Remote**, the budget and where questions go.
+A remote member that calls a Landflow agent on kagent (its address is that agent's on kagent's controller,
+`…/agents/<namespace>/<name>`) wears that agent's face, here, on the Teams cards, above the Run a Team node and in Run
+Trace, and its chip reads **<agent> on kagent**; any other remote member gets the A2A radio icon.
 Tap a card to edit it in a sheet; **+ Add a report** on a manager adds a member under it. A new member reports to the lead
 unless asked otherwise (the first one becomes the lead). Removing a member hands its reports to its manager and drops it
 from reviews. Members not connected to the lead yet are listed under the chart. The page autosaves the draft after a
@@ -78,13 +81,14 @@ The **Run a Team** node (`core.runTeam`, under AI) runs a published team as one 
 | **Team** | a published team (the options list every team and say which are published) |
 | **Message** | the task, for the lead; default `{{ $json.chatInput ?? $json.text }}` like Run an Agent |
 | **Version** | **Published** (default) or **Draft** (to try a change before publishing) |
-| Inputs | the flow's items, plus the optional **Lead's Chat Model**, **Lead's Memory** and **Lead's Tool** slots of Run an Agent: whatever is connected goes to the **lead**, so a flow keeps its model or a tool such as a GitHub branch check on the team node |
+| Inputs | the flow's items, plus Run an Agent's optional **Chat Model**, **Memory** and **Tool** slots: whatever is connected goes to the **lead**, so a flow keeps its model or a tool such as a GitHub branch check on the team node |
 | Outputs | **Done** and **Needs a person** |
 
 Done carries `{ reply, team: { id, name, version }, members: [{ title, asked, tokens, overBudget? }] }`; Needs a person the
 same plus `reason`. A team that was never published, a deleted team or an empty message fails the node (or the item, with
 Continue on fail), like Run an Agent does. The node shows the team's name under its title (the hidden `teamName`
-parameter, filled in when the team is picked or turned from a lead).
+parameter, filled in when the team is picked or turned from a lead), the lead's face instead of the team icon, and every
+member's face and title above it.
 
 ### How a team run goes
 

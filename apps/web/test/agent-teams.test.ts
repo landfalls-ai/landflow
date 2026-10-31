@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orgTree, rootOf, teamIssues, type AgentTeamConfig, type TeamMember } from '@/lib/shared/agent-teams';
+import { deploymentOf, memberAgent, orgTree, rootOf, teamIssues, type AgentTeamConfig, type TeamMember } from '@/lib/shared/agent-teams';
 
 const remote = (id: string, title: string, extra: Partial<TeamMember> = {}): TeamMember => ({ id, title, kind: 'a2a', reportsTo: 'm_lead', parameters: { agentUrl: `http://kagent/${id}` }, ...extra }) as TeamMember;
 
@@ -50,5 +50,22 @@ describe('agent teams', () => {
     const team = pluginTeam();
     team.members[2] = { ...team.members[2], title: 'planner' };
     expect(teamIssues(team)).toContain('Two members share a title: titles are how managers call them.');
+  });
+
+  it('finds the Landflow agent behind a member, also one called on kagent', () => {
+    const agents = [
+      { id: 'ag_lead', name: 'Tech Lead' },
+      { id: 'ag_plan', name: 'Planner', kagent: 'landflow-planner' },
+    ];
+    const team = pluginTeam();
+    team.members[1] = remote('m_plan', 'Planner', { parameters: { agentUrl: 'http://host.docker.internal:58083/agents/kagent/landflow-planner/' } } as Partial<TeamMember>);
+    expect(memberAgent(team.members[0], agents)?.id).toBe('ag_lead');
+    expect(memberAgent(team.members[1], agents)?.id).toBe('ag_plan');
+    // A remote agent that isn't one of ours keeps no face.
+    expect(memberAgent(team.members[2], agents)).toBeUndefined();
+    expect(deploymentOf('http://kagent-controller:8083/agents/kagent/landflow-text?x=1#y')).toBe('landflow-text');
+    // Only kagent's controller route names an agent: a bare path is some other A2A server.
+    expect(deploymentOf('http://kagent/dev')).toBeUndefined();
+    expect(deploymentOf('')).toBeUndefined();
   });
 });

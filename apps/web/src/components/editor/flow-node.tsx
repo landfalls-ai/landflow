@@ -4,6 +4,7 @@ import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
 import { CircleDot, Copy, Loader2, Play, Power, Settings2, SkipForward, Trash2, UsersRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useNodeFace } from '../agents/faces';
 import { isCompact, NodeTile } from '../canvas/node-tile';
 import { useAssistant } from './assistant';
 import { TeamStrip } from './team-strip';
@@ -61,6 +62,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   const canTeam = useEditor((s) => selected && s.nodeTypes[wf.type] !== undefined && wf.type === 'core.messageAgent' && s.edges.some((e) => e.target === id && e.data?.connectionType === 'ai_tool') && canTurnNodeIntoTeam(id));
   const { openNode, openPalette, removeNodes, duplicateNode, updateNode, toggleBreakpoint } = useEditor.getState();
 
+  const face = useNodeFace(wf.type, wf.parameters);
   const compact = isCompact(info?.descriptor, wf.parameters, asTool);
   const runNode = (scope: 'from' | 'only') => useEditor.getState().run?.({ kind: 'node', nodeId: id, scope });
 
@@ -81,6 +83,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       onAddSubnode={(handle, type) => openPalette({ connectionType: type, from: { nodeId: id, handleId: handle, handleType: 'target' } })}
       onToggleBreakpoint={() => toggleBreakpoint(id)}
       fresh={fresh}
+      face={face}
     >
       {wf.type === 'core.runTeam' && typeof wf.parameters.teamId === 'string' && wf.parameters.teamId && (
         <NodeToolbar isVisible={!selected && !fixing} position={Position.Top} offset={compact ? 12 : 14}>

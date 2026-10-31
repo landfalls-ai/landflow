@@ -1,9 +1,10 @@
 'use client';
 import { memo, useEffect, useState } from 'react';
-import { getBezierPath, type EdgeProps } from '@xyflow/react';
+import type { EdgeProps } from '@xyflow/react';
 import { Plus, Trash2 } from 'lucide-react';
 import { nodeColor } from '@/lib/client/node-style';
 import { EdgeLine } from '../canvas/edge-line';
+import { edgePath, useLane } from '../canvas/edge-path';
 import { useEditor, type FlowEdge } from './store';
 
 const FLOW_WINDOW_MS = 1400;
@@ -26,7 +27,8 @@ export const FlowEdgeView = memo(function FlowEdgeView(props: EdgeProps<FlowEdge
     return () => clearTimeout(timer);
   }, [flowingAt]);
 
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: isAi ? 0.35 : 0.3 });
+  const ends = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition };
+  const [path, labelX, labelY] = edgePath(ends, isAi, useLane(ends, isAi));
   const roomy = Math.hypot(targetX - sourceX, targetY - sourceY) > 120;
 
   const insert = () => {

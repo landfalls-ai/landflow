@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { defaultParameters, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { api, ApiError } from '@/lib/client/api';
 import type { AgentSummary } from '@/lib/shared/agents';
-import { managerOf, orgTree, reportsOf, teamIssues, type AgentTeam, type AgentTeamConfig, type OrgNode, type TeamMember } from '@/lib/shared/agent-teams';
+import { managerOf, memberAgent, orgTree, reportsOf, teamIssues, type AgentTeam, type AgentTeamConfig, type OrgNode, type TeamMember } from '@/lib/shared/agent-teams';
 import { cn } from '@/lib/utils';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { ParamForm } from '../editor/param-form';
@@ -108,7 +108,6 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
     [teamId],
   );
 
-  const roster = useMemo(() => new Map((agents ?? []).map((a) => [a.id, a])), [agents]);
   const issues = useMemo(() => (draft ? teamIssues(draft) : []), [draft]);
   const tree = useMemo(() => (draft ? orgTree(draft) : undefined), [draft]);
   const loose = useMemo(() => {
@@ -202,7 +201,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
       key={member.id}
       config={draft}
       member={member}
-      agent={member.kind === 'agent' ? roster.get(member.agentId) : undefined}
+      agent={memberAgent(member, agents ?? [])}
       lead={!member.reportsTo}
       onEdit={() => setEditing({ member })}
       onAddReport={member.kind === 'agent' ? () => setEditing({ reportsTo: member.id }) : undefined}
@@ -334,7 +333,8 @@ function MemberCard({ config, member, agent, lead, onEdit, onAddReport }: { conf
   return (
     <article className="rounded-2xl border border-hair bg-sf p-3 transition-colors hover:border-bd">
       <div className="flex items-start gap-3">
-        {member.kind === 'agent' ? <AgentAvatar agent={agent ?? { name: member.title }} size={44} /> : <A2aTile size={44} />}
+        {/* A remote member that calls a Landflow agent on kagent wears that agent's face. */}
+        {member.kind === 'agent' || agent ? <AgentAvatar agent={agent ?? { name: member.title }} size={44} /> : <A2aTile size={44} />}
         <button type="button" onClick={onEdit} className="min-w-0 flex-1 rounded text-left focus-visible:outline-2 focus-visible:outline-ac">
           <span className="flex flex-wrap items-center gap-1.5">
             <span className="text-[14px] font-semibold text-t1">{member.title || 'Untitled'}</span>
@@ -348,7 +348,7 @@ function MemberCard({ config, member, agent, lead, onEdit, onAddReport }: { conf
         {reviews.length > 0 && <Chip tone="accent">Reviews {reviews.join(', ')}</Chip>}
         {member.kind === 'a2a' && (
           <Chip>
-            <RadioTower className="size-3" /> Remote
+            <RadioTower className="size-3" /> {agent ? `${agent.name} on kagent` : 'Remote'}
           </Chip>
         )}
         {member.budgetTokens !== undefined && <Chip>{tokens(member.budgetTokens)} tokens a run</Chip>}

@@ -3,6 +3,8 @@
 import { useState, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { AgentAvatar } from '../agents/avatar';
+import { actorAgent, faceOf, useRoster } from '../agents/faces';
 import { Badge, type Tone } from '../ui/badge';
 import { JsonView } from '../ui/json-view';
 import type { RunActor } from '@/lib/shared/run-trace';
@@ -27,6 +29,13 @@ const initials = (name: string) => {
 };
 
 export function Avatar({ actor, size = 28 }: { actor?: RunActor; size?: number }) {
+  // A Landflow agent (also one called on kagent) wears its own face; everyone else gets initials.
+  const agent = actorAgent(actor, useRoster());
+  if (agent) return <AgentAvatar agent={faceOf(agent)} size={size} />;
+  return <Initials actor={actor} size={size} />;
+}
+
+function Initials({ actor, size }: { actor?: RunActor; size: number }) {
   const color = actorColor(actor);
   return (
     <span

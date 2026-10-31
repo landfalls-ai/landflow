@@ -4,7 +4,7 @@
  * `teamIssues` finds any. A team's project is kept with the other resources' homes (kind `agentTeam`).
  */
 import { nanoid } from 'nanoid';
-import { rootOf, type QuestionsTo, teamIssues, type AgentTeam, type AgentTeamConfig, type TeamMember, type TeamSummary } from '../../shared/agent-teams';
+import { memberAgent, rootOf, type QuestionsTo, teamIssues, type AgentTeam, type AgentTeamConfig, type TeamMember, type TeamSummary } from '../../shared/agent-teams';
 import { agentStore } from '../agents/store';
 import { database } from '../db';
 import { homeProjectId } from '../projects/store';
@@ -87,9 +87,9 @@ function revive(row: Row): AgentTeam {
   };
 }
 
-function summarize(team: AgentTeam): TeamSummary {
+function summarize(team: AgentTeam, onKagent: Array<{ id: string; kagent?: string }>): TeamSummary {
   const { draft } = team;
-  const agentIds = draft.members.flatMap((m) => (m.kind === 'agent' && m.agentId ? [m.agentId] : []));
+  const agentIds = draft.members.flatMap((m) => (m.kind === 'agent' ? (m.agentId ? [m.agentId] : []) : (memberAgent(m, onKagent)?.id ?? [])));
   return {
     id: team.id,
     name: draft.name || 'Untitled team',
@@ -98,7 +98,7 @@ function summarize(team: AgentTeam): TeamSummary {
     ...(rootOf(draft) && { lead: rootOf(draft)!.title }),
     ...(team.published && { published: { version: team.published.version, publishedAt: team.published.publishedAt } }),
     agentIds,
-    remote: draft.members.length - agentIds.length,
+    remote: draft.members.filter((m) => m.kind === 'a2a').length,
     issues: issuesOf(draft).length,
     updatedAt: team.updatedAt,
   };
@@ -109,7 +109,9 @@ export const agentTeamStore = {
     return database().all<Row>(`SELECT ${COLUMNS} FROM agent_teams ORDER BY updated_at DESC`).map(revive);
   },
   summaries(): TeamSummary[] {
-    return this.list().map(summarize);
+    // Remote members that call a Landflow agent on kagent show that agent's face.
+    const onKagent = agentStore.list().flatMap((a) => (a.kagent ? [{ id: a.id, kagent: a.kagent.name }] : []));
+    return this.list().map((team) => summarize(team, onKagent));
   },
   get(id: string): AgentTeam | undefined {
     const row = database().get<Row>(`SELECT ${COLUMNS} FROM agent_teams WHERE id = ?`, id);

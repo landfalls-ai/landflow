@@ -4,38 +4,17 @@
  * title, lead first and then each manager's reports in chart order, so a team on the canvas never hides its agents.
  */
 import { useEffect, useState } from 'react';
-import { api } from '@/lib/client/api';
-import { orgTree, type AgentTeam, type OrgNode, type TeamMember } from '@/lib/shared/agent-teams';
+import { memberAgent, orgTree, type OrgNode, type TeamMember } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
 import { AgentAvatar, type AvatarSource } from '../agents/avatar';
-
-// Loaded once per page: the canvas draws many nodes, and a team rarely changes while a flow is open.
-const teams = new Map<string, Promise<AgentTeam | undefined>>();
-let roster: Promise<AgentSummary[]> | undefined;
-
-const loadTeam = (id: string) => {
-  if (!teams.has(id))
-    teams.set(
-      id,
-      api<{ team: AgentTeam }>(`/api/agent-teams/${encodeURIComponent(id)}`).then(
-        (r) => r.team,
-        () => undefined,
-      ),
-    );
-  return teams.get(id)!;
-};
-const loadRoster = () =>
-  (roster ??= api<{ agents: AgentSummary[] }>('/api/agents').then(
-    (r) => r.agents ?? [],
-    () => [],
-  ));
+import { faceOf as agentFace, loadRoster, loadTeam } from '../agents/faces';
 
 const inChartOrder = (node: OrgNode): TeamMember[] => [node.member, ...node.reports.flatMap(inChartOrder)];
 
-/** A Landflow agent wears its own face; a remote agent gets the A2A node's colour and radio icon. */
+/** A Landflow agent wears its own face, also when it is called on kagent; another remote agent gets the A2A node's colour and radio icon. */
 function faceOf(member: TeamMember, agents: AgentSummary[]): AvatarSource {
-  const agent = member.kind === 'agent' ? agents.find((a) => a.id === member.agentId) : undefined;
-  return agent ? { name: agent.name, icon: agent.icon, color: agent.color, avatar: agent.avatar } : { name: member.title, icon: 'lucide:radio-tower', color: '#a855f7' };
+  const agent = memberAgent(member, agents);
+  return agent ? agentFace(agent) : { name: member.title, icon: 'lucide:radio-tower', color: '#a855f7' };
 }
 
 export function TeamStrip({ teamId }: { teamId: string }) {
