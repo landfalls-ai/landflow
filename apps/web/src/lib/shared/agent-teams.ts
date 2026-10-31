@@ -131,6 +131,13 @@ export function orgTree(config: AgentTeamConfig): OrgNode | undefined {
   return build(roots[0]);
 }
 
+/** Every member in chart order: the lead, then each manager's reports under it; the members' order without a single lead. */
+export function chartOrder(config: AgentTeamConfig): TeamMember[] {
+  const tree = orgTree(config);
+  const walk = (node: OrgNode): TeamMember[] => [node.member, ...node.reports.flatMap(walk)];
+  return tree ? walk(tree) : config.members;
+}
+
 /** What stops a team from running, in plain words; empty when it can run. With `agentExists`, members whose agent is gone count too. */
 export function teamIssues(config: AgentTeamConfig, options: { agentExists?: (agentId: string) => boolean } = {}): string[] {
   const issues: string[] = [];

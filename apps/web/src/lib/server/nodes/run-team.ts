@@ -6,6 +6,9 @@
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
+import { chartOrder } from '../../shared/agent-teams';
+import type { AgentStreamEvent } from '../../shared/agents';
+import { teamProgressFolder } from '../../shared/team-progress';
 import { streamer } from './agents';
 
 const main = [{ type: 'main' as const }];
@@ -82,7 +85,7 @@ export const runTeamNode = defineNode({
       {
         name: 'notice',
         displayName:
-          'The lead runs with the team’s goal; each member is asked by title, with a reason, and reports back. A model, memory and tools connected here go to the lead. Tools that need approval are refused (nobody is there to approve them). Done carries { reply, team, members }; Needs a person adds a reason: a question for a person, a review nobody did, a budget or limit reached.',
+          'The lead runs with the team’s goal; each member is asked by title, with a reason, and reports back. A model, memory and tools connected here go to the lead. Tools that need approval are refused (nobody is there to approve them). Done carries { reply, team, members, activity }; Needs a person adds a reason: a question for a person, a review nobody did, a budget or limit reached.',
         type: 'notice',
       },
     ],
@@ -123,6 +126,15 @@ export const runTeamNode = defineNode({
           ...(node.name && { nodeName: node.name }),
         };
         send?.({ type: 'begin', itemIndex: i });
+        // Who works on what, for the canvases (lib/shared/team-progress.ts): the lead's stream, folded. What the run did
+        // (turns, moments) goes on the output too, so a finished node shows it.
+        const fold = teamProgressFolder(chartOrder(config).map((m) => m.title));
+        const stream = send && streamer(send, i);
+        const onEvent = (event: AgentStreamEvent) => {
+          stream?.(event);
+          const report = fold(event);
+          if (report) ctx.sendProgress?.(report as unknown as JsonObject);
+        };
         const result = await runTeam({
           team: { id: team.id, name: config.name },
           config,
@@ -134,7 +146,7 @@ export const runTeamNode = defineNode({
             flow: { ...(model && { model }), ...(tools.length && { tools }) },
           }),
           ...(memory && { memory }),
-          ...(send && { onEvent: streamer(send, i) }),
+          onEvent,
         });
         send?.({ type: 'end', itemIndex: i });
         if (result.reason === 'error') {
@@ -155,6 +167,7 @@ export const runTeamNode = defineNode({
             ...(m.overBudget && { overBudget: true }),
           })),
           ...(result.needsPerson && { reason: result.needsPerson }),
+          activity: fold.activity() as unknown as JsonObject,
         };
         (result.needsPerson ? needsPerson : done).push({
           json,

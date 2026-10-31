@@ -12,8 +12,8 @@
  * its groups as they are. The node an execution waits at is marked waiting,
  * with what it waits for on hover.
  */
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Controls, Handle, Position, ReactFlow, ReactFlowProvider, useNodesState, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Controls, Handle, Position, ReactFlow, ReactFlowProvider, useNodesState, useReactFlow, useStore, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -23,8 +23,11 @@ import { GROUP_COLLAPSED_SIZE, GROUP_HANDLES, collapsedBoxes, depthOf, descendan
 import type { NodeRun, NodeTypeInfo, Workflow, WorkflowNode } from '@/lib/shared/types';
 import { EdgeLine } from '../canvas/edge-line';
 import { edgePath, useLane } from '../canvas/edge-path';
+import { activityOfRuns, type TeamActivity, type TeamProgress } from '@/lib/shared/team-progress';
 import { useNodeFace } from '../agents/faces';
-import { handleId, NodeTile } from '../canvas/node-tile';
+import { useTeamTile } from '../editor/team-live';
+import { TeamStrip } from '../editor/team-strip';
+import { handleId, NodeTile, ranFor } from '../canvas/node-tile';
 import { StickyNoteView } from '../canvas/sticky-note';
 import { CompositeBadge, GroupBoxView, GroupFrameView } from '../canvas/group-frame';
 import { useCompositeNames } from '../canvas/composite-names';
@@ -176,6 +179,10 @@ interface CanvasState {
   active: Set<string>;
   /** A live line under a node (what it reports while it runs). */
   captions: Record<string, string>;
+  /** A running team node's report: who works now and on what. */
+  teams: Record<string, TeamProgress>;
+  /** What each finished team node did (its output's `activity`). */
+  activities: Record<string, TeamActivity>;
   running: boolean;
   dimIdle: boolean;
   selectedNodeId?: string;
@@ -194,6 +201,10 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
   const dimmed = ctx.dimIdle && !status;
   const caption = ctx.captions[id];
   const face = useNodeFace(wf.type, wf.parameters);
+  // A team node becomes the member at work while it runs, and shows what it did after (team-live.tsx).
+  const teamId = wf.type === 'core.runTeam' && typeof wf.parameters.teamId === 'string' && wf.parameters.teamId ? wf.parameters.teamId : undefined;
+  const live = teamId && ctx.running ? ctx.teams[id] : undefined;
+  const team = useTeamTile(teamId, live, teamId && !live ? ctx.activities[id] : undefined);
   return (
     <div className={cn('relative cursor-pointer transition-[opacity,filter] duration-300', dimmed && 'opacity-40 grayscale')} title={dimmed ? 'Did not run in this execution' : undefined}>
       <NodeTile
@@ -208,8 +219,15 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
         subConnections={ctx.subsOf[id]}
         readOnly
         face={face}
+        live={team.tile}
       />
-      {caption && (
+      {teamId ? (
+        // The team above its node, as in the editor; while it runs, who works now and on what.
+        // Above the duration a finished node shows over its corner.
+        <div className={cn('absolute bottom-full left-1/2 z-10 -translate-x-1/2', ranFor(status) ? 'mb-7' : 'mb-3')}>
+          <TeamStrip teamId={teamId} live={live} moments={team.moments} />
+        </div>
+      ) : caption && (
         <div
           data-testid="node-caption"
           title={caption}
@@ -287,19 +305,40 @@ export interface ExecutionCanvasProps {
   running?: boolean;
   /** Live lines under running nodes, by node id. */
   captions?: Record<string, string>;
+  /** Running team nodes' reports, by node id: the strip above the node lights up the member working. */
+  teams?: Record<string, TeamProgress>;
   selectedNodeId?: string;
   onNodeClick?: (nodeId: string) => void;
   className?: string;
 }
 
 const NO_CAPTIONS: Record<string, string> = {};
+const NO_TEAMS: Record<string, TeamProgress> = {};
 
-function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, captions = NO_CAPTIONS, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
+const FIT = { padding: 0.22, maxZoom: 1.05 };
+
+/** Fits again when the nodes grow after the first fit (a team node's summary arriving), until the person pans or zooms. */
+function RefitOnGrow({ moved }: { moved: RefObject<boolean> }) {
+  const { fitView } = useReactFlow();
+  const size = useStore((s) => s.nodes.reduce((sum, n) => sum + (n.measured?.width ?? 0) + (n.measured?.height ?? 0), 0));
+  const largest = useRef(0);
+  useEffect(() => {
+    // Only past the largest yet: a live node that shrinks and grows again doesn't jolt the view.
+    if (size <= largest.current || moved.current) return;
+    largest.current = size;
+    const timer = setTimeout(() => void fitView(FIT), 60);
+    return () => clearTimeout(timer);
+  }, [size, fitView, moved]);
+  return null;
+}
+
+function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, captions = NO_CAPTIONS, teams = NO_TEAMS, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
   // Groups expanded or collapsed in this view (by id); the rest show as saved. Reset for another workflow.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   useEffect(() => setOverrides({}), [workflow.id]);
   const toggleGroup = useCallback((id: string, collapsed: boolean) => setOverrides((o) => ({ ...o, [id]: collapsed })), []);
   const collapsedOf = useCallback((id: string, saved: boolean) => overrides[id] ?? saved, [overrides]);
+  const moved = useRef(false);
 
   const flow = useMemo(() => toReadOnlyFlow(workflow), [workflow]);
   const groups = useMemo(() => workflow.groups ?? [], [workflow]);
@@ -349,13 +388,15 @@ function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId
       subsOf,
       active: new Set(activeNodeIds),
       captions,
+      teams,
+      activities: Object.fromEntries(workflow.nodes.flatMap((n) => (n.type === 'core.runTeam' && activityOfRuns(runData[n.id]) ? [[n.id, activityOfRuns(runData[n.id])!]] : []))),
       running,
       dimIdle: !running && Object.keys(runData).length > 0,
       selectedNodeId,
       groupRuns: Object.fromEntries(groups.map((g) => [g.id, summarizeGroupRun(descendantNodeIds(groups, g.id), statuses)])),
       toggleGroup,
     };
-  }, [flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, captions, selectedNodeId, toggleGroup]);
+  }, [flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, captions, teams, selectedNodeId, toggleGroup]);
 
   return (
     <CanvasContext.Provider value={state}>
@@ -372,10 +413,14 @@ function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId
           elementsSelectable={false}
           edgesFocusable={false}
           fitView
-          fitViewOptions={{ padding: 0.22, maxZoom: 1.05 }}
+          fitViewOptions={FIT}
+          onMoveStart={(event) => {
+            if (event) moved.current = true;
+          }}
           minZoom={0.2}
           maxZoom={2}
         >
+          <RefitOnGrow moved={moved} />
           <Controls showInteractive={false} position="bottom-left" />
         </ReactFlow>
       </div>

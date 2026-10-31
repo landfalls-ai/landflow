@@ -19,6 +19,7 @@ import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge
 import { nanoid } from 'nanoid';
 import { create } from 'zustand';
 import { defaultParameters, defaultVersionOf, portParameters, withPropertyDefaults } from '@landflow/protocol';
+import type { NodeProgress } from '@/lib/client/node-progress';
 import { edgeCountsOf, statusesOf, waitSummary, withWaiting, type NodeStatus, type WaitInfo } from '@/lib/client/run-data';
 import type { FlowTemplate } from '@/lib/client/templates';
 import type {
@@ -178,6 +179,8 @@ interface EditorState {
   runs: Record<string, NodeRun[]>;
   edgeCounts: Record<string, number>;
   flowing: Record<string, number>;
+  /** The latest `node.progress` of each node running now: its caption on the canvas, a team's working member. */
+  progress: Record<string, NodeProgress>;
   log: LogLine[];
   /** Outcome of the run on the canvas, for the logs header. */
   runStatus?: ExecutionState;
@@ -328,6 +331,7 @@ const emptyRun = {
   runs: {},
   edgeCounts: {},
   flowing: {},
+  progress: {} as Record<string, NodeProgress>,
   log: [] as LogLine[],
   runStatus: undefined,
   wait: undefined,
@@ -1220,8 +1224,10 @@ export const useEditor = create<EditorState>((set, get) => {
               edgeCounts[edge.id] = (edgeCounts[edge.id] ?? 0) + 1;
             }
           }
+          const { [event.nodeId]: _done, ...progress } = s.progress;
           return {
             statuses: { ...s.statuses, [event.nodeId]: status },
+            progress,
             runs: { ...s.runs, [event.nodeId]: [...(s.runs[event.nodeId] ?? []), event.run] },
             edgeCounts,
             flowing,
@@ -1244,6 +1250,9 @@ export const useEditor = create<EditorState>((set, get) => {
         });
         break;
       }
+      case 'node.progress':
+        set((s) => ({ progress: { ...s.progress, [event.nodeId]: { ...event, since: s.progress[event.nodeId]?.since ?? event.at } } }));
+        break;
       case 'node.log':
         set((s) => ({ log: [...s.log, line({ kind: 'log', nodeId: event.nodeId, nodeName: s.nodes.find((n) => n.id === event.nodeId)?.data.wf.name, message: `${event.level}: ${event.message}` })] }));
         break;
@@ -1251,6 +1260,7 @@ export const useEditor = create<EditorState>((set, get) => {
         set((s) => ({
           running: false,
           paused: undefined,
+          progress: {},
           runStatus: event.status,
           runDurationMs: event.durationMs,
           // The node it waits at has no finished run yet: mark it, with what it waits for.

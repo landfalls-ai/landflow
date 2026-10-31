@@ -44,6 +44,9 @@ import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, statusText, useNow } 
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
+import { useTeamLeads } from '../agents/faces';
+import { TeamNowCard } from '../editor/team-live';
+import { liveTeam } from '../editor/team-strip';
 import { AgentSessionPanel, type AgentNodeRef } from './agent-session-panel';
 import { ExecutionCanvas } from './execution-canvas';
 import { useExecutions } from './executions-shell';
@@ -114,9 +117,9 @@ export function ExecutionPreview({ workflowId, executionId }: { workflowId: stri
   const { executions, open } = useExecutions();
   const router = useRouter();
 
-  // n8n opens the newest execution when none is in the URL.
+  // n8n opens the newest execution when none is in the URL; a phone shows the list instead, one screen at a time.
   useEffect(() => {
-    if (!executionId && executions?.length) open(executions[0].id, 'replace');
+    if (!executionId && executions?.length && window.matchMedia('(min-width: 768px)').matches) open(executions[0].id, 'replace');
   }, [executionId, executions, open]);
 
   if (executionId) return <ExecutionDetail key={executionId} executionId={executionId} />;
@@ -255,8 +258,13 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
     const reporting = Object.fromEntries(Object.values(progress).map((p) => [p.nodeId, p.since ?? p.at]));
     return { ...inferred, ...reporting, ...active };
   }, [live, runData, active, progress]);
-  // The one-line caption under a node on the canvas: "Developer · Bash: pnpm test".
+  // The one-line caption over a node on the canvas: "Developer · Running the tests".
   const captions = useMemo(() => (live ? Object.fromEntries(Object.entries(progress).map(([id, p]) => [id, progressLine(p)])) : {}), [live, progress]);
+  // Running team nodes: who works now and on what, for the strip above the node.
+  const teams = useMemo(
+    () => (live ? Object.fromEntries(Object.entries(progress).flatMap(([id, p]) => (liveTeam(p.data) ? [[id, liveTeam(p.data)!]] : []))) : {}),
+    [live, progress],
+  );
   const activeIds = useMemo(() => Object.keys(running), [running]);
   const pending = useMemo<LogsPending[]>(() => {
     const list: LogsPending[] = activeIds.filter((id) => !record?.paused || id !== record.paused.nodeId).map((id) => ({ nodeId: id, state: 'running', startedAt: running[id] }));
@@ -264,18 +272,27 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
     return live ? list : [];
   }, [activeIds, running, record?.paused, live]);
 
-  // Run an Agent nodes that run or ran in this execution (the agent is the node's parameter, else the one its output names).
+  // A Run a Team node's session is its lead's: the lead's agent, by team.
+  const teamLeads = useTeamLeads(canvasWorkflow?.nodes);
+  // Run an Agent and Run a Team nodes that run or ran in this execution (the agent is the node's parameter, else the one
+  // its output names; a team's is its lead).
   const agentNodes = useMemo<AgentNodeRef[]>(() => {
     const list: AgentNodeRef[] = [];
     for (const n of canvasWorkflow?.nodes ?? []) {
-      if (n.type !== 'core.messageAgent' || (!runData[n.id] && !(n.id in running))) continue;
+      if (!runData[n.id] && !(n.id in running)) continue;
+      if (n.type === 'core.runTeam') {
+        const lead = teamLeads[String(n.parameters?.teamId ?? '')];
+        if (lead) list.push({ nodeId: n.id, name: nodes[n.id]?.name ?? n.name, agentId: lead });
+        continue;
+      }
+      if (n.type !== 'core.messageAgent') continue;
       const param = n.parameters?.agentId;
       const output = runData[n.id]?.flatMap((r) => r.outputs.flat()).find((item) => typeof item.json?.agentId === 'string')?.json.agentId;
       const agentId = typeof param === 'string' && param && !param.includes('{{') && !param.startsWith('=') ? param : typeof output === 'string' ? output : undefined;
       if (agentId) list.push({ nodeId: n.id, name: nodes[n.id]?.name ?? n.name, agentId });
     }
     return list;
-  }, [canvasWorkflow, runData, running, nodes]);
+  }, [canvasWorkflow, runData, running, nodes, teamLeads]);
   const setCollapsedPersist = (value: boolean) => {
     setCollapsed(value);
     try {
@@ -710,6 +727,16 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
           Full screen <ExternalLink className="size-3" />
         </Link>
       </div>
+      {/* On a phone the canvas is small: a running team gets a Now card over either view (team-live.tsx). */}
+      {Object.entries(teams).map(([nodeId, team]) => {
+        const node = canvasWorkflow?.nodes.find((n) => n.id === nodeId);
+        const teamId = typeof node?.parameters.teamId === 'string' ? node.parameters.teamId : undefined;
+        return node && teamId ? (
+          <div key={nodeId} className="shrink-0 px-3 pt-3 sm:hidden">
+            <TeamNowCard teamId={teamId} live={team} nodeName={node.name} onOpenTrace={view === 'canvas' ? () => chooseView('trace') : undefined} />
+          </div>
+        ) : null;
+      })}
       {view === 'trace' && (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <RunTraceBody executionId={executionId} executionHref={`/workflows/${record.workflowId}/executions/${executionId}`} journal={journal} />
@@ -717,7 +744,8 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
       )}
       {view === 'canvas' && (
         <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
-          <div className="relative min-h-0 flex-1 animate-in">
+          {/* The flow stays in view while agents work: the session panel above the logs shrinks first. */}
+          <div className="relative min-h-[200px] flex-1 animate-in">
             {canvasWorkflow ? (
               <ExecutionCanvas
                 workflow={canvasWorkflow}
@@ -729,6 +757,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                 running={live}
                 selectedNodeId={livePick && progress[livePick] ? livePick : selection?.nodeId}
                 captions={captions}
+                teams={teams}
                 onNodeClick={selectNode}
               />
             ) : (

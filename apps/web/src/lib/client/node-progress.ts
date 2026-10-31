@@ -3,13 +3,15 @@
  * agent's steps as a RemoteRun (the shape the agent timeline renders), and a one-line caption for the canvas.
  */
 import type { RemoteRun, RemoteToolStep } from '../shared/agents';
+import { narrate, shortArg } from '../shared/team-progress';
 import type { ExecutionEvent } from '../shared/types';
+
+export { shortArg };
 
 /** A node's latest report; `since` is when it first reported (from the server, or the first event this page saw). */
 export type NodeProgress = Extract<ExecutionEvent, { type: 'node.progress' }> & { since?: string };
 
 const STATUSES = new Set<RemoteToolStep['status']>(['running', 'success', 'error', 'awaiting_approval']);
-const KEYS = ['command', 'cmd', 'path', 'file_path', 'filePath', 'query', 'url', 'pattern', 'text'];
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -64,15 +66,6 @@ export function remoteRunOfProgress(event: Pick<NodeProgress, 'data' | 'nodeName
   };
 }
 
-/** The most telling argument of a step in a few words: a command, a path, a query. */
-export function shortArg(args: Record<string, unknown> | undefined, max = 60): string | undefined {
-  if (!args) return undefined;
-  const key = KEYS.find((k) => typeof args[k] === 'string' && args[k]) ?? Object.keys(args).find((k) => typeof args[k] === 'string' && args[k]);
-  const text = key ? String(args[key]).replace(/\s+/g, ' ').trim() : undefined;
-  if (!text) return undefined;
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
-
 /** A result in one short line. */
 export function snippetOf(value: unknown, max = 100): string | undefined {
   if (value === undefined || value === null) return undefined;
@@ -81,12 +74,26 @@ export function snippetOf(value: unknown, max = 100): string | undefined {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-/** "Developer · Bash: pnpm test", or the state when no step runs yet. */
+/**
+ * "Developer · Running the tests", or the state when no step runs yet: the step in plain words (lib/shared/team-progress.ts
+ * `narrate`). A team node names the member working now and what it does (`member`, `plain`).
+ */
 export function progressLine(event: Pick<NodeProgress, 'data' | 'nodeName'>): string {
+  const { data } = event;
+  if (typeof data.member === 'string') return `${data.member} · ${typeof data.plain === 'string' ? data.plain : typeof data.doing === 'string' ? data.doing : 'working'}`;
   const run = remoteRunOfProgress(event);
   const step = [...run.steps].reverse().find((s) => s.status === 'running' || s.status === 'awaiting_approval') ?? run.steps.at(-1);
-  const arg = step && shortArg(step.args, 40);
-  return `${event.nodeName} · ${step ? `${step.name}${arg ? `: ${arg}` : ''}` : run.state}`;
+  return `${event.nodeName} · ${step ? narrate(step.name, step.args).plain : run.state}`;
+}
+
+/** The step's exact command or argument, for a tooltip beside the plain words. */
+export function progressDetail(event: Pick<NodeProgress, 'data' | 'nodeName'>): string | undefined {
+  const { data } = event;
+  if (typeof data.member === 'string') return typeof data.command === 'string' ? data.command : typeof data.doing === 'string' ? data.doing : undefined;
+  const run = remoteRunOfProgress(event);
+  const step = [...run.steps].reverse().find((s) => s.status === 'running' || s.status === 'awaiting_approval') ?? run.steps.at(-1);
+  const arg = step && shortArg(step.args, 200);
+  return step ? `${step.name}${arg ? `: ${arg}` : ''}` : undefined;
 }
 
 /** Does a timeline tool call (label or tool name) stand for this sub-node? */

@@ -1004,8 +1004,13 @@ four steps of the approved plan:
   reviews, budgets, where questions go), saved, published and moved between projects like agents.
 - **Run a Team** (`core.runTeam`): the team as one flow step, with goal ancestry, reviews before a manager reports
   done, budgets, members named by title in the trace, **Turn into a team** in the editor and in Spotlight.
-- Next: consults (ask a peer) and hand-offs; a person answering a member's question and the run carrying on; reviews
-  across the chart and a reviewer's verdict as the sign-off; live budget use on the chart; the Go and Python SDKs
+- **Watching it work** (after the first runs): a running team node becomes the member at work (face, title, plain words,
+  its last steps), with a ribbon of turns and the moments that matter (tests, typecheck, pull requests, a review's
+  verdict); it keeps a summary after the run; the execution view's Agent session panel follows the lead and names the
+  member working; phones get a Now card and an executions page that shows one thing at a time; the team page is an
+  aligned chart of cards; Spotlight turns a team written by name into its id.
+- Next: consults (ask a peer) and hand-offs; a person answering a member's question and the run carrying on; a
+  manager's own reports in the live status; reviews across the chart and a reviewer's verdict as the sign-off; live budget use on the chart; the Go and Python SDKs
   declaring `delegates`. Paperclip-style autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.
 
 ## Planned next

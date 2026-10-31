@@ -32,6 +32,29 @@ export const loadRoster = () =>
     () => [],
   ));
 
+/** The lead's agent of every Run a Team node in `nodes`, by team id (filled in as the teams load). */
+export function useTeamLeads(nodes: ReadonlyArray<{ type: string; parameters?: Record<string, unknown> }> | undefined): Record<string, string> {
+  const ids = [...new Set((nodes ?? []).flatMap((n) => (n.type === 'core.runTeam' && typeof n.parameters?.teamId === 'string' && n.parameters.teamId ? [n.parameters.teamId] : [])))].sort().join(',');
+  const [leads, setLeads] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!ids) return;
+    let live = true;
+    void Promise.all(ids.split(',').map(async (id) => [id, await loadTeam(id)] as const)).then((teams) => {
+      if (!live) return;
+      const found: Record<string, string> = {};
+      for (const [id, team] of teams) {
+        const lead = team && rootOf(team.published ?? team.draft);
+        if (lead?.kind === 'agent') found[id] = lead.agentId;
+      }
+      setLeads(found);
+    });
+    return () => {
+      live = false;
+    };
+  }, [ids]);
+  return leads;
+}
+
 /** The roster, once loaded (undefined until then). */
 export function useRoster(): AgentSummary[] | undefined {
   const [agents, setAgents] = useState<AgentSummary[]>();

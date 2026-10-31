@@ -221,6 +221,36 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
   return { ops: cleaned, invented, values };
 }
 
+const teamKey = (value: string) => value.trim().toLowerCase().replace(/\s+team$/, '');
+
+/**
+ * A Run a Team node's team as the model wrote it: models put the team's name or its lead's title where the id goes
+ * ("Tech Lead" for team_COGk…). A name that matches one published team becomes its id, and `teamName` is filled in from
+ * the team, so the node shows it and runs. `typeOf` gives the type of a node a setParameters op names.
+ */
+export function withTeamIds(ops: unknown, teams: readonly TeamBrief[], typeOf: (node: string) => string | undefined = () => undefined): unknown {
+  if (!Array.isArray(ops) || !teams.length) return ops;
+  const resolve = (parameters: unknown) => {
+    if (!parameters || typeof parameters !== 'object') return parameters;
+    const p = parameters as Record<string, unknown>;
+    const written = typeof p.teamId === 'string' ? p.teamId.trim() : '';
+    if (!written || written.includes('{{')) return parameters;
+    const key = teamKey(written);
+    const exact = teams.find((t) => t.id === written);
+    const named = teams.filter((t) => teamKey(t.name) === key);
+    const led = teams.filter((t) => t.members.some((m) => !m.reportsTo && teamKey(m.title) === key));
+    const team = exact ?? (named.length === 1 ? named[0] : !named.length && led.length === 1 ? led[0] : undefined);
+    return team ? { ...p, teamId: team.id, teamName: team.name } : parameters;
+  };
+  return ops.map((op) => {
+    if (!op || typeof op !== 'object') return op;
+    const o = op as Record<string, unknown>;
+    if (o.op === 'addNode' && o.type === 'core.runTeam') return { ...o, parameters: resolve(o.parameters) };
+    if (o.op === 'setParameters' && typeOf(String(o.node ?? '')) === 'core.runTeam') return { ...o, parameters: resolve(o.parameters) };
+    return op;
+  });
+}
+
 /** An id-like token in prose: a capital, then 8 or more capitals, digits, `_` or `-`, with a digit among them (C057L43652P). */
 const ID_TOKEN = /\b(?=[A-Z\d_-]*\d)[A-Z][A-Z\d_-]{8,}\b/g;
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -449,7 +479,8 @@ export async function runChat(input: ChatInput): Promise<void> {
         };
         // A node already proposed and waiting is used, not added again.
         const { ops: fresh, repeated } = withoutRepeatedAdds(working, waiting, ops);
-        const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(fresh, known(), typeText);
+        const teamed = withTeamIds(fresh, input.teams ?? [], (name) => nodeByName(name)?.type);
+        const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(teamed, known(), typeText);
         for (const value of values) invented.add(value);
         const validated = validateOps(working, proposedOps, lookup);
         if (!validated.ops.length && repeated.length && !validated.dropped.length) {

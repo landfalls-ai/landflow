@@ -196,24 +196,25 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
   }
 
   const published = team.published;
-  const card = (member: TeamMember) => (
+  const card = (member: TeamMember, inSection = false) => (
     <MemberCard
       key={member.id}
       config={draft}
       member={member}
       agent={memberAgent(member, agents ?? [])}
       lead={!member.reportsTo}
+      inSection={inSection}
       onEdit={() => setEditing({ member })}
       onAddReport={member.kind === 'agent' ? () => setEditing({ reportsTo: member.id }) : undefined}
     />
   );
-  const branch = (node: OrgNode, depth: number): React.ReactNode => (
-    <div key={node.member.id} className={cn(depth > 0 && 'ml-3 border-l border-hair pl-3 sm:ml-5 sm:pl-5')}>
-      <div className="py-1.5">{card(node.member)}</div>
-      {node.reports.map((n) => branch(n, depth + 1))}
-    </div>
-  );
-
+  // The chart in sections, breadth first: the lead on top, then one grid of equal cards per manager's direct reports.
+  const sections: OrgNode[] = [];
+  for (let queue = tree ? [tree] : []; queue.length; ) {
+    const node = queue.shift()!;
+    if (node.reports.length) sections.push(node);
+    queue.push(...node.reports);
+  }
   return (
     <>
       <PageHeader
@@ -232,7 +233,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
           </>
         }
       />
-      <PageBody className="mx-auto w-full max-w-[760px] px-4 sm:px-6">
+      <PageBody className="mx-auto w-full max-w-[960px] px-4 sm:px-6">
         <div className="flex flex-col gap-4">
           <Field id="team-name" label="Name">
             <Input id="team-name" value={draft.name} onChange={(e) => update((c) => ({ ...c, name: e.target.value }))} placeholder="Plugin team" />
@@ -249,11 +250,26 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
               </Button>
             </div>
             {draft.members.length === 0 && <p className="rounded-2xl border border-dashed border-hair px-4 py-8 text-center text-[13px] text-t3">No members yet. Add the lead first, then the members who report to it.</p>}
-            {tree && branch(tree, 0)}
+            {tree && (
+              <div className="flex flex-col items-center">
+                <div className="w-full sm:max-w-[360px]">{card(tree.member)}</div>
+                {sections.map((node) => (
+                  <div key={node.member.id} className="flex w-full flex-col items-center">
+                    <div className="h-5 w-px bg-hair" aria-hidden />
+                    <section aria-label={`Reports to ${node.member.title}`} className="w-full">
+                      <h3 className="mb-2 text-center text-[12px] text-t3">
+                        Reports to {node.member.title} · {node.reports.length}
+                      </h3>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{node.reports.map((n) => card(n.member, true))}</div>
+                    </section>
+                  </div>
+                ))}
+              </div>
+            )}
             {loose.length > 0 && (
               <div className="mt-2">
                 <div className="mb-1 text-[12px] text-t3">Not in the chart yet</div>
-                <div className="flex flex-col gap-2">{loose.map(card)}</div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{loose.map((m) => card(m))}</div>
               </div>
             )}
           </section>
@@ -327,38 +343,48 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
 
 const tokens = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
 
-function MemberCard({ config, member, agent, lead, onEdit, onAddReport }: { config: AgentTeamConfig; member: TeamMember; agent?: AgentSummary; lead: boolean; onEdit: () => void; onAddReport?: () => void }) {
+function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddReport }: { config: AgentTeamConfig; member: TeamMember; agent?: AgentSummary; lead: boolean; inSection?: boolean; onEdit: () => void; onAddReport?: () => void }) {
   const manager = managerOf(config, member);
   const reviews = (member.reviews ?? []).map((id) => config.members.find((m) => m.id === id)?.title).filter(Boolean);
+  const reviewedBy = config.members.filter((m) => m.reviews?.includes(member.id)).map((m) => m.title);
+  // A footer only when it has something to say: a card in a row without one keeps its height (the grid) and its role.
+  const chips = Boolean((manager && !inSection) || reviews.length || reviewedBy.length || member.budgetTokens !== undefined || member.questionsTo === 'person');
+  const runsOn = member.kind === 'a2a' ? (agent ? `${agent.name} on kagent` : 'Remote agent over A2A') : agent ? 'Landflow agent' : 'Pick an agent';
   return (
-    <article className="rounded-2xl border border-hair bg-sf p-3 transition-colors hover:border-bd">
-      <div className="flex items-start gap-3">
-        {/* A remote member that calls a Landflow agent on kagent wears that agent's face. */}
-        {member.kind === 'agent' || agent ? <AgentAvatar agent={agent ?? { name: member.title }} size={44} /> : <A2aTile size={44} />}
-        <button type="button" onClick={onEdit} className="min-w-0 flex-1 rounded text-left focus-visible:outline-2 focus-visible:outline-ac">
-          <span className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[14px] font-semibold text-t1">{member.title || 'Untitled'}</span>
-            {lead && <Badge tone="accent">Lead</Badge>}
+    // A card: who (face, title, where it runs), what it does, and its relations in a footer, so cards in a row line up.
+    <article className={cn('flex h-full flex-col overflow-hidden rounded-2xl border bg-sf transition-colors hover:border-bd', lead ? 'border-acbd' : 'border-hair')}>
+      <button type="button" onClick={onEdit} className="flex flex-1 flex-col gap-2 p-3 text-left focus-visible:outline-2 focus-visible:outline-ac">
+        <span className={cn('-m-3 mb-0 flex items-center gap-3 p-3', lead && 'bg-acdim')}>
+          {/* A remote member that calls a Landflow agent on kagent wears that agent's face. */}
+          {member.kind === 'agent' || agent ? <AgentAvatar agent={agent ?? { name: member.title }} size={48} /> : <A2aTile size={48} />}
+          <span className="min-w-0">
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span className="truncate text-[15px] font-semibold text-t1">{member.title || 'Untitled'}</span>
+              {lead && <Badge tone="accent">Lead</Badge>}
+            </span>
+            <span className="flex items-center gap-1 text-[12px] text-t3">
+              {member.kind === 'a2a' && <RadioTower className="size-3 shrink-0" />}
+              <span className="truncate">{runsOn}</span>
+            </span>
           </span>
-          <span className="block text-[12px] text-t2">{member.role || (member.kind === 'agent' ? (agent ? `${agent.name}${agent.role ? `, ${agent.role}` : ''}` : 'Pick an agent') : 'Remote agent')}</span>
-        </button>
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {manager && <Chip>Reports to {manager.title}</Chip>}
-        {reviews.length > 0 && <Chip tone="accent">Reviews {reviews.join(', ')}</Chip>}
-        {member.kind === 'a2a' && (
-          <Chip>
-            <RadioTower className="size-3" /> {agent ? `${agent.name} on kagent` : 'Remote'}
-          </Chip>
-        )}
-        {member.budgetTokens !== undefined && <Chip>{tokens(member.budgetTokens)} tokens a run</Chip>}
-        {member.questionsTo === 'person' && <Chip>Questions go to a person</Chip>}
-        {onAddReport && (
-          <button type="button" onClick={onAddReport} className="ml-auto rounded text-[12px] font-semibold text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac">
-            + Add a report
-          </button>
-        )}
-      </div>
+        </span>
+        <span className="line-clamp-3 text-[12.5px] leading-snug text-t2">{member.role || (agent?.role ? `${agent.name}, ${agent.role}` : 'No role yet: tap to say what it does.')}</span>
+      </button>
+      {(chips || onAddReport || !manager) && (
+        <div className="mt-auto flex min-h-[44px] flex-wrap items-center gap-1.5 border-t border-hair px-3 py-2">
+          {manager && !inSection && <Chip>Reports to {manager.title}</Chip>}
+          {reviews.length > 0 && <Chip tone="accent">Reviews {reviews.join(', ')}</Chip>}
+          {reviewedBy.length > 0 && <Chip>Reviewed by {reviewedBy.join(', ')}</Chip>}
+          {member.budgetTokens !== undefined && <Chip>{tokens(member.budgetTokens)} tokens a run</Chip>}
+          {member.questionsTo === 'person' && <Chip>Questions go to a person</Chip>}
+          {!manager && !chips && <span className="text-[12px] text-t3">Runs the team</span>}
+          {onAddReport && (
+            <button type="button" onClick={onAddReport} className="ml-auto rounded text-[12px] font-semibold text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac">
+              + Add a report
+            </button>
+          )}
+        </div>
+      )}
     </article>
   );
 }

@@ -35,11 +35,14 @@ to** the member's manager first (who may pass them on to a person), or straight 
 
 ## The chart
 
-The team page (`/agents/teams/:id`) draws the team as an indented tree of member cards, one column, so it reads on a
-phone: face, title, what it does, and chips for **Reports to**, **Reviews**, **Remote**, the budget and where questions go.
-A remote member that calls a Landflow agent on kagent (its address is that agent's on kagent's controller,
-`…/agents/<namespace>/<name>`) wears that agent's face, here, on the Teams cards, above the Run a Team node and in Run
-Trace, and its chip reads **<agent> on kagent**; any other remote member gets the A2A radio icon.
+The team page (`/agents/teams/:id`) draws the team as an aligned org chart of equal cards: the lead on top (tinted),
+then one section per manager ("Reports to Tech Lead · 3") in chart order, each a grid of same-size cards, one column on a
+phone, two from `sm`, three from `lg`. A card has a header (face, title, where it runs: **Landflow agent**, **<agent> on
+kagent** or **Remote agent over A2A**), what it does in up to three lines, and a footer with **Reviews**, **Reviewed by**,
+the budget and where questions go (**Reports to** only outside the chart), so cards in a row line up. A remote member
+that calls a Landflow agent on kagent (its address is that agent's on kagent's controller, `…/agents/<namespace>/<name>`)
+wears that agent's face, here, on the Teams cards, above the Run a Team node and in Run Trace; any other remote member
+gets the A2A radio icon.
 Tap a card to edit it in a sheet; **+ Add a report** on a manager adds a member under it. A new member reports to the lead
 unless asked otherwise (the first one becomes the lead). Removing a member hands its reports to its manager and drops it
 from reviews. Members not connected to the lead yet are listed under the chart. The page autosaves the draft after a
@@ -84,8 +87,9 @@ The **Run a Team** node (`core.runTeam`, under AI) runs a published team as one 
 | Inputs | the flow's items, plus Run an Agent's optional **Chat Model**, **Memory** and **Tool** slots: whatever is connected goes to the **lead**, so a flow keeps its model or a tool such as a GitHub branch check on the team node |
 | Outputs | **Done** and **Needs a person** |
 
-Done carries `{ reply, team: { id, name, version }, members: [{ title, asked, tokens, overBudget? }] }`; Needs a person the
-same plus `reason`. A team that was never published, a deleted team or an empty message fails the node (or the item, with
+Done carries `{ reply, team: { id, name, version }, members: [{ title, asked, tokens, overBudget? }], activity }`; Needs a
+person the same plus `reason`. `activity` is what the run did, for the canvases: `{ durationMs, turns: [{ member, start,
+end }], moments: [{ at, member, tone, text }], steps: { <title>: count } }` (times in milliseconds since the team started). A team that was never published, a deleted team or an empty message fails the node (or the item, with
 Continue on fail), like Run an Agent does. The node shows the team's name under its title (the hidden `teamName`
 parameter, filled in when the team is picked or turned from a lead), the lead's face instead of the team icon, and every
 member's face and title above it.
@@ -118,6 +122,39 @@ member's face and title above it.
 8. The run ends when the lead answers. Its answer is `reply`; the lead's other ends (iteration limit, budget) go to Needs a
    person with a reason, an error fails the node.
 
+### Watching a team work
+
+While a Run a Team node runs it reports who works now and on what (`node.progress`, folded from the lead's stream by
+[`lib/shared/team-progress.ts`](../apps/web/src/lib/shared/team-progress.ts)): the member working, what it does as the step
+reads ("Bash: pnpm test") and in plain words ("Running the tests"), the command, how many steps it took in this turn, its
+last five steps, every member's state (idle, working, done, failed) and how often it was asked, each member's turns, and
+the moments that matter. On the editor's canvas during a run and on the execution view of a running execution
+([`components/editor/team-live.tsx`](../apps/web/src/components/editor/team-live.tsx)):
+
+- **The node becomes the worker.** It wears the working member's face, title and colour (the running frame too), with the
+  lead's face as a small badge ("for Tech Lead"); the line under the title says what it does in plain words, then the exact
+  command in small mono, then the clock and the step ("1:06 · step 5"). When the lead takes over again, the node swaps back.
+- **A ticker** under the head shows the last three steps, each with a check, a cross or a spinner and how long it took.
+- **A ribbon** at the bottom of the node has one segment per turn in that member's colour, growing while it works.
+- **The roster** above the node shows faces only: the member at work is ringed in its colour, done members have a check,
+  one that failed is ringed red and members not asked yet fade.
+- **Moments** appear above the roster for 25 seconds: "Asked the Reviewer", "Tests failed · exit 1", "14 tests pass",
+  "Typecheck passed", "Pull request #4 opened", "Branch pushed", "Reviewer: approve" or "Reviewer asks for changes" (from a
+  `VERDICT:` line in the answer), "Developer failed".
+
+Plain words come from `narrate()`: a shell command reads by what its chain ends with (`cd x && pnpm install && pnpm test`
+is "Running the tests"; also installs, typechecks, lint, builds, clones, commits, pushes, `gh pr create` and `gh pr merge`),
+Read and Edit name the file, Grep names the pattern, a web fetch names the host, and a tool with no rule keeps its name as
+a sentence ("Check branch"). Captions of other nodes that report progress (an A2A Agent node) use the same words, with the
+exact step in their tooltip.
+
+After the run the node keeps the ribbon and a one-line summary of its output's `activity` (the results that mattered and
+each member's step count), in the editor and on the execution view. The execution view's **Agent session** panel follows
+the lead's session live, its header names the member working ("Tech Lead · Reviewer working"), and it gives way to the
+canvas on a short screen so the flow stays in view. On a phone the execution view pins a **Now card** over the canvas or
+the Run Trace: the face, a sentence ("Reviewer is running the tests"), the command, the ticker and a way into the Run Trace;
+and the workflow's executions page shows the list and an open execution one at a time, with a back arrow to the list.
+
 ### In the Run Trace
 
 The journal names members by title and records each request with its reason, under the request of the manager that asked
@@ -141,7 +178,8 @@ in [`lib/shared/turn-into-team.ts`](../apps/web/src/lib/shared/turn-into-team.ts
 
 [Spotlight](assistant.md#spotlight) is given the published teams (names, ids, members by title and who reports to whom),
 in its context and in the docs of `core.runTeam`, so "run the plugin team on this" proposes a Run a Team node with that team's
-id. It has a `turnIntoTeam` op (`{"op":"turnIntoTeam","node":"<lead>"}`) for "turn the Tech Lead and its agents into a
+id. A model that writes the team's name or its lead's title where the id goes ("Tech Lead") has it turned into the id, with
+`teamName` filled in, before the proposal reaches the editor. It has a `turnIntoTeam` op (`{"op":"turnIntoTeam","node":"<lead>"}`) for "turn the Tech Lead and its agents into a
 team": applying the proposal does what the toolbar button does.
 
 ### What is not enforced

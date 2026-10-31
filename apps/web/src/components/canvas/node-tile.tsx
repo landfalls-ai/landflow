@@ -10,7 +10,7 @@ import { Handle, Position } from '@xyflow/react';
 import { indexedPorts } from '@landflow/protocol';
 import { Check, Hourglass, Pause, Pin, Plus, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
+import { duration, languageMeta, TRANSPORT_META } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import type { NodeStatus } from '@/lib/client/run-data';
 import type { ConnectionType, NodeTypeInfo, PortDescriptor } from '@/lib/shared/types';
@@ -66,6 +66,9 @@ function slotsWidth(ports: Array<{ port: PortDescriptor }>) {
 }
 
 /** Drawn round: sub-nodes, nodes attached as tools, and nodes whose shown outputs all go to root nodes (a vector store in a retrieve mode). */
+/** Whether a node shows how long it ran (over its corner when wide, under its name otherwise). */
+export const ranFor = (status: NodeStatus | undefined) => Boolean(status && (status.state === 'success' || status.state === 'error') && status.durationMs !== undefined);
+
 export function isCompact(descriptor: NodeTypeInfo['descriptor'] | undefined, parameters: Record<string, unknown>, asTool?: boolean) {
   if (descriptor?.kind === 'subnode' || asTool) return true;
   const outputs = indexPorts(descriptor?.outputs ?? [{ type: 'main' }], parameters);
@@ -95,8 +98,19 @@ export interface NodeTileProps {
   fresh?: boolean;
   /** The agent the node stands for (Run an Agent's agent, a team's lead): its face replaces the node's icon. */
   face?: AvatarSource;
+  /**
+   * What a wide node shows while it works or after it ran (a team's member at work: components/editor/team-live.tsx):
+   * `head` replaces the icon and name, `body` sits under them and grows the tile, and `color` tints the running frame.
+   */
+  live?: NodeLive;
   /** Toolbars and overlays rendered inside the node. */
   children?: ReactNode;
+}
+
+export interface NodeLive {
+  head?: ReactNode;
+  body?: ReactNode;
+  color?: string;
 }
 
 /** Status mark in the tile's bottom-right corner, n8n style. */
@@ -164,6 +178,7 @@ export function NodeTile(props: NodeTileProps) {
     onToggleBreakpoint,
     fresh,
     face,
+    live,
     children,
   } = props;
   const descriptor = info?.descriptor;
@@ -181,8 +196,8 @@ export function NodeTile(props: NodeTileProps) {
   const color = nodeColor(info);
   const subtitle = subtitleOf(descriptor?.subtitle, parameters);
   const lang = info && info.pluginId !== 'core' ? languageMeta(info.language) : undefined;
-  const ran = status && (status.state === 'success' || status.state === 'error') && status.durationMs !== undefined;
-  const style = { '--node': color } as CSSProperties;
+  const ran = ranFor(status);
+  const style = { '--node': live?.color ?? color } as CSSProperties;
   const isImage = Boolean(descriptor?.icon && /^(https?:|data:)/.test(descriptor.icon));
 
   const meta = (lang || unavailable || ran) && (
@@ -197,7 +212,7 @@ export function NodeTile(props: NodeTileProps) {
       {ran && (
         <span>
           {lang ? '· ' : ''}
-          {status!.reused ? 'reused' : `${status!.durationMs} ms`}
+          {status!.reused ? 'reused' : duration(status!.durationMs)}
         </span>
       )}
     </div>
@@ -349,15 +364,41 @@ export function NodeTile(props: NodeTileProps) {
   // -------------------------------------------------------------- main node
   const width = wide ? Math.max(WIDE_TILE, slotsWidth(aiIn)) : TILE;
   const height = Math.max(TILE, Math.max(mainIn.length, mainOut.length) * 30 + 22);
+  const grows = wide && Boolean(live?.body);
+  const head = wide && live?.head ? (
+    live.head
+  ) : (
+    <>
+      {face ? (
+        <AgentAvatar agent={face} size={wide ? 40 : 54} className="transition-transform duration-200 group-hover:scale-110" />
+      ) : (
+        <NodeIcon
+          icon={descriptor?.icon}
+          size={wide ? 30 : isImage ? 46 : 38}
+          style={{ color }}
+          strokeWidth={1.6}
+          className="shrink-0 transition-transform duration-200 group-hover:scale-110"
+        />
+      )}
+      {wide && (
+        <div className="min-w-0">
+          <div className={cn('truncate text-[14px] font-semibold text-t1', disabled && 'line-through')}>{name}</div>
+          <div className="truncate text-[12px] text-t3">{subtitle ?? descriptor?.displayName}</div>
+        </div>
+      )}
+    </>
+  );
   return (
-    <div className="group relative" style={{ ...style, width, height }}>
+    // A tile with a live body grows with it: the handles stay centred on its sides.
+    <div className="group relative" style={{ ...style, width, ...(grows ? { minHeight: height } : { height }) }}>
       {children}
       {pausedLabel}
       {isTrigger && <Zap className="absolute -left-6 top-1/2 size-4 -translate-y-1/2 text-viz-2" fill="currentColor" strokeWidth={0} />}
       <div
         className={cn(
-          'relative flex size-full items-center bg-sf',
-          wide ? 'gap-3 rounded-[18px] px-4' : 'justify-center',
+          'relative flex size-full bg-sf',
+          grows ? 'flex-col rounded-[18px]' : 'items-center',
+          wide && !grows ? 'gap-3 rounded-[18px] px-4' : !wide && 'justify-center',
           !wide && (isTrigger ? 'rounded-l-[44px] rounded-r-[18px]' : 'rounded-[18px]'),
           frameClasses(status, selected, unavailable),
           disabled && 'opacity-50',
@@ -365,22 +406,15 @@ export function NodeTile(props: NodeTileProps) {
         )}
         style={{ background: `linear-gradient(160deg, ${tint(color, 9)}, var(--sf) 70%)` }}
       >
-        {face ? (
-          <AgentAvatar agent={face} size={wide ? 40 : 54} className="transition-transform duration-200 group-hover:scale-110" />
+        {grows ? (
+          <>
+            <div className="flex shrink-0 items-center gap-3 px-4" style={{ height }}>
+              {head}
+            </div>
+            {live!.body}
+          </>
         ) : (
-          <NodeIcon
-            icon={descriptor?.icon}
-            size={wide ? 30 : isImage ? 46 : 38}
-            style={{ color }}
-            strokeWidth={1.6}
-            className="shrink-0 transition-transform duration-200 group-hover:scale-110"
-          />
-        )}
-        {wide && (
-          <div className="min-w-0">
-            <div className={cn('truncate text-[14px] font-semibold text-t1', disabled && 'line-through')}>{name}</div>
-            <div className="truncate text-[12px] text-t3">{subtitle ?? descriptor?.displayName}</div>
-          </div>
+          head
         )}
         {disabled && !wide && <span className="absolute inset-x-3 top-1/2 h-[1.5px] -rotate-45 bg-t3" />}
         <StatusMark status={status} />

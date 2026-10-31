@@ -5,7 +5,7 @@ import type { NodeTypeInfo } from '@/lib/shared/types';
 import type { GenerateInput } from '@/lib/server/nodes/models';
 import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
-import { opsArgument, withEarlierRefs, recoverToolCalls, runChat, withoutApplyRequests, withoutAppliedClaims, withoutEchoedNotes, withoutInventedIds, withoutMadeUpIds, withoutRepeats, MAX_STEPS, type ChatEvent } from '@/lib/server/assistant/chat';
+import { opsArgument, withEarlierRefs, recoverToolCalls, runChat, withoutApplyRequests, withoutAppliedClaims, withoutEchoedNotes, withoutInventedIds, withoutMadeUpIds, withoutRepeats, withTeamIds, MAX_STEPS, type ChatEvent } from '@/lib/server/assistant/chat';
 import { registryLookup, validateOps } from '@/lib/server/assistant/ops';
 import { searchNodes } from '@/lib/server/assistant/research';
 import { suggestAfterRun } from '@/lib/server/assistant/suggest';
@@ -433,6 +433,25 @@ describe('builder chat', () => {
     // Expressions, other parameters and a value the node type itself offers are left alone.
     const offered = () => JSON.stringify([{ name: 'modelId', default: 'gpt-5-mini' }]);
     expect(withoutInventedIds([{ op: 'setParameters', node: 'A', parameters: { sheetId: '{{ $json.sheet }}', name: 'X9Y8Z7W6V5', modelId: 'gpt-5-mini' } }], '', offered).invented).toEqual([]);
+  });
+
+  it('turns a team written by name or by its lead into the team’s id', () => {
+    const teams = [
+      { id: 'team_tl1', name: 'Tech Lead team', version: 2, members: [{ title: 'Tech Lead' }, { title: 'Reviewer', reportsTo: 'Tech Lead' }] },
+      { id: 'team_ops', name: 'Ops', version: 1, members: [{ title: 'On-call' }] },
+    ];
+    const add = (teamId: string) => [{ op: 'addNode', type: 'core.runTeam', name: 'Run Team', parameters: { teamId, teamName: '', message: 'Review' } }];
+    const params = (ops: unknown) => (ops as Array<{ parameters: Record<string, unknown> }>)[0].parameters;
+    // The lead's title, the team's name with or without "team", and the id itself.
+    for (const written of ['Tech Lead', 'tech lead team', 'team_tl1']) expect(params(withTeamIds(add(written), teams))).toMatchObject({ teamId: 'team_tl1', teamName: 'Tech Lead team', message: 'Review' });
+    expect(params(withTeamIds(add('ops'), teams))).toMatchObject({ teamId: 'team_ops', teamName: 'Ops' });
+    // A name no team has, and an expression, are left as written.
+    expect(params(withTeamIds(add('Marketing'), teams))).toMatchObject({ teamId: 'Marketing', teamName: '' });
+    expect(params(withTeamIds(add('{{ $json.team }}'), teams))).toMatchObject({ teamId: '{{ $json.team }}' });
+    // setParameters on a Run a Team node already in the flow; other nodes' teamId is not touched.
+    const set = [{ op: 'setParameters', node: 'Run Team', parameters: { teamId: 'Ops' } }];
+    expect(params(withTeamIds(set, teams, (name) => (name === 'Run Team' ? 'core.runTeam' : undefined)))).toEqual({ teamId: 'team_ops', teamName: 'Ops' });
+    expect(params(withTeamIds(set, teams))).toEqual({ teamId: 'Ops' });
   });
 
   it('keeps an answer that proposed nothing as written', async () => {

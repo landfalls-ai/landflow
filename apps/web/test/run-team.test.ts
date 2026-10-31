@@ -179,6 +179,11 @@ describe('Run a Team', () => {
       { title: 'Developer', asked: 1, tokens: expect.any(Number) },
       { title: 'Tester', asked: 1, tokens: expect.any(Number) },
     ]);
+    // What the run did, for the canvases: the lead's direct reports' turns, in order, and the moments.
+    const activity = done!.activity as { turns: Array<{ member: string; end?: number }>; moments: Array<{ text: string }> };
+    expect(activity.turns.map((t) => t.member)).toEqual(['Tech Lead', 'Planner', 'Tech Lead', 'Planner', 'Tech Lead', 'Developer', 'Tech Lead']);
+    expect(activity.turns.every((t) => typeof t.end === 'number')).toBe(true);
+    expect(activity.moments.map((m) => m.text)).toEqual(expect.arrayContaining(['Asked the Planner', 'Planner reported back', 'Asked the Developer', 'Developer reported back']));
     // The planner kept its conversation, and its first request carried the goal.
     const sends = a2a.calls.filter((c) => c.method === 'SendMessage' || c.method === 'SendStreamingMessage');
     const planner = sends.filter((c) => c.params.message?.parts?.[0]?.text?.includes('Hello World') || c.params.message?.parts?.[0]?.text?.includes('and again'));

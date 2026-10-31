@@ -12,6 +12,7 @@ import { api } from '@/lib/client/api';
 import { matchesNode, remoteRunOfProgress, type NodeProgress } from '@/lib/client/node-progress';
 import type { AgentSession } from '@/lib/shared/agents';
 import { TimelineView } from '../agents/timeline';
+import { liveTeam } from '../editor/team-strip';
 
 export interface AgentNodeRef {
   nodeId: string;
@@ -84,9 +85,12 @@ export function AgentSessionPanel({
 
   if (!node) return null;
   const working = Boolean(runningNode);
+  // A team node's report names the member at work (lib/shared/team-progress.ts): the session is the lead's, the work is theirs.
+  const member = live ? liveTeam(progress[node.nodeId]?.data as Record<string, unknown> | undefined)?.member : undefined;
   return (
-    <div className="shrink-0 border-t border-hair bg-sf" data-testid="agent-session-panel">
-      <div className="flex h-9 items-center gap-2 px-4">
+    // Gives way before the canvas does: on a short screen the session shrinks to its header and scrolls.
+    <div className="flex min-h-9 flex-col border-t border-hair bg-sf" data-testid="agent-session-panel">
+      <div className="flex h-9 shrink-0 items-center gap-2 px-4">
         <button onClick={() => setOpen(!expanded)} aria-expanded={expanded} className="flex items-center gap-2 text-[13px] font-semibold text-t1">
           <ChevronDown className={cn('size-3.5 text-t3 transition-transform', !expanded && '-rotate-90')} />
           <Bot className="size-3.5 text-ac" />
@@ -109,7 +113,10 @@ export function AgentSessionPanel({
             ))}
           </div>
         ) : (
-          <span className="truncate text-[12px] text-t3">{node.name}</span>
+          <span className="truncate text-[12px] text-t3">
+            {node.name}
+            {member && member.toLowerCase() !== node.name.toLowerCase() && <span className="font-medium text-t2"> · {member} working</span>}
+          </span>
         )}
       </div>
       {expanded && (
@@ -119,7 +126,7 @@ export function AgentSessionPanel({
             const el = e.currentTarget;
             stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
           }}
-          className="max-h-[320px] overflow-y-auto border-t border-hair px-4 py-3"
+          className="max-h-[320px] min-h-0 overflow-y-auto border-t border-hair px-4 py-3"
         >
           {error ? (
             <p className="text-[13px] text-rd">{error}</p>
