@@ -125,7 +125,8 @@ You help the user build and fix the workflow open in the editor. Tools:
 How to work:
 - Research, then propose. Use exact type ids and parameter names from the docs.
 - When the request has several parts (a branch, then more steps on each side, a loop), first write a short numbered plan in one or two lines, then propose the whole thing in one propose_changes call, or a few: new nodes join each other with "ref" and "after"/"connect", so one call can hold a chain, both sides of a branch and a loop back. Don't research the same node twice, and don't propose one node per call.
-- Changes proposed earlier in the conversation that the user hasn't applied yet are part of the workflow you read (get_workflow marks them pending). Connect to them by name; never propose them again.
+- Changes proposed earlier in the conversation that the user hasn't applied yet are part of the workflow you read (get_workflow marks them pending). Connect to them by name; never propose them again. A node a pending proposal removes is gone because the user asked: never add it, or a node doing its job, back.
+- Once everything the latest message asks for is proposed, stop: say in one line what the cards do. Don't go on to improve the workflow unasked.
 - A node that already has several outputs (get_workflow lists each output and what it feeds, and get_node_docs lists its ports) branches by itself: connect new nodes from the right output ("output": 0, 1…). Don't put an If, Filter or Switch after it to test what it already separates.
 - A connection back to an earlier node is allowed and makes a loop; the engine runs loops. To limit the rounds, use a round counter: a Code node that adds 1 to a round number (kept in a field the loop's nodes pass on, or read from the counter node's own previous output), then an If "round < N" whose true branch connects back to the node to repeat and whose false branch goes on to what happens after the last round.
 - To fix a node's input, prefer changing the node's own parameters (read a field the items have). To put a node between two nodes, use addNode with "before": "<the later node>".
@@ -390,11 +391,15 @@ export async function runChat(input: ChatInput): Promise<void> {
   /** Ids of the nodes proposed and not applied yet, and one line for each proposal. */
   const waiting = new Set<string>();
   const waitingSummaries: string[] = [];
+  /** Nodes the pending proposals remove, by lower-case name: not to be added back. */
+  const removed = new Map<string, { name: string; type: string }>();
   /** ref → name of the nodes this reply's proposals added, for later proposals that use the ref. */
   const proposedRefs = new Map<string, string>();
   const hold = (summary: string, next: Workflow) => {
     const known = new Set(working.nodes.map((n) => n.id));
     for (const node of next.nodes) if (!known.has(node.id)) waiting.add(node.id);
+    const kept = new Set(next.nodes.map((n) => n.id));
+    for (const node of working.nodes) if (!kept.has(node.id) && !waiting.has(node.id)) removed.set(node.name.toLowerCase(), { name: node.name, type: node.type });
     waitingSummaries.push(shorten(summary, 140));
     working = next;
   };
@@ -402,7 +407,15 @@ export async function runChat(input: ChatInput): Promise<void> {
     const validated = validateOps(working, opsArgument(earlier.ops), lookup);
     if (validated.ops.length) hold(earlier.summary, validated.workflow);
   }
-  const outline = () => workflowOutline(working, runs, { types, pending: waiting, pendingSummaries: waitingSummaries });
+  const outline = () => workflowOutline(working, runs, { types, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
+  const latest = input.messages.findLast((m) => m.role === 'user')?.content.toLowerCase() ?? '';
+  /** A node this proposal adds back after a pending proposal removed it: by name, or by type unless the latest message names the type. */
+  const addedBack = (ops: AssistantOp[]) =>
+    ops.flatMap((op) => {
+      if (op.op !== 'addNode') return [];
+      const gone = removed.get((op.name ?? '').toLowerCase()) ?? [...removed.values()].find((r) => r.type === op.type && !latest.includes((types.find((t) => t.type === op.type)?.descriptor.displayName ?? op.type).toLowerCase()));
+      return gone ? [`“${gone.name}” (${gone.type})`] : [];
+    });
   /** Whether an incomplete proposal was already sent back to the model in this reply. */
   let sentBack = false;
   /** Whether a proposal that put a branching node after a node that already branches was sent back. */
@@ -483,6 +496,13 @@ export async function runChat(input: ChatInput): Promise<void> {
         const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(teamed, known(), typeText);
         for (const value of values) invented.add(value);
         const validated = validateOps(working, proposedOps, lookup);
+        const back = addedBack(validated.ops);
+        if (back.length) {
+          return result(
+            `Nothing changes: ${back.join(', ')} ${back.length === 1 ? 'is' : 'are'} removed by a pending proposal because the user asked; don't add ${back.length === 1 ? 'it' : 'them'}, or a node doing the same job, back. If everything the latest message asks for is proposed, stop and say in one line what the cards do.`,
+            'Skipped adding back a removed node',
+          );
+        }
         if (!validated.ops.length && repeated.length && !validated.dropped.length) {
           return result(`Nothing changes: ${repeated.join('; ')}. Connect from it with another propose_changes call if something is still missing.`, 'Skipped a repeated proposal');
         }
@@ -533,7 +553,7 @@ export async function runChat(input: ChatInput): Promise<void> {
         const dropped = [...validated.dropped, ...validated.ignored, ...inventedNotes];
         const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
-        const shown = result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied. If the request has more parts, propose them now: the nodes above are in the workflow for you to connect to.`, `Proposed ${count}`);
+        const shown = result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied. If the latest message asks for something this doesn't cover yet, propose it now (the nodes above are in the workflow for you to connect to); if it's all proposed, stop and say in one line what the cards do.`, `Proposed ${count}`);
         onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: validated.warnings });
         proposed = true;
         recordSuggestions(['proposal']);

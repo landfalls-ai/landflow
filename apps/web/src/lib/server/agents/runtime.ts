@@ -63,8 +63,8 @@ export interface TeamRole {
   under?: string;
   /** Tokens the member may use in this session: the run stops with reason `budget` at the limit. */
   budgetTokens?: number;
-  /** Called with the answer the model is about to give: text back is told to the model (as a message) and the loop goes on. */
-  beforeAnswer?(reply: string): string | undefined;
+  /** Called with the answer the model is about to give (and the session so far): text back is told to the model (as a message) and the loop goes on. */
+  beforeAnswer?(reply: string, session: AgentSession): string | undefined;
 }
 
 export interface RunResult {
@@ -360,7 +360,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       session.messages.push({ role: 'assistant', text: answer, toolCalls: turn.toolCalls, ...(turn.raw && !changed && { raw: turn.raw }) });
       if (answer.trim()) upsert({ id: entryId(), type: 'assistant', text: answer, at: now(), model: `${model.provider}/${model.model}`, usage });
       if (!turn.toolCalls.length) {
-        const nudge = request.team?.beforeAnswer?.(answer);
+        const nudge = request.team?.beforeAnswer?.(answer, session);
         if (nudge) {
           session.messages.push({ role: 'user', content: nudge });
           upsert({ id: entryId(), type: 'notice', message: nudge, at: now() });

@@ -79,7 +79,7 @@ Rules:
 - Parameters: only the parameter names listed for that node. Reference fields of the current item with expressions such as "{{ $json.title }}". Field parameters (like "field") take a plain field name such as "text", not an expression.
 - Nodes that write a result object into "outputField" (see the parameter notes, e.g. "receives {score, label}") nest it: compare "{{ $json.sentiment.label }}" or "{{ $json.sentiment.score }}", never the whole object.
 - connections: {"from": key, "to": key, "output": n}. "output" is the source's output index (If/Filter-like nodes: 0 = true, 1 = false). AI sub-nodes attach to an AI Agent with "type" ai_languageModel, ai_memory or ai_tool, from the sub-node to the agent. RAG: a vector store (mode retrieve-as-tool) attaches to an agent as ai_tool, or (mode retrieve) to a Question and Answer Chain as ai_retriever; embeddings attach to a vector store as ai_embedding, a data loader as ai_document, a text splitter to the loader as ai_textSplitter.
-- testData: 2–4 realistic sample items the flow can be tested with when run manually (objects with the fields the flow reads).
+- testData: 2–4 realistic sample items the flow can be tested with when run manually (objects with the fields the flow reads); just 1 when the flow runs an agent or a team, since each item is a whole agent run.
 
 ${PARAMETER_FORMATS}`;
 
@@ -103,6 +103,9 @@ function catalog(types: NodeTypeInfo[]): string {
     })
     .join('\n');
 }
+
+/** Nodes that run a whole agent (or team) session per item: a test run of a flow with one gets one sample item. */
+const AGENT_TYPES = new Set(['core.aiAgent', 'core.messageAgent', 'core.runTeam', 'core.a2aAgent']);
 
 function asItems(rows: unknown): NodeItem[] | undefined {
   if (!Array.isArray(rows)) return undefined;
@@ -190,7 +193,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL): Promise<
     nodes.unshift(trigger);
     for (const root of roots) edges.push([trigger.key, root.key, 0, 'main']);
   }
-  const testItems = asItems(raw.testData);
+  const testItems = asItems(raw.testData)?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
   const pinData = trigger && trigger.type === 'core.manualTrigger' && testItems ? { [trigger.key]: testItems } : undefined;
   return { name: (raw.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped };
 }

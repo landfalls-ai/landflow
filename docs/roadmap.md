@@ -1008,7 +1008,10 @@ four steps of the approved plan:
   its last steps), with a ribbon of turns and the moments that matter (tests, typecheck, pull requests, a review's
   verdict); it keeps a summary after the run; the execution view's Agent session panel follows the lead and names the
   member working; phones get a Now card and an executions page that shows one thing at a time; the team page is an
-  aligned chart of cards; Spotlight turns a team written by name into its id.
+  aligned chart of cards; Spotlight turns a team written by name into its id. Then: a run outlives the editor that
+  started it (Stop asks the server, the editor picks a running run up again and keeps a growing live node in view); a
+  manager answers from what its reports said (file names it made up send it back once); Spotlight stops once a request
+  is proposed and doesn't add back a node it was asked to remove; the AI builder pins one sample item for agent flows.
 - Next: consults (ask a peer) and hand-offs; a person answering a member's question and the run carrying on; a
   manager's own reports in the live status; reviews across the chart and a reviewer's verdict as the sign-off; live budget use on the chart; the Go and Python SDKs
   declaring `delegates`. Paperclip-style autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.

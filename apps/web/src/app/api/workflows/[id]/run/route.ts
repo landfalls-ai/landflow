@@ -6,6 +6,10 @@
  *
  * `idempotencyKey` (or an `Idempotency-Key` header): a key already used for this workflow within the
  * retention window starts no new run; the stream names the existing execution (`duplicate: true`).
+ *
+ * The run outlives the request: closing or reloading the editor leaves it running, the editor picks it up again, and
+ * POST /api/executions/:id/stop stops it. A debug run is the exception and stops with the request, since nobody would
+ * be left to step it.
  */
 import { context } from '@opentelemetry/api';
 import { z } from 'zod';
@@ -109,7 +113,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
 
   const encoder = new TextEncoder();
   const abort = new AbortController();
-  request.signal.addEventListener('abort', () => abort.abort());
+  if (body.data.debug) request.signal.addEventListener('abort', () => abort.abort());
 
   const stream = new ReadableStream({
     async start(controller) {

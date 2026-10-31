@@ -119,7 +119,11 @@ member's face and title above it.
 7. **Budgets.** Tokens are counted per member: a Landflow agent's model usage, a remote member's A2A usage. At 80% a warn
    *Budget* check is recorded, at 100% a fail one: an agent member stops (`budget`), and its tool answers that it is over
    budget and is not called again. The lead's budget stops the lead at the limit and routes the run to Needs a person.
-8. The run ends when the lead answers. Its answer is `reply`; the lead's other ends (iteration limit, budget) go to Needs a
+8. **Answers from what was reported.** A manager (the lead, or a member with reports) is told to name only the files,
+   tests, commands and results its reports gave it. If its final answer names a file (`get-alerts.ts`, `PLAN.md`, or the
+   last part of a path) that none of its task, its reports' answers and steps, or its own tools' results mention, it is
+   sent back once with those names, and a warn *Grounded* check is recorded. A manager that asked nobody is not checked.
+9. The run ends when the lead answers. Its answer is `reply`; the lead's other ends (iteration limit, budget) go to Needs a
    person with a reason, an error fails the node.
 
 ### Watching a team work

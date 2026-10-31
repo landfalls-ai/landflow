@@ -157,6 +157,8 @@ interface EditorState {
   lastAddedId?: string;
 
   running: boolean;
+  /** A run going on without this page's stream (the editor was reloaded mid-run), followed through the live events (follow-run.ts). */
+  following?: string;
   /** The current run was started in debug mode. */
   debugging: boolean;
   paused?: PausedAt;
@@ -255,6 +257,8 @@ interface EditorState {
   applyEvent(event: ExecutionEvent): void;
   finishRun(): void;
   loadExecution(record: ExecutionRecord, viewing?: boolean): void;
+  /** Show a run that goes on without this page's stream, with the nodes `progress` names as running, and follow it. */
+  attachRun(record: ExecutionRecord, progress?: Record<string, NodeProgress>, viewing?: boolean): void;
   clearRun(): void;
   toWorkflow(): Workflow;
 }
@@ -320,6 +324,7 @@ function toFlow(workflow: Pick<Workflow, 'nodes' | 'connections'>): { nodes: Flo
 
 const emptyRun = {
   running: false,
+  following: undefined,
   debugging: false,
   paused: undefined,
   viewing: undefined,
@@ -1310,6 +1315,19 @@ export const useEditor = create<EditorState>((set, get) => {
       runDurationMs: record.durationMs,
       viewing: viewing ? { id: record.executionId, status: record.status, startedAt: record.startedAt } : undefined,
     });
+  },
+
+  attachRun(record, progress = {}, viewing = false) {
+    get().loadExecution(record, viewing);
+    const started = Date.parse(record.startedAt);
+    set((s) => ({
+      running: true,
+      following: record.executionId,
+      executionStartedAt: started,
+      serverStartedAt: started,
+      progress,
+      statuses: { ...s.statuses, ...Object.fromEntries(Object.entries(progress).map(([id, p]) => [id, { ...s.statuses[id], state: 'running' as const, startedAt: p.since ?? p.at }])) },
+    }));
   },
 
   clearRun() {

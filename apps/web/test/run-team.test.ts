@@ -275,6 +275,27 @@ describe('Run a Team', () => {
     expect(events.some((e) => e.type === 'check' && e.check.name === 'Review' && e.check.status === 'pass')).toBe(true);
   });
 
+  it('sends the lead back once when its answer names files no report mentioned', async () => {
+    const t = team([remote('m_rev', 'Reviewer')]);
+    scripts.set('lead-model', (turn, body) => {
+      if (turn === 1) {
+        // Told to answer from what its reports give it.
+        expect(lastUser(body)).toContain('name only the files, tests, commands and results your reports gave you');
+        return call('ask_reviewer', { message: 'Review src/nodes/get-alerts.ts', reason: 'Review' });
+      }
+      if (turn === 2) return { text: 'Reviewed `src/getAlerts.ts` and src/nodes/get-alerts.ts on Node.js: fine.' };
+      if (turn === 3) {
+        expect(lastUser(body)).toContain('Your answer names getAlerts.ts, which none of your reports mentioned');
+        return { text: 'Reviewed get-alerts.ts: fine.' };
+      }
+      return { text: 'Reviewed getAlerts.ts again.' };
+    });
+    turns.clear();
+    const { done, events } = await run(t.id);
+    expect(done!.reply).toBe('Reviewed get-alerts.ts: fine.');
+    expect(events.find((e) => e.type === 'check' && e.check.name === 'Grounded')).toMatchObject({ check: { status: 'warn', subject: 'Tech Lead', message: "Tech Lead's answer named getAlerts.ts, which no report mentioned" } });
+  });
+
   it('sends the run to Needs a person when the reviewer is still not asked after two reminders', async () => {
     const t = team([remote('m_dev', 'Developer'), remote('m_rev', 'Reviewer', { reviews: ['m_dev'] })]);
     scripts.set('lead-model', (turn) => (turn === 1 ? call('ask_developer', { message: 'slug one', reason: 'Build' }) : { text: `Done, honest (${turn}).` }));
@@ -360,5 +381,12 @@ describe('Run a Team', () => {
     });
     expect(record.status).toBe('error');
     expect(record.error?.message).toContain('Publish “Draft” first');
+  });
+});
+
+describe('file names in an answer', () => {
+  it('reads names alone and at the end of a path, not products', async () => {
+    const { fileNamesIn } = await import('@/lib/server/agent-teams/runtime');
+    expect(fileNamesIn('Files: `plugins/grafana/src/index.ts`, PLAN.md and /tmp/w/get-alerts.test.ts on Node.js; v1.2 of package.json')).toEqual(['index.ts', 'PLAN.md', 'get-alerts.test.ts', 'package.json']);
   });
 });

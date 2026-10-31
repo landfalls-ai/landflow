@@ -1,8 +1,9 @@
 'use client';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import Link from 'next/link';
-import { Background, BackgroundVariant, ControlButton, Controls, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, type OnConnectEnd, type OnEdgesChange } from '@xyflow/react';
+import { Background, BackgroundVariant, ControlButton, Controls, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, useStore, type OnConnectEnd, type OnEdgesChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowLeft,
   Bug,
@@ -30,6 +31,7 @@ import { tint } from '@/lib/client/node-style';
 import { TEMPLATES } from '@/lib/client/templates';
 import type { DebugCommand, ExecutionEvent, ExecutionRecord, ImportReport, NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import type { PolicyWarnings } from '@/lib/shared/governance';
+import type { NodeProgress } from '@/lib/client/node-progress';
 import { Badge, executionTone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
@@ -59,6 +61,7 @@ import { WorkflowMenu } from './workflow-menu';
 import { PublishControl } from './publish-control';
 import { ListeningBar, listenForTestEvent, stopListening, testTriggerFor, useTestListener } from './test-listener';
 import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from './edit-lock';
+import { followable, useFollowRun } from './follow-run';
 import { useFollowWaiting } from './waiting';
 
 const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView };
@@ -103,6 +106,33 @@ async function pasteN8n(data: unknown, at?: { x: number; y: number }) {
   }
 }
 
+/**
+ * A node that reports progress grows while it runs (a team node becomes the member at work, with the strip and moments
+ * above it): when it no longer fits between the top of the canvas and Spotlight's bar, the view moves to it, never
+ * zooming in. Not once the person has panned or zoomed during the run.
+ */
+function KeepRunningInView({ moved }: { moved: RefObject<boolean> }) {
+  const { fitView, getZoom } = useReactFlow();
+  const ids = useEditor(useShallow((s) => (s.running ? Object.keys(s.progress) : [])));
+  const overflows = useStore((s) => {
+    const [, y, zoom] = s.transform;
+    return ids.some((id) => {
+      const node = s.nodeLookup.get(id);
+      if (!node?.measured?.height) return false;
+      // The strip and moments sit above the node; the sub-node labels and Spotlight's bar below it.
+      const top = (node.internals.positionAbsolute.y - 72) * zoom + y;
+      const bottom = (node.internals.positionAbsolute.y + node.measured.height + 28) * zoom + y;
+      return top < 8 || bottom > s.height - 64;
+    });
+  });
+  useEffect(() => {
+    if (!overflows || moved.current || !ids.length) return;
+    const timer = setTimeout(() => void fitView({ nodes: ids.map((id) => ({ id })), padding: { top: '96px', bottom: '120px', left: '48px', right: '48px' }, maxZoom: getZoom(), duration: 300 }), 60);
+    return () => clearTimeout(timer);
+  }, [overflows, ids, moved, fitView, getZoom]);
+  return null;
+}
+
 function Canvas({ onSave }: { onSave: () => void }) {
   const flowNodes = useEditor((s) => s.nodes);
   const stickies = useEditor((s) => s.stickies);
@@ -120,6 +150,12 @@ function Canvas({ onSave }: { onSave: () => void }) {
   const { onNodesChange, onEdgesChange, onConnect, openNode, openPalette } = useEditor.getState();
   const { screenToFlowPosition, fitView } = useReactFlow();
   const fitted = useRef(false);
+  // The person panned or zoomed during the run on the canvas: leave the view where they put it.
+  const moved = useRef(false);
+  const running = useEditor((s) => s.running);
+  useEffect(() => {
+    if (running) moved.current = false;
+  }, [running]);
   const wrapper = useRef<HTMLDivElement>(null);
   const pointer = useRef<{ x: number; y: number }>(undefined);
 
@@ -284,6 +320,9 @@ function Canvas({ onSave }: { onSave: () => void }) {
       }}
       onConnect={onConnect}
       onConnectEnd={onConnectEnd}
+      onMoveStart={(event) => {
+        if (event) moved.current = true;
+      }}
       onNodeDoubleClick={(_e, node) => node.type === 'lf' && openNode(node.id)}
       onPaneClick={() => useEditor.getState().palette && openPalette(undefined)}
       isValidConnection={(c) => (c.sourceHandle ?? 'main').split(':')[0] === (c.targetHandle ?? 'main').split(':')[0] && c.source !== c.target}
@@ -297,6 +336,7 @@ function Canvas({ onSave }: { onSave: () => void }) {
       connectionLineStyle={{ stroke: 'var(--t2)', strokeWidth: 1.5, strokeDasharray: '5 4' }}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--canvas-dot)" />
+      <KeepRunningInView moved={moved} />
       <Controls position="bottom-left" showInteractive={false} className="!bottom-3 !left-3">
         <ControlButton onClick={() => useEditor.getState().undo()} disabled={!canUndo} title="Undo (⌘Z)" aria-label="Undo">
           <Undo2 />
@@ -326,6 +366,14 @@ async function sendDebug(executionId: string | undefined, command: DebugCommand)
     toast.error((e as Error).message);
   }
 }
+
+/** Stop a run on the server (it outlives the editor's request); one that already ended has nothing to stop. */
+function stopExecution(executionId: string) {
+  api(`/api/executions/${executionId}/stop`, { method: 'POST' }).catch(() => {});
+}
+
+/** An execution as GET /api/executions/:id gives it: with each running node's latest progress while it runs. */
+type OpenedExecution = { execution: ExecutionRecord; progress?: Record<string, NodeProgress> };
 
 function EmptyCanvas() {
   const empty = useEditor((s) => s.nodes.length === 0 && s.stickies.length === 0 && s.groups.length === 0);
@@ -534,6 +582,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const [saving, setSaving] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Stop pressed before the server named the execution: stopped as soon as it does.
+  const stopWhenStarted = useRef(false);
   const name = useEditor((s) => s.name);
   const dirty = useEditor((s) => s.dirty);
   const running = useEditor((s) => s.running);
@@ -544,6 +594,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const { takeOver } = useEditLockSync(workflowId, loaded);
   // A waiting run on the canvas keeps its waiting mark current and shows the rest once it resumes.
   useFollowWaiting();
+  // A run this editor started before a reload goes on: show it live again.
+  useFollowRun();
 
   // The assistant's conversation lasts while this workflow is open.
   useEffect(() => useAssistant.getState().bind(workflowId), [workflowId]);
@@ -561,12 +613,14 @@ export function Editor({ workflowId }: { workflowId: string }) {
         setChatOpen(workflow.nodes.some((n) => n.type === 'core.chatTrigger') && !requested);
         // Show an execution from history if one was asked for, else the last run, so the canvas isn't blank.
         const record = requested
-          ? api<{ execution: ExecutionRecord }>(`/api/executions/${requested}`)
-          : api<{ executions: { id: string }[] }>(`/api/executions?workflowId=${workflowId}&limit=1`).then(
-              ({ executions }) => executions[0] && api<{ execution: ExecutionRecord }>(`/api/executions/${executions[0].id}`),
-            );
+          ? api<OpenedExecution>(`/api/executions/${requested}`)
+          : api<{ executions: { id: string }[] }>(`/api/executions?workflowId=${workflowId}&limit=1`).then(({ executions }) => executions[0] && api<OpenedExecution>(`/api/executions/${executions[0].id}`));
         record
-          .then((r) => r && !useEditor.getState().running && useEditor.getState().loadExecution(r.execution, Boolean(requested)))
+          .then((r) => {
+            if (!r || useEditor.getState().running) return;
+            if (followable(r.execution)) useEditor.getState().attachRun(r.execution, r.progress, Boolean(requested));
+            else useEditor.getState().loadExecution(r.execution, Boolean(requested));
+          })
           .catch(() => requested && toast.error(`Execution ${requested} not found`));
       })
       .catch((e: Error) => toast.error(`Could not load workflow: ${e.message}`));
@@ -628,6 +682,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
       const state = useEditor.getState();
       if (state.running) return undefined;
       state.startRun(debug);
+      stopWhenStarted.current = false;
       const controller = new AbortController();
       abortRef.current = controller;
       let result: RunResult | undefined;
@@ -641,7 +696,11 @@ export function Editor({ workflowId }: { workflowId: string }) {
             ...(debug && { debug: { breakpoints: state.breakpoints, step: state.breakpoints.length === 0 } }),
           },
           (event, data) => {
-            if (event === 'started') useEditor.setState({ executionId: (data as { executionId: string }).executionId });
+            if (event === 'started') {
+              const { executionId } = data as { executionId: string };
+              useEditor.setState({ executionId });
+              if (stopWhenStarted.current) stopExecution(executionId);
+            }
             if (event === 'execution') {
               const update = data as ExecutionEvent;
               // Streamed text and tool calls go to the chat panel; everything else to the canvas and the log.
@@ -658,6 +717,12 @@ export function Editor({ workflowId }: { workflowId: string }) {
         useEditor.getState().finishRun();
         abortRef.current = null;
       }
+      // The stream broke before the run ended (the connection dropped): it goes on on the server, so follow it there.
+      const { executionId } = useEditor.getState();
+      if (!result && !debug && executionId)
+        api<OpenedExecution>(`/api/executions/${executionId}`)
+          .then((r) => followable(r.execution) && !useEditor.getState().running && useEditor.getState().attachRun(r.execution, r.progress))
+          .catch(() => {});
       return result;
     },
     [workflowId],
@@ -710,9 +775,12 @@ export function Editor({ workflowId }: { workflowId: string }) {
 
   const stop = () => {
     stopListening();
-    const { debugging: inDebug, executionId } = useEditor.getState();
+    const { debugging: inDebug, executionId, running } = useEditor.getState();
     if (inDebug && executionId) void sendDebug(executionId, 'stop');
-    else abortRef.current?.abort();
+    else if (inDebug) abortRef.current?.abort();
+    // The run outlives this page's request, so Stop asks the server; the stream then ends with the run.
+    else if (running && executionId) stopExecution(executionId);
+    else if (running) stopWhenStarted.current = true;
   };
 
   const sendChat = useCallback(

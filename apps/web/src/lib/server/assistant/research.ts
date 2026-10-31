@@ -166,6 +166,8 @@ export interface OutlineOptions {
   pending?: ReadonlySet<string>;
   /** What the pending proposals are, one line each. */
   pendingSummaries?: string[];
+  /** Nodes the pending proposals remove (no longer in the nodes above). */
+  removed?: Array<{ name: string; type: string }>;
 }
 
 function summarizeNode(node: WorkflowNode, options: OutlineOptions, workflow: Workflow): string[] {
@@ -198,6 +200,7 @@ export function workflowOutline(workflow: Workflow, runs: Record<string, RunDige
     'Connections:',
     ...(edges.length ? edges : ['(none)']),
     ...(options.pendingSummaries?.length ? ['Pending proposals (already in the nodes and connections above, waiting for the user to apply them; do not propose them again):', ...options.pendingSummaries.map((t) => `- ${t}`)] : []),
+    ...(options.removed?.length ? ['Removed by pending proposals (the user asked for them to go; do not add them, or nodes doing their job, back):', ...options.removed.map((r) => `- “${r.name}” (${r.type})`)] : []),
     ...(ran.length ? [`Last run: ${ran.join('; ')}`] : ['No run data yet.']),
   ].join('\n');
 }

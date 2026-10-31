@@ -20,6 +20,15 @@ import { issuesOf } from './store';
 const TASK_CHARS = 600;
 /** How often a manager is sent back to ask a reviewer before it may report done. */
 const MAX_REVIEW_NUDGES = 2;
+/** What a manager is told to keep its answer to: it sees its reports' answers, not their work. */
+const REPORT_RULE = 'When you answer, name only the files, tests, commands and results your reports gave you, as they wrote them; don\'t add details nobody reported.';
+
+/** File names in a text (`get-alerts.ts`, `PLAN.md`), for telling which ones an answer made up. */
+export function fileNamesIn(text: string): string[] {
+  // A path's last part counts on its own: `src/index.ts` names `index.ts`. "Node.js" and its kind are products, not files.
+  const names = text.match(/(?<![\w.-])[\w-]+(?:\.[\w-]+)*\.(?:tsx?|jsx?|mjs|cjs|py|go|rs|java|rb|md|json|ya?ml|toml|sql|sh|css|html)\b/g) ?? [];
+  return [...new Set(names.filter((name) => !/^(?:node|next|nuxt|vue|react|express|three|chart|d3)\.js$/i.test(name)))];
+}
 
 export interface TeamRunRequest {
   team: { id: string; name: string };
@@ -88,6 +97,10 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const reviewed = new Map<string, number>();
   let clock = 0;
   const needsPerson: string[] = [];
+  /** What each manager was told (its task) and heard back (its reports' answers and steps): an answer names files from these. */
+  const told = new Map<string, string>();
+  const heard = new Map<string, string[]>();
+  const hear = (manager: TeamMember, ...texts: string[]) => heard.set(manager.id, [...(heard.get(manager.id) ?? []), ...texts]);
   const raise = (reason: string) => {
     if (!needsPerson.includes(reason)) needsPerson.push(reason);
   };
@@ -150,15 +163,34 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         : [],
     );
 
+  /**
+   * File names in the answer of a manager that asked its reports that nothing gave it (not its task, its reports' answers
+   * and steps, nor its own tools' results): made up, so it is sent back once.
+   */
+  const madeUp = (manager: TeamMember, reply: string, session: AgentSession) => {
+    const answers = heard.get(manager.id);
+    if (!answers?.length) return [];
+    const results = session.messages.flatMap((m) => (m.role === 'tool' ? m.results.map((r) => r.content) : []));
+    const text = [told.get(manager.id) ?? '', ...answers, ...results].join('\n');
+    return fileNamesIn(reply).filter((name) => !text.includes(name));
+  };
+
   function roleFor(member: TeamMember): TeamRole {
     let nudges = 0;
+    let grounded = false;
     return {
       tools: [],
       title: member.title,
       ...(member.budgetTokens && { budgetTokens: member.budgetTokens }),
-      beforeAnswer() {
+      beforeAnswer(reply, session) {
         const pending = unreviewed(member);
-        if (!pending.length) return undefined;
+        if (!pending.length) {
+          const names = grounded ? [] : madeUp(member, reply, session);
+          if (!names.length) return undefined;
+          grounded = true;
+          check('Grounded', 'warn', `${member.title}'s answer named ${names.join(', ')}, which no report mentioned`, member.title);
+          return `Your answer names ${names.join(', ')}, which none of your reports mentioned. ${REPORT_RULE} Ask them if you need more.`;
+        }
         if (nudges >= MAX_REVIEW_NUDGES) {
           for (const { report, reviewer } of pending) {
             check('Review', 'fail', `${reviewer.title} never reviewed ${report.title}'s work`, reviewer.title);
@@ -213,6 +245,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     }
     asked.set(report.id, (asked.get(report.id) ?? 0) + 1);
     const outcome = await work(text);
+    hear(manager, text, typeof outcome.output === 'string' ? outcome.output : JSON.stringify(outcome.output ?? ''), outcome.remote ? JSON.stringify(outcome.remote.steps ?? []) : '');
     clock++;
     delivered.set(report.id, clock);
     // A reviewer asked after the work was delivered has looked at it.
@@ -237,6 +270,9 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           const agent = agentStore.get(report.agentId);
           if (!agent) throw new Error(`${report.title}'s agent was deleted`);
           tasks.set(report.id, text);
+          // A member that manages others answers from what its reports gave it, like the lead.
+          const manages = reportsOf(config, report.id).length > 0;
+          if (manages) told.set(report.id, withAncestry(manager, text));
           // One session per member for the run: a second ask continues the first.
           let session = sessions.get(report.id);
           if (!session) {
@@ -259,7 +295,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           const result = await runAgent({
             agent,
             session,
-            message: withAncestry(manager, text),
+            message: manages ? `${withAncestry(manager, text)}\n\n${REPORT_RULE}` : withAncestry(manager, text),
             depth: ctx.depth + 1,
             maxDepth: ctx.maxDepth,
             approvals: 'deny',
@@ -355,10 +391,11 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   if (request.memory) session.messages = await request.memory.load(request.memoryKey || 'default');
   if (request.execution) session.execution = request.execution;
   const role: TeamRole = { ...roleFor(root), tools: await toolsFor(root) };
+  told.set(root.id, request.message);
   const result = await runAgent({
     agent: leadAgent,
     session,
-    message: config.goal ? `Team goal: ${config.goal}\n\n${request.message}` : request.message,
+    message: [config.goal ? `Team goal: ${config.goal}` : '', request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n'),
     approvals: 'deny',
     signal: request.signal,
     ...(request.flow && { flow: request.flow }),

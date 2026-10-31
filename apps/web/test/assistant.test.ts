@@ -454,6 +454,36 @@ describe('builder chat', () => {
     expect(params(withTeamIds(set, teams))).toEqual({ teamId: 'Ops' });
   });
 
+  it('doesn’t add back a node a pending proposal removes, and says to stop once all is proposed', async () => {
+    const { model, calls } = scripted([
+      { toolCalls: [{ id: 'c1', name: 'propose_changes', input: { summary: 'Remove Check', ops: [{ op: 'removeNode', node: 'Check' }] } }] },
+      { toolCalls: [{ id: 'c2', name: 'get_workflow', input: {} }] },
+      // It wanders off and puts the node back, by name and then as another node of the same type.
+      { toolCalls: [{ id: 'c3', name: 'propose_changes', input: { summary: 'Add a check', ops: [{ op: 'addNode', type: 'core.if', name: 'Check', after: 'Code' }] } }] },
+      { toolCalls: [{ id: 'c4', name: 'propose_changes', input: { summary: 'Add a filter', ops: [{ op: 'addNode', type: 'core.if', name: 'Is it valid', after: 'Code' }] } }] },
+      { text: 'Done.' },
+    ]);
+    const events: ChatEvent[] = [];
+    await runChat({ messages: [{ role: 'user', content: 'Remove the Check node' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
+    expect(events.filter((e) => e.type === 'proposal').map((e) => (e as { summary: string }).summary)).toEqual(['Remove Check']);
+    const result = (call: number) => (calls[call].messages.at(-1) as { results: Array<{ content: string }> }).results[0].content;
+    expect(result(1)).toContain("if it's all proposed, stop");
+    expect(result(2)).toContain('Removed by pending proposals');
+    expect(result(2)).toContain('“Check” (core.if)');
+    expect(result(3)).toContain('“Check” (core.if) is removed by a pending proposal');
+    expect(result(4)).toContain('“Check” (core.if) is removed by a pending proposal');
+  });
+
+  it('adds a node of a removed node’s type when the request names that type', async () => {
+    const { model } = scripted([
+      { toolCalls: [{ id: 'c1', name: 'propose_changes', input: { summary: 'Swap the If', ops: [{ op: 'removeNode', node: 'Check' }, { op: 'addNode', type: 'core.if', name: 'Is it valid', after: 'Code' }] } }] },
+      { text: 'Done.' },
+    ]);
+    const events: ChatEvent[] = [];
+    await runChat({ messages: [{ role: 'user', content: 'Replace Check with a new If node after Code' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
+    expect(events.filter((e) => e.type === 'proposal')).toHaveLength(1);
+  });
+
   it('keeps an answer that proposed nothing as written', async () => {
     const { model } = scripted([{ text: 'The Set node has been updated in Landflow 0.2: it now keeps other fields.' }]);
     const events: ChatEvent[] = [];
