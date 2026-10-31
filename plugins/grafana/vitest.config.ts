@@ -1,0 +1,14 @@
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+    setupFiles: [],
+    include: ['test/**/*.{test,spec}.{js,ts}'],
+    exclude: ['node_modules'],
+    tsConfig: {
+      configFile: 'tsconfig.test.json'
+    }
+  },
+});
