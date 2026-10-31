@@ -59,6 +59,7 @@ export interface TeamRunResult {
   members: MemberReport[];
   session: AgentSession;
   reason: RunEndReason;
+  /** What the whole team used: the lead, its agent members and the usage remote members reported. */
   usage: TokenUsage;
 }
 
@@ -88,6 +89,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   // The run's bookkeeping, by member id.
   const sessions = new Map<string, AgentSession>();
   const tokens = new Map<string, number>();
+  const used = new Map<string, TokenUsage>();
   const asked = new Map<string, number>();
   const tasks = new Map<string, string>([[root.id, request.message]]);
   const warned = new Set<string>();
@@ -132,8 +134,12 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     });
   }
 
-  const spend = (member: TeamMember, used: number, set = false) => {
-    const now = set ? used : (tokens.get(member.id) ?? 0) + used;
+  /** A member's usage so far (`set`: its session's total) or more of it (a remote answer's). */
+  const spend = (member: TeamMember, usage: TokenUsage, set = false) => {
+    const before = used.get(member.id);
+    const mine = set || !before ? { ...usage } : { inputTokens: before.inputTokens + usage.inputTokens, outputTokens: before.outputTokens + usage.outputTokens };
+    used.set(member.id, mine);
+    const now = total(mine);
     tokens.set(member.id, now);
     const budget = member.budgetTokens;
     if (!budget) return;
@@ -177,7 +183,8 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
 
   function roleFor(member: TeamMember): TeamRole {
     let nudges = 0;
-    let grounded = false;
+    /** Whether this member was sent back for naming files nothing gave it, and whether its next answer was checked. */
+    let grounded: 'no' | 'sent' | 'checked' = 'no';
     return {
       tools: [],
       title: member.title,
@@ -185,11 +192,17 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       beforeAnswer(reply, session) {
         const pending = unreviewed(member);
         if (!pending.length) {
-          const names = grounded ? [] : madeUp(member, reply, session);
+          if (grounded === 'checked') return undefined;
+          const names = madeUp(member, reply, session);
+          if (grounded === 'sent') {
+            grounded = 'checked';
+            if (names.length) check('Grounded', 'warn', `${member.title}'s answer still names ${names.join(', ')}, which no report mentioned`, member.title);
+            return undefined;
+          }
           if (!names.length) return undefined;
-          grounded = true;
+          grounded = 'sent';
           check('Grounded', 'warn', `${member.title}'s answer named ${names.join(', ')}, which no report mentioned`, member.title);
-          return `Your answer names ${names.join(', ')}, which none of your reports mentioned. ${REPORT_RULE} Ask them if you need more.`;
+          return `Your answer names ${names.join(', ')}, which none of your reports mentioned. Answer the request again for the person who asked: leave those out unless a report gives them (ask your reports if you need them), and don't mention this note. ${REPORT_RULE}`;
         }
         if (nudges >= MAX_REVIEW_NUDGES) {
           for (const { report, reviewer } of pending) {
@@ -302,7 +315,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
             signal: ctx.signal,
             team: role,
           });
-          spend(report, total(result.session.usage), true);
+          spend(report, result.session.usage, true);
           if (result.reason === 'error') {
             const last = [...result.session.timeline].reverse().find((e) => e.type === 'error');
             throw new Error(last?.type === 'error' ? last.message : `${report.title} failed`);
@@ -370,7 +383,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           // An answer to the remote agent's question goes as it is; a new request carries the goal and the manager's task.
           const message = known?.question ? text : withAncestry(manager, text);
           const outcome = await built.invoke({ ...input, message }, renamed(ctx));
-          if (outcome.remote?.usage) spend(report, total(outcome.remote.usage));
+          if (outcome.remote?.usage) spend(report, outcome.remote.usage);
           return {
             ...outcome,
             ...(outcome.remote && {
@@ -404,7 +417,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   });
   session = result.session;
   if (request.memory && result.reason !== 'error') await request.memory.save(request.memoryKey || 'default', session.messages);
-  spend(root, total(session.usage), true);
+  spend(root, session.usage, true);
   if (result.reason === 'budget') raise(`${root.title} used up its budget or limit (${root.budgetTokens ? `${root.budgetTokens.toLocaleString()} tokens` : 'tokens'})`);
   else if (result.reason === 'max_iterations') raise(`${root.title} did not reach an answer within its iteration limit`);
 
@@ -419,6 +432,6 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     })),
     session,
     reason: result.reason,
-    usage: session.usage,
+    usage: [...used.values()].reduce((sum, u) => ({ inputTokens: sum.inputTokens + u.inputTokens, outputTokens: sum.outputTokens + u.outputTokens }), { inputTokens: 0, outputTokens: 0 }),
   };
 }

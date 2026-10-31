@@ -175,7 +175,8 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
       {report.checks.length > 0 && (
         <>
           <SectionTitle>
-            Checks · {report.checks.filter((c) => c.status === 'fail').length} failed, {report.checks.filter((c) => c.status === 'pass').length} passed
+            Checks · {report.checks.filter((c) => c.status === 'fail').length} failed
+            {report.checks.some((c) => c.status === 'warn') ? `, ${report.checks.filter((c) => c.status === 'warn').length} to look at` : ''}, {report.checks.filter((c) => c.status === 'pass').length} passed
           </SectionTitle>
           <List>
             {[...failedReport, ...otherReport].map((c) => (
@@ -187,7 +188,7 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
               >
                 {c.name}
                 <Small>
-                  {c.check === 'node' ? 'reported by a node' : 'built in'}
+                  {c.check === 'node' && c.source !== 'builtin' ? (c.source === 'person' ? 'a person' : 'reported by a node') : 'built in'}
                   {c.resolution ? ` · ${c.resolution.decision === 'accepted' ? 'accepted as is' : 'sent back'} by ${c.resolution.by}` : ''}
                   {c.message ? ` · ${cut(c.message, 140)}` : ''}
                 </Small>

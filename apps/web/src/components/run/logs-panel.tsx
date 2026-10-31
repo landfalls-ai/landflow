@@ -492,7 +492,7 @@ export function LogsPanel(props: LogsPanelProps) {
                       )}
                     </span>
                   )}
-                  <span className={cn('w-[46px] shrink-0 text-right font-mono text-[11px] tabular-nums', p ? 'text-warn' : 'text-t3')}>
+                  <span className={cn('min-w-[46px] shrink-0 whitespace-nowrap text-right font-mono text-[11px] tabular-nums', p ? 'text-warn' : 'text-t3')}>
                     {p ? (since && p.state === 'running' ? duration(Math.max(0, now - since)) : '') : reused ? '—' : duration(run.durationMs)}
                   </span>
                   <span className={cn('w-6 shrink-0 text-right font-mono text-[11px]', items ? 'text-t2' : 'text-t3')} title={items !== undefined ? `${items} output item${items === 1 ? '' : 's'}` : undefined}>

@@ -229,3 +229,19 @@ describe('structured replies', () => {
     expect(parts.structured).toBe(false);
   });
 });
+
+describe('checks the host recorded', () => {
+  it('counts a team’s and a guardrail’s checks, not the six a Run report recorded', () => {
+    const events: JournalEvent[] = [];
+    const add = (e: Record<string, unknown>) => events.push({ seq: events.length + 1, executionId: 'ex_host', at: at(events.length), ...e } as JournalEvent);
+    add({ type: 'span.started', spanId: 'run', kind: 'run', name: 'Review', actor: flow });
+    add({ type: 'span.started', spanId: 'node:lead:0', parentSpanId: 'run', kind: 'agent', name: 'Tech Lead', actor: lead });
+    add({ type: 'check', spanId: 'node:lead:0', check: { name: 'Grounded', status: 'warn', message: "Tech Lead's answer named types.ts, which no report mentioned", subject: 'Tech Lead', source: 'builtin' } });
+    add({ type: 'check', spanId: 'node:lead:0', check: { name: 'Hidden failures: an earlier report', status: 'fail', source: 'builtin' } });
+    add({ type: 'span.ended', spanId: 'node:lead:0', status: 'success', output: 'Reviewed the plugin.' });
+    add({ type: 'span.ended', spanId: 'run', status: 'success' });
+    const report = buildRunReport(foldJournal(events), RUN_PROFILES.generic);
+    expect(report.checks.map((c) => [c.name, c.status])).toEqual([['Grounded', 'warn']]);
+    expect(report.verdict).toBe('warn');
+  });
+});

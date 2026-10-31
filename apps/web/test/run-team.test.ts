@@ -285,7 +285,7 @@ describe('Run a Team', () => {
       }
       if (turn === 2) return { text: 'Reviewed `src/getAlerts.ts` and src/nodes/get-alerts.ts on Node.js: fine.' };
       if (turn === 3) {
-        expect(lastUser(body)).toContain('Your answer names getAlerts.ts, which none of your reports mentioned');
+        expect(lastUser(body)).toContain('Your answer names getAlerts.ts, which none of your reports mentioned. Answer the request again for the person who asked');
         return { text: 'Reviewed get-alerts.ts: fine.' };
       }
       return { text: 'Reviewed getAlerts.ts again.' };
@@ -293,7 +293,23 @@ describe('Run a Team', () => {
     turns.clear();
     const { done, events } = await run(t.id);
     expect(done!.reply).toBe('Reviewed get-alerts.ts: fine.');
-    expect(events.find((e) => e.type === 'check' && e.check.name === 'Grounded')).toMatchObject({ check: { status: 'warn', subject: 'Tech Lead', message: "Tech Lead's answer named getAlerts.ts, which no report mentioned" } });
+    expect(events.filter((e) => e.type === 'check' && e.check.name === 'Grounded')).toEqual([expect.objectContaining({ check: expect.objectContaining({ status: 'warn', subject: 'Tech Lead', message: "Tech Lead's answer named getAlerts.ts, which no report mentioned" }) })]);
+  });
+
+  it('says so when the answer sent back still names them', async () => {
+    const t = team([remote('m_rev', 'Reviewer')]);
+    scripts.set('lead-model', (turn) => {
+      if (turn === 1) return call('ask_reviewer', { message: 'Review src/nodes/get-alerts.ts', reason: 'Review' });
+      if (turn === 2) return { text: 'Reviewed src/getAlerts.ts: fine.' };
+      return { text: 'The review named getAlerts.ts, but no report listed it.' };
+    });
+    turns.clear();
+    const { done, events } = await run(t.id);
+    expect(done!.reply).toBe('The review named getAlerts.ts, but no report listed it.');
+    expect(events.filter((e) => e.type === 'check' && e.check.name === 'Grounded').map((e) => e.type === 'check' && e.check.message)).toEqual([
+      "Tech Lead's answer named getAlerts.ts, which no report mentioned",
+      "Tech Lead's answer still names getAlerts.ts, which no report mentioned",
+    ]);
   });
 
   it('sends the run to Needs a person when the reviewer is still not asked after two reminders', async () => {
@@ -332,6 +348,9 @@ describe('Run a Team', () => {
       tokens: 20,
       overBudget: true,
     });
+    // The node's usage is the whole team's: the lead's three calls and the Developer's one.
+    const usage = done!.usage as { inputTokens: number; outputTokens: number };
+    expect(usage.inputTokens + usage.outputTokens).toBe(80);
     expect(events.filter((e) => e.type === 'check' && e.check.name === 'Budget').map((e) => e.type === 'check' && e.check.status)).toEqual(['fail']);
   });
 

@@ -87,7 +87,9 @@ The **Run a Team** node (`core.runTeam`, under AI) runs a published team as one 
 | Inputs | the flow's items, plus Run an Agent's optional **Chat Model**, **Memory** and **Tool** slots: whatever is connected goes to the **lead**, so a flow keeps its model or a tool such as a GitHub branch check on the team node |
 | Outputs | **Done** and **Needs a person** |
 
-Done carries `{ reply, team: { id, name, version }, members: [{ title, asked, tokens, overBudget? }], activity }`; Needs a
+Done carries `{ reply, team: { id, name, version }, members: [{ title, asked, tokens, overBudget? }], usage, activity }`
+(`usage` is the whole team's `{ inputTokens, outputTokens }`: the lead, its agent members and what remote members
+reported); Needs a
 person the same plus `reason`. `activity` is what the run did, for the canvases: `{ durationMs, turns: [{ member, start,
 end }], moments: [{ at, member, tone, text }], steps: { <title>: count } }` (times in milliseconds since the team started). A team that was never published, a deleted team or an empty message fails the node (or the item, with
 Continue on fail), like Run an Agent does. The node shows the team's name under its title (the hidden `teamName`
@@ -122,7 +124,9 @@ member's face and title above it.
 8. **Answers from what was reported.** A manager (the lead, or a member with reports) is told to name only the files,
    tests, commands and results its reports gave it. If its final answer names a file (`get-alerts.ts`, `PLAN.md`, or the
    last part of a path) that none of its task, its reports' answers and steps, or its own tools' results mention, it is
-   sent back once with those names, and a warn *Grounded* check is recorded. A manager that asked nobody is not checked.
+   sent back once to answer the person again without them, and a warn *Grounded* check is recorded; if the answer it
+   gives then still names one, a second warn check says so and the answer stands. A manager that asked nobody is not
+   checked.
 9. The run ends when the lead answers. Its answer is `reply`; the lead's other ends (iteration limit, budget) go to Needs a
    person with a reason, an error fails the node.
 

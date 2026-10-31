@@ -92,7 +92,9 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
   asked.
 - **Team**: who called whom, with ×n counts (laid out top to bottom, no sideways scrolling), plus a card per actor with
   its time, tokens, how often it was asked and its results. A card opens to the actor's **turns** and shows its **fix
-  cycles** ([iterations](#iterations-rounds-turns-and-fix-cycles)).
+  cycles** ([iterations](#iterations-rounds-turns-and-fix-cycles)). Tokens come from every span that reports usage (a
+  model call, an agent or team node, a remote agent's answer); a span keeps what the spans under it don't account for,
+  so a team's total is counted once and each member keeps its own.
 - **Report**: the run report, computed live with the run's profile, plus the counts, failed steps, who called whom,
   each request's result, cycles, waits and artifacts. **Checked** can pick another profile to look at the run through
   (a flow without one through Software delivery, say) without changing the flow; the header follows it. **Copy as Markdown** copies it. When a Run report node saved one,
@@ -223,7 +225,9 @@ Summary**. The summary needs a chat model on the node's Chat Model slot, which w
 report's facts only. The report's sections are the same for every flow:
 
 - the outcome, as reported and as checked;
-- the checks;
+- the checks: the six built-in ones, worked out again each time, and every check recorded during the run (a node's
+  `ctx.check`, a team's *Grounded*, *Review* and *Budget*, a guardrail's), so a warn or fail from any of them sets the
+  verdict;
 - who called whom;
 - cycles;
 - problems (found by, fixed by, confirmed);

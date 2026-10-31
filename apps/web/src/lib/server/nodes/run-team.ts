@@ -167,6 +167,7 @@ export const runTeamNode = defineNode({
             ...(m.overBudget && { overBudget: true }),
           })),
           ...(result.needsPerson && { reason: result.needsPerson }),
+          usage: { ...result.usage },
           activity: fold.activity() as unknown as JsonObject,
         };
         (result.needsPerson ? needsPerson : done).push({

@@ -131,12 +131,19 @@ function narrateCommand(command: string): { plain: string; kind?: StepKind } {
   const parts = command.split(/&&|\|\||;|\n/).map((p) => p.trim()).filter(Boolean);
   const dir = parts.map((p) => /^cd\s+(\S+)/.exec(p)?.[1]).filter(Boolean).at(-1);
   const meaningful = parts.filter((p) => !/^(cd|export|set|source|\.)\s/.test(p));
-  const last = meaningful.at(-1) ?? parts.at(-1) ?? command;
+  // A pipeline is for what its first stage does: `find . -name x | head` looks around, `head` only trims it.
+  const last = (meaningful.at(-1) ?? parts.at(-1) ?? command).split('|')[0].trim();
   for (const [pattern, plain, kind] of COMMANDS) if (pattern.test(last)) return { plain, kind };
   const [word, ...rest] = last.split(/\s+/);
-  const target = rest.filter((a) => !a.startsWith('-')).at(-1);
+  const args = rest.filter((a) => !a.startsWith('-'));
+  const target = args.at(-1);
   if (/^(cat|head|tail|less|wc)$/.test(word) && target) return { plain: `Reading ${baseName(target)}` };
-  if (/^(ls|tree|find|pwd|du)$/.test(word)) return { plain: `Looking around ${baseName(target ?? dir ?? '.')}` };
+  if (/^(ls|tree|find|pwd|du)$/.test(word)) {
+    // find takes its path first; "." is the directory the chain went to.
+    const path = word === 'find' ? args[0] : target;
+    const where = path && path !== '.' ? path : dir;
+    return { plain: where ? `Looking around ${baseName(where)}` : 'Looking around the files' };
+  }
   if (/^(grep|rg|ag)$/.test(word)) return { plain: 'Searching the code' };
   if (/^(curl|wget|http)$/.test(word)) return { plain: 'Calling a URL' };
   if (/^(mkdir|cp|mv|rm|touch|chmod)$/.test(word)) return { plain: 'Arranging files' };

@@ -381,6 +381,21 @@ describe('foldJournal', () => {
     expect(m.story.some((e) => e.type === 'check')).toBe(true);
   });
 
+  it('counts a team node’s usage once: its remote member keeps what it reported, the lead the rest', () => {
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Review', actor: flow });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Tech Lead', actor: lead });
+    add(2, { type: 'span.started', spanId: 'node:team:0/step:a', parentSpanId: 'node:team:0', kind: 'delegate', name: 'developer', actor: developer, caller: lead });
+    add(3, { type: 'span.ended', spanId: 'node:team:0/step:a', status: 'success', output: 'Done.', usage: { inputTokens: 800, outputTokens: 200 } });
+    add(4, { type: 'span.ended', spanId: 'node:team:0', status: 'success', output: 'Reviewed.', usage: { inputTokens: 5000, outputTokens: 1000 } });
+    add(5, { type: 'span.ended', spanId: 'run', status: 'success' });
+    const folded = foldJournal(events);
+    expect(folded.tokens).toEqual({ inputTokens: 5000, outputTokens: 1000 });
+    const of = (id: string) => folded.actors.find((a) => a.actor.id === id)!;
+    expect([of(lead.id).tokensIn, of(lead.id).tokensOut]).toEqual([4200, 800]);
+    expect([of(developer.id).tokensIn, of(developer.id).tokensOut]).toEqual([800, 200]);
+  });
+
   it('handles an empty journal and cut text', () => {
     const m = foldJournal([]);
     expect(m.empty).toBe(true);

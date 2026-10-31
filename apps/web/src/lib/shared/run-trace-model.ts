@@ -606,19 +606,44 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
   const asks: Array<{ from: string; to: string; t: number }> = [];
   let tokensIn = 0;
   let tokensOut = 0;
+  // Tokens come from every span that reports usage: a model call, an agent or team node (its own model's calls, its
+  // members'), a remote agent's answer. A span keeps what the spans with usage nearest under it don't account for, so
+  // nothing counts twice and each actor keeps its own.
+  const own = new Map<string, TokenCounts>();
+  for (const span of order) {
+    if (!span.usage) continue;
+    own.set(span.id, own.get(span.id) ?? { inputTokens: 0, outputTokens: 0 });
+    const mine = own.get(span.id)!;
+    mine.inputTokens += span.usage.inputTokens;
+    mine.outputTokens += span.usage.outputTokens;
+    for (let up = span.parentId ? spans[span.parentId] : undefined; up; up = up.parentId ? spans[up.parentId] : undefined) {
+      if (!up.usage) continue;
+      const theirs = own.get(up.id) ?? { inputTokens: 0, outputTokens: 0 };
+      own.set(up.id, { inputTokens: theirs.inputTokens - span.usage.inputTokens, outputTokens: theirs.outputTokens - span.usage.outputTokens });
+      break;
+    }
+  }
+  const countTokens = (span: RunSpan, owner: RunActorStats) => {
+    const used = own.get(span.id);
+    if (!used) return;
+    const input = Math.max(0, used.inputTokens);
+    const output = Math.max(0, used.outputTokens);
+    owner.tokensIn += input;
+    owner.tokensOut += output;
+    tokensIn += input;
+    tokensOut += output;
+  };
   for (const span of order) {
     const at = span.startedAt;
     if (span.kind === 'model') {
       // The model's tokens count for the agent that called it.
       const owner = statOf(span.caller ?? (span.parentId ? spans[span.parentId]?.actor : undefined) ?? span.actor, at);
       owner.modelCalls++;
-      owner.tokensIn += span.usage?.inputTokens ?? 0;
-      owner.tokensOut += span.usage?.outputTokens ?? 0;
-      tokensIn += span.usage?.inputTokens ?? 0;
-      tokensOut += span.usage?.outputTokens ?? 0;
+      countTokens(span, owner);
       continue;
     }
     const mine = statOf(span.actor, at);
+    countTokens(span, mine);
     if (span.kind === 'tool') mine.toolCalls++;
     if (WORK_KINDS.has(span.kind)) mine.workMs += span.ms;
     if (span.kind === 'wait') {

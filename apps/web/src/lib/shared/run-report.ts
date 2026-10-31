@@ -377,10 +377,11 @@ export function runChecks(model: RunModel, profile: RunProfile, options: ReportO
     }
   }
 
-  // Checks nodes reported (ctx.check), with a person's decision when there is one.
-  const builtinNames = new Set(BUILTIN_CHECKS.map((c) => `${c.name}: `));
+  // Checks nodes and the host reported (ctx.check, a team's Grounded, Review and Budget, a guardrail), with a person's
+  // decision when there is one. The six above, which a Run report records on their spans, are worked out again instead.
+  const builtinNames = BUILTIN_CHECKS.map((c) => `${c.name}: `);
   for (const item of model.checks) {
-    if (item.check.source === 'builtin' || [...builtinNames].some((prefix) => item.check.name.startsWith(prefix))) continue;
+    if (builtinNames.some((prefix) => item.check.name.startsWith(prefix))) continue;
     if (roundStart && item.check.resolution?.decision === 'sent_back' && item.settledAt && item.settledAt <= roundStart) continue;
     checks.push({ ...item.check, id: item.id, check: 'node', spanId: item.spanId, ...(item.actor && { actor: item.actor }) });
   }

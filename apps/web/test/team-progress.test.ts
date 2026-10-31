@@ -136,6 +136,11 @@ describe('plain words for steps', () => {
     expect(words('Bash', { command: 'gh pr merge 4 --squash' })).toEqual({ plain: 'Merging the pull request', kind: 'merge' });
     expect(words('Bash', { command: 'git clone https://github.com/o/r /tmp/work' }).plain).toBe('Cloning the repository');
     expect(words('Bash', { command: 'cd /tmp/work && ls -la plugins/grafana' }).plain).toBe('Looking around grafana');
+    // A pipeline is read by its first stage, and find by its path.
+    expect(words('Bash', { command: "cd /tmp/work && find . -name '*.ts' | head -20" }).plain).toBe('Looking around work');
+    expect(words('Bash', { command: 'find plugins/grafana/src -type f' }).plain).toBe('Looking around src');
+    expect(words('Bash', { command: 'ls' }).plain).toBe('Looking around the files');
+    expect(words('Bash', { command: 'pnpm test 2>&1 | tail -30' }).plain).toBe('Running the tests');
     expect(words('Bash', { command: 'cat /tmp/work/plugins/grafana/PLAN.md' }).plain).toBe('Reading PLAN.md');
     expect(words('Bash', { command: 'node scripts/x.js' }).plain).toBe('Running node');
     // Progress carries arguments as JSON text.
