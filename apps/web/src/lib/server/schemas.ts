@@ -2,6 +2,24 @@ import { z } from 'zod';
 import { connectionTypeSchema } from '@landflow/protocol';
 import { workflowTransportOverrideSchema } from './transports/schema';
 
+/** A custom Run report profile (lib/shared/run-profiles.ts). */
+export const runProfileSchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().min(1).max(120),
+  description: z.string().max(1000).optional(),
+  words: z.object({ pass: z.string().max(80).optional(), fail: z.string().max(80).optional() }).optional(),
+  artifacts: z.array(z.string().max(64)).max(50).optional(),
+  claims: z.array(z.object({ id: z.string().min(1).max(64), label: z.string().min(1).max(120), claim: z.string().min(1).max(2000), evidence: z.string().min(1).max(2000) })).max(100).optional(),
+  roles: z.array(z.object({ label: z.string().min(1).max(120), actor: z.string().min(1).max(2000), deny: z.string().min(1).max(2000) })).max(100).optional(),
+  deliveries: z.array(z.object({ label: z.string().min(1).max(120), work: z.string().min(1).max(2000), delivery: z.string().min(1).max(2000) })).max(100).optional(),
+  approval: z.string().max(2000).optional(),
+  gate: z.enum(['route', 'ask', 'warn']).optional(),
+  mute: z.array(z.string().max(64)).max(10).optional(),
+});
+
+/** WorkflowSettings.runProfile: a built-in profile's id or a custom profile. */
+const runProfileSettingSchema = z.union([z.enum(['generic', 'software', 'support']), runProfileSchema]);
+
 export const workflowNodeSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -108,6 +126,9 @@ export const workflowSchema = z
         aiMaxCostPerDay: z.number().min(0).optional(),
         /** Transport policy overrides by plugin id for this workflow's runs (transports/policy-store.ts withWorkflowOverride). */
         transports: z.record(z.string().min(1).max(128), workflowTransportOverrideSchema).optional(),
+        /** Run Trace (docs/run-trace.md): how much content the journal keeps, and the Run report's profile. */
+        traceContent: z.enum(['full', 'summaries', 'off']).optional(),
+        runProfile: runProfileSettingSchema.optional(),
       })
       .optional(),
     stickyNotes: z

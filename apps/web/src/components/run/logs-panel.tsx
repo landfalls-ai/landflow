@@ -5,14 +5,16 @@
  * selected run's input or output on the right. Knows nothing about where it
  * is mounted; the host owns selection, height and actions.
  */
-import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, ChevronUp, CircleX, Loader2, Pause, Recycle, ScrollText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { duration } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
+import { remoteRunOfProgress, stepsOf, type NodeProgress } from '@/lib/client/node-progress';
 import { runsInOrder, type RunEntry } from '@/lib/client/run-data';
 import type { LogEntry } from '@landflow/protocol';
 import type { NodeRun, NodeTypeInfo } from '@/lib/shared/types';
+import { RemoteSteps } from '../agents/timeline';
 import { NodeIcon } from '../ui/icon';
 import { DataView } from './data-view';
 import { RUN_STATE, RunStateIcon, statusText, useNow, type RunState } from './run-status';
@@ -48,6 +50,11 @@ export interface LogsPanelProps {
   durationMs?: number;
   running?: boolean;
   pending?: LogsPending[];
+  /** What running nodes last reported (ctx.sendProgress), by node id: a running row with one can be opened to watch its steps. */
+  progress?: Record<string, NodeProgress>;
+  /** The running node whose live steps the detail pane shows (instead of a finished run). */
+  livePick?: string;
+  onLivePick?: (nodeId: string) => void;
   /** Controlled selection; falls back to the failed run, else the last run. */
   selected?: LogsSelection;
   onSelect?: (selection: LogsSelection) => void;
@@ -180,6 +187,11 @@ function RunDetail({ row, nodes, nodeTypes, actions }: { row: Row; nodes: Record
   const index = Math.min(branch, Math.max(0, branches.length - 1));
   const ports = (side === 'output' ? info?.descriptor.outputs : info?.descriptor.inputs)?.filter((p) => p.type === 'main') ?? [];
   const state: RunState = run.status;
+  // The tool calls an agent made (A2A Agent, Run an Agent): a list, not only raw JSON.
+  const first = run.outputs[0]?.[0]?.json;
+  const steps = useMemo(() => stepsOf(first?.steps), [first]);
+  const agentName = typeof first?.agent === 'string' ? first.agent : (node?.name ?? 'Agent');
+  const stateName = typeof first?.state === 'string' ? first.state : typeof first?.endReason === 'string' ? first.endReason : 'done';
   const parentName = run.parentNodeId ? (nodes[run.parentNodeId]?.name ?? run.parentNodeId) : undefined;
 
   const errorBox = side === 'output' && run.error && (
@@ -252,6 +264,11 @@ function RunDetail({ row, nodes, nodeTypes, actions }: { row: Row; nodes: Record
           </>
         }
       />
+      {side === 'output' && steps.length > 0 && (
+        <div className="max-h-[45%] shrink-0 overflow-y-auto border-t border-hair" data-testid="run-steps">
+          <RemoteSteps remote={{ agent: agentName, state: stateName, steps }} />
+        </div>
+      )}
       {Boolean(run.logs?.length) && (
         <div className="max-h-[40%] shrink-0 overflow-y-auto border-t border-hair">
           <button onClick={() => setLogsOpen((o) => !o)} className="flex w-full items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3 hover:text-t1">
@@ -275,8 +292,43 @@ function RunDetail({ row, nodes, nodeTypes, actions }: { row: Row; nodes: Record
   );
 }
 
+/** A running node's live steps (a remote agent's commands), following the newest. */
+function LiveDetail({ event, nodes, nodeTypes }: { event: NodeProgress; nodes: Record<string, LogsNode>; nodeTypes: Record<string, NodeTypeInfo> }) {
+  const node = nodes[event.nodeId];
+  const info = node?.type ? nodeTypes[node.type] : undefined;
+  const run = remoteRunOfProgress(event);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [run.steps.length, run.state, event.at]);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col animate-in" data-testid="live-progress">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hair px-3 py-2">
+        <NodeBadge info={info} size={24} />
+        <span className="truncate text-[14px] font-semibold text-t1">{node?.name ?? event.nodeName}</span>
+        <span className="flex items-center gap-1 rounded-full bg-warndim px-2 py-px text-[11px] font-semibold text-warn">
+          <Loader2 className="size-3 animate-spin" /> {run.state}
+        </span>
+        <span className="text-[11px] text-t3">live: {run.agent}</span>
+      </div>
+      <div
+        ref={bodyRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        }}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
+        {run.steps.length ? <RemoteSteps remote={run} /> : <p className="px-3 py-3 text-[13px] text-t3">The agent has not run a tool yet ({run.state}).</p>}
+      </div>
+    </div>
+  );
+}
+
 export function LogsPanel(props: LogsPanelProps) {
-  const { runData, nodes, nodeTypes, status, startedAt, durationMs, running, pending, selected, onSelect, actions, collapsed, onToggle, headerActions, emptyHint, className } = props;
+  const { runData, nodes, nodeTypes, status, startedAt, durationMs, running, pending, progress, livePick, onLivePick, selected, onSelect, actions, collapsed, onToggle, headerActions, emptyHint, className } = props;
   const rows = useMemo(() => buildLogRows(runData, pending), [runData, pending]);
   const [internal, setInternal] = useState<LogsSelection>();
   const [folded, setFolded] = useState<Set<string>>(new Set());
@@ -286,8 +338,12 @@ export function LogsPanel(props: LogsPanelProps) {
   const nested = rows.some((r) => r.childCount > 0);
   const pick = selected ?? internal;
   const current = (pick && rows.find((r) => !r.pending && r.nodeId === pick.nodeId && r.runIndex === pick.runIndex)) || autoSelect(rows);
+  const liveEvent = livePick ? progress?.[livePick] : undefined;
   const select = (row: Row) => {
-    if (row.pending) return;
+    if (row.pending) {
+      if (progress?.[row.nodeId]) onLivePick?.(row.nodeId);
+      return;
+    }
     setInternal({ nodeId: row.nodeId, runIndex: row.runIndex });
     onSelect?.({ nodeId: row.nodeId, runIndex: row.runIndex });
   };
@@ -373,7 +429,8 @@ export function LogsPanel(props: LogsPanelProps) {
               const { run, pending: p } = row;
               const node = nodes[row.nodeId];
               const info = node?.type ? nodeTypes[node.type] : undefined;
-              const isSelected = !p && current?.key === row.key;
+              const live = p && Boolean(progress?.[row.nodeId]);
+              const isSelected = p ? Boolean(live && liveEvent?.nodeId === row.nodeId) : !liveEvent && current?.key === row.key;
               const reused = Boolean(run.reused);
               const failed = !p && run.status === 'error' && !reused;
               const sub = run.source !== 'main';
@@ -387,11 +444,11 @@ export function LogsPanel(props: LogsPanelProps) {
                   data-row={row.key}
                   role="option"
                   aria-selected={isSelected}
-                  aria-disabled={p ? true : undefined}
+                  aria-disabled={p && !live ? true : undefined}
                   onClick={() => select(row)}
                   className={cn(
                     'group relative flex h-8 items-center gap-1.5 rounded-lg border-l-2 pr-2 text-[13px] transition-colors duration-150 animate-fade-up',
-                    p ? 'border-l-warn bg-warndim' : failed ? 'cursor-pointer border-l-rd bg-rddim' : 'cursor-pointer border-l-transparent',
+                    p ? cn('border-l-warn bg-warndim', live && 'cursor-pointer') : failed ? 'cursor-pointer border-l-rd bg-rddim' : 'cursor-pointer border-l-transparent',
                     isSelected ? (failed ? 'bg-rddim ring-1 ring-rdbd' : 'bg-acdim ring-1 ring-acbd') : !p && 'hover:bg-acdim',
                   )}
                   style={{ paddingLeft: 6 + row.depth * 18, animationDelay: `${Math.min(i, 16) * 22}ms` }}
@@ -461,7 +518,9 @@ export function LogsPanel(props: LogsPanelProps) {
             )}
           </div>
           <div className="flex min-h-0 flex-col">
-            {current ? (
+            {liveEvent ? (
+              <LiveDetail key={liveEvent.nodeId} event={liveEvent} nodes={nodes} nodeTypes={nodeTypes} />
+            ) : current ? (
               <RunDetail key={current.key} row={current} nodes={nodes} nodeTypes={nodeTypes} actions={actions} />
             ) : (
               <div className="grid flex-1 place-items-center p-6 text-center text-[13px] text-t3">{running ? 'Node data appears here as nodes finish.' : 'Select a node run to see its input and output.'}</div>

@@ -146,6 +146,7 @@ not implement `OptionsLoader`. On failure `NewPlugin` panics and lists every pro
 | `PollState()`, `SetPollState(map)`, `IsFirstPoll()` | see [Polling triggers](#polling-triggers) |
 | `ContinueOnFail()`, `ErrorItem(i, err)` | the node is set to continue on error: append `ctx.ErrorItem(i, err)` for a failing item and go on |
 | `BinaryRef(i, name)`, `BinaryBytes(i, name)`, `BinaryReader(i, name)`, `ReadBinary(ref)`, `PrepareBinary(…)` | see [Binary data](#binary-data) |
+| `Artifact(landflow.Artifact{Name, Kind, URL, MimeType, Text, Data})`, `Check(landflow.Check{Name, Status, Message, Subject, Evidence})` | report what the node made (a pull request, a file, a ticket) or checked (`CheckPass`, `CheckFail`, `CheckWarn`, `CheckSkip`) for the run's trace; collected into the response `records` (kept when the node fails) with the time, credential values masked; `Records()` lists them |
 | `IdempotencyKey()` | `<executionId>:<nodeId>:<runIndex>`, the same across retries of this step; pass it to APIs that take an idempotency key (`""` from older hosts) |
 | `Span(name, attrs, fn)`, `StartSpan`, `DBSpan(info, fn)`, `Metrics()` | see [Observability](#observability) |
 | `Context()` | request context carrying the server span, cancelled if the caller disconnects |

@@ -14,13 +14,18 @@ import { join } from 'node:path';
 import { nanoid } from 'nanoid';
 import type { JsonObject } from '@landflow/protocol';
 import {
+  cleanPlugins,
+  cleanTeam,
   DEFAULT_AGENT_SETTINGS,
   type Agent,
   type AgentConfig,
   type AgentSession,
   type AgentSummary,
+  type KagentDeployment,
   type SessionSummary,
 } from '../../shared/agents';
+import { cleanAvatar } from '../../shared/faces';
+import { cleanPersona } from '../../shared/persona';
 import { deleteAgentSessionFeedback } from '../chat-feedback';
 import { ConfigFile, configStoreKind, importOnce } from '../config-store';
 import { database, type Database } from '../db';
@@ -56,12 +61,19 @@ const safeId = (id: string) => /^[\w-]+$/.test(id);
 
 /** A complete config from partial input: what the builder, import and older files may leave out. */
 export function normalizeConfig(input: Partial<AgentConfig>): AgentConfig {
+  const persona = cleanPersona(input.persona);
+  const plugins = cleanPlugins(input.plugins);
+  const avatar = cleanAvatar(input.avatar);
+  const team = cleanTeam(input.team);
   return {
     name: (input.name ?? '').trim() || 'Untitled agent',
     description: input.description ?? '',
     icon: input.icon || 'bot',
     color: input.color || '#a855f7',
+    ...(avatar && { avatar }),
+    ...(team && { team }),
     ...(input.model && { model: input.model }),
+    ...(persona && { persona }),
     instructions: input.instructions ?? '',
     skills: input.skills ?? [],
     tools: input.tools ?? [],
@@ -70,6 +82,7 @@ export function normalizeConfig(input: Partial<AgentConfig>): AgentConfig {
     memory: { crossSession: Boolean(input.memory?.crossSession) },
     settings: { ...DEFAULT_AGENT_SETTINGS, ...input.settings },
     ...(input.guardrails && ((input.guardrails.input || input.guardrails.output) ? { guardrails: input.guardrails } : {})),
+    ...(plugins && { plugins }),
   };
 }
 
@@ -94,6 +107,7 @@ function summarizeSession(session: AgentSession): SessionSummary {
     usage: session.usage,
     ...(session.traceIds.length && { traceId: session.traceIds.at(-1) }),
     ...(session.parentSessionId && { parentSessionId: session.parentSessionId }),
+    ...(session.execution && { execution: session.execution }),
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   };
@@ -401,11 +415,18 @@ class AgentStore {
       description: agent.description,
       icon: agent.icon,
       color: agent.color,
+      ...(agent.avatar && { avatar: agent.avatar }),
+      ...(agent.team && { team: agent.team }),
+      ...(agent.persona?.role && { role: agent.persona.role }),
+      ...(agent.persona?.tones && { tones: agent.persona.tones }),
       ...(agent.model && { model: `${agent.model.provider}/${agent.model.model}` }),
       tools: agent.tools.length,
       skills: agent.skills.length,
       ...(agent.published && { publishedVersion: agent.published.version }),
       draftChanged: agent.published ? !sameConfig(agent, agent.published.config) : false,
+      ...(agent.kagent && { kagent: agent.kagent.name }),
+      channels: [...new Set((agent.published?.config.channels ?? []).filter((c) => c.enabled).map((c) => c.type))],
+      schedules: (agent.published?.config.schedules ?? []).filter((s) => s.enabled).length,
       sessions: this.backend.sessionCount(agent.id),
       updatedAt: agent.updatedAt,
     }));
@@ -425,7 +446,9 @@ class AgentStore {
   saveDraft(id: string, config: Partial<AgentConfig>): Agent | undefined {
     const agent = this.backend.get(id);
     if (!agent) return undefined;
-    return this.write({ ...agent, ...normalizeConfig({ ...configOf(agent), ...config }), updatedAt: new Date().toISOString() });
+    // The optional parts come from the new config only, so a cleared model, persona, guardrails or plugin list stays cleared.
+    const { model: _model, persona: _persona, guardrails: _guardrails, plugins: _plugins, ...rest } = agent;
+    return this.write({ ...rest, ...normalizeConfig({ ...configOf(agent), ...config }), updatedAt: new Date().toISOString() });
   }
 
   publish(id: string): Agent | undefined {
@@ -442,6 +465,14 @@ class AgentStore {
     if (!agent) return undefined;
     const { published: _published, ...rest } = agent;
     return this.write({ ...rest, updatedAt: new Date().toISOString() });
+  }
+
+  /** Record where the published agent runs in kagent, or forget it (undefined). The draft and versions are untouched. */
+  setKagent(id: string, kagent: KagentDeployment | undefined): Agent | undefined {
+    const agent = this.backend.get(id);
+    if (!agent) return undefined;
+    const { kagent: _previous, ...rest } = agent;
+    return this.write({ ...rest, ...(kagent && { kagent }) });
   }
 
   delete(id: string): boolean {

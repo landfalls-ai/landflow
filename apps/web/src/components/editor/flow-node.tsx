@@ -2,10 +2,12 @@
 import { memo } from 'react';
 import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
-import { CircleDot, Copy, Loader2, Play, Power, Settings2, SkipForward, Trash2 } from 'lucide-react';
+import { CircleDot, Copy, Loader2, Play, Power, Settings2, SkipForward, Trash2, UsersRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isCompact, NodeTile } from '../canvas/node-tile';
 import { useAssistant } from './assistant';
+import { TeamStrip } from './team-strip';
+import { canTurnNodeIntoTeam, turnIntoTeam } from './turn-into-team';
 import { useEditor, type FlowNode } from './store';
 
 function ToolbarButton({
@@ -55,6 +57,8 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
     useShallow((s) => s.edges.filter((e) => e.source === id && e.data?.connectionType === 'main').map((e) => e.sourceHandle ?? 'main:0')),
   );
   const subConnections = useEditor(useShallow((s) => s.edges.filter((e) => e.target === id && e.data?.connectionType !== 'main').map((e) => e.targetHandle)));
+  // A Run an Agent node with agents hanging under it as tools can become a team.
+  const canTeam = useEditor((s) => selected && s.nodeTypes[wf.type] !== undefined && wf.type === 'core.messageAgent' && s.edges.some((e) => e.target === id && e.data?.connectionType === 'ai_tool') && canTurnNodeIntoTeam(id));
   const { openNode, openPalette, removeNodes, duplicateNode, updateNode, toggleBreakpoint } = useEditor.getState();
 
   const compact = isCompact(info?.descriptor, wf.parameters, asTool);
@@ -78,6 +82,11 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       onToggleBreakpoint={() => toggleBreakpoint(id)}
       fresh={fresh}
     >
+      {wf.type === 'core.runTeam' && typeof wf.parameters.teamId === 'string' && wf.parameters.teamId && (
+        <NodeToolbar isVisible={!selected && !fixing} position={Position.Top} offset={compact ? 12 : 14}>
+          <TeamStrip teamId={wf.parameters.teamId} />
+        </NodeToolbar>
+      )}
       <NodeToolbar isVisible={fixing && !selected} position={Position.Top} offset={compact ? 12 : 14}>
         <span className="flex animate-pop items-center gap-1 rounded-full border border-acbd bg-sf px-2 py-0.5 text-[11px] font-semibold text-viz-7 shadow-pop">
           <Loader2 className="size-3 animate-spin" /> Spotlight is fixing this
@@ -105,6 +114,11 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
           <ToolbarButton title={wf.disabled ? 'Enable' : 'Disable'} onClick={() => updateNode(id, { disabled: !wf.disabled })}>
             <Power className="size-3.5" />
           </ToolbarButton>
+          {canTeam && (
+            <ToolbarButton title="Turn into a team" onClick={() => void turnIntoTeam(id)}>
+              <UsersRound className="size-3.5" />
+            </ToolbarButton>
+          )}
           <ToolbarButton title="Duplicate (⌘D)" onClick={() => duplicateNode(id)}>
             <Copy className="size-3.5" />
           </ToolbarButton>

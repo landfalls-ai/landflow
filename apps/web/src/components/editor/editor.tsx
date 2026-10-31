@@ -36,6 +36,7 @@ import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
 import { WorkflowTabs } from '../shell/workflow-tabs';
 import { prefetchFailure, useAssistant } from './assistant';
+import { BrainCanvasCard } from '../brain/canvas-card';
 import { focusSpotlight, Spotlight, SpotlightActivity } from './spotlight';
 import { ChatPanel, type ChatApproval, type ChatChunk, type ChatFile, type ChatOutcome } from './chat-panel';
 import { parseClipboard, type ClipboardData } from './clipboard';
@@ -827,6 +828,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
               <EmptyCanvas />
               <CanvasToolbar />
               <SpotlightActivity />
+              <BrainCanvasCard />
               {/* One dock at the bottom: run controls, then Spotlight. The side padding keeps clear of zoom and the minimap.
                   When the canvas is narrow (a side panel open), Spotlight wraps to its own line above the run controls. */}
               <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 pl-14 pr-[232px]">

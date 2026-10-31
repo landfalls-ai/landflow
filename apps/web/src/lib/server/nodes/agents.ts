@@ -1,9 +1,12 @@
 /**
  * Nodes that connect workflows and Agents (docs/agents.md): a trigger that makes a workflow
  * callable by an agent (as a tool) or by another workflow (Execute Workflow, in workflows.ts),
- * and an action that sends a message to a published agent.
+ * and Run an Agent, which runs a published agent as a step of the flow with the chat model,
+ * memory and tools connected to it.
  */
-import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
+import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
+import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
+import type { AgentStreamEvent } from '../../shared/agents';
 
 const main = [{ type: 'main' as const }];
 
@@ -127,18 +130,23 @@ export const workflowTrigger = defineNode({
 export const messageAgentNode = defineNode({
   description: {
     name: 'messageAgent',
-    displayName: 'Message an Agent',
-    description: 'Send a message to a published agent and get its reply',
+    displayName: 'Run an Agent',
+    description: 'Run one of your agents in the flow: its persona, skills and capabilities, with the chat model, memory and tools connected here',
     version: 1,
     kind: 'action',
     categories: ['AI'],
     icon: 'lucide:bot-message-square',
     color: '#a855f7',
-    subtitle: '{{agentId}}',
-    keywords: ['agent', 'assistant', 'delegate', 'ask'],
+    keywords: ['agent', 'assistant', 'delegate', 'ask', 'message an agent', 'persona', 'knowledge base'],
     usableAsTool: true,
     toolDescription: 'Ask another agent to do something. Argument: `message` (the full task, the agent does not see this conversation).',
-    inputs: main,
+    // Like the AI Agent's ports, all optional: the agent brings its own model and capabilities.
+    inputs: [
+      { type: 'main' },
+      { type: 'ai_languageModel', displayName: 'Chat Model', maxConnections: 1 },
+      { type: 'ai_memory', displayName: 'Memory', maxConnections: 1 },
+      { type: 'ai_tool', displayName: 'Tool' },
+    ],
     outputs: main,
     properties: [
       {
@@ -158,8 +166,8 @@ export const messageAgentNode = defineNode({
         type: 'options',
         default: 'new',
         options: [
-          { name: 'New session per item', value: 'new', description: 'Every message starts fresh' },
-          { name: 'Continue by key', value: 'key', description: 'Messages with the same key share a session (session memory)' },
+          { name: 'New session per item', value: 'new', description: 'Every message starts fresh (a connected memory still gives it the history)' },
+          { name: 'Continue by key', value: 'key', description: 'Messages with the same key share a session, or the connected memory’s history' },
         ],
       },
       {
@@ -171,7 +179,8 @@ export const messageAgentNode = defineNode({
       },
       {
         name: 'notice',
-        displayName: 'Tools that require approval are refused in workflow runs (nobody is there to approve them).',
+        displayName:
+          'Connect a chat model to use it instead of the agent’s own, tools (a vector store in Retrieve Documents (As Tool) mode is a knowledge base) to add to its capabilities for this run, and a memory to keep the conversation in. Tools that require approval are refused in workflow runs (nobody is there to approve them).',
         type: 'notice',
       },
     ],
@@ -180,6 +189,11 @@ export const messageAgentNode = defineNode({
     // Loaded lazily: the agents runtime imports the runner, which needs the registry this plugin is part of.
     const { agentStore } = await import('../agents/store');
     const { newSession, runAgent } = await import('../agents/runtime');
+    const connection = ctx.getInputConnectionData;
+    const [model] = connection ? await connection<LanguageModel>('ai_languageModel') : [];
+    const [memory] = connection ? await connection<AgentMemory>('ai_memory') : [];
+    const tools = connection ? await connection<AgentTool>('ai_tool') : [];
+    const send = ctx.sendChunk;
     const items = ctx.getInputData();
     const out: NodeItem[] = [];
     for (let i = 0; i < Math.max(items.length, 1); i++) {
@@ -191,18 +205,49 @@ export const messageAgentNode = defineNode({
         const message = String(ctx.getNodeParameter('message', i) ?? '').trim();
         if (!message) throw new NodeOperationError('The message is empty', { itemIndex: i });
         const key = ctx.getNodeParameter<string>('conversation', i) === 'key' ? String(ctx.getNodeParameter('sessionKey', i) ?? '').trim() : '';
-        const conversationKey = key ? `workflow:${ctx.getWorkflowId() ?? 'unknown'}:${key}` : undefined;
-        const existing = conversationKey ? agentStore.findConversation(agent.id, conversationKey) : undefined;
-        const session =
-          (existing && { ...existing, version: agent.published.version }) ??
-          newSession(agent, { source: 'workflow', userId: `workflow:${ctx.getWorkflowId() ?? 'unknown'}`, version: agent.published.version, ...(conversationKey && { conversationKey }) });
-        const result = await runAgent({ agent, session, message, approvals: 'deny' });
+        const userId = `workflow:${ctx.getWorkflowId() ?? 'unknown'}`;
+        // Links the session to this run and node, so the execution view can show the agent working.
+        const node = ctx.getNode();
+        const execution = { workflowId: ctx.getWorkflowId() ?? 'unknown', executionId: ctx.getExecutionId(), nodeId: node.id, ...(node.name && { nodeName: node.name }) };
+        let session;
+        if (memory) {
+          // The connected memory holds the conversation: a new session starts from its history and saves back to it.
+          session = newSession(agent, { source: 'workflow', userId, version: agent.published.version });
+          session.messages = await memory.load(key || 'default');
+        } else {
+          const conversationKey = key ? `${userId}:${key}` : undefined;
+          const existing = conversationKey ? agentStore.findConversation(agent.id, conversationKey) : undefined;
+          session = (existing && { ...existing, version: agent.published.version }) ?? newSession(agent, { source: 'workflow', userId, version: agent.published.version, ...(conversationKey && { conversationKey }) });
+        }
+        session.execution = execution;
+        send?.({ type: 'begin', itemIndex: i });
+        const result = await runAgent({
+          agent,
+          session,
+          message,
+          approvals: 'deny',
+          ...((model || tools.length) && { flow: { ...(model && { model }), ...(tools.length && { tools }) } }),
+          // The chat panel and streaming triggers get the agent's answers and tool calls as they happen.
+          ...(send && { onEvent: streamer(send, i) }),
+        });
+        send?.({ type: 'end', itemIndex: i });
         if (result.reason === 'error') {
           const last = [...result.session.timeline].reverse().find((e) => e.type === 'error');
           throw new NodeOperationError(`${agent.name} failed: ${last?.type === 'error' ? last.message : 'unknown error'}`, { itemIndex: i });
         }
+        if (memory) await memory.save(key || 'default', result.session.messages);
+        const steps = result.session.timeline.flatMap((e) => (e.type === 'tool' ? [{ tool: e.tool, kind: e.kind, status: e.status, ...(e.error && { error: e.error }) }] : []));
         out.push({
-          json: { reply: result.reply ?? null, sessionId: result.session.id, agentId: agent.id, version: agent.published.version, endReason: result.reason, usage: { ...result.usage } },
+          json: {
+            reply: result.reply ?? null,
+            sessionId: result.session.id,
+            agentId: agent.id,
+            version: agent.published.version,
+            model: model ? `${model.provider}/${model.model}` : agent.published.config.model ? `${agent.published.config.model.provider}/${agent.published.config.model.model}` : null,
+            endReason: result.reason,
+            usage: { ...result.usage },
+            steps,
+          },
           pairedItem: { item: i },
         });
       } catch (error) {
@@ -225,3 +270,20 @@ export const messageAgentNode = defineNode({
     },
   },
 });
+
+/** An agent's timeline as the chat chunks of the AI Agent node: its answers, and its tool calls as they start and end. */
+export function streamer(send: NonNullable<IExecuteContext['sendChunk']>, itemIndex: number) {
+  let wrote = false;
+  return (event: AgentStreamEvent) => {
+    if (event.type !== 'entry') return;
+    const { entry } = event;
+    if (entry.type === 'assistant' && entry.text.trim()) {
+      send({ type: 'item', itemIndex, content: `${wrote ? '\n\n' : ''}${entry.text}` });
+      wrote = true;
+    } else if (entry.type === 'tool') {
+      const status = entry.status === 'running' ? 'started' : entry.status === 'success' ? 'finished' : 'failed';
+      const output = entry.error ?? (entry.output === undefined ? undefined : typeof entry.output === 'string' ? entry.output : JSON.stringify(entry.output));
+      send({ type: 'tool', itemIndex, tool: { id: entry.callId, name: entry.tool, status, input: entry.input as JsonObject, ...(output !== undefined && { output: output.slice(0, 2_000) }) } });
+    }
+  };
+}

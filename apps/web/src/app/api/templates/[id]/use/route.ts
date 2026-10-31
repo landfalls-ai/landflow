@@ -11,6 +11,7 @@ import { currentPrincipal } from '@/lib/server/auth/guard';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { createIn, targetProject } from '@/lib/server/projects/http';
 import { getTemplate, TemplateError, templateAccess, useTemplate } from '@/lib/server/templates';
+import { recordUsage } from '@/lib/server/usage/ledger';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +37,8 @@ export const POST = handler(async (request: Request, ctx: Ctx) => {
       createWorkflow: (save, workflowId) => createIn(projectId, 'workflow', save, (w: Workflow) => w.id, workflowId),
       createTable: (create) => createIn(projectId, 'dataTable', create, (t) => t.id),
     });
+    const created = (result as { workflow?: { id?: string } }).workflow?.id;
+    recordUsage({ kind: 'template.used', ...(created && { workflowId: created }), ...(viewer?.id && { actorId: viewer.id }), attrs: { templateId: id, template: template.name } });
     return json(result, 201);
   } catch (caught) {
     if (caught instanceof TemplateError) return error(caught.message, caught.status, caught.details);

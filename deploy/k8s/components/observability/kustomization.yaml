@@ -1,0 +1,38 @@
+# Optional: the local telemetry backend (grafana/otel-lgtm: Collector, Tempo, Prometheus, Loki, Grafana) in the namespace,
+# and OTLP export from the host and every plugin to it (docs/deployment.md, "Telemetry on Kubernetes"). kagent in the kind cluster
+# sends its traces, metrics and logs here too (deploy/kind/bridge.yaml, docs/a2a.md). The image comes from Docker Hub.
+#
+#   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-observability
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - lgtm.yaml
+configMapGenerator:
+  - name: landflow-otelcol-config
+    options: { disableNameSuffixHash: true, labels: { app.kubernetes.io/part-of: landflow-observability } }
+    files: [otelcol-config.yaml]
+  - name: landflow-grafana-dashboards
+    options: { disableNameSuffixHash: true, labels: { app.kubernetes.io/part-of: landflow-observability } }
+    files: [agent-runs.json]
+  - name: landflow-grafana-dashboard-provider
+    options: { disableNameSuffixHash: true, labels: { app.kubernetes.io/part-of: landflow-observability } }
+    files: [landflow.yaml=dashboard-provider.yaml]
+patches:
+  # Every Landflow process exports OTLP/HTTP to the backend (the host and the TypeScript SDK send JSON, the Go and Python
+  # SDKs protobuf: the Collector takes both on 4318).
+  - target: { kind: Deployment, labelSelector: app.kubernetes.io/part-of=landflow }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://landflow-lgtm:4318" }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: OTEL_RESOURCE_ATTRIBUTES, value: "deployment.environment=landflow-dev" }
+  # The host links each run's trace to Grafana's Explore view of Tempo (LANDFLOW_TRACE_URL, {traceId} is filled in).
+  - target: { kind: Deployment, name: landflow-host }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: LANDFLOW_TRACE_URL
+          value: "http://landflow-lgtm.landflow-dev.svc.cluster.local:3000/explore?schemaVersion=1&orgId=1&panes=%7B%22t%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22{traceId}%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-24h%22%2C%22to%22%3A%22now%22%7D%7D%7D"

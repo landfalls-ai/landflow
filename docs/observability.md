@@ -26,6 +26,7 @@ host and for plugins.
 | `LANDFLOW_LOG_LEVEL` | `info` | `debug` · `info` · `warn` · `error` |
 | `LANDFLOW_LOG_FORMAT` | `json` | `json` (one object per line) or `pretty` (human-readable, still with ids) |
 | `LANDFLOW_LOG_SPANS` | `true` | write one log line per finished span (see §3) |
+| `LANDFLOW_LOG_OTLP` | `true` | host: with an OTLP endpoint, also export every log line (but the `span.end` lines) as an OTel log record (see §3) |
 | `LANDFLOW_METRICS_PROMETHEUS` | `true` | serve Prometheus text: host `GET /api/metrics`, plugins `GET /metrics` on their HTTP port |
 | `LANDFLOW_TRACE_URL` | – | host UI only: link template for a trace, e.g. `http://localhost:16686/trace/{traceId}` (Jaeger) or a Grafana Tempo URL |
 | `NEXT_OTEL_FETCH_DISABLED` | host: `1` | Next.js' own `fetch` spans stay off: the host already opens `plugin.rpc` and `gen_ai.chat` client spans for its outbound calls. Set `0` to get them back |
@@ -86,6 +87,11 @@ With `LANDFLOW_LOG_SPANS=true` (the default) every finished span is also written
   request wherever they appear (messages, URLs, errors).
 - Node logs (`ctx.logger.*` / `ExecuteResponse.logs`) are also written to the process log with the
   trace context, besides being returned to the host.
+- **Over OTLP** (host): with `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) set and
+  `LANDFLOW_LOG_OTLP` on (the default), every line is also an OTel log record (scope `landflow-host.log`, the message as
+  the body, the fields as attributes, the active trace and span ids), so a backend such as Loki links each line to its
+  trace. `span.end` lines are left out (the spans themselves are exported); audit events are their own records
+  ([audit](features/audit-and-governance.md)). `OTEL_LOGS_EXPORTER=none` turns all of it off.
 
 ## 4. Spans
 
@@ -106,13 +112,13 @@ conventions.
 | `vector_store.insert {store}`, `vector_store.query {store}` | client (child of the vector store's `node.execute`, or of `execute_tool` for an agent knowledge base) | RAG ([Retrieval](features/ai.md#retrieval-rag)): `landflow.vector_store` (`memory`/`sqlite`/`pgvector`), `db.system.name` (`landflow.memory`/`sqlite`/`postgresql`), `db.collection.name` (the collection), `db.operation.name` (`insert`/`query`), `landflow.retrieval.documents` (written or returned); query: `landflow.retrieval.mode` (`vector`/`hybrid`), `landflow.retrieval.top_k`, `landflow.retrieval.filtered`. The query is embedded just before, by the embeddings sub-node (`node.execute`, `landflow.node.source=ai_embedding`, with its `gen_ai.embeddings` child; a knowledge base embeds directly). Document text never reaches span attributes |
 | `retrieval.rerank` | internal | `landflow.rerank.method` (`llm`), `gen_ai.request.model`, `landflow.rerank.documents` (candidates), `landflow.retrieval.top_k`; the judge's call is a `gen_ai.chat` child |
 | `guardrails.check` | internal (child of the Guardrails node's `node.execute`, one per item) | `landflow.guardrails.mode` (`check`/`sanitize`), `landflow.guardrails.checks` (the checks that ran), `landflow.guardrails.passed`, `landflow.guardrails.violations` (count), `landflow.guardrails.failed` (the checks that found something); model checks are `gen_ai.chat` children. Matched values never reach spans |
-| `trigger.fire` | internal (root for schedule/poll/error/retry; child of the HTTP span for manual runs, webhooks, forms, MCP Server Trigger calls and chat) | `landflow.trigger.source` (`manual`/`webhook`/`form`/`mcp`/`schedule`/`poll`/`chat`/`error`/`retry`), `landflow.workflow.id`, `landflow.node.name`; `landflow.trigger.test=true` (on the span and the `landflow.trigger.fires` metric) for a call to a test URL (`/api/webhook-test/…`, `/form-test/…`, `/mcp-test/…`), which is otherwise traced exactly like the production call (those URLs are sampled like webhooks: any method, form and MCP POSTs). `error`: an error workflow started for a failed execution, as its own trace; `retry`: an automatic retry of a failed execution (a manual Retry runs under its request's span) |
+| `trigger.fire` | internal (root for schedule/poll/error/retry; child of the HTTP span for manual runs, webhooks, forms, MCP Server Trigger calls and chat) | `landflow.trigger.source` (`manual`/`webhook`/`form`/`mcp`/`schedule`/`poll`/`chat`/`error`/`retry`/`usage`), `landflow.workflow.id`, `landflow.node.name`; `landflow.trigger.test=true` (on the span and the `landflow.trigger.fires` metric) for a call to a test URL (`/api/webhook-test/…`, `/form-test/…`, `/mcp-test/…`), which is otherwise traced exactly like the production call (those URLs are sampled like webhooks: any method, form and MCP POSTs). `error`: an error workflow started for a failed execution, as its own trace; `retry`: an automatic retry of a failed execution (a manual Retry runs under its request's span); `usage`: an On Usage Event trigger started by the [second brain](second-brain.md)'s ledger |
 | `trigger.listen` | internal (child of `POST /api/workflows/:id/listen`) | The editor listening for a test event, for as long as its stream is open: `landflow.trigger.source` (`webhook`/`form`/`mcp`), `landflow.trigger.test=true`, `landflow.workflow.id`, `landflow.node.name`, `landflow.listener.id`, `landflow.execution.id` (the test run's id; MCP tool calls are `<id>-<suffix>`); at the end `landflow.listen.outcome` (`received`/`timeout`/`stopped`/`closed`) and, for MCP, `landflow.listen.calls` |
 | `trigger.poll {node type}` | internal (root) | `landflow.workflow.id`, `landflow.node.name`, `landflow.node.type`, `landflow.poll.items`, `landflow.poll.first` |
 | `registry.scan`, `registry.register` | internal | `landflow.plugin.id`, `landflow.plugin.endpoint`, `landflow.discovery.source` (register); `landflow.scan.targets`, `landflow.scan.found` (scan) |
 
 | `invoke_agent {agent name}` | internal (root for schedule, Telegram and Slack runs; child of the HTTP span for the test chat; child of `execute_tool` for a sub-agent) | OTel GenAI agent conventions: `gen_ai.operation.name=invoke_agent`, `gen_ai.agent.id`, `gen_ai.agent.name`, `gen_ai.conversation.id` (the session), `gen_ai.system`, `gen_ai.request.model`, `landflow.agent.source` (`test`/`schedule`/`telegram`/`slack`/`workflow`/`agent`), `landflow.agent.version` (`draft` or N), `landflow.agent.end_reason` |
-| `execute_tool {tool name}` | internal (child of `invoke_agent`) | `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type=function`, `landflow.agent.tool.kind` (`node`/`workflow`/`agent`/`skill`/`memory`), plus the agent attributes; contains the node's spans, a workflow's `workflow.execute` or a sub-agent's `invoke_agent` |
+| `execute_tool {tool name}` | internal (child of `invoke_agent`) | `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type=function`, `landflow.agent.tool.kind` (`node`/`workflow`/`agent`/`skill`/`memory`/`a2a`), plus the agent attributes; contains the node's spans, a workflow's `workflow.execute`, a sub-agent's `invoke_agent` or a remote agent's client `invoke_agent` |
 | `assistant.suggest {node type}`, `assistant.chat` | internal (child of the request span) | The editor assistant ([assistant.md](assistant.md)). `landflow.assistant.request` (`suggest`/`chat`), `landflow.workflow.id`, `gen_ai.request.model`; suggest: `landflow.node.type`, `landflow.assistant.suggestions`, `landflow.outcome=skipped` for a node not worth a model call; chat: `landflow.assistant.turns`, `landflow.assistant.steps` and an `assistant.tool` event per tool call (`gen_ai.tool.name`, `landflow.outcome`). The model calls are `gen_ai.chat` children |
 
 A tool call by an AI agent is a `node.execute` span with `landflow.node.source=ai_tool`, a child
@@ -142,6 +148,21 @@ call or form submission is a child of that request's HTTP span; a timer (`time`,
 finished sub-execution (`subworkflow`) starts a new root trace. **Execute Workflow** runs the child
 execution inside the calling node's span, so parent and child share a trace until a wait splits it.
 The execution's `traceId` is the trace of its latest part.
+
+<a id="remote-agents-a2a"></a>
+
+**Remote agents (A2A).** Each call to a remote agent ([a2a.md](a2a.md)), from an agent's A2A capability or the A2A
+Agent node, is an `invoke_agent {card name}` **client** span (`lib/server/telemetry/a2a.ts`), a child of the
+capability's `execute_tool` or the node's `node.execute`. Its trace context goes to the agent as `traceparent`, so an
+agent that continues it (kagent does) adds its own spans to the trace. Attributes: `gen_ai.operation.name=invoke_agent`,
+`gen_ai.provider.name=a2a`, `gen_ai.agent.name`, `rpc.system=jsonrpc`, `rpc.service=lf.a2a.v1.A2AService`,
+`rpc.method` (`SendMessage`/`SendStreamingMessage`/`GetTask`/`CancelTask`), `rpc.jsonrpc.version`, `server.address`,
+`server.port`, `url.full`, `landflow.a2a.caller` (`agent`/`node`); from the task it ends with: `a2a.task.id`,
+`a2a.task.state`, `gen_ai.conversation.id` (the A2A context), `gen_ai.usage.input_tokens` / `output_tokens` (and the
+cache-read and reasoning counts when reported), `landflow.a2a.tool_calls`, `landflow.a2a.pause` (`approval`/`question`).
+Each tool call the agent made is an `a2a.tool_call` event at its own time (`gen_ai.tool.name`, `gen_ai.tool.call.id`,
+`landflow.a2a.tool.status`, `error.message`). A failed, rejected or canceled task sets error status. What kagent adds to
+the trace, and its quirks, are in [a2a.md](a2a.md#tracing).
 
 ### Plugins (every SDK)
 
@@ -202,6 +223,10 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.agent.tool.duration` | histogram (ms) | agent attributes, `gen_ai.tool.name`, `landflow.agent.tool.kind` |
 | `landflow.agent.approvals` | counter | agent attributes, `gen_ai.tool.name`, `landflow.agent.approval.decision` (`approved`/`denied`) |
 | `landflow.agent.tokens` | counter | agent attributes, `gen_ai.token.type` (`input`/`output`) |
+| `landflow.a2a.calls` | counter | `gen_ai.agent.name` (the card's name), `rpc.method`, `landflow.a2a.caller` (`agent`/`node`), `a2a.task.state`, `landflow.outcome` |
+| `landflow.a2a.call.duration` | histogram (ms) | `gen_ai.agent.name`, `rpc.method`, `landflow.a2a.caller`: until the task settles or pauses |
+| `landflow.a2a.tokens` | counter | `gen_ai.agent.name`, `gen_ai.token.type`: what the remote agent reports using (kagent's usage extension) |
+| `landflow.a2a.tool.calls` | counter | `gen_ai.agent.name`, `gen_ai.tool.name`, `landflow.a2a.tool.status` (`success`/`error`/`awaiting_approval`): the remote agent's own tool calls |
 | `landflow.assistant.requests` | counter | `landflow.assistant.request` (`suggest`/`chat`), `landflow.outcome` (`ok`/`error`/`timeout`/`skipped`) |
 | `landflow.assistant.duration` | histogram (ms) | `landflow.assistant.request` |
 | `landflow.assistant.suggestions` | counter | `landflow.assistant.kind` (`fix`/`param`/`data`/`next`, or `proposal` for a chat proposal): what the editor was shown |
@@ -330,6 +355,10 @@ Every process writes JSON logs with `trace_id`. To browse traces, run any OTLP b
   writes `.otel/{traces,metrics,logs}.jsonl` and serves every process's metrics at
   `http://localhost:9464/metrics`.
 - Prometheus scraping `http://localhost:3000/api/metrics` and each plugin's `http://host:port/metrics`.
+- On the OrbStack cluster, the `orbstack-observability` overlay runs Grafana with Tempo, Prometheus and Loki in
+  `landflow-dev`, points every Landflow process at it and ships the "Landflow · agent runs" dashboard
+  ([deployment.md](deployment.md#telemetry-on-kubernetes)). kagent in the kind cluster exports there too
+  ([a2a.md](a2a.md#kagent-next-to-landflow)).
 
 <a id="token-and-cost-tracking"></a>
 
@@ -371,7 +400,7 @@ the call may start, then prices and records what it used.
   |---|---|---|
   | Max tokens / max cost per execution | Workflow settings → AI usage limits | the execution, its earlier segments and its sub-workflows |
   | Max tokens / max cost per day | Workflow settings → AI usage limits | every execution of the workflow today |
-  | Daily token limit, daily and monthly cost limit | Agent → Settings | every run of the agent (sessions, schedules, channels, Message an Agent) |
+  | Daily token limit, daily and monthly cost limit | Agent → Settings | every run of the agent (sessions, schedules, channels, Run an Agent) |
   | Tokens or cost per day or month, per model credential | Settings → AI prices → AI usage caps (`GET/PUT /api/settings/ai-caps`) | every call made with the credential, by any workflow or agent |
   | Tokens or cost per day or month, per user, or one cap for every user | the same | every run the user started (a manual run, an agent session); runs without a user, such as triggers, aren't counted |
 

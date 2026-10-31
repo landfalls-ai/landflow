@@ -3,7 +3,7 @@
 Status: **in progress**. Written 2026-10-27 at commit 493177a. **Spotlight in the editor is built** (2026-10-27): the bar at
 the bottom of the canvas with suggestion bubbles, `@` mentions and node-type completion, replacing the Assistant panel;
 [assistant.md](assistant.md#spotlight) documents it. The new Home, Spotlight on the other pages and the action layer are
-still a plan. An interactive version with UI
+still a plan. Spotlight in the editor knows the published [agent teams](agent-teams.md#spotlight) and can turn a lead and its agents into one. An interactive version with UI
 mockups is the artifact <https://claude.ai/artifact/3FPJ1Ci3Jb8K3oJfjcvV8F> (private to the owner). The screen-by-screen
 simplification review that goes with it is [ux-simplification.md](ux-simplification.md).
 
@@ -187,7 +187,7 @@ POST /api/actions/receipts/:id/undo
 ```
 
 New routes go into `routePolicy` (`lib/server/auth/policy.ts`) and [reference/api.md](reference/api.md) when built.
-The chat loop is the editor assistant's loop (`assistant/chat.ts`, at most 8 model calls) with catalog tools in place
+The chat loop is the editor assistant's loop (`assistant/chat.ts`, up to 20 model calls while its steps make progress) with catalog tools in place
 of the editor-only ones.
 
 ## Delivery

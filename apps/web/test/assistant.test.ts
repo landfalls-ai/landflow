@@ -5,7 +5,7 @@ import type { NodeTypeInfo } from '@/lib/shared/types';
 import type { GenerateInput } from '@/lib/server/nodes/models';
 import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
-import { recoverToolCalls, runChat, withoutApplyRequests, withoutAppliedClaims, withoutEchoedNotes, withoutInventedIds, withoutMadeUpIds, withoutRepeats, MAX_STEPS, type ChatEvent } from '@/lib/server/assistant/chat';
+import { opsArgument, withEarlierRefs, recoverToolCalls, runChat, withoutApplyRequests, withoutAppliedClaims, withoutEchoedNotes, withoutInventedIds, withoutMadeUpIds, withoutRepeats, MAX_STEPS, type ChatEvent } from '@/lib/server/assistant/chat';
 import { registryLookup, validateOps } from '@/lib/server/assistant/ops';
 import { searchNodes } from '@/lib/server/assistant/research';
 import { suggestAfterRun } from '@/lib/server/assistant/suggest';
@@ -481,12 +481,186 @@ describe('builder chat', () => {
     expect(recoverToolCalls('<function=rm_rf><parameter=x>1</parameter></function>').calls).toEqual([]);
   });
 
-  it('stops after the step limit', async () => {
-    const { model, calls } = scripted(Array.from({ length: MAX_STEPS + 2 }, (_, i) => ({ toolCalls: [{ id: `c${i}`, name: 'get_workflow', input: {} }] })));
+  it('goes on while steps add something new, up to the ceiling', async () => {
+    // Each search is new, so each step makes progress; the ceiling ends it.
+    const { model, calls } = scripted(Array.from({ length: MAX_STEPS + 2 }, (_, i) => ({ toolCalls: [{ id: `c${i}`, name: 'search_nodes', input: { query: i % 2 ? 'sort items' : 'merge branches' } }, { id: `d${i}`, name: 'get_node_docs', input: { type: i % 2 ? 'core.sort' : 'core.merge' } }, { id: `e${i}`, name: 'get_run_data', input: { node: `Ghost ${i}` } }] })));
     const events: ChatEvent[] = [];
-    await runChat({ messages: [{ role: 'user', content: 'Loop forever' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
+    await runChat({ messages: [{ role: 'user', content: 'Keep researching' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
+    // The ghost node's error message is different each time, so the steps are never all repeats.
     expect(calls).toHaveLength(MAX_STEPS);
     expect(events.at(-2)).toMatchObject({ type: 'text', text: expect.stringContaining(`Stopped after ${MAX_STEPS} steps`) });
     expect(events.at(-1)).toMatchObject({ type: 'done', steps: MAX_STEPS });
+  });
+
+  it('stops early when steps only repeat', async () => {
+    const { model, calls } = scripted(Array.from({ length: MAX_STEPS }, (_, i) => ({ toolCalls: [{ id: `c${i}`, name: 'get_workflow', input: {} }] })));
+    const events: ChatEvent[] = [];
+    await runChat({ messages: [{ role: 'user', content: 'Loop forever' }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
+    // The first read is new; the next two are not.
+    expect(calls).toHaveLength(3);
+    expect(events.at(-2)).toMatchObject({ type: 'text', text: expect.stringContaining('only repeated') });
+    expect(events.at(-2)).not.toMatchObject({ text: expect.stringContaining('Stopped after') });
+  });
+});
+
+/** Start → Brief → Create branch → Tech Lead → Open draft PR, the flow of the live test. */
+function delivery(): Workflow {
+  const node = (id: string, name: string, type: string, x: number, parameters: Record<string, unknown> = {}) => ({ id, name, type, typeVersion: 1, position: [x, 0] as [number, number], parameters });
+  const edge = (a: string, b: string) => ({ id: `${a}${b}`, type: 'main' as const, source: a, sourceIndex: 0, target: b, targetIndex: 0 });
+  return {
+    id: 'wf_delivery',
+    name: 'Delivery',
+    nodes: [node('t', 'Start', 'core.manualTrigger', 0), node('b', 'Brief', 'core.set', 280), node('c', 'Create branch', 'core.set', 560), node('l', 'Tech Lead', 'core.set', 840), node('d', 'Open draft PR', 'core.set', 1120)],
+    connections: [edge('t', 'b'), edge('b', 'c'), edge('c', 'l'), edge('l', 'd')],
+  };
+}
+
+const proposalsOf = (events: ChatEvent[]) => events.filter((e): e is Extract<ChatEvent, { type: 'proposal' }> => e.type === 'proposal');
+const toolResults = (calls: GenerateInput[], index: number) => (calls[index].messages.at(-1) as { results: Array<{ content: string; isError?: boolean }> }).results;
+
+describe('multi-part requests, pending proposals, branches and loops', () => {
+  it('reads the ops shapes local models send: an array, one op, JSON text, a wrapper', () => {
+    const add = { op: 'addNode', type: 'core.noOp', name: 'X' };
+    expect(opsArgument([add])).toEqual([add]);
+    expect(opsArgument(add)).toEqual([add]);
+    expect(opsArgument(JSON.stringify([add]))).toEqual([add]);
+    expect(opsArgument(JSON.stringify(add))).toEqual([add]);
+    expect(opsArgument({ ops: [add] })).toEqual([add]);
+    expect(opsArgument('[{op: addNode')).toEqual([]);
+  });
+
+  it('reads a ref from an earlier proposal in the same reply as that node’s name', () => {
+    const refs = new Map([['run_report', 'Run report']]);
+    const ops = withEarlierRefs(
+      [
+        { op: 'connect', from: 'Tech Lead', to: 'run_report' },
+        { op: 'addNode', ref: 'gate', type: 'core.if', name: 'Rounds left?', after: 'run_report', output: 1 },
+        { op: 'connect', from: 'gate', to: 'Open PR' },
+      ],
+      refs,
+    );
+    expect(ops).toEqual([
+      { op: 'connect', from: 'Tech Lead', to: 'Run report' },
+      { op: 'addNode', ref: 'gate', type: 'core.if', name: 'Rounds left?', after: 'Run report', output: 1 },
+      { op: 'connect', from: 'gate', to: 'Open PR' },
+    ]);
+  });
+
+  it('does not branch where a node already branches, but still accepts it when asked for twice', async () => {
+    const wf = delivery();
+    const filter = { summary: 'Check', ops: [{ op: 'addNode', ref: 'rr', type: 'core.runReport', name: 'Run report', after: 'Tech Lead', parameters: { gate: 'route' } }, { op: 'addNode', type: 'core.filter', name: 'Check if passed', after: 'rr' }] };
+    const { model, calls } = scripted([{ toolCalls: [{ id: 'c1', name: 'propose_changes', input: filter }] }, { toolCalls: [{ id: 'c2', name: 'propose_changes', input: filter }] }, { text: 'Review it.' }]);
+    const events: ChatEvent[] = [];
+    await runChat({ messages: [{ role: 'user', content: 'Add a run report' }], workflow: wf, model, types, onEvent: (e) => events.push(e) });
+    const [first] = toolResults(calls, 1);
+    expect(first.isError).toBe(true);
+    expect(first.content).toContain('Run report already branches: output 0 “Passed”, output 1 “Send back”. Connect from those outputs instead');
+    // Sent back once: the same proposal the second time goes through.
+    expect(proposalsOf(events)).toHaveLength(1);
+  });
+
+  it('answers a call with no ops after a proposal: the person applies, connect by name; a ref carries over', async () => {
+    const { model, calls } = scripted([
+      { toolCalls: [{ id: 'c1', name: 'propose_changes', input: { summary: 'Report', ops: [{ op: 'addNode', ref: 'rr', type: 'core.runReport', name: 'Run report', after: 'Tech Lead', parameters: { gate: 'route' } }] } }] },
+      { toolCalls: [{ id: 'c2', name: 'propose_changes', input: { summary: 'Apply the report first' } }] },
+      { toolCalls: [{ id: 'c3', name: 'propose_changes', input: { summary: 'Passed', ops: { op: 'addNode', ref: 'pr', type: 'core.set', name: 'Open ready PR', after: 'rr', output: 0 } } }] },
+      { text: 'Done.' },
+    ]);
+    const events: ChatEvent[] = [];
+    await runChat({ messages: [{ role: 'user', content: 'Add a run report, then open a PR when it passes' }], workflow: delivery(), model, types, onEvent: (e) => events.push(e) });
+    const [empty] = toolResults(calls, 2);
+    expect(empty.isError).toBe(true);
+    expect(empty.content).toContain("You can't apply proposals");
+    expect(empty.content).toContain('“Run report” is already in the workflow you work on');
+    // The third call used the first proposal's ref, as one op, not in an array: it goes through, after “Run report”.
+    expect(proposalsOf(events).map((p) => p.ops)).toEqual([
+      [expect.objectContaining({ op: 'addNode', name: 'Run report' })],
+      [expect.objectContaining({ op: 'addNode', name: 'Open ready PR', after: 'Run report' })],
+    ]);
+  });
+
+  it('reads `name` as the node of a removeNode or setParameters', () => {
+    expect(parseOps([{ op: 'removeNode', name: 'Run Report' }, { op: 'setParameters', name: 'Brief', parameters: { a: 1 } }]).ops).toEqual([
+      { op: 'removeNode', node: 'Run Report' },
+      { op: 'setParameters', node: 'Brief', parameters: { a: 1 } },
+    ]);
+  });
+
+  it('lists each node’s outputs and what they feed in get_workflow', async () => {
+    const { model, calls } = scripted([
+      { toolCalls: [{ id: 'c1', name: 'propose_changes', input: { summary: 'Report', ops: [{ op: 'addNode', ref: 'rr', type: 'core.runReport', name: 'Run report', after: 'Tech Lead', parameters: { gate: 'route' } }, { op: 'addNode', ref: 'pr', type: 'core.set', name: 'Open ready PR', after: 'rr', output: 0 }] } }] },
+      { toolCalls: [{ id: 'c2', name: 'get_workflow', input: {} }] },
+      { text: 'Done.' },
+    ]);
+    await runChat({ messages: [{ role: 'user', content: 'Add a run report' }], workflow: delivery(), model, types, onEvent: () => {} });
+    const outline = toolResults(calls, 2)[0].content;
+    expect(outline).toContain('branches: output 0 “Passed” → “Open ready PR”; output 1 “Send back” → nothing yet');
+    expect(outline).toContain('[pending: proposed, not applied yet]');
+  });
+
+  it('accepts a connection back to an earlier node as a loop, without a warning', () => {
+    const wf = delivery();
+    const before = apply([{ op: 'addNode', ref: 'n', type: 'core.code', name: 'Count rounds', after: 'Tech Lead' }, { op: 'addNode', ref: 'r', type: 'core.if', name: 'Round under 3', after: 'n' }], wf).workflow;
+    const result = apply([{ op: 'connect', from: 'Round under 3', to: 'Tech Lead', output: 0 }], before);
+    expect(result.dropped).toEqual([]);
+    expect(result.applied).toEqual([{ op: 'connect', from: 'Round under 3', to: 'Tech Lead' }]);
+    expect(structuralWarnings(before, result.workflow, lookup())).toEqual([]);
+    // A second input from something that is not downstream still warns.
+    const other = apply([{ op: 'connect', from: 'Brief', to: 'Tech Lead' }], before);
+    expect(structuralWarnings(before, other.workflow, lookup())).toEqual(['“Tech Lead” now gets input from both “Create branch” and “Brief”']);
+  });
+
+  it('replays the live test: a multi-part proposal, a pending one not repeated, a Filter sent back, a loop', async () => {
+    const request = 'Add a Run report node after the Tech Lead (gate: route). If it passes: open a ready PR, comment, merge. If it sends back: loop to the Tech Lead up to 3 rounds, then open a draft PR.';
+    const plan = [
+      { op: 'addNode', ref: 'rr', type: 'core.runReport', name: 'Run report', after: 'Tech Lead', parameters: { gate: 'route' } },
+      { op: 'addNode', ref: 'ready', type: 'core.set', name: 'Open ready PR', after: 'rr', output: 0 },
+      { op: 'addNode', ref: 'comment', type: 'core.set', name: 'Comment on PR', after: 'ready' },
+      { op: 'addNode', ref: 'merge', type: 'core.set', name: 'Merge PR', after: 'comment' },
+      { op: 'addNode', ref: 'count', type: 'core.code', name: 'Count rounds', after: 'rr', output: 1 },
+      { op: 'addNode', ref: 'more', type: 'core.if', name: 'Round under 3', after: 'count' },
+      { op: 'connect', from: 'more', to: 'Tech Lead', output: 0 },
+      { op: 'disconnect', from: 'Tech Lead', to: 'Open draft PR' },
+      { op: 'connect', from: 'more', to: 'Open draft PR', output: 1 },
+    ];
+    // Reply 1: a Filter after the report goes back; then the whole plan goes in one proposal, with the loop.
+    const first = scripted([
+      { text: '1. Run report. 2. Passed: ready PR, comment, merge. 3. Send back: count, loop, draft PR.', toolCalls: [{ id: 'a1', name: 'propose_changes', input: { summary: 'Report and check', ops: [plan[0], { op: 'addNode', type: 'core.filter', name: 'Check if passed', after: 'rr' }] } }] },
+      { toolCalls: [{ id: 'a2', name: 'propose_changes', input: { summary: 'Run report with both sides and the loop', ops: plan } }] },
+      { text: 'Review the card and click Apply.' },
+    ]);
+    const events: ChatEvent[] = [];
+    await runChat({ messages: [{ role: 'user', content: request }], workflow: delivery(), model: first.model, types, onEvent: (e) => events.push(e) });
+    expect(toolResults(first.calls, 1)[0].content).toContain('Run report already branches');
+    const [proposal] = proposalsOf(events);
+    expect(proposalsOf(events)).toHaveLength(1);
+    expect(proposal.ops.map((op) => op.op)).toEqual(['addNode', 'addNode', 'addNode', 'addNode', 'addNode', 'addNode', 'connect', 'disconnect', 'connect']);
+    expect(proposal.dropped).toEqual([]);
+    expect(proposal.warnings).toEqual([]);
+    expect(proposal.ops.some((op) => op.op === 'addNode' && op.type === 'core.filter')).toBe(false);
+    expect(proposal.ops).toContainEqual({ op: 'connect', from: 'more', to: 'Tech Lead' });
+
+    // Reply 2: the proposal is still pending. The model proposes it again, then adds only what is missing.
+    const second = scripted([
+      { toolCalls: [{ id: 'b1', name: 'propose_changes', input: { summary: 'Run report', ops: [plan[0], plan[1]] } }] },
+      { toolCalls: [{ id: 'b2', name: 'propose_changes', input: { summary: 'Notify', ops: [{ op: 'addNode', ref: 'n', type: 'core.set', name: 'Notify', after: 'Merge PR' }] } }] },
+      { text: 'Review the card.' },
+    ]);
+    const again: ChatEvent[] = [];
+    await runChat({
+      messages: [{ role: 'user', content: request }, { role: 'assistant', content: '[Proposed “Run report with both sides and the loop”: not applied yet]' }, { role: 'user', content: 'Also notify after the merge' }],
+      workflow: delivery(),
+      pending: [{ summary: proposal.summary, ops: proposal.ops }],
+      model: second.model,
+      types,
+      onEvent: (e) => again.push(e),
+    });
+    // The model sees the pending nodes as part of the workflow, and the repeated proposal is skipped.
+    expect(second.calls[0].system).toContain('Open ready PR” (core.set) [pending: proposed, not applied yet]');
+    expect(second.calls[0].system).toContain('Pending proposals');
+    expect(toolResults(second.calls, 1)[0].content).toMatch(/^Nothing changes: “Run report” was proposed earlier/);
+    const [notify] = proposalsOf(again);
+    expect(proposalsOf(again)).toHaveLength(1);
+    expect(notify.ops).toEqual([{ op: 'addNode', ref: 'n', type: 'core.set', name: 'Notify', after: 'Merge PR' }]);
   });
 });

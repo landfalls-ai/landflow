@@ -2,7 +2,7 @@
  * Test helpers: run a core node in-process through the SDK's runNode, or a
  * small workflow through the engine (expressions per item, sub-node wiring).
  */
-import { runNode, type ConnectionType, type ExecuteRequest, type INodeType, type JsonObject, type NodeItem } from '@landflow/sdk';
+import { runNode, type ContextExtras, type ConnectionType, type ExecuteRequest, type INodeType, type JsonObject, type NodeItem } from '@landflow/sdk';
 import { executeWorkflow, inProcessNodeType, type ExecutionResult, type NodeTypeResolver, type WorkflowConnection, type WorkflowNode } from '@landflow/engine';
 import { corePlugin } from '@/lib/server/nodes';
 
@@ -12,7 +12,7 @@ export type Input = Array<Record<string, unknown>>;
 export const items = (...list: Input): NodeItem[] => list.map((json) => ({ json: json as JsonObject }));
 
 /** One node, the same parameters for every item (no expressions), main input 0 = `input`. */
-export async function run(node: INodeType, parameters: Record<string, unknown>, input: Input = [{}], credentials?: Record<string, JsonObject>) {
+export async function run(node: INodeType, parameters: Record<string, unknown>, input: Input = [{}], credentials?: Record<string, JsonObject>, extras?: ContextExtras) {
   const request: ExecuteRequest = {
     protocol: 'landflow.plugin/v1',
     executionId: 'ex_test',
@@ -24,7 +24,7 @@ export async function run(node: INodeType, parameters: Record<string, unknown>, 
     inputs: [items(...input)],
     ...(credentials && { credentials }),
   };
-  const response = await runNode(node, request);
+  const response = await runNode(node, request, extras);
   return { ...response, json: (output = 0) => (response.outputs[output] ?? []).map((item) => item.json) };
 }
 

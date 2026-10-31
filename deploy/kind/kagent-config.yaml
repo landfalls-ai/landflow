@@ -1,0 +1,6 @@
+# kagent CLI configuration for the install: `kagent --config deploy/kind/kagent-config.yaml install --namespace kagent`, with
+# KUBECONFIG pointing at the landflow-kagent cluster (the CLI installs into the current context). Paths resolve against this file.
+install:
+  defaultModelProvider: Ollama
+  kagent:
+    valuesFiles: [kagent-values.yaml]

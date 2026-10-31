@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input, Select, Textarea } from '@/components/ui/inputs';
 import { projectLabel, useProjectStore, useProjects, writableProjects } from './use-projects';
 
-const NOUNS: Record<ResourceKind, [string, string]> = { workflow: ['workflow', 'workflows'], credential: ['credential', 'credentials'], dataTable: ['data table', 'data tables'], agent: ['agent', 'agents'] };
+const NOUNS: Record<ResourceKind, [string, string]> = { workflow: ['workflow', 'workflows'], credential: ['credential', 'credentials'], dataTable: ['data table', 'data tables'], agent: ['agent', 'agents'], agentTeam: ['agent team', 'agent teams'] };
 
 /** "3 workflows, 1 credential" from per-kind counts. */
 export function describeCounts(counts: Partial<Record<ResourceKind, number>> | undefined): string {

@@ -157,6 +157,8 @@ def execute_response_to_proto(response: dict[str, Any]) -> pb.ExecuteResponse:
         msg.error.item_index = -1 if item_index is None else int(item_index)
     if response.get("pollState") is not None:
         msg.poll_state.CopyFrom(to_dynamic(response["pollState"]))
+    for record in response.get("records") or []:
+        msg.records.add().CopyFrom(to_dynamic(record))
     return msg
 
 
@@ -179,6 +181,9 @@ def execute_response_from_proto(msg: pb.ExecuteResponse) -> dict[str, Any]:
     poll_state = from_dynamic(_optional(msg, "poll_state"), None, "poll_state")
     if poll_state is not None:
         response["pollState"] = poll_state
+    records = [from_dynamic(record, None, "records") for record in msg.records]
+    if records:
+        response["records"] = [record for record in records if record is not None]
     return response
 
 

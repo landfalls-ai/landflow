@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from datetime import datetime, timezone
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -42,6 +43,7 @@ def _visible(prop: Mapping[str, Any], values: Mapping[str, Any]) -> bool:
             return False
     return True
 _UNSET = object()
+_CHECK_STATUSES = ("pass", "fail", "warn", "skip")
 _node_log = logging.getLogger(NODE_LOGGER)
 _LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warn": logging.WARNING, "error": logging.ERROR}
 
@@ -221,6 +223,7 @@ class ExecuteContext(_TelemetryContext):
         self.telemetry = telemetry or Telemetry.noop()
         self._server_span = span
         self._http = None
+        self._records: list[dict[str, Any]] = []
         node_name = self.node.get("name") or descriptor.get("name", "")
         self.logger = NodeLogger(
             node_name,
@@ -358,6 +361,69 @@ class ExecuteContext(_TelemetryContext):
         a guess from ``file_name``.
         """
         return self.binary.prepare(data, file_name, mime_type)
+
+    # -------------------------------------------------------------- records
+
+    def artifact(
+        self,
+        name: str,
+        kind: str | None = None,
+        url: str | None = None,
+        mime_type: str | None = None,
+        text: str | None = None,
+        data: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Report something this node made that people will want to open: a pull request, a file, a ticket.
+
+        ``kind`` is free text (``pull_request``, ``commit``, ``file``, ``ticket``, ``document``, ``link``, ...).
+        Collected into ``ExecuteResponse.records`` and shown with the step in the run's trace. ``text`` is short
+        content to show inline; ``data`` is a JSON object. Text fields are redacted like logs.
+        """
+        record: dict[str, Any] = {"type": "artifact", "name": redact_text(str(name))}
+        if kind:
+            record["kind"] = kind
+        if url:
+            record["url"] = redact_text(url)
+        if mime_type:
+            record["mimeType"] = mime_type
+        if text is not None:
+            record["text"] = redact_text(str(text))
+        if data is not None:
+            record["data"] = to_jsonable(dict(data))
+        self._add_record(record)
+
+    def check(
+        self,
+        name: str,
+        status: str,
+        message: str | None = None,
+        subject: str | None = None,
+        evidence: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Report the outcome of a check: tests passed, a reply cites its source, a refund is within policy.
+
+        ``status`` is ``pass``, ``fail``, ``warn`` or ``skip``. ``subject`` says what it is about (a claim, a file);
+        ``evidence`` is a JSON object of what it looked at.
+        """
+        if status not in _CHECK_STATUSES:
+            raise ValueError(f"check status must be one of {', '.join(_CHECK_STATUSES)}, got {status!r}")
+        record: dict[str, Any] = {"type": "check", "name": redact_text(str(name)), "status": status}
+        if message is not None:
+            record["message"] = redact_text(str(message))
+        if subject is not None:
+            record["subject"] = redact_text(str(subject))
+        if evidence is not None:
+            record["evidence"] = to_jsonable(dict(evidence))
+        self._add_record(record)
+
+    def _add_record(self, record: dict[str, Any]) -> None:
+        record["at"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        self._records.append(record)
+
+    @property
+    def records(self) -> list[dict[str, Any]]:
+        """The artifacts and checks reported so far, in order (what goes into ``ExecuteResponse.records``)."""
+        return self._records
 
     # -------------------------------------------------------------- polling
 

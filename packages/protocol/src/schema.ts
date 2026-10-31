@@ -122,6 +122,7 @@ export const nodeDescriptorSchema: z.ZodType<NodeDescriptor> = z.object({
   properties: z.array(propertySchema),
   usableAsTool: z.boolean().optional(),
   toolDescription: z.string().optional(),
+  delegates: z.boolean().optional(),
   toolInputSchema: z.record(z.string(), z.any()).optional(),
   supplies: z.enum(SUB_NODE_TYPES).optional(),
   documentationUrl: z.string().optional(),
@@ -316,6 +317,28 @@ export const executeRequestSchema = z.object({
   binaryAccess: z.object({ url: z.string(), token: z.string() }).optional(),
 });
 
+export const nodeRecordSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('artifact'),
+    name: z.string(),
+    kind: z.string().optional(),
+    url: z.string().optional(),
+    mimeType: z.string().optional(),
+    text: z.string().optional(),
+    data: jsonObject.optional(),
+    at: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal('check'),
+    name: z.string(),
+    status: z.enum(['pass', 'fail', 'warn', 'skip']),
+    message: z.string().optional(),
+    subject: z.string().optional(),
+    evidence: jsonObject.optional(),
+    at: z.string().optional(),
+  }),
+]);
+
 export const executeResponseSchema = z.object({
   outputs: z.array(z.array(nodeItemSchema)),
   logs: z
@@ -329,6 +352,7 @@ export const executeResponseSchema = z.object({
     })
     .optional(),
   pollState: jsonObject.optional(),
+  records: z.array(nodeRecordSchema).optional(),
 });
 
 const nodeRefSchema = z.object({ id: z.string(), name: z.string(), type: z.string(), typeVersion: z.number().int() });

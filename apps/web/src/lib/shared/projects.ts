@@ -22,9 +22,9 @@ export const PROJECT_ROLE_HINTS: Record<ProjectRole, string> = {
 
 export type ProjectType = 'personal' | 'team';
 
-export const RESOURCE_KINDS = ['workflow', 'credential', 'dataTable', 'agent'] as const;
+export const RESOURCE_KINDS = ['workflow', 'credential', 'dataTable', 'agent', 'agentTeam'] as const;
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
-export const RESOURCE_LABELS: Record<ResourceKind, string> = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent' };
+export const RESOURCE_LABELS: Record<ResourceKind, string> = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent', agentTeam: 'agent team' };
 
 /** Kinds that can be shared with other projects. */
 export const SHAREABLE_KINDS = ['workflow', 'credential'] as const satisfies readonly ResourceKind[];

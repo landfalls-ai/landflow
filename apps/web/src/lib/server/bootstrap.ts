@@ -24,6 +24,9 @@ import { evaluationSchedules } from './evaluations/schedule';
 import { imapIdle } from './imap-idle';
 import { corePlugin } from './nodes';
 import { auditHeads } from './audit/anchoring';
+import { brain } from './brain';
+import { startUsageTrigger } from './brain/usage-trigger';
+import { startUsageListeners } from './usage/listeners';
 import { registry } from './plugins/registry';
 import { ensurePublications } from './publish';
 import { publishSchedules } from './publish-schedule';
@@ -100,6 +103,11 @@ export function ensureBootstrapped(): Promise<void> {
     leaderService('evaluation schedules', () => evaluationSchedules.start(), () => evaluationSchedules.stop());
     // Online evaluations: a sample of finished agent runs is graded by an LLM judge.
     startOnlineEvaluations();
+    // The second brain (docs/second-brain.md): every process records its usage and starts On Usage Event workflows for
+    // what it recorded; the leader studies, detects and checks effects.
+    startUsageListeners();
+    startUsageTrigger();
+    leaderService('second brain', () => brain.start(), () => brain.stop());
     await startRegistryGrpcServer();
 
     const seeds = (process.env.LANDFLOW_PLUGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);

@@ -1,0 +1,23 @@
+# A local kind cluster for kagent 1.0 and Agent Substrate (docs/deployment.md, "kagent next to Landflow"). Kubernetes 1.37 serves
+# the PodCertificateRequest and ClusterTrustBundle APIs Substrate needs; OrbStack's own cluster (1.36) doesn't, so kagent runs
+# here, on the same OrbStack Docker engine, and Landflow stays in `landflow-dev` on the OrbStack cluster.
+#
+#   KIND_EXPERIMENTAL_DOCKER_NETWORK=landflow-kind kind create cluster --config deploy/kind/landflow-kagent.yaml
+#   deploy/scripts/kagent-up.sh        # the same, plus proxy ARP, kagent and the bridge to Landflow
+#
+# The kagent controller (A2A, gRPC, REST on 8083) and UI are published on the Mac's loopback through NodePorts 30083 and 30082.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: landflow-kagent
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    extraPortMappings:
+      - { containerPort: 30083, hostPort: 58083, listenAddress: 127.0.0.1 }
+      - { containerPort: 30082, hostPort: 58082, listenAddress: 127.0.0.1 }
+# Substrate's install pulls several images onto the one node: pull them in parallel (as Substrate's own kind script does).
+kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    serializeImagePulls: false
+    maxParallelImagePulls: 4

@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, Bot, FolderOpen, KeyRound, LayoutTemplate, MoreHorizontal, Plus, Share2, Table2, Trash2, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
+import { ArrowRightLeft, Bot, FolderOpen, KeyRound, LayoutTemplate, MoreHorizontal, Network, Plus, Share2, Table2, Trash2, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -138,14 +138,15 @@ export function ProjectPage({ projectId }: { projectId: string }) {
   );
 }
 
-const LIST_KEY: Record<ResourceKind, string> = { workflow: 'workflows', credential: 'credentials', dataTable: 'tables', agent: 'agents' };
-const HREF: Partial<Record<ResourceKind, (id: string) => string>> = { workflow: (id) => `/workflows/${id}`, dataTable: (id) => `/data-tables/${id}`, agent: (id) => `/agents/${id}` };
-const ICON: Record<ResourceKind, typeof WorkflowIcon> = { workflow: WorkflowIcon, credential: KeyRound, dataTable: Table2, agent: Bot };
+const LIST_KEY: Record<ResourceKind, string> = { workflow: 'workflows', credential: 'credentials', dataTable: 'tables', agent: 'agents', agentTeam: 'teams' };
+const HREF: Partial<Record<ResourceKind, (id: string) => string>> = { workflow: (id) => `/workflows/${id}`, dataTable: (id) => `/data-tables/${id}`, agent: (id) => `/agents/${id}`, agentTeam: (id) => `/agents/teams/${id}` };
+const ICON: Record<ResourceKind, typeof WorkflowIcon> = { workflow: WorkflowIcon, credential: KeyRound, dataTable: Table2, agent: Bot, agentTeam: Network };
 const EMPTY: Record<ResourceKind, string> = {
   workflow: 'No workflows in this project yet.',
   credential: 'No credentials in this project yet. Credentials shared with the project show here too; its workflows can use them.',
   dataTable: 'No data tables in this project yet.',
   agent: 'No agents in this project yet.',
+  agentTeam: 'No agent teams in this project yet.',
 };
 
 function ResourceList({ project, kind, onChanged }: { project: ProjectDetail; kind: ResourceKind; onChanged: () => void }) {
@@ -194,7 +195,7 @@ function ResourceList({ project, kind, onChanged }: { project: ProjectDetail; ki
   };
   const sorted = useMemo(() => [...(items ?? [])].sort((a, b) => Number(Boolean(a.ownership?.shared)) - Number(Boolean(b.ownership?.shared)) || a.name.localeCompare(b.name)), [items]);
   const Icon = ICON[kind];
-  const noun = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent' }[kind];
+  const noun = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent', agentTeam: 'agent team' }[kind];
 
   return (
     <>
@@ -567,6 +568,7 @@ function GovernanceCard({ project }: { project: ProjectDetail }) {
   const [nodes, setNodes] = useState<ScopedNodePolicy>(EMPTY_NODE_POLICY);
   const [approvers, setApprovers] = useState<ProjectApprovers>('default');
   const [fourEyes, setFourEyes] = useState(false);
+  const [brainPayloads, setBrainPayloads] = useState(false);
   const [saving, setSaving] = useState(false);
   const [version, setVersion] = useState(0);
   const base = `/api/projects/${encodeURIComponent(project.id)}/settings`;
@@ -575,6 +577,7 @@ function GovernanceCard({ project }: { project: ProjectDetail }) {
     setNodes(next.settings.nodes);
     setApprovers(next.settings.approvers);
     setFourEyes(next.settings.fourEyes);
+    setBrainPayloads(next.settings.brainPayloads ?? false);
     setVersion((v) => v + 1);
   };
   useEffect(() => {
@@ -584,11 +587,12 @@ function GovernanceCard({ project }: { project: ProjectDetail }) {
   }, [base]);
   if (!view) return <Card className="h-24 animate-pulse-soft">{null}</Card>;
   const editable = view.canEdit;
-  const dirty = JSON.stringify({ nodes, approvers, fourEyes }) !== JSON.stringify({ nodes: view.settings.nodes, approvers: view.settings.approvers, fourEyes: view.settings.fourEyes });
+  const dirty = JSON.stringify({ nodes, approvers, fourEyes, brainPayloads }) !==
+    JSON.stringify({ nodes: view.settings.nodes, approvers: view.settings.approvers, fourEyes: view.settings.fourEyes, brainPayloads: view.settings.brainPayloads ?? false });
   const save = async () => {
     setSaving(true);
     try {
-      show(await api<ProjectSettingsView>(base, { method: 'PATCH', json: { nodes, approvers, fourEyes } }));
+      show(await api<ProjectSettingsView>(base, { method: 'PATCH', json: { nodes, approvers, fourEyes, brainPayloads } }));
       toast.success('Project governance saved');
     } catch (e) {
       toast.error((e as Error).message);
@@ -612,6 +616,13 @@ function GovernanceCard({ project }: { project: ProjectDetail }) {
         <div>
           <div className="text-[13px] font-semibold text-t1">Four-eyes for this project’s workflows</div>
           <p className="text-[12px] text-t3">Publishing, rolling back and promoting its workflows to another environment need someone else’s approval, even when the instance doesn’t ask for it. Who approves follows the setting below.</p>
+        </div>
+      </div>
+      <div className="flex items-start gap-2">
+        <Switch checked={brainPayloads} onChange={setBrainPayloads} disabled={!editable} label="Let the second brain read run data" />
+        <div>
+          <div className="text-[13px] font-semibold text-t1">Let the second brain read run data</div>
+          <p className="text-[12px] text-t3">Off: it studies metadata only (counts, durations, error messages with values removed). On: it may read a failed run’s input and output to write a fix.</p>
         </div>
       </div>
       {project.type === 'team' && (

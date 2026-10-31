@@ -1167,6 +1167,151 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    version: 1890,
+    name: 'second_brain',
+    statements: [
+      // The usage ledger (lib/server/usage, docs/second-brain.md): one row per thing that happened, metadata only. Kept
+      // USAGE_RETENTION_DAYS (90); `attrs` is a small JSON object.
+      `CREATE TABLE IF NOT EXISTS usage_events (
+        id TEXT PRIMARY KEY,
+        at TEXT NOT NULL,
+        day TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        project_id TEXT,
+        workflow_id TEXT,
+        node_id TEXT,
+        node_type TEXT,
+        agent_id TEXT,
+        actor_id TEXT,
+        execution_id TEXT,
+        signature TEXT,
+        message TEXT,
+        duration_ms DOUBLE PRECISION,
+        items BIGINT,
+        tokens BIGINT,
+        cost DOUBLE PRECISION,
+        attrs TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS usage_events_at ON usage_events (at)`,
+      `CREATE INDEX IF NOT EXISTS usage_events_kind ON usage_events (kind, at)`,
+      `CREATE INDEX IF NOT EXISTS usage_events_workflow ON usage_events (workflow_id, at)`,
+      `CREATE INDEX IF NOT EXISTS usage_events_signature ON usage_events (signature)`,
+      // Daily rollups of the ledger, recomputed from it for recent days and kept 400 days ('' for an absent key column).
+      `CREATE TABLE IF NOT EXISTS usage_daily (
+        day TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        workflow_id TEXT NOT NULL DEFAULT '',
+        node_type TEXT NOT NULL DEFAULT '',
+        signature TEXT NOT NULL DEFAULT '',
+        agent_id TEXT NOT NULL DEFAULT '',
+        project_id TEXT,
+        count BIGINT NOT NULL DEFAULT 0,
+        failures BIGINT NOT NULL DEFAULT 0,
+        duration_sum DOUBLE PRECISION NOT NULL DEFAULT 0,
+        duration_max DOUBLE PRECISION NOT NULL DEFAULT 0,
+        items BIGINT NOT NULL DEFAULT 0,
+        tokens BIGINT NOT NULL DEFAULT 0,
+        cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, kind, workflow_id, node_type, signature, agent_id)
+      )`,
+      // What the brain knows about each workflow, agent, node type and credential (lib/server/brain/study.ts); `data` is
+      // the BrainProfile.
+      `CREATE TABLE IF NOT EXISTS brain_profiles (
+        subject_type TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        project_id TEXT,
+        updated_at TEXT NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (subject_type, subject_id)
+      )`,
+      // Facts with their evidence (lib/server/brain/facts.ts); `data` is the BrainFact.
+      `CREATE TABLE IF NOT EXISTS brain_facts (
+        id TEXT PRIMARY KEY,
+        subject_type TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        project_id TEXT,
+        status TEXT NOT NULL,
+        last_seen TEXT NOT NULL,
+        data TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS brain_facts_subject ON brain_facts (subject_type, subject_id)`,
+      // Suggestions (lib/server/brain/proposals.ts); `data` is the Proposal. One open suggestion per fingerprint.
+      `CREATE TABLE IF NOT EXISTS proposals (
+        id TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        source TEXT NOT NULL,
+        detector TEXT,
+        project_id TEXT,
+        workflow_id TEXT,
+        status TEXT NOT NULL,
+        score DOUBLE PRECISION NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        data TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS proposals_fingerprint ON proposals (fingerprint)`,
+      `CREATE INDEX IF NOT EXISTS proposals_status ON proposals (status, score)`,
+      `CREATE INDEX IF NOT EXISTS proposals_workflow ON proposals (workflow_id, status)`,
+    ],
+  },
+  {
+    version: 1900,
+    name: 'agent_templates',
+    statements: [
+      // Personas saved from agents to start new ones from (lib/server/agents/templates.ts, docs/agents.md#templates): shared
+      // in a project, or the whole instance when project_id is NULL. `data` is the template without its id, name and
+      // project; built-in ones ship in code.
+      `CREATE TABLE IF NOT EXISTS agent_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        project_id TEXT,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        data TEXT NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 1910,
+    name: 'agent_teams',
+    statements: [
+      // Agent teams (lib/server/agent-teams/store.ts, docs/agent-teams.md): agents with standing relations. `draft` is the
+      // AgentTeamConfig being edited, `published` the version flows run (NULL until first published) with its `version`.
+      // The project is kept with the other resources' homes (projects/store.ts), not here.
+      `CREATE TABLE IF NOT EXISTS agent_teams (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        draft TEXT NOT NULL,
+        published TEXT,
+        version INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 2000,
+    name: 'execution_events',
+    statements: [
+      // The Run Trace journal (lib/server/journal, docs/run-trace.md): the events of one execution in order. `data` is the
+      // whole JournalEvent; the other columns are for reading and pruning. Kept LANDFLOW_TRACE_RETENTION_DAYS (30).
+      `CREATE TABLE IF NOT EXISTS execution_events (
+        execution_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        at TEXT NOT NULL,
+        type TEXT NOT NULL,
+        span_id TEXT NOT NULL,
+        parent_span_id TEXT,
+        trace_id TEXT,
+        data TEXT NOT NULL,
+        PRIMARY KEY (execution_id, seq)
+      )`,
+      `CREATE INDEX IF NOT EXISTS execution_events_at ON execution_events (at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1175,6 +1320,7 @@ export const TABLES = {
   workflows: ['id'],
   executions: ['id'],
   execution_steps: ['execution_id', 'seq'],
+  execution_events: ['execution_id', 'seq'],
   execution_checkpoints: ['execution_id'],
   poll_state: ['key'],
   workflow_versions: ['id'],
@@ -1250,6 +1396,13 @@ export const TABLES = {
   audit_signing_keys: ['key_id'],
   audit_heads: ['seq'],
   composite_types: ['name', 'version'],
+  usage_events: ['id'],
+  usage_daily: ['day', 'kind', 'workflow_id', 'node_type', 'signature', 'agent_id'],
+  brain_profiles: ['subject_type', 'subject_id'],
+  brain_facts: ['id'],
+  proposals: ['id'],
+  agent_templates: ['id'],
+  agent_teams: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

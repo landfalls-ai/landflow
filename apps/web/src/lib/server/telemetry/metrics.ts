@@ -34,6 +34,10 @@ function create(provider: MeterProvider) {
     agentToolDuration: meter.createHistogram('landflow.agent.tool.duration', { description: 'Duration of an agent tool call', unit: 'ms', advice }),
     agentApprovals: meter.createCounter('landflow.agent.approvals', { description: 'Tool calls a person approved or denied' }),
     agentTokens: meter.createCounter('landflow.agent.tokens', { description: 'Model tokens used by agents' }),
+    a2aCalls: meter.createCounter('landflow.a2a.calls', { description: 'Calls to remote A2A agents, by agent, method, final task state and outcome' }),
+    a2aDuration: meter.createHistogram('landflow.a2a.call.duration', { description: 'Duration of a call to a remote A2A agent (until its task settles)', unit: 'ms', advice }),
+    a2aTokens: meter.createCounter('landflow.a2a.tokens', { description: 'Model tokens remote A2A agents report using (kagent usage extension)' }),
+    a2aToolCalls: meter.createCounter('landflow.a2a.tool.calls', { description: 'Tool calls remote A2A agents made, by agent, tool and status' }),
     runtimeEvents: meter.createCounter('landflow.runtime.events', { description: 'Durable runtime events: deduplicated, skipped, queued, recovered and retried runs' }),
     httpDuration: meter.createHistogram('http.server.request.duration', {
       description: 'Duration of HTTP server requests',

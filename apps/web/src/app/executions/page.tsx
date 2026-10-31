@@ -16,6 +16,7 @@ import { useLiveEvents } from '@/lib/client/live';
 import type { ExecutionRecord, ExecutionSummary } from '@/lib/shared/types';
 import { ExecutionMarks, RERUN_LABEL, canRetry, deleteExecution, retryTitle, startRerun, startRetry, stopAllExecutions, stopAllSummary, type RetryBody } from '@/components/executions/meta';
 import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, useNow } from '@/components/run/run-status';
+import { LiveRuns, NeedsYouList } from '@/components/run-trace/run-lists';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -415,6 +416,8 @@ function ExecutionsInner() {
         }
       />
       <div className="flex flex-col gap-4 px-6 py-5">
+        <NeedsYouList />
+        <LiveRuns executions={list} />
         <div className="flex flex-wrap items-center gap-3">
           <div role="tablist" className="flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
             {FILTERS.map((f) => (

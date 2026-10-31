@@ -1,0 +1,27 @@
+# Helm values for kagent 1.0 in the landflow-kagent kind cluster (deploy/kind/kagent-config.yaml passes them to `kagent install`).
+# The default ModelConfig is the Mac's Ollama: host.docker.internal reaches it from the kind node on the OrbStack engine.
+providers:
+  default: ollama
+  ollama:
+    provider: Ollama
+    model: "qwen3-coder:30b"
+    config:
+      host: host.docker.internal:11434
+# Landflow brings its own tools over MCP: leave out the bundled Kubernetes tool server and Grafana MCP.
+kagent-tools: { enabled: false }
+grafana-mcp: { enabled: false }
+# OpenTelemetry: the controller's traces, logs and metrics, and those of every agent runtime it compiles, go to Landflow's
+# telemetry backend (grafana/otel-lgtm in landflow-dev: deploy/k8s/components/observability) through the bridge Service
+# landflow-otel (deploy/kind/bridge.yaml). A Landflow call's traceparent continues into kagent's spans, so one trace shows
+# both sides. Agent Substrate's own telemetry is set on its release (deploy/scripts/kagent-up.sh: otel.endpoint).
+config:
+  telemetry: &telemetry
+    traces: { endpoint: "http://landflow-otel.landflow.svc.cluster.local:4317", protocol: grpc }
+    logs: { endpoint: "http://landflow-otel.landflow.svc.cluster.local:4317", protocol: grpc }
+    metrics: { endpoint: "http://landflow-otel.landflow.svc.cluster.local:4317", protocol: grpc }
+  runtimeDefaults:
+    telemetry:
+      <<: *telemetry
+      # Local development: prompts, replies and the system prompt go on the model spans (gen_ai.input.messages,
+      # gen_ai.output.messages, gen_ai.system_instructions). Tool arguments and replies are on execute_tool spans either way.
+      captureContent: true

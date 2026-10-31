@@ -338,3 +338,16 @@ and, for direction B, an adapter (a headless run with a JSON event stream).
 | Codex CLI | `AGENTS.md` | yes | yes (JSON events) | check its current config and skill support before building |
 | Gemini CLI | `GEMINI.md`, extensions | yes | yes | same |
 | OpenCode, Cursor | agent/rule files | yes | partly | same |
+
+**kagent** (built 2026-10-30, outside this plan): a Landflow agent can already hand work to an agent that runs on a
+Kubernetes-native runtime. kagent 1.0 runs agents (its own runtime, or Claude Code and Codex as harnesses) in sandboxes
+on Agent Substrate; Landflow calls them over A2A as a capability, they call Landflow's tools over MCP, and their tool
+approvals pause the Landflow run ([a2a.md](a2a.md)). That covers part of direction B for agents that live in a cluster.
+Since 2026-10-31 that includes stage 1 of this plan's Claude Code direction: an agent built in Landflow deploys to
+kagent's **Claude Code** Harness with its persona, its tools (those that need approval on a second MCP server, so
+kagent pauses on them) and its **Claude Code plugins** from the added marketplaces, which Landflow pins and serves to
+kagent as OCI images ([a2a.md](a2a.md#on-claude-code)). Checked live with a developer agent on qwen3-coder through
+Ollama: it writes and tests code in the sandbox and hands it in through an approval card. Stage 2 (a harness image with
+real toolchains, and Claude models) is open.
+Google's AX was looked at the same day and left out: a sandboxed task runner for coding agents, with no A2A, result
+stream or approval protocol yet.

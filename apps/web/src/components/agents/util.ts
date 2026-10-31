@@ -2,6 +2,8 @@
 /** Small helpers shared by the agent pages: ids, setup checks, JSON import/export and SKILL.md parsing. */
 import { nanoid } from 'nanoid';
 import {
+  cleanPlugins,
+  cleanTeam,
   DEFAULT_AGENT_SETTINGS,
   type Agent,
   type AgentConfig,
@@ -10,6 +12,8 @@ import {
   type AgentToolConfig,
   type ModelProvider,
 } from '@/lib/shared/agents';
+import { cleanAvatar } from '@/lib/shared/faces';
+import { cleanPersona, hasPrompt } from '@/lib/shared/persona';
 
 export const newId = (prefix: string) => `${prefix}_${nanoid(8)}`;
 
@@ -37,12 +41,19 @@ export const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
 
 /** The config part of an agent, in the server's key order: what the draft holds, a version snapshots and Export writes. */
 export function configOf(source: Agent | AgentConfig): AgentConfig {
+  const persona = cleanPersona(source.persona);
+  const plugins = cleanPlugins(source.plugins);
+  const avatar = cleanAvatar(source.avatar);
+  const team = cleanTeam(source.team);
   return {
     name: source.name,
     description: source.description ?? '',
     icon: source.icon || 'bot',
     color: source.color || '#a855f7',
+    ...(avatar && { avatar }),
+    ...(team && { team }),
     ...(source.model && { model: source.model }),
+    ...(persona && { persona }),
     instructions: source.instructions ?? '',
     skills: source.skills ?? [],
     tools: source.tools ?? [],
@@ -51,6 +62,7 @@ export function configOf(source: Agent | AgentConfig): AgentConfig {
     memory: { crossSession: Boolean(source.memory?.crossSession) },
     settings: { ...DEFAULT_AGENT_SETTINGS, ...source.settings },
     ...(source.guardrails && ((source.guardrails.input || source.guardrails.output) ? { guardrails: source.guardrails } : {})),
+    ...(plugins && { plugins }),
   };
 }
 
@@ -74,16 +86,12 @@ export function setupSteps(config: AgentConfig) {
   const model = Boolean(config.model?.model) && (!provider?.credentialRequired || Boolean(config.model?.credential));
   return [
     { key: 'model', label: 'Choose a model', done: model },
-    {
-      key: 'instructions',
-      label: 'Add instructions',
-      done: config.instructions.trim().length > 0,
-    },
+    { key: 'persona', label: 'Describe the persona', done: hasPrompt(config) },
     { key: 'tools', label: 'Add tools', done: config.tools.length > 0 },
   ];
 }
 
-/** The test chat needs a model and instructions; tools are optional. */
+/** The test chat needs a model and a persona or instructions; tools are optional. */
 export const canTest = (config: AgentConfig) =>
   setupSteps(config)
     .filter((s) => s.key !== 'tools')

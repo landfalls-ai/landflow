@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // Components are rendered to static HTML in a few tests (test/run-artifacts-view.test.ts): tsconfig keeps JSX for Next.
+  oxc: { jsx: { runtime: 'automatic' } },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   test: {
     include: ['test/**/*.test.ts', 'src/**/*.test.ts'],

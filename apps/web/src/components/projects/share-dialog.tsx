@@ -18,8 +18,8 @@ import { FieldLabel, Select } from '@/components/ui/inputs';
 import { projectLabel, useProjects, writableProjects } from './use-projects';
 
 /** The API collection of each kind. */
-export const RESOURCE_PATH: Record<ResourceKind, string> = { workflow: '/api/workflows', credential: '/api/credentials', dataTable: '/api/data-tables', agent: '/api/agents' };
-const NOUN: Record<ResourceKind, string> = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent' };
+export const RESOURCE_PATH: Record<ResourceKind, string> = { workflow: '/api/workflows', credential: '/api/credentials', dataTable: '/api/data-tables', agent: '/api/agents', agentTeam: '/api/agent-teams' };
+const NOUN: Record<ResourceKind, string> = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent', agentTeam: 'agent team' };
 const ROLE_LABEL: Record<ShareRole, string> = { editor: 'Can edit', viewer: 'Can view', user: 'Can use' };
 
 interface Target {

@@ -362,12 +362,17 @@ class Plugin:
             poll_state = ctx._response_poll_state()
             if poll_state is not None:
                 response["pollState"] = poll_state
+            if ctx.records:
+                response["records"] = ctx.records
             span.set_attribute("landflow.items.out", sum(len(branch) for branch in outputs))
             return response
         error = {k: redact_text(v) if isinstance(v, str) else v for k, v in error.items()}
         span.set_status("error", error["message"])
         span.set_attribute("landflow.items.out", 0)
-        return {"outputs": [], "logs": ctx.logger.entries, "error": error}
+        failed: dict[str, Any] = {"outputs": [], "logs": ctx.logger.entries, "error": error}
+        if ctx.records:
+            failed["records"] = ctx.records
+        return failed
 
     def load_options(
         self,

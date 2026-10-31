@@ -17,6 +17,7 @@ import { currentActorId } from './auth/context';
 import { database, dataDir, type Database } from './db';
 import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } from './db/rows';
 import { recordExecutionInsights } from './insights';
+import { recordExecutionUsage } from './usage/ledger';
 import { pruneExecutions } from './settings';
 import { singleton } from './singleton';
 import { syncPublication } from './publications';
@@ -158,6 +159,8 @@ class Store {
     const summary = summarize(record);
     // Insights first: its rollup keeps the run's counts after retention deletes the execution.
     recordExecutionInsights(summary);
+    // The usage ledger too (docs/second-brain.md): what ran, failed and was slow, without the items.
+    recordExecutionUsage(record, record.workflow ?? this.getWorkflow(record.workflowId));
     // Retention (Settings → General): count and age; running and waiting executions are never pruned.
     pruneExecutions();
   }
@@ -212,6 +215,8 @@ class Store {
       const deleted = this.db.delete('executions', { id }) > 0;
       this.db.delete('execution_steps', { execution_id: id });
       this.db.delete('execution_checkpoints', { execution_id: id });
+      // The Run Trace journal goes with the execution (lib/server/journal).
+      this.db.delete('execution_events', { execution_id: id });
       this.db.delete('retries', { execution_id: id });
       this.db.delete('chat_feedback', { id: `execution:${id}` });
       return deleted;

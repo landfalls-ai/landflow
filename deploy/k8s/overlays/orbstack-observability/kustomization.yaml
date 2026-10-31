@@ -1,0 +1,13 @@
+# The OrbStack overlay plus the local telemetry backend (components/observability): Grafana with Tempo, Prometheus and Loki
+# in landflow-dev, and every Landflow process exporting OTLP to it. kagent in the kind cluster exports there too
+# (deploy/scripts/kagent-up.sh). Back to the plain overlay: apply ../orbstack, then delete Deployment and Service
+# landflow-lgtm and ConfigMaps landflow-otelcol-config, landflow-grafana-dashboards, landflow-grafana-dashboard-provider.
+#
+#   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-observability
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: landflow-dev
+resources:
+  - ../orbstack
+components:
+  - ../../components/observability

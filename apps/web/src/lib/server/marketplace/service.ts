@@ -23,6 +23,7 @@ import type {
   PluginDetail,
   ResolvedSource,
 } from '../../shared/marketplace';
+import type { KagentPlugin } from '../../shared/agents';
 import { flowLink } from '../../shared/marketplace';
 import { agentStore } from '../agents/store';
 import { onConfigChanged } from '../config-store';
@@ -30,7 +31,7 @@ import { clusterActive, clusterState } from '../cluster/state';
 import { registry } from '../plugins/registry';
 import { logger } from '../telemetry';
 import { traceMarketplace } from '../telemetry/marketplace';
-import { agentFromClaude, skillFromClaude } from './map';
+import { agentFromClaude, skillFromClaude, titleCase } from './map';
 import { commandLine, contentHash, downloadPlugin, freePort, nodePlugins, portFree, readInstallMarker, writeInstallMarker, type SupervisedPlugin } from './node-plugins';
 import { importTemplate, previewTemplate } from '../templates';
 import { localTemplates } from '../templates/store';
@@ -253,6 +254,32 @@ export const marketplace = {
     return result;
   },
 
+  /**
+   * A plugin for kagent's Claude Code runtime (docs/a2a.md, "Claude Code plugins"): `<plugin>@<marketplace>` as its GitHub
+   * repository pinned to the commit it is at now, so every sandbox loads the same files. Claude Code loads the plugin whole,
+   * and kagent needs its `.claude-plugin/plugin.json` to do that.
+   */
+  async claudePlugin(id: string): Promise<KagentPlugin> {
+    const at = id.lastIndexOf('@');
+    const name = id.slice(0, at);
+    const market = id.slice(at + 1);
+    const named = () => marketplaceStore.marketplaces().find((x) => marketplaceName(x) === market);
+    let m = named();
+    if (!m) {
+      // A marketplace not fetched yet (the built-in Anthropic one, until Explore opens) has no name to match: fetch it.
+      for (const unread of marketplaceStore.marketplaces().filter((x) => !x.name)) await this.catalog(unread.id).catch(() => undefined);
+      m = named();
+    }
+    if (at <= 0 || !m) throw new MarketplaceError(`The plugin ${id} is in no added marketplace: add “${market}” on the Marketplace page`, 404);
+    const detail = await this.detail(m.id, name);
+    if (detail.source.kind !== 'github') throw new MarketplaceError(`The plugin ${id} is on this host, and kagent fetches plugins from git: use one from a GitHub marketplace`, 422);
+    if (!detail.claudeManifest) throw new MarketplaceError(`The plugin ${id} has no .claude-plugin/plugin.json, which kagent needs to give it to Claude Code`, 422);
+    const pinned = await pinnedSource(detail.source);
+    const commit = pinned.kind === 'github' ? (pinned.sha ?? (/^[0-9a-f]{40}$/i.test(pinned.ref) ? pinned.ref : undefined)) : undefined;
+    if (pinned.kind !== 'github' || !commit) throw new MarketplaceError(`The plugin ${id} couldn’t be pinned to a commit: GitHub didn’t answer`, 502);
+    return { id, url: `https://github.com/${pinned.owner}/${pinned.repo}.git`, commit: commit.toLowerCase(), ...(pinned.path && { path: pinned.path }) };
+  },
+
   /** Read a plugin's files: what it contains and what Landflow would create from it. */
   async detail(id: string, name: string, fresh = false): Promise<PluginDetail> {
     const key = `${id}:${name}`;
@@ -365,7 +392,8 @@ export const marketplace = {
         marketplaceStore.addSkills(createdSkills);
         for (const agent of detail.agents) {
           // Each agent gets its own copies of the plugin's skills.
-          const created = agentStore.create(agentFromClaude(agent, { pluginId: pluginKey, skills: detail.skills.map(skillFromClaude) }));
+          const team = detail.plugin.displayName ?? titleCase(name);
+          const created = agentStore.create(agentFromClaude(agent, { pluginId: pluginKey, skills: detail.skills.map(skillFromClaude), team }));
           createdAgents.push({ id: created.id, name: created.name });
         }
         if (detail.flows.length) {

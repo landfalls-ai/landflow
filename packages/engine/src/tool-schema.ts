@@ -32,6 +32,21 @@ export function collectFromAI(value: unknown, found = new Map<string, FromAIPlac
 const isFieldParam = (name: string) => name === 'field' || (/Field$/.test(name) && !/^output/i.test(name));
 const IDENTIFIER = /^[A-Za-z_][\w-]{0,63}$/;
 
+/** What the model is told to write in the `reason` argument of a delegating tool. */
+export const REASON_DESCRIPTION = 'Why you are asking and what done looks like, in one sentence';
+
+/** The schema with a required `reason` argument (for nodes that hand work to another agent: `delegates`). A copy. */
+export function withReason(schema: JsonObject): JsonObject {
+  const properties = (schema.properties && typeof schema.properties === 'object' ? schema.properties : {}) as JsonObject;
+  const required = Array.isArray(schema.required) ? (schema.required as string[]) : [];
+  return {
+    ...schema,
+    type: 'object',
+    properties: { ...properties, reason: { type: 'string', description: REASON_DESCRIPTION } },
+    required: [...required.filter((name) => name !== 'reason'), 'reason'],
+  };
+}
+
 export function deriveToolSchema(descriptor: NodeDescriptor, parameters: Record<string, unknown>): JsonObject {
   if (descriptor.toolInputSchema) return descriptor.toolInputSchema;
 

@@ -66,12 +66,17 @@ The workflow's **Evaluations** tab starts a run, lists runs with per-metric aver
 ## Agents (Preview)
 
 **Agents** (sidebar) are standalone assistants modelled on n8n's Agents tab ([docs/agents.md](../agents.md)). An agent has:
-- a model (Anthropic, any OpenAI-compatible API, or Ollama) and instructions;
+- a persona: a role, who it helps and what it does, a voice (tone, answer length, language, sign-off), Always and Never rules, examples and free instructions, built on the **Persona** tab beside the system prompt they make ([docs/agents.md](../agents.md#the-persona));
+- a model (Anthropic, any OpenAI-compatible API, or Ollama);
 - [skills](https://docs.claude.com/en/docs/agents-and-tools/agent-skills) it loads on demand;
-- capabilities: any plugin action node, workflows that start with **When Called by an Agent**, other agents as sub-agents, MCP servers (each tool the server lists), and knowledge bases (a vector store collection searched with a tool). Each capability can require a person's approval.
+- capabilities: any plugin action node, workflows that start with **When Called by an Agent**, other agents as sub-agents, MCP servers (each tool the server lists), remote agents over A2A such as kagent's (their own tool approvals pause the run; [docs/a2a.md](../a2a.md)), and knowledge bases (a vector store collection searched with a tool). Each capability can require a person's approval.
 - session memory, plus optional cross-session memory per user.
 
-You test it in a chat that streams tool calls and approval cards, then publish it as a version. The published version runs on schedules (cron, in a time zone), answers in Telegram, Slack (mentions and DMs through the Events API, slash commands, replies in threads, approval buttons; see [docs/agents.md](../agents.md#slack)) and Microsoft Teams (a Bot Framework bot with Adaptive Card approvals; [docs/agents.md](../agents.md#microsoft-teams)); tools that need approval can also be approved from an emailed link ([docs/agents.md](../agents.md#approvals-by-email)), and is callable from workflows through the **Message an Agent** node. Every run is an `invoke_agent` trace with `execute_tool` and `gen_ai.chat` children.
+You test it in a chat that streams tool calls and approval cards, then publish it as a version. The published version runs on schedules (cron, in a time zone), answers in Telegram, Slack (mentions and DMs through the Events API, slash commands, replies in threads, approval buttons; see [docs/agents.md](../agents.md#slack)) and Microsoft Teams (a Bot Framework bot with Adaptive Card approvals; [docs/agents.md](../agents.md#microsoft-teams)); tools that need approval can also be approved from an emailed link ([docs/agents.md](../agents.md#approvals-by-email)), and runs as a step of a workflow through the **Run an Agent** node: the chat model, tools (knowledge bases are vector stores searched as tools) and memory connected to it replace the agent's model and join its capabilities for that run. Every run is an `invoke_agent` trace with `execute_tool` and `gen_ai.chat` children.
+
+## Remote agents (A2A)
+
+The **A2A Agent** node (`core.a2aAgent`) calls an agent that runs elsewhere over A2A 1.0: **Send Message** (waits for the task to settle or pause), **Answer a Pause** (approve or reject the tool calls a paused task waits on, or answer its questions), **Get Task** and **Cancel Task**. It streams when the agent does, outputs the reply, state, task and context ids, the agent's tool calls and token usage, and its call is a client span the agent's own spans join. Agents take the same as a capability. A published agent can also run on kagent with its persona, model and tools written there from Landflow (the **kagent** card in the builder), and each publish writes the new version. See [docs/a2a.md](../a2a.md) and its section [Landflow agents on kagent](../a2a.md#landflow-agents-on-kagent).
 
 ## MCP
 

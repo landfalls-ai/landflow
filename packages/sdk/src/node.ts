@@ -22,6 +22,8 @@ import type {
   JsonObject,
   LogEntry,
   NodeDescriptor,
+  NodeArtifact,
+  NodeCheck,
   NodeItem,
   NodeRef,
   PluginInfo,
@@ -182,6 +184,21 @@ export interface IExecuteContext extends IBaseContext {
    * editor's chat panel): send part of the answer before the node finishes. Absent otherwise.
    */
   sendChunk?(chunk: StreamChunk): void;
+  /**
+   * In-process only: report what the node is doing while it runs (a remote agent's steps). The engine turns each call
+   * into a `node.progress` event for the run's viewers, at most about twice a second (the last one always goes out), and
+   * the host keeps the latest per running node. `data` is any JSON object; it is shown, not stored in the run data.
+   * Also given to a node a connected agent calls as a tool. Absent in remote plugins.
+   */
+  sendProgress?(data: JsonObject): void;
+  /**
+   * Report something this node made that people will want to open: a pull request, a file, a ticket. In-process the
+   * engine turns it into a `node.record` event as it happens; a remote plugin's are returned in `ExecuteResponse.records`.
+   * Shown with the node's step in the run's trace. Credential values are masked in the text fields.
+   */
+  artifact(artifact: NodeArtifact): void;
+  /** Report the outcome of a check the node made: tests passed, a reply cites its source, a refund is within policy. Delivered like `artifact`. */
+  check(check: NodeCheck): void;
 }
 
 /** A sub-node's context. In-process sub-nodes can pull their own sub-nodes too (a document loader its text splitter). */

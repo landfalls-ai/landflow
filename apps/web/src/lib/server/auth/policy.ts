@@ -71,12 +71,21 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/transports')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/credentials')) return { scope: 'admin' };
 
-  if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites'].some(under)) {
+  if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };
   }
   if (under('/api/ai') || under('/api/assistant')) return { scope: 'workflows:write' };
   if (under('/api/executions') || under('/api/binary')) return { scope: read ? 'executions:read' : 'executions:write' };
-  if (under('/api/events') || under('/api/insights') || under('/api/metrics')) return { scope: 'executions:read' };
+  // Run Trace: the needs-you list across runs (docs/run-trace.md) reads like executions; the route limits it to what the caller sees.
+  if (under('/api/events') || under('/api/runs') || under('/api/insights') || under('/api/metrics')) return { scope: 'executions:read' };
+  // The second brain (docs/second-brain.md): reading usage and facts is like reading insights; the editor reports its own
+  // signals; suggestions are decided by builders (the routes check the target); running it now is for admins.
+  if (path === '/api/usage/signal') return { scope: 'workflows:write' };
+  if (under('/api/usage')) return { scope: 'executions:read' };
+  if (path === '/api/brain/run') return { scope: 'admin', action: 'settings:manage' };
+  if (path === '/api/brain/analyst') return { scope: 'workflows:write' };
+  if (under('/api/brain')) return { scope: 'executions:read' };
+  if (under('/api/proposals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   return { scope: 'admin' };
 }
 
@@ -95,9 +104,11 @@ export interface ResourceRule {
 const RESOURCE_ROUTES: Array<{ pattern: RegExp; kind: ResourceRule['kind']; reserved: string[] }> = [
   { pattern: /^\/api\/workflows\/([^/]+)(\/.*)?$/, kind: 'workflow', reserved: ['import'] },
   { pattern: /^\/api\/insights\/workflows\/([^/]+)(\/.*)?$/, kind: 'workflow', reserved: [] },
+  { pattern: /^\/api\/brain\/workflows\/([^/]+)(\/.*)?$/, kind: 'workflow', reserved: [] },
   { pattern: /^\/api\/credentials\/([^/]+)(\/.*)?$/, kind: 'credential', reserved: ['test'] },
   { pattern: /^\/api\/data-tables\/([^/]+)(\/.*)?$/, kind: 'dataTable', reserved: [] },
   { pattern: /^\/api\/agents\/([^/]+)(\/.*)?$/, kind: 'agent', reserved: ['import', 'models', 'workflow-tools'] },
+  { pattern: /^\/api\/agent-teams\/([^/]+)(\/.*)?$/, kind: 'agentTeam', reserved: [] },
   { pattern: /^\/api\/executions\/([^/]+)(\/.*)?$/, kind: 'execution', reserved: ['stop-all'] },
 ];
 

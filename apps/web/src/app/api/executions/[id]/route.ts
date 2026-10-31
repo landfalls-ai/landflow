@@ -1,6 +1,6 @@
 import { executionFeedback } from '@/lib/server/chat-feedback';
 import { error, handler, json } from '@/lib/server/http';
-import { cancelExecution, cancelQueuedExecution, cancelWaitingExecution, liveExecution } from '@/lib/server/runner';
+import { cancelExecution, cancelQueuedExecution, cancelWaitingExecution, liveExecution, liveProgress } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
 import { traceUrl } from '@/lib/server/telemetry';
 import { recordAudit } from '@/lib/server/audit';
@@ -18,7 +18,9 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const link = traceUrl(execution.traceId);
   // A chat answer's thumbs up/down (hosted chat, widget, editor).
   const chatFeedback = executionFeedback(id);
-  return json({ execution: { ...execution, ...(chatFeedback && { chatFeedback }) }, ...(link && { traceUrl: link }) });
+  // What the running nodes last reported (a remote agent's steps), for a page opened mid-run.
+  const progress = execution.status === 'running' ? liveProgress(id) : {};
+  return json({ execution: { ...execution, ...(chatFeedback && { chatFeedback }) }, ...(link && { traceUrl: link }), ...(Object.keys(progress).length && { progress }) });
 });
 
 /** DELETE cancels a running, waiting or queued execution, or removes a finished one from history. */

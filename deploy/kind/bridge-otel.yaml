@@ -1,0 +1,25 @@
+# kagent's and Agent Substrate's telemetry to Landflow's backend (grafana/otel-lgtm, deploy/k8s/components/observability) in
+# the OrbStack cluster: a name in kind's DNS, landflow-otel.landflow.svc.cluster.local:4317 (OTLP gRPC) and :4318 (HTTP),
+# whose endpoint is the ClusterIP of landflow-lgtm (LANDFLOW_OTEL_IP, filled in by deploy/scripts/kagent-up.sh). kagent's
+# Helm values point at it (deploy/kind/kagent-values.yaml), and the controller adds it to each agent's egress allowlist.
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-otel
+  namespace: landflow
+spec:
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP, appProtocol: grpc }
+    - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: landflow-otel-orbstack
+  namespace: landflow
+  labels: { kubernetes.io/service-name: landflow-otel }
+addressType: IPv4
+ports:
+  - { name: otlp-grpc, port: 4317, protocol: TCP, appProtocol: grpc }
+  - { name: otlp-http, port: 4318, protocol: TCP }
+endpoints: [{ addresses: ["LANDFLOW_OTEL_IP"] }]

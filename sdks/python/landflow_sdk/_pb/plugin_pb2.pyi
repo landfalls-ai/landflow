@@ -155,16 +155,18 @@ class NodeError(_message.Message):
     def __init__(self, message: _Optional[str] = ..., description: _Optional[str] = ..., item_index: _Optional[int] = ...) -> None: ...
 
 class ExecuteResponse(_message.Message):
-    __slots__ = ("outputs", "logs", "error", "poll_state")
+    __slots__ = ("outputs", "logs", "error", "poll_state", "records")
     OUTPUTS_FIELD_NUMBER: _ClassVar[int]
     LOGS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     POLL_STATE_FIELD_NUMBER: _ClassVar[int]
+    RECORDS_FIELD_NUMBER: _ClassVar[int]
     outputs: _containers.RepeatedCompositeFieldContainer[Branch]
     logs: _containers.RepeatedCompositeFieldContainer[LogEntry]
     error: NodeError
     poll_state: DynamicValue
-    def __init__(self, outputs: _Optional[_Iterable[_Union[Branch, _Mapping]]] = ..., logs: _Optional[_Iterable[_Union[LogEntry, _Mapping]]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., poll_state: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+    records: _containers.RepeatedCompositeFieldContainer[DynamicValue]
+    def __init__(self, outputs: _Optional[_Iterable[_Union[Branch, _Mapping]]] = ..., logs: _Optional[_Iterable[_Union[LogEntry, _Mapping]]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., poll_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., records: _Optional[_Iterable[_Union[DynamicValue, _Mapping]]] = ...) -> None: ...
 
 class LoadOptionsRequest(_message.Message):
     __slots__ = ("node_type", "method", "parameters", "credentials")

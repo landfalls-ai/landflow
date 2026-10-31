@@ -1,0 +1,50 @@
+# The two directions between Landflow (OrbStack cluster, namespace landflow-dev) and kagent (kind cluster landflow-kagent).
+# Applied to the kind cluster by deploy/scripts/kagent-up.sh, which fills in LANDFLOW_HOST_IP: the ClusterIP of
+# landflow-host in the OrbStack cluster. OrbStack routes cluster IPs to every container on its engine, kind's node included,
+# so a kagent agent reaches Landflow as http://landflow-host.landflow.svc.cluster.local:3000 (a name in kind's own DNS, so
+# kagent's egress gateway can allow it by hostname). bridge-otel.yaml does the same for Landflow's telemetry backend.
+#
+# Landflow reaches kagent the other way round: the controller (A2A JSON-RPC at /agents/<namespace>/<name>) and the UI are
+# NodePorts 30083 and 30082, published on the Mac's loopback as 58083 and 58082 (deploy/kind/landflow-kagent.yaml), and pods in
+# the OrbStack cluster reach those through host.docker.internal.
+apiVersion: v1
+kind: Namespace
+metadata: { name: landflow }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-host
+  namespace: landflow
+spec:
+  ports: [{ name: http, port: 3000, targetPort: 3000, protocol: TCP }]
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: landflow-host-orbstack
+  namespace: landflow
+  labels: { kubernetes.io/service-name: landflow-host }
+addressType: IPv4
+ports: [{ name: http, port: 3000, protocol: TCP }]
+endpoints: [{ addresses: ["LANDFLOW_HOST_IP"] }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kagent-controller-host
+  namespace: kagent
+spec:
+  type: NodePort
+  selector: { app.kubernetes.io/name: kagent, app.kubernetes.io/instance: kagent, app.kubernetes.io/component: controller }
+  ports: [{ name: http, port: 8083, targetPort: 8083, nodePort: 30083, protocol: TCP }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kagent-ui-host
+  namespace: kagent
+spec:
+  type: NodePort
+  selector: { app.kubernetes.io/name: kagent, app.kubernetes.io/instance: kagent, app.kubernetes.io/component: ui }
+  ports: [{ name: http, port: 8080, targetPort: 8080, nodePort: 30082, protocol: TCP }]

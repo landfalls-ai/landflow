@@ -4,7 +4,10 @@
  * plugin — there is no privileged node API.
  */
 import { definePlugin } from '@landflow/sdk';
+import { a2aAgentNode } from './a2a';
+import { runTeamNode } from './run-team';
 import { messageAgentNode, workflowTrigger } from './agents';
+import { landflowUsageNode, suggestImprovementNode, usageTriggerNode } from './usage';
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
 import { aiStep } from './composites';
@@ -16,6 +19,7 @@ import { codeNode, httpRequestNode, setNode } from './data';
 import { dataTableNode } from './datatable';
 import { dateTimeNode } from './datetime';
 import { emailReadImapNode, imapCredential } from './email-imap';
+import { kagentCredential } from './kagent-credential';
 import { microsoftBotCredential } from './microsoft-bot-credential';
 import { evaluationNode, evaluationTrigger } from './evaluation';
 import { convertToFileNode, extractFromFileNode, readWriteFileNode } from './files';
@@ -39,6 +43,7 @@ import { openAiChatModelNode, openAiNode } from './openai';
 import { aggregateNode, removeDuplicatesNode, renameKeysNode, splitOutNode, summarizeNode } from './transform';
 import { chatTrigger, errorTrigger, manualTrigger, scheduleTrigger, webhookTrigger } from './triggers';
 import { executeWorkflowNode } from './workflows';
+import { runReportNode } from './run-report';
 
 export const corePlugin = definePlugin({
   info: {
@@ -89,6 +94,11 @@ export const corePlugin = definePlugin({
     convertToFileNode,
     aiAgentNode,
     messageAgentNode,
+    runTeamNode,
+    a2aAgentNode,
+    landflowUsageNode,
+    usageTriggerNode,
+    suggestImprovementNode,
     chainLlmNode,
     textClassifierNode,
     informationExtractorNode,
@@ -112,9 +122,10 @@ export const corePlugin = definePlugin({
     cohereRerankerNode,
     retrievalQaChainNode,
     guardrailsNode,
+    runReportNode,
     evaluationTrigger,
     evaluationNode,
   ],
   composites: [aiStep],
-  credentialTypes: [openAiApiCredential, anthropicApiCredential, cohereApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, mcpOAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential, microsoftBotCredential, sshPrivateKeyCredential],
+  credentialTypes: [openAiApiCredential, anthropicApiCredential, cohereApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, mcpOAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential, microsoftBotCredential, sshPrivateKeyCredential, kagentCredential],
 });

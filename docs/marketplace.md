@@ -57,7 +57,9 @@ templates that installing adds to Templates, each with a read-only [share page](
 - **Installed.** What each install created: links to its agents, its skills, its flows' templates,
   and for node plugins the process state, port, restarts, **Logs** and **Restart**. **Uninstall** asks first,
   then deletes exactly what the install created. That includes agents you edited since; other
-  agents are never touched.
+  agents are never touched. The installed agents are ordinary draft agents in the default project: they show under
+  **Agents** (the **From marketplace** filter, in a team named after the plugin), where you add tools, pick a model and
+  publish them.
 - **Skill library.** Every installed skill with its *when to use* line, references and full
   instructions.
 
@@ -70,6 +72,7 @@ templates that installing adds to Templates, each with a read-only [share page](
 | body | instructions |
 | `model: sonnet` / `opus` / `haiku` / `inherit` | Anthropic `claude-sonnet-5-5` / `claude-opus-5-5` / `claude-haiku-5-5` / `claude-sonnet-5-5`. A full `claude-…` id is kept. Anything else leaves the model unset |
 | `color: yellow` | the agent colour (hex); the icon is picked from the name, then from the description |
+| (none) | a [face](agents.md#faces) seeded by the plugin and the agent's name, and the plugin's name as the agent's [team](agents.md#teams), so a plugin's agents sit together on the roster. The roster's **From marketplace** filter shows them, each with a "From <plugin>" link |
 | `tools: Glob, Grep, Read…` | not mapped, because Claude Code's built-in tools have no Landflow equivalent. They are listed in the description so you can add node, workflow or sub-agent tools under **Capabilities** |
 | skills of the same plugin | `AgentSkill`s: `whenToUse` = description, `instructions` = body, `references` = text files under `references/` (at most 30 files, 128 KB each, 1 MB in total) |
 

@@ -4,7 +4,10 @@
 #   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack -l 'app.kubernetes.io/component in (plugin,config)'   # plugins only
 #
 # OrbStack's cluster runs on the same Docker engine, so `landflow/*:k8s-dev` images are used as they are
-# (imagePullPolicy: Never): nothing is pulled or pushed. Data is throwaway (emptyDir). Dev-only secrets below.
+# (imagePullPolicy: Never): nothing is pulled or pushed. Data stays on the landflow-data PersistentVolumeClaim (OrbStack's
+# local-path storage) across rollouts: credentials, agents and the images Landflow's registry serves kagent survive a new
+# image. `kubectl --context orbstack -n landflow-dev delete pvc landflow-data` (with the host scaled to 0) starts over.
+# Dev-only secrets below.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: landflow-dev
@@ -24,6 +27,7 @@ images:
   - { name: landflow/plugin-productivity, newTag: k8s-dev }
   - { name: landflow/plugin-google-workspace, newTag: k8s-dev }
   - { name: landflow/plugin-databases, newTag: k8s-dev }
+  - { name: landflow/plugin-github, newTag: k8s-dev }
 generatorOptions:
   disableNameSuffixHash: true
   labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: config }
@@ -40,7 +44,7 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/imagePullPolicy
         value: Never
-  # Throwaway data instead of a PersistentVolumeClaim, and the URL the Mac reaches the host on.
+  # The URL the Mac reaches the host on, and the Mac's Ollama.
   - patch: |-
       apiVersion: apps/v1
       kind: Deployment
@@ -53,12 +57,5 @@ patches:
                 env:
                   - { name: LANDFLOW_PUBLIC_URL, value: "http://landflow-host.landflow-dev.svc.cluster.local:3000" }
                   - { name: LANDFLOW_MCP_GATEWAY_PUBLIC_URL, value: "http://landflow-host.landflow-dev.svc.cluster.local:4000" }
-            volumes:
-              - name: data
-                persistentVolumeClaim: null
-                emptyDir: { sizeLimit: 1Gi }
-  - patch: |-
-      $patch: delete
-      apiVersion: v1
-      kind: PersistentVolumeClaim
-      metadata: { name: landflow-data }
+                  # The Mac's Ollama, for Spotlight and the second brain.
+                  - { name: OLLAMA_URL, value: "http://host.docker.internal:11434" }

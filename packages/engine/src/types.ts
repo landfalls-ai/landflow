@@ -7,6 +7,7 @@ import type {
   JsonObject,
   NodeDescriptor,
   NodeItem,
+  NodeRecord,
   TransportKind,
   WebhookMethodRequest,
   WebhookMethodResponse,
@@ -132,6 +133,10 @@ export interface WorkflowSettings {
   aiMaxCostPerDay?: number;
   /** Transport policy overrides by plugin id for this workflow's runs (the host's selector; docs/transports.md). */
   transports?: Record<string, { mode?: 'auto' | 'pinned'; pinned?: string; allowed?: string[]; objective?: 'balanced' | 'latency' | 'throughput' }>;
+  /** How much content the run's journal keeps (Run Trace, docs/run-trace.md): all of it redacted and cut to 32 KB per event (`full`, the default), the first 400 characters of each text (`summaries`), or none, only who did what and when (`off`). */
+  traceContent?: 'full' | 'summaries' | 'off';
+  /** The Run report's profile (docs/run-trace.md#profiles): `generic`, `software`, `support`, or a custom profile (apps/web lib/shared/run-profiles.ts). */
+  runProfile?: 'generic' | 'software' | 'support' | JsonObject;
 }
 
 /** A canvas note. It never runs; the engine ignores it. */
@@ -348,6 +353,8 @@ export type ExecutionEvent =
       nodeName: string;
       source: RunSource;
       parentNodeId?: string;
+      /** A tool sub-node's call: the arguments it was called with (the request a delegated agent works on). */
+      input?: JsonObject;
       at: string;
     }
   | {
@@ -366,6 +373,10 @@ export type ExecutionEvent =
   | { type: 'node.log'; executionId: string; nodeId: string; level: LogEntry['level']; message: string; at: string }
   /** Part of a streamed answer (ctx.sendChunk), only with `ExecuteWorkflowOptions.streaming`. */
   | { type: 'node.chunk'; executionId: string; nodeId: string; nodeName: string; chunk: StreamChunk; at: string }
+  /** What a running node reports (ctx.sendProgress), throttled; `parentNodeId` is the root node of a sub-node (tool) run. */
+  | { type: 'node.progress'; executionId: string; nodeId: string; nodeName: string; parentNodeId?: string; data: JsonObject; at: string }
+  /** An artifact or check the node reported (ctx.artifact, ctx.check; a remote node's come with its response). */
+  | { type: 'node.record'; executionId: string; nodeId: string; nodeName: string; parentNodeId?: string; record: NodeRecord; at: string }
   | ({ type: 'execution.paused'; executionId: string; at: string } & PauseInfo)
   | { type: 'execution.resumed'; executionId: string; command: DebugCommand; at: string }
   | {

@@ -88,7 +88,7 @@ export function canResource(actor: Actor | undefined, kind: ResourceKind, id: st
   return resourceCan(resourceAccess(actor, kind, id), action);
 }
 
-const NOT_FOUND: Record<ResourceKind, string> = { workflow: 'Workflow not found', credential: 'Credential not found', dataTable: 'Data table not found', agent: 'Agent not found' };
+const NOT_FOUND: Record<ResourceKind, string> = { workflow: 'Workflow not found', credential: 'Credential not found', dataTable: 'Data table not found', agent: 'Agent not found', agentTeam: 'Agent team not found' };
 
 /** Why `actor` may not do `action` with a resource (404 when they can't see it at all), or undefined when they may. */
 export function resourceDenial(actor: Actor | undefined, kind: ResourceKind, id: string, action: ResourceAction): { status: 403 | 404; message: string } | undefined {

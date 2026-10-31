@@ -4,7 +4,7 @@
  * outline and a keyword search over the node catalog. No model calls here;
  * suggest.ts and the chat tools turn these into prompt text.
  */
-import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import { indexedPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import type { RunDigest } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow, WorkflowNode } from '@/lib/shared/types';
 import { registry } from '../plugins/registry';
@@ -150,13 +150,38 @@ export function nodeContext(workflow: Workflow, nodeId: string, run: RunDigest |
   ].join('\n');
 }
 
-function summarizeNode(node: WorkflowNode): string {
+/** The main outputs a node shows with its parameters: index (the handle's), name and whether the descriptor names it. */
+export function mainOutputs(node: WorkflowNode, types: NodeTypeInfo[]): Array<{ index: number; name?: string }> {
+  const info = types.find((t) => t.type === node.type);
+  if (!info) return [];
+  return indexedPorts(info.descriptor.outputs, node.parameters)
+    .filter((p) => p.port.type === 'main' && p.visible)
+    .map((p) => ({ index: p.index, ...(p.port.displayName && { name: p.port.displayName }) }));
+}
+
+export interface OutlineOptions {
+  /** The node types, to list the outputs of nodes that branch. */
+  types?: NodeTypeInfo[];
+  /** Ids of nodes that were proposed but not applied yet (earlier replies, or this one). */
+  pending?: ReadonlySet<string>;
+  /** What the pending proposals are, one line each. */
+  pendingSummaries?: string[];
+}
+
+function summarizeNode(node: WorkflowNode, options: OutlineOptions, workflow: Workflow): string[] {
   const parameters = json(node.parameters, 300);
-  return `- “${node.name}” (${node.type})${node.disabled ? ' [disabled]' : ''}: ${parameters}`;
+  const line = `- “${node.name}” (${node.type})${node.disabled ? ' [disabled]' : ''}${options.pending?.has(node.id) ? ' [pending: proposed, not applied yet]' : ''}: ${parameters}`;
+  const outputs = options.types ? mainOutputs(node, options.types) : [];
+  if (outputs.length < 2) return [line];
+  const target = (index: number) => {
+    const names = workflow.connections.filter((c) => c.type === 'main' && c.source === node.id && c.sourceIndex === index).map((c) => `“${nodeById(workflow, c.target)?.name ?? c.target}”`);
+    return names.length ? names.join(', ') : 'nothing yet';
+  };
+  return [line, `  branches: ${outputs.map((o) => `output ${o.index}${o.name ? ` “${o.name}”` : ''} → ${target(o.index)}`).join('; ')}`];
 }
 
 /** The whole workflow as prompt text: nodes with parameters, then connections, then which nodes have run data. */
-export function workflowOutline(workflow: Workflow, runs: Record<string, RunDigest> = {}): string {
+export function workflowOutline(workflow: Workflow, runs: Record<string, RunDigest> = {}, options: OutlineOptions = {}): string {
   const name = (id: string) => nodeById(workflow, id)?.name ?? id;
   const edges = workflow.connections.map((c) =>
     c.type === 'main'
@@ -169,9 +194,10 @@ export function workflowOutline(workflow: Workflow, runs: Record<string, RunDige
   return [
     `Workflow “${workflow.name}”: ${workflow.nodes.length} node${workflow.nodes.length === 1 ? '' : 's'}.`,
     'Nodes:',
-    ...(workflow.nodes.length ? workflow.nodes.map(summarizeNode) : ['(none: the canvas is empty)']),
+    ...(workflow.nodes.length ? workflow.nodes.flatMap((n) => summarizeNode(n, options, workflow)) : ['(none: the canvas is empty)']),
     'Connections:',
     ...(edges.length ? edges : ['(none)']),
+    ...(options.pendingSummaries?.length ? ['Pending proposals (already in the nodes and connections above, waiting for the user to apply them; do not propose them again):', ...options.pendingSummaries.map((t) => `- ${t}`)] : []),
     ...(ran.length ? [`Last run: ${ran.join('; ')}`] : ['No run data yet.']),
   ].join('\n');
 }

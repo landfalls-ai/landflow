@@ -143,6 +143,95 @@
         "type": "string"
       },
       "additionalProperties": {}
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "artifact"
+              },
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "check"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail",
+                  "warn",
+                  "skip"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "name",
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
     }
   },
   "required": [

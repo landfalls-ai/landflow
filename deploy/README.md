@@ -16,11 +16,13 @@ Two overlays go with them: [`compose.infra-link.yml`](compose.infra-link.yml) at
 | Path | |
 |---|---|
 | [`docker/`](docker) | Dockerfiles: the host, Node, Python and Go plugins, the code runner and `landflow-bridge` |
-| [`k8s/`](k8s) | kustomize base, components, overlays (`overlays/orbstack`, `orbstack-brokers`, `orbstack-queue`, gateway and ingress variants) and examples (KEDA, Envoy Gateway) |
+| [`k8s/`](k8s) | kustomize base, components, overlays (`overlays/orbstack`, `orbstack-brokers`, `orbstack-queue`, `orbstack-observability` with Grafana, Tempo, Prometheus and Loki, gateway and ingress variants) and examples (KEDA, Envoy Gateway) |
+| [`kind/`](kind) | kagent 1.0 next to Landflow: the kind cluster (`landflow-kagent`, Kubernetes 1.37), kagent's install config and values, the bridges to Landflow and its telemetry, the Harnesses (`harness.yaml`, kagent's own runtime; `harness-claude.yaml`, Claude Code on Ollama; `harness-claude-dev.yaml`, Claude Code on the common toolchain image), the package registries agents may reach (`egress-dev.yaml`), Landflow's ServiceAccount and Role for writing agents, and the example agents as Landflow config (`agents/text-formatter.json`; `agents/dev-agent.json`, a developer on Claude Code), which Landflow deploys ([docs/a2a.md](../docs/a2a.md#landflow-agents-on-kagent)) |
 | [`infra/`](infra) | what the infra stack mounts: the Keycloak realm, the Postgres init script, Git server keys, OpenBao, MinIO, Mosquitto, Service Bus and Vector configs |
 | [`mcp-gateway/`](mcp-gateway) | agentgateway configs and compose overrides (file, auth, Landflow tokens, tokens plus an identity provider) |
-| [`scripts/`](scripts) | smoke tests (`smoke.sh`, `brokers-smoke.sh`), the queue-mode end-to-end test, the transport benchmark and the MCP gateway spike |
+| [`scripts/`](scripts) | smoke tests (`smoke.sh`, `brokers-smoke.sh`), the queue-mode end-to-end test, the transport benchmark, the MCP gateway spike, `kagent-up.sh` (kagent in kind, bridged to Landflow, with the example agent deployed from Landflow) and `claude-harness-dev.sh` (the common toolchain image for Claude Code agents, served from Landflow's registry) |
 | [`.env.example`](.env.example) | every value the compose files read, with its default (development values only) |
 
 Build on this machine with `COMPOSE_BAKE=false` (the default buildx builder belongs to another project), and deploy only
-to the local OrbStack Docker engine and cluster (`--context orbstack`).
+to the local OrbStack Docker engine and cluster (`--context orbstack`), plus the kind cluster `landflow-kagent` on that
+same engine for kagent.

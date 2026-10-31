@@ -172,6 +172,8 @@ interface CanvasState {
   outputsOf: Record<string, string[]>;
   subsOf: Record<string, string[]>;
   active: Set<string>;
+  /** A live line under a node (what it reports while it runs). */
+  captions: Record<string, string>;
   running: boolean;
   dimIdle: boolean;
   selectedNodeId?: string;
@@ -188,8 +190,9 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
   const { wf } = data;
   const status = ctx.statuses[id];
   const dimmed = ctx.dimIdle && !status;
+  const caption = ctx.captions[id];
   return (
-    <div className={cn('cursor-pointer transition-[opacity,filter] duration-300', dimmed && 'opacity-40 grayscale')} title={dimmed ? 'Did not run in this execution' : undefined}>
+    <div className={cn('relative cursor-pointer transition-[opacity,filter] duration-300', dimmed && 'opacity-40 grayscale')} title={dimmed ? 'Did not run in this execution' : undefined}>
       <NodeTile
         name={wf.name}
         info={ctx.nodeTypes[wf.type]}
@@ -202,6 +205,16 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
         subConnections={ctx.subsOf[id]}
         readOnly
       />
+      {caption && (
+        <div
+          data-testid="node-caption"
+          title={caption}
+          // Above the node: below it sit the labels of round nodes and sub-nodes.
+          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 w-max max-w-[180px] -translate-x-1/2 truncate rounded-full border border-hair bg-sf px-2 py-px text-[11px] leading-4 text-t2 shadow-sm animate-fade-up"
+        >
+          {caption}
+        </div>
+      )}
     </div>
   );
 });
@@ -266,12 +279,16 @@ export interface ExecutionCanvasProps {
   /** A waiting execution: what it waits for (its node is marked waiting, with the reason on hover). */
   wait?: WaitInfo;
   running?: boolean;
+  /** Live lines under running nodes, by node id. */
+  captions?: Record<string, string>;
   selectedNodeId?: string;
   onNodeClick?: (nodeId: string) => void;
   className?: string;
 }
 
-function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
+const NO_CAPTIONS: Record<string, string> = {};
+
+function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, captions = NO_CAPTIONS, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
   // Groups expanded or collapsed in this view (by id); the rest show as saved. Reset for another workflow.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   useEffect(() => setOverrides({}), [workflow.id]);
@@ -325,13 +342,14 @@ function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId
       outputsOf,
       subsOf,
       active: new Set(activeNodeIds),
+      captions,
       running,
       dimIdle: !running && Object.keys(runData).length > 0,
       selectedNodeId,
       groupRuns: Object.fromEntries(groups.map((g) => [g.id, summarizeGroupRun(descendantNodeIds(groups, g.id), statuses)])),
       toggleGroup,
     };
-  }, [flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, selectedNodeId, toggleGroup]);
+  }, [flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, captions, selectedNodeId, toggleGroup]);
 
   return (
     <CanvasContext.Provider value={state}>

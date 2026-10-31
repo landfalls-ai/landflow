@@ -454,6 +454,58 @@ type LogEntry struct {
 	Message string   `json:"message"`
 }
 
+// Artifact is something a node made that people will want to open: a pull
+// request, a file, a ticket (ExecuteContext.Artifact).
+type Artifact struct {
+	Name string
+	// Kind is free text: "pull_request", "commit", "file", "ticket", "document", "link", ...
+	Kind     string
+	URL      string
+	MimeType string
+	// Text is short content to show inline.
+	Text string
+	Data map[string]any
+}
+
+// CheckStatus is the outcome of a Check.
+type CheckStatus string
+
+const (
+	CheckPass CheckStatus = "pass"
+	CheckFail CheckStatus = "fail"
+	CheckWarn CheckStatus = "warn"
+	CheckSkip CheckStatus = "skip"
+)
+
+// Check is the outcome of a check a node made: tests passed, a reply cites its
+// source, a refund is within policy (ExecuteContext.Check).
+type Check struct {
+	Name    string
+	Status  CheckStatus
+	Message string
+	// Subject says what the check is about: a claim, a file, an actor's name.
+	Subject string
+	// Evidence is what it looked at (command output, the values compared).
+	Evidence map[string]any
+}
+
+// Record is one entry of ExecuteResponse.records: an artifact (Type "artifact")
+// or a check (Type "check"), with when it was reported (RFC 3339).
+type Record struct {
+	Type     string         `json:"type"`
+	Name     string         `json:"name"`
+	Kind     string         `json:"kind,omitempty"`
+	URL      string         `json:"url,omitempty"`
+	MimeType string         `json:"mimeType,omitempty"`
+	Text     string         `json:"text,omitempty"`
+	Data     map[string]any `json:"data,omitempty"`
+	Status   CheckStatus    `json:"status,omitempty"`
+	Message  string         `json:"message,omitempty"`
+	Subject  string         `json:"subject,omitempty"`
+	Evidence map[string]any `json:"evidence,omitempty"`
+	At       string         `json:"at,omitempty"`
+}
+
 // NodeErrorPayload is the wire form of a node failure.
 type NodeErrorPayload struct {
 	Message     string `json:"message"`
@@ -469,6 +521,8 @@ type ExecuteResponse struct {
 	Error   *NodeErrorPayload `json:"error,omitempty"`
 	// PollState is the state for the next poll (poll triggers, mode "poll" only).
 	PollState map[string]any `json:"pollState,omitempty"`
+	// Records are the artifacts and checks the node reported, in order.
+	Records []Record `json:"records,omitempty"`
 }
 
 // LoadOptionsRequest is the body of POST /landflow/v1/load-options.

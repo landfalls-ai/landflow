@@ -2,7 +2,7 @@
 /**
  * Workflow settings (n8n's Workflow settings dialog): error workflow, time
  * zone, timeout, which workflows may call this one, which executions are
- * kept, concurrency, automatic retries, AI usage limits and transport overrides. This dialog only edits and saves
+ * kept, concurrency, automatic retries, AI usage limits, Run Trace and transport overrides. This dialog only edits and saves
  * `workflow.settings`; the engine and runner apply them. Its Governance section (four-eyes publishing, allowed nodes)
  * is the workflow's policy, saved on its own route first (./workflow-governance.tsx).
  */
@@ -10,11 +10,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Settings2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
+import { RUN_PROFILES, type RunProfile } from '@/lib/shared/run-profiles';
 import type { PluginSummary, WorkflowSettings, WorkflowSummary } from '@/lib/shared/types';
 import { transportLabel, type TransportObjective, type TransportPolicy, type WorkflowTransportOverride } from '@/lib/shared/transports';
 import { Dialog, Field, ToggleRow } from '../agents/dialog';
 import { Button } from '../ui/button';
-import { Input, Select } from '../ui/inputs';
+import { Input, Select, Textarea } from '../ui/inputs';
 import { NotifyOnFailure } from './notify-on-failure';
 import { useEditor } from './store';
 import { useWorkflowGovernance, WorkflowGovernanceSection } from './workflow-governance';
@@ -540,10 +541,74 @@ export function SettingsDialog({ onClose, onSave }: { onClose: () => void; onSav
           </p>
         </div>
 
+        <RunTraceSettings value={draft} onChange={patch} />
+
         {transportPlugins.length > 0 && <TransportOverrides plugins={transportPlugins} value={draft.transports} onChange={(transports) => patch({ transports })} />}
 
         <WorkflowGovernanceSection state={governance} />
       </div>
     </Dialog>
+  );
+}
+
+/** Workflow settings → Run Trace (docs/run-trace.md): how much the run's journal keeps, and the Run report's profile. */
+function RunTraceSettings({ value, onChange }: { value: WorkflowSettings; onChange: (next: Partial<WorkflowSettings>) => void }) {
+  const setting = value.runProfile;
+  const custom = setting !== undefined && typeof setting === 'object';
+  const [text, setText] = useState(() => JSON.stringify(custom ? setting : { ...RUN_PROFILES.software, id: 'my-profile', name: 'My profile' }, null, 2));
+  const [bad, setBad] = useState<string>();
+  const editCustom = (next: string) => {
+    setText(next);
+    try {
+      const parsed = JSON.parse(next) as Partial<RunProfile>;
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.id !== 'string' || typeof parsed.name !== 'string') throw new Error('A profile needs an "id" and a "name".');
+      setBad(undefined);
+      onChange({ runProfile: parsed as WorkflowSettings['runProfile'] });
+    } catch (e) {
+      setBad((e as Error).message);
+    }
+  };
+  const choice = custom ? 'custom' : (setting ?? 'generic');
+  return (
+    <div className="space-y-2">
+      <div className="text-[12px] font-semibold text-t2">Run Trace</div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field id="wf-run-profile" label="Profile" hint={custom ? 'A custom profile, as JSON.' : RUN_PROFILES[choice as keyof typeof RUN_PROFILES]?.description}>
+          <Select
+            id="wf-run-profile"
+            value={choice}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (next === 'custom') editCustom(text);
+              else onChange({ runProfile: next === 'generic' ? undefined : (next as 'software' | 'support') });
+            }}
+          >
+            <option value="generic">Generic</option>
+            <option value="software">Software delivery</option>
+            <option value="support">Customer support</option>
+            <option value="custom">Custom (JSON)</option>
+          </Select>
+        </Field>
+        <Field
+          id="wf-trace-content"
+          label="Content kept"
+          hint={value.traceContent === 'off' ? 'Only who did what and when.' : value.traceContent === 'summaries' ? 'The first 400 characters of each message.' : 'Redacted, up to 32 KB per event.'}
+        >
+          <Select id="wf-trace-content" value={value.traceContent ?? 'full'} onChange={(e) => onChange({ traceContent: e.target.value === 'full' ? undefined : (e.target.value as 'summaries' | 'off') })}>
+            <option value="full">Full</option>
+            <option value="summaries">Summaries</option>
+            <option value="off">Off</option>
+          </Select>
+        </Field>
+      </div>
+      {custom && (
+        <Field id="wf-run-profile-json" label="Custom profile" hint={bad ? <span className="text-rd">{bad}</span> : 'Claims, role rules and deliveries the Run report checks; patterns are regular expressions.'}>
+          <Textarea id="wf-run-profile-json" value={text} onChange={(e) => editCustom(e.target.value)} rows={10} spellCheck={false} className={cn('font-mono text-[12px]', bad && 'border-rd')} />
+        </Field>
+      )}
+      <p className="text-[12px] leading-snug text-t3">
+        Every run keeps a journal of who did what: steps, requests between agents, waits for people, artifacts and checks. The profile gives the Run report node its checks and words. Journals are kept 30 days.
+      </p>
+    </div>
   );
 }

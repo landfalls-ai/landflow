@@ -6,7 +6,7 @@
  * the transcript (session memory) and the timeline the UI shows.
  */
 import { nanoid } from 'nanoid';
-import type { AgentMessage, ToolCall, ToolResult } from '@landflow/engine';
+import type { AgentMessage, AgentTool, LanguageModel, ToolCall, ToolResult } from '@landflow/engine';
 import type {
   Agent,
   AgentConfig,
@@ -25,9 +25,11 @@ import { notifyApprovalEmails } from '../approval-email';
 import { singleton } from '../singleton';
 import { activeTraceIds, logger, recordAgentTokens, recordApproval, traceAgentRun, traceToolCall, traceUrl } from '../telemetry';
 import { applyGuardrail, guardrailEntry, ruleActive } from './guardrails';
+import { agentSessionJournal } from '../journal/agent-session';
 import { agentModel } from './models';
+import { personaPrompt } from '../../shared/persona';
 import { agentStore, configOf } from './store';
-import { buildToolset, type BuiltTool, type ToolContext } from './tools';
+import { buildToolset, dedupe, type BuiltTool, type ToolContext } from './tools';
 
 const MAX_RESULT_CHARS = 16_000;
 const MAX_USER_TURNS_IN_CONTEXT = 30;
@@ -46,6 +48,23 @@ export interface RunRequest {
   onEvent?: (event: AgentStreamEvent) => void;
   /** Start a new trace (schedules, channels) instead of joining the caller's. */
   rootTrace?: boolean;
+  /** What a workflow connected to the agent's node (Run an Agent): a chat model that replaces the agent's, and more tools. */
+  flow?: { model?: LanguageModel; tools?: AgentTool[] };
+  /** What a team run adds to a member (agent-teams/runtime.ts): the tools for its reports, how it shows in the journal, a check before its answer. */
+  team?: TeamRole;
+}
+
+export interface TeamRole {
+  /** One delegate tool per direct report. */
+  tools: BuiltTool[];
+  /** The member's title: the journal names it by this, not by its agent's name. */
+  title?: string;
+  /** Journal under the span of the request that asked this member (default: the node's span), its words as inline messages. */
+  under?: string;
+  /** Tokens the member may use in this session: the run stops with reason `budget` at the limit. */
+  budgetTokens?: number;
+  /** Called with the answer the model is about to give: text back is told to the model (as a message) and the loop goes on. */
+  beforeAnswer?(reply: string): string | undefined;
 }
 
 export interface RunResult {
@@ -104,28 +123,16 @@ export function newSession(
 }
 
 function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession): string {
-  const parts = [config.instructions.trim() || 'You are a helpful assistant.'];
-  if (config.skills.length) {
-    parts.push(
-      [
-        '## Skills',
-        'Skills are step-by-step instructions for specific tasks. When a task matches a skill, call load_skill first and follow it.',
-        ...config.skills.map((s) => `- ${s.name}: ${s.whenToUse}`),
-      ].join('\n'),
-    );
-  }
+  let memory: string | undefined;
   if (config.memory.crossSession) {
     const notes = agentStore.memories(agent.id, session.userId);
-    parts.push(
-      [
-        '## What you remember about this user',
-        notes.length ? notes.map((n) => `- ${n.text} (${n.at.slice(0, 10)})`).join('\n') : '(nothing yet)',
-        'Use the remember tool for durable facts worth knowing next time.',
-      ].join('\n'),
-    );
+    memory = [
+      '## What you remember about this user',
+      notes.length ? notes.map((n) => `- ${n.text} (${n.at.slice(0, 10)})`).join('\n') : '(nothing yet)',
+      'Use the remember tool for durable facts worth knowing next time.',
+    ].join('\n');
   }
-  parts.push(`You are “${config.name}”${config.description ? `: ${config.description}` : ''}. Current date and time: ${new Date().toISOString()}.`);
-  return parts.join('\n\n');
+  return personaPrompt(config, { memory, now: new Date() });
 }
 
 /** The transcript the model sees: the last N user turns, cut at a user message so tool calls stay paired. */
@@ -152,6 +159,9 @@ async function pool<T, R>(items: T[], limit: number, work: (item: T) => Promise<
   return results;
 }
 
+/** The least time between two saves of a running session. */
+const SAVE_EVERY_MS = 1_500;
+
 /** Run the agent once on a session. Rejects if the session is already running. */
 export async function runAgent(request: RunRequest): Promise<RunResult> {
   const { agent } = request;
@@ -166,11 +176,36 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     request.onEvent?.(event);
     bus.publish({ channel: 'agent', agentId: agent.id, event });
   };
+  // A session a Run an Agent node started also writes its entries into that run's journal (lib/server/journal).
+  const journalEntry = agentSessionJournal(session, { id: agent.id, name: request.team?.title ?? agent.name }, { under: request.team?.under, inline: Boolean(request.team?.under) });
   const upsert = (entry: TimelineEntry) => {
     const index = session.timeline.findIndex((e) => e.id === entry.id);
     if (index >= 0) session.timeline[index] = entry;
     else session.timeline.push(entry);
     emit({ type: 'entry', sessionId: session.id, entry });
+    journalEntry(entry);
+    persistSoon();
+  };
+  // While the run goes on, the saved session follows the timeline (at most every SAVE_EVERY_MS), so a page that
+  // opens mid-run (the execution view's agent panel) sees the tool calls so far. The final save stays the one below.
+  let lastSave = 0;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  const persistNow = () => {
+    saveTimer = undefined;
+    if (!running.has(session.id)) return;
+    lastSave = Date.now();
+    try {
+      // Keep the object the loop holds: only the store's copy gets the new updatedAt.
+      agentStore.saveSession(session);
+    } catch (error) {
+      logger.warn(`could not save the running session: ${(error as Error).message}`);
+    }
+  };
+  const persistSoon = () => {
+    if (saveTimer || session.status !== 'running') return;
+    const wait = lastSave + SAVE_EVERY_MS - Date.now();
+    if (wait <= 0) persistNow();
+    else saveTimer = setTimeout(persistNow, wait);
   };
 
   // Token & cost tracking: the run's model calls count for this agent, under its usage limits (and any caller's caps).
@@ -184,7 +219,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         sessionId: session.id,
         source: session.source,
         version: String(session.version),
-        ...(config.model && { model: { provider: config.model.provider, model: config.model.model } }),
+        ...((request.flow?.model ?? config.model) && { model: { provider: (request.flow?.model ?? config.model)!.provider, model: (request.flow?.model ?? config.model)!.model } }),
         root: request.rootTrace,
       },
       async () => {
@@ -234,6 +269,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       },
     ));
   } finally {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
     running.delete(session.id);
   }
 
@@ -241,8 +278,9 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     let model;
     let toolset;
     try {
-      model = await agentModel(config.model);
-      toolset = await buildToolset(agent, config);
+      model = request.flow?.model ?? (await agentModel(config.model));
+      toolset = await buildToolset(agent, config, request.flow?.tools);
+      if (request.team?.tools.length) toolset = { ...toolset, tools: dedupe([...toolset.tools, ...request.team.tools]) };
     } catch (error) {
       upsert({ id: entryId(), type: 'error', message: (error as Error).message, at: now() });
       return { reason: 'error' };
@@ -258,6 +296,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       runId: `ar_${nanoid(10)}`,
       signal: request.signal,
       delegate: (target, task) => delegate(target, task),
+      approvals: request.approvals ?? 'ask',
     };
 
     let iterations = 0;
@@ -268,14 +307,22 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       const pending = session.pending;
       iterations = pending.iterations;
       const decided = await Promise.all(pending.calls.map((call) => settlePending(call, byName.get(call.tool), ctx)));
+      const settled = [...pending.results, ...decided.filter(isResult)];
+      // A remote agent that paused again: wait for the next decision, keeping what is settled.
+      const again = decided.filter((d): d is { pending: PendingCall } => !isResult(d)).map((d) => d.pending);
+      if (again.length) {
+        session.pending = { calls: again, results: settled, iterations };
+        return { reason: 'awaiting_approval' };
+      }
       const order = pendingOrder(session.messages);
-      const results = [...pending.results, ...decided].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
-      session.messages.push({ role: 'tool', results });
-      justDenied = new Set(pending.calls.filter((c) => c.decision === 'denied').map((c) => c.tool));
+      session.messages.push({ role: 'tool', results: settled.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)) });
+      // A rejected remote call isn't a rejected tool: the agent heard the reason and answered, so the model may ask it again.
+      justDenied = new Set(pending.calls.filter((c) => c.decision === 'denied' && !c.remote).map((c) => c.tool));
       delete session.pending;
     }
 
-    const budget = config.settings.sessionTokenBudget;
+    const limits = [config.settings.sessionTokenBudget, request.team?.budgetTokens ?? 0].filter((n) => n > 0);
+    const budget = limits.length ? Math.min(...limits) : 0;
     while (iterations < Math.min(200, Math.max(1, config.settings.maxIterations))) {
       if (request.signal?.aborted) return { reason: 'canceled' };
       if (budget > 0 && session.usage.inputTokens + session.usage.outputTokens >= budget) {
@@ -312,7 +359,15 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       // `raw` replays the provider's own blocks (the original text), so a changed answer drops it.
       session.messages.push({ role: 'assistant', text: answer, toolCalls: turn.toolCalls, ...(turn.raw && !changed && { raw: turn.raw }) });
       if (answer.trim()) upsert({ id: entryId(), type: 'assistant', text: answer, at: now(), model: `${model.provider}/${model.model}`, usage });
-      if (!turn.toolCalls.length) return { reason: 'completed', reply: answer };
+      if (!turn.toolCalls.length) {
+        const nudge = request.team?.beforeAnswer?.(answer);
+        if (nudge) {
+          session.messages.push({ role: 'user', content: nudge });
+          upsert({ id: entryId(), type: 'notice', message: nudge, at: now() });
+          continue;
+        }
+        return { reason: 'completed', reply: answer };
+      }
       const denied = justDenied;
       justDenied = new Set();
 
@@ -335,7 +390,10 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           upsert(toolEntry(call, tool, { status: 'awaiting_approval' }));
         } else runnable.push(call);
       }
-      const results = [...immediate, ...(await pool(runnable, config.settings.toolConcurrency, (call) => execute(call, byName.get(call.name)!, ctx)))];
+      const ran = await pool(runnable, config.settings.toolConcurrency, (call) => execute(call, byName.get(call.name)!, ctx));
+      const results = [...immediate, ...ran.filter(isResult)];
+      // Remote agents that paused for an approval of their own tool calls wait with the calls that need one.
+      waiting.push(...ran.filter((r): r is { pending: PendingCall } => !isResult(r)).map((r) => r.pending));
       if (waiting.length) {
         session.pending = { calls: waiting, results, iterations };
         return { reason: 'awaiting_approval' };
@@ -364,33 +422,49 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     };
   }
 
-  async function execute(call: ToolCall, tool: BuiltTool, ctx: ToolContext): Promise<ToolResult> {
+  /** Run a tool call (or, with `resume`, answer the remote agent it paused on): its result, or the pause to wait on. */
+  async function execute(call: ToolCall, tool: BuiltTool, ctx: ToolContext, resume?: { state: Record<string, unknown>; approved: boolean }): Promise<ToolResult | { pending: PendingCall }> {
     const started = Date.now();
-    upsert(toolEntry(call, tool, { status: 'running' }));
+    upsert(toolEntry(call, tool, { status: 'running', approval: undefined }));
+    // The remote agent's tool calls as they happen (A2A tools).
+    const callCtx: ToolContext = { ...ctx, callId: call.id, callSpan: journalEntry.spanOf(call.id), progress: (remote) => upsert(toolEntry(call, tool, { status: 'running', remote, approval: undefined })) };
     try {
-      const outcome = await traceToolCall({ agentId: agent.id, agentName: config.name, tool: call.name, callId: call.id, kind: tool.kind }, () => tool.invoke(call.input, ctx));
+      const outcome = await traceToolCall({ agentId: agent.id, agentName: config.name, tool: call.name, callId: call.id, kind: tool.kind }, () =>
+        resume && tool.resume ? tool.resume(resume.state, resume.approved, callCtx) : tool.invoke(call.input, callCtx),
+      );
+      if (outcome.pause) {
+        upsert(toolEntry(call, tool, { status: 'awaiting_approval', approval: { message: outcome.pause.message }, durationMs: Date.now() - started, ...(outcome.remote && { remote: outcome.remote }) }));
+        return { pending: { callId: call.id, tool: call.name, input: call.input, remote: outcome.pause.remote } };
+      }
       upsert(
         toolEntry(call, tool, {
           status: 'success',
           output: outcome.output,
+          approval: undefined,
           durationMs: Date.now() - started,
           ...(outcome.workflowId && { workflowId: outcome.workflowId }),
           ...(outcome.executionId && { executionId: outcome.executionId }),
           ...(outcome.childAgentId && { childAgentId: outcome.childAgentId }),
           ...(outcome.childSessionId && { childSessionId: outcome.childSessionId }),
+          ...(outcome.remote && { remote: outcome.remote }),
         }),
       );
       return { id: call.id, name: call.name, content: asContent(outcome.output) };
     } catch (error) {
       const message = (error as Error).message;
-      upsert(toolEntry(call, tool, { status: 'error', error: message, durationMs: Date.now() - started }));
+      upsert(toolEntry(call, tool, { status: 'error', error: message, approval: undefined, durationMs: Date.now() - started }));
       return { id: call.id, name: call.name, content: `Error: ${message}`, isError: true };
     }
   }
 
-  async function settlePending(call: PendingCall, tool: BuiltTool | undefined, ctx: ToolContext): Promise<ToolResult> {
+  async function settlePending(call: PendingCall, tool: BuiltTool | undefined, ctx: ToolContext): Promise<ToolResult | { pending: PendingCall }> {
     if (!tool) return { id: call.callId, name: call.tool, content: `The tool "${call.tool}" is no longer available.`, isError: true };
     const asCall: ToolCall = { id: call.callId, name: call.tool, input: call.input };
+    // A remote agent's pause: the decision goes to that agent either way, and its answer is the tool's result.
+    if (call.remote) {
+      if (!tool.resume) return { id: call.callId, name: call.tool, content: `The tool "${call.tool}" can no longer answer the agent that paused.`, isError: true };
+      return execute(asCall, tool, ctx, { state: call.remote.state, approved: call.decision === 'approved' });
+    }
     if (call.decision === 'approved') return execute(asCall, tool, ctx);
     upsert(toolEntry(asCall, tool, { status: 'denied', error: 'Denied by a person' }));
     return {
@@ -414,6 +488,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     return { reply: result.reply, sessionId: child.id };
   }
 }
+
+const isResult = (value: ToolResult | { pending: PendingCall }): value is ToolResult => !('pending' in value);
 
 /** Tool-call ids of the last assistant turn, in the order the model made them. */
 function pendingOrder(messages: AgentMessage[]): string[] {

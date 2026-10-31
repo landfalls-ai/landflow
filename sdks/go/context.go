@@ -31,6 +31,9 @@ type ExecuteContext struct {
 	pollMu       sync.Mutex
 	pollState    map[string]any
 	pollStateSet bool
+
+	recordMu sync.Mutex
+	records  []Record
 }
 
 // NewExecuteContext builds a context for req against the node described by
@@ -129,6 +132,47 @@ func (c *ExecuteContext) nextPollState() (map[string]any, bool) {
 	c.pollMu.Lock()
 	defer c.pollMu.Unlock()
 	return c.pollState, c.pollStateSet
+}
+
+// Artifact reports something this node made that people will want to open (a
+// pull request, a file, a ticket). It goes into ExecuteResponse.records and is
+// shown with the step in the run's trace. Credential values are masked in the
+// text fields.
+func (c *ExecuteContext) Artifact(a Artifact) {
+	c.addRecord(Record{
+		Type: "artifact", Name: RedactString(c, a.Name), Kind: a.Kind, URL: RedactString(c, a.URL),
+		MimeType: a.MimeType, Text: RedactString(c, a.Text), Data: a.Data,
+	})
+}
+
+// Check reports the outcome of a check the node made. Status must be one of
+// CheckPass, CheckFail, CheckWarn and CheckSkip; anything else is dropped with
+// a warning in the node's log.
+func (c *ExecuteContext) Check(k Check) {
+	switch k.Status {
+	case CheckPass, CheckFail, CheckWarn, CheckSkip:
+	default:
+		c.Logger.Warn(fmt.Sprintf("check %q dropped: unknown status %q", k.Name, k.Status))
+		return
+	}
+	c.addRecord(Record{
+		Type: "check", Name: RedactString(c, k.Name), Status: k.Status, Message: RedactString(c, k.Message),
+		Subject: RedactString(c, k.Subject), Evidence: k.Evidence,
+	})
+}
+
+func (c *ExecuteContext) addRecord(r Record) {
+	r.At = time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	c.recordMu.Lock()
+	defer c.recordMu.Unlock()
+	c.records = append(c.records, r)
+}
+
+// Records returns the artifacts and checks reported so far, in order.
+func (c *ExecuteContext) Records() []Record {
+	c.recordMu.Lock()
+	defer c.recordMu.Unlock()
+	return append([]Record(nil), c.records...)
 }
 
 // Request returns the raw request.

@@ -32,6 +32,7 @@ import { emitAuditLog } from './otel';
 import { targetProject } from './project';
 import { getAuditSettings } from './settings';
 import { insertEvent } from './store';
+import { recordAuditUsage } from '../usage/ledger';
 
 export type { AuditEvent, AuditOutcome, AuditTarget } from '../../shared/audit';
 export { auditRequestContext } from './context';
@@ -164,6 +165,7 @@ export function recordAudit(input: AuditInput): AuditEvent | undefined {
       ...(details && { details }),
     };
     const queued = insertEvent(event);
+    recordAuditUsage(event);
     if (ctx && input.action !== 'api.request') ctx.recorded++;
     emitAuditLog(event);
     if (queued) kick().fn?.();

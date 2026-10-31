@@ -23,7 +23,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body className="min-h-screen">
         <ViewerProvider viewer={viewer}>
-          <div className="flex min-h-screen">
+          <div className="flex min-h-screen flex-col md:flex-row">
             <Sidebar />
             <main className="relative min-w-0 flex-1">{children}</main>
           </div>

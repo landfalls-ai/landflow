@@ -50,8 +50,8 @@ app() {
   check "host: /api/health" bash -c "curl -fsS $base/api/health | json 'print(\"online\", d[\"online\"], \"of\", d[\"plugins\"], \"plugins,\", d[\"nodeTypes\"], \"node types\")'"
   # The owner from LANDFLOW_OWNER_EMAIL / LANDFLOW_OWNER_PASSWORD (compose.yml); the session cookie goes in $jar.
   check "host: owner signs in" bash -c "curl -fsS -c $jar -H 'content-type: application/json' -d '{\"email\":\"${LANDFLOW_OWNER_EMAIL:-owner@landflow.test}\",\"password\":\"${LANDFLOW_OWNER_PASSWORD:-landflow-dev-only}\"}' $base/api/auth/login | json 'print(d[\"user\"][\"email\"], d[\"user\"][\"role\"])'"
-  check "host: all 7 plugins online" bash -c "curl -fsS -b $jar $base/api/plugins | json '
-want = {\"text-toolkit\", \"py-insights\", \"go-crypto\", \"messaging\", \"productivity\", \"google\", \"databases\"}
+  check "host: all 8 plugins online" bash -c "curl -fsS -b $jar $base/api/plugins | json '
+want = {\"text-toolkit\", \"py-insights\", \"go-crypto\", \"messaging\", \"productivity\", \"google\", \"databases\", \"github\"}
 online = {p[\"id\"] for p in d[\"plugins\"] if p[\"status\"] == \"online\"}
 missing = want - online
 print(\", \".join(sorted(p[\"id\"] + \"@\" + p[\"transport\"] for p in d[\"plugins\"] if p[\"id\"] in want)))

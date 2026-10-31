@@ -61,6 +61,7 @@ import {
   type JsonObject,
   type LogEntry,
   type NodeItem,
+  type NodeRecord,
 } from '@landflow/protocol';
 import type { ContextExtras, WaitRequest } from '@landflow/sdk';
 import {
@@ -79,7 +80,7 @@ import { ExpressionError, ExpressionResolver, type ExpressionData } from './expr
 import { sharedRateLimiter } from './rate-limit';
 import { collectSecretReferences, secretParameterPaths, type SecretValues } from './secrets';
 import { engineMetrics, failSpan, recordedIds, SOURCE_ATTRIBUTE, startChild } from './telemetry';
-import { deriveToolSchema } from './tool-schema';
+import { deriveToolSchema, withReason } from './tool-schema';
 import type {
   ExecuteWorkflowOptions,
   ExecutionEvent,
@@ -1178,6 +1179,7 @@ class WorkflowRun {
     limit?: NodeLimit,
   ): Promise<{ response: ExecuteResponse; wait?: WaitRequest }> {
     let wait: WaitRequest | undefined;
+    const progress = this.progressSender(node);
     const extras: ContextExtras = {
       signal: limit ? (this.signal ? AbortSignal.any([this.signal, limit.signal]) : limit.signal) : this.signal,
       putExecutionToWait: (requested) => {
@@ -1192,6 +1194,8 @@ class WorkflowRun {
         else this.nodeState[node.id] = structuredClone(state);
       },
       getNodeOutputs: () => this.expressionOutputs(node),
+      sendProgress: progress.send,
+      onRecord: (record) => this.emitRecord(node, record),
       ...(this.options.streaming && {
         sendChunk: (chunk) => this.emit({ type: 'node.chunk', executionId: this.options.executionId, nodeId: node.id, nodeName: node.name, chunk: structuredClone(chunk), at: now() }),
       }),
@@ -1206,8 +1210,56 @@ class WorkflowRun {
         }),
       getInputConnectionData: <T>(type: SubNodeType, index?: number) => this.supplySubNodes(node, type, request.inputs[0] ?? [], index) as Promise<T[]>,
     };
-    const response = await this.raceAbort(context.with(spanContext, () => resolved.execute(request, extras)), limit);
-    return { response, ...(wait && { wait }) };
+    try {
+      const response = await this.raceAbort(context.with(spanContext, () => resolved.execute(request, extras)), limit);
+      this.emitRecords(node, response);
+      return { response, ...(wait && { wait }) };
+    } finally {
+      progress.flush();
+    }
+  }
+
+  /** A `node.record` event: an artifact or check the node reported (`ctx.artifact`, `ctx.check`). */
+  private emitRecord(node: WorkflowNode, record: NodeRecord, parentNodeId?: string) {
+    this.emit({
+      type: 'node.record',
+      executionId: this.options.executionId,
+      nodeId: node.id,
+      nodeName: node.name,
+      ...(parentNodeId && { parentNodeId }),
+      record: structuredClone(record),
+      at: record.at ?? now(),
+    });
+  }
+
+  /** The records a remote plugin returned with its response (in-process nodes send theirs live through `onRecord`). */
+  private emitRecords(node: WorkflowNode, response: ExecuteResponse, parentNodeId?: string) {
+    for (const record of response.records ?? []) this.emitRecord(node, record, parentNodeId);
+  }
+
+  /** `ctx.sendProgress` of a node: node.progress events, at most two a second per node, the last one always sent (flush). */
+  private progressSender(node: WorkflowNode, parentNodeId?: string): { send: (data: JsonObject) => void; flush: () => void } {
+    let last = 0;
+    let pending: JsonObject | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const emit = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      if (!pending) return;
+      const data = pending;
+      pending = undefined;
+      last = Date.now();
+      this.emit({ type: 'node.progress', executionId: this.options.executionId, nodeId: node.id, nodeName: node.name, ...(parentNodeId && { parentNodeId }), data, at: now() });
+    };
+    return {
+      send: (data) => {
+        pending = structuredClone(data);
+        const wait = last + PROGRESS_EVERY_MS - Date.now();
+        if (wait <= 0) emit();
+        else timer ??= setTimeout(emit, wait);
+      },
+      flush: emit,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -1363,10 +1415,13 @@ class WorkflowRun {
     return {
       name: toToolName(subNode.name),
       description: subNode.notes || descriptor.toolDescription || descriptor.description,
-      inputSchema: deriveToolSchema(descriptor, subNode.parameters),
+      inputSchema: descriptor.delegates ? withReason(deriveToolSchema(descriptor, subNode.parameters)) : deriveToolSchema(descriptor, subNode.parameters),
       nodeId: subNode.id,
-      invoke: (input) =>
-        this.trackSubRun(root, subNode, 'tool', { json: input as JsonObject }, async () => {
+      // The recorded input keeps a delegating node's `reason` (the journal says why the agent asked); the node never sees it.
+      invoke: (given) =>
+        this.trackSubRun(root, subNode, 'tool', { json: given as JsonObject }, async () => {
+          const { reason: _reason, ...rest } = given;
+          const input = descriptor.delegates ? rest : given;
           // Arguments become the item; same-named parameters are overridden; $fromAI() reads them.
           const items: NodeItem[] = [{ json: input as JsonObject }];
           const overrides = Object.fromEntries(
@@ -1374,7 +1429,24 @@ class WorkflowRun {
           );
           const secrets = await this.parameterSecrets(subNode, resolved);
           const request = { ...this.buildRequest(subNode, resolved, [items], items, overrides, input, secrets), mode: 'tool' as const, idempotencyKey: this.stepKey(subNode, 'tool') };
-          const response = await resolved.execute(request, { signal: this.signal });
+          const progress = this.progressSender(subNode, root.id);
+          let response;
+          try {
+            response = await resolved.execute(request, {
+              signal: this.signal,
+              sendProgress: progress.send,
+              onRecord: (record) => this.emitRecord(subNode, record, root.id),
+              // A tool keeps state for the run's length too (an A2A agent keeps its conversation across calls).
+              getNodeState: (() => this.nodeState[subNode.id]) as ContextExtras['getNodeState'],
+              setNodeState: (state) => {
+                if (state === undefined) delete this.nodeState[subNode.id];
+                else this.nodeState[subNode.id] = structuredClone(state);
+              },
+            });
+          } finally {
+            progress.flush();
+          }
+          this.emitRecords(subNode, response, root.id);
           if (response.error) throw new NodeExecutionError(response.error.message, subNode, response.error.description);
           const out = response.outputs[0] ?? [];
           const result = out.length === 1 ? out[0].json : out.map((item) => item.json);
@@ -1404,6 +1476,7 @@ class WorkflowRun {
       nodeName: subNode.name,
       source,
       parentNodeId: root.id,
+      ...(source === 'tool' && { input: structuredClone(input.json) }),
       at: now(),
     });
     const base = { startedAt: new Date(started).toISOString(), source, inputs: [[input]], parentNodeId: root.id, ...(ids && { spanId: ids.spanId }) };
@@ -1436,6 +1509,9 @@ function positionY(node: WorkflowNode | undefined): number {
 function byPosition(nodes: WorkflowNode[]): WorkflowNode[] {
   return [...nodes].sort((a, b) => a.position[1] - b.position[1] || a.position[0] - b.position[0]);
 }
+
+/** The least time between two node.progress events of one node. */
+const PROGRESS_EVERY_MS = 500;
 
 /** How many chunks / documents a sub-node run keeps in its recorded output. */
 const SUB_RUN_PREVIEW = 50;

@@ -1,7 +1,8 @@
 'use client';
 /**
- * The agent builder (/agents/:id): header with setup checklist, test chat and publishing; Build, Sessions and
- * Settings tabs. Every change to the draft autosaves after a short pause.
+ * The agent builder (/agents/:id): header with setup checklist, test chat and publishing; the agent's icon, name and where
+ * it runs; Persona, Abilities, Deploy, Safety, Sessions and Evaluations tabs. Every change to the draft autosaves after a
+ * short pause.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -22,25 +23,33 @@ import {
   TriangleAlert,
   Undo2,
   Upload,
+  Users,
+  X,
+  LayoutTemplate,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
-import type { Agent, AgentConfig } from '@/lib/shared/agents';
-import { Badge } from '../ui/badge';
+import type { Agent, AgentConfig, KagentStatus } from '@/lib/shared/agents';
+import { Badge, Chip } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
-import { AppIcon, NodeIcon } from '../ui/icon';
-import { Textarea } from '../ui/inputs';
+import { Input, Textarea } from '../ui/inputs';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
+import { AgentAvatar } from './avatar';
+import { AvatarDialog } from './avatar-dialog';
 import { CapabilitiesCard } from './capabilities-card';
 import { GuardrailsCard } from './guardrails-card';
+import { KagentCard } from './kagent-card';
 import { Dialog, Field } from './dialog';
 import { ModelCard } from './model-card';
 import { EvaluationsTab } from './evaluations-tab';
+import { PersonaTab } from './persona-tab';
 import { SessionsTab } from './sessions-tab';
 import { SettingsTab } from './settings-tab';
+import { PluginsCard } from './plugins-card';
+import { SaveTemplateDialog } from './save-template-dialog';
 import { SkillsCard } from './skills-card';
 import { TestChat } from './test-chat';
 import type { ToolEntry } from './timeline';
@@ -48,38 +57,41 @@ import { TriggersCard } from './triggers-card';
 import { useAgentData, useAgentList } from './use-agent-data';
 import { canTest, configOf, downloadJson, parseAgentFile, sameConfig, setupSteps, slug, type UpdateConfig } from './util';
 
-export type BuilderTab = 'build' | 'sessions' | 'settings' | 'evaluations';
+export const BUILDER_TABS = ['persona', 'abilities', 'deploy', 'safety', 'sessions', 'evaluations'] as const;
+export type BuilderTab = (typeof BUILDER_TABS)[number];
 type SaveState = 'saved' | 'pending' | 'saving' | 'error';
 
-const ICONS = [
-  'bot',
-  'sparkles',
-  'brain',
-  'headset',
-  'mail',
-  'message-circle',
-  'calendar',
-  'search',
-  'file-text',
-  'database',
-  'shopping-cart',
-  'code',
-  'shield',
-  'briefcase',
-  'life-buoy',
-  'megaphone',
-  'newspaper',
-  'rocket',
-  'globe',
-  'zap',
-];
-const COLORS = ['#a855f7', '#6366f1', '#3b82f6', '#0ea5e9', '#14b8a6', '#22c55e', '#eab308', '#f97316', '#ef4444', '#ec4899', '#64748b'];
-
-const SECTION_FOR: Record<string, string> = {
-  model: 'section-model',
-  instructions: 'section-model',
-  tools: 'section-capabilities',
+/** Where each "Finish setup" step is done: the tab, the section to scroll to and the field to focus. */
+const STEP_TARGET: Record<string, { tab: BuilderTab; section: string; field?: string }> = {
+  model: { tab: 'abilities', section: 'section-model', field: 'agent-provider' },
+  persona: { tab: 'persona', section: 'section-persona', field: 'persona-role' },
+  tools: { tab: 'abilities', section: 'section-capabilities' },
 };
+
+const CHANNEL_NAMES: Record<string, string> = { slack: 'Slack', telegram: 'Telegram', teams: 'Teams' };
+
+/** Where the published version runs: Landflow, kagent, its channels and schedules. Opens the Deploy tab. */
+function RunsOn({ agent, onOpen }: { agent: Agent; onOpen: () => void }) {
+  const published = agent.published;
+  const channels = [...new Set((published?.config.channels ?? []).filter((c) => c.enabled).map((c) => CHANNEL_NAMES[c.type] ?? c.type))];
+  const schedules = (published?.config.schedules ?? []).filter((s) => s.enabled).length;
+  return (
+    <button onClick={onOpen} className="group flex max-w-full flex-wrap items-center gap-1.5 text-left text-[12px] text-t3" title="Open the Deploy tab">
+      <span className="group-hover:text-t1">Runs on</span>
+      {published ? <Chip tone="success">Landflow · v{published.version}</Chip> : <Chip>Nowhere yet: publish it first</Chip>}
+      {agent.kagent && (
+        <Chip mono>
+          kagent · {agent.kagent.name}
+          {agent.kagent.version ? ` v${agent.kagent.version}` : ''}
+        </Chip>
+      )}
+      {channels.map((name) => (
+        <Chip key={name}>{name}</Chip>
+      ))}
+      {schedules > 0 && <Chip>{schedules === 1 ? '1 schedule' : `${schedules} schedules`}</Chip>}
+    </button>
+  );
+}
 
 function SaveIndicator({ state, onRetry }: { state: SaveState; onRetry: () => void }) {
   if (state === 'error')
@@ -96,59 +108,115 @@ function SaveIndicator({ state, onRetry }: { state: SaveState; onRetry: () => vo
   );
 }
 
-function IconPicker({ config, update }: { config: AgentConfig; update: UpdateConfig }) {
+/** The agent's avatar: opens the avatar picker (a face, an icon, initials or an image, and the colour). */
+function AvatarButton({ agentId, config, update }: { agentId: string; config: AgentConfig; update: UpdateConfig }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        aria-label="Change avatar"
+        title="Change avatar"
+        className="rounded-[28%] transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-ac"
+      >
+        <AgentAvatar agent={config} size={64} />
+      </button>
+      {open && (
+        <AvatarDialog
+          name={config.name}
+          subtitle={config.persona?.role}
+          seed={agentId}
+          value={{ avatar: config.avatar, icon: config.icon, color: config.color }}
+          onClose={() => setOpen(false)}
+          onDone={(choice) => {
+            setOpen(false);
+            update((c) => {
+              const { avatar: _avatar, ...rest } = c;
+              return { ...rest, icon: choice.icon, color: choice.color, ...(choice.avatar && { avatar: choice.avatar }) };
+            });
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+/** The team the agent belongs to, which groups it on the Agents page: one of the teams in use, or a new one. */
+function TeamPicker({ config, update, teams }: { config: AgentConfig; update: UpdateConfig; teams: string[] }) {
+  const [text, setText] = useState('');
+  const set = (team?: string) =>
+    update((c) => {
+      const { team: _team, ...rest } = c;
+      return team?.trim() ? { ...rest, team: team.trim() } : rest;
+    });
   return (
     <Popover
       align="start"
-      trigger={({ toggle }) => (
+      trigger={({ toggle, open }) => (
         <button
-          onClick={toggle}
-          aria-label="Change icon and colour"
-          title="Change icon and colour"
-          className="rounded-[28%] transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-ac"
+          onClick={() => {
+            setText('');
+            toggle();
+          }}
+          aria-expanded={open}
+          className={cn('inline-flex items-center gap-1 rounded-full border border-hair px-2 py-0.5 text-[12px] transition-colors hover:border-bd', config.team ? 'text-t1' : 'text-t3')}
         >
-          <AppIcon icon={config.icon} color={config.color} size={56} />
+          <Users className="size-3" />
+          {config.team ?? 'Add to a team'}
         </button>
       )}
-      className="w-[260px] p-3"
+      className="w-[240px]"
     >
-      <MenuLabel>Icon</MenuLabel>
-      <div className="grid grid-cols-5 gap-1 px-1 pb-2">
-        {ICONS.map((icon) => (
-          <button
-            key={icon}
-            aria-label={icon}
-            aria-pressed={config.icon === icon}
-            onClick={() => update((c) => ({ ...c, icon }))}
-            className={cn(
-              'grid size-9 place-items-center rounded-lg border transition-colors',
-              config.icon === icon ? 'border-ac bg-acdim' : 'border-transparent hover:bg-acdim',
-            )}
+      {(close) => (
+        <>
+          <MenuLabel>Team</MenuLabel>
+          <form
+            className="px-2 pb-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!text.trim()) return;
+              set(text);
+              close();
+            }}
           >
-            <NodeIcon icon={icon} size={16} style={{ color: config.color }} />
-          </button>
-        ))}
-      </div>
-      <MenuLabel>Colour</MenuLabel>
-      <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
-        {COLORS.map((color) => (
-          <button
-            key={color}
-            aria-label={color}
-            aria-pressed={config.color === color}
-            onClick={() => update((c) => ({ ...c, color }))}
-            className={cn('size-6 rounded-full border-2 transition-transform hover:scale-110', config.color === color ? 'border-t1' : 'border-transparent')}
-            style={{ background: color }}
-          />
-        ))}
-      </div>
+            <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="New team" aria-label="New team" maxLength={60} autoFocus />
+          </form>
+          {teams
+            .filter((t) => t !== config.team)
+            .map((team) => (
+              <MenuItem
+                key={team}
+                onClick={() => {
+                  set(team);
+                  close();
+                }}
+              >
+                <Users /> {team}
+              </MenuItem>
+            ))}
+          {config.team && (
+            <>
+              <MenuSeparator />
+              <MenuItem
+                onClick={() => {
+                  set(undefined);
+                  close();
+                }}
+              >
+                <X /> Remove from {config.team}
+              </MenuItem>
+            </>
+          )}
+        </>
+      )}
     </Popover>
   );
 }
 
-export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: { agentId: string; initialTab?: BuilderTab; initialSession?: string }) {
+export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }: { agentId: string; initialTab?: BuilderTab; initialSession?: string }) {
   const router = useRouter();
   const agents = useAgentList();
+  const teams = [...new Set((agents ?? []).flatMap((a) => (a.team ? [a.team] : [])))].sort((a, b) => a.localeCompare(b));
   const [agent, setAgent] = useState<Agent>();
   const [draft, setDraft] = useState<AgentConfig>();
   const [loadError, setLoadError] = useState<string>();
@@ -157,9 +225,9 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
   const [sessionId, setSessionId] = useState(initialSession);
   const [testing, setTesting] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [modal, setModal] = useState<{ kind: 'description' } | { kind: 'delete' } | { kind: 'import'; config: Partial<AgentConfig>; file: string } | null>(
-    null,
-  );
+  const [modal, setModal] = useState<
+    { kind: 'description' } | { kind: 'delete' } | { kind: 'template' } | { kind: 'import'; config: Partial<AgentConfig>; file: string } | null
+  >(null);
   const [description, setDescription] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -248,7 +316,7 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
     setTab(next);
     setSessionId(session);
     const params = new URLSearchParams();
-    if (next !== 'build') params.set('tab', next);
+    if (next !== 'persona') params.set('tab', next);
     if (session) params.set('session', session);
     const query = params.toString();
     window.history.replaceState(null, '', `/agents/${agentId}${query ? `?${query}` : ''}`);
@@ -258,9 +326,10 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
     setPublishing(true);
     try {
       await persist();
-      const { agent: next } = await api<{ agent: Agent }>(`/api/agents/${agentId}/publish`, { method: 'POST' });
+      const { agent: next, kagent } = await api<{ agent: Agent; kagent?: KagentStatus | { error: string } }>(`/api/agents/${agentId}/publish`, { method: 'POST' });
       setAgent(next);
-      toast.success(`Published v${next.published?.version ?? ''}`);
+      if (kagent && 'error' in kagent) toast.warning(`Published v${next.published?.version ?? ''}, but kagent still has v${next.kagent?.version ?? '?'}: ${kagent.error}`);
+      else toast.success(`Published v${next.published?.version ?? ''}${kagent ? ' and written to kagent' : ''}`);
       void useAgentData.getState().loadAgents();
     } catch (e) {
       toast.error((e as Error).message);
@@ -312,11 +381,12 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
   };
 
   const focusStep = (key: string) => {
-    go('build');
+    const target = STEP_TARGET[key];
+    if (!target) return;
+    go(target.tab);
     requestAnimationFrame(() => {
-      document.getElementById(SECTION_FOR[key])?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      if (key === 'instructions') document.getElementById('agent-instructions')?.focus({ preventScroll: true });
-      if (key === 'model') document.getElementById('agent-provider')?.focus({ preventScroll: true });
+      document.getElementById(target.section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (target.field) document.getElementById(target.field)?.focus({ preventScroll: true });
     });
   };
 
@@ -423,7 +493,7 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
                 )}
               </Popover>
             )}
-            <span title={testable ? 'Chat with the draft' : 'Choose a model and add instructions first'}>
+            <span title={testable ? 'Chat with the draft' : 'Choose a model and describe the persona first'}>
               <Button
                 size="sm"
                 variant="outline"
@@ -534,6 +604,14 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
                   <MenuItem
                     onClick={() => {
                       close();
+                      setModal({ kind: 'template' });
+                    }}
+                  >
+                    <LayoutTemplate /> Save as template…
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      close();
                       fileInput.current?.click();
                     }}
                   >
@@ -556,9 +634,9 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
         </header>
         <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void importFile(e.target.files?.[0])} />
 
-        <div className={cn('mx-auto w-full px-4 pb-16 pt-7 sm:px-6', tab === 'sessions' ? 'max-w-[960px]' : 'max-w-[680px]')}>
+        <div className={cn('mx-auto w-full px-4 pb-16 pt-7 sm:px-6', tab === 'persona' ? 'max-w-[1160px]' : tab === 'sessions' ? 'max-w-[960px]' : 'max-w-[680px]')}>
           <div className="flex animate-fade-up items-center gap-4">
-            <IconPicker config={draft} update={update} />
+            <AvatarButton agentId={agentId} config={draft} update={update} />
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-[22px] font-semibold tracking-[-0.01em] text-t1">{draft.name || 'Untitled agent'}</h1>
               <button
@@ -570,18 +648,22 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
               >
                 {draft.description || 'Add a description'}
               </button>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <TeamPicker config={draft} update={update} teams={teams} />
+                <RunsOn agent={agent} onOpen={() => go('deploy')} />
+              </div>
             </div>
           </div>
 
-          <div className="mt-5 flex gap-5 border-b border-hair" role="tablist" aria-label="Agent">
-            {(['build', 'sessions', 'evaluations', 'settings'] as const).map((key) => (
+          <div className="mt-5 flex gap-5 overflow-x-auto border-b border-hair" role="tablist" aria-label="Agent">
+            {BUILDER_TABS.map((key) => (
               <button
                 key={key}
                 role="tab"
                 aria-selected={tab === key}
                 onClick={() => go(key)}
                 className={cn(
-                  '-mb-px border-b-2 pb-2 text-[13px] capitalize transition-colors',
+                  '-mb-px shrink-0 border-b-2 pb-2 text-[13px] capitalize transition-colors',
                   tab === key ? 'border-ac font-semibold text-t1' : 'border-transparent text-t2 hover:text-t1',
                 )}
               >
@@ -591,27 +673,40 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
           </div>
 
           <div className="mt-5">
-            {tab === 'build' && (
+            {tab === 'persona' && (
+              <PersonaTab agent={agent} config={draft} update={update} nextVersion={nextVersion} testable={testable} onTest={() => setTesting(true)} />
+            )}
+            {tab === 'abilities' && (
               <div className="space-y-4">
                 <div id="section-model" className="scroll-mt-20">
                   <ModelCard config={draft} update={update} />
                 </div>
                 <SkillsCard config={draft} update={update} />
-                <TriggersCard config={draft} update={update} published={Boolean(published)} agentId={agentId} />
                 <div id="section-capabilities" className="scroll-mt-20 space-y-4">
                   <CapabilitiesCard agentId={agentId} config={draft} update={update} />
                 </div>
+                <PluginsCard config={draft} update={update} />
+              </div>
+            )}
+            {tab === 'deploy' && (
+              <div className="space-y-4">
+                <TriggersCard config={draft} update={update} published={Boolean(published)} agentId={agentId} />
+                <KagentCard agent={agent} onAgent={setAgent} />
+              </div>
+            )}
+            {tab === 'safety' && (
+              <div className="space-y-4">
                 <GuardrailsCard config={draft} update={update} />
+                <SettingsTab config={draft} update={update} agentId={agentId} />
               </div>
             )}
             {tab === 'sessions' && <SessionsTab agentId={agentId} sessionId={sessionId} onOpen={(id) => go('sessions', id)} childHref={childHref} />}
-            {tab === 'settings' && <SettingsTab config={draft} update={update} agentId={agentId} />}
             {tab === 'evaluations' && <EvaluationsTab agentId={agentId} />}
           </div>
         </div>
       </div>
 
-      {testing && <TestChat agentId={agentId} agentName={draft.name} onClose={() => setTesting(false)} beforeSend={persist} childHref={childHref} />}
+      {testing && <TestChat agentId={agentId} agentName={draft.name} look={draft} onClose={() => setTesting(false)} beforeSend={persist} childHref={childHref} />}
 
       {modal?.kind === 'description' && (
         <Dialog
@@ -649,6 +744,9 @@ export function AgentBuilder({ agentId, initialTab = 'build', initialSession }: 
             />
           </Field>
         </Dialog>
+      )}
+      {modal?.kind === 'template' && (
+        <SaveTemplateDialog agent={{ id: agentId, name: draft.name, description: draft.description }} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'delete' && (
         <Dialog

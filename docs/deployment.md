@@ -101,7 +101,7 @@ All credentials are **for local development and tests only**.
 | Azure Service Bus emulator 2.0 (`servicebus`) | AMQP `localhost:55675`, management + `/health` http://localhost:55300 | `servicebus:5672`, `servicebus:5300` | `Endpoint=sb://localhost:55675;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;`; static entities from [`infra/servicebus/Config.json`](../deploy/infra/servicebus/Config.json); SQL backend `servicebus-sql` (Azure SQL Edge, `sa` / `Landflow-dev-only1`, not published) |
 | agentgateway 1.6 (`mcp-gateway`) | MCP http://localhost:54000/mcp, admin API + UI http://localhost:55000 (`/ui`) | `mcp-gateway:4000`, `mcp-gateway:15000` | none (the admin API has no authentication: loopback only); targets in SQLite in `mcp-gateway-data` |
 | **Landflow host** (app) | http://localhost:53000 | `web:3000`, gRPC registry `web:7070` | owner `owner@landflow.test` / `landflow-dev-only` (`LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`) |
-| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207` (HTTP/gRPC) | |
+| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211` (HTTP/gRPC) | |
 | Code runner (app) | http://127.0.0.1:53300 (through `code-runner-port`) | `code-runner:7300`, on the internal `landflow-code` network only | header `x-landflow-runner-secret: landflow-code-runner-dev-only` |
 | **Queue mode** load balancer | http://localhost:53080 | `lb:3000` | owner `owner@landflow.test` / `landflow-dev-only` |
 | Queue mode mains | http://localhost:53081, http://localhost:53082 | `main-1:3000`, `main-2:3000` | same |
@@ -302,7 +302,7 @@ Tests: `(cd apps/web && LANDFLOW_INTEGRATION=oidc,smtp npx vitest run test/oidc.
 | Image | Built from | Runs |
 |---|---|---|
 | `landflow/host:dev` | [`docker/host.Dockerfile`](../deploy/docker/host.Dockerfile) | `node apps/web/server.js` (Next standalone output) as `node` (uid 1000), data in `/data`; queue-mode workers run `node worker.mjs` (an esbuild bundle of `pnpm worker`) from the same image |
-| `landflow/plugin-text-toolkit:dev`, `landflow/plugin-messaging:dev` | [`docker/node-plugin.Dockerfile`](../deploy/docker/node-plugin.Dockerfile) | `tsx src/main.ts` as `node` |
+| `landflow/plugin-text-toolkit:dev`, `landflow/plugin-messaging:dev`, `landflow/plugin-github:dev` | [`docker/node-plugin.Dockerfile`](../deploy/docker/node-plugin.Dockerfile) | `tsx src/main.ts` as `node` |
 | `landflow/plugin-py-insights:dev`, `landflow/plugin-productivity:dev` | [`docker/python-plugin.Dockerfile`](../deploy/docker/python-plugin.Dockerfile) | `python main.py` (SDK with `grpc` and `otel` extras) as uid 10001 |
 | `landflow/plugin-go-crypto:dev`, `landflow/plugin-google-workspace:dev`, `landflow/plugin-databases:dev` | [`docker/go-plugin.Dockerfile`](../deploy/docker/go-plugin.Dockerfile) | static binary on Alpine as uid 10001 |
 | `landflow/code-runner:dev` | [`docker/code-runner.Dockerfile`](../deploy/docker/code-runner.Dockerfile) | `node dist/main.mjs` (esbuild bundle) on Node 26 + CPython 3 (standard library) as uid 10001; `code-runner-port` runs `node dist/forward.mjs` from the same image |
@@ -508,7 +508,7 @@ diff, and overlays for the differences between clusters. A Helm chart would add 
 | `k8s/components/valkey` | optional: Valkey 8 and `LANDFLOW_VALKEY_URL` for queue mode |
 | `k8s/components/external-services` | optional: Postgres and Valkey elsewhere, from a Secret `landflow-external` you create (`database-url`, `valkey-url`) |
 | `k8s/components/cluster-discovery` | optional: discovery in every namespace: a **ClusterRole** (`get`/`list`/`watch` on `services` and `endpointslices`, nothing else) bound to `landflow-host`, and `LANDFLOW_K8S_NAMESPACES=*` |
-| `k8s/overlays/orbstack` | OrbStack: namespace `landflow-dev`, the local `:k8s-dev` images with `imagePullPolicy: Never`, an `emptyDir` instead of the PVC, dev-only Secrets (`landflow-registry`, `landflow-host` with the owner) |
+| `k8s/overlays/orbstack` | OrbStack: namespace `landflow-dev`, the local `:k8s-dev` images with `imagePullPolicy: Never`, the host's data on the `landflow-data` PVC (OrbStack's `local-path`, so credentials, agents and the images Landflow serves kagent survive a rollout; delete the PVC with the host scaled to 0 to start over), dev-only Secrets (`landflow-registry`, `landflow-host` with the owner), and `OLLAMA_URL` at the Mac's Ollama (`host.docker.internal:11434`) for Spotlight and the [second brain](second-brain.md) |
 | `k8s/overlays/orbstack-cluster-wide` | the OrbStack overlay plus `cluster-discovery` |
 | `k8s/components/{kafka,rabbitmq,nats}`, `k8s/components/valkey` | optional: one message broker each, one small pod and a Service (`kafka:9092` KRaft, `rabbitmq:5672`, `nats:4222` with JetStream, `valkey:6379`), the images and versions of `compose.infra.yml`, data in an `emptyDir`. `k8s/components/brokers` takes all four |
 | `k8s/components/broker-transports` | optional: points the host and the TypeScript plugins at the brokers: ConfigMap `landflow-transport` (`LANDFLOW_<KIND>_URL`, `LANDFLOW_TRANSPORT_<KIND>_URL`, `LANDFLOW_MAX_CONCURRENCY`), a ConfigMap `landflow-transport-<plugin>` with `LANDFLOW_TRANSPORTS`, and a Secret `landflow-transport` (`LANDFLOW_TRANSPORT_SECRET`, the AMQP URLs) |
@@ -522,6 +522,8 @@ diff, and overlays for the differences between clusters. A Helm chart would add 
 | `k8s/overlays/orbstack-queue` | the OrbStack overlay plus `postgres`, `valkey`, `minio` and `queue-mode`: "Queue mode on Kubernetes" below |
 | `k8s/examples/keda/` | KEDA `ScaledObject`s per broker, and `queue-workers.yaml` for the queue workers (not in any overlay): "Autoscaling with KEDA" below |
 | `k8s/examples/envoy-gateway/` | a `BackendTrafficPolicy` with long timeouts for the HTTPRoute, for Envoy Gateway |
+| `k8s/components/observability` | optional: a local telemetry backend (`grafana/otel-lgtm`: Collector, Tempo, Prometheus, Loki, Grafana) as `landflow-lgtm`, OTLP export from every Landflow Deployment to it, and the "Landflow · agent runs" dashboard: "Telemetry on Kubernetes" below |
+| `k8s/overlays/orbstack-observability` | the OrbStack overlay plus `observability` |
 
 For another cluster, copy the overlay: set the namespace, the image registry and tags (`images:`), real Secrets
 (`landflow-registry` key `secret`; `landflow-host` keys `encryption-key`, `owner-email`, `owner-password`; all optional),
@@ -658,7 +660,7 @@ anonymous. `components/gateway-landflow-tokens` (in both OrbStack overlays) repl
 per-plugin routes (`LANDFLOW_MCP_GATEWAY_ROUTE_POLICIES`); edit the three URLs in `gateway-config.yaml` for your host. With it: no
 token → empty tool list; a bad token → 401 with `WWW-Authenticate: Bearer resource_metadata=…`; a token with a grant → the granted tools
 (`POST /api/mcp/tokens`, `POST /api/mcp/grants` with `{"subject":{"kind":"token","id":…},"pluginId":…,"tools":"*"}`) and `tools/call` runs.
-The host pod's data is an `emptyDir` in this overlay, so tokens and grants vanish when the pod restarts.
+The host pod's data is on the `landflow-data` PVC in this overlay, so tokens and grants survive a restart.
 
 ### Service Bus entities
 
@@ -845,6 +847,51 @@ pods (the plugin's logs say which pod ran each), and deleting its Service remove
 kubectl --context orbstack create namespace landflow-dev    # once (or apply the overlay)
 (cd apps/web && LANDFLOW_INTEGRATION=k8s npx vitest run test/kubernetes.integration.test.ts)
 ```
+
+### Telemetry on Kubernetes
+
+```bash
+kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-observability
+kubectl --context orbstack -n landflow-dev rollout status deploy/landflow-lgtm
+```
+
+`landflow-lgtm` runs [`grafana/otel-lgtm`](https://github.com/grafana/docker-otel-lgtm) 0.39.0 (Collector contrib 0.164,
+Tempo, Prometheus 3.15, Loki, Grafana 13.3) with OTLP on 4317 (gRPC) and 4318 (HTTP). Every Landflow Deployment gets
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://landflow-lgtm:4318` and `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=landflow-dev`,
+and the host's `LANDFLOW_TRACE_URL` opens a run's trace in Grafana's Explore. Grafana is at
+http://landflow-lgtm.landflow-dev.svc.cluster.local:3000 (OrbStack resolves cluster names on the Mac; a browser that
+doesn't, such as Chrome with its own DNS, needs
+`kubectl --context orbstack -n landflow-dev port-forward svc/landflow-lgtm 53011:3000` and http://localhost:53011),
+signed in as an anonymous Editor, with the data sources `prometheus`, `tempo` and `loki`.
+
+The Collector's config (`otelcol-config.yaml`) is the image's own plus what kagent's runtime needs: `signal_to_metrics`
+derives `gen_ai.invoke_agent.duration` from kagent's `invoke_agent` spans and `delta_to_cumulative` turns its delta
+histograms into cumulative ones, and `transform/harness_native_genai` drops the duplicate usage attributes of kagent's
+native harnesses. The **Landflow · agent runs** dashboard (`agent-runs.json`, the home dashboard) shows runs, tool calls,
+remote agent calls, remote tool calls, approvals and tokens; runs by end reason and A2A calls by task state; both sides'
+tool calls; latency p95 (runs, tools, A2A calls, kagent's `invoke_agent`); tokens by side; Agent Substrate's restore,
+checkpoint and scheduling p95 and its workers; recent agent-run and remote-call traces; and the logs of the host and
+kagent's agents. Editing the dashboard's ConfigMap reloads it without a restart.
+
+For development only: storage is an `emptyDir`, so restarting the pod loses every trace, metric and log. Back to the
+plain overlay: apply `overlays/orbstack`, then delete Deployment and Service `landflow-lgtm` and the ConfigMaps
+`landflow-otelcol-config`, `landflow-grafana-dashboards` and `landflow-grafana-dashboard-provider`.
+
+### kagent next to Landflow
+
+kagent 1.0 and Agent Substrate need Kubernetes 1.37, so they run in a kind cluster (`landflow-kagent`) on the same
+OrbStack Docker engine, not in the OrbStack cluster. `deploy/scripts/kagent-up.sh` creates it, installs kagent, bridges
+the two clusters both ways, gives Landflow a ServiceAccount that may write agents in kagent's namespace (saved as a
+**kagent cluster** credential), and creates the example agent in Landflow and deploys it to kagent from there, so its
+persona, model and tools are Landflow's ([a2a.md](a2a.md#landflow-agents-on-kagent)). It also applies a Claude Code
+Harness (`landflow-claude`), the package registries agents' sandboxes may reach (`egress-dev.yaml`, named in the
+credential's Egress Policies), and sets the credential's plugin registry to the Landflow Service's ClusterIP, where
+kagent's nodes pull agents' Claude Code plugins ([a2a.md](a2a.md#on-claude-code)). `deploy/scripts/claude-harness-dev.sh`
+then adds `landflow-claude-dev`, Claude Code on an image with the common toolchains, served from Landflow's registry
+([a2a.md](a2a.md#a-toolchain-image-for-claude-code)). With the observability overlay
+running, kagent and Substrate send their telemetry to `landflow-lgtm`. What it does, the files in `deploy/kind/` and the
+endpoints are in [a2a.md](a2a.md#kagent-next-to-landflow). Run it again after the host's data was reset (a new PVC):
+the credential and the agent are gone with it.
 
 ### Troubleshooting
 

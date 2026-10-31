@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { CountUp } from '@/components/ui/count-up';
 import { AppIcon, NodeIcon } from '@/components/ui/icon';
 import { SectionLabel } from '@/components/ui/inputs';
+import { SuggestionsInbox } from '@/components/brain/suggestions-inbox';
 
 interface Stats {
   workflows: number;
@@ -107,6 +108,8 @@ export default function Overview() {
           />
           <Kpi index={3} label="Plugins online" icon="lucide:puzzle" color="var(--viz-7)" value={plugins ? online : undefined} sub={plugins && `${plugins.length} registered · ${nodeTypes} node types`} />
         </section>
+
+        <SuggestionsInbox />
 
         <section className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[1.4fr_1fr]">
           <Panel title="Recent executions" href="/executions" linkLabel="View all">

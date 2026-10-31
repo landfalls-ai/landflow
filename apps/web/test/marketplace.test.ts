@@ -253,6 +253,24 @@ describe('install and uninstall', () => {
     expect(writing.agents).toEqual([]);
   });
 
+  it('pins a plugin for kagent’s Claude Code runtime to the commit its branch is at', async () => {
+    const commit = 'c0ffee'.padEnd(40, '0');
+    // Only this test answers the commits API: elsewhere a branch stays unpinned.
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request) => {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      return url.pathname === '/repos/acme/tools/commits/HEAD' ? Promise.resolve(new Response(commit)) : fakeGitHub(input);
+    }));
+    try {
+      expect((await marketplace.detail(id, 'reviewers')).claudeManifest).toBe(true);
+      expect(await marketplace.claudePlugin('reviewers@acme-tools')).toEqual({ id: 'reviewers@acme-tools', url: 'https://github.com/acme/tools.git', commit, path: 'plugins/reviewers' });
+      // Claude Code loads a plugin whole only from its manifest.
+      await expect(marketplace.claudePlugin('mcp-only@acme-tools')).rejects.toThrow('The plugin mcp-only@acme-tools has no .claude-plugin/plugin.json');
+      await expect(marketplace.claudePlugin('reviewers@elsewhere')).rejects.toThrow('The plugin reviewers@elsewhere is in no added marketplace: add “elsewhere” on the Marketplace page');
+    } finally {
+      vi.stubGlobal('fetch', vi.fn(fakeGitHub));
+    }
+  });
+
   it('installs agents with the plugin’s skills and records what it created', async () => {
     const result = (await marketplace.install(id, 'reviewers')) as InstallResult;
     expect(result.installed).toMatchObject({ id: 'reviewers@acme-tools', version: '1.2.0', agents: [{ name: 'Code Reviewer' }, { name: 'Test Analyzer' }], skills: [{ name: 'review-checklist' }] });

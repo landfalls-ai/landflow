@@ -95,6 +95,7 @@ export function SuggestionsCard({ nodeId, run }: { nodeId: string; run: NodeRun 
   const workflowId = useEditor((s) => s.workflowId);
   const running = useEditor((s) => s.running);
   const nodeName = useEditor((s) => s.nodes.find((n) => n.id === nodeId)?.data.wf.name);
+  const nodeType = useEditor((s) => s.nodes.find((n) => n.id === nodeId)?.data.wf.type);
   const key = suggestionKey(workflowId, nodeId, run);
   const entry = useSuggestions((s) => s.entries[key]);
   const [auto, setAuto] = useState(readAutoSuggest);
@@ -175,7 +176,7 @@ export function SuggestionsCard({ nodeId, run }: { nodeId: string; run: NodeRun 
               suggestion={suggestion}
               state={entry.handled[suggestion.id]}
               onApply={() => {
-                if (applyChanges([{ ops: suggestion.ops, kind: suggestion.kind }], suggestion.title)) useSuggestions.getState().handle(key, suggestion, 'applied');
+                if (applyChanges([{ ops: suggestion.ops, kind: suggestion.kind, nodeType }], suggestion.title)) useSuggestions.getState().handle(key, suggestion, 'applied');
               }}
               onDismiss={() => useSuggestions.getState().handle(key, suggestion, 'dismissed')}
             />

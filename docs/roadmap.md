@@ -557,6 +557,9 @@ the bottom of the canvas beside the run controls ([assistant.md](assistant.md#sp
 - What remains: the local model doesn't always keep replies short, Test and fix can spend its 4 fixes on one node, and
   its checks are structural ([limitations.md](limitations.md)). The Home, ⌘K across the app and the action layer are
   still a plan.
+- Multi-part requests (2026-10-31): a progress-aware budget, a plan then one proposal, pending proposals kept, no
+  If or Filter after a node that already branches, loops allowed, and teams (`turnIntoTeam`)
+  ([assistant.md](assistant.md#the-builder-chat)).
 
 ## Alert triage, Landfall and the flow marketplace (built 2026-10-29)
 
@@ -641,6 +644,369 @@ unless the type is closed; slots can take nested composites. Migration 1883 (`co
   Python SDK's `CONNECTION_TYPES` lacked the newer sub-node types.
 - What remains: a governance rule that requires a composite, drawing the fallback as an edge, and composite types in
   Git sync and environment promotion ([limitations.md](limitations.md)).
+
+## Remote agents over A2A, kagent and deep tracing (built 2026-10-30)
+
+A Landflow agent can hand work to an agent that runs on a Kubernetes-native runtime, and every step of that shows in
+one trace ([a2a.md](a2a.md)). kagent (Solo.io) was chosen over Google's AX: kagent speaks A2A in and MCP out and has
+human-in-the-loop approvals; AX is a sandboxed task runner with none of those yet ([harnesses.md](harnesses.md#other-harnesses)).
+
+- **A2A client** (`lib/server/a2a/client.ts`): A2A 1.0 over JSON-RPC; cards (an older card is refused), SendMessage
+  with GetTask polling, SendStreamingMessage (server-sent events merged into the task), GetTask, CancelTask; kagent's
+  HITL and usage extensions and its tool call parts.
+- **Agent capability** (**Add A2A agent**): `ask_<name>`, described by the card or *Use when*; streamed remote tool
+  calls in the timeline; the conversation kept per session; the remote agent's tool approvals become Landflow approval
+  cards (test chat, Slack, Teams, email) and its questions go to the model; where no one can approve, the pause is
+  rejected for the model. Slack, Teams and the approval email name the remote agent and tool.
+- **A2A Agent node** (`core.a2aAgent`): Send Message, Answer a Pause, Get Task, Cancel Task.
+- **Tracing**: an `invoke_agent` client span per call, with `traceparent` sent along, `a2a.tool_call` events and
+  `landflow.a2a.*` metrics; host log lines exported as OTel log records (`LANDFLOW_LOG_OTLP`).
+- **kagent next to Landflow**: kagent 1.0.0-alpha17 and Agent Substrate 0.6.0-alpha3 in a kind cluster (Kubernetes
+  1.37) on the OrbStack engine (`deploy/kind/`, `deploy/scripts/kagent-up.sh`), bridged both ways, with an example
+  agent on the Text Toolkit's tools.
+- **Landflow agents on kagent** ([a2a.md](a2a.md#landflow-agents-on-kagent)): the persona of a kagent agent comes from
+  Landflow. Deploying a published agent (the **kagent** card, `PUT /api/agents/<id>/kagent`) writes an AgentTemplate
+  whose system prompt is the one the runtime gives the model (`shared/persona.ts`, now shared by both), plus its
+  ModelConfig, its tools (a RemoteMCPServer on the new per-agent endpoint `/api/mcp/agents/<id>`, with the tools that
+  need approval in a `requireApproval` binding), the Agent and a Secret, by server-side apply. Every publish writes the
+  new version; the status reads kagent back and names each field that differs (an edit made in kagent), a publish
+  kagent didn't get, and the Agent's Ready condition. A **kagent cluster** credential (`core.kagentApi`) holds the
+  Kubernetes API, token, namespace, harness and the two URLs; the example agent is now created in Landflow and deployed
+  from there, and the hand-written AgentTemplate is gone.
+- **Telemetry on Kubernetes**: the `observability` component and `orbstack-observability` overlay (Grafana, Tempo,
+  Prometheus, Loki), the Collector stanzas kagent's runtime needs, and the "Landflow · agent runs" dashboard; kagent
+  and Substrate export there too.
+- **Tests**: `a2a.test.ts` against a fake kagent-like agent (`test/fake-a2a.ts`); `kagent.test.ts` against a fake
+  Kubernetes API (the persona, the five resources, publish, drift, ownership, the MCP endpoint).
+- Checked live: from the test chat in the browser, a Landflow agent on `qwen3-coder:30b` asked the kagent agent to slugify
+  one text and upper-case another; kagent called Landflow's MCP tools, `changeCase` paused, the approval card showed
+  in Landflow, approving finished the run, and kagent's UI showed the approval given in Landflow. One trace went
+  from the Landflow run through kagent's controller, agentgateway, Substrate restoring the sandbox and the agent's model
+  and tool calls, back into Landflow's MCP endpoint and the plugin; the dashboard and Loki showed the same run.
+- Bugs found and fixed: the Capabilities card's buttons ran past the card's edge once **Add A2A agent** was added (the
+  actions row now wraps inside the card: `Section` in `components/agents/dialog.tsx`); `kagent-up.sh` failed on its
+  closing heredoc.
+- Checked live for Landflow agents on kagent: `kagent-up.sh` created and published **Text formatter** in Landflow and
+  deployed it as `kagent/landflow-text`; kagent's UI showed Landflow's system prompt, model and description, and kagent
+  listed the agent's two tools from `/api/mcp/agents/<id>`. Publishing v2 with a new sign-off rule wrote it to kagent
+  ("In sync · v2"); an edit made to the AgentTemplate with kubectl showed as **Changed in kagent** with both prompts,
+  and **Redeploy** put Landflow's back. From the Text desk agent's test chat, kagent paused on `changeCase` (the tool
+  marked "needs approval" in Landflow), the approval card showed in Landflow, and the reply ended with v2's sign-off;
+  the tool's `execute_tool` span from Landflow's endpoint was in the same trace.
+- What remains: remote tokens in the agent's AI limits, serving A2A from Landflow, a card preview in the dialog,
+  memory, guardrails and usage limits for agents on kagent, and kagent's own tracing quirks
+  ([limitations.md](limitations.md)).
+
+## Agents as personas (built 2026-10-31)
+
+An agent is configured as a persona instead of one instructions box ([agents.md](agents.md#the-persona)), the first of
+four steps proposed with a design canvas: the persona editor, persona cards on the Agents page grouped by team,
+templates to start from, and richer avatars.
+
+- **The Persona tab**: who it is (name, role, who it helps, what it does, description), its voice (tone words, answer
+  length, language, sign-off), Always and Never rules, examples, and free instructions. They are stored as the
+  agent's `persona` (blank parts dropped) and compiled by `personaPrompt()`, moved to `lib/shared/persona.ts` so the
+  builder shows **What the model reads** with the same function the runtime and kagent use. The card compares the
+  prompt with the published version's (and says whether kagent runs it) and shows the changes line by line. An agent
+  without persona parts keeps the prompt it had, so agents deployed to kagent don't drift.
+- **Tabs by purpose**: Persona, Abilities (model, skills, capabilities, memory), Deploy (triggers, kagent), Safety
+  (guardrails, limits), Sessions and Evaluations, replacing Build and Settings (their old links still open the new
+  tabs); **Runs on** under the name shows where the published version runs.
+- Publishing and the test chat need a persona part or instructions, instead of instructions only. The example agent
+  `kagent-up.sh` creates now has a persona.
+- Bug found and fixed: clearing an optional part of the draft (the model, the guardrails, now the persona) didn't stick,
+  since the autosave kept the stored value under the new draft (`saveDraft` in `agents/store.ts`); a `PUT` without a
+  `model` now leaves the model as it is, and `model: null` clears it. Found in the browser: the Triggers card's
+  description was squeezed into a narrow column beside its four buttons (a card's title now keeps at least 220px, so
+  the buttons wrap under it: `Section` in `components/agents/dialog.tsx`), and an agent with only instructions showed
+  them at the bottom with nothing pointing there (a note at the top of the tab now links to them).
+- Checked live: in the browser, adding a tone, a sign-off and a Never rule to **Text formatter** marked the prompt
+  "Changed since v1" with the three lines in **Changes since v1**; publishing v2 wrote the same text to kagent's
+  AgentTemplate ("The same as published v2, the version kagent runs"), and a test-chat run on `qwen3-coder:30b`
+  answered in one sentence ending with the sign-off. `?tab=settings` opened Safety.
+- **Tests**: `agent-persona.test.ts` (the compiled sections and their order, an unchanged prompt without a persona,
+  cleaning, autosave, publishing on a persona alone) and a `kagent.test.ts` case that a published persona is what
+  kagent's AgentTemplate gets.
+- Steps 2 to 4 (persona cards grouped by team, templates and "save as template", faces, initials and image avatars)
+  were built the same day: [Agent workspace and the Agent architect](#agent-workspace-and-the-agent-architect-built-2026-10-31).
+
+## Agents on Claude Code (built 2026-10-31)
+
+Stage 1 of running Landflow agents in Claude Code ([harnesses.md](harnesses.md)), through kagent's Claude Code
+Harness ([a2a.md](a2a.md#on-claude-code)).
+
+- **Runtime**: the kagent card lists the cluster's Harnesses with their runtimes and deploys to the one picked
+  (`harness` on `PUT`). The deployment keeps it, and the card moves an agent between runtimes. Codex and own-image
+  Harnesses are refused.
+- **Claude Code's resources**:
+  - the model is always `Anthropic`, on Ollama's Messages API with the key `ollama`, or with the credential's base
+    URL and key; OpenAI models are refused;
+  - the tools are split over `<name>` and `<name>-approval` (`?tools=free|approval`, filtered in `tools/list` and
+    `tools/call`), so kagent's per-server pause covers exactly the tools that need approval;
+  - an approval server no longer needed is deleted.
+- **Claude Code plugins**: an Abilities card picks plugins from the added marketplaces, kept as `plugins`
+  (`<plugin>@<marketplace>`). Deploying resolves each one (`marketplace.claudePlugin`: a GitHub source, a
+  `.claude-plugin/plugin.json`, a pinned commit). The pins are kept, the status compares against them, and `plugins` is
+  a drift field.
+- **Landflow's OCI registry**: kagent 1.0.0-alpha17's golden snapshot has no egress, so a git plugin source crashes
+  it. Landflow packs each pin into a deterministic one-layer image (`kagent/oci.ts`), keeps it in
+  `LANDFLOW_DATA_DIR/oci` and serves it at `/v2` (pull only, by digest, public). The credential's new **Plugin
+  Registry** says where kagent's nodes reach it; `kagent-up.sh` sets the Service's ClusterIP. A missing image is packed
+  again from the deployment that pinned it.
+- **In `deploy/kind`**: `harness-claude.yaml` (`landflow-claude`: Claude Code with every model name mapped to
+  `qwen3-coder:30b`), applied by `kagent-up.sh`, and `agents/dev-agent.json`, a developer persona with `submit_work`
+  (needs approval) and the `mattpocock-skills` plugin.
+- Found while checking it: a marketplace whose catalog wasn't fetched yet (Anthropic's, until Explore opens) had no
+  name to resolve a plugin against, so `claudePlugin` fetches unread catalogs first. A plugin bundle's `skills` list
+  doesn't matter for a Claude-format plugin, which kagent hands to Claude Code whole.
+- Checked live on 2026-10-31:
+  - From Dev desk's test chat in the browser, the Dev agent on `landflow-claude` (qwen3-coder through Ollama) wrote
+    `slugify.sh` and its tests in bash, ran and debugged them, and called `submit_work`. kagent's pause showed as
+    Landflow's approval card, and approving ran the tool in Landflow.
+  - qwen3-coder then calls `submit_work` again. A tool answer saying the task is over, a Never rule and denying the
+    call didn't stop it.
+  - The git plugin source crashed the golden actor as described above. With the registry, atelet pulled
+    `mattpocock-skills` (pinned at `49dd158`) from `/v2` and the agent came up Ready. Claude Code ran with it as a
+    `--plugin-dir`, and its Skill tool loaded `mattpocock-skills:tdd`.
+- **Tests**:
+  - `kagent.test.ts`, "on Claude Code": the Harnesses; the Anthropic model on Ollama; the two servers and the
+    endpoint's split; plugins at their commits and as packed images; plugin drift; moving back to the ADK runtime; and
+    what is refused.
+  - `kagent-oci.test.ts`: the tar, the deterministic digest, the registry's answers and repacking.
+  - A `marketplace.test.ts` case for pinning.
+- What remains:
+  - stage 2: a Harness image with real toolchains, and Claude models instead of qwen3-coder;
+  - plugins from marketplaces that aren't on GitHub;
+  - Codex Harnesses.
+
+## Agents in flows (built 2026-10-31)
+
+A published agent as a step of a workflow, with the canvas's model, tools, knowledge bases and memory
+([agents.md](agents.md#from-workflows)).
+
+- **Run an Agent** (`core.messageAgent`, formerly "Message an Agent"; the type is unchanged) has the AI Agent's three
+  optional sub-node ports. A connected **Chat Model** replaces the agent's own model for the run. Connected **Tools**
+  (any `usableAsTool` node, an MCP Client Tool, or a vector store searched as a tool, which is how a knowledge base
+  joins) are added to the agent's capabilities as `flow` tools and run as the node's sub-nodes. A connected **Memory**
+  seeds the session from its history and saves back to it.
+- The agent keeps its persona, skills, own capabilities, guardrails and usage limits. Tools that need approval are
+  refused, since a workflow run has nobody to approve them.
+- It outputs `{ reply, sessionId, agentId, version, model, endReason, usage, steps }`. Answers and tool calls stream to
+  the editor's chat panel; each run is an agent session from the workflow, traced as `invoke_agent`.
+- In the runtime: `RunRequest.flow` carries the model and tools, and `buildToolset` wraps each flow tool. The timeline
+  has a `flow` tool kind.
+- Checked live on 2026-10-31 on the cluster: a "Returns desk" agent (a returns specialist persona) in a workflow with
+  a Chat trigger, an Ollama Chat Model (qwen3-coder), Simple Memory, a SQLite vector store of the returns policy as
+  `search_policy`, and a Calculator. Asked about a $240 opened jacket, it searched the policy, calculated the 15%
+  restocking fee and answered $204 back; the follow-up "what if it had been on sale?" used the memory and the policy.
+- **Tests**: `agent-node.test.ts`: the agent's own model and persona with nothing connected; a connected model and
+  Calculator, with the tool's run data; and memory across runs by session key.
+- What remains: approvals from a workflow run (a pause that waits, like Wait for Approval), and running an agent
+  deployed to kagent from the node with the canvas's tools (the node runs agents on Landflow's runtime; the A2A Agent
+  node calls kagent).
+
+## Second brain (built 2026-10-31)
+
+Landflow studies how it is used, remembers what it learns, and suggests improvements
+([second-brain.md](second-brain.md)). The plan's four phases were built together, with the recommended decisions:
+- its own ledger;
+- the ledger, detectors and inbox in code, with nodes and an agent for conclusions of your own;
+- metadata only, with payloads opt-in per project;
+- Apply with a diff;
+- the local model;
+- scoped per project.
+
+- **Ledger**: `usage_events` and `usage_daily` (migration 1890), fed by saved executions, the audit writer, the AI usage
+  writer, the bus, the assistant routes, template use and the node picker's empty searches. Error messages are redacted
+  and signed. There is a one-time backfill, and `GET /api/usage` for reports.
+- **Suggestions**: eleven detectors as SQL with thresholds. The model writes fixes, slow-step tips, persona rules and
+  draft workflows. Suggestions in `proposals` are refreshed by fingerprint, held back once decided, and capped per
+  workflow per week. Apply goes through governance, or the canvas applies the ops itself and the person saves.
+- **Memory**: a daily study profiles workflows, agents, node types, credentials and the instance into `brain_facts` and
+  `brain_profiles`, embedded per project into `landflow-brain-<project>`. Search fuses keywords and vectors.
+- **Learning**: a baseline on Apply, checks after 7 and 14 days, and the outcome as a `change` fact. "Intended"
+  dismissals become facts, and detectors that are mostly rejected get quieter.
+- **Your own conclusions**: the Landflow Usage, On Usage Event and Suggest Improvement nodes; four templates (new
+  failure alerts, weekly failure hot spots, weekly AI cost review, a weekly digest); and the Platform analyst agent,
+  made from Insights.
+- **Where you see it**: Home's Suggestions inbox, a canvas pill and side card, Insights' "What Landflow knows", and a
+  project setting for run data.
+- The edit operations gain `setNodeSettings` (retries, timeout, on error) and `setWorkflowSettings` (the error workflow,
+  timeout, retries), so suggestions can change settings as well as parameters.
+- **Tests**: `brain.test.ts` (26): the ledger, the detectors, the suggestion lifecycle, effects, study without a model,
+  the nodes, the settings operations and the routes.
+- What remains:
+  - acting alone on low-risk suggestions (with Spotlight's action layer);
+  - access control on the vector collections;
+  - dead weight for credentials and agents;
+  - a cluster-wide On Usage Event in queue mode.
+
+## Agent workspace and the Agent architect (built 2026-10-31)
+
+Steps 2 to 4 of the persona plan, plus faces, an architect that designs agents in a chat, and installed marketplace
+agents on the roster ([agents.md](agents.md#the-roster)).
+
+- **The roster**: agent cards with avatar, role, tones, publish state, where the published version runs, model, tools,
+  skills and sessions, grouped by team, with filters (published, drafts, on kagent, from marketplace) and search. Each
+  card's menu opens the agent, saves it as a template or exports its JSON.
+- **Templates** ([agents.md](agents.md#templates)): seven built-in personas, each with a designed face, plus a blank
+  one, and **Save as template…**. A template keeps the persona, instructions, skills, model (without its credential)
+  and avatar, never tools, channels, schedules or the team. Saved templates go in the `agent_templates` table
+  (migration 1900), shared in the agent's project and moved with it. The New agent dialog picks a template, a name, a
+  team and an avatar; `POST /api/agents` takes `templateId`, `avatar`, `color`, `icon` and `team`.
+- **Avatars and faces** ([agents.md](agents.md#avatars)): a face from parts (skin, hair and its colour, eyes, brows,
+  mouth, beard, glasses, an extra; one in twelve shuffled faces is a robot), an icon, initials or an image (cropped to
+  256 px in the browser, at most 200 KB), on a soft or solid tile. SVG faces in `components/agents/avatar.tsx`, parts
+  and cleaning in `lib/shared/faces.ts`.
+- **Teams** ([agents.md](agents.md#teams)): a label under the agent's name that groups the roster.
+- **Agent architect** ([agents.md](agents.md#agent-architect)): a chat (`POST /api/assistant/agent`, SSE) with its own
+  face that searches every plugin online for nodes usable as tools, reads node docs, lists callable workflows, agents,
+  credential names and templates, and proposes a whole agent; the draft stays beside the chat and **Create agent**
+  makes it. Drafts are validated (unknown types, workflows and agents left out, the node's own parameters over its
+  defaults, invented ids dropped, credentials never set; what's left to do listed).
+- **Marketplace agents on the roster**: `GET /api/agents` marks agents a marketplace install created
+  (`marketplace`), the roster filters them and links each to its plugin; installs give each agent a face and the
+  plugin's name as its team.
+- **Missing tools in the second brain** ([second-brain.md](second-brain.md#4-detectors-and-suggestions)): what the
+  architect needed and no node online does (it says so, or it made up a node type for an app no plugin covers) is a
+  `tool.missing` event; the new **Missing tool** detector suggests "Build a tool for Grafana" on Home, with a plugin
+  sketch the model writes and a link to Build a plugin. Architect asks are `spotlight.asked` with `proposals`, so one
+  that made a draft isn't counted as unmet demand.
+- Bugs found and fixed while checking in the browser: the prompt's closing line doubled the full stop after a
+  description ending in one (`personaPrompt`); the delete icon on a saved template overlapped the card's footer, and the
+  Delete? confirmation overlapped its text (it's now a strip of its own); a saved template's card showed "Your
+  templates" instead of its category. In the architect's first live run, qwen3-coder proposed the same agent four
+  times, sent the tones as one string, looked a node up as `http.request`, and added a "receive alert" HTTP tool and a
+  Code tool for formatting: a repeated proposal is now skipped, lists sent as one string are split, node lookups take
+  the short id or the name, and the prompt says triggers belong on the Deploy tab and formatting is the model's job.
+- In later live runs the model copied the format's placeholder ("App: …") as the app, sent lists as unquoted
+  brackets (`[Calm, Direct]`), and listed formatting with Text Toolkit, a plugin that is online, as missing. Now a
+  placeholder app is replaced by the first capitalised word after the verb, bracketed lists are split, a missing item
+  whose app is an online plugin is dropped (and noted), and the detector groups spellings of one app together.
+- Checked live on the cluster (OrbStack, `landflow-dev`) in Chrome, in light and dark themes: the roster grouped by
+  team with faces, initials and a solid icon tile; the New agent dialog with templates; the avatar picker (shuffle,
+  icon, solid tile); the team picker; Save as template and an agent made from it; and the architect on
+  `qwen3-coder:30b` designing "Grafana Guardian" from the Messaging plugin's Slack node, with the missing Slack
+  credential listed. Its "read firing alerts (Grafana)" became **Build a tool for Grafana** on Home after a brain run,
+  with the model's sketch of the plugin (Get alerts, Get alert details, Acknowledge alert).
+- **Tests**: `agent-workspace.test.ts` (8: faces, avatars, teams, summaries, templates) and `agent-architect.test.ts`
+  (13: drafts, the chat with a scripted model, missing tools, marketplace agents), and a `brain.test.ts` case for the
+  Missing tool detector and its plugin sketch.
+- What remains:
+  - exporting agents as Claude Code plugins (`agents/<name>.md`, `skills/<name>/SKILL.md`, `.claude-plugin/plugin.json`
+    and a `marketplace.json`), so they can be placed in a marketplace as well as installed from one;
+  - installing marketplace agents into the current project rather than the default one;
+  - the architect improving an existing agent, and a model picker for it;
+  - building the plugin a Missing tool suggestion sketches, from the suggestion (**Build it** now starts the workflows
+    that do it; the agents and flow that build a plugin are next, below).
+
+## Building tools from suggestions (in progress, 2026-10-31)
+
+Approving a Missing tool suggestion starts a flow of developer agents (planner, developer, reviewer) on kagent's Claude
+Code runtime that write the plugin in this repository and open a draft pull request. Built so far:
+
+- **Build it** on Missing tool suggestions ([second-brain.md](second-brain.md#5-where-you-see-it)): it records
+  `proposal.applied`, and On Usage Event's **Suggestion From** filter starts the flows that build tools, each item
+  carrying the whole suggestion (`proposal`). The toast names the flows; with none published, a warning says what to
+  publish.
+- **Network for Claude Code** ([a2a.md](a2a.md#network-for-claude-code)): kagent's sandboxes had no egress at all.
+  Landflow now writes the Agent's `egressPolicyRefs` (the kagent card's **Network access**, else the credential's
+  **Egress Policies**), with drift, and `deploy/kind/egress-dev.yaml` grants the package registries (Alpine, Go, npm,
+  PyPI).
+- **A toolchain image for Claude Code** ([a2a.md](a2a.md#a-toolchain-image-for-claude-code)): the Harness
+  `landflow-claude-dev` runs Claude Code on one common image (Go, Node with pnpm, Python with uv, a C toolchain), served
+  from Landflow's registry by digest. Nothing project-specific is baked in: a project's dependencies come over the
+  network. `/v2` serves manifests with their own media type and streams blobs.
+- **The host's data on its volume** on OrbStack (`landflow-data`, local-path), so credentials, agents and the images
+  Landflow serves kagent survive a rollout.
+- **GitHub flow steps**: a bundled `github` plugin (`plugins/github`, TypeScript, 7111/7211), one **GitHub** node for
+  deterministic steps over the REST API: Repository Get; File Get, List, Create or Update; Files Commit (several files
+  in one commit through the Git Data API, optionally creating the branch); Branch Create, Get; Pull Request Create
+  (draft by default), Get, List Files, Comment; Issue Create, Comment. No delete. Pull Request Merge was added on 2026-10-31,
+  for flows that merge once a Run Report passes. Agents use GitHub's MCP
+  server instead.
+- **GitHub from the sandbox** ([a2a.md](a2a.md#github-from-the-sandbox)): `deploy/kind/egress-github.yaml` lets
+  Claude Code reach github.com and api.github.com with a fine-grained token the gateway injects (the sandbox never sees
+  it), and the Harness points git's `extraHeader` at the gateway. A clone of this repository takes about 4 s, a
+  filtered `pnpm install` about 11 s.
+- **The team and its flow**, set up live over the API (not yet a template): the Planner, Developer and Reviewer as
+  Claude Code agents on kagent (`landflow-claude-dev`, egress for packages and GitHub), and a Tech Lead, a Landflow
+  agent, in **Build plugins from suggestions**: On Usage Event (Missing tool) → Brief → GitHub Create branch → Tech Lead
+  → GitHub Open draft pull request. The team are the Tech Lead's sub-nodes on the canvas: its chat model, a memory per
+  suggestion, the three agents as A2A Agent tools and GitHub Check branch as a tool, so every hand-off is a sub-node
+  run with its input, output and live steps.
+- **Watching it run** ([agents.md](agents.md), [a2a.md](a2a.md)): the Agent session panel under the canvas, a
+  teammate lit with a caption of its current step, its Claude Code steps streaming into the detail pane, and the
+  steps kept in the output afterwards.
+- **First runs** (2026-10-31): on "Build a tool for Grafana", the first run (the team as the Tech Lead's own A2A
+  capabilities) took 42 minutes and opened draft pull request #1 with three commits: the plan, the plugin and its
+  README. The work was weak: Alertmanager v1 paths, compiled `.js` committed next to the sources, a test that only
+  checked the description, and a Reviewer that edited files and still approved. The agents' instructions now ask for
+  the API's current version, a test per node against a fake server, no build output, a git identity per agent, and a
+  Reviewer that only reads and runs. The second run uses the canvas form above.
+- **Checked, then merged** (2026-10-31): v3 of the flow puts a Run report after the Tech Lead. When every check
+  passes it opens the pull request, posts the report and merges it (the GitHub node's **Merge**); otherwise the failed
+  checks go back to the Tech Lead, up to 3 rounds, then a draft pull request waits for a person. Its first run was
+  sent back once (typecheck failing, the Reviewer editing), fixed in round 2 and merged pull request #3 after 41
+  minutes.
+- Next:
+  - the team and flow as a template (agents, the workflow and its credentials named) instead of a setup script;
+  - GitHub's MCP server as an agent tool, for reviews and comments on the pull request;
+  - caches in the cluster (a Go module proxy, an npm and PyPI mirror) so repeated installs stay local, and Go's
+    standard library pre-built in the image.
+
+## Run Trace (built 2026-10-31)
+
+Watching and reviewing what a run did, for any flow, phone first ([run-trace.md](run-trace.md)). Phases 1 to 3 of the
+approved plan:
+
+- **The journal** (`execution_events`, migration 2000): actors, spans, messages, artifacts and checks per execution,
+  written by the runner's translator, Landflow agent sessions, the A2A Agent node (every remote step kept, failed ones
+  marked failed, `isError` results included), approvals (web, Slack, email) and the Run report gate. Redacted, cut to
+  32 KB per event (**Content kept**: full, summaries or off), batched about twice a second, kept 30 days, live as
+  `journal` events.
+- **Artifacts and checks from any node**: `ctx.artifact` and `ctx.check` in the TypeScript, Python and Go SDKs,
+  `ExecuteResponse.records` over every transport, the engine's `node.record` event. The GitHub plugin reports its pull
+  requests, issues and branches.
+- **The screens**: Run trace next to Canvas on every execution and full screen at `/runs/<id>`. They have a header with
+  who is working now, Needs you, and the Story, Trace, Team and Report tabs. Details open in a sheet, and a time slider
+  replays the run. Needs you and live cards appear on Executions.
+- **Checks, profiles and the report**: the built-in checks (six since 2026-10-31: Agent notes committed), the Generic, Software delivery and Customer support
+  profiles (or a custom one as JSON), the structured reply block, and the **Run Report** node. The node saves the
+  report with the run, outputs it as Markdown to post, and gates on failed checks by sending the work back, asking a
+  person or only warning.
+- **What a run made** (2026-10-31): an **Artifacts** tab with code changes per file (pushed or never pushed, a diff
+  per agent or combined, and the branch as GitHub sees it through the GitHub node's **Compare**), Markdown documents
+  rendered, links and JSON data; file steps open as diffs in the detail sheet ([run-trace.md](run-trace.md#artifacts-and-code-changes)).
+- **Iterations** (2026-10-31): rounds of a loop with why each went back, each agent's turns with the reason it gave
+  for every request, members' words between their tool calls, and fix cycles from check commands
+  ([run-trace.md](run-trace.md#iterations-rounds-turns-and-fix-cycles)).
+- Still open from the artifacts plan: images, CSV tables, an HTML preview in a sandboxed frame and PDFs in the
+  Artifacts tab; line comments on a diff that collect into the gate's Send back text; reasons from delegating nodes of
+  other plugins (they need `delegates`); fix cycles per round; a lead's claims credited with its team's steps.
+- Next (phase 4):
+  - other agents' spans joined by trace id, starting with Claude Code's own OpenTelemetry;
+  - OTLP export with OpenInference kinds;
+  - search and comparison across runs, and each profile's measures over time;
+  - re-run from a span, and Copy to editor with the run's data pinned;
+  - pausing a running agent so a person can take over;
+  - **Content kept** per project.
+
+## Agent teams (built 2026-10-31)
+
+Agents as a team with standing relations instead of tools under a node ([agent-teams.md](agent-teams.md)), in the
+four steps of the approved plan:
+
+- **The record**: a reason on every request between agents, members' words, rounds, turns and fix cycles in Run Trace.
+- **Members that remember and ask back**: one A2A conversation per member per run; a member's question goes to the
+  agent that asked it first.
+- **Teams on the Agents page**: an org chart of Landflow agents and remote agents (one lead, one manager each,
+  reviews, budgets, where questions go), saved, published and moved between projects like agents.
+- **Run a Team** (`core.runTeam`): the team as one flow step, with goal ancestry, reviews before a manager reports
+  done, budgets, members named by title in the trace, **Turn into a team** in the editor and in Spotlight.
+- Next: consults (ask a peer) and hand-offs; a person answering a member's question and the run carrying on; reviews
+  across the chart and a reviewer's verdict as the sign-off; live budget use on the chart; the Go and Python SDKs
+  declaring `delegates`. Paperclip-style autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.
 
 ## Planned next
 
