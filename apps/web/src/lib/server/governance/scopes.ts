@@ -35,6 +35,7 @@ export const projectSettingsPatchSchema = z.strictObject({
   nodes: scopedNodePolicySchema.partial().optional(),
   approvers: z.enum(['default', 'admins', 'editors', 'instance']).optional(),
   fourEyes: z.boolean().optional(),
+  brainPayloads: z.boolean().optional(),
 });
 
 export const workflowPolicyPatchSchema = z.strictObject({
@@ -101,6 +102,7 @@ export function getProjectSettings(projectId: string | undefined): ProjectSettin
     nodes: nodePolicy(saved?.nodes),
     approvers: (approvers.success && approvers.data) || 'default',
     fourEyes: saved?.fourEyes === true,
+    ...(saved?.brainPayloads === true && { brainPayloads: true }),
     ...(typeof saved?.updatedAt === 'string' && { updatedAt: saved.updatedAt }),
     ...(typeof saved?.updatedBy === 'string' && { updatedBy: saved.updatedBy }),
   };
@@ -115,6 +117,7 @@ export function updateProjectSettings(projectId: string, patch: z.infer<typeof p
     nodes: nodePolicy(patch.nodes, current.nodes),
     approvers: patch.approvers ?? current.approvers,
     fourEyes: patch.fourEyes ?? current.fourEyes,
+    ...((patch.brainPayloads ?? current.brainPayloads) && { brainPayloads: true }),
     updatedAt: now,
     ...(by && { updatedBy: by }),
   };

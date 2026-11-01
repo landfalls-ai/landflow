@@ -20,6 +20,7 @@ import {
   type HealthResponse,
   type LoadOptionsRequest,
   type NodeItem,
+  type NodeRecord,
   type PluginManifest,
   type PropertyOption,
   type TestCredentialsRequest,
@@ -109,6 +110,7 @@ export interface ExecuteResponseMsg {
   logs: { level: string; message: string }[];
   error: { message: string; description: string; itemIndex: number } | null;
   pollState: DynamicValueMsg | null;
+  records?: DynamicValueMsg[];
 }
 export interface PluginInfoMsg {
   id: string;
@@ -211,6 +213,7 @@ export function executeResponseToMsg(response: ExecuteResponse): ExecuteResponse
         }
       : null,
     pollState: response.pollState ? toDynamic(response.pollState) : null,
+    records: (response.records ?? []).map((record) => toDynamic(record)),
   };
 }
 
@@ -229,6 +232,8 @@ export function executeResponseFromMsg(msg: ExecuteResponseMsg): ExecuteResponse
   }
   const pollState = fromDynamic<ExecuteResponse['pollState'] | null>(msg.pollState, null);
   if (pollState) response.pollState = pollState;
+  const records = (msg.records ?? []).map((record) => fromDynamic<NodeRecord | null>(record, null)).filter((record): record is NodeRecord => !!record);
+  if (records.length) response.records = records;
   return response;
 }
 

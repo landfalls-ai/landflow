@@ -1,6 +1,7 @@
 /** Claude Code agents and skills → Landflow agent configs and agent skills. */
 import { nanoid } from 'nanoid';
-import type { AgentConfig, AgentModel, AgentSkill } from '../../shared/agents';
+import { cleanTeam, type AgentConfig, type AgentModel, type AgentSkill } from '../../shared/agents';
+import { randomFace } from '../../shared/faces';
 import type { ClaudeAgentFile, ClaudeSkillFile } from '../../shared/marketplace';
 
 /** Claude Code's model aliases. `inherit` means "the main conversation's model", Sonnet by default. */
@@ -73,8 +74,11 @@ export function skillFromClaude(skill: ClaudeSkillFile): AgentSkill {
 
 const MAX_DESCRIPTION = 600;
 
-/** One Claude Code agent as a Landflow agent draft, with the plugin's skills attached. */
-export function agentFromClaude(agent: ClaudeAgentFile, options: { pluginId: string; skills: AgentSkill[] }): Partial<AgentConfig> {
+/**
+ * One Claude Code agent as a Landflow agent draft, with the plugin's skills attached. It gets a face seeded by the
+ * plugin and its name, and the plugin as its team, so a plugin's agents sit together on the roster.
+ */
+export function agentFromClaude(agent: ClaudeAgentFile, options: { pluginId: string; skills: AgentSkill[]; team?: string }): Partial<AgentConfig> {
   const model = mapModel(agent.model);
   let description = agent.description.length > MAX_DESCRIPTION ? `${agent.description.slice(0, MAX_DESCRIPTION - 1).trimEnd()}…` : agent.description;
   const notes = [`Installed from ${options.pluginId}.`];
@@ -88,6 +92,8 @@ export function agentFromClaude(agent: ClaudeAgentFile, options: { pluginId: str
     icon: iconFor(agent.name, agent.description),
     color: (agent.color && COLORS[agent.color.toLowerCase()]) ?? (agent.color && /^#[0-9a-f]{6}$/i.test(agent.color) ? agent.color : '#a855f7'),
     ...(model && { model }),
+    avatar: { kind: 'face', face: randomFace(`${options.pluginId}/${agent.name}`) },
+    ...(cleanTeam(options.team) && { team: cleanTeam(options.team) }),
     instructions: agent.body,
     skills: options.skills,
   };

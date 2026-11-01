@@ -1,6 +1,8 @@
 import { agentConfigSchema, asConfig } from '@/lib/server/agents/http';
 import { agentStore } from '@/lib/server/agents/store';
 import { error, handler, json, parseBody } from '@/lib/server/http';
+import { rememberLeftover, removeFromKagent } from '@/lib/server/kagent/deploy';
+import { logger } from '@/lib/server/telemetry';
 import { ownershipOf } from '@/lib/server/projects';
 import { forgetDeleted, routeActor } from '@/lib/server/projects/http';
 
@@ -22,6 +24,15 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
+  // An agent deployed to kagent leaves it too. If kagent can't be reached, its resources are remembered and removed the
+  // next time an agent is deployed to that cluster.
+  const deployment = agentStore.get(id)?.kagent;
+  if (deployment) {
+    await removeFromKagent(id).catch((cause) => {
+      logger.warn('kagent: a deleted agent’s resources could not be removed; they go when the cluster is reached', { agentId: id, error: (cause as Error).message });
+      rememberLeftover(deployment, id);
+    });
+  }
   if (!agentStore.delete(id)) return error('Agent not found', 404);
   forgetDeleted('agent', id);
   return json({ ok: true });

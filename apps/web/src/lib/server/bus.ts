@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import type { ExecutionEvent } from '@landflow/engine';
 import type { AgentStreamEvent } from '../shared/agents';
 import type { EditLockView } from '../shared/auth';
+import type { JournalEvent } from '../shared/run-trace';
 import type { RegistryEvent } from '../shared/types';
 import { singleton } from './singleton';
 
@@ -9,6 +10,8 @@ export type BusEvent =
   | { channel: 'registry'; event: RegistryEvent }
   | { channel: 'execution'; workflowId: string; event: ExecutionEvent }
   | { channel: 'agent'; agentId: string; event: AgentStreamEvent }
+  /** New entries of an execution's journal (Run Trace, lib/server/journal), in seq order, batched about twice a second. */
+  | { channel: 'journal'; workflowId: string; executionId: string; events: JournalEvent[] }
   /** Someone opened, took over or left a workflow in the editor (lib/server/auth/edit-locks.ts); null = free. */
   | { channel: 'lock'; workflowId: string; lock: EditLockView | null };
 

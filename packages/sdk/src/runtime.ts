@@ -11,6 +11,7 @@ import type {
   JsonObject,
   LogEntry,
   NodeItem,
+  NodeRecord,
   PropertyOption,
   TestCredentialsRequest,
   TestCredentialsResponse,
@@ -45,6 +46,13 @@ export interface ContextExtras {
   getNodeOutputs?: IExecuteContext['getNodeOutputs'];
   /** In-process only: streamed answer chunks (set while a streaming response listens). */
   sendChunk?: IExecuteContext['sendChunk'];
+  /** In-process only: progress of a running node (`ctx.sendProgress`). */
+  sendProgress?: IExecuteContext['sendProgress'];
+  /**
+   * In-process only: receives each `ctx.artifact` / `ctx.check` as it is made (the engine turns it into a `node.record`
+   * event). Without it the records are collected into `ExecuteResponse.records`, which is how remote plugins send them.
+   */
+  onRecord?: (record: NodeRecord) => void;
   /** Extra log sink (the host streams logs live). */
   onLog?: (entry: LogEntry) => void;
   signal?: AbortSignal;
@@ -121,7 +129,12 @@ interface PollStateBox {
   set: boolean;
 }
 
-function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[], extras: ContextExtras) {
+/** Masks the credential values of this call in a record's text and JSON fields. */
+function scrubRecord<T extends object>(record: T): T {
+  return JSON.parse(scrub(JSON.stringify(record))) as T;
+}
+
+function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[], records: NodeRecord[], extras: ContextExtras) {
   const telemetry = extras.telemetry ?? getTelemetry();
   const type = qualifiedType(request.node.type, extras.pluginId);
   const base = otelContext.active();
@@ -147,6 +160,11 @@ function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[]
   const logger = nodeLogger(logs, processLog, extras.onLog);
   const http = createTracedFetch(telemetry, { base, signal: extras.signal });
   const poll: PollStateBox = { set: false };
+  const report = (record: NodeRecord) => {
+    const stamped = scrubRecord({ ...record, at: new Date().toISOString() });
+    if (extras.onRecord) extras.onRecord(stamped);
+    else records.push(stamped);
+  };
 
   const context: IExecuteContext = {
     getNode: () => request.node,
@@ -181,6 +199,8 @@ function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[]
       returnJsonArray: (data) => (Array.isArray(data) ? data : [data]).map((json) => ({ json })),
       ...createBinaryHelpers(request, extras.binary ?? (request.binaryAccess && httpBinaryClient(request.binaryAccess, http)), extras.signal),
     },
+    artifact: (artifact) => report({ type: 'artifact', ...artifact }),
+    check: (check) => report({ type: 'check', ...check }),
     getPollState: <T extends JsonObject>() => request.pollState as T | undefined,
     setPollState: (state: JsonObject) => {
       poll.value = state;
@@ -196,6 +216,7 @@ function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[]
   if (extras.setNodeState) context.setNodeState = extras.setNodeState;
   if (extras.getNodeOutputs) context.getNodeOutputs = extras.getNodeOutputs;
   if (extras.sendChunk) context.sendChunk = extras.sendChunk;
+  if (extras.sendProgress) context.sendProgress = extras.sendProgress;
   return { context, poll, logger };
 }
 
@@ -205,7 +226,7 @@ export function createExecuteContext(
   logs: LogEntry[],
   extras: ContextExtras = {},
 ): IExecuteContext {
-  return buildContext(node, request, logs, extras).context;
+  return buildContext(node, request, logs, [], extras).context;
 }
 
 function isItem(value: unknown): value is NodeItem {
@@ -267,21 +288,24 @@ export interface NodeRunResult {
 /** runNode, plus the thrown error for the server span. */
 export async function executeNode(node: INodeType, request: ExecuteRequest, extras: ContextExtras = {}): Promise<NodeRunResult> {
   const logs: LogEntry[] = [];
+  const records: NodeRecord[] = [];
   if (!node.execute) {
     return { response: { outputs: [[]], error: { message: `Node "${node.description.name}" cannot be executed` } } };
   }
   const release = registerSecrets(requestSecrets(request.credentials, extras.credentialTypes));
   try {
-    const { context, poll, logger } = buildContext(node, request, logs, extras);
+    const { context, poll, logger } = buildContext(node, request, logs, records, extras);
     try {
       const result = await node.execute(context);
       const response: ExecuteResponse = { outputs: normalizeOutputs(result, request.inputs[0]?.length ?? 0) };
       applyPollSemantics(node, request, response, poll, logger);
       if (logs.length) response.logs = logs;
+      if (records.length) response.records = records;
       return { response };
     } catch (error) {
       const response: ExecuteResponse = { outputs: [[]], error: toErrorPayload(error) };
       if (logs.length) response.logs = logs;
+      if (records.length) response.records = records;
       return { response, error };
     }
   } finally {

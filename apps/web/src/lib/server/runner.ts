@@ -51,6 +51,7 @@ import { getVersion, versionFor } from './versions';
 import { credentials } from './credentials/vault';
 import { resolveWorkflowCredentials } from './projects/credentials';
 import { registry } from './plugins/registry';
+import { traceSegment } from './journal';
 import { parameterSecretOptions, redactRunData } from './secrets/runtime';
 import { singleton } from './singleton';
 import { store } from './store';
@@ -204,6 +205,18 @@ interface QueueWaiter {
   onEvent?: (event: ExecutionEvent) => void;
   onReply?: (reply: RunReply) => void;
 }
+/**
+ * The latest `node.progress` of each running node, by execution (what a page opened mid-run reads; this process's runs
+ * only), with `since`: when the node first reported (a tool sub-node has no node.started to time it from).
+ */
+export type NodeProgress = Extract<ExecutionEvent, { type: 'node.progress' }> & { since: string };
+const progressOf = singleton('node-progress', () => new Map<string, Map<string, NodeProgress>>());
+
+/** What the running nodes of an execution last reported (ctx.sendProgress), by node id. */
+export function liveProgress(executionId: string): Record<string, NodeProgress> {
+  return Object.fromEntries(progressOf.get(executionId) ?? []);
+}
+
 const queueWaiters = singleton('queue-waiters', () => new Map<string, QueueWaiter>());
 /** Sub-executions that finished while their parent was still on its way into `waiting` for them. */
 const finishedChildren = singleton('finished-children', () => new Map<string, ExecutionRecord>());
@@ -553,6 +566,8 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
 
   let finished: ExecutionRecord;
   let checkpointed = false;
+  // The Run Trace journal of this stretch (lib/server/journal): every event of the engine is told in actors and spans.
+  const trace = traceSegment(record, workflow);
   // Token & cost tracking: every model call of this segment counts here, under the workflow's AI usage caps.
   // Caps per user count the runs a signed-in user started (record.startedBy: the editor's Execute, the API, chat), also after a Wait.
   const scopes = workflowScopes(workflow);
@@ -601,6 +616,7 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       },
       onEvent: (raw) => {
         const event = redactRunData(raw);
+        trace.feed(event);
         if (event.type === 'execution.started' && event.traceId) record.traceId = event.traceId;
         if (event.type === 'node.finished') {
           (record.runData[event.nodeId] ??= []).push(event.run);
@@ -611,6 +627,12 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
         if (event.type === 'node.log') {
           logger[event.level](event.message, { 'landflow.execution.id': executionId, 'landflow.node.id': event.nodeId, 'landflow.workflow.id': workflow.id });
         }
+        if (event.type === 'node.progress') {
+          let nodes = progressOf.get(executionId);
+          if (!nodes) progressOf.set(executionId, (nodes = new Map()));
+          nodes.set(event.nodeId, { ...event, since: nodes.get(event.nodeId)?.since ?? event.at });
+        } else if (event.type === 'node.finished') progressOf.get(executionId)?.delete(event.nodeId);
+        else if (event.type === 'execution.finished') progressOf.delete(executionId);
         // Streamed chunks go only to the caller that asked for them (the chat panel, a hosted chat, a streaming webhook).
         if (event.type !== 'node.chunk') bus.publish({ channel: 'execution', workflowId: workflow.id, event });
         segment.onEvent?.(event);
@@ -641,6 +663,7 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       recordRuntimeEvent('retry_scheduled', workflow.id);
     }
   } finally {
+    trace.close();
     live.delete(executionId);
     // A worker frees its job's lease itself, once the result is out.
     if (clusterActive() && !segment.dispatched) void coordinator().deleteIfValue(`lease:${executionId}`, instanceId()).catch(() => {});

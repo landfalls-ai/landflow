@@ -56,22 +56,30 @@ A bubble that ends in “…” fills the box to finish; a complete question or 
 
 ### The builder chat
 
-Each message sends the conversation so far, the current workflow (`toWorkflow()`, saved or not), the selected node and a digest of every node's last main run. The server runs a tool-calling loop of at most **8 model calls** per message:
+Each message sends the conversation so far, the current workflow (`toWorkflow()`, saved or not), the selected node and a digest of every node's last main run. Proposals from earlier replies that are still waiting (neither applied nor dismissed) go with it as `pending` (summary and ops, at most 20; the route validates the shape and the server checks the ops against the workflow). The server runs a tool-calling loop per message. It goes on while a step makes progress (a new proposal, or a tool result not seen before in this reply), up to **20 model calls** (`MAX_STEPS`), and stops early, with a note that the last steps only repeated, when two steps in a row add nothing. Only the ceiling gives "Stopped after 20 steps":
 
 | Tool | What it returns | Activity line |
 |---|---|---|
 | `search_nodes(query)` | Keyword matches over display names, type ids, keywords, categories, plugin names and descriptions | Searched nodes for "sheets" |
 | `get_node_docs(type)` | The type's ports, credentials and parameters (accepts a node name too) | Read Google Sheets docs |
-| `get_workflow()` | The outline, including changes proposed earlier in this reply | Read the workflow |
+| `get_workflow()` | The outline, including pending changes (marked `[pending: proposed, not applied yet]`, with a list of the pending proposals); a node with two or more main outputs lists each output, its name and what it feeds | Read the workflow |
 | `get_run_data(node)` | The node's parameters, neighbours, run status, error and first items | Read run data of "Code" |
 | `propose_changes(summary, ops)` | Validates the ops and shows them as a proposal card | Proposed 2 changes |
 
-Before showing a proposal, `propose_changes` makes three checks:
+Before showing a proposal, `propose_changes` makes these checks:
 - **Nothing valid**: if none of the ops apply, the reasons go back to the model to fix.
+- **Parts failed**: if some ops apply and others don't (a type that doesn't exist, a connection to a `ref` no `addNode` gave, a number outside its field's range such as a timeout of `30` in a field measured in milliseconds, which is left out), it goes back **once** with the reasons, so a "replace X with Y" that only removed X isn't shown as is. The second attempt is shown, with what it still leaves out.
+- **Units**: if the latest message names a duration ("a 30 minute timeout") and the proposal sets a number field whose label or description gives its unit ("Timeout (ms)") to that duration in another unit (30 or 1800), it goes back **once** saying the number it should be (`30 minutes is 1800000, not 1800`). `get_node_docs` lists a collection's fields with their labels and number ranges, so the unit is in front of the model.
 - **Dangling**: if the change leaves something dangling, it goes back **once** with the [warnings](#warnings) and a hint to use `before`. The second attempt is shown, warnings and all.
-- **Repeat**: if the change alters nothing (already in the workflow, or proposed earlier in the reply), it is skipped.
+- **Repeat**: if the change alters nothing (already in the workflow, or proposed earlier in the reply), it is skipped. An `addNode` for a node of the same type and name as one that is pending (an earlier reply, or this one) is dropped, and later ops that name its `ref` use the pending node.
+- **Added back**: an `addNode` for a node a pending proposal removes (same name, or same type unless the latest message names that type, as in "replace Check with a new If node") is skipped, unless the latest message asks to add one by that name ("remove Check, then add a new Check after Code"; an add verb before the name, with no remove or delete between them), and the model is told not to add it, or a node doing its job, back. `get_workflow` lists the nodes pending proposals remove.
+- **Branching twice**: an If, Filter or Switch (`core.if`, `core.filter`, `core.switch`) added right after a node that already has two or more named main outputs, without an `output`, goes back **once** with a note such as *Run Report already branches: output 0 “Passed”, output 1 “Send back”. Connect from those outputs instead.* If it is proposed again, it is shown.
 
-Later proposals in the same reply build on earlier ones. If you apply only a later proposal, any ops that depend on an earlier one are skipped, and the toast says so.
+Later proposals build on earlier ones, in the same reply and in later replies while they are pending. Once everything the latest message asks for is proposed, the model is told to stop and say in one line what the cards do, rather than go on improving the workflow unasked (both the prompt and each proposal's tool result say so). A request with several parts is meant to go in as one proposal (or a few): the prompt asks for a short numbered plan first, then new nodes wired to each other with `ref`, `after` and `connect`, branches and loops included.
+
+**Loops.** A `connect` back to an earlier node makes a loop; the engine runs loops, and neither the op validation nor the structural warnings treat an edge from downstream as a second input to complete. The prompt describes the round counter: a Code node that adds 1 to a round number, then an If “round < N” whose true branch connects back and whose false branch goes on.
+
+ If you apply only a later proposal, any ops that depend on an earlier one are skipped, and the toast says so.
 
 Each card has **Apply** and **Dismiss**. When a reply has two or more open proposals, **Apply all** applies them in one step with one undo. Earlier turns go back to the model as text, with a note on each proposal: `[Proposed "…": applied | dismissed | not applied yet]`.
 
@@ -80,6 +88,7 @@ Local models sometimes write a tool call as text (`<function=propose_changes><pa
 More guards cover what local models get wrong (all in `lib/server/assistant/chat.ts`):
 - **Made-up ids**: a parameter named like an id (`channelId`, `sheetId`, `id`…) whose value appears nowhere in the conversation, the workflow, its run data or the node type's own options is left out of the proposal, and the card lists it as left for the user to fill in. The prompt also says not to invent ids, channels, addresses, URLs or keys.
 - **"It has been added"**: in a reply that proposed something, sentences that say the change was made ("has been added", "I've updated…", "The workflow now has…", "is ready to…") are dropped, because nothing changes until Apply. Lists keep their lines; if nothing is left, the reply says to review the card and click Apply.
+- **Teams by name**: a Run a Team node whose `teamId` is a published team's name (with or without "team") or its lead's title, as models write it, gets that team's id and `teamName`; a name no team has, or that fits more than one, is left as written (`withTeamIds`).
 - **Made-up ids in the text**: an id the proposal left out as made up (an id-like token: a capital letter, 9 or more capitals, digits, `_` or `-`, with a digit) is removed from the reply's text as well; in brackets it goes, elsewhere it becomes "the right id".
 - **Repeats**: a sentence the reply already said earlier in the message (the same words, or six or more content words of which 80% were said before) is dropped, and a proposal identical to an earlier one in the reply is skipped.
 - **Echoed notes**: the model sometimes copies the notes it gets in the history (`[Proposed “…”: applied]`, `[Test run 2 failed: …]`) into its reply; those lines are removed. More wordings of "it's done" count as claims too: "was set up", "will now", "now sends …".
@@ -119,6 +128,9 @@ Proposals use `lib/shared/assistant-ops.ts`. A node reference is a node **name**
 | `disconnect` | `from`, `to`, `type?` | Works in either direction |
 | `removeNode` | `node` | Its connections and pinned data go too |
 | `renameNode` | `node`, `name` | `$('Old')` and `$node["Old"]` in other nodes' parameters are renamed too |
+| `turnIntoTeam` | `node` | a Run an Agent node with agents attached as tools becomes one Run a Team node; applying it saves the team ([agent-teams.md](agent-teams.md#turn-into-a-team)) |
+| `setNodeSettings` | `node`, `settings` | A node's settings, not its parameters: `retryOnFail`, `maxTries`, `waitBetweenTriesMs`, `onError`, `timeoutSeconds`, `alwaysOutputData`, `disabled`. Other keys are dropped. The [second brain](second-brain.md) uses it for retries |
+| `setWorkflowSettings` | `settings` | `errorWorkflowId`, `timeoutSeconds`, `retryMaxAttempts`, `retryBaseDelaySeconds`; other keys are dropped |
 
 `applyOps(workflow, ops, lookup)` is pure: workflow in, workflow out. It is also the validator. Validation follows the same rules as the flow builder:
 - unknown types, unknown nodes and impossible connections are **dropped with a reason**;
@@ -139,7 +151,7 @@ The server runs it against the registry's available node types. The editor runs 
 | Route | Body | Response |
 |---|---|---|
 | `POST /api/assistant/suggest` | `{ workflow, workflowId?, nodeId, run: RunDigest, model? }` | `{ suggestions: [{ id, kind, title, detail, confidence, ops, dropped?, warnings? }], model, durationMs, skipped? }` · 404 for an unknown node, 502 when the model fails |
-| `POST /api/assistant/chat` | `{ messages: [{ role, content }], workflow, workflowId?, selectedNodeId?, runs?: { [nodeId]: RunDigest }, mentions?: { nodes?: string[], types?: string[] }, session?: fix\|review, model? }` (`session`: a [Test and fix](#test-and-fix) request) | SSE, one event per step: `text {text}`, `tool {name, label, ok}`, `proposal {id, summary, ops, dropped, warnings}`, then `done {model, durationMs, steps, usage}` or `error {message}` |
+| `POST /api/assistant/chat` | `{ messages: [{ role, content }], workflow, workflowId?, selectedNodeId?, runs?: { [nodeId]: RunDigest }, mentions?: { nodes?: string[], types?: string[] }, pending?: [{ summary, ops }], session?: fix\|review, model? }` (`session`: a [Test and fix](#test-and-fix) request) | SSE, one event per step: `text {text}`, `tool {name, label, ok}`, `proposal {id, summary, ops, dropped, warnings}`, then `done {model, durationMs, steps, usage}` or `error {message}` |
 | `POST /api/assistant/feedback` | `{ kind: fix\|param\|data\|next\|proposal, action: applied\|dismissed }` | `{ ok: true }` (feeds the metrics below) |
 
 `RunDigest` is `{ status, durationMs, error?, inputs: [{ count, sample }], outputs: [{ count, sample }], logs? }`. `sample` holds the first 3 items' JSON, with long strings, arrays and deep objects clipped. The editor builds digests with `digestRun()`, so full run data never leaves the browser.

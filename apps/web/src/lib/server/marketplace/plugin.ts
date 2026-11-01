@@ -22,7 +22,7 @@ const TEXT_FILE = /\.(md|markdown|txt|json|ya?ml|toml|csv|xml|html?|rst)$/i;
 /** A marketplace.json plugin entry, as listed. */
 export type MarketplaceEntry = Record<string, unknown> & { name: string; source?: unknown };
 
-type Loaded = Pick<PluginDetail, 'manifest' | 'agents' | 'skills' | 'unsupported' | 'nodePlugin' | 'flows' | 'readme' | 'warnings'>;
+type Loaded = Pick<PluginDetail, 'manifest' | 'claudeManifest' | 'agents' | 'skills' | 'unsupported' | 'nodePlugin' | 'flows' | 'readme' | 'warnings'>;
 
 /** A flow file a plugin ships, parsed (a Landflow template file). */
 export interface FlowFile {
@@ -326,5 +326,5 @@ export async function loadPlugin(reader: RepoReader, entry: MarketplaceEntry, fr
   const readmePath = files.find((f) => /^readme\.md$/i.test(f.path))?.path;
   if (readmePath) readme = await reader.text(readmePath, 64 * 1024).catch(() => undefined);
 
-  return { manifest, agents, skills, unsupported, ...(nodePlugin && { nodePlugin }), flows, ...(readme && { readme }), warnings };
+  return { manifest, ...(pluginJson && { claudeManifest: true }), agents, skills, unsupported, ...(nodePlugin && { nodePlugin }), flows, ...(readme && { readme }), warnings };
 }

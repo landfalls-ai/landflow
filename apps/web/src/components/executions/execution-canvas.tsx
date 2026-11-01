@@ -12,8 +12,8 @@
  * its groups as they are. The node an execution waits at is marked waiting,
  * with what it waits for on hover.
  */
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Controls, Handle, Position, ReactFlow, ReactFlowProvider, getBezierPath, useNodesState, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Controls, Handle, Position, ReactFlow, ReactFlowProvider, useNodesState, useReactFlow, useStore, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -22,7 +22,12 @@ import { edgeCountsOf, statusesOf, summarizeGroupRun, withWaiting, type GroupRun
 import { GROUP_COLLAPSED_SIZE, GROUP_HANDLES, collapsedBoxes, depthOf, descendantGroupIds, descendantNodeIds, routeEdges } from '@/lib/shared/groups';
 import type { NodeRun, NodeTypeInfo, Workflow, WorkflowNode } from '@/lib/shared/types';
 import { EdgeLine } from '../canvas/edge-line';
-import { handleId, NodeTile } from '../canvas/node-tile';
+import { edgePath, useLane } from '../canvas/edge-path';
+import { activityOfRuns, type TeamActivity, type TeamProgress } from '@/lib/shared/team-progress';
+import { useNodeFace, useShownParameters } from '../agents/faces';
+import { useTeamTile } from '../editor/team-live';
+import { TeamStrip } from '../editor/team-strip';
+import { handleId, NodeTile, ranFor } from '../canvas/node-tile';
 import { StickyNoteView } from '../canvas/sticky-note';
 import { CompositeBadge, GroupBoxView, GroupFrameView } from '../canvas/group-frame';
 import { useCompositeNames } from '../canvas/composite-names';
@@ -172,6 +177,12 @@ interface CanvasState {
   outputsOf: Record<string, string[]>;
   subsOf: Record<string, string[]>;
   active: Set<string>;
+  /** A live line under a node (what it reports while it runs). */
+  captions: Record<string, string>;
+  /** A running team node's report: who works now and on what. */
+  teams: Record<string, TeamProgress>;
+  /** What each finished team node did (its output's `activity`). */
+  activities: Record<string, TeamActivity>;
   running: boolean;
   dimIdle: boolean;
   selectedNodeId?: string;
@@ -188,12 +199,19 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
   const { wf } = data;
   const status = ctx.statuses[id];
   const dimmed = ctx.dimIdle && !status;
+  const caption = ctx.captions[id];
+  const face = useNodeFace(wf.type, wf.parameters);
+  const shown = useShownParameters(wf.type, wf.parameters);
+  // A team node becomes the member at work while it runs, and shows what it did after (team-live.tsx).
+  const teamId = wf.type === 'core.runTeam' && typeof wf.parameters.teamId === 'string' && wf.parameters.teamId ? wf.parameters.teamId : undefined;
+  const live = teamId && ctx.running ? ctx.teams[id] : undefined;
+  const team = useTeamTile(teamId, live, teamId && !live ? ctx.activities[id] : undefined);
   return (
-    <div className={cn('cursor-pointer transition-[opacity,filter] duration-300', dimmed && 'opacity-40 grayscale')} title={dimmed ? 'Did not run in this execution' : undefined}>
+    <div className={cn('relative cursor-pointer transition-[opacity,filter] duration-300', dimmed && 'opacity-40 grayscale')} title={dimmed ? 'Did not run in this execution' : undefined}>
       <NodeTile
         name={wf.name}
         info={ctx.nodeTypes[wf.type]}
-        parameters={wf.parameters}
+        parameters={shown}
         status={status}
         disabled={wf.disabled}
         selected={ctx.selectedNodeId === id}
@@ -201,7 +219,25 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
         connectedOutputs={ctx.outputsOf[id]}
         subConnections={ctx.subsOf[id]}
         readOnly
+        face={face}
+        live={team.tile}
       />
+      {teamId ? (
+        // The team above its node, as in the editor; while it runs, who works now and on what.
+        // Above the duration a finished node shows over its corner.
+        <div className={cn('absolute bottom-full left-1/2 z-10 -translate-x-1/2', ranFor(status) ? 'mb-7' : 'mb-3')}>
+          <TeamStrip teamId={teamId} live={live} moments={team.moments} />
+        </div>
+      ) : caption && (
+        <div
+          data-testid="node-caption"
+          title={caption}
+          // Above the node: below it sit the labels of round nodes and sub-nodes.
+          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 w-max max-w-[180px] -translate-x-1/2 truncate rounded-full border border-hair bg-sf px-2 py-px text-[11px] leading-4 text-t2 shadow-sm animate-fade-up"
+        >
+          {caption}
+        </div>
+      )}
     </div>
   );
 });
@@ -209,7 +245,8 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
 const ExecEdgeView = memo(function ExecEdgeView({ id, source, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<ExecEdge>) {
   const ctx = useContext(CanvasContext)!;
   const isAi = data?.connectionType !== 'main';
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: isAi ? 0.35 : 0.3 });
+  const ends = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition };
+  const [path, labelX, labelY] = edgePath(ends, isAi, useLane(ends, isAi));
   // Items are on the move into a node that is running now (or out of a sub-node being called).
   const flowing = ctx.running && (isAi ? ctx.active.has(source) : ctx.active.has(target) && Boolean(ctx.statuses[source]));
   return (
@@ -231,7 +268,8 @@ const ExecEdgeView = memo(function ExecEdgeView({ id, source, target, sourceX, s
 const ExecProxyEdgeView = memo(function ExecProxyEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<ExecProxyEdge>) {
   const ctx = useContext(CanvasContext)!;
   const isAi = data?.connectionType !== 'main';
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: isAi ? 0.35 : 0.3 });
+  const ends = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition };
+  const [path, labelX, labelY] = edgePath(ends, isAi, useLane(ends, isAi));
   const edgeIds = data?.edgeIds ?? [];
   const count = edgeIds.reduce((sum, edgeId) => sum + (ctx.edgeCounts[edgeId] ?? 0), 0);
   return (
@@ -266,17 +304,42 @@ export interface ExecutionCanvasProps {
   /** A waiting execution: what it waits for (its node is marked waiting, with the reason on hover). */
   wait?: WaitInfo;
   running?: boolean;
+  /** Live lines under running nodes, by node id. */
+  captions?: Record<string, string>;
+  /** Running team nodes' reports, by node id: the strip above the node lights up the member working. */
+  teams?: Record<string, TeamProgress>;
   selectedNodeId?: string;
   onNodeClick?: (nodeId: string) => void;
   className?: string;
 }
 
-function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
+const NO_CAPTIONS: Record<string, string> = {};
+const NO_TEAMS: Record<string, TeamProgress> = {};
+
+const FIT = { padding: 0.22, maxZoom: 1.05 };
+
+/** Fits again when the nodes grow after the first fit (a team node's summary arriving), until the person pans or zooms. */
+function RefitOnGrow({ moved }: { moved: RefObject<boolean> }) {
+  const { fitView } = useReactFlow();
+  const size = useStore((s) => s.nodes.reduce((sum, n) => sum + (n.measured?.width ?? 0) + (n.measured?.height ?? 0), 0));
+  const largest = useRef(0);
+  useEffect(() => {
+    // Only past the largest yet: a live node that shrinks and grows again doesn't jolt the view.
+    if (size <= largest.current || moved.current) return;
+    largest.current = size;
+    const timer = setTimeout(() => void fitView(FIT), 60);
+    return () => clearTimeout(timer);
+  }, [size, fitView, moved]);
+  return null;
+}
+
+function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, captions = NO_CAPTIONS, teams = NO_TEAMS, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
   // Groups expanded or collapsed in this view (by id); the rest show as saved. Reset for another workflow.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   useEffect(() => setOverrides({}), [workflow.id]);
   const toggleGroup = useCallback((id: string, collapsed: boolean) => setOverrides((o) => ({ ...o, [id]: collapsed })), []);
   const collapsedOf = useCallback((id: string, saved: boolean) => overrides[id] ?? saved, [overrides]);
+  const moved = useRef(false);
 
   const flow = useMemo(() => toReadOnlyFlow(workflow), [workflow]);
   const groups = useMemo(() => workflow.groups ?? [], [workflow]);
@@ -325,13 +388,16 @@ function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId
       outputsOf,
       subsOf,
       active: new Set(activeNodeIds),
+      captions,
+      teams,
+      activities: Object.fromEntries(workflow.nodes.flatMap((n) => (n.type === 'core.runTeam' && activityOfRuns(runData[n.id]) ? [[n.id, activityOfRuns(runData[n.id])!]] : []))),
       running,
       dimIdle: !running && Object.keys(runData).length > 0,
       selectedNodeId,
       groupRuns: Object.fromEntries(groups.map((g) => [g.id, summarizeGroupRun(descendantNodeIds(groups, g.id), statuses)])),
       toggleGroup,
     };
-  }, [flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, selectedNodeId, toggleGroup]);
+  }, [flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, captions, teams, selectedNodeId, toggleGroup]);
 
   return (
     <CanvasContext.Provider value={state}>
@@ -348,10 +414,14 @@ function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId
           elementsSelectable={false}
           edgesFocusable={false}
           fitView
-          fitViewOptions={{ padding: 0.22, maxZoom: 1.05 }}
+          fitViewOptions={FIT}
+          onMoveStart={(event) => {
+            if (event) moved.current = true;
+          }}
           minZoom={0.2}
           maxZoom={2}
         >
+          <RefitOnGrow moved={moved} />
           <Controls showInteractive={false} position="bottom-left" />
         </ReactFlow>
       </div>

@@ -18,6 +18,7 @@
     "plugin:ts": "pnpm --filter @landflow/plugin-text-toolkit start",
     "plugin:py": "cd plugins/py-insights && (test -x .venv/bin/python && .venv/bin/python main.py || python3 main.py)",
     "plugin:go": "cd plugins/go-crypto && go run .",
+    "plugin:github": "pnpm --filter @landflow/plugin-github start",
     "plugin:messaging": "pnpm --filter @landflow/plugin-messaging start",
     "plugin:productivity": "cd plugins/productivity && (test -x .venv/bin/python && .venv/bin/python main.py || python3 main.py)",
     "plugin:google": "cd plugins/google-workspace && go run .",

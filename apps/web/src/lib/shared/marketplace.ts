@@ -199,6 +199,8 @@ export interface PluginDetail {
   source: ResolvedSource;
   /** `.claude-plugin/plugin.json` merged with the entry, as read. */
   manifest: Record<string, unknown>;
+  /** The plugin has a `.claude-plugin/plugin.json`: kagent's Claude Code runtime loads only such plugins. */
+  claudeManifest?: boolean;
   agents: ClaudeAgentFile[];
   skills: ClaudeSkillFile[];
   unsupported: UnsupportedComponent[];

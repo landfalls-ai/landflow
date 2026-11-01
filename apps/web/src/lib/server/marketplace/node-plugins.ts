@@ -19,7 +19,7 @@ import type { NodePluginManifest, NodePluginStatus } from '../../shared/marketpl
 import { singleton } from '../singleton';
 import { logger } from '../telemetry';
 import { recordPluginRestart, traceMarketplace } from '../telemetry/marketplace';
-import type { RepoReader } from './reader';
+import type { RepoFile, RepoReader } from './reader';
 
 const MAX_FILES = 500;
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
@@ -52,12 +52,21 @@ function repoRoot(): string | undefined {
   return undefined;
 }
 
-/** Write the plugin's files; paths are checked to stay inside `dir`. */
-export async function downloadPlugin(reader: RepoReader, dir: string): Promise<number> {
+/** The plugin's files, without dependency folders, within the size limits. */
+export async function pluginFiles(reader: RepoReader): Promise<RepoFile[]> {
   const files = (await reader.list()).filter((f) => !SKIP.test(f.path));
   if (files.length > MAX_FILES) throw new Error(`The plugin has ${files.length} files; the limit is ${MAX_FILES}`);
   const total = files.reduce((sum, f) => sum + (f.size ?? 0), 0);
   if (total > MAX_TOTAL_BYTES) throw new Error(`The plugin is ${Math.round(total / 1024 / 1024)} MB; the limit is ${MAX_TOTAL_BYTES / 1024 / 1024} MB`);
+  return files;
+}
+
+/** Read one file of the plugin, within the per-file limit. */
+export const pluginFile = (reader: RepoReader, path: string) => reader.bytes(path, MAX_FILE_BYTES);
+
+/** Write the plugin's files; paths are checked to stay inside `dir`. */
+export async function downloadPlugin(reader: RepoReader, dir: string): Promise<number> {
+  const files = await pluginFiles(reader);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const root = resolve(dir);
@@ -65,7 +74,7 @@ export async function downloadPlugin(reader: RepoReader, dir: string): Promise<n
     const target = resolve(root, file.path);
     if (!target.startsWith(root + sep)) throw new Error(`Path escapes the plugin directory: ${file.path}`);
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, await reader.bytes(file.path, MAX_FILE_BYTES));
+    writeFileSync(target, await pluginFile(reader, file.path));
   }
   return files.length;
 }

@@ -1,0 +1,71 @@
+# One pod with the whole local telemetry backend: grafana/otel-lgtm (OpenTelemetry Collector, Tempo, Prometheus, Loki,
+# Pyroscope and Grafana with the data sources wired to each other). Landflow (host and plugins) and kagent (controller,
+# agent runtimes, Agent Substrate, from the kind cluster through deploy/kind/bridge.yaml) send OTLP to it; Grafana shows
+# a run's trace, its logs and the metrics side by side. For development only: in-memory/emptyDir storage, anonymous editor.
+#
+#   Grafana   http://landflow-lgtm.landflow-dev.svc.cluster.local:3000     (OrbStack resolves cluster names on the Mac)
+#   OTLP      landflow-lgtm:4317 (gRPC), landflow-lgtm:4318 (HTTP)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landflow-lgtm
+  labels: { app.kubernetes.io/name: landflow-lgtm, app.kubernetes.io/part-of: landflow-observability }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: landflow-lgtm }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: landflow-lgtm, app.kubernetes.io/part-of: landflow-observability }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: lgtm
+          image: grafana/otel-lgtm:0.39.0
+          ports:
+            - { name: grafana, containerPort: 3000 }
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+          env:
+            # Local development: anyone who reaches Grafana may explore and edit dashboards, without signing in.
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "true" }
+            - { name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Editor }
+            - { name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH, value: /otel-lgtm/grafana/conf/provisioning/dashboards/landflow/agent-runs.json }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: otelcol, mountPath: /otel-lgtm/otelcol-config.yaml, subPath: otelcol-config.yaml, readOnly: true }
+            - { name: dashboards, mountPath: /otel-lgtm/grafana/conf/provisioning/dashboards/landflow, readOnly: true }
+            - { name: dashboard-provider, mountPath: /otel-lgtm/grafana/conf/provisioning/dashboards/landflow.yaml, subPath: landflow.yaml, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /ready, port: 13133 }
+            periodSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet: { path: /api/health, port: grafana }
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            requests: { cpu: 200m, memory: 768Mi }
+            limits: { memory: 3Gi }
+      volumes:
+        - name: data
+          emptyDir: { sizeLimit: 4Gi }
+        - name: otelcol
+          configMap: { name: landflow-otelcol-config }
+        - name: dashboards
+          configMap: { name: landflow-grafana-dashboards }
+        - name: dashboard-provider
+          configMap: { name: landflow-grafana-dashboard-provider }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-lgtm
+  labels: { app.kubernetes.io/name: landflow-lgtm, app.kubernetes.io/part-of: landflow-observability }
+spec:
+  selector: { app.kubernetes.io/name: landflow-lgtm }
+  ports:
+    - { name: grafana, port: 3000, targetPort: grafana }
+    - { name: otlp-grpc, port: 4317, targetPort: otlp-grpc, appProtocol: grpc }
+    - { name: otlp-http, port: 4318, targetPort: otlp-http }

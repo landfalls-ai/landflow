@@ -1,0 +1,23 @@
+# What Landflow's agents on kagent may reach beyond Landflow and their model (docs/a2a.md, "Network for Claude Code"):
+# kagent's sandboxes have no egress, so a Claude Code agent couldn't install a toolchain or a project's dependencies.
+# This grants the public package registries, for every workload in the kagent namespace; kagent's egress gateway
+# (ate-system/atenet-egress) enforces it by origin.
+#
+#   kubectl --kubeconfig "$KIND_KUBECONFIG" apply -f deploy/kind/egress-dev.yaml    # kagent-up.sh applies it
+apiVersion: api.kagent.dev/v1alpha3
+kind: EgressPolicy
+metadata:
+  name: landflow-dev-packages
+  namespace: kagent
+spec:
+  destinations:
+    # Alpine (the Claude Code harness image): apk add.
+    - origin: https://dl-cdn.alpinelinux.org
+    # Go modules, checksums and toolchains (GOTOOLCHAIN=auto downloads through the proxy).
+    - origin: https://proxy.golang.org
+    - origin: https://sum.golang.org
+    # npm and pnpm.
+    - origin: https://registry.npmjs.org
+    # PyPI: the index and its files.
+    - origin: https://pypi.org
+    - origin: https://files.pythonhosted.org

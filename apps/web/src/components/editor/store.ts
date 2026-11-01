@@ -19,6 +19,7 @@ import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge
 import { nanoid } from 'nanoid';
 import { create } from 'zustand';
 import { defaultParameters, defaultVersionOf, portParameters, withPropertyDefaults } from '@landflow/protocol';
+import type { NodeProgress } from '@/lib/client/node-progress';
 import { edgeCountsOf, statusesOf, waitSummary, withWaiting, type NodeStatus, type WaitInfo } from '@/lib/client/run-data';
 import type { FlowTemplate } from '@/lib/client/templates';
 import type {
@@ -38,7 +39,7 @@ import type {
 } from '@/lib/shared/types';
 import { STICKY_DEFAULT_CONTENT, STICKY_DEFAULT_SIZE } from '../canvas/sticky-note';
 import { preparePaste, remapReferences, selectionOrigin, serializeSelection, type ClipboardData } from './clipboard';
-import { GROUP_NAME_MAX, ancestorsOf, clearSpot, descendantGroupIds, descendantNodeIds, nodeBox, normalizeGroups } from '@/lib/shared/groups';
+import { GROUP_NAME_MAX, NODE_TILE, NODE_WIDE_TILE, ancestorsOf, clearSpot, descendantGroupIds, descendantNodeIds, nodeBox, normalizeGroups } from '@/lib/shared/groups';
 import { autoBind, bindSlot, compositeLookup, compositeOfNode, instantiateComposite, unbindSlot, type CompositeFix, type CompositeTypeInfo } from '@/lib/shared/composites';
 import {
   adoptFrames,
@@ -58,6 +59,11 @@ import {
   type GroupData,
   type GroupFlowNode,
 } from './groups';
+
+/** Tidy up: the space between columns (a square tile's column is 280px, as before). */
+const TIDY_GAP_X = 280 - NODE_TILE;
+/** Tidy up: from one sub-node to the next under their parent, wider than a sub-node's name. */
+const SUBNODE_PITCH = 170;
 
 export type { NodeRunState, NodeStatus } from '@/lib/client/run-data';
 export type { GroupData, GroupFlowNode } from './groups';
@@ -151,6 +157,8 @@ interface EditorState {
   lastAddedId?: string;
 
   running: boolean;
+  /** A run going on without this page's stream (the editor was reloaded mid-run), followed through the live events (follow-run.ts). */
+  following?: string;
   /** The current run was started in debug mode. */
   debugging: boolean;
   paused?: PausedAt;
@@ -173,6 +181,8 @@ interface EditorState {
   runs: Record<string, NodeRun[]>;
   edgeCounts: Record<string, number>;
   flowing: Record<string, number>;
+  /** The latest `node.progress` of each node running now: its caption on the canvas, a team's working member. */
+  progress: Record<string, NodeProgress>;
   log: LogLine[];
   /** Outcome of the run on the canvas, for the logs header. */
   runStatus?: ExecutionState;
@@ -247,6 +257,8 @@ interface EditorState {
   applyEvent(event: ExecutionEvent): void;
   finishRun(): void;
   loadExecution(record: ExecutionRecord, viewing?: boolean): void;
+  /** Show a run that goes on without this page's stream, with the nodes `progress` names as running, and follow it. */
+  attachRun(record: ExecutionRecord, progress?: Record<string, NodeProgress>, viewing?: boolean): void;
   clearRun(): void;
   toWorkflow(): Workflow;
 }
@@ -312,6 +324,7 @@ function toFlow(workflow: Pick<Workflow, 'nodes' | 'connections'>): { nodes: Flo
 
 const emptyRun = {
   running: false,
+  following: undefined,
   debugging: false,
   paused: undefined,
   viewing: undefined,
@@ -323,6 +336,7 @@ const emptyRun = {
   runs: {},
   edgeCounts: {},
   flowing: {},
+  progress: {} as Record<string, NodeProgress>,
   log: [] as LogLine[],
   runStatus: undefined,
   wait: undefined,
@@ -820,30 +834,53 @@ export const useEditor = create<EditorState>((set, get) => {
       for (const e of main) if (e.source === id) visit(e.target, depth + 1, next);
     };
     for (const n of flow) if (!main.some((e) => e.target === n.id)) visit(n.id, 0, new Set());
-    for (const n of flow) column[n.id] ??= 0;
+    // A loop no root leads into starts from its first node.
+    for (const n of flow) if (column[n.id] === undefined) visit(n.id, 0, new Set());
     // Rows: follow parents' order (and output index) so branches don't cross.
     const columns: string[][] = [];
     for (const n of flow) (columns[column[n.id]] ??= []).push(n.id);
+    // A node sits level with its parents (a chain stays on one line), nodes in a column at least a row apart.
     const row: Record<string, number> = {};
     columns.forEach((ids, c) => {
+      const parentsOf = (id: string) => (c === 0 ? [] : main.filter((e) => e.target === id && row[e.source] !== undefined));
       const key = (id: string) => {
-        const parents = main.filter((e) => e.target === id && row[e.source] !== undefined);
-        if (!parents.length || c === 0) return nodes.find((n) => n.id === id)!.position.y;
+        const parents = parentsOf(id);
+        if (!parents.length) return nodes.find((n) => n.id === id)!.position.y;
         return parents.reduce((sum, e) => sum + row[e.source] + parseHandle(e.sourceHandle).index * 0.1, 0) / parents.length;
       };
-      ids.sort((a, b) => key(a) - key(b)).forEach((id, i) => (row[id] = i - (ids.length - 1) / 2));
+      const sorted = ids.sort((a, b) => key(a) - key(b));
+      const placed = sorted.some((id) => parentsOf(id).length);
+      if (!placed) return sorted.forEach((id, i) => (row[id] = i - (ids.length - 1) / 2));
+      // Wanted rows (a node without parents goes under the one before it), pushed apart, then the column shifted back by
+      // the average push so siblings spread evenly around their parent.
+      const wanted = sorted.map((id) => (parentsOf(id).length ? key(id) : undefined));
+      const rows: number[] = [];
+      sorted.forEach((_id, i) => {
+        const want = wanted[i] ?? (i ? rows[i - 1] + 1 : 0);
+        rows.push(i ? Math.max(want, rows[i - 1] + 1) : want);
+      });
+      const shift = rows.reduce((sum, r, i) => sum + r - (wanted[i] ?? r), 0) / rows.length;
+      sorted.forEach((id, i) => (row[id] = Math.round((rows[i] - shift) * 2) / 2));
     });
+    // Columns as wide as their widest node, with room between them for output names, the + and an edge's count: two
+    // agents side by side used to sit 40px apart, their connection squeezed past the outputs' names.
+    const widthOf = (n: FlowNode) => n.measured?.width ?? (nodeTypes[n.data.wf.type]?.descriptor.inputs.some((p) => p.type !== 'main') ? NODE_WIDE_TILE : NODE_TILE);
+    const columnWidth = columns.map((ids) => Math.max(NODE_TILE, ...ids.map((id) => widthOf(nodes.find((n) => n.id === id)!))));
+    const columnX = columnWidth.map((_w, c) => columnWidth.slice(0, c).reduce((x, w) => x + w + TIDY_GAP_X, 0));
     const positions: Record<string, { x: number; y: number }> = {};
     for (const n of flow) {
-      const wide = nodeTypes[n.data.wf.type]?.descriptor.inputs.some((p) => p.type !== 'main');
-      positions[n.id] = { x: column[n.id] * 280 - (wide ? 76 : 0), y: row[n.id] * 170 };
+      const c = column[n.id];
+      // Centred in its column, and square tiles keep the old 280px rhythm.
+      positions[n.id] = { x: columnX[c] + (columnWidth[c] - widthOf(n)) / 2, y: row[n.id] * 170 };
     }
-    // Sub-nodes in a row under their parent.
+    // Sub-nodes in a row centred under their parent, far enough apart for their names (150px under a 64px circle).
     for (const parent of new Set(subEdges.map((e) => e.target))) {
-      const children = subEdges.filter((e) => e.target === parent).map((e) => e.source);
+      const children = [...new Set(subEdges.filter((e) => e.target === parent).map((e) => e.source))];
       const base = positions[parent];
-      if (!base) continue;
-      children.forEach((id, i) => (positions[id] = { x: base.x + 10 + i * 110, y: base.y + 200 }));
+      const node = nodes.find((n) => n.id === parent);
+      if (!base || !node) continue;
+      const left = base.x + widthOf(node) / 2 - ((children.length - 1) * SUBNODE_PITCH + 64) / 2;
+      children.forEach((id, i) => (positions[id] = { x: left + i * SUBNODE_PITCH, y: base.y + 200 }));
     }
     set((s) => {
       const nodes = s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n));
@@ -1192,8 +1229,10 @@ export const useEditor = create<EditorState>((set, get) => {
               edgeCounts[edge.id] = (edgeCounts[edge.id] ?? 0) + 1;
             }
           }
+          const { [event.nodeId]: _done, ...progress } = s.progress;
           return {
             statuses: { ...s.statuses, [event.nodeId]: status },
+            progress,
             runs: { ...s.runs, [event.nodeId]: [...(s.runs[event.nodeId] ?? []), event.run] },
             edgeCounts,
             flowing,
@@ -1216,6 +1255,9 @@ export const useEditor = create<EditorState>((set, get) => {
         });
         break;
       }
+      case 'node.progress':
+        set((s) => ({ progress: { ...s.progress, [event.nodeId]: { ...event, since: s.progress[event.nodeId]?.since ?? event.at } } }));
+        break;
       case 'node.log':
         set((s) => ({ log: [...s.log, line({ kind: 'log', nodeId: event.nodeId, nodeName: s.nodes.find((n) => n.id === event.nodeId)?.data.wf.name, message: `${event.level}: ${event.message}` })] }));
         break;
@@ -1223,6 +1265,7 @@ export const useEditor = create<EditorState>((set, get) => {
         set((s) => ({
           running: false,
           paused: undefined,
+          progress: {},
           runStatus: event.status,
           runDurationMs: event.durationMs,
           // The node it waits at has no finished run yet: mark it, with what it waits for.
@@ -1272,6 +1315,19 @@ export const useEditor = create<EditorState>((set, get) => {
       runDurationMs: record.durationMs,
       viewing: viewing ? { id: record.executionId, status: record.status, startedAt: record.startedAt } : undefined,
     });
+  },
+
+  attachRun(record, progress = {}, viewing = false) {
+    get().loadExecution(record, viewing);
+    const started = Date.parse(record.startedAt);
+    set((s) => ({
+      running: true,
+      following: record.executionId,
+      executionStartedAt: started,
+      serverStartedAt: started,
+      progress,
+      statuses: { ...s.statuses, ...Object.fromEntries(Object.entries(progress).map(([id, p]) => [id, { ...s.statuses[id], state: 'running' as const, startedAt: p.since ?? p.at }])) },
+    }));
   },
 
   clearRun() {

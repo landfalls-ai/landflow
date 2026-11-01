@@ -3,6 +3,7 @@ import type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, Node
 import type { CredentialTypeDescriptor, NodeDescriptor, NodeItem, PluginInfo } from '@landflow/protocol';
 import type { EditLockView } from './auth';
 import type { EvaluationRef } from './evaluations';
+import type { JournalEvent } from './run-trace';
 import type { ExecutionAiUsage } from './ai-usage';
 
 export type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, NodeRun, PauseReason, Transport, Workflow };
@@ -321,7 +322,9 @@ export interface PollStatus {
 export type StreamEvent =
   | { channel: 'registry'; event: RegistryEvent; seq: number; at: string }
   | { channel: 'execution'; workflowId: string; event: ExecutionEvent; seq: number; at: string }
-  | { channel: 'lock'; workflowId: string; lock: EditLockView | null; seq: number; at: string };
+  | { channel: 'lock'; workflowId: string; lock: EditLockView | null; seq: number; at: string }
+  /** New journal entries of an execution (Run Trace); `seq` here is the stream's, each event has its own. */
+  | { channel: 'journal'; workflowId: string; executionId: string; events: JournalEvent[]; seq: number; at: string };
 
 /** A folder in the workflows list (GET /api/folders). Folders nest through `parentId`. */
 export interface Folder {

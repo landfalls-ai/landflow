@@ -34,7 +34,8 @@ let runner: CodeRunner;
 const saved: Record<string, string | undefined> = {};
 
 beforeAll(async () => {
-  runner = await startCodeRunner({ secret: SECRET, port: 0, limits: { timeoutMs: 10_000, cpuSeconds: 5, memoryMb: 128, maxOutputBytes: 1024 * 1024, fileSizeMb: 1 } }, {});
+  // The CPU limit sits far below the wall-clock timeout so a busy loop hits it first even on a loaded machine.
+  runner = await startCodeRunner({ secret: SECRET, port: 0, limits: { timeoutMs: 10_000, cpuSeconds: 1, memoryMb: 128, maxOutputBytes: 1024 * 1024, fileSizeMb: 1 } }, {});
   for (const key of ENV) saved[key] = process.env[key];
   if (!variables.get('REGION')) variables.create({ key: 'REGION', value: 'eu-west-1' });
 });
@@ -139,7 +140,7 @@ describe('Code node in the sandbox', () => {
 
   it('passes the runner’s limits through as errors', async () => {
     const result = await run(codeNode, { mode: 'all', code: 'for (;;) {}' });
-    expect(result.error?.message).toBe('Code used more than 5 s of CPU time');
+    expect(result.error?.message).toBe('Code used more than 1 s of CPU time');
   }, 20_000);
 
   it('explains a wrong secret and an unreachable runner', async () => {

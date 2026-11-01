@@ -146,6 +146,7 @@ not implement `OptionsLoader`. On failure `NewPlugin` panics and lists every pro
 | `PollState()`, `SetPollState(map)`, `IsFirstPoll()` | see [Polling triggers](#polling-triggers) |
 | `ContinueOnFail()`, `ErrorItem(i, err)` | the node is set to continue on error: append `ctx.ErrorItem(i, err)` for a failing item and go on |
 | `BinaryRef(i, name)`, `BinaryBytes(i, name)`, `BinaryReader(i, name)`, `ReadBinary(ref)`, `PrepareBinary(…)` | see [Binary data](#binary-data) |
+| `Artifact(landflow.Artifact{Name, Kind, URL, MimeType, Text, Data})`, `Check(landflow.Check{Name, Status, Message, Subject, Evidence})` | report what the node made (a pull request, a file, a ticket) or checked (`CheckPass`, `CheckFail`, `CheckWarn`, `CheckSkip`) for the run's trace; collected into the response `records` (kept when the node fails) with the time, credential values masked; `Records()` lists them |
 | `IdempotencyKey()` | `<executionId>:<nodeId>:<runIndex>`, the same across retries of this step; pass it to APIs that take an idempotency key (`""` from older hosts) |
 | `Span(name, attrs, fn)`, `StartSpan`, `DBSpan(info, fn)`, `Metrics()` | see [Observability](#observability) |
 | `Context()` | request context carrying the server span, cancelled if the caller disconnects |
@@ -251,6 +252,16 @@ single-line field (literal `\n`) or whose line breaks collapsed into spaces. Enc
 bits are refused with a readable error. `Token(ctx, fresh)` mints through `POST /app/installations/{id}/access_tokens` and caches
 the token until a minute before its `expires_at`; `RS256Sign` signs any payload. Installation discovery (by repository) is left to
 the plugin.
+
+## Delegating nodes
+
+`NodeDescriptor.Delegates` flags a node that hands work to another agent. Used as an agent's tool, the engine adds a required
+`reason` argument to its schema ("why you are asking and what done looks like") and records it in the run's trace. It is
+left out of the descriptor JSON when false:
+
+```go
+Delegates: true,
+```
 
 ## Capabilities and composite types
 

@@ -9,7 +9,8 @@
  */
 import { nanoid } from 'nanoid';
 import { changeParameter, defaultParameters, defaultVersionOf, indexedPorts } from '@landflow/protocol';
-import type { ConnectionType, NodeDescriptor, NodeRun, Workflow, WorkflowConnection, WorkflowNode } from './types';
+import { delegatesOf, replaceWithTeam, turnIntoTeamBlocker } from './turn-into-team';
+import type { ConnectionType, NodeDescriptor, NodeRun, PropertyDescriptor, Workflow, WorkflowConnection, WorkflowNode } from './types';
 
 /**
  * Nodes are referenced by name (what the model sees), by id, or by the `ref`
@@ -34,7 +35,65 @@ export type AssistantOp =
   | { op: 'connect'; from: string; to: string; output?: number; input?: number; type?: ConnectionType }
   | { op: 'disconnect'; from: string; to: string; type?: ConnectionType }
   | { op: 'removeNode'; node: string }
-  | { op: 'renameNode'; node: string; name: string };
+  | { op: 'renameNode'; node: string; name: string }
+  /**
+   * A Run an Agent node with agents attached as tools becomes one Run a Team node (docs/agent-teams.md). The editor saves the
+   * team when the change is applied; the node's team is filled in then.
+   */
+  | { op: 'turnIntoTeam'; node: string }
+  /** A node's run settings (retries, on error, timeout), not its parameters. */
+  | { op: 'setNodeSettings'; node: string; settings: NodeSettingsPatch }
+  /** The workflow's settings: its error workflow, timeout, automatic retries. */
+  | { op: 'setWorkflowSettings'; settings: WorkflowSettingsPatch };
+
+/** The node settings an op may change. */
+export interface NodeSettingsPatch {
+  retryOnFail?: boolean;
+  maxTries?: number;
+  waitBetweenTriesMs?: number;
+  onError?: 'stop' | 'continue';
+  timeoutSeconds?: number;
+  alwaysOutputData?: boolean;
+  disabled?: boolean;
+}
+
+/** The workflow settings an op may change. */
+export interface WorkflowSettingsPatch {
+  errorWorkflowId?: string;
+  timeoutSeconds?: number;
+  retryMaxAttempts?: number;
+  retryBaseDelaySeconds?: number;
+}
+
+const NODE_SETTINGS: Record<keyof NodeSettingsPatch, 'boolean' | 'number' | 'onError'> = {
+  retryOnFail: 'boolean',
+  maxTries: 'number',
+  waitBetweenTriesMs: 'number',
+  onError: 'onError',
+  timeoutSeconds: 'number',
+  alwaysOutputData: 'boolean',
+  disabled: 'boolean',
+};
+const WORKFLOW_SETTINGS: Record<keyof WorkflowSettingsPatch, 'string' | 'number'> = {
+  errorWorkflowId: 'string',
+  timeoutSeconds: 'number',
+  retryMaxAttempts: 'number',
+  retryBaseDelaySeconds: 'number',
+};
+
+/** The settings of `raw` that `allowed` names, with the right types; undefined when none is left. */
+function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError'>): T | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const kind = allowed[key];
+    if (kind === 'boolean' && typeof value === 'boolean') out[key] = value;
+    else if (kind === 'number' && typeof value === 'number' && Number.isFinite(value) && value >= 0) out[key] = value;
+    else if (kind === 'string' && typeof value === 'string' && value.trim()) out[key] = value.trim();
+    else if (kind === 'onError' && (value === 'stop' || value === 'continue')) out[key] = value;
+  }
+  return Object.keys(out).length ? (out as T) : undefined;
+}
 
 export type OpKind = AssistantOp['op'];
 
@@ -87,6 +146,8 @@ function parseOp(o: Record<string, unknown> | undefined): AssistantOp | undefine
   const from = text(o.from) ?? text(o.source);
   const to = text(o.to) ?? text(o.target);
   const node = text(o.node) ?? text(o.nodeName);
+  // Only renameNode gives `name` a meaning of its own (the new name); elsewhere a model's `name` is the node it means.
+  const subject = node ?? text(o.name);
   switch (text(o.op) ?? text(o.action)) {
     case 'addNode': {
       const type = text(o.type) ?? text(o.nodeType);
@@ -103,7 +164,7 @@ function parseOp(o: Record<string, unknown> | undefined): AssistantOp | undefine
       };
     }
     case 'setParameters':
-      return node && record(o.parameters) ? { op: 'setParameters', node, parameters: record(o.parameters)! } : undefined;
+      return subject && record(o.parameters) ? { op: 'setParameters', node: subject, parameters: record(o.parameters)! } : undefined;
     case 'connect':
       return from && to
         ? {
@@ -118,10 +179,20 @@ function parseOp(o: Record<string, unknown> | undefined): AssistantOp | undefine
     case 'disconnect':
       return from && to ? { op: 'disconnect', from, to, ...(connectionType(o.type) && { type: connectionType(o.type) }) } : undefined;
     case 'removeNode':
-      return node ? { op: 'removeNode', node } : undefined;
+      return subject ? { op: 'removeNode', node: subject } : undefined;
     case 'renameNode': {
       const name = text(o.name) ?? text(o.newName);
       return node && name ? { op: 'renameNode', node, name } : undefined;
+    }
+    case 'turnIntoTeam':
+      return node ? { op: 'turnIntoTeam', node } : undefined;
+    case 'setNodeSettings': {
+      const settings = settingsOf<NodeSettingsPatch>(o.settings, NODE_SETTINGS);
+      return node && settings ? { op: 'setNodeSettings', node, settings } : undefined;
+    }
+    case 'setWorkflowSettings': {
+      const settings = settingsOf<WorkflowSettingsPatch>(o.settings, WORKFLOW_SETTINGS);
+      return settings ? { op: 'setWorkflowSettings', settings } : undefined;
     }
     default:
       return undefined;
@@ -151,6 +222,35 @@ function renameReferences(value: unknown, from: string, to: string): unknown {
   if (Array.isArray(value)) return value.map((v) => renameReferences(v, from, to));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, renameReferences(v, from, to)]));
   return value;
+}
+
+/**
+ * Numbers outside a field's range, top level or in a collection, taken out of the patch with a reason: a model that
+ * reads "30 minute timeout" for a field in milliseconds sets 30, which the editor would refuse.
+ */
+function outOfRange(properties: PropertyDescriptor[], patch: Record<string, unknown>, nodeName: string) {
+  const notes: string[] = [];
+  const check = (prop: PropertyDescriptor | undefined, value: unknown) => {
+    const n = typeof value === 'string' && value.trim() && !value.includes('{{') ? Number(value) : value;
+    if (prop?.type !== 'number' || typeof n !== 'number' || Number.isNaN(n)) return true;
+    const { minValue, maxValue } = prop.typeOptions ?? {};
+    const bound = minValue !== undefined && n < minValue ? `under its minimum of ${minValue}` : maxValue !== undefined && n > maxValue ? `over its maximum of ${maxValue}` : undefined;
+    if (bound) notes.push(`“${prop.displayName}” of “${nodeName}”: ${n} is ${bound}`);
+    return !bound;
+  };
+  const kept = Object.fromEntries(
+    Object.entries(patch).flatMap(([key, value]): Array<[string, unknown]> => {
+      const props = properties.filter((p) => p.name === key);
+      const collection = props.find((p) => p.type === 'collection');
+      if (collection && value && typeof value === 'object' && !Array.isArray(value)) {
+        const inner = Object.entries(value).filter(([k, v]) => check(collection.values?.find((p) => p.name === k), v));
+        // A collection left with nothing would replace the node's own values.
+        return inner.length || !Object.keys(value).length ? [[key, Object.fromEntries(inner)]] : [];
+      }
+      return check(props.find((p) => p.type === 'number'), value) ? [[key, value]] : [];
+    }),
+  );
+  return { patch: kept, notes };
 }
 
 /** Set parameters the way the editor does (dependent fields reset, defaults filled), in declaration order. */
@@ -372,7 +472,9 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         }
         const id = `n_${newId()}`;
         const name = uniqueName(op.name ?? descriptor.displayName, wf.nodes);
-        const merged = mergeParameters(descriptor, defaultParameters(descriptor), op.parameters ?? {});
+        const ranged = outOfRange(descriptor.properties, op.parameters ?? {}, name);
+        dropped.push(...ranged.notes);
+        const merged = mergeParameters(descriptor, defaultParameters(descriptor), ranged.patch);
         ignored.push(...merged.ignored.map((key) => `“${name}” has no parameter “${key}”`));
         const node: WorkflowNode = { id, name, type: op.type, typeVersion: defaultVersionOf(descriptor), position: [0, 0], parameters: merged.parameters };
         let next: Workflow = { ...wf, nodes: [...wf.nodes, node] };
@@ -400,7 +502,7 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         wf = next;
         refs.set(ref, id);
         added.push(id);
-        const parameters = Object.fromEntries(merged.applied.map((key) => [key, op.parameters![key]]));
+        const parameters = Object.fromEntries(merged.applied.map((key) => [key, ranged.patch[key]]));
         applied.push({
           op: 'addNode',
           ref,
@@ -425,14 +527,17 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
           dropped.push(`set parameters of “${node.name}”: unknown node type ${node.type}`);
           break;
         }
-        const merged = mergeParameters(descriptor, node.parameters, op.parameters);
+        const ranged = outOfRange(descriptor.properties, op.parameters, node.name);
+        dropped.push(...ranged.notes);
+        const merged = mergeParameters(descriptor, node.parameters, ranged.patch);
         ignored.push(...merged.ignored.map((key) => `“${node.name}” has no parameter “${key}”`));
         if (!merged.applied.length) {
+          if (ranged.notes.length) break;
           dropped.push(`set parameters of “${node.name}”: none of ${Object.keys(op.parameters).join(', ') || 'them'} exist`);
           break;
         }
         wf = { ...wf, nodes: wf.nodes.map((n) => (n.id === node.id ? { ...n, parameters: merged.parameters } : n)) };
-        applied.push({ op: 'setParameters', node: handle(node), parameters: Object.fromEntries(merged.applied.map((key) => [key, op.parameters[key]])) });
+        applied.push({ op: 'setParameters', node: handle(node), parameters: Object.fromEntries(merged.applied.map((key) => [key, ranged.patch[key]])) });
         break;
       }
 
@@ -528,6 +633,46 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         applied.push({ op: 'renameNode', node: applyAs, name: op.name });
         break;
       }
+
+      case 'turnIntoTeam': {
+        const node = find(op.node);
+        if (!node) {
+          dropped.push(`turn into a team: no node “${op.node}”`);
+          break;
+        }
+        const blocker = turnIntoTeamBlocker(wf, node.id);
+        if (blocker) {
+          dropped.push(`turn “${node.name}” into a team: ${blocker}`);
+          break;
+        }
+        // The team gets its id when the editor saves it; until then the node stands for it.
+        wf = replaceWithTeam(wf, node.id, delegatesOf(wf, node.id).map((n) => n.id), { id: '', name: `${node.name} team` });
+        applied.push({ op: 'turnIntoTeam', node: handle(node) });
+        break;
+      }
+
+      case 'setNodeSettings': {
+        const node = find(op.node);
+        const settings = settingsOf<NodeSettingsPatch>(op.settings, NODE_SETTINGS);
+        if (!node || !settings) {
+          dropped.push(node ? `settings of “${node.name}”: nothing to change` : `settings: no node “${op.node}”`);
+          break;
+        }
+        wf = { ...wf, nodes: wf.nodes.map((n) => (n.id === node.id ? { ...n, ...settings } : n)) };
+        applied.push({ op: 'setNodeSettings', node: handle(node), settings });
+        break;
+      }
+
+      case 'setWorkflowSettings': {
+        const settings = settingsOf<WorkflowSettingsPatch>(op.settings, WORKFLOW_SETTINGS);
+        if (!settings) {
+          dropped.push('workflow settings: nothing to change');
+          break;
+        }
+        wf = { ...wf, settings: { ...(wf.settings ?? {}), ...settings } };
+        applied.push({ op: 'setWorkflowSettings', settings });
+        break;
+      }
     }
   }
 
@@ -537,6 +682,22 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
     wf = target ? makeRoom(wf, id, target) : { ...wf, nodes: wf.nodes.map((n) => (n.id === id ? { ...n, position: placeAdded(wf, lookup, id) } : n)) };
   }
   return { workflow: wf, applied, dropped, ignored, added };
+}
+
+/** The ids reachable from `id` along main connections (a node in a loop reaches itself). */
+function downstream(workflow: Workflow, id: string): Set<string> {
+  const seen = new Set<string>();
+  const queue = [id];
+  while (queue.length) {
+    const current = queue.pop()!;
+    for (const c of workflow.connections) {
+      if (c.source === current && c.type === 'main' && !seen.has(c.target)) {
+        seen.add(c.target);
+        queue.push(c.target);
+      }
+    }
+  }
+  return seen;
 }
 
 /**
@@ -556,7 +717,9 @@ export function structuralWarnings(before: Workflow, after: Workflow, lookup: De
     if (existed.has(node.id)) {
       if (fed(before, node.id) && !fed(after, node.id)) warnings.push(`“${node.name}” no longer receives any input`);
       const now = inputs(after, node.id);
-      if (now.length > 1 && now.length > inputs(before, node.id).length && descriptor.inputs.filter((p) => p.type === 'main').length === 1) {
+      // An edge back from something downstream closes a loop (docs/assistant.md): a second input by design.
+      const closesLoop = now.filter((c) => !before.connections.some((b) => b.id === c.id)).every((c) => downstream(after, node.id).has(c.source));
+      if (now.length > 1 && now.length > inputs(before, node.id).length && !closesLoop && descriptor.inputs.filter((p) => p.type === 'main').length === 1) {
         warnings.push(`“${node.name}” now gets input from both ${now.map((c) => `“${name(c.source)}”`).join(' and ')}`);
       }
       continue;
@@ -623,6 +786,12 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
       case 'renameNode':
         names.set(op.name, op.name);
         return { sign: '✎', text: `“${name(op.node)}” → “${op.name}”` };
+      case 'turnIntoTeam':
+        return { sign: '~', text: `“${name(op.node)}” and the agents under it become a team (one Run a Team node)` };
+      case 'setNodeSettings':
+        return { sign: '~', text: `“${name(op.node)}” settings: ${Object.entries(op.settings).map(([key, value]) => `${key} = ${preview(value)}`).join(', ')}` };
+      case 'setWorkflowSettings':
+        return { sign: '~', text: `workflow settings: ${Object.entries(op.settings).map(([key, value]) => `${key} = ${preview(value)}`).join(', ')}` };
     }
   });
 }

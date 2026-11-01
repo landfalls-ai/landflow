@@ -4,12 +4,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Bot, Loader2, RotateCcw, SendHorizontal, Square, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '../ui/badge';
+import { AgentAvatar, type AvatarSource } from './avatar';
 import { TimelineView, TraceChip, type ToolEntry } from './timeline';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
 
 export function TestChat({
   agentId,
   agentName,
+  look,
   onClose,
   beforeSend,
   childHref,
@@ -17,6 +19,8 @@ export function TestChat({
 }: {
   agentId: string;
   agentName: string;
+  /** The agent's avatar, shown when the chat is empty. */
+  look?: AvatarSource;
   onClose: () => void;
   /** Saves the draft first, so the run uses what's on screen. */
   beforeSend: () => Promise<void>;
@@ -105,9 +109,13 @@ export function TestChat({
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {run.entries.length === 0 && (
           <div className="mt-8 animate-fade-up text-center">
-            <div className="mx-auto mb-3 grid size-10 place-items-center rounded-full border border-acbd bg-acdim">
-              <Bot className="size-5 text-ac" strokeWidth={1.6} />
-            </div>
+            {look ? (
+              <AgentAvatar agent={look} size={56} round className="mx-auto mb-3" />
+            ) : (
+              <div className="mx-auto mb-3 grid size-10 place-items-center rounded-full border border-acbd bg-acdim">
+                <Bot className="size-5 text-ac" strokeWidth={1.6} />
+              </div>
+            )}
             <div className="text-[15px] font-semibold text-t1">Talk to {agentName || 'your agent'}</div>
             <div className="mx-auto mt-1 max-w-[270px] text-[13px] text-t2">
               Messages run the current draft. Tool calls show up here as they happen, and the conversation is saved under Sessions.

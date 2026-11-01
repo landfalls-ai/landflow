@@ -1,0 +1,43 @@
+# What Landflow may do in the landflow-kagent kind cluster (docs/a2a.md, "Landflow agents on kagent"): write the resources of
+# the agents it deploys, in the kagent namespace only. deploy/scripts/kagent-up.sh puts this ServiceAccount's token in a
+# Landflow credential of type "kagent cluster" (core.kagentApi).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: landflow
+  namespace: kagent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: landflow-agents
+  namespace: kagent
+rules:
+  - apiGroups: [api.kagent.dev]
+    resources: [agents, agenttemplates, modelconfigs, remotemcpservers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Harnesses to run on, and EgressPolicies an agent may reference (what its sandbox reaches; written by hand or kagent-up.sh).
+  - apiGroups: [api.kagent.dev]
+    resources: [harnesses, egresspolicies]
+    verbs: [get, list]
+  # The token kagent calls an agent's tools with, and a model's API key.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: landflow-agents
+  namespace: kagent
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: landflow-agents }
+subjects: [{ kind: ServiceAccount, name: landflow, namespace: kagent }]
+---
+# A long-lived token for the ServiceAccount (local development: rerun kagent-up.sh to rotate it).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: landflow-token
+  namespace: kagent
+  annotations: { kubernetes.io/service-account.name: landflow }
+type: kubernetes.io/service-account-token

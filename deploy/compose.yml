@@ -1,4 +1,4 @@
-# Landflow packaged as images: the host plus the seven plugins, each announcing itself to the
+# Landflow packaged as images: the host plus the eight plugins, each announcing itself to the
 # host's registry by its service name, and the sandboxed code runner the Code node uses.
 #
 #   docker compose -f deploy/compose.yml up -d --build --wait     # http://localhost:53000
@@ -65,8 +65,8 @@ services:
       LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
       # Plugins announce themselves; the scan (at boot and the Plugins page's "Scan network")
       # probes the plugin services instead of the container's own 127.0.0.1.
-      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases
-      LANDFLOW_SCAN_PORTS: 7101-7107,7201-7207
+      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github
+      LANDFLOW_SCAN_PORTS: 7101-7107,7111,7201-7207,7211
       # Base of links the host hands out (resume URLs, error-workflow links): the published port.
       LANDFLOW_PUBLIC_URL: http://localhost:${LANDFLOW_HOST_PORT:-53000}
       # Where plugins fetch and upload item files (/api/binary): the host on the compose network.
@@ -218,6 +218,17 @@ services:
     environment:
       <<: *plugin-env
       LANDFLOW_ADVERTISE_HOST: databases
+
+  github:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-github:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: github, HTTP_PORT: "7111", GRPC_PORT: "7211" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: github
 
   # Sandboxed Code node runner (services/code-runner): every JavaScript or Python snippet runs in a fresh child
   # process. The container is the security boundary: it joins only the internal `code` network (no route out; the

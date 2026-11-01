@@ -150,11 +150,12 @@ export function Section({
     <section className={cn('rounded-2xl border border-hair bg-sf animate-fade-up', className)}>
       <div className="flex flex-wrap items-start gap-3 px-4 pb-3 pt-3.5">
         <span className="grid size-8 shrink-0 place-items-center rounded-[10px] border border-hair bg-wl text-t2">{icon}</span>
-        <div className="min-w-0 flex-1">
+        {/* The title keeps room for its description: wide actions wrap under it instead. */}
+        <div className="min-w-[min(100%,220px)] flex-1">
           <h2 className="text-[14px] font-semibold text-t1">{title}</h2>
           {description && <p className="text-[12px] leading-snug text-t3">{description}</p>}
         </div>
-        {actions && <div className="flex shrink-0 flex-wrap items-center gap-1.5">{actions}</div>}
+        {actions && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">{actions}</div>}
       </div>
       {children && <div className="border-t border-hair px-4 py-3.5">{children}</div>}
     </section>

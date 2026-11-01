@@ -1,0 +1,99 @@
+# The OpenTelemetry Collector inside grafana/otel-lgtm (contrib build), mounted over the image's /otel-lgtm/otelcol-config.yaml.
+# The image's own pipelines (traces → Tempo, metrics → Prometheus, logs → Loki, profiles → Pyroscope), plus two steps from
+# kagent's observability guide (kagent.dev/docs/kagent/1.x/observability/lightweight-otel-stack):
+#   - transform/harness_native_genai drops the duplicate GenAI usage attributes the native claude/codex harness processes add;
+#   - signal_to_metrics derives gen_ai.invoke_agent.duration from kagent's invoke_agent spans (its runtime doesn't record it),
+#     and delta_to_cumulative turns those delta histograms into the cumulative ones Prometheus takes.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  prometheus/collector:
+    config:
+      scrape_configs:
+        - job_name: opentelemetry-collector
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["127.0.0.1:8888"]
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+    path: /ready
+
+processors:
+  batch: {}
+  delta_to_cumulative: {}
+  transform/harness_native_genai:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        conditions:
+          - resource.attributes["kagent.genai.producer"] == "runtime" and not span.attributes["llm_request.context"] == "standalone"
+        statements:
+          - delete_matching_keys(span.attributes, "^gen_ai\\.(operation\\.name|system|request\\.model|response\\.finish_reasons|usage\\..*)$")
+
+connectors:
+  signal_to_metrics:
+    spans:
+      - name: gen_ai.invoke_agent.duration
+        description: The duration of one kagent agent invocation, derived from its span.
+        unit: s
+        conditions:
+          - span.attributes["gen_ai.operation.name"] == "invoke_agent" and resource.attributes["service.namespace"] != "landflow" and instrumentation_scope.name != "github.com/kagent-dev/kagent/go/adk/pkg/a2a/server" and instrumentation_scope.name != "kagent.core.a2a"
+        histogram:
+          buckets: [0.5, 1, 2, 5, 10, 30, 60, 120, 300]
+          value: Seconds(span.end_time - span.start_time)
+        attributes:
+          - key: gen_ai.agent.name
+            optional: true
+          - key: gen_ai.request.model
+            optional: true
+          - key: error.type
+            optional: true
+        include_resource_attributes:
+          - key: service.name
+          - key: kagent.runtime
+            optional: true
+          - key: gen_ai.main_agent.id
+            optional: true
+
+exporters:
+  otlp_http/metrics:
+    endpoint: http://127.0.0.1:9090/api/v1/otlp
+    tls:
+      insecure: true
+  otlp_http/traces:
+    endpoint: http://127.0.0.1:4418
+    tls:
+      insecure: true
+  otlp_http/logs:
+    endpoint: http://127.0.0.1:3100/otlp
+    tls:
+      insecure: true
+  otlp_grpc/profiles:
+    endpoint: http://127.0.0.1:4040
+    tls:
+      insecure: true
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [transform/harness_native_genai, batch]
+      exporters: [signal_to_metrics, otlp_http/traces]
+    metrics:
+      receivers: [otlp, prometheus/collector, signal_to_metrics]
+      processors: [delta_to_cumulative, batch]
+      exporters: [otlp_http/metrics]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/logs]
+    profiles:
+      receivers: [otlp]
+      exporters: [otlp_grpc/profiles]

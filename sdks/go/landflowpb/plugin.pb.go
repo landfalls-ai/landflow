@@ -875,6 +875,7 @@ type ExecuteResponse struct {
 	Logs          []*LogEntry            `protobuf:"bytes,2,rep,name=logs,proto3" json:"logs,omitempty"`
 	Error         *NodeError             `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`                          // set when the node failed as a whole
 	PollState     *DynamicValue          `protobuf:"bytes,4,opt,name=poll_state,json=pollState,proto3" json:"poll_state,omitempty"` // poll triggers: state for the next poll
+	Records       []*DynamicValue        `protobuf:"bytes,5,rep,name=records,proto3" json:"records,omitempty"`                      // each: a NodeRecord JSON object (artifact or check, docs/protocol.md)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -933,6 +934,13 @@ func (x *ExecuteResponse) GetError() *NodeError {
 func (x *ExecuteResponse) GetPollState() *DynamicValue {
 	if x != nil {
 		return x.PollState
+	}
+	return nil
+}
+
+func (x *ExecuteResponse) GetRecords() []*DynamicValue {
+	if x != nil {
+		return x.Records
 	}
 	return nil
 }
@@ -2066,13 +2074,14 @@ const file_landflow_plugin_v1_plugin_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x1d\n" +
 	"\n" +
-	"item_index\x18\x03 \x01(\x05R\titemIndex\"\xef\x01\n" +
+	"item_index\x18\x03 \x01(\x05R\titemIndex\"\xab\x02\n" +
 	"\x0fExecuteResponse\x124\n" +
 	"\aoutputs\x18\x01 \x03(\v2\x1a.landflow.plugin.v1.BranchR\aoutputs\x120\n" +
 	"\x04logs\x18\x02 \x03(\v2\x1c.landflow.plugin.v1.LogEntryR\x04logs\x123\n" +
 	"\x05error\x18\x03 \x01(\v2\x1d.landflow.plugin.v1.NodeErrorR\x05error\x12?\n" +
 	"\n" +
-	"poll_state\x18\x04 \x01(\v2 .landflow.plugin.v1.DynamicValueR\tpollState\"\xcf\x01\n" +
+	"poll_state\x18\x04 \x01(\v2 .landflow.plugin.v1.DynamicValueR\tpollState\x12:\n" +
+	"\arecords\x18\x05 \x03(\v2 .landflow.plugin.v1.DynamicValueR\arecords\"\xcf\x01\n" +
 	"\x12LoadOptionsRequest\x12\x1b\n" +
 	"\tnode_type\x18\x01 \x01(\tR\bnodeType\x12\x16\n" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12@\n" +
@@ -2253,53 +2262,54 @@ var file_landflow_plugin_v1_plugin_proto_depIdxs = []int32{
 	10, // 16: landflow.plugin.v1.ExecuteResponse.logs:type_name -> landflow.plugin.v1.LogEntry
 	11, // 17: landflow.plugin.v1.ExecuteResponse.error:type_name -> landflow.plugin.v1.NodeError
 	0,  // 18: landflow.plugin.v1.ExecuteResponse.poll_state:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 19: landflow.plugin.v1.LoadOptionsRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 20: landflow.plugin.v1.LoadOptionsRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 21: landflow.plugin.v1.LoadOptionsResponse.options:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 22: landflow.plugin.v1.TestCredentialsRequest.data:type_name -> landflow.plugin.v1.DynamicValue
-	4,  // 23: landflow.plugin.v1.WebhookMethodRequest.node:type_name -> landflow.plugin.v1.NodeRef
-	0,  // 24: landflow.plugin.v1.WebhookMethodRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 25: landflow.plugin.v1.WebhookMethodRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 26: landflow.plugin.v1.WebhookMethodRequest.static_data:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 27: landflow.plugin.v1.WebhookMethodResponse.static_data:type_name -> landflow.plugin.v1.DynamicValue
-	10, // 28: landflow.plugin.v1.WebhookMethodResponse.logs:type_name -> landflow.plugin.v1.LogEntry
-	11, // 29: landflow.plugin.v1.WebhookMethodResponse.error:type_name -> landflow.plugin.v1.NodeError
-	29, // 30: landflow.plugin.v1.IncomingWebhookRequest.headers:type_name -> landflow.plugin.v1.IncomingWebhookRequest.HeadersEntry
-	30, // 31: landflow.plugin.v1.IncomingWebhookRequest.query:type_name -> landflow.plugin.v1.IncomingWebhookRequest.QueryEntry
-	4,  // 32: landflow.plugin.v1.ReceiveWebhookRequest.node:type_name -> landflow.plugin.v1.NodeRef
-	0,  // 33: landflow.plugin.v1.ReceiveWebhookRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 34: landflow.plugin.v1.ReceiveWebhookRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
-	0,  // 35: landflow.plugin.v1.ReceiveWebhookRequest.static_data:type_name -> landflow.plugin.v1.DynamicValue
-	19, // 36: landflow.plugin.v1.ReceiveWebhookRequest.request:type_name -> landflow.plugin.v1.IncomingWebhookRequest
-	31, // 37: landflow.plugin.v1.WebhookReply.headers:type_name -> landflow.plugin.v1.WebhookReply.HeadersEntry
-	6,  // 38: landflow.plugin.v1.ReceiveWebhookResponse.items:type_name -> landflow.plugin.v1.Item
-	21, // 39: landflow.plugin.v1.ReceiveWebhookResponse.response:type_name -> landflow.plugin.v1.WebhookReply
-	0,  // 40: landflow.plugin.v1.ReceiveWebhookResponse.static_data:type_name -> landflow.plugin.v1.DynamicValue
-	10, // 41: landflow.plugin.v1.ReceiveWebhookResponse.logs:type_name -> landflow.plugin.v1.LogEntry
-	11, // 42: landflow.plugin.v1.ReceiveWebhookResponse.error:type_name -> landflow.plugin.v1.NodeError
-	2,  // 43: landflow.plugin.v1.PluginService.GetManifest:input_type -> landflow.plugin.v1.GetManifestRequest
-	9,  // 44: landflow.plugin.v1.PluginService.Execute:input_type -> landflow.plugin.v1.ExecuteRequest
-	13, // 45: landflow.plugin.v1.PluginService.LoadOptions:input_type -> landflow.plugin.v1.LoadOptionsRequest
-	23, // 46: landflow.plugin.v1.PluginService.Health:input_type -> landflow.plugin.v1.HealthRequest
-	15, // 47: landflow.plugin.v1.PluginService.TestCredentials:input_type -> landflow.plugin.v1.TestCredentialsRequest
-	17, // 48: landflow.plugin.v1.PluginService.WebhookMethod:input_type -> landflow.plugin.v1.WebhookMethodRequest
-	20, // 49: landflow.plugin.v1.PluginService.ReceiveWebhook:input_type -> landflow.plugin.v1.ReceiveWebhookRequest
-	25, // 50: landflow.plugin.v1.RegistryService.Announce:input_type -> landflow.plugin.v1.AnnounceRequest
-	27, // 51: landflow.plugin.v1.RegistryService.Withdraw:input_type -> landflow.plugin.v1.WithdrawRequest
-	3,  // 52: landflow.plugin.v1.PluginService.GetManifest:output_type -> landflow.plugin.v1.GetManifestResponse
-	12, // 53: landflow.plugin.v1.PluginService.Execute:output_type -> landflow.plugin.v1.ExecuteResponse
-	14, // 54: landflow.plugin.v1.PluginService.LoadOptions:output_type -> landflow.plugin.v1.LoadOptionsResponse
-	24, // 55: landflow.plugin.v1.PluginService.Health:output_type -> landflow.plugin.v1.HealthResponse
-	16, // 56: landflow.plugin.v1.PluginService.TestCredentials:output_type -> landflow.plugin.v1.TestCredentialsResponse
-	18, // 57: landflow.plugin.v1.PluginService.WebhookMethod:output_type -> landflow.plugin.v1.WebhookMethodResponse
-	22, // 58: landflow.plugin.v1.PluginService.ReceiveWebhook:output_type -> landflow.plugin.v1.ReceiveWebhookResponse
-	26, // 59: landflow.plugin.v1.RegistryService.Announce:output_type -> landflow.plugin.v1.AnnounceResponse
-	28, // 60: landflow.plugin.v1.RegistryService.Withdraw:output_type -> landflow.plugin.v1.WithdrawResponse
-	52, // [52:61] is the sub-list for method output_type
-	43, // [43:52] is the sub-list for method input_type
-	43, // [43:43] is the sub-list for extension type_name
-	43, // [43:43] is the sub-list for extension extendee
-	0,  // [0:43] is the sub-list for field type_name
+	0,  // 19: landflow.plugin.v1.ExecuteResponse.records:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 20: landflow.plugin.v1.LoadOptionsRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 21: landflow.plugin.v1.LoadOptionsRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 22: landflow.plugin.v1.LoadOptionsResponse.options:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 23: landflow.plugin.v1.TestCredentialsRequest.data:type_name -> landflow.plugin.v1.DynamicValue
+	4,  // 24: landflow.plugin.v1.WebhookMethodRequest.node:type_name -> landflow.plugin.v1.NodeRef
+	0,  // 25: landflow.plugin.v1.WebhookMethodRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 26: landflow.plugin.v1.WebhookMethodRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 27: landflow.plugin.v1.WebhookMethodRequest.static_data:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 28: landflow.plugin.v1.WebhookMethodResponse.static_data:type_name -> landflow.plugin.v1.DynamicValue
+	10, // 29: landflow.plugin.v1.WebhookMethodResponse.logs:type_name -> landflow.plugin.v1.LogEntry
+	11, // 30: landflow.plugin.v1.WebhookMethodResponse.error:type_name -> landflow.plugin.v1.NodeError
+	29, // 31: landflow.plugin.v1.IncomingWebhookRequest.headers:type_name -> landflow.plugin.v1.IncomingWebhookRequest.HeadersEntry
+	30, // 32: landflow.plugin.v1.IncomingWebhookRequest.query:type_name -> landflow.plugin.v1.IncomingWebhookRequest.QueryEntry
+	4,  // 33: landflow.plugin.v1.ReceiveWebhookRequest.node:type_name -> landflow.plugin.v1.NodeRef
+	0,  // 34: landflow.plugin.v1.ReceiveWebhookRequest.parameters:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 35: landflow.plugin.v1.ReceiveWebhookRequest.credentials:type_name -> landflow.plugin.v1.DynamicValue
+	0,  // 36: landflow.plugin.v1.ReceiveWebhookRequest.static_data:type_name -> landflow.plugin.v1.DynamicValue
+	19, // 37: landflow.plugin.v1.ReceiveWebhookRequest.request:type_name -> landflow.plugin.v1.IncomingWebhookRequest
+	31, // 38: landflow.plugin.v1.WebhookReply.headers:type_name -> landflow.plugin.v1.WebhookReply.HeadersEntry
+	6,  // 39: landflow.plugin.v1.ReceiveWebhookResponse.items:type_name -> landflow.plugin.v1.Item
+	21, // 40: landflow.plugin.v1.ReceiveWebhookResponse.response:type_name -> landflow.plugin.v1.WebhookReply
+	0,  // 41: landflow.plugin.v1.ReceiveWebhookResponse.static_data:type_name -> landflow.plugin.v1.DynamicValue
+	10, // 42: landflow.plugin.v1.ReceiveWebhookResponse.logs:type_name -> landflow.plugin.v1.LogEntry
+	11, // 43: landflow.plugin.v1.ReceiveWebhookResponse.error:type_name -> landflow.plugin.v1.NodeError
+	2,  // 44: landflow.plugin.v1.PluginService.GetManifest:input_type -> landflow.plugin.v1.GetManifestRequest
+	9,  // 45: landflow.plugin.v1.PluginService.Execute:input_type -> landflow.plugin.v1.ExecuteRequest
+	13, // 46: landflow.plugin.v1.PluginService.LoadOptions:input_type -> landflow.plugin.v1.LoadOptionsRequest
+	23, // 47: landflow.plugin.v1.PluginService.Health:input_type -> landflow.plugin.v1.HealthRequest
+	15, // 48: landflow.plugin.v1.PluginService.TestCredentials:input_type -> landflow.plugin.v1.TestCredentialsRequest
+	17, // 49: landflow.plugin.v1.PluginService.WebhookMethod:input_type -> landflow.plugin.v1.WebhookMethodRequest
+	20, // 50: landflow.plugin.v1.PluginService.ReceiveWebhook:input_type -> landflow.plugin.v1.ReceiveWebhookRequest
+	25, // 51: landflow.plugin.v1.RegistryService.Announce:input_type -> landflow.plugin.v1.AnnounceRequest
+	27, // 52: landflow.plugin.v1.RegistryService.Withdraw:input_type -> landflow.plugin.v1.WithdrawRequest
+	3,  // 53: landflow.plugin.v1.PluginService.GetManifest:output_type -> landflow.plugin.v1.GetManifestResponse
+	12, // 54: landflow.plugin.v1.PluginService.Execute:output_type -> landflow.plugin.v1.ExecuteResponse
+	14, // 55: landflow.plugin.v1.PluginService.LoadOptions:output_type -> landflow.plugin.v1.LoadOptionsResponse
+	24, // 56: landflow.plugin.v1.PluginService.Health:output_type -> landflow.plugin.v1.HealthResponse
+	16, // 57: landflow.plugin.v1.PluginService.TestCredentials:output_type -> landflow.plugin.v1.TestCredentialsResponse
+	18, // 58: landflow.plugin.v1.PluginService.WebhookMethod:output_type -> landflow.plugin.v1.WebhookMethodResponse
+	22, // 59: landflow.plugin.v1.PluginService.ReceiveWebhook:output_type -> landflow.plugin.v1.ReceiveWebhookResponse
+	26, // 60: landflow.plugin.v1.RegistryService.Announce:output_type -> landflow.plugin.v1.AnnounceResponse
+	28, // 61: landflow.plugin.v1.RegistryService.Withdraw:output_type -> landflow.plugin.v1.WithdrawResponse
+	53, // [53:62] is the sub-list for method output_type
+	44, // [44:53] is the sub-list for method input_type
+	44, // [44:44] is the sub-list for extension type_name
+	44, // [44:44] is the sub-list for extension extendee
+	0,  // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_landflow_plugin_v1_plugin_proto_init() }

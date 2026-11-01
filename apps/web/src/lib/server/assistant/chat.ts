@@ -1,6 +1,6 @@
 /**
- * The builder chat: a multi-turn tool-calling loop (at most 8 model calls per
- * message) that can search the node catalog, read node docs, the workflow and
+ * The builder chat: a multi-turn tool-calling loop (it goes on while its steps
+ * make progress, up to MAX_STEPS model calls per message) that can search the node catalog, read node docs, the workflow and
  * the last run's data, and propose changes. Proposals are validated edit
  * operations the user applies in the editor; the chat never edits the
  * workflow itself. Events stream to the caller as they happen.
@@ -8,15 +8,19 @@
 import { nanoid } from 'nanoid';
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { AssistantOp, RunDigest } from '@/lib/shared/assistant-ops';
-import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
+import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
+import type { NodeTypeInfo, PropertyDescriptor, Workflow } from '@/lib/shared/types';
 import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
 import { assistantModel, modelLabel } from './model';
-import { registryLookup, validateOps } from './ops';
+import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
 import { availableTypes, catalogSummary, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 
-export const MAX_STEPS = 8;
+/** The most model calls for one message. A reply stops sooner when two steps in a row add nothing new. */
+export const MAX_STEPS = 20;
+/** Steps in a row that add nothing new (no proposal, no tool result not seen before) before the reply stops. */
+const MAX_STALLED = 2;
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -39,6 +43,13 @@ export interface ChatInput {
   model?: string | LanguageModel;
   /** The node types proposals may use (default: every type online). The route passes the workflow's allowed ones. */
   types?: NodeTypeInfo[];
+  /** The published agent teams the flow can run with a Run a Team node (docs/agent-teams.md). The route reads them from the store. */
+  teams?: TeamBrief[];
+  /**
+   * Proposals from earlier replies that are still waiting (not applied, not dismissed). They count as part of the
+   * workflow the model reads, and a new proposal that repeats one is dropped.
+   */
+  pending?: Array<{ summary: string; ops: unknown }>;
   /** Nodes (by id) and node types the user tagged in the message with Spotlight's bubbles. */
   mentions?: { nodes?: string[]; types?: string[] };
   /**
@@ -53,7 +64,7 @@ export interface ChatInput {
 const OP_SCHEMA = {
   type: 'object',
   properties: {
-    op: { type: 'string', enum: ['addNode', 'setParameters', 'connect', 'disconnect', 'removeNode', 'renameNode'] },
+    op: { type: 'string', enum: ['addNode', 'setParameters', 'connect', 'disconnect', 'removeNode', 'renameNode', 'turnIntoTeam'] },
     ref: { type: 'string', description: 'addNode: handle for this new node in later ops' },
     type: { type: 'string', description: 'addNode: node type id. connect/disconnect: main, ai_languageModel, ai_memory or ai_tool' },
     name: { type: 'string', description: 'addNode: node name. renameNode: the new name' },
@@ -61,7 +72,7 @@ const OP_SCHEMA = {
     after: { type: 'string', description: 'addNode: existing node name or ref to wire the new node after' },
     before: { type: 'string', description: 'addNode: insert the new node in front of this node (what fed it feeds the new node)' },
     output: { type: 'integer', description: 'Output index of the source (If: 0 = true, 1 = false)' },
-    node: { type: 'string', description: 'setParameters / removeNode / renameNode: node name' },
+    node: { type: 'string', description: 'setParameters / removeNode / renameNode / turnIntoTeam: node name' },
     from: { type: 'string' },
     to: { type: 'string' },
   },
@@ -81,7 +92,7 @@ const TOOLS: ToolSpec[] = [
   },
   {
     name: 'get_workflow',
-    description: 'Read the current workflow: nodes with their parameters, connections, and which nodes have run data. Includes changes you proposed earlier in this reply.',
+    description: 'Read the current workflow: nodes with their parameters, the outputs of nodes that branch and what is connected to each, connections, and which nodes have run data. Includes changes proposed earlier (marked pending: not applied yet).',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -91,7 +102,7 @@ const TOOLS: ToolSpec[] = [
   },
   {
     name: 'propose_changes',
-    description: 'Show the user a change to the workflow to review and apply. Use one call per coherent change. Refer to existing nodes by name.',
+    description: 'Show the user a change to the workflow to review and apply. Put everything one request asks for into as few calls as you can, wiring new nodes to each other by ref. Refer to existing nodes by name.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -113,9 +124,14 @@ You help the user build and fix the workflow open in the editor. Tools:
 
 How to work:
 - Research, then propose. Use exact type ids and parameter names from the docs.
-- One proposal per coherent change ("Add a Slack message after the filter"); several proposals in one reply are fine.
+- When the request has several parts (a branch, then more steps on each side, a loop), first write a short numbered plan in one or two lines, then propose the whole thing in one propose_changes call, or a few: new nodes join each other with "ref" and "after"/"connect", so one call can hold a chain, both sides of a branch and a loop back. Don't research the same node twice, and don't propose one node per call.
+- Changes proposed earlier in the conversation that the user hasn't applied yet are part of the workflow you read (get_workflow marks them pending). Connect to them by name; never propose them again. A node a pending proposal removes is gone because the user asked: never add it, or a node doing its job, back.
+- Once everything the latest message asks for is proposed, stop: say in one line what the cards do. Don't go on to improve the workflow unasked.
+- A node that already has several outputs (get_workflow lists each output and what it feeds, and get_node_docs lists its ports) branches by itself: connect new nodes from the right output ("output": 0, 1…). Don't put an If, Filter or Switch after it to test what it already separates.
+- A connection back to an earlier node is allowed and makes a loop; the engine runs loops. To limit the rounds, use a round counter: a Code node that adds 1 to a round number (kept in a field the loop's nodes pass on, or read from the counter node's own previous output), then an If "round < N" whose true branch connects back to the node to repeat and whose false branch goes on to what happens after the last round.
 - To fix a node's input, prefer changing the node's own parameters (read a field the items have). To put a node between two nodes, use addNode with "before": "<the later node>".
-- ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
+- ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}, {"op":"turnIntoTeam","node":"<a Run an Agent node with A2A Agent or Run an Agent nodes attached as its tools>"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
+- Teams: an agent team (Agents page → Teams) is a lead with members who report to it, with reviews and budgets; the Run a Team node (core.runTeam, parameters teamId and teamName, message) runs a published one as a single step, with Done and Needs a person outputs. When the user wants a team that already exists, add that node with its teamId and teamName from "Published agent teams" below; the chat model, memory and tools attached to the node go to the lead. When the user wants a lead and the agents under it turned into a team, propose {"op":"turnIntoTeam","node":"<the lead>"}: applying it creates and publishes the team and swaps the nodes, so never tell the person to create a team first or to pick one afterwards. The same action is "Turn into a team" in the toolbar of a selected Run an Agent node that has agents as tools. Never invent a teamId.
 - Expressions read the current item with "{{ $json.field }}" and other nodes with "{{ $('Node name').item.json.field }}".
 - Never make up ids, channels, email addresses, URLs or keys the user didn't give: leave those parameters empty and say the user fills them in.
 - After proposing, say in one or two sentences what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied or made. Don't repeat the ops in prose.
@@ -131,14 +147,46 @@ const SESSION = 'This message comes from Spotlight\'s test-and-fix session: it a
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
 
 /** The ops argument as the model sent it: an array, or a JSON string of one. */
-function opsArgument(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return [];
+/** The ops a model sent: an array, a single op, JSON text of either, or a wrapper with `ops` (local models vary). */
+export function opsArgument(value: unknown): unknown {
+  let ops = value;
+  if (typeof ops === 'string') {
+    try {
+      ops = JSON.parse(ops);
+    } catch {
+      return [];
+    }
   }
+  if (ops && typeof ops === 'object' && !Array.isArray(ops)) {
+    const one = ops as Record<string, unknown>;
+    if (Array.isArray(one.ops)) return one.ops;
+    if (typeof one.op === 'string') return [one];
+  }
+  return ops;
 }
+const REF_FIELDS = ['from', 'to', 'after', 'before', 'node'] as const;
+/**
+ * Ops with the refs of nodes added by earlier proposals in this reply written as those nodes' names: refs live inside one
+ * proposal, but models keep using them ("connect Tech Lead → run_report" after proposing `run_report`).
+ */
+export function withEarlierRefs(ops: unknown, refs: Map<string, string>): unknown {
+  if (!Array.isArray(ops) || !refs.size) return ops;
+  const record = (op: unknown) => (op && typeof op === 'object' && !Array.isArray(op) ? (op as Record<string, unknown>) : undefined);
+  const own = new Set(ops.flatMap((op) => (typeof record(op)?.ref === 'string' ? [record(op)!.ref as string] : [])));
+  return ops.map((op) => {
+    const fields = record(op);
+    if (!fields) return op;
+    const next = { ...fields };
+    for (const field of REF_FIELDS) {
+      const value = next[field];
+      if (typeof value === 'string' && !own.has(value) && refs.has(value)) next[field] = refs.get(value);
+    }
+    return next;
+  });
+}
+
+/** Where a model put its ops: `ops`, else the names local models reach for. */
+const opsOf = (args: Record<string, unknown>) => opsArgument(args.ops ?? args.changes ?? args.operations);
 
 const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
 
@@ -172,6 +220,82 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
     return op;
   });
   return { ops: cleaned, invented, values };
+}
+
+const teamKey = (value: string) => value.trim().toLowerCase().replace(/\s+team$/, '');
+
+const UNIT_MS = { ms: 1, s: 1000, min: 60_000, h: 3_600_000 } as const;
+type Unit = keyof typeof UNIT_MS;
+const UNIT_NAME: Record<Unit, string> = { ms: 'milliseconds', s: 'seconds', min: 'minutes', h: 'hours' };
+const DURATION = /(\d+(?:\.\d+)?)\s*(milliseconds?|ms|seconds?|secs?|s|minutes?|mins?|hours?|hrs?|h)\b/gi;
+const unitOfWord = (word: string): Unit => (/^(ms|milli)/i.test(word) ? 'ms' : /^s/i.test(word) ? 's' : /^m/i.test(word) ? 'min' : 'h');
+/** The unit a number field is in, from its label or description: "Timeout (ms)", "Wait (seconds)". */
+const unitOfField = (p: PropertyDescriptor): Unit | undefined => {
+  const text = `${p.displayName} ${p.description ?? ''}`;
+  if (/\(ms\)|millisecond/i.test(text)) return 'ms';
+  if (/\((s|sec|seconds?)\)|in seconds/i.test(text)) return 's';
+  if (/\((min|minutes?)\)|in minutes/i.test(text)) return 'min';
+  return undefined;
+};
+
+/**
+ * Durations the request named that a proposal set in the wrong unit: "a 30 minute timeout" on a field in milliseconds
+ * proposed as 30 or 1800. Each is said as the number it should be, for sending the proposal back.
+ */
+export function unitSlips(ops: unknown, request: string, propertiesOf: (op: Record<string, unknown>) => PropertyDescriptor[] | undefined): string[] {
+  const durations = [...request.matchAll(DURATION)].map((m) => ({ text: m[0], value: Number(m[1]), ms: Number(m[1]) * UNIT_MS[unitOfWord(m[2])] }));
+  if (!durations.length || !Array.isArray(ops)) return [];
+  const slips: string[] = [];
+  const check = (p: PropertyDescriptor | undefined, value: unknown) => {
+    const unit = p?.type === 'number' ? unitOfField(p) : undefined;
+    if (!unit || typeof value !== 'number') return;
+    for (const d of durations) {
+      const expected = d.ms / UNIT_MS[unit];
+      const misread = [d.value, ...Object.values(UNIT_MS).map((ms) => d.ms / ms)].includes(value);
+      if (value !== expected && misread) slips.push(`“${p!.displayName}” is in ${UNIT_NAME[unit]}: ${d.text} is ${expected}, not ${value}`);
+    }
+  };
+  for (const op of ops) {
+    if (!op || typeof op !== 'object' || !('parameters' in op)) continue;
+    const properties = propertiesOf(op as Record<string, unknown>);
+    const parameters = (op as { parameters?: unknown }).parameters;
+    if (!properties || !parameters || typeof parameters !== 'object') continue;
+    for (const [key, value] of Object.entries(parameters)) {
+      const props = properties.filter((p) => p.name === key);
+      const collection = props.find((p) => p.type === 'collection');
+      if (collection && value && typeof value === 'object') for (const [k, v] of Object.entries(value)) check(collection.values?.find((p) => p.name === k), v);
+      else check(props.find((p) => p.type === 'number'), value);
+    }
+  }
+  return slips;
+}
+
+/**
+ * A Run a Team node's team as the model wrote it: models put the team's name or its lead's title where the id goes
+ * ("Tech Lead" for team_COGk…). A name that matches one published team becomes its id, and `teamName` is filled in from
+ * the team, so the node shows it and runs. `typeOf` gives the type of a node a setParameters op names.
+ */
+export function withTeamIds(ops: unknown, teams: readonly TeamBrief[], typeOf: (node: string) => string | undefined = () => undefined): unknown {
+  if (!Array.isArray(ops) || !teams.length) return ops;
+  const resolve = (parameters: unknown) => {
+    if (!parameters || typeof parameters !== 'object') return parameters;
+    const p = parameters as Record<string, unknown>;
+    const written = typeof p.teamId === 'string' ? p.teamId.trim() : '';
+    if (!written || written.includes('{{')) return parameters;
+    const key = teamKey(written);
+    const exact = teams.find((t) => t.id === written);
+    const named = teams.filter((t) => teamKey(t.name) === key);
+    const led = teams.filter((t) => t.members.some((m) => !m.reportsTo && teamKey(m.title) === key));
+    const team = exact ?? (named.length === 1 ? named[0] : !named.length && led.length === 1 ? led[0] : undefined);
+    return team ? { ...p, teamId: team.id, teamName: team.name } : parameters;
+  };
+  return ops.map((op) => {
+    if (!op || typeof op !== 'object') return op;
+    const o = op as Record<string, unknown>;
+    if (o.op === 'addNode' && o.type === 'core.runTeam') return { ...o, parameters: resolve(o.parameters) };
+    if (o.op === 'setParameters' && typeOf(String(o.node ?? '')) === 'core.runTeam') return { ...o, parameters: resolve(o.parameters) };
+    return op;
+  });
 }
 
 /** An id-like token in prose: a capital, then 8 or more capitals, digits, `_` or `-`, with a digit among them (C057L43652P). */
@@ -281,11 +405,11 @@ export function withoutApplyRequests(text: string): string {
  * `<function=name><parameter=key>value</parameter></function>`, instead of a
  * structured one. Read those back so the turn still works.
  */
-export function recoverToolCalls(text: string): { text: string; calls: ToolCall[] } {
+export function recoverToolCalls(text: string, names: ReadonlySet<string> = TOOL_NAMES): { text: string; calls: ToolCall[] } {
   const calls: ToolCall[] = [];
   const rest = text
     .replace(/<function=([\w-]+)>([\s\S]*?)<\/function>/g, (whole, name: string, body: string) => {
-      if (!TOOL_NAMES.has(name)) return whole;
+      if (!names.has(name)) return whole;
       const input: Record<string, unknown> = {};
       for (const [, key, value] of body.matchAll(/<parameter=([\w-]+)>\s*([\s\S]*?)\s*<\/parameter>/g)) {
         try {
@@ -308,17 +432,54 @@ export async function runChat(input: ChatInput): Promise<void> {
   const lookup = registryLookup(types);
   const model = assistantModel(input.model);
   const started = Date.now();
-  /** The workflow plus what was proposed so far in this reply: later proposals build on earlier ones. */
+  /** The workflow plus what is proposed and waiting (earlier replies, then this one): later proposals build on it. */
   let working = input.workflow;
+  /** Ids of the nodes proposed and not applied yet, and one line for each proposal. */
+  const waiting = new Set<string>();
+  const waitingSummaries: string[] = [];
+  /** Nodes the pending proposals remove, by lower-case name: not to be added back. */
+  const removed = new Map<string, { name: string; type: string }>();
+  /** ref → name of the nodes this reply's proposals added, for later proposals that use the ref. */
+  const proposedRefs = new Map<string, string>();
+  const hold = (summary: string, next: Workflow) => {
+    const known = new Set(working.nodes.map((n) => n.id));
+    for (const node of next.nodes) if (!known.has(node.id)) waiting.add(node.id);
+    const kept = new Set(next.nodes.map((n) => n.id));
+    for (const node of working.nodes) if (!kept.has(node.id) && !waiting.has(node.id)) removed.set(node.name.toLowerCase(), { name: node.name, type: node.type });
+    waitingSummaries.push(shorten(summary, 140));
+    working = next;
+  };
+  for (const earlier of input.pending ?? []) {
+    const validated = validateOps(working, opsArgument(earlier.ops), lookup);
+    if (validated.ops.length) hold(earlier.summary, validated.workflow);
+  }
+  const outline = () => workflowOutline(working, runs, { types, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
+  const latest = input.messages.findLast((m) => m.role === 'user')?.content.toLowerCase() ?? '';
+  /** Whether the latest message asks to add a node by this name ("remove Check and add a new Check after Filter"). */
+  const asksToAdd = (name: string) => new RegExp(`\\b(?:add|insert|put|create|new|another)\\b(?:(?!\\b(?:remove|delete|drop)\\b)[^.!?\\n])*\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(latest);
+  /** A node this proposal adds back after a pending proposal removed it: by name, or by type unless the latest message names the type; not when it asks for one by that name. */
+  const addedBack = (ops: AssistantOp[]) =>
+    ops.flatMap((op) => {
+      if (op.op !== 'addNode') return [];
+      if (op.name && asksToAdd(op.name)) return [];
+      const gone = removed.get((op.name ?? '').toLowerCase()) ?? [...removed.values()].find((r) => r.type === op.type && !latest.includes((types.find((t) => t.type === op.type)?.descriptor.displayName ?? op.type).toLowerCase()));
+      return gone ? [`“${gone.name}” (${gone.type})`] : [];
+    });
   /** Whether an incomplete proposal was already sent back to the model in this reply. */
   let sentBack = false;
+  /** Whether a proposal that put a branching node after a node that already branches was sent back. */
+  let branchSentBack = false;
+  /** Whether a proposal with parts that failed was sent back. */
+  let failedSentBack = false;
+  /** Whether a proposal that set a duration in the wrong unit was sent back. */
+  let unitsSentBack = false;
   let proposed = false;
   /** Whether a fix request that proposed nothing was sent back for a proposal. */
   let pressed = false;
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
   const sent = new Set<string>();
   /** What the user and the editor said, for telling a given id from a made-up one. */
-  const known = () => [...input.messages.map((m) => m.content), JSON.stringify(working), JSON.stringify(runs)].join('\n');
+  const known = () => [...input.messages.map((m) => m.content), JSON.stringify(working), JSON.stringify(runs), ...(input.teams?.length ? [describeTeams(input.teams)] : [])].join('\n');
   /** Ids left out of proposals as made up: the text doesn't repeat them either. */
   const invented = new Set<string>();
   /** The text shown so far in this reply, for leaving out what it says twice. */
@@ -334,7 +495,8 @@ export async function runChat(input: ChatInput): Promise<void> {
   const system = [
     SYSTEM,
     `\nApps and plugins this workflow can use (search_nodes for the rest):\n${catalogSummary(types)}`,
-    `\nThe editor now:\n${workflowOutline(working, runs)}`,
+    input.teams?.length ? `\nPublished agent teams (Run a Team can run these):\n${describeTeams(input.teams)}` : '',
+    `\nThe editor now:\n${outline()}`,
     working.groups?.some((g) => g.composite) ? `\nComposites (frames typed by a contract: fill their slots with matching nodes, keep their rules):\n${compositeOutline(working)}` : '',
     selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types)}` : '',
     tagged.length ? `\nThe user tagged in the message:\n${tagged.join('\n')}` : '',
@@ -361,10 +523,11 @@ export async function runChat(input: ChatInput): Promise<void> {
           const close = searchNodes(asked, types, 3).map((h) => h.type);
           return result(`Unknown node type “${asked}”.${close.length ? ` Did you mean: ${close.join(', ')}?` : ''}`, `Looked up “${shorten(asked, 40)}”: not found`, false);
         }
-        return result(nodeDocs(info, existing?.parameters), `Read ${info.descriptor.displayName} docs`);
+        const teamsNote = info.type === 'core.runTeam' ? `\nPublished agent teams:\n${input.teams?.length ? describeTeams(input.teams) : '(none yet: build one on the Agents page, or turn a lead and its agents into a team)'}` : '';
+        return result(`${nodeDocs(info, existing?.parameters)}${teamsNote}`, `Read ${info.descriptor.displayName} docs`);
       }
       case 'get_workflow':
-        return result(workflowOutline(working, runs), 'Read the workflow');
+        return result(outline(), 'Read the workflow');
       case 'get_run_data': {
         const node = nodeByName(String(args.node ?? ''));
         if (!node) return result(`No node named “${String(args.node ?? '')}”. Nodes: ${working.nodes.map((n) => n.name).join(', ')}`, `Looked for “${shorten(String(args.node ?? ''), 40)}”: not found`, false);
@@ -372,24 +535,77 @@ export async function runChat(input: ChatInput): Promise<void> {
       }
       case 'propose_changes': {
         const summary = shorten(String(args.summary ?? '').trim() || 'Proposed change', 140);
-        const asSent = JSON.stringify(opsArgument(args.ops));
+        const ops = withEarlierRefs(opsOf(args), proposedRefs);
+        const asSent = JSON.stringify(ops);
         if (sent.has(asSent)) return result('Nothing changes: you proposed exactly this above. Do not propose it again.', 'Skipped a repeated proposal');
         const typeText = (op: Record<string, unknown>) => {
           const type = op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type;
           const info = types.find((t) => t.type === type);
           return info ? JSON.stringify(info.descriptor.properties) : '';
         };
-        const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(opsArgument(args.ops), known(), typeText);
+        // A node already proposed and waiting is used, not added again.
+        const { ops: fresh, repeated } = withoutRepeatedAdds(working, waiting, ops);
+        const teamed = withTeamIds(fresh, input.teams ?? [], (name) => nodeByName(name)?.type);
+        const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(teamed, known(), typeText);
         for (const value of values) invented.add(value);
         const validated = validateOps(working, proposedOps, lookup);
+        const back = addedBack(validated.ops);
+        if (back.length) {
+          return result(
+            `Nothing changes: ${back.join(', ')} ${back.length === 1 ? 'is' : 'are'} removed by a pending proposal because the user asked; don't add ${back.length === 1 ? 'it' : 'them'}, or a node doing the same job, back. If everything the latest message asks for is proposed, stop and say in one line what the cards do.`,
+            'Skipped adding back a removed node',
+          );
+        }
+        if (!validated.ops.length && repeated.length && !validated.dropped.length) {
+          return result(`Nothing changes: ${repeated.join('; ')}. Connect from it with another propose_changes call if something is still missing.`, 'Skipped a repeated proposal');
+        }
         if (!validated.ops.length) {
+          const empty = !Array.isArray(ops) || !ops.length;
+          // Local models call propose_changes with no ops to "apply" what they proposed: only the person can, and it isn't needed.
+          if (empty && waiting.size) {
+            const names = working.nodes.filter((n) => waiting.has(n.id)).map((n) => `“${n.name}”`);
+            return result(
+              `Nothing could be proposed: no changes given. You can't apply proposals (the person does, with the card's Apply button), and you don't need to: ${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} already in the workflow you work on. Connect to ${names.length === 1 ? 'it' : 'them'} by name in a propose_changes call with the remaining ops, e.g. {"op":"connect","from":${JSON.stringify(working.nodes.find((n) => waiting.has(n.id))?.name ?? 'Run report')},"to":"<next node>","output":0}.`,
+              'Proposal rejected: no changes given',
+              false,
+            );
+          }
           const why = [...validated.dropped, ...inventedNotes].join('; ') || 'no changes given';
-          return result(`Nothing could be proposed: ${why}. Fix the ops (check names, type ids and parameters) and call propose_changes again.`, `Proposal rejected: ${shorten(why, 80)}`, false);
+          // With nothing readable, show the model what it sent and the shape wanted: it corrects itself instead of retrying the same call.
+          const shape = validated.dropped.length || inventedNotes.length ? '' : ` "ops" must be an array of operations, like [{"op":"addNode","ref":"r1","type":"core.runReport","name":"Run report","after":"Tech Lead"},{"op":"connect","from":"r1","to":"Open PR","output":0}]. You sent: ${shorten(JSON.stringify(args), 300)}.`;
+          return result(`Nothing could be proposed: ${why}.${shape} Fix the ops (check names, type ids and parameters) and call propose_changes again.`, `Proposal rejected: ${shorten(why, 80)}`, false);
         }
         // Proposing the same thing twice (it happens with local models) changes nothing the second time.
         const graph = (wf: Workflow) => JSON.stringify([wf.nodes, wf.connections]);
         if (graph(validated.workflow) === graph(working)) {
           return result('Nothing changes: this is already in the workflow or was proposed above. Do not propose it again.', 'Skipped a repeated proposal');
+        }
+        // A node that already branches needs no If / Filter / Switch after it: back once, naming its outputs.
+        const branching = redundantBranches(validated.workflow, validated.ops, types);
+        if (branching.length && !branchSentBack) {
+          branchSentBack = true;
+          return result(
+            `Not shown yet: ${branching.join(' ')} Call propose_changes again with those connections. If the user asked for exactly this extra node, propose it again as it is.`,
+            `Proposal changed: ${shorten(branching[0], 80)}`,
+            false,
+          );
+        }
+        // A duration the request named, set in the wrong unit ("30 minutes" as 30 or 1800 in a field in milliseconds), goes back once.
+        const slips = unitsSentBack ? [] : unitSlips(proposedOps, latest, (op) => types.find((t) => t.type === (op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type))?.descriptor.properties);
+        if (slips.length) {
+          unitsSentBack = true;
+          return result(`Not shown yet: ${slips.join('; ')}. Call propose_changes again with the numbers in the field's unit.`, `Proposal changed: ${shorten(slips[0], 80)}`, false);
+        }
+        // A change with parts that failed (a type that doesn't exist, a connection to a node it never added) goes back once:
+        // shown as it is, it could remove a node without adding the one meant to replace it.
+        if (validated.dropped.length && !failedSentBack) {
+          failedSentBack = true;
+          const why = validated.dropped.join('; ');
+          return result(
+            `Not shown yet: part of this change failed: ${why}. Add a node before connecting to it (an addNode with that "ref"), use type ids from search_nodes, and call propose_changes again with the complete change.`,
+            `Proposal incomplete: ${shorten(why, 80)}`,
+            false,
+          );
         }
         // A change that leaves part of the flow dangling goes back once for the model to complete.
         if (validated.warnings.length && !sentBack) {
@@ -401,12 +617,13 @@ export async function runChat(input: ChatInput): Promise<void> {
             false,
           );
         }
-        working = validated.workflow;
+        hold(summary, validated.workflow);
+        for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
         sent.add(asSent);
         const dropped = [...validated.dropped, ...validated.ignored, ...inventedNotes];
-        const notes = dropped.length ? ` Left out: ${dropped.join('; ')}.` : '';
+        const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
-        const shown = result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied.`, `Proposed ${count}`);
+        const shown = result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied. If the latest message asks for something this doesn't cover yet, propose it now (the nodes above are in the workflow for you to connect to); if it's all proposed, stop and say in one line what the cards do.`, `Proposed ${count}`);
         onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: validated.warnings });
         proposed = true;
         recordSuggestions(['proposal']);
@@ -421,7 +638,10 @@ export async function runChat(input: ChatInput): Promise<void> {
     const history: AgentMessage[] = input.messages.map((m) => (m.role === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', text: m.content, toolCalls: [] }));
     let steps = 0;
     let finished = false;
-    while (steps < MAX_STEPS && !finished) {
+    /** Steps in a row that added nothing new, and the tool results seen so far in this reply. */
+    let stalled = 0;
+    const seen = new Set<string>();
+    while (steps < MAX_STEPS && !finished && stalled < MAX_STALLED) {
       steps++;
       const turn = await model.generate({ system, messages: history, tools: TOOLS, ...(input.signal && { signal: input.signal }) });
       usage.inputTokens += turn.usage?.inputTokens ?? 0;
@@ -446,15 +666,25 @@ export async function runChat(input: ChatInput): Promise<void> {
       }
       if (finished) break;
       const results: ToolResult[] = [];
+      let progress = false;
       for (const call of calls) {
+        const shownBefore = waitingSummaries.length;
         const outcome = await execute(call);
         span.addEvent('assistant.tool', { 'gen_ai.tool.name': call.name, 'landflow.outcome': outcome.isError ? 'error' : 'ok' });
         results.push(outcome);
+        // Progress is a new proposal, or a result this reply hasn't had yet.
+        const key = `${outcome.name}\n${outcome.content}`;
+        if (waitingSummaries.length > shownBefore || !seen.has(key)) progress = true;
+        seen.add(key);
       }
+      stalled = progress ? 0 : stalled + 1;
       history.push({ role: 'tool', results });
     }
     // A test-and-fix session goes on (or stops) by itself: "ask me to continue" would only be noise there.
-    if (!finished && !input.session) onEvent({ type: 'text', text: `(Stopped after ${MAX_STEPS} steps. Ask me to continue if there is more to do.)` });
+    if (!finished && !input.session) {
+      const text = stalled >= MAX_STALLED ? '(Stopped: the last steps only repeated what was already done. Tell me what to change, or ask me to continue.)' : `(Stopped after ${MAX_STEPS} steps. Ask me to continue if there is more to do.)`;
+      onEvent({ type: 'text', text });
+    }
     span.setAttribute('landflow.assistant.steps', steps);
     onEvent({ type: 'done', model: modelLabel(model), durationMs: Date.now() - started, steps, usage });
   });

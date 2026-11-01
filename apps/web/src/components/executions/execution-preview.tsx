@@ -5,6 +5,7 @@
  * controls for a paused run), the workflow as it ran, and the Logs panel.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Bug,
@@ -33,13 +34,20 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveEvents } from '@/lib/client/live';
+import { useRunJournal } from '@/lib/client/run-trace';
+import { progressLine, type NodeProgress } from '@/lib/client/node-progress';
 import type { RunEntry } from '@/lib/client/run-data';
 import type { DebugCommand, ExecutionRecord } from '@/lib/shared/types';
+import { RunTraceBody, hasAgentSpans } from '../run-trace/run-trace-view';
 import { LogsPanel, type LogsNode, type LogsPending, type LogsSelection } from '../run/logs-panel';
 import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, statusText, useNow } from '../run/run-status';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
+import { useTeamLeads } from '../agents/faces';
+import { TeamNowCard } from '../editor/team-live';
+import { liveTeam } from '../editor/team-strip';
+import { AgentSessionPanel, type AgentNodeRef } from './agent-session-panel';
 import { ExecutionCanvas } from './execution-canvas';
 import { useExecutions } from './executions-shell';
 import { MODE_META, RERUN_LABEL, canRetry, deleteExecution, startRerun, startRetry, type RerunBody, type RetryBody } from './meta';
@@ -47,6 +55,7 @@ import { AiUsageChip, BufferedChip, FeedbackChip, ParentChip, SubWorkflowWait, w
 
 const HEIGHT_KEY = 'landflow-logs-height';
 const COLLAPSED_KEY = 'landflow-logs-collapsed';
+const VIEW_KEY = 'landflow-run-view';
 const HEADER_H = 40;
 
 function readNumber(key: string, fallback: number) {
@@ -108,9 +117,9 @@ export function ExecutionPreview({ workflowId, executionId }: { workflowId: stri
   const { executions, open } = useExecutions();
   const router = useRouter();
 
-  // n8n opens the newest execution when none is in the URL.
+  // n8n opens the newest execution when none is in the URL; a phone shows the list instead, one screen at a time.
   useEffect(() => {
-    if (!executionId && executions?.length) open(executions[0].id, 'replace');
+    if (!executionId && executions?.length && window.matchMedia('(min-width: 768px)').matches) open(executions[0].id, 'replace');
   }, [executionId, executions, open]);
 
   if (executionId) return <ExecutionDetail key={executionId} executionId={executionId} />;
@@ -140,7 +149,13 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
   const [picked, setPicked] = useState<LogsSelection>();
   const [busy, setBusy] = useState<string>();
   const [active, setActive] = useState<Record<string, string>>({});
+  // What running nodes last reported (a remote agent's steps), by node id; livePick: the one open in the detail pane.
+  const [progress, setProgress] = useState<Record<string, NodeProgress>>({});
+  const [livePick, setLivePick] = useState<string>();
   const [collapsed, setCollapsed] = useState(false);
+  // Canvas | Run trace: the person's choice (remembered), else Run trace for runs with agents.
+  const [chosenView, setChosenView] = useState<'canvas' | 'trace'>();
+  const journal = useRunJournal(executionId);
   const [height, setHeight] = useState(320);
   const bodyRef = useRef<HTMLDivElement>(null);
   const reloadTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -148,15 +163,26 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
   useEffect(() => {
     setHeight(readNumber(HEIGHT_KEY, 320));
     setCollapsed(readNumber(COLLAPSED_KEY, 0) === 1);
+    try {
+      const v = localStorage.getItem(VIEW_KEY);
+      if (v === 'canvas' || v === 'trace') setChosenView(v);
+    } catch {}
   }, []);
 
   const load = useCallback(() => {
-    api<{ execution: ExecutionRecord; traceUrl?: string }>(`/api/executions/${executionId}`)
+    api<{
+      execution: ExecutionRecord;
+      traceUrl?: string;
+      progress?: Record<string, NodeProgress>;
+    }>(`/api/executions/${executionId}`)
       .then((r) => {
         setRecord(r.execution);
         setTraceUrl(r.traceUrl);
         setMissing(false);
-        if (r.execution.status !== 'running') setActive({});
+        if (r.execution.status !== 'running') {
+          setActive({});
+          setProgress({});
+        } else if (r.progress) setProgress((current) => ({ ...r.progress, ...current }));
       })
       .catch(() => setMissing(true));
   }, [executionId]);
@@ -178,7 +204,13 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
     if (event.event.executionId !== executionId) return;
     const e = event.event;
     if (e.type === 'node.started') setActive((a) => ({ ...a, [e.nodeId]: e.at }));
+    else if (e.type === 'node.progress')
+      setProgress((p) => ({
+        ...p,
+        [e.nodeId]: { ...e, since: p[e.nodeId]?.since ?? e.at },
+      }));
     else if (e.type === 'node.finished') {
+      setProgress(({ [e.nodeId]: _, ...rest }) => rest);
       setActive(({ [e.nodeId]: _, ...rest }) => rest);
       reload();
     } else if (e.type === 'execution.started' || e.type === 'execution.paused' || e.type === 'execution.resumed' || e.type === 'execution.finished') reload();
@@ -222,8 +254,17 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
         const parent = run.parentNodeId;
         if (parent && !runData[parent] && (!inferred[parent] || run.startedAt < inferred[parent])) inferred[parent] = run.startedAt;
       }
-    return { ...inferred, ...active };
-  }, [live, runData, active]);
+    // A node that reported progress is running, also when the page missed its node.started (opened mid-run).
+    const reporting = Object.fromEntries(Object.values(progress).map((p) => [p.nodeId, p.since ?? p.at]));
+    return { ...inferred, ...reporting, ...active };
+  }, [live, runData, active, progress]);
+  // The one-line caption over a node on the canvas: "Developer · Running the tests".
+  const captions = useMemo(() => (live ? Object.fromEntries(Object.entries(progress).map(([id, p]) => [id, progressLine(p)])) : {}), [live, progress]);
+  // Running team nodes: who works now and on what, for the strip above the node.
+  const teams = useMemo(
+    () => (live ? Object.fromEntries(Object.entries(progress).flatMap(([id, p]) => (liveTeam(p.data) ? [[id, liveTeam(p.data)!]] : []))) : {}),
+    [live, progress],
+  );
   const activeIds = useMemo(() => Object.keys(running), [running]);
   const pending = useMemo<LogsPending[]>(() => {
     const list: LogsPending[] = activeIds.filter((id) => !record?.paused || id !== record.paused.nodeId).map((id) => ({ nodeId: id, state: 'running', startedAt: running[id] }));
@@ -231,6 +272,27 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
     return live ? list : [];
   }, [activeIds, running, record?.paused, live]);
 
+  // A Run a Team node's session is its lead's: the lead's agent, by team.
+  const teamLeads = useTeamLeads(canvasWorkflow?.nodes);
+  // Run an Agent and Run a Team nodes that run or ran in this execution (the agent is the node's parameter, else the one
+  // its output names; a team's is its lead).
+  const agentNodes = useMemo<AgentNodeRef[]>(() => {
+    const list: AgentNodeRef[] = [];
+    for (const n of canvasWorkflow?.nodes ?? []) {
+      if (!runData[n.id] && !(n.id in running)) continue;
+      if (n.type === 'core.runTeam') {
+        const lead = teamLeads[String(n.parameters?.teamId ?? '')];
+        if (lead) list.push({ nodeId: n.id, name: nodes[n.id]?.name ?? n.name, agentId: lead });
+        continue;
+      }
+      if (n.type !== 'core.messageAgent') continue;
+      const param = n.parameters?.agentId;
+      const output = runData[n.id]?.flatMap((r) => r.outputs.flat()).find((item) => typeof item.json?.agentId === 'string')?.json.agentId;
+      const agentId = typeof param === 'string' && param && !param.includes('{{') && !param.startsWith('=') ? param : typeof output === 'string' ? output : undefined;
+      if (agentId) list.push({ nodeId: n.id, name: nodes[n.id]?.name ?? n.name, agentId });
+    }
+    return list;
+  }, [canvasWorkflow, runData, running, nodes, teamLeads]);
   const setCollapsedPersist = (value: boolean) => {
     setCollapsed(value);
     try {
@@ -341,7 +403,15 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
 
   const selectNode = (nodeId: string) => {
     const runs = record.runData[nodeId];
-    if (!runs?.length) return;
+    if (!runs?.length) {
+      // A running node (a teammate being called) has no run yet: open its live steps.
+      if (progress[nodeId]) {
+        setLivePick(nodeId);
+        if (collapsed) setCollapsedPersist(false);
+      }
+      return;
+    }
+    setLivePick(undefined);
     setPicked({ nodeId, runIndex: runs.length - 1 });
     if (collapsed) setCollapsedPersist(false);
   };
@@ -414,6 +484,15 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
         </Button>
       </>
     ) : null;
+
+  const hasTrace = hasAgentSpans(journal.model);
+  const view = chosenView ?? (hasTrace ? 'trace' : 'canvas');
+  const chooseView = (next: 'canvas' | 'trace') => {
+    setChosenView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {}
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -622,59 +701,108 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
       </div>
 
       {/* ------------------------------------------------- canvas + logs */}
-      <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
-        <div className="relative min-h-0 flex-1 animate-in">
-          {canvasWorkflow ? (
-            <ExecutionCanvas
-              workflow={canvasWorkflow}
-              nodeTypes={nodeTypes}
-              runData={record.runData}
-              activeNodeIds={live ? activeIds : undefined}
-              pausedNodeId={live ? record.paused?.nodeId : undefined}
-              wait={record.status === 'waiting' ? record.wait : undefined}
-              running={live}
-              selectedNodeId={selection?.nodeId}
-              onNodeClick={selectNode}
-            />
-          ) : (
-            <div className="canvas-readonly grid size-full place-items-center bg-[repeating-linear-gradient(-45deg,transparent_0_14px,var(--acdim)_14px_28px)] text-[13px] text-t3">Loading workflow…</div>
-          )}
-          {!hasSnapshot && !live && canvasWorkflow && (
-            <div className="pointer-events-none absolute left-3 top-3 rounded-full border border-hair bg-sf px-2.5 py-0.5 text-[11px] text-t3 animate-fade-up">
-              Showing the current workflow: this execution has no snapshot
+      <div className="flex shrink-0 items-center gap-2 border-b border-hair px-4 py-1.5">
+        <div role="tablist" aria-label="View" className="flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
+          {(
+            [
+              ['canvas', 'Canvas'],
+              ['trace', 'Run trace'],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={view === id}
+              onClick={() => chooseView(id)}
+              className={cn(
+                'h-7 rounded-full px-3.5 text-[13px] text-t2 transition-all duration-200 hover:text-t1',
+                view === id && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <Link href={`/runs/${executionId}`} className="ml-auto flex h-7 items-center gap-1 rounded-full px-2.5 text-[12px] text-t2 hover:bg-acdim hover:text-t1">
+          Full screen <ExternalLink className="size-3" />
+        </Link>
+      </div>
+      {/* On a phone the canvas is small: a running team gets a Now card over either view (team-live.tsx). */}
+      {Object.entries(teams).map(([nodeId, team]) => {
+        const node = canvasWorkflow?.nodes.find((n) => n.id === nodeId);
+        const teamId = typeof node?.parameters.teamId === 'string' ? node.parameters.teamId : undefined;
+        return node && teamId ? (
+          <div key={nodeId} className="shrink-0 px-3 pt-3 sm:hidden">
+            <TeamNowCard teamId={teamId} live={team} nodeName={node.name} onOpenTrace={view === 'canvas' ? () => chooseView('trace') : undefined} />
+          </div>
+        ) : null;
+      })}
+      {view === 'trace' && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <RunTraceBody executionId={executionId} executionHref={`/workflows/${record.workflowId}/executions/${executionId}`} journal={journal} />
+        </div>
+      )}
+      {view === 'canvas' && (
+        <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
+          {/* The flow stays in view while agents work: the session panel above the logs shrinks first. */}
+          <div className="relative min-h-[200px] flex-1 animate-in">
+            {canvasWorkflow ? (
+              <ExecutionCanvas
+                workflow={canvasWorkflow}
+                nodeTypes={nodeTypes}
+                runData={record.runData}
+                activeNodeIds={live ? activeIds : undefined}
+                pausedNodeId={live ? record.paused?.nodeId : undefined}
+                wait={record.status === 'waiting' ? record.wait : undefined}
+                running={live}
+                selectedNodeId={livePick && progress[livePick] ? livePick : selection?.nodeId}
+                captions={captions}
+                teams={teams}
+                onNodeClick={selectNode}
+              />
+            ) : (
+              <div className="canvas-readonly grid size-full place-items-center bg-[repeating-linear-gradient(-45deg,transparent_0_14px,var(--acdim)_14px_28px)] text-[13px] text-t3">
+                Loading workflow…
+              </div>
+            )}
+            {!hasSnapshot && !live && canvasWorkflow && (
+              <div className="pointer-events-none absolute left-3 top-3 rounded-full border border-hair bg-sf px-2.5 py-0.5 text-[11px] text-t3 animate-fade-up">
+                Showing the current workflow: this execution has no snapshot
+              </div>
+            )}
+          </div>
+          {agentNodes.length > 0 && <AgentSessionPanel executionId={executionId} nodes={agentNodes} running={activeIds} selectedNodeId={selection?.nodeId} live={live} progress={progress} />}
+          {!collapsed && (
+            <div role="separator" aria-orientation="horizontal" aria-label="Resize logs" onPointerDown={onResizeStart} className="group relative z-10 -my-1 h-2 shrink-0 cursor-row-resize touch-none">
+              <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-hair transition-colors group-hover:h-0.5 group-hover:bg-viz-1" />
             </div>
           )}
-        </div>
-        {!collapsed && (
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize logs"
-            onPointerDown={onResizeStart}
-            className="group relative z-10 -my-1 h-2 shrink-0 cursor-row-resize touch-none"
-          >
-            <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-hair transition-colors group-hover:h-0.5 group-hover:bg-viz-1" />
+          <div className="shrink-0 border-t border-hair animate-fade-up [animation-delay:80ms]" style={{ height: collapsed ? HEADER_H + (live ? 2 : 0) : height }}>
+            <LogsPanel
+              runData={record.runData}
+              nodes={nodes}
+              nodeTypes={nodeTypes}
+              status={state}
+              startedAt={record.startedAt}
+              durationMs={record.durationMs}
+              running={live}
+              pending={pending}
+              selected={selection}
+              onSelect={(next) => {
+                setLivePick(undefined);
+                setPicked(next);
+              }}
+              progress={progress}
+              livePick={livePick}
+              onLivePick={setLivePick}
+              actions={runActions}
+              collapsed={collapsed}
+              onToggle={() => setCollapsedPersist(!collapsed)}
+              emptyHint={record.status === 'canceled' ? 'The run was canceled before any node finished.' : queued ? 'Nothing has run yet: the execution is waiting in the queue.' : undefined}
+            />
           </div>
-        )}
-        <div className="shrink-0 border-t border-hair animate-fade-up [animation-delay:80ms]" style={{ height: collapsed ? HEADER_H + (live ? 2 : 0) : height }}>
-          <LogsPanel
-            runData={record.runData}
-            nodes={nodes}
-            nodeTypes={nodeTypes}
-            status={state}
-            startedAt={record.startedAt}
-            durationMs={record.durationMs}
-            running={live}
-            pending={pending}
-            selected={selection}
-            onSelect={setPicked}
-            actions={runActions}
-            collapsed={collapsed}
-            onToggle={() => setCollapsedPersist(!collapsed)}
-            emptyHint={record.status === 'canceled' ? 'The run was canceled before any node finished.' : queued ? 'Nothing has run yet: the execution is waiting in the queue.' : undefined}
-          />
         </div>
-      </div>
+      )}
     </div>
   );
 }

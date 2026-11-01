@@ -25,12 +25,13 @@ const withCredentials = async (request: ExecuteRequest): Promise<ExecuteRequest>
 
 /** The node's live logs and streamed chunks go out redacted too (they become live events). */
 function redactedExtras(extras: ContextExtras | undefined): ContextExtras | undefined {
-  const { onLog, sendChunk } = extras ?? {};
-  if (!extras || (!onLog && !sendChunk)) return extras;
+  const { onLog, sendChunk, sendProgress } = extras ?? {};
+  if (!extras || (!onLog && !sendChunk && !sendProgress)) return extras;
   return {
     ...extras,
     ...(onLog && { onLog: (entry: Parameters<typeof onLog>[0]) => onLog(redactValue(entry)) }),
     ...(sendChunk && { sendChunk: (chunk: Parameters<typeof sendChunk>[0]) => sendChunk(redactValue(chunk)) }),
+    ...(sendProgress && { sendProgress: (data: Parameters<typeof sendProgress>[0]) => sendProgress(redactValue(data)) }),
   };
 }
 

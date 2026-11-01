@@ -12,6 +12,7 @@ import { deleteUser, getUser } from '../auth/users';
 import { dataTables } from '../datatables';
 import { folders } from '../folders';
 import { forgetProjectSettings } from '../governance/scopes';
+import { agentTemplateRows } from '../agents/template-rows';
 import { localTemplates } from '../templates/store';
 import { projectVariables } from './variables';
 import {
@@ -84,6 +85,7 @@ function moveAll(fromProjectId: string, toProjectId: string, options: { includeU
   folders.reassignProject(fromProjectId, toProjectId);
   projectVariables.moveAll(fromProjectId, toProjectId);
   localTemplates.moveProject(fromProjectId, toProjectId);
+  agentTemplateRows.moveProject(fromProjectId, toProjectId);
   forgetProjectSettings(fromProjectId);
   for (const share of sharesTo(fromProjectId)) {
     // A share to the new owner is pointless (it owns or already has it), so it goes with the old project.
@@ -98,6 +100,7 @@ function dropProjectData(projectId: string) {
   folders.removeProject(projectId);
   projectVariables.removeProject(projectId);
   localTemplates.moveProject(projectId);
+  agentTemplateRows.moveProject(projectId);
   forgetProjectSettings(projectId);
 }
 

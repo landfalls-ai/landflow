@@ -3,7 +3,7 @@ import type { AgentMessage, LanguageModel, ModelTurn, ToolSpec } from '@landflow
 import type { Agent, AgentConfig, AgentStreamEvent } from '@/lib/shared/agents';
 
 /** The model each test scripts: one function per model turn, called with what the runtime sent. */
-type Step = (input: { system?: string; messages: AgentMessage[]; tools: ToolSpec[] }) => Partial<ModelTurn>;
+type Step = (input: { system?: string; messages: AgentMessage[]; tools: ToolSpec[] }) => Partial<ModelTurn> | Promise<Partial<ModelTurn>>;
 const script: Step[] = [];
 const seen: Array<{ system?: string; messages: AgentMessage[]; tools: ToolSpec[] }> = [];
 
@@ -20,7 +20,7 @@ vi.mock('@/lib/server/agents/models', () => ({
         seen.push({ system: input.system, messages: structuredClone(input.messages), tools: input.tools });
         const step = script.shift();
         if (!step) throw new Error('The script ran out of turns');
-        return { text: '', toolCalls: [], stopReason: 'end_turn', usage: { inputTokens: 10, outputTokens: 5 }, ...step(input) };
+        return { text: '', toolCalls: [], stopReason: 'end_turn', usage: { inputTokens: 10, outputTokens: 5 }, ...(await step(input)) };
       },
     };
   },
@@ -75,6 +75,26 @@ describe('agent runtime', () => {
     expect(saved.timeline.map((e) => e.type)).toEqual(['user', 'assistant']);
     expect(events.map((e) => e.type)).toEqual(['run.started', 'entry', 'entry', 'run.finished']);
     expect(agentStore.listSessions(agent.id)[0]).toMatchObject({ id: saved.id, turns: 1 });
+  });
+
+  it('saves a running session as its timeline grows, with the execution link', async () => {
+    const agent = makeAgent({ tools: [{ id: 't1', type: 'node', name: 'Echo', description: 'Echo the input', nodeType: 'core.noOp', parameters: {} }] });
+    const session = newSession(agent, { source: 'workflow', userId: 'workflow:wf_1', version: 'draft' });
+    session.execution = { workflowId: 'wf_1', executionId: 'ex_1', nodeId: 'n1', nodeName: 'Tech Lead' };
+    let midRun: ReturnType<typeof agentStore.getSession>;
+    script.push(call('Echo', { word: 'ping' }), async () => {
+      // Past the save throttle: the tool call made so far is on disk although the run has not finished.
+      await new Promise((resolve) => setTimeout(resolve, 1700));
+      midRun = agentStore.getSession(session.id);
+      return { text: 'Done.' };
+    });
+    await runAgent({ agent, session, message: 'echo ping' });
+
+    expect(midRun!).toMatchObject({ status: 'running', execution: { executionId: 'ex_1', nodeId: 'n1', nodeName: 'Tech Lead' } });
+    expect(midRun!.timeline.map((e) => e.type)).toEqual(['user', 'tool']);
+    expect(midRun!.timeline[1]).toMatchObject({ status: 'success' });
+    expect(agentStore.getSession(session.id)).toMatchObject({ status: 'idle', execution: { executionId: 'ex_1' } });
+    expect(agentStore.listSessions(agent.id)[0].execution).toMatchObject({ nodeId: 'n1' });
   });
 
   it('keeps the transcript between messages (session memory)', async () => {
@@ -303,7 +323,7 @@ describe('agent nodes', () => {
     script.push(reply('Hello from the agent.'));
     const ok = await run(messageAgentNode, { agentId: agent.id, message: 'hi', conversation: 'new' });
     expect(ok.json()[0]).toMatchObject({ reply: 'Hello from the agent.', agentId: agent.id, version: 1, endReason: 'completed' });
-    expect(agentStore.getSession(ok.json()[0].sessionId as string)).toMatchObject({ source: 'workflow', version: 1 });
+    expect(agentStore.getSession(ok.json()[0].sessionId as string)).toMatchObject({ source: 'workflow', version: 1, execution: { workflowId: 'wf_test', executionId: 'ex_test', nodeId: 'n1' } });
   });
 });
 

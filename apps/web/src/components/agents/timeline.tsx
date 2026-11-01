@@ -2,16 +2,17 @@
 /** A session's timeline: chat bubbles, expandable tool calls, approvals, errors. Shared by the test chat and the Sessions tab. */
 import { useState } from 'react';
 import Link from 'next/link';
-import { Ban, Bot, Check, ChevronRight, Copy, ExternalLink, Hand, Info, Loader2, ShieldAlert, ThumbsDown, ThumbsUp, TriangleAlert, User, Waypoints, X } from 'lucide-react';
+import { Ban, Bot, Check, ChevronRight, Copy, ExternalLink, Hand, Info, Loader2, RadioTower, ShieldAlert, ThumbsDown, ThumbsUp, TriangleAlert, User, Waypoints, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { duration } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
-import type { TimelineEntry, ToolKind } from '@/lib/shared/agents';
+import type { RemoteRun, TimelineEntry, ToolKind } from '@/lib/shared/agents';
 import type { ChatFeedback, FeedbackRating } from '@/lib/shared/chat-feedback';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { JsonView } from '../ui/json-view';
+import { shortArg, snippetOf } from '@/lib/client/node-progress';
 import { useNodeTypes } from './use-agent-data';
 
 export type ToolEntry = Extract<TimelineEntry, { type: 'tool' }>;
@@ -57,7 +58,11 @@ const KIND_ICON: Record<ToolKind, string> = {
   agent: 'bot',
   skill: 'book-open',
   memory: 'brain',
+  a2a: 'radio-tower',
+  flow: 'plug',
 };
+
+const A2A_COLOR = '#a855f7';
 
 export function useToolIcon() {
   const nodeTypes = useNodeTypes();
@@ -71,7 +76,7 @@ export function useToolIcon() {
     }
     return {
       icon: KIND_ICON[entry.kind] ?? 'wrench',
-      color: entry.kind === 'agent' ? 'var(--ac)' : 'var(--t2)',
+      color: entry.kind === 'agent' ? 'var(--ac)' : entry.kind === 'a2a' ? A2A_COLOR : 'var(--t2)',
     };
   };
 }
@@ -91,13 +96,84 @@ export function ToolStatusIcon({ status, className }: { status: ToolEntry['statu
   }
 }
 
+/** What a remote (A2A) agent did during the call: its tool calls as they happen, each expandable, and its token usage. */
+export function RemoteSteps({ remote }: { remote: RemoteRun }) {
+  const [open, setOpen] = useState<string | null>(null);
+  if (!remote.steps.length && !remote.usage) return null;
+  return (
+    <div className="border-t border-hair px-3 py-2">
+      <div className="mb-1 flex items-center gap-1.5 text-[11px] text-t3">
+        <RadioTower className="size-3 shrink-0" style={{ color: A2A_COLOR }} />
+        <span className="font-semibold text-t2">{remote.agent}</span>
+        <span>{remote.state}</span>
+        {remote.usage && (
+          <span className="ml-auto font-mono" title="Tokens the remote agent reports using">
+            {remote.usage.inputTokens.toLocaleString()} in · {remote.usage.outputTokens.toLocaleString()} out
+          </span>
+        )}
+      </div>
+      {remote.steps.length > 0 && (
+        <ol className="space-y-0.5">
+          {remote.steps.map((step) => {
+            const ms = step.startedAt && step.endedAt ? Date.parse(step.endedAt) - Date.parse(step.startedAt) : undefined;
+            const expanded = open === step.id;
+            return (
+              <li key={step.id}>
+                <button
+                  onClick={() => setOpen(expanded ? null : step.id)}
+                  aria-expanded={expanded}
+                  className="flex w-full items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-acdim"
+                >
+                  <ChevronRight className={cn('size-3 shrink-0 text-t3 transition-transform', expanded && 'rotate-90')} />
+                  <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-t1">
+                    {step.name}
+                    {shortArg(step.args) && <span className="ml-1.5 text-t3">{shortArg(step.args)}</span>}
+                    {!expanded && step.status !== 'running' && (step.error ?? snippetOf(step.output, 80)) && (
+                      <span className={cn('ml-1.5 text-[11px]', step.error ? 'text-rd' : 'text-t3')}>→ {snippetOf(step.error ?? step.output, 80)}</span>
+                    )}
+                  </span>
+                  {ms !== undefined && Number.isFinite(ms) && <span className="font-mono text-[11px] text-t3">{duration(ms)}</span>}
+                  <ToolStatusIcon status={step.status} className="size-3" />
+                </button>
+                {expanded && (
+                  <div className="ml-5 mt-1 space-y-1.5 animate-in">
+                    {step.args && (
+                      <div className="max-h-40 overflow-auto rounded-lg border border-hair bg-wl px-2 py-1">
+                        <JsonView value={step.args} />
+                      </div>
+                    )}
+                    {step.error ? (
+                      <div className="whitespace-pre-wrap rounded-lg border border-rdbd bg-rddim px-2.5 py-1.5 font-mono text-[12px] text-rd [overflow-wrap:anywhere]">{step.error}</div>
+                    ) : step.output !== undefined ? (
+                      <div className="max-h-48 overflow-auto rounded-lg border border-hair bg-wl px-2 py-1">
+                        {typeof step.output === 'string' ? (
+                          <div className="whitespace-pre-wrap py-1 font-mono text-[12px] text-t1 [overflow-wrap:anywhere]">{step.output}</div>
+                        ) : (
+                          <JsonView value={step.output} />
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function ToolRow({
   entry,
   childHref,
   onDecide,
   deciding,
+  live,
 }: {
   entry: ToolEntry;
+  /** The tool is a workflow sub-node reporting progress (no `remote` of its own): its steps so far. */
+  live?: RemoteRun;
   childHref?: (entry: ToolEntry) => string | undefined;
   onDecide?: (callId: string, approved: boolean) => void;
   deciding?: boolean;
@@ -124,19 +200,35 @@ function ToolRow({
         {entry.durationMs !== undefined && <span className="font-mono text-[11px] text-t3">{duration(entry.durationMs)}</span>}
         <ToolStatusIcon status={entry.status} />
       </button>
+      {(entry.remote ?? (entry.status === 'running' ? live : undefined)) && <RemoteSteps remote={(entry.remote ?? live)!} />}
       {waiting && (
         <div className="border-t border-warnbd bg-warndim px-3 py-2.5">
           <div className="flex items-start gap-2 text-[12px] text-warn">
             <Hand className="mt-px size-3.5 shrink-0" />
-            <span>
-              The agent wants to run <strong>{entry.label}</strong>. It waits until someone approves.
-            </span>
+            {entry.approval ? (
+              <span>
+                <strong>{entry.approval.message}</strong>. It waits until someone approves.
+              </span>
+            ) : (
+              <span>
+                The agent wants to run <strong>{entry.label}</strong>. It waits until someone approves.
+              </span>
+            )}
           </div>
-          {!open && Object.keys(entry.input ?? {}).length > 0 && (
+          {!open && !entry.approval && Object.keys(entry.input ?? {}).length > 0 && (
             <div className="mt-2 max-h-40 overflow-auto rounded-lg border border-hair bg-sf px-2 py-1">
               <JsonView value={entry.input} />
             </div>
           )}
+          {entry.approval &&
+            entry.remote?.steps
+              .filter((step) => step.status === 'awaiting_approval' && step.args)
+              .map((step) => (
+                <div key={step.id} className="mt-2 max-h-40 overflow-auto rounded-lg border border-hair bg-sf px-2 py-1">
+                  <div className="pt-1 font-mono text-[11px] text-t3">{step.name}</div>
+                  <JsonView value={step.args} />
+                </div>
+              ))}
           {onDecide && (
             <div className="mt-2.5 flex gap-2">
               <Button size="sm" variant="primary" loading={deciding} onClick={() => onDecide(entry.callId, true)}>
@@ -229,8 +321,11 @@ export function TimelineView({
   wide,
   feedback,
   onRate,
+  liveSteps,
 }: {
   entries: TimelineEntry[];
+  /** A running tool call's live steps from elsewhere (the execution view: a sub-node's `node.progress`). */
+  liveSteps?: (entry: ToolEntry) => RemoteRun | undefined;
   childHref?: (entry: ToolEntry) => string | undefined;
   onDecide?: (callId: string, approved: boolean) => void;
   deciding?: boolean;
@@ -302,7 +397,7 @@ export function TimelineView({
           case 'tool':
             return (
               <div key={entry.id} className={cn('pl-[34px]', !wide && 'pr-1')}>
-                <ToolRow entry={entry} childHref={childHref} onDecide={onDecide} deciding={deciding} />
+                <ToolRow entry={entry} childHref={childHref} onDecide={onDecide} deciding={deciding} live={liveSteps?.(entry)} />
               </div>
             );
           case 'error':

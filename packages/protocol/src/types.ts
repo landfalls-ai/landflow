@@ -222,6 +222,12 @@ export interface NodeDescriptor {
   /** Description given to the model when used as a tool (defaults to `description`). */
   toolDescription?: string;
   /**
+   * The node hands work to another agent (an A2A agent, an agent of the host). Used as a tool, the engine adds a required
+   * `reason` argument ("why you are asking and what done looks like") to its input schema, keeps it out of the node's
+   * parameters and gives it to the run's journal, so a trace can say why one agent asked another.
+   */
+  delegates?: boolean;
+  /**
    * Optional JSON Schema for the tool's arguments. Without it the host derives
    * one from the primitive properties; arguments become the input item's JSON
    * and override same-named parameters.
@@ -570,6 +576,35 @@ export interface NodeErrorPayload {
   itemIndex?: number;
 }
 
+/**
+ * Something a node made that people will want to open: a pull request, a file, a ticket, a document (`ctx.artifact`).
+ * The run's journal keeps it with the step that made it (docs/run-trace.md).
+ */
+export interface NodeArtifact {
+  name: string;
+  /** What it is, free text: `pull_request`, `commit`, `file`, `ticket`, `document`, `link`, … */
+  kind?: string;
+  url?: string;
+  mimeType?: string;
+  /** Short content to show inline (cut to 32 KB with the rest of the event). */
+  text?: string;
+  data?: JsonObject;
+}
+
+/** The outcome of a check a node made (`ctx.check`): tests passed, a reply cites its source, a refund is within policy. */
+export interface NodeCheck {
+  name: string;
+  status: 'pass' | 'fail' | 'warn' | 'skip';
+  message?: string;
+  /** What the check is about, free text: a claim, a file, an actor's name. */
+  subject?: string;
+  /** What it looked at (command output, the values compared). */
+  evidence?: JsonObject;
+}
+
+/** An artifact or check a node reported, with when (ISO; the host's receive time when absent). */
+export type NodeRecord = (({ type: 'artifact' } & NodeArtifact) | ({ type: 'check' } & NodeCheck)) & { at?: string };
+
 export interface ExecuteResponse {
   /** outputs[i] = the items emitted on main output i. */
   outputs: NodeItem[][];
@@ -577,6 +612,8 @@ export interface ExecuteResponse {
   error?: NodeErrorPayload;
   /** Poll triggers: state to pass to the next poll (e.g. the newest id seen). */
   pollState?: JsonObject;
+  /** Artifacts and checks the node reported (`ctx.artifact`, `ctx.check`), in order; absent from older SDKs. */
+  records?: NodeRecord[];
 }
 
 export interface LoadOptionsRequest {

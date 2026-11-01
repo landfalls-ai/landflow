@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Activity, BookOpenText, Bot, ChartColumn, House, KeyRound, LayoutTemplate, Puzzle, Settings, Store, Table2, Workflow } from 'lucide-react';
+import { Activity, BookOpenText, Bot, ChartColumn, House, KeyRound, LayoutTemplate, Menu, Puzzle, Settings, Store, Table2, Workflow, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveConnected, useLiveEvents } from '@/lib/client/live';
@@ -39,15 +39,45 @@ const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string;
   },
 ];
 
-/** The left rail: product mark, grouped navigation, live status, the user menu. Not on sign-in and public pages. */
+/**
+ * The left rail: product mark, grouped navigation, live status, the user menu. Not on sign-in and public pages. On a phone
+ * (below `md`) the rail is a drawer behind a slim top bar with a menu button.
+ */
 export function Sidebar() {
   const pathname = usePathname();
   const viewer = useViewer();
+  // The phone drawer: open from the top bar, closed when a link is followed.
+  const [openOn, setOpenOn] = useState<string>();
   if (!viewer || isChromelessPage(pathname)) return null;
-  return <Rail pathname={pathname} />;
+  const open = openOn === pathname;
+  return (
+    <>
+      <PhoneBar onMenu={() => setOpenOn(pathname)} />
+      {open && <div className="fixed inset-0 z-40 bg-black/30 md:hidden" onClick={() => setOpenOn(undefined)} aria-hidden />}
+      <Rail pathname={pathname} open={open} onClose={() => setOpenOn(undefined)} />
+    </>
+  );
 }
 
-function Rail({ pathname }: { pathname: string }) {
+function PhoneBar({ onMenu }: { onMenu: () => void }) {
+  const connected = useLiveConnected();
+  return (
+    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-hair bg-sf2 px-2 md:hidden">
+      <button type="button" aria-label="Open the menu" onClick={onMenu} className="grid size-9 place-items-center rounded-lg text-t2 hover:bg-acdim hover:text-t1">
+        <Menu className="size-[18px]" strokeWidth={1.7} />
+      </button>
+      <Link href="/" className="flex items-center gap-2">
+        <span className="grid size-7 place-items-center rounded-[8px] border border-acbd bg-ac2 text-[11px] font-bold text-on-ac">LF</span>
+        <span className="text-[13px] font-semibold text-t1">Landflow</span>
+      </Link>
+      <span className="ml-auto pr-1" title={connected ? 'Receiving live events' : 'Reconnecting to the event stream'}>
+        <StatusDot status={connected ? 'online' : 'offline'} />
+      </span>
+    </div>
+  );
+}
+
+function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; onClose: () => void }) {
   const connected = useLiveConnected();
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
 
@@ -61,7 +91,15 @@ function Rail({ pathname }: { pathname: string }) {
   const online = plugins.filter((p) => p.status === 'online').length;
 
   return (
-    <aside className="sticky top-0 z-30 flex h-screen w-[196px] shrink-0 flex-col border-r border-hair bg-sf2 px-1.5 py-2.5">
+    <aside
+      className={cn(
+        'top-0 h-screen w-[196px] shrink-0 flex-col border-r border-hair bg-sf2 px-1.5 py-2.5 md:sticky md:z-30 md:flex md:shadow-none',
+        open ? 'fixed left-0 z-50 flex overflow-y-auto shadow-pop' : 'hidden',
+      )}
+    >
+      <button type="button" aria-label="Close the menu" onClick={onClose} className="absolute right-1.5 top-2.5 grid size-8 place-items-center rounded-lg text-t3 hover:bg-acdim hover:text-t1 md:hidden">
+        <X className="size-4" />
+      </button>
       <Link href="/" className="mb-2 flex items-center gap-2.5 px-2.5 py-1">
         <span className="grid size-[34px] shrink-0 place-items-center rounded-[9px] border border-acbd bg-ac2 text-[12px] font-bold tracking-[0.02em] text-on-ac">LF</span>
         <span className="truncate text-[13px] font-semibold text-t1">Landflow</span>

@@ -132,6 +132,7 @@ SDK environment variables:
   "inputs":  [{ "type": "main" }],
   "outputs": [{ "type": "main" }],       // several main outputs = branches (IF: true/false)
   "usableAsTool": true,                  // can be attached to an AI Agent's ai_tool port
+  "delegates": true,                     // optional: hands work to another agent; as a tool it gets a required `reason` argument
   "properties": [
     { "name": "algorithm", "displayName": "Algorithm", "type": "options", "default": "sha256",
       "options": [ { "name": "SHA-256", "value": "sha256" }, { "name": "MD5", "value": "md5" } ] },
@@ -159,6 +160,7 @@ SDK environment variables:
 {
   "outputs": [ [ { "json": { "email": "a@b.c", "hash": "…" }, "pairedItem": { "item": 0 } } ] ],
   "logs": [ { "level": "info", "message": "hashed 1 item" } ],
+  "records": [ { "type": "artifact", "name": "PR #7: Fix it", "kind": "pull_request", "url": "https://github.com/…", "at": "2026-10-31T10:00:00.000Z" } ], // optional
   "error": null                            // or { "message", "description"?, "itemIndex"? }
 }
 ```
@@ -205,6 +207,21 @@ node with side effects should forward it to downstream APIs that accept an idemp
 per item can append the item index (`<key>:<i>`). Older hosts leave it out. The SDKs expose it as
 `ctx.getIdempotencyKey()` (`undefined` when absent), `ctx.idempotency_key` (`None`) and
 `ctx.IdempotencyKey()` (`""`).
+
+**Records (artifacts and checks).** A node can report what it made and what it checked, for the run's journal and trace
+view. `ExecuteResponse.records` is an ordered list; each entry has a `type`, an optional `at` (ISO time; the host's
+receive time when absent) and the fields of one of two shapes. An **artifact** (`type: "artifact"`) is something people
+will want to open: `{ name, kind?, url?, mimeType?, text?, data? }` with a free-text `kind` (`pull_request`, `commit`,
+`branch`, `file`, `ticket`, `document`, `link`, …); `text` is short content to show inline. A **check**
+(`type: "check"`) is the outcome of a check: `{ name, status: "pass" | "fail" | "warn" | "skip", message?, subject?,
+evidence? }`, where `subject` says what it is about (a claim, a file) and `evidence` is a JSON object of what it looked
+at. The list travels like `logs` on every binding: in the HTTP body, over gRPC as `repeated DynamicValue records = 5`
+(one NodeRecord JSON object each), and in a broker reply, and it is kept when the node fails, so a failed check made
+before the error still shows. Older plugins send none; a host that predates the field ignores it. The engine turns each
+entry into a `node.record` event ([features/engine.md](features/engine.md)); an in-process node reports them live. The
+SDKs expose `ctx.artifact(…)` and `ctx.check(…)` (TypeScript), `ctx.artifact(name, kind=…, url=…)` and
+`ctx.check(name, status, …)` (Python), `ctx.Artifact(landflow.Artifact{…})` and `ctx.Check(landflow.Check{…})` (Go);
+credential values are masked in the text fields. Schema: `schema/execute-response.schema.json`.
 
 ## 4. Property types
 

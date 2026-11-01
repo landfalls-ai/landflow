@@ -6,9 +6,43 @@
  * plus built-in tools for skills and cross-session memory.
  */
 import { defaultVersionOf, PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
-import { ExpressionResolver, deriveToolSchema, toToolName, type ToolSpec } from '@landflow/engine';
-import type { Agent, AgentConfig, AgentSession, McpServerToolConfig, NodeToolConfig, SubAgentConfig, ToolKind, WorkflowToolConfig } from '../../shared/agents';
+import { ExpressionResolver, REASON_DESCRIPTION, deriveToolSchema, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
+import type {
+  A2aAgentToolConfig,
+  Agent,
+  AgentConfig,
+  AgentSession,
+  McpServerToolConfig,
+  NodeToolConfig,
+  PendingCall,
+  RemoteRun,
+  SubAgentConfig,
+  ToolKind,
+  WorkflowToolConfig,
+} from '../../shared/agents';
 import type { ExecutionRecord } from '../../shared/types';
+import {
+  answerMessage,
+  approvalMessage,
+  endpointFrom as a2aEndpointFrom,
+  getAgentCard,
+  hitlRequestOf,
+  KAGENT_HITL_EXTENSION,
+  questionTexts,
+  remoteStepsOf,
+  replyOf,
+  stateName,
+  statusText,
+  supportsExtension,
+  tokenUsageOf,
+  type A2aEndpoint,
+  type A2aResult,
+  type A2aTask,
+  type AgentCard,
+  type HitlRequest,
+  type OutgoingMessage,
+} from '../a2a/client';
+import { callAgent, landflowTags, remoteRunOf, throttled } from '../a2a/traced';
 import { credentials } from '../credentials/vault';
 import { agentToolsFrom, endpointFrom, listMcpTools, resourceAndPromptTools, selectTools } from '../mcp/client';
 import { registry } from '../plugins/registry';
@@ -33,6 +67,13 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** Runs a sub-agent on a task in a child session (provided by the runtime, avoiding an import cycle). */
   delegate(target: Agent, task: string): Promise<{ reply?: string; sessionId: string }>;
+  /** `deny`: no one can approve in this run (sub-agents, workflow nodes, schedules), so a remote agent's pause is rejected. */
+  approvals: 'ask' | 'deny';
+  /** A remote agent's progress during this call (its tool calls as they happen), for the timeline. */
+  progress?(remote: RemoteRun): void;
+  /** The model's id for this call, and the journal span it is recorded under (set by the runtime while a run is journaled). */
+  callId?: string;
+  callSpan?: string;
 }
 
 export interface ToolOutcome {
@@ -41,6 +82,10 @@ export interface ToolOutcome {
   executionId?: string;
   childAgentId?: string;
   childSessionId?: string;
+  /** An A2A agent's task: its tool calls and usage. */
+  remote?: RemoteRun;
+  /** The remote agent paused for a person's approval of its own tool calls: the run waits, then `resume` sends the decision. */
+  pause?: { message: string; remote: NonNullable<PendingCall['remote']> };
 }
 
 export interface BuiltTool extends ToolSpec {
@@ -50,6 +95,8 @@ export interface BuiltTool extends ToolSpec {
   nodeType?: string;
   requireApproval: boolean;
   invoke(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome>;
+  /** After a pause (ToolOutcome.pause): send the person's decision and carry on. */
+  resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext, answer?: string): Promise<ToolOutcome>;
 }
 
 export interface Toolset {
@@ -58,12 +105,12 @@ export interface Toolset {
   unavailable: string[];
 }
 
-/** The agent's tools. MCP servers' tools are listed over the network: pass them in from buildToolset. */
+/** The agent's tools. MCP servers' tools and A2A agents' cards are read over the network: pass them in from buildToolset. */
 export function buildTools(agent: Agent, config: AgentConfig, mcp: Toolset = { tools: [], unavailable: [] }): Toolset {
   const tools: BuiltTool[] = [...mcp.tools];
   const unavailable: string[] = [...mcp.unavailable];
   for (const tool of config.tools) {
-    if (tool.type === 'mcp') continue;
+    if (tool.type === 'mcp' || tool.type === 'a2a') continue;
     const built =
       tool.type === 'node' ? nodeTool(tool) : tool.type === 'workflow' ? workflowTool(tool) : tool.type === 'knowledge' ? knowledgeTool(tool) : subAgentTool(tool, agent);
     if ('error' in built) unavailable.push(built.error);
@@ -74,7 +121,7 @@ export function buildTools(agent: Agent, config: AgentConfig, mcp: Toolset = { t
   return { tools: dedupe(tools), unavailable };
 }
 
-function dedupe(tools: BuiltTool[]): BuiltTool[] {
+export function dedupe(tools: BuiltTool[]): BuiltTool[] {
   const seen = new Map<string, number>();
   return tools.map((tool) => {
     const count = seen.get(tool.name) ?? 0;
@@ -83,16 +130,36 @@ function dedupe(tools: BuiltTool[]): BuiltTool[] {
   });
 }
 
-/** buildTools plus the tools of the agent's MCP servers, listed from each server (in parallel). */
-export async function buildToolset(agent: Agent, config: AgentConfig): Promise<Toolset> {
-  const servers = config.tools.filter((tool): tool is McpServerToolConfig => tool.type === 'mcp');
-  const listed = await Promise.all(servers.map((server) => mcpServerTools(server)));
-  const mcp: Toolset = { tools: [], unavailable: [] };
+/** buildTools plus the tools of the agent's MCP servers and A2A agents, read from each (in parallel), and the flow's. */
+export async function buildToolset(agent: Agent, config: AgentConfig, flow: AgentTool[] = []): Promise<Toolset> {
+  const listed = await Promise.all(
+    config.tools.flatMap((tool) => (tool.type === 'mcp' ? [mcpServerTools(tool)] : tool.type === 'a2a' ? [a2aAgentTool(tool).then((t) => ('error' in t ? t : [t]))] : [])),
+  );
+  const remote: Toolset = { tools: [], unavailable: [] };
   for (const result of listed) {
-    if ('error' in result) mcp.unavailable.push(result.error);
-    else mcp.tools.push(...result);
+    if ('error' in result) remote.unavailable.push(result.error);
+    else remote.tools.push(...result);
   }
-  return buildTools(agent, config, mcp);
+  const built = buildTools(agent, config, remote);
+  return flow.length ? { ...built, tools: dedupe([...built.tools, ...flow.map(flowTool)]) } : built;
+}
+
+/**
+ * A tool connected to the agent's node in a workflow (Run an Agent): a tool node or a vector store searched as a tool.
+ * The engine runs it as the node's sub-node, so it lights up on the canvas like an AI Agent's tools.
+ */
+export function flowTool(tool: AgentTool): BuiltTool {
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    kind: 'flow',
+    label: tool.name,
+    requireApproval: false,
+    async invoke(input, ctx) {
+      return { output: await tool.invoke(input, ctx.signal) };
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +209,145 @@ async function mcpServerTools(config: McpServerToolConfig): Promise<BuiltTool[] 
 }
 
 // ---------------------------------------------------------------------------
+// A2A agents
+// ---------------------------------------------------------------------------
+
+export const A2A_AGENT = 'core.a2aAgent';
+/** How often a remote agent that pauses in a run where no one can approve gets a rejection before the call fails. */
+const MAX_AUTO_REJECTIONS = 3;
+
+/** The tool description: the card's description and skills, unless the builder wrote when to use it. */
+function describeCard(card: AgentCard, useWhen?: string): string {
+  if (useWhen?.trim()) return useWhen.trim();
+  const skills = (card.skills ?? []).map((skill) => `${skill.name}${skill.description ? `: ${skill.description}` : ''}`);
+  return [card.description || `Ask the ${card.name} agent`, skills.length ? `Skills: ${skills.join('; ')}` : ''].filter(Boolean).join('. ').slice(0, 1_000);
+}
+
+export interface A2aToolOptions {
+  /**
+   * Where a question the remote agent asks goes: the calling agent (its tool result, the default), a person who answers
+   * later (`person`: `onPerson` hears it and the caller is told to finish without it), or a person the run waits for
+   * (`pause`: the call pauses on the question like an approval, and the person's answer goes to the same task).
+   */
+  questions?: 'caller' | 'person' | 'pause';
+  onPerson?(text: string): void;
+}
+
+/** An A2A agent as an `ask_<name>` tool: its card is read when the run starts (an agent that can't be reached is a notice). */
+export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aToolOptions = {}): Promise<BuiltTool | { error: string }> {
+  const resolved = registry.resolve(A2A_AGENT);
+  if ('error' in resolved) return { error: `${config.name}: ${resolved.error}` };
+  let endpoint: A2aEndpoint;
+  let card: AgentCard;
+  try {
+    const secrets = credentials.resolveFor({ type: A2A_AGENT, credentials: config.credentials, parameters: config.parameters }, resolved.descriptor);
+    endpoint = a2aEndpointFrom(config.parameters, secrets);
+    card = await getAgentCard(endpoint);
+  } catch (error) {
+    return { error: `${config.name}: ${(error as Error).message}` };
+  }
+  const options = (config.parameters.options ?? {}) as { humanInTheLoop?: boolean };
+  const extensions = options.humanInTheLoop !== false && supportsExtension(card, KAGENT_HITL_EXTENSION) ? [KAGENT_HITL_EXTENSION] : [];
+  const name = toToolName(`ask_${config.name}`);
+
+  /** Send one message and turn the task it ends with into the tool's outcome. */
+  async function run(message: OutgoingMessage, ctx: ToolContext, rejections = 0): Promise<ToolOutcome> {
+    const metadata = { ...landflowTags({ 'agent.id': ctx.agent.id, 'session.id': ctx.session.id, 'run.id': ctx.runId }), ...message.metadata };
+    const result: A2aResult = await callAgent(endpoint, card, { ...message, metadata }, { caller: 'agent', signal: ctx.signal, extensions, onUpdate: throttled(ctx.progress, card) });
+    const contexts = (ctx.session.remoteContexts ??= {});
+    if (result.kind === 'message') {
+      if (result.message.contextId) contexts[config.id] = { contextId: result.message.contextId };
+      return { output: replyOf(result) ?? `(${card.name} gave no answer)`, remote: { agent: card.name, state: 'completed', steps: [] } };
+    }
+    const { task } = result;
+    const remote = remoteRunOf(card, task);
+    contexts[config.id] = { contextId: task.contextId };
+    const state = task.status.state;
+    if (state === 'TASK_STATE_COMPLETED') return { output: replyOf(result) ?? `(${card.name} gave no answer)`, remote };
+    if (state === 'TASK_STATE_FAILED' || state === 'TASK_STATE_REJECTED' || state === 'TASK_STATE_CANCELED') {
+      throw new Error(`${card.name}: the task ${stateName(state)}${statusText(task) ? `: ${statusText(task)}` : ''}`);
+    }
+    if (state === 'TASK_STATE_AUTH_REQUIRED') throw new Error(`${card.name} needs credentials Landflow can't give it${statusText(task) ? `: ${statusText(task)}` : ''}`);
+    // INPUT_REQUIRED
+    const request = hitlRequestOf(task);
+    if (request?.type === 'tool_approval_request') {
+      if (ctx.approvals === 'deny') {
+        if (rejections >= MAX_AUTO_REJECTIONS) throw new Error(`${card.name} keeps asking for approvals no one can give in this kind of run`);
+        const reason = 'No one can approve tool calls in this kind of run: carry on without them, or say what you would have done.';
+        return run(approvalMessage(task, request, false, reason), ctx, rejections + 1);
+      }
+      const calls = request.tools.map((t) => ({ name: t.name, ...(t.args && { args: t.args }) }));
+      return {
+        output: null,
+        remote,
+        pause: {
+          message: `${card.name} wants to run ${calls.map((c) => c.name).join(', ')}`,
+          remote: { agent: card.name, calls, state: { taskId: task.id, contextId: task.contextId, request } },
+        },
+      };
+    }
+    // A question: the model answers it (or asks the user) with its next call, which goes to the same task.
+    const questions = request?.type === 'ask_user_request' ? questionTexts(request) : [statusText(task) ?? 'The agent needs more input'];
+    if (toolOptions.questions === 'pause') {
+      contexts[config.id] = { contextId: task.contextId };
+      const ask = `${card.name} asks:\n${questions.map((q) => `- ${q}`).join('\n')}`;
+      return {
+        output: null,
+        remote,
+        pause: { message: ask, remote: { agent: card.name, calls: [], state: { taskId: task.id, contextId: task.contextId, question: { id: request?.type === 'ask_user_request' ? request.id : '', questions }, ask } } },
+      };
+    }
+    if (toolOptions.questions === 'person') {
+      contexts[config.id] = { contextId: task.contextId };
+      toolOptions.onPerson?.(`${card.name} asks:\n${questions.map((q) => `- ${q}`).join('\n')}`);
+      return { output: `${card.name} asked a question that a person will answer. Don't ask it again: finish with what you have and say what is still open.`, remote };
+    }
+    contexts[config.id] = { contextId: task.contextId, taskId: task.id, ...(request?.type === 'ask_user_request' && { question: { id: request.id, questions } }) };
+    return {
+      output: `${card.name} asks:\n${questions.map((q) => `- ${q}`).join('\n')}\nAnswer from what you know or ask the user, then call ${name} again with the answers as the message.`,
+      remote,
+    };
+  }
+
+  return {
+    kind: 'a2a',
+    nodeType: A2A_AGENT,
+    name,
+    label: config.name,
+    description: describeCard(card, config.useWhen),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: `What to ask ${card.name}. It keeps the conversation across your calls, but does not see yours: say what it needs to know` },
+        reason: { type: 'string', description: REASON_DESCRIPTION },
+      },
+      required: ['message', 'reason'],
+    },
+    requireApproval: Boolean(config.requireApproval),
+    async invoke(input, ctx) {
+      const text = String(input.message ?? '').trim();
+      if (!text) throw new Error('"message" is empty');
+      const known = ctx.session.remoteContexts?.[config.id];
+      if (known?.taskId && known.question) {
+        const request: Extract<HitlRequest, { type: 'ask_user_request' }> = { type: 'ask_user_request', id: known.question.id, questions: known.question.questions };
+        return run(answerMessage({ id: known.taskId, contextId: known.contextId }, request, [text]), ctx);
+      }
+      return run({ text, ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
+    },
+    async resume(state, approved, ctx, answer) {
+      const { taskId, contextId, request, question } = state as { taskId: string; contextId: string; request?: Extract<HitlRequest, { type: 'tool_approval_request' }>; question?: { id: string; questions: string[] } };
+      // A question a person answered: the answer goes to the same task (as a plain reply when the agent asked without the extension).
+      if (question) {
+        const text = answer?.trim() || 'No one answered: carry on with what you have and say what is still open.';
+        if (!question.id) return run({ text, contextId, taskId }, ctx);
+        return run(answerMessage({ id: taskId, contextId }, { type: 'ask_user_request', id: question.id, questions: question.questions }, [text]), ctx);
+      }
+      return run(approvalMessage({ id: taskId, contextId }, request!, approved, approved ? undefined : 'A person rejected this tool call.'), ctx);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Plugin nodes
 // ---------------------------------------------------------------------------
 
@@ -156,9 +362,12 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
     label: config.name,
     nodeType: config.nodeType,
     description: config.description || descriptor.toolDescription || descriptor.description,
-    inputSchema: deriveToolSchema(descriptor, config.parameters),
+    inputSchema: descriptor.delegates ? withReason(deriveToolSchema(descriptor, config.parameters)) : deriveToolSchema(descriptor, config.parameters),
     requireApproval: Boolean(config.requireApproval),
-    async invoke(input, ctx) {
+    async invoke(given, ctx) {
+      // A delegating node's `reason` is for the record (the timeline shows the call's input), not for the node.
+      const { reason: _reason, ...rest } = given;
+      const input = descriptor.delegates ? rest : given;
       // The arguments are the node's one input item; $fromAI() reads them and same-named parameters take them.
       const items: NodeItem[] = [{ json: input as JsonObject }];
       // $secrets in the tool's parameters, when Settings → External secrets allows it.
@@ -286,8 +495,11 @@ function subAgentTool(config: SubAgentConfig, self: Agent): BuiltTool | { error:
     description: config.useWhen || target.description || `Delegate a task to the ${target.name} agent and get its answer`,
     inputSchema: {
       type: 'object',
-      properties: { task: { type: 'string', description: 'The task, with everything the agent needs to know: it does not see this conversation' } },
-      required: ['task'],
+      properties: {
+        task: { type: 'string', description: 'The task, with everything the agent needs to know: it does not see this conversation' },
+        reason: { type: 'string', description: REASON_DESCRIPTION },
+      },
+      required: ['task', 'reason'],
     },
     requireApproval: Boolean(config.requireApproval),
     async invoke(input, ctx) {

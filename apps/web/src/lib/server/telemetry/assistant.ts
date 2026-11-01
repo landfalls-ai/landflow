@@ -8,7 +8,7 @@ import { DURATION_BUCKETS_MS } from '@landflow/engine';
 import { hostMetrics, outcomeOf } from './metrics';
 import { SpanKind, withSpan, type Span } from './spans';
 
-export type AssistantRequestKind = 'suggest' | 'chat';
+export type AssistantRequestKind = 'suggest' | 'chat' | 'architect';
 /** Suggestion kinds, plus `proposal` for changes proposed in the chat. */
 export type AssistantChangeKind = 'fix' | 'param' | 'data' | 'next' | 'proposal';
 

@@ -293,6 +293,13 @@ func executeResponseToProto(resp *ExecuteResponse) (*pb.ExecuteResponse, error) 
 		}
 		out.PollState = dv
 	}
+	for i, r := range resp.Records {
+		dv, err := toDynamic(r)
+		if err != nil {
+			return nil, fmt.Errorf("records[%d]: %w", i, err)
+		}
+		out.Records = append(out.Records, dv)
+	}
 	return out, nil
 }
 
@@ -320,6 +327,16 @@ func ExecuteResponseFromProto(in *pb.ExecuteResponse) (*ExecuteResponse, error) 
 	var err error
 	if resp.PollState, err = optionalObjectFromDynamic(in.GetPollState(), "pollState"); err != nil {
 		return nil, err
+	}
+	for i, dv := range in.GetRecords() {
+		if len(dv.GetJson()) == 0 {
+			continue
+		}
+		var r Record
+		if err := json.Unmarshal(dv.GetJson(), &r); err != nil {
+			return nil, fmt.Errorf("records[%d]: DynamicValue must hold a JSON object: %v", i, err)
+		}
+		resp.Records = append(resp.Records, r)
 	}
 	return resp, nil
 }

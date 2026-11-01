@@ -252,6 +252,7 @@ function Sidebar() {
 
 export function ExecutionsShell({ workflowId, children }: { workflowId: string; children: ReactNode }) {
   const router = useRouter();
+  const selectedId = useParams<{ executionId?: string[] }>().executionId?.[0];
   const [workflow, setWorkflow] = useState<Workflow>();
   const [workflowMissing, setWorkflowMissing] = useState(false);
   const [nodeTypes, setNodeTypes] = useState<Record<string, NodeTypeInfo>>({});
@@ -297,19 +298,27 @@ export function ExecutionsShell({ workflowId, children }: { workflowId: string; 
     <ExecutionsContext.Provider value={value}>
       <div className="flex h-screen flex-col overflow-hidden">
         <header className="relative flex h-[52px] shrink-0 items-center gap-3 border-b border-hair bg-bg px-4">
-          <Link href="/workflows" aria-label="Back to workflows" className="grid size-8 place-items-center rounded-full text-t2 transition-colors hover:bg-acdim hover:text-t1">
+          <Link href="/workflows" aria-label="Back to workflows" className={cn('size-8 place-items-center rounded-full text-t2 transition-colors hover:bg-acdim hover:text-t1', selectedId ? 'hidden md:grid' : 'grid')}>
             <ArrowLeft className="size-4" />
           </Link>
-          <span className="max-w-[30%] truncate text-[15px] font-semibold text-t1">{workflow?.name ?? (workflowMissing ? 'Deleted workflow' : ' ')}</span>
-          {workflow?.active && <Badge tone="success">Published</Badge>}
-          <WorkflowTabs workflowId={workflowId} active="executions" className="absolute left-1/2 -translate-x-1/2" />
-          <Link href={`/executions?workflowId=${workflowId}`} className="ml-auto text-[12px] text-t2 transition-colors hover:text-t1">
+          {selectedId && (
+            <Link href={`/workflows/${workflowId}/executions`} aria-label="Back to executions" className="grid size-8 place-items-center rounded-full text-t2 transition-colors hover:bg-acdim hover:text-t1 md:hidden">
+              <ArrowLeft className="size-4" />
+            </Link>
+          )}
+          <span className="hidden max-w-[30%] truncate md:block text-[15px] font-semibold text-t1">{workflow?.name ?? (workflowMissing ? 'Deleted workflow' : ' ')}</span>
+          {workflow?.active && <Badge tone="success" className="hidden md:inline-flex">Published</Badge>}
+          <WorkflowTabs workflowId={workflowId} active="executions" className="md:absolute md:left-1/2 md:-translate-x-1/2" />
+          <Link href={`/executions?workflowId=${workflowId}`} className="ml-auto hidden text-[12px] text-t2 transition-colors hover:text-t1 md:block">
             All executions
           </Link>
         </header>
-        <div className="grid min-h-0 flex-1 grid-cols-[300px_minmax(0,1fr)]">
-          <Sidebar />
-          <div className="flex min-h-0 min-w-0 flex-col bg-bg">{children}</div>
+        {/* On a phone the list and an open execution take the whole width in turn; the back arrow returns to the list. */}
+        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]">
+          <div className={cn('min-h-0 flex-col [&>aside]:flex-1', selectedId ? 'hidden md:flex' : 'flex')}>
+            <Sidebar />
+          </div>
+          <div className={cn('min-h-0 min-w-0 flex-col bg-bg', selectedId ? 'flex' : 'hidden md:flex')}>{children}</div>
         </div>
       </div>
     </ExecutionsContext.Provider>

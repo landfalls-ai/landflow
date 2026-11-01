@@ -3,7 +3,7 @@
  * stamped with the active span's trace and span ids. String values under
  * secret-looking keys are redacted. See docs/observability.md §3.
  */
-import { context, trace } from '@opentelemetry/api';
+import { context, logs, SeverityNumber, trace } from '@opentelemetry/api';
 import { singleton } from '../singleton';
 import { SECRET_KEY, telemetryConfig, type LogLevel } from './config';
 
@@ -57,6 +57,23 @@ export function writeRecord(level: LogLevel, message: string, fields: LogAttribu
   };
   const scrubbed = scrub(record);
   process.stdout.write(`${telemetryConfig.logFormat === 'pretty' ? pretty(scrubbed) : safeJson(scrubbed)}\n`);
+  if (telemetryConfig.exportLogs && telemetryConfig.logOtlp && message !== 'span.end') exportRecord(level, scrubbed, at);
+}
+
+const OTEL_SEVERITY: Record<LogLevel, SeverityNumber> = { debug: SeverityNumber.DEBUG, info: SeverityNumber.INFO, warn: SeverityNumber.WARN, error: SeverityNumber.ERROR };
+
+/**
+ * The line as an OTel log record (OTLP, next to the traces: a backend links each line to its trace). The global provider is
+ * the host's OTLP log exporter once startTelemetry() ran, a no-op before. `span.end` lines aren't sent: they are the spans.
+ */
+function exportRecord(level: LogLevel, record: LogAttributes, at: Date) {
+  const { ts: _ts, level: _level, service: _service, msg, trace_id: _trace, span_id: _span, ...attributes } = record;
+  const flat: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value === undefined || value === null) continue;
+    flat[key] = typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? value : safeJson(value as LogAttributes);
+  }
+  logs.getLogger('landflow-host.log').emit({ timestamp: at, severityNumber: OTEL_SEVERITY[level], severityText: level.toUpperCase(), body: String(msg), attributes: flat });
 }
 
 /** Extra scrubbing of every record before it is written (lib/server/secrets/install.ts redacts external secret values). */

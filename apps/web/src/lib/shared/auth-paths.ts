@@ -62,6 +62,8 @@ export const PUBLIC_ROUTES = [
   '/api/approvals/email',
   // SCIM 2.0 provisioning (Okta, Entra ID): a bearer API key with the `scim` scope, checked by the routes.
   '/scim/v2',
+  // The OCI registry of Claude Code plugins packed for kagent (pull only, by digest): kagent's nodes pull anonymously.
+  '/v2',
 ] as const;
 
 /** `/api/auth` routes that need a signed-in user. */

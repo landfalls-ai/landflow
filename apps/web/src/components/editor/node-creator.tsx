@@ -19,6 +19,7 @@ import type { NodeTypeInfo } from '@/lib/shared/types';
 import { describeMatcher, nodeMatches, type CompositeTypeInfo } from '@/lib/shared/composites';
 import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
+import { api } from '@/lib/client/api';
 import { useEditor, type PaletteRequest } from './store';
 
 type Mode = 'trigger' | 'next' | 'ai_languageModel' | 'ai_memory' | 'ai_tool' | 'ai_embedding' | 'ai_document' | 'ai_textSplitter' | 'ai_retriever' | 'ai_reranker';
@@ -175,6 +176,7 @@ export function NodeCreator() {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const reported = useRef(new Set<string>());
   const list = useRef<HTMLDivElement>(null);
   const close = () => useEditor.getState().openPalette(undefined);
 
@@ -192,6 +194,7 @@ export function NodeCreator() {
     setStack([{ kind: 'root' }]);
     setQuery('');
     setActive(0);
+    reported.current.clear();
     setTimeout(() => input.current?.focus(), 30);
   }, [request]);
 
@@ -544,6 +547,19 @@ export function NodeCreator() {
   }, [mode, all, segments, view, query, composites, slot]);
 
   const rows = sections.flatMap((s) => s.rows);
+
+  // A search with no results that stays put is a missing node: tell the second brain once per query.
+  const empty = rows.length === 0;
+  useEffect(() => {
+    const q = query.trim();
+    if (!request || !empty || q.length < 3 || reported.current.has(q)) return;
+    const timer = setTimeout(() => {
+      reported.current.add(q);
+      const workflowId = useEditor.getState().workflowId || undefined;
+      api('/api/usage/signal', { method: 'POST', json: { kind: 'search.empty', query: q.slice(0, 300), workflowId } }).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [request, empty, query]);
   useEffect(() => {
     list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active]);

@@ -404,3 +404,38 @@ describe('tool schemas', () => {
     expect(schema.required).toEqual(['text']);
   });
 });
+
+describe('node progress', () => {
+  it('turns ctx.sendProgress of a tool sub-node into throttled node.progress events, the last one always', async () => {
+    const slow = defineNode({
+      description: { name: 'slow', displayName: 'Slow', description: 'works', version: 1, kind: 'action', inputs: main, outputs: main, usableAsTool: true, properties: [] },
+      async execute(ctx) {
+        for (let i = 1; i <= 20; i++) ctx.sendProgress?.({ step: i });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        ctx.sendProgress?.({ step: 21 });
+        return [[{ json: { done: true } }]];
+      },
+    });
+    const caller = defineNode({
+      description: { name: 'caller', displayName: 'Caller', description: '', version: 1, kind: 'action', outputs: main, inputs: [...main, { type: 'ai_tool' }], properties: [] },
+      async execute(ctx) {
+        const [tool] = await ctx.getInputConnectionData!<AgentTool>('ai_tool');
+        await tool.invoke({});
+        return [[{ json: {} }]];
+      },
+    });
+    registry.slow = slow;
+    registry.caller = caller;
+    const events: ExecutionEvent[] = [];
+    const result = await run(wf([n('a', 'trigger'), n('c', 'caller'), n('s', 'slow')], [c('a', 'c'), c('s', 'c', 0, 1, 'ai_tool')]), (e) => events.push(e));
+    expect(result.status).toBe('success');
+    const progress = events.filter((e): e is Extract<ExecutionEvent, { type: 'node.progress' }> => e.type === 'node.progress');
+    expect(progress.length).toBeLessThan(5);
+    expect(progress[0]).toMatchObject({ executionId: 'ex', nodeId: 's', nodeName: 's', parentNodeId: 'c', data: { step: 1 } });
+    expect(progress.at(-1)!.data).toEqual({ step: 21 });
+    // Progress comes between the sub-node's start and end.
+    const types = events.filter((e) => 'nodeId' in e && e.nodeId === 's').map((e) => e.type);
+    expect(types[0]).toBe('node.started');
+    expect(types.at(-1)).toBe('node.finished');
+  });
+});

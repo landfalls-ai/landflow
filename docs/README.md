@@ -18,13 +18,18 @@ how to run it and how to change it. The [project README](../README.md) has the q
 |---|---|---|
 | Editor: canvas, node creator, runs, pinned data, debugging, versions, templates; importing from n8n and Flowise | [features/editor.md](features/editor.md) | [ui-review.md](ui-review.md) |
 | Editor assistant: suggestions after a run, Spotlight (the builder chat) | [assistant.md](assistant.md) | |
+| Second brain: the usage ledger, detectors and the Suggestions inbox, facts, the Platform analyst, your own conclusions | [second-brain.md](second-brain.md) | [observability.md](observability.md) |
 | Composite nodes: groups typed by a contract (slots, rules, ports), checked in the editor, run as one step | [composites.md](composites.md) | [protocol.md](protocol.md) §3 |
 | Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes, debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
 | Plugins: the node interface in each SDK, autodiscovery, branding | [plugins.md](plugins.md) | [protocol.md](protocol.md) |
 | Transports: HTTP, gRPC, ten brokers, Auto, the claim check, MCP faces | [transports.md](transports.md) | [protocol.md](protocol.md) §14–15 |
 | MCP gateway (agentgateway): sync, identity, tokens | [mcp-gateway.md](mcp-gateway.md) | [transports.md](transports.md) |
 | AI: AI Agent and sub-nodes, hosted chat and widget, RAG, guardrails, evaluations, MCP | [features/ai.md](features/ai.md) | |
-| Standalone agents: skills, capabilities, channels (Telegram, Slack, Teams), schedules, memory | [agents.md](agents.md) | |
+| Standalone agents: personas, skills, capabilities, channels (Telegram, Slack, Teams), schedules, memory | [agents.md](agents.md) | |
+| The agent roster: teams, persona templates, faces and other avatars, the Agent architect chat | [agents.md](agents.md#the-roster) | [second-brain.md](second-brain.md) |
+| Agent teams: agents with a lead, reporting lines and reviewers, the org chart, budgets, publishing | [agent-teams.md](agent-teams.md) | [agents.md](agents.md#teams) |
+| Remote agents over A2A (a capability and the A2A Agent node), kagent next to Landflow, tracing across both | [a2a.md](a2a.md) | [observability.md](observability.md#remote-agents-a2a) |
+| Run Trace: each run's journal (who did what, requests between agents, waits, artifacts, checks), the Story, Trace, Team and Report screens, profiles, the Run report node and its gate | [run-trace.md](run-trace.md) | [protocol.md](protocol.md) (`records`) |
 | Marketplace: Claude Code plugin marketplaces as agents, skills, node plugins and flows; flow share pages | [marketplace.md](marketplace.md) | |
 | Alert triage and Landfall war rooms: the triage, Landfall and threat-intel plugins and their flows | [triage.md](triage.md) | each plugin's README |
 | Integrations: messaging, productivity, Google Workspace, databases | [features/integrations.md](features/integrations.md) | each plugin's README |
@@ -38,7 +43,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | CLI | [features/cli.md](features/cli.md) | [packages/cli](../packages/cli/README.md) |
 | HTTP API | [reference/api.md](reference/api.md) | `GET /api/openapi.json` |
 | Environment variables | [reference/configuration.md](reference/configuration.md) | |
-| Docker, Kubernetes, the infra stack | [deployment.md](deployment.md) | [deploy/](../deploy/README.md) |
+| Docker, Kubernetes, the infra stack, telemetry on Kubernetes | [deployment.md](deployment.md) | [deploy/](../deploy/README.md) |
 
 ## Every document
 
@@ -53,7 +58,8 @@ how to run it and how to change it. The [project README](../README.md) has the q
 - [observability.md](observability.md): the OpenTelemetry contract: span names, attributes, metrics, logs.
 
 **Features**: the twelve pages under [features/](#feature-map), plus [plugins.md](plugins.md),
-[assistant.md](assistant.md), [composites.md](composites.md), [agents.md](agents.md) and [marketplace.md](marketplace.md).
+[assistant.md](assistant.md), [second-brain.md](second-brain.md), [composites.md](composites.md), [agents.md](agents.md), [agent-teams.md](agent-teams.md), [a2a.md](a2a.md),
+[run-trace.md](run-trace.md) and [marketplace.md](marketplace.md).
 
 **Reference**: [reference/api.md](reference/api.md) (every route), [reference/configuration.md](reference/configuration.md)
 (every host environment variable).
@@ -61,7 +67,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 **Running and changing Landflow**
 
 - [deployment.md](deployment.md): Compose stacks, ports and credentials, queue mode, the code runner, Kubernetes on
-  OrbStack, stop and reset.
+  OrbStack, telemetry on Kubernetes, kagent beside it, stop and reset.
 - [development.md](development.md): setup, code tour, conventions, the full verification list, integration flags.
 - [limitations.md](limitations.md): what Landflow does not do yet.
 - [roadmap.md](roadmap.md): the waves, what each built, and what remains.
@@ -96,7 +102,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | [packages/cli](../packages/cli/README.md) | every `landflow` command and its JSON output |
 | [services/landflow-bridge](../services/landflow-bridge/README.md) | broker kinds for plugins whose SDK lacks a driver |
 | [plugins/text-toolkit](../plugins/text-toolkit/README.md), [py-insights](../plugins/py-insights/README.md), [go-crypto](../plugins/go-crypto/README.md) | the example plugins, one per SDK |
-| [plugins/messaging](../plugins/messaging/README.md), [productivity](../plugins/productivity/README.md), [google-workspace](../plugins/google-workspace/README.md), [databases](../plugins/databases/README.md) | the integration plugins |
+| [plugins/messaging](../plugins/messaging/README.md), [productivity](../plugins/productivity/README.md), [google-workspace](../plugins/google-workspace/README.md), [databases](../plugins/databases/README.md), [github](../plugins/github/README.md) | the integration plugins |
 | [plugins/triage](../plugins/triage/README.md), [landfall](../plugins/landfall/README.md), [threat-intel](../plugins/threat-intel/README.md) | the triage plugins ([triage.md](triage.md)) |
 | [deploy/k8s/examples/keda](../deploy/k8s/examples/keda/README.md) | KEDA autoscaling examples |
 | [sdks/go/transport/testdata/live-brokers](../sdks/go/transport/testdata/live-brokers/README.md), [live](../sdks/go/transport/testdata/live/README.md) | the cross-language broker checks |

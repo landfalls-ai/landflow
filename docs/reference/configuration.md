@@ -6,7 +6,7 @@ SDK's README. Part of the [Landflow docs](../README.md).
 
 | Variable | Default | |
 |---|---|---|
-| `LANDFLOW_DATA_DIR` | `apps/web/.data` | data directory: the SQLite database (`landflow.db`), credentials, binary files and the other host files |
+| `LANDFLOW_DATA_DIR` | `apps/web/.data` | data directory: the SQLite database (`landflow.db`), credentials, binary files, the Claude Code plugin images packed for kagent (`oci/`) and the other host files |
 | `LANDFLOW_DB` | `sqlite` | `postgres` keeps the store in Postgres (`DATABASE_URL`); one host per database |
 | `DATABASE_URL` | – | Postgres connection string for `LANDFLOW_DB=postgres`, e.g. the infra stack's `postgres://landflow:landflow-dev-only@127.0.0.1:55432/landflow` |
 | `LANDFLOW_EXECUTIONS_MODE` | `regular` | `queue`: mains enqueue production runs on Valkey for workers (`pnpm worker`) and elect a leader ("Queue mode, workers and high availability") |
@@ -44,11 +44,20 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | the Ollama used by the AI flow builder and the editor assistant, and the default of the Ollama chat and embeddings nodes |
 | `LANDFLOW_BUILDER_MODEL` | `qwen3-coder:30b` | model the AI flow builder and the editor assistant use |
 | `AI_USAGE_RETENTION_DAYS` | `400` | how long per-call AI usage rows (tokens, cost) are kept |
+| `LANDFLOW_BRAIN` | `true` | `false` turns the [second brain](../second-brain.md) off: no usage ledger, no detectors, no study |
+| `USAGE_RETENTION_DAYS` | `90` | how long raw usage events are kept; daily rollups are kept 400 days |
+| `LANDFLOW_BRAIN_MODEL` | the builder model | the model the second brain writes fixes, tips, persona rules, drafts and purposes with; `off`: rules only |
+| `LANDFLOW_BRAIN_EMBEDDINGS` | `nomic-embed-text` | the Ollama model that embeds its facts into `landflow-brain-<project>`; `off`: keyword search only |
+| `LANDFLOW_BRAIN_INTERVAL_MINUTES` | `60` | how often the leader rolls up, checks effects and runs the detectors (it studies once a day) |
+| `LANDFLOW_BRAIN_WEEKLY_CAP` | `3` | suggestions per workflow per week |
 | `LANDFLOW_AUDIT_OUTBOX` | `on` | `off` stops this process from delivering the audit outbox to SIEM destinations (events still queue; another host or a restart delivers them) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | – | OTLP/HTTP endpoint for traces and metrics, e.g. `http://localhost:4318`; unset: nothing is exported |
 | `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER[_ARG]`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_SDK_DISABLED` | standard | see docs/observability.md |
 | `LANDFLOW_LOG_LEVEL` / `LANDFLOW_LOG_FORMAT` / `LANDFLOW_LOG_SPANS` | `info` / `json` / `true` | log level, `json` or `pretty`, one log line per finished span |
+| `LANDFLOW_LOG_OTLP` | `true` | with an OTLP endpoint, also export every log line (but `span.end`) as an OTel log record ([observability.md §3](../observability.md#3-logs)) |
 | `LANDFLOW_METRICS_PROMETHEUS` | `true` | serve `GET /api/metrics` |
+| `LANDFLOW_TRACE_CONTENT` | `full` | how much of a run's content the Run Trace journal keeps (docs/run-trace.md): `full` (inputs, outputs and texts, each event cut to 32 KB), `summaries` (every text cut to 400 characters) or `off` (names, statuses and errors only). A workflow's setting `traceContent` overrides it |
+| `LANDFLOW_TRACE_RETENTION_DAYS` | `30` | days the Run Trace journal is kept; older events are pruned once a day (by the leader in queue mode). `0` keeps them until their execution is deleted. Deleting or pruning an execution deletes its events |
 | `LANDFLOW_TRACE_URL` | – | trace link template, e.g. `http://localhost:16686/trace/{traceId}` |
 | `LANDFLOW_BINARY_STORE` | `filesystem` | where files live: `filesystem` or `s3` |
 | `LANDFLOW_BINARY_DIR` | `<data dir>/binary` | the filesystem store's directory |

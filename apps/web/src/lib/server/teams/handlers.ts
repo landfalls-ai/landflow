@@ -11,7 +11,7 @@
  * a message activity with the action's data as its `value`, after which the card is replaced through the Bot Connector.
  */
 import type { JsonObject } from '@landflow/protocol';
-import type { Agent, AgentChannel } from '../../shared/agents';
+import { approvalSubject, type Agent, type AgentChannel } from '../../shared/agents';
 import { allowed } from '../agents/triggers';
 import { decide, newSession, runAgent, type RunResult } from '../agents/runtime';
 import { agentStore } from '../agents/store';
@@ -136,7 +136,7 @@ async function deliver(agent: Agent, channel: AgentChannel, credential: TeamsCre
     const name = agent.published?.config.name ?? agent.name;
     for (const call of result.session.pending.calls.filter((c) => !c.decision)) {
       const target: ApprovalTarget = { t: 'agent', a: agent.id, ch: channel.id, s: result.session.id, c: call.callId };
-      await sendActivity(credential, to, { card: approvalCard({ title: `${name} wants to run a tool`, tool: call.tool, input: call.input, target }) });
+      await sendActivity(credential, to, { card: approvalCard({ title: `${name} wants to run a tool`, ...approvalSubject(call), target }) });
     }
     return;
   }

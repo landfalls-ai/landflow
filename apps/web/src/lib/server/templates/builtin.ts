@@ -735,6 +735,83 @@ export const BUILTIN_TEMPLATES: TemplateDetail[] = [
   }),
 
   template({
+    id: 'new-failure-alerts',
+    name: 'New failure alerts to Slack',
+    description: 'From the second brain’s usage ledger: the first time a step fails in a way never seen before, post the workflow, the step and the (redacted) error to Slack. Repeats of a known failure stay quiet.',
+    categories: ['it-ops', 'engineering'],
+    setup: ['Pick or add your Slack bot and invite it to the channel.', 'Change the channel in **Post to Slack** (default `#alerts`).', 'Publish the workflow: it watches every workflow you can open.'],
+    nodes: [
+      node('event', 'On new failure', 'usageTrigger', [0, 0], { kinds: ['node.failed'], workflowId: '', onlyNew: true, batchSeconds: 30 }),
+      node('post', 'Post to Slack', 'messaging.slack', [260, 0], {
+        resource: 'message',
+        operation: 'post',
+        channelId: '#alerts',
+        text: '🆕 New failure in *{{ $json.workflowName ?? $json.workflowId }}* ({{ $json.nodeType }}): {{ $json.message }}',
+      }, { uses: [SLOT.slack] }),
+    ],
+    links: [main('event', 'post')],
+  }),
+
+  template({
+    id: 'failure-hot-spots',
+    name: 'Weekly failure hot spots',
+    description: 'Every Monday at 8, read the week’s failed steps from the usage ledger, grouped by error, and post the top ten with their counts to Slack.',
+    categories: ['it-ops', 'engineering'],
+    setup: ['Pick or add your Slack bot and invite it to the channel.', 'Change the channel in **Post to Slack** (default `#ops`).', 'Change the schedule in **Every Monday** (a cron expression).'],
+    nodes: [
+      node('weekly', 'Every Monday', 'schedule', [0, 0], { rule: { interval: [{ field: 'cronExpression', expression: '0 8 * * 1' }] } }),
+      node('failures', 'Failures by error', 'landflowUsage', [260, 0], { operation: 'report', groupBy: 'signature', kinds: ['node.failed'], days: 7, limit: 10, oneItem: true }),
+      node('post', 'Post to Slack', 'messaging.slack', [520, 0], {
+        resource: 'message',
+        operation: 'post',
+        channelId: '#ops',
+        text: "🔥 Failure hot spots this week ({{ $json.totals.count }} failed steps)\n{{ $json.rows.map(r => `• ${r.count}× ${r.label ?? r.key}`).join('\\n') || 'No failures 🎉' }}",
+      }, { uses: [SLOT.slack] }),
+    ],
+    links: [main('weekly', 'failures'), main('failures', 'post')],
+  }),
+
+  template({
+    id: 'weekly-ai-cost-review',
+    name: 'Weekly AI cost review',
+    description: 'Every Monday at 8, total the week’s AI calls from the usage ledger by workflow and by model (calls, tokens, cost) and email the table over SMTP.',
+    categories: ['ai', 'it-ops'],
+    setup: ['Pick or add your SMTP credential.', 'Set the sender and recipients in **Email the review**.', 'Change the schedule in **Every Monday** (a cron expression).'],
+    nodes: [
+      node('weekly', 'Every Monday', 'schedule', [0, 0], { rule: { interval: [{ field: 'cronExpression', expression: '0 8 * * 1' }] } }),
+      node('byWorkflow', 'Cost by workflow', 'landflowUsage', [260, 0], { operation: 'report', groupBy: 'workflow', kinds: ['ai.call'], days: 7, limit: 15, oneItem: true }),
+      node('byModel', 'Cost by model', 'landflowUsage', [520, 0], { operation: 'report', groupBy: 'model', kinds: ['ai.call'], days: 7, limit: 15, oneItem: true }),
+      node('mail', 'Email the review', 'messaging.emailSend', [780, 0], {
+        fromEmail: 'reports@example.com',
+        toEmail: 'team@example.com',
+        subject: 'AI cost this week: ${{ $json.totals.cost.toFixed(2) }}',
+        emailFormat: 'html',
+        html: "<h2>AI cost this week</h2>\n<p>{{ $json.totals.count }} calls, {{ $json.totals.tokens }} tokens, <b>${{ $json.totals.cost.toFixed(2) }}</b></p>\n<h3>By model</h3>\n<table>{{ $json.rows.map(r => `<tr><td>${r.key || 'unknown'}</td><td>${r.count} calls</td><td>${r.tokens} tokens</td><td>$${r.cost.toFixed(2)}</td></tr>`).join('') }}</table>\n<h3>By workflow</h3>\n<table>{{ $('Cost by workflow').item.json.rows.map(r => `<tr><td>${r.label ?? (r.key || 'outside workflows')}</td><td>${r.count} calls</td><td>$${r.cost.toFixed(2)}</td></tr>`).join('') }}</table>",
+      }, { uses: [SLOT.smtp] }),
+    ],
+    links: [main('weekly', 'byWorkflow'), main('byWorkflow', 'byModel'), main('byModel', 'mail')],
+  }),
+
+  template({
+    id: 'brain-weekly-digest',
+    name: 'Second brain weekly digest',
+    description: 'Every Monday at 9, post the open suggestions from the second brain to Slack, best first, so the team decides them together.',
+    categories: ['it-ops', 'productivity'],
+    setup: ['Pick or add your Slack bot and invite it to the channel.', 'Change the channel in **Post to Slack** (default `#landflow`).', 'Decide the suggestions on the Home page’s Suggestions inbox.'],
+    nodes: [
+      node('weekly', 'Every Monday', 'schedule', [0, 0], { rule: { interval: [{ field: 'cronExpression', expression: '0 9 * * 1' }] } }),
+      node('open', 'Open suggestions', 'landflowUsage', [260, 0], { operation: 'proposals', status: 'open', limit: 10, oneItem: true }),
+      node('post', 'Post to Slack', 'messaging.slack', [520, 0], {
+        resource: 'message',
+        operation: 'post',
+        channelId: '#landflow',
+        text: "🧠 {{ $json.proposals.length }} open suggestions\n{{ $json.proposals.map(p => `• *${p.title}* (${p.label}): ${p.effect ?? p.why}`).join('\\n') || 'Nothing open this week.' }}",
+      }, { uses: [SLOT.slack] }),
+    ],
+    links: [main('weekly', 'open'), main('open', 'post')],
+  }),
+
+  template({
     id: 'order-lookup-agent',
     name: 'Order lookup assistant',
     description: 'A chat agent for the team that looks up orders by customer email in the Orders data table (as a tool), and never makes orders up.',

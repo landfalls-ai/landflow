@@ -23,6 +23,7 @@ import type { AgentSettings } from '../../shared/agents';
 import { EMPTY_USAGE, type AiCaps, type AiModelUsage, type AiUsageReport, type AiUsageTotals, type ExecutionAiUsage, type UsageCapSet } from '../../shared/ai-usage';
 import { database, type Database, type SqlValue } from '../db';
 import { logger } from '../telemetry/logger';
+import { recordUsage } from '../usage/ledger';
 import { instanceTimezone } from '../settings';
 import { aiCaps, capSetActive } from './caps';
 import { getUser } from '../auth/users';
@@ -157,6 +158,16 @@ export class AiUsageMeter implements UsageMeter {
         cost: call.cost,
       });
       noteUsage();
+      recordUsage({
+        kind: 'ai.call',
+        workflowId: scope.lookup('workflowId'),
+        agentId: scope.lookup('agentId'),
+        executionId: scope.lookup('executionId'),
+        actorId: scope.lookup('userId'),
+        tokens: (call.inputTokens ?? 0) + (call.outputTokens ?? 0),
+        cost: call.cost,
+        attrs: { provider: call.provider, model: call.model, operation: call.operation, input: call.inputTokens, output: call.outputTokens },
+      });
       if (now - this.pruned > DAY_MS / 24) {
         this.pruned = now;
         this.db().deleteBefore('ai_usage', 'at', new Date(now - this.retentionDays * DAY_MS).toISOString());

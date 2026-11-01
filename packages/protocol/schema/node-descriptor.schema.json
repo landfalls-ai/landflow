@@ -232,6 +232,9 @@
     "toolDescription": {
       "type": "string"
     },
+    "delegates": {
+      "type": "boolean"
+    },
     "toolInputSchema": {
       "type": "object",
       "propertyNames": {

@@ -17,6 +17,7 @@ import { usePublication } from './publish-control';
 import { parseHandle, useEditor } from './store';
 import { SuggestionsCard } from './suggestions-card';
 import { TriggerUrl } from './trigger-url';
+import { syncTeamName } from './turn-into-team';
 
 function Segmented<T extends string>({
   value,
@@ -332,7 +333,10 @@ export function NodePanel() {
                       nodeType={wf.type}
                       properties={descriptor.properties}
                       values={wf.parameters}
-                      onChange={(parameters) => update({ parameters })}
+                      onChange={(parameters) => {
+                        update({ parameters });
+                        if (wf.type === 'core.runTeam' && parameters.teamId !== wf.parameters.teamId) void syncTeamName(openNodeId);
+                      }}
                       preview={preview}
                       credentials={wf.credentials}
                       scope={workflowId ? { workflowId } : undefined}

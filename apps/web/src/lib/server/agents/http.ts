@@ -1,6 +1,6 @@
 /** Request schemas and the SSE response shared by the agent routes. */
 import { z } from 'zod';
-import type { AgentConfig, AgentStreamEvent } from '../../shared/agents';
+import { PLUGIN_ID, type AgentConfig, type AgentStreamEvent } from '../../shared/agents';
 import { sseHeaders } from '../http';
 import { logger } from '../telemetry';
 
@@ -31,13 +31,29 @@ export const agentConfigSchema = z
       })
       .optional()
       .nullable(),
+    persona: z
+      .object({
+        role: z.string().max(500),
+        audience: z.string().max(500),
+        mission: z.string().max(5_000),
+        tones: z.array(z.string().max(40)).max(20),
+        length: z.enum(['sentence', 'paragraph', 'detailed']),
+        language: z.string().max(60),
+        signoff: z.string().max(200),
+        always: z.array(z.string().max(1_000)).max(50),
+        never: z.array(z.string().max(1_000)).max(50),
+        examples: z.array(z.object({ user: z.string().max(5_000), assistant: z.string().max(5_000) })).max(10),
+      })
+      .partial()
+      .optional(),
     instructions: z.string().max(100_000).optional(),
     skills: z.array(z.object({ id: z.string(), name: z.string(), whenToUse: z.string(), instructions: z.string().max(65_536) }).passthrough()).optional(),
-    tools: z.array(z.object({ id: z.string(), type: z.enum(['node', 'workflow', 'agent', 'mcp', 'knowledge']) }).passthrough()).optional(),
+    tools: z.array(z.object({ id: z.string(), type: z.enum(['node', 'workflow', 'agent', 'mcp', 'knowledge', 'a2a']) }).passthrough()).optional(),
     schedules: z.array(z.object({ id: z.string(), prompt: z.string(), frequency: z.enum(['hourly', 'daily', 'weekly', 'monthly', 'cron']) }).passthrough()).optional(),
     channels: z.array(z.object({ id: z.string(), type: z.enum(['telegram', 'slack', 'teams']), credential: ref }).passthrough()).optional(),
     memory: z.object({ crossSession: z.boolean() }).optional(),
     guardrails: z.object({ input: guardrailRule.optional(), output: guardrailRule.optional() }).optional(),
+    plugins: z.array(z.string().max(200).regex(PLUGIN_ID, 'A plugin is <plugin>@<marketplace>')).max(20).optional(),
     settings: z
       .object({
         maxIterations: z.number().int().min(1).max(200),
@@ -54,10 +70,10 @@ export const agentConfigSchema = z
   })
   .passthrough();
 
-/** The parsed body as a config (a cleared model arrives as null). */
+/** The parsed body as a config (a cleared model arrives as null; a body without one leaves the model as it is). */
 export function asConfig(body: z.infer<typeof agentConfigSchema>): Partial<AgentConfig> {
   const { model, ...rest } = body;
-  return { ...(rest as Partial<AgentConfig>), model: model ?? undefined };
+  return { ...(rest as Partial<AgentConfig>), ...(model !== undefined && { model: model ?? undefined }) };
 }
 
 /**

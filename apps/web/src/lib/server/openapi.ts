@@ -40,7 +40,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers' | 'Plugins' | 'MCP';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agent teams';
   id: string;
   summary: string;
   description?: string;
@@ -611,6 +611,58 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Get an execution with its run data',
     responses: { 200: reply('The execution (and a trace link when LANDFLOW_TRACE_URL is set)', object({ execution: ref('ExecutionRecord'), traceUrl: { type: 'string' } }, ['execution'])), 404: notFound },
   });
+  add('get', '/api/executions/{id}/events', {
+    tag: 'Executions',
+    id: 'getExecutionEvents',
+    summary: 'Read the Run Trace journal of an execution',
+    description: 'The events of the run (spans, messages, artifacts, checks) in order, after a sequence number. `last` is the highest seq of the page; `more` says another page follows. The live stream sends new events as `journal` events.',
+    pathParams: { id: 'The execution id' },
+    query: [
+      { name: 'after', description: 'Only events with a higher seq (default 0)', schema: { type: 'integer', minimum: 0, default: 0 } },
+      { name: 'limit', description: 'At most this many (default 500, at most 2000)', schema: { type: 'integer', minimum: 1, maximum: 2000, default: 500 } },
+    ],
+    responses: { 200: reply('The events', object({ events: array({ type: 'object' }), last: { type: 'integer' }, more: { type: 'boolean' } }, ['events', 'last', 'more'])), 404: notFound },
+  });
+  add('get', '/api/executions/{id}/changes', {
+    tag: 'Executions',
+    id: 'getExecutionChanges',
+    summary: 'Read the branch of a run as GitHub sees it',
+    description:
+      'Compares the branch the run worked on with its base, through the GitHub plugin’s Repository → Compare and the flow’s own GitHub credential. The repository and branch come from the run’s GitHub steps and journal. `available: false` with a `reason` when the run names no repository or branch, has no GitHub credential to read it with, or GitHub refuses. Files carry GitHub’s patch unless it is large or binary, up to 300 files (`truncated`). Kept per run for 10 minutes (15 seconds while live).',
+    pathParams: { id: 'The execution id' },
+    responses: {
+      200: reply(
+        'The comparison, or why there is none',
+        object({ available: { type: 'boolean' }, reason: { type: 'string' }, repository: object({ owner: { type: 'string' }, repo: { type: 'string' }, url: { type: 'string' } }, ['owner', 'repo', 'url']), branch: { type: 'object' }, fetchedAt: { type: 'string' } }, ['available']),
+      ),
+      404: notFound,
+    },
+  });
+  add('post', '/api/executions/{id}/checks', {
+    tag: 'Executions',
+    id: 'decideExecutionCheck',
+    summary: 'Settle a failed check of a run',
+    description: 'A person accepts a failed check as it is, or sends it back for a fix. Written to the journal as a check event with a `resolution`.',
+    pathParams: { id: 'The execution id' },
+    body: jsonBody(object({ spanId: { type: 'string' }, name: { type: 'string' }, subject: { type: 'string', description: "Which of the span's checks of that name, when there are several (a team's Budget for each member)" }, decision: { type: 'string', enum: ['accepted', 'sent_back'] }, note: { type: 'string' } }, ['spanId', 'name', 'decision'])),
+    responses: { 200: reply('The check with its resolution', object({ check: { type: 'object' } }, ['check'])), 404: notFound, 409: errorRef('The check already has a decision, or did not fail') },
+  });
+  add('post', '/api/executions/{id}/gate', {
+    tag: 'Executions',
+    id: 'decideRunReportGate',
+    summary: 'Answer a Run report waiting on its failed checks',
+    description: 'For a Run report node whose gate asks a person: accept the failed checks as they are, or send the work back. The decision goes into the journal, settles each failed check, and the run resumes out of Passed or Send back.',
+    pathParams: { id: 'The execution id' },
+    body: jsonBody(object({ decision: { type: 'string', enum: ['accepted', 'sent_back'] }, note: { type: 'string' } }, ['decision'])),
+    responses: { 200: reply('The run after it went on', object({ status: { type: 'string' } }, ['status'])), 404: notFound, 409: errorRef('The run is not waiting on a Run report') },
+  });
+  add('get', '/api/runs/needs-you', {
+    tag: 'Executions',
+    id: 'listRunsNeedingYou',
+    summary: 'What waits for a person across runs',
+    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check), title, detail, actor, spanId, since.',
+    responses: { 200: reply('The items, newest first', object({ items: array({ type: 'object' }) }, ['items'])) },
+  });
   add('get', '/api/executions/{id}/feedback', {
     tag: 'Executions',
     id: 'getExecutionFeedback',
@@ -645,6 +697,39 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ entryId: { type: 'string', description: 'The id of an assistant entry of the session’s timeline' }, rating: { type: 'string', enum: ['up', 'down'], nullable: true }, comment: { type: 'string', maxLength: 2000 } }, ['entryId', 'rating'])),
     responses: { 200: reply('The feedback now on the reply', object({ feedback: { type: 'object', nullable: true, additionalProperties: true } }, ['feedback'])), 404: notFound },
   });
+  const teamBody = jsonBody(object({ name: { type: 'string' }, goal: { type: 'string' }, description: { type: 'string' }, members: array({ type: 'object', additionalProperties: true }) }), 'The draft: members are `{ id, kind: agent | a2a, title, role, reportsTo, reviews, budgetTokens, questionsTo, agentId | parameters, credentials }`', false);
+  const teamReply = (description: string) => reply(description, object({ team: { type: 'object', additionalProperties: true }, issues: array({ type: 'string' }) }, ['team']));
+  add('get', '/api/agent-teams', {
+    tag: 'Agent teams',
+    id: 'listAgentTeams',
+    summary: 'The agent teams you can see',
+    description: 'Teams of agents with standing relations (docs/agent-teams.md): name, goal, lead, member count, published version and `issues` (what stops the draft from being published). `projectId` limits them to a project.',
+    responses: { 200: reply('The teams', object({ teams: array({ type: 'object', additionalProperties: true }) }, ['teams'])) },
+  });
+  add('post', '/api/agent-teams', {
+    tag: 'Agent teams',
+    id: 'createAgentTeam',
+    summary: 'Create an agent team',
+    body: teamBody,
+    responses: { 201: teamReply('The new team'), 400: invalid },
+  });
+  add('get', '/api/agent-teams/{id}', { tag: 'Agent teams', id: 'getAgentTeam', summary: 'An agent team, with the issues that stop it from being published', responses: { 200: teamReply('The team'), 404: notFound } });
+  add('put', '/api/agent-teams/{id}', {
+    tag: 'Agent teams',
+    id: 'saveAgentTeam',
+    summary: 'Save the team’s draft',
+    description: 'Replaces the draft; the published version stays as it is. A draft with issues saves anyway: they only stop publishing.',
+    body: teamBody,
+    responses: { 200: teamReply('The saved team'), 400: invalid, 404: notFound },
+  });
+  add('delete', '/api/agent-teams/{id}', { tag: 'Agent teams', id: 'deleteAgentTeam', summary: 'Delete an agent team', responses: { 200: reply('Deleted'), 404: notFound } });
+  add('post', '/api/agent-teams/{id}/publish', {
+    tag: 'Agent teams',
+    id: 'publishAgentTeam',
+    summary: 'Publish the draft as the next version',
+    responses: { 200: teamReply('The team, published'), 400: errorRef('The draft has issues (`issues` lists them)'), 404: notFound },
+  });
+  add('post', '/api/agent-teams/{id}/unpublish', { tag: 'Agent teams', id: 'unpublishAgentTeam', summary: 'Stop flows from running the team', responses: { 200: teamReply('The team, unpublished'), 404: notFound } });
   add('delete', '/api/executions/{id}', {
     tag: 'Executions',
     id: 'deleteExecution',
@@ -1470,6 +1555,76 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(fromZod(connectionTestSchema), 'Values to test instead of the saved ones', false),
     responses: { 200: reply('The result', ref('TransportConnectionCheck')), 404: notFound },
   });
+
+  // The second brain (docs/second-brain.md).
+  const text = (name: string, description: string) => ({ name, description, schema: { type: 'string' } });
+  const usageQuery = [
+    text('kinds', 'Comma-separated kinds, such as node.failed,ai.call (empty: all)'),
+    text('from', 'ISO time or YYYY-MM-DD (default 7 days ago)'),
+    text('to', 'ISO time or YYYY-MM-DD (default now)'),
+    text('workflowId', 'One workflow'),
+    text('agentId', 'One agent'),
+    text('nodeType', 'One node type'),
+    text('signature', 'One failure signature'),
+    text('limit', 'At most this many rows'),
+  ];
+  const proposal = { type: 'object', description: 'A Proposal (lib/shared/brain.ts): target, title, why, evidence, effect, ops or a draft or persona rules, risk, confidence, score, status' };
+  add('get', '/api/usage', {
+    tag: 'Second brain',
+    id: 'usageReport',
+    summary: 'A grouped report of the usage ledger',
+    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent or model (default kind). Counts, failures, durations, items, tokens and cost per group; windows past USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
+    query: [{ name: 'groupBy', description: 'What to group by', schema: { type: 'string', enum: ['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model'] } }, ...usageQuery],
+    responses: { 200: reply('The report', object({ from: { type: 'string' }, to: { type: 'string' }, groupBy: { type: 'string' }, rows: array({ type: 'object' }), totals: { type: 'object' } }, ['rows', 'totals'])) },
+  });
+  add('get', '/api/usage/events', {
+    tag: 'Second brain',
+    id: 'listUsageEvents',
+    summary: 'Usage events, newest first',
+    query: usageQuery,
+    responses: { 200: reply('The events', object({ events: array({ type: 'object' }) }, ['events'])) },
+  });
+  add('get', '/api/proposals', {
+    tag: 'Second brain',
+    id: 'listProposals',
+    summary: 'List suggestions',
+    description: 'Best first. `status`: open (default), applied, dismissed, snoozed, expired or all. Members see suggestions about the workflows and agents they can open.',
+    query: [text('status', 'open (default), applied, dismissed, snoozed, expired or all'), text('workflowId', 'About one workflow'), text('agentId', 'About one agent'), text('detector', 'From one detector'), text('limit', 'At most this many (200)')],
+    responses: { 200: reply('The suggestions', object({ proposals: array(proposal) }, ['proposals'])) },
+  });
+  add('post', '/api/proposals', {
+    tag: 'Second brain',
+    id: 'createProposal',
+    summary: 'Add a suggestion',
+    description: 'Source `analyst`. Its ops are checked against the workflow; the same fingerprint refreshes the open suggestion. Needs edit access to the workflow or agent. `proposal: null` when it is held back (dismissed or applied recently, or the weekly cap is full).',
+    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' } }, ['title', 'why'])),
+    responses: { 200: reply('Held back', object({ proposal: { type: 'null' }, reason: { type: 'string' } })), 201: reply('The suggestion', object({ proposal }, ['proposal'])), 400: invalid, 404: notFound },
+  });
+  add('get', '/api/proposals/{id}', { tag: 'Second brain', id: 'getProposal', summary: 'Get a suggestion', responses: { 200: reply('The suggestion', object({ proposal }, ['proposal'])), 404: notFound } });
+  add('patch', '/api/proposals/{id}', {
+    tag: 'Second brain',
+    id: 'decideProposal',
+    summary: 'Dismiss or snooze a suggestion',
+    description: '`{ action: "dismiss", reason: intended|not-relevant|wrong|done, note? }` or `{ action: "snooze", days }`. Dismissed as intended, it becomes a fact and isn’t suggested again.',
+    body: jsonBody({ type: 'object', properties: { action: { type: 'string', enum: ['dismiss', 'snooze'] }, reason: { type: 'string', enum: ['intended', 'not-relevant', 'wrong', 'done'] }, note: { type: 'string' }, days: { type: 'integer' } }, required: ['action'] }),
+    responses: { 200: reply('The suggestion', object({ proposal }, ['proposal'])), 400: invalid, 404: notFound, 409: errorRef('Already applied or dismissed') },
+  });
+  add('post', '/api/proposals/{id}/apply', {
+    tag: 'Second brain',
+    id: 'applyProposal',
+    summary: 'Apply a suggestion',
+    description: 'Ops are checked against the workflow as it is now and saved through governance; a draft becomes a new workflow (`?projectId=`); persona rules go to the agent’s draft.',
+    responses: { 200: reply('Applied', object({ proposal, workflow: ref('Workflow'), warnings: array({ type: 'string' }) }, ['proposal', 'warnings'])), 400: errorRef('Advice only: nothing to apply'), 404: notFound, 409: errorRef('The changes no longer fit, or it is already decided') },
+  });
+  add('get', '/api/brain/facts', {
+    tag: 'Second brain',
+    id: 'listBrainFacts',
+    summary: 'What the second brain learned',
+    description: '`q` searches (keywords fused with the vector index); otherwise lists by subjectType, subjectId, kind and status.',
+    query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential or instance'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (100)')],
+    responses: { 200: reply('The facts', object({ facts: array({ type: 'object' }) }, ['facts'])) },
+  });
+  add('get', '/api/brain/status', { tag: 'Second brain', id: 'brainStatus', summary: 'What the second brain holds and when it last looked', responses: { 200: reply('The status', { type: 'object' }) } });
   return out;
 }
 
@@ -1496,6 +1651,8 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Account', description: 'Who you are and your API keys' },
       { name: 'Triggers', description: 'Webhook, form and MCP Server Trigger URLs and their test URLs: public, each checked by its trigger’s own authentication' },
       { name: 'Plugins', description: 'Installed plugins, their transports and transport policies, and broker connections (changes need an owner or admin)' },
+      { name: 'Second brain', description: 'The usage ledger, suggestions and what Landflow learned from how it is used (docs/second-brain.md)' },
+      { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

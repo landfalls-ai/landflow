@@ -1,0 +1,308 @@
+/**
+ * The second brain's nodes (docs/second-brain.md#6-your-own-conclusions): read the usage ledger and what the brain knows
+ * (Landflow Usage), start a workflow when something happens (On Usage Event), and post a suggestion to the inbox next to
+ * the built-in ones (Suggest Improvement). All three are tools too, which is how the Platform analyst agent uses them.
+ *
+ * A workflow sees the usage its creator could see (lib/server/brain/scope.ts).
+ */
+import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
+import { DETECTOR_LABELS, DETECTORS, USAGE_KINDS, type UsageGroup, type UsageKind } from '../../shared/brain';
+import { store } from '../store';
+
+const main = [{ type: 'main' as const }];
+const DAY_MS = 86_400_000;
+const kindOptions = USAGE_KINDS.map((kind) => ({ name: kind, value: kind }));
+const anyWorkflow = () => [{ name: 'Any workflow', value: '' }, ...store.listWorkflows().map((w) => ({ name: w.name, value: w.id })).sort((a, b) => a.name.localeCompare(b.name))];
+
+const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as JsonObject;
+
+const list = (value: unknown): string[] => (Array.isArray(value) ? value.map(String).filter(Boolean) : typeof value === 'string' && value.trim() ? value.split(',').map((v) => v.trim()).filter(Boolean) : []);
+
+export const landflowUsageNode = defineNode({
+  description: {
+    name: 'landflowUsage',
+    displayName: 'Landflow Usage',
+    description: 'Read how the platform is used: runs, failures, AI costs and edits, what the second brain knows, and its suggestions',
+    version: 1,
+    kind: 'action',
+    categories: ['AI', 'Core'],
+    icon: 'lucide:brain',
+    color: '#8b5cf6',
+    subtitle: '{{operation}}',
+    keywords: ['usage', 'analytics', 'second brain', 'insights', 'failures', 'cost', 'facts', 'suggestions', 'ledger'],
+    usableAsTool: true,
+    toolDescription:
+      'Read Landflow usage. Arguments: `operation` (report, events, facts, workflow, proposals), `groupBy` for reports (day, kind, workflow, nodeType, signature, agent, model), `kinds` (comma-separated, e.g. node.failed,ai.call), `days`, `workflowId`, `query` for facts.',
+    inputs: main,
+    outputs: main,
+    properties: [
+      {
+        name: 'operation',
+        displayName: 'Operation',
+        type: 'options',
+        default: 'report',
+        noDataExpression: true,
+        options: [
+          { name: 'Report', value: 'report', description: 'Counts, failures, durations, tokens and cost, grouped' },
+          { name: 'Events', value: 'events', description: 'The events themselves, newest first' },
+          { name: 'Search Facts', value: 'facts', description: 'What the brain learned, best match first' },
+          { name: 'Workflow Knowledge', value: 'workflow', description: 'A workflow’s profile, facts and open suggestions' },
+          { name: 'Suggestions', value: 'proposals', description: 'Suggestions in the inbox' },
+        ],
+      },
+      {
+        name: 'groupBy',
+        displayName: 'Group By',
+        type: 'options',
+        default: 'workflow',
+        options: (['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model'] as UsageGroup[]).map((g) => ({ name: g, value: g })),
+        displayOptions: { show: { operation: ['report'] } },
+      },
+      { name: 'kinds', displayName: 'Kinds', type: 'multiOptions', default: [], options: kindOptions, description: 'Empty: every kind', displayOptions: { show: { operation: ['report', 'events'] } } },
+      { name: 'days', displayName: 'Days', type: 'number', default: 7, typeOptions: { minValue: 1, maxValue: 400 }, displayOptions: { show: { operation: ['report', 'events'] } } },
+      {
+        name: 'workflowId',
+        displayName: 'Workflow',
+        type: 'options',
+        default: '',
+        typeOptions: { loadOptionsMethod: 'workflows' },
+        displayOptions: { show: { operation: ['report', 'events', 'workflow', 'proposals'] } },
+      },
+      { name: 'query', displayName: 'Query', type: 'string', default: '', placeholder: 'invoice failures', displayOptions: { show: { operation: ['facts'] } } },
+      {
+        name: 'status',
+        displayName: 'Status',
+        type: 'options',
+        default: 'open',
+        options: ['open', 'applied', 'dismissed', 'snoozed', 'expired', 'all'].map((s) => ({ name: s, value: s })),
+        displayOptions: { show: { operation: ['proposals'] } },
+      },
+      { name: 'limit', displayName: 'Limit', type: 'number', default: 50, typeOptions: { minValue: 1, maxValue: 1000 }, displayOptions: { show: { operation: ['report', 'events', 'facts', 'proposals'] } } },
+      { name: 'oneItem', displayName: 'As One Item', type: 'boolean', default: false, description: 'Output the whole answer as one item instead of one item per row', displayOptions: { show: { operation: ['report', 'events', 'facts', 'proposals'] } } },
+    ],
+  },
+  methods: { loadOptions: { workflows: anyWorkflow } },
+  async execute(ctx) {
+    const { usageReport, listUsageEvents } = await import('../usage/query');
+    const { scopeForWorkflow, covers } = await import('../brain/scope');
+    const { searchFacts, listFacts, getProfile } = await import('../brain/facts');
+    const { listProposals } = await import('../brain/proposals');
+    const { vectorFactHits } = await import('../brain/study');
+    const { workflowOutline } = await import('../assistant/research');
+    const { agentStore } = await import('../agents/store');
+    const { projectsOf } = await import('../brain/scope');
+    const scope = scopeForWorkflow(ctx.getWorkflowId());
+    const items = ctx.getInputData();
+    const out: NodeItem[] = [];
+    const labels = (group: UsageGroup, key: string) => (group === 'workflow' ? store.getWorkflow(key)?.name : group === 'agent' ? agentStore.get(key)?.name : undefined);
+    for (let i = 0; i < Math.max(items.length, 1); i++) {
+      const operation = ctx.getNodeParameter<string>('operation', i);
+      const workflowId = String(ctx.getNodeParameter('workflowId', i, '') ?? '').trim() || undefined;
+      if (workflowId && !covers(scope, { workflowId })) throw new NodeOperationError('This workflow can’t read that workflow’s usage', { itemIndex: i });
+      const days = Math.max(1, Math.min(400, Number(ctx.getNodeParameter('days', i, 7)) || 7));
+      const limit = Math.max(1, Math.min(1_000, Number(ctx.getNodeParameter('limit', i, 50)) || 50));
+      const oneItem = Boolean(ctx.getNodeParameter('oneItem', i, false));
+      const kinds = list(ctx.getNodeParameter('kinds', i, [])).filter((k): k is UsageKind => (USAGE_KINDS as readonly string[]).includes(k));
+      const from = new Date(Date.now() - days * DAY_MS).toISOString();
+      const rows: unknown[] = [];
+      let whole: unknown;
+      switch (operation) {
+        case 'report': {
+          const groupBy = ctx.getNodeParameter<UsageGroup>('groupBy', i);
+          whole = usageReport({ kinds, from, workflowId }, groupBy, { scope, limit, labels });
+          rows.push(...(whole as { rows: unknown[] }).rows);
+          break;
+        }
+        case 'events':
+          rows.push(...listUsageEvents({ kinds, from, workflowId }, { limit, scope }));
+          whole = { events: rows };
+          break;
+        case 'facts': {
+          const query = String(ctx.getNodeParameter('query', i, '') ?? '');
+          rows.push(...searchFacts(query, { scope, limit, vectorHits: await vectorFactHits(query, projectsOf(scope)) }));
+          whole = { facts: rows };
+          break;
+        }
+        case 'workflow': {
+          if (!workflowId) throw new NodeOperationError('Choose a workflow', { itemIndex: i });
+          const workflow = store.getWorkflow(workflowId);
+          whole = {
+            ...(workflow && { name: workflow.name, outline: workflowOutline(workflow) }),
+            profile: getProfile('workflow', workflowId) ?? null,
+            facts: listFacts({ subjectType: 'workflow', subjectId: workflowId }),
+            proposals: listProposals({ workflowId }),
+          };
+          break;
+        }
+        case 'proposals': {
+          const status = ctx.getNodeParameter<string>('status', i) as 'open';
+          rows.push(...listProposals({ status, workflowId, scope, limit }).map((p) => ({ ...p, ...(p.detector && { detectorLabel: DETECTOR_LABELS[p.detector] }) })));
+          whole = { proposals: rows };
+          break;
+        }
+        default:
+          throw new NodeOperationError(`Unknown operation ${operation}`, { itemIndex: i });
+      }
+      if (operation === 'workflow' || oneItem) out.push({ json: json(whole), pairedItem: { item: i } });
+      else out.push(...rows.map((row) => ({ json: json(row), pairedItem: { item: i } })));
+    }
+    return [out];
+  },
+});
+
+export const usageTriggerNode = defineNode({
+  description: {
+    name: 'usageTrigger',
+    displayName: 'On Usage Event',
+    description: 'Start the workflow when something happens on the platform: a node fails, a run is slow, an AI call costs too much…',
+    version: 1,
+    kind: 'trigger',
+    // "Run" in the editor starts here with an example; the ledger starts it once the workflow is published.
+    triggerSource: 'manual',
+    categories: ['Triggers', 'AI'],
+    icon: 'lucide:radar',
+    color: '#8b5cf6',
+    subtitle: '{{kinds}}',
+    keywords: ['usage', 'event', 'failure', 'second brain', 'monitor', 'watch', 'on failure', 'cost'],
+    inputs: [],
+    outputs: main,
+    properties: [
+      { name: 'kinds', displayName: 'Kinds', type: 'multiOptions', default: ['node.failed'], options: kindOptions, description: 'Empty: every kind' },
+      { name: 'workflowId', displayName: 'Workflow', type: 'options', default: '', typeOptions: { loadOptionsMethod: 'workflows' }, description: 'Only events of this workflow' },
+      {
+        name: 'detector',
+        displayName: 'Suggestion From',
+        type: 'options',
+        default: '',
+        options: [{ name: 'Any detector', value: '' }, ...DETECTORS.map((id) => ({ name: DETECTOR_LABELS[id], value: id }))],
+        description: 'For proposal.applied: only suggestions this detector made. Each item carries the whole suggestion in `proposal`',
+        displayOptions: { show: { kinds: ['proposal.applied'] } },
+      },
+      { name: 'onlyNew', displayName: 'Only New Failures', type: 'boolean', default: false, description: 'For node.failed: only a failure signature never seen before', displayOptions: { show: { kinds: ['node.failed'] } } },
+      { name: 'minCost', displayName: 'Minimum Cost (USD)', type: 'number', default: 0, typeOptions: { minValue: 0, numberPrecision: 4 }, description: 'For ai.call: only calls that cost at least this', displayOptions: { show: { kinds: ['ai.call'] } } },
+      { name: 'batchSeconds', displayName: 'Batch Seconds', type: 'number', default: 10, typeOptions: { minValue: 0, maxValue: 3600 }, description: 'Events within this many seconds start one run, one item each' },
+      {
+        name: 'notice',
+        displayName:
+          'Publish the workflow to listen. Each event is an item: { kind, at, workflowId, nodeId, nodeType, agentId, executionId, signature, message, durationMs, items, tokens, cost, attrs }, and for proposal.applied the suggestion in `proposal`. Events from workflows that start from On Usage Event never start one, so they can’t loop.',
+        type: 'notice',
+      },
+    ],
+  },
+  methods: { loadOptions: { workflows: anyWorkflow } },
+  execute(ctx) {
+    const items = ctx.getInputData();
+    if (items.some((item) => Object.keys(item.json).length)) return [items];
+    // A manual run: an example of what an event hands over.
+    return [
+      [
+        {
+          json: {
+            id: 'ue_example',
+            at: new Date().toISOString(),
+            kind: 'node.failed',
+            workflowId: 'wf_example',
+            workflowName: 'Example workflow',
+            nodeId: 'n1',
+            nodeType: 'core.httpRequest',
+            executionId: 'ex_example',
+            signature: '3f2a9c1d0b7e',
+            message: 'The service answered 503: Service Unavailable',
+            durationMs: 30_012,
+            attrs: { mode: 'trigger' },
+          },
+        },
+      ],
+    ];
+  },
+});
+
+const HELD_BACK = 'held back: the same advice is already open for this node, it was dismissed or applied recently, or the weekly cap is full';
+
+export const suggestImprovementNode = defineNode({
+  description: {
+    name: 'suggestImprovement',
+    displayName: 'Suggest Improvement',
+    description: 'Post a suggestion to the Suggestions inbox, next to the second brain’s own: a change to a workflow, a new workflow, or advice',
+    version: 1,
+    kind: 'action',
+    categories: ['AI', 'Core'],
+    icon: 'lucide:lightbulb',
+    color: '#8b5cf6',
+    subtitle: '{{label}}',
+    keywords: ['suggest', 'improvement', 'proposal', 'second brain', 'recommendation', 'inbox'],
+    usableAsTool: true,
+    toolDescription:
+      'Post a suggestion to the inbox. Arguments: `title`, `why` (with the evidence), optional `workflowId` it is about, `effect` (the expected effect), `ops` (a JSON array of edit operations on that workflow: addNode, setParameters, connect, setNodeSettings, setWorkflowSettings…).',
+    inputs: main,
+    outputs: main,
+    properties: [
+      { name: 'title', displayName: 'Title', type: 'string', default: '', required: true, placeholder: 'Retry the CRM call when it times out' },
+      { name: 'why', displayName: 'Why', type: 'string', default: '', required: true, typeOptions: { rows: 3 }, description: 'The reason and the evidence people see' },
+      { name: 'workflowId', displayName: 'About Workflow', type: 'options', default: '', typeOptions: { loadOptionsMethod: 'workflows' }, description: 'The workflow it changes or is about (empty: the instance)' },
+      { name: 'nodeName', displayName: 'Node', type: 'string', default: '', description: 'The node it is about, by name' },
+      { name: 'label', displayName: 'Label', type: 'string', default: '', description: 'A short tag in the inbox (default: this workflow’s name)' },
+      { name: 'effect', displayName: 'Expected Effect', type: 'string', default: '' },
+      { name: 'ops', displayName: 'Changes (JSON)', type: 'json', default: '[]', description: 'Edit operations on the workflow, checked against it before they are kept; empty for advice' },
+      {
+        name: 'risk',
+        displayName: 'Risk',
+        type: 'options',
+        default: 'medium',
+        options: [
+          { name: 'Low', value: 'low' },
+          { name: 'Medium', value: 'medium' },
+          { name: 'High', value: 'high' },
+        ],
+      },
+      { name: 'confidence', displayName: 'Confidence', type: 'number', default: 0.6, typeOptions: { minValue: 0, maxValue: 1, numberPrecision: 2 } },
+      { name: 'fingerprint', displayName: 'Fingerprint', type: 'string', default: '', description: 'The same fingerprint refreshes the open suggestion instead of adding one (default: from the label, workflow and title)' },
+    ],
+  },
+  methods: { loadOptions: { workflows: anyWorkflow } },
+  async execute(ctx) {
+    const { proposeFrom, ProposalError } = await import('../brain/proposals');
+    const { covers, scopeForWorkflow } = await import('../brain/scope');
+    const scope = scopeForWorkflow(ctx.getWorkflowId());
+    const runId = ctx.getWorkflowId();
+    // An agent's tools run as `agent:<id>`: its suggestions carry the agent's name.
+    const { agentStore } = await import('../agents/store');
+    const own = runId?.startsWith('agent:') ? agentStore.get(runId.slice('agent:'.length)) : runId ? store.getWorkflow(runId) : undefined;
+    const items = ctx.getInputData();
+    const out: NodeItem[] = [];
+    for (let i = 0; i < Math.max(items.length, 1); i++) {
+      const workflowId = String(ctx.getNodeParameter('workflowId', i, '') ?? '').trim() || undefined;
+      if (workflowId && !covers(scope, { workflowId })) throw new NodeOperationError('This workflow can’t suggest changes to that workflow', { itemIndex: i });
+      let ops: unknown = ctx.getNodeParameter('ops', i, '[]');
+      if (typeof ops === 'string') {
+        try {
+          ops = ops.trim() ? JSON.parse(ops) : [];
+        } catch {
+          throw new NodeOperationError('Changes (JSON) is not valid JSON', { itemIndex: i });
+        }
+      }
+      try {
+        const proposal = proposeFrom(
+          {
+            title: String(ctx.getNodeParameter('title', i) ?? ''),
+            why: String(ctx.getNodeParameter('why', i) ?? ''),
+            label: String(ctx.getNodeParameter('label', i, '') ?? '').trim() || own?.name,
+            ...(workflowId && { workflowId }),
+            nodeName: String(ctx.getNodeParameter('nodeName', i, '') ?? '').trim() || undefined,
+            effect: String(ctx.getNodeParameter('effect', i, '') ?? '').trim() || undefined,
+            ops,
+            risk: ctx.getNodeParameter('risk', i, 'medium') as 'medium',
+            confidence: Number(ctx.getNodeParameter('confidence', i, 0.6)),
+            fingerprint: String(ctx.getNodeParameter('fingerprint', i, '') ?? '').trim() || undefined,
+          },
+          'workflow',
+        );
+        out.push({ json: proposal ? json({ saved: true, proposal }) : { saved: false, reason: HELD_BACK }, pairedItem: { item: i } });
+      } catch (caught) {
+        if (caught instanceof ProposalError) throw new NodeOperationError(caught.message, { itemIndex: i });
+        throw caught;
+      }
+    }
+    return [out];
+  },
+});

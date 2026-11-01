@@ -122,6 +122,7 @@ Everything from before still works (`getNodeParameter`, `getInputData`, `helpers
 | ★ `getCredentials<T>(name)` | that credential type's data; throws a `NodeOperationError` when the host sent none |
 | ★ `getCredentials<T>(name, { optional: true })` | same, `undefined` when absent (for `required: false`) |
 | `getCredentials<T>()` | the only credential sent (or `undefined`); throws if several were sent |
+| ★ `artifact({ name, kind?, url?, mimeType?, text?, data? })` / `check({ name, status, message?, subject?, evidence? })` | report what the node made (a pull request, a file, a ticket) or checked (`status`: `pass` `fail` `warn` `skip`) for the run's trace. In-process they reach the engine live (`onRecord`); a remote plugin returns them in `ExecuteResponse.records`, stamped with the time and with credential values masked ([protocol §3](../../docs/protocol.md#3-messages-json-shapes)) |
 | ★ `getPollState<T>()` / `setPollState(state)` / `isFirstPoll()` | poll triggers, see below |
 | ★ `span(name, attrs?, fn, { kind }?)` | child span; `fn(span)` gets the OTel `Span`; a throw sets error status + `exception` event and is rethrown. `kind: 'client'` for a call over a protocol `http` doesn't cover (SMTP, a database driver) |
 | ★ `metrics.counter(name, opts?).add(v, attrs?)` | custom counter |

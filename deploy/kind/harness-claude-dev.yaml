@@ -1,0 +1,27 @@
+# Claude Code with the common toolchains (docs/a2a.md, "A toolchain image for Claude Code"): landflow-claude's runtime and
+# settings on the image deploy/docker/claude-harness-dev.Dockerfile builds (Go, Node with pnpm, Python with uv, a C
+# toolchain). deploy/scripts/claude-harness-dev.sh puts the image in Landflow's registry and applies this with its digest:
+# workload.image must be pinned by digest, and kagent's nodes pull it from Landflow at the Service's private IP.
+apiVersion: api.kagent.dev/v1alpha3
+kind: Harness
+metadata:
+  name: landflow-claude-dev
+  namespace: kagent
+spec:
+  claude: {}
+  workload:
+    image: registry.invalid/runtimes/claude-harness-dev@sha256:0000000000000000000000000000000000000000000000000000000000000000  # set by claude-harness-dev.sh
+  env:
+    - { name: ANTHROPIC_DEFAULT_HAIKU_MODEL, value: "qwen3-coder:30b" }
+    - { name: ANTHROPIC_DEFAULT_SONNET_MODEL, value: "qwen3-coder:30b" }
+    - { name: ANTHROPIC_DEFAULT_OPUS_MODEL, value: "qwen3-coder:30b" }
+    - { name: CLAUDE_CODE_SUBAGENT_MODEL, value: "qwen3-coder:30b" }
+    - { name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, value: "1" }
+    # git sends a placeholder Authorization to github.com, which the EgressPolicy landflow-github replaces with the token
+    # at kagent's gateway (deploy/kind/egress-github.yaml). Without that policy github.com is unreachable anyway.
+    - { name: GIT_CONFIG_COUNT, value: "1" }
+    - { name: GIT_CONFIG_KEY_0, value: "http.https://github.com/.extraHeader" }
+    - { name: GIT_CONFIG_VALUE_0, value: "Authorization: landflow-egress-gateway" }
+  substrate:
+    workerPoolRef: { name: kagent-default }
+    snapshotPolicy: { location: s3://ate-snapshots/kagent/ }

@@ -9,8 +9,11 @@ import { toast } from 'sonner';
 import { create } from 'zustand';
 import { api, streamEvents } from '@/lib/client/api';
 import { applyOps, digestRun, type AssistantOp, type DescriptorLookup, type RunDigest } from '@/lib/shared/assistant-ops';
+import type { AgentTeamConfig } from '@/lib/shared/agent-teams';
+import { teamFromLead } from '@/lib/shared/turn-into-team';
 import type { NodeRun } from '@/lib/shared/types';
 import { useEditor } from './store';
+import { saveTeamFor } from './turn-into-team';
 
 export type SuggestionKind = 'fix' | 'param' | 'data' | 'next';
 export type ChangeKind = SuggestionKind | 'proposal';
@@ -39,8 +42,9 @@ export const editorLookup = (): DescriptorLookup => {
 };
 
 /** Report an applied or dismissed change for the assistant metrics. Best effort. */
-export function sendFeedback(kind: ChangeKind, action: 'applied' | 'dismissed') {
-  api('/api/assistant/feedback', { method: 'POST', json: { kind, action } }).catch(() => {});
+export function sendFeedback(kind: ChangeKind, action: 'applied' | 'dismissed', nodeType?: string) {
+  const workflowId = useEditor.getState().workflowId || undefined;
+  api('/api/assistant/feedback', { method: 'POST', json: { kind, action, workflowId, nodeType } }).catch(() => {});
 }
 
 /**
@@ -48,7 +52,7 @@ export function sendFeedback(kind: ChangeKind, action: 'applied' | 'dismissed') 
  * with one undo. Ops that no longer fit (the workflow changed since they were
  * proposed) are skipped. Returns false when nothing applied.
  */
-export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKind }>, label: string): boolean {
+export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKind; nodeType?: string }>, label: string): boolean {
   const state = useEditor.getState();
   const lookup = editorLookup();
   let workflow = state.toWorkflow();
@@ -56,16 +60,25 @@ export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKi
   const dropped: string[] = [];
   let edited: string | undefined;
   let count = 0;
+  /** Teams to save once the graph is swapped: Spotlight's turnIntoTeam ops, read from the graph as it was. */
+  const teams: Array<{ nodeId: string; config: AgentTeamConfig }> = [];
   for (const change of changes) {
+    const before = workflow;
     const result = applyOps(workflow, change.ops, lookup);
     workflow = result.workflow;
+    for (const op of result.applied) {
+      if (op.op !== 'turnIntoTeam') continue;
+      const lead = before.nodes.find((n) => n.name === op.node || n.id === op.node);
+      const made = lead && teamFromLead(before, lead.id);
+      if (lead && made && !('error' in made)) teams.push({ nodeId: lead.id, config: made.team });
+    }
     added.push(...result.added.filter((id) => workflow.nodes.some((n) => n.id === id)));
     dropped.push(...result.dropped);
     count += result.applied.length;
     const op = result.applied.findLast((o) => o.op === 'setParameters' || o.op === 'renameNode');
     if (op?.op === 'renameNode') edited = workflow.nodes.find((n) => n.name === op.name)?.id;
     else if (op?.op === 'setParameters') edited = workflow.nodes.find((n) => n.name === op.node || n.id === op.node)?.id;
-    if (result.applied.length) sendFeedback(change.kind, 'applied');
+    if (result.applied.length) sendFeedback(change.kind, 'applied', change.nodeType);
   }
   if (!count) {
     toast.error('Couldn’t apply the change', { description: dropped[0] ?? 'Nothing to change.' });
@@ -74,6 +87,7 @@ export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKi
   // Select what changed: the last node added, else the node edited.
   const focusId = added.at(-1) ?? edited;
   const undo = state.replaceGraph(workflow, focusId ? { id: focusId, added: added.includes(focusId) } : undefined);
+  for (const { nodeId, config } of teams) void saveTeamFor(nodeId, config);
   const skipped = dropped.length ? `Skipped ${dropped.length}: ${dropped[0]}` : undefined;
   // Long enough to look at the canvas before deciding to undo.
   toast.success(label, { description: skipped, action: { label: 'Undo', onClick: undo }, duration: 15_000 });
@@ -159,7 +173,9 @@ export const useSuggestions = create<SuggestionsState>((set, get) => ({
       const entry = s.entries[key];
       return entry ? { entries: { ...s.entries, [key]: { ...entry, handled: { ...entry.handled, [suggestion.id]: action } } } } : s;
     });
-    if (action === 'dismissed') sendFeedback(suggestion.kind, 'dismissed');
+    // The key is workflowId:nodeId:startedAt.
+    const nodeId = key.split(':')[1];
+    if (action === 'dismissed') sendFeedback(suggestion.kind, 'dismissed', useEditor.getState().nodes.find((n) => n.id === nodeId)?.data.wf.type);
   },
 
   clear() {
@@ -295,6 +311,11 @@ function historyOf(items: ChatItem[]) {
   });
 }
 
+/** The proposals in the conversation that are neither applied nor dismissed: the server counts them as part of the workflow. */
+export function pendingProposals(items: ChatItem[]): Array<{ summary: string; ops: AssistantOp[] }> {
+  return items.flatMap((item) => (item.role === 'assistant' ? item.parts.flatMap((part) => (part.kind === 'proposal' && !part.proposal.state ? [{ summary: part.proposal.summary, ops: part.proposal.ops }] : [])) : []));
+}
+
 export const useAssistant = create<AssistantState>((set, get) => ({
   open: false,
   items: [],
@@ -323,6 +344,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [], ...group };
     const abort = new AbortController();
     const messages = historyOf(options.fresh ? [user] : [...get().items, user]);
+    const pending = options.fresh ? [] : pendingProposals(get().items).slice(-20);
     set((s) => ({ open: true, items: [...s.items, user, reply], pending: true, abort }));
     const patch = (fn: (item: Extract<ChatItem, { role: 'assistant' }>) => Partial<Extract<ChatItem, { role: 'assistant' }>>) =>
       set((s) => ({ items: s.items.map((item) => (item.id === reply.id && item.role === 'assistant' ? { ...item, ...fn(item) } : item)) }));
@@ -335,6 +357,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           workflowId: editor.workflowId,
           selectedNodeId: options.nodeId ?? (options.withoutSelection ? undefined : (editor.openNodeId ?? editor.nodes.find((n) => n.selected)?.id)),
           runs: runDigests(),
+          ...(pending.length && { pending }),
           ...(options.mentions && { mentions: options.mentions }),
           ...(options.session && { session: options.session }),
         },

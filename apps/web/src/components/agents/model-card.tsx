@@ -1,5 +1,5 @@
 'use client';
-/** Build tab → Model & instructions: provider, credential or server, model, temperature and the system prompt. */
+/** Abilities tab → Model: provider, credential or server, model and temperature. (The system prompt is the Persona tab's.) */
 import { useEffect, useLayoutEffect, useRef, useState, type TextareaHTMLAttributes } from 'react';
 import { Brain, Loader2, Pencil, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -182,7 +182,7 @@ export function ModelCard({ config, update }: { config: AgentConfig; update: Upd
     });
 
   return (
-    <Section icon={<Brain className="size-4" />} title="Model & instructions" description="The model that thinks and the instructions it always follows.">
+    <Section icon={<Brain className="size-4" />} title="Model" description="The model that thinks for the agent.">
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <Field id="agent-provider" label="Provider" required>
@@ -300,24 +300,6 @@ export function ModelCard({ config, update }: { config: AgentConfig; update: Upd
             </Field>
           </div>
         )}
-        <Field
-          id="agent-instructions"
-          label="Instructions"
-          required
-          hint="Who the agent is, what it should do and how. Sent as the system prompt on every turn."
-        >
-          <AutoTextarea
-            id="agent-instructions"
-            rows={5}
-            value={config.instructions}
-            onChange={(e) => {
-              const instructions = e.target.value;
-              update((c) => ({ ...c, instructions }));
-            }}
-            placeholder="Summarize new tickets in the Customer Support Slack channel."
-            className="min-h-[120px]"
-          />
-        </Field>
       </div>
       {dialog && provider?.credentialType && (
         <CredentialDialog

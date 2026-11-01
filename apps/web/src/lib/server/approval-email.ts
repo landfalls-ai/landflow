@@ -11,7 +11,7 @@
  * (`email:<address>`).
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import type { Agent } from '../shared/agents';
+import { approvalSubject, type Agent, type PendingCall } from '../shared/agents';
 import { ApprovalError, decideApproval, pendingApproval } from './approvals';
 import { decide, DecisionError } from './agents/runtime';
 import { agentStore } from './agents/store';
@@ -140,14 +140,14 @@ export async function sendApprovalEmails(options: { to: string[]; title: string;
 }
 
 /** An agent run stopped for approvals: email the configured addresses a pair of links per undecided call (best effort). */
-export async function notifyApprovalEmails(agent: Agent, session: { id: string; pending?: { calls: Array<{ callId: string; tool: string; input: Record<string, unknown>; decision?: string }> } }, recipients: string[] | undefined) {
+export async function notifyApprovalEmails(agent: Agent, session: { id: string; pending?: { calls: PendingCall[] } }, recipients: string[] | undefined) {
   const to = parseAddresses(recipients);
   if (!to.length || !session.pending) return;
   if (!mailConfigured()) {
     logger.warn('approval emails are set for an agent but the host has no SMTP (LANDFLOW_SMTP_HOST)', { 'gen_ai.agent.id': agent.id });
     return;
   }
-  const calls = session.pending.calls.filter((c) => !c.decision).map((c): ApprovalEmailCall => ({ tool: c.tool, input: c.input, target: { t: 'agent', a: agent.id, s: session.id, c: c.callId } }));
+  const calls = session.pending.calls.filter((c) => !c.decision).map((c): ApprovalEmailCall => ({ ...approvalSubject(c), target: { t: 'agent', a: agent.id, s: session.id, c: c.callId } }));
   if (!calls.length) return;
   try {
     await sendApprovalEmails({ to, title: `${agent.published?.config.name ?? agent.name} wants to run a tool`, calls });

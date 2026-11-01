@@ -23,6 +23,8 @@ export const telemetryConfig = {
   /** OTel log records (audit events, lib/server/audit) over OTLP/HTTP JSON (./logs). */
   exportLogs:
     Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT) && process.env.OTEL_LOGS_EXPORTER !== 'none',
+  /** With exportLogs: every log line (but `span.end`) is also an OTel log record, with its trace and span ids. */
+  logOtlp: flag(process.env.LANDFLOW_LOG_OTLP, true),
 };
 
 /**

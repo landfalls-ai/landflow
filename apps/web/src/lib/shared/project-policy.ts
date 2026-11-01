@@ -37,6 +37,11 @@ export interface ProjectSettings {
    * (as the workflow's own policy does for one workflow). Who approves follows `approvers`.
    */
   fourEyes: boolean;
+  /**
+   * The second brain may read item contents of this project's runs (a failing node's input and output, clipped) when it
+   * writes a fix (docs/second-brain.md#principles). Off: metadata only.
+   */
+  brainPayloads?: boolean;
   updatedAt?: string;
   updatedBy?: string;
 }

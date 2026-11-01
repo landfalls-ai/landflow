@@ -145,6 +145,7 @@ message ExecuteResponse {
   repeated LogEntry logs = 2;
   NodeError error = 3;           // set when the node failed as a whole
   DynamicValue poll_state = 4;   // poll triggers: state for the next poll
+  repeated DynamicValue records = 5; // each: a NodeRecord JSON object (artifact or check, docs/protocol.md)
 }
 
 // ---- Load options -----------------------------------------------------

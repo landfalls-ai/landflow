@@ -339,7 +339,7 @@ func (p *Plugin) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteResp
 	}})
 	outputs, runErr := p.runNode(rn, ec)
 
-	resp := &ExecuteResponse{Logs: ec.Logger.Entries()}
+	resp := &ExecuteResponse{Logs: ec.Logger.Entries(), Records: ec.Records()}
 	status := "success"
 	if runErr != nil {
 		status = "error"

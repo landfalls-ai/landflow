@@ -1,0 +1,33 @@
+# GitHub for Landflow's Claude Code agents on kagent (docs/a2a.md, "GitHub from the sandbox"): git over HTTPS and the REST
+# API, with the token added at kagent's egress gateway, so the sandbox never holds it. A request must carry the header as
+# a placeholder (the Harness landflow-claude-dev sets git's extraHeader; curl sends -H 'Authorization: x'), and the
+# gateway replaces its value with the Secret's.
+#
+# The Secret is yours to create, with a fine-grained token scoped to the repositories agents may touch:
+#
+#   read -rs PAT && kubectl --context kind-landflow-kagent -n kagent create secret generic github-git \
+#     --from-literal=token="$PAT" --from-literal=basic="$(printf 'x-access-token:%s' "$PAT" | base64)"; unset PAT
+#
+# kagent-up.sh applies this when that Secret exists. An agent gets it when its kagent card's Network access names it.
+apiVersion: api.kagent.dev/v1alpha3
+kind: EgressPolicy
+metadata:
+  name: landflow-github
+  namespace: kagent
+spec:
+  destinations:
+    # git clone, fetch and push: Basic x-access-token:<token>.
+    - origin: https://github.com
+      authentication:
+        header: Authorization
+        prefix: "Basic "
+        secretKeyRef: { name: github-git, key: basic }
+    # The REST API: Bearer <token>.
+    - origin: https://api.github.com
+      authentication:
+        header: Authorization
+        prefix: "Bearer "
+        secretKeyRef: { name: github-git, key: token }
+    # Archives and raw files (no token: public content, or URLs GitHub already signed).
+    - origin: https://codeload.github.com
+    - origin: https://raw.githubusercontent.com

@@ -48,6 +48,7 @@ serve(Plugin("my-plugin", "My Plugin", "0.1.0", nodes=[Upper()]), http_port=7150
 | `ctx.get_credentials(name=None)` / `ctx.credentials` | decrypted credential values ([Credentials](#credentials)) |
 | `ctx.get_poll_state()`, `ctx.set_poll_state(state)`, `ctx.is_first_poll()` | polling triggers ([Polling triggers](#polling-triggers)) |
 | `ctx.continue_on_fail()` | the node is set to continue on error: catch a failing item, append `{"json": {"error": msg}, "pairedItem": {"item": i}}`, go on |
+| `ctx.artifact(name, kind=None, url=None, mime_type=None, text=None, data=None)`, `ctx.check(name, status, message=None, subject=None, evidence=None)` | report what the node made (a pull request, a file, a ticket) or checked (`status`: `pass` `fail` `warn` `skip`, anything else raises) for the run's trace; collected into the response `records` (kept when the node fails) with the time, credential values masked |
 | `ctx.idempotency_key` | `<executionId>:<nodeId>:<runIndex>`, the same across retries of this step; pass it to APIs that take an idempotency key (`None` from older hosts) |
 | `ctx.get_binary_bytes(i, name="data")`, `ctx.prepare_binary_data(data, file_name)`, ... | files on items ([Binary data](#binary-data)) |
 | `ctx.logger.debug/info/warn/error(msg, *args, **attrs)` | collected into the response `logs` and written to the process log with trace ids |
@@ -114,6 +115,16 @@ plugin = Plugin("github", "GitHub", "0.1.0", nodes=[ListRepos()], credential_typ
   a proxy or a local test double.
 - Credential values are **redacted** from log lines, span attributes, node logs and error messages
   (password fields, keys that look like secrets, and fields the type does not declare).
+
+## Delegating nodes
+
+A node that hands work to another agent sets `"delegates": True` in its descriptor. Used as an agent's tool, the engine adds a
+required `reason` argument to its schema ("why you are asking and what done looks like") and records it in the run's trace.
+Like the other optional flags it passes through as written, so leave the key out rather than setting it to `False`:
+
+```python
+description = {..., "usableAsTool": True, "delegates": True}
+```
 
 ## Capabilities and composite types
 
@@ -478,6 +489,8 @@ lookups for other tooling: `native_driver_kinds()` (`kafka`, `amqp`, `nats`, `je
 `landflow_sdk/_pb/` is generated from `packages/protocol/proto/landflow/plugin/v1/plugin.proto` and
 committed. Regenerate with `PYTHON=/path/to/python-with-grpcio-tools scripts/gen_proto.sh`, then bump
 the `grpc` extra's lower bounds to match.
+the `grpc` extra's lower bounds to match. (`plugin_pb2.py` / `.pyi` can also be produced by `protoc --python_out
+--pyi_out` of the same release the header names; `plugin_pb2_grpc.py` only changes with the service.)
 
 ## Tests
 

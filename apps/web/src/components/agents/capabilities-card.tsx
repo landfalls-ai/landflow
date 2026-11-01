@@ -11,6 +11,7 @@ import {
   Pencil,
   Plug,
   Plus,
+  RadioTower,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -27,7 +28,7 @@ import { api } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { languageMeta } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
-import type { AgentConfig, AgentToolConfig, KnowledgeBaseToolConfig, McpServerToolConfig, NodeToolConfig, SubAgentConfig, WorkflowToolConfig } from '@/lib/shared/agents';
+import type { A2aAgentToolConfig, AgentConfig, AgentToolConfig, KnowledgeBaseToolConfig, McpServerToolConfig, NodeToolConfig, SubAgentConfig, WorkflowToolConfig } from '@/lib/shared/agents';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { ParamForm } from '../editor/param-form';
@@ -36,11 +37,13 @@ import { ProtectedGate } from '../shell/protected-gate';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
-import { AppIcon, NodeIcon } from '../ui/icon';
+import { NodeIcon } from '../ui/icon';
+import { AgentAvatar } from './avatar';
 import { Input, Textarea } from '../ui/inputs';
 import { Dialog, Field, ItemRow, Section, ToggleRow } from './dialog';
 import { KnowledgeDialog, KnowledgeTile, STORE_LABEL } from './knowledge-dialog';
 import { MCP_CLIENT_TOOL, McpServerDialog, McpTile } from './mcp-server-dialog';
+import { A2A_AGENT, A2aAgentDialog, A2aTile } from './a2a-agent-dialog';
 import { useAgentList, useNodeTypes } from './use-agent-data';
 import { newId, type UpdateConfig } from './util';
 
@@ -501,7 +504,7 @@ function SubAgentDialog({
       <Dialog
         title={picked?.name ?? 'Sub-agent'}
         subtitle="An agent this agent can hand a task to"
-        icon={<AppIcon icon={picked?.icon ?? 'bot'} color={picked?.color} size={32} />}
+        icon={<AgentAvatar agent={picked ?? {}} size={32} />}
         onClose={onClose}
         footer={
           <>
@@ -593,7 +596,7 @@ function SubAgentDialog({
               }
               className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-acdim disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
             >
-              <AppIcon icon={agent.icon} color={agent.color} size={32} />
+              <AgentAvatar agent={agent} size={32} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-semibold text-t1">{agent.name}</span>
                 <span className="block truncate text-[12px] text-t3">{agent.description || 'No description'}</span>
@@ -623,6 +626,7 @@ type DialogState =
   | { kind: 'workflow'; tool?: WorkflowToolConfig }
   | { kind: 'agent'; tool?: SubAgentConfig }
   | { kind: 'mcp'; tool?: McpServerToolConfig }
+  | { kind: 'a2a'; tool?: A2aAgentToolConfig }
   | { kind: 'knowledge'; tool?: KnowledgeBaseToolConfig };
 
 export function CapabilitiesCard({ agentId, config, update }: { agentId: string; config: AgentConfig; update: UpdateConfig }) {
@@ -648,9 +652,11 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
           ? { kind: 'workflow', tool }
           : tool.type === 'mcp'
             ? { kind: 'mcp', tool }
-            : tool.type === 'knowledge'
-              ? { kind: 'knowledge', tool }
-              : { kind: 'agent', tool },
+            : tool.type === 'a2a'
+              ? { kind: 'a2a', tool }
+              : tool.type === 'knowledge'
+                ? { kind: 'knowledge', tool }
+                : { kind: 'agent', tool },
     );
 
   const pickNode = (info: NodeTypeInfo) =>
@@ -684,13 +690,17 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       icon = <McpTile />;
       title = tool.name;
       subtitle = `MCP server · ${String(tool.parameters.endpointUrl ?? '') || 'No URL'}`;
+    } else if (tool.type === 'a2a') {
+      icon = <A2aTile />;
+      title = tool.name;
+      subtitle = `A2A agent · ${tool.useWhen || String(tool.parameters.agentUrl ?? '') || 'No URL'}`;
     } else if (tool.type === 'knowledge') {
       icon = <KnowledgeTile />;
       title = tool.name;
       subtitle = `Knowledge base · ${STORE_LABEL[tool.store]} “${tool.collection}” · ${tool.embeddings.model}`;
     } else {
       const agent = agents?.find((a) => a.id === tool.agentId);
-      icon = <AppIcon icon={agent?.icon ?? 'bot'} color={agent?.color} size={32} />;
+      icon = <AgentAvatar agent={agent ?? {}} size={32} />;
       title = agent?.name ?? 'Deleted agent';
       subtitle = `Sub-agent · ${tool.useWhen || agent?.description || 'No description'}`;
     }
@@ -739,7 +749,7 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       <Section
         icon={<Wrench className="size-4" />}
         title="Capabilities"
-        description="What the agent can do: nodes as tools, workflows, other agents, MCP servers and knowledge bases."
+        description="What the agent can do: nodes as tools, workflows, other agents (here or remote, over A2A), MCP servers and knowledge bases."
         actions={
           <>
             <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'pick-node' })}>
@@ -753,6 +763,9 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
             </Button>
             <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'mcp' })}>
               <Plug className="size-3.5" /> Add MCP server
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'a2a' })}>
+              <RadioTower className="size-3.5" /> Add A2A agent
             </Button>
             <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'knowledge' })}>
               <BookOpen className="size-3.5" /> Add knowledge base
@@ -810,6 +823,7 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       {dialog?.kind === 'mcp' && (
         <McpServerDialog key={dialog.tool?.id ?? 'new'} tool={dialog.tool} info={nodeTypes?.[MCP_CLIENT_TOOL]} onSave={save} onClose={() => setDialog(null)} />
       )}
+      {dialog?.kind === 'a2a' && <A2aAgentDialog key={dialog.tool?.id ?? 'new'} tool={dialog.tool} info={nodeTypes?.[A2A_AGENT]} onSave={save} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'knowledge' && <KnowledgeDialog key={dialog.tool?.id ?? 'new'} agentId={agentId} tool={dialog.tool} onSave={save} onClose={() => setDialog(null)} />}
     </>
   );

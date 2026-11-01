@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { SectionLabel, Switch } from '@/components/ui/inputs';
 import { change, formatMinutes, formatRate, formatRunTime } from '@/components/insights/format';
 import { FAILED_COLOR, RunsChart, SUCCEEDED_COLOR } from '@/components/insights/runs-chart';
+import { BrainPanel } from '@/components/brain/brain-panel';
 import { WorkflowTable } from '@/components/insights/workflow-table';
 
 const PERIODS: { value: InsightsPeriod; label: string; previous: string; days: number }[] = [
@@ -215,6 +216,8 @@ export default function InsightsPage() {
             />
           )}
         </Card>
+
+        <BrainPanel />
 
         <p className="text-[12px] leading-relaxed text-t3">
           Insights are counted as runs finish and kept for 400 days, apart from execution history, so pruning executions doesn’t change them. Time saved is the

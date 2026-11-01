@@ -9,6 +9,7 @@
 import type { JsonObject } from '@landflow/protocol';
 import type { ExecutionEvent } from '@landflow/engine';
 import type { ExecutionRecord } from '../shared/types';
+import { recordDecision } from './journal/decisions';
 import { liveExecution, resumeExecution } from './runner';
 import { decidedBlocks, slackCredentialFor, slackRefOf, updateMessage } from './slack';
 import { store } from './store';
@@ -92,6 +93,8 @@ export async function decideApproval(
   const decisions = { ...approval.decisions, [callId]: { approved, ...(by && { by }), at: new Date().toISOString() } };
   const next: PendingApproval = { ...approval, decisions };
   store.saveExecution({ ...stored, wait: { ...stored.wait!, data: { ...stored.wait!.data, approval: next as unknown as JsonObject } } });
+  // Said in the run's journal, in the wait it answers (before the resume ends that wait): web, Slack and email alike.
+  recordDecision(executionId, stored.workflowId, { id: by ?? 'unknown', name: by }, `${approved ? 'Approved' : 'Rejected'} ${call.tool}`);
   void updateSlackMessage(stored, next, call, decisions[callId]).catch((error: Error) =>
     logger.warn('could not update the Slack approval message', { 'landflow.execution.id': executionId, error: error.message }),
   );

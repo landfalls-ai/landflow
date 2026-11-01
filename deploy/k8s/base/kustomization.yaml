@@ -1,4 +1,4 @@
-# Landflow on Kubernetes: the host (with read-only RBAC for plugin discovery) and the seven example plugins.
+# Landflow on Kubernetes: the host (with read-only RBAC for plugin discovery) and the eight example plugins.
 # No namespace here: overlays set it (overlays/orbstack → landflow-dev). Optional pieces are components:
 # ../components/postgres, ../components/valkey, ../components/external-services.
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -17,6 +17,7 @@ resources:
   - plugins/productivity.yaml
   - plugins/google-workspace.yaml
   - plugins/databases.yaml
+  - plugins/github.yaml
 configMapGenerator:
   # The MCP gateway sidecar's base config: a copy of deploy/mcp-gateway/config.sidecar.yaml (kustomize can't read outside
   # this directory; keep the two the same). The host writes the targets at runtime.
