@@ -11,6 +11,7 @@ import { toToolName, REASON_DESCRIPTION, type AgentMemory, type AgentTool, type 
 import type { AgentSession, AgentStreamEvent, RunEndReason, SessionExecution, TokenUsage } from '../../shared/agents';
 import { reportsOf, rootOf, type AgentMember, type AgentTeamConfig, type RemoteMember, type TeamMember } from '../../shared/agent-teams';
 import { verdictOf } from '../../shared/team-progress';
+import { agentConnections, remoteConnections } from '../agents/connections';
 import { agentStore } from '../agents/store';
 import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { newSession, runAgent, type TeamRole } from '../agents/runtime';
@@ -226,6 +227,21 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     if (!state.needsPerson.includes(reason)) state.needsPerson.push(reason);
   };
 
+  /**
+   * What a member works with, for the chart: an agent's settings (the lead's model and memory when the flow doesn't give
+   * them), a remote member's kagent deployment (Claude Code, its model, plugins and network) or its host.
+   */
+  const connectionsOf = (m: TeamMember) => {
+    try {
+      if (m.kind === 'a2a') return remoteConnections(typeof m.parameters.agentUrl === 'string' ? m.parameters.agentUrl : undefined);
+      const agent = agentStore.get(m.agentId);
+      if (!agent) return [];
+      return agentConnections(agent, m.id === root.id ? { model: Boolean(request.flow?.model), memory: Boolean(request.memory) } : {});
+    } catch {
+      return [];
+    }
+  };
+
   if (journal && !request.resume) {
     // The chart as recorded: the Run Trace draws the team from this, not from who happened to call whom.
     journal.record({
@@ -239,15 +255,19 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
             version: request.config.version,
           }),
           ...(config.goal && { goal: config.goal }),
-          members: config.members.map((m) => ({
-            id: m.id,
-            title: m.title,
-            kind: m.kind,
-            ...(m.role && { role: m.role }),
-            ...(m.reportsTo && { reportsTo: m.reportsTo }),
-            ...(m.reviews?.length && { reviews: m.reviews }),
-            ...(m.budgetTokens && { budgetTokens: m.budgetTokens }),
-          })),
+          members: config.members.map((m) => {
+            const connections = connectionsOf(m);
+            return {
+              id: m.id,
+              title: m.title,
+              kind: m.kind,
+              ...(m.role && { role: m.role }),
+              ...(m.reportsTo && { reportsTo: m.reportsTo }),
+              ...(m.reviews?.length && { reviews: m.reviews }),
+              ...(m.budgetTokens && { budgetTokens: m.budgetTokens }),
+              ...(connections.length > 0 && { connections }),
+            };
+          }),
         },
       },
     });
@@ -299,7 +319,10 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     return (agent?.published?.config ?? agent)?.model?.model;
   };
 
-  /** What the whole team used, its cost where some member's was priced. */
+  /**
+   * What the whole team used, its cost where some member's was priced. Its model is the lead's: the team node's span is
+   * the lead's, so what the members' own spans don't account for (the lead's calls) is told with the lead's model.
+   */
   const teamUsage = (): TokenUsage => {
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
     for (const member of config.members) {
@@ -309,6 +332,8 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       const { model: _model, ...rest } = used;
       usage = addUsage(usage, { ...rest, ...(cost !== undefined && { costUsd: cost }) });
     }
+    const lead = root && modelOf(root, state.used[root.id]);
+    if (lead) usage.model = lead;
     return usage.costUsd !== undefined ? { ...usage, costUsd: Math.round(usage.costUsd * 1e6) / 1e6 } : usage;
   };
 

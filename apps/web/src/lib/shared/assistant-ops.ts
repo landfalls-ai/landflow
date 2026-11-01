@@ -228,6 +228,28 @@ function renameReferences(value: unknown, from: string, to: string): unknown {
  * Numbers outside a field's range, top level or in a collection, taken out of the patch with a reason: a model that
  * reads "30 minute timeout" for a field in milliseconds sets 30, which the editor would refuse.
  */
+/**
+ * A value the agent fills, as the engine reads it: `{{ $fromAI('key', 'description', 'type') }}`, what the "Let the model
+ * decide" button writes. Spotlight's model sometimes writes a bare `$fromAI`, or the call without the braces: both become
+ * that expression, with the parameter's name, display name and type. Top-level parameters only.
+ */
+export function fromAIValues(properties: PropertyDescriptor[], patch: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...patch };
+  for (const [key, value] of Object.entries(patch)) {
+    const v = typeof value === 'string' ? value.trim().replace(/^=/, '') : '';
+    if (!/^\$fromAI\b/.test(v)) continue;
+    if (/^\$fromAI\s*\(.*\)$/s.test(v)) {
+      out[key] = `{{ ${v} }}`;
+      continue;
+    }
+    const prop = properties.find((p) => p.name === key);
+    const label = (prop?.displayName ?? key).replace(/['"`]/g, '’');
+    const type = prop?.type === 'number' ? 'number' : prop?.type === 'boolean' ? 'boolean' : 'string';
+    out[key] = `{{ $fromAI('${key}', '${label}', '${type}') }}`;
+  }
+  return out;
+}
+
 function outOfRange(properties: PropertyDescriptor[], patch: Record<string, unknown>, nodeName: string) {
   const notes: string[] = [];
   const check = (prop: PropertyDescriptor | undefined, value: unknown) => {
@@ -433,6 +455,8 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
   const refs = new Map<string, string>();
   /** New node id → the node it was inserted in front of. */
   const insertions = new Map<string, string>();
+  /** New node id → the node its `after` wired it from (main). */
+  const mainAfter = new Map<string, string>();
 
   const find = (reference: string): WorkflowNode | undefined => {
     const byRef = refs.get(reference);
@@ -472,7 +496,7 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         }
         const id = `n_${newId()}`;
         const name = uniqueName(op.name ?? descriptor.displayName, wf.nodes);
-        const ranged = outOfRange(descriptor.properties, op.parameters ?? {}, name);
+        const ranged = outOfRange(descriptor.properties, fromAIValues(descriptor.properties, op.parameters ?? {}), name);
         dropped.push(...ranged.notes);
         const merged = mergeParameters(descriptor, defaultParameters(descriptor), ranged.patch);
         ignored.push(...merged.ignored.map((key) => `“${name}” has no parameter “${key}”`));
@@ -498,6 +522,7 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
             break;
           }
           next = connected;
+          if (descriptor.kind !== 'subnode') mainAfter.set(id, after.id);
         }
         wf = next;
         refs.set(ref, id);
@@ -527,7 +552,7 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
           dropped.push(`set parameters of “${node.name}”: unknown node type ${node.type}`);
           break;
         }
-        const ranged = outOfRange(descriptor.properties, op.parameters, node.name);
+        const ranged = outOfRange(descriptor.properties, fromAIValues(descriptor.properties, op.parameters), node.name);
         dropped.push(...ranged.notes);
         const merged = mergeParameters(descriptor, node.parameters, ranged.patch);
         ignored.push(...merged.ignored.map((key) => `“${node.name}” has no parameter “${key}”`));
@@ -560,6 +585,18 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
           break;
         }
         wf = connected;
+        // A node these ops added "after" an agent, then attach to it as a tool, a model or a memory, is that and not also
+        // a step after it: the main edge its `after` made goes (it would run the tool once more when the agent is done).
+        if (plan.type !== 'main' && mainAfter.get(plan.source.id) === plan.target.id) {
+          wf = { ...wf, connections: wf.connections.filter((c) => !(c.type === 'main' && c.source === plan.target.id && c.target === plan.source.id)) };
+          mainAfter.delete(plan.source.id);
+          const ref = handle(plan.source);
+          const i = applied.findIndex((a) => a.op === 'addNode' && a.ref === ref);
+          if (i >= 0) {
+            const { after: _after, output: _output, ...rest } = applied[i] as Extract<AssistantOp, { op: 'addNode' }>;
+            applied[i] = rest;
+          }
+        }
         applied.push({
           op: 'connect',
           from: handle(plan.source),
@@ -576,8 +613,10 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         const target = find(op.to);
         const matches = (c: WorkflowConnection, a?: WorkflowNode, b?: WorkflowNode) =>
           a && b && c.source === a.id && c.target === b.id && (!op.type || c.type === op.type);
-        // Either direction, since sub-node edges run sub-node → agent.
-        const remove = wf.connections.filter((c) => matches(c, source, target) || matches(c, target, source));
+        // The edges the way it was asked; else, since sub-node edges run sub-node → agent, a sub-node edge the other way.
+        // ("Disconnect Tech Lead → Check Branch" is the main edge after the lead, not the tool edge into it as well.)
+        const forward = wf.connections.filter((c) => matches(c, source, target));
+        const remove = forward.length ? forward : wf.connections.filter((c) => matches(c, target, source) && c.type !== 'main');
         if (!source || !target || !remove.length) {
           dropped.push(`disconnect “${op.from}” → “${op.to}”: ${!source || !target ? `no node “${!source ? op.from : op.to}”` : 'they aren’t connected'}`);
           break;
@@ -711,11 +750,13 @@ export function structuralWarnings(before: Workflow, after: Workflow, lookup: De
   const inputs = (wf: Workflow, id: string) => wf.connections.filter((c) => c.target === id && c.type === 'main');
   const fed = (wf: Workflow, id: string) => inputs(wf, id).length > 0;
   const name = (id: string) => after.nodes.find((n) => n.id === id)?.name ?? id;
+  /** Attached to an agent as a tool (or another sub-node slot): it runs when the agent calls it, with no input of its own. */
+  const attached = (id: string) => after.connections.some((c) => c.source === id && c.type !== 'main');
   for (const node of after.nodes) {
     const descriptor = lookup(node.type);
     if (!descriptor || descriptor.kind === 'trigger') continue;
     if (existed.has(node.id)) {
-      if (fed(before, node.id) && !fed(after, node.id)) warnings.push(`“${node.name}” no longer receives any input`);
+      if (fed(before, node.id) && !fed(after, node.id) && !attached(node.id)) warnings.push(`“${node.name}” no longer receives any input`);
       const now = inputs(after, node.id);
       // An edge back from something downstream closes a loop (docs/assistant.md): a second input by design.
       const closesLoop = now.filter((c) => !before.connections.some((b) => b.id === c.id)).every((c) => downstream(after, node.id).has(c.source));
@@ -728,7 +769,7 @@ export function structuralWarnings(before: Workflow, after: Workflow, lookup: De
       if (!after.connections.some((c) => c.source === node.id && c.type !== 'main')) warnings.push(`new node “${node.name}” isn’t attached to anything`);
       continue;
     }
-    if (!fed(after, node.id)) warnings.push(`new node “${node.name}” has no input`);
+    if (!fed(after, node.id) && !attached(node.id)) warnings.push(`new node “${node.name}” has no input`);
     // Only the slots the node's parameters show (an agent's Fallback Model only with the switch on).
     for (const { port, index } of indexedPorts(descriptor.inputs, node.parameters).filter((p) => p.visible && p.port.type !== 'main' && p.port.required)) {
       if (!after.connections.some((c) => c.target === node.id && c.type === port.type && (c.targetIndex ?? 0) === index)) warnings.push(`new node “${node.name}” needs a ${port.displayName ?? port.type} attached`);

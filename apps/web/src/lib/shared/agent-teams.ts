@@ -9,6 +9,7 @@
  * Not to be confused with an agent's `team` label (a grouping on the Agents page) or Microsoft Teams channels.
  */
 import type { CredentialRef } from './agents';
+import type { ActorConnection } from './run-trace';
 
 /** Where a member's questions go first: its manager (who may pass them on to a person) or straight to a person. */
 export type QuestionsTo = 'manager' | 'person';
@@ -185,6 +186,8 @@ export interface TeamSnapshotMember {
   reportsTo?: string;
   reviews?: string[];
   budgetTokens?: number;
+  /** What it works with when the run started: model, tools, knowledge, runtime, plugins, network (lib/server/agents/connections.ts). */
+  connections?: ActorConnection[];
 }
 
 export interface TeamSnapshot {

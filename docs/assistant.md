@@ -122,10 +122,10 @@ Proposals use `lib/shared/assistant-ops.ts`. A node reference is a node **name**
 
 | Op | Fields | Notes |
 |---|---|---|
-| `addNode` | `type`, `ref?`, `name?`, `parameters?`, `after?`, `before?`, `output?` | `after`: the new node is wired from that node's `output`. If the new node is a sub-node, it attaches to `after` instead. `before`: inserts the node in front of another. Whatever fed that node feeds the new one, and the downstream nodes move one column right. Names are made unique, and defaults are filled in |
-| `setParameters` | `node`, `parameters` | Merged one parameter at a time, in declaration order, the way the editor sets them: dependent fields reset and new defaults fill in |
+| `addNode` | `type`, `ref?`, `name?`, `parameters?`, `after?`, `before?`, `output?` | `after`: the new node is wired from that node's `output`. If the new node is a sub-node, it attaches to `after` instead; a node the same ops then `connect` to `after` as a tool (or model, memory) is only that, and the main edge goes. `before`: inserts the node in front of another. Whatever fed that node feeds the new one, and the downstream nodes move one column right. Names are made unique, and defaults are filled in |
+| `setParameters` | `node`, `parameters` | Merged one parameter at a time, in declaration order, the way the editor sets them: dependent fields reset and new defaults fill in. A bare `$fromAI` (or the call without braces) becomes `{{ $fromAI('<name>', '<display name>', '<type>') }}`, what **Let the model decide** writes; `addNode` parameters too |
 | `connect` | `from`, `to`, `output?`, `input?`, `type?` | A connection that already exists counts as done, not as a second edge. Edges touching a sub-node take its capability type. An agent → sub-node edge is flipped to run sub-node → agent. A Merge's inputs fill in turn. On a port with a connection limit, the new edge replaces the oldest |
-| `disconnect` | `from`, `to`, `type?` | Works in either direction |
+| `disconnect` | `from`, `to`, `type?` | The edges from `from` to `to`; when there are none, a sub-node edge the other way (they run sub-node → agent). "Disconnect Lead → Check Branch" removes the main edge after the lead, not the tool edge into it |
 | `removeNode` | `node` | Its connections and pinned data go too |
 | `renameNode` | `node`, `name` | `$('Old')` and `$node["Old"]` in other nodes' parameters are renamed too |
 | `turnIntoTeam` | `node` | a Run an Agent node with agents attached as tools becomes one Run a Team node; applying it saves the team ([agent-teams.md](agent-teams.md#turn-into-a-team)) |
@@ -141,9 +141,9 @@ The server runs it against the registry's available node types. The editor runs 
 ### Warnings
 
 `structuralWarnings(before, after)` flags:
-- a node that lost its only input;
+- a node that lost its only input (not one attached to an agent as a tool, which needs none);
 - a single-input node that now gets input from two nodes (an insert that forgot its disconnect);
-- a new node with no input, or a new sub-node attached to nothing;
+- a new node with no input (unless attached as a tool), or a new sub-node attached to nothing;
 - a new root node missing a required sub-node (for example, an AI Agent without a chat model).
 
 ## API

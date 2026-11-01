@@ -12,6 +12,7 @@ import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { Select } from '../ui/inputs';
+import { ModelMark } from './connections';
 import { Card, SectionTitle, Tap, ToneBadge, who } from './parts';
 import type { Open } from './sheet';
 
@@ -307,7 +308,10 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
               <Item key={a.actor.id} mark={a.priced ? '$' : '·'} onOpen={() => open({ kind: 'actor', id: a.actor.id })}>
                 <b>{a.actor.name}</b>
                 {a.workMs ? ` · ${fmtMs(a.workMs)}` : ''}
-                <Small>{spendLine(a)}</Small>
+                <Small>
+                  <ModelMark connections={a.actor.connections} model={a.models[0]} />
+                  {spendLine(a)}
+                </Small>
               </Item>
             ))}
           </List>

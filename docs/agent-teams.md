@@ -194,9 +194,11 @@ and the workflow's executions page shows the list and an open execution one at a
 
 The journal names members by title and records each request with its reason, under the request of the manager that asked
 it (a developer's tester hangs under the developer). The node's span carries the team as it was when the run began
-(`attrs.team`: id, name, version, goal, members with `reportsTo`, `reviews`, `budgetTokens`), and the **Team** tab draws the
-chart from it, as an indented tree with who reviews whom and how often each was asked, instead of guessing from who
-called whom. Runs without a recorded team keep the generic who-called-whom graph.
+(`attrs.team`: id, name, version, goal, members with `reportsTo`, `reviews`, `budgetTokens` and `connections`), and the
+**Team** tab draws the chart from it, as an indented tree with who reviews whom and how often each was asked, instead of
+guessing from who called whom. Each row has chips for what the member [works with](run-trace.md#what-each-agent-works-with):
+the lead's model, memory, tools and knowledge; a remote member on kagent's Claude Code, model, plugins and network
+policies, with their own logos. The node's usage names the lead's model and counts its model calls. Runs without a recorded team keep the generic who-called-whom graph.
 
 ### Turn into a team
 

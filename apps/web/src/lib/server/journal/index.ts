@@ -6,6 +6,7 @@
 import type { ExecutionEvent, Workflow } from '@landflow/engine';
 import type { ExecutionRecord } from '../../shared/types';
 import { JOURNAL_RETENTION_DAYS } from '../../shared/run-trace';
+import { nodeConnections } from '../agents/connections';
 import { getUser } from '../auth/users';
 import { logger } from '../telemetry';
 import { spanEvents } from './store';
@@ -62,6 +63,7 @@ export function traceSegment(record: Pick<ExecutionRecord, 'executionId' | 'star
       emit: (draft) => journal.record(draft, { redacted: true }),
       onTrace: (traceId) => (journal.traceId = traceId),
       flush: () => journal.flush(),
+      connectionsOf: (node, flow) => safe(() => nodeConnections(node, flow)),
     });
     translator.seed(safe(() => spanEvents(record.executionId)) ?? []);
     journal.bindSpans(translator.spanOfNode, translator.actorOfNode);

@@ -550,3 +550,53 @@ describe('routes', () => {
     expect(items[1]).toMatchObject({ workflowName: 'Waiter', since: '2026-10-31T09:00:00.000Z', actor: { id: 'node:lead' } });
   });
 });
+
+describe('connections', () => {
+  it('tells what an agent node works with: its sub-nodes, then what the host adds', () => {
+    const flow: Workflow = {
+      ...workflow,
+      nodes: [...workflow.nodes, node('kb', 'Docs', 'core.vectorStorePGVector', { parameters: { collection: 'handbook' } }), node('off', 'Unused', 'core.calculatorTool', { disabled: true })],
+      connections: [
+        { id: 'c1', type: 'ai_languageModel', source: 'model', sourceIndex: 0, target: 'lead', targetIndex: 0 },
+        { id: 'c2', type: 'ai_memory', source: 'memory', sourceIndex: 0, target: 'lead', targetIndex: 0 },
+        { id: 'c3', type: 'ai_tool', source: 'check', sourceIndex: 0, target: 'lead', targetIndex: 0 },
+        { id: 'c4', type: 'ai_tool', source: 'planner', sourceIndex: 0, target: 'lead', targetIndex: 0 },
+        { id: 'c5', type: 'ai_tool', source: 'kb', sourceIndex: 0, target: 'lead', targetIndex: 0 },
+        { id: 'c6', type: 'ai_tool', source: 'off', sourceIndex: 0, target: 'lead', targetIndex: 0 },
+        { id: 'c7', type: 'main', source: 'trigger', sourceIndex: 0, target: 'lead', targetIndex: 0 },
+      ],
+    };
+    flow.nodes = flow.nodes.map((n) =>
+      n.id === 'model' ? { ...n, parameters: { model: 'qwen3-coder:30b', baseUrl: 'http://host.docker.internal:11434' } } : n.id === 'check' ? { ...n, parameters: { resource: 'branch', operation: 'get', branch: "{{ $fromAI('b') }}" } } : n.id === 'memory' ? { ...n, parameters: { turns: 40 } } : n,
+    );
+    const asked: Array<{ node: string; flow: { model: boolean; memory: boolean } }> = [];
+    const drafts: JournalDraft[] = [];
+    const translator = createTranslator({
+      workflow: flow,
+      executionId: 'ex_c',
+      emit: (d) => drafts.push(d),
+      connectionsOf: (n, given) => {
+        asked.push({ node: n.id, flow: given });
+        return n.id === 'lead' ? [{ kind: 'model', name: 'qwen3-coder:30b', detail: 'from the agent' }, { kind: 'skill', name: 'Review a PR' }] : undefined;
+      },
+    });
+    translator.feed({ type: 'execution.started', executionId: 'ex_c', workflowId: flow.id, mode: 'manual', at: at() });
+    translator.feed({ ...started('lead'), executionId: 'ex_c' } as ExecutionEvent);
+    const lead = spanStart(drafts, 'node:lead:0')!;
+    expect(lead.actor.connections).toEqual([
+      { kind: 'model', name: 'qwen3-coder:30b', detail: 'qwen3-coder (Ollama) · host.docker.internal:11434', nodeType: 'core.ollamaChatModel', from: 'flow' },
+      { kind: 'memory', name: 'Memory', detail: '40 turns', nodeType: 'core.simpleMemory', from: 'flow' },
+      { kind: 'knowledge', name: 'Docs', detail: 'handbook', nodeType: 'core.vectorStorePGVector', from: 'flow' },
+      // An expression isn't a resource or operation; the plain ones are.
+      { kind: 'tool', name: 'Check branch', detail: 'branch · get', nodeType: 'github.github', from: 'flow' },
+      { kind: 'skill', name: 'Review a PR' },
+      { kind: 'agent', name: 'Planner', nodeType: 'core.a2aAgent', from: 'flow' },
+    ]);
+    // The host is told the flow gives the model and memory, so it doesn't add the agent's own; the sub-node's wins anyway.
+    expect(asked).toContainEqual({ node: 'lead', flow: { model: true, memory: true } });
+
+    // A delegate (an A2A tool sub-node) carries what the host says of it.
+    translator.feed({ ...started('planner', { source: 'tool', parentNodeId: 'lead' }), executionId: 'ex_c' } as ExecutionEvent);
+    expect(asked.map((a) => a.node)).toContain('planner');
+  });
+});

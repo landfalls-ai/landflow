@@ -95,7 +95,7 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
 - **Trace**: the span tree with timing bars, down to a remote agent's single tool calls. A request shows why it was
   asked.
 - **Team**: who called whom, with ×n counts (laid out top to bottom, no sideways scrolling), plus a card per actor with
-  its time, tokens, how often it was asked and its results. A card opens to the actor's **turns** and shows its **fix
+  its time, tokens, how often it was asked, its results and chips for what it [works with](#what-each-agent-works-with). A card opens to the actor's **turns** and shows its **fix
   cycles** ([iterations](#iterations-rounds-turns-and-fix-cycles)). Tokens come from every span that reports usage (a
   model call, an agent or team node, a remote agent's answer); a span keeps what the spans under it don't account for,
   so a team's total is counted once and each member keeps its own. Cost, cache reads and model requests go the same
@@ -104,7 +104,7 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
   · $0.0213 · claude-sonnet-5-5" and its guardrail stops are checks on its request.
 - **Report**: the run report, computed live with the run's profile, plus the counts (tokens with the run's cost when
   some was priced), failed steps, who called whom, each request's result, what each agent used (time, model calls,
-  tokens, cost, model), cycles, waits and artifacts. **Checked** can pick another profile to look at the run through
+  tokens, cost, model with its provider's logo), cycles, waits and artifacts. **Checked** can pick another profile to look at the run through
   (a flow without one through Software delivery, say) without changing the flow; the header follows it. **Copy as Markdown** copies it. When a Run report node saved one,
   **Saved report** opens it.
 - **Artifacts**: what the run made (below). Code changes first when agents changed files, then documents, links and data.
@@ -118,6 +118,25 @@ running execution showing who is working on what.
 
 On a phone (below 768 px) the app's left rail is a drawer behind a slim top bar with a menu button, so these pages get
 the whole width.
+
+### What each agent works with
+
+Each agent actor carries its **connections** (`RunActor.connections`): its model, memory, knowledge, tools, skills, the
+agents it can ask, where it runs, its plugins and what its sandbox may reach. They show as chips on its card and on the
+team chart, and as a **Works with** list in its sheet (name, kind, one line of detail, and where it is set: in the flow,
+in the agent's settings, on kagent). Each wears the thing's own icon: the node type's (a plugin's logo), else a brand's
+(`brand:<slug>` from `lib/shared/brand-icons.ts`: Ollama, Anthropic, Claude, OpenAI, Gemini, Mistral, Hugging Face,
+GitHub, Kubernetes, Docker, MCP, kagent, PostgreSQL, SQLite), else its kind's.
+
+| Where | What the run records |
+|---|---|
+| An agent node in the flow | Its sub-nodes when the span starts: the chat model (model name, the node's name and server), memory (turns), tools (a node's resource and operation), knowledge (a vector store or retriever: its collection), A2A and agent sub-nodes as agents it can ask. Disabled sub-nodes are left out. |
+| A Run an Agent node | The agent's published settings beside the sub-nodes, without the model or memory a sub-node already gives (`lib/server/agents/connections.ts`). |
+| An A2A Agent node or tool, a team's remote member | When the URL is a Landflow agent deployed to kagent (by the URL its deployment recorded, else the kagent name it ends with): **Claude Code** (when it has plugins, the mod or a Claude harness) and **kagent** (the deployment's name, sandbox and hot start), its Claude Code plugins (the landflow-harness mod among them), each EgressPolicy (GitHub, package registries, Landflow) and the agent's own model, tools and skills. Any other URL: an A2A agent and its host. |
+| A team | Each member's connections on the chart the node's span records (`attrs.team.members[].connections`); the lead's leaves out the model and memory the flow gives. The model folds them onto the member's actor by title. |
+
+A team node's usage names the lead's model, and an agent session counts each of its model calls, so the lead's card and
+the report say "3 model calls · 5,443 in · 714 out · $0 · qwen3-coder:30b" beside a member's reported usage.
 
 ## Iterations: rounds, turns and fix cycles
 
@@ -354,4 +373,7 @@ images are not loaded.
   down shows up only when the result reconciles it.
 - Built-in checks see only what the journal recorded. A tool that fails silently (exit code 0) passes.
 - Models, memory and other non-tool sub-nodes can't report artifacts or checks.
+- Connections are what the flow and the agent's published settings said when the span started: a tool an agent
+  didn't call still shows, and a change made during the run doesn't. A kagent agent's runtime is told from its
+  deployment (plugins, the mod, the harness name), not read from the cluster.
 - A trace rebuilt from an older run's data has no progress notes, artifacts, checks or decisions.

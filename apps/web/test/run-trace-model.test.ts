@@ -396,6 +396,62 @@ describe('foldJournal', () => {
     expect([of(developer.id).tokensIn, of(developer.id).tokensOut]).toEqual([800, 200]);
   });
 
+  it('names the lead’s model and counts its calls: the team’s usage carries them, its members’ spans the rest', () => {
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Review', actor: flow });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Tech Lead', actor: lead });
+    add(2, { type: 'span.started', spanId: 'node:team:0/step:a', parentSpanId: 'node:team:0', kind: 'delegate', name: 'Reviewer', actor: { id: 'remote:Reviewer', type: 'agent', name: 'Reviewer' }, caller: lead });
+    add(3, { type: 'span.ended', spanId: 'node:team:0/step:a', status: 'success', usage: { inputTokens: 228584, outputTokens: 875, cacheReadTokens: 210124, costUsd: 0, requests: 16, model: 'qwen3-coder:30b' } });
+    add(4, { type: 'span.ended', spanId: 'node:team:0', status: 'success', usage: { inputTokens: 234027, outputTokens: 1589, cacheReadTokens: 210124, costUsd: 0, requests: 19, model: 'qwen3-coder:30b' } });
+    const of = (folded: ReturnType<typeof foldJournal>, id: string) => folded.actors.find((a) => a.actor.id === id)!;
+    const folded = foldJournal(events);
+    expect(of(folded, lead.id)).toMatchObject({ tokensIn: 5443, tokensOut: 714, modelCalls: 3, models: ['qwen3-coder:30b'] });
+    expect(of(folded, 'remote:Reviewer')).toMatchObject({ modelCalls: 16, models: ['qwen3-coder:30b'] });
+  });
+
+  it('counts a model sub-node’s calls once: its spans are among the requests the team’s usage carries', () => {
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Review', actor: flow });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Tech Lead', actor: lead });
+    for (const [i, input] of [1964, 2177, 2712].entries()) {
+      add(2 + i * 2, { type: 'span.started', spanId: `node:model:${i}`, parentSpanId: 'node:team:0', kind: 'model', name: 'qwen3-coder:30b', actor: { id: 'node:model', type: 'node', name: 'Ollama Chat Model' }, caller: lead });
+      add(3 + i * 2, { type: 'span.ended', spanId: `node:model:${i}`, status: 'success', usage: { inputTokens: input, outputTokens: 100 } });
+    }
+    add(8, { type: 'span.started', spanId: 'node:team:0/step:a', parentSpanId: 'node:team:0', kind: 'delegate', name: 'Reviewer', actor: { id: 'remote:Reviewer', type: 'agent', name: 'Reviewer' }, caller: lead });
+    add(9, { type: 'span.ended', spanId: 'node:team:0/step:a', status: 'success', usage: { inputTokens: 374244, outputTokens: 1495, requests: 24, model: 'qwen3-coder:30b' } });
+    add(10, { type: 'span.ended', spanId: 'node:team:0', status: 'success', usage: { inputTokens: 381097, outputTokens: 1795, requests: 27, model: 'qwen3-coder:30b' } });
+    const folded = foldJournal(events);
+    const of = (id: string) => folded.actors.find((a) => a.actor.id === id)!;
+    expect(of(lead.id)).toMatchObject({ tokensIn: 6853, tokensOut: 300, modelCalls: 3 });
+    expect(of('remote:Reviewer')).toMatchObject({ modelCalls: 24 });
+  });
+
+  it('gives team members what the chart recorded they work with, and keeps a node’s own connections', () => {
+    const { events, add } = journal();
+    const withModel: RunActor = { ...lead, connections: [{ kind: 'model', name: 'qwen3-coder:30b', nodeType: 'core.ollamaChatModel', from: 'flow' }] };
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Review', actor: flow });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Tech Lead', actor: withModel });
+    add(2, {
+      type: 'span.updated',
+      spanId: 'node:team:0',
+      attrs: {
+        team: {
+          id: 'team_1',
+          name: 'Plugin builders',
+          members: [
+            { id: 'm1', title: 'Tech Lead', kind: 'agent', connections: [{ kind: 'tool', name: 'check_branch', nodeType: 'github.github' }] },
+            { id: 'm2', title: 'Reviewer', kind: 'a2a', reportsTo: 'm1', connections: [{ kind: 'runtime', name: 'Claude Code', icon: 'brand:claude' }] },
+          ],
+        },
+      },
+    });
+    add(3, { type: 'span.started', spanId: 'node:team:0/step:a', parentSpanId: 'node:team:0', kind: 'delegate', name: 'Reviewer', actor: { id: 'remote:Reviewer', type: 'agent', name: 'Reviewer' }, caller: lead });
+    const folded = foldJournal(events);
+    const of = (id: string) => folded.actors.find((a) => a.actor.id === id)!.actor.connections?.map((c) => c.name);
+    expect(of(lead.id)).toEqual(['qwen3-coder:30b', 'check_branch']);
+    expect(of('remote:Reviewer')).toEqual(['Claude Code']);
+  });
+
   it('handles an empty journal and cut text', () => {
     const m = foldJournal([]);
     expect(m.empty).toBe(true);

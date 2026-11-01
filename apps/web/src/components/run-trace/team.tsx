@@ -9,6 +9,7 @@ import { resolveRunProfile } from '@/lib/shared/run-profiles';
 import { cut, edgeParts, fmtMs, preview, spendLine, type RunActorStats, type RunEdge, type RunModel, type RunRound, type RunTurn, type RunTurnItem } from '@/lib/shared/run-trace-model';
 import { Badge } from '../ui/badge';
 import { EmptyState } from '../ui/empty-state';
+import { ConnectionChips } from './connections';
 import { Avatar, Card, SectionTitle, Tap, ToneBadge, actorColor } from './parts';
 import type { Open } from './sheet';
 
@@ -277,6 +278,7 @@ export function ActorCard({ s, open, turns = [], cycles = [], rounds = [] }: { s
             <span className="block truncate text-[12px] text-t3">{s.actor.role ?? (s.actor.type === 'human' ? 'person' : s.actor.type)}</span>
           </div>
         </div>
+        <ConnectionChips connections={s.actor.connections} className="mt-2" />
         <ul className="mt-2 space-y-1 text-[12.5px] text-t2">
           {li.map((x, i) => (
             <li key={i} className={cn('break-words', x.bad && 'text-rd')}>
@@ -303,6 +305,7 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
     seen.add(m.id);
     const stats = model.actors.find((a) => a.actor.name === m.title);
     const actor = stats?.actor ?? { id: `member:${m.id}`, name: m.title, type: 'agent' as const };
+    const connections = actor.connections?.length ? actor.connections : m.connections;
     const live = working.has(m.title) || waiting.has(m.title);
     const reviews = (m.reviews ?? []).map(titleOf).filter(Boolean);
     return (
@@ -313,6 +316,7 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
             <span className="min-w-0 flex-1">
               <b className="block truncate text-[13px] font-semibold text-t1">{m.title}</b>
               <span className="block truncate text-[11.5px] text-t3">{live ? 'working now' : (m.role ?? (m.kind === 'a2a' ? 'remote agent' : 'agent'))}</span>
+              <ConnectionChips connections={connections} max={6} className="mt-1" />
             </span>
             <span className="flex shrink-0 flex-wrap justify-end gap-1">
               {reviews.length > 0 && <Badge tone="neutral">reviews {reviews.join(', ')}</Badge>}

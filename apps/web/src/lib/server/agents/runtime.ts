@@ -357,7 +357,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         return { reason: 'error' };
       }
       const usage = turn.usage ?? { inputTokens: 0, outputTokens: 0 };
-      session.usage = { inputTokens: session.usage.inputTokens + usage.inputTokens, outputTokens: session.usage.outputTokens + usage.outputTokens };
+      // Each model call counts, with the model that answered: a team's report names it beside the agent's tokens.
+      session.usage = { inputTokens: session.usage.inputTokens + usage.inputTokens, outputTokens: session.usage.outputTokens + usage.outputTokens, requests: (session.usage.requests ?? 0) + 1, model: model.model };
       recordAgentTokens({ agentId: agent.id, agentName: config.name }, usage);
       // Output guardrail: only the final answer is checked; a blocked or sanitized one replaces it in the transcript too.
       let answer = turn.text;

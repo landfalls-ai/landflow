@@ -6,7 +6,7 @@
  */
 import type { ExecutionEvent, Workflow, WorkflowNode } from '@landflow/engine';
 import type { JsonObject } from '@landflow/protocol';
-import { toolInput, type JournalDraft, type JournalEvent, type RunActor, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from '../../shared/run-trace';
+import { mergeConnections, toolInput, type ActorConnection, type JournalDraft, type JournalEvent, type RunActor, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from '../../shared/run-trace';
 
 /** Nodes that are agents when they run in the main flow. */
 export const AGENT_NODE_TYPES = new Set(['core.messageAgent', 'core.runTeam', 'core.aiAgent', 'core.a2aAgent']);
@@ -20,7 +20,7 @@ const HUMAN: RunActor = { id: 'human', name: 'A person', type: 'human' };
 const NOTE_CHARS = 400;
 
 export interface TranslatorOptions {
-  workflow: Pick<Workflow, 'id' | 'name' | 'nodes' | 'settings'>;
+  workflow: Pick<Workflow, 'id' | 'name' | 'nodes' | 'settings'> & Partial<Pick<Workflow, 'connections'>>;
   executionId: string;
   /** The person who started the run, when known (`human:<id>`). */
   startedBy?: { id: string; name?: string };
@@ -29,6 +29,11 @@ export interface TranslatorOptions {
   onTrace?: (traceId: string) => void;
   /** Called when the events so far must reach the store at once (the run ended or started waiting). */
   flush?: () => void;
+  /**
+   * What an agent node works with beyond its sub-nodes: a Run an Agent node's agent, an A2A node's kagent deployment.
+   * `flow` says which the sub-nodes already give (a model, a memory), so the agent's own aren't told as well.
+   */
+  connectionsOf?: (node: WorkflowNode, flow: { model: boolean; memory: boolean }) => ActorConnection[] | undefined;
 }
 
 type Item = Record<string, unknown>;
@@ -167,7 +172,8 @@ export function createTranslator(options: TranslatorOptions) {
   const isAgent = (node: WorkflowNode | undefined) => Boolean(node && AGENT_NODE_TYPES.has(node.type));
 
   function nodeActor(node: WorkflowNode | undefined, name: string, type: RunActor['type']): RunActor {
-    return { id: `node:${node?.id ?? name}`, name, type, ...(node?.notes?.trim() && { role: short(node.notes.trim(), 200) }), ...(node && { nodeType: node.type }) };
+    const connections = type === 'agent' && node ? connectionsOfNode(node) : [];
+    return { id: `node:${node?.id ?? name}`, name, type, ...(node?.notes?.trim() && { role: short(node.notes.trim(), 200) }), ...(node && { nodeType: node.type }), ...(connections.length && { connections }) };
   }
 
   function modelName(node: WorkflowNode | undefined, fallback: string): string {
@@ -176,6 +182,46 @@ export function createTranslator(options: TranslatorOptions) {
       if (typeof value === 'string' && value.trim() && !value.includes('{{')) return value.trim();
     }
     return fallback;
+  }
+
+  /** A plain value of a node's parameters (no expression). */
+  const plain = (value: unknown) => (typeof value === 'string' && value.trim() && !value.includes('{{') ? value.trim() : undefined);
+  const hostOf = (url: unknown) => {
+    try {
+      return plain(url) ? new URL(String(url)).host : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  /**
+   * What an agent node works with: its sub-nodes in the flow (the chat model, memory, tools, knowledge from a vector store
+   * or retriever), then what `connectionsOf` adds (the agent's own settings, its kagent deployment).
+   */
+  function connectionsOfNode(node: WorkflowNode): ActorConnection[] {
+    const out: ActorConnection[] = [];
+    for (const c of workflow.connections ?? []) {
+      if (c.target !== node.id || c.type === 'main') continue;
+      const sub = nodes.get(c.source);
+      if (!sub || sub.disabled) continue;
+      const p = sub.parameters ?? {};
+      const base = { nodeType: sub.type, from: 'flow' as const };
+      if (c.type === 'ai_languageModel') {
+        const model = modelName(sub, sub.name);
+        const detail = [model !== sub.name ? sub.name : '', hostOf(p.baseUrl)].filter(Boolean).join(' · ');
+        out.push({ kind: 'model', name: model, ...(detail && { detail }), ...base });
+      } else if (c.type === 'ai_memory') {
+        const turns = typeof p.turns === 'number' ? `${p.turns} turns` : typeof p.contextWindowLength === 'number' ? `${p.contextWindowLength} turns` : undefined;
+        out.push({ kind: 'memory', name: sub.name, ...(turns && { detail: turns }), ...base });
+      } else if (c.type === 'ai_retriever' || (c.type === 'ai_tool' && /vectorstore|retriever/i.test(sub.type))) {
+        const what = plain(p.collection) ?? plain(p.tableName) ?? plain(p.memoryKey);
+        out.push({ kind: 'knowledge', name: sub.name, ...(what && { detail: what }), ...base });
+      } else if (c.type === 'ai_tool') {
+        const what = [plain(p.resource), plain(p.operation)].filter(Boolean).join(' · ');
+        out.push({ kind: AGENT_TOOL_TYPES.has(sub.type) ? 'agent' : 'tool', name: sub.name, ...(what && { detail: what }), ...base });
+      }
+    }
+    return mergeConnections(out, options.connectionsOf?.(node, { model: out.some((c) => c.kind === 'model'), memory: out.some((c) => c.kind === 'memory') }));
   }
 
   // ---- node events --------------------------------------------------------
@@ -216,6 +262,8 @@ export function createTranslator(options: TranslatorOptions) {
         const agentId = str(node.parameters?.agentId);
         const actor: RunActor = agentId && !agentId.includes('{{') ? { id: `agent:${agentId}`, name: e.nodeName, type: 'agent', nodeType: node.type } : { id: `remote:${e.nodeName}`, name: e.nodeName, type: 'agent', nodeType: node.type };
         if (node.notes?.trim()) actor.role = short(node.notes.trim(), 200);
+        const connections = connectionsOfNode(node);
+        if (connections.length) actor.connections = connections;
         // The caller's `reason` argument (the engine adds it to delegating tools) is why it asked: kept beside the request, not in it.
         const { reason, ...asked } = isObject(e.input) ? e.input : ({} as Item);
         const why = str(reason);

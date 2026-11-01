@@ -234,6 +234,56 @@ describe('assistant ops', () => {
     expect(docs).toContain('timeout (number, “Timeout (ms)”, 1000–3600000)');
   });
 
+  it('attaches a node added after an agent and connected to it as a tool as that only, not also as a step after it', () => {
+    const result = apply([
+      { op: 'addNode', ref: 'ag', type: 'core.aiAgent', name: 'Agent', after: 'Code' },
+      { op: 'addNode', ref: 'tool', type: 'core.httpRequest', name: 'Fetch', after: 'ag' },
+      { op: 'connect', from: 'tool', to: 'ag', type: 'ai_tool' },
+    ]);
+    const id = (name: string) => result.workflow.nodes.find((n) => n.name === name)!.id;
+    const between = result.workflow.connections.filter((c) => [c.source, c.target].includes(id('Fetch'))).map((c) => `${c.type}:${c.source === id('Fetch') ? 'Fetch' : 'Agent'}`);
+    expect(between).toEqual(['ai_tool:Fetch']);
+    expect(result.applied.find((op) => op.op === 'addNode' && op.name === 'Fetch')).not.toHaveProperty('after');
+  });
+
+  it('disconnects the edge the way it was asked: the main edge after an agent, not also the tool edge into it', () => {
+    const wired = apply([
+      { op: 'addNode', ref: 'ag', type: 'core.aiAgent', name: 'Agent', after: 'Code' },
+      { op: 'addNode', ref: 'tool', type: 'core.httpRequest', name: 'Fetch' },
+      { op: 'connect', from: 'Agent', to: 'Fetch' },
+      { op: 'connect', from: 'Fetch', to: 'Agent', type: 'ai_tool' },
+    ]).workflow;
+    const id = (wf: Workflow, name: string) => wf.nodes.find((n) => n.name === name)!.id;
+    const kinds = (wf: Workflow) => wf.connections.filter((c) => [c.source, c.target].includes(id(wf, 'Fetch'))).map((c) => `${c.type}:${c.source === id(wf, 'Fetch') ? 'Fetch→Agent' : 'Agent→Fetch'}`);
+    expect(kinds(wired).sort()).toEqual(['ai_tool:Fetch→Agent', 'main:Agent→Fetch']);
+    const main = apply([{ op: 'disconnect', from: 'Agent', to: 'Fetch' }], wired).workflow;
+    expect(kinds(main)).toEqual(['ai_tool:Fetch→Agent']);
+    // Asked the other way round, a sub-node edge still goes.
+    const tool = apply([{ op: 'disconnect', from: 'Agent', to: 'Fetch', type: 'ai_tool' }], main).workflow;
+    expect(kinds(tool)).toEqual([]);
+  });
+
+  it('doesn’t warn that a node attached to an agent as a tool has no input', () => {
+    const before = apply([
+      { op: 'addNode', ref: 'ag', type: 'core.aiAgent', name: 'Agent', after: 'Code' },
+      { op: 'addNode', ref: 'tool', type: 'core.httpRequest', name: 'Fetch' },
+      { op: 'connect', from: 'Agent', to: 'Fetch' },
+      { op: 'connect', from: 'Fetch', to: 'Agent', type: 'ai_tool' },
+    ]).workflow;
+    const after = apply([{ op: 'disconnect', from: 'Agent', to: 'Fetch' }], before).workflow;
+    expect(structuralWarnings(before, after, lookup()).filter((w) => w.includes('Fetch'))).toEqual([]);
+  });
+
+  it('turns a bare $fromAI into the expression the agent fills, with the parameter’s name and display name', () => {
+    const added = validateOps(workflow(), [{ op: 'addNode', ref: 'd', type: 'core.a2aAgent', name: 'Developer', after: 'Code', parameters: { agentUrl: '$fromAI' } }], lookup());
+    expect(added.workflow.nodes.find((n) => n.name === 'Developer')!.parameters.agentUrl).toBe("{{ $fromAI('agentUrl', 'Agent URL', 'string') }}");
+    // The call without its braces gets them; an expression already written is kept.
+    const call = validateOps(added.workflow, [{ op: 'setParameters', node: 'Developer', parameters: { agentUrl: "$fromAI('url', 'Where the agent is', 'string')" } }], lookup());
+    expect(call.workflow.nodes.find((n) => n.name === 'Developer')!.parameters.agentUrl).toBe("{{ $fromAI('url', 'Where the agent is', 'string') }}");
+    const kept = validateOps(call.workflow, [{ op: 'setParameters', node: 'Developer', parameters: { agentUrl: "{{ $fromAI('u', 'U', 'string') }}" } }], lookup());
+    expect(kept.workflow.nodes.find((n) => n.name === 'Developer')!.parameters.agentUrl).toBe("{{ $fromAI('u', 'U', 'string') }}");
+  });
+
   it('leaves out numbers outside a field’s range, top level or in a collection, with a reason', () => {
     // "A 30 minute timeout" on a field in milliseconds (1,000 to 3,600,000) came back as 30.
     const added = validateOps(workflow(), [{ op: 'addNode', ref: 'd', type: 'core.a2aAgent', name: 'Developer', after: 'Code', parameters: { agentUrl: 'http://agent', options: { timeout: 30 } } }], lookup());

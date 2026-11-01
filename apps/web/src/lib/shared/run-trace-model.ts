@@ -4,8 +4,9 @@
  * and what was reported against what was checked. Pure, so the Run report node can use it too.
  * `until` folds only the events up to a time (the time slider replays a run with it).
  */
+import { teamSnapshotOf } from './agent-teams';
 import { formatCost } from './ai-usage';
-import { toolInput, type JournalEvent, type RunActor, type RunArtifact, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from './run-trace';
+import { mergeConnections, toolInput, type JournalEvent, type RunActor, type RunArtifact, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from './run-trace';
 
 /** What a request to another agent came to, from evidence (what it delivered), not from what the agent said. */
 export type ResultLabel = 'Delivered' | 'Answered' | 'Left undelivered' | 'Working' | 'Waiting';
@@ -412,10 +413,12 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
     const known = actorBase.get(actor.id);
     if (!known) actorBase.set(actor.id, { actor: { ...actor }, firstAt: at });
     else {
-      // Later events may know more (a role, the card name of a remote agent).
+      // Later events may know more (a role, the card name of a remote agent, what it works with).
+      const connections = mergeConnections(known.actor.connections, actor.connections);
       known.actor = {
         ...known.actor,
         ...Object.fromEntries(Object.entries(actor).filter(([, v]) => v !== undefined && v !== '')),
+        ...(connections.length && { connections }),
       } as RunActor;
     }
   };
@@ -630,10 +633,12 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
     if (!span.usage) continue;
     const mine = ownOf(span.id);
     const u = span.usage;
+    // A model span is one request, said or not: an agent's usage above it counts it among its own.
+    const requests = u.requests ?? (span.kind === 'model' ? 1 : 0);
     mine.inputTokens += u.inputTokens;
     mine.outputTokens += u.outputTokens;
     mine.cacheRead += u.cacheReadTokens ?? 0;
-    mine.requests += u.requests ?? 0;
+    mine.requests += requests;
     if (u.costUsd !== undefined) mine.cost = (mine.cost ?? 0) + u.costUsd;
     for (let up = span.parentId ? spans[span.parentId] : undefined; up; up = up.parentId ? spans[up.parentId] : undefined) {
       if (!up.usage) continue;
@@ -641,7 +646,7 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
       theirs.inputTokens -= u.inputTokens;
       theirs.outputTokens -= u.outputTokens;
       theirs.cacheRead -= u.cacheReadTokens ?? 0;
-      theirs.requests -= u.requests ?? 0;
+      theirs.requests -= requests;
       if (u.costUsd !== undefined) theirs.cost = (theirs.cost ?? 0) - u.costUsd;
       break;
     }
@@ -719,6 +724,15 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
   for (const item of checks) if (item.actor && item.check.status === 'fail') statOf(item.actor, item.at).failedChecks.push(item);
   for (const entry of actorBase.values()) statOf(entry.actor, entry.firstAt);
   for (const s of stats.values()) s.actor = actorBase.get(s.actor.id)?.actor ?? s.actor;
+  // A team run records what each member works with on its chart: the member's actor (by name) carries it too.
+  const team = order.map((s) => teamSnapshotOf(s.attrs)).find(Boolean);
+  for (const member of team?.members ?? []) {
+    if (!member.connections?.length) continue;
+    for (const s of stats.values()) {
+      if (s.actor.name !== member.title || s.actor.type !== 'agent') continue;
+      s.actor = { ...s.actor, connections: mergeConnections(s.actor.connections, member.connections) };
+    }
+  }
 
   // Cycles: pairs that asked each other more than once, or back and forth.
   const cycles: RunCycle[] = [];

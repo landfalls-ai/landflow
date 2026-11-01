@@ -360,7 +360,7 @@ export const sqliteVectorStoreNode = vectorStoreNode({
   name: 'vectorStoreSqlite',
   displayName: 'SQLite Vector Store',
   description: 'Keep documents and their embeddings in a SQLite file in Landflow’s data folder and search them',
-  icon: 'lucide:database',
+  icon: 'brand:sqlite',
   keywords: ['sqlite', 'local', 'file', 'persistent'],
   properties: [collectionProperty('landflow')],
   open: () => new SqliteVectorStore(),
@@ -371,7 +371,7 @@ export const postgresCredential = defineCredentialType({
   name: 'postgres',
   displayName: 'Postgres',
   description: 'A Postgres database. The PGVector store needs the vector extension (CREATE EXTENSION vector).',
-  icon: 'lucide:database',
+  icon: 'brand:postgresql',
   documentationUrl: 'https://github.com/pgvector/pgvector',
   properties: [
     { name: 'host', displayName: 'Host', type: 'string', default: 'localhost', required: true },
@@ -426,7 +426,7 @@ export const pgVectorStoreNode = vectorStoreNode({
   name: 'vectorStorePGVector',
   displayName: 'Postgres PGVector Store',
   description: 'Keep documents and their embeddings in Postgres with pgvector and search them',
-  icon: 'lucide:database-zap',
+  icon: 'brand:postgresql',
   keywords: ['postgres', 'postgresql', 'pgvector', 'pg'],
   credentials: [{ name: 'postgres', required: true }],
   properties: [

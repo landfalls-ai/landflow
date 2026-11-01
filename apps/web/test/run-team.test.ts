@@ -223,6 +223,14 @@ describe('Run a Team', () => {
       version: 1,
       members: expect.arrayContaining([expect.objectContaining({ title: 'Tester', reportsTo: 'm_dev' })]),
     });
+    // What each member works with, on the chart: the lead's model, a remote member's host (no Landflow agent behind it).
+    const members = (snapshot && snapshot.type === 'span.updated' ? (snapshot.attrs?.team as { members: Array<{ title: string; connections?: Array<{ kind: string; name: string }> }> }).members : []) ?? [];
+    expect(members.find((m) => m.title === 'Tech Lead')?.connections).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'model', name: 'lead-model' })]));
+    expect(members.find((m) => m.title === 'Planner')?.connections).toEqual([expect.objectContaining({ kind: 'runtime', name: 'A2A agent' })]);
+    // The team's usage names the lead's model and counts every model call: the lead's four, the developer's two, the remote members' reported ones.
+    const ended = events.find((e) => e.type === 'span.ended' && e.usage && events.some((x) => x.type === 'span.updated' && x.attrs?.team && x.spanId === e.spanId));
+    expect(ended && ended.type === 'span.ended' && ended.usage).toMatchObject({ model: 'lead-model', requests: expect.any(Number) });
+    expect((leadReport as { requests?: number }).requests).toBe(4);
   });
 
   it('sends a remote member’s question to its manager, who answers with the next call', async () => {

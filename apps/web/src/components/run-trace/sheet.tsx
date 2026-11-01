@@ -11,6 +11,7 @@ import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { ArtifactPreview, PREVIEWED } from './artifact-preview';
 import { ChangeDiff } from './diff-view';
+import { ConnectionList } from './connections';
 import { Avatar, ResultChip, SectionTitle, Tap, ValueBlock, clock, who } from './parts';
 import { Doc, TextBlock } from './rich-text';
 
@@ -354,6 +355,12 @@ function ActorSheet({ id, model, open }: { id: string; model: RunModel; open: (o
           ['Messages', s.messages ? `${s.messages} sent` : undefined],
         ]}
       />
+      {s.actor.connections?.length ? (
+        <>
+          <SectionTitle>Works with · {s.actor.connections.length}</SectionTitle>
+          <ConnectionList connections={s.actor.connections} />
+        </>
+      ) : null}
       {spans.length > 0 && (
         <>
           <SectionTitle>What it did · {spans.length}</SectionTitle>
