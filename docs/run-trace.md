@@ -154,6 +154,11 @@ GitHub, Kubernetes, Docker, MCP, kagent, PostgreSQL, SQLite), else its kind's.
 | An A2A Agent node or tool, a team's remote member | When the URL is a Landflow agent deployed to kagent (by the URL its deployment recorded, else the kagent name it ends with): **Claude Code** (when it has plugins, the mod or a Claude harness) and **kagent** (the deployment's name, sandbox and hot start), its Claude Code plugins (the landflow-harness mod among them), each EgressPolicy (GitHub, the package cache, Landflow) and the agent's own model, tools and skills. Any other URL: an A2A agent and its host. |
 | A team | Each member's connections on the chart the node's span records (`attrs.team.members[].connections`); the lead's leaves out the model and memory the flow gives. The model folds them onto the member's actor by title. |
 
+**GitHub MCP** is its own row for an agent that has GitHub's MCP tools (`preset: 'github'`, [a2a.md](a2a.md#githubs-mcp-tools-for-agents)),
+with the GitHub mark and kind *Tool*: *Tool · pull requests, reviews, line comments* at *Read and review*, *Tool ·
+repositories, pull requests, issues (read)* at *Read*. It sits beside the *May reach · GitHub* row of the agent's kagent
+deployment (the gateway adds the token) and is never shown as an ordinary MCP server.
+
 A team node's usage names the lead's model, and an agent session counts each of its model calls, so the lead's card and
 the report say "3 model calls · 5,443 in · 714 out · $0 · qwen3-coder:30b" beside a member's reported usage.
 
@@ -326,8 +331,23 @@ The **Artifacts** tab (code in `components/run-trace/artifacts.tsx`) opens every
   **page** (HTML) shows in a frame with `sandbox=""` (no script, forms, navigation or same origin) behind a policy that
   loads nothing from the network, and its links do nothing; **Show the source** gives the text. `.csv` and `.html` files
   agents wrote show here too, from their last text.
+- **Review comments**: what a member left on GitHub through its MCP tools (described below), one card each.
 - **Links**: artifacts with an http(s) URL (pull requests, commits), except images and PDFs, which open from their own
   cards. **Data**: JSON artifacts as a collapsible tree.
+
+**Review comments.** When a member's GitHub MCP call succeeds and leaves a review or a comment, the journal records an
+artifact of kind `review_comment` under that call's span (`lib/shared/review-comments.ts`, written by
+`lib/server/journal/agent-session.ts`): `pull_request_review_write` (a review created with a verdict, or a pending one
+submitted: `APPROVE`, `REQUEST_CHANGES` or `COMMENT`; a pending review, a deleted one and a resolved thread leave
+nothing), `add_comment_to_pending_review` (a comment on a file and line), `add_reply_to_pull_request_comment` and
+`add_issue_comment`. Its `text` is the body, its `url` the link GitHub returned when it returned one, and its `data` the
+`repository` (`owner/repo`), the pull request or issue `number`, the `path` and `line` when given, the `verdict` and the
+`action` (`line`, `review`, `reply`, `comment`). Both paths feed it: a Landflow agent's tool call (a Run an Agent node, a
+team member) and a Claude Code member's `mcp__<server>__<tool>` step that the landflow-harness mod reported, read when the
+step ends in success; a call to a tool with other arguments than GitHub's (`owner`, `repo`) is not one. The Story tells it
+in the member's words as a turn with the body quoted (*Reviewer commented on src/nodes/get-alerts.ts line 42*,
+*Reviewer reviewed pull request #5: approve*), and the Artifacts tab lists it under **Review comments** with the link. With
+run content off, the body is not kept.
 
 **Where the changes come from.** `lib/shared/run-changes.ts` folds the journal: a remote agent's `Write`, `Edit` and
 `MultiEdit` tool steps (their `input` is the Claude Code tool input; a remote agent's arguments that arrive as JSON text are
