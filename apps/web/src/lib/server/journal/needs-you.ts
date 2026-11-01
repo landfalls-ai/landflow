@@ -5,6 +5,7 @@
  */
 import type { ExecutionRecord } from '../../shared/types';
 import type { JournalEvent, RunActor, RunCheck } from '../../shared/run-trace';
+import { openAsks } from '../a2a/agent-asks';
 import { liveExecution } from '../runner';
 import { store } from '../store';
 import { openWaitSpan } from './decisions';
@@ -83,14 +84,33 @@ export function needsYou(visible: Set<string> | undefined, now = Date.now()): Ne
     if (item?.kind === 'gate') gated.add(record.executionId);
   }
   const names = new Map<string, { workflowId: string; workflowName: string }>();
+  const nameOf = (executionId: string) => {
+    let execution = names.get(executionId);
+    if (!execution) {
+      const record = liveExecution(executionId) ?? store.getExecution(executionId);
+      if (record) names.set(executionId, (execution = { workflowId: record.workflowId, workflowName: record.workflowName }));
+    }
+    return execution;
+  };
+  // A command a Claude Code member asks about (a push to main): the run goes on, a person's word lets it through.
+  for (const ask of openAsks()) {
+    const execution = nameOf(ask.executionId);
+    if (!execution || (visible && !visible.has(execution.workflowId))) continue;
+    items.push({
+      executionId: ask.executionId,
+      workflowId: execution.workflowId,
+      workflowName: execution.workflowName,
+      kind: 'approval',
+      title: `${ask.member ?? 'An agent'} wants to run ${ask.command.length > 120 ? `${ask.command.slice(0, 119)}…` : ask.command}`,
+      detail: execution.workflowName,
+      spanId: ask.spanId,
+      since: ask.createdAt,
+    });
+  }
   for (const event of failedChecks(now)) {
     if (gated.has(event.executionId)) continue;
-    let execution = names.get(event.executionId);
-    if (!execution) {
-      const record = liveExecution(event.executionId) ?? store.getExecution(event.executionId);
-      if (!record) continue;
-      names.set(event.executionId, (execution = { workflowId: record.workflowId, workflowName: record.workflowName }));
-    }
+    const execution = nameOf(event.executionId);
+    if (!execution) continue;
     if (visible && !visible.has(execution.workflowId)) continue;
     const actor = spanStart(event.executionId, event.spanId)?.actor;
     const check: RunCheck = event.check;

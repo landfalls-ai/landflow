@@ -15,6 +15,7 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { AgentTraceSummary, TokenUsage, TraceGuardDecision } from '../../shared/agents';
 import { agentStore } from '../agents/store';
+import { cancelAsks, openAsk, type AskRun } from './agent-asks';
 import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { clusterActive, clusterState } from '../cluster/state';
 import { singleton } from '../singleton';
@@ -56,6 +57,7 @@ const eventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('guard'), at: clock.optional(), rule: text(60), tool: text(120), agent: text(80).optional(), arg: text(200).optional(), reason: text(400).optional(), action: z.enum(['deny', 'report']).optional() }),
   z.object({ type: z.literal('redact'), at: clock.optional(), agent: text(80).optional(), kinds: z.array(text(60)).max(20).optional() }),
   z.object({ type: z.literal('spawn'), at: clock.optional(), agent: text(80), kind: text(80).optional(), description: text(200).optional(), model: text(120).optional() }),
+  z.object({ type: z.literal('ask'), at: clock.optional(), askId: text(64), command: text(1_000), cwd: text(300).optional(), reason: text(400).optional(), agent: text(80).optional() }),
   z.object({ type: z.literal('turn'), at: clock.optional(), ms: count.optional(), agent: text(80).optional(), reason: text(40).optional() }),
 ]);
 type TraceEvent = z.infer<typeof eventSchema>;
@@ -70,6 +72,8 @@ interface Trace {
   /** The main loop's turn ended: the mod sent everything it had. */
   done: boolean;
   summary?: AgentTraceSummary;
+  /** Where the call sits in a run: the asks of its guard are shown there (agent-asks.ts). */
+  run?: AskRun;
   listeners: Set<(summary: AgentTraceSummary) => void>;
 }
 
@@ -92,6 +96,11 @@ const emptySummary = (): AgentTraceSummary => ({
 });
 
 function apply(trace: Trace, event: TraceEvent) {
+  // An ask is a person's business, not the summary's: it goes to the run (a2a/agent-asks.ts) and the mod polls the answer.
+  if (event.type === 'ask') {
+    openAsk(trace.id, trace.run, { askId: event.askId, command: event.command, cwd: event.cwd, reason: event.reason, agent: event.agent });
+    return;
+  }
   const s = (trace.summary ??= emptySummary());
   switch (event.type) {
     case 'start':
@@ -175,7 +184,7 @@ export interface TraceHandle {
 }
 
 /** A trace for one call to a Claude Code agent with the mod. `baseUrl`: Landflow as the agent reaches it. */
-export function openTrace(options: { baseUrl: string; provider?: string; guard?: GuardMode }): TraceHandle {
+export function openTrace(options: { baseUrl: string; provider?: string; guard?: GuardMode; run?: AskRun }): TraceHandle {
   sweep();
   if (traces().size >= MAX_TRACES) {
     const oldest = [...traces().values()].sort((a, b) => a.createdAt - b.createdAt)[0];
@@ -184,7 +193,7 @@ export function openTrace(options: { baseUrl: string; provider?: string; guard?:
   const random = randomBytes(18).toString('base64url');
   // In queue mode the process that holds it is in the id, so another one can pass the mod's batches on (forwardTrace).
   const id = clusterActive() ? `${Buffer.from(clusterState().config.instanceId).toString('base64url')}.${random}` : random;
-  const trace: Trace = { id, provider: (options.provider ?? 'anthropic').toLowerCase(), createdAt: Date.now(), events: 0, done: false, listeners: new Set() };
+  const trace: Trace = { id, provider: (options.provider ?? 'anthropic').toLowerCase(), createdAt: Date.now(), events: 0, done: false, ...(options.run && { run: options.run }), listeners: new Set() };
   traces().set(id, trace);
   const url = `${options.baseUrl.replace(/\/+$/, '')}/api/agent-trace/${id}`;
   return {
@@ -200,6 +209,7 @@ export function openTrace(options: { baseUrl: string; provider?: string; guard?:
       for (const end = Date.now() + graceMs; !trace.done && trace.summary && Date.now() < end; ) await new Promise((r) => setTimeout(r, 100));
       trace.closedAt = Date.now();
       trace.listeners.clear();
+      cancelAsks(id);
       return trace.summary ? structuredClone(trace.summary) : undefined;
     },
   };
@@ -263,11 +273,11 @@ export function resetTraces() {
 const trimmed = (url: string) => url.replace(/\/+$/, '');
 
 /**
- * A trace for a call to the A2A agent at `endpointUrl`, when it is a Landflow agent deployed to kagent with the mod
+ * A trace for a call to the A2A agent at `endpointUrl` (`run`: where the call sits in a run, so the member's asks show there), when it is a Landflow agent deployed to kagent with the mod
  * (its deployment has `trace`); undefined for any other agent. Matched by its A2A URL, else by the kagent name the URL
  * ends with (`…/agents/<namespace>/<name>`) when only one such agent has it.
  */
-export function traceFor(endpointUrl: string): TraceHandle | undefined {
+export function traceFor(endpointUrl: string, run?: AskRun): TraceHandle | undefined {
   const traced = agentStore.list().filter((agent) => agent.kagent?.trace);
   const url = trimmed(endpointUrl);
   let agent = traced.find((a) => a.kagent?.trace?.a2aUrl && trimmed(a.kagent.trace.a2aUrl) === url);
@@ -279,7 +289,7 @@ export function traceFor(endpointUrl: string): TraceHandle | undefined {
   const target = agent?.kagent?.trace;
   if (!agent || !target) return undefined;
   const model = (agent.published?.config ?? agent).model;
-  return openTrace({ baseUrl: target.url.replace(/\/api\/agent-trace\/?$/, ''), provider: model?.provider ?? 'anthropic' });
+  return openTrace({ baseUrl: target.url.replace(/\/api\/agent-trace\/?$/, ''), provider: model?.provider ?? 'anthropic', ...(run && { run }) });
 }
 
 /** The message with the trace's marker as its first line (only a new request's text: the mod reads it from the prompt). */

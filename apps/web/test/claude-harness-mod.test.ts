@@ -47,6 +47,22 @@ describe('the landflow-harness guardrails', () => {
     expect(rule('git push')).toBeUndefined();
   });
 
+  it('asks a person about those pushes (ask), but refuses mirroring and a refused part outright', () => {
+    const asked = (command: string) => guardBash(command, '/data/workspace')?.ask === true;
+    for (const command of ['git push origin main', 'git push origin HEAD:refs/heads/master', 'git push --force origin feature', 'git push origin +feature', 'git push origin :feature', 'git push --delete origin feature', 'git -C repo push -f', 'git push --force-with-lease']) {
+      expect(asked(command), command).toBe(true);
+    }
+    expect(asked('git push -u origin landflow/plugin-grafana')).toBe(false);
+    expect(guardBash('git push --mirror')).toMatchObject({ rule: 'git-push' });
+    expect(guardBash('git push --mirror')?.ask).toBeUndefined();
+    expect(guardBash('git push --all origin')?.ask).toBeUndefined();
+    // Allowing the push must not let the part that is refused through.
+    expect(guardBash('git push origin main && cat .env', '/data/workspace')).toMatchObject({ rule: 'secret-file' });
+    expect(guardBash('git push origin main && cat .env', '/data/workspace')?.ask).toBeUndefined();
+    // Read-only still refuses every push.
+    expect(guardReadOnly('Bash', { command: 'git push origin feature' }, '/data/workspace')?.rule).toBe('read-only');
+  });
+
   it('stops changes to git’s auth settings and merging pull requests', () => {
     expect(rule('git config --global credential.helper store')).toBe('git-auth-config');
     expect(rule('git -c http.extraheader="AUTHORIZATION: basic x" fetch')).toBe('git-auth-config');
@@ -89,7 +105,8 @@ describe('the landflow-harness guardrails', () => {
   });
 
   it('says why, in words the model can act on', () => {
-    expect(guardBash('git push origin main')?.reason).toContain('push to your own branch');
+    expect(guardBash('git push origin main')?.reason).toContain('Pushing to main');
+    expect(guardBash('git push --mirror')?.reason).toContain('own branch');
     expect(guardFile('Read', { file_path: '/x/.env' }, ROOTS)?.reason).toContain('example or template');
   });
 });

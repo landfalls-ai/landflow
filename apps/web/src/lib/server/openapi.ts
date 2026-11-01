@@ -1680,6 +1680,33 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ events: array({ type: 'object', additionalProperties: true }) }, ['events'])),
     responses: { 202: { description: 'Passed on to the queue-mode process that holds the trace' }, 204: { description: 'Taken' }, 400: invalid, 404: notFound, 410: errorRef('The call has ended: stop posting here'), 413: errorRef('The trace holds all it may') },
   });
+  add('get', '/api/agent-trace/{id}/asks/{askId}', {
+    tag: 'Agents',
+    id: 'getAgentTraceAsk',
+    summary: 'A person’s answer to a command a remote agent asked about',
+    description: 'Polled by the landflow-harness mod after it posted an `ask` event (a push to main, a force push, deleting a remote branch; docs/a2a.md). `wait` holds the request up to 30 seconds until a person decides. `denied` with `expired` means nobody answered in time or the call ended. The trace id is the only credential.',
+    public: true,
+    pathParams: { id: 'The trace id from the request’s `<!-- landflow-trace … -->` line', askId: 'The id the mod gave the ask' },
+    query: [{ name: 'wait', description: 'Seconds to hold the request while the ask is pending (at most 30)', schema: { type: 'integer', minimum: 0, maximum: 30, default: 0 } }],
+    responses: { 200: reply('The answer', object({ decision: { type: 'string', enum: ['pending', 'approved', 'denied'] }, by: { type: 'string' }, at: { type: 'string' }, expired: { type: 'boolean' } }, ['decision'])), 404: notFound },
+  });
+  add('get', '/api/executions/{id}/asks', {
+    tag: 'Executions',
+    id: 'listExecutionAsks',
+    summary: 'Commands a Claude Code member of the run asks a person about',
+    description: 'The open asks of the run: a command its guard lets a person allow (docs/a2a.md). The run is not paused while they wait.',
+    pathParams: { id: 'The execution id' },
+    responses: { 200: reply('The open asks', object({ asks: array({ type: 'object', additionalProperties: true }) }, ['asks'])), 404: notFound },
+  });
+  add('post', '/api/executions/{id}/asks/{askId}', {
+    tag: 'Executions',
+    id: 'decideExecutionAsk',
+    summary: 'Approve or reject a command a Claude Code member asked about',
+    description: 'Needs the access to the run that deciding its tool approvals needs. The member’s mod polls the decision and runs the command or tells Claude Code a person denied it; the run’s journal gets an Approval check.',
+    pathParams: { id: 'The execution id', askId: 'The ask id (`attrs.ask` of the wait, or from the list)' },
+    body: jsonBody(object({ approved: { type: 'boolean' } }, ['approved'])),
+    responses: { 200: reply('Decided', object({ ask: { type: 'object', additionalProperties: true } }, ['ask'])), 400: invalid, 404: notFound, 409: errorRef('Already answered, or nobody answered in time') },
+  });
   add('get', '/api/binary/{id}', { tag: 'Executions', id: 'getBinary', summary: 'The bytes of a stored file', description: 'A file of an execution (`item.binary.<name>.id`) with its Content-Type, size and name; `?download=1` makes it an attachment. Plugins send their `binaryAccess` token as a Bearer token. Answers single HTTP `Range` requests (`bytes=a-b`, `a-`, `-n`) with 206 and `Content-Range`, so video and audio can seek; 416 with `Content-Range: bytes */<size>` when unsatisfiable. Multi-range or malformed headers (and any `If-Range`) get the whole file as 200. Every response carries `Accept-Ranges: bytes`. `HEAD` answers the same headers.', query: [{ name: 'download', description: '`1`: Content-Disposition attachment', schema: { type: 'string' } }], headers: [{ name: 'Range', description: 'One byte range: `bytes=0-99`, `bytes=100-`, `bytes=-500`', schema: { type: 'string' } }], responses: { 200: { description: 'The whole file', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 206: { description: 'The requested part (`Content-Range: bytes a-b/size`)', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 403: errorRef('The token can’t read that file'), 404: notFound, 416: errorRef('Range not satisfiable (`Content-Range: bytes */size`)') } });
   add('get', '/api/mcp/status', { tag: 'MCP', id: 'mcpStatus', summary: 'The MCP gateway and identity configuration', description: 'What Settings → MCP shows: the gateway mode and URL, whether the gateway secret is set, the identity provider, the registry namespace.', responses: { 200: reply('The configuration', { type: 'object' }) } });
   add('get', '/api/mcp/jwks', { tag: 'MCP', id: 'mcpJwks', summary: 'The JWKS of Landflow-issued MCP tokens', description: 'Public. The gateway (agentgateway) validates Landflow-issued tokens against it.', public: true, responses: { 200: reply('RFC 7517 key set', object({ keys: array({ type: 'object' }) }, ['keys'])) } });

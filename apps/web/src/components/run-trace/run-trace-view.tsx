@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { decideGate, decideToolApprovals, resolveCheck, useRunJournal, type RunJournal } from '@/lib/client/run-trace';
 import { api } from '@/lib/client/api';
-import { useWorkingMembers } from '@/lib/client/run-controls';
+import { decideAsk, useWorkingMembers } from '@/lib/client/run-controls';
 import type { ExecutionRecord } from '@/lib/shared/types';
 import { RUN_PROFILES, resolveRunProfile } from '@/lib/shared/run-profiles';
 import { foldChanges } from '@/lib/shared/run-changes';
@@ -162,10 +162,11 @@ function NeedsYou({
       setDeciding(undefined);
     }
   };
-  const decide = async (spanId: string, approved: boolean) => {
+  const decide = async (spanId: string, approved: boolean, ask?: string) => {
     setDeciding(`${spanId}:${approved}`);
     try {
-      const done = await decideToolApprovals(executionId, approved);
+      // A command a member's guard asks about (the run is not paused): decided by its own route.
+      const done = ask ? Boolean(await decideAsk(executionId, ask, approved)) : await decideToolApprovals(executionId, approved);
       if (done) {
         toast.success(approved ? 'Approved' : 'Rejected');
         onDecided();
@@ -219,10 +220,10 @@ function NeedsYou({
                 </>
               ) : n.attrs.wait === 'approval' ? (
                 <>
-                  <Button variant="primary" loading={deciding === `${n.spanId}:true`} disabled={Boolean(deciding)} onClick={() => decide(n.spanId, true)}>
+                  <Button variant="primary" loading={deciding === `${n.spanId}:true`} disabled={Boolean(deciding)} onClick={() => decide(n.spanId, true, typeof n.attrs.ask === 'string' ? n.attrs.ask : undefined)}>
                     Approve
                   </Button>
-                  <Button variant="danger" loading={deciding === `${n.spanId}:false`} disabled={Boolean(deciding)} onClick={() => decide(n.spanId, false)}>
+                  <Button variant="danger" loading={deciding === `${n.spanId}:false`} disabled={Boolean(deciding)} onClick={() => decide(n.spanId, false, typeof n.attrs.ask === 'string' ? n.attrs.ask : undefined)}>
                     Reject
                   </Button>
                 </>

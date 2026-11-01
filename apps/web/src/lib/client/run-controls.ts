@@ -27,6 +27,43 @@ export async function askMemberAgain(executionId: string, nodeId: string, member
   return id;
 }
 
+/** A command a Claude Code member's guard asks a person about (GET /api/executions/:id/asks): the run goes on while it waits. */
+export interface RunAsk {
+  id: string;
+  member?: string;
+  command: string;
+  reason?: string;
+  createdAt: string;
+}
+
+/** Approve or reject such a command (POST /api/executions/:id/asks/:askId). */
+export const decideAsk = (executionId: string, askId: string, approved: boolean) => api<{ ask: RunAsk }>(`/api/executions/${executionId}/asks/${askId}`, { method: 'POST', json: { approved } });
+
+/** The open asks of a running execution, read every few seconds while `active`; `refresh` reads now (after a decision). */
+export function useRunAsks(executionId: string | undefined, active: boolean): { asks: RunAsk[]; refresh: () => void } {
+  const [asks, setAsks] = useState<RunAsk[]>([]);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((n) => n + 1), []);
+  useEffect(() => {
+    if (!executionId || !active) {
+      setAsks([]);
+      return;
+    }
+    let cancelled = false;
+    const read = () =>
+      api<{ asks: RunAsk[] }>(`/api/executions/${executionId}/asks`)
+        .then((r) => !cancelled && setAsks((now) => (JSON.stringify(now) === JSON.stringify(r.asks) ? now : r.asks)))
+        .catch(() => {});
+    void read();
+    const timer = setInterval(read, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [executionId, active, tick]);
+  return { asks, refresh };
+}
+
 const memberPath = (executionId: string, member: string, action: 'pause' | 'continue') => `/api/executions/${executionId}/agents/${encodeURIComponent(member)}/${action}`;
 
 export const pauseMember = (executionId: string, member: string) => api<WorkingMember>(memberPath(executionId, member, 'pause'), { method: 'POST' });

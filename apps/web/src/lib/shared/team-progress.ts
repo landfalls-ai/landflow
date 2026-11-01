@@ -59,6 +59,8 @@ export interface TeamApprovalWait {
   summary?: string;
   /** What it acts on, from its input: "#5" for a pull request or issue, a path, a branch. */
   target?: string;
+  /** A command the member's guard asks about (a push to main), not a tool: "wants to run". */
+  run?: boolean;
 }
 
 /** Who consults whom while a peer works for another member (or has taken its task over). */

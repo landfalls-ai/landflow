@@ -10,6 +10,8 @@
  * Guard. Before a tool call runs, the rules in ./rules.ts refuse what an agent here never needs to do: read secret
  * files, print the environment, push to main or force-push, merge pull requests, change git's auth settings, delete the
  * machine, upload files, write outside its workspace. The model reads the reason as the tool's error and carries on.
+ * A push to main or master, a force push and deleting a remote branch are asked of a person instead (Normal mode, when the
+ * request carries a trace URL): the mod posts an `ask` event, waits for the answer and runs the command only if approved.
  * `guard=report` only reports what would have been refused; `guard=off` neither. `guard=strict` also keeps the agent
  * read-only on the code (rules.ts `guardReadOnly`). The agent's own mode is the `guard` option, which Landflow sets per
  * agent when it deploys it (the packed plugin.json's default): a request's marker can make it stricter, never looser.
@@ -21,7 +23,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import { guardBash, guardFile, guardReadOnly, redact, type Verdict } from './rules'
 
 const MARKER = /^[ \t]*<!--[ \t]*landflow-trace[ \t]+(https?:\/\/[^\s>]+)((?:[ \t]+[a-z]+=[a-z]+)*)[ \t]*-->[ \t]*(\r?\n)?/m
-const VERSION = '0.3.0'
+const VERSION = '0.4.0'
 /** Events go out at most this often while a turn runs, ms. */
 const EVERY_MS = 3000
 /** Events kept while Landflow can't be reached; the oldest go first. */
@@ -29,6 +31,11 @@ const MAX_EVENTS = 500
 /** A tool call is shown by the first of these arguments it has. */
 const ARG_KEYS = ['command', 'file_path', 'notebook_path', 'path', 'pattern', 'url', 'query', 'description', 'skill', 'prompt']
 const ARG_CHARS = 160
+/** How long an ask waits for a person before the command is refused, ms. */
+const ASK_MS = 10 * 60_000
+/** Each poll of an ask's answer waits this long on Landflow's side (seconds), so a decision arrives at once and the hook's own clock stays still. */
+const ASK_POLL_S = 25
+const ASK_COMMAND_CHARS = 1000
 
 type Guard = 'strict' | 'enforce' | 'report' | 'off'
 /** From the loosest to the strictest. */
@@ -55,6 +62,8 @@ interface State {
   sentAt: number
   /** URLs Landflow answered 404 or 410 (the run's call ended): nothing more goes there. */
   closed: Set<string>
+  /** Asks made so far, to name the next. */
+  asks: number
 }
 
 const cut = (text: string) => (text.length > ARG_CHARS ? `${text.slice(0, ARG_CHARS)}…` : text)
@@ -123,6 +132,54 @@ function verdictOf(state: State, tool: string, input: Record<string, unknown>): 
   return guardFile(tool, input, state.roots, state.cwd)
 }
 
+/** What a person said to an ask: `person` is false when nobody could answer (Landflow unreachable, the call ended, no answer in time). */
+interface Answer {
+  approved: boolean
+  person: boolean
+  message?: string
+}
+
+/**
+ * Ask Landflow to put a command to a person and wait for the answer. The ask is posted at once; the answer is read by
+ * long polls (Landflow holds each for up to ASK_POLL_S seconds and answers when a person decides), so the wait costs the
+ * hook none of its own time. Gives up after ASK_MS.
+ */
+async function askPerson($: EngineInterface, state: State, command: string, cwd: string, reason: string, agent: string | undefined): Promise<Answer> {
+  const url = state.target
+  const shown = cut(redact(command.trim()).text)
+  const unreachable: Answer = { approved: false, person: false, message: `Landflow couldn't ask a person, so this didn't run: ${shown}` }
+  if (!url || state.closed.has(url)) return unreachable
+  const started = await $.clock.now()
+  const askId = `ask-${++state.asks}-${started.toString(36)}`
+  await send($, state, started)
+  try {
+    const event: TraceEvent = { type: 'ask', at: started, askId, command: redact(command.trim()).text.slice(0, ASK_COMMAND_CHARS), cwd, reason, agent }
+    const posted = await $.http.fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: [event] }) })
+    if (posted.status >= 300) return unreachable
+  } catch {
+    return unreachable
+  }
+  let failures = 0
+  for (;;) {
+    if ((await $.clock.now()) - started >= ASK_MS) return { approved: false, person: false, message: `Nobody answered in ${ASK_MS / 60_000} minutes, so this didn't run: ${shown}` }
+    try {
+      const response = await $.http.fetch(`${url}/asks/${askId}?wait=${ASK_POLL_S}`, { method: 'GET' })
+      if (response.status === 404 || response.status === 410) return unreachable
+      const body = (response as unknown as { text: string | (() => Promise<string>) }).text
+      const parsed = JSON.parse((typeof body === 'function' ? await body() : body) || '{}') as { decision?: string; expired?: boolean }
+      failures = 0
+      if (parsed.decision === 'approved') return { approved: true, person: true }
+      if (parsed.decision === 'denied') {
+        if (parsed.expired) return { approved: false, person: false, message: `Nobody answered in time, so this didn't run: ${shown}` }
+        return { approved: false, person: true, message: `A person denied: ${shown}` }
+      }
+    } catch {
+      if (++failures >= 5) return unreachable
+      await $.clock.sleep(1000)
+    }
+  }
+}
+
 /** A block's text with secrets masked, and the kinds masked (a tool_result's content is text or text blocks). */
 function maskBlock(block: Block, found: Set<string>): Block {
   const mask = (text: string) => {
@@ -141,7 +198,7 @@ function maskBlock(block: Block, found: Set<string>): Block {
 
 export const register: Register = (on, options) => {
   const floor = guardOf(options.guard) ?? 'enforce'
-  const state: State = { guard: floor, floor, roots: [], cwd: '/', queue: [], sentAt: 0, closed: new Set() }
+  const state: State = { guard: floor, floor, roots: [], cwd: '/', queue: [], sentAt: 0, closed: new Set(), asks: 0 }
 
   on('session.start', async ($, e, next) => {
     const home = (await $.env.get('HOME')) ?? ''
@@ -190,7 +247,16 @@ export const register: Register = (on, options) => {
   on('tool.call', async ($, e, next) => {
     const input = e as unknown as Record<string, unknown>
     const verdict = verdictOf(state, e.tool, input)
-    if (verdict) {
+    if (verdict?.ask && state.guard === 'enforce' && state.target && e.tool === 'Bash') {
+      // A person may allow this one: ask, and run it only if they approve.
+      const at = await $.clock.now()
+      const answer = await askPerson($, state, String(input.command ?? ''), state.cwd, verdict.reason, e.agentId)
+      if (!answer.approved) {
+        if (!answer.person) record(state, { type: 'guard', at: await $.clock.now(), rule: verdict.rule, tool: e.tool, agent: e.agentId, arg: argOf(input), reason: answer.message, action: 'deny' })
+        soon($, state, at)
+        return { deny: answer.message ?? 'A person denied this command.' }
+      }
+    } else if (verdict) {
       const at = await $.clock.now()
       const refused = state.guard === 'enforce' || state.guard === 'strict'
       record(state, { type: 'guard', at, rule: verdict.rule, tool: e.tool, agent: e.agentId, arg: argOf(input), reason: verdict.reason, action: refused ? 'deny' : 'report' })

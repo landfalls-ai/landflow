@@ -1353,6 +1353,35 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS team_notes_expires ON team_notes (expires_at)`,
     ],
   },
+  {
+    version: 2040,
+    name: 'agent_asks',
+    statements: [
+      // Commands a Claude Code member's guard asks a person about (lib/server/a2a/agent-asks.ts, docs/a2a.md): one row per ask,
+      // where the trace route that takes the ask, the route that records the decision and the route the mod polls meet (in queue
+      // mode they run in different processes). `trace_key` is a hash of the call's trace id (the id is the mod's credential),
+      // `mod_id` the id the mod gave the ask, `status` pending | approved | denied | expired | canceled.
+      `CREATE TABLE IF NOT EXISTS agent_asks (
+        id TEXT PRIMARY KEY,
+        trace_key TEXT NOT NULL,
+        mod_id TEXT NOT NULL,
+        execution_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        span_id TEXT NOT NULL,
+        parent_span_id TEXT NOT NULL,
+        member TEXT,
+        command TEXT NOT NULL,
+        cwd TEXT,
+        reason TEXT,
+        status TEXT NOT NULL,
+        decided_by TEXT,
+        decided_at TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS agent_asks_trace ON agent_asks (trace_key, mod_id)`,
+      `CREATE INDEX IF NOT EXISTS agent_asks_execution ON agent_asks (execution_id, status)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1445,6 +1474,7 @@ export const TABLES = {
   agent_templates: ['id'],
   agent_teams: ['id'],
   team_notes: ['id'],
+  agent_asks: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

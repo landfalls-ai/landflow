@@ -276,7 +276,9 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
    */
   async function run(message: OutgoingMessage, ctx: ToolContext, rejections = 0): Promise<ToolOutcome> {
     const metadata = { ...landflowTags({ 'agent.id': ctx.agent.id, 'session.id': ctx.session.id, 'run.id': ctx.runId }), ...message.metadata };
-    const trace = message.text && !message.taskId ? traceFor(endpoint.url) : undefined;
+    // In a run the member's asks (a push to main its guard puts to a person) show under this request.
+    const where = ctx.session.execution && { executionId: ctx.session.execution.executionId, workflowId: ctx.session.execution.workflowId, nodeId: ctx.session.execution.nodeId, member: ctx.agent.name, ...(ctx.callSpan && { spanId: ctx.callSpan }) };
+    const trace = message.text && !message.taskId ? traceFor(endpoint.url, where || undefined) : undefined;
     const progress = ctx.progress && trace ? (remote: RemoteRun) => ctx.progress!(withTrace(remote, trace.summary())) : ctx.progress;
     let result: A2aResult;
     let summary: AgentTraceSummary | undefined;
