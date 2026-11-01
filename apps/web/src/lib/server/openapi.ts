@@ -663,6 +663,14 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check), title, detail, actor, spanId, since.',
     responses: { 200: reply('The items, newest first', object({ items: array({ type: 'object' }) }, ['items'])) },
   });
+  add('get', '/api/runs/lines', {
+    tag: 'Executions',
+    id: 'runLines',
+    summary: 'What runs did, in one line each',
+    description: 'By execution id: `in` (what came in: label, detail, kind), `by` (the lead or agent, the members who worked, the team), `out` (what came out: label, detail, url, tone ok, warn, bad or live), status, ms and tokens. Runs the caller cannot read, and runs without a journal, are left out.',
+    query: [{ name: 'ids', description: 'Execution ids, comma-separated (at most 20)', required: true, schema: { type: 'string' } }],
+    responses: { 200: reply('The lines, by execution id', object({ lines: { type: 'object' } }, ['lines'])), 400: errorRef('No ids, or too many') },
+  });
   add('get', '/api/runs/search', {
     tag: 'Executions',
     id: 'searchRuns',

@@ -155,7 +155,25 @@ In the new look ([the look](ui-review.md#the-look)) a card above the tabs shows 
   saying what it does ("Bash: pnpm test"). A wait for a person pulses amber with what it asks, and **Answer below** scrolls
   to Needs you; a failure is a red cross with **Re-run from here** ([run it again](#run-it-again)).
 - **Elsewhere**: the same timeline, from each run's own journal, is the card of every run going on under **Running now**
-  on Home and the Executions page (a tap opens its Run Trace).
+  on Home and the Executions page, and of the team's run on its team page while it works (a tap opens its Run Trace).
+
+### What a run did, in one line
+
+Also in the new look, a run can read as one line (`components/run-trace/run-line.tsx`, built by `runLine()` in
+`lib/shared/run-line.ts`): **what came in** (the trigger with its icon and what it carried: a pull request's number and
+title, a chat message, an email's subject, a form, a schedule, a webhook, or "Run by you"), **who did it** (the agent's
+face, or the team's lead with the faces of the members who had a turn), and **what came out** (the best of the run's
+artifacts, delivered ones first, then pull requests, reviews, published notes, commits, tickets, documents; else the reply
+as "Answered"), green when done, amber with what it asks when it waits for you, red with the error when it failed. A tap
+on the result opens it (a pull request on GitHub); the rest of the row opens the run.
+
+- **Run Trace**: once a run is over, the [timeline](#a-run-as-a-timeline) above the tabs folds into its line (**Show the
+  steps** opens it again; a tap on the line opens the Story).
+- **Home**: the recent runs are lines; runs going on show as timelines under Running now.
+- **The team page**: the team's last run as a line (its timeline while it runs); **the agent page**: the last three runs
+  the agent took part in, at the top of its Sessions tab.
+- The lines come from `GET /api/runs/lines?ids=…` (at most 20 runs), folded on the server from each run's journal and
+  cached by its last event like the run digests.
 
 ### Headlines
 

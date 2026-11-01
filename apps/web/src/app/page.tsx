@@ -17,6 +17,7 @@ import { AppIcon, NodeIcon } from '@/components/ui/icon';
 import { SectionLabel } from '@/components/ui/inputs';
 import { SuggestionsInbox } from '@/components/brain/suggestions-inbox';
 import { LiveRuns } from '@/components/run-trace/run-lists';
+import { RunLines } from '@/components/run-trace/run-line';
 import { useNewLook } from '@/components/shell/look-toggle';
 
 interface Stats {
@@ -118,6 +119,11 @@ export default function Overview() {
 
         <section className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[1.4fr_1fr]">
           <Panel title="Recent executions" href="/executions" linkLabel="View all">
+            {newLook && executions?.length ? (
+              <div className="p-3">
+                <RunLines runs={executions.filter((e) => e.status !== 'running').slice(0, 6).map((e) => ({ id: e.id, href: `/runs/${e.id}`, name: e.workflowName, startedAt: e.startedAt }))} />
+              </div>
+            ) : (
             <div className="divide-y divide-hair">
               {executions?.map((execution) => (
                 <Link key={execution.id} href={`/workflows/${execution.workflowId}/executions/${execution.id}`} className="flex items-center gap-3 px-4 py-2.5 transition-colors duration-[120ms] hover:bg-sf2">
@@ -141,6 +147,7 @@ export default function Overview() {
                 </Link>
               ))}
             </div>
+            )}
             {executions?.length === 0 && <EmptyState compact title="No executions yet" hint="Run a workflow and it shows up here." className="py-8" />}
           </Panel>
 

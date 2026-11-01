@@ -53,6 +53,8 @@ import { PluginsCard } from './plugins-card';
 import { SaveTemplateDialog } from './save-template-dialog';
 import { SkillsCard } from './skills-card';
 import { TestChat } from './test-chat';
+import { useNewLook } from '../shell/look-toggle';
+import { AgentLastRuns } from '../run-trace/run-line';
 import type { ToolEntry } from './timeline';
 import { TriggersCard } from './triggers-card';
 import { useAgentData, useAgentList } from './use-agent-data';
@@ -220,6 +222,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
   const agents = useAgentList();
   const teams = [...new Set((agents ?? []).flatMap((a) => (a.team ? [a.team] : [])))].sort((a, b) => a.localeCompare(b));
   const [agent, setAgent] = useState<Agent>();
+  const newLook = useNewLook();
   const [draft, setDraft] = useState<AgentConfig>();
   const [loadError, setLoadError] = useState<string>();
   const [save, setSave] = useState<SaveState>('saved');
@@ -710,6 +713,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
                 <SettingsTab config={draft} update={update} agentId={agentId} />
               </div>
             )}
+            {tab === 'sessions' && newLook && !sessionId && <AgentLastRuns agentName={agent.name} />}
             {tab === 'sessions' && <SessionsTab agentId={agentId} sessionId={sessionId} onOpen={(id) => go('sessions', id)} childHref={childHref} />}
             {tab === 'evaluations' && <EvaluationsTab agentId={agentId} />}
           </div>

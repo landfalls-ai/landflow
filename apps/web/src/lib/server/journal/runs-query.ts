@@ -8,6 +8,7 @@ import type { ExecutionSummary } from '../../shared/types';
 import type { JournalEvent } from '../../shared/run-trace';
 import { digestRun, measureOf, type RunDigest, type RunMeasure } from '../../shared/run-compare';
 import { foldJournal } from '../../shared/run-trace-model';
+import { runLine, type RunLine } from '../../shared/run-line';
 import { database } from '../db';
 import { parse } from '../db/rows';
 import { store } from '../store';
@@ -238,6 +239,29 @@ export function digestOf(executionId: string): RunDigest | undefined {
     digests.set(key, digest);
   }
   return digest;
+}
+
+const lines = new Map<string, RunLine>();
+
+/**
+ * What a saved or running run did, in one line (lib/shared/run-line.ts): what came in, who did it, what came out. Cached
+ * by the last journal number like the digest, so a finished run is folded once.
+ */
+export function lineOf(executionId: string): RunLine | undefined {
+  const record = store.getExecution(executionId);
+  if (!record) return undefined;
+  if (record.status !== 'running') rebuildJournal(record, record.workflow ?? store.getWorkflow(record.workflowId));
+  const key = `${executionId}:${lastSeq(executionId)}:${record.status}`;
+  let line = lines.get(key);
+  if (!line) {
+    const model = foldJournal(loadEvents(executionId));
+    if (model.empty) return undefined;
+    line = runLine(model);
+    if (!line.ms && record.durationMs) line = { ...line, ms: record.durationMs };
+    if (lines.size >= MAX_CACHED) lines.delete(lines.keys().next().value!);
+    lines.set(key, line);
+  }
+  return line;
 }
 
 /** A workflow's last runs as points over time, oldest first. */

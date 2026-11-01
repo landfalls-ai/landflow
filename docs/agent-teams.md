@@ -52,6 +52,9 @@ last-run data as the Last run card). While a run goes on, the member at work is 
 and **Working…**. A tap opens the agent's page. On a phone the cards are a sideways scroll-snap carousel; from `sm` they wrap
 in a row. The classic look draws the page without them. Code: `components/agents/member-cards.tsx`.
 
+Above the cards, also in the new look: the team's run as a timeline while it works, and its last run as one line (in →
+who → out) once it is over ([run-trace.md](run-trace.md#a-run-as-a-timeline)).
+
 ## The chart
 
 The team page (`/agents/teams/:id`) draws the team as an aligned org chart of equal cards: the lead on top (tinted),

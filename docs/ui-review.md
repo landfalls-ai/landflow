@@ -27,8 +27,10 @@ branch `design-before-blocks` keeps the code as it was before these designs.
 
 What the new look draws so far:
 
-- a run as a timeline above the Run Trace's tabs and under Running now on Home and the Executions page
-  ([run-trace.md](run-trace.md#a-run-as-a-timeline));
+- a run as a timeline above the Run Trace's tabs, under Running now on Home and the Executions page, and on the team page
+  while the team works ([run-trace.md](run-trace.md#a-run-as-a-timeline));
+- what a run did, in one line (in → who → out): Home's recent runs, a finished run's Run Trace, the team's last run and
+  the agent's last runs ([run-trace.md](run-trace.md#what-a-run-did-in-one-line));
 - team members as cards above the team chart ([agent-teams.md](agent-teams.md#member-cards));
 - the analyst answering with a chart: source chips, one "Looking across N sources…" line, and an answer card whose chart
   comes from the tool results ([second-brain.md](second-brain.md#the-analyst-agent)).

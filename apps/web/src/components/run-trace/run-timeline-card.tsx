@@ -7,16 +7,18 @@
  * (`RunTimelineLive`, which reads the run's journal itself).
  */
 import Link from 'next/link';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ArrowRight, Check, Hourglass, Workflow, X } from 'lucide-react';
 import { useRunJournal } from '@/lib/client/run-trace';
 import { headlinesOf } from '@/lib/shared/run-headlines';
+import { runLine } from '@/lib/shared/run-line';
 import { fitSteps, runTimeline, timelineFill, type RunTimeline, type TimelineStatus, type TimelineStep } from '@/lib/shared/run-timeline';
 import { fmtMs, type RunModel } from '@/lib/shared/run-trace-model';
 import { cn } from '@/lib/utils';
 import { useNewLook } from '../shell/look-toggle';
 import { RerunFromHere } from './run-controls';
 import { Avatar, actorColor } from './parts';
+import { RunLineRow } from './run-line';
 
 const STATUS: Record<TimelineStatus, { label: string; className: string; dot?: boolean }> = {
   'on-track': { label: 'On track', className: 'border-gnbd bg-gndim text-gn', dot: true },
@@ -149,7 +151,18 @@ function CardHead({ timeline }: { timeline: RunTimeline }) {
 export function RunTimelineCard({ model, onStory }: { model: RunModel; onStory?: () => void }) {
   const newLook = useNewLook();
   const timeline = useMemo(() => runTimeline(model, headlinesOf(model)), [model]);
+  const [steps, setSteps] = useState(false);
   if (!newLook || model.empty || !timeline.steps.length) return null;
+  // Once a run is over, its timeline folds into one line: what came in, who did it, what came out.
+  if (!model.live && (timeline.status === 'done' || timeline.status === 'failed' || timeline.status === 'over-budget') && !steps)
+    return (
+      <section aria-label="What the run did" className="flex flex-col gap-1.5">
+        <RunLineRow line={runLine(model)} onOpen={onStory} />
+        <button type="button" onClick={() => setSteps(true)} className="self-start px-1 text-[12px] font-medium text-t3 hover:text-t1">
+          Show the steps
+        </button>
+      </section>
+    );
   const failed = timeline.steps.find((s) => s.state === 'failed');
   return (
     <section aria-label="The run as a timeline" className={cn('rounded-2xl border bg-sf p-3.5 shadow-[0_1px_3px_var(--hair)]', timeline.status === 'needs-you' ? 'border-warnbd' : timeline.status === 'failed' ? 'border-rdbd' : 'border-hair')}>
