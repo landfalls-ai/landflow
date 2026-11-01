@@ -135,6 +135,32 @@ function KeepRunningInView({ moved }: { moved: RefObject<boolean> }) {
   return null;
 }
 
+/**
+ * While a change is being built (new look), a ghost that lands outside the view brings the whole flow and its ghosts into
+ * view, never zooming in: a node added after the last one is often past the right edge.
+ */
+function KeepGhostsInView({ ids }: { ids: string[] }) {
+  const { fitView, getZoom } = useReactFlow();
+  const outside = useStore((s) => {
+    const [x, y, zoom] = s.transform;
+    return ids.some((id) => {
+      const node = s.nodeLookup.get(id);
+      if (!node) return false;
+      const { x: nx, y: ny } = node.internals.positionAbsolute;
+      const w = node.measured?.width ?? 80;
+      const h = node.measured?.height ?? 80;
+      // The node and its label below; Spotlight's bar sits at the bottom.
+      return nx * zoom + x < 8 || (nx + w) * zoom + x > s.width - 8 || ny * zoom + y < 8 || (ny + h + 40) * zoom + y > s.height - 72;
+    });
+  });
+  useEffect(() => {
+    if (!outside || !ids.length) return;
+    const timer = setTimeout(() => void fitView({ padding: { top: '72px', bottom: '120px', left: '48px', right: '48px' }, maxZoom: getZoom(), duration: 400 }), 80);
+    return () => clearTimeout(timer);
+  }, [outside, ids, fitView, getZoom]);
+  return null;
+}
+
 function Canvas({ onSave }: { onSave: () => void }) {
   const flowNodes = useEditor((s) => s.nodes);
   const stickies = useEditor((s) => s.stickies);
@@ -151,6 +177,8 @@ function Canvas({ onSave }: { onSave: () => void }) {
   const ghosts = useGhosts();
   const nodes = useMemo(() => (ghosts.nodes.length ? [...built.nodes, ...(ghosts.nodes as unknown as CanvasNode[])] : built.nodes), [built.nodes, ghosts.nodes]);
   const edges = useMemo(() => (ghosts.edges.length ? [...built.edges, ...(ghosts.edges as unknown as FlowEdge[])] : built.edges), [built.edges, ghosts.edges]);
+  const ghostKey = ghosts.nodes.map((n) => n.id).join(',');
+  const ghostIds = useMemo(() => (ghostKey ? ghostKey.split(',') : []), [ghostKey]);
   // Read-only (someone else holds the edit lock) swaps the store's editing actions, so re-read them.
   const readOnly = useEditLock((s) => s.readOnly);
   const { onNodesChange, onEdgesChange, onConnect, openNode, openPalette } = useEditor.getState();
@@ -343,6 +371,7 @@ function Canvas({ onSave }: { onSave: () => void }) {
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--canvas-dot)" />
       <KeepRunningInView moved={moved} />
+      <KeepGhostsInView ids={ghostIds} />
       <Controls position="bottom-left" showInteractive={false} className="!bottom-3 !left-3">
         <ControlButton onClick={() => useEditor.getState().undo()} disabled={!canUndo} title="Undo (⌘Z)" aria-label="Undo">
           <Undo2 />
