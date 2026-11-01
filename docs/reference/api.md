@@ -38,7 +38,9 @@ scope, an admin role) is set in `apps/web/src/lib/server/auth/policy.ts`. The pu
 | `GET /api/environment/promotion-requests`, `GET /api/environment/promotion-requests/:id`, `POST /api/environment/promotion-requests/:id/approve`, `/reject`, `/cancel` | promotion requests (owners and admins): `?status=pending` (default) or `all`, `{ requests, fourEyes }`; approve, reject and cancel take `{ comment? }`; approve promotes and returns `{ request, result }` (409 when stale or already decided, 403 for the requester or a non-approver) |
 | `GET/PUT /api/variables/:key/environments` | a variable's per-environment values `{ values: { <environment>: string \| null } }` (null removes one) |
 | `DELETE /api/executions/:id` | cancel a live, waiting or queued run, or delete a finished one |
-| `POST /api/executions/:id/rerun` | re-run in the background: the whole run, from a node, or one node |
+| `POST /api/executions/:id/rerun` | re-run in the background: the whole run, from a node, or one node; `askMember: { member, message }` (from a Run a Team node) asks one team member the same message again |
+| `GET /api/executions/:id/agents` | the team members of a live execution that can be paused, and their state (`working`, `pausing`, `paused`) |
+| `POST /api/executions/:id/agents/:member/pause`, `.../continue` | pause a team member (a Landflow agent at its next step boundary, a remote member stopped at once), then give it the next instruction `{ message? }` (docs/run-trace.md#pause-and-take-over) |
 | `POST /api/executions/:id/retry` | retry a failed (or canceled) run in the background, linked to it: `{ from: 'failed' \| 'start', version: 'original' \| 'current' }` (defaults: from the failed node, original version) → 202 `{ executionId }` |
 | `POST /api/executions/stop-all` | abort every running execution, cancel waiting and queued ones, drop pending automatic retries → `{ running, waiting, queued, retries }` |
 | `POST /api/executions/:id/debug` | debugger: step / continue / stop, breakpoints |

@@ -1000,8 +1000,8 @@ approved plan:
   - other agents' spans joined by trace id, starting with Claude Code's own OpenTelemetry;
   - ~~OTLP export with OpenInference kinds~~, ~~search and comparison across runs~~ and the generic measures over time
     are built (2026-11-01, [run-trace.md](run-trace.md#search-compare-and-measures)); a profile's own measures are open;
-  - re-run from a span, and Copy to editor with the run's data pinned;
-  - pausing a running agent so a person can take over;
+  - ~~re-run from a span, and Copy to editor with the run's data pinned~~ and ~~pausing a running agent so a person can
+    take over~~ are built (2026-11-01, [run-trace.md](run-trace.md#run-it-again));
   - **Content kept** per project.
 
 ## Agent teams (built 2026-10-31)

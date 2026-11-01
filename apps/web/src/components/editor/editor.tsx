@@ -62,6 +62,7 @@ import { PublishControl } from './publish-control';
 import { ListeningBar, listenForTestEvent, stopListening, testTriggerFor, useTestListener } from './test-listener';
 import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from './edit-lock';
 import { followable, useFollowRun } from './follow-run';
+import { pinFromRun } from './pin-from-run';
 import { useFollowWaiting } from './waiting';
 
 const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView };
@@ -618,6 +619,12 @@ export function Editor({ workflowId }: { workflowId: string }) {
         record
           .then((r) => {
             if (!r || useEditor.getState().running) return;
+            // "Copy to editor" from the Run Trace: the steps before the asked node keep this run's outputs as pinned test data.
+            const pin = requested ? new URLSearchParams(window.location.search).get('pin') : null;
+            if (pin) {
+              const count = pinFromRun(r.execution, pin);
+              toast.success(count ? `Pinned the outputs of ${count} step${count === 1 ? '' : 's'} from this run` : 'No earlier outputs to pin', { description: 'Fix the flow, then run it: pinned steps return their data instead of running.' });
+            }
             if (followable(r.execution)) useEditor.getState().attachRun(r.execution, r.progress, Boolean(requested));
             else useEditor.getState().loadExecution(r.execution, Boolean(requested));
           })

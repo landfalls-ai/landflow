@@ -860,9 +860,31 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Re-run an execution',
     description: 'All of it with the same input, from one node (reusing everything before it) or just one node, in the background.',
     body: jsonBody(
-      object({ scope: { type: 'string', enum: ['all', 'from', 'only'], default: 'all' }, nodeId: { type: 'string' }, version: { type: 'string', enum: ['current', 'original'], default: 'current' } }),
+      object({ scope: { type: 'string', enum: ['all', 'from', 'only'], default: 'all' }, nodeId: { type: 'string' }, version: { type: 'string', enum: ['current', 'original'], default: 'current' }, askMember: object({ member: { type: 'string' }, message: { type: 'string' } }, ['member', 'message']) }),
     ),
     responses: { 202: reply('Started', object({ executionId: { type: 'string' } }, ['executionId'])), 400: invalid, 404: notFound },
+  });
+  add('get', '/api/executions/{id}/agents', {
+    tag: 'Executions',
+    id: 'listExecutionAgents',
+    summary: 'Team members at work',
+    description: 'The team members of a running execution that can be paused, and their state (`working`, `pausing`, `paused`). Held in memory by the server that runs it.',
+    responses: { 200: reply('Members', object({ members: { type: 'array', items: object({ member: { type: 'string' }, kind: { type: 'string', enum: ['agent', 'remote'] }, state: { type: 'string', enum: ['working', 'pausing', 'paused'] }, since: { type: 'string' } }) } }, ['members'])) },
+  });
+  add('post', '/api/executions/{id}/agents/{member}/pause', {
+    tag: 'Executions',
+    id: 'pauseExecutionAgent',
+    summary: 'Pause a team member',
+    description: 'A Landflow agent member (the lead too) stops at its next step boundary and waits; a remote (A2A) member is stopped at once (its task is canceled) so it can be redirected. `member` is its title in the team. Answers 404 when it isn’t working in this execution.',
+    responses: { 200: reply('Pausing or paused', object({ member: { type: 'string' }, kind: { type: 'string' }, state: { type: 'string', enum: ['working', 'pausing', 'paused'] } })), 404: notFound, 502: errorRef('The remote agent could not be stopped') },
+  });
+  add('post', '/api/executions/{id}/agents/{member}/continue', {
+    tag: 'Executions',
+    id: 'continueExecutionAgent',
+    summary: 'Take over a paused team member',
+    description: 'Sends the next instruction (a message from the person) to a paused member, which goes on with it. Without `message` it goes on as it was. Answers 409 when the member is not paused.',
+    body: jsonBody(object({ message: { type: 'string', maxLength: 8000 } }), undefined, false),
+    responses: { 200: reply('Going on', object({ member: { type: 'string' }, kind: { type: 'string' }, state: { type: 'string' } })), 404: notFound, 409: errorRef('The member is not paused') },
   });
   add('post', '/api/executions/stop-all', {
     tag: 'Executions',

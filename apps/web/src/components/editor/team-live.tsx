@@ -9,7 +9,8 @@
  * node amber, with the question and an Answer button.
  */
 import { useEffect, useState, type ReactNode } from 'react';
-import { Check, ChevronRight, Hourglass, Loader2, X } from 'lucide-react';
+import { Check, ChevronRight, Hourglass, Loader2, Pause, X } from 'lucide-react';
+import { useWorkingMembers } from '@/lib/client/run-controls';
 import { duration } from '@/lib/client/format';
 import { chartOrder, memberAgent, type TeamMember } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
@@ -18,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { AgentAvatar, type AvatarSource } from '../agents/avatar';
 import { faceOf as agentFace, loadRoster, loadTeam } from '../agents/faces';
 import type { NodeLive } from '../canvas/node-tile';
+import { stateOf, TeamPauseBar } from './team-pause';
 
 export interface TeamFace {
   member: TeamMember;
@@ -116,7 +118,7 @@ export function TeamTicker({ steps, className }: { steps: TeamStep[]; className?
 }
 
 /** The member at work: its face ringed in its colour (with the lead's as a badge), what it does, the command and the clock. */
-function WorkerHead({ live, faces, elapsed }: { live: TeamProgress; faces: TeamFace[]; elapsed: number }) {
+function WorkerHead({ live, faces, elapsed, paused }: { live: TeamProgress; faces: TeamFace[]; elapsed: number; paused?: boolean }) {
   const lead = faces[0];
   const worker = faceByTitle(faces, live.member) ?? lead;
   const isLead = !worker || worker === lead;
@@ -125,7 +127,12 @@ function WorkerHead({ live, faces, elapsed }: { live: TeamProgress; faces: TeamF
     <>
       <span key={worker?.title} className="relative shrink-0 animate-pop">
         {worker && <AgentAvatar agent={worker.face} size={44} />}
-        <span className="pointer-events-none absolute -inset-[4px] animate-pulse-soft rounded-[16px] border-2" style={{ borderColor: worker?.color }} />
+        <span className={cn('pointer-events-none absolute -inset-[4px] rounded-[16px] border-2', paused ? 'border-warn' : 'animate-pulse-soft')} style={paused ? undefined : { borderColor: worker?.color }} />
+        {paused && (
+          <span className="absolute -right-1.5 -top-1.5 grid size-[18px] place-items-center rounded-full bg-warn text-bg ring-2 ring-sf" title="Paused" data-testid="team-paused-badge">
+            <Pause className="size-2.5" fill="currentColor" strokeWidth={0} />
+          </span>
+        )}
         {!isLead && lead && (
           <span className="absolute -bottom-1.5 -right-1.5 rounded-full ring-2 ring-sf" title={`Works for ${lead.title}`}>
             <AgentAvatar agent={lead.face} size={18} round />
@@ -137,7 +144,8 @@ function WorkerHead({ live, faces, elapsed }: { live: TeamProgress; faces: TeamF
           <span className="truncate text-[14px] font-semibold text-t1">{worker?.title ?? live.member}</span>
           {!isLead && lead && <span className="shrink-0 text-[10.5px] text-t3">for {lead.title}</span>}
         </div>
-        <div key={words} className="truncate text-[12.5px] font-medium leading-4 text-t1 animate-fade-up">
+        {paused && <div className="truncate text-[12.5px] font-semibold leading-4 text-warn">Paused: waiting for you</div>}
+        <div key={words} hidden={paused} className="truncate text-[12.5px] font-medium leading-4 text-t1 animate-fade-up">
           {words}
         </div>
         {live.command && (
@@ -362,6 +370,7 @@ const AMBER = 'var(--warn)';
 export function useTeamTile(teamId: string | undefined, live: TeamProgress | undefined, activity: TeamActivity | undefined, options: TeamTileOptions = {}): { tile?: NodeLive; moments?: ReactNode } {
   const faces = useTeamFaces(teamId);
   const elapsed = useElapsed(live);
+  const working = useWorkingMembers(options.executionId, Boolean(live && options.executionId && !options.waiting));
   if (!faces?.length) return {};
   const { executionId, newTab } = options;
   const hrefOf = executionId ? (turn: TeamTurn) => memberTraceHref(executionId, turn.member) : undefined;
@@ -387,13 +396,16 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
   }
   if (live) {
     const worker = faceByTitle(faces, live.member) ?? faces[0];
+    const mine = stateOf(working.members, live.member);
+    const paused = mine?.state === 'paused';
     return {
       tile: {
-        color: worker.color,
-        head: <WorkerHead live={live} faces={faces} elapsed={elapsed} />,
+        color: paused ? AMBER : worker.color,
+        head: <WorkerHead live={live} faces={faces} elapsed={elapsed} paused={paused} />,
         body: (
           <>
             <TeamTicker steps={live.steps} className="mx-4 border-t border-hair pt-2" />
+            {executionId && mine && <TeamPauseBar executionId={executionId} member={live.member} className="mx-4 mt-2" />}
             <TeamBudgets usage={live.usage} faces={faces} focus={live.member} className="mx-4 mt-2" />
             <TeamRibbon turns={live.turns} total={elapsed} faces={faces} open hrefOf={hrefOf} newTab={newTab} />
           </>
@@ -424,16 +436,18 @@ const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1
  * The execution view's Now card on a phone, where the canvas is small: who works and on what in a sentence, the command,
  * the ticker, and a way into the Run Trace.
  */
-export function TeamNowCard({ teamId, live, nodeName, onOpenTrace }: { teamId: string; live: TeamProgress; nodeName: string; onOpenTrace?: () => void }) {
+export function TeamNowCard({ teamId, live, nodeName, onOpenTrace, executionId }: { teamId: string; live: TeamProgress; nodeName: string; onOpenTrace?: () => void; executionId?: string }) {
   const faces = useTeamFaces(teamId);
   const elapsed = useElapsed(live);
+  const working = useWorkingMembers(executionId, Boolean(executionId && !live.waiting));
   if (!faces?.length) return null;
   const lead = faces[0];
   const worker = faceByTitle(faces, live.member) ?? lead;
   const words = live.plain ?? live.doing ?? 'Working';
   if (live.waiting) return <TeamAskCard teamId={teamId} waiting={live.waiting} nodeName={nodeName} />;
+  const paused = stateOf(working.members, live.member)?.state === 'paused';
   return (
-    <section className="rounded-2xl border border-hair bg-sf p-3 shadow-pop" data-testid="team-now-card" aria-live="polite">
+    <section className={cn('rounded-2xl border bg-sf p-3 shadow-pop', paused ? 'border-warn/50' : 'border-hair')} data-testid="team-now-card" aria-live="polite">
       <div className="mb-2 flex items-center justify-between text-[11px] text-t3">
         <span className="truncate font-semibold uppercase tracking-[0.06em]">Now · {nodeName}</span>
         <span className="shrink-0 font-mono tabular-nums">{clock(elapsed)}</span>
@@ -441,17 +455,23 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace }: { teamId: s
       <div className="flex min-w-0 items-center gap-3">
         <span key={worker.title} className="relative shrink-0 animate-pop">
           <AgentAvatar agent={worker.face} size={40} />
-          <span className="pointer-events-none absolute -inset-[3px] animate-pulse-soft rounded-[14px] border-2" style={{ borderColor: worker.color }} />
+          <span className={cn('pointer-events-none absolute -inset-[3px] rounded-[14px] border-2', paused ? 'border-warn' : 'animate-pulse-soft')} style={paused ? undefined : { borderColor: worker.color }} />
+          {paused && (
+            <span className="absolute -right-1.5 -top-1.5 grid size-[18px] place-items-center rounded-full bg-warn text-bg ring-2 ring-sf" title="Paused">
+              <Pause className="size-2.5" fill="currentColor" strokeWidth={0} />
+            </span>
+          )}
         </span>
         <div className="min-w-0">
           <div key={words} className="text-[14px] font-semibold leading-5 text-t1 animate-fade-up">
-            {worker.title} is {lowerFirst(words)}
+            {paused ? `${worker.title} is paused` : `${worker.title} is ${lowerFirst(words)}`}
           </div>
           {live.command && <div className="truncate font-mono text-[10.5px] text-t3">{live.command}</div>}
         </div>
       </div>
       <TeamTicker steps={live.steps} className="mt-2.5" />
       <TeamBudgets usage={live.usage} faces={faces} focus={live.member} className="mt-2.5" />
+      {executionId && <TeamPauseBar executionId={executionId} member={live.member} className="mt-2.5" />}
       <div className="mt-2.5 flex items-center justify-between border-t border-hair pt-2 text-[11.5px] text-t3">
         <span className="truncate">
           {worker === lead ? 'Leading the team' : `For ${lead.title}`}

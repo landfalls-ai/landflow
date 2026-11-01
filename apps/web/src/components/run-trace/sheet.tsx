@@ -14,6 +14,8 @@ import { ChangeDiff } from './diff-view';
 import { ConnectionList } from './connections';
 import { Avatar, ResultChip, SectionTitle, Tap, ValueBlock, clock, who } from './parts';
 import { Doc, TextBlock } from './rich-text';
+import { RerunPanel, useRunControls } from './run-controls';
+import { TeamPauseBar } from '../editor/team-pause';
 
 export type Open = {
   kind: 'span' | 'artifact' | 'check' | 'actor';
@@ -205,6 +207,7 @@ function SpanSheet({
         <Value label="Came back" value={span.output} repo={repo} />
         <Value label="Error" value={span.error} tone="error" repo={repo} />
       </div>
+      {span.id !== 'run' && span.kind !== 'wait' && span.kind !== 'model' && <RerunPanel model={model} spanId={span.id} />}
       {span.checks.length > 0 && (
         <>
           <SectionTitle>Checks</SectionTitle>
@@ -339,11 +342,13 @@ function CheckSheet({
 }
 
 function ActorSheet({ id, model, open }: { id: string; model: RunModel; open: (o: Open) => void }) {
+  const controls = useRunControls();
   const s = model.actors.find((a) => a.actor.id === id);
   if (!s) return <p className="text-[13px] text-t3">Not involved yet.</p>;
   const spans = model.order.filter((x) => x.actor.id === id && !x.hidden && x.id !== 'run' && x.kind !== 'model');
   return (
     <>
+      {controls && model.live && s.actor.type === 'agent' && <TeamPauseBar executionId={controls.executionId} member={s.actor.name} className="pb-3" />}
       <Facts
         rows={[
           ['Is', s.actor.role ?? s.actor.type],

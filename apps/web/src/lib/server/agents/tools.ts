@@ -42,6 +42,7 @@ import {
   type AgentCard,
   type HitlRequest,
   type OutgoingMessage,
+  cancelTask as cancelRemoteTask,
 } from '../a2a/client';
 import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
 import { callAgent, landflowTags, remoteRunOf, throttled } from '../a2a/traced';
@@ -99,6 +100,8 @@ export interface BuiltTool extends ToolSpec {
   invoke(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome>;
   /** After a pause (ToolOutcome.pause): send the person's decision and carry on. */
   resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext, answer?: string): Promise<ToolOutcome>;
+  /** A remote agent: stop the task it works on (A2A CancelTask), so a person can redirect it (agent-teams/pause.ts). */
+  cancelTask?(taskId: string): Promise<void>;
 }
 
 export interface Toolset {
@@ -345,6 +348,9 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       required: ['message', 'reason'],
     },
     requireApproval: Boolean(config.requireApproval),
+    async cancelTask(taskId) {
+      await cancelRemoteTask(endpoint, taskId);
+    },
     async invoke(input, ctx) {
       const text = String(input.message ?? '').trim();
       if (!text) throw new Error('"message" is empty');

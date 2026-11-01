@@ -17,6 +17,7 @@ import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { newSession, runAgent, type TeamRole } from '../agents/runtime';
 import { a2aAgentTool, type BuiltTool, type ToolContext, type ToolOutcome } from '../agents/tools';
 import { liveJournal } from '../journal/writer';
+import { holdMember } from './pause';
 import { issuesOf } from './store';
 
 /** How long a manager's own task is when it goes on to its reports. */
@@ -565,10 +566,13 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         });
         if (request.execution) session.execution = request.execution;
       }
+      // A person may pause this member between steps and give it an instruction (pause.ts).
+      const held = request.execution && holdMember(request.execution.executionId, report.title, 'agent', { under: ctx.callSpan, actor: { id: `agent:${agent.id}`, name: report.title, type: 'agent' } });
       const role: TeamRole = {
         ...roleFor(report),
         tools: await toolsFor(report),
         ...(ctx.callSpan && { under: ctx.callSpan }),
+        ...(held && { pause: held }),
       };
       const result = await runAgent({
         agent,
@@ -581,7 +585,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         team: role,
         ...(request.onMemberEvent && { onEvent: (event: AgentStreamEvent) => request.onMemberEvent!(report.title, event) }),
         onUsage: (usage) => spend(report, usage, true),
-      });
+      }).finally(() => held?.release());
       state.sessions[report.id] = result.session;
       spend(report, result.session.usage, true);
       const child = { childAgentId: agent.id, childSessionId: result.session.id };
@@ -679,6 +683,57 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         ...(outcome.pause && { pause: { message: ask, remote: { ...outcome.pause.remote, agent: report.title, state: { ...outcome.pause.remote.state, ask, asker: report.title } } } }),
       };
     };
+    /**
+     * Send `message` so a person can stop the task and redirect it (pause.ts): the task is canceled, the person's instruction
+     * goes to the same conversation as a new message, and its answer is the call's.
+     */
+    const redirectable = async (ctx: ToolContext, input: Record<string, unknown>, first: string): Promise<ToolOutcome> => {
+      if ('error' in built) throw new Error(built.error);
+      const send = (message: string, c: ToolContext) => built.invoke({ ...input, message }, c);
+      if (!request.execution) return account(await send(first, renamed(ctx)), first);
+      const attempt = { taskId: undefined as string | undefined, contextId: undefined as string | undefined, stopped: false, abort: new AbortController() };
+      const held = holdMember(request.execution.executionId, report.title, 'remote', {
+        under: ctx.callSpan,
+        actor: { id: `remote:${report.title}`, name: report.title, type: 'agent' },
+        async stop() {
+          attempt.stopped = true;
+          if (attempt.taskId) await built.cancelTask?.(attempt.taskId).catch(() => {});
+          attempt.abort.abort();
+        },
+      });
+      try {
+        let message = first;
+        for (;;) {
+          Object.assign(attempt, { taskId: undefined, contextId: undefined, stopped: false, abort: new AbortController() });
+          const stop = () => attempt.abort.abort();
+          if (ctx.signal?.aborted) stop();
+          else ctx.signal?.addEventListener('abort', stop, { once: true });
+          const own = renamed(ctx);
+          const watching: ToolContext = {
+            ...own,
+            signal: attempt.abort.signal,
+            progress: (remote) => {
+              attempt.taskId = remote.taskId ?? attempt.taskId;
+              attempt.contextId = remote.contextId ?? attempt.contextId;
+              own.progress?.(remote);
+            },
+          };
+          try {
+            return account(await send(message, watching), message);
+          } catch (error) {
+            if (!attempt.stopped || ctx.signal?.aborted) throw error;
+            if (attempt.contextId) (ctx.session.remoteContexts ??= {})[report.id] = { contextId: attempt.contextId };
+            const instruction = await held.wait({ summary: `Stopped ${report.title} to redirect it`, signal: ctx.signal });
+            if (ctx.signal?.aborted) throw error;
+            message = instruction ? `A person stopped you and says:\n${instruction}` : 'A person stopped you and let you go on: carry on with your task from where you stopped.';
+          } finally {
+            ctx.signal?.removeEventListener('abort', stop);
+          }
+        }
+      } finally {
+        held.release();
+      }
+    };
     return {
       ...base,
       requireApproval: false,
@@ -688,7 +743,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           const known = ctx.session.remoteContexts?.[report.id];
           // An answer to the remote agent's question goes as it is; a new request carries the goal and the manager's task.
           const message = known?.question ? text : withAncestry(manager, text);
-          return account(await built.invoke({ ...input, message }, renamed(ctx)), message);
+          return redirectable(ctx, input, message);
         }),
       // A person answered its question: the answer goes to the task it paused on.
       async resume(saved, approved, ctx, answer) {
@@ -715,7 +770,8 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     if (request.execution) session.execution = request.execution;
     state.told[root.id] = request.message;
   }
-  const role: TeamRole = { ...roleFor(root), tools: await toolsFor(root) };
+  const heldLead = request.execution && holdMember(request.execution.executionId, root.title, 'agent', { under: nodeSpan(), actor: { id: `agent:${leadAgent.id}`, name: root.title, type: 'agent' } });
+  const role: TeamRole = { ...roleFor(root), tools: await toolsFor(root), ...(heldLead && { pause: heldLead }) };
   const leadStarted = Date.now();
   const result = await runAgent({
     agent: leadAgent,
@@ -727,7 +783,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     ...(request.onEvent && { onEvent: request.onEvent }),
     onUsage: (usage) => spend(root, usage, true),
     team: role,
-  });
+  }).finally(() => heldLead?.release());
   session = result.session;
   timed(root, leadStarted);
   spend(root, session.usage, true);
