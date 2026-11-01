@@ -209,7 +209,8 @@ transport and Valkey Cluster settings).
 | `edafddc` | History rows for the member cards and the analyst's chart | history.md |
 | `58d1a42` | Design: what a run did, in one line. In the new look a run reads as what came in (the trigger and what it carried), who did it (the agent, or the team's lead with the members who worked) and what came out (its best artifact, else its reply; amber when it waits, red when it failed): Home's recent runs, a finished run's Run Trace (its timeline folds into the line, Show the steps opens it), the team's last run (and its timeline while it works) and the agent's last runs on its Sessions tab. `GET /api/runs/lines` folds them on the server (`lib/shared/run-line.ts`, cached like the digests) | run-trace.md#what-a-run-did-in-one-line |
 | `7e794d1` | Design: a member card's derived "what I do" lines leave out lead-ins ("For every request:") and the tool names in brackets ("(ask_writer)") | agent-teams.md#member-cards |
-| (this change) | Design: a wait asked of a person sits on the member whose turn waits instead of a step of its own, and a run that used no counted tokens leaves them out of its card | run-trace.md#a-run-as-a-timeline |
+| `dc595f3` | Design: a wait asked of a person sits on the member whose turn waits instead of a step of its own, and a run that used no counted tokens leaves them out of its card | run-trace.md#a-run-as-a-timeline |
+| (this change) | Design: the timeline's bubble says what a member does (the tool it runs, else "Thinking…", not its own name), and a team run's last step is its lead's, as "Delivering" with what it does while it works between members | run-trace.md#a-run-as-a-timeline |
 
 ## What is next
 

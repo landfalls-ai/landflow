@@ -163,9 +163,16 @@ export function runTimeline(model: RunModel, headlines: Headline[] = []): RunTim
 
   // The member at work, and a wait for a person, sit on their own step with what they do.
   const wait = model.needsYou.find((n) => n.kind === 'wait');
+  // What a member does: the step it runs ("Bash: pnpm test"); a request named after the member says nothing, so then its
+  // latest tool call while it runs, else that it thinks.
+  const doingOf = (w: (typeof model.working)[number]) => {
+    if (!same(w.name, w.actor.name)) return cut(w.name, 48);
+    const tool = model.order.filter((s) => s.kind === 'tool' && s.status === 'running' && same(s.actor.name, w.actor.name)).at(-1);
+    return tool ? cut(tool.name, 48) : 'Thinking…';
+  };
   for (const w of model.working) {
     const step = [...steps].reverse().find((s) => s.state === 'now' && (same(s.who, w.actor.name) || s.spanId === w.spanId || same(s.actor?.name, w.actor.name)));
-    if (step) step.doing ??= cut(w.name, 48);
+    if (step && (!step.doing || step.doing === 'Thinking…')) step.doing = doingOf(w);
   }
   if (wait) {
     const name = wait.actor?.name;
@@ -186,12 +193,17 @@ export function runTimeline(model: RunModel, headlines: Headline[] = []): RunTim
     if (step) step.state = 'failed';
   }
   // The run's end: what it delivered, or where it is going.
+  // The run's end is the lead's (it answers once its members are done), else the flow's; while the lead works with no member
+  // at work, it sits there with what it does.
   const end: TimelineStep = {
     key: 'end',
     label: model.live || wait ? 'Finish' : model.status === 'error' ? 'Stopped' : model.outcome.reported ? 'Delivered' : 'Done',
-    who: 'the flow',
+    who: team && lead ? lead.name : 'the flow',
+    ...(team && lead && { actor: lead }),
     state: model.live || wait ? 'next' : model.status === 'error' ? 'next' : 'done',
   };
+  const leadAtWork = team && lead && model.live && !wait && !steps.some((s) => s.state === 'now') ? model.working.find((w) => same(w.actor.name, lead.name)) : undefined;
+  if (leadAtWork) Object.assign(end, { state: 'now' as const, label: 'Delivering', doing: doingOf(leadAtWork) });
   if (steps.length) steps.push(end);
 
   // Over budget: a member's tokens past what the team gave it.

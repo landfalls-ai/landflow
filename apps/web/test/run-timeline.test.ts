@@ -61,7 +61,7 @@ describe('a run as a timeline', () => {
     expect(t.steps.map((s) => [s.label, s.who, s.state])).toEqual([
       ['Planned', 'Planner', 'done'],
       ['14 tests pass', 'Developer', 'done'],
-      ['Delivered', 'the flow', 'done'],
+      ['Delivered', 'Tech Lead', 'done'],
     ]);
     expect(timelineFill(t.steps)).toBe(1);
   });
@@ -81,6 +81,19 @@ describe('a run as a timeline', () => {
     expect(now.doing).toMatch(/pnpm test/);
     expect(t.steps.filter((s) => s.state === 'next').map((s) => s.label)).toEqual(['Review', 'Finish']);
     expect(timelineFill(t.steps)).toBeCloseTo(1 / 3);
+  });
+
+  it('puts the lead on the last step while it works between its members, with the tool it runs', () => {
+    const model = foldJournal(
+      journal((add) => {
+        start(add);
+        add(30, { type: 'span.ended', spanId: 'node:team:0/ask:2', status: 'success', output: 'Built' });
+        add(31, { type: 'span.started', spanId: 'node:team:0/tool:9', parentSpanId: 'node:team:0', kind: 'tool', name: 'Read: plan.md', actor: lead });
+      }),
+      { now: T0 + 35_000 },
+    );
+    const t = runTimeline(model);
+    expect(t.steps.at(-1)).toMatchObject({ who: 'Tech Lead', state: 'now', label: 'Delivering', doing: 'Read: plan.md' });
   });
 
   it('turns a member’s step amber with what a wait for a person asks', () => {

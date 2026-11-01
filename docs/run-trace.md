@@ -148,11 +148,12 @@ In the new look ([the look](ui-review.md#the-look)) a card above the tabs shows 
   step), each named by its result where a [headline](#headlines) gives one ("14 tests pass", "Typecheck failed"), else by
   what the member does, read from its title or role ("Planned", "Built", "Reviewed"); for any other run, its nodes once
   each in the order they first ran. While the run goes on, the members not asked yet follow as steps to come, and the
-  run's end closes the line (**Delivered**, **Done**, or **Finish** to come). A long run keeps its first step and the latest
+  run's end closes the line (**Delivered**, **Done**, or **Finish** to come), under the team's lead for a team run: while
+  the lead works between its members, it sits there as **Delivering** with what it does. A long run keeps its first step and the latest
   ones, so it reads on a phone.
 - **Now**: done steps are green checks joined by a line that fills as the run goes, with a glint running along it while
   it is live. The member at work sits on its step with its face, a ring growing out of it in its colour, and a bubble
-  saying what it does ("Bash: pnpm test"). A wait for a person pulses amber with what it asks, and **Answer below** scrolls
+  saying what it does (the tool it runs, "Bash: pnpm test", else "Thinking…"). A wait for a person pulses amber with what it asks, and **Answer below** scrolls
   to Needs you; a failure is a red cross with **Re-run from here** ([run it again](#run-it-again)).
 - **Elsewhere**: the same timeline, from each run's own journal, is the card of every run going on under **Running now**
   on Home and the Executions page, and of the team's run on its team page while it works (a tap opens its Run Trace).
