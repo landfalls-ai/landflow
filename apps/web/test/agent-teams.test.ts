@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deploymentOf, memberAgent, orgTree, rootOf, teamIssues, type AgentTeamConfig, type TeamMember } from '@/lib/shared/agent-teams';
+import { consultEdges, deploymentOf, memberAgent, orgTree, rootOf, teamIssues, type AgentTeamConfig, type TeamMember } from '@/lib/shared/agent-teams';
 
 const remote = (id: string, title: string, extra: Partial<TeamMember> = {}): TeamMember => ({ id, title, kind: 'a2a', reportsTo: 'm_lead', parameters: { agentUrl: `http://kagent/${id}` }, ...extra }) as TeamMember;
 
@@ -78,5 +78,23 @@ describe('agent teams', () => {
     // Only kagent's controller route names an agent: a bare path is some other A2A server.
     expect(deploymentOf('http://kagent/dev')).toBeUndefined();
     expect(deploymentOf('')).toBeUndefined();
+  });
+});
+
+describe('consultEdges', () => {
+  const m = (id: string, consults?: string[]) => ({ id, consults });
+  it('lists each consult once, from the member that may ask to the peer', () => {
+    expect(consultEdges({ members: [m('a', ['b']), m('b'), m('c', ['a'])] })).toEqual([
+      { from: 'a', to: 'b', mutual: false },
+      { from: 'c', to: 'a', mutual: false },
+    ]);
+  });
+  it('makes one marked line of two members consulting each other', () => {
+    expect(consultEdges({ members: [m('a', ['b']), m('b', ['a'])] })).toEqual([{ from: 'a', to: 'b', mutual: true }]);
+    expect(consultEdges({ members: [m('b', ['a']), m('a', ['b', 'b'])] })).toEqual([{ from: 'b', to: 'a', mutual: true }]);
+  });
+  it('drops ids that are not in the team and self-consults', () => {
+    expect(consultEdges({ members: [m('a', ['gone', 'a', 'b']), m('b')] })).toEqual([{ from: 'a', to: 'b', mutual: false }]);
+    expect(consultEdges({ members: [] })).toEqual([]);
   });
 });
