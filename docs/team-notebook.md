@@ -88,7 +88,7 @@ A disagreement is a pair, not an edit: the Notebook tab shows the two notes side
 ## On the canvas and in the Run Trace
 
 When a member writes, searches or disputes a note, the team node and the live strip (`team-live.tsx`) say so in plain words
-("Writing a note", "Noting a decision", "Searching the notebook", "Disputing a note") with a notebook-pen icon and an entrance animation, and the run's headlines
+("Noting a fact", "Noting a decision", "Searching the notebook · 3 found", "Disputing a note") with a notebook-pen icon and an entrance animation, and the run's headlines
 include note moments (`shared/run-headlines.ts`, `shared/team-progress.ts`). In the Run Trace each note tool call is a
 step of its member.
 

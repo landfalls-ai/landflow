@@ -255,6 +255,15 @@ Read and Edit name the file, Grep names the pattern, a web fetch names the host,
 a sentence ("Check branch"). Captions of other nodes that report progress (an A2A Agent node) use the same words, with the
 exact step in their tooltip.
 
+`narrate(name, args, { output?, cache? })` also reads the notebook tools: "Searching the notebook" while `note_search` runs
+and "Searching the notebook · 3 found" once its result says how many notes it returned, "Noting a decision", "Noting a
+fact" or "Noting an open question" for `note_add` by kind, "Answering a question" (`note_update` with an answer),
+"Disputing a note" and "Promoting a note to the team". A dependency install (pnpm, npm, yarn or bun install/add/ci,
+`go mod download`, `pip install`, `apk add`) reads "Installing dependencies · from the cache" when the member works through
+Landflow's package cache: the folder gets `packageCache` (the titles of the members whose Landflow agent is deployed to
+kagent with a package egress policy, the same policy "Package cache" in its connections shows), and a step whose own output
+names `landflow-cache` counts too. Other installs read "Installing dependencies".
+
 After the run the node keeps the ribbon, a one-line summary of its output's `activity` (the results that mattered and
 each member's step count) and each budgeted member's bar (`activity.usage`), in the editor and on the execution view. A
 run that waited for a person keeps one activity across the wait: the second part's turns and moments follow the first's,

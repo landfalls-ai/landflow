@@ -8,6 +8,7 @@ import type { WorkflowNode } from '@landflow/engine';
 import type { Agent, AgentConfig, AgentToolConfig } from '../../shared/agents';
 import { brandIcon, brandOfProvider } from '../../shared/brand-icons';
 import { mergeConnections, type ActorConnection } from '../../shared/run-trace';
+import { PACKAGE_POLICY } from '../../shared/team-progress';
 import { agentStore } from './store';
 
 const PROVIDER: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', ollama: 'Ollama' };
@@ -86,7 +87,7 @@ function policyConnection(name: string, deployment: string): ActorConnection {
   if (name === `${deployment}-landflow`) return { kind: 'network', name: 'Landflow', detail: 'its run reports and tools', icon: 'lucide:radio', from: 'kagent' };
   if (/github/i.test(name)) return { kind: 'network', name: 'GitHub', detail: `${name}: the gateway adds the token`, icon: brandIcon('github'), from: 'kagent' };
   // Landflow's package policy reaches only the package cache in front of the registries (deploy/k8s/components/package-cache).
-  if (/package|registry|npm|pypi/i.test(name)) return { kind: 'network', name: 'Package cache', detail: `${name} · npm, Go, PyPI, Alpine through landflow-cache`, icon: 'lucide:package', from: 'kagent' };
+  if (PACKAGE_POLICY.test(name)) return { kind: 'network', name: 'Package cache', detail: `${name} · npm, Go, PyPI, Alpine through landflow-cache`, icon: 'lucide:package', from: 'kagent' };
   return { kind: 'network', name, icon: 'lucide:globe', from: 'kagent' };
 }
 

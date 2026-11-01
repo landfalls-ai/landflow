@@ -154,6 +154,8 @@ const sentence = (name: string) => {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : name;
 };
 
+/** Installing a dependency: pnpm, npm, yarn or bun install/add/ci, Go modules, pip, poetry, apk. */
+const INSTALL = /\b(pnpm|npm|yarn|bun)\b.*\b(i|install|ci|add)\b|\bpip3?\s+install\b|\bgo\s+mod\s+(download|tidy)\b|\bpoetry\s+install\b|\bapk\s+add\b/;
 /** Shell commands: the last command of a chain says what it is for ("cd x && pnpm install && pnpm test" runs the tests). */
 const COMMANDS: Array<[RegExp, string, StepKind?]> = [
   [/\bgh\s+pr\s+create\b/, 'Opening a pull request', 'pr'],
@@ -168,17 +170,35 @@ const COMMANDS: Array<[RegExp, string, StepKind?]> = [
   [/\b(typecheck|type-check|tsc|mypy|pyright)\b/, 'Type-checking', 'typecheck'],
   [/\b(lint|eslint|ruff|golangci-lint|biome)\b/, 'Linting', 'lint'],
   [/\b(vitest|jest|pytest|unittest|mocha)\b|\bgo\s+test\b|\b(pnpm|npm|yarn|bun)\b.*\btest\b|\bcargo\s+test\b/, 'Running the tests', 'test'],
-  [/\b(pnpm|npm|yarn|bun)\b.*\b(i|install|ci|add)\b|\bpip3?\s+install\b|\bgo\s+mod\s+(download|tidy)\b|\bpoetry\s+install\b/, 'Installing dependencies', 'install'],
+  [INSTALL, 'Installing dependencies', 'install'],
   [/\b(pnpm|npm|yarn|bun)\b.*\bbuild\b|\bgo\s+build\b|\bcargo\s+build\b|\bmake\b/, 'Building', 'build'],
 ];
 
-function narrateCommand(command: string): { plain: string; kind?: StepKind } {
+/** The names of the EgressPolicies that open only Landflow's package cache (deploy/k8s/components/package-cache). */
+export const PACKAGE_POLICY = /package|registry|npm|pypi/i;
+
+/** What narrate() can know besides a step's name and arguments. */
+export interface NarrateContext {
+  /** The step's result, once it has one (a search says how many notes it found). */
+  output?: unknown;
+  /** The member's sandbox works through Landflow's package cache: its installs read "from the cache". */
+  cache?: boolean;
+}
+
+/** The cache's address in a step's own output (`landflow-cache.landflow.svc…`): a registry URL npm, pip or Go printed. */
+const CACHE_ADDRESS = /landflow-cache/i;
+
+function narrateCommand(command: string, cx: NarrateContext = {}): { plain: string; kind?: StepKind } {
   const parts = command.split(/&&|\|\||;|\n/).map((p) => p.trim()).filter(Boolean);
   const dir = parts.map((p) => /^cd\s+(\S+)/.exec(p)?.[1]).filter(Boolean).at(-1);
   const meaningful = parts.filter((p) => !/^(cd|export|set|source|\.)\s/.test(p));
   // A pipeline is for what its first stage does: `find . -name x | head` looks around, `head` only trims it.
   const last = (meaningful.at(-1) ?? parts.at(-1) ?? command).split('|')[0].trim();
-  for (const [pattern, plain, kind] of COMMANDS) if (pattern.test(last)) return { plain, kind };
+  for (const [pattern, plain, kind] of COMMANDS) {
+    if (!pattern.test(last)) continue;
+    const cached = pattern === INSTALL && (cx.cache || CACHE_ADDRESS.test(textOf(cx.output)));
+    return { plain: cached ? `${plain} · from the cache` : plain, kind };
+  }
   const [word, ...rest] = last.split(/\s+/);
   const args = rest.filter((a) => !a.startsWith('-'));
   const target = args.at(-1);
@@ -198,20 +218,43 @@ function narrateCommand(command: string): { plain: string; kind?: StepKind } {
 const NOTE_TOOL = /^(?:mcp__[^_]+__)?(note_add|note_search|note_update|note_dispute|note_promote)$/i;
 const clip = (text: string, max = 90) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
-/** A notebook tool in plain words ("Searching the notebook", "Noting a decision"). */
-function narrateNote(tool: string, a: Record<string, unknown>): string {
+/** A notebook tool in plain words ("Searching the notebook · 3 found", "Noting a decision"). */
+function narrateNote(tool: string, a: Record<string, unknown>, output?: unknown): string {
   switch (tool.toLowerCase()) {
-    case 'note_search':
-      return 'Searching the notebook';
+    case 'note_search': {
+      const found = foundNotes(output);
+      return found === undefined ? 'Searching the notebook' : `Searching the notebook · ${found} found`;
+    }
     case 'note_add':
-      return a.kind === 'decision' ? 'Noting a decision' : a.kind === 'open_question' ? 'Noting an open question' : a.kind === 'artifact_ref' ? 'Noting an artifact' : a.kind === 'task_status' ? 'Noting where the work stands' : 'Writing a note';
+      return a.kind === 'decision' ? 'Noting a decision' : a.kind === 'open_question' ? 'Noting an open question' : a.kind === 'artifact_ref' ? 'Noting an artifact' : a.kind === 'task_status' ? 'Noting where the work stands' : 'Noting a fact';
     case 'note_update':
-      return a.answer ? 'Answering an open question' : 'Updating a note';
+      return a.answer ? 'Answering a question' : 'Updating a note';
     case 'note_dispute':
       return 'Disputing a note';
     default:
       return a.to === 'project' ? 'Suggesting a note for the project' : 'Promoting a note to the team';
   }
+}
+
+/** The words of a tool result: a string, `{ text }`, or MCP's `{ content: [{ text }] }`. */
+function plainText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(plainText).join('\n');
+  if (value && typeof value === 'object') {
+    const o = value as Record<string, unknown>;
+    if (typeof o.text === 'string') return o.text;
+    if (o.content !== undefined) return plainText(o.content);
+  }
+  return '';
+}
+
+/** How many notes a note_search returned, from its result ("3 notes (matched by meaning): ...", "Nothing in the notebook matches ..."); undefined while there is no result. */
+function foundNotes(output: unknown): number | undefined {
+  const text = plainText(output).trim();
+  if (!text) return undefined;
+  const n = /^(\d+) notes?\b/.exec(text)?.[1];
+  if (n) return Number(n);
+  return /^Nothing in the notebook/i.test(text) ? 0 : undefined;
 }
 
 /** The moment a notebook write makes ("Reviewer noted: plugins need an icons/ folder"), when the tool wrote something. */
@@ -234,14 +277,14 @@ export function noteMoment(member: string, name: string, args: unknown): Omit<Te
  * A step in plain words ("Running the tests", "Reading PLAN.md"), and what it is for when its result matters. A step
  * with no rule keeps its tool's name as a sentence.
  */
-export function narrate(name: string, args?: unknown): { plain: string; kind?: StepKind } {
+export function narrate(name: string, args?: unknown, cx: NarrateContext = {}): { plain: string; kind?: StepKind } {
   const a = argsOf(args) ?? {};
   const text = (key: string) => (typeof a[key] === 'string' ? (a[key] as string) : undefined);
   const path = text('file_path') ?? text('filePath') ?? text('path') ?? text('notebook_path');
   const tool = name.replace(/^mcp__[^_]+__/, '').toLowerCase();
-  if (NOTE_TOOL.test(name)) return { plain: narrateNote(tool, a) };
+  if (NOTE_TOOL.test(name)) return { plain: narrateNote(tool, a, cx.output) };
   const command = text('command') ?? text('cmd') ?? (/^(bash|shell|exec|run|terminal)/.test(tool) ? text('value') : undefined);
-  if (command && /^(bash|shell|exec|run_command|run|terminal|execute_command)/.test(tool)) return narrateCommand(command);
+  if (command && /^(bash|shell|exec|run_command|run|terminal|execute_command)/.test(tool)) return narrateCommand(command, cx);
   if (/^(read|read_file|view|open|cat)/.test(tool)) return { plain: path ? `Reading ${baseName(path)}` : 'Reading a file' };
   if (/^(write|edit|multiedit|multi_edit|str_replace|create_file|notebookedit|apply_patch)/.test(tool)) return { plain: path ? `Editing ${baseName(path)}` : 'Editing files' };
   if (/^(grep|glob|search|find|ls|list)/.test(tool)) {
@@ -256,7 +299,7 @@ export function narrate(name: string, args?: unknown): { plain: string; kind?: S
   if (/^web_?search/.test(tool)) return { plain: 'Searching the web' };
   if (/^(task|agent)$/.test(tool)) return { plain: 'Asking a sub-agent' };
   if (/^todo/.test(tool)) return { plain: 'Updating the to-do list' };
-  if (command) return narrateCommand(command);
+  if (command) return narrateCommand(command, cx);
   return { plain: sentence(name) };
 }
 
@@ -325,6 +368,8 @@ export interface TeamFolderOptions {
   budgets?: Record<string, number>;
   /** What members used before (a run going on after a person answered), so the bars and their moments carry on. */
   usage?: TeamUsage[];
+  /** Titles of the members whose sandboxes work through Landflow's package cache: their installs read "from the cache". */
+  packageCache?: string[];
 }
 
 /**
@@ -358,6 +403,8 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
   const tokens = new Map<string, { tokens: number; estimated?: boolean }>((options.usage ?? []).map((u) => [norm(u.member), { tokens: u.tokens, ...(u.estimated && { estimated: true }) }]));
   /** The budget moment each member had: one at 80%, one at 100%. */
   const flagged = new Map<string, 'warn' | 'bad'>();
+  const cached = new Set((options.packageCache ?? []).map(norm));
+  const narrated = (title: string, name: string, args: unknown, output?: unknown) => narrate(name, args, { cache: cached.has(norm(title)), ...(output !== undefined && { output }) });
   const levelOf = (key: string): 'warn' | 'bad' | undefined => {
     const budget = budgets.get(key);
     const used = tokens.get(key)?.tokens ?? 0;
@@ -475,7 +522,7 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
         if (!total.has(entry.callId)) counts.set(norm(owner), (counts.get(norm(owner)) ?? 0) + 1);
         totals.set(norm(owner), total.add(entry.callId));
       }
-      const words = narrate(entry.tool === entry.label ? entry.tool : entry.label, entry.input).plain;
+      const words = narrated(owner, entry.tool === entry.label ? entry.tool : entry.label, entry.input, entry.output).plain;
       ownStep(owner, entry.callId, { name: entry.label, status: entry.status === 'denied' ? 'error' : entry.status, plain: words, ...(entry.durationMs !== undefined && { ms: entry.durationMs }) });
       if (entry.status === 'running') {
         ownerWorks(owner, entry.label, words);
@@ -519,7 +566,7 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
         steps.slice(-STEPS).map((s) => {
           const args = shortArg(argsOf(s.args), 200);
           const ms = msBetween(s.startedAt, s.endedAt);
-          return { name: s.name, status: s.status, plain: narrate(s.name, s.args).plain, ...(args && { args }), ...(ms !== undefined && s.status !== 'running' && { ms }) };
+          return { name: s.name, status: s.status, plain: narrated(member.title, s.name, s.args, s.output).plain, ...(args && { args }), ...(ms !== undefined && s.status !== 'running' && { ms }) };
         }),
       );
     }
@@ -532,7 +579,7 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
         moment(wrote);
         continue;
       }
-      const made = stepMoment(narrate(step.name, step.args).kind, step.status === 'success', `${textOf(step.output)} ${step.error ?? ''}`);
+      const made = stepMoment(narrated(member.title, step.name, step.args).kind, step.status === 'success', `${textOf(step.output)} ${step.error ?? ''}`);
       if (made) moment({ member: member.title, ...made });
     }
     if (entry.status === 'running' || entry.status === 'awaiting_approval') {
@@ -543,7 +590,7 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
       current = member.title;
       turnTo(member.title);
       command = step ? shortArg(argsOf(step.args), 200) : undefined;
-      plain = step ? narrate(step.name, step.args).plain : peerKind ? asking : reason ? `Starting: ${reason.length > 60 ? `${reason.slice(0, 59)}…` : reason}` : 'Starting';
+      plain = step ? narrated(member.title, step.name, step.args, step.output).plain : peerKind ? asking : reason ? `Starting: ${reason.length > 60 ? `${reason.slice(0, 59)}…` : reason}` : 'Starting';
       set(member.title, { state: 'working', doing: step ? stepLine(step) : reason ? `asked: ${reason}` : 'working' });
       set(owner, { state: 'working', doing: peerKind === 'handoff' ? `handed over to ${member.title}` : peerKind === 'consult' ? `consulting ${member.title}` : `waiting on ${member.title}` });
       ownStep(owner, entry.callId, { name: entry.label, status: 'running', plain: peerKind ? asking : `Asking the ${member.title}` });

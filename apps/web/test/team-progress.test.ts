@@ -249,6 +249,29 @@ describe('plain words for steps', () => {
     expect(words('Bash', JSON.stringify({ command: 'pnpm lint' })).plain).toBe('Linting');
   });
 
+  it('says an install went through the package cache when the member works through it, or its own output names the cache', () => {
+    const install = { command: 'cd /tmp/work && pnpm install --ignore-scripts' };
+    expect(narrate('Bash', install, { cache: true })).toEqual({ plain: 'Installing dependencies · from the cache', kind: 'install' });
+    expect(narrate('Bash', install, { output: 'Progress: resolved 1, GET http://landflow-cache.landflow.svc.cluster.local:8080/npm/zod' })).toEqual({ plain: 'Installing dependencies · from the cache', kind: 'install' });
+    expect(narrate('Bash', install).plain).toBe('Installing dependencies');
+    for (const command of ['npm install', 'yarn add zod', 'go mod download', 'pip install -r requirements.txt', 'apk add --no-cache git']) {
+      expect(narrate('Bash', { command }, { cache: true }).plain).toBe('Installing dependencies · from the cache');
+      expect(narrate('Bash', { command }).plain).toBe('Installing dependencies');
+    }
+    // Only installs: a test run through the cache is still a test run.
+    expect(narrate('Bash', { command: 'pnpm test' }, { cache: true }).plain).toBe('Running the tests');
+  });
+
+  it('puts "from the cache" on the live node for the members that work through the cache', () => {
+    const fold = teamProgressFolder(['Lead', 'Developer'], Date.now, { packageCache: ['developer'] });
+    fold({ type: 'run.started', sessionId: 's1' });
+    const step: Step = { name: 'Bash', status: 'running', args: { command: 'pnpm install' } };
+    expect(fold(tool('c1', 'Developer', 'running', [step]))!.plain).toBe('Installing dependencies · from the cache');
+    const other = teamProgressFolder(['Lead', 'Developer']);
+    other({ type: 'run.started', sessionId: 's1' });
+    expect(other(tool('c1', 'Developer', 'running', [step]))!.plain).toBe('Installing dependencies');
+  });
+
   it('reads file, search and web tools, and falls back to the tool name', () => {
     expect(words('Read', { file_path: '/tmp/work/plugins/grafana/src/nodes/get-alerts.ts' }).plain).toBe('Reading get-alerts.ts');
     expect(words('Edit', { file_path: '/w/README.md' }).plain).toBe('Editing README.md');
@@ -265,11 +288,20 @@ describe('plain words for steps', () => {
     expect(words('note_search', { query: 'how plugins declare icons' }).plain).toBe('Searching the notebook');
     expect(words('note_add', { kind: 'decision', text: 'x' }).plain).toBe('Noting a decision');
     expect(words('note_add', { kind: 'open_question', text: 'x' }).plain).toBe('Noting an open question');
-    expect(words('note_add', { kind: 'fact', text: 'x' }).plain).toBe('Writing a note');
-    expect(words('note_update', { id: 'n', answer: 'v2' }).plain).toBe('Answering an open question');
+    expect(words('note_add', { kind: 'fact', text: 'x' }).plain).toBe('Noting a fact');
+    expect(words('note_add', { text: 'x' }).plain).toBe('Noting a fact');
+    expect(words('note_update', { id: 'n', answer: 'v2' }).plain).toBe('Answering a question');
+    expect(words('note_update', { id: 'n', status: 'verified' }).plain).toBe('Updating a note');
     expect(words('note_dispute', { id: 'n', text: 'x' }).plain).toBe('Disputing a note');
     expect(words('note_promote', { id: 'n', to: 'project' }).plain).toBe('Suggesting a note for the project');
     expect(words('note_promote', { id: 'n' }).plain).toBe('Promoting a note to the team');
+    // A search says how many notes it found once its result is known.
+    const search = { query: 'icons' };
+    expect(narrate('note_search', search, { output: '3 notes (matched by meaning):\n- [note_a] fact ...' }).plain).toBe('Searching the notebook · 3 found');
+    expect(narrate('note_search', search, { output: '1 note (matched by keywords):\n- [note_a] fact ...' }).plain).toBe('Searching the notebook · 1 found');
+    expect(narrate('note_search', search, { output: 'Nothing in the notebook matches “zebra”.' }).plain).toBe('Searching the notebook · 0 found');
+    expect(narrate('note_search', search, { output: { content: [{ type: 'text', text: '2 notes (matched by meaning):' }] } }).plain).toBe('Searching the notebook · 2 found');
+    expect(narrate('note_search', search, { output: undefined }).plain).toBe('Searching the notebook');
     // Over MCP a Claude Code member's tool carries the server's prefix.
     expect(words('mcp__landflow-agent__note_add', { kind: 'decision', text: 'x' }).plain).toBe('Noting a decision');
   });

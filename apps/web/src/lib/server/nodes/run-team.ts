@@ -6,10 +6,12 @@
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
-import { chartOrder } from '../../shared/agent-teams';
+import { chartOrder, type TeamMember } from '../../shared/agent-teams';
 import type { AgentStreamEvent } from '../../shared/agents';
-import { joinActivity, teamProgressFolder, type TeamActivity } from '../../shared/team-progress';
+import { joinActivity, PACKAGE_POLICY, teamProgressFolder, type TeamActivity } from '../../shared/team-progress';
 import { shortArg } from '../../shared/team-progress';
+import { agentStore } from '../agents/store';
+import { agentAtEndpoint } from '../notebook/binding';
 import type { TeamState } from '../agent-teams/runtime';
 import { SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL } from '../slack';
 import { streamer } from './agents';
@@ -26,6 +28,13 @@ interface Waiting {
   needsPerson: NodeItem[];
   state: TeamState;
   activity: TeamActivity;
+}
+
+/** Whether a member's sandbox works through Landflow's package cache: the Landflow agent behind it (or at its A2A address) is deployed to kagent with a package egress policy. */
+function worksThroughCache(member: TeamMember): boolean {
+  const url = member.kind === 'a2a' && typeof member.parameters.agentUrl === 'string' ? member.parameters.agentUrl : undefined;
+  const agent = member.kind === 'agent' ? agentStore.get(member.agentId) : url ? agentAtEndpoint(url) : undefined;
+  return Boolean(agent?.kagent?.egressPolicies?.some((policy) => PACKAGE_POLICY.test(policy)));
 }
 
 export const runTeamNode = defineNode({
@@ -223,6 +232,7 @@ export const runTeamNode = defineNode({
         const fold = teamProgressFolder(chartOrder(config).map((m) => m.title), Date.now, {
           budgets: Object.fromEntries(config.members.flatMap((m) => (m.budgetTokens ? [[m.title, m.budgetTokens]] : []))),
           ...(resume && waited?.activity?.usage && { usage: waited.activity.usage }),
+          packageCache: config.members.filter((m) => worksThroughCache(m)).map((m) => m.title),
         });
         const stream = send && streamer(send, i);
         const onEvent = (event: AgentStreamEvent) => {
