@@ -259,8 +259,9 @@ export const noteStore = {
     }
   },
 
-  counts(teamId: string, projectId?: string): NoteCounts {
-    const notes = this.list({ teamId, ...(projectId && { projectId }), scopes: ['team', 'project'] });
+  /** The tab's headline: what the list holds under the same scope (and run), whatever kind or status the tab picked, so the tiles can switch between kinds. */
+  counts(teamId: string, projectId?: string, within: Pick<NoteFilter, 'scopes' | 'onlyRun' | 'expired'> = {}): NoteCounts {
+    const notes = this.list({ teamId, ...(projectId && { projectId }), allRuns: true, ...within });
     const count = (test: (n: TeamNote) => boolean) => notes.filter(test).length;
     return {
       open: count((n) => n.kind === 'open_question' && n.status === 'open'),

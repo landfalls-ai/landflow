@@ -14,7 +14,7 @@ import { api, ApiError } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import type { AgentSummary } from '@/lib/shared/agents';
 import { NOTE_KINDS, NOTE_KIND_LABEL, type NoteCounts, type NoteKind, type NoteScope, type TeamNote } from '@/lib/shared/notebook';
-import { expiryView, groupNotes, hostOf, statusLabel, traceHref, type DisputePair } from '@/lib/shared/notebook-view';
+import { expiryView, groupNotes, hostOf, sourceParts, statusLabel, type DisputePair } from '@/lib/shared/notebook-view';
 import { cn } from '@/lib/utils';
 import { Badge, Chip, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -30,7 +30,7 @@ interface Face {
 type Listed = { notes: Array<TeamNote & { score?: number }>; counts: NoteCounts; via?: 'meaning' | 'keywords' };
 type Scope = 'all' | NoteScope;
 
-const STATUS_TONE: Record<string, Tone> = { verified: 'success', unverified: 'muted', unchecked: 'warning', disputed: 'danger', open: 'warning', answered: 'success', expired: 'muted' };
+const STATUS_TONE: Record<string, Tone> = { verified: 'success', unverified: 'warning', unchecked: 'warning', disputed: 'danger', open: 'warning', answered: 'success', expired: 'muted' };
 /** The colour at a card's left edge, by what the note is. */
 const KIND_COLOR: Record<NoteKind, string> = {
   open_question: 'var(--warn)',
@@ -351,12 +351,12 @@ function NoteCard({ note, face, busy, fresh, fading, side, onAction, onPromote, 
   const expiry = expiryView(note);
   const color = face?.agent ? faceOf(face.agent).color : undefined;
   const status = statusLabel(note);
-  const href = traceHref(note);
   const host = hostOf(note.source.url);
+  const parts = sourceParts(note);
   const locked = note.tainted && !note.verifiedAt;
   const isQuestion = note.kind === 'open_question';
   // A disputed note on its own (the other side is gone) can be verified; inside a pair you keep one.
-  const canVerify = !side && note.status !== 'expired' && !note.verifiedAt && !isQuestion;
+  const canVerify = !side && note.status !== 'expired' && !note.verifiedAt && !isQuestion && note.status !== 'disputed';
   const submit = (action: 'answer' | 'dispute') => {
     if (!draft.trim()) return;
     void onAction({ action, text: draft }, () => {
@@ -391,19 +391,28 @@ function NoteCard({ note, face, busy, fresh, fading, side, onAction, onPromote, 
 
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-t3">
         {face?.agent ? <AgentAvatar agent={faceOf(face.agent)} size={20} round /> : <span className="grid size-5 place-items-center rounded-full bg-acdim text-[10px] font-semibold text-t2">{note.author.charAt(0).toUpperCase()}</span>}
+        <span>by</span>
         <span className="font-medium text-t2">{note.author}</span>
+        {parts.map((part) => (
+          <span key={part.kind} className="inline-flex items-center gap-x-2">
+            <span>·</span>
+            {part.href && part.kind === 'run' ? (
+              <Link href={part.href} className="inline-flex items-center gap-1 font-semibold text-ac hover:underline" title="Open the step that wrote it in the Run Trace">
+                <Link2 className="size-3" /> {part.label}
+              </Link>
+            ) : part.href ? (
+              <a href={part.href} target="_blank" rel="noreferrer" className="inline-flex max-w-[180px] items-center gap-1 truncate hover:text-t1">
+                <ExternalLink className="size-3 shrink-0" /> <span className="truncate">{part.label}</span>
+              </a>
+            ) : (
+              <span className="max-w-[180px] truncate" title="The workflow step that ran the team">
+                {part.label}
+              </span>
+            )}
+          </span>
+        ))}
         <span>·</span>
         <span title={new Date(note.createdAt).toLocaleString()}>{timeAgo(note.createdAt)}</span>
-        {href && (
-          <Link href={href} className="inline-flex items-center gap-1 font-semibold text-ac hover:underline" title="Open the step that wrote it in the Run Trace">
-            <Link2 className="size-3" /> Run Trace
-          </Link>
-        )}
-        {note.source.url && (
-          <a href={note.source.url} target="_blank" rel="noreferrer" className="inline-flex max-w-[180px] items-center gap-1 truncate hover:text-t1">
-            <ExternalLink className="size-3 shrink-0" /> <span className="truncate">{host}</span>
-          </a>
-        )}
       </div>
 
       {note.status !== 'expired' && (
@@ -442,6 +451,11 @@ function NoteCard({ note, face, busy, fresh, fading, side, onAction, onPromote, 
           {canVerify && (
             <Button size="sm" variant={locked ? 'primary' : 'outline'} disabled={busy} onClick={() => void onAction({ action: 'verify' }, () => toast.success('Verified'))}>
               <ShieldCheck className="size-3.5" /> Verify
+            </Button>
+          )}
+          {note.status === 'disputed' && (
+            <Button size="sm" variant="primary" disabled={busy} title="Keep this note as the one that holds, and drop the one that disagrees" onClick={() => void onAction({ action: 'resolve', keep: note.id }, () => toast.success('Settled: this one holds'))}>
+              <Scale className="size-3.5" /> Resolve
             </Button>
           )}
           {note.status !== 'disputed' && (

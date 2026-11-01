@@ -50,7 +50,9 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
   } else {
     notes = noteStore.list(run ? { ...filter, onlyRun: run } : filter);
   }
-  return json({ notes, counts: noteStore.counts(id, projectId), ...(via && { via }) });
+  // The headline counts what the list holds under the same scope, run and expiry, whatever kind or status is picked.
+  const counts = noteStore.counts(id, projectId, { expired: filter.expired, ...(scopes && { scopes }), ...(run && { onlyRun: run }) });
+  return json({ notes, counts, ...(via && { via }) });
 });
 
 const addSchema = z.object({ kind: z.enum(NOTE_KINDS).optional(), text: z.string().min(1).max(2000) });

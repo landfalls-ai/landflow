@@ -166,6 +166,11 @@ describe('writing', () => {
     expect(off.source).toEqual({ executionId: 'exec_1', spanId: 's2', tool: 'note_add' });
   });
 
+  it('keeps the name of the workflow step that ran the team', async () => {
+    const note = (await service.addNote(bind({ step: 'Build plugin' }), { kind: 'fact', text: 'Written inside a step' })).note;
+    expect(note.source).toMatchObject({ executionId: 'exec_1', step: 'Build plugin' });
+  });
+
   it('shows the team’s open questions and decisions as a short block, and nothing when there are none', async () => {
     expect(service.notebookBlock(manager())).toBe('');
     await service.addNote(bind(), { kind: 'decision', text: 'Target the v2 alerting API only' });
@@ -353,7 +358,15 @@ describe('the routes', () => {
     await service.addNote(bind({ runId: 'exec_b' }), { kind: 'fact', text: 'A plugin needs an icons folder' });
     const all = await (await notesRoute.GET(new Request('http://localhost/x'), ctx(team.id))).json();
     expect(all.notes).toHaveLength(3);
-    expect(all.counts).toMatchObject({ decisions: 1, total: 1 });
+    expect(all.counts).toMatchObject({ open: 1, decisions: 1, facts: 1, total: 3 });
+    // The headline follows the scope filter and ignores the kind filter, so it matches the list below it.
+    const runsOnly = await (await notesRoute.GET(new Request('http://localhost/x?scope=run&kind=fact'), ctx(team.id))).json();
+    expect(runsOnly.notes).toHaveLength(1);
+    expect(runsOnly.counts).toMatchObject({ open: 1, decisions: 0, facts: 1, total: 2 });
+    const teamOnly = await (await notesRoute.GET(new Request('http://localhost/x?scope=team'), ctx(team.id))).json();
+    expect(teamOnly.counts).toMatchObject({ open: 0, decisions: 1, facts: 0, total: 1 });
+    const oneRun = await (await notesRoute.GET(new Request('http://localhost/x?run=exec_b'), ctx(team.id))).json();
+    expect(oneRun.counts).toMatchObject({ decisions: 1, facts: 1, total: 2 });
     const open = await (await notesRoute.GET(new Request('http://localhost/x?kind=open_question&status=open'), ctx(team.id))).json();
     expect(open.notes.map((n: TeamNote) => n.text)).toEqual(['Which API version?']);
     const onlyRun = await (await notesRoute.GET(new Request('http://localhost/x?run=exec_b'), ctx(team.id))).json();

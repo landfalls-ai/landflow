@@ -83,3 +83,21 @@ export function statusLabel(note: TeamNote): string {
   if (note.tainted && !note.verifiedAt && note.status === 'unverified') return 'unchecked';
   return note.status;
 }
+
+export interface SourcePart {
+  kind: 'run' | 'step' | 'url';
+  /** "Run Trace" for a run, the step's name, the URL's host. */
+  label: string;
+  href?: string;
+}
+
+/** Where a note came from, in the order the card reads them after "by <author>": the run (a Run Trace link), the step that ran the team, the page it was read from. */
+export function sourceParts(note: Pick<TeamNote, 'source'>): SourcePart[] {
+  const parts: SourcePart[] = [];
+  const run = traceHref(note);
+  if (run) parts.push({ kind: 'run', label: 'Run Trace', href: run });
+  if (note.source.step) parts.push({ kind: 'step', label: note.source.step });
+  const host = hostOf(note.source.url);
+  if (host) parts.push({ kind: 'url', label: host, ...(note.source.url && /^https?:\/\//i.test(note.source.url) && { href: note.source.url }) });
+  return parts;
+}
