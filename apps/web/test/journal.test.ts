@@ -551,6 +551,18 @@ describe('routes', () => {
   });
 });
 
+describe('a Run a Team node', () => {
+  it('acts as its team’s lead when the host names one, its span keeping the node’s name', () => {
+    const drafts: JournalDraft[] = [];
+    const translator = createTranslator({ workflow, executionId: 'ex_t', emit: (d) => drafts.push(d), actorNameOf: (n) => (n.id === 'lead' ? 'Editor' : undefined) });
+    translator.feed({ type: 'execution.started', executionId: 'ex_t', workflowId: workflow.id, mode: 'manual', at: at() });
+    translator.feed({ ...started('lead'), executionId: 'ex_t' } as ExecutionEvent);
+    const span = spanStart(drafts, 'node:lead:0')!;
+    expect(span.actor).toMatchObject({ id: 'node:lead', name: 'Editor' });
+    expect(span.name).toBe(workflow.nodes.find((n) => n.id === 'lead')!.name);
+  });
+});
+
 describe('connections', () => {
   it('tells what an agent node works with: its sub-nodes, then what the host adds', () => {
     const flow: Workflow = {

@@ -97,8 +97,10 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
   dividers when the flow loops, and artifacts as cards. Failed steps and
   failed checks appear inline. Tool and model calls fold into "n steps" rows that open; each tool call there says what
   it did, in the agent's own words when it gave a `description` (Claude Code does with every command), else in plain
-  words ("Cloning the repository", "Reading get-alerts.ts"), with the tool's name beside it. A team run opens with its
-  [headlines](#headlines).
+  words ("Cloning the repository", "Reading get-alerts.ts"), with the tool's name beside it ("1 step" for one). A
+  request a member picks up again after a wait (its tool was approved, the run resumed) reads *Writer went on with
+  Editor's request after the wait* instead of a second ask. A Run a Team node's own turns carry its lead's title. A team
+  run opens with its [headlines](#headlines).
 - **Trace**: the span tree with timing bars, down to a remote agent's single tool calls. A request shows why it was
   asked.
 - **Team**: who called whom, with ×n counts (laid out top to bottom, no sideways scrolling), plus a card per actor with

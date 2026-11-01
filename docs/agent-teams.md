@@ -269,7 +269,10 @@ and the workflow's executions page shows the list and an open execution one at a
 ### In the Run Trace
 
 The journal names members by title and records each request with its reason, under the request of the manager that asked
-it (a developer's tester hangs under the developer). The node's span carries the team as it was when the run began
+it (a developer's tester hangs under the developer). The node's own turns are the lead's: its actor is the lead's title
+from the team's chart ("Editor asked Writer"), whatever the node is called (before, a node named *Run Team* read "Run
+Team asked Writer"). After a wait (a tool approved), the member's request goes on under the node's next run; the Story
+tells it as *Writer went on with Editor's request after the wait*, not as a second ask. The node's span carries the team as it was when the run began
 (`attrs.team`: id, name, version, goal, members with `reportsTo`, `reviews`, `consults`, `budgetTokens` and `connections`), and the
 **Team** tab draws the chart from it, as an indented tree with who reviews whom and how often each was asked, instead of
 guessing from who called whom. Each row has chips for what the member [works with](run-trace.md#what-each-agent-works-with):

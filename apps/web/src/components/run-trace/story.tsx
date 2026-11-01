@@ -174,21 +174,30 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
       const doing = [...model.order].reverse().find((c) => c.id.startsWith(`${s.id}/`) && c.status === 'running' && !c.hidden);
       return (
         <Ev avatar={<Avatar actor={caller ?? s.actor} />} onOpen={() => open({ kind: 'span', id: s.id })} label={`Request to ${s.actor.name}`}>
-          <Head at={entry.at}>
-            {who(caller)}
-            <span>{s.kind === 'handoff' ? 'handed off to' : 'asked'}</span>
-            {who(s.actor)}
-            <Badge tone="muted" className="font-mono font-medium">
-              {s.kind === 'handoff' ? 'handoff' : 'A2A'}
-            </Badge>
-          </Head>
-          {typeof s.attrs.reason === 'string' && s.attrs.reason && (
+          {entry.continued ? (
+            <Head at={entry.at}>
+              {who(s.actor)}
+              <span>went on with</span>
+              {who(caller)}
+              <span>’s request after the wait</span>
+            </Head>
+          ) : (
+            <Head at={entry.at}>
+              {who(caller)}
+              <span>{s.kind === 'handoff' ? 'handed off to' : 'asked'}</span>
+              {who(s.actor)}
+              <Badge tone="muted" className="font-mono font-medium">
+                {s.kind === 'handoff' ? 'handoff' : 'A2A'}
+              </Badge>
+            </Head>
+          )}
+          {!entry.continued && typeof s.attrs.reason === 'string' && s.attrs.reason && (
             <p className="mt-1 break-words text-[12.5px] text-t2">
               <b className="font-semibold text-t1">Why </b>
               {preview(s.attrs.reason, 220)}
             </p>
           )}
-          {s.input !== undefined && <Bubble>{preview(textOf(s.input, 400), 180)}</Bubble>}
+          {!entry.continued && s.input !== undefined && <Bubble>{preview(textOf(s.input, 400), 180)}</Bubble>}
           {running ? (
             <NowLine>
               {s.actor.name} {s.status === 'waiting' ? 'waiting' : 'working'} · {fmtMs(s.ms)}
@@ -196,7 +205,7 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
             </NowLine>
           ) : (
             <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {s.steps > 0 && <Badge tone="neutral">{s.steps} steps</Badge>}
+              {s.steps > 0 && <Badge tone="neutral">{s.steps} {s.steps === 1 ? 'step' : 'steps'}</Badge>}
               {s.failedSteps > 0 && <Badge tone="danger">{s.failedSteps} failed</Badge>}
               <Badge tone="neutral">{fmtMs(s.ms)}</Badge>
             </div>

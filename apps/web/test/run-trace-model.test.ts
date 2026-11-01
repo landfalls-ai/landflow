@@ -466,3 +466,27 @@ describe('foldJournal', () => {
     expect(preview('## Outcome The plugin is built. ## Plan Ship it', 200)).toBe('Outcome The plugin is built. Plan Ship it');
   });
 });
+
+describe('a request that goes on after its node waited', () => {
+  it('is told as going on, not as a second ask', async () => {
+    const { storyOf } = await import('@/lib/shared/run-trace-model');
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Notes', actor: flow });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Run Team', actor: lead });
+    add(2, { type: 'span.started', spanId: 'node:team:0/step:call_1', parentSpanId: 'node:team:0', kind: 'delegate', name: 'planner', actor: planner, caller: lead, input: 'Write the notes' });
+    add(3, { type: 'span.started', spanId: 'node:team:0/step:call_1/approval', parentSpanId: 'node:team:0/step:call_1', kind: 'wait', name: 'planner wants to use publish', actor: person });
+    add(9, { type: 'span.ended', spanId: 'node:team:0/step:call_1/approval', status: 'success' });
+    add(9, { type: 'span.ended', spanId: 'node:team:0/step:call_1', status: 'success' });
+    add(9, { type: 'span.ended', spanId: 'node:team:0', status: 'success' });
+    add(10, { type: 'span.started', spanId: 'node:team:1', parentSpanId: 'run', kind: 'agent', name: 'Run Team', actor: lead });
+    add(10, { type: 'span.started', spanId: 'node:team:1/step:call_1', parentSpanId: 'node:team:1', kind: 'delegate', name: 'planner', actor: planner, caller: lead, input: 'Write the notes' });
+    add(12, { type: 'span.ended', spanId: 'node:team:1/step:call_1', status: 'success' });
+    add(13, { type: 'span.started', spanId: 'node:team:1/step:call_2', parentSpanId: 'node:team:1', kind: 'delegate', name: 'developer', actor: developer, caller: lead, input: 'Check them' });
+    const asks = storyOf(foldJournal(events)).flatMap((e) => (e.type === 'ask' ? [[e.span.id, Boolean(e.continued)]] : []));
+    expect(asks).toEqual([
+      ['node:team:0/step:call_1', false],
+      ['node:team:1/step:call_1', true],
+      ['node:team:1/step:call_2', false],
+    ]);
+  });
+});

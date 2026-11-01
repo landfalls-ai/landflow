@@ -3,10 +3,11 @@
  * `traceSegment` is the runner's hook (one per stretch of a run); `liveJournal` lets other writers (a Landflow agent's
  * session, the approvals route) add events under a node's span; the routes read with `store.read`.
  */
-import type { ExecutionEvent, Workflow } from '@landflow/engine';
+import type { ExecutionEvent, Workflow, WorkflowNode } from '@landflow/engine';
 import type { ExecutionRecord } from '../../shared/types';
 import { JOURNAL_RETENTION_DAYS } from '../../shared/run-trace';
 import { nodeConnections } from '../agents/connections';
+import { agentTeamStore } from '../agent-teams/store';
 import { getUser } from '../auth/users';
 import { logger } from '../telemetry';
 import { spanEvents } from './store';
@@ -52,6 +53,14 @@ export interface SegmentTrace {
 }
 
 /** Journal one stretch of an execution: the runner feeds it every event, and it closes when the stretch ends. */
+/** The lead of the team a Run a Team node runs (its published chart; the draft's for a team not yet published). */
+function teamLeadTitle(node: WorkflowNode): string | undefined {
+  const id = typeof node.parameters?.teamId === 'string' ? node.parameters.teamId : '';
+  const team = id ? agentTeamStore.get(id) : undefined;
+  const chart = team?.published ?? team?.draft;
+  return chart?.members.find((m) => !m.reportsTo)?.title;
+}
+
 export function traceSegment(record: Pick<ExecutionRecord, 'executionId' | 'startedBy'>, workflow: Workflow): SegmentTrace {
   const noop: SegmentTrace = { feed: () => {}, close: () => {} };
   try {
@@ -65,6 +74,7 @@ export function traceSegment(record: Pick<ExecutionRecord, 'executionId' | 'star
       onTrace: (traceId) => (journal.traceId = traceId),
       flush: () => journal.flush(),
       connectionsOf: (node, flow) => safe(() => nodeConnections(node, flow)),
+      actorNameOf: (node) => (node.type === 'core.runTeam' ? safe(() => teamLeadTitle(node)) : undefined),
     });
     translator.seed(safe(() => spanEvents(record.executionId)) ?? []);
     journal.bindSpans(translator.spanOfNode, translator.actorOfNode);

@@ -36,6 +36,8 @@ export interface TranslatorOptions {
    * `flow` says which the sub-nodes already give (a model, a memory), so the agent's own aren't told as well.
    */
   connectionsOf?: (node: WorkflowNode, flow: { model: boolean; memory: boolean }) => ActorConnection[] | undefined;
+  /** Who an agent node acts as, when not its name: a Run a Team node is its team's lead ("Editor asked Writer", not "Run Team asked Writer"). */
+  actorNameOf?: (node: WorkflowNode) => string | undefined;
 }
 
 type Item = Record<string, unknown>;
@@ -175,9 +177,10 @@ export function createTranslator(options: TranslatorOptions) {
 
   const isAgent = (node: WorkflowNode | undefined) => Boolean(node && AGENT_NODE_TYPES.has(node.type));
 
-  function nodeActor(node: WorkflowNode | undefined, name: string, type: RunActor['type']): RunActor {
+  function nodeActor(node: WorkflowNode | undefined, nodeName: string, type: RunActor['type']): RunActor {
     const connections = type === 'agent' && node ? connectionsOfNode(node) : [];
-    return { id: `node:${node?.id ?? name}`, name, type, ...(node?.notes?.trim() && { role: short(node.notes.trim(), 200) }), ...(node && { nodeType: node.type }), ...(connections.length && { connections }) };
+    const name = (type === 'agent' && node && options.actorNameOf?.(node)) || nodeName;
+    return { id: `node:${node?.id ?? nodeName}`, name, type, ...(node?.notes?.trim() && { role: short(node.notes.trim(), 200) }), ...(node && { nodeType: node.type }), ...(connections.length && { connections }) };
   }
 
   function modelName(node: WorkflowNode | undefined, fallback: string): string {

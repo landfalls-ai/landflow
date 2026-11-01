@@ -261,7 +261,8 @@ export type StoryEntry =
     }
   | { type: 'round'; key: string; at: string; seq: number; round: RunRound }
   | { type: 'agent'; key: string; at: string; seq: number; span: RunSpan }
-  | { type: 'ask'; key: string; at: string; seq: number; span: RunSpan }
+  /** `continued`: the same request going on after its node waited (a person approved a tool), not a second ask. */
+  | { type: 'ask'; key: string; at: string; seq: number; span: RunSpan; continued?: boolean }
   | {
       type: 'reply';
       key: string;
@@ -1033,6 +1034,9 @@ function insideRequest(model: RunModel, span: RunSpan): boolean {
 /** The chat-like story: messages, requests with their results, waits, artifacts, failures; quiet spans folded into "n steps". */
 export function storyOf(model: RunModel): StoryEntry[] {
   const raw: StoryEntry[] = [];
+  // A node that waited runs again as node:<id>:<n+1>, and the member's request it was in goes on under the same call id.
+  const requestKey = (id: string) => id.replace(/^(node:[^/:]+):\d+\//, '$1/');
+  const requested = new Set<string>();
   for (const m of model.messages) raw.push(m);
   for (const round of model.rounds) raw.push({ type: 'round', key: round.key, at: round.startedAt, seq: round.seq - 0.25, round });
   for (const span of model.order) {
@@ -1050,7 +1054,9 @@ export function storyOf(model: RunModel): StoryEntry[] {
           result: resultOf(span),
         });
     } else if (REQUESTS.has(span.kind)) {
-      raw.push({ type: 'ask', key: `s:${span.id}`, at, seq: span.seq, span });
+      const continued = requested.has(requestKey(span.id));
+      requested.add(requestKey(span.id));
+      raw.push({ type: 'ask', key: `s:${span.id}`, at, seq: span.seq, span, ...(continued && { continued: true }) });
       if (span.endedAt)
         raw.push({
           type: 'reply',
