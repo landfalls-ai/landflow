@@ -326,12 +326,22 @@ export interface KagentDeployment {
   plugins?: KagentPlugin[];
   /** The EgressPolicies its Agent references (what its sandbox may reach); absent, the credential's. */
   egressPolicies?: string[];
+  /** Claude Code: the landflow-harness mod's guard for this agent (absent: `enforce`). A request can't loosen it. */
+  guard?: KagentGuard;
   /**
    * Claude Code with Landflow's landflow-harness mod (docs/a2a.md, "The landflow-harness mod"): where the mod posts what
    * the agent does (`<landflowUrl>/api/agent-trace`), so a run shows its real tokens, cost and tool calls.
    */
   trace?: { url: string; /** The agent's A2A URL then, to know a call goes to it. */ a2aUrl?: string };
 }
+
+/**
+ * How strictly the landflow-harness mod guards a Claude Code agent (docs/a2a.md, "The landflow-harness mod"): `strict`
+ * keeps it read-only on the code (a reviewer), `enforce` refuses what no agent here needs to do (the default), `report`
+ * only reports what would have been refused.
+ */
+export type KagentGuard = 'strict' | 'enforce' | 'report';
+export const KAGENT_GUARDS: readonly KagentGuard[] = ['strict', 'enforce', 'report'];
 
 /**
  * A Claude Code plugin as kagent fetches it: a git repository at one commit and the plugin's folder in it, and the image
@@ -345,6 +355,8 @@ export interface KagentPlugin {
   path?: string;
   /** `<registry>/plugins/<marketplace>/<plugin>@sha256:…` */
   oci?: string;
+  /** A built-in plugin's options Landflow wrote as its plugin.json defaults (the landflow-harness mod's `guard`). */
+  options?: Record<string, string>;
 }
 
 /** What runs an agent on kagent: its own ADK runtime, Claude Code, Codex, or an image of one's own. */
@@ -376,6 +388,8 @@ export interface KagentStatus {
   plugins?: KagentPlugin[];
   /** The EgressPolicies its Agent references. */
   egressPolicies?: string[];
+  /** Claude Code: the mod's guard for this agent. */
+  guard?: KagentGuard;
   version?: number;
   deployedAt?: string;
   /** The agent's A2A endpoint on kagent's controller, as Landflow reaches it. */
@@ -624,7 +638,7 @@ export interface AgentTraceSummary {
   /** Tool calls the API ran itself (web search, code execution). */
   serverTools?: number;
   guard: TraceGuardDecision[];
-  guardMode?: 'enforce' | 'report' | 'off';
+  guardMode?: 'strict' | 'enforce' | 'report' | 'off';
   /** Tool results that had a secret masked, and the kinds. */
   redacted: number;
   redactedKinds?: string[];

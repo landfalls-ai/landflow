@@ -43,6 +43,7 @@ function cleanMember(input: unknown): TeamMember | undefined {
   const id = text(m.id, 40);
   if (!id) return undefined;
   const reviews = Array.isArray(m.reviews) ? [...new Set(m.reviews.filter((r): r is string => typeof r === 'string'))] : [];
+  const consults = Array.isArray(m.consults) ? [...new Set(m.consults.filter((r): r is string => typeof r === 'string'))] : [];
   const role = text(m.role, 500);
   const budget = typeof m.budgetTokens === 'number' && Number.isFinite(m.budgetTokens) ? Math.floor(m.budgetTokens) : undefined;
   const base = {
@@ -51,6 +52,7 @@ function cleanMember(input: unknown): TeamMember | undefined {
     ...(role && { role }),
     ...(typeof m.reportsTo === 'string' && m.reportsTo && { reportsTo: m.reportsTo }),
     ...(reviews.length && { reviews }),
+    ...(consults.length && { consults }),
     ...(budget !== undefined && { budgetTokens: budget }),
     ...((m.questionsTo === 'manager' || m.questionsTo === 'person') && { questionsTo: m.questionsTo as QuestionsTo }),
   };

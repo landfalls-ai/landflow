@@ -34,7 +34,7 @@ export function TeamStrip({ teamId, live, moments }: { teamId: string; live?: Te
         <div className="flex items-center gap-1 rounded-full border border-hair bg-sf px-1 py-0.5 shadow-pop" data-testid="team-strip" title={faces.map((f) => `${f.title}: ${stateOf(f.title) ?? 'idle'}`).join(', ')}>
           {faces.slice(0, 8).map(({ member, face, color, title }) => {
             const state = stateOf(title);
-            const now = live.member.toLowerCase() === title.toLowerCase() && live.plain !== 'Done';
+            const now = (live.member.toLowerCase() === title.toLowerCase() || live.consulting?.from.toLowerCase() === title.toLowerCase()) && live.plain !== 'Done';
             return (
               <span key={member.id} className={cn('relative rounded-full transition-[opacity,transform,filter] duration-300', state === 'idle' && 'opacity-35 saturate-50', now && 'scale-110')}>
                 <AgentAvatar agent={face} size={20} round className={cn('ring-2', state === 'failed' ? 'ring-rd' : 'ring-sf')} />

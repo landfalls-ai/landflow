@@ -6,18 +6,24 @@
  * After the run the node keeps the ribbon and a one-line summary from its output's `activity`. On a phone the execution
  * view pins a Now card with the same over the canvas. A turn on the ribbon opens that member in the Run Trace; a member
  * with a budget gets a bar that turns amber at 80% and red when used up; a member's question for a person turns the
- * node amber, with the question and an Answer button.
+ * node amber, with the question and an Answer button; a tool that needs a person's approval does the same, with the tool
+ * and what it would do and Approve / Deny buttons. While a member consults a peer (or hands its task over), both are
+ * ringed and the node names it.
  */
 import { useEffect, useState, type ReactNode } from 'react';
-import { Check, ChevronRight, Hourglass, Loader2, NotebookPen, X } from 'lucide-react';
+import { Check, ChevronRight, Hourglass, Loader2, NotebookPen, Pause, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { useWorkingMembers } from '@/lib/client/run-controls';
 import { duration } from '@/lib/client/format';
+import { decideToolApprovals } from '@/lib/client/run-trace';
 import { chartOrder, memberAgent, type TeamMember } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
-import type { TeamActivity, TeamMoment, TeamProgress, TeamStep, TeamTurn, TeamUsage } from '@/lib/shared/team-progress';
+import type { TeamActivity, TeamApprovalWait, TeamMoment, TeamProgress, TeamStep, TeamTurn, TeamUsage } from '@/lib/shared/team-progress';
 import { cn } from '@/lib/utils';
 import { AgentAvatar, type AvatarSource } from '../agents/avatar';
 import { faceOf as agentFace, loadRoster, loadTeam } from '../agents/faces';
 import type { NodeLive } from '../canvas/node-tile';
+import { stateOf, TeamPauseBar } from './team-pause';
 
 export interface TeamFace {
   member: TeamMember;
@@ -116,28 +122,58 @@ export function TeamTicker({ steps, className }: { steps: TeamStep[]; className?
 }
 
 /** The member at work: its face ringed in its colour (with the lead's as a badge), what it does, the command and the clock. */
-function WorkerHead({ live, faces, elapsed }: { live: TeamProgress; faces: TeamFace[]; elapsed: number }) {
+function WorkerHead({ live, faces, elapsed, paused }: { live: TeamProgress; faces: TeamFace[]; elapsed: number; paused?: boolean }) {
   const lead = faces[0];
   const worker = faceByTitle(faces, live.member) ?? lead;
   const isLead = !worker || worker === lead;
   const words = live.plain ?? live.doing ?? 'Working';
+  // A peer at work for another member: both are ringed, and the head names who asked whom.
+  const asker = live.consulting && faceByTitle(faces, live.consulting.from);
+  const handoff = live.consulting?.kind === 'handoff';
   return (
     <>
-      <span key={worker?.title} className="relative shrink-0 animate-pop">
-        {worker && <AgentAvatar agent={worker.face} size={44} />}
-        <span className="pointer-events-none absolute -inset-[4px] animate-pulse-soft rounded-[16px] border-2" style={{ borderColor: worker?.color }} />
-        {!isLead && lead && (
-          <span className="absolute -bottom-1.5 -right-1.5 rounded-full ring-2 ring-sf" title={`Works for ${lead.title}`}>
-            <AgentAvatar agent={lead.face} size={18} round />
+      {asker && live.consulting ? (
+        <span key={`${asker.title}>${worker?.title}`} className="relative flex shrink-0 items-center animate-pop" data-testid="team-consulting" title={`${asker.title} ${handoff ? 'handed the task to' : 'is consulting'} ${worker?.title}`}>
+          <span className="relative">
+            <AgentAvatar agent={asker.face} size={36} />
+            <span className="pointer-events-none absolute -inset-[3px] animate-pulse-soft rounded-[13px] border-2 border-dashed" style={{ borderColor: asker.color }} />
           </span>
-        )}
-      </span>
+          <span className="relative -ml-2.5">
+            {worker && <AgentAvatar agent={worker.face} size={44} />}
+            <span className={cn('pointer-events-none absolute -inset-[4px] rounded-[16px] border-2', paused ? 'border-warn' : 'animate-pulse-soft')} style={paused ? undefined : { borderColor: worker?.color }} />
+          </span>
+        </span>
+      ) : (
+        <span key={worker?.title} className="relative shrink-0 animate-pop">
+          {worker && <AgentAvatar agent={worker.face} size={44} />}
+          <span className={cn('pointer-events-none absolute -inset-[4px] rounded-[16px] border-2', paused ? 'border-warn' : 'animate-pulse-soft')} style={paused ? undefined : { borderColor: worker?.color }} />
+          {paused && (
+            <span className="absolute -right-1.5 -top-1.5 grid size-[18px] place-items-center rounded-full bg-warn text-bg ring-2 ring-sf" title="Paused" data-testid="team-paused-badge">
+              <Pause className="size-2.5" fill="currentColor" strokeWidth={0} />
+            </span>
+          )}
+          {!isLead && lead && (
+            <span className="absolute -bottom-1.5 -right-1.5 rounded-full ring-2 ring-sf" title={`Works for ${lead.title}`}>
+              <AgentAvatar agent={lead.face} size={18} round />
+            </span>
+          )}
+        </span>
+      )}
       <div className="min-w-0 flex-1" aria-live="polite">
         <div className="flex min-w-0 items-baseline gap-1.5">
-          <span className="truncate text-[14px] font-semibold text-t1">{worker?.title ?? live.member}</span>
-          {!isLead && lead && <span className="shrink-0 text-[10.5px] text-t3">for {lead.title}</span>}
+          {asker && live.consulting ? (
+            <span className="truncate text-[14px] font-semibold text-t1">
+              {asker.title} <span className="font-normal text-t2">{handoff ? 'handed over to the' : 'consulting the'}</span> {worker?.title ?? live.member}
+            </span>
+          ) : (
+            <>
+              <span className="truncate text-[14px] font-semibold text-t1">{worker?.title ?? live.member}</span>
+              {!isLead && lead && <span className="shrink-0 text-[10.5px] text-t3">for {lead.title}</span>}
+            </>
+          )}
         </div>
-        <div key={words} className="truncate text-[12.5px] font-medium leading-4 text-t1 animate-fade-up">
+        {paused && <div className="truncate text-[12.5px] font-semibold leading-4 text-warn">Paused: waiting for you</div>}
+        <div key={words} hidden={paused} className="truncate text-[12.5px] font-medium leading-4 text-t1 animate-fade-up">
           {words}
         </div>
         {live.command && (
@@ -245,10 +281,21 @@ export const questionText = (question: string) =>
     .replace(/^\s*-\s+/gm, '')
     .trim();
 
-/** The amber head of a node whose run waits on a member's question: the asker's face, "asks", and the question. */
-function AskHead({ waiting, faces }: { waiting: { member: string; question: string }; faces: TeamFace[] }) {
+/** What a run waits on at a Run a Team node: a member's question for a person, or a tool of its that needs approval. */
+export interface TeamWaiting {
+  member: string;
+  question: string;
+  approval?: TeamApprovalWait;
+}
+
+/** "Tech Lead wants to use Comment on pull request" (a tool waiting for approval), else the member's question. */
+const waitTitle = (waiting: TeamWaiting, who: string) => (waiting.approval ? `${who} wants to use ${waiting.approval.tool}` : `${who} asks a person`);
+const waitText = (waiting: TeamWaiting) => (waiting.approval ? (waiting.approval.summary ?? '') : questionText(waiting.question));
+
+/** The amber head of a node whose run waits on a member's question or a tool's approval: the asker's face and what it asks. */
+function AskHead({ waiting, faces }: { waiting: TeamWaiting; faces: TeamFace[] }) {
   const face = faceByTitle(faces, waiting.member) ?? faces[0];
-  const text = questionText(waiting.question);
+  const text = waitText(waiting);
   return (
     <>
       <span key={face.title} className="relative shrink-0 animate-pop">
@@ -259,10 +306,14 @@ function AskHead({ waiting, faces }: { waiting: { member: string; question: stri
         </span>
       </span>
       <div className="min-w-0 flex-1" aria-live="polite">
-        <div className="truncate text-[14px] font-semibold text-t1">{face.title} asks a person</div>
-        <div className="line-clamp-2 text-[12px] leading-4 text-t2" title={text}>
-          {text}
+        <div className="truncate text-[14px] font-semibold text-t1" title={waitTitle(waiting, face.title)}>
+          {waitTitle(waiting, face.title)}
         </div>
+        {text && (
+          <div className="line-clamp-2 text-[12px] leading-4 text-t2" title={text}>
+            {text}
+          </div>
+        )}
       </div>
     </>
   );
@@ -281,6 +332,55 @@ export function AnswerLink({ executionId, className }: { executionId: string; cl
     >
       Answer <ChevronRight className="size-3.5" />
     </a>
+  );
+}
+
+/**
+ * Approve / Deny a tool a member waits to use, from the node or the phone card: the same call as Needs you
+ * (`decideToolApprovals`, POST /api/executions/:id/approvals); `onDecide` replaces it where the page follows the run itself.
+ */
+export function ApprovalButtons({ executionId, onDecide, className }: { executionId: string; onDecide?: (approved: boolean) => Promise<void>; className?: string }) {
+  const [busy, setBusy] = useState<'approve' | 'deny'>();
+  const decide = async (approved: boolean) => {
+    setBusy(approved ? 'approve' : 'deny');
+    try {
+      if (onDecide) await onDecide(approved);
+      else await decideToolApprovals(executionId, approved);
+      toast.success(approved ? 'Approved' : 'Denied');
+    } catch (e) {
+      toast.error((e as Error).message);
+      setBusy(undefined);
+    }
+  };
+  return (
+    <span className={cn('flex items-center gap-2', className)} data-testid="team-approval">
+      <button
+        type="button"
+        disabled={Boolean(busy)}
+        {...own}
+        onClick={(e) => {
+          e.stopPropagation();
+          void decide(true);
+        }}
+        data-testid="team-approve"
+        className="nodrag nopan inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-full bg-warn px-4 text-[13px] font-semibold text-bg shadow-sm transition-transform hover:scale-[1.03] disabled:opacity-60"
+      >
+        {busy === 'approve' ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" strokeWidth={3} />} Approve
+      </button>
+      <button
+        type="button"
+        disabled={Boolean(busy)}
+        {...own}
+        onClick={(e) => {
+          e.stopPropagation();
+          void decide(false);
+        }}
+        data-testid="team-deny"
+        className="nodrag nopan inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-full border border-warn/60 px-4 text-[13px] font-semibold text-t1 transition-colors hover:bg-warndim disabled:opacity-60"
+      >
+        {busy === 'deny' ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" strokeWidth={3} />} Deny
+      </button>
+    </span>
   );
 }
 
@@ -342,16 +442,24 @@ export function TeamSummary({ activity, className }: { activity: TeamActivity; c
 export interface TeamTileOptions {
   /** The run the node is in: its ribbon's turns open in the Run Trace, its question's Answer goes to its form. */
   executionId?: string;
-  /** The run waits at this node for a person's answer to a member's question (the execution's `wait.data.teamQuestion`). */
-  waiting?: { member: string; question: string };
+  /** The run waits at this node for a person's answer to a member's question, or a tool's approval (the execution's `wait.data`). */
+  waiting?: TeamWaiting;
+  /** Decide a waiting tool approval where the page follows the run itself (the editor); else the approvals route is called and the page catches up. */
+  onDecide?: (approved: boolean) => Promise<void>;
   /** Open the Run Trace in a new tab (from the editor, so the flow stays open). */
   newTab?: boolean;
 }
 
-/** The question a waiting run's node waits on, from its wait's data (nodes/run-team.ts). */
-export function teamQuestionOf(wait: { nodeId?: string; data?: Record<string, unknown> } | undefined, nodeId: string): { member: string; question: string } | undefined {
-  const q = wait?.nodeId === nodeId ? (wait.data?.teamQuestion as { member?: unknown; question?: unknown } | undefined) : undefined;
-  return q && typeof q.member === 'string' && typeof q.question === 'string' ? { member: q.member, question: q.question } : undefined;
+/** What a waiting run's node waits on, from its wait's data (nodes/run-team.ts): a member's question, or a tool's approval. */
+export function teamQuestionOf(wait: { nodeId?: string; data?: Record<string, unknown> } | undefined, nodeId: string): TeamWaiting | undefined {
+  if (wait?.nodeId !== nodeId) return undefined;
+  const q = wait.data?.teamQuestion as { member?: unknown; question?: unknown } | undefined;
+  if (q && typeof q.member === 'string' && typeof q.question === 'string') return { member: q.member, question: q.question };
+  const a = wait.data?.teamApproval as { member?: unknown; tool?: unknown; summary?: unknown } | undefined;
+  if (a && typeof a.member === 'string' && typeof a.tool === 'string') {
+    return { member: a.member, question: `${a.member} wants to use ${a.tool}`, approval: { tool: a.tool, ...(typeof a.summary === 'string' && a.summary && { summary: a.summary }) } };
+  }
+  return undefined;
 }
 
 const AMBER = 'var(--warn)';
@@ -364,6 +472,7 @@ const AMBER = 'var(--warn)';
 export function useTeamTile(teamId: string | undefined, live: TeamProgress | undefined, activity: TeamActivity | undefined, options: TeamTileOptions = {}): { tile?: NodeLive; moments?: ReactNode } {
   const faces = useTeamFaces(teamId);
   const elapsed = useElapsed(live);
+  const working = useWorkingMembers(options.executionId, Boolean(live && options.executionId && !options.waiting));
   if (!faces?.length) return {};
   const { executionId, newTab } = options;
   const hrefOf = executionId ? (turn: TeamTurn) => memberTraceHref(executionId, turn.member) : undefined;
@@ -377,7 +486,15 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
         body: (
           <>
             <div className="mx-4 flex items-center gap-2 border-t border-hair pt-2">
-              {executionId && options.waiting ? <AnswerLink executionId={executionId} /> : <span className="text-[11.5px] text-t3">Waiting for the answer…</span>}
+              {executionId && options.waiting ? (
+                asked.approval ? (
+                  <ApprovalButtons executionId={executionId} onDecide={options.onDecide} className="w-full" />
+                ) : (
+                  <AnswerLink executionId={executionId} />
+                )
+              ) : (
+                <span className="text-[11.5px] text-t3">{asked.approval ? 'Waiting for an approval…' : 'Waiting for the answer…'}</span>
+              )}
             </div>
             <TeamBudgets usage={live?.usage ?? activity?.usage} faces={faces} focus={asked.member} className="mx-4 mt-2" />
             {turns && <TeamRibbon turns={turns} total={live ? elapsed : (activity?.durationMs ?? 0)} faces={faces} hrefOf={hrefOf} newTab={newTab} />}
@@ -389,13 +506,16 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
   }
   if (live) {
     const worker = faceByTitle(faces, live.member) ?? faces[0];
+    const mine = stateOf(working.members, live.member);
+    const paused = mine?.state === 'paused';
     return {
       tile: {
-        color: worker.color,
-        head: <WorkerHead live={live} faces={faces} elapsed={elapsed} />,
+        color: paused ? AMBER : worker.color,
+        head: <WorkerHead live={live} faces={faces} elapsed={elapsed} paused={paused} />,
         body: (
           <>
             <TeamTicker steps={live.steps} className="mx-4 border-t border-hair pt-2" />
+            {executionId && mine && <TeamPauseBar executionId={executionId} member={live.member} className="mx-4 mt-2" />}
             <TeamBudgets usage={live.usage} faces={faces} focus={live.member} className="mx-4 mt-2" />
             <TeamRibbon turns={live.turns} total={elapsed} faces={faces} open hrefOf={hrefOf} newTab={newTab} />
           </>
@@ -426,34 +546,50 @@ const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1
  * The execution view's Now card on a phone, where the canvas is small: who works and on what in a sentence, the command,
  * the ticker, and a way into the Run Trace.
  */
-export function TeamNowCard({ teamId, live, nodeName, onOpenTrace }: { teamId: string; live: TeamProgress; nodeName: string; onOpenTrace?: () => void }) {
+export function TeamNowCard({ teamId, live, nodeName, onOpenTrace, executionId }: { teamId: string; live: TeamProgress; nodeName: string; onOpenTrace?: () => void; executionId?: string }) {
   const faces = useTeamFaces(teamId);
   const elapsed = useElapsed(live);
+  const working = useWorkingMembers(executionId, Boolean(executionId && !live.waiting));
   if (!faces?.length) return null;
   const lead = faces[0];
   const worker = faceByTitle(faces, live.member) ?? lead;
   const words = live.plain ?? live.doing ?? 'Working';
   if (live.waiting) return <TeamAskCard teamId={teamId} waiting={live.waiting} nodeName={nodeName} />;
+  const paused = stateOf(working.members, live.member)?.state === 'paused';
+  const consulting = live.consulting && faceByTitle(faces, live.consulting.from);
   return (
-    <section className="rounded-2xl border border-hair bg-sf p-3 shadow-pop" data-testid="team-now-card" aria-live="polite">
+    <section className={cn('rounded-2xl border bg-sf p-3 shadow-pop', paused ? 'border-warn/50' : 'border-hair')} data-testid="team-now-card" aria-live="polite">
       <div className="mb-2 flex items-center justify-between text-[11px] text-t3">
         <span className="truncate font-semibold uppercase tracking-[0.06em]">Now · {nodeName}</span>
         <span className="shrink-0 font-mono tabular-nums">{clock(elapsed)}</span>
       </div>
       <div className="flex min-w-0 items-center gap-3">
+        {consulting && (
+          <span className="relative -mr-5 shrink-0 animate-pop">
+            <AgentAvatar agent={consulting.face} size={32} />
+            <span className="pointer-events-none absolute -inset-[3px] animate-pulse-soft rounded-[12px] border-2 border-dashed" style={{ borderColor: consulting.color }} />
+          </span>
+        )}
         <span key={worker.title} className="relative shrink-0 animate-pop">
           <AgentAvatar agent={worker.face} size={40} />
-          <span className="pointer-events-none absolute -inset-[3px] animate-pulse-soft rounded-[14px] border-2" style={{ borderColor: worker.color }} />
+          <span className={cn('pointer-events-none absolute -inset-[3px] rounded-[14px] border-2', paused ? 'border-warn' : 'animate-pulse-soft')} style={paused ? undefined : { borderColor: worker.color }} />
+          {paused && (
+            <span className="absolute -right-1.5 -top-1.5 grid size-[18px] place-items-center rounded-full bg-warn text-bg ring-2 ring-sf" title="Paused">
+              <Pause className="size-2.5" fill="currentColor" strokeWidth={0} />
+            </span>
+          )}
         </span>
         <div className="min-w-0">
           <div key={words} className="text-[14px] font-semibold leading-5 text-t1 animate-fade-up">
-            {worker.title} is {lowerFirst(words)}
+            {paused ? `${worker.title} is paused` : consulting && live.consulting ? `${consulting.title} ${live.consulting.kind === 'handoff' ? 'handed over to the' : 'is consulting the'} ${worker.title}` : `${worker.title} is ${lowerFirst(words)}`}
           </div>
+          {consulting && <div className="text-[12.5px] leading-4 text-t2">{words}</div>}
           {live.command && <div className="truncate font-mono text-[10.5px] text-t3">{live.command}</div>}
         </div>
       </div>
       <TeamTicker steps={live.steps} className="mt-2.5" />
       <TeamBudgets usage={live.usage} faces={faces} focus={live.member} className="mt-2.5" />
+      {executionId && <TeamPauseBar executionId={executionId} member={live.member} className="mt-2.5" />}
       <div className="mt-2.5 flex items-center justify-between border-t border-hair pt-2 text-[11.5px] text-t3">
         <span className="truncate">
           {worker === lead ? 'Leading the team' : `For ${lead.title}`}
@@ -470,7 +606,7 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace }: { teamId: s
 }
 
 /** The phone card of a run waiting on a member's question: who asks, the question in full, and the Answer button. */
-export function TeamAskCard({ teamId, waiting, nodeName, executionId }: { teamId: string; waiting: { member: string; question: string }; nodeName: string; executionId?: string }) {
+export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }: { teamId: string; waiting: TeamWaiting; nodeName: string; executionId?: string; onDecide?: (approved: boolean) => Promise<void> }) {
   const faces = useTeamFaces(teamId);
   if (!faces?.length) return null;
   const face = faceByTitle(faces, waiting.member) ?? faces[0];
@@ -483,11 +619,11 @@ export function TeamAskCard({ teamId, waiting, nodeName, executionId }: { teamId
           <span className="pointer-events-none absolute -inset-[3px] animate-pulse-soft rounded-[14px] border-2 border-warn" />
         </span>
         <div className="min-w-0">
-          <div className="text-[14px] font-semibold leading-5 text-t1">{face.title} asks</div>
-          <p className="mt-0.5 whitespace-pre-line text-[13px] leading-5 text-t1">{questionText(waiting.question)}</p>
+          <div className="text-[14px] font-semibold leading-5 text-t1">{waiting.approval ? waitTitle(waiting, face.title) : `${face.title} asks`}</div>
+          {waitText(waiting) && <p className="mt-0.5 whitespace-pre-line text-[13px] leading-5 text-t1">{waitText(waiting)}</p>}
         </div>
       </div>
-      {executionId && <AnswerLink executionId={executionId} className="mt-3 w-full" />}
+      {executionId && (waiting.approval ? <ApprovalButtons executionId={executionId} onDecide={onDecide} className="mt-3" /> : <AnswerLink executionId={executionId} className="mt-3 w-full" />)}
     </section>
   );
 }

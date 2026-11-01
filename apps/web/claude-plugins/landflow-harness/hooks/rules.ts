@@ -183,6 +183,109 @@ export function guardBash(command: string, cwd = '/'): Verdict | undefined {
   return undefined
 }
 
+/**
+ * The strict guard (an agent deployed with `guard: strict`, such as a reviewer): read-only on the code. On top of the rules
+ * above, it refuses edits outside /tmp, commits and every other git command that changes the branch or the remote,
+ * pull requests and issues opened, closed or edited, GitHub API writes, deleting, moving or overwriting files, and
+ * publishing packages. Reading, searching, installing dependencies, running tests and builds, and reviewing or commenting
+ * on a pull request go on. Best effort: a script that writes files itself isn't caught, so it pairs with a token that
+ * can't push.
+ */
+const SCRATCH = ['/tmp', '/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty']
+const scratch = (path: string) => SCRATCH.some(root => within(path, root))
+const GIT_WRITES = new Set(['commit', 'push', 'merge', 'rebase', 'reset', 'revert', 'cherry-pick', 'am', 'apply', 'rm', 'mv', 'clean', 'restore', 'add', 'init', 'filter-branch', 'filter-repo', 'replace', 'update-ref', 'notes', 'submodule', 'pull'])
+const GH_WRITES: Record<string, Set<string>> = {
+  pr: new Set(['create', 'merge', 'close', 'reopen', 'edit', 'ready', 'lock', 'unlock']),
+  issue: new Set(['create', 'close', 'reopen', 'edit', 'delete', 'transfer', 'lock', 'unlock', 'pin', 'unpin']),
+  release: new Set(['create', 'delete', 'edit', 'upload']),
+  repo: new Set(['create', 'delete', 'edit', 'fork', 'rename', 'archive', 'sync']),
+  label: new Set(['create', 'delete', 'edit', 'clone']),
+  workflow: new Set(['run', 'enable', 'disable']),
+  run: new Set(['rerun', 'cancel', 'delete']),
+  secret: new Set(['set', 'delete']),
+  variable: new Set(['set', 'delete']),
+  gist: new Set(['create', 'delete', 'edit']),
+}
+const FILE_CHANGERS = new Set(['rm', 'rmdir', 'mv', 'unlink', 'truncate', 'shred', 'chmod', 'chown', 'chgrp', 'ln', 'patch', 'install'])
+const PUBLISHERS = new Set(['npm', 'pnpm', 'yarn', 'bun', 'cargo', 'twine', 'poetry', 'gem'])
+const READ_ONLY = 'This agent is read-only on the code'
+
+/** Where a segment's output redirections write (`> f`, `>> f`, `2> f`, `&> f`), not `>&2` or `2>&1`. */
+function redirections(segment: string): string[] {
+  const targets: string[] = []
+  // Quoted text is an argument, not a redirection (`echo "a -> b"`); a quoted target is still a file in the working directory.
+  const bare = segment.replace(/"[^"]*"|'[^']*'/g, 'quoted')
+  for (const match of bare.matchAll(/(?:^|[^<>&0-9])(?:[0-9]|&)?>>?(?!&)\s*([^\s;|&<>]+)/g)) targets.push(match[1]!)
+  return targets
+}
+
+function readOnlySegment(segment: string, cwd: string): Verdict | undefined {
+  const words = wordsOf(segment)
+  const head = words[0]?.replace(/^.*\//, '')
+  if (!head) return undefined
+  const outside = redirections(segment).map(t => normalPath(t, cwd)).find(t => !scratch(t))
+  if (outside) return { rule: 'read-only', reason: `${READ_ONLY}: it doesn't write ${outside}. Write notes under /tmp, or say what should change.` }
+
+  const git = gitArgs(words)
+  if (git) {
+    if (GIT_WRITES.has(git.sub)) return { rule: 'read-only', reason: `${READ_ONLY}: \`git ${git.sub}\` changes the branch or the remote. Read and review; say what should change instead.` }
+    if (git.sub === 'stash' && !['list', 'show'].includes(git.args[0] ?? '')) return { rule: 'read-only', reason: `${READ_ONLY}: \`git stash\` changes the working tree. Read and review instead.` }
+    if (git.sub === 'branch' && git.args.some(a => /^(-[dDmMcC]|--delete|--move|--copy|--force|-f)$/.test(a))) return { rule: 'read-only', reason: `${READ_ONLY}: it doesn't delete, move or copy branches.` }
+    if (git.sub === 'tag' && git.args.some(a => !a.startsWith('-') || /^(-[adsfm]|--delete|--annotate|--sign|--force)$/.test(a)) && !git.args.some(a => /^(-l|--list|-n\d*|--contains|--points-at)$/.test(a))) return { rule: 'read-only', reason: `${READ_ONLY}: it doesn't make or delete tags.` }
+    if ((git.sub === 'checkout' || git.sub === 'switch') && git.args.some(a => /^(-[bBcC]|--orphan|--)$/.test(a) || a === '.')) return { rule: 'read-only', reason: `${READ_ONLY}: \`git ${git.sub} ${git.args.join(' ')}\` makes a branch or discards changes. Checking out an existing branch to read it is fine.` }
+    return undefined
+  }
+
+  if (head === 'gh') {
+    const [group, action] = [words[1] ?? '', words[2] ?? '']
+    if (GH_WRITES[group]?.has(action)) return { rule: 'read-only', reason: `${READ_ONLY}: \`gh ${group} ${action}\` changes GitHub. Review and comment on the pull request; the flow opens, merges and closes it.` }
+    if (group === 'api') {
+      const method = words.findIndex(w => w === '-X' || w === '--method')
+      const verb = (method >= 0 ? words[method + 1] : words.find(w => /^(-X|--method=)/.test(w))?.replace(/^(-X|--method=)/, ''))?.toUpperCase()
+      const fields = words.some(w => /^(-f|-F|--field|--raw-field|--input)(=|$)/.test(w))
+      const comment = /\/(pulls\/\d+\/(comments|reviews)|issues\/\d+\/comments)\b/.test(segment)
+      if ((verb && verb !== 'GET') || (!verb && fields)) {
+        if (!(comment && (verb === 'POST' || !verb))) return { rule: 'read-only', reason: `${READ_ONLY}: that GitHub API call writes. Reading and commenting on a pull request are fine.` }
+      }
+    }
+    return undefined
+  }
+
+  if (FILE_CHANGERS.has(head)) {
+    const targets = words.slice(1).filter(w => !w.startsWith('-')).map(w => normalPath(w, cwd))
+    if (!targets.length || targets.some(t => !scratch(t))) return { rule: 'read-only', reason: `${READ_ONLY}: \`${head}\` changes files. Say what should change instead.` }
+  }
+  if (head === 'cp' || head === 'tee' || head === 'touch' || head === 'mkdir') {
+    const positional = words.slice(1).filter(w => !w.startsWith('-'))
+    const targets = (head === 'cp' ? positional.slice(-1) : positional).map(w => normalPath(w, cwd))
+    if (targets.some(t => !scratch(t))) return { rule: 'read-only', reason: `${READ_ONLY}: \`${head}\` writes ${targets.find(t => !scratch(t))}. Use /tmp for scratch files.` }
+  }
+  if ((head === 'sed' || head === 'perl') && words.some(w => /^-[a-zA-Z]*i/.test(w) || w === '--in-place' || w.startsWith('--in-place='))) {
+    return { rule: 'read-only', reason: `${READ_ONLY}: \`${head} -i\` edits files in place. Say what should change instead.` }
+  }
+  if (PUBLISHERS.has(head) && words.slice(1).some(w => w === 'publish' || w === 'unpublish' || w === 'deprecate' || w === 'yank')) {
+    return { rule: 'read-only', reason: `${READ_ONLY}: publishing packages is not done from here.` }
+  }
+  return undefined
+}
+
+/** A tool call the strict guard refuses: an edit outside /tmp, or a Bash command that changes the code or GitHub. */
+export function guardReadOnly(tool: string, input: Record<string, unknown>, cwd = '/'): Verdict | undefined {
+  if (FILE_TOOLS_WRITE.has(tool)) {
+    const raw = [input.file_path, input.notebook_path, input.path].find(v => typeof v === 'string' && v.trim()) as string | undefined
+    const path = raw ? normalPath(raw.trim(), cwd) : undefined
+    if (!path || !scratch(path)) return { rule: 'read-only', reason: `${READ_ONLY}: it doesn't edit ${path ?? 'files'}. Write notes under /tmp, or say what should change and where.` }
+    return undefined
+  }
+  if (tool === 'Bash' && typeof input.command === 'string') {
+    for (const segment of segments(input.command)) {
+      const verdict = readOnlySegment(segment, cwd)
+      if (verdict) return verdict
+    }
+  }
+  return undefined
+}
+
 /** Tokens and keys as their issuers write them, and what each is called when it is masked. */
 const SECRETS: Array<[RegExp, string]> = [
   [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, 'private key'],

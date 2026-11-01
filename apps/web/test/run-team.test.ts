@@ -7,7 +7,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import type { Workflow, WorkflowNode } from '@landflow/engine';
+import { toToolName, type Workflow, type WorkflowNode } from '@landflow/engine';
 import type { AgentTeamConfig, TeamMember } from '@/lib/shared/agent-teams';
 import type { TeamActivity } from '@/lib/shared/team-progress';
 import { startFakeModels, type FakeReply } from './fake-ai-services';
@@ -299,6 +299,152 @@ describe('Run a Team', () => {
     expect(resumed.error?.message ?? resumed.status).toBe('success');
     const done = resumed.runData.Team?.at(-1)?.outputs?.[0]?.[0]?.json as Record<string, unknown>;
     expect(done.reply).toBe('Lead: Developer: You said: green');
+  });
+
+  it('pauses at a tool that needs approval and goes on with the person’s decision, recording it as a check', async () => {
+    const { decideApproval } = await import('@/lib/server/approvals');
+    const comment = agentStore.create({
+      name: 'Commenter',
+      instructions: 'You comment.',
+      model: { provider: 'ollama', model: 'comment-model', baseUrl: fake.url.replace(/\/v1$/, '') },
+      tools: [{ id: 't1', type: 'node', name: 'Comment on pull request', description: 'Comment', nodeType: 'core.noOp', parameters: {}, requireApproval: true }],
+    });
+    agentStore.publish(comment.id);
+    const t = team([{ id: 'm_dev', title: 'Developer', kind: 'agent', agentId: comment.id, reportsTo: 'm_lead' } as TeamMember]);
+    const tool = toToolName('Comment on pull request');
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_developer', { message: 'Comment on #5', reason: 'Tell them' }) : { text: `Lead: ${lastTool(body).slice(0, 60)}` }));
+    scripts.set('comment-model', (turn, body) => (turn === 1 ? call(tool, { text: 'Review passed', reason: 'Tell them' }, 'c_comment') : { text: `Developer: ${lastTool(body).slice(0, 40)}` }));
+    turns.clear();
+    const { record } = await run(t.id);
+    // The wait looks like the AI Agent node's, so Needs you, the execution view, Slack and email decide it the same way.
+    expect(record.status).toBe('waiting');
+    expect(record.wait?.data).toMatchObject({
+      approval: { channel: 'chat', title: 'Developer wants to use Comment on pull request', calls: [{ id: expect.stringMatching(/^m_dev\//), tool: 'Comment on pull request', input: { text: 'Review passed' } }] },
+      teamApproval: { team: 'Plugin team', member: 'Developer', tool: 'Comment on pull request' },
+    });
+    const callId = (record.wait?.data?.approval as { calls: Array<{ id: string }> }).calls[0].id;
+    const outcome = await decideApproval(record.executionId, callId, true, { by: 'ana@example.com' });
+    resetJournals();
+    expect(outcome.status).toBe('resumed');
+    const resumed = (outcome as { record: typeof record }).record;
+    expect(resumed.error?.message ?? resumed.status).toBe('success');
+    const done = resumed.runData.Team?.at(-1)?.outputs?.[0]?.[0]?.json as Record<string, unknown>;
+    // The tool ran (the Developer saw its result), and the team went on.
+    expect(String(done.reply)).toContain('Lead: Developer:');
+    expect(String(done.reply)).not.toContain('rejected');
+    const events = read(record.executionId);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'check', check: expect.objectContaining({ name: 'Approval', status: 'pass', subject: 'Developer', message: expect.stringContaining('ana@example.com approved Developer\'s use of Comment on pull request') }) }));
+  });
+
+  it('tells the member when the person rejects the tool call, and the team goes on without it', async () => {
+    const { decideApproval } = await import('@/lib/server/approvals');
+    const merger = agentStore.create({
+      name: 'Merger',
+      instructions: 'You merge.',
+      model: { provider: 'ollama', model: 'merge-model', baseUrl: fake.url.replace(/\/v1$/, '') },
+      tools: [{ id: 't1', type: 'node', name: 'Merge pull request', description: 'Merge', nodeType: 'core.noOp', parameters: {}, requireApproval: true }],
+    });
+    agentStore.publish(merger.id);
+    const t = team([{ id: 'm_dev', title: 'Developer', kind: 'agent', agentId: merger.id, reportsTo: 'm_lead' } as TeamMember]);
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_developer', { message: 'Merge #5', reason: 'Ship it' }) : { text: `Lead heard: ${lastTool(body)}` }));
+    scripts.set('merge-model', (turn, body) => (turn === 1 ? call(toToolName('Merge pull request'), { reason: 'Ship it' }, 'c_merge') : { text: `Could not merge: ${lastTool(body)}` }));
+    turns.clear();
+    const { record } = await run(t.id);
+    expect(record.status).toBe('waiting');
+    const callId = (record.wait?.data?.approval as { calls: Array<{ id: string }> }).calls[0].id;
+    const outcome = await decideApproval(record.executionId, callId, false, { by: 'ana@example.com' });
+    resetJournals();
+    const resumed = (outcome as { record: typeof record }).record;
+    expect(resumed.status).toBe('success');
+    const done = resumed.runData.Team?.at(-1)?.outputs?.[0]?.[0]?.json as Record<string, unknown>;
+    expect(done.reply).toContain('Could not merge: A person rejected your call to Merge pull request; it did not run');
+    expect(read(record.executionId)).toContainEqual(expect.objectContaining({ type: 'check', check: expect.objectContaining({ name: 'Approval', status: 'warn', message: expect.stringContaining('rejected Developer') }) }));
+  });
+
+  it('refuses a tool that needs approval outside a flow and ends in Needs a person with what was wanted', async () => {
+    const { runTeam } = await import('@/lib/server/agent-teams/runtime');
+    const poster = agentStore.create({
+      name: 'Poster',
+      instructions: 'You post.',
+      model: { provider: 'ollama', model: 'post-model', baseUrl: fake.url.replace(/\/v1$/, '') },
+      tools: [{ id: 't1', type: 'node', name: 'Post update', description: 'Post', nodeType: 'core.noOp', parameters: {}, requireApproval: true }],
+    });
+    agentStore.publish(poster.id);
+    const t = team([{ id: 'm_dev', title: 'Developer', kind: 'agent', agentId: poster.id, reportsTo: 'm_lead' } as TeamMember]);
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_developer', { message: 'Post it', reason: 'Tell' }) : { text: `Lead: ${lastTool(body).slice(0, 20)}` }));
+    scripts.set('post-model', (turn) => (turn === 1 ? call(toToolName('Post update'), { reason: 'Tell' }, 'c_post') : { text: 'Could not post' }));
+    turns.clear();
+    const result = await runTeam({ team: { id: t.id, name: 'Plugin team' }, config: agentTeamStore.get(t.id)!.published!, message: 'Post', userId: 'test' });
+    expect(result.waiting).toBeUndefined();
+    expect(result.needsPerson).toContain("Developer wanted to use Post update, which needs a person's approval");
+  });
+
+  it('lets a member consult a peer, whose answer comes back to the member that asked', async () => {
+    const t = team([
+      { id: 'm_dev', title: 'Developer', kind: 'agent', agentId: developer.id, reportsTo: 'm_lead', consults: ['m_qa'] } as TeamMember,
+      { id: 'm_qa', title: 'Reviewer', kind: 'agent', agentId: qa.id, reportsTo: 'm_lead', budgetTokens: 100_000 } as TeamMember,
+    ]);
+    const seen: string[][] = [];
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_developer', { message: 'Add the tests', reason: 'Needs code' }) : { text: `Lead: ${lastTool(body)}` }));
+    scripts.set('dev-model', (turn, body) => {
+      seen.push((body.tools ?? []).map((tool) => tool.function.name));
+      return turn === 1 ? call('consult_reviewer', { message: 'How do tests fake the API?', reason: 'how tests fake the API' }) : { text: `Developer: ${lastTool(body)}` };
+    });
+    scripts.set('qa-model', (_turn, body) => ({ text: `Reviewer says ${lastUser(body).includes('Developer') ? 'to the Developer' : 'to someone'}: use the fake server` }));
+    turns.clear();
+    const { done, events } = await run(t.id);
+    // The Developer has the consult and the hand-off tool for its peer, the Reviewer (who has none: nobody may be consulted by it).
+    expect(seen[0]).toEqual(expect.arrayContaining(['consult_reviewer', 'hand_off_to_reviewer']));
+    // The Reviewer answered the Developer (its ask carried the Developer's task, not the lead's), and the lead got the Developer's answer.
+    expect(String(done?.reply)).toContain('Developer: Reviewer says to the Developer: use the fake server');
+    // The peer's tokens count against its own budget, and the ask is counted.
+    expect(done?.members).toContainEqual(expect.objectContaining({ title: 'Reviewer', asked: 1, tokens: expect.any(Number) }));
+    // The consult sits under the Developer's request in the journal.
+    const spans = events.filter((e) => e.type === 'span.started');
+    const consult = spans.find((e) => e.type === 'span.started' && e.attrs?.tool === 'consult_reviewer');
+    const asked = spans.find((e) => e.type === 'span.started' && e.attrs?.tool === 'ask_developer');
+    expect(consult).toMatchObject({ kind: 'delegate', name: 'Reviewer', attrs: { reason: 'how tests fake the API' } });
+    expect(consult?.type === 'span.started' && consult.parentSpanId).toBe(asked?.type === 'span.started' && asked.spanId);
+  });
+
+  it('hands a task to a peer: the peer’s answer goes to the manager as the result of the original ask', async () => {
+    const t = team([
+      { id: 'm_plan', title: 'Planner', kind: 'agent', agentId: developer.id, reportsTo: 'm_lead', consults: ['m_qa'] } as TeamMember,
+      { id: 'm_qa', title: 'Builder', kind: 'agent', agentId: qa.id, reportsTo: 'm_lead' } as TeamMember,
+    ]);
+    let planner = 0;
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_planner', { message: 'Plan and build the slugify plugin', reason: 'Start' }) : { text: `Lead: ${lastTool(body)}` }));
+    scripts.set('dev-model', (turn, body) => {
+      planner++;
+      return turn === 1 ? call('hand_off_to_builder', { message: 'Notes: use a regex', reason: 'You build it' }) : { text: `Planner extra turn ${lastTool(body)}` };
+    });
+    scripts.set('qa-model', (_turn, body) => ({ text: `Built it from: ${lastUser(body).includes('Notes: use a regex') ? 'the notes' : 'nothing'}` }));
+    turns.clear();
+    const { done, events } = await run(t.id);
+    // The Planner stepped out after the hand-off (one model call), and the Builder's answer is what the lead heard.
+    expect(planner).toBe(1);
+    expect(String(done?.reply)).toContain('Built it from: the notes');
+    expect(String(done?.reply)).toContain('Planner handed this task to Builder');
+    expect(events).toContainEqual(expect.objectContaining({ type: 'check', check: expect.objectContaining({ name: 'Hand-off', message: 'Planner handed the task to Builder' }) }));
+  });
+
+  it('offers no consult back to a member in the chain, so peers can’t loop', async () => {
+    const t = team([
+      { id: 'm_dev', title: 'Developer', kind: 'agent', agentId: developer.id, reportsTo: 'm_lead', consults: ['m_qa'] } as TeamMember,
+      { id: 'm_qa', title: 'Reviewer', kind: 'agent', agentId: qa.id, reportsTo: 'm_lead', consults: ['m_dev'] } as TeamMember,
+    ]);
+    const qaTools: string[][] = [];
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_developer', { message: 'Go', reason: 'Start' }) : { text: `Lead: ${lastTool(body)}` }));
+    scripts.set('dev-model', (turn, body) => (turn === 1 ? call('consult_reviewer', { message: 'Hi', reason: 'Ask' }) : { text: `Developer: ${lastTool(body)}` }));
+    scripts.set('qa-model', (_turn, body) => {
+      qaTools.push((body.tools ?? []).map((tool) => tool.function.name));
+      return { text: 'Reviewer answer' };
+    });
+    turns.clear();
+    const { done } = await run(t.id);
+    expect(String(done?.reply)).toContain('Reviewer answer');
+    // The Developer is waiting on the Reviewer, so the Reviewer isn't offered the Developer.
+    expect(qaTools[0].some((name) => name.includes('developer'))).toBe(false);
   });
 
   it('ends in Needs a person when the run can’t wait for one', async () => {

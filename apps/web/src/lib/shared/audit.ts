@@ -102,6 +102,8 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'execution.delete': 'Deleted an execution',
   'execution.stop': 'Stopped an execution',
   'execution.stop_all': 'Stopped all executions',
+  'execution.agent.pause': 'Paused a team member',
+  'execution.agent.continue': 'Took over a paused team member',
   'source_control.push': 'Pushed to Git',
   'source_control.pull': 'Pulled from Git',
   'sync.apply': 'Applied Git sync files',

@@ -733,7 +733,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
         const teamId = typeof node?.parameters.teamId === 'string' ? node.parameters.teamId : undefined;
         return node && teamId ? (
           <div key={nodeId} className="shrink-0 px-3 pt-3 sm:hidden">
-            <TeamNowCard teamId={teamId} live={team} nodeName={node.name} onOpenTrace={view === 'canvas' ? () => chooseView('trace') : undefined} />
+            <TeamNowCard teamId={teamId} live={team} nodeName={node.name} executionId={executionId} onOpenTrace={view === 'canvas' ? () => chooseView('trace') : undefined} />
           </div>
         ) : null;
       })}

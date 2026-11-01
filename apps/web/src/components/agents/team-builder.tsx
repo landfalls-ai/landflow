@@ -190,7 +190,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
       const exists = c.members.some((m) => m.id === member.id);
       return { ...c, members: exists ? c.members.map((m) => (m.id === member.id ? member : m)) : [...c.members, member] };
     });
-  /** Removing a member hands its reports to its manager and drops it from reviews. */
+  /** Removing a member hands its reports to its manager and drops it from reviews and consults. */
   const removeMember = (id: string) =>
     update((c) => {
       const gone = c.members.find((m) => m.id === id);
@@ -198,7 +198,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
         ...c,
         members: c.members
           .filter((m) => m.id !== id)
-          .map((m) => ({ ...m, ...(m.reportsTo === id && { reportsTo: gone?.reportsTo }), ...(m.reviews?.includes(id) && { reviews: m.reviews.filter((r) => r !== id) }) })),
+          .map((m) => ({ ...m, ...(m.reportsTo === id && { reportsTo: gone?.reportsTo }), ...(m.reviews?.includes(id) && { reviews: m.reviews.filter((r) => r !== id) }), ...(m.consults?.includes(id) && { consults: m.consults.filter((r) => r !== id) }) })),
       };
     });
 
@@ -419,8 +419,9 @@ function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddRepor
   const manager = managerOf(config, member);
   const reviews = (member.reviews ?? []).map((id) => config.members.find((m) => m.id === id)?.title).filter(Boolean);
   const reviewedBy = config.members.filter((m) => m.reviews?.includes(member.id)).map((m) => m.title);
+  const consults = (member.consults ?? []).map((id) => config.members.find((m) => m.id === id)?.title).filter(Boolean);
   // A footer only when it has something to say: a card in a row without one keeps its height (the grid) and its role.
-  const chips = Boolean((manager && !inSection) || reviews.length || reviewedBy.length || member.budgetTokens !== undefined || member.questionsTo === 'person');
+  const chips = Boolean((manager && !inSection) || reviews.length || reviewedBy.length || consults.length || member.budgetTokens !== undefined || member.questionsTo === 'person');
   const runsOn = member.kind === 'a2a' ? (agent ? `${agent.name} on kagent` : 'Remote agent over A2A') : agent ? 'Landflow agent' : 'Pick an agent';
   return (
     // A card: who (face, title, where it runs), what it does, and its relations in a footer, so cards in a row line up.
@@ -447,6 +448,12 @@ function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddRepor
           {manager && !inSection && <Chip>Reports to {manager.title}</Chip>}
           {reviews.length > 0 && <Chip tone="accent">Reviews {reviews.join(', ')}</Chip>}
           {reviewedBy.length > 0 && <Chip>Reviewed by {reviewedBy.join(', ')}</Chip>}
+          {/* A dashed chip: a standing line between peers, not a reporting line. */}
+          {consults.length > 0 && (
+            <Chip tone="accent" className="border-dashed">
+              May consult {consults.join(', ')}
+            </Chip>
+          )}
           {member.budgetTokens !== undefined && <Chip>{tokens(member.budgetTokens)} tokens a run</Chip>}
           {member.questionsTo === 'person' && <Chip>Questions go to a person</Chip>}
           {!manager && !chips && <span className="text-[12px] text-t3">Runs the team</span>}
@@ -510,8 +517,8 @@ function MemberDialog({
 
   const finish = () => {
     const role = value.role?.trim();
-    const { reviews, ...rest } = value;
-    onSave({ ...rest, title: value.title.trim(), ...(role ? { role } : { role: undefined }), ...(reviews?.length && { reviews }) } as TeamMember);
+    const { reviews, consults, ...rest } = value;
+    onSave({ ...rest, title: value.title.trim(), ...(role ? { role } : { role: undefined }), ...(reviews?.length && { reviews }), ...(value.kind === 'agent' && consults?.length && { consults }) } as TeamMember);
   };
 
   return (
@@ -608,6 +615,29 @@ function MemberDialog({
               })}
             </div>
             <p className="mt-1 text-[12px] leading-snug text-t3">Their manager can’t report done until this member signs off their work.</p>
+          </fieldset>
+        )}
+        {others.length > 0 && value.kind === 'agent' && (
+          <fieldset>
+            <legend className="mb-[5px] text-[12px] font-semibold text-t2">May consult</legend>
+            <div className="space-y-1">
+              {others.map((m) => {
+                const on = value.consults?.includes(m.id) ?? false;
+                return (
+                  <label key={m.id} className="flex cursor-pointer items-center gap-2 rounded-[10px] border border-dashed border-hair bg-wl px-3 py-2 text-[13px] text-t1">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => set({ consults: on ? (value.consults ?? []).filter((r) => r !== m.id) : [...(value.consults ?? []), m.id] })}
+                      className="size-4 accent-[var(--ac)]"
+                    />
+                    {m.title || 'Untitled'}
+                    {on && <Check className="ml-auto size-3.5 text-ac" />}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[12px] leading-snug text-t3">It can ask them a question directly (the answer comes back to it, not to its manager) or hand its task over to them, without going through its manager.</p>
           </fieldset>
         )}
         <div className="grid gap-4 sm:grid-cols-2">

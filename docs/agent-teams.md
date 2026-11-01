@@ -2,7 +2,7 @@
 
 An agent team is a set of agents with standing relations, like an org chart: one **lead** runs the work, every other
 member **reports to** exactly one manager, and a member can **review** another's work, so its manager can't report done
-until the reviewer signs off. Members are Landflow [agents](agents.md) or remote agents over [A2A](a2a.md) (Claude Code on
+until the reviewer signs off. A member can also be allowed to **consult** a peer (ask it directly) or hand its task over to one. Members are Landflow [agents](agents.md) or remote agents over [A2A](a2a.md) (Claude Code on
 kagent, say). Teams live on the **Agents** page, in the **Teams** view next to the roster.
 
 Not to be confused with the agent's **team label** (a grouping on the roster, see [agents.md](agents.md#teams)) or the
@@ -15,7 +15,7 @@ Microsoft Teams channel of an agent (`/api/teams/...`). This resource is `agent-
 |---|---|
 | `name`, `goal`, `description` | the goal is what the team is for; every request inside the team carries it |
 | `members[]` | `kind: 'agent'` (`agentId`) or `kind: 'a2a'` (`parameters` of the A2A Agent node: `agentUrl`, `authentication`, `options`; `credentials`) |
-| per member | `id`, `title` (how its manager calls it), `role` (a sentence: when to ask it), `reportsTo`, `reviews[]`, `budgetTokens`, `questionsTo` (`manager`, the default, or `person`) |
+| per member | `id`, `title` (how its manager calls it), `role` (a sentence: when to ask it), `reportsTo`, `reviews[]`, `consults[]` (peers it **may consult**), `budgetTokens`, `questionsTo` (`manager`, the default, or `person`) |
 
 The types and the checks are in [`apps/web/src/lib/shared/agent-teams.ts`](../apps/web/src/lib/shared/agent-teams.ts).
 
@@ -28,6 +28,7 @@ list); **publishing is refused** until there are none:
 - exactly one member leads (reports to nobody), and every reporting line ends at the lead: no circles;
 - everyone reports to, and reviews, a member who is in the team; nobody reviews themselves;
 - **a remote agent can't manage**: only Landflow agents run a tool-calling loop, so nobody reports to a remote member;
+- a member may consult only a member who is in the team, never itself, and **a remote agent can't consult** (it has no tools to do it with: only Landflow agents get the consult and hand-off tools);
 - a Landflow member names its agent, a remote member its address; a budget is more than 0 tokens.
 
 A budget is the tokens a member may spend in one run: a warning at 80%, a stop at 100%. No budget, no limit. **Questions go
@@ -39,7 +40,7 @@ The team page (`/agents/teams/:id`) draws the team as an aligned org chart of eq
 then one section per manager ("Reports to Tech Lead · 3") in chart order, each a grid of same-size cards, one column on a
 phone, two from `sm`, three from `lg`. A card has a header (face, title, where it runs: **Landflow agent**, **<agent> on
 kagent** or **Remote agent over A2A**), what it does in up to three lines, and a footer with **Reviews**, **Reviewed by**,
-the budget and where questions go (**Reports to** only outside the chart), so cards in a row line up. A remote member
+**May consult** (a dashed chip, for a standing line between peers that is not a reporting line), the budget and where questions go (**Reports to** only outside the chart), so cards in a row line up. A remote member
 that calls a Landflow agent on kagent (its address is that agent's on kagent's controller, `…/agents/<namespace>/<name>`)
 wears that agent's face, here, on the Teams cards, above the Run a Team node and in Run Trace; any other remote member
 gets the A2A radio icon.
@@ -120,8 +121,8 @@ member's face and title above it.
    tool its instructions name but the list doesn't (written for another flow, like a `Check_branch` the flow doesn't
    connect) isn't there: not to say it used it or what it would have returned.
 2. A **Landflow agent** member runs its own loop when asked, with *its* reports as tools, so a team can have several
-   levels. It keeps one session for the whole run: a second ask continues the first. Tools of its own agent that need
-   approval are refused (nobody is there), as for any agent in a flow.
+   levels. It keeps one session for the whole run: a second ask continues the first. A tool of its own agent that
+   needs approval pauses the run (see *Tool approvals*, below).
 3. A **remote** member is called over [A2A](a2a.md) with the tool of the `a2a` capability, keeping **one A2A conversation
    per member for the run** (its context id lives on its manager's session). The title, not the card's name, is what the
    journal and the trace call it.
@@ -135,6 +136,23 @@ member's face and title above it.
    A2A task, and the team goes on from there; the node's activity joins the turns before and after. Outside a flow (a run
    that can't wait) the old way stays: the manager is told a person will answer, and the run leaves by **Needs a person**
    with the question. Tool approvals a remote member waits on are refused, as everywhere in a flow.
+5a. **Tool approvals.** A tool that needs approval (an agent's tool marked **Needs approval**, or one connected to the node
+   with that setting) pauses the run in a flow instead of being refused. The member that wants it stops where it is, the
+   pause passes up to the lead through every manager in between, and the node puts the execution to wait the way the AI
+   Agent node does (`resume: 'webhook'`, `rerun`) with `wait.data.approval` (`{ nodeName, nodeId, channel, title: "Developer
+   wants to use Comment on pull request", calls: [{ id: "<member id>/<call id>", tool: "Comment on pull request", input }]
+   }`) and `wait.data.teamApproval` (`{ team, member, tool, summary }`, what the node itself reads). So everything that
+   decides an AI Agent's approval works unchanged: **Needs you** in the Run Trace (**Approve** / **Reject**, which call `POST
+   /api/executions/:id/approvals`), the execution view, and the channels the node offers in **Ask For Tool Approvals In**:
+   the chat / execution view (default), **Slack** (a message with Approve and Reject buttons, with the node's Slack
+   credential, channel and approvers) or **Email** (signed links to the approver emails), and an **Approval Timeout** that
+   refuses the calls after a while. The state of the team is kept with the node, as for a question. When the person
+   decides, the call goes back to the member that wanted it: approved, the tool runs and its result is the member's; rejected,
+   the member is told ("A person rejected your call to X; it did not run") and goes on without it, and a call nobody
+   decided in time is refused the same way. Each decision is a passed (approved) or warn (rejected, or not decided in time)
+   **Approval** check on the Run Trace: who decided, what for which member, and when. Outside a flow (a run that can't wait)
+   the tool is refused as before and the run leaves by **Needs a person** with `Developer wanted to use Post update, which
+   needs a person's approval`.
 6. **Reviews.** A review is seen to by the nearest manager of both the reviewer and the reviewed (their own manager when
    they share one; the lead when the Reviewer sits under QA and the Developer under the lead). That manager, giving its
    final answer while the work has not been looked at (the reviewer was not asked after the work came back), is told to
@@ -145,6 +163,19 @@ member's face and title above it.
    **Needs a person** and a failed *Review* check is recorded; a review records a passed check (`approved` with
    `VERDICT: APPROVE`, `was asked` without a verdict) or a warn one for changes. A reviewer above or below the member it
    reviews isn't held to it: a manager reads its report's work when it comes back.
+6a. **Consults and hand-offs.** A Landflow agent member with `consults` gets two tools for each peer it may consult:
+   `consult_<title>(message, reason)` and `hand_off_to_<title>(message, reason)` (a required `reason`, like `ask_<title>`).
+   A **consult** asks the peer a question: the peer answers *the member that asked*, not the lead (the request carries the
+   asker's task as its current task), the answer is the tool's result, the usage counts against the **peer's** budget, and it
+   is neither work delivered nor a review. A **hand-off** passes the member's task with its notes: the peer works on it,
+   the member's turn ends as soon as the peer has answered (it is not asked for more), and the peer's answer goes to the
+   member's manager as the result of the original ask (with a note that the member handed it over, so the manager can
+   name the right member); a passed *Hand-off* check is recorded and the peer counts as having delivered the work. A
+   hand-off is allowed to the peers the member may consult (there is no separate setting). A peer may be a Landflow agent
+   or a remote (kagent / A2A) member; the members who **have** the tools are Landflow agents only, because a remote member
+   can't call tools Landflow gives it. No loops: a peer already in the call chain (the member who asked it, up to the
+   lead) isn't offered, a peer busy with another request answers that it is busy, and a chain of consults and hand-offs
+   stops after two. A question or approval a peer waits on pauses the run and goes back down to it like any other.
 7. **Budgets.** Tokens are counted per member: a Landflow agent's model usage, a remote member's A2A usage, and for a
    Claude Code member on kagent what the landflow-harness mod reported for each request (cache reads included). A remote
    member that reports none is estimated from what crossed the wire (its requests, answers, and its steps' arguments and results,
@@ -196,6 +227,16 @@ the moments that matter. On the editor's canvas during a run and on the executio
   "Typecheck passed", "Pull request #4 opened", "Branch pushed", "Reviewer: approve" or "Reviewer asks for changes" (from a
   `VERDICT:` line in the answer), "Developer failed", "Developer used 80% of its budget" (amber), "Developer used up its
   budget", "Planner asks a person" (amber, with the question).
+- **A consult** rings both members: the head shows the two faces (the asker's dashed), reads "Developer consulting the
+  Reviewer" (or "Planner handed over to the Developer"), the ticker starts with the asker's request ("Asking the Reviewer
+  how tests fake the API") above the peer's own steps, the roster rings both, and a moment says "Developer consults the
+  Reviewer", "Reviewer answered Developer" or "Planner handed the task to the Developer". The Now card on a phone says
+  the same.
+- **A tool waiting for approval** turns the node amber like a question: the asker's face with an hourglass, "Tech Lead
+  wants to use Comment on pull request", what it would do in a few words (the comment, the command, the path), and
+  **Approve** / **Deny** buttons on the node and on the phone card (the same call as Needs you). A moment says "Tech Lead
+  asks to use Comment on pull request" (amber). The node reads it from the waiting execution's `wait.data.teamApproval`, so
+  a reload or another device shows the same; from the editor the canvas follows the resumed run.
 - **A question for a person** turns the node amber: the asker's face with an hourglass, "Planner asks a person", the
   question, and an **Answer** button that opens the run's waiting form (`/form/waiting/<execution>`); the answer goes back
   to the member that asked. The node reads it from the waiting execution's `wait.data.teamQuestion`, so a reload or
@@ -222,7 +263,7 @@ and the workflow's executions page shows the list and an open execution one at a
 
 The journal names members by title and records each request with its reason, under the request of the manager that asked
 it (a developer's tester hangs under the developer). The node's span carries the team as it was when the run began
-(`attrs.team`: id, name, version, goal, members with `reportsTo`, `reviews`, `budgetTokens` and `connections`), and the
+(`attrs.team`: id, name, version, goal, members with `reportsTo`, `reviews`, `consults`, `budgetTokens` and `connections`), and the
 **Team** tab draws the chart from it, as an indented tree with who reviews whom and how often each was asked, instead of
 guessing from who called whom. Each row has chips for what the member [works with](run-trace.md#what-each-agent-works-with):
 the lead's model, memory, tools and knowledge; a remote member on kagent's Claude Code, model, plugins and network
@@ -230,7 +271,23 @@ policies, with their own logos. A member with a budget has a bar under its chips
 budget (amber at 80%, red once used up). The node's usage names the lead's model and counts its model calls. Runs without
 a recorded team keep the generic who-called-whom graph. The **Story** tab opens with the team's **Headlines**: the moments
 its node kept (see [Run Trace](run-trace.md#headlines)). A team member's question waits as a form: Needs you's **Answer**
-opens the run's form page.
+opens the run's form page; a tool waiting for approval reads "Developer wants to use Comment on pull request: <what>" with
+**Approve** / **Reject** in place. Each row shows **may consult X** (a dashed badge) from the recorded chart (`consults` in
+`attrs.team`), and what really happened under the member that asked: **consulted Reviewer ×2**, **handed off to Builder**.
+A consult sits under the request of the member that made it in the Story, as a request to the peer with its reason, and
+decisions on tools are *Approval* checks.
+
+### Pause a member and take over
+
+While a team node runs, **Pause** (the node's Now card and tile, the Run Trace) stops one member and lets a person
+steer it. A Landflow agent, the lead included, stops at its next step boundary, keeps its session and waits; the node
+shows it paused, and a **Take over** box takes the next instruction, which is added to the member's conversation as a
+message from the person before it goes on. A remote member is **stopped and redirected**: its A2A task is cancelled
+and the instruction goes to the same conversation as a new message. The wait is in the run's process (a timeout,
+`LANDFLOW_TEAM_PAUSE_MINUTES`, lets the member carry on alone) and does not survive a host restart; see
+[Run Trace](run-trace.md#pause-and-take-over). From the Run Trace a finished run can also **Ask this member again**: the
+team node runs again with the lead told to ask only that member the same message
+([Run it again](run-trace.md#run-it-again)).
 
 ### Turn into a team
 
@@ -257,4 +314,5 @@ team": applying the proposal does what the toolbar button does.
 - A reviewer that manages the member it reviews (or reports to it) isn't held to the review; a verdict is read from a
   `VERDICT:` line only.
 - A middle manager's own budget is enforced for agents asked as members; the lead's is checked by the session limit.
-- Heartbeats, a task backlog, consults and hand-offs between peers are not built.
+- Heartbeats and a task backlog are not built. Consults and hand-offs are made by Landflow agent members only (a remote member has no tools to ask a peer with), and the model decides when to use them: nothing forces a consult.
+- A tool approval is for the tools Landflow runs (an agent's, or connected to the node). A Claude Code member on kagent keeps its own guard (the landflow-harness mod) and its approvals are still refused in a flow.

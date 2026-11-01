@@ -1,6 +1,21 @@
 {
   "name": "landflow-harness",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "What Landflow adds to its Claude Code agents: each request's tokens and each tool call's time reported to the run, guardrails on tool calls, and secrets masked in tool output",
-  "author": { "name": "Landflow" }
+  "author": {
+    "name": "Landflow"
+  },
+  "userConfig": {
+    "guard": {
+      "type": "string",
+      "title": "Guard",
+      "description": "strict: read-only on the code; enforce: the guardrails refuse; report: they only report. Landflow sets it per agent when it deploys it.",
+      "options": [
+        "strict",
+        "enforce",
+        "report"
+      ],
+      "default": "enforce"
+    }
+  }
 }

@@ -101,7 +101,9 @@ export function kagentConnections(agent: Agent): ActorConnection[] {
     const [name, marketplace] = plugin.id.split('@');
     out.push(
       name === 'landflow-harness'
-        ? { kind: 'plugin', name, detail: 'Landflow’s mod: usage, guardrails, redaction', icon: 'lucide:shield-check', from: 'kagent' }
+        ? d.guard === 'strict'
+          ? { kind: 'plugin', name, detail: 'Landflow’s mod: read-only on the code, usage, redaction', icon: 'lucide:lock', from: 'kagent' }
+          : { kind: 'plugin', name, detail: `Landflow’s mod: usage, ${d.guard === 'report' ? 'guardrails report only' : 'guardrails'}, redaction`, icon: 'lucide:shield-check', from: 'kagent' }
         : { kind: 'plugin', name: name ?? plugin.id, ...(marketplace && { detail: marketplace }), icon: brandIcon('claude'), from: 'kagent' },
     );
   }

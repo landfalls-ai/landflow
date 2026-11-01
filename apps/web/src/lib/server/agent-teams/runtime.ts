@@ -10,7 +10,7 @@
 import { toToolName, REASON_DESCRIPTION, type AgentMemory, type AgentTool, type LanguageModel } from '@landflow/engine';
 import type { AgentSession, AgentStreamEvent, RemoteRun, RunEndReason, SessionExecution, TokenUsage } from '../../shared/agents';
 import { reportsOf, rootOf, type AgentMember, type AgentTeamConfig, type RemoteMember, type TeamMember } from '../../shared/agent-teams';
-import { verdictOf } from '../../shared/team-progress';
+import { shortArg, verdictOf } from '../../shared/team-progress';
 import { agentConnections, remoteConnections } from '../agents/connections';
 import { agentStore } from '../agents/store';
 import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
@@ -23,12 +23,15 @@ import { agentAtEndpoint, openNotebookCall } from '../notebook/binding';
 import { notebookBlock, projectOf, type NotebookBinding } from '../notebook/service';
 import { notebookTools } from '../notebook/tools';
 import { store } from '../store';
+import { holdMember } from './pause';
 import { issuesOf } from './store';
 
 /** How long a manager's own task is when it goes on to its reports. */
 const TASK_CHARS = 600;
 /** How often a manager is sent back to ask a reviewer before it may report done. */
 const MAX_REVIEW_NUDGES = 2;
+/** How many consults or hand-offs may follow one another (a member consults a peer who consults another): no more below this. */
+const MAX_CONSULT_HOPS = 2;
 /** What a manager is told to keep its answer to: it sees its reports' answers, not their work. */
 const REPORT_RULE = 'When you answer, name only the files, tests, commands and results your reports gave you, as they wrote them; don\'t add details nobody reported.';
 
@@ -96,8 +99,33 @@ export interface TeamRunRequest {
    * a remote member's mod reports them mid-task, and once it answers (`estimated` when it reports none).
    */
   onUsage?: (title: string, tokens: number, estimated: boolean) => void;
-  /** Going on after a wait: the state saved then (TeamRunResult.waiting) and the person's answer to the question. */
-  resume?: { state: TeamState; answer: string };
+  /**
+   * Going on after a wait: the state saved then (TeamRunResult.waiting), the person's answer to a question, or their
+   * decisions on the tool calls waiting for approval (by call id, as `waiting.approval` named them).
+   */
+  resume?: { state: TeamState; answer: string; decisions?: Record<string, TeamDecision> };
+}
+
+/** A person's word on a tool call: from the approval route (`by` is who, `at` when). */
+export interface TeamDecision {
+  approved: boolean;
+  by?: string;
+  at?: string;
+}
+
+/** A tool call a member waits to use until a person approves it. */
+export interface TeamApprovalCall {
+  /** `<member id>/<call id>`: the key of the decision. */
+  id: string;
+  tool: string;
+  label: string;
+  input: Record<string, unknown>;
+}
+
+/** The tool calls the run waits on, and the member that wants them. */
+export interface TeamApproval {
+  member: string;
+  calls: TeamApprovalCall[];
 }
 
 /** What a team run keeps between asks, as JSON: saved when it waits for a person, restored when it goes on. By member id. */
@@ -128,6 +156,8 @@ export interface TeamState {
   roles: Record<string, { nudges: number; grounded: 'no' | 'sent' | 'checked'; sentFor: string[]; unverified?: string[] }>;
   /** Per member: time spent answering its requests, ms (absent in runs saved before it was kept). */
   ms?: Record<string, number>;
+  /** Per member that handed its task to a peer in its running turn: the peer and its answer, which becomes the member's result. */
+  handoffs?: Record<string, { to: string; answer: string }>;
 }
 
 const emptyState = (): TeamState => ({
@@ -181,8 +211,11 @@ export interface TeamRunResult {
   reason: RunEndReason;
   /** What the whole team used: the lead, its agent members and the usage remote members reported. */
   usage: TokenUsage;
-  /** The run waits for a person: who asked what, and the state to go on from (TeamRunRequest.resume). */
-  waiting?: { member: string; question: string; state: TeamState };
+  /**
+   * The run waits for a person: who asked what, and the state to go on from (TeamRunRequest.resume). With `approval`, the
+   * wait is for a tool call that needs approval, not a question (`question` then says what the member wants to do).
+   */
+  waiting?: { member: string; question: string; state: TeamState; approval?: TeamApproval };
 }
 
 const total = (usage: { inputTokens: number; outputTokens: number }) => usage.inputTokens + usage.outputTokens;
@@ -213,6 +246,18 @@ const NOTEBOOK_KEY = (key: string) => `Notebook run key: ${key}. If a note tool 
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
 export const toolNameOf = (title: string) => toToolName(`ask_${title}`).toLowerCase();
+export const consultToolNameOf = (title: string) => toToolName(`consult_${title}`).toLowerCase();
+export const handOffToolNameOf = (title: string) => toToolName(`hand_off_to_${title}`).toLowerCase();
+
+/** How a wait for approval reads: "Developer wants to use Comment on pull request". */
+export const approvalText = (approval: TeamApproval) => `${approval.member} wants to use ${approval.calls.map((c) => c.label).join(', ')}`;
+
+type Mode = 'ask' | 'consult' | 'handoff';
+/** The members in a call chain (the lead down to the member running) and how many consults or hand-offs are in it. */
+interface Trail {
+  ids: string[];
+  hops: number;
+}
 
 export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const { config } = request;
@@ -293,6 +338,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
               ...(m.role && { role: m.role }),
               ...(m.reportsTo && { reportsTo: m.reportsTo }),
               ...(m.reviews?.length && { reviews: m.reviews }),
+              ...(m.consults?.length && { consults: m.consults }),
               ...(m.budgetTokens && { budgetTokens: m.budgetTokens }),
               ...(connections.length > 0 && { connections }),
             };
@@ -447,6 +493,11 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       tools: [],
       title: member.title,
       ...(member.budgetTokens && { budgetTokens: member.budgetTokens }),
+      // A member that handed its task to a peer is done once the peer has answered.
+      stopAfterTools: () => {
+        const handed = state.handoffs?.[member.id];
+        return handed ? `Handed the task to ${byId.get(handed.to)?.title ?? 'a peer'}.` : undefined;
+      },
       beforeAnswer(reply, session) {
         const pending = unreviewed(member);
         if (!pending.length) {
@@ -496,11 +547,14 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     };
   }
 
-  /** The tools for a member's direct reports, and the notebook's (bound to this run and this member). */
-  async function toolsFor(manager: TeamMember): Promise<BuiltTool[]> {
-    const delegates = await Promise.all(reportsOf(config, manager.id).map((report) => (report.kind === 'agent' ? agentTool(manager, report) : remoteTool(manager, report))));
-    return [...delegates, ...notebookTools(notebookFor(manager))];
+  /** The tools for a member's direct reports, the peers it may consult or hand its task to, and the notebook's (bound to this run and this member). */
+  async function toolsFor(manager: TeamMember, trail: Trail = { ids: [manager.id], hops: 0 }): Promise<BuiltTool[]> {
+    const reports = await Promise.all(reportsOf(config, manager.id).map((report) => (report.kind === 'agent' ? agentTool(manager, report, 'ask', trail) : remoteTool(manager, report, 'ask'))));
+    return [...reports, ...(await peerTools(manager, trail)), ...notebookTools(notebookFor(manager))];
   }
+
+  /** Members running a turn now: a peer is consulted only when it is free (one session each). */
+  const running = new Set<string>();
 
   const describe = (report: TeamMember) => {
     const reviewing = config.members.filter((m) => report.reviews?.includes(m.id)).map((m) => m.title);
@@ -523,7 +577,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   });
 
   /** What every delegate tool does around the call: the budget, the count, then what the answer settles. A pause settles nothing yet. */
-  async function guarded(manager: TeamMember, report: TeamMember, input: Record<string, unknown>, work: (message: string) => Promise<ToolOutcome>): Promise<ToolOutcome> {
+  async function guarded(manager: TeamMember, report: TeamMember, input: Record<string, unknown>, work: (message: string) => Promise<ToolOutcome>, mode: Mode = 'ask'): Promise<ToolOutcome> {
     const text = String(input.message ?? '').trim();
     if (!text) throw new Error('"message" is empty');
     if (state.overBudget.includes(report.id)) {
@@ -535,18 +589,21 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     const started = Date.now();
     try {
       const outcome = await work(text);
-      return outcome.pause ? outcome : settle(manager, report, text, outcome);
+      return outcome.pause ? outcome : settle(manager, report, text, outcome, mode);
     } finally {
       timed(report, started);
     }
   }
 
   /** A member answered: what its manager heard, the work delivered, the review ledger. */
-  function settle(manager: TeamMember, report: TeamMember, text: string, outcome: ToolOutcome): ToolOutcome {
+  function settle(manager: TeamMember, report: TeamMember, text: string, outcome: ToolOutcome, mode: Mode = 'ask'): ToolOutcome {
     const answer = typeof outcome.output === 'string' ? outcome.output : JSON.stringify(outcome.output ?? '');
     hear(manager, text, answer, outcome.remote ? JSON.stringify(outcome.remote.steps ?? []) : '');
     state.clock++;
+    // A consult answers a question: it is neither work delivered nor a review. A hand-off delivers the work.
+    if (mode === 'consult') return outcome;
     state.delivered[report.id] = state.clock;
+    if (mode === 'handoff') return outcome;
     // A reviewer asked after the work was delivered has looked at it; its verdict, when it gives one, is the sign-off.
     state.reviewed[report.id] = state.clock;
     const verdict = verdictOf(answer);
@@ -568,7 +625,51 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     return call && { ask: String(call.remote!.state.ask), asker: String(call.remote!.state.asker ?? call.remote!.agent) };
   };
 
-  async function agentTool(manager: TeamMember, report: AgentMember): Promise<BuiltTool> {
+  /** The name a tool call went by in a session's timeline (the tool's label), else its tool name. */
+  const labelOf = (session: AgentSession, callId: string, tool: string) => {
+    const entry = session.timeline.find((e) => e.type === 'tool' && e.callId === callId);
+    return entry?.type === 'tool' ? entry.label : tool;
+  };
+
+  /** What a paused session waits on: a question for a person, or tool calls that need approval (its own, or passed up from a member below). */
+  type Block = { kind: 'question'; ask: string; asker: string } | { kind: 'approval'; approval: TeamApproval };
+  const blockOf = (session: AgentSession, owner: TeamMember): Block | undefined => {
+    const pending = session.pending;
+    const question = questionOf(pending);
+    if (question) return { kind: 'question', ...question };
+    const passed = pending?.calls.find((c) => c.remote?.state.approval);
+    if (passed) return { kind: 'approval', approval: passed.remote!.state.approval as TeamApproval };
+    const own = pending?.calls.filter((c) => !c.remote) ?? [];
+    if (!own.length) return undefined;
+    return { kind: 'approval', approval: { member: owner.title, calls: own.map((c) => ({ id: `${owner.id}/${c.callId}`, tool: c.tool, label: labelOf(session, c.callId, c.tool), input: c.input as Record<string, unknown> })) } };
+  };
+  /** The pause a member's manager gets while the member waits on a person. */
+  const pauseOf = (member: TeamMember, block: Block): NonNullable<ToolOutcome['pause']> =>
+    block.kind === 'question'
+      ? { message: block.ask, remote: { agent: member.title, calls: [], state: { member: member.id, ask: block.ask, asker: block.asker } } }
+      : { message: approvalText(block.approval), remote: { agent: member.title, calls: [], state: { member: member.id, approval: block.approval as unknown as Record<string, unknown> } } };
+
+  /**
+   * The person's word goes into a paused session: its own tool calls get their decision (a check says who decided what and
+   * when; one nobody decided in time is refused), a question gets the answer, and a call waiting on a member below is let
+   * through to it.
+   */
+  const applyWord = (owner: TeamMember, session: AgentSession | undefined, answer: string) => {
+    for (const call of session?.pending?.calls ?? []) {
+      if (call.remote) {
+        if (typeof call.remote.state.ask === 'string' || call.remote.state.approval) Object.assign(call, { decision: 'approved', answer });
+        continue;
+      }
+      const word = request.resume?.decisions?.[`${owner.id}/${call.callId}`];
+      const label = labelOf(session!, call.callId, call.tool);
+      Object.assign(call, { decision: word?.approved ? 'approved' : 'denied' });
+      const when = word?.at ? ` at ${word.at.replace('T', ' ').replace(/:\d\d(?:\.\d+)?Z$/, ' UTC')}` : '';
+      if (!word) check('Approval', 'warn', `${owner.title}'s use of ${label} was not approved in time`, owner.title);
+      else check('Approval', word.approved ? 'pass' : 'warn', `${word.by ?? 'A person'} ${word.approved ? 'approved' : 'rejected'} ${owner.title}'s use of ${label}${when}`, owner.title);
+    }
+  };
+
+  async function agentTool(manager: TeamMember, report: AgentMember, mode: Mode, trail: Trail): Promise<BuiltTool> {
     /** Run the member's loop: with `text`, a new ask; without, going on from the question it paused on. */
     const runMember = async (ctx: ToolContext, text?: string): Promise<ToolOutcome> => {
       const agent = agentStore.get(report.agentId);
@@ -592,22 +693,29 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         });
         if (request.execution) session.execution = request.execution;
       }
+      // A person may pause this member between steps and give it an instruction (pause.ts).
+      const held = request.execution && holdMember(request.execution.executionId, report.title, 'agent', { under: ctx.callSpan, actor: { id: `agent:${agent.id}`, name: report.title, type: 'agent' } });
       const role: TeamRole = {
         ...roleFor(report),
-        tools: await toolsFor(report),
+        tools: await toolsFor(report, { ids: [...trail.ids, report.id], hops: trail.hops + (mode === 'ask' ? 0 : 1) }),
         ...(ctx.callSpan && { under: ctx.callSpan }),
+        ...(held && { pause: held }),
       };
+      running.add(report.id);
       const result = await runAgent({
         agent,
         session,
         ...(text !== undefined && { message: manages ? `${withAncestry(manager, text)}\n\n${REPORT_RULE}` : withAncestry(manager, text) }),
         depth: ctx.depth + 1,
         maxDepth: ctx.maxDepth,
-        approvals: 'deny',
+        approvals,
         signal: ctx.signal,
         team: role,
         ...(request.onMemberEvent && { onEvent: (event: AgentStreamEvent) => request.onMemberEvent!(report.title, event) }),
         onUsage: (usage) => spend(report, usage, true),
+      }).finally(() => {
+        held?.release();
+        running.delete(report.id);
       });
       state.sessions[report.id] = result.session;
       spend(report, result.session.usage, true);
@@ -617,13 +725,19 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         throw new Error(last?.type === 'error' ? last.message : `${report.title} failed`);
       }
       if (result.reason === 'awaiting_approval') {
-        const question = questionOf(result.session.pending);
-        if (!question) throw new Error(`${report.title} waits for an approval no one can give in a team run`);
-        return { output: null, pause: { message: question.ask, remote: { agent: report.title, calls: [], state: { member: report.id, ...question } } }, ...child };
+        const block = blockOf(result.session, report);
+        if (!block) throw new Error(`${report.title} waits for an approval no one can give in a team run`);
+        return { output: null, pause: pauseOf(report, block), ...child };
       }
       if (result.reason === 'budget') {
         if (!state.overBudget.includes(report.id)) state.overBudget.push(report.id);
         return { output: `${report.title} used up its token budget before it could answer.${result.reply ? ` Its last words: ${result.reply}` : ''}`, ...child };
+      }
+      // A member that handed its task to a peer answers with the peer's answer: its manager gets that as the result of its ask.
+      const handed = state.handoffs?.[report.id];
+      if (handed) {
+        delete state.handoffs![report.id];
+        return { output: `${handed.answer}\n\n(${report.title} handed this task to ${byId.get(handed.to)?.title ?? 'a peer'}, who answered.)`, ...child };
       }
       return { output: result.reply !== undefined ? marked(report, result.reply) : `(${report.title} gave no answer)`, ...child };
     };
@@ -634,19 +748,18 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       description: describe(report),
       inputSchema: inputSchema(report),
       requireApproval: false,
-      invoke: (input, ctx) => guarded(manager, report, input, (text) => runMember(ctx, text)),
-      // The person answered the question one of its reports asked: the answer goes down to the call it paused on.
+      invoke: (input, ctx) => guarded(manager, report, input, (text) => runMember(ctx, text), mode),
+      // The person answered the question one of its reports asked, or decided its tool calls: it goes down to the calls it paused on.
       async resume(_saved, _approved, ctx, answer) {
-        const pending = state.sessions[report.id]?.pending;
-        if (!pending) throw new Error(`${report.title} has no question waiting`);
-        for (const call of pending.calls) if (call.remote && typeof call.remote.state.ask === 'string') Object.assign(call, { decision: 'approved', answer: answer ?? '' });
+        if (!state.sessions[report.id]?.pending) throw new Error(`${report.title} has nothing waiting`);
+        applyWord(report, state.sessions[report.id], answer ?? '');
         const outcome = await runMember(ctx);
-        return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome);
+        return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome, mode);
       },
     };
   }
 
-  async function remoteTool(manager: TeamMember, report: RemoteMember): Promise<BuiltTool> {
+  async function remoteTool(manager: TeamMember, report: RemoteMember, mode: Mode): Promise<BuiltTool> {
     const toPerson = report.questionsTo === 'person';
     const built = await a2aAgentTool(
       {
@@ -712,6 +825,57 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         ...(outcome.pause && { pause: { message: ask, remote: { ...outcome.pause.remote, agent: report.title, state: { ...outcome.pause.remote.state, ask, asker: report.title } } } }),
       };
     };
+    /**
+     * Send `message` so a person can stop the task and redirect it (pause.ts): the task is canceled, the person's instruction
+     * goes to the same conversation as a new message, and its answer is the call's.
+     */
+    const redirectable = async (ctx: ToolContext, input: Record<string, unknown>, first: string, open?: { used(names: string[]): void }): Promise<ToolOutcome> => {
+      if ('error' in built) throw new Error(built.error);
+      const send = (message: string, c: ToolContext) => built.invoke({ ...input, message }, c);
+      if (!request.execution) return account(await send(first, renamed(ctx, open)), first);
+      const attempt = { taskId: undefined as string | undefined, contextId: undefined as string | undefined, stopped: false, abort: new AbortController() };
+      const held = holdMember(request.execution.executionId, report.title, 'remote', {
+        under: ctx.callSpan,
+        actor: { id: `remote:${report.title}`, name: report.title, type: 'agent' },
+        async stop() {
+          attempt.stopped = true;
+          if (attempt.taskId) await built.cancelTask?.(attempt.taskId).catch(() => {});
+          attempt.abort.abort();
+        },
+      });
+      try {
+        let message = first;
+        for (;;) {
+          Object.assign(attempt, { taskId: undefined, contextId: undefined, stopped: false, abort: new AbortController() });
+          const stop = () => attempt.abort.abort();
+          if (ctx.signal?.aborted) stop();
+          else ctx.signal?.addEventListener('abort', stop, { once: true });
+          const own = renamed(ctx, open);
+          const watching: ToolContext = {
+            ...own,
+            signal: attempt.abort.signal,
+            progress: (remote) => {
+              attempt.taskId = remote.taskId ?? attempt.taskId;
+              attempt.contextId = remote.contextId ?? attempt.contextId;
+              own.progress?.(remote);
+            },
+          };
+          try {
+            return account(await send(message, watching), message);
+          } catch (error) {
+            if (!attempt.stopped || ctx.signal?.aborted) throw error;
+            if (attempt.contextId) (ctx.session.remoteContexts ??= {})[report.id] = { contextId: attempt.contextId };
+            const instruction = await held.wait({ summary: `Stopped ${report.title} to redirect it`, signal: ctx.signal });
+            if (ctx.signal?.aborted) throw error;
+            message = instruction ? `A person stopped you and says:\n${instruction}` : 'A person stopped you and let you go on: carry on with your task from where you stopped.';
+          } finally {
+            ctx.signal?.removeEventListener('abort', stop);
+          }
+        }
+      } finally {
+        held.release();
+      }
+    };
     return {
       ...base,
       requireApproval: false,
@@ -725,18 +889,18 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           const open = openNotebookFor(report, ctx);
           try {
             const message = known?.question ? text : [withAncestry(manager, text), open && NOTEBOOK_KEY(open.key)].filter(Boolean).join('\n\n');
-            return account(await built.invoke({ ...input, message }, renamed(ctx, open)), message);
+            return await redirectable(ctx, input, message, open);
           } finally {
             open?.close();
           }
-        }),
+        }, mode),
       // A person answered its question: the answer goes to the task it paused on.
       async resume(saved, approved, ctx, answer) {
         if ('error' in built || !built.resume) throw new Error(`${report.title} can't be reached to take the answer`);
         const open = openNotebookFor(report, ctx);
         try {
           const outcome = account(await built.resume(saved, approved, renamed(ctx, open), answer), answer ?? '');
-          return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome);
+          return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome, mode);
         } finally {
           open?.close();
         }
@@ -744,12 +908,72 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     };
   }
 
+  /**
+   * The tools of a member for its peers (`consults`): `consult_<title>` asks a peer a question and the answer comes back to
+   * the member that asked (not to its manager); `hand_off_to_<title>` passes the member's task and notes to the peer, which
+   * works on it while the member steps out, and the peer's answer goes to the member's manager as the result of the ask.
+   * Only Landflow agents have these tools (a remote member has none to call), though a peer may be a remote member. A peer
+   * already in the chain is not offered, and one busy with another request says so: no loops.
+   */
+  async function peerTools(member: TeamMember, trail: Trail): Promise<BuiltTool[]> {
+    if (member.kind !== 'agent' || trail.hops >= MAX_CONSULT_HOPS) return [];
+    const peers = (member.consults ?? []).flatMap((id) => {
+      const peer = byId.get(id);
+      return peer && peer.id !== member.id && !trail.ids.includes(peer.id) ? [peer] : [];
+    });
+    const tools: BuiltTool[] = [];
+    for (const peer of peers) {
+      for (const mode of ['consult', 'handoff'] as const) {
+        const base = peer.kind === 'agent' ? await agentTool(member, peer, mode, trail) : await remoteTool(member, peer, mode);
+        const handOff = mode === 'handoff';
+        const role = peer.role?.trim().replace(/\.$/, '');
+        const ready = (outcome: ToolOutcome): ToolOutcome => {
+          if (!handOff || outcome.pause) return outcome;
+          // A peer over its budget answered nothing: the task isn't handed off.
+          if (state.overBudget.includes(peer.id)) return outcome;
+          state.handoffs = { ...state.handoffs, [member.id]: { to: peer.id, answer: asText(outcome.output) } };
+          check('Hand-off', 'pass', `${member.title} handed the task to ${peer.title}`, member.title);
+          return { ...outcome, output: `You handed the task to ${peer.title}, who has finished it; its answer goes to your manager as yours. Your turn is over: reply with one short line saying so.` };
+        };
+        tools.push({
+          ...base,
+          name: handOff ? handOffToolNameOf(peer.title) : consultToolNameOf(peer.title),
+          label: peer.title,
+          description: handOff
+            ? [role, `${peer.title} is your peer`, `hand your task to ${peer.title} when it is better placed than you to finish it: it works on it with your notes and its answer goes to your manager as your result, and your turn ends`].filter(Boolean).join('. ') + '.'
+            : [role, `${peer.title} is your peer, not your report`, 'consult it when you need its knowledge: its answer comes back to you'].filter(Boolean).join('. ') + '.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              message: {
+                type: 'string',
+                description: handOff
+                  ? `Your notes for ${peer.title}: what you did and found, and what is left. It does not see your conversation`
+                  : `What to ask ${peer.title}. It does not see your conversation: say what it needs to know`,
+              },
+              reason: { type: 'string', description: REASON_DESCRIPTION },
+            },
+            required: ['message', 'reason'],
+          },
+          invoke: async (input, ctx) => {
+            if (running.has(peer.id)) return { output: `${peer.title} is busy with another request right now. Ask your manager, or go on without it.` };
+            return ready(await base.invoke(input, ctx));
+          },
+          ...(base.resume && { resume: async (...args: Parameters<NonNullable<BuiltTool['resume']>>) => ready(await base.resume!(...args)) }),
+        });
+      }
+    }
+    return tools;
+  }
+
   // The lead: the node's session (or the one saved when the run waited), its journal under the node's span.
   const userId = request.userId;
+  /** Tools that need approval pause the run where a person can decide (a flow's); elsewhere they are refused. */
+  const approvals = request.canWait ? ('ask' as const) : ('deny' as const);
   let session: AgentSession;
   if (request.resume?.state.lead) {
     session = request.resume.state.lead;
-    for (const call of session.pending?.calls ?? []) if (call.remote && typeof call.remote.state.ask === 'string') Object.assign(call, { decision: 'approved', answer: request.resume.answer });
+    applyWord(root, session, request.resume.answer);
   } else {
     session = newSession(leadAgent, {
       source: 'workflow',
@@ -760,32 +984,48 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     if (request.execution) session.execution = request.execution;
     state.told[root.id] = request.message;
   }
-  const role: TeamRole = { ...roleFor(root), tools: await toolsFor(root) };
+  const heldLead = request.execution && holdMember(request.execution.executionId, root.title, 'agent', { under: nodeSpan(), actor: { id: `agent:${leadAgent.id}`, name: root.title, type: 'agent' } });
+  const role: TeamRole = { ...roleFor(root), tools: await toolsFor(root), ...(heldLead && { pause: heldLead }) };
   const leadStarted = Date.now();
   const result = await runAgent({
     agent: leadAgent,
     session,
     ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', notebookBlock(notebookFor(root)), request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
-    approvals: 'deny',
+    approvals,
     signal: request.signal,
     ...(request.flow && { flow: request.flow }),
     ...(request.onEvent && { onEvent: request.onEvent }),
     onUsage: (usage) => spend(root, usage, true),
     team: role,
-  });
+  }).finally(() => heldLead?.release());
   session = result.session;
   timed(root, leadStarted);
   spend(root, session.usage, true);
-  const question = result.reason === 'awaiting_approval' ? questionOf(session.pending) : undefined;
-  if (result.reason === 'awaiting_approval' && !question) raise(`${root.title} waits for an approval no one can give in a team run`);
-  if (request.memory && result.reason !== 'error' && !question) await request.memory.save(request.memoryKey || 'default', session.messages);
+  const block = result.reason === 'awaiting_approval' ? blockOf(session, root) : undefined;
+  if (result.reason === 'awaiting_approval' && !block) raise(`${root.title} waits for an approval no one can give in a team run`);
+  // A lead that handed its task to a peer answers with the peer's answer.
+  const handed = state.handoffs?.[root.id];
+  if (handed) delete state.handoffs![root.id];
+  // Outside a flow nobody can approve: the tool was refused, and the run leaves by Needs a person with what was wanted.
+  if (!request.canWait) {
+    const sessions = [[root.title, session] as const, ...config.members.flatMap((m) => (state.sessions[m.id] ? [[m.title, state.sessions[m.id]] as const] : []))];
+    for (const [title, s] of sessions) {
+      for (const e of s.timeline) if (e.type === 'tool' && e.status === 'denied' && e.error?.includes("needs a person's approval")) raise(`${title} wanted to use ${e.label}, which needs a person's approval`);
+    }
+  }
+  if (request.memory && result.reason !== 'error' && !block) await request.memory.save(request.memoryKey || 'default', session.messages);
   if (result.reason === 'budget') raise(`${root.title} used up its budget or limit (${root.budgetTokens ? `${root.budgetTokens.toLocaleString()} tokens` : 'tokens'})`);
   else if (result.reason === 'max_iterations') raise(`${root.title} did not reach an answer within its iteration limit`);
 
   return {
-    ...(result.reply !== undefined && { reply: marked(root, result.reply) }),
+    ...(result.reply !== undefined && { reply: handed ? handed.answer : marked(root, result.reply) }),
     ...(state.needsPerson.length && { needsPerson: state.needsPerson.join('; ') }),
-    ...(question && { waiting: { member: question.asker, question: question.ask, state: { ...state, lead: session } } }),
+    ...(block && {
+      waiting:
+        block.kind === 'question'
+          ? { member: block.asker, question: block.ask, state: { ...state, lead: session } }
+          : { member: block.approval.member, question: approvalText(block.approval), state: { ...state, lead: session }, approval: block.approval },
+    }),
     members: config.members.map((m) => {
       const used = state.used[m.id];
       const cost = costOf(m, used);

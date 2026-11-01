@@ -4,7 +4,9 @@ import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
 import { CircleDot, Copy, Loader2, Play, Power, Settings2, SkipForward, Trash2, UsersRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { ExecutionEvent } from '@/lib/shared/types';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
+import { decideToolApprovals } from '@/lib/client/run-trace';
 import { useNodeFace, useShownParameters } from '../agents/faces';
 import { isCompact, NodeTile, ranFor } from '../canvas/node-tile';
 import { useAssistant } from './assistant';
@@ -77,7 +79,23 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   const executionId = useEditor((s) => (teamId ? s.executionId : undefined));
   const wait = useEditor((s) => (teamId && !s.running && s.wait?.nodeId === id ? s.wait : undefined));
   const asked = teamQuestionOf(wait, id);
-  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), newTab: true });
+  // A tool a member waits to use: Approve / Deny on the node resume the run, and the canvas follows it like a chat run.
+  const decideInEditor = async (approved: boolean) => {
+    if (!executionId) return;
+    let resumed = false;
+    try {
+      await decideToolApprovals(executionId, approved, (event, data) => {
+        if (event === 'decision' && (data as { status?: string }).status === 'resumed' && !resumed) {
+          resumed = true;
+          useEditor.setState({ running: true, runStatus: 'running', executionId });
+        }
+        if (event === 'execution' && (data as ExecutionEvent).type !== 'node.chunk') useEditor.getState().applyEvent(data as ExecutionEvent);
+      });
+    } finally {
+      if (resumed) useEditor.getState().finishRun();
+    }
+  };
+  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), ...(asked?.approval && { onDecide: decideInEditor }), newTab: true });
   const compact = isCompact(info?.descriptor, wf.parameters, asTool);
   const runNode = (scope: 'from' | 'only') => useEditor.getState().run?.({ kind: 'node', nodeId: id, scope });
 

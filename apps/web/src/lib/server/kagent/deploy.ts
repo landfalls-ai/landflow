@@ -11,7 +11,7 @@
  * than resolving them again.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import type { Agent, AgentConfig, CredentialRef, KagentDeployment, KagentDrift, KagentHarness, KagentPlugin, KagentRuntime, KagentStatus } from '../../shared/agents';
+import type { Agent, AgentConfig, CredentialRef, KagentDeployment, KagentDrift, KagentGuard, KagentHarness, KagentPlugin, KagentRuntime, KagentStatus } from '../../shared/agents';
 import { OLLAMA_URL } from '../agents/models';
 import { agentStore } from '../agents/store';
 import { buildToolset } from '../agents/tools';
@@ -184,7 +184,7 @@ async function compile(agent: Agent, config: AgentConfig, version: number, name:
  * Claude Code: the config's plugins, each resolved from its marketplace and pinned to the commit it is at now, and packed
  * into an image when the cluster pulls plugins from Landflow's registry.
  */
-async function pinPlugins(config: AgentConfig, cluster: KagentCluster): Promise<KagentPlugin[]> {
+async function pinPlugins(config: AgentConfig, cluster: KagentCluster, guard: KagentGuard = 'enforce'): Promise<KagentPlugin[]> {
   const pins: KagentPlugin[] = [];
   for (const id of config.plugins ?? []) {
     let pin: KagentPlugin;
@@ -202,10 +202,10 @@ async function pinPlugins(config: AgentConfig, cluster: KagentCluster): Promise<
     }
     pins.push(pin);
   }
-  // Landflow's own mod (docs/a2a.md, "The landflow-harness mod"): real usage, tool calls and guardrails. Only from the
-  // registry: kagent can't fetch it from anywhere else.
+  // Landflow's own mod (docs/a2a.md, "The landflow-harness mod"): real usage, tool calls and guardrails, with this agent's
+  // guard as its plugin.json default. Only from the registry: kagent can't fetch it from anywhere else.
   const registry = cluster.pluginRegistry;
-  const harness = registry ? builtinPin() : undefined;
+  const harness = registry ? builtinPin(undefined, guard === 'enforce' ? undefined : { guard }) : undefined;
   if (registry && harness && !pins.some((pin) => pin.id === harness.id)) {
     try {
       harness.oci = imageRef(registry, harness, await packPlugin(harness));
@@ -224,7 +224,7 @@ const ours = (object: KubeObject | undefined, agentId: string) => !object || obj
  * Write the published agent to kagent under `name` (default: the last name, else the agent's name as a DNS label). The token
  * kagent calls the agent's tools with is kept across deploys; moving to another name or cluster removes the old resources.
  */
-export async function deployToKagent(agentId: string, input: { credential?: CredentialRef; name?: string; harness?: string; egressPolicies?: string[] } = {}): Promise<{ agent: Agent; status: KagentStatus; unavailable: string[] }> {
+export async function deployToKagent(agentId: string, input: { credential?: CredentialRef; name?: string; harness?: string; egressPolicies?: string[]; guard?: KagentGuard } = {}): Promise<{ agent: Agent; status: KagentStatus; unavailable: string[] }> {
   const agent = agentStore.get(agentId);
   if (!agent) throw new KagentError('Agent not found', 404);
   if (!agent.published) throw new KagentError('Publish the agent first: kagent runs the published version');
@@ -243,7 +243,9 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   const previous = agent.kagent;
   const sameCluster = previous?.credential.id === credential.id;
   const harness = await harnessOf(cluster, input.harness?.trim() || (sameCluster && previous?.harness) || cluster.harness);
-  const plugins = harness.runtime === 'claude' ? await pinPlugins(agent.published.config, cluster) : [];
+  // The mod's guard: the one asked for, else the one deployed last (on any cluster: it is the agent's, not the cluster's).
+  const guard: KagentGuard = input.guard ?? previous?.guard ?? 'enforce';
+  const plugins = harness.runtime === 'claude' ? await pinPlugins(agent.published.config, cluster, guard) : [];
   // The agent's own list (an empty one: none), else the one deployed last on this cluster, else the cluster's.
   const egressPolicies = input.egressPolicies ?? (sameCluster ? previous?.egressPolicies : undefined) ?? cluster.egressPolicies ?? [];
   await checkEgressPolicies(cluster, egressPolicies);
@@ -294,6 +296,7 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
     token: credentials.sealSecret(token),
     ...(plugins.length && { plugins }),
     ...(input.egressPolicies !== undefined || egressPolicies.length ? { egressPolicies } : {}),
+    ...(guard !== 'enforce' && plugins.some((pin) => pin.url === BUILTIN_URL) && { guard }),
     ...(plugins.some((pin) => pin.url === BUILTIN_URL) && { trace: { url: `${cluster.landflowUrl}/api/agent-trace`, ...(a2aUrlOf(cluster, name) && { a2aUrl: a2aUrlOf(cluster, name) }) } }),
   };
   const saved = agentStore.setKagent(agent.id, deployment) ?? agent;
@@ -447,6 +450,7 @@ export async function kagentStatus(agent: Agent): Promise<KagentStatus> {
     outdated,
     ...(deployment.plugins && { plugins: deployment.plugins }),
     ...(deployment.egressPolicies && { egressPolicies: deployment.egressPolicies }),
+    ...(deployment.guard && { guard: deployment.guard }),
   };
   try {
     const cluster = await clusterOf(deployment.credential);

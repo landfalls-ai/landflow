@@ -446,8 +446,20 @@ every Claude Code agent Landflow deploys gets Landflow's own mod, **landflow-har
   | `upload` | `nc`, `socat`, `telnet`; `curl`/`wget` sending a file (`-T`, `-d @file`, `-F x=@file`) |
   | `write-outside-workspace` | Write, Edit, MultiEdit and NotebookEdit outside the working directory, `/tmp` and `~/.claude` (the same idea as Claude Code 2.1.314's `permissions.blockWritesOutsideWorkingDirectories`) |
 
-  The rules enforce without a marker too. The marker's `guard=report` only reports what would have been stopped;
-  `guard=off` neither.
+  **The guard per agent.** The Deploy tab's kagent card picks one of three for a Claude Code agent (`guard` on
+  `PUT /api/agents/:id/kagent`, kept across redeploys and publishes):
+
+  | Guard | What it does |
+  | --- | --- |
+  | **Read-only** (`strict`) | the rules above, and the agent is read-only on the code (`read-only`): no Write, Edit, MultiEdit or NotebookEdit outside `/tmp`; no `git commit`, `push`, `merge`, `rebase`, `reset`, `add`, `stash`, `restore`, `clean`, `pull`, new branches or tags, deleting or moving branches, `checkout --`; no `gh pr create/merge/close/edit`, issue, release, repo, label, workflow, secret or gist changes, no `gh api` writes (a pull request's review and line comments are allowed); no `rm`, `mv`, `cp`, `tee`, `touch` or redirections (`>`, `>>`) outside `/tmp`, no `sed -i`/`perl -i`, no publishing packages. Reading, searching, checking out a branch, installing dependencies, running tests and builds, and `gh pr review`/`gh pr comment` go on. For a reviewer |
+  | **Normal** (`enforce`, the default) | the rules above |
+  | **Report only** (`report`) | nothing is refused; each stop is reported (`action: report`) |
+
+  The deploy writes it into the mod's `plugin.json` as the default of its `guard` option (`userConfig`), so the packed
+  image differs per guard (`KagentPlugin.options`). A request can make it stricter for one turn (the marker's
+  `guard=strict`), never looser: an `enforce` agent ignores `guard=report` and `guard=off`. The trace's `start` event
+  says the mode in force, and Run Trace shows the agent's mod as *read-only on the code* among its connections. Read-only
+  is best effort: a script that writes files itself isn't caught, so pair it with a token that can't push.
 - **Redact.** A tool's result is kept with every token or key it shows masked (`[redacted GitHub token]`): private
   keys, GitHub, Anthropic, OpenAI, AWS, Slack, Google and npm tokens, Landflow's `lfk_` and `lf_` keys,
   `Authorization` headers and passwords in URLs. A secret that reached a file or a command's output doesn't reach the
@@ -540,9 +552,11 @@ gone, a push to main refused and reported, enforcing without a marker and report
 
 - Remote agents' tokens are recorded (timeline, span, `landflow.a2a.tokens`) but don't count toward an agent's daily or
   monthly AI limits, which count Landflow's own model calls.
-- The landflow-harness mod's trace lives in the memory of the host that made the call: in queue mode a worker's call
-  posts to the main's URL, which doesn't know the trace (404), so the run keeps its estimate. Its guard mode comes only
-  from the marker (no per-agent setting yet), its rules are patterns over the command line (a script that does the
+- The landflow-harness mod's trace lives in the memory of the host that made the call. In queue mode its id starts with
+  that process (`<instance>.<random>`, base64url), and the main the mod posts to passes a batch it doesn't hold on to
+  that process's inbox over Valkey (`202`), so a worker's call gets its real usage; a batch for a worker that has gone is
+  lost, and the run keeps its estimate for it. Its guard is set per agent
+  at deploy time (read-only, normal, report only); its rules are patterns over the command line (a script that does the
   same thing gets past them), and a continuation of a paused task (an answer, an approval) carries no marker, so that
   part is estimated. It needs a Plugin Registry and the Claude Code version wrapper while kagent pins 2.1.285.
 - The dialog doesn't preview the agent card before saving; a wrong URL shows as a notice when a run starts.

@@ -739,7 +739,7 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ entryId: { type: 'string', description: 'The id of an assistant entry of the session’s timeline' }, rating: { type: 'string', enum: ['up', 'down'], nullable: true }, comment: { type: 'string', maxLength: 2000 } }, ['entryId', 'rating'])),
     responses: { 200: reply('The feedback now on the reply', object({ feedback: { type: 'object', nullable: true, additionalProperties: true } }, ['feedback'])), 404: notFound },
   });
-  const teamBody = jsonBody(object({ name: { type: 'string' }, goal: { type: 'string' }, description: { type: 'string' }, members: array({ type: 'object', additionalProperties: true }) }), 'The draft: members are `{ id, kind: agent | a2a, title, role, reportsTo, reviews, budgetTokens, questionsTo, agentId | parameters, credentials }`', false);
+  const teamBody = jsonBody(object({ name: { type: 'string' }, goal: { type: 'string' }, description: { type: 'string' }, members: array({ type: 'object', additionalProperties: true }) }), 'The draft: members are `{ id, kind: agent | a2a, title, role, reportsTo, reviews, consults, budgetTokens, questionsTo, agentId | parameters, credentials }`', false);
   const teamReply = (description: string) => reply(description, object({ team: { type: 'object', additionalProperties: true }, issues: array({ type: 'string' }) }, ['team']));
   add('get', '/api/agent-teams', {
     tag: 'Agent teams',
@@ -860,9 +860,31 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Re-run an execution',
     description: 'All of it with the same input, from one node (reusing everything before it) or just one node, in the background.',
     body: jsonBody(
-      object({ scope: { type: 'string', enum: ['all', 'from', 'only'], default: 'all' }, nodeId: { type: 'string' }, version: { type: 'string', enum: ['current', 'original'], default: 'current' } }),
+      object({ scope: { type: 'string', enum: ['all', 'from', 'only'], default: 'all' }, nodeId: { type: 'string' }, version: { type: 'string', enum: ['current', 'original'], default: 'current' }, askMember: object({ member: { type: 'string' }, message: { type: 'string' } }, ['member', 'message']) }),
     ),
     responses: { 202: reply('Started', object({ executionId: { type: 'string' } }, ['executionId'])), 400: invalid, 404: notFound },
+  });
+  add('get', '/api/executions/{id}/agents', {
+    tag: 'Executions',
+    id: 'listExecutionAgents',
+    summary: 'Team members at work',
+    description: 'The team members of a running execution that can be paused, and their state (`working`, `pausing`, `paused`). Held in memory by the server that runs it.',
+    responses: { 200: reply('Members', object({ members: { type: 'array', items: object({ member: { type: 'string' }, kind: { type: 'string', enum: ['agent', 'remote'] }, state: { type: 'string', enum: ['working', 'pausing', 'paused'] }, since: { type: 'string' } }) } }, ['members'])) },
+  });
+  add('post', '/api/executions/{id}/agents/{member}/pause', {
+    tag: 'Executions',
+    id: 'pauseExecutionAgent',
+    summary: 'Pause a team member',
+    description: 'A Landflow agent member (the lead too) stops at its next step boundary and waits; a remote (A2A) member is stopped at once (its task is canceled) so it can be redirected. `member` is its title in the team. Answers 404 when it isn’t working in this execution.',
+    responses: { 200: reply('Pausing or paused', object({ member: { type: 'string' }, kind: { type: 'string' }, state: { type: 'string', enum: ['working', 'pausing', 'paused'] } })), 404: notFound, 502: errorRef('The remote agent could not be stopped') },
+  });
+  add('post', '/api/executions/{id}/agents/{member}/continue', {
+    tag: 'Executions',
+    id: 'continueExecutionAgent',
+    summary: 'Take over a paused team member',
+    description: 'Sends the next instruction (a message from the person) to a paused member, which goes on with it. Without `message` it goes on as it was. Answers 409 when the member is not paused.',
+    body: jsonBody(object({ message: { type: 'string', maxLength: 8000 } }), undefined, false),
+    responses: { 200: reply('Going on', object({ member: { type: 'string' }, kind: { type: 'string' }, state: { type: 'string' } })), 404: notFound, 409: errorRef('The member is not paused') },
   });
   add('post', '/api/executions/stop-all', {
     tag: 'Executions',
@@ -1607,7 +1629,7 @@ function paths(): Record<string, Record<string, Json>> {
     public: true,
     pathParams: { id: 'The trace id from the request’s `<!-- landflow-trace … -->` line' },
     body: jsonBody(object({ events: array({ type: 'object', additionalProperties: true }) }, ['events'])),
-    responses: { 204: { description: 'Taken' }, 400: invalid, 404: notFound, 410: errorRef('The call has ended: stop posting here'), 413: errorRef('The trace holds all it may') },
+    responses: { 202: { description: 'Passed on to the queue-mode process that holds the trace' }, 204: { description: 'Taken' }, 400: invalid, 404: notFound, 410: errorRef('The call has ended: stop posting here'), 413: errorRef('The trace holds all it may') },
   });
   add('get', '/api/binary/{id}', { tag: 'Executions', id: 'getBinary', summary: 'The bytes of a stored file', description: 'A file of an execution (`item.binary.<name>.id`) with its Content-Type, size and name; `?download=1` makes it an attachment. Plugins send their `binaryAccess` token as a Bearer token. Answers single HTTP `Range` requests (`bytes=a-b`, `a-`, `-n`) with 206 and `Content-Range`, so video and audio can seek; 416 with `Content-Range: bytes */<size>` when unsatisfiable. Multi-range or malformed headers (and any `If-Range`) get the whole file as 200. Every response carries `Accept-Ranges: bytes`. `HEAD` answers the same headers.', query: [{ name: 'download', description: '`1`: Content-Disposition attachment', schema: { type: 'string' } }], headers: [{ name: 'Range', description: 'One byte range: `bytes=0-99`, `bytes=100-`, `bytes=-500`', schema: { type: 'string' } }], responses: { 200: { description: 'The whole file', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 206: { description: 'The requested part (`Content-Range: bytes a-b/size`)', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 403: errorRef('The token can’t read that file'), 404: notFound, 416: errorRef('Range not satisfiable (`Content-Range: bytes */size`)') } });
   add('get', '/api/mcp/status', { tag: 'MCP', id: 'mcpStatus', summary: 'The MCP gateway and identity configuration', description: 'What Settings → MCP shows: the gateway mode and URL, whether the gateway secret is set, the identity provider, the registry namespace.', responses: { 200: reply('The configuration', { type: 'object' }) } });

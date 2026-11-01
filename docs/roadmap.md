@@ -1000,8 +1000,8 @@ approved plan:
   - other agents' spans joined by trace id, starting with Claude Code's own OpenTelemetry;
   - ~~OTLP export with OpenInference kinds~~, ~~search and comparison across runs~~ and the generic measures over time
     are built (2026-11-01, [run-trace.md](run-trace.md#search-compare-and-measures)); a profile's own measures are open;
-  - re-run from a span, and Copy to editor with the run's data pinned;
-  - pausing a running agent so a person can take over;
+  - ~~re-run from a span, and Copy to editor with the run's data pinned~~ and ~~pausing a running agent so a person can
+    take over~~ are built (2026-11-01, [run-trace.md](run-trace.md#run-it-again));
   - **Content kept** per project.
 
 ## Agent teams (built 2026-10-31)
@@ -1034,8 +1034,12 @@ four steps of the approved plan:
   Run Trace's Team chart and the team page's **Last run** card (amber at 80%, red once used up, with moments for both);
   a question for a person turns the node amber with the question and an **Answer** button; each turn on the ribbon opens
   that member in the Run Trace; the Story opens with the run's **Headlines**.
-- Next: consults (ask a peer) and hand-offs; tool approvals inside a team (the pause a question uses). Paperclip-style
-  autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.
+- **Tool approvals and consults** (2026-11-01): a tool that needs approval pauses a team run for a person (Needs you,
+  Slack or email, **Approve** / **Deny** on the node and the phone card; the decision is an *Approval* check); members
+  may **consult** peers and **hand a task over** (`consults`, the `consult_` and `hand_off_to_` tools), shown on the node
+  with both members ringed, on the team page as dashed chips and in the Run Trace under the member that asked.
+- Next: tools of a Claude Code member on kagent asking for approval; Paperclip-style autonomy (heartbeats, a team inbox of
+  tasks) is left out on purpose for now.
 
 ## Claude Code agents report what they use (built 2026-11-01)
 
@@ -1054,7 +1058,9 @@ Claude Code agent Landflow deploys gets Landflow's own mod ([a2a.md](a2a.md#the-
   long-context tier); team members carry tokens in and out, cache reads, cost, model and time; the Team tab and the
   actor sheet show them; the Report has **What each agent used** and the run's cost; guardrail stops and masked secrets
   are checks.
-- Next: the mod's model calls as their own spans; a per-agent guard mode; traces that work across queue-mode workers.
+- Since then: the mod's model calls are their own spans (`d211811`), and each agent has its own guard, Read-only, Normal
+  or Report only, chosen when it is deployed, and in queue mode a worker's live steps, budgets and real usage show on
+  any main (2026-11-01).
   Live budget use from the trace while a member works shows on the team node since 2026-11-01.
 
 ## Planned next

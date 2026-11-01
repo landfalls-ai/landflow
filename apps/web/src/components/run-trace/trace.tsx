@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { cut, fmtMs, resultOf, type RunModel, type RunSpan } from '@/lib/shared/run-trace-model';
 import { EmptyState } from '../ui/empty-state';
 import { actorColor, clock } from './parts';
+import { RerunFromHere } from './run-controls';
 import type { Open } from './sheet';
 
 const OP: Record<string, string> = {
@@ -94,6 +95,11 @@ export function Trace({ model, open }: { model: RunModel; open: (o: Open) => voi
             </div>
           </button>
         </div>
+        {s.status === 'error' && s.id !== 'run' && (
+          <div className="pb-2 pl-11 pr-3">
+            <RerunFromHere spanId={s.id} model={model} />
+          </div>
+        )}
       </div>,
     );
     if (expanded) kids.forEach(walk);

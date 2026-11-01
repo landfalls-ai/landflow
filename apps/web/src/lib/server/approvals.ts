@@ -36,6 +36,8 @@ export interface PendingApproval {
   channel: 'chat' | 'slack' | 'email';
   calls: ApprovalCall[];
   requestedAt?: string;
+  /** What the request says it wants, when not the node's "wants to run a tool" (a team member's: "Developer wants to use …"). */
+  title?: string;
   decisions?: Record<string, ApprovalDecision>;
   slack?: { channel: string; messages?: Record<string, string>; approvers?: string[] };
   email?: { to: string[] };
@@ -122,6 +124,6 @@ async function updateSlackMessage(record: ExecutionRecord, approval: PendingAppr
     channel: approval.slack.channel,
     ts,
     text: `${call.tool}: ${decision.approved ? 'approved' : 'rejected'}`,
-    blocks: decidedBlocks({ title: `${approval.nodeName} wants to run a tool`, tool: call.tool, input: call.input, approved: decision.approved, user, ...(!user && decision.by && { note: decision.by }) }),
+    blocks: decidedBlocks({ title: approval.title ?? `${approval.nodeName} wants to run a tool`, tool: call.tool, input: call.input, approved: decision.approved, user, ...(!user && decision.by && { note: decision.by }) }),
   });
 }
