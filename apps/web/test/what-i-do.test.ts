@@ -24,6 +24,11 @@ describe('whatIDoLines', () => {
     expect(whatIDoLines({ persona: { mission: 'Triage.' }, instructions: '# How\n- Read the ticket\n- Label it' })).toEqual(['Triage', 'How', 'Read the ticket']);
   });
 
+  it('leaves out lead-ins and the tool names in brackets', () => {
+    const instructions = 'You run a small desk that writes release notes. For every request:\n1. Ask the Writer (ask_writer) for release notes.\n2. Ask the Fact checker (ask_fact_checker) to check them.';
+    expect(whatIDoLines({ instructions })).toEqual(['You run a small desk that writes release notes', 'Ask the Writer for release notes', 'Ask the Fact checker to check them']);
+  });
+
   it('is empty when there is nothing to go on', () => {
     expect(whatIDoLines({})).toEqual([]);
     expect(whatIDoLines({ persona: { whatIDo: [' ', ''] }, instructions: '' })).toEqual([]);

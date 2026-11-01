@@ -37,10 +37,12 @@ const lines = (items?: unknown) => {
 export function whatIDoLines(agent: { persona?: AgentPersona; instructions?: string }): string[] {
   const own = lines(agent.persona?.whatIDo);
   if (own) return own;
+  // A lead-in ("For every request:") says nothing on its own, and a tool's name in brackets ("(ask_writer)") is for the model.
   const sentences = (source?: string) =>
     (source ?? '')
       .split(/\n+|(?<=[.!?])\s+/)
-      .map((s) => s.replace(/^\s*(?:#+|[-*•]|\d+[.)])\s*/, '').replace(/[.:;,\s]+$/, '').trim())
+      .filter((s) => !/:\s*$/.test(s))
+      .map((s) => s.replace(/^\s*(?:#+|[-*•]|\d+[.)])\s*/, '').replace(/\s*\([a-z0-9_]+\)/g, '').replace(/[.:;,\s]+$/, '').trim())
       .filter((s) => s.length > 2);
   return lines([...sentences(agent.persona?.mission), ...sentences(agent.instructions)]) ?? [];
 }
