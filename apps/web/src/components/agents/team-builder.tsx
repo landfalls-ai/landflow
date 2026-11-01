@@ -671,24 +671,52 @@ interface LastTeamRun {
   startedAt: string;
   nodeName: string;
   durationMs?: number;
-  members: Array<{ title: string; tokens: number; budgetTokens?: number; estimated?: boolean; overBudget?: boolean; costUsd?: number }>;
+  /** Going on now: read from the team node's live progress. */
+  live?: boolean;
+  /** The member at work (a live run). */
+  member?: string;
+  members: Array<{ title: string; tokens: number; budgetTokens?: number; estimated?: boolean; overBudget?: boolean; costUsd?: number; notAsked?: boolean; working?: boolean }>;
   moments?: TeamMoment[];
 }
 
-/** The team's latest run in a flow: when, and what each member used against its budget, with a way into its Run Trace. */
+const LIVE_POLL_MS = 4_000;
+
+/**
+ * The team's latest run in a flow: when, and what each member used against its budget, with a way into its Run Trace.
+ * While a run goes on it reads again every few seconds, so the bars fill as the members work; a member its manager never
+ * asked says so beside an empty bar.
+ */
 function LastRun({ teamId, faces }: { teamId: string; faces: Array<{ title: string; agent?: AgentSummary }> }) {
   const [run, setRun] = useState<LastTeamRun | null>();
+  const [tick, setTick] = useState(0);
   useEffect(() => {
+    let gone = false;
     api<{ run?: LastTeamRun }>(`/api/agent-teams/${teamId}/last-run`)
-      .then((r) => setRun(r.run ?? null))
-      .catch(() => setRun(null));
-  }, [teamId]);
+      .then((r) => !gone && setRun(r.run ?? null))
+      .catch(() => !gone && setRun((prev) => prev ?? null));
+    return () => {
+      gone = true;
+    };
+  }, [teamId, tick]);
+  const live = Boolean(run?.live);
+  useEffect(() => {
+    if (!live) return;
+    const timer = setTimeout(() => setTick((n) => n + 1), LIVE_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [live, tick]);
   if (!run || !run.members.length) return null;
   const when = new Date(run.startedAt);
   return (
-    <section aria-label="Last run" className="rounded-2xl border border-hair bg-sf p-3.5" data-testid="team-last-run">
+    <section aria-label={run.live ? 'Running now' : 'Last run'} className={cn('rounded-2xl border bg-sf p-3.5', run.live ? 'border-gn/40' : 'border-hair')} data-testid="team-last-run" data-live={run.live || undefined}>
       <div className="mb-2.5 flex items-baseline justify-between gap-2">
-        <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">Last run</h2>
+        {run.live ? (
+          <h2 className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-gn">
+            <span className="size-1.5 animate-pulse rounded-full bg-gn" aria-hidden />
+            Running now
+          </h2>
+        ) : (
+          <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">Last run</h2>
+        )}
         <Link href={`/runs/${run.executionId}?tab=team`} className="truncate text-[12px] font-semibold text-t1 hover:underline">
           {run.workflowName} · {when.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} →
         </Link>
@@ -697,10 +725,21 @@ function LastRun({ teamId, faces }: { teamId: string; faces: Array<{ title: stri
         {run.members.map((m) => {
           const face = faces.find((f) => f.title === m.title);
           return (
-            <li key={m.title} className="flex min-w-0 items-center gap-2.5">
-              {face?.agent ? <AgentAvatar agent={faceOf(face.agent)} size={24} /> : <span className="grid size-6 place-items-center rounded-lg bg-acdim text-[11px] font-semibold text-t2">{m.title.charAt(0)}</span>}
-              <span className="w-28 shrink-0 truncate text-[13px] text-t1">{m.title}</span>
-              {m.budgetTokens ? (
+            <li key={m.title} className={cn('flex min-w-0 items-center gap-2.5', m.notAsked && 'opacity-60')} data-testid="team-last-run-member" data-not-asked={m.notAsked || undefined}>
+              <span className={cn('relative shrink-0 rounded-lg', m.working && 'ring-2 ring-gn ring-offset-1 ring-offset-sf')}>
+                {face?.agent ? <AgentAvatar agent={faceOf(face.agent)} size={24} /> : <span className="grid size-6 place-items-center rounded-lg bg-acdim text-[11px] font-semibold text-t2">{m.title.charAt(0)}</span>}
+              </span>
+              <span className="w-28 shrink-0 truncate text-[13px] text-t1">
+                {m.title}
+                {m.working && <span className="ml-1 text-[11px] text-gn">· working</span>}
+              </span>
+              {m.notAsked ? (
+                // An empty bar with its budget: the budget is set, the member just wasn't needed.
+                <span className="flex min-w-0 flex-1 items-center gap-2" title={`${m.title} wasn't asked in this run`}>
+                  <span className="h-1 min-w-0 flex-1 rounded-full bg-acdim" />
+                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-t3">not asked{m.budgetTokens ? ` · of ${tokens(m.budgetTokens)}` : ''}</span>
+                </span>
+              ) : m.budgetTokens ? (
                 <BudgetBar usage={{ member: m.title, tokens: m.tokens, budget: m.budgetTokens, ...(m.estimated && { estimated: true }) }} color={face?.agent ? faceOf(face.agent).color : undefined} className="min-w-0 flex-1" />
               ) : (
                 <span className="font-mono text-[11px] tabular-nums text-t3">

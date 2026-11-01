@@ -273,7 +273,10 @@ each member's step count) and each budgeted member's bar (`activity.usage`), in 
 run that waited for a person keeps one activity across the wait: the second part's turns and moments follow the first's,
 and its usage carries on, so 80% isn't told twice. The team's page shows a **Last run** card: the flow and time (a link
 into its Run Trace), each member's tokens against its budget, and the run's last results (`GET
-/api/agent-teams/:id/last-run`). The execution view's **Agent session** panel follows
+/api/agent-teams/:id/last-run`). While a run goes on the card reads **Running now** (green, with a pulse) and reads
+again every 4 seconds from the team node's live progress, so the bars fill as members work and the member at work is
+ringed with "· working"; every member with a budget is listed, and one its manager never asked fades with "not asked ·
+of 100k" beside an empty bar. The execution view's **Agent session** panel follows
 the lead's session live, its header names the member working ("Tech Lead · Reviewer working"), and it gives way to the
 canvas on a short screen so the flow stays in view. On a phone the execution view pins a **Now card** over the canvas or
 the Run Trace: the face, a sentence ("Reviewer is running the tests"), the command, the ticker and a way into the Run Trace;
