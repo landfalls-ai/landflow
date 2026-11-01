@@ -31,6 +31,9 @@ What the new look draws so far:
   while the team works ([run-trace.md](run-trace.md#a-run-as-a-timeline));
 - what a run did, in one line (in → who → out): Home's recent runs, a finished run's Run Trace, the team's last run and
   the agent's last runs ([run-trace.md](run-trace.md#what-a-run-did-in-one-line));
+- an approval with its evidence: the member's reasons, the case, what it looked at, buttons named by the action and Edit, in
+  Needs you and on the waiting node, with a row of faces for who has something for you
+  ([run-trace.md](run-trace.md#an-approval-with-its-evidence));
 - team members as cards above the team chart ([agent-teams.md](agent-teams.md#member-cards));
 - the analyst answering with a chart: source chips, one "Looking across N sources…" line, and an answer card whose chart
   comes from the tool results ([second-brain.md](second-brain.md#the-analyst-agent));

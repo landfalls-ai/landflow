@@ -656,11 +656,28 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ decision: { type: 'string', enum: ['accepted', 'sent_back'] }, note: { type: 'string' } }, ['decision'])),
     responses: { 200: reply('The run after it went on', object({ status: { type: 'string' } }, ['status'])), 404: notFound, 409: errorRef('The run is not waiting on a Run report') },
   });
+  add('get', '/api/executions/{id}/approvals', {
+    tag: 'Executions',
+    id: 'getExecutionApprovals',
+    summary: 'The tool calls a waiting run asks a person to approve',
+    description: 'An AI Agent node’s, or a team member’s, tool calls waiting for approval, with the decisions so far (`calls: [{ id, tool, input }]`, `decisions`). `approval` is null when the run waits for nothing of the kind.',
+    pathParams: { id: 'The execution id' },
+    responses: { 200: reply('The approval', object({ approval: { type: 'object', nullable: true, additionalProperties: true } }, ['approval'])), 404: notFound },
+  });
+  add('post', '/api/executions/{id}/approvals', {
+    tag: 'Executions',
+    id: 'decideExecutionApproval',
+    summary: 'Approve or reject one waiting tool call, optionally with an edited input',
+    description: 'Streams `decision` (`{ status: \'waiting\' | \'resumed\', approval }`), then, once every call has a decision, the resumed run’s `execution` events and a `result`. `input` (only with `approved: true`) is the tool’s input as a person changed it: the tool runs with it instead of the call’s own, and the run’s journal marks the wait `edited` (`editedBy`) and says “Approved … with changes”. It must be a JSON object (up to 200 KB). Errors before anything is decided are JSON: 400 (a bad edit), 404, 409 (already decided, or nothing to approve).',
+    pathParams: { id: 'The execution id' },
+    body: jsonBody(object({ callId: { type: 'string' }, approved: { type: 'boolean' }, input: { type: 'object', additionalProperties: true, description: 'The tool’s input as edited; replaces the call’s own input. Approvals only.' } }, ['callId', 'approved'])),
+    responses: { 200: reply('The decision, then the resumed run', { type: 'string', description: '`event: <name>` and `data: <JSON>` lines' }, 'text/event-stream'), 400: invalid, 404: notFound, 409: errorRef('Already decided, or the run is not waiting for a tool approval') },
+  });
   add('get', '/api/runs/needs-you', {
     tag: 'Executions',
     id: 'listRunsNeedingYou',
     summary: 'What waits for a person across runs',
-    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check), title, detail, actor, spanId, since.',
+    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check), title, detail, actor, member (the team member a tool approval or a guard’s ask is for), spanId, since.',
     responses: { 200: reply('The items, newest first', object({ items: array({ type: 'object' }) }, ['items'])) },
   });
   add('get', '/api/runs/lines', {
@@ -1696,7 +1713,7 @@ function paths(): Record<string, Record<string, Json>> {
     public: true,
     pathParams: { id: 'The trace id from the request’s `<!-- landflow-trace … -->` line', askId: 'The id the mod gave the ask' },
     query: [{ name: 'wait', description: 'Seconds to hold the request while the ask is pending (at most 30)', schema: { type: 'integer', minimum: 0, maximum: 30, default: 0 } }],
-    responses: { 200: reply('The answer', object({ decision: { type: 'string', enum: ['pending', 'approved', 'denied'] }, by: { type: 'string' }, at: { type: 'string' }, expired: { type: 'boolean' } }, ['decision'])), 404: notFound },
+    responses: { 200: reply('The answer', object({ decision: { type: 'string', enum: ['pending', 'approved', 'denied'] }, by: { type: 'string' }, at: { type: 'string' }, command: { type: 'string', description: 'Approved with a command a person changed: the mod runs this one instead' }, expired: { type: 'boolean' } }, ['decision'])), 404: notFound },
   });
   add('get', '/api/executions/{id}/asks', {
     tag: 'Executions',
@@ -1712,7 +1729,7 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Approve or reject a command a Claude Code member asked about',
     description: 'Needs the access to the run that deciding its tool approvals needs. The member’s mod polls the decision and runs the command or tells Claude Code a person denied it; the run’s journal gets an Approval check.',
     pathParams: { id: 'The execution id', askId: 'The ask id (`attrs.ask` of the wait, or from the list)' },
-    body: jsonBody(object({ approved: { type: 'boolean' } }, ['approved'])),
+    body: jsonBody(object({ approved: { type: 'boolean' }, command: { type: 'string', description: 'The command as a person changed it before allowing it (approvals only): the mod runs it instead, and the journal says it was edited' } }, ['approved'])),
     responses: { 200: reply('Decided', object({ ask: { type: 'object', additionalProperties: true } }, ['ask'])), 400: invalid, 404: notFound, 409: errorRef('Already answered, or nobody answered in time') },
   });
   add('get', '/api/binary/{id}', { tag: 'Executions', id: 'getBinary', summary: 'The bytes of a stored file', description: 'A file of an execution (`item.binary.<name>.id`) with its Content-Type, size and name; `?download=1` makes it an attachment. Plugins send their `binaryAccess` token as a Bearer token. Answers single HTTP `Range` requests (`bytes=a-b`, `a-`, `-n`) with 206 and `Content-Range`, so video and audio can seek; 416 with `Content-Range: bytes */<size>` when unsatisfiable. Multi-range or malformed headers (and any `If-Range`) get the whole file as 200. Every response carries `Accept-Ranges: bytes`. `HEAD` answers the same headers.', query: [{ name: 'download', description: '`1`: Content-Disposition attachment', schema: { type: 'string' } }], headers: [{ name: 'Range', description: 'One byte range: `bytes=0-99`, `bytes=100-`, `bytes=-500`', schema: { type: 'string' } }], responses: { 200: { description: 'The whole file', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 206: { description: 'The requested part (`Content-Range: bytes a-b/size`)', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 403: errorRef('The token can’t read that file'), 404: notFound, 416: errorRef('Range not satisfiable (`Content-Range: bytes */size`)') } });

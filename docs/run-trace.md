@@ -176,6 +176,37 @@ on the result opens it (a pull request on GitHub); the rest of the row opens the
 - The lines come from `GET /api/runs/lines?ids=…` (at most 20 runs), folded on the server from each run's journal and
   cached by its last event like the run digests.
 
+### An approval with its evidence
+
+In the new look, a run that waits for a person to approve a tool call (a team member's tool that needs approval, a
+published note, a command the guard asks about) shows a **decision card** (`components/run-trace/approval-card.tsx`)
+instead of a title and two buttons, so the person decides with the reasons in front of them:
+
+- **In its own words.** The member's face and name, and what it wants and recommends: the reason it was asked (an ask's
+  `reason`, else the reason on its latest turn) and its last words before the wait, one or two sentences, cut
+  (`approvalWords()` in `lib/shared/approval-case.ts`).
+- **The case.** What the tool acts on (`plugins · #5`), the tool's readable name and its input made readable
+  (`approvalCase(wait, model)`): a review as its verdict (approve, request changes, comment) and its text; a command in
+  mono; a file write as its path; anything else as `key: value` lines, cut.
+- **What it looked at.** The evidence the run already records, only rows that have data (`approvalEvidence(model, wait)`
+  in `lib/shared/approval-evidence.ts`): when it asked, its checks (and the tests the team kept as headlines), the code it
+  changed (+/- and files, from the run's [changes](#artifacts-and-code-changes)), its [fix cycles](#fix-cycles), its
+  budget used against its own and the run's time. Each row opens its place in the Run Trace: a detail sheet, or a tab
+  (`?tab=story&member=Reviewer`).
+- **Buttons named by the action.** *Post review & approve*, *Post review & request changes*, *Run the command*, *Publish
+  notes*, *Write the file*, else *Approve: <tool>*; then **Edit** and **Deny**.
+- **Edit.** Opens the input (a review's verdict and body, the command, or the input as JSON for anything else).
+  **Approve with these changes** sends the edited input with the approval and the tool runs with it instead of the
+  member's own. The journal marks the wait `edited: true` with `editedBy`, says "Approved … with changes", and the
+  Approval check says it too; the wait's detail sheet shows an **Edited by you** badge. A guard's ask (a command) sends the
+  edited command: the mod's poll hands it back and the mod runs it instead (still stopped by the rules nobody can allow).
+
+The card is the Needs you section's, and the waiting node's: from the editor, **Review** next to Approve / Deny on the node
+opens it in a sheet, and the execution view's phone card is it (both read the run's journal). Needs you also gets a row of
+**faces** across the top, a dot on each member that waits (and on the Executions page's list, one face per member with
+something for you across runs). The classic look keeps its title and buttons; the edit works through the API in both
+looks (`POST /api/executions/:id/approvals` with `input`, `POST /api/executions/:id/asks/:askId` with `command`).
+
 ### Headlines
 
 A Run a Team node keeps the moments of its run on its output (`activity.moments`: tests pass or fail, a typecheck or
@@ -552,6 +583,7 @@ only reach the process that runs the execution.
 | `GET /api/executions/:id/agents` | the team members of a live execution that can be paused: `{ members: [{ member, kind: 'agent' \| 'remote', state: 'working' \| 'pausing' \| 'paused', since? }] }` |
 | `POST /api/executions/:id/agents/:member/pause` | pause a member (by its title): an agent at its next step boundary, a remote member at once → `{ member, kind, state }` (404 when it isn't working here) |
 | `POST /api/executions/:id/agents/:member/continue` | `{ message? }`: the person's instruction to a paused member, which goes on with it (409 when it isn't paused) |
+| `POST /api/executions/:id/approvals` | `{ callId, approved, input? }`: decide a waiting tool call; `input` (a JSON object, with `approved: true`) is the tool's input as a person edited it, and the tool runs with it ([an approval with its evidence](#an-approval-with-its-evidence)). SSE: `decision`, then the resumed run. |
 | `GET /api/runs/needs-you` | Across the runs you can see: waits for a person (`approval`, `form`, `question`, `gate`) and failed checks of the last 7 days nobody decided on. |
 | `GET /api/runs/search`, `/api/runs/compare?a=&b=`, `/api/runs/measures?workflowId=` | Search, compare and measures across runs ("Search, compare and measures" below). |
 

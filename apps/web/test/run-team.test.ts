@@ -370,6 +370,41 @@ describe('Run a Team', () => {
     expect(events).toContainEqual(expect.objectContaining({ type: 'span.started', kind: 'wait', name: 'Developer wants to use Comment on pull request on #5: Review passed', attrs: expect.objectContaining({ wait: 'approval', member: 'Developer', tool: 'Comment on pull request', target: '#5', summary: 'Review passed' }) }));
   });
 
+  it('runs the tool with the input a person edited, and says so in the journal', async () => {
+    const { decideApproval, ApprovalError } = await import('@/lib/server/approvals');
+    const comment = agentStore.create({
+      name: 'Editor',
+      instructions: 'You comment.',
+      model: { provider: 'ollama', model: 'edit-model', baseUrl: fake.url.replace(/\/v1$/, '') },
+      tools: [{ id: 't1', type: 'node', name: 'Comment on pull request', description: 'Comment', nodeType: 'core.noOp', parameters: {}, requireApproval: true }],
+    });
+    agentStore.publish(comment.id);
+    const t = team([{ id: 'm_dev', title: 'Developer', kind: 'agent', agentId: comment.id, reportsTo: 'm_lead' } as TeamMember]);
+    const tool = toToolName('Comment on pull request');
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_developer', { message: 'Comment on #5', reason: 'Tell them' }) : { text: `Lead: ${lastTool(body)}` }));
+    scripts.set('edit-model', (turn, body) => (turn === 1 ? call(tool, { text: 'Review passed', pull_number: 5, reason: 'Tell them' }, 'c_edit') : { text: `Developer saw: ${lastTool(body)}` }));
+    turns.clear();
+    const { record } = await run(t.id);
+    expect(record.status).toBe('waiting');
+    const callId = (record.wait?.data?.approval as { calls: Array<{ id: string }> }).calls[0].id;
+    // Only an approval carries an edit.
+    await expect(decideApproval(record.executionId, callId, false, { input: { text: 'x' } })).rejects.toBeInstanceOf(ApprovalError);
+    const outcome = await decideApproval(record.executionId, callId, true, { by: 'ana@example.com', input: { text: 'Needs one more test', pull_number: 5 } });
+    resetJournals();
+    expect(outcome.status).toBe('resumed');
+    const resumed = (outcome as { record: typeof record }).record;
+    expect(resumed.error?.message ?? resumed.status).toBe('success');
+    const done = resumed.runData.Team?.at(-1)?.outputs?.[0]?.[0]?.json as Record<string, unknown>;
+    // The tool ran with the edit, not with what the member wrote.
+    expect(String(done.reply)).toContain('Needs one more test');
+    expect(String(done.reply)).not.toContain('Review passed');
+    const events = read(record.executionId);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'check', check: expect.objectContaining({ name: 'Approval', status: 'pass', message: expect.stringContaining("approved Developer's use of Comment on pull request with changes") }) }));
+    // The wait says the person edited it.
+    expect(events).toContainEqual(expect.objectContaining({ type: 'span.updated', attrs: { edited: true, editedBy: 'ana@example.com' } }));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'message', text: 'Approved Comment on pull request with changes' }));
+  });
+
   it('tells the member when the person rejects the tool call, and the team goes on without it', async () => {
     const { decideApproval } = await import('@/lib/server/approvals');
     const merger = agentStore.create({

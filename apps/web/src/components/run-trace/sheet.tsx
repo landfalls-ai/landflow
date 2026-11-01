@@ -16,6 +16,7 @@ import { Avatar, ResultChip, SectionTitle, Tap, ValueBlock, clock, who } from '.
 import { Doc, TextBlock } from './rich-text';
 import { RerunPanel, useRunControls } from './run-controls';
 import { TeamPauseBar } from '../editor/team-pause';
+import { useNewLook } from '../shell/look-toggle';
 
 export type Open = {
   kind: 'span' | 'artifact' | 'check' | 'actor';
@@ -172,6 +173,7 @@ function SpanSheet({
   const edits = span.kind === 'tool' ? changes?.files.flatMap((f) => f.changes.filter((c) => c.spanId === span.id).map((c) => ({ file: f.path, c }))) : undefined;
   const kids = span.children.map((id) => model.spans[id]).filter((s) => s && !s.hidden);
   const attrs = Object.entries(span.attrs).filter(([k]) => k !== 'hidden');
+  const newLook = useNewLook();
   return (
     <>
       <div className="flex flex-wrap items-center gap-1.5 pb-3">
@@ -179,6 +181,12 @@ function SpanSheet({
         {span.state && <Badge tone="muted">{span.state}</Badge>}
         {(span.kind === 'delegate' || span.kind === 'handoff') && <ResultChip span={span} />}
         <Badge tone="muted">{span.kind}</Badge>
+        {/* A person changed what the tool would do before approving it (the approval card's Edit). */}
+        {newLook && span.attrs.edited === true && (
+          <Badge tone="warning" title={typeof span.attrs.editedBy === 'string' ? `Edited by ${span.attrs.editedBy}` : undefined}>
+            Edited by {typeof span.attrs.editedBy === 'string' && span.attrs.editedBy !== 'A person' ? 'you' : 'a person'}
+          </Badge>
+        )}
       </div>
       <Facts
         rows={[

@@ -36,8 +36,9 @@ export interface RunAsk {
   createdAt: string;
 }
 
-/** Approve or reject such a command (POST /api/executions/:id/asks/:askId). */
-export const decideAsk = (executionId: string, askId: string, approved: boolean) => api<{ ask: RunAsk }>(`/api/executions/${executionId}/asks/${askId}`, { method: 'POST', json: { approved } });
+/** Approve or reject such a command (POST /api/executions/:id/asks/:askId); `command` is what a person changed it to before allowing it. */
+export const decideAsk = (executionId: string, askId: string, approved: boolean, command?: string) =>
+  api<{ ask: RunAsk }>(`/api/executions/${executionId}/asks/${askId}`, { method: 'POST', json: { approved, ...(approved && command && { command }) } });
 
 /** The open asks of a running execution, read every few seconds while `active`; `refresh` reads now (after a decision). */
 export function useRunAsks(executionId: string | undefined, active: boolean): { asks: RunAsk[]; refresh: () => void } {

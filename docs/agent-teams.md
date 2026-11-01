@@ -193,6 +193,9 @@ member's face and title above it.
    **Approval** check on the Run Trace: who decided, what for which member, and when. Outside a flow (a run that can't wait)
    the tool is refused as before and the run leaves by **Needs a person** with `Developer wanted to use Post update, which
    needs a person's approval`.
+   In the new look the approval is a decision card with the member's reasons and the evidence it looked at, and **Edit**
+   lets the person change the input (a review's verdict and text, a command, or JSON) before approving: the tool runs with
+   the edit, and the Approval check says "with changes" ([run-trace.md](run-trace.md#an-approval-with-its-evidence)).
 6. **Reviews.** A review is seen to by the nearest manager of both the reviewer and the reviewed (their own manager when
    they share one; the lead when the Reviewer sits under QA and the Developer under the lead). That manager, giving its
    final answer while the work has not been looked at (the reviewer was not asked after the work came back), is told to

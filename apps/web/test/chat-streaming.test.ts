@@ -199,6 +199,29 @@ describe('streamed chat replies (editor chat panel)', () => {
     expect(again.status).toBe(409);
   });
 
+  it('runs the tool with the input a person edited when approving', async () => {
+    const id = 'wf_stream_edit';
+    store.saveWorkflow(chatWorkflow(id, { requireApproval: 'all' }));
+    const first = await readSse(
+      await runRoute.POST(
+        new Request(`http://stream.test/api/workflows/${id}/run`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { message: 'What is 6*7?' } }) }),
+        params({ id }),
+      ),
+    );
+    const executionId = first.find((e) => e.event === 'result')!.data.executionId as string;
+    const post = (body: unknown) =>
+      approvalsRoute.POST(new Request(`http://stream.test/api/executions/${executionId}/approvals`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), params({ id: executionId }));
+    // The edit must be an object, and only an approval carries one.
+    expect((await post({ callId: 'call_1', approved: true, input: ['2+3'] })).status).toBe(400);
+    expect((await post({ callId: 'call_1', approved: false, input: { expression: '2+3' } })).status).toBe(400);
+
+    const decided = await readSse(await post({ callId: 'call_1', approved: true, input: { expression: '2+3' } }));
+    expect(decided.find((e) => e.event === 'result')!.data.status).toBe('success');
+    // The Calculator got the edit, not the model's 6*7.
+    const steps = (store.getExecution(executionId)!.runData.Agent.at(-1)!.outputs[0][0].json as { steps: Array<{ input: unknown; output: unknown }> }).steps;
+    expect(steps[0]).toMatchObject({ input: { expression: '2+3' }, output: { result: 5 } });
+  });
+
   it('a rejected call does not run and the model is told so', async () => {
     const id = 'wf_stream_reject';
     store.saveWorkflow(chatWorkflow(id, { requireApproval: 'selected', approvalTools: 'Calculator' }));
