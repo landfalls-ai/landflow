@@ -198,7 +198,7 @@ export function ApprovalCard({
                 </div>
               ))
             ) : (
-              <p className="text-[12.5px] text-t2">No input.</p>
+              <p className="text-[12.5px] text-t2">It runs with no input: approving lets {c.toolName} run as it is.</p>
             )}
           </dl>
         )}
@@ -230,9 +230,12 @@ export function ApprovalCard({
             <Button variant="primary" loading={busy === 'approve'} disabled={Boolean(busy)} onClick={() => send(true)} data-testid="approval-approve">
               <Check className="size-3.5" strokeWidth={3} /> {verb}
             </Button>
-            <Button variant="outline" disabled={Boolean(busy)} onClick={() => setDraft(c.edit)} data-testid="approval-edit">
-              <Pencil className="size-3.5" /> Edit
-            </Button>
+            {/* Nothing to edit when the tool takes no input. */}
+            {(c.rows.length > 0 || c.edit.kind !== 'json') && (
+              <Button variant="outline" disabled={Boolean(busy)} onClick={() => setDraft(c.edit)} data-testid="approval-edit">
+                <Pencil className="size-3.5" /> Edit
+              </Button>
+            )}
             <Button variant="danger" loading={busy === 'deny'} disabled={Boolean(busy)} onClick={() => send(false)} data-testid="approval-deny">
               <X className="size-3.5" /> Deny
             </Button>

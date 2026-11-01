@@ -82,7 +82,8 @@ function kindOf(tool: string, input: Record<string, unknown> | undefined, ask: b
 /** The first `max` sentences of a text, cut. */
 export function sentences(text: string, max = 2, chars = 260): string {
   const flat = text.replace(/\s+/g, ' ').trim();
-  const parts = flat.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g) ?? [flat];
+  // A sentence ends at . ! or ? before a space or the end, so "0.9.0" or "e.g.x" stays inside it.
+  const parts = flat.match(/\S.*?[.!?]+(?=\s|$)|\S.*$/g) ?? [flat];
   return cut(parts.slice(0, max).join(' ').trim(), chars);
 }
 

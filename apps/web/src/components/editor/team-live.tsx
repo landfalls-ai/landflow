@@ -385,7 +385,7 @@ export function ApprovalButtons({ executionId, onDecide, className, member }: { 
     }
   };
   return (
-    <span className={cn('flex items-center gap-2', className)} data-testid="team-approval">
+    <span className={cn('flex flex-wrap items-center gap-2', className)} data-testid="team-approval">
       <button
         type="button"
         disabled={Boolean(busy)}
@@ -424,9 +424,9 @@ export function ApprovalButtons({ executionId, onDecide, className, member }: { 
             data-testid="team-review"
             title="See why, what it looked at, and edit before approving"
             aria-label="Review before deciding"
-            className="nodrag nopan inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-warn/60 px-3 text-[13px] font-semibold text-t1 transition-colors hover:bg-warndim"
+            className="nodrag nopan inline-flex h-7 basis-full items-center justify-center gap-1.5 rounded-full text-[12px] font-semibold text-warn transition-colors hover:bg-warndim"
           >
-            <FileSearch className="size-3.5" /> Review
+            <FileSearch className="size-3.5" /> Review the case
           </button>
           {reviewing && <ApprovalSheet executionId={executionId} {...(member && { member })} {...(onDecide && { onDecide })} onClose={() => setReviewing(false)} />}
         </>

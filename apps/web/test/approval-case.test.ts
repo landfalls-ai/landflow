@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JournalEvent, RunActor } from '@/lib/shared/run-trace';
 import { foldJournal, type NeedsYouItem } from '@/lib/shared/run-trace-model';
-import { approvalCase, editedInput, readableTool, verbOf, type ApprovalWait } from '@/lib/shared/approval-case';
+import { approvalCase, editedInput, readableTool, sentences, verbOf, type ApprovalWait } from '@/lib/shared/approval-case';
 import { approvalEvidence, listFaces, needsFaces } from '@/lib/shared/approval-evidence';
 import { RUN_PROFILES } from '@/lib/shared/run-profiles';
 
@@ -55,6 +55,11 @@ const reviewAttrs = { wait: 'approval', member: 'Reviewer', tool: 'Review pull r
 const waitOf = (model: ReturnType<typeof waiting>): ApprovalWait => model.needsYou.find((n): n is ApprovalWait => n.kind === 'wait')!;
 
 describe('the case of an approval', () => {
+  it('keeps a version number inside its sentence', () => {
+    expect(sentences('Here are the notes for Landflow 0.9.0 based on the change list. 0.9.0: agents can pause. Done!', 1)).toBe('Here are the notes for Landflow 0.9.0 based on the change list.');
+    expect(sentences('No full stop at the end', 1)).toBe('No full stop at the end');
+  });
+
   it('reads a review: the repository and number, the verdict and its text, a button that names both', () => {
     const model = waiting(reviewAttrs);
     const c = approvalCase(waitOf(model), model);
