@@ -17,6 +17,7 @@ import {
   FlaskConical,
   Loader2,
   MoreHorizontal,
+  Package,
   Pencil,
   Rocket,
   Trash2,
@@ -55,6 +56,7 @@ import { TestChat } from './test-chat';
 import type { ToolEntry } from './timeline';
 import { TriggersCard } from './triggers-card';
 import { useAgentData, useAgentList } from './use-agent-data';
+import { ExportPluginDialog } from './export-plugin-dialog';
 import { canTest, configOf, downloadJson, parseAgentFile, sameConfig, setupSteps, slug, type UpdateConfig } from './util';
 
 export const BUILDER_TABS = ['persona', 'abilities', 'deploy', 'safety', 'sessions', 'evaluations'] as const;
@@ -226,7 +228,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
   const [testing, setTesting] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [modal, setModal] = useState<
-    { kind: 'description' } | { kind: 'delete' } | { kind: 'template' } | { kind: 'import'; config: Partial<AgentConfig>; file: string } | null
+    { kind: 'description' } | { kind: 'delete' } | { kind: 'template' } | { kind: 'plugin' } | { kind: 'import'; config: Partial<AgentConfig>; file: string } | null
   >(null);
   const [description, setDescription] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -604,6 +606,14 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
                   <MenuItem
                     onClick={() => {
                       close();
+                      setModal({ kind: 'plugin' });
+                    }}
+                  >
+                    <Package /> Export as Claude Code plugin…
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      close();
                       setModal({ kind: 'template' });
                     }}
                   >
@@ -745,6 +755,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
           </Field>
         </Dialog>
       )}
+      {modal?.kind === 'plugin' && <ExportPluginDialog base={`/api/agents/${agentId}`} title={draft.name} onClose={() => setModal(null)} />}
       {modal?.kind === 'template' && (
         <SaveTemplateDialog agent={{ id: agentId, name: draft.name, description: draft.description }} onClose={() => setModal(null)} />
       )}

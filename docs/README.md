@@ -32,7 +32,8 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Searching and comparing runs, measures over time, and exporting each run's journal over OTLP with OpenInference kinds | [run-trace.md](run-trace.md#search-compare-and-measures) | [reference/api.md](reference/api.md), [reference/configuration.md](reference/configuration.md) (`LANDFLOW_OTLP_TRACES_URL`) |
 | Claude Code agents' real usage, cost and guardrails (the landflow-harness mod) | [a2a.md](a2a.md#the-landflow-harness-mod) | [run-trace.md](run-trace.md), [agent-teams.md](agent-teams.md) |
 | Run Trace: each run's journal (who did what, requests between agents, waits, artifacts, checks), the Story, Trace, Team and Report screens, profiles, the Run report node and its gate | [run-trace.md](run-trace.md) | [protocol.md](protocol.md) (`records`) |
-| Marketplace: Claude Code plugin marketplaces as agents, skills, node plugins and flows; flow share pages | [marketplace.md](marketplace.md) | |
+| Marketplace: Claude Code plugin marketplaces as agents, skills, node plugins and flows; flow share pages; agents and teams exported as Claude Code plugins | [marketplace.md](marketplace.md) | |
+| Team templates: a team, its agents and its flow saved as one template and created again with fresh ids and credentials | [templates.md](templates.md) | [features/editor.md](features/editor.md), [agent-teams.md](agent-teams.md) |
 | Alert triage and Landfall war rooms: the triage, Landfall and threat-intel plugins and their flows | [triage.md](triage.md) | each plugin's README |
 | Integrations: messaging, productivity, Google Workspace, databases | [features/integrations.md](features/integrations.md) | each plugin's README |
 | Files and binary data | [features/files.md](features/files.md) | [protocol.md](protocol.md) §11 |

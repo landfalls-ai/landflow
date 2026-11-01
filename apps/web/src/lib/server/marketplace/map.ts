@@ -1,11 +1,11 @@
 /** Claude Code agents and skills → Landflow agent configs and agent skills. */
 import { nanoid } from 'nanoid';
 import { cleanTeam, type AgentConfig, type AgentModel, type AgentSkill } from '../../shared/agents';
-import { randomFace } from '../../shared/faces';
-import type { ClaudeAgentFile, ClaudeSkillFile } from '../../shared/marketplace';
+import { cleanAvatar, randomFace } from '../../shared/faces';
+import type { ClaudeAgentFile, ClaudeSkillFile, LandflowAgentData } from '../../shared/marketplace';
 
 /** Claude Code's model aliases. `inherit` means "the main conversation's model", Sonnet by default. */
-const MODEL_ALIASES: Record<string, string> = {
+export const MODEL_ALIASES: Record<string, string> = {
   sonnet: 'claude-sonnet-5-5',
   opus: 'claude-opus-5-5',
   haiku: 'claude-haiku-5-5',
@@ -20,7 +20,7 @@ export function mapModel(value: string | undefined): AgentModel | undefined {
   return undefined;
 }
 
-const COLORS: Record<string, string> = {
+export const COLORS: Record<string, string> = {
   red: '#ef4444',
   orange: '#f97316',
   yellow: '#eab308',
@@ -79,6 +79,7 @@ const MAX_DESCRIPTION = 600;
  * plugin and its name, and the plugin as its team, so a plugin's agents sit together on the roster.
  */
 export function agentFromClaude(agent: ClaudeAgentFile, options: { pluginId: string; skills: AgentSkill[]; team?: string }): Partial<AgentConfig> {
+  if (agent.landflow) return agentFromExport(agent, agent.landflow, options);
   const model = mapModel(agent.model);
   let description = agent.description.length > MAX_DESCRIPTION ? `${agent.description.slice(0, MAX_DESCRIPTION - 1).trimEnd()}…` : agent.description;
   const notes = [`Installed from ${options.pluginId}.`];
@@ -96,5 +97,29 @@ export function agentFromClaude(agent: ClaudeAgentFile, options: { pluginId: str
     ...(cleanTeam(options.team) && { team: cleanTeam(options.team) }),
     instructions: agent.body,
     skills: options.skills,
+  };
+}
+
+/**
+ * An agent a Landflow export wrote (`.landflow/agents/<slug>.json`, ./export.ts): the config it kept, so nothing the
+ * agent file can't hold is lost. The agent file's body counts as the prompt only if someone edited it since: then it
+ * replaces the instructions, and the persona parts (already in the old body) are dropped. Credentials, schedules and
+ * channels were never exported; the agent's own `team` label wins over the plugin's.
+ */
+function agentFromExport(agent: ClaudeAgentFile, data: LandflowAgentData, options: { skills: AgentSkill[]; team?: string }): Partial<AgentConfig> {
+  const { config } = data;
+  const edited = agent.body.trim() !== data.body.trim();
+  const avatar = cleanAvatar(config.avatar);
+  const team = cleanTeam(config.team) ?? cleanTeam(options.team);
+  return {
+    ...config,
+    name: config.name || titleCase(agent.name),
+    description: config.description ?? agent.description,
+    ...(avatar ? { avatar } : { avatar: { kind: 'face' as const, face: randomFace(agent.name) } }),
+    ...(team && { team }),
+    instructions: edited ? agent.body : (config.instructions ?? agent.body),
+    ...(edited && { persona: undefined }),
+    skills: config.skills ?? options.skills,
+    tools: config.tools ?? [],
   };
 }

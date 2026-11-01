@@ -8,11 +8,12 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Ban, Boxes, ChevronLeft, Download, KeyRound, LayoutTemplate, PackageX, Pencil, Table2, Trash2 } from 'lucide-react';
+import { Ban, Boxes, ChevronLeft, Download, KeyRound, LayoutTemplate, PackageX, Pencil, Table2, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { timeAgo } from '@/lib/client/format';
+import { chartOrder } from '@/lib/shared/agent-teams';
 import { flowLink } from '@/lib/shared/marketplace';
 import type { TemplateDetail } from '@/lib/shared/templates';
 import type { NodeTypeInfo } from '@/lib/shared/types';
@@ -101,6 +102,39 @@ export function TemplateSetupCards({ template }: { template: Pick<TemplateDetail
         </Card>
       )}
     </>
+  );
+}
+
+/** A team template's members: who is in it, who reports to whom, and what comes with it. */
+function TeamCard({ template }: { template: TemplateDetail }) {
+  const bundle = template.bundle;
+  if (!bundle) return null;
+  const members = chartOrder(bundle.team);
+  const agentName = (key: string) => bundle.agents.find((a) => a.key === key)?.config.name ?? 'Missing agent';
+  return (
+    <Card className="flex flex-col gap-2.5">
+      <SectionLabel>
+        <span className="inline-flex items-center gap-1.5">
+          <Users className="size-3.5" /> Team · {bundle.team.name}
+        </span>
+      </SectionLabel>
+      {bundle.team.goal && <p className="text-[12px] leading-snug text-t2">{bundle.team.goal}</p>}
+      <ul className="flex flex-col gap-1.5">
+        {members.map((m) => (
+          <li key={m.id} className="rounded-[10px] border border-hair bg-wl px-2.5 py-2">
+            <div className="truncate text-[12px] font-semibold text-t1">
+              {m.title}
+              {!m.reportsTo && <span className="ml-1.5 font-normal text-t3">lead</span>}
+            </div>
+            <div className="truncate text-[11px] text-t3">{m.kind === 'agent' ? `Agent “${agentName(m.agentId)}”` : `Remote agent at ${String(m.parameters?.agentUrl ?? 'an A2A address')}`}</div>
+          </li>
+        ))}
+      </ul>
+      <p className="text-[11px] text-t3">
+        {bundle.agents.length} agent{bundle.agents.length === 1 ? '' : 's'} are created with it
+        {bundle.hasWorkflow ? ', and the flow that runs the team' : ''}; each gets a new id in the project you choose.
+      </p>
+    </Card>
   );
 }
 
@@ -250,9 +284,11 @@ export function TemplateView({ id }: { id: string }) {
       />
       <PageBody className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-4">
-          <Card className="h-[440px] overflow-hidden p-0">
-            <ExecutionCanvas workflow={template.workflow} nodeTypes={types} runData={NO_RUN_DATA} />
-          </Card>
+          {(!template.bundle || template.bundle.hasWorkflow) && (
+            <Card className="h-[440px] overflow-hidden p-0">
+              <ExecutionCanvas workflow={template.workflow} nodeTypes={types} runData={NO_RUN_DATA} />
+            </Card>
+          )}
           <Card className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <TemplateNodeIcons nodeTypes={template.nodeTypes} types={types} size="md" />
@@ -294,6 +330,7 @@ export function TemplateView({ id }: { id: string }) {
 
         <aside className="flex min-w-0 flex-col gap-4">
           <Problems template={template} types={types} />
+          <TeamCard template={template} />
           <TemplateSetupCards template={template} />
         </aside>
       </PageBody>

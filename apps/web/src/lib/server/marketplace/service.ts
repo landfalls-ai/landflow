@@ -8,6 +8,8 @@ import { existsSync, rmSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import type {
+  ClaudeAgentFile,
+  LandflowTeamData,
   Catalog,
   CatalogPlugin,
   ExploreFlow,
@@ -31,6 +33,7 @@ import { clusterActive, clusterState } from '../cluster/state';
 import { registry } from '../plugins/registry';
 import { logger } from '../telemetry';
 import { traceMarketplace } from '../telemetry/marketplace';
+import { agentTeamStore } from '../agent-teams/store';
 import { agentFromClaude, skillFromClaude, titleCase } from './map';
 import { commandLine, contentHash, downloadPlugin, freePort, nodePlugins, portFree, readInstallMarker, writeInstallMarker, type SupervisedPlugin } from './node-plugins';
 import { importTemplate, previewTemplate } from '../templates';
@@ -127,6 +130,30 @@ function withNeeds(detail: PluginDetail): PluginDetail {
   const known = new Set(registry.nodeTypes().map((t) => t.type));
   const own = detail.nodePlugin ? `${detail.nodePlugin.id}.` : undefined;
   return { ...detail, flows: detail.flows.map((flow) => ({ ...flow, needs: flow.nodeTypes.filter((type) => !known.has(type) && !(own && type.startsWith(own))) })) };
+}
+
+/**
+ * What an exported plugin (./export.ts) says about how its agents relate: a sub-agent tool pointing at another exported
+ * agent follows it to the copy just created, and `.landflow/team.json` becomes a team of those copies.
+ */
+function linkExported(created: Array<{ file: ClaudeAgentFile; id: string }>, team: LandflowTeamData | undefined, teams: Array<{ id: string; name: string }>) {
+  const bySource = new Map(created.flatMap((c) => (c.file.landflow?.sourceId ? [[c.file.landflow.sourceId, c.id] as const] : [])));
+  for (const { id } of created) {
+    const agent = agentStore.get(id);
+    if (!agent?.tools.some((t) => t.type === 'agent' && bySource.has(t.agentId))) continue;
+    agentStore.saveDraft(id, { tools: agent.tools.map((t) => (t.type === 'agent' && bySource.has(t.agentId) ? { ...t, agentId: bySource.get(t.agentId)! } : t)) });
+  }
+  if (!team) return;
+  const bySlug = new Map(created.map((c) => [c.file.path.split('/').pop()!.replace(/\.md$/i, ''), c.id] as const));
+  const members = team.team.members.flatMap((member) => {
+    if (member.kind !== 'agent') return [member];
+    const agentId = typeof member.agent === 'string' ? bySlug.get(member.agent) : undefined;
+    if (!agentId) return [];
+    const { agent: _slug, ...rest } = member;
+    return [{ ...rest, agentId }];
+  });
+  const made = agentTeamStore.create({ ...team.team, members: members as never });
+  teams.push({ id: made.id, name: made.draft.name });
 }
 
 export const marketplace = {
@@ -352,6 +379,8 @@ export const marketplace = {
 
     return traceMarketplace('install', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name, 'landflow.marketplace.node_plugin': Boolean(nodePlugin) }, async () => {
       const createdAgents: Array<{ id: string; name: string }> = [];
+      const createdFrom: Array<{ file: ClaudeAgentFile; id: string }> = [];
+      const createdTeams: Array<{ id: string; name: string }> = [];
       const createdSkills: LibrarySkill[] = [];
       const createdTemplates: Array<{ id: string; name: string }> = [];
       const pluginDir = nodePlugin ? join(marketplaceStore.dir, 'plugins', name.replace(/[^\w.-]/g, '_')) : undefined;
@@ -395,7 +424,9 @@ export const marketplace = {
           const team = detail.plugin.displayName ?? titleCase(name);
           const created = agentStore.create(agentFromClaude(agent, { pluginId: pluginKey, skills: detail.skills.map(skillFromClaude), team }));
           createdAgents.push({ id: created.id, name: created.name });
+          createdFrom.push({ file: agent, id: created.id });
         }
+        linkExported(createdFrom, detail.landflowTeam, createdTeams);
         if (detail.flows.length) {
           // Read again rather than trust the cached detail: the files are what gets installed.
           const entry = m.entries?.find((e) => e.name === name);
@@ -419,6 +450,7 @@ export const marketplace = {
           agents: createdAgents,
           skills: createdSkills.map((s) => ({ id: s.id, name: s.name })),
           ...(createdTemplates.length && { templates: createdTemplates }),
+          ...(createdTeams.length && { teams: createdTeams }),
           unsupported: detail.unsupported,
           ...(nodeRecord && { nodePlugin: nodeRecord }),
         };
@@ -435,6 +467,7 @@ export const marketplace = {
       } catch (error) {
         // Roll back whatever was created.
         for (const agent of createdAgents) agentStore.delete(agent.id);
+        for (const team of createdTeams) agentTeamStore.delete(team.id);
         marketplaceStore.removeSkills(createdSkills.map((s) => s.id));
         for (const template of createdTemplates) localTemplates.delete(template.id);
         if (pluginDir) {
@@ -455,6 +488,7 @@ export const marketplace = {
         rmSync(installed.nodePlugin.dir, { recursive: true, force: true });
       }
       const agents = installed.agents.filter((a) => agentStore.delete(a.id)).length;
+      for (const team of installed.teams ?? []) agentTeamStore.delete(team.id);
       marketplaceStore.removeSkills(installed.skills.map((s) => s.id));
       // The plugin's flows; workflows made from them stay (they are the users' now).
       const templates = (installed.templates ?? []).filter((t) => localTemplates.delete(t.id)).length;

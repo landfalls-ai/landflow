@@ -779,6 +779,55 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 200: reply('The latest run, or nothing'), 404: notFound },
   });
   add('post', '/api/agent-teams/{id}/unpublish', { tag: 'Agent teams', id: 'unpublishAgentTeam', summary: 'Stop flows from running the team', responses: { 200: teamReply('The team, unpublished'), 404: notFound } });
+  const exportQuery = [
+    { name: 'format', description: '`claude-plugin` (the only format, and the default)', schema: { type: 'string', enum: ['claude-plugin'] } },
+    { name: 'marketplace', description: '`1`: also write `.claude-plugin/marketplace.json`, so the folder is a one-plugin marketplace', schema: { type: 'string' } },
+    { name: 'preview', description: '`1`: answer with the list of files (`{ name, files: [{ path, bytes }] }`) instead of the zip', schema: { type: 'string' } },
+  ];
+  const zipReply = { description: 'The plugin as a zip (`Content-Disposition: attachment; filename="<name>.zip"`), or the file list with `preview=1`', content: { 'application/zip': { schema: { type: 'string', format: 'binary' } }, 'application/json': { schema: object({ name: { type: 'string' }, files: array(object({ path: { type: 'string' }, bytes: { type: 'integer' } }, ['path', 'bytes'])) }, ['name', 'files']) } } };
+  add('get', '/api/agents/{id}/export', {
+    tag: 'Agent teams',
+    id: 'exportAgentPlugin',
+    summary: 'Export an agent as a Claude Code plugin',
+    description: 'A zip in Anthropic’s plugin format (docs/marketplace.md#export-agents-as-plugins): `.claude-plugin/plugin.json`, `agents/<slug>.md` (name, description, tools, model, color; the prompt as the body), `skills/<slug>/SKILL.md`, and `.landflow/agents/<slug>.json` with what only Landflow uses (persona parts, tools, avatar, model provider), which Claude Code ignores and installing the plugin in Landflow reads back. Credentials, schedules and channels are left out.',
+    query: exportQuery,
+    responses: { 200: zipReply, 400: invalid, 404: notFound },
+  });
+  add('get', '/api/agent-teams/{id}/export', {
+    tag: 'Agent teams',
+    id: 'exportAgentTeamPlugin',
+    summary: 'Export a team as a Claude Code plugin',
+    description: 'Like an agent’s export, with a file per Landflow agent in the team, the skills they use, and `.landflow/team.json` with the members, who reports to whom and who reviews (remote A2A members are there only, without credentials).',
+    query: exportQuery,
+    responses: { 200: zipReply, 400: invalid, 404: notFound },
+  });
+  add('get', '/api/agent-teams/{id}/flows', {
+    tag: 'Agent teams',
+    id: 'listAgentTeamFlows',
+    summary: 'The workflows you can see that run the team',
+    description: 'Workflows with a Run a Team node set to this team: the ones “Save as template” can take along.',
+    responses: { 200: reply('The flows', object({ flows: array(object({ id: { type: 'string' }, name: { type: 'string' }, active: { type: 'boolean' }, nodes: { type: 'integer' } }, ['id', 'name', 'active', 'nodes'])) }, ['flows'])), 404: notFound },
+  });
+  add('post', '/api/agent-teams/{id}/template', {
+    tag: 'Agent teams',
+    id: 'saveAgentTeamAsTemplate',
+    summary: 'Save the team as a template',
+    description: 'A template holding the team, every Landflow agent in it (published config, the draft while unpublished), the remote members’ A2A addresses and, with `workflowId`, that workflow (it must have a Run a Team node set to this team). Credentials the agents, remote members and workflow name become slots; no secret leaves. Using the template (`POST /api/templates/{id}/use`) creates all of it with fresh ids. `projectId`: where it is saved (`null`: instance-wide, owners and admins).',
+    body: jsonBody(
+      object(
+        {
+          name: { type: 'string', maxLength: 200 },
+          description: { type: 'string', maxLength: 2000 },
+          categories: array({ type: 'string' }),
+          setup: array({ type: 'string' }),
+          workflowId: { type: 'string', description: 'A workflow you can see that runs this team' },
+          projectId: { type: ['string', 'null'] },
+        },
+        ['name'],
+      ),
+    ),
+    responses: { 201: reply('The template', object({ template: { type: 'object', additionalProperties: true } }, ['template'])), 400: invalid, 403: errorRef('You can’t add templates there'), 404: notFound },
+  });
   add('delete', '/api/executions/{id}', {
     tag: 'Executions',
     id: 'deleteExecution',
@@ -1061,10 +1110,11 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Templates',
     id: 'useTemplate',
     summary: 'Create a workflow from a template',
-    description: 'Each credential slot gets the saved credential picked for it (of the slot’s type); missing data tables are created and URL paths made unique. Saved as an inactive draft.',
+    description: 'Each credential slot gets the saved credential picked for it (of the slot’s type); missing data tables are created and URL paths made unique. Saved as an inactive draft. A team template (`team` in its summary) first creates its agents and its team in the same project with fresh ids (published again if they were), rewrites the member, Run a Team and Run an Agent references, then creates the workflow if it has one; the answer then has `team` and `agents` and `workflow` may be absent.',
     body: jsonBody(
       object({
         name: { type: 'string', maxLength: 200 },
+        teamName: { type: 'string', maxLength: 200, description: 'A team template: the new team’s name' },
         folderId: { type: 'string' },
         credentials: { type: 'object', description: 'Slot id → credential id (null or left out: none yet)', additionalProperties: { type: ['string', 'null'] } },
       }),
