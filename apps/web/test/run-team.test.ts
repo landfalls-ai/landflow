@@ -395,7 +395,8 @@ describe('Run a Team', () => {
     });
     turns.clear();
     const { done, events } = await run(t.id);
-    expect(done!.reply).toBe('The review named getAlerts.ts, but no report listed it.');
+    // What it still names goes on with a note, so a comment posted from the answer doesn't pass it off as reported.
+    expect(done!.reply).toBe("The review named getAlerts.ts, but no report listed it.\n\n(Not in any team member's report: getAlerts.ts. Check before relying on them.)");
     expect(events.filter((e) => e.type === 'check' && e.check.name === 'Grounded').map((e) => e.type === 'check' && e.check.message)).toEqual([
       "Tech Lead's answer named getAlerts.ts, which no report mentioned",
       "Tech Lead's answer still names getAlerts.ts, which no report mentioned",

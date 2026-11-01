@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { ChevronRight, Diamond, Flag, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { cut, fmtMs, preview, textOf, type RunModel, type RunRound, type RunSpan, type StoryEntry } from '@/lib/shared/run-trace-model';
+import { narrate } from '@/lib/shared/team-progress';
 import { Badge } from '../ui/badge';
 import { EmptyState } from '../ui/empty-state';
 import { Avatar, NowLine, ResultChip, Tap, clock, who } from './parts';
@@ -59,6 +60,15 @@ function Line({ icon, children, tone, onOpen, label }: { icon: ReactNode; childr
   );
 }
 
+/** What a tool step did, in a few words: the agent's own description of it (Claude Code gives one with each command), else the step in plain words. */
+export function stepWords(span: RunSpan): string | undefined {
+  if (span.kind !== 'tool') return undefined;
+  const input = typeof span.input === 'object' && span.input !== null ? (span.input as Record<string, unknown>) : undefined;
+  const description = typeof input?.description === 'string' ? input.description.trim() : '';
+  const words = description || narrate(span.name, span.input).plain;
+  return words.toLowerCase() === span.name.toLowerCase() ? undefined : words;
+}
+
 function Steps({ spans, open }: { spans: RunSpan[]; open: (o: Open) => void }) {
   const [expanded, setExpanded] = useState(false);
   const running = spans.filter((s) => s.status === 'running').length;
@@ -76,14 +86,18 @@ function Steps({ spans, open }: { spans: RunSpan[]; open: (o: Open) => void }) {
       </button>
       {expanded && (
         <ul className="mt-1 divide-y divide-hair rounded-xl border border-hair bg-sf">
-          {spans.map((s) => (
-            <li key={s.id}>
-              <Tap onClick={() => open({ kind: 'span', id: s.id })} className="flex items-center gap-2 px-3 py-2 text-[12.5px] hover:bg-acdim/60">
-                <span className="min-w-0 flex-1 truncate text-t1">{s.name}</span>
-                <span className="shrink-0 font-mono text-[11px] text-t3">{s.status === 'running' ? 'running' : fmtMs(s.ms)}</span>
-              </Tap>
-            </li>
-          ))}
+          {spans.map((s) => {
+            const words = stepWords(s);
+            return (
+              <li key={s.id}>
+                <Tap onClick={() => open({ kind: 'span', id: s.id })} className="flex items-center gap-2 px-3 py-2 text-[12.5px] hover:bg-acdim/60">
+                  <span className={cn('min-w-0 flex-1 truncate', s.status === 'error' ? 'text-rd' : 'text-t1')}>{words ?? s.name}</span>
+                  {words && <span className="shrink-0 text-[11px] text-t3">{s.name}</span>}
+                  <span className="shrink-0 font-mono text-[11px] text-t3">{s.status === 'running' ? 'running' : fmtMs(s.ms)}</span>
+                </Tap>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

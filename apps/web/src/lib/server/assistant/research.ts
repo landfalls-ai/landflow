@@ -23,8 +23,17 @@ const conditions = (show?: Record<string, unknown[]>, hide?: Record<string, unkn
     ...Object.entries(hide ?? {}).map(([key, values]) => `${key} ∉ ${values.map((v) => JSON.stringify(v)).join('|')}`),
   ].join(', ');
 
+/** A number's range, as `1000–3600000`, `≥ 1` or `≤ 100`. */
+const range = (p: PropertyDescriptor) => {
+  const { minValue: min, maxValue: max } = p.typeOptions ?? {};
+  return p.type !== 'number' ? '' : min !== undefined && max !== undefined ? `${min}–${max}` : min !== undefined ? `≥ ${min}` : max !== undefined ? `≤ ${max}` : '';
+};
+
+/** A field of a collection: its name, type, label (where the unit is, "Timeout (ms)") and range. */
+const describeField = (f: PropertyDescriptor) => `${f.name} (${[f.type, f.displayName !== f.name && `“${f.displayName}”`, range(f)].filter(Boolean).join(', ')})`;
+
 function describeProperty(p: PropertyDescriptor, parameters?: Record<string, unknown>): string {
-  const parts = [`${p.name} (${p.type}${p.required ? ', required' : ''})`];
+  const parts = [`${p.name} (${[p.type, p.required && 'required', range(p)].filter(Boolean).join(', ')})`];
   if (p.displayName !== p.name) parts.push(`“${p.displayName}”`);
   if (p.description) parts.push(`— ${p.description.slice(0, 160)}`);
   const option = (o: NonNullable<PropertyDescriptor['options']>[number]) => [o.name !== String(o.value) && o.name, o.description?.slice(0, 120)].filter(Boolean).join(': ');
@@ -34,7 +43,7 @@ function describeProperty(p: PropertyDescriptor, parameters?: Record<string, unk
   if (when) parts.push(`shown when ${when}`);
   if (parameters && p.displayOptions && !isPropertyVisible(p, parameters)) parts.push('[hidden with the current parameters]');
   const fields = p.values ?? p.groups?.flatMap((g) => g.values);
-  if (fields?.length) parts.push(`fields: ${fields.slice(0, 10).map((f) => `${f.name} (${f.type})`).join(', ')}`);
+  if (fields?.length) parts.push(`fields: ${fields.slice(0, 10).map(describeField).join(', ')}`);
   return `- ${parts.join(' ')}`;
 }
 

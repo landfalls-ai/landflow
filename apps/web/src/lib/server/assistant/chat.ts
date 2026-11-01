@@ -9,7 +9,7 @@ import { nanoid } from 'nanoid';
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { AssistantOp, RunDigest } from '@/lib/shared/assistant-ops';
 import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
-import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
+import type { NodeTypeInfo, PropertyDescriptor, Workflow } from '@/lib/shared/types';
 import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
@@ -224,6 +224,52 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
 
 const teamKey = (value: string) => value.trim().toLowerCase().replace(/\s+team$/, '');
 
+const UNIT_MS = { ms: 1, s: 1000, min: 60_000, h: 3_600_000 } as const;
+type Unit = keyof typeof UNIT_MS;
+const UNIT_NAME: Record<Unit, string> = { ms: 'milliseconds', s: 'seconds', min: 'minutes', h: 'hours' };
+const DURATION = /(\d+(?:\.\d+)?)\s*(milliseconds?|ms|seconds?|secs?|s|minutes?|mins?|hours?|hrs?|h)\b/gi;
+const unitOfWord = (word: string): Unit => (/^(ms|milli)/i.test(word) ? 'ms' : /^s/i.test(word) ? 's' : /^m/i.test(word) ? 'min' : 'h');
+/** The unit a number field is in, from its label or description: "Timeout (ms)", "Wait (seconds)". */
+const unitOfField = (p: PropertyDescriptor): Unit | undefined => {
+  const text = `${p.displayName} ${p.description ?? ''}`;
+  if (/\(ms\)|millisecond/i.test(text)) return 'ms';
+  if (/\((s|sec|seconds?)\)|in seconds/i.test(text)) return 's';
+  if (/\((min|minutes?)\)|in minutes/i.test(text)) return 'min';
+  return undefined;
+};
+
+/**
+ * Durations the request named that a proposal set in the wrong unit: "a 30 minute timeout" on a field in milliseconds
+ * proposed as 30 or 1800. Each is said as the number it should be, for sending the proposal back.
+ */
+export function unitSlips(ops: unknown, request: string, propertiesOf: (op: Record<string, unknown>) => PropertyDescriptor[] | undefined): string[] {
+  const durations = [...request.matchAll(DURATION)].map((m) => ({ text: m[0], value: Number(m[1]), ms: Number(m[1]) * UNIT_MS[unitOfWord(m[2])] }));
+  if (!durations.length || !Array.isArray(ops)) return [];
+  const slips: string[] = [];
+  const check = (p: PropertyDescriptor | undefined, value: unknown) => {
+    const unit = p?.type === 'number' ? unitOfField(p) : undefined;
+    if (!unit || typeof value !== 'number') return;
+    for (const d of durations) {
+      const expected = d.ms / UNIT_MS[unit];
+      const misread = [d.value, ...Object.values(UNIT_MS).map((ms) => d.ms / ms)].includes(value);
+      if (value !== expected && misread) slips.push(`“${p!.displayName}” is in ${UNIT_NAME[unit]}: ${d.text} is ${expected}, not ${value}`);
+    }
+  };
+  for (const op of ops) {
+    if (!op || typeof op !== 'object' || !('parameters' in op)) continue;
+    const properties = propertiesOf(op as Record<string, unknown>);
+    const parameters = (op as { parameters?: unknown }).parameters;
+    if (!properties || !parameters || typeof parameters !== 'object') continue;
+    for (const [key, value] of Object.entries(parameters)) {
+      const props = properties.filter((p) => p.name === key);
+      const collection = props.find((p) => p.type === 'collection');
+      if (collection && value && typeof value === 'object') for (const [k, v] of Object.entries(value)) check(collection.values?.find((p) => p.name === k), v);
+      else check(props.find((p) => p.type === 'number'), value);
+    }
+  }
+  return slips;
+}
+
 /**
  * A Run a Team node's team as the model wrote it: models put the team's name or its lead's title where the id goes
  * ("Tech Lead" for team_COGk…). A name that matches one published team becomes its id, and `teamName` is filled in from
@@ -423,6 +469,10 @@ export async function runChat(input: ChatInput): Promise<void> {
   let sentBack = false;
   /** Whether a proposal that put a branching node after a node that already branches was sent back. */
   let branchSentBack = false;
+  /** Whether a proposal with parts that failed was sent back. */
+  let failedSentBack = false;
+  /** Whether a proposal that set a duration in the wrong unit was sent back. */
+  let unitsSentBack = false;
   let proposed = false;
   /** Whether a fix request that proposed nothing was sent back for a proposal. */
   let pressed = false;
@@ -537,6 +587,23 @@ export async function runChat(input: ChatInput): Promise<void> {
           return result(
             `Not shown yet: ${branching.join(' ')} Call propose_changes again with those connections. If the user asked for exactly this extra node, propose it again as it is.`,
             `Proposal changed: ${shorten(branching[0], 80)}`,
+            false,
+          );
+        }
+        // A duration the request named, set in the wrong unit ("30 minutes" as 30 or 1800 in a field in milliseconds), goes back once.
+        const slips = unitsSentBack ? [] : unitSlips(proposedOps, latest, (op) => types.find((t) => t.type === (op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type))?.descriptor.properties);
+        if (slips.length) {
+          unitsSentBack = true;
+          return result(`Not shown yet: ${slips.join('; ')}. Call propose_changes again with the numbers in the field's unit.`, `Proposal changed: ${shorten(slips[0], 80)}`, false);
+        }
+        // A change with parts that failed (a type that doesn't exist, a connection to a node it never added) goes back once:
+        // shown as it is, it could remove a node without adding the one meant to replace it.
+        if (validated.dropped.length && !failedSentBack) {
+          failedSentBack = true;
+          const why = validated.dropped.join('; ');
+          return result(
+            `Not shown yet: part of this change failed: ${why}. Add a node before connecting to it (an addNode with that "ref"), use type ids from search_nodes, and call propose_changes again with the complete change.`,
+            `Proposal incomplete: ${shorten(why, 80)}`,
             false,
           );
         }

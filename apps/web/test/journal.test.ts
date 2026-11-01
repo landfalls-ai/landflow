@@ -237,6 +237,27 @@ describe('translator', () => {
     ]);
     expect(ofType(out, 'span.updated').map((d) => d.note)).toEqual(['Pushing', '{"pct":5}']);
   });
+
+  it('follows the remote run of an A2A Agent node on the canvas, as of one in an agent’s tools', () => {
+    // A top-level node: no parentNodeId on its events. Its steps were kept as a JSON note, and its output cut whole.
+    const top = (data: Record<string, unknown>) => ({ type: 'node.progress', executionId: 'ex_1', nodeId: 'planner', nodeName: 'Planner', data, at: at() }) as unknown as ExecutionEvent;
+    const write = { id: 'call_w', name: 'Write', status: 'success', args: { file_path: '/tmp/work/out/nodes.csv', content: 'node,file\nGet alerts,get-alerts.ts' }, startedAt: '2026-10-31T10:06:00.000Z' };
+    const events = [
+      { type: 'execution.started', executionId: 'ex_1', workflowId: workflow.id, mode: 'manual', at: at() } as ExecutionEvent,
+      started('planner'),
+      top({ agent: 'landflow_developer', state: 'working', taskId: 'task-9', steps: [{ ...push, status: 'success' }] }),
+      finished('planner', { reply: 'Wrote nodes.csv', state: 'completed', taskId: 'task-9', agent: 'landflow_developer', steps: [{ ...push, status: 'success' }, write] }),
+    ];
+    const out = translate(events);
+    expect(spanStart(out, 'node:planner:0')).toMatchObject({ kind: 'agent' });
+    expect(ofType(out, 'span.updated').filter((d) => d.note)).toEqual([]);
+    expect(spanStart(out, 'node:planner:0/step:call_push')).toMatchObject({ kind: 'tool', name: 'Bash' });
+    expect(spanStart(out, 'node:planner:0/step:call_w')).toMatchObject({ kind: 'tool', name: 'Write', input: write.args });
+    expect(spanEnd(out, 'node:planner:0')).toMatchObject({ output: 'Wrote nodes.csv', attrs: expect.objectContaining({ taskId: 'task-9', agent: 'landflow_developer' }) });
+    // A segment that starts after the node began (a resume) knows it follows a remote run.
+    const later = translate([top({ agent: 'landflow_developer', state: 'working', steps: [{ id: 'call_x', name: 'Read', status: 'running' }] })], withSeq(translate(events.slice(0, 2))));
+    expect(spanStart(later, 'node:planner:0/step:call_x')).toMatchObject({ kind: 'tool', name: 'Read' });
+  });
 });
 
 describe('content modes', () => {

@@ -145,7 +145,9 @@ member's face and title above it.
    (`PR #7`, `/pull/7`). Anything nothing gave it sends it back once to answer the person again without it, told the files
    its reports did name (or that none did) and to say where its instructions ask for something no report gave; a warn
    *Grounded* check is recorded. Its next answer replaces that check: a pass when the details are gone, a warn when it
-   still names them (and the answer stands). A manager that asked nobody is not checked.
+   still names them. Then the answer stands with a note after it, `(Not in any team member's report: index.ts, utils.ts.
+   Check before relying on them.)`, so a comment or ticket posted from it doesn't pass them off as reported. A manager
+   that asked nobody is not checked.
 9. The run ends when the lead answers. Its answer is `reply`; the lead's other ends (iteration limit, budget) go to Needs a
    person with a reason, an error fails the node.
 

@@ -37,8 +37,10 @@ OTel trace id when telemetry recorded one, and a step's own span id in `attrs.ot
   or `agent` spans, sub-node runs become `model`, `tool` or `delegate` spans, and waits become `wait` spans. A chat or
   form trigger's input becomes a message from the person.
 - **Remote agents**: an A2A Agent node's progress (the remote task's state and its tool calls) becomes the remote
-  agent's own `tool` spans under the request. When the node finishes, every step in its result is reconciled, so all
-  steps are kept, not only the latest 20. A step whose result says `isError: true` counts as failed.
+  agent's own `tool` spans under the request, whether the node is an agent's tool or a step on the canvas. When the node
+  finishes, every step in its result is reconciled, so all steps are kept, not only the latest 20. A step whose result
+  says `isError: true` counts as failed. (Before 2026-11-01 an A2A Agent node on the canvas kept its progress as a text
+  note and its output cut whole, so those runs show none of its steps or files.)
 - **Landflow agents** started by Run an Agent write their turns, tool calls and sub-agent requests under that node's
   span (`journal/agent-session.ts`). A guardrail that blocked or sanitized a turn becomes a check.
 - **People**: approving or rejecting a tool call (from the web, Slack or email) is a message in the wait it answers.
@@ -87,7 +89,9 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
 - **Story** (the default): the run as a conversation. It shows messages, requests between agents (with **Why** they
   were asked) and their result (Delivered, Answered, Left undelivered, Working, Waiting), waits for people, round
   dividers when the flow loops, and artifacts as cards. Failed steps and
-  failed checks appear inline. Tool and model calls fold into "n steps" rows that open.
+  failed checks appear inline. Tool and model calls fold into "n steps" rows that open; each tool call there says what
+  it did, in the agent's own words when it gave a `description` (Claude Code does with every command), else in plain
+  words ("Cloning the repository", "Reading get-alerts.ts"), with the tool's name beside it.
 - **Trace**: the span tree with timing bars, down to a remote agent's single tool calls. A request shows why it was
   asked.
 - **Team**: who called whom, with ×n counts (laid out top to bottom, no sideways scrolling), plus a card per actor with
@@ -125,8 +129,9 @@ A run that goes back and forth is told at three levels. The first two are folds 
 - **Turns.** An agent with a model has one turn per model call: **why** (the model's words before acting, else the
   `reason` it gave each request), what it **did** (requests and tool calls) and what came back, with the duration and
   steps of each request. A member that is asked things has one turn per request: why it was asked, what it said and
-  did in order (its words between tool calls, then its tool calls), and what came back (result, reply, steps). The Team
-  tab shows them under each card, collapsed.
+  did in order (its words between tool calls, then its tool calls), and what came back (result, reply, steps). A remote
+  agent on the canvas (an A2A Agent node, not an agent's tool) has one turn with its tool calls and the words it said
+  between them, in order. The Team tab shows them under each card, collapsed.
 - **Fix cycles.** For each actor, its runs of a check command in order, each passed or failed with the errors the
   output counts (`error TS…` lines, "Found n errors", "n failed", Go `--- FAIL`, linter "n problems"), and the changes
   made between the runs (edits and writes, or the profile's delivery work pattern): "typecheck 19 → 13, never passed",
@@ -146,7 +151,10 @@ Two things in the journal make turns readable:
 - **What members said.** A remote agent's text between its tool calls (the text of every task artifact that a later
   artifact follows) is journaled as `message` events with `inline: true` under the delegate span, in order with the
   steps, once each. They belong to the member's turn and are left out of the Story. The last artifact's text is the
-  reply and is not repeated. They are cut like all journal content (`traceContent`, 32 KB per event).
+  reply and is not repeated. A streaming agent (kagent's) appends its words to the artifact a token at a time, each a
+  part with its own spacing, so the text parts between two tool calls are joined as sent into one message. (Before
+  2026-11-01 each token was its own message, trimmed of its spaces.) They are cut like all journal content
+  (`traceContent`, 32 KB per event).
 
 ## Profiles
 
@@ -235,6 +243,8 @@ report's facts only. The report's sections are the same for every flow:
 - claims against evidence;
 - each actor;
 - artifacts;
+- files written: every file an agent's Write or Edit step changed, with who and how many lines, as the Artifacts tab's
+  code changes show them (the Report tab counts them as artifacts too);
 - a timeline;
 - what should happen next.
 
@@ -264,8 +274,18 @@ The **Artifacts** tab (code in `components/run-trace/artifacts.tsx`) opens every
   reached the branch (`pushed in 0039ded`, `2 of 3 pushed`, `never pushed`). Tap a card for the diff: **Combined** or one
   agent's changes, each as a line diff. The diff box scrolls sideways by itself, so the page never does.
 - **Documents**: Markdown artifacts (a `mimeType` of `text/markdown`, or kind `report` or `document`) and `.md` files agents
-  wrote, formatted when opened. **Links**: artifacts with a URL (pull requests, commits). **Data**: JSON artifacts as a
-  collapsible tree.
+  wrote, formatted when opened.
+- **Images**, **Tables**, **Pages** and **PDFs** (`components/run-trace/artifact-preview.tsx`): an artifact is read once as
+  what it is (`lib/shared/artifact-kinds.ts`), from its `mimeType`, its kind (`image`, `screenshot`, `pdf`, `csv`, `html`),
+  its name or URL's extension and what it carries. An image or a PDF needs a URL it can load: http(s), or an inline
+  `data:image/…` or `data:application/pdf`. One on another server loads only when tapped (**Load the image from
+  cdn.example.com**), since loading it tells that server who looked, and with no referrer. A **table** (CSV or TSV, quoted
+  fields as RFC 4180 has them) shows one card per row with each column as a label, 25 rows first and 100 more per tap. A
+  **page** (HTML) shows in a frame with `sandbox=""` (no script, forms, navigation or same origin) behind a policy that
+  loads nothing from the network, and its links do nothing; **Show the source** gives the text. `.csv` and `.html` files
+  agents wrote show here too, from their last text.
+- **Links**: artifacts with an http(s) URL (pull requests, commits), except images and PDFs, which open from their own
+  cards. **Data**: JSON artifacts as a collapsible tree.
 
 **Where the changes come from.** `lib/shared/run-changes.ts` folds the journal: a remote agent's `Write`, `Edit` and
 `MultiEdit` tool steps (their `input` is the Claude Code tool input; a remote agent's arguments that arrive as JSON text are
@@ -291,10 +311,19 @@ branch**, the diff switches between **What the agents did** and **On the branch*
 branch holds that no step in the record changed come last as their own cards (**not in the run's record**, GitHub's patch).
 That is also how a committed agent note (`MEMORY.md`) shows up. GitHub lists at most 300 files of a comparison, patches only for files that are
 not large or binary: the tab says when the list is cut. Without a GitHub step, a credential, or an answer, the tab shows the
-journal's view alone and says why.
+journal's view alone and says why: a run with no GitHub step reads "Not checked against GitHub", the others "could not be
+read" with the reason.
+
+**Line comments.** Tap a line of any diff in the tab (or its line number, which is a button for a keyboard) and write what
+should change; the comment shows under the diff, and the line number is marked. A card above the files counts them, with
+**Copy them** and **Clear all**. They are kept in this browser per run (`localStorage`, so a reload keeps a review in
+progress) and matched by file, side, number and the line's text. When the run waits on a Run report's gate, its card in
+**Needs you** shows a **Note for Send back** filled with them (`- src/a.ts line 12 (`quote`): comment` per line), which you
+can edit; **Send back for a fix** sends it as the gate's `note`, and the comments are cleared. **Add a note** writes one
+without comments.
 
 **In the detail sheet.** A `Write`, `Edit` or `MultiEdit` step opens as the same line diff instead of JSON. A Markdown
-artifact opens formatted. When the run names a repository, commit SHAs (7 to 40 hex digits), the run's branch and `#12` pull
+artifact opens formatted; an image, a PDF, a table or a page opens as in the tab. When the run names a repository, commit SHAs (7 to 40 hex digits), the run's branch and `#12` pull
 request numbers in replies become GitHub links. Everything an agent writes is untrusted: Markdown is rendered without raw HTML
 (`react-markdown` with `remark-gfm` and `rehype-sanitize`), links open in a new tab and only when they are http or https, and
 images are not loaded.

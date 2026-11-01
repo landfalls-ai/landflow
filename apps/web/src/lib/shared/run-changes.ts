@@ -106,9 +106,9 @@ export interface BranchChanges {
   note?: string;
 }
 
-/** `GET /api/executions/:id/changes`: the branch compared, or why it could not be. */
+/** `GET /api/executions/:id/changes`: the branch compared, or why it could not be (`noGitHub` when there was nothing to compare: the run has no GitHub step). */
 export type BranchReply =
-  | { available: false; reason: string }
+  | { available: false; reason: string; noGitHub?: true }
   | { available: true; repository: { owner: string; repo: string; url: string }; branch: BranchChanges; fetchedAt: string };
 
 /** The journal's agent memory notes, left out exactly as the profiles do. */

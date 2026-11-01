@@ -5,6 +5,7 @@
  * (lib/server/nodes/run-report.ts) at the end of a flow, where it also records the checks and saves the report.
  * Every fact points at the span it came from.
  */
+import type { RunChanges } from './run-changes';
 import type { RunActor, RunCheck } from './run-trace';
 import { AGENT_NOTES_PATH, BUILTIN_CHECKS, profilePattern, type BuiltinCheckId, type ClaimRule, type RunProfile } from './run-profiles';
 import { cut, fmtMs, resultOf, textOf, type RunModel, type RunSpan } from './run-trace-model';
@@ -63,6 +64,8 @@ export interface RunReport {
   cycles: Array<{ a: string; b: string; rounds: number }>;
   actors: Array<{ name: string; type: RunActor['type']; role?: string; workMs: number; steps: number; failedSteps: number; tokens: number; asked: number; results: string[]; made: string[] }>;
   artifacts: Array<{ name: string; kind?: string; url?: string; by?: string; spanId: string }>;
+  /** The files agents wrote or edited (`changes`), the last step that touched each. */
+  files: Array<{ path: string; created: boolean; additions: number; deletions: number; by: string[]; spanId: string }>;
   timeline: Array<{ at: string; text: string; spanId?: string }>;
   next: string[];
   markdown: string;
@@ -165,9 +168,11 @@ function latestStep(steps: RunSpan[], actorId: string, pattern: RegExp, before?:
   return found;
 }
 
-/** What the run's branch holds as GitHub sees it (files added or changed against the base), when the run names one. */
 export interface ReportOptions {
+  /** What the run's branch holds as GitHub sees it (files added or changed against the base), when the run names one. */
   branchFiles?: string[];
+  /** The files agents wrote or edited, from the journal's file steps (lib/shared/run-changes.ts). */
+  changes?: RunChanges;
 }
 
 /** The six built-in checks, plus the ones nodes reported, over a folded journal. */
@@ -462,6 +467,7 @@ export function buildRunReport(model: RunModel, profile: RunProfile, options: Re
     cycles,
     actors,
     artifacts,
+    files: (options.changes?.files ?? []).map((f) => ({ path: f.path, created: f.created, additions: f.additions, deletions: f.deletions, by: f.actors.map((a) => a.actor.name), spanId: f.changes.at(-1)!.spanId })),
     timeline,
     next,
   };
@@ -529,6 +535,11 @@ export function reportMarkdown(report: Omit<RunReport, 'markdown'>, options: { t
   if (report.artifacts.length) {
     lines.push('### Artifacts', '');
     for (const a of report.artifacts) lines.push(`- ${a.url ? `[${a.name}](${a.url})` : a.name}${a.kind ? ` · ${a.kind}` : ''}${a.by ? ` · ${a.by}` : ''}`);
+    lines.push('');
+  }
+  if (report.files.length) {
+    lines.push('### Files written', '');
+    for (const f of report.files) lines.push(`- \`${f.path.replace(/`/g, "'")}\` · ${f.created ? 'new' : 'changed'} · +${f.additions} −${f.deletions}${f.by.length ? ` · ${f.by.join(', ')}` : ''}`);
     lines.push('');
   }
   if (report.timeline.length) {

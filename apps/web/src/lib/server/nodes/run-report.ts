@@ -10,6 +10,7 @@ import { defineNode, NodeOperationError, type PropertyDescriptor } from '@landfl
 import type { LanguageModel } from '@landflow/engine';
 import type { JsonObject, NodeItem } from '@landflow/protocol';
 import { resolveRunProfile, type RunGate } from '../../shared/run-profiles';
+import { foldChanges } from '../../shared/run-changes';
 import { buildRunReport, type ReportCheck } from '../../shared/run-report';
 import type { JournalEvent } from '../../shared/run-trace';
 import { foldJournal } from '../../shared/run-trace-model';
@@ -117,12 +118,14 @@ export const runReportNode = defineNode({
     const { runBranchChanges } = await import('../run-changes');
     const branch = await runBranchChanges(executionId).catch(() => undefined);
     const branchFiles = branch?.available ? branch.branch.files.filter((f) => f.status !== 'removed').map((f) => f.path) : undefined;
-    let report = buildRunReport(foldJournal(journalEvents(executionId)), profile, { title, branchFiles });
+    const events = journalEvents(executionId);
+    const changes = foldChanges(events);
+    let report = buildRunReport(foldJournal(events), profile, { title, branchFiles, changes });
     if (ctx.getNodeParameter('summarize', 0, false) && !decision) {
       const [model] = (await ctx.getInputConnectionData?.<LanguageModel>('ai_languageModel')) ?? [];
       if (!model) throw new NodeOperationError('No chat model connected', { description: '“Add a Summary” needs a chat model on the “Chat Model” slot.' });
       const turn = await model.generate({ system: SUMMARY_SYSTEM, messages: [{ role: 'user', content: report.markdown }], tools: [], ...(ctx.signal && { signal: ctx.signal }) });
-      if (turn.text.trim()) report = buildRunReport(foldJournal(journalEvents(executionId)), profile, { title, branchFiles, summary: { text: turn.text, by: model.model } });
+      if (turn.text.trim()) report = buildRunReport(foldJournal(journalEvents(executionId)), profile, { title, branchFiles, changes, summary: { text: turn.text, by: model.model } });
     }
     const failed = report.checks.filter((c) => c.status === 'fail' && !c.resolution);
 

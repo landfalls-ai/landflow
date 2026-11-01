@@ -882,6 +882,10 @@ function toolLabel(span: RunSpan): string {
   return cut(detail && !span.name.includes(detail) ? `${span.name}: ${detail}` : span.name, 90);
 }
 
+/** The words a span's agent said between its tool calls, as turn items. */
+const saidItems = (span: RunSpan): RunTurnItem[] =>
+  span.said.map((words, index) => ({ type: 'said', key: `w:${span.id}:${index}`, spanId: span.id, at: words.at, seq: words.seq, label: span.actor.name, text: words.text, status: 'success', ms: 0, steps: 0, failedSteps: 0 }));
+
 function itemOf(span: RunSpan): RunTurnItem {
   const back = span.error ?? (span.output !== undefined ? textOf(span.output, 600) : '');
   const reason = typeof span.attrs.reason === 'string' ? span.attrs.reason : undefined;
@@ -914,14 +918,20 @@ export function turnsOf(model: RunModel): Record<string, RunTurn[]> {
   for (const span of model.order) {
     if (span.kind === 'agent') {
       // The turns of one run of the agent: a model call starts a turn, what follows it (until the next call) is what it did.
+      // A remote agent on the canvas (an A2A Agent node) has no model calls here: its one turn holds its tool calls and the
+      // words it said between them, in order.
       const round = roundOf(span.id);
       const turns: Array<{ call?: RunSpan; did: RunTurnItem[]; at: string; seq: number; t0: number }> = [];
-      for (const kid of span.children.map((id) => model.spans[id])) {
-        if (kid.kind === 'model') turns.push({ call: kid, did: [], at: kid.startedAt, seq: kid.seq, t0: kid.t0 });
-        else if (!kid.hidden && (REQUESTS.has(kid.kind) || kid.kind === 'tool')) {
-          if (!turns.length) turns.push({ did: [], at: kid.startedAt, seq: kid.seq, t0: kid.t0 });
-          turns[turns.length - 1].did.push(itemOf(kid));
+      const kids = span.children.map((id) => model.spans[id]).filter((kid) => kid.kind === 'model' || (!kid.hidden && (REQUESTS.has(kid.kind) || kid.kind === 'tool')));
+      const entries = [...kids.map((kid) => ({ seq: kid.seq, kid })), ...saidItems(span).map((words) => ({ seq: words.seq, words }))].sort((a, b) => a.seq - b.seq);
+      for (const entry of entries) {
+        if ('kid' in entry && entry.kid.kind === 'model') {
+          turns.push({ call: entry.kid, did: [], at: entry.kid.startedAt, seq: entry.kid.seq, t0: entry.kid.t0 });
+          continue;
         }
+        const item = 'kid' in entry ? itemOf(entry.kid) : entry.words;
+        if (!turns.length) turns.push({ did: [], at: item.at, seq: item.seq, t0: 'kid' in entry ? entry.kid.t0 : ms(item.at) });
+        turns[turns.length - 1].did.push(item);
       }
       turns.forEach((turn, index) => {
         const said = turn.call ? textOf((turn.call.output as Record<string, unknown> | undefined)?.text, 2000) : '';
@@ -943,7 +953,7 @@ export function turnsOf(model: RunModel): Record<string, RunTurn[]> {
     } else if (REQUESTS.has(span.kind)) {
       const did: RunTurnItem[] = [
         ...span.children.map((id) => model.spans[id]).filter((k) => k.kind === 'tool' && !k.hidden).map(itemOf),
-        ...span.said.map((words, index): RunTurnItem => ({ type: 'said', key: `w:${span.id}:${index}`, spanId: span.id, at: words.at, seq: words.seq, label: span.actor.name, text: words.text, status: 'success', ms: 0, steps: 0, failedSteps: 0 })),
+        ...saidItems(span),
       ].sort((a, b) => a.seq - b.seq);
       const reason = typeof span.attrs.reason === 'string' ? span.attrs.reason : undefined;
       const [result, tone] = resultOf(span);

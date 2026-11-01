@@ -10,7 +10,7 @@
 import { nanoid } from 'nanoid';
 import { changeParameter, defaultParameters, defaultVersionOf, indexedPorts } from '@landflow/protocol';
 import { delegatesOf, replaceWithTeam, turnIntoTeamBlocker } from './turn-into-team';
-import type { ConnectionType, NodeDescriptor, NodeRun, Workflow, WorkflowConnection, WorkflowNode } from './types';
+import type { ConnectionType, NodeDescriptor, NodeRun, PropertyDescriptor, Workflow, WorkflowConnection, WorkflowNode } from './types';
 
 /**
  * Nodes are referenced by name (what the model sees), by id, or by the `ref`
@@ -222,6 +222,35 @@ function renameReferences(value: unknown, from: string, to: string): unknown {
   if (Array.isArray(value)) return value.map((v) => renameReferences(v, from, to));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, renameReferences(v, from, to)]));
   return value;
+}
+
+/**
+ * Numbers outside a field's range, top level or in a collection, taken out of the patch with a reason: a model that
+ * reads "30 minute timeout" for a field in milliseconds sets 30, which the editor would refuse.
+ */
+function outOfRange(properties: PropertyDescriptor[], patch: Record<string, unknown>, nodeName: string) {
+  const notes: string[] = [];
+  const check = (prop: PropertyDescriptor | undefined, value: unknown) => {
+    const n = typeof value === 'string' && value.trim() && !value.includes('{{') ? Number(value) : value;
+    if (prop?.type !== 'number' || typeof n !== 'number' || Number.isNaN(n)) return true;
+    const { minValue, maxValue } = prop.typeOptions ?? {};
+    const bound = minValue !== undefined && n < minValue ? `under its minimum of ${minValue}` : maxValue !== undefined && n > maxValue ? `over its maximum of ${maxValue}` : undefined;
+    if (bound) notes.push(`“${prop.displayName}” of “${nodeName}”: ${n} is ${bound}`);
+    return !bound;
+  };
+  const kept = Object.fromEntries(
+    Object.entries(patch).flatMap(([key, value]): Array<[string, unknown]> => {
+      const props = properties.filter((p) => p.name === key);
+      const collection = props.find((p) => p.type === 'collection');
+      if (collection && value && typeof value === 'object' && !Array.isArray(value)) {
+        const inner = Object.entries(value).filter(([k, v]) => check(collection.values?.find((p) => p.name === k), v));
+        // A collection left with nothing would replace the node's own values.
+        return inner.length || !Object.keys(value).length ? [[key, Object.fromEntries(inner)]] : [];
+      }
+      return check(props.find((p) => p.type === 'number'), value) ? [[key, value]] : [];
+    }),
+  );
+  return { patch: kept, notes };
 }
 
 /** Set parameters the way the editor does (dependent fields reset, defaults filled), in declaration order. */
@@ -443,7 +472,9 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         }
         const id = `n_${newId()}`;
         const name = uniqueName(op.name ?? descriptor.displayName, wf.nodes);
-        const merged = mergeParameters(descriptor, defaultParameters(descriptor), op.parameters ?? {});
+        const ranged = outOfRange(descriptor.properties, op.parameters ?? {}, name);
+        dropped.push(...ranged.notes);
+        const merged = mergeParameters(descriptor, defaultParameters(descriptor), ranged.patch);
         ignored.push(...merged.ignored.map((key) => `“${name}” has no parameter “${key}”`));
         const node: WorkflowNode = { id, name, type: op.type, typeVersion: defaultVersionOf(descriptor), position: [0, 0], parameters: merged.parameters };
         let next: Workflow = { ...wf, nodes: [...wf.nodes, node] };
@@ -471,7 +502,7 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         wf = next;
         refs.set(ref, id);
         added.push(id);
-        const parameters = Object.fromEntries(merged.applied.map((key) => [key, op.parameters![key]]));
+        const parameters = Object.fromEntries(merged.applied.map((key) => [key, ranged.patch[key]]));
         applied.push({
           op: 'addNode',
           ref,
@@ -496,14 +527,17 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
           dropped.push(`set parameters of “${node.name}”: unknown node type ${node.type}`);
           break;
         }
-        const merged = mergeParameters(descriptor, node.parameters, op.parameters);
+        const ranged = outOfRange(descriptor.properties, op.parameters, node.name);
+        dropped.push(...ranged.notes);
+        const merged = mergeParameters(descriptor, node.parameters, ranged.patch);
         ignored.push(...merged.ignored.map((key) => `“${node.name}” has no parameter “${key}”`));
         if (!merged.applied.length) {
+          if (ranged.notes.length) break;
           dropped.push(`set parameters of “${node.name}”: none of ${Object.keys(op.parameters).join(', ') || 'them'} exist`);
           break;
         }
         wf = { ...wf, nodes: wf.nodes.map((n) => (n.id === node.id ? { ...n, parameters: merged.parameters } : n)) };
-        applied.push({ op: 'setParameters', node: handle(node), parameters: Object.fromEntries(merged.applied.map((key) => [key, op.parameters[key]])) });
+        applied.push({ op: 'setParameters', node: handle(node), parameters: Object.fromEntries(merged.applied.map((key) => [key, ranged.patch[key]])) });
         break;
       }
 

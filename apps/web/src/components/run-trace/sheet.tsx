@@ -3,11 +3,13 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { ExternalLink, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { isMarkdownArtifact, type FileChange, type RunChanges } from '@/lib/shared/run-changes';
+import { artifactShape, safeUrl } from '@/lib/shared/artifact-kinds';
+import type { FileChange, RunChanges } from '@/lib/shared/run-changes';
 import type { RunGitHub } from '@/lib/shared/run-repo';
 import { fmtMs, type RunArtifactItem, type RunCheckItem, type RunModel, type RunSpan } from '@/lib/shared/run-trace-model';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
+import { ArtifactPreview, PREVIEWED } from './artifact-preview';
 import { ChangeDiff } from './diff-view';
 import { Avatar, ResultChip, SectionTitle, Tap, ValueBlock, clock, who } from './parts';
 import { Doc, TextBlock } from './rich-text';
@@ -249,7 +251,9 @@ function SpanSheet({
 
 function ArtifactSheet({ item, repo }: { item: RunArtifactItem; repo?: RunGitHub }) {
   const a = item.artifact;
-  const document = a.text && isMarkdownArtifact(a);
+  const shape = artifactShape(a);
+  const document = shape === 'markdown';
+  const link = safeUrl(a.url);
   return (
     <>
       <Facts
@@ -260,11 +264,15 @@ function ArtifactSheet({ item, repo }: { item: RunArtifactItem; repo?: RunGitHub
           ['Type', a.mimeType],
           [
             'Link',
-            a.url ? (
-              <a href={a.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 break-all text-ac underline underline-offset-2">
-                {a.url} <ExternalLink className="size-3 shrink-0" />
+            link ? (
+              <a href={link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 break-all text-ac underline underline-offset-2">
+                {link} <ExternalLink className="size-3 shrink-0" />
               </a>
-            ) : undefined,
+            ) : a.url?.startsWith('data:') ? (
+              'inline data'
+            ) : (
+              a.url
+            ),
           ],
         ]}
       />
@@ -273,6 +281,8 @@ function ArtifactSheet({ item, repo }: { item: RunArtifactItem; repo?: RunGitHub
           <div className="min-w-0 rounded-xl border border-hair bg-sf px-3 py-2.5">
             <Doc text={a.text!} />
           </div>
+        ) : PREVIEWED.includes(shape) ? (
+          <ArtifactPreview shape={shape} name={a.name} url={safeUrl(a.url, shape)} text={a.text} />
         ) : (
           <Value label="Content" value={a.text} repo={repo} />
         )}

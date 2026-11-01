@@ -2,17 +2,20 @@
 /**
  * The Artifacts tab: what a run made. Code changes first when agents changed files (one card per file, one line per agent
  * saying whether it reached the branch, tap for the diff — what the agents did, or the branch as GitHub sees it once
- * `GET /api/executions/:id/changes` answers), then documents (formatted), links (pull requests, commits) and data.
- * Phone first: one column, cards, and a diff scrolls sideways inside its own box.
+ * `GET /api/executions/:id/changes` answers), then documents (formatted), images, tables (CSV as cards), pages (HTML in a
+ * sandboxed frame), PDFs, links (pull requests, commits) and data. Lines of a diff take comments, which the gate's Send back
+ * carries. Phone first: one column, cards, and a diff scrolls sideways inside its own box.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronRight, ExternalLink, FileText } from 'lucide-react';
+import { ChevronRight, ExternalLink, FileImage, FileText, Globe, MessageSquare, Table2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
+import { artifactShape, isCsvPath, isHtmlPath, safeUrl, type ArtifactShape } from '@/lib/shared/artifact-kinds';
+import { lineCommentsNote } from '@/lib/shared/line-comments';
 import {
   compareWithBranch,
   diffHunks,
-  isMarkdownArtifact,
   isMarkdownPath,
   parsePatchHunks,
   type ActorChanges,
@@ -28,7 +31,9 @@ import { cut, type RunArtifactItem, type RunModel } from '@/lib/shared/run-trace
 import { Badge } from '../ui/badge';
 import { EmptyState } from '../ui/empty-state';
 import { JsonView } from '../ui/json-view';
+import { ArtifactPreview } from './artifact-preview';
 import { ChangeDiff, DiffView } from './diff-view';
+import { useLineComments } from './line-comments';
 import { Card, SectionTitle, Tap, clock } from './parts';
 import { Doc } from './rich-text';
 import type { Open } from './sheet';
@@ -137,7 +142,7 @@ function FileDiff({ file, branch, open, repo, git }: { file: FileChanges; branch
               <span className="font-mono">{branch.data.base}</span> and <span className="font-mono">{branch.data.head}</span>.
             </p>
             {onBranch.patch ? (
-              <DiffView hunks={parsePatchHunks(onBranch.patch)} label={`${file.path} on the branch`} />
+              <DiffView hunks={parsePatchHunks(onBranch.patch)} path={file.path} label={`${file.path} on the branch`} />
             ) : (
               <p className="rounded-xl border border-hair bg-sf2 px-3 py-2 text-[12.5px] text-t3">GitHub left out the patch for this file (it is large or binary).</p>
             )}
@@ -165,7 +170,7 @@ function FileDiff({ file, branch, open, repo, git }: { file: FileChanges; branch
             </div>
           )}
           {combined ? (
-            <DiffView hunks={combined} label={`${file.path}, all changes`} />
+            <DiffView hunks={combined} path={file.path} label={`${file.path}, all changes`} />
           ) : (
             picked.map((change, i) => (
               <section key={change.spanId + i} className="flex min-w-0 flex-col gap-1.5">
@@ -272,7 +277,7 @@ function BranchFileCard({ file, data }: { file: BranchFile; data: BranchChanges 
         <div className="px-3.5 pb-3">
           <div className="mt-2.5 border-t border-hair pt-2.5">
             {file.patch ? (
-              <DiffView hunks={parsePatchHunks(file.patch)} label={`${file.path} on the branch`} />
+              <DiffView hunks={parsePatchHunks(file.patch)} path={file.path} label={`${file.path} on the branch`} />
             ) : (
               <p className="rounded-xl border border-hair bg-sf2 px-3 py-2 text-[12.5px] text-t3">
                 GitHub left out the patch for this file (it is large or binary). It changed between <span className="font-mono">{data.base}</span> and <span className="font-mono">{data.head}</span>.
@@ -281,6 +286,40 @@ function BranchFileCard({ file, data }: { file: BranchFile; data: BranchChanges 
           </div>
         </div>
       )}
+    </Card>
+  );
+}
+
+/** Your line comments on this run's diffs: how many, where they go, and Copy or Clear. Tap a line of a diff to add one. */
+function CommentsSummary() {
+  const store = useLineComments();
+  if (!store) return null;
+  const { comments } = store;
+  if (!comments.length) return <p className="mb-2 px-0.5 text-[12px] text-t3">Tap a line of a diff to comment on it; Send back on the Run report takes your comments along.</p>;
+  const files = new Set(comments.map((c) => c.path)).size;
+  return (
+    <Card className="mb-2 min-w-0 border-acbd bg-acdim/40">
+      <p className="flex items-start gap-2 text-[13px] text-t1">
+        <MessageSquare className="mt-[2px] size-4 shrink-0 text-ac" aria-hidden />
+        <span>
+          <b>
+            {comments.length} line comment{comments.length === 1 ? '' : 's'}
+          </b>{' '}
+          on {files} file{files === 1 ? '' : 's'}. Send back on the Run report takes them along; they stay in this browser until then.
+        </span>
+      </p>
+      <div className="mt-1 flex flex-wrap gap-4 pl-6">
+        <button
+          type="button"
+          onClick={() => navigator.clipboard.writeText(lineCommentsNote(comments)).then(() => toast.success('Copied'), () => toast.error('Could not copy to the clipboard'))}
+          className="min-h-8 text-[12.5px] text-ac underline underline-offset-2"
+        >
+          Copy them
+        </button>
+        <button type="button" onClick={store.clear} className="min-h-8 text-[12.5px] text-t2 underline underline-offset-2 hover:text-rd">
+          Clear all
+        </button>
+      </div>
     </Card>
   );
 }
@@ -314,7 +353,10 @@ function CodeChanges({
           {reply.branch.truncated && ` ${reply.branch.note ?? 'GitHub lists at most 300 files.'}`}
         </p>
       )}
-      {fetched.status === 'done' && !fetched.reply.available && <p className="mb-2 px-0.5 text-[12px] text-t3">The branch on GitHub could not be read: {fetched.reply.reason}</p>}
+      {fetched.status === 'done' && !fetched.reply.available && (
+        <p className="mb-2 px-0.5 text-[12px] text-t3">{fetched.reply.noGitHub ? 'Not checked against GitHub: this run has no GitHub step.' : `The branch on GitHub could not be read: ${fetched.reply.reason}`}</p>
+      )}
+      <CommentsSummary />
       <div className="flex flex-col gap-2">
         {changes.files.map((file) => (
           <FileCard key={file.path} file={file} open={open} repo={repo} git={changes.git} branch={reply && against ? { state: against.compared.byPath.get(file.path)!, data: reply.branch } : undefined} />
@@ -370,9 +412,63 @@ function Document({ item, open }: { item: DocumentItem; open: (o: Open) => void 
   );
 }
 
+interface PreviewItem {
+  key: string;
+  name: string;
+  shape: ArtifactShape;
+  by?: string;
+  at: string;
+  url?: string;
+  text?: string;
+  open?: Open;
+}
+
+const PREVIEW_ICON = { image: FileImage, pdf: FileText, csv: Table2, html: Globe } as Partial<Record<ArtifactShape, typeof FileText>>;
+
+/** An image, a PDF, a table or a page: tap to see it as what it is. */
+function PreviewCard({ item, open }: { item: PreviewItem; open: (o: Open) => void }) {
+  const [shown, setShown] = useState(false);
+  const Icon = PREVIEW_ICON[item.shape] ?? FileText;
+  return (
+    <Card className="min-w-0 !p-0">
+      <Tap onClick={() => setShown(!shown)} className="rounded-2xl px-3.5 py-3 hover:bg-acdim/40" label={`${item.name}: ${shown ? 'hide' : 'show'} it`}>
+        <span className="flex items-start gap-2">
+          <Icon className="mt-[2px] size-4 shrink-0 text-t3" aria-hidden />
+          <span className="min-w-0 flex-1">
+            <b className="block break-all text-[13.5px] font-semibold text-t1">{item.name}</b>
+            <span className="block text-[12px] text-t3">
+              {item.by ? `${item.by} · ` : ''}
+              {clock(item.at)}
+            </span>
+          </span>
+          <ChevronRight className={cn('mt-[3px] size-3.5 shrink-0 text-t3 transition-transform', shown && 'rotate-90')} aria-hidden />
+        </span>
+      </Tap>
+      {shown && (
+        <div className="min-w-0 border-t border-hair px-3.5 py-3">
+          <ArtifactPreview shape={item.shape} name={item.name} url={item.url} text={item.text} />
+          {item.open && (
+            <button type="button" onClick={() => open(item.open!)} className="mt-1 min-h-8 text-[12.5px] text-ac underline underline-offset-2">
+              Details
+            </button>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** The previewed shapes as groups: the shape, the group's title, one of them. */
+const PREVIEW_GROUPS: Array<[ArtifactShape, string, string]> = [
+  ['image', 'Images', 'image'],
+  ['csv', 'Tables', 'table'],
+  ['html', 'Pages', 'page'],
+  ['pdf', 'PDFs', 'PDF'],
+];
+
 function LinkCard({ item }: { item: RunArtifactItem }) {
   const a = item.artifact;
-  const url = a.url!;
+  const url = safeUrl(a.url)!;
   return (
     <Card className="min-w-0 !p-0">
       <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-start gap-2 rounded-2xl px-3.5 py-3 hover:bg-acdim/40">
@@ -446,26 +542,48 @@ export function Artifacts({
   const reply = !replay && fetched.status === 'done' && fetched.reply.available ? fetched.reply : undefined;
   const against = useMemo(() => (reply ? { reply, compared: compareWithBranch(changes, reply.branch) } : undefined), [changes, reply]);
 
+  const shapes = useMemo(() => new Map(model.artifacts.map((a) => [a.id, artifactShape(a.artifact)])), [model.artifacts]);
   const documents = useMemo<DocumentItem[]>(() => {
     const made = model.artifacts
-      .filter((a) => a.artifact.text && isMarkdownArtifact(a.artifact))
+      .filter((a) => shapes.get(a.id) === 'markdown')
       .map((a) => ({ key: a.id, name: a.artifact.name, by: a.actor?.name, at: a.at, text: a.artifact.text!, open: { kind: 'artifact', id: a.id } as Open }));
     // Files agents wrote, whole: their last text.
     const written = changes.files
       .filter((f) => isMarkdownPath(f.path) && f.after !== undefined)
       .map((f) => ({ key: `file:${f.path}`, name: f.path, by: f.actors.map((a) => a.actor.name).join(', '), at: f.changes.at(-1)!.at, text: f.after!, open: { kind: 'span', id: f.changes.at(-1)!.spanId } as Open }));
     return [...made, ...written];
-  }, [model.artifacts, changes.files]);
-  const links = model.artifacts.filter((a) => a.artifact.url);
+  }, [model.artifacts, changes.files, shapes]);
+  const previews = useMemo<PreviewItem[]>(() => {
+    const made = model.artifacts.flatMap((a): PreviewItem[] => {
+      const shape = shapes.get(a.id)!;
+      if (!PREVIEW_GROUPS.some(([s]) => s === shape)) return [];
+      return [{ key: a.id, name: a.artifact.name, shape, by: a.actor?.name, at: a.at, url: safeUrl(a.artifact.url, shape), text: a.artifact.text, open: { kind: 'artifact', id: a.id } }];
+    });
+    // Tables and pages agents wrote as files: their last text.
+    const written = changes.files.flatMap((f): PreviewItem[] => {
+      const shape: ArtifactShape | undefined = f.after === undefined ? undefined : isCsvPath(f.path) ? 'csv' : isHtmlPath(f.path) ? 'html' : undefined;
+      if (!shape) return [];
+      const last = f.changes.at(-1)!;
+      return [{ key: `file:${f.path}`, name: f.path, shape, by: f.actors.map((a) => a.actor.name).join(', '), at: last.at, text: f.after, open: { kind: 'span', id: last.spanId } }];
+    });
+    return [...made, ...written];
+  }, [model.artifacts, changes.files, shapes]);
+  // An image's or a PDF's link opens from its own card; only http(s) links are shown.
+  const links = model.artifacts.filter((a) => safeUrl(a.artifact.url) && shapes.get(a.id) !== 'image' && shapes.get(a.id) !== 'pdf');
   const data = model.artifacts.filter(hasData);
+  const byShape = (shape: ArtifactShape) => previews.filter((p) => p.shape === shape);
 
-  if (!changes.files.length && !documents.length && !links.length && !data.length) {
+  if (!changes.files.length && !documents.length && !previews.length && !links.length && !data.length) {
     return <EmptyState title="Nothing made yet" hint="Documents, files, links and data the run makes appear here." />;
   }
   const parts = [
     changes.files.length ? `${changes.files.length} file${changes.files.length === 1 ? '' : 's'}` : undefined,
     changes.agents.length ? `${changes.agents.length} agent${changes.agents.length === 1 ? '' : 's'}` : undefined,
     documents.length ? `${documents.length} document${documents.length === 1 ? '' : 's'}` : undefined,
+    ...PREVIEW_GROUPS.map(([shape, , one]) => {
+      const n = byShape(shape).length;
+      return n ? `${n} ${one}${n === 1 ? '' : 's'}` : undefined;
+    }),
     links.length ? `${links.length} link${links.length === 1 ? '' : 's'}` : undefined,
     data.length ? `${data.length} data` : undefined,
   ].filter(Boolean);
@@ -494,6 +612,18 @@ export function Artifacts({
           ))}
         </Group>
       )}
+      {PREVIEW_GROUPS.map(([shape, title]) => {
+        const items = byShape(shape);
+        return (
+          items.length > 0 && (
+            <Group key={shape} title={title} count={items.length}>
+              {items.map((p) => (
+                <PreviewCard key={p.key} item={p} open={open} />
+              ))}
+            </Group>
+          )
+        );
+      })}
       {links.length > 0 && (
         <Group title="Links" count={links.length}>
           {links.map((a) => (

@@ -374,4 +374,19 @@ describe('A2A node as an agent’s tool', () => {
     expect(remoteSaidOf(task.task).map((w) => [w.text, w.afterSteps])).toEqual([['Let me slugify that first.', 0], ['The slug looks right.', 1]]);
     expect(replyOf(task)).toBe('Done: hello-there');
   });
+
+  it('joins words streamed a token at a time into what was said between two tool calls', () => {
+    const call = (id: string, type: string) => ({ artifactId: `a-${id}-${type}`, parts: [{ data: { id, name: 'Bash' }, metadata: { 'kagent.dev/a2a/part-type': type } }] });
+    const tokens = (id: string, ...words: string[]) => ({ artifactId: id, parts: words.map((text) => ({ text })) });
+    const task = {
+      id: 't',
+      contextId: 'c',
+      status: { state: 'TASK_STATE_COMPLETED' },
+      artifacts: [tokens('a1', 'I', "'ll", ' clone', ' it', '.', '\n\nThen', ' look.'), call('c1', 'function_call'), call('c1', 'function_response'), tokens('a2', 'Cloned', '.'), call('c2', 'function_call'), tokens('a3', 'Done', '.')],
+    } as unknown as Parameters<typeof remoteSaidOf>[0];
+    expect(remoteSaidOf(task)).toEqual([
+      { id: 'a1:0', text: "I'll clone it.\n\nThen look.", afterSteps: 0 },
+      { id: 'a2:0', text: 'Cloned.', afterSteps: 1 },
+    ]);
+  });
 });

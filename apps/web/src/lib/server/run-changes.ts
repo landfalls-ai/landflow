@@ -76,7 +76,7 @@ export async function runBranchChanges(executionId: string): Promise<BranchReply
 async function ask(workflow: Workflow | undefined, events: ReturnType<typeof journalOf>, executionId: string): Promise<BranchReply> {
   if (!workflow) return unavailable('The flow of this run no longer exists.');
   const nodes = workflow.nodes.filter((n) => n.type === GITHUB_NODE);
-  if (!nodes.length) return unavailable('This run has no GitHub step.');
+  if (!nodes.length) return { available: false, reason: 'This run has no GitHub step.', noGitHub: true };
   // The repository the GitHub steps name (their parameters), else the one the journal shows.
   const named = nodes.map((n) => ({ owner: literal(n.parameters.owner), repo: literal(n.parameters.repository) })).find((n) => n.owner && n.repo);
   const repository = repoOf(events, named?.owner && named.repo ? { owner: named.owner, repo: named.repo } : undefined);

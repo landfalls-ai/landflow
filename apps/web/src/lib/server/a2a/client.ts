@@ -548,6 +548,8 @@ export function remoteStepsOf(task: A2aTask): RemoteStep[] {
 /**
  * What the remote agent said between its tool calls, in order: the text of every artifact followed by a later one (the
  * last artifact's text is its answer or its question, not "said"). `afterSteps` places each among the tool calls.
+ * A streaming agent appends its words to one artifact a token at a time, each a part with its own spacing ("The", " sea"),
+ * so the text parts between two tool calls are joined as sent and said once.
  */
 export function remoteSaidOf(task: A2aTask): RemoteSaid[] {
   const artifacts = task.artifacts ?? [];
@@ -555,16 +557,24 @@ export function remoteSaidOf(task: A2aTask): RemoteSaid[] {
   const said: RemoteSaid[] = [];
   artifacts.forEach((artifact, index) => {
     const at = typeof artifact.metadata?.[TIMELINE_POSITION] === 'string' ? (artifact.metadata[TIMELINE_POSITION] as string) : undefined;
+    let words: RemoteSaid | undefined;
+    const flush = () => {
+      if (words?.text.trim()) said.push({ ...words, text: words.text.trim() });
+      words = undefined;
+    };
     artifact.parts.forEach((part, partIndex) => {
       const data = part.data as { id?: unknown } | undefined;
       const kind = part.metadata?.[PART_TYPE];
       if (data && typeof data.id === 'string' && (kind === 'function_call' || kind === 'function_response')) {
+        flush();
         calls.add(data.id);
         return;
       }
-      if (typeof part.text !== 'string' || !part.text.trim() || index === artifacts.length - 1) return;
-      said.push({ id: `${artifact.artifactId}:${partIndex}`, text: part.text.trim(), afterSteps: calls.size, ...(at && { at }) });
+      if (typeof part.text !== 'string' || index === artifacts.length - 1) return;
+      if (words) words.text += part.text;
+      else words = { id: `${artifact.artifactId}:${partIndex}`, text: part.text, afterSteps: calls.size, ...(at && { at }) };
     });
+    flush();
   });
   return said;
 }

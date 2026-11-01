@@ -84,6 +84,8 @@ function summary(model: RunModel, report: RunReport): string {
 export function Report({ model, report, open, profile, onProfile }: { model: RunModel; report?: RunReport; open: (o: Open) => void; profile?: string; onProfile?: (id: string | undefined) => void }) {
   if (model.empty || !report) return <EmptyState compact title="Nothing recorded yet" hint="The report builds from the facts as the run goes." />;
   const { outcome } = model;
+  // Files agents wrote count as made, as the Artifacts tab shows them.
+  const made = model.artifacts.length + report.files.length;
   const saved = model.artifacts.filter((a) => a.artifact.kind === 'report').at(-1);
   const recorded = (spanId: string | undefined, name: string) => model.checks.find((c) => c.spanId === spanId && c.check.name === name);
   const openCheck = (spanId: string | undefined, name: string) => {
@@ -141,7 +143,7 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
           [String(requests.length), 'requests'],
           [(model.tokens.inputTokens + model.tokens.outputTokens).toLocaleString(), 'tokens'],
           [String(model.failedSteps.length), 'failed steps'],
-          [String(model.artifacts.length), 'artifacts'],
+          [String(made), 'artifacts'],
         ].map(([v, l]) => (
           <div key={l} className="rounded-xl border border-hair bg-sf px-1 py-2">
             <b className="block text-[15px] font-semibold text-t1">{v}</b>
@@ -337,8 +339,8 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
         </>
       )}
 
-      <SectionTitle>Artifacts · {model.artifacts.length}</SectionTitle>
-      {model.artifacts.length ? (
+      <SectionTitle>Artifacts · {made}</SectionTitle>
+      {made ? (
         <List>
           {model.artifacts.map((a) => (
             <Item key={a.id} mark="◆" tone="ok" onOpen={() => open({ kind: 'artifact', id: a.id })}>
@@ -346,6 +348,15 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
               <Small>
                 {a.artifact.kind ?? 'artifact'}
                 {a.actor ? ` · ${a.actor.name}` : ''}
+              </Small>
+            </Item>
+          ))}
+          {report.files.map((file) => (
+            <Item key={file.path} mark="◆" tone="ok" onOpen={() => open({ kind: 'span', id: file.spanId })}>
+              <span className="break-all font-mono text-[12.5px]">{file.path}</span>
+              <Small>
+                {file.created ? 'file written' : 'file changed'}
+                {file.by.length ? ` · ${file.by.join(', ')}` : ''} · +{file.additions} −{file.deletions}
               </Small>
             </Item>
           ))}

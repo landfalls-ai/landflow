@@ -13,13 +13,16 @@ import { decideGate, decideToolApprovals, resolveCheck, useRunJournal, type RunJ
 import { RUN_PROFILES, resolveRunProfile } from '@/lib/shared/run-profiles';
 import { foldChanges } from '@/lib/shared/run-changes';
 import { githubOf } from '@/lib/shared/run-repo';
+import { lineCommentsNote } from '@/lib/shared/line-comments';
 import { buildRunReport, checksLine, type RunReport } from '@/lib/shared/run-report';
 import { cut, fmtMs, foldJournal, preview, quietMs, type NeedsYouItem, type RunCheckItem, type RunModel } from '@/lib/shared/run-trace-model';
 import { useNow } from '../run/run-status';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
+import { Textarea } from '../ui/inputs';
 import { Artifacts } from './artifacts';
+import { LineCommentsProvider, useLineComments } from './line-comments';
 import { Card, ToneBadge, clock } from './parts';
 import { Report } from './report';
 import { DetailSheet, type Open } from './sheet';
@@ -127,6 +130,12 @@ function NeedsYou({
   onDecided: () => void;
 }) {
   const [deciding, setDeciding] = useState<string>();
+  // Send back's note: the line comments from the Artifacts tab, or what the person wrote over them.
+  const store = useLineComments();
+  const comments = store?.comments ?? [];
+  const [draft, setDraft] = useState<string>();
+  const [noting, setNoting] = useState(false);
+  const note = draft ?? lineCommentsNote(comments);
   // A Run report waiting on its failed checks stands for them: they are answered together, as that wait.
   const gated = items.some((n) => n.kind === 'wait' && n.attrs.wait === 'gate');
   const shown = gated ? items.filter((n) => n.kind === 'wait') : items;
@@ -134,8 +143,12 @@ function NeedsYou({
   const gate = async (spanId: string, decision: 'accepted' | 'sent_back') => {
     setDeciding(`${spanId}:${decision}`);
     try {
-      await decideGate(executionId, decision);
+      await decideGate(executionId, decision, decision === 'sent_back' ? note.trim() || undefined : undefined);
       toast.success(decision === 'accepted' ? 'Accepted as is' : 'Sent back for a fix');
+      if (decision === 'sent_back') {
+        store?.clear();
+        setDraft(undefined);
+      }
       onDecided();
     } catch (e) {
       toast.error((e as Error).message);
@@ -173,6 +186,15 @@ function NeedsYou({
               </span>
             </div>
             <p className="mt-1 line-clamp-3 text-[13.5px] text-t1">{n.detail ?? n.title}</p>
+            {n.attrs.wait === 'gate' && (comments.length > 0 || noting) && (
+              <div className="mt-2 flex flex-col gap-1">
+                <label htmlFor={`note-${n.spanId}`} className="text-[12px] text-t2">
+                  Note for Send back
+                  {comments.length > 0 && ` · ${comments.length} line comment${comments.length === 1 ? '' : 's'} from the Artifacts tab`}
+                </label>
+                <Textarea id={`note-${n.spanId}`} rows={Math.min(8, note.split('\n').length + 1)} value={note} onChange={(e) => setDraft(e.target.value)} placeholder="What should the fix change?" />
+              </div>
+            )}
             <div className="mt-2.5 flex flex-wrap gap-2">
               {n.attrs.wait === 'gate' ? (
                 <>
@@ -182,6 +204,11 @@ function NeedsYou({
                   <Button variant="primary" loading={deciding === `${n.spanId}:sent_back`} disabled={Boolean(deciding)} onClick={() => gate(n.spanId, 'sent_back')}>
                     Send back for a fix
                   </Button>
+                  {!comments.length && !noting && (
+                    <Button variant="ghost" onClick={() => setNoting(true)}>
+                      Add a note
+                    </Button>
+                  )}
                 </>
               ) : n.attrs.wait === 'approval' ? (
                 <>
@@ -238,7 +265,16 @@ export function RunTraceView({ executionId, executionHref, className }: { execut
 }
 
 /** The trace of a journal the caller already loaded (the execution page reads it once for its view switch). */
-export function RunTraceBody({
+export function RunTraceBody(props: Parameters<typeof TraceBody>[0]) {
+  // Line comments on diffs are kept per run and read by the gate's Send back.
+  return (
+    <LineCommentsProvider executionId={props.executionId}>
+      <TraceBody {...props} />
+    </LineCommentsProvider>
+  );
+}
+
+function TraceBody({
   executionId,
   executionHref,
   className,
@@ -272,14 +308,17 @@ export function RunTraceBody({
     () => (replay ? foldJournal(events, { until: cursor }) : full.live ? foldJournal(events, { now }) : full),
     [events, full, replay, cursor, now],
   );
-  // The Run report's checks, live, with the run's profile or the one picked on the Report tab: the header's verdict and the tab.
-  const [profileId, setProfileId] = useState<keyof typeof RUN_PROFILES>();
-  const report = useMemo(() => (model.empty ? undefined : buildRunReport(model, profileId ? RUN_PROFILES[profileId] : resolveRunProfile(model.run?.attrs.profile))), [model, profileId]);
-
   // Code changes and the repository, from the journal up to the slider (the Artifacts tab, the detail sheet's diffs and links).
   const seen = useMemo(() => (replay ? events.filter((e) => Date.parse(e.at) <= (cursor as number)) : events), [events, replay, cursor]);
   const changes = useMemo(() => foldChanges(seen), [seen]);
   const github = useMemo(() => githubOf(seen), [seen]);
+
+  // The Run report's checks, live, with the run's profile or the one picked on the Report tab: the header's verdict and the tab.
+  const [profileId, setProfileId] = useState<keyof typeof RUN_PROFILES>();
+  const report = useMemo(
+    () => (model.empty ? undefined : buildRunReport(model, profileId ? RUN_PROFILES[profileId] : resolveRunProfile(model.run?.attrs.profile), { changes })),
+    [model, profileId, changes],
+  );
 
   // "Watch": replay from the start to the end at 30x.
   useEffect(() => {

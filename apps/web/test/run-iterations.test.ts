@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ExecutionEvent, Workflow, WorkflowNode } from '@landflow/engine';
 import type { JournalDraft, JournalEvent, RunActor } from '@/lib/shared/run-trace';
 import { foldJournal } from '@/lib/shared/run-trace-model';
+import { stepWords } from '@/components/run-trace/story';
 import { errorCount, fixCyclesOf } from '@/lib/shared/fix-cycles';
 import { RUN_PROFILES } from '@/lib/shared/run-profiles';
 
@@ -181,6 +182,27 @@ describe('turns', () => {
     expect(first.back).toMatchObject({ text: 'Commit: abc', steps: 6, result: 'Answered' });
     expect(second.did.map((d) => d.type)).toEqual(['said']);
     expect(second.round).toBe(2);
+  });
+
+  it('gives a remote agent on the canvas one turn with what it said between its tool calls, in order', () => {
+    const b = builder();
+    b.add({ type: 'span.started', spanId: 'run', kind: 'run', name: 'Extract', actor: flow });
+    b.span('node:a2a:0', 'run', 'agent', 'Developer', developer, { nodeId: 'a2a', attrs: { nodeType: 'core.a2aAgent' } });
+    b.add({ type: 'message', spanId: 'node:a2a:0', from: developer, text: "I'll clone it first.", inline: true });
+    b.span('node:a2a:0/step:c1', 'node:a2a:0', 'tool', 'Bash', developer, { input: { command: 'git clone x /tmp/work', description: 'Clone the repository' } });
+    b.end('node:a2a:0/step:c1');
+    b.add({ type: 'message', spanId: 'node:a2a:0', from: developer, text: 'Now the CSV.', inline: true });
+    b.span('node:a2a:0/step:c2', 'node:a2a:0', 'tool', 'Write', developer, { input: { file_path: '/tmp/work/out/a.csv', content: 'a' } });
+    b.end('node:a2a:0/step:c2');
+    b.end('node:a2a:0', 'success', { output: 'Done' });
+    b.end('run');
+    const [turn] = foldJournal(b.events).turns['remote:developer'];
+    expect(turn.did.map((d) => (d.type === 'said' ? d.text : d.label.split(':')[0]))).toEqual(["I'll clone it first.", 'Bash', 'Now the CSV.', 'Write']);
+    // The Story's steps say what each did: the agent's own description, else the step in plain words.
+    const spans = foldJournal(b.events).spans;
+    expect(stepWords(spans['node:a2a:0/step:c1'])).toBe('Clone the repository');
+    expect(stepWords(spans['node:a2a:0/step:c2'])).toBe('Editing a.csv');
+    expect(stepWords(spans['node:a2a:0'])).toBeUndefined();
   });
 });
 

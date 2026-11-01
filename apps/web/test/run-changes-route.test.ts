@@ -142,7 +142,7 @@ describe('GET /api/executions/:id/changes', () => {
     const spy = fakePlugin(() => ok(compare()));
     asked.length = 0;
     makeRun('ex_nogithub', []);
-    expect((await call('ex_nogithub')).body).toEqual({ available: false, reason: 'This run has no GitHub step.' });
+    expect((await call('ex_nogithub')).body).toEqual({ available: false, reason: 'This run has no GitHub step.', noGitHub: true });
     makeRun('ex_nocred', [github('branch', 'acme', 'widgets', false)]);
     expect((await call('ex_nocred')).body.reason).toMatch(/no credential/);
     const wf = store.saveWorkflow({ id: 'wf_nobranch', name: 'nobranch', nodes: [github('branch', 'acme', 'widgets')], connections: [] });

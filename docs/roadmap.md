@@ -981,9 +981,12 @@ approved plan:
 - **Iterations** (2026-10-31): rounds of a loop with why each went back, each agent's turns with the reason it gave
   for every request, members' words between their tool calls, and fix cycles from check commands
   ([run-trace.md](run-trace.md#iterations-rounds-turns-and-fix-cycles)).
-- Still open from the artifacts plan: images, CSV tables, an HTML preview in a sandboxed frame and PDFs in the
-  Artifacts tab; line comments on a diff that collect into the gate's Send back text; reasons from delegating nodes of
-  other plugins (the Go and Python SDKs declare `delegates` now; plugins still have to set it); fix cycles per round; a lead's claims credited with its team's steps.
+- Artifacts, the rest (2026-11-01): images, CSV tables (one card per row), HTML pages in a sandboxed frame and PDFs in
+  the Artifacts tab and the detail sheet, from `lib/shared/artifact-kinds.ts`; another server's image or PDF loads only
+  when tapped. Line comments on any diff line, kept per run in the browser, fill the gate's **Note for Send back**.
+- Still open from the artifacts plan: reasons from delegating nodes of other plugins (the Go and Python SDKs declare
+  `delegates` now; plugins still have to set it); fix cycles per round; a lead's claims credited with its team's steps;
+  line comments shared between people (they live in one browser).
 - Next (phase 4):
   - other agents' spans joined by trace id, starting with Claude Code's own OpenTelemetry;
   - OTLP export with OpenInference kinds;

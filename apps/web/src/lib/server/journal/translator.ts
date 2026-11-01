@@ -10,6 +10,8 @@ import { toolInput, type JournalDraft, type JournalEvent, type RunActor, type Ru
 
 /** Nodes that are agents when they run in the main flow. */
 export const AGENT_NODE_TYPES = new Set(['core.messageAgent', 'core.runTeam', 'core.aiAgent', 'core.a2aAgent']);
+/** Agent nodes that run a remote agent: on the canvas, as in an agent's tools, their progress is that agent's steps. */
+const REMOTE_NODE_TYPES = new Set(['core.a2aAgent']);
 /** Tool sub-nodes that hand a task to another agent (a request the caller waits on) rather than call a function. */
 export const AGENT_TOOL_TYPES = new Set(['core.a2aAgent', 'core.messageAgent', 'core.aiAgent']);
 
@@ -182,7 +184,15 @@ export function createTranslator(options: TranslatorOptions) {
       const resumed = priors.some((prior) => spans.get(prior)?.status === 'waiting');
       for (const prior of priors) end(prior, 'success', { at: e.at });
       const agent = isAgent(node);
-      start({ ...base, kind: agent ? 'agent' : 'step', actor: agent ? nodeActor(node, e.nodeName, 'agent') : workflowActor, parent: 'run', name: e.nodeName, attrs: { ...(node && { nodeType: node.type }), ...(resumed && { resumed: true }) } });
+      start({
+        ...base,
+        kind: agent ? 'agent' : 'step',
+        actor: agent ? nodeActor(node, e.nodeName, 'agent') : workflowActor,
+        parent: 'run',
+        name: e.nodeName,
+        attrs: { ...(node && { nodeType: node.type }), ...(resumed && { resumed: true }) },
+        ...(node && REMOTE_NODE_TYPES.has(node.type) && { remote: freshRemote() }),
+      });
       return;
     }
     const rootId = spanOfNode(e.parentNodeId);
@@ -229,7 +239,7 @@ export function createTranslator(options: TranslatorOptions) {
 
     if (span.kind === 'model') {
       if (item) output = { text: item.text ?? '', ...(Array.isArray(item.toolCalls) && item.toolCalls.length ? { toolCalls: item.toolCalls } : {}) };
-    } else if (span.kind === 'delegate') {
+    } else if (span.kind === 'delegate' || span.remote) {
       if (item) {
         output = item.reply ?? undefined;
         reconcile(span, item, e.at);
@@ -379,7 +389,7 @@ export function createTranslator(options: TranslatorOptions) {
     const id = (ofNode.get(e.nodeId) ?? []).find((spanId) => spans.get(spanId)?.open);
     const span = id ? spans.get(id) : undefined;
     if (!span) return;
-    if (span.kind === 'delegate' && isRemoteRun(e.data)) return remoteProgress(span, e.data, e.at);
+    if ((span.kind === 'delegate' || span.remote) && isRemoteRun(e.data)) return remoteProgress(span, e.data, e.at);
     const message = str(e.data.message) ?? str(e.data.status) ?? short(JSON.stringify(e.data));
     if (message === span.note) return;
     update(span.id, { note: short(message), at: e.at });
@@ -505,7 +515,7 @@ export function createTranslator(options: TranslatorOptions) {
         const state: SpanState = { id: event.spanId, kind: event.kind, actor: event.actor, open: true, status: 'running', ...(event.parentSpanId && { parent: event.parentSpanId }), ...(event.nodeId && { nodeId: event.nodeId }) };
         spans.set(event.spanId, state);
         if (event.nodeId) ofNode.set(event.nodeId, [...(ofNode.get(event.nodeId) ?? []), event.spanId]);
-        if (event.kind === 'delegate') state.remote = freshRemote();
+        if (event.kind === 'delegate' || (event.kind === 'agent' && REMOTE_NODE_TYPES.has(String(event.attrs?.nodeType)))) state.remote = freshRemote();
         const stepMatch = /^(.+)\/step:(.+)$/.exec(event.spanId);
         if (stepMatch) spans.get(stepMatch[1])?.remote?.steps.set(stepMatch[2], { state: 'running' });
         const parentWait = /^(.+)\/wait(?::(\d+))?$/.exec(event.spanId);

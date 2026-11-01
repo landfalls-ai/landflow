@@ -111,8 +111,8 @@ export interface TeamState {
   /** What each manager was told (its task) and heard back (its reports' answers and steps): what its answer may name. */
   told: Record<string, string>;
   heard: Record<string, string[]>;
-  /** Per member: review reminders sent, whether it was sent back for made-up details, and for which. */
-  roles: Record<string, { nudges: number; grounded: 'no' | 'sent' | 'checked'; sentFor: string[] }>;
+  /** Per member: review reminders sent, whether it was sent back for made-up details, for which, and what it still named after. */
+  roles: Record<string, { nudges: number; grounded: 'no' | 'sent' | 'checked'; sentFor: string[]; unverified?: string[] }>;
 }
 
 const emptyState = (): TeamState => ({
@@ -317,6 +317,12 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     return files.length ? `The files your reports named: ${files.slice(0, 12).join(', ')}${files.length > 12 ? '…' : ''}. ` : 'None of your reports named a file. ';
   };
 
+  /** A member's answer as it goes on: what it still named after it was sent back carries a note, so no one downstream takes it as reported. */
+  const marked = (member: TeamMember, reply: string) => {
+    const names = state.roles[member.id]?.unverified;
+    return names?.length ? `${reply}\n\n(Not in any team member's report: ${names.join(', ')}. Check before relying on them.)` : reply;
+  };
+
   function roleFor(member: TeamMember): TeamRole {
     /** Its review reminders so far, whether it was sent back for made-up details (and its next answer checked), and for which. */
     const mine = (state.roles[member.id] ??= { nudges: 0, grounded: 'no', sentFor: [] });
@@ -331,6 +337,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           const names = madeUp(member, reply, session);
           if (mine.grounded === 'sent') {
             mine.grounded = 'checked';
+            if (names.length) mine.unverified = names;
             // A span keeps one Grounded check per member: this one says what the answer was sent back for.
             check(
               'Grounded',
@@ -494,7 +501,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         if (!state.overBudget.includes(report.id)) state.overBudget.push(report.id);
         return { output: `${report.title} used up its token budget before it could answer.${result.reply ? ` Its last words: ${result.reply}` : ''}`, ...child };
       }
-      return { output: result.reply ?? `(${report.title} gave no answer)`, ...child };
+      return { output: result.reply !== undefined ? marked(report, result.reply) : `(${report.title} gave no answer)`, ...child };
     };
     return {
       kind: 'agent',
@@ -621,7 +628,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   else if (result.reason === 'max_iterations') raise(`${root.title} did not reach an answer within its iteration limit`);
 
   return {
-    ...(result.reply !== undefined && { reply: result.reply }),
+    ...(result.reply !== undefined && { reply: marked(root, result.reply) }),
     ...(state.needsPerson.length && { needsPerson: state.needsPerson.join('; ') }),
     ...(question && { waiting: { member: question.asker, question: question.ask, state: { ...state, lead: session } } }),
     members: config.members.map((m) => ({
