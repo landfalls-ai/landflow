@@ -6,12 +6,18 @@ const URL = 'http://landflow.test/api/agent-trace/t1'
 const usage = { input_tokens: 1200, output_tokens: 80, cache_read_input_tokens: 9000, cache_creation_input_tokens: 300, model: 'claude-sonnet-5-5' }
 
 /** The engine beneath the mod: a network that keeps what was posted, tools that answer, a turn that ends. */
-function world(on: Parameters<Parameters<typeof test>[1]>[1]) {
+function world(on: Parameters<Parameters<typeof test>[1]>[1], answers: Array<Record<string, unknown>> = []) {
   const posts: Array<{ url: string; events: Array<Record<string, unknown>> }> = []
+  const polls: string[] = []
   const ran: string[] = []
   mock.clock(on, { now: 1000 })
   mock.env(on, { HOME: '/data' })
   on('http.fetch', (_, e) => {
+    if (e.init?.method === 'GET') {
+      // A poll of an ask: the next answer in `answers` (pending until a person decides).
+      polls.push(e.url)
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(answers.shift() ?? { decision: 'pending' }) } }
+    }
     posts.push({ url: e.url, events: JSON.parse(e.init?.body ?? '{}').events })
     return { value: { status: 200, ok: true, headers: {}, text: '{}' } }
   })
@@ -25,7 +31,7 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1]) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [{ name: 'Bash', input: {} }], stopReason: 'tool_use' as const, usage }
   })
   on('turn.complete', (_, e) => ({ text: e.answer }))
-  return { posts, ran }
+  return { posts, ran, polls }
 }
 
 const events = (posts: Array<{ events: Array<Record<string, unknown>> }>) => posts.flatMap(p => p.events)
@@ -51,16 +57,76 @@ test('a marked request is traced and the marker never reaches the model', async 
   expect(all[3]).toMatchObject({ ms: 4200, reason: 'answer' })
 })
 
-test('the guard refuses a push to main and tells the run', async ($, on) => {
-  const { posts, ran } = world(on)
+test('a push to main asks a person and runs once they approve', async ($, on) => {
+  const { posts, ran, polls } = world(on, [{ decision: 'pending' }, { decision: 'approved', by: 'ann@example.com' }])
+  await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
+  await $.prompt.submit({ text: `<!-- landflow-trace ${URL} -->\nShip it` })
+  const result = await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
+  await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+
+  expect(result.deny).toBeUndefined()
+  expect(ran).toEqual(['Bash'])
+  const ask = events(posts).find(e => e.type === 'ask')
+  expect(ask).toMatchObject({ command: 'git push origin main', cwd: '/data/workspace' })
+  expect(String(ask?.reason)).toContain('main')
+  expect(polls).toHaveLength(2)
+  expect(polls[0]).toBe(`${URL}/asks/${ask?.askId}?wait=25`)
+  expect(events(posts).some(e => e.type === 'guard')).toBe(false)
+})
+
+test('a push to main a person denies is refused with their word', async ($, on) => {
+  const { posts, ran } = world(on, [{ decision: 'denied', by: 'ann@example.com' }])
   await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
   await $.prompt.submit({ text: `<!-- landflow-trace ${URL} -->\nShip it` })
   const result = await $.tool.call({ tool: 'Bash', command: 'git add -A && git push origin main' })
   await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 'turn-1', reason: 'answer' })
 
   expect(ran).toEqual([])
+  expect(result.deny).toBe('A person denied: git add -A && git push origin main')
+  expect(events(posts).filter(e => e.type === 'ask')).toHaveLength(1)
+})
+
+test('a command nobody answered in time is refused and reported', async ($, on) => {
+  const { posts, ran } = world(on, [{ decision: 'denied', expired: true }])
+  await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
+  await $.prompt.submit({ text: `<!-- landflow-trace ${URL} -->\nShip it` })
+  const result = await $.tool.call({ tool: 'Bash', command: 'git push --force origin feature' })
+  await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+
+  expect(ran).toEqual([])
+  expect(result.deny).toContain("Nobody answered in time, so this didn't run")
+  expect(events(posts).find(e => e.type === 'guard')).toMatchObject({ rule: 'git-push', action: 'deny' })
+})
+
+test('without a trace URL a push to main is refused, nobody to ask', async ($, on) => {
+  const { posts, ran } = world(on)
+  await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
+  const result = await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
+  expect(ran).toEqual([])
   expect(result.deny).toContain('git-push')
-  expect(events(posts).find(e => e.type === 'guard')).toMatchObject({ rule: 'git-push', tool: 'Bash', action: 'deny' })
+  expect(posts).toEqual([])
+})
+
+test('a read-only agent never asks: every push is refused', { options: { guard: 'strict' } }, async ($, on) => {
+  const { posts, ran } = world(on)
+  await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
+  await $.prompt.submit({ text: `<!-- landflow-trace ${URL} -->\nReview` })
+  const result = await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
+  await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+  expect(ran).toEqual([])
+  expect(result.deny).toContain('read-only')
+  expect(events(posts).some(e => e.type === 'ask')).toBe(false)
+})
+
+test('a report-only agent runs a push to main and reports it', { options: { guard: 'report' } }, async ($, on) => {
+  const { posts, ran } = world(on)
+  await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
+  await $.prompt.submit({ text: `<!-- landflow-trace ${URL} -->\nShip it` })
+  await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
+  await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+  expect(ran).toEqual(['Bash'])
+  expect(events(posts).some(e => e.type === 'ask')).toBe(false)
+  expect(events(posts).find(e => e.type === 'guard')).toMatchObject({ rule: 'git-push', action: 'report' })
 })
 
 test('the guard enforces without a marker, and a marker can\'t loosen it', async ($, on) => {

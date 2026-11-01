@@ -7,6 +7,8 @@
 export interface Verdict {
   rule: string
   reason: string
+  /** A person may allow this one: the mod asks Landflow instead of refusing (Normal mode only). */
+  ask?: true
 }
 
 /** Files that hold secrets: reading one puts the secret in the model's context. Examples and templates are fine. */
@@ -94,7 +96,6 @@ export function wordsOf(segment: string): string[] {
 }
 
 const PROTECTED_BRANCH = /^(?:[^:]*:)?(?:refs\/heads\/)?(main|master)$/
-const PUSH_FLAGS = new Set(['--force', '-f', '--force-with-lease', '--force-if-includes', '--delete', '-d', '--mirror', '--all', '--prune'])
 const READERS = new Set(['cat', 'less', 'more', 'head', 'tail', 'bat', 'base64', 'xxd', 'od', 'strings', 'nl', 'tac', 'hexdump', 'grep', 'rg', 'awk', 'sed', 'cut', 'sort', 'uniq', 'jq', 'yq', 'cp', 'scp', 'rsync', 'tar', 'zip'])
 /** Copies read every argument but the last (the destination). */
 const COPIERS = new Set(['cp', 'scp', 'rsync'])
@@ -129,14 +130,16 @@ function guardSegment(segment: string, cwd: string): Verdict | undefined {
     if (git.config.some(c => GIT_AUTH_KEY.test(c))) return { rule: 'git-auth-config', reason: "git's http, credential and URL settings are set for this sandbox: don't change them, not even with -c." }
     if (git.sub === 'config' && git.args.some(a => GIT_AUTH_KEY.test(a))) return { rule: 'git-auth-config', reason: "git's http, credential and URL settings are set for this sandbox: don't change them." }
     if (git.sub === 'push') {
-      const flag = git.args.find(a => PUSH_FLAGS.has(a) || /^--(force|delete|mirror)/.test(a))
-      if (flag) return { rule: 'git-push', reason: `\`git push ${flag}\` rewrites or deletes what others have. Push new commits to your own branch instead.` }
-      const positional = git.args.filter(a => !a.startsWith('-'))
-      const refspecs = positional.slice(1)
-      if (refspecs.some(r => r.startsWith('+'))) return { rule: 'git-push', reason: 'A `+refspec` force-pushes. Push new commits to your own branch instead.' }
-      if (refspecs.some(r => r.startsWith(':'))) return { rule: 'git-push', reason: 'A `:branch` refspec deletes the branch on the remote. Leave branches in place.' }
+      // A person may allow a push to main or master, a force push and deleting a remote branch (`ask`); the rest stay refused.
+      const bulk = git.args.find(a => a === '--mirror' || a === '--all' || a === '--prune' || a.startsWith('--mirror='))
+      if (bulk) return { rule: 'git-push', reason: `\`git push ${bulk}\` rewrites or deletes what others have. Push new commits to your own branch instead.` }
+      const refspecs = git.args.filter(a => !a.startsWith('-')).slice(1)
+      const forced = git.args.find(a => /^--(force|force-with-lease|force-if-includes)(=|$)/.test(a) || a === '-f')
+      if (forced) return { rule: 'git-push', ask: true, reason: `\`git push ${forced}\` rewrites what others have.` }
+      if (git.args.some(a => a === '--delete' || a === '-d') || refspecs.some(r => r.startsWith(':'))) return { rule: 'git-push', ask: true, reason: 'Deleting a branch on the remote.' }
+      if (refspecs.some(r => r.startsWith('+'))) return { rule: 'git-push', ask: true, reason: 'A `+refspec` force-pushes.' }
       const target = refspecs.find(r => PROTECTED_BRANCH.test(r))
-      if (target) return { rule: 'git-push', reason: `Pushing to ${target.replace(/^.*:/, '')} isn't allowed: push to your own branch and open a pull request.` }
+      if (target) return { rule: 'git-push', ask: true, reason: `Pushing to ${target.replace(/^.*:/, '')}.` }
     }
     return undefined
   }
@@ -183,19 +186,24 @@ function guardSegment(segment: string, cwd: string): Verdict | undefined {
   return undefined
 }
 
-/** What a Bash command would do that the guardrails stop, in its first part that does it. */
+/**
+ * What a Bash command would do that the guardrails stop, in its first part that does it. A part a person may allow (`ask`)
+ * is reported only when no other part is stopped outright: allowing the command must not let a refused part through.
+ */
 export function guardBash(command: string, cwd = '/'): Verdict | undefined {
   if (/:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/.test(command)) return { rule: 'destructive', reason: 'That is a fork bomb.' }
   if (/>\s*\/dev\/(sd|nvme|vd|xvd)[a-z0-9]*/.test(command)) return { rule: 'destructive', reason: 'That writes over a disk.' }
   if (/\/proc\/[^/\s]+\/environ/.test(command)) return { rule: 'env-dump', reason: 'The environment holds keys and tokens: name the variable you need (one that is not a secret) instead.' }
   // Each part is read from the directory an earlier `cd` moved to (`cd /tmp && rm -rf work` removes /tmp/work).
   let here = cwd
+  let asked: Verdict | undefined
   for (const segment of segments(command)) {
     const verdict = guardSegment(segment, here)
-    if (verdict) return verdict
+    if (verdict?.ask) asked ??= verdict
+    else if (verdict) return verdict
     here = cdTarget(segment, here) ?? cwd
   }
-  return undefined
+  return asked
 }
 
 /**
