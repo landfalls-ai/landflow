@@ -35,6 +35,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Marketplace: Claude Code plugin marketplaces as agents, skills, node plugins and flows; flow share pages; agents and teams exported as Claude Code plugins | [marketplace.md](marketplace.md) | |
 | Team templates: a team, its agents and its flow saved as one template and created again with fresh ids and credentials | [templates.md](templates.md) | [features/editor.md](features/editor.md), [agent-teams.md](agent-teams.md) |
 | Alert triage and Landfall war rooms: the triage, Landfall and threat-intel plugins and their flows | [triage.md](triage.md) | each plugin's README |
+| Runbooks made from closed Landfall war rooms, found by alert kind | [runbooks.md](runbooks.md) | [triage.md](triage.md) |
 | Integrations: messaging, productivity, Google Workspace, databases | [features/integrations.md](features/integrations.md) | each plugin's README |
 | Files and binary data | [features/files.md](features/files.md) | [protocol.md](protocol.md) §11 |
 | Settings, variables, data tables, insights | [features/settings-and-data.md](features/settings-and-data.md) | |

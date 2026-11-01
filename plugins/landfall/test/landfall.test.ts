@@ -240,6 +240,24 @@ describe('timeline', () => {
   });
 });
 
+describe('runbook support', () => {
+  it('Get Room returns the incident with its whole timeline', async () => {
+    const incident = fake.seed({ title: 'checkout 5xx', severity: 'sev2' });
+    fake.append(incident, 'remediation.proposed', { remediationId: 'rem_1', description: 'restart checkout' }, 'agent');
+    const [room] = jsonOf(await node({ resource: 'incident', operation: 'getRoom', incidentId: incident.id }));
+    expect(room).toMatchObject({ incident: { id: incident.id, title: 'checkout 5xx', severity: 'sev2', displayId: incident.displayId } });
+    expect((room.events as any[]).map((e) => e.type)).toEqual(['incident.opened', 'remediation.proposed']);
+  });
+
+  it('Add Runbook Link posts the name and link as a note, and wants an http(s) URL', async () => {
+    const incident = fake.seed({ title: 'link' });
+    const [event] = jsonOf(await node({ resource: 'timeline', operation: 'addRunbookLink', incidentId: incident.id, runbookName: 'Checkout 5xx', runbookUrl: 'https://flow.example/workflows/wf_1' }));
+    expect(event).toMatchObject({ type: 'chat.message', payload: { text: 'Runbook: Checkout 5xx\nhttps://flow.example/workflows/wf_1' } });
+    const bad = await node({ resource: 'timeline', operation: 'addRunbookLink', incidentId: incident.id, runbookUrl: '/workflows/wf_1' }, { continueOnFail: true });
+    expect(jsonOf(bad)[0].error).toMatch(/absolute http/);
+  });
+});
+
 describe('remediation', () => {
   it('records a fix applied outside Landfall, keyed by the suggestion seq', async () => {
     const incident = fake.seed({ title: 'fix' });

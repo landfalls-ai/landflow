@@ -602,7 +602,7 @@ No migrations: a template's marketplace origin is kept in its document.
   port another process already held: the free-port probe bound 127.0.0.1 only, which macOS allows beside a wildcard
   listener. It now also connects to the port and binds every interface (with a test).
 - What remains: the Landfall and threat intel calls are checked against fakes, not the live services; share pages need
-  sign-in; runbooks aren't built from closed rooms yet.
+  sign-in.
 
 ## Composite nodes (built 2026-10-29)
 
@@ -1059,11 +1059,16 @@ Claude Code agent Landflow deploys gets Landflow's own mod ([a2a.md](a2a.md#the-
   any main (2026-11-01).
   Live budget use from the trace while a member works shows on the team node since 2026-11-01.
 
+## Runbooks from Landfall war rooms (built 2026-11-01)
+
+A closed room's applied remediations, chat and outcome fold into a draft workflow ([runbooks.md](runbooks.md)): a form wait per
+step, an approval before risky or production-changing steps, tagged by alert kind. **Runbooks** in the sidebar makes and
+lists them; the **Find Runbook** node and the triage flow name the matching one and link it in the new room (**Timeline →
+Add Runbook Link**); **Incident → Get Room** reads a room for it. Deterministic, no model.
+
 ## Planned next
 
-**Runbooks from Landfall war rooms.** After a room closes, turn what the responders did (the timeline, the remediation
-records, the "Room outcomes" rows) into a dedicated runbook in Landflow: a workflow with the steps, the approvals it
-needs, and a link back from Landfall's alerts of the same kind. The other follow-ups above are candidates too.
+The follow-ups above are candidates, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).
 
 ## Not planned
 

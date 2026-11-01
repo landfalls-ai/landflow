@@ -81,6 +81,7 @@ exports[`mapping every bundled plugin manifest > landfall > matches the snapshot
   "heartbeat_ping ro=0 d=0 i=0 [heartbeatName]",
   "incident_declare ro=0 d=0 i=0 [title,severity,description]",
   "incident_get ro=1 d=0 i=1 [incidentId,throughSeq]",
+  "incident_getRoom ro=1 d=0 i=1 []",
   "incident_getAll ro=1 d=0 i=1 [returnAll,limit,filters]",
   "incident_openManually ro=0 d=0 i=0 [title,severity,entityHint]",
   "incident_openFromAlert ro=0 d=0 i=0 [title,severity,additionalFields]",
@@ -88,6 +89,7 @@ exports[`mapping every bundled plugin manifest > landfall > matches the snapshot
   "remediation_recordAppliedExternally ro=0 d=0 i=0 [incidentId,sourceSeq,additionalFields]",
   "timeline_addEvent ro=0 d=0 i=0 [incidentId,eventType,payload]",
   "timeline_addNote ro=0 d=0 i=0 [incidentId,text]",
+  "timeline_addRunbookLink ro=0 d=0 i=0 [incidentId,runbookName,runbookUrl]",
   "timeline_getEvents ro=1 d=0 i=1 [incidentId,returnAll,limit,eventOptions]",
 ]
 `;

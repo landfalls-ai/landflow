@@ -43,6 +43,7 @@ import { openAiChatModelNode, openAiNode } from './openai';
 import { aggregateNode, removeDuplicatesNode, renameKeysNode, splitOutNode, summarizeNode } from './transform';
 import { chatTrigger, errorTrigger, manualTrigger, scheduleTrigger, webhookTrigger } from './triggers';
 import { executeWorkflowNode } from './workflows';
+import { findRunbookNode } from './runbooks';
 import { runReportNode } from './run-report';
 
 export const corePlugin = definePlugin({
@@ -83,6 +84,7 @@ export const corePlugin = definePlugin({
     waitNode,
     splitInBatchesNode,
     executeWorkflowNode,
+    findRunbookNode,
     respondToWebhookNode,
     formNode,
     noOpNode,

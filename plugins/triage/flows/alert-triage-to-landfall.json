@@ -62,6 +62,7 @@
       "Pick the **Webhook secret** and send alerts to the **Alert webhook** URL with that header: Alertmanager, Grafana, Datadog, CloudWatch (SNS), Sentry, Wazuh or any JSON (**Normalize alert** detects which).",
       "Pick the **Anthropic account** for **Claude**, and the **Slack bot** for **Ask on-call** (set its channel).",
       "Optional: add VirusTotal, AbuseIPDB or GreyNoise keys to **Enrich IOCs**; with none, threat intel says *unknown*.",
+      "Optional: **Find the runbook** looks for a runbook made from a closed war room for this kind of alert (see **Runbooks** in the sidebar) and **Link the runbook in the room** posts its link in the room. Set the base URL on **Find the runbook** to this Landflow instance's address.",
       "Run it in **Shadow** for a week, compare `outcome` with `would_have` in the table (or the **Triage digest**), then switch **Triage decision** to **Enforce**.",
       "Noise rules need an `approvedBy` (a person) and should have an `expiresAt`: add them in **Triage rules** when the table shows a pattern.",
       "Set an error workflow in the workflow settings (**Landflow failures → Landfall** from the Landfall plugin, or one that posts to Slack), so a run that still fails, such as Landfall unreachable after 3 tries, reaches someone."
@@ -697,6 +698,68 @@
             },
             "combinator": "and"
           }
+        },
+        {
+          "id": "findRunbook",
+          "name": "Find the runbook",
+          "type": "core.findRunbook",
+          "typeVersion": 1,
+          "position": [
+            3440,
+            -240
+          ],
+          "parameters": {
+            "alertKind": "{{ $('Normalize alert').item.json.alert.labels?.alertname ?? $('Normalize alert').item.json.alert.title }}",
+            "baseUrl": "https://landflow.example.com"
+          },
+          "onError": "continue",
+          "notes": "Looks for a runbook (made from a closed war room) for this kind of alert. Set the base URL to this Landflow instance."
+        },
+        {
+          "id": "hasRunbook",
+          "name": "Runbook found?",
+          "type": "core.if",
+          "typeVersion": 1,
+          "position": [
+            3720,
+            -240
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $json.runbookFound }}",
+                  "operator": "isTrue",
+                  "right": ""
+                }
+              ]
+            },
+            "combinator": "and"
+          }
+        },
+        {
+          "id": "linkRunbook",
+          "name": "Link the runbook in the room",
+          "type": "landfall.landfall",
+          "typeVersion": 1,
+          "position": [
+            4000,
+            -240
+          ],
+          "parameters": {
+            "resource": "timeline",
+            "operation": "addRunbookLink",
+            "incidentId": "{{ $('Open war room').item.json.incidentId }}",
+            "runbookName": "{{ $json.runbook.name }}",
+            "runbookUrl": "{{ $json.runbook.url }}"
+          },
+          "credentials": {
+            "landfallApi": {
+              "id": "landfall",
+              "name": "Landfall"
+            }
+          },
+          "onError": "continue"
         }
       ],
       "connections": [
@@ -898,6 +961,30 @@
           "source": "confirmed",
           "sourceIndex": 0,
           "target": "open",
+          "targetIndex": 0
+        },
+        {
+          "id": "c26",
+          "type": "main",
+          "source": "open",
+          "sourceIndex": 0,
+          "target": "findRunbook",
+          "targetIndex": 0
+        },
+        {
+          "id": "c27",
+          "type": "main",
+          "source": "findRunbook",
+          "sourceIndex": 0,
+          "target": "hasRunbook",
+          "targetIndex": 0
+        },
+        {
+          "id": "c28",
+          "type": "main",
+          "source": "hasRunbook",
+          "sourceIndex": 0,
+          "target": "linkRunbook",
           "targetIndex": 0
         }
       ],

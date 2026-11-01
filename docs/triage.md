@@ -43,6 +43,9 @@ and the score rules in [threat-intel](../plugins/threat-intel/README.md).
    instead of opening a second one. *Ask* posts to Slack with a form link and waits: **Open a war room** or **Not an
    incident**, with a reason. After 15 minutes with no answer it opens the room. What Landfall did (`opened`, `attached`,
    `suppressed`…) and the room URL go back on the row.
+6. **Runbook.** After a room opens, **Find the runbook** looks for a [runbook](runbooks.md) made from an earlier room of the
+   same kind of alert and **Link the runbook in the room** posts its link in the room (Landfall has no link field on an
+   alert, so it is a note on the timeline).
 
 ### Safety rules
 
@@ -71,7 +74,7 @@ These are enforced in the nodes, not left to the flow:
 | **Triage digest** | triage | Every morning, a Slack summary of the last day: alerts by outcome and by who decided, on-call answers, and every alert shadow mode would have held |
 | **Landflow failures → Landfall** | landfall | An error workflow: a failed workflow opens or attaches to a Landfall incident (dedup key: workflow and node) with the error and the execution link |
 | **Landflow heartbeat → Landfall** | landfall | Pings a Landfall heartbeat every 5 minutes, so Landfall pages someone when the automation goes quiet |
-| **Learn from closed Landfall rooms** | landfall | When a room ends, reads its timeline and records in **Room outcomes**: real or not, cause, fix, lessons and runbook steps. The rows feed better triage rules and, later, runbooks |
+| **Learn from closed Landfall rooms** | landfall | When a room ends, reads its timeline and records in **Room outcomes**: real or not, cause, fix, lessons and runbook steps. The rows feed better triage rules and [runbooks](runbooks.md) |
 | **IOC lookup API** | threat-intel | POST an IOC (or a list) to a webhook and get the combined verdict back |
 
 ## Landfall setup

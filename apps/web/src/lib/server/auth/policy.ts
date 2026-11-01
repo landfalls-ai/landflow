@@ -71,7 +71,7 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/transports')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/credentials')) return { scope: 'admin' };
 
-  if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites'].some(under)) {
+  if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites', '/api/runbooks'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };
   }
   if (under('/api/ai') || under('/api/assistant')) return { scope: 'workflows:write' };
