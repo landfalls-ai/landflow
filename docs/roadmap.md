@@ -1034,8 +1034,12 @@ four steps of the approved plan:
   Run Trace's Team chart and the team page's **Last run** card (amber at 80%, red once used up, with moments for both);
   a question for a person turns the node amber with the question and an **Answer** button; each turn on the ribbon opens
   that member in the Run Trace; the Story opens with the run's **Headlines**.
-- Next: consults (ask a peer) and hand-offs; tool approvals inside a team (the pause a question uses). Paperclip-style
-  autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.
+- **Tool approvals and consults** (2026-11-01): a tool that needs approval pauses a team run for a person (Needs you,
+  Slack or email, **Approve** / **Deny** on the node and the phone card; the decision is an *Approval* check); members
+  may **consult** peers and **hand a task over** (`consults`, the `consult_` and `hand_off_to_` tools), shown on the node
+  with both members ringed, on the team page as dashed chips and in the Run Trace under the member that asked.
+- Next: tools of a Claude Code member on kagent asking for approval; Paperclip-style autonomy (heartbeats, a team inbox of
+  tasks) is left out on purpose for now.
 
 ## Claude Code agents report what they use (built 2026-11-01)
 

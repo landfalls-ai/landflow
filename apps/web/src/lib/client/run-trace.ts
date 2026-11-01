@@ -147,9 +147,10 @@ export function decideGate(executionId: string, decision: 'accepted' | 'sent_bac
 
 /**
  * Decide the tool calls an execution waits on (the AI Agent node's approvals). Returns false when the wait is not a tool
- * approval (a form, an approval node): the caller sends the person to the execution instead.
+ * approval (a form, an approval node): the caller sends the person to the execution instead. `onEvent` follows the resumed
+ * run's stream (the editor applies it to its canvas).
  */
-export async function decideToolApprovals(executionId: string, approved: boolean): Promise<boolean> {
+export async function decideToolApprovals(executionId: string, approved: boolean, onEvent: (event: string, data: unknown) => void = () => {}): Promise<boolean> {
   const { approval } = await api<{
     approval: {
       calls: Array<{ id: string }>;
@@ -158,6 +159,6 @@ export async function decideToolApprovals(executionId: string, approved: boolean
   }>(`/api/executions/${executionId}/approvals`);
   if (!approval) return false;
   const open = approval.calls.filter((call) => approval.decisions?.[call.id] === undefined);
-  for (const call of open) await streamEvents(`/api/executions/${executionId}/approvals`, { callId: call.id, approved }, () => {});
+  for (const call of open) await streamEvents(`/api/executions/${executionId}/approvals`, { callId: call.id, approved }, onEvent);
   return true;
 }

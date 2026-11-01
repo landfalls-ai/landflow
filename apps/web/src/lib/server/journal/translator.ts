@@ -488,6 +488,12 @@ export function createTranslator(options: TranslatorOptions) {
       attrs.calls = calls.map((c) => ({ id: c.id, tool: c.tool, input: c.input }));
       const tools = calls.map((c) => String(c.tool)).filter(Boolean);
       name = tools.length ? `Approve ${tools.join(', ')}` : 'Approve a tool call';
+      // A team member's tool (Run a Team): who wants it, and what with.
+      const team = isObject(data.teamApproval) ? data.teamApproval : undefined;
+      if (team) {
+        attrs.member = team.member;
+        name = `${String(team.member)} wants to use ${String(team.tool)}${str(team.summary) ? `: ${str(team.summary)}` : ''}`;
+      }
     } else if (wait.resume === 'form') {
       // A Run report asking a person about its failed checks (nodes/run-report.ts) is a gate, answered in place.
       const gate = isObject(data.runReport) && data.runReport.gate ? data.runReport : undefined;

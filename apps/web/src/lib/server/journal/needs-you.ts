@@ -43,6 +43,9 @@ function waitItem(record: ExecutionRecord): NeedsYouItem | undefined {
   const approval = isObject(data.approval) && Array.isArray(data.approval.calls) ? data.approval : undefined;
   if (approval) {
     const tools = (approval.calls as unknown[]).filter(isObject).map((c) => String(c.tool)).filter(Boolean);
+    // A team member's tool (Run a Team): who wants it, and what for.
+    const team = isObject(data.teamApproval) ? data.teamApproval : undefined;
+    if (team) return { ...base, kind: 'approval', title: `${String(team.member)} wants to use ${String(team.tool)}`, detail: typeof team.summary === 'string' && team.summary ? team.summary : record.workflowName };
     return { ...base, kind: 'approval', title: tools.length ? `${wait.nodeName} wants to run ${tools.join(', ')}` : `${wait.nodeName} needs an approval`, detail: record.workflowName };
   }
   if (wait.resume === 'form') {

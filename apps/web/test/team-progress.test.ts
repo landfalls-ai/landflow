@@ -163,6 +163,38 @@ describe('team progress', () => {
     ]);
   });
 
+  it('marks a tool waiting for approval as a moment that names the tool and what it would do', () => {
+    const fold = teamProgressFolder(['Tech Lead', 'Developer']);
+    fold({ type: 'run.started', sessionId: 's1' });
+    const waiting = fold.waiting('Tech Lead', 'Tech Lead wants to use Comment on pull request', { tool: 'Comment on pull request', summary: 'Review passed: 14 tests' });
+    expect(waiting).toMatchObject({ member: 'Tech Lead', plain: 'Waiting for a person’s approval', waiting: { member: 'Tech Lead', approval: { tool: 'Comment on pull request' } } });
+    expect(waiting.moments.at(-1)).toMatchObject({ member: 'Tech Lead', tone: 'warn', text: 'Tech Lead asks to use Comment on pull request', question: 'Review passed: 14 tests' });
+  });
+
+  it('shows a consult with both members at work, and a hand-off as a moment', () => {
+    const peer = (callId: string, tool: string, status: 'running' | 'success', owner = 'Developer'): AgentStreamEvent => ({
+      type: 'entry',
+      sessionId: 's1',
+      entry: { id: `e_${callId}_${status}`, type: 'tool', callId, tool, label: 'Reviewer', kind: 'agent', input: { message: 'q', reason: 'how tests fake the API' }, status, at, ...(status === 'success' && { output: 'Use the fake server' }) } as TimelineEntry,
+    });
+    const fold = teamProgressFolder(['Tech Lead', 'Developer', 'Reviewer']);
+    fold({ type: 'run.started', sessionId: 's1' });
+    fold(tool('c1', 'Developer', 'running'));
+    // The Developer's own stream: it consults the Reviewer.
+    const consulting = fold(peer('c2', 'consult_reviewer', 'running'), 'Developer')!;
+    expect(consulting).toMatchObject({ member: 'Reviewer', consulting: { from: 'Developer', to: 'Reviewer', kind: 'consult' }, plain: 'Asking the Reviewer how tests fake the API' });
+    expect(consulting.steps[0]).toMatchObject({ status: 'running', plain: 'Asking the Reviewer how tests fake the API' });
+    expect(consulting.moments.at(-1)).toMatchObject({ member: 'Developer', text: 'Developer consults the Reviewer' });
+    const answered = fold(peer('c2', 'consult_reviewer', 'success'), 'Developer')!;
+    expect(answered.consulting).toBeUndefined();
+    expect(answered).toMatchObject({ member: 'Developer', plain: "Reading the Reviewer's answer" });
+    expect(answered.moments.at(-1)).toMatchObject({ text: 'Reviewer answered Developer' });
+    // A hand-off says so.
+    const handed = fold(peer('c3', 'hand_off_to_reviewer', 'running'), 'Developer')!;
+    expect(handed.consulting).toMatchObject({ kind: 'handoff' });
+    expect(handed.moments.at(-1)).toMatchObject({ member: 'Developer', text: 'Developer handed the task to the Reviewer' });
+  });
+
   it('marks the question the run waits on, and carries the usage on after the answer', () => {
     let clock = 0;
     const fold = teamProgressFolder(['Lead', 'Developer'], () => clock, { budgets: { Developer: 1_000 } });

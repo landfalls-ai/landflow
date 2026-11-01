@@ -739,7 +739,7 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ entryId: { type: 'string', description: 'The id of an assistant entry of the session’s timeline' }, rating: { type: 'string', enum: ['up', 'down'], nullable: true }, comment: { type: 'string', maxLength: 2000 } }, ['entryId', 'rating'])),
     responses: { 200: reply('The feedback now on the reply', object({ feedback: { type: 'object', nullable: true, additionalProperties: true } }, ['feedback'])), 404: notFound },
   });
-  const teamBody = jsonBody(object({ name: { type: 'string' }, goal: { type: 'string' }, description: { type: 'string' }, members: array({ type: 'object', additionalProperties: true }) }), 'The draft: members are `{ id, kind: agent | a2a, title, role, reportsTo, reviews, budgetTokens, questionsTo, agentId | parameters, credentials }`', false);
+  const teamBody = jsonBody(object({ name: { type: 'string' }, goal: { type: 'string' }, description: { type: 'string' }, members: array({ type: 'object', additionalProperties: true }) }), 'The draft: members are `{ id, kind: agent | a2a, title, role, reportsTo, reviews, consults, budgetTokens, questionsTo, agentId | parameters, credentials }`', false);
   const teamReply = (description: string) => reply(description, object({ team: { type: 'object', additionalProperties: true }, issues: array({ type: 'string' }) }, ['team']));
   add('get', '/api/agent-teams', {
     tag: 'Agent teams',
