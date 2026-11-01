@@ -191,7 +191,12 @@ function WorkerHead({ live, faces, elapsed, paused }: { live: TeamProgress; face
 }
 
 /** Where a member's turn opens: its sheet on the Run Trace's Team tab. */
-export const memberTraceHref = (executionId: string, member: string) => `/runs/${executionId}?tab=team&member=${encodeURIComponent(member)}`;
+/** A member in the Run Trace: with `turn` (its 1st, 2nd… turn), the Story scrolled to that request; else its sheet on the Team tab. */
+export const memberTraceHref = (executionId: string, member: string, turn?: number) =>
+  turn ? `/runs/${executionId}?tab=story&member=${encodeURIComponent(member)}&turn=${turn}` : `/runs/${executionId}?tab=team&member=${encodeURIComponent(member)}`;
+
+/** Which of its member's turns a turn is, from 1. */
+export const turnOrdinal = (turns: TeamTurn[], turn: TeamTurn) => turns.filter((t) => norm(t.member) === norm(turn.member) && t.start <= turn.start).length;
 
 /** Keeps a tap on a link inside a canvas node from selecting or dragging the node. */
 const own = {
@@ -553,7 +558,8 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
   if (!faces?.length) return {};
   const ask = !options.waiting && !live?.waiting ? asks[0] : undefined;
   const { executionId, newTab } = options;
-  const hrefOf = executionId ? (turn: TeamTurn) => memberTraceHref(executionId, turn.member) : undefined;
+  const allTurns = live?.turns ?? activity?.turns ?? [];
+  const hrefOf = executionId ? (turn: TeamTurn) => memberTraceHref(executionId, turn.member, turnOrdinal(allTurns, turn) || undefined) : undefined;
   const asked: TeamWaiting | undefined = options.waiting ?? live?.waiting ?? (ask && { member: ask.member ?? faces[0].title, question: `${ask.member ?? faces[0].title} wants to run ${ask.command}`, approval: { tool: ask.command, run: true, ...(ask.reason && { summary: ask.reason }) }, since: ask.createdAt });
   if (asked) {
     const turns = live?.turns ?? activity?.turns;

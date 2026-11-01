@@ -220,8 +220,9 @@ the moments that matter. On the editor's canvas during a run and on the executio
   command in small mono, then the clock and the step ("1:06 · step 5"). When the lead takes over again, the node swaps back.
 - **A ticker** under the head shows the last three steps, each with a check, a cross or a spinner and how long it took.
 - **A ribbon** at the bottom of the node has one segment per turn in that member's colour, growing while it works. Tap a
-  segment to open that member in the Run Trace (`/runs/<execution>?tab=team&member=<title>`: the Team tab with the
-  member's sheet open); from the editor it opens in a new tab so the flow stays open.
+  segment to open that turn in the Run Trace's Story (`/runs/<execution>?tab=story&member=<title>&turn=<n>`, the
+  member's `n`th turn): the Story scrolls to the request where the turn starts and marks it for a few seconds (the lead's
+  later turns start where a member reported back); from the editor it opens in a new tab so the flow stays open.
 - **Budget bars.** A member with a token budget gets a bar under the ticker (the member at work, and any member past 80%)
   that turns amber at 80% and red once used up, each named by the member's title, with "42k / 60k" beside it (`~` when estimated: a remote member that
   reports no usage). Tokens move after each model call of the lead and of agent members (`onUsage` in

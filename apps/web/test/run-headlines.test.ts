@@ -5,7 +5,8 @@
 import { describe, expect, it } from 'vitest';
 import type { JournalEvent, RunActor } from '@/lib/shared/run-trace';
 import { foldJournal } from '@/lib/shared/run-trace-model';
-import { headlinesOf } from '@/lib/shared/run-headlines';
+import { headlinesOf, turnEntryKey } from '@/lib/shared/run-headlines';
+import { turnOrdinal } from '@/components/editor/team-live';
 import type { TeamActivity } from '@/lib/shared/team-progress';
 
 const T0 = Date.parse('2026-11-01T10:00:00.000Z');
@@ -94,5 +95,25 @@ describe('the Story headlines', () => {
   it('has none for a run without a team node', () => {
     const model = foldJournal(events({ durationMs: 1, turns: [], steps: {}, moments: [] }));
     expect(headlinesOf(model)).toEqual([]);
+  });
+});
+
+describe('a ribbon segment opens its turn in the Story', () => {
+  it('counts a member’s turns and finds the request where each starts', () => {
+    const turns = [
+      { member: 'Tech Lead', start: 0, end: 2_000 },
+      { member: 'Developer', start: 2_000, end: 30_000 },
+      { member: 'Tech Lead', start: 30_000, end: 40_000 },
+    ];
+    expect(turns.map((t) => turnOrdinal(turns, t))).toEqual([1, 1, 2]);
+    const model = foldJournal(events({ durationMs: 50_000, turns, steps: {}, moments: [] }));
+    const ask = model.story.find((e) => e.type === 'ask' && e.span.actor.name === 'Developer');
+    const back = model.story.find((e) => e.type === 'reply' && e.span.caller?.name === 'Tech Lead');
+    expect(turnEntryKey(model, 'Developer', 1)).toBe(ask?.key);
+    // The lead works again when the Developer reports back.
+    expect(turnEntryKey(model, 'Tech Lead', 2)).toBe(back?.key);
+    // A turn past the last request still lands on the member.
+    expect(turnEntryKey(model, 'developer', 3)).toBe(ask?.key);
+    expect(turnEntryKey(model, 'Nobody', 1)).toBeUndefined();
   });
 });

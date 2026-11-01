@@ -132,7 +132,9 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
 running execution showing who is working on what.
 
 `/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`, `report`) and, once
-the run loads, that member's sheet. A team node's ribbon links each turn this way.
+the run loads, that member's sheet. With `tab=story&turn=<n>` instead it scrolls the Story to the member's `n`th turn
+and marks it (a ring and a flash): a team node's ribbon links each turn this way (`turnEntryKey` in
+`shared/run-headlines.ts`).
 
 ### Headlines
 

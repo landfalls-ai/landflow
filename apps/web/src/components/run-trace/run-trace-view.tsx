@@ -19,6 +19,7 @@ import { githubOf } from '@/lib/shared/run-repo';
 import { lineCommentsNote } from '@/lib/shared/line-comments';
 import { buildRunReport, checksLine, type RunReport } from '@/lib/shared/run-report';
 import { cut, fmtMs, foldJournal, preview, quietMs, type NeedsYouItem, type RunCheckItem, type RunModel } from '@/lib/shared/run-trace-model';
+import { turnEntryKey } from '@/lib/shared/run-headlines';
 import { useNow } from '../run/run-status';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -337,12 +338,31 @@ function TraceBody({
     const asked = params.get('tab');
     setTabState(asked && TABS.some(([id]) => id === asked) ? (asked as Tab) : readTab());
     const member = params.get('member');
-    if (member) setWanted(member);
+    // ?tab=story&member=Developer&turn=2 (a ribbon segment): the Story at that turn, not the member's sheet.
+    const turn = Number(params.get('turn'));
+    if (member && turn > 0 && asked === 'story') setWantedTurn({ member, n: turn });
+    else if (member) setWanted(member);
     // A link from a notebook note (?span=<id>) opens the span the note was written in.
     const span = params.get('span');
     if (span) setWantedSpan(span);
   }, []);
   const [wantedSpan, setWantedSpan] = useState<string>();
+  const [wantedTurn, setWantedTurn] = useState<{ member: string; n: number }>();
+  useEffect(() => {
+    if (!wantedTurn || full.empty) return;
+    const key = turnEntryKey(full, wantedTurn.member, wantedTurn.n);
+    if (!key) return;
+    setWantedTurn(undefined);
+    // After the Story has drawn: scroll the turn to the middle and keep it marked a few seconds. No cleanup: clearing
+    // `wantedTurn` re-runs this effect, which would cancel the scroll.
+    setTimeout(() => {
+      const el = document.getElementById(`story-${key}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('animate-flash', 'ring-2', 'ring-viz-1/50');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-viz-1/50'), 4000);
+    }, 150);
+  }, [wantedTurn, full]);
   useEffect(() => {
     if (!wantedSpan || full.empty) return;
     if (wantedSpan in full.spans) setTarget({ kind: 'span', id: wantedSpan });

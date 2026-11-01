@@ -61,3 +61,17 @@ export function headlinesOf(model: RunModel): Headline[] {
   }
   return found;
 }
+
+/**
+ * The story entry where a member's `n`th turn starts (a team node's ribbon links to it): its `n`th request, not counting a
+ * request that went on after a wait. The lead is asked once, by the node, and works again each time a member reports
+ * back, so its later turns start at those replies. Else the member's first request, so the link still lands near it.
+ */
+export function turnEntryKey(model: RunModel, member: string, n: number): string | undefined {
+  const same = (name: string | undefined) => name?.trim().toLowerCase() === member.trim().toLowerCase();
+  const asks = model.story.filter((e) => e.type === 'ask' && !e.continued && same(e.span.actor.name));
+  if (asks[n - 1]) return asks[n - 1].key;
+  const backs = model.story.filter((e) => e.type === 'reply' && same(e.span.caller?.name));
+  if (n > 1 && backs[n - 2]) return backs[n - 2].key;
+  return asks[0]?.key ?? backs[0]?.key;
+}
