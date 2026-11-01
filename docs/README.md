@@ -28,6 +28,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Standalone agents: personas, skills, capabilities, channels (Telegram, Slack, Teams), schedules, memory | [agents.md](agents.md) | |
 | The agent roster: teams, persona templates, faces and other avatars, the Agent architect chat | [agents.md](agents.md#the-roster) | [second-brain.md](second-brain.md) |
 | Agent teams: agents with a lead, reporting lines and reviewers, the org chart, budgets, publishing | [agent-teams.md](agent-teams.md) | [agents.md](agents.md#teams) |
+| The team notebook: notes members write while they work, search by meaning, disputes, promotion to team and project, the Notebook tab, Claude Code members over MCP | [team-notebook.md](team-notebook.md) | [agent-teams.md](agent-teams.md), [second-brain.md](second-brain.md) |
 | Remote agents over A2A (a capability and the A2A Agent node), kagent next to Landflow, tracing across both | [a2a.md](a2a.md) | [observability.md](observability.md#remote-agents-a2a) |
 | Searching and comparing runs, measures over time, and exporting each run's journal over OTLP with OpenInference kinds | [run-trace.md](run-trace.md#search-compare-and-measures) | [reference/api.md](reference/api.md), [reference/configuration.md](reference/configuration.md) (`LANDFLOW_OTLP_TRACES_URL`) |
 | Claude Code agents' real usage, cost and guardrails (the landflow-harness mod) | [a2a.md](a2a.md#the-landflow-harness-mod) | [run-trace.md](run-trace.md), [agent-teams.md](agent-teams.md) |
@@ -61,7 +62,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 - [observability.md](observability.md): the OpenTelemetry contract: span names, attributes, metrics, logs.
 
 **Features**: the twelve pages under [features/](#feature-map), plus [plugins.md](plugins.md),
-[assistant.md](assistant.md), [second-brain.md](second-brain.md), [composites.md](composites.md), [agents.md](agents.md), [agent-teams.md](agent-teams.md), [a2a.md](a2a.md),
+[assistant.md](assistant.md), [second-brain.md](second-brain.md), [composites.md](composites.md), [agents.md](agents.md), [agent-teams.md](agent-teams.md), [team-notebook.md](team-notebook.md), [a2a.md](a2a.md),
 [run-trace.md](run-trace.md) and [marketplace.md](marketplace.md).
 
 **Reference**: [reference/api.md](reference/api.md) (every route), [reference/configuration.md](reference/configuration.md)

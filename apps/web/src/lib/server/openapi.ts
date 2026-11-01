@@ -778,6 +778,28 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'The newest execution whose Run a Team node ran this team: `run` has `executionId`, `workflowName`, `status`, `startedAt`, `nodeName`, `members` (`title`, `tokens`, `budgetTokens`, `estimated`, `overBudget`, `costUsd`), and the run’s `durationMs` and last few `moments`. Empty when the team has not run.',
     responses: { 200: reply('The latest run, or nothing'), 404: notFound },
   });
+  add('get', '/api/agent-teams/{id}/notes', {
+    tag: 'Agent teams',
+    id: 'listTeamNotes',
+    summary: 'The team’s notebook: notes, counts and search by meaning',
+    description: 'Notes the team’s members wrote while working (docs/team-notebook.md). Query: `scope` (run, team, project), `kind`, `status`, `run` (an execution id), `expired=1` to include expired notes, `q` to rank by meaning (`via` says whether embeddings or keywords did it). Returns `notes`, `counts` and `via`.',
+    responses: { 200: reply('The notes'), 404: notFound },
+  });
+  add('post', '/api/agent-teams/{id}/notes', {
+    tag: 'Agent teams',
+    id: 'addTeamNote',
+    summary: 'Add a note as a person',
+    description: 'A person’s note lands in the team scope, verified. Body: `text` and optional `kind`.',
+    responses: { 201: reply('The note'), 400: invalid, 404: notFound },
+  });
+  add('post', '/api/agent-teams/{id}/notes/{noteId}', {
+    tag: 'Agent teams',
+    id: 'actOnTeamNote',
+    summary: 'Verify, answer, reopen, dispute, resolve, promote or edit a note',
+    description: 'Body `{ action }` with `verify`; `answer` and `dispute` and `edit` (`text`); `reopen`; `resolve` (`keep`: the id of the note that holds); `promote` (`to`: team or project; a project note becomes a suggestion in the second brain’s inbox).',
+    responses: { 200: reply('The note, or the pair, or the promotion'), 201: reply('The disputing note'), 400: invalid, 404: notFound },
+  });
+  add('delete', '/api/agent-teams/{id}/notes/{noteId}', { tag: 'Agent teams', id: 'deleteTeamNote', summary: 'Forget a note', responses: { 200: reply('Deleted'), 404: notFound } });
   add('post', '/api/agent-teams/{id}/unpublish', { tag: 'Agent teams', id: 'unpublishAgentTeam', summary: 'Stop flows from running the team', responses: { 200: teamReply('The team, unpublished'), 404: notFound } });
   const exportQuery = [
     { name: 'format', description: '`claude-plugin` (the only format, and the default)', schema: { type: 'string', enum: ['claude-plugin'] } },
