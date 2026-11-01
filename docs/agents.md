@@ -151,7 +151,11 @@ Older links still work: `?tab=build` opens Persona and `?tab=settings` opens Saf
 The Persona tab builds the system prompt from parts, instead of one instructions box:
 
 - **Who it is**: the name, a role, who it helps, what it does, and the description (shown in the agent list and to
-  agents that delegate to this one).
+  agents that delegate to this one), and **What I do**: up to three short lines (120 characters each) for the agent's
+  card on a team page ([member cards](agent-teams.md#member-cards)). Left empty, the card takes the first sentences of
+  the mission, then of the instructions (`whatIDoLines()` in `persona.ts`; the roster summary carries them as
+  `whatIDo`). They are display only: `personaPrompt()` never reads them, so editing them leaves the prompt, and the
+  agent deployed on kagent, as they were. The Agent architect writes them for a new agent.
 - **Voice**: tone words (from the list, or your own), the answer length (one sentence, a short paragraph, or as
   detailed as needed), the language it answers in (by default, the one it's written to in), and a sign-off line.
 - **Rules**: an **Always** list and a **Never** list, a sentence each.

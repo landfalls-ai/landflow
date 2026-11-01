@@ -327,6 +327,21 @@ export function PersonaTab({
                   onChange={(e) => set({ mission: e.target.value })}
                 />
               </Field>
+              <Field label="What I do" hint="Up to three short lines for its card on a team page. Left empty, they come from what it does. Not part of the prompt.">
+                <div className="space-y-1.5">
+                  {[0, 1, 2].map((i) => (
+                    <Input
+                      key={i}
+                      id={`persona-whatido-${i}`}
+                      aria-label={`What I do, line ${i + 1}`}
+                      maxLength={120}
+                      value={persona.whatIDo?.[i] ?? ''}
+                      placeholder={['Reviews every pull request', 'Flags risky changes', 'Explains what it found'][i]}
+                      onChange={(e) => set({ whatIDo: [0, 1, 2].map((j) => (j === i ? e.target.value : persona.whatIDo?.[j] ?? '')) })}
+                    />
+                  ))}
+                </div>
+              </Field>
               <Field id="persona-description" label="Description" hint="Shown in the agent list and to agents that delegate to this one; it also closes the prompt.">
                 <Input
                   id="persona-description"

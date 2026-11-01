@@ -33,6 +33,11 @@ import type { TeamMoment } from '@/lib/shared/team-progress';
 import { faceOf } from './faces';
 import { ConsultLines } from './consult-lines';
 import { newId } from './util';
+import { MemberCards } from './member-cards';
+import { modelLabel, useLastTeamRun, type LastTeamRun } from './team-run-data';
+import { useNewLook } from '../shell/look-toggle';
+
+export { modelLabel };
 
 /** The A2A Agent node's parameters that describe the remote agent (as in the agent builder's A2A dialog). */
 const SERVER_PROPERTIES = new Set(['agentUrl', 'authentication', 'options']);
@@ -50,6 +55,8 @@ function below(config: AgentTeamConfig, id: string): Set<string> {
 export function TeamBuilder({ teamId }: { teamId: string }) {
   const router = useRouter();
   const agents = useAgentList();
+  const newLook = useNewLook();
+  const lastRun = useLastTeamRun(teamId);
   const [team, setTeam] = useState<AgentTeam>();
   const [draft, setDraft] = useState<AgentTeamConfig>();
   const [loadError, setLoadError] = useState<string>();
@@ -292,6 +299,8 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
             <Textarea id="team-goal" rows={2} value={draft.goal ?? ''} onChange={(e) => update((c) => ({ ...c, goal: e.target.value }))} placeholder="Build approved plugins on a branch, tested and reviewed" />
           </Field>
 
+          {newLook && <MemberCards config={draft} teamName={draft.name} agents={agents ?? []} run={lastRun} />}
+
           <section aria-label="Org chart">
             <div className="mb-1.5 flex items-center justify-between">
               <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">Members</h2>
@@ -333,7 +342,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
             </div>
           </section>
 
-          <LastRun teamId={teamId} faces={draft.members.map((m) => ({ title: m.title, agent: memberAgent(m, agents ?? []) }))} />
+          <LastRun run={lastRun} faces={draft.members.map((m) => ({ title: m.title, agent: memberAgent(m, agents ?? []) }))} />
           {flows.length > 0 && (
             <section aria-label="Flows that run this team" className="rounded-[12px] border border-hair bg-sf px-3.5 py-3">
               <h2 className="mb-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">{fromTemplate ? 'Created from the template' : 'Flows that run this team'}</h2>
@@ -427,13 +436,6 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
 }
 
 const tokens = formatTokens;
-
-/** "Claude Opus 5.5" for the Claude models, else the model's own name. */
-export function modelLabel(model: { provider: string; model: string }): string {
-  const claude = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?/.exec(model.model);
-  if (model.provider === 'anthropic' && claude) return `Claude ${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`;
-  return model.model;
-}
 
 function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddReport }: { config: AgentTeamConfig; member: TeamMember; agent?: AgentSummary; lead: boolean; inSection?: boolean; onEdit: () => void; onAddReport?: () => void }) {
   const manager = managerOf(config, member);
@@ -747,46 +749,12 @@ function MemberDialog({
   );
 }
 
-interface LastTeamRun {
-  executionId: string;
-  workflowName: string;
-  status: string;
-  startedAt: string;
-  nodeName: string;
-  durationMs?: number;
-  /** Going on now: read from the team node's live progress. */
-  live?: boolean;
-  /** The member at work (a live run). */
-  member?: string;
-  members: Array<{ title: string; tokens: number; budgetTokens?: number; estimated?: boolean; overBudget?: boolean; costUsd?: number; notAsked?: boolean; working?: boolean }>;
-  moments?: TeamMoment[];
-}
-
-const LIVE_POLL_MS = 4_000;
-
 /**
  * The team's latest run in a flow: when, and what each member used against its budget, with a way into its Run Trace.
  * While a run goes on it reads again every few seconds, so the bars fill as the members work; a member its manager never
  * asked says so beside an empty bar.
  */
-function LastRun({ teamId, faces }: { teamId: string; faces: Array<{ title: string; agent?: AgentSummary }> }) {
-  const [run, setRun] = useState<LastTeamRun | null>();
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    let gone = false;
-    api<{ run?: LastTeamRun }>(`/api/agent-teams/${teamId}/last-run`)
-      .then((r) => !gone && setRun(r.run ?? null))
-      .catch(() => !gone && setRun((prev) => prev ?? null));
-    return () => {
-      gone = true;
-    };
-  }, [teamId, tick]);
-  const live = Boolean(run?.live);
-  useEffect(() => {
-    if (!live) return;
-    const timer = setTimeout(() => setTick((n) => n + 1), LIVE_POLL_MS);
-    return () => clearTimeout(timer);
-  }, [live, tick]);
+function LastRun({ run, faces }: { run?: LastTeamRun | null; faces: Array<{ title: string; agent?: AgentSummary }> }) {
   if (!run || !run.members.length) return null;
   const when = new Date(run.startedAt);
   return (

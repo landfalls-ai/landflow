@@ -25,7 +25,7 @@ import {
   type SessionSummary,
 } from '../../shared/agents';
 import { cleanAvatar } from '../../shared/faces';
-import { cleanPersona } from '../../shared/persona';
+import { cleanPersona, whatIDoLines } from '../../shared/persona';
 import { deleteAgentSessionFeedback } from '../chat-feedback';
 import { ConfigFile, configStoreKind, importOnce } from '../config-store';
 import { database, type Database } from '../db';
@@ -419,6 +419,7 @@ class AgentStore {
       ...(agent.team && { team: agent.team }),
       ...(agent.persona?.role && { role: agent.persona.role }),
       ...(agent.persona?.tones && { tones: agent.persona.tones }),
+      ...(whatIDoLines(agent).length && { whatIDo: whatIDoLines(agent) }),
       ...(agent.model && { model: `${agent.model.provider}/${agent.model.model}` }),
       tools: agent.tools.length,
       skills: agent.skills.length,
