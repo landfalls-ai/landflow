@@ -766,8 +766,9 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
 
   // Needs a person: open waits, failed checks nobody settled.
   const needsYou: NeedsYouItem[] = [];
+  const echoes = waitEchoes(order, spans);
   for (const span of order) {
-    if (span.kind !== 'wait' || !OPEN(span.status)) continue;
+    if (span.kind !== 'wait' || !OPEN(span.status) || echoes.needsYou.has(span.id)) continue;
     needsYou.push({
       kind: 'wait',
       spanId: span.id,
@@ -1031,12 +1032,55 @@ function insideRequest(model: RunModel, span: RunSpan): boolean {
   return false;
 }
 
+/**
+ * Waits that repeat another wait for the same pause. A member's tool approval is journaled three times: for its tool call,
+ * for the request it is in (`<request>/approval`) and for the run (`run/wait:<n>`, the engine's wait); a member's question
+ * twice. `story` drops the run's copy and the nested ones (the request's wait has the member and the words), `needsYou`
+ * keeps the run's copy (its actions answer the execution) and drops the others.
+ */
+export function waitEchoes(order: RunSpan[], spans: Record<string, RunSpan>): { story: Set<string>; needsYou: Set<string> } {
+  const waits = order.filter((span) => span.kind === 'wait' && !span.hidden);
+  const overlap = (a: RunSpan, b: RunSpan) => a.t0 <= b.t1 && b.t0 <= a.t1;
+  const story = new Set<string>();
+  const needsYou = new Set<string>();
+  for (const wait of waits) {
+    if (wait.parentId === 'run') {
+      const nodeId = typeof wait.attrs.nodeId === 'string' ? wait.attrs.nodeId : undefined;
+      const echoes = nodeId ? waits.filter((w) => w.parentId !== 'run' && w.id.startsWith(`node:${nodeId}:`) && overlap(w, wait)) : [];
+      if (!echoes.length) continue;
+      story.add(wait.id);
+      for (const echo of echoes) needsYou.add(echo.id);
+      continue;
+    }
+    // Under a span above this one, another wait for the same time: the outer one tells it.
+    for (let p = wait.parentId ? spans[wait.parentId] : undefined; p && p.id !== 'run'; p = p.parentId ? spans[p.parentId] : undefined) {
+      const outer = p.children.some((id) => id !== wait.id && !wait.id.startsWith(`${id}/`) && spans[id]?.kind === 'wait' && !spans[id].hidden && overlap(spans[id], wait));
+      if (outer) {
+        story.add(wait.id);
+        needsYou.add(wait.id);
+        break;
+      }
+    }
+  }
+  return { story, needsYou };
+}
+
 /** The chat-like story: messages, requests with their results, waits, artifacts, failures; quiet spans folded into "n steps". */
 export function storyOf(model: RunModel): StoryEntry[] {
   const raw: StoryEntry[] = [];
   // A node that waited runs again as node:<id>:<n+1>, and the member's request it was in goes on under the same call id.
   const requestKey = (id: string) => id.replace(/^(node:[^/:]+):\d+\//, '$1/');
   const requested = new Set<string>();
+  // A request that goes on after the wait ended canceled when its node stopped to wait: that is not "Left undelivered".
+  const goesOn = new Set<string>();
+  const lastOf = new Map<string, string>();
+  for (const span of model.order) {
+    if (span.hidden || !REQUESTS.has(span.kind)) continue;
+    const before = lastOf.get(requestKey(span.id));
+    if (before) goesOn.add(before);
+    lastOf.set(requestKey(span.id), span.id);
+  }
+  const echoes = waitEchoes(model.order, model.spans);
   for (const m of model.messages) raw.push(m);
   for (const round of model.rounds) raw.push({ type: 'round', key: round.key, at: round.startedAt, seq: round.seq - 0.25, round });
   for (const span of model.order) {
@@ -1056,8 +1100,11 @@ export function storyOf(model: RunModel): StoryEntry[] {
     } else if (REQUESTS.has(span.kind)) {
       const continued = requested.has(requestKey(span.id));
       requested.add(requestKey(span.id));
-      raw.push({ type: 'ask', key: `s:${span.id}`, at, seq: span.seq, span, ...(continued && { continued: true }) });
-      if (span.endedAt)
+      // It keeps the request's first start; in the story it goes on when its node runs again.
+      const parent = span.parentId ? model.spans[span.parentId] : undefined;
+      const resumedAt = continued && parent && ms(parent.startedAt) > ms(at) ? parent.startedAt : at;
+      raw.push({ type: 'ask', key: `s:${span.id}`, at: resumedAt, seq: span.seq, span, ...(continued && { continued: true }) });
+      if (span.endedAt && !(goesOn.has(span.id) && span.status === 'canceled'))
         raw.push({
           type: 'reply',
           key: `r:${span.id}`,
@@ -1067,7 +1114,7 @@ export function storyOf(model: RunModel): StoryEntry[] {
           result: resultOf(span),
         });
     } else if (span.kind === 'wait') {
-      raw.push({ type: 'wait', key: `s:${span.id}`, at, seq: span.seq, span });
+      if (!echoes.story.has(span.id)) raw.push({ type: 'wait', key: `s:${span.id}`, at, seq: span.seq, span });
     } else if (QUIET_KINDS.has(span.kind) && !insideRequest(model, span)) {
       if (span.status === 'error')
         raw.push({

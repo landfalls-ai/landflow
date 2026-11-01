@@ -188,7 +188,8 @@ function NeedsYou({
               <b>{n.attrs.wait === 'pause' ? n.title : `Needs ${n.actor.name}`}</b>
               <span className="text-t2">
                 {' '}
-                · {n.attrs.wait === 'pause' ? 'paused' : n.caller ? `${n.caller.name} waiting` : 'waiting'} since {clock(n.since)}
+                {/* A team member's tool: the run's wait names the member (its caller is the node, the lead). */}
+                · {n.attrs.wait === 'pause' ? 'paused' : typeof n.attrs.member === 'string' ? `${n.attrs.member} waiting` : n.caller ? `${n.caller.name} waiting` : 'waiting'} since {clock(n.since)}
               </span>
             </div>
             <p className="mt-1 line-clamp-3 text-[13.5px] text-t1">{n.detail ?? n.title}</p>

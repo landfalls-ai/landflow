@@ -490,3 +490,68 @@ describe('a request that goes on after its node waited', () => {
     ]);
   });
 });
+
+describe('a member waiting on a tool approval', () => {
+  /** The live shape: the wait is journaled for the tool call, for the request and for the run; the request goes on after it. */
+  function approvalRun(resumed: boolean) {
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Notes', actor: flow });
+    add(0, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Run Team', actor: lead, nodeId: 'team' });
+    add(5, { type: 'span.started', spanId: 'node:team:0/step:call_1', parentSpanId: 'node:team:0', kind: 'delegate', name: 'planner', actor: planner, caller: lead, input: 'Write the notes' });
+    add(20, { type: 'span.started', spanId: 'node:team:0/step:call_1/step:call_9', parentSpanId: 'node:team:0/step:call_1', kind: 'tool', name: 'publish', actor: planner });
+    add(20, { type: 'span.started', spanId: 'node:team:0/step:call_1/step:call_9/approval', parentSpanId: 'node:team:0/step:call_1/step:call_9', kind: 'wait', name: 'Approve publish', actor: person, caller: planner, attrs: { wait: 'approval' } });
+    add(20, { type: 'span.started', spanId: 'node:team:0/step:call_1/approval', parentSpanId: 'node:team:0/step:call_1', kind: 'wait', name: 'planner wants to use publish', actor: person, caller: planner, attrs: { wait: 'approval' } });
+    add(20, { type: 'span.started', spanId: 'run/wait:1', parentSpanId: 'run', kind: 'wait', name: 'planner wants to use publish', actor: person, caller: lead, attrs: { wait: 'approval', nodeId: 'team', member: 'planner' } });
+    if (!resumed) return events;
+    add(40, { type: 'span.ended', spanId: 'run/wait:1', status: 'success' });
+    add(40, { type: 'span.ended', spanId: 'node:team:0/step:call_1/step:call_9/approval', status: 'success' });
+    add(40, { type: 'span.ended', spanId: 'node:team:0/step:call_1/approval', status: 'success' });
+    add(40, { type: 'span.ended', spanId: 'node:team:0/step:call_1/step:call_9', status: 'canceled' });
+    add(40, { type: 'span.ended', spanId: 'node:team:0/step:call_1', status: 'canceled' });
+    add(40, { type: 'span.ended', spanId: 'node:team:0', status: 'success' });
+    add(40, { type: 'span.started', spanId: 'node:team:1', parentSpanId: 'run', kind: 'agent', name: 'Run Team', actor: lead, nodeId: 'team' });
+    // The request keeps its first start.
+    add(5, { type: 'span.started', spanId: 'node:team:1/step:call_1', parentSpanId: 'node:team:1', kind: 'delegate', name: 'planner', actor: planner, caller: lead, input: 'Write the notes' });
+    add(45, { type: 'span.ended', spanId: 'node:team:1/step:call_1', status: 'success', output: 'Published' });
+    add(46, { type: 'span.ended', spanId: 'node:team:1', status: 'success' });
+    add(46, { type: 'span.ended', spanId: 'run', status: 'success' });
+    return events;
+  }
+
+  it('tells the wait once, under the request, and the request goes on at the resume', async () => {
+    const { storyOf } = await import('@/lib/shared/run-trace-model');
+    const story = storyOf(foldJournal(approvalRun(true)));
+    expect(story.filter((e) => e.type === 'wait').map((e) => e.type === 'wait' && e.span.id)).toEqual(['node:team:0/step:call_1/approval']);
+    // The first part ended canceled when the node stopped to wait: no "Left undelivered" for it.
+    expect(story.filter((e) => e.type === 'reply').map((e) => e.type === 'reply' && e.span.id)).toEqual(['node:team:1/step:call_1']);
+    const goesOn = story.find((e) => e.type === 'ask' && e.continued);
+    expect(goesOn?.at).toBe(at(40));
+    const order = story.map((e) => e.key);
+    expect(order.indexOf('s:node:team:0/step:call_1/approval')).toBeLessThan(order.indexOf('s:node:team:1/step:call_1'));
+  });
+
+  it('needs a person once while it waits', () => {
+    const waits = foldJournal(approvalRun(false)).needsYou.filter((n) => n.kind === 'wait');
+    expect(waits.map((n) => n.spanId)).toEqual(['run/wait:1']);
+  });
+
+  it('keeps a wait that has no copy, and two waits at different times', async () => {
+    const { storyOf } = await import('@/lib/shared/run-trace-model');
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Notes', actor: flow });
+    add(0, { type: 'span.started', spanId: 'node:wait:0', parentSpanId: 'run', kind: 'step', name: 'Wait', actor: flow, nodeId: 'wait' });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Run Team', actor: lead, nodeId: 'team' });
+    add(2, { type: 'span.started', spanId: 'node:team:0/step:call_1', parentSpanId: 'node:team:0', kind: 'delegate', name: 'planner', actor: planner, caller: lead });
+    add(3, { type: 'span.started', spanId: 'node:team:0/step:call_1/wait', parentSpanId: 'node:team:0/step:call_1', kind: 'wait', name: 'planner needs an answer', actor: person, caller: planner });
+    add(4, { type: 'span.ended', spanId: 'node:team:0/step:call_1/wait', status: 'success' });
+    add(6, { type: 'span.started', spanId: 'node:team:0/step:call_1/step:call_2', parentSpanId: 'node:team:0/step:call_1', kind: 'tool', name: 'publish', actor: planner });
+    add(6, { type: 'span.started', spanId: 'node:team:0/step:call_1/step:call_2/approval', parentSpanId: 'node:team:0/step:call_1/step:call_2', kind: 'wait', name: 'Approve publish', actor: person, caller: planner });
+    add(7, { type: 'span.started', spanId: 'run/wait:1', parentSpanId: 'run', kind: 'wait', name: 'Wait until noon', actor: person, attrs: { wait: 'time', nodeId: 'wait' } });
+    const story = storyOf(foldJournal(events));
+    expect(story.filter((e) => e.type === 'wait').map((e) => e.type === 'wait' && e.span.id)).toEqual([
+      'node:team:0/step:call_1/wait',
+      'node:team:0/step:call_1/step:call_2/approval',
+      'run/wait:1',
+    ]);
+  });
+});

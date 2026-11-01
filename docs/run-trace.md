@@ -89,7 +89,7 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
 - **The header**: live or finished, the time, who is working on what right now, the outcome as reported (the last
   agent's answer) and as checked (the Run report's verdict in the profile's words, with how many checks failed). A live
   run with no new event for 5 minutes says **Quiet for n min**.
-- **Needs you**: the approvals a run waits for (Approve and Reject in place; a team member's reads "Developer wants to use Comment on pull request" with what it would do), a Run report's gate (**Accept as is** or
+- **Needs you**: the approvals a run waits for (Approve and Reject in place; a team member's reads "Developer wants to use Comment on pull request" with what it would do, and names the member as the one waiting), a Run report's gate (**Accept as is** or
   **Send back for a fix**), a form wait such as a team member's question (**Answer** opens the run's form page,
   `/form/waiting/<executionId>`), other waits (**Open to answer**), and failed checks nobody has decided on.
 - **Story** (the default): the run as a conversation. It shows messages, requests between agents (with **Why** they
@@ -99,8 +99,11 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
   it did, in the agent's own words when it gave a `description` (Claude Code does with every command), else in plain
   words ("Cloning the repository", "Reading get-alerts.ts"), with the tool's name beside it ("1 step" for one). A
   request a member picks up again after a wait (its tool was approved, the run resumed) reads *Writer went on with
-  Editor's request after the wait* instead of a second ask. A Run a Team node's own turns carry its lead's title. A team
-  run opens with its [headlines](#headlines).
+  Editor's request after the wait* instead of a second ask, at the time the run resumed, and its first part shows no
+  *Left undelivered*. A Run a Team node's own turns carry its lead's title. One wait is told once: a member's tool approval
+  is journaled for the tool call, for the member's request and for the run, and the Story keeps the request's (who waits,
+  for what), while **Needs you** keeps the run's (its buttons answer the execution); `waitEchoes` in
+  `lib/shared/run-trace-model.ts` picks them. A team run opens with its [headlines](#headlines).
 - **Trace**: the span tree with timing bars, down to a remote agent's single tool calls. A request shows why it was
   asked.
 - **Team**: who called whom, with ×n counts (laid out top to bottom, no sideways scrolling), plus a card per actor with
