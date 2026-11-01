@@ -19,7 +19,7 @@ pnpm --filter @landflow/plugin-landfall fake-landfall   # the fake as a standalo
 
 | Node (type) | Resource → operations | Output |
 |---|---|---|
-| **Landfall** (`landfall.landfall`, usable as an AI tool) | **Incident** → Open From Alert, Recover, Open Manually, Declare, Get, Get Many · **Timeline** → Get Events, Add Event, Add Note · **Remediation** → Record Applied Externally · **Heartbeat** → Ping | see below |
+| **Landfall** (`landfall.landfall`, usable as an AI tool) | **Incident** → Open From Alert, Recover, Open Manually, Declare, Get, Get Room, Get Many · **Timeline** → Get Events, Add Event, Add Note, Add Runbook Link · **Remediation** → Record Applied Externally · **Heartbeat** → Ping | see below |
 | **Landfall Trigger** (`landfall.landfallTrigger`) | poll trigger, default every 30 s: New Incident, Incident Ended, New Timeline Events | `{ event, incident, timelineEvent? }` |
 
 Parameters are read per item and every output item is paired with its input. Errors read `Landfall API error 422: …` with
@@ -37,11 +37,13 @@ the remote-source connection must exist and be healthy; 429: the 300 requests pe
 | Incident → **Get Many** | `GET …/incidents` | Return All (follows `nextCursor`) or Limit (1-200), Filters: Status (open / closed / all), Search | one item per `IncidentView` |
 | Timeline → **Get Events** | `GET …/incidents/:id/events` | Incident ID, Return All / Limit (1-500), Options: Since Seq, Before Seq | one item per `TimelineEvent`, ascending. With a limit Landfall returns the *newest* rows |
 | Timeline → **Add Event** | `POST …/incidents/:id/events` | Incident ID, Event Type, Payload (JSON object) | the appended `TimelineEvent`. `expectedSeq` is read for you (newest seq + 1) and a 409 re-reads and retries once |
+| Incident → **Get Room** | `GET …/incidents/:id/state` and `…/events` | Incident ID | one item `{ incident: { id, …state }, events }`: the input of Landflow's [Make a runbook](../../docs/runbooks.md) |
+| Timeline → **Add Runbook Link** | same as Add Note | Incident ID, Runbook Name, Runbook URL (absolute http(s)) | the appended `chat.message` (`Runbook: <name>` and the link) |
 | Timeline → **Add Note** | same, type `chat.message` | Incident ID, Text | the appended event, written as the member who owns the API key |
 | Remediation → **Record Applied Externally** | same, type `remediation.applied-externally` | Incident ID, Source Seq (seq of the `remediation.proposed` event), Additional Fields: Remediation ID, Action (≤ 500), Note (≤ 1000) | the appended event |
 | Heartbeat → **Ping** | `POST /o/:slug/heartbeats/:name/ping` (heartbeat token) | Heartbeat Name | `{ ok: true, heartbeat }` |
 
-`Get`, `Get Many` and `Get Events` are the read-only operations (MCP `readOnlyHint`, safe to repeat over a broker); the rest
+`Get`, `Get Room`, `Get Many` and `Get Events` are the read-only operations (MCP `readOnlyHint`, safe to repeat over a broker); the rest
 are at most once. Landfall refuses `agent.step`, `incident.triggered`, `severity.proposed`, `demo.marked`, `selfmon.marked`,
 `context.attached` / `detached` and `cluster.uninvolved` on the event route; Add Event passes its 400 on.
 

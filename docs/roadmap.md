@@ -602,7 +602,7 @@ No migrations: a template's marketplace origin is kept in its document.
   port another process already held: the free-port probe bound 127.0.0.1 only, which macOS allows beside a wildcard
   listener. It now also connects to the port and binds every interface (with a test).
 - What remains: the Landfall and threat intel calls are checked against fakes, not the live services; share pages need
-  sign-in; runbooks aren't built from closed rooms yet.
+  sign-in.
 
 ## Composite nodes (built 2026-10-29)
 
@@ -1075,6 +1075,7 @@ Agent team members start every run from what they are handed. They now share a n
 - **Trust**: notes from outside are tainted until a person verifies them; disputes keep both notes until one is kept;
   `traceContent: off` keeps provenance and drops excerpts.
 - **See it**: the team's Notebook tab, note moments on the canvas and in the headlines, deep links into the Run Trace.
+
 ## GitHub's MCP tools for agents (built 2026-11-01)
 
 Agents read and review pull requests through GitHub's own MCP server ([a2a.md](a2a.md#githubs-mcp-tools-for-agents)): an
@@ -1084,11 +1085,16 @@ allow-list per agent (read for every member; review, line comments and comments 
 branch, file and repository write never offered). Kagent members get the same cut through the agents' MCP endpoint, and
 Run Trace shows it with GitHub's mark. Not live-checked against GitHub with a token.
 
+## Runbooks from Landfall war rooms (built 2026-11-01)
+
+A closed room's applied remediations, chat and outcome fold into a draft workflow ([runbooks.md](runbooks.md)): a form wait per
+step, an approval before risky or production-changing steps, tagged by alert kind. **Runbooks** in the sidebar makes and
+lists them; the **Find Runbook** node and the triage flow name the matching one and link it in the new room (**Timeline →
+Add Runbook Link**); **Incident → Get Room** reads a room for it. Deterministic, no model.
+
 ## Planned next
 
-**Runbooks from Landfall war rooms.** After a room closes, turn what the responders did (the timeline, the remediation
-records, the "Room outcomes" rows) into a dedicated runbook in Landflow: a workflow with the steps, the approvals it
-needs, and a link back from Landfall's alerts of the same kind. The other follow-ups above are candidates too.
+The follow-ups above are candidates, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).
 
 ## Not planned
 

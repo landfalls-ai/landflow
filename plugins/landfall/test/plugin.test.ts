@@ -71,8 +71,8 @@ describe('operations', () => {
 
   it('has the resources and operations', () => {
     expect(byResource).toEqual({
-      incident: ['declare', 'get', 'getAll', 'openManually', 'openFromAlert', 'recover'],
-      timeline: ['addEvent', 'addNote', 'getEvents'],
+      incident: ['declare', 'get', 'getRoom', 'getAll', 'openManually', 'openFromAlert', 'recover'],
+      timeline: ['addEvent', 'addNote', 'addRunbookLink', 'getEvents'],
       remediation: ['recordAppliedExternally'],
       heartbeat: ['ping'],
     });
@@ -85,16 +85,18 @@ describe('operations', () => {
       'incident_declare',
       'incident_get',
       'incident_getAll',
+      'incident_getRoom',
       'incident_openFromAlert',
       'incident_openManually',
       'incident_recover',
       'remediation_recordAppliedExternally',
       'timeline_addEvent',
       'timeline_addNote',
+      'timeline_addRunbookLink',
       'timeline_getEvents',
     ]);
     const readOnly = tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name).sort();
-    expect(readOnly).toEqual(['incident_get', 'incident_getAll', 'timeline_getEvents']);
+    expect(readOnly).toEqual(['incident_get', 'incident_getAll', 'incident_getRoom', 'timeline_getEvents']);
     for (const tool of tools) {
       expect(tool.annotations.destructiveHint).toBe(false);
       expect(tool.annotations.idempotentHint).toBe(tool.annotations.readOnlyHint);

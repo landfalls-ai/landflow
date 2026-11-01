@@ -40,7 +40,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks';
   id: string;
   summary: string;
   description?: string;
@@ -1116,6 +1116,33 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'Built-in and remote templates can’t be deleted.',
     responses: { 200: reply('Deleted', ok), 400: invalid, 404: notFound },
   });
+  // ---- runbooks from Landfall rooms (docs/runbooks.md) ----
+  const runbookStep = object({ title: { type: 'string' }, approval: { type: 'boolean' }, reason: { type: 'string' }, notes: array({ type: 'string' }), source: { type: 'object' } }, ['title', 'approval', 'notes']);
+  const runbook = object({ id: { type: 'string' }, name: { type: 'string' }, alertKind: { type: 'string' }, room: { type: 'string' }, steps: { type: 'integer' }, approvals: { type: 'integer' }, published: { type: 'boolean' }, updatedAt: { type: 'string' }, url: { type: 'string' }, match: { type: 'string', enum: ['exact', 'similar', 'all'] } }, ['id', 'name', 'alertKind', 'url']);
+  add('get', '/api/runbooks', {
+    tag: 'Runbooks',
+    id: 'listRunbooks',
+    summary: 'List runbooks',
+    description: 'Workflows tagged `runbook` that you can see. With `kind` (an alert title, alertname or kind slug): the ones for that kind, exact before similar, published before draft.',
+    query: [{ name: 'kind', description: 'An alert kind', schema: { type: 'string' } }, { name: 'projectId', description: 'Only this project', schema: { type: 'string' } }],
+    responses: { 200: reply('The runbooks', object({ runbooks: array(runbook) }, ['runbooks'])) },
+  });
+  add('post', '/api/runbooks', {
+    tag: 'Runbooks',
+    id: 'saveRunbook',
+    summary: 'Save reviewed steps as a draft runbook',
+    description: 'Makes a workflow (not active) in `?projectId=` or your personal project: a form wait per step, and an approval form, If and Stop and Error before a step with `approval: true`. Tagged `runbook` and `alert-kind:<slug>`.',
+    body: jsonBody(object({ name: { type: 'string' }, alertKind: { type: 'string' }, description: { type: 'string' }, room: { type: 'string' }, steps: array(runbookStep), background: { type: 'object' }, folderId: { type: 'string' } }, ['name', 'alertKind', 'steps'])),
+    responses: { 201: reply('The draft workflow', object({ workflow: ref('Workflow'), runbook }, ['workflow', 'runbook'])), 400: invalid },
+  });
+  add('post', '/api/runbooks/draft', {
+    tag: 'Runbooks',
+    id: 'draftRunbook',
+    summary: 'Fold a closed Landfall room into runbook steps',
+    description: 'Nothing is saved. `room` is `{ incident, events, outcome? }` (the Landfall node’s Get Room output, plus a Room outcomes row). One step per applied remediation, in order; a step needs approval when the responders marked it risky, it names production, or it uses a changing word. 422 when there is nothing to fold.',
+    body: jsonBody(object({ room: { type: 'object' }, alertKind: { type: 'string' }, name: { type: 'string' } }, ['room'])),
+    responses: { 200: reply('The draft', object({ draft: object({ name: { type: 'string' }, alertKind: { type: 'string' }, description: { type: 'string' }, room: { type: 'string' }, steps: array(runbookStep), skipped: array({ type: 'string' }), background: { type: 'object' } }, ['name', 'alertKind', 'steps']), existing: array(runbook) }, ['draft'])), 400: invalid, 422: errorRef('Nothing to fold') },
+  });
   // ---- composite types (docs/composites.md) ----
   const compositeInfo = object(
     {
@@ -1805,6 +1832,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Triggers', description: 'Webhook, form and MCP Server Trigger URLs and their test URLs: public, each checked by its trigger’s own authentication' },
       { name: 'Plugins', description: 'Installed plugins, their transports and transport policies, and broker connections (changes need an owner or admin)' },
       { name: 'Second brain', description: 'The usage ledger, suggestions and what Landflow learned from how it is used (docs/second-brain.md)' },
+      { name: 'Runbooks', description: 'Runbook workflows made from closed Landfall war rooms, found by alert kind (docs/runbooks.md)' },
       { name: 'Agents', description: 'Agents that run elsewhere (kagent) reporting what they did back to the run that asked them (docs/a2a.md)' },
       { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
