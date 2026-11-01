@@ -410,3 +410,12 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     set((s) => ({ items: s.items.map((item) => (item.id === itemId && item.role === 'assistant' ? { ...item, parts: fn(item.parts) } : item)) }));
   },
 }));
+
+/** The last reply offers "Test and fix" for a flow just drafted. */
+export const offersTest = (items: ChatItem[]) => {
+  const last = items.at(-1);
+  return last?.role === 'assistant' && last.parts.some((p) => p.kind === 'action' && p.action === 'test' && !p.state);
+};
+
+/** Spotlight works on its own: drafting a flow, testing and fixing it, or a drafted flow waiting for its test. */
+export const useWorking = () => useAssistant((s) => s.drafting || Boolean(s.testing) || offersTest(s.items));

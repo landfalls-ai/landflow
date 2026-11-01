@@ -33,7 +33,10 @@ What the new look draws so far:
   the agent's last runs ([run-trace.md](run-trace.md#what-a-run-did-in-one-line));
 - team members as cards above the team chart ([agent-teams.md](agent-teams.md#member-cards));
 - the analyst answering with a chart: source chips, one "Looking across N sources…" line, and an answer card whose chart
-  comes from the tool results ([second-brain.md](second-brain.md#the-analyst-agent)).
+  comes from the tool results ([second-brain.md](second-brain.md#the-analyst-agent));
+- building step by step: while Spotlight builds a change, a side card ticks off its steps, the nodes it adds appear on the
+  canvas as dashed ghosts (the one being made shimmers), new connections draw dashed, and a thin bar on top of the canvas
+  shows how far the plan is; nothing changes until Apply ([assistant.md](assistant.md#building-step-by-step)).
 
 ## Canvas
 
