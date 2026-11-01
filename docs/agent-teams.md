@@ -240,7 +240,7 @@ the moments that matter. On the editor's canvas during a run and on the executio
   the same.
 - **A tool waiting for approval** turns the node amber like a question: the asker's face with an hourglass, "Tech Lead
   wants to use" with the tool's name on its own line below in mono (a long tool name no longer pushes the head off the
-  node), what it would do in a few words (the comment, the command, the path), and
+  node; the buttons keep a strip of room below them, so the sub-node handles and the status mark don't sit on them), what it would do in a few words (the comment, the command, the path), and
   **Approve** / **Deny** buttons on the node and on the phone card (the same call as Needs you). A moment says "Tech Lead
   asks to use Comment on pull request" (amber). The node reads it from the waiting execution's `wait.data.teamApproval`, so
   a reload or another device shows the same; from the editor the canvas follows the resumed run.

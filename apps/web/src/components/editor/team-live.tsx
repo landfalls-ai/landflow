@@ -513,7 +513,12 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
               )}
             </div>
             <TeamBudgets usage={live?.usage ?? activity?.usage} faces={faces} focus={asked.member} className="mx-4 mt-2" />
-            {turns && <TeamRibbon turns={turns} total={live ? elapsed : (activity?.durationMs ?? 0)} faces={faces} hrefOf={hrefOf} newTab={newTab} />}
+            {turns?.length ? (
+              <TeamRibbon turns={turns} total={live ? elapsed : (activity?.durationMs ?? 0)} faces={faces} hrefOf={hrefOf} newTab={newTab} />
+            ) : (
+              // Without a ribbon the buttons were the tile's last row: the sub-node handles and the status mark sat on them.
+              <div className="h-7 shrink-0" aria-hidden data-testid="team-wait-foot" />
+            )}
           </>
         ),
       },
