@@ -41,7 +41,9 @@ notebook-pen icon:
 - `note_add { kind, text, url? }`: a new note, in the run's scope. A note that already stands in the run's notebook is not written twice.
 - `note_search { query }`: the notes that fit the query, ranked by meaning (below). The lead is also given the open
   questions, the decisions and the disputed notes in its first message, so it begins with them.
-- `note_update { id, text?, answer? }`: change one of its own run notes, or answer an open question.
+- `note_update { id, text?, answer?, status? }`: change one of its own run notes, or answer an open question. `status:
+  verified` is in a manager's schema only (members get `unverified` and `open`): offered to everyone, a member kept trying it
+  and getting *Only a manager verifies a note*, four failed steps in one live run. The server refuses it either way.
 - `note_dispute { id, text }`: add a note that disagrees with another; both stay, linked, until a person settles it.
 - `note_promote { id }`: run to team. Only a manager or the lead.
 

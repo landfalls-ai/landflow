@@ -326,6 +326,11 @@ describe('the tools', () => {
     expect(notebookTools(manager()).map((t) => t.name)).toEqual(['note_add', 'note_search', 'note_update', 'note_dispute', 'note_promote']);
     expect(notebookTools(bind()).every((t) => t.kind === 'notebook' && t.label === t.name && !t.requireApproval)).toBe(true);
     expect(specsFor(false)).toHaveLength(NOTEBOOK_SPECS.length - 1);
+    // Only a manager verifies: the others aren't offered it.
+    const status = (manager: boolean) => ((specsFor(manager).find((t) => t.name === 'note_update')!.inputSchema.properties as Record<string, { enum: string[] }>).status.enum);
+    expect(status(true)).toContain('verified');
+    expect(status(false)).not.toContain('verified');
+    expect(notebookStubs().find((t) => t.name === 'note_update')!.description).toMatch(/Only a manager marks a note verified/);
     expect(notebookStubs().map((t) => t.name)).toEqual(['note_add', 'note_search', 'note_update', 'note_dispute']);
   });
 

@@ -88,7 +88,21 @@ export const NOTEBOOK_SPECS: NotebookToolSpec[] = [
   },
 ];
 
-export const specsFor = (manager: boolean) => NOTEBOOK_SPECS.filter((spec) => !spec.manager || manager);
+/**
+ * A member's tools: `note_promote` for managers only, and `note_update` without `verified` for the rest (only a manager
+ * verifies; offered it anyway, a model kept calling it and getting the refusal: four failed steps in one live run).
+ */
+export const specsFor = (manager: boolean) =>
+  NOTEBOOK_SPECS.filter((spec) => !spec.manager || manager).map((spec) => (manager || spec.name !== 'note_update' ? spec : memberUpdate(spec)));
+
+function memberUpdate(spec: NotebookToolSpec): NotebookToolSpec {
+  const properties = spec.inputSchema.properties as JsonObject;
+  return {
+    ...spec,
+    description: 'Change a note: reword your own, or answer an open question (answer). Only a manager marks a note verified. Use note_dispute for a note you think is wrong.',
+    inputSchema: { ...spec.inputSchema, properties: { ...properties, status: { type: 'string', enum: ['unverified', 'open'], description: 'open: an answered question needs asking again' } } },
+  };
+}
 
 const WEB_TOOL = /web_?fetch|web_?search|fetch|browse|curl|wget|http|url/i;
 /** Whether the member read something from outside the team earlier in its session (a web or fetch tool). */
