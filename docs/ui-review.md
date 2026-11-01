@@ -25,6 +25,8 @@ browser in `localStorage` (`landflow-look`), set on `<html data-look>` before pa
 new look, and read in components with `useLook()` / `useNewLook()` from `components/shell/look-toggle.tsx`. The git
 branch `design-before-blocks` keeps the code as it was before these designs.
 
+The analyst answering with a chart is [described with the analyst](second-brain.md#the-analyst-agent): source chips, one "Looking across N sources…" line, and an answer card whose chart comes from the tool results.
+
 ## Canvas
 
 | | n8n | Landflow | |

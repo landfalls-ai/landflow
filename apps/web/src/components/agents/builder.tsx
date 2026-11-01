@@ -716,7 +716,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
         </div>
       </div>
 
-      {testing && <TestChat agentId={agentId} agentName={draft.name} look={draft} onClose={() => setTesting(false)} beforeSend={persist} childHref={childHref} />}
+      {testing && <TestChat agentId={agentId} agentName={draft.name} look={draft} onClose={() => setTesting(false)} beforeSend={persist} childHref={childHref} tools={draft.tools} />}
 
       {modal?.kind === 'description' && (
         <Dialog
