@@ -19,7 +19,7 @@ Legend: ✅ on par with n8n · ➕ beyond n8n · ◐ partial · ✗ missing
 
 A second switch under the theme switch picks the look: **New** (the default) draws the run cards and timelines from the
 design review against blocks.diy (a run as a timeline, what a run did in one line, an approval with its evidence, team
-members as cards, the analyst answering with a chart, building step by step); **Classic** draws the screens as they were
+members as cards ([team page](agent-teams.md#member-cards)), the analyst answering with a chart, building step by step); **Classic** draws the screens as they were
 before them. Only the drawing changes: every feature, route and button works the same in both. The choice is kept per
 browser in `localStorage` (`landflow-look`), set on `<html data-look>` before paint so a classic page never flashes the
 new look, and read in components with `useLook()` / `useNewLook()` from `components/shell/look-toggle.tsx`. The git

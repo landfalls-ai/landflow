@@ -245,6 +245,8 @@ export interface AgentPersona {
   language?: string;
   /** A line it ends every answer with. */
   signoff?: string;
+  /** Up to three short lines for the member cards on a team page ("Reviews every pull request"). Never part of the prompt. */
+  whatIDo?: string[];
   /** Rules, a sentence each. */
   always?: string[];
   never?: string[];
@@ -425,6 +427,8 @@ export interface AgentSummary {
   /** The persona's role and tones, for the roster's cards. */
   role?: string;
   tones?: string[];
+  /** The member card's “what I do” lines: the persona's own, else the first sentences of its mission or instructions (whatIDoLines). */
+  whatIDo?: string[];
   model?: string;
   tools: number;
   skills: number;

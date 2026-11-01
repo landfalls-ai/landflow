@@ -41,6 +41,17 @@ list); **publishing is refused** until there are none:
 A budget is the tokens a member may spend in one run: a warning at 80%, a stop at 100%. No budget, no limit. **Questions go
 to** the member's manager first (who may pass them on to a person), or straight to a person.
 
+## Member cards
+
+In the new look ([the look](ui-review.md#the-look)) the team page shows one card per member above the chart: a large face,
+the team's name (small, muted) over the member's title, up to three **what I do** lines (the persona's own, else the first
+sentences of its mission or instructions; see [the persona](agents.md#the-persona)), and chips for where it runs (its model,
+or **Claude Code · kagent** for a remote member or an agent deployed on kagent), **Consults** (the members it may consult or
+hand over to), its budget and how its last turn went (tokens used, **Over budget** or **Not asked last run**, from the same
+last-run data as the Last run card). While a run goes on, the member at work is outlined in its colour with a pulsing glow
+and **Working…**. A tap opens the agent's page. On a phone the cards are a sideways scroll-snap carousel; from `sm` they wrap
+in a row. The classic look draws the page without them. Code: `components/agents/member-cards.tsx`.
+
 ## The chart
 
 The team page (`/agents/teams/:id`) draws the team as an aligned org chart of equal cards: the lead on top (tinted),

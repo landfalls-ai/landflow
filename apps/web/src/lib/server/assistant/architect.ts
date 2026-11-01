@@ -100,6 +100,7 @@ const TOOLS: ToolSpec[] = [
         role: { type: 'string', description: 'What it is in a few words ("Customer support lead")' },
         audience: { type: 'string', description: 'Who it helps' },
         mission: { type: 'string', description: 'What it does for them' },
+        whatIDo: { type: 'array', items: { type: 'string' }, description: 'Up to 3 short lines (under 80 characters) for its team card: "Triages new tickets"' },
         tones: { type: 'array', items: { type: 'string' }, description: '2–3 words: Precise, Friendly, Calm, Direct, Warm, Brief, Thorough, Patient, Formal, Empathetic' },
         length: { type: 'string', enum: ['sentence', 'short', 'detailed'] },
         always: { type: 'array', items: { type: 'string' }, description: 'Rules, a sentence each' },
@@ -220,6 +221,7 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
   set('role', text(args.role, 120));
   set('audience', text(args.audience, 200));
   set('mission', text(args.mission, 300));
+  set('whatIDo', texts(parsed(args.whatIDo), 120, 3, /\n/));
   set('tones', texts(parsed(args.tones), 24, 4, /[,;\n]/));
   set('always', texts(parsed(args.always), 200, 8, /\n/));
   set('never', texts(parsed(args.never), 200, 8, /\n/));
