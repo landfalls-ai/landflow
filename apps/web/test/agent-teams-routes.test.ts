@@ -38,6 +38,20 @@ describe('agent team routes', () => {
     await one.DELETE(req('DELETE'), ctx(team.id));
   });
 
+  it('keeps who a member may consult, and lists a consult that has no one to go to as an issue', async () => {
+    const dev = agentStore.create({ name: 'Dev' }).id;
+    const team = await create({
+      name: 'Peers',
+      members: [members[0], { id: 'm_a', kind: 'agent', agentId: dev, title: 'Developer', reportsTo: 'm_lead', consults: ['m_b', 'm_b', 7] }, { id: 'm_b', kind: 'agent', agentId: dev, title: 'Reviewer', reportsTo: 'm_lead' }],
+    });
+    expect(team.draft.members[1]).toMatchObject({ consults: ['m_b'] });
+    const got = await (await one.GET(req('GET'), ctx(team.id))).json();
+    expect(got.issues).toEqual([]);
+    const saved = await (await one.PUT(req('PUT', { ...team.draft, members: [team.draft.members[0], { ...team.draft.members[1], consults: ['m_gone'] }, team.draft.members[2]] }), ctx(team.id))).json();
+    expect(saved.issues).toContain("Developer may consult a member who isn't in the team.");
+    await one.DELETE(req('DELETE'), ctx(team.id));
+  });
+
   it('creates, lists, reads, saves and deletes a team', async () => {
     const team = await create();
     expect(team.draft.members).toHaveLength(3);

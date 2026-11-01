@@ -52,6 +52,17 @@ describe('agent teams', () => {
     expect(teamIssues(team)).toContain('Two members share a title: titles are how managers call them.');
   });
 
+  it('checks who a member may consult: someone in the team, not itself, and not from a remote member', () => {
+    const team = pluginTeam();
+    team.members[2] = { ...team.members[2], consults: ['m_dev', 'm_gone'] } as TeamMember;
+    team.members[3] = { ...team.members[3], consults: ['m_rev'] } as TeamMember;
+    team.members[1] = { ...team.members[1], consults: ['m_plan'] } as TeamMember;
+    const issues = teamIssues(team);
+    expect(issues).toContain("Developer may consult a member who isn't in the team.");
+    expect(issues.some((i) => i.includes("can't consult itself"))).toBe(true);
+    expect(issues.some((i) => i.includes("can't consult anyone"))).toBe(true);
+  });
+
   it('finds the Landflow agent behind a member, also one called on kagent', () => {
     const agents = [
       { id: 'ag_lead', name: 'Tech Lead' },

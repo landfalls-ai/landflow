@@ -25,6 +25,11 @@ interface MemberBase {
   reportsTo?: string;
   /** Members whose work it must sign off before their manager reports done. */
   reviews?: string[];
+  /**
+   * Peers it may consult or hand its task to, without going through its manager (Landflow agents only: a remote member
+   * has no tools to do it with). The peer answers the member that asked, and counts against its own budget.
+   */
+  consults?: string[];
   /** Tokens it may spend in one run: a warning at 80%, a stop at 100%. Absent: no limit. */
   budgetTokens?: number;
   questionsTo?: QuestionsTo;
@@ -157,6 +162,11 @@ export function teamIssues(config: AgentTeamConfig, options: { agentExists?: (ag
       if (r === m.id) issues.push(`${m.title} can't review its own work.`);
       else if (!byId.has(r)) issues.push(`${m.title} reviews a member who isn't in the team.`);
     }
+    for (const c of m.consults ?? []) {
+      if (c === m.id) issues.push(`${m.title} can't consult itself.`);
+      else if (!byId.has(c)) issues.push(`${m.title} may consult a member who isn't in the team.`);
+    }
+    if (m.kind === 'a2a' && m.consults?.length) issues.push(`${m.title} is a remote agent, so it can't consult anyone: only Landflow agents have tools to do it with.`);
     if (m.budgetTokens !== undefined && !(m.budgetTokens > 0)) issues.push(`${m.title}'s budget must be more than 0 tokens.`);
     if (m.kind === 'a2a' && reportsOf(config, m.id).length) issues.push(`${m.title} is a remote agent, so nobody can report to it: only Landflow agents can manage.`);
     if (m.kind === 'agent' && !m.agentId) issues.push(`Pick the agent for ${m.title}.`);
@@ -185,6 +195,7 @@ export interface TeamSnapshotMember {
   role?: string;
   reportsTo?: string;
   reviews?: string[];
+  consults?: string[];
   budgetTokens?: number;
   /** What it works with when the run started: model, tools, knowledge, runtime, plugins, network (lib/server/agents/connections.ts). */
   connections?: ActorConnection[];

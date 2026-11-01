@@ -45,8 +45,23 @@ export interface TeamMoment {
   member: string;
   tone: 'ok' | 'bad' | 'warn' | 'info';
   text: string;
-  /** A member's question for a person, in full: the run waits for the answer. */
+  /** A member's question for a person, in full: the run waits for the answer. For a tool waiting for approval: its input as short text. */
   question?: string;
+}
+
+/** A tool call a member waits to use until a person approves it, as the node tells it. */
+export interface TeamApprovalWait {
+  /** The tool's name as a person reads it ("Comment on pull request"); several joined by commas. */
+  tool: string;
+  /** Its input as a few words: the comment, the command, the path. */
+  summary?: string;
+}
+
+/** Who consults whom while a peer works for another member (or has taken its task over). */
+export interface TeamConsulting {
+  from: string;
+  to: string;
+  kind: 'consult' | 'handoff';
 }
 
 /** What a member used so far, in tokens, against its budget when it has one. */
@@ -90,8 +105,10 @@ export interface TeamProgress {
   moments: TeamMoment[];
   /** Each member's tokens so far, against its budget. */
   usage?: TeamUsage[];
-  /** A member asked a person: the run waits for the answer. */
-  waiting?: { member: string; question: string };
+  /** A member asked a person, or wants a tool that needs approval (`approval`): the run waits for the answer. */
+  waiting?: { member: string; question: string; approval?: TeamApprovalWait };
+  /** The member working was consulted by another (or took its task over): both show at work. */
+  consulting?: TeamConsulting;
   /** Milliseconds since the team started, when this was reported. */
   at: number;
 }
@@ -272,7 +289,7 @@ export interface TeamFolderOptions {
  * run: `fold(event)` returns the report to send, or undefined when the event changes nothing worth showing;
  * `fold(event, title)` folds the stream of a member that manages others (its own loop: whom it asks, its own tools);
  * `fold.usage(title, tokens)` takes a member's tokens so far (a moment at 80% and at 100% of its budget);
- * `fold.waiting(member, question)` marks the question the run now waits on; `fold.activity()` is what the run did, for
+ * `fold.waiting(member, question, approval?)` marks the question (or the tool waiting for approval) the run now waits on; `fold.activity()` is what the run did, for
  * the node's output.
  */
 export function teamProgressFolder(titles: string[], now: () => number = Date.now, options: TeamFolderOptions = {}) {
@@ -291,7 +308,9 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
   let current = lead;
   let command: string | undefined;
   let plain: string | undefined;
-  let waiting: { member: string; question: string } | undefined;
+  let waiting: { member: string; question: string; approval?: TeamApprovalWait } | undefined;
+  /** Peers at work for another member, by the peer's name: who asked, how, which call, and why. */
+  const consulting = new Map<string, TeamConsulting & { callId: string; reason?: string }>();
   const budgets = new Map(Object.entries(options.budgets ?? {}).filter(([, b]) => b > 0).map(([title, b]) => [norm(title), b]));
   const tokens = new Map<string, { tokens: number; estimated?: boolean }>((options.usage ?? []).map((u) => [norm(u.member), { tokens: u.tokens, ...(u.estimated && { estimated: true }) }]));
   /** The budget moment each member had: one at 80%, one at 100%. */
@@ -354,6 +373,10 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
   const report = (): TeamProgress => {
     const nowMember = members.get(norm(current));
     const usage = usageList();
+    const peer = consulting.get(norm(current));
+    // A peer at work shows the request that brought it (the asker's row, spinning) above its own steps.
+    const request = peer && (stepsOf.get(norm(peer.from)) ?? []).find((s) => (s as TeamStep & { id?: string }).id === peer.callId);
+    const shown = request ? [request, ...(stepsOf.get(norm(current)) ?? []).slice(-2)] : (stepsOf.get(norm(current)) ?? []);
     return {
       member: current,
       agent: current,
@@ -362,12 +385,13 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
       ...(plain && { plain }),
       ...(command && { command }),
       stepCount: counts.get(norm(current)) ?? 0,
-      steps: (stepsOf.get(norm(current)) ?? []).map(({ name, status, args, plain: words, ms }) => ({ name, status, plain: words, ...(args && { args }), ...(ms !== undefined && { ms }) })),
+      steps: shown.map(({ name, status, args, plain: words, ms }) => ({ name, status, plain: words, ...(args && { args }), ...(ms !== undefined && { ms }) })),
       team: { lead, members: [...members.values()].map((m) => ({ ...m })) },
       turns: turns.map((t) => ({ ...t })),
       moments: moments.slice(-MOMENTS).map((m) => ({ ...m })),
       ...(usage && { usage }),
       ...(waiting && { waiting: { ...waiting } }),
+      ...(peer && { consulting: { from: peer.from, to: members.get(norm(current))?.title ?? current, kind: peer.kind } }),
       at: elapsed(),
     };
   };
@@ -417,11 +441,20 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
       return report();
     }
     if (owner !== lead) askedBy.set(norm(member.title), norm(owner));
+    // A consult or a hand-off: a peer asked by a member, not by its manager (the tool's name tells: consult_<title>, hand_off_to_<title>).
+    const peerKind = /^consult_/.test(entry.tool) ? 'consult' : /^hand_off_to_/.test(entry.tool) ? 'handoff' : undefined;
+    const asked = typeof entry.input?.reason === 'string' ? entry.input.reason.trim() : '';
+    const asking = peerKind === 'handoff' ? `Handing the task to the ${member.title}` : `Asking the ${member.title}${asked ? ` ${asked.length > 70 ? `${asked.slice(0, 69)}…` : asked}` : ''}`;
     if (!calls.has(entry.callId)) {
       calls.set(entry.callId, member.title);
       member.asked++;
       counts.set(norm(member.title), 0);
-      moment({ member: owner, tone: 'info', text: owner === lead ? `Asked the ${member.title}` : `${owner} asked the ${member.title}` });
+      if (peerKind) consulting.set(norm(member.title), { from: owner, to: member.title, kind: peerKind, callId: entry.callId, ...(asked && { reason: asked }) });
+      moment({
+        member: owner,
+        tone: 'info',
+        text: peerKind === 'handoff' ? `${owner} handed the task to the ${member.title}` : peerKind === 'consult' ? `${owner} consults the ${member.title}` : owner === lead ? `Asked the ${member.title}` : `${owner} asked the ${member.title}`,
+      });
     }
     const steps = entry.remote?.steps ?? [];
     const total = totals.get(norm(member.title)) ?? new Set<string>();
@@ -454,15 +487,16 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
       current = member.title;
       turnTo(member.title);
       command = step ? shortArg(argsOf(step.args), 200) : undefined;
-      plain = step ? narrate(step.name, step.args).plain : reason ? `Starting: ${reason.length > 60 ? `${reason.slice(0, 59)}…` : reason}` : 'Starting';
+      plain = step ? narrate(step.name, step.args).plain : peerKind ? asking : reason ? `Starting: ${reason.length > 60 ? `${reason.slice(0, 59)}…` : reason}` : 'Starting';
       set(member.title, { state: 'working', doing: step ? stepLine(step) : reason ? `asked: ${reason}` : 'working' });
-      set(owner, { state: 'working', doing: `waiting on ${member.title}` });
-      ownStep(owner, entry.callId, { name: entry.label, status: 'running', plain: `Asking the ${member.title}` });
+      set(owner, { state: 'working', doing: peerKind === 'handoff' ? `handed over to ${member.title}` : peerKind === 'consult' ? `consulting ${member.title}` : `waiting on ${member.title}` });
+      ownStep(owner, entry.callId, { name: entry.label, status: 'running', plain: peerKind ? asking : `Asking the ${member.title}` });
     } else {
       const ok = entry.status === 'success';
+      consulting.delete(norm(member.title));
       set(member.title, { state: ok ? 'done' : 'failed' });
-      ownStep(owner, entry.callId, { name: entry.label, status: ok ? 'success' : 'error', plain: `Asked the ${member.title} · ${total.size} ${total.size === 1 ? 'step' : 'steps'}`, ...(entry.durationMs !== undefined && { ms: entry.durationMs }) });
-      moment(ok ? answerMoment(member.title, textOf(entry.output)) : { member: member.title, tone: 'bad', text: `${member.title} failed` });
+      ownStep(owner, entry.callId, { name: entry.label, status: ok ? 'success' : 'error', plain: `${peerKind === 'handoff' ? 'Handed over to' : 'Asked'} the ${member.title} · ${total.size} ${total.size === 1 ? 'step' : 'steps'}`, ...(entry.durationMs !== undefined && { ms: entry.durationMs }) });
+      moment(ok ? (peerKind === 'consult' ? { member: member.title, tone: 'info', text: `${member.title} answered ${owner}` } : answerMoment(member.title, textOf(entry.output))) : { member: member.title, tone: 'bad', text: `${member.title} failed` });
       if (works(member.title)) ownerWorks(owner, `reading ${member.title}'s answer`, `Reading the ${member.title}'s answer`);
     }
     return report();
@@ -484,13 +518,13 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
     return report();
   };
   /** The run waits for a person's answer to a member's question: a moment with the question, and the node turns to the asker. */
-  fold.waiting = (member: string, question: string): TeamProgress => {
+  fold.waiting = (member: string, question: string, approval?: TeamApprovalWait): TeamProgress => {
     const name = members.get(norm(member))?.title ?? member;
-    waiting = { member: name, question };
+    waiting = { member: name, question, ...(approval && { approval }) };
     current = name;
     command = undefined;
-    plain = 'Waiting for a person’s answer';
-    moment({ member: name, tone: 'warn', text: `${name} asks a person`, question });
+    plain = approval ? 'Waiting for a person’s approval' : 'Waiting for a person’s answer';
+    moment(approval ? { member: name, tone: 'warn', text: `${name} asks to use ${approval.tool}`, ...(approval.summary && { question: approval.summary }) } : { member: name, tone: 'warn', text: `${name} asks a person`, question });
     return report();
   };
   /** What the run did: every turn (closed), the moments, each member's step count and tokens. */

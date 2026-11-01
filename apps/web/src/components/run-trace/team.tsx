@@ -301,6 +301,18 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
   const reportsOf = (id: string) => team.members.filter((m) => m.reportsTo === id);
   const roots = team.members.filter((m) => !m.reportsTo || !team.members.some((x) => x.id === m.reportsTo));
   const titleOf = (id: string) => team.members.find((m) => m.id === id)?.title;
+  // What happened between peers: a member's consults and hand-offs, counted from the requests it made (consult_<title>, hand_off_to_<title>).
+  const peerCalls = (title: string) => {
+    const counts = new Map<string, { to: string; kind: 'consulted' | 'handed off to'; n: number }>();
+    for (const span of model.order) {
+      const tool = typeof span.attrs.tool === 'string' ? span.attrs.tool : '';
+      if (span.kind !== 'delegate' || span.caller?.name !== title || !/^(consult_|hand_off_to_)/.test(tool)) continue;
+      const kind = tool.startsWith('consult_') ? ('consulted' as const) : ('handed off to' as const);
+      const key = `${kind}:${span.name}`;
+      counts.set(key, { to: span.name, kind, n: (counts.get(key)?.n ?? 0) + 1 });
+    }
+    return [...counts.values()];
+  };
   const row = (m: TeamSnapshotMember, seen: Set<string>): React.ReactNode => {
     if (seen.has(m.id)) return null;
     seen.add(m.id);
@@ -309,6 +321,8 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
     const connections = actor.connections?.length ? actor.connections : m.connections;
     const live = working.has(m.title) || waiting.has(m.title);
     const reviews = (m.reviews ?? []).map(titleOf).filter(Boolean);
+    const mayConsult = (m.consults ?? []).map(titleOf).filter(Boolean);
+    const didConsult = peerCalls(m.title);
     return (
       <li key={m.id}>
         <Tap onClick={() => open({ kind: 'actor', id: actor.id })} label={m.title} className="rounded-xl">
@@ -322,6 +336,17 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
             </span>
             <span className="flex shrink-0 flex-wrap justify-end gap-1">
               {reviews.length > 0 && <Badge tone="neutral">reviews {reviews.join(', ')}</Badge>}
+              {mayConsult.length > 0 && (
+                <Badge tone="muted" className="border-dashed" title="May consult these peers without going through its manager">
+                  may consult {mayConsult.join(', ')}
+                </Badge>
+              )}
+              {didConsult.map((c) => (
+                <Badge key={`${c.kind}:${c.to}`} tone="accent" className="border-dashed">
+                  {c.kind} {c.to}
+                  {c.n > 1 ? ` ×${c.n}` : ''}
+                </Badge>
+              ))}
               {stats && stats.asked > 0 && <Badge tone="neutral">asked ×{stats.asked}</Badge>}
             </span>
           </span>

@@ -70,6 +70,8 @@ export interface TeamRole {
   beforeAnswer?(reply: string, session: AgentSession): string | undefined;
   /** A person may pause the member between steps and give it an instruction (agent-teams/pause.ts). */
   pause?: MemberPause;
+  /** Called after each turn's tool results: text back ends the run there with it as the reply (a member that handed its task to a peer). */
+  stopAfterTools?(): string | undefined;
 }
 
 export interface RunResult {
@@ -339,6 +341,11 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       // A rejected remote call isn't a rejected tool: the agent heard the reason and answered, so the model may ask it again.
       justDenied = new Set(pending.calls.filter((c) => c.decision === 'denied' && !c.remote).map((c) => c.tool));
       delete session.pending;
+      const stopped = request.team?.stopAfterTools?.();
+      if (stopped !== undefined) {
+        session.messages.push({ role: 'assistant', text: stopped, toolCalls: [] });
+        return { reason: 'completed', reply: stopped };
+      }
     }
 
     const limits = [config.settings.sessionTokenBudget, request.team?.budgetTokens ?? 0].filter((n) => n > 0);
@@ -432,6 +439,11 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       }
       const order = turn.toolCalls.map((c) => c.id);
       session.messages.push({ role: 'tool', results: results.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)) });
+      const stopped = request.team?.stopAfterTools?.();
+      if (stopped !== undefined) {
+        session.messages.push({ role: 'assistant', text: stopped, toolCalls: [] });
+        return { reason: 'completed', reply: stopped };
+      }
     }
     upsert({ id: entryId(), type: 'notice', message: `Stopped after ${iterations} iterations without a final answer (Settings → Max iterations).`, at: now() });
     return { reason: 'max_iterations' };
@@ -502,7 +514,9 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     return {
       id: call.callId,
       name: call.tool,
-      content: `The user rejected the tool call to ${call.tool}. STOP what you are doing and wait for the user to tell you how to proceed. The tool is still available if needed.`,
+      content: request.team
+        ? `A person rejected your call to ${tool.label}; it did not run. Don't call it again: go on with what you can do without it, and tell your manager what you couldn't do.`
+        : `The user rejected the tool call to ${call.tool}. STOP what you are doing and wait for the user to tell you how to proceed. The tool is still available if needed.`,
       isError: true,
     };
   }
