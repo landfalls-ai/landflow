@@ -146,7 +146,8 @@ member's face and title above it.
    pause passes up to the lead through every manager in between, and the node puts the execution to wait the way the AI
    Agent node does (`resume: 'webhook'`, `rerun`) with `wait.data.approval` (`{ nodeName, nodeId, channel, title: "Developer
    wants to use Comment on pull request", calls: [{ id: "<member id>/<call id>", tool: "Comment on pull request", input }]
-   }`) and `wait.data.teamApproval` (`{ team, member, tool, summary }`, what the node itself reads). So everything that
+   }`) and `wait.data.teamApproval` (`{ team, member, tool, summary, target }`, what the node itself reads; `target` is
+   what the tool acts on, from its arguments: `#5` from a pull request or issue number, else a path, file or branch). So everything that
    decides an AI Agent's approval works unchanged: **Needs you** in the Run Trace (**Approve** / **Reject**, which call `POST
    /api/executions/:id/approvals`), the execution view, and the channels the node offers in **Ask For Tool Approvals In**:
    the chat / execution view (default), **Slack** (a message with Approve and Reject buttons, with the node's Slack
@@ -239,14 +240,17 @@ the moments that matter. On the editor's canvas during a run and on the executio
   Reviewer", "Reviewer answered Developer" or "Planner handed the task to the Developer". The Now card on a phone says
   the same.
 - **A tool waiting for approval** turns the node amber like a question: the asker's face with an hourglass, "Tech Lead
-  wants to use" with the tool's name on its own line below in mono (a long tool name no longer pushes the head off the
-  node; the buttons keep a strip of room below them, so the sub-node handles and the status mark don't sit on them), what it would do in a few words (the comment, the command, the path), and
-  **Approve** / **Deny** buttons on the node and on the phone card (the same call as Needs you). A moment says "Tech Lead
-  asks to use Comment on pull request" (amber). The node reads it from the waiting execution's `wait.data.teamApproval`, so
+  wants to use" with the tool's name on its own line below in mono and what it acts on after it ("add_issue_comment on
+  #5"; a long tool name no longer pushes the head off the node; the buttons keep a strip of room below them, so the
+  sub-node handles and the status mark don't sit on them), the clock time it asked and how long ago ("12:40 · asked 2m
+  ago", ticking), what it would do quoted in an amber box (the comment, the command, the path), and **Approve** / **Deny**
+  buttons on the node and on the phone card (the same call as Needs you). A pill above the node says "Tech Lead asks to
+  use Comment on pull request" and stays until the run goes on (the 25-second moment is not repeated beside it). The node reads it from the waiting execution's `wait.data.teamApproval`, so
   a reload or another device shows the same; from the editor the canvas follows the resumed run.
-- **A question for a person** turns the node amber: the asker's face with an hourglass, "Planner asks a person", the
-  question, and an **Answer** button that opens the run's waiting form (`/form/waiting/<execution>`); the answer goes back
-  to the member that asked. The node reads it from the waiting execution's `wait.data.teamQuestion`, so a reload or
+- **A question for a person** turns the node amber: the asker's face with an hourglass, "Planner asks you", the question,
+  when it asked ("12:40 · asked 2m ago"), and an **Answer** button that opens the run's waiting form
+  (`/form/waiting/<execution>`); the answer goes back to the member that asked. A pill above the node, "Planner asks you:
+  <question>" with its own **Answer**, stays until the question is answered, unlike the moments that fade. The node reads it from the waiting execution's `wait.data.teamQuestion`, so a reload or
   another device shows the same; on a phone the execution view pins a **Needs you** card with the question in full.
 
 Plain words come from `narrate()`: a shell command reads by what its chain ends with (`cd x && pnpm install && pnpm test`

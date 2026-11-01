@@ -9,7 +9,7 @@ import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
 import { chartOrder } from '../../shared/agent-teams';
 import type { AgentStreamEvent } from '../../shared/agents';
 import { joinActivity, teamProgressFolder, type TeamActivity } from '../../shared/team-progress';
-import { shortArg } from '../../shared/team-progress';
+import { shortArg, targetOf } from '../../shared/team-progress';
 import type { TeamState } from '../agent-teams/runtime';
 import { SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL } from '../slack';
 import { streamer } from './agents';
@@ -262,7 +262,7 @@ export const runTeamNode = defineNode({
           const { approval } = result.waiting;
           const first = approval?.calls[0];
           ctx.sendProgress?.(
-            fold.waiting(result.waiting.member, result.waiting.question, approval && first && { tool: approval.calls.map((c) => c.label).join(', '), ...(shortArg(first.input, 140) && { summary: shortArg(first.input, 140) }) }) as unknown as JsonObject,
+            fold.waiting(result.waiting.member, result.waiting.question, approval && first && { tool: approval.calls.map((c) => c.label).join(', '), ...(shortArg(first.input, 140) && { summary: shortArg(first.input, 140) }), ...(targetOf(first.input) && { target: targetOf(first.input) }) }) as unknown as JsonObject,
           );
         }
         const activity = joinActivity(resume ? waited?.activity : undefined, fold.activity());
@@ -276,7 +276,7 @@ export const runTeamNode = defineNode({
             const settings = approvalSettings(ctx, i, 'all');
             const calls = approval.calls.map((c) => ({ id: c.id, name: c.label, input: c.input as JsonObject }));
             const first = approval.calls[0];
-            await askForApproval(ctx, i, settings, calls, { teamApproval: { team: config.name, member, tool: approval.calls.map((c) => c.label).join(', '), summary: shortArg(first.input, 140) ?? null } }, question);
+            await askForApproval(ctx, i, settings, calls, { teamApproval: { team: config.name, member, tool: approval.calls.map((c) => c.label).join(', '), summary: shortArg(first.input, 140) ?? null, target: targetOf(first.input) ?? null } }, question);
             ctx.logger.info(`${member} wants to use ${approval.calls.map((c) => c.label).join(', ')}; waiting for an approval`);
             return [done, needsPerson];
           }

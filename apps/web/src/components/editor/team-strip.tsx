@@ -51,21 +51,25 @@ export function TeamStrip({ teamId, live, moments }: { teamId: string; live?: Te
       </div>
     );
   }
+  // A run that waits on a member keeps its "asks you" moment above the team, whether or not progress is still live.
   return (
-    <div className="flex max-w-[280px] items-center gap-1.5 rounded-full border border-hair bg-sf py-0.5 pl-0.5 pr-2.5 shadow-pop" title={faces.map((f) => f.title).join(', ')} data-testid="team-strip">
-      <span className="flex shrink-0">
-        {faces.slice(0, 6).map(({ member, face }, i) => (
-          <AgentAvatar key={member.id} agent={face} size={20} round className={cn('ring-2 ring-sf', i && '-ml-1.5')} />
-        ))}
-      </span>
-      <span className="truncate text-[11px] font-medium text-t2">
-        {faces.map((f, i) => (
-          <span key={f.member.id}>
-            {i ? ' · ' : ''}
-            <span className={i ? undefined : 'font-semibold text-t1'}>{f.title}</span>
-          </span>
-        ))}
-      </span>
+    <div className="flex flex-col items-center gap-1.5">
+      {moments}
+      <div className="flex max-w-[280px] items-center gap-1.5 rounded-full border border-hair bg-sf py-0.5 pl-0.5 pr-2.5 shadow-pop" title={faces.map((f) => f.title).join(', ')} data-testid="team-strip">
+        <span className="flex shrink-0">
+          {faces.slice(0, 6).map(({ member, face }, i) => (
+            <AgentAvatar key={member.id} agent={face} size={20} round className={cn('ring-2 ring-sf', i && '-ml-1.5')} />
+          ))}
+        </span>
+        <span className="truncate text-[11px] font-medium text-t2">
+          {faces.map((f, i) => (
+            <span key={f.member.id}>
+              {i ? ' · ' : ''}
+              <span className={i ? undefined : 'font-semibold text-t1'}>{f.title}</span>
+            </span>
+          ))}
+        </span>
+      </div>
     </div>
   );
 }

@@ -313,14 +313,15 @@ describe('Run a Team', () => {
     const t = team([{ id: 'm_dev', title: 'Developer', kind: 'agent', agentId: comment.id, reportsTo: 'm_lead' } as TeamMember]);
     const tool = toToolName('Comment on pull request');
     scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_developer', { message: 'Comment on #5', reason: 'Tell them' }) : { text: `Lead: ${lastTool(body).slice(0, 60)}` }));
-    scripts.set('comment-model', (turn, body) => (turn === 1 ? call(tool, { text: 'Review passed', reason: 'Tell them' }, 'c_comment') : { text: `Developer: ${lastTool(body).slice(0, 40)}` }));
+    scripts.set('comment-model', (turn, body) => (turn === 1 ? call(tool, { text: 'Review passed', pull_number: 5, reason: 'Tell them' }, 'c_comment') : { text: `Developer: ${lastTool(body).slice(0, 40)}` }));
     turns.clear();
     const { record } = await run(t.id);
     // The wait looks like the AI Agent node's, so Needs you, the execution view, Slack and email decide it the same way.
     expect(record.status).toBe('waiting');
     expect(record.wait?.data).toMatchObject({
       approval: { channel: 'chat', title: 'Developer wants to use Comment on pull request', calls: [{ id: expect.stringMatching(/^m_dev\//), tool: 'Comment on pull request', input: { text: 'Review passed' } }] },
-      teamApproval: { team: 'Plugin team', member: 'Developer', tool: 'Comment on pull request' },
+      // What the tool acts on, so the node can say "Comment on pull request on #5".
+      teamApproval: { team: 'Plugin team', member: 'Developer', tool: 'Comment on pull request', target: '#5' },
     });
     const callId = (record.wait?.data?.approval as { calls: Array<{ id: string }> }).calls[0].id;
     const outcome = await decideApproval(record.executionId, callId, true, { by: 'ana@example.com' });

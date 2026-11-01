@@ -57,6 +57,8 @@ export interface TeamApprovalWait {
   tool: string;
   /** Its input as a few words: the comment, the command, the path. */
   summary?: string;
+  /** What it acts on, from its input: "#5" for a pull request or issue, a path, a branch. */
+  target?: string;
 }
 
 /** Who consults whom while a peer works for another member (or has taken its task over). */
@@ -131,6 +133,20 @@ export function shortArg(args: Record<string, unknown> | undefined, max = 60): s
   const text = key ? String(args[key]).replace(/\s+/g, ' ').trim() : undefined;
   if (!text) return undefined;
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** What a tool call acts on, from its input: "#5" (a pull request or issue number), else a path or a branch. */
+export function targetOf(args: Record<string, unknown> | undefined): string | undefined {
+  if (!args) return undefined;
+  for (const key of ['pull_number', 'pullNumber', 'pr', 'issue_number', 'issueNumber', 'number']) {
+    const n = args[key];
+    if ((typeof n === 'number' && Number.isInteger(n)) || (typeof n === 'string' && /^\d+$/.test(n))) return `#${n}`;
+  }
+  for (const key of ['path', 'file', 'filePath', 'branch', 'ref']) {
+    const v = args[key];
+    if (typeof v === 'string' && v.trim()) return v.trim().length > 48 ? `…${v.trim().slice(-47)}` : v.trim();
+  }
+  return undefined;
 }
 
 /** Arguments as an object: progress can carry them as JSON text. */

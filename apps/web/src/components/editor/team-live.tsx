@@ -14,7 +14,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Check, ChevronRight, Hourglass, Loader2, NotebookPen, Pause, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useWorkingMembers } from '@/lib/client/run-controls';
-import { duration } from '@/lib/client/format';
+import { duration, timeAgo } from '@/lib/client/format';
 import { decideToolApprovals } from '@/lib/client/run-trace';
 import { chartOrder, memberAgent, type TeamMember } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
@@ -290,6 +290,8 @@ export interface TeamWaiting {
   member: string;
   question: string;
   approval?: TeamApprovalWait;
+  /** When the member asked (the execution's `wait.since`). */
+  since?: string;
 }
 
 /** "Tech Lead wants to use Comment on pull request" (a tool waiting for approval), else the member's question. */
@@ -314,20 +316,26 @@ function AskHead({ waiting, faces }: { waiting: TeamWaiting; faces: TeamFace[] }
           // The tool on its own line: on a narrow node "Writer wants to use publish_notes" cut off the one thing to decide on.
           <div title={waitTitle(waiting, face.title)}>
             <div className="truncate text-[12px] leading-4 text-t2">{face.title} wants to use</div>
-            <div className="truncate font-mono text-[13px] font-semibold leading-5 text-t1" data-testid="team-wait-tool">
-              {waiting.approval.tool}
+            <div className="truncate text-[13px] leading-5 text-t1">
+              <span className="font-mono font-semibold" data-testid="team-wait-tool">
+                {waiting.approval.tool}
+              </span>
+              {waiting.approval.target && <span className="text-t2" data-testid="team-wait-target"> on {waiting.approval.target}</span>}
             </div>
           </div>
         ) : (
-          <div className="truncate text-[14px] font-semibold text-t1" title={waitTitle(waiting, face.title)}>
-            {waitTitle(waiting, face.title)}
-          </div>
+          <>
+            <div className="truncate text-[14px] font-semibold text-t1" title={waitTitle(waiting, face.title)}>
+              {face.title} <span className="font-normal text-t2">asks you</span>
+            </div>
+            {text && (
+              <div className="line-clamp-2 text-[12px] leading-4 text-t1" title={text}>
+                {text}
+              </div>
+            )}
+          </>
         )}
-        {text && (
-          <div className="line-clamp-2 text-[12px] leading-4 text-t2" title={text}>
-            {text}
-          </div>
-        )}
+        <AskedAgo since={waiting.since} />
       </div>
     </>
   );
@@ -467,15 +475,66 @@ export interface TeamTileOptions {
 }
 
 /** What a waiting run's node waits on, from its wait's data (nodes/run-team.ts): a member's question, or a tool's approval. */
-export function teamQuestionOf(wait: { nodeId?: string; data?: Record<string, unknown> } | undefined, nodeId: string): TeamWaiting | undefined {
+export function teamQuestionOf(wait: { nodeId?: string; data?: Record<string, unknown>; since?: string } | undefined, nodeId: string): TeamWaiting | undefined {
   if (wait?.nodeId !== nodeId) return undefined;
+  const since = typeof wait.since === 'string' && wait.since ? { since: wait.since } : {};
   const q = wait.data?.teamQuestion as { member?: unknown; question?: unknown } | undefined;
-  if (q && typeof q.member === 'string' && typeof q.question === 'string') return { member: q.member, question: q.question };
-  const a = wait.data?.teamApproval as { member?: unknown; tool?: unknown; summary?: unknown } | undefined;
+  if (q && typeof q.member === 'string' && typeof q.question === 'string') return { member: q.member, question: q.question, ...since };
+  const a = wait.data?.teamApproval as { member?: unknown; tool?: unknown; summary?: unknown; target?: unknown } | undefined;
   if (a && typeof a.member === 'string' && typeof a.tool === 'string') {
-    return { member: a.member, question: `${a.member} wants to use ${a.tool}`, approval: { tool: a.tool, ...(typeof a.summary === 'string' && a.summary && { summary: a.summary }) } };
+    const approval = { tool: a.tool, ...(typeof a.summary === 'string' && a.summary && { summary: a.summary }), ...(typeof a.target === 'string' && a.target && { target: a.target }) };
+    return { member: a.member, question: `${a.member} wants to use ${a.tool}`, approval, ...since };
   }
   return undefined;
+}
+
+/** Re-render every `ms` while `on`: for "asked 2 min ago". */
+function useTick(on: boolean, ms = 15_000) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!on) return;
+    const timer = setInterval(() => setTick((n) => n + 1), ms);
+    return () => clearInterval(timer);
+  }, [on, ms]);
+}
+
+/** "12:40 · asked 2m ago" for a wait that began at `since`. */
+function AskedAgo({ since, className }: { since?: string; className?: string }) {
+  useTick(Boolean(since));
+  if (!since || !Date.parse(since)) return null;
+  return (
+    <div className={cn('font-mono text-[11px] leading-4 text-t3 tabular-nums', className)} data-testid="team-wait-since">
+      {new Date(since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · asked {timeAgo(since)}
+    </div>
+  );
+}
+
+/**
+ * The moment pinned above a node whose run waits on a member: "Developer asks you: Alertmanager v2 API?" with Answer, or
+ * "Writer asks to use publish_notes". It stays until the run goes on, unlike the moments that fade after 25 seconds.
+ */
+function AskMoment({ waiting, faces, executionId }: { waiting: TeamWaiting; faces: TeamFace[]; executionId?: string }) {
+  const face = faceByTitle(faces, waiting.member) ?? faces[0];
+  const text = waiting.approval ? `${face.title} asks to use ${waiting.approval.tool}` : `${face.title} asks you: ${questionText(waiting.question)}`;
+  return (
+    <span className="flex max-w-[300px] animate-pop items-center gap-1.5 rounded-full border border-warn bg-sf py-0.5 pl-0.5 pr-0.5 text-[11px] font-medium text-t1 shadow-pop" title={text} data-testid="team-ask-moment">
+      <AgentAvatar agent={face.face} size={16} round />
+      <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-warn" />
+      <span className="min-w-0 truncate pr-1.5">{text}</span>
+      {executionId && !waiting.approval && (
+        <a
+          href={`/form/waiting/${executionId}`}
+          target="_blank"
+          rel="noopener"
+          {...own}
+          className="nodrag nopan shrink-0 rounded-full bg-t1 px-2 py-px text-[10.5px] font-semibold text-bg hover:opacity-90"
+          data-testid="team-ask-moment-answer"
+        >
+          Answer
+        </a>
+      )}
+    </span>
+  );
 }
 
 const AMBER = 'var(--warn)';
@@ -501,6 +560,12 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
         head: <AskHead waiting={asked} faces={faces} />,
         body: (
           <>
+            {asked.approval?.summary && (
+              // What the tool would do, in its own words: the comment, the command, the path.
+              <blockquote className="mx-4 mb-2 line-clamp-3 rounded-xl border border-warn/30 bg-warndim px-3 py-1.5 text-[12px] leading-4 text-t1" title={asked.approval.summary} data-testid="team-wait-summary">
+                “{asked.approval.summary}”
+              </blockquote>
+            )}
             <div className="mx-4 flex items-center gap-2 border-t border-hair pt-2">
               {executionId && options.waiting ? (
                 asked.approval ? (
@@ -522,7 +587,12 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
           </>
         ),
       },
-      ...(live && { moments: <TeamMoments moments={live.moments} elapsed={elapsed} faces={faces} /> }),
+      moments: (
+        <span className="flex flex-col items-center gap-1">
+          {live && <TeamMoments moments={live.moments.filter((m) => m.tone !== 'warn' || !/ asks (a person|to use )/.test(m.text))} elapsed={elapsed} faces={faces} />}
+          <AskMoment waiting={asked} faces={faces} executionId={executionId} />
+        </span>
+      ),
     };
   }
   if (live) {

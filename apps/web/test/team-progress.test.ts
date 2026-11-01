@@ -5,7 +5,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { AgentStreamEvent, TimelineEntry } from '@/lib/shared/agents';
-import { activityOfRuns, joinActivity, narrate, teamProgressFolder } from '@/lib/shared/team-progress';
+import { activityOfRuns, joinActivity, narrate, targetOf, teamProgressFolder } from '@/lib/shared/team-progress';
+import { teamQuestionOf } from '@/components/editor/team-live';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
 
 const at = '2026-10-31T21:00:00.000Z';
@@ -294,5 +295,29 @@ describe('plain words for steps', () => {
     fold(tool('c9', 'Reviewer', 'running', [step]));
     expect(reviewed.moments.filter((m) => m.note).map((m) => m.text)).toEqual(['Lead decided: Each node gets a test against a fake server.', 'Reviewer noted: plugins need an icons/ folder']);
     expect(fold.activity().moments.filter((m) => m.note)).toHaveLength(2);
+  });
+});
+
+describe('what a waiting member asks for', () => {
+  it('names what a tool acts on: a pull request or issue number first, then a path or branch', () => {
+    expect(targetOf({ owner: 'o', repo: 'r', pull_number: 5, body: 'LGTM' })).toBe('#5');
+    expect(targetOf({ issueNumber: '12' })).toBe('#12');
+    expect(targetOf({ path: 'src/nodes/get-alerts.ts', line: 42 })).toBe('src/nodes/get-alerts.ts');
+    expect(targetOf({ branch: 'plugins/alerts' })).toBe('plugins/alerts');
+    expect(targetOf({ path: `plugins/${'a'.repeat(60)}/index.ts` })).toMatch(/^….{47}$/);
+    expect(targetOf({ text: 'Review passed' })).toBeUndefined();
+    expect(targetOf(undefined)).toBeUndefined();
+  });
+
+  it('reads a question or an approval off the wait, with when it was asked and what it is on', () => {
+    const since = '2026-11-01T12:40:00.000Z';
+    expect(teamQuestionOf({ nodeId: 'n1', since, data: { teamQuestion: { member: 'Developer', question: 'Alertmanager v2?' } } }, 'n1')).toEqual({ member: 'Developer', question: 'Alertmanager v2?', since });
+    expect(teamQuestionOf({ nodeId: 'n1', since, data: { teamApproval: { member: 'Reviewer', tool: 'add_issue_comment', summary: 'Tests cover the fake server.', target: '#5' } } }, 'n1')).toEqual({
+      member: 'Reviewer',
+      question: 'Reviewer wants to use add_issue_comment',
+      approval: { tool: 'add_issue_comment', summary: 'Tests cover the fake server.', target: '#5' },
+      since,
+    });
+    expect(teamQuestionOf({ nodeId: 'n2', since, data: { teamQuestion: { member: 'Developer', question: 'x' } } }, 'n1')).toBeUndefined();
   });
 });
