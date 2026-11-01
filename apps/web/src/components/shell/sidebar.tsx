@@ -13,6 +13,7 @@ import { useViewer } from '../auth/viewer';
 import { ProjectSwitcher } from '../projects/project-switcher';
 import { StatusDot } from '../ui/badge';
 import { EnvironmentBadge } from './environment-badge';
+import { LookToggle } from './look-toggle';
 import { ThemeToggle } from './theme-toggle';
 
 const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string; icon: typeof House; preview?: boolean }> }> = [
@@ -150,7 +151,10 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
           <StatusDot status={connected ? 'online' : 'offline'} />
           {connected ? 'Live' : 'Reconnecting…'}
         </div>
-        <ThemeToggle />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <ThemeToggle />
+          <LookToggle />
+        </div>
       </div>
       <div className="mt-2 border-t border-hair pt-2">
         <UserMenu />
