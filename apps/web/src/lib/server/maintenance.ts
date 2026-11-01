@@ -6,6 +6,7 @@
 import { leads } from './cluster/state';
 import { pruneIdempotencyKeys } from './idempotency';
 import { backfillInsights } from './insights';
+import { pruneAsks } from './a2a/agent-asks';
 import { pruneJournal } from './journal';
 import { noteStore } from './notebook/store';
 import { pruneExecutions } from './settings';
@@ -39,6 +40,7 @@ export function startDataMaintenance(): { backfilled: number; pruned: number } {
     attempt('idempotency key pruning', () => pruneIdempotencyKeys());
     attempt('run journal retention', () => pruneJournal());
     attempt('team notebook expiry', expireNotes);
+    attempt('command ask retention', () => pruneAsks());
     if (backfilled || pruned) logger.info('platform data ready', { 'landflow.insights.backfilled': backfilled, 'landflow.executions.pruned': pruned });
     const timer = setInterval(() => {
       // Queue mode: the leader main prunes.
@@ -54,6 +56,7 @@ export function startDataMaintenance(): { backfilled: number; pruned: number } {
       const removed = attempt('run journal retention', () => pruneJournal());
       if (removed) logger.info('pruned run journal events', { 'landflow.journal.pruned': removed });
       attempt('team notebook expiry', expireNotes);
+      attempt('command ask retention', () => pruneAsks());
     }, DAY_MS);
     daily.unref?.();
     return { backfilled, pruned };

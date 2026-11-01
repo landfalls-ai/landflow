@@ -367,7 +367,7 @@ export const a2aAgentNode = defineNode({
           } else {
             // A Landflow agent on kagent with the landflow-harness mod reports its real usage, cost and tool calls here.
             const message = { text, metadata, ...(contextId && { contextId }), ...(remembered?.taskId && { taskId: remembered.taskId }) };
-            const trace = message.taskId ? undefined : traceFor(endpoint.url);
+            const trace = message.taskId ? undefined : traceFor(endpoint.url, ctx.getExecutionId() && ctx.getWorkflowId() ? { executionId: ctx.getExecutionId()!, workflowId: ctx.getWorkflowId()!, nodeId: ctx.getNode().id, member: ctx.getNode().name } : undefined);
             try {
               result = await callAgent(endpoint, card, withMarker(message, trace), send);
             } finally {
