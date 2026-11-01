@@ -5,7 +5,7 @@
  * converted by the n8n importer. Shapes shared by the API and the pages. No runtime imports.
  */
 import type { AgentTeamConfig } from './agent-teams';
-import type { AgentConfig } from './agents';
+import type { AgentAvatar, AgentConfig } from './agents';
 import type { ImportReport, Workflow } from './types';
 
 export const TEMPLATE_CATEGORIES = [
@@ -19,6 +19,7 @@ export const TEMPLATE_CATEGORIES = [
   { id: 'productivity', name: 'Productivity' },
   { id: 'security', name: 'Security' },
   { id: 'incident-response', name: 'Incident response' },
+  { id: 'agent-teams', name: 'Agent teams' },
 ] as const;
 
 export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number]['id'];
@@ -94,9 +95,21 @@ export interface TemplateBundle {
   workflowKey?: string;
 }
 
+/** A member's face on a team template's card: a Landflow agent's own avatar, a remote member's initials. */
+export interface TemplateFace {
+  name: string;
+  icon?: string;
+  color?: string;
+  avatar?: AgentAvatar;
+}
+
 /** What a card says about a team template. */
 export interface TemplateTeamSummary {
   name: string;
+  /** The members in chart order, lead first. */
+  faces: TemplateFace[];
+  /** What the person chooses when using it: "GitHub credential", "Ollama or Claude model", "Repository". */
+  picks: string[];
   members: number;
   /** Landflow agents included. */
   agents: number;

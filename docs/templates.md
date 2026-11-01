@@ -25,7 +25,28 @@ channels, the remote members and the flow's nodes becomes a slot. An Anthropic k
 host's key serves otherwise). A flow that doesn't run the team is refused (400), and so is a team with a member whose agent
 was deleted.
 
-A team template shows on the Templates page with a **Team** badge. Its page lists the members (title, agent or remote
+## The gallery
+
+Every team template is in the **Agent teams** category (the chip in the gallery; a template saved from a team page gets it
+whatever categories were picked). Its card is its own: the members' faces in a row (a Landflow agent's avatar from the
+template; a remote member, such as a Claude Code agent on kagent, shows by its initials), a **You pick** row of chips naming
+what the person chooses when using it, and a **Use template** button that opens the same setup as the template's page and
+asks for each credential. The chips come from the template alone (`teamSummary` in `templates/team.ts`): one
+"<name> credential" per credential slot ("GitHub credential"), "Ollama or Claude model" when its agents have a model
+(or "OpenAI model"), and "Repository" when a node of the flow has a `repository` parameter. Nothing secret is in a
+template, so the card shows nothing secret.
+
+### Built in: Plugin builders
+
+"A Tech Lead with a Planner, Developer and Reviewer on Claude Code, and the flow that builds, checks and merges a plugin."
+It is the team and flow that build plugins from approved Missing tool suggestions, written in source
+(`templates/builtin-teams.ts`) from a team that ran for real: the Tech Lead is a Landflow agent on an Ollama model, the
+Planner, Developer and Reviewer are remote members (A2A addresses of Claude Code agents on kagent, which you point at your
+own), and the flow creates a branch, runs the team, lets the Run report check what each agent said against what it did,
+opens a pull request and merges it, or sends the failed checks back for up to three rounds. Every id, credential and the
+repository were left out: the GitHub nodes carry the slot **GitHub** and the placeholders `your-org` and `your-repo`.
+
+A team template shows on the Templates page with its own card (above). Its page lists the members (title, agent or remote
 address), says how many agents come with it, and shows the flow's canvas if it has one. **Export** and **Import** carry
 it (the template file's `bundle`). Its flow can't be swapped by **Edit**: save it again from the team page.
 

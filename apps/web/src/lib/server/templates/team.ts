@@ -4,9 +4,9 @@
  * credentials the agents name into slots, and on use creates the agents and the team with every reference rewritten
  * (`createFromBundle`, `remapWorkflow`). The workflow's own part is the templates module's (./index.ts).
  */
-import type { AgentTeam, AgentTeamConfig, TeamMember } from '../../shared/agent-teams';
+import { chartOrder, type AgentTeam, type AgentTeamConfig, type TeamMember } from '../../shared/agent-teams';
 import type { Agent, AgentConfig, AgentToolConfig, CredentialRef } from '../../shared/agents';
-import type { TemplateBundle, TemplateCredentialSlot } from '../../shared/templates';
+import type { TemplateBundle, TemplateCredentialSlot, TemplateFace, TemplateTeamSummary } from '../../shared/templates';
 import type { Workflow, WorkflowNode } from '../../shared/types';
 import { agentTeamStore, issuesOf } from '../agent-teams/store';
 import { agentStore, configOf } from '../agents/store';
@@ -247,9 +247,27 @@ export function remapWorkflow<N extends WorkflowNode>(nodes: N[], bundle: Templa
   });
 }
 
-/** What a card says about a bundle. */
-export const teamSummary = (bundle: TemplateBundle) => ({
+/** Whether one of the workflow's nodes has a `repository` parameter (a GitHub node's). */
+const hasRepository = (workflow: Pick<Workflow, 'nodes'> | undefined) => Boolean(workflow?.nodes.some((n) => 'repository' in n.parameters));
+
+/** What the person chooses when using the template, in a few words: each credential it names, a model, a repository. */
+export function teamPicks(bundle: TemplateBundle, slots: TemplateCredentialSlot[], workflow?: Pick<Workflow, 'nodes'>): string[] {
+  const picks = slots.map((slot) => (/credential$/i.test(slot.name) ? slot.name : `${slot.name} credential`));
+  const providers = new Set(bundle.agents.flatMap((a) => (a.config.model ? [a.config.model.provider] : [])));
+  if (providers.has('ollama') || providers.has('anthropic')) picks.push('Ollama or Claude model');
+  if (providers.has('openai')) picks.push('OpenAI model');
+  if (hasRepository(workflow)) picks.push('Repository');
+  return [...new Set(picks)];
+}
+
+/** What a card says about a bundle: the members' faces, what the person picks, and the counts. */
+export const teamSummary = (bundle: TemplateBundle, slots: TemplateCredentialSlot[] = [], workflow?: Pick<Workflow, 'nodes'>): TemplateTeamSummary => ({
   name: bundle.team.name,
+  faces: chartOrder(bundle.team).map((m): TemplateFace => {
+    const config = m.kind === 'agent' ? bundle.agents.find((a) => a.key === m.agentId)?.config : undefined;
+    return config ? { name: m.title, ...(config.icon && { icon: config.icon }), ...(config.color && { color: config.color }), ...(config.avatar && { avatar: config.avatar }) } : { name: m.title };
+  }),
+  picks: teamPicks(bundle, slots, workflow),
   members: bundle.team.members.length,
   agents: bundle.agents.length,
   remote: bundle.team.members.filter((m) => m.kind === 'a2a').length,

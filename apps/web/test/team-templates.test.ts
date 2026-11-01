@@ -130,7 +130,12 @@ describe('save a team as a template', () => {
     expect(developer.published).toBe(true);
     expect(bundle.team.members.find((m) => m.id === 'm_rev')).toMatchObject({ kind: 'a2a', parameters: { agentUrl: 'http://kagent.local/agents/kagent/reviewer' } });
     expect(template.workflow.nodes.map((n) => n.type)).toEqual(['core.manualTrigger', 'core.runTeam', 'core.messageAgent']);
-    expect(template.team).toEqual({ name: 'Plugin team', members: 3, agents: 3, remote: 1, hasWorkflow: true });
+    expect(template.team).toMatchObject({ name: 'Plugin team', members: 3, agents: 3, remote: 1, hasWorkflow: true });
+    // The card: the members' faces in chart order (a remote member by its title), and what the person picks.
+    expect(template.team!.faces.map((f) => f.name)).toEqual(['Tech Lead', 'Developer', 'Reviewer']);
+    expect(template.team!.picks).toContain('Ollama or Claude model');
+    expect(template.team!.picks.some((p) => /SECRET/.test(p))).toBe(false);
+    expect(template.categories).toContain('agent-teams');
 
     // Slots: one per credential type, named for who uses it; nothing of the saved credentials is kept.
     expect(template.credentials.map((s) => s.type).sort()).toEqual(['core.anthropicApi', 'core.httpBearerAuth', 'core.openAiApi']);

@@ -175,7 +175,8 @@ function finish(detail: Omit<TemplateDetail, 'usable' | 'problems' | 'nodeTypes'
   const problems = templateProblems(detail.workflow, scopeProject ?? detail.projectId);
   return {
     ...detail,
-    ...(detail.bundle && { team: teamSummary(detail.bundle) }),
+    ...(detail.bundle && { team: teamSummary(detail.bundle, detail.credentials, detail.workflow) }),
+    ...(detail.bundle && { categories: [...new Set<TemplateCategory>([...detail.categories, 'agent-teams'])] }),
     nodeTypes: nodeTypesOf(detail.workflow),
     nodeCount: detail.workflow.nodes.length,
     credentials: withSlotNodes(detail.credentials, detail.workflow),

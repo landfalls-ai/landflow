@@ -87,7 +87,7 @@ The code is in `apps/web/src/lib/server/agent-teams/` (`store.ts`, with `teamsOf
 The team page has two ways to take a team elsewhere. **Export as Claude Code plugin** downloads a plugin zip
 ([marketplace.md](marketplace.md#export-agents-as-plugins)) with a file per Landflow agent and the chart in
 `.landflow/team.json`. **Save as template** keeps the team, its agents and, if you pick one, a flow that runs it, as a
-template that **Use template** recreates with fresh ids and credentials of the new person's choosing ([templates.md](templates.md)).
+template that **Use template** recreates with fresh ids and credentials of the new person's choosing ([templates.md](templates.md)). Team templates have their own category and card in the gallery (the members' faces, **You pick**, **Use template**), and one is built in: **Plugin builders**, the Tech Lead team and the flow that builds, checks and merges a plugin.
 When a team has flows, the page lists them (`GET /api/agent-teams/:id/flows`), and the team a template creates opens with
 its new flow marked.
 

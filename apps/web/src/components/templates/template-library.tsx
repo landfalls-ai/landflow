@@ -163,7 +163,7 @@ export function TemplateLibrary() {
         {listing && templates.length > 0 && (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-2.5">
             {templates.map((t, i) => (
-              <TemplateCard key={t.id} template={t} types={types} index={i} href={href(t.id)} remoteLabel={remote?.label} />
+              <TemplateCard key={t.id} template={t} types={types} index={i} href={href(t.id)} remoteLabel={remote?.label} folderId={folder} projectId={known} />
             ))}
           </div>
         )}
