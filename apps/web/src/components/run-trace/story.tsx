@@ -307,6 +307,15 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
 
 const DOT: Record<TeamMoment['tone'], string> = { ok: 'bg-gn', bad: 'bg-rd', warn: 'bg-warn', info: 'bg-viz-1' };
 
+/** "4:12" (or "1:04:12"): time into the run. */
+export function intoRun(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = String(total % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
 /** The run's moments in a row at the top of the story, newest last; a tap scrolls to the moment and flashes it. */
 function Headlines({ items, model }: { items: Headline[]; model: RunModel }) {
   if (!items.length) return null;
@@ -339,7 +348,10 @@ function Headlines({ items, model }: { items: Headline[]; model: RunModel }) {
               {actor ? <Avatar actor={actor} size={26} /> : <span className="size-[26px]" />}
               <span className={cn('size-1.5 shrink-0 rounded-full', DOT[h.moment.tone])} />
               <span className="max-w-[220px] truncate">{h.moment.text}</span>
-              <span className="font-mono text-[10.5px] font-normal tabular-nums text-t3">{clock(new Date(h.at).toISOString())}</span>
+              {/* How far into the run, like the ribbon's turns; the clock time is in the tooltip. */}
+              <span className="font-mono text-[10.5px] font-normal tabular-nums text-t3" title={clock(new Date(h.at).toISOString())} data-testid="story-headline-elapsed">
+                {intoRun(h.at - model.t0)}
+              </span>
             </button>
           );
         })}
@@ -350,15 +362,35 @@ function Headlines({ items, model }: { items: Headline[]; model: RunModel }) {
 
 export function Story({ model, open }: { model: RunModel; open: (o: Open) => void }) {
   const headlines = useMemo(() => (model.empty ? [] : headlinesOf(model)), [model]);
+  const marked = useMemo(() => {
+    const map = new Map<string, TeamMoment[]>();
+    for (const h of headlines) if (h.entryKey) map.set(h.entryKey, [...(map.get(h.entryKey) ?? []), h.moment]);
+    return map;
+  }, [headlines]);
   if (model.empty) return <EmptyState compact title="Nothing recorded yet" hint="The story appears as the run starts." />;
   return (
     <div className="flex flex-col gap-1">
       <Headlines items={headlines} model={model} />
-      {model.story.map((entry) => (
-        <div key={entry.key} id={`story-${entry.key}`} className="scroll-mt-24 rounded-xl">
-          <Entry entry={entry} model={model} open={open} />
-        </div>
-      ))}
+      {model.story.map((entry) => {
+        const marks = marked.get(entry.key);
+        return (
+          <div key={entry.key} id={`story-${entry.key}`} className="scroll-mt-24 rounded-xl">
+            <Entry entry={entry} model={model} open={open} />
+            {marks && (
+              // The entry a headline points to keeps a mark under it, so it can be found again after the flash.
+              <div className="mb-1 ml-11 flex flex-wrap gap-1" data-testid="story-headline-mark">
+                {marks.map((m, i) => (
+                  <span key={i} className={cn('flex max-w-full items-center gap-1 rounded-full border px-1.5 py-px text-[10.5px] font-medium', m.tone === 'bad' ? 'border-rd/30 text-rd' : m.tone === 'warn' ? 'border-warn/50 text-warn' : 'border-hair text-t2')}>
+                    <span className={cn('size-1.5 shrink-0 rounded-full', DOT[m.tone])} />
+                    <span className="font-semibold">Headline</span>
+                    <span className="truncate">· {m.text}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
       <p className="mt-3 flex items-center justify-center gap-2 text-center text-[12px] text-t3">
         {model.live ? (
           <>

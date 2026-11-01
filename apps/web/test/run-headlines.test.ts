@@ -7,6 +7,7 @@ import type { JournalEvent, RunActor } from '@/lib/shared/run-trace';
 import { foldJournal } from '@/lib/shared/run-trace-model';
 import { headlinesOf, turnEntryKey } from '@/lib/shared/run-headlines';
 import { turnOrdinal } from '@/components/editor/team-live';
+import { intoRun } from '@/components/run-trace/story';
 import type { TeamActivity } from '@/lib/shared/team-progress';
 
 const T0 = Date.parse('2026-11-01T10:00:00.000Z');
@@ -115,5 +116,11 @@ describe('a ribbon segment opens its turn in the Story', () => {
     // A turn past the last request still lands on the member.
     expect(turnEntryKey(model, 'developer', 3)).toBe(ask?.key);
     expect(turnEntryKey(model, 'Nobody', 1)).toBeUndefined();
+  });
+});
+
+describe('headline chips', () => {
+  it('say how far into the run each happened', () => {
+    expect([0, 9_400, 252_000, 3_852_000].map(intoRun)).toEqual(['0:00', '0:09', '4:12', '1:04:12']);
   });
 });

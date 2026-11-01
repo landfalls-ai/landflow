@@ -140,9 +140,10 @@ and marks it (a ring and a flash): a team node's ribbon links each turn this way
 
 A Run a Team node keeps the moments of its run on its output (`activity.moments`: tests pass or fail, a typecheck or
 build, a pull request opened, a review's verdict, a member near or past its budget, a question for a person). The Story
-opens with them as a row of chips, oldest first: the member's face, a coloured dot (green, red, amber), the words and the
-time. A tap scrolls the story to where it happened (the member's own entry just before it, else whatever the story says
-then) and flashes it. Hand-offs ("Asked the Reviewer") stay out. The placing is in
+opens with them as a row of chips, oldest first: the member's face, a coloured dot (green, red, amber), the words and how
+far into the run it happened ("4:12"; the clock time on hover). A tap scrolls the story to where it happened (the
+member's own entry just before it, else whatever the story says then) and flashes it, and that entry keeps a
+"Headline · <words>" mark under it so it can be found again. Hand-offs ("Asked the Reviewer") stay out. The placing is in
 [`lib/shared/run-headlines.ts`](../apps/web/src/lib/shared/run-headlines.ts). A team run that waited for a person
 (a tool approval, a question) runs its node twice and keeps one activity on the second: its times leave the wait out, and
 `activity.parts` gives each part's length, so a moment from before the wait sits on the first node run and one from after
