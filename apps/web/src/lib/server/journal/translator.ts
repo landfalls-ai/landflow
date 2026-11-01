@@ -74,7 +74,16 @@ const when = (value: unknown, fallback: string) => (typeof value === 'string' &&
 function usageIn(json: unknown): TokenCounts | undefined {
   const usage = isObject(json) && isObject(json.usage) ? json.usage : undefined;
   if (!usage || typeof usage.inputTokens !== 'number' || typeof usage.outputTokens !== 'number') return undefined;
-  return { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
+  const count = (key: 'cacheReadTokens' | 'cacheWriteTokens' | 'costUsd' | 'requests') => (typeof usage[key] === 'number' && Number.isFinite(usage[key]) ? { [key]: usage[key] as number } : {});
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    ...count('cacheReadTokens'),
+    ...count('cacheWriteTokens'),
+    ...count('costUsd'),
+    ...count('requests'),
+    ...(typeof usage.model === 'string' && usage.model && { model: usage.model }),
+  };
 }
 
 const isRemoteRun = (data: JsonObject) => Array.isArray(data.steps) || (typeof data.agent === 'string' && typeof data.state === 'string');

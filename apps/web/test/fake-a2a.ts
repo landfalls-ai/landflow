@@ -43,6 +43,11 @@ export interface FakeA2a {
   legacyCard: boolean;
   /** Whether a finished task reports its usage (kagent's usage extension). */
   usage: boolean;
+  /**
+   * A Claude Code mod in front of the model (landflow-harness): it sees a new message's text first and returns what the
+   * model reads, so a test can report to a trace the way the mod does.
+   */
+  mod?: (text: string) => string | Promise<string>;
   close(): Promise<void>;
 }
 
@@ -177,6 +182,10 @@ export async function startFakeA2a(): Promise<FakeA2a> {
       else if (task.status.state === 'TASK_STATE_WORKING') complete(task, 'finally done', state.usage);
       answer(view(task));
       return;
+    }
+    const parts = rpc.params.message?.parts;
+    if (state.mod && parts?.some((p) => typeof p.text === 'string') && !rpc.params.message?.taskId) {
+      rpc.params.message!.parts = [{ text: await state.mod(parts.map((p) => p.text ?? '').join('')) }];
     }
     if (rpc.method === 'SendMessage') {
       answer({ task: view(handle(rpc.params)) });

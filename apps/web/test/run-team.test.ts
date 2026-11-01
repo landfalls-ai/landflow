@@ -32,6 +32,7 @@ const { agentStore } = await import('@/lib/server/agents/store');
 const { agentTeamStore } = await import('@/lib/server/agent-teams/store');
 const { read } = await import('@/lib/server/journal/store');
 const { resetJournals } = await import('@/lib/server/journal/writer');
+const traceRoute = await import('@/app/api/agent-trace/[id]/route');
 
 registry.registerBuiltin(corePlugin);
 
@@ -175,11 +176,17 @@ describe('Run a Team', () => {
       team: { id: t.id, name: 'Plugin team', version: 1 },
     });
     expect(done!.members).toEqual([
-      { title: 'Tech Lead', asked: 1, tokens: expect.any(Number) },
-      { title: 'Planner', asked: 2, tokens: expect.any(Number) },
-      { title: 'Developer', asked: 1, tokens: expect.any(Number) },
-      { title: 'Tester', asked: 1, tokens: expect.any(Number) },
+      expect.objectContaining({ title: 'Tech Lead', asked: 1, tokens: expect.any(Number) }),
+      expect.objectContaining({ title: 'Planner', asked: 2, tokens: expect.any(Number) }),
+      expect.objectContaining({ title: 'Developer', asked: 1, tokens: expect.any(Number) }),
+      expect.objectContaining({ title: 'Tester', asked: 1, tokens: expect.any(Number) }),
     ]);
+    // Each member's tokens in and out, its model and cost where known (a local model is free), and its time.
+    const [leadReport, plannerReport] = done!.members as Array<Record<string, unknown>>;
+    expect(leadReport).toMatchObject({ inputTokens: 48, outputTokens: 32, costUsd: 0, model: 'lead-model', ms: expect.any(Number) });
+    // A remote member reports its usage (kagent's usage extension) but no model, so it isn't priced.
+    expect(plannerReport).toMatchObject({ inputTokens: 240, outputTokens: 60 });
+    expect(plannerReport).not.toHaveProperty('costUsd');
     // What the run did, for the canvases: every member's turns in order (the Tester asked by the Developer too), and the moments.
     const activity = done!.activity as { turns: Array<{ member: string; end?: number }>; moments: Array<{ text: string }> };
     expect(activity.turns.map((t) => t.member)).toEqual(['Tech Lead', 'Planner', 'Tech Lead', 'Planner', 'Tech Lead', 'Developer', 'Tester', 'Developer', 'Tech Lead']);
@@ -459,12 +466,7 @@ describe('Run a Team', () => {
     turns.clear();
     const { done, events } = await run(t.id);
     expect(done!.reply).toContain('Developer is over its budget of 20 tokens');
-    expect(done!.members).toContainEqual({
-      title: 'Developer',
-      asked: 1,
-      tokens: 20,
-      overBudget: true,
-    });
+    expect(done!.members).toContainEqual(expect.objectContaining({ title: 'Developer', asked: 1, tokens: 20, overBudget: true }));
     // The node's usage is the whole team's: the lead's three calls and the Developer's one.
     const usage = done!.usage as { inputTokens: number; outputTokens: number };
     expect(usage.inputTokens + usage.outputTokens).toBe(80);
@@ -479,7 +481,8 @@ describe('Run a Team', () => {
     try {
       const { done, events } = await run(t.id);
       expect(done!.reply).toContain('Planner is over its budget of 10 tokens');
-      expect(done!.members).toContainEqual({ title: 'Planner', asked: 1, tokens: expect.any(Number), estimated: true, overBudget: true });
+      expect(done!.members).toContainEqual(expect.objectContaining({ title: 'Planner', asked: 1, tokens: expect.any(Number), estimated: true, overBudget: true }));
+      expect((done!.members as Array<Record<string, unknown>>).find((m) => m.title === 'Planner')).not.toHaveProperty('inputTokens');
       const budget = events.find((e) => e.type === 'check' && e.check.name === 'Budget');
       expect(budget && budget.type === 'check' && budget.check.message).toMatch(/^Planner used about \d+ of its 10 tokens and was stopped \(estimated: it reports no usage\)$/);
       // An estimate counts against the budget, not in what the team used: that is the lead's alone here.
@@ -487,6 +490,55 @@ describe('Run a Team', () => {
       expect(usage.inputTokens + usage.outputTokens).toBe(60);
     } finally {
       a2a.usage = true;
+    }
+  });
+
+  it('takes a Claude Code member’s real usage, cost and guardrail stops from its landflow-harness mod', async () => {
+    // A Landflow agent deployed to kagent with the mod: calls to its A2A URL carry a trace marker.
+    const onKagent = agentStore.create({ name: 'Reviewer on kagent', instructions: 'Review.', model: { provider: 'anthropic', model: 'claude-sonnet-5-5' } });
+    const agentUrl = `${a2a.url}/agents/kagent/rt-reviewer`;
+    agentStore.setKagent(onKagent.id, { credential: { id: 'cred', name: 'kind' }, name: 'rt-reviewer', trace: { url: 'http://landflow.test/api/agent-trace', a2aUrl: agentUrl } } as never);
+    const t = team([remote('m_rev', 'Reviewer', { parameters: { agentUrl } })]);
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_reviewer', { message: 'slug review it', reason: 'Review' }) : { text: `Result: ${lastTool(body)}` }));
+    turns.clear();
+    const seen: string[] = [];
+    // What the mod does inside Claude Code: take the marker off the prompt and post what happened to the trace.
+    a2a.mod = async (text) => {
+      seen.push(text);
+      const found = /^<!-- landflow-trace (\S+) -->\n/.exec(text);
+      if (!found) return text;
+      const events = [
+        { type: 'start', mod: '0.2.0', guard: 'enforce' },
+        { type: 'step', ms: 900, model: 'claude-sonnet-5-5', input: 1200, output: 80, cacheRead: 9000, cacheWrite: 300, tools: ['Bash'] },
+        { type: 'tool', ms: 40, tool: 'Bash', ok: true, arg: 'pnpm test' },
+        { type: 'guard', rule: 'git-push', tool: 'Bash', arg: 'git push origin main', reason: 'push to your own branch', action: 'deny' },
+        { type: 'redact', kinds: ['GitHub token'] },
+        { type: 'turn', ms: 1500, reason: 'answer' },
+      ];
+      const response = await traceRoute.POST(new Request(found[1], { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events }) }), { params: Promise.resolve({ id: found[1].split('/').pop()! }) });
+      expect(response.status).toBe(204);
+      return text.slice(found[0].length);
+    };
+    a2a.usage = false;
+    try {
+      const { done, events } = await run(t.id);
+      expect(seen[0]).toMatch(/^<!-- landflow-trace http:\/\/landflow\.test\/api\/agent-trace\/[A-Za-z0-9_-]{24} -->\nTeam goal:/);
+      expect(done!.reply).toContain('The slug is review-it');
+      // Real usage, priced at Sonnet 5.5: 1,200 fresh in at $2, 9,000 cache reads at $0.10, 300 cache writes at $2.50, 80 out at $10 (per 1M).
+      const reviewer = (done!.members as Array<Record<string, unknown>>).find((m) => m.title === 'Reviewer');
+      expect(reviewer).toMatchObject({ tokens: 10_580, inputTokens: 10_500, outputTokens: 80, cacheReadTokens: 9_000, costUsd: 0.00485, model: 'claude-sonnet-5-5', requests: 1 });
+      expect(reviewer).not.toHaveProperty('estimated');
+      expect((done!.usage as { costUsd?: number }).costUsd).toBeCloseTo(0.00485, 9);
+      // The request's span carries the usage and cost; the guardrail stop and the masked secret are checks on it.
+      const ended = events.find((e) => e.type === 'span.ended' && e.usage?.costUsd !== undefined);
+      expect(ended && ended.type === 'span.ended' && ended.usage).toMatchObject({ inputTokens: 10_500, costUsd: 0.00485, requests: 1, model: 'claude-sonnet-5-5' });
+      const checks = events.flatMap((e) => (e.type === 'check' ? [e.check] : []));
+      expect(checks).toContainEqual(expect.objectContaining({ name: 'Guardrail', status: 'warn', subject: 'Reviewer', message: 'Stopped Bash: git push origin main (git-push: push to your own branch)' }));
+      expect(checks).toContainEqual(expect.objectContaining({ name: 'Secrets masked', message: 'Masked secrets in 1 tool result (GitHub token) before the model read them' }));
+    } finally {
+      a2a.usage = true;
+      a2a.mod = undefined;
+      agentStore.setKagent(onKagent.id, undefined as never);
     }
   });
 

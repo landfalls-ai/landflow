@@ -95,7 +95,7 @@ export const runTeamNode = defineNode({
       {
         name: 'notice',
         displayName:
-          'The lead runs with the team’s goal; each member is asked by title, with a reason, and reports back. A model, memory and tools connected here go to the lead. Tools that need approval are refused (nobody is there to approve them). A member’s question for a person pauses the run until someone answers it (Needs you, or the form link), then the team goes on. Done carries { reply, team, members, usage, activity }; Needs a person adds a reason: a review nobody did or that asked for changes, a budget or limit reached.',
+          'The lead runs with the team’s goal; each member is asked by title, with a reason, and reports back. A model, memory and tools connected here go to the lead. Tools that need approval are refused (nobody is there to approve them). A member’s question for a person pauses the run until someone answers it (Needs you, or the form link), then the team goes on. Done carries { reply, team, members, usage, activity } (each member’s tokens, and its cost, model and time where known); Needs a person adds a reason: a review nobody did or that asked for changes, a budget or limit reached.',
         type: 'notice',
       },
     ],
@@ -210,6 +210,12 @@ export const runTeamNode = defineNode({
             tokens: m.tokens,
             ...(m.estimated && { estimated: true }),
             ...(m.overBudget && { overBudget: true }),
+            ...(m.inputTokens !== undefined && { inputTokens: m.inputTokens, outputTokens: m.outputTokens ?? 0 }),
+            ...(m.cacheReadTokens && { cacheReadTokens: m.cacheReadTokens }),
+            ...(m.costUsd !== undefined && { costUsd: m.costUsd }),
+            ...(m.model && { model: m.model }),
+            ...(m.requests && { requests: m.requests }),
+            ...(m.ms && { ms: m.ms }),
           })),
           ...(result.needsPerson && { reason: result.needsPerson }),
           usage: { ...result.usage },

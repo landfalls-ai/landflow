@@ -12,6 +12,7 @@ import type { AgentSession, AgentStreamEvent, RunEndReason, SessionExecution, To
 import { reportsOf, rootOf, type AgentMember, type AgentTeamConfig, type RemoteMember, type TeamMember } from '../../shared/agent-teams';
 import { verdictOf } from '../../shared/team-progress';
 import { agentStore } from '../agents/store';
+import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { newSession, runAgent, type TeamRole } from '../agents/runtime';
 import { a2aAgentTool, type BuiltTool, type ToolContext, type ToolOutcome } from '../agents/tools';
 import { liveJournal } from '../journal/writer';
@@ -113,6 +114,8 @@ export interface TeamState {
   heard: Record<string, string[]>;
   /** Per member: review reminders sent, whether it was sent back for made-up details, for which, and what it still named after. */
   roles: Record<string, { nudges: number; grounded: 'no' | 'sent' | 'checked'; sentFor: string[]; unverified?: string[] }>;
+  /** Per member: time spent answering its requests, ms (absent in runs saved before it was kept). */
+  ms?: Record<string, number>;
 }
 
 const emptyState = (): TeamState => ({
@@ -132,6 +135,7 @@ const emptyState = (): TeamState => ({
   told: {},
   heard: {},
   roles: {},
+  ms: {},
 });
 
 export interface MemberReport {
@@ -142,6 +146,18 @@ export interface MemberReport {
   /** A remote member that reports no usage: its tokens are estimated from what went to it and came back. */
   estimated?: true;
   overBudget?: true;
+  /** Its input and output tokens, and of the input what came from the prompt cache (when reported). */
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  /** USD: what its mod reported, priced (a remote member), or its model's price (an agent member). */
+  costUsd?: number;
+  /** The model it ran on, as it reported it (else its agent's). */
+  model?: string;
+  /** Model requests, when reported. */
+  requests?: number;
+  /** Time spent answering its requests (the lead: its whole run), ms. */
+  ms?: number;
 }
 
 export interface TeamRunResult {
@@ -158,6 +174,13 @@ export interface TeamRunResult {
 }
 
 const total = (usage: { inputTokens: number; outputTokens: number }) => usage.inputTokens + usage.outputTokens;
+
+/** Two usages together: tokens add up, and cost, cache reads and requests where either has them; the later model wins. */
+export function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const sum = (key: 'cacheReadTokens' | 'cacheWriteTokens' | 'costUsd' | 'requests') => (a[key] !== undefined || b[key] !== undefined ? { [key]: (a[key] ?? 0) + (b[key] ?? 0) } : {});
+  const model = b.model ?? a.model;
+  return { inputTokens: a.inputTokens + b.inputTokens, outputTokens: a.outputTokens + b.outputTokens, ...sum('cacheReadTokens'), ...sum('cacheWriteTokens'), ...sum('costUsd'), ...sum('requests'), ...(model && { model }) };
+}
 /** About four characters a token. */
 const tokensIn = (text: string) => Math.ceil(text.length / 4);
 const asText = (value: unknown) => (typeof value === 'string' ? value : value === undefined ? '' : JSON.stringify(value));
@@ -234,7 +257,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const spend = (member: TeamMember, usage: TokenUsage, set = false, guess = false) => {
     const ledger = guess ? state.estimated : state.used;
     const before = ledger[member.id];
-    const mine = set || !before ? { ...usage } : { inputTokens: before.inputTokens + usage.inputTokens, outputTokens: before.outputTokens + usage.outputTokens };
+    const mine = set || !before ? { ...usage } : addUsage(before, usage);
     ledger[member.id] = mine;
     if (!guess) delete state.estimated[member.id];
     const now = total(mine);
@@ -250,6 +273,43 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       state.warned.push(member.id);
       check('Budget', 'warn', `${member.title} used ${about}${now.toLocaleString()} of its ${budget.toLocaleString()} tokens (80%)${why}`, member.title);
     }
+  };
+
+  const timed = (member: TeamMember, started: number) => {
+    const ms = (state.ms ??= {});
+    ms[member.id] = (ms[member.id] ?? 0) + (Date.now() - started);
+  };
+
+  /** USD a member's usage cost: what its mod reported (priced), else its agent's model's price (none for a remote guess). */
+  const costOf = (member: TeamMember, usage: TokenUsage | undefined): number | undefined => {
+    if (!usage) return undefined;
+    if (usage.costUsd !== undefined) return usage.costUsd;
+    if (member.kind !== 'agent') return undefined;
+    const agent = agentStore.get(member.agentId);
+    const model = (agent?.published?.config ?? agent)?.model;
+    if (!model) return undefined;
+    const price = findPrice(model.provider, model.model, priceOverrides());
+    if (!price) return model.provider === 'ollama' ? 0 : undefined;
+    return estimateCost(price, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens ?? 0, usage.cacheWriteTokens ?? 0);
+  };
+  const modelOf = (member: TeamMember, usage: TokenUsage | undefined): string | undefined => {
+    if (usage?.model) return usage.model;
+    if (member.kind !== 'agent') return undefined;
+    const agent = agentStore.get(member.agentId);
+    return (agent?.published?.config ?? agent)?.model?.model;
+  };
+
+  /** What the whole team used, its cost where some member's was priced. */
+  const teamUsage = (): TokenUsage => {
+    let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+    for (const member of config.members) {
+      const used = state.used[member.id];
+      if (!used) continue;
+      const cost = costOf(member, used);
+      const { model: _model, ...rest } = used;
+      usage = addUsage(usage, { ...rest, ...(cost !== undefined && { costUsd: cost }) });
+    }
+    return usage.costUsd !== undefined ? { ...usage, costUsd: Math.round(usage.costUsd * 1e6) / 1e6 } : usage;
   };
 
   /** The goal and the manager's own task, in front of every request. */
@@ -414,8 +474,13 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       };
     }
     state.asked[report.id] = (state.asked[report.id] ?? 0) + 1;
-    const outcome = await work(text);
-    return outcome.pause ? outcome : settle(manager, report, text, outcome);
+    const started = Date.now();
+    try {
+      const outcome = await work(text);
+      return outcome.pause ? outcome : settle(manager, report, text, outcome);
+    } finally {
+      timed(report, started);
+    }
   }
 
   /** A member answered: what its manager heard, the work delivered, the review ledger. */
@@ -609,6 +674,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     state.told[root.id] = request.message;
   }
   const role: TeamRole = { ...roleFor(root), tools: await toolsFor(root) };
+  const leadStarted = Date.now();
   const result = await runAgent({
     agent: leadAgent,
     session,
@@ -620,6 +686,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     team: role,
   });
   session = result.session;
+  timed(root, leadStarted);
   spend(root, session.usage, true);
   const question = result.reason === 'awaiting_approval' ? questionOf(session.pending) : undefined;
   if (result.reason === 'awaiting_approval' && !question) raise(`${root.title} waits for an approval no one can give in a team run`);
@@ -631,15 +698,26 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     ...(result.reply !== undefined && { reply: marked(root, result.reply) }),
     ...(state.needsPerson.length && { needsPerson: state.needsPerson.join('; ') }),
     ...(question && { waiting: { member: question.asker, question: question.ask, state: { ...state, lead: session } } }),
-    members: config.members.map((m) => ({
-      title: m.title,
-      asked: m.id === root.id ? 1 : (state.asked[m.id] ?? 0),
-      tokens: state.tokens[m.id] ?? 0,
-      ...(state.estimated[m.id] && { estimated: true as const }),
-      ...(state.overBudget.includes(m.id) && { overBudget: true as const }),
-    })),
+    members: config.members.map((m) => {
+      const used = state.used[m.id];
+      const cost = costOf(m, used);
+      const model = modelOf(m, used);
+      return {
+        title: m.title,
+        asked: m.id === root.id ? 1 : (state.asked[m.id] ?? 0),
+        tokens: state.tokens[m.id] ?? 0,
+        ...(state.estimated[m.id] && { estimated: true as const }),
+        ...(state.overBudget.includes(m.id) && { overBudget: true as const }),
+        ...(used && { inputTokens: used.inputTokens, outputTokens: used.outputTokens }),
+        ...(used?.cacheReadTokens && { cacheReadTokens: used.cacheReadTokens }),
+        ...(cost !== undefined && { costUsd: Math.round(cost * 1e6) / 1e6 }),
+        ...(model && { model }),
+        ...(used?.requests && { requests: used.requests }),
+        ...(state.ms?.[m.id] && { ms: state.ms[m.id] }),
+      };
+    }),
     session,
     reason: result.reason,
-    usage: Object.values(state.used).reduce((sum, u) => ({ inputTokens: sum.inputTokens + u.inputTokens, outputTokens: sum.outputTokens + u.outputTokens }), { inputTokens: 0, outputTokens: 0 }),
+    usage: teamUsage(),
   };
 }

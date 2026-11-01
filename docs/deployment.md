@@ -301,7 +301,7 @@ Tests: `(cd apps/web && LANDFLOW_INTEGRATION=oidc,smtp npx vitest run test/oidc.
 
 | Image | Built from | Runs |
 |---|---|---|
-| `landflow/host:dev` | [`docker/host.Dockerfile`](../deploy/docker/host.Dockerfile) | `node apps/web/server.js` (Next standalone output) as `node` (uid 1000), data in `/data`; queue-mode workers run `node worker.mjs` (an esbuild bundle of `pnpm worker`) from the same image |
+| `landflow/host:dev` | [`docker/host.Dockerfile`](../deploy/docker/host.Dockerfile) | `node apps/web/server.js` (Next standalone output) as `node` (uid 1000), data in `/data`; queue-mode workers run `node worker.mjs` (an esbuild bundle of `pnpm worker`) from the same image; `apps/web/claude-plugins` (the landflow-harness mod packed for kagent's Claude Code agents, [a2a.md](a2a.md#the-landflow-harness-mod)) is copied next to `server.js` |
 | `landflow/plugin-text-toolkit:dev`, `landflow/plugin-messaging:dev`, `landflow/plugin-github:dev` | [`docker/node-plugin.Dockerfile`](../deploy/docker/node-plugin.Dockerfile) | `tsx src/main.ts` as `node` |
 | `landflow/plugin-py-insights:dev`, `landflow/plugin-productivity:dev` | [`docker/python-plugin.Dockerfile`](../deploy/docker/python-plugin.Dockerfile) | `python main.py` (SDK with `grpc` and `otel` extras) as uid 10001 |
 | `landflow/plugin-go-crypto:dev`, `landflow/plugin-google-workspace:dev`, `landflow/plugin-databases:dev` | [`docker/go-plugin.Dockerfile`](../deploy/docker/go-plugin.Dockerfile) | static binary on Alpine as uid 10001 |

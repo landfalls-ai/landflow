@@ -10,9 +10,12 @@
  *
  * The same store serves runtime images for Harnesses (deploy/scripts/claude-harness-dev.sh puts one there: a Harness's
  * workload.image is pinned by digest and pulled the same way). Their blobs are large, so the route streams them.
+ *
+ * Landflow's own plugins ship with the host (apps/web/claude-plugins, copied into the image next to server.js) and are
+ * packed from there: `builtinPin` pins one to a hash of its files, so a host with other files gives another digest.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { KagentPlugin } from '../../shared/agents';
@@ -103,13 +106,65 @@ function save(blob: Buffer): string {
   return digest;
 }
 
-/** Pack the plugin at its pinned commit into an image and keep it; the manifest's digest. */
-export async function packPlugin(pin: KagentPlugin): Promise<string> {
+/** The source URL of Landflow's own plugins (`builtinPin`): packed from the host's files, never fetched. */
+export const BUILTIN_URL = 'landflow:builtin';
+/** The mod every Claude Code agent on kagent gets (docs/a2a.md, "The landflow-harness mod"). */
+export const HARNESS_PLUGIN = 'landflow-harness';
+
+/** Where Landflow's own plugins are: apps/web/claude-plugins (the host runs from apps/web, in dev and in its image). */
+export const builtinPluginsDir = () => process.env.LANDFLOW_CLAUDE_PLUGINS_DIR || join(process.cwd(), 'claude-plugins');
+
+/** Kept out of the image: the types Claude Code writes for an editor, the mod's own tests, OS litter. */
+const LEFT_OUT = [/(^|\/)\.claude-plugin\/types(\/|$)/, /\.test\.tsx?$/, /(^|\/)\.DS_Store$/, /(^|\/)node_modules(\/|$)/, /(^|\/)\.gitignore$/];
+
+/** A built-in plugin's files, sorted by path; undefined when it isn't there. */
+export function builtinFiles(name: string): { path: string; body: Buffer }[] | undefined {
+  const root = join(builtinPluginsDir(), name);
+  if (!existsSync(join(root, '.claude-plugin', 'plugin.json'))) return undefined;
+  const files: { path: string; body: Buffer }[] = [];
+  const walk = (dir: string, prefix: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (LEFT_OUT.some((pattern) => pattern.test(path))) continue;
+      if (entry.isDirectory()) walk(join(dir, entry.name), path);
+      else if (entry.isFile()) files.push({ path, body: readFileSync(join(dir, entry.name)) });
+    }
+  };
+  walk(root, '');
+  return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/** A built-in plugin pinned to a hash of its files (the commit field), or undefined when the host doesn't ship it. */
+export function builtinPin(name: string = HARNESS_PLUGIN): KagentPlugin | undefined {
+  const files = builtinFiles(name);
+  if (!files) return undefined;
+  const hash = createHash('sha256');
+  for (const file of files) hash.update(`${file.path}\0${file.body.length}\0`).update(file.body);
+  return { id: `${name}@landflow`, url: BUILTIN_URL, commit: hash.digest('hex').slice(0, 40), path: name };
+}
+
+/** The files of a pinned plugin: a built-in one from the host, any other from GitHub at its commit. */
+async function filesOf(pin: KagentPlugin): Promise<{ path: string; body: Buffer }[]> {
+  if (pin.url === BUILTIN_URL) {
+    const files = builtinFiles(pin.path ?? pin.id.slice(0, pin.id.lastIndexOf('@')));
+    if (!files) throw new Error(`This host doesn’t ship the plugin ${pin.id} (${builtinPluginsDir()})`);
+    return files;
+  }
   const repo = githubRepo(pin.url);
   if (!repo) throw new Error(`The plugin ${pin.id} isn’t on GitHub (${pin.url})`);
   const reader = readerFor({ kind: 'github', owner: repo.owner, repo: repo.repo, ref: pin.commit, sha: pin.commit, path: pin.path ?? '' });
   const files = [];
   for (const file of await pluginFiles(reader)) files.push({ path: file.path, body: await pluginFile(reader, file.path) });
+  return files;
+}
+
+/** Pack the plugin at its pinned commit into an image and keep it; the manifest's digest. */
+export async function packPlugin(pin: KagentPlugin): Promise<string> {
+  return packFiles(await filesOf(pin));
+}
+
+/** Pack files into a one-layer image and keep it; the manifest's digest (the same files, the same digest). */
+export function packFiles(files: { path: string; body: Buffer }[]): string {
   const tar = tarOf(files);
   const layer = gzipSync(tar, { level: 9 });
   layer[9] = 0xff; // gzip's OS byte, which differs between platforms: "unknown"

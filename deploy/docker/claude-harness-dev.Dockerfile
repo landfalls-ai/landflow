@@ -10,6 +10,8 @@
 #   Python      3.12, pip and uv
 #   C           gcc, make and musl headers (build-base), for cgo and native npm and Python packages
 #   tools       curl, jq, ripgrep, unzip, openssh-client (git is in the base image)
+#   Claude Code a newer release than the base image's (2.1.285), for mods: Landflow's landflow-harness mod needs 2.1.287
+#               or later (apps/web/claude-plugins/landflow-harness)
 #
 # deploy/scripts/claude-harness-dev.sh builds it, puts it in Landflow's registry (kagent pulls by digest; nothing is pushed)
 # and applies the Harness landflow-claude-dev that runs it. Build context: the repository root (nothing is copied from it).
@@ -17,11 +19,13 @@
 ARG HARNESS_IMAGE=ghcr.io/kagent-dev/kagent/claude-harness@sha256:69cbd021825de5b6798723c96a4ae72f78a4916e70e4f1cd7f6bd5678e6641ff
 ARG GO_IMAGE=golang:1.27.0-alpine3.24
 ARG PNPM_VERSION=10.28.2
+ARG CLAUDE_CODE_VERSION=2.1.316
 
 FROM ${GO_IMAGE} AS go
 
 FROM ${HARNESS_IMAGE}
 ARG PNPM_VERSION
+ARG CLAUDE_CODE_VERSION
 USER root
 RUN apk add --no-cache nodejs npm python3 py3-pip uv build-base curl jq ripgrep unzip openssh-client
 COPY --from=go /usr/local/go /usr/local/go
@@ -34,4 +38,21 @@ RUN npm install -g --no-fund --no-audit corepack@latest \
  && corepack prepare pnpm@${PNPM_VERSION} --activate \
  && mkdir -p "$GOPATH" && chmod -R a+rwX "$GOPATH" "$COREPACK_HOME" \
  && go version && node --version && pnpm --version && python3 --version && uv --version
+# Claude Code from npm (the native binary for this platform, linux-arm64-musl here) in place of the base image's.
+# kagent 1.0's harness pins the release it was verified on (PinnedClaudeVersion 2.1.285, strict) and refuses to start
+# unless `claude --version` names it, with no setting to change that. So `claude` is a wrapper whose version line names
+# both: "2.1.316 (Claude Code) (kagent pin 2.1.285)"; everything else goes to the binary as it is.
+RUN rm -f /usr/local/bin/claude \
+ && npm install -g --no-fund --no-audit @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+ && rm -f /usr/local/bin/claude
+COPY --chmod=755 <<'EOF' /usr/local/bin/claude
+#!/bin/sh
+real=/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then
+  echo "$("$real" --version) (kagent pin ${KAGENT_CLAUDE_PIN:-2.1.285})"
+  exit 0
+fi
+exec "$real" "$@"
+EOF
+RUN claude --version | grep -q "^${CLAUDE_CODE_VERSION} .*kagent pin 2.1.285"
 USER 65532:65532

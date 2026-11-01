@@ -69,6 +69,8 @@ RUN mkdir -p /data && chown node:node /data
 COPY --from=build --chown=node:node /app/apps/web/.next/standalone ./
 COPY --from=build --chown=node:node /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=build --chown=node:node /app/apps/web/dist/worker.mjs ./apps/web/worker.mjs
+# Landflow's own Claude Code plugins (the landflow-harness mod), packed into images for kagent's agents (kagent/oci.ts).
+COPY --from=build --chown=node:node /app/apps/web/claude-plugins ./apps/web/claude-plugins
 # The worker bundle keeps the broker clients external (above). Next's standalone output ships them inside the pnpm store
 # and reaches them through its own hashed aliases, which only the mains use: link them where /app/apps/web/worker.mjs finds
 # them. The tracer also skips the native addons (kafka-javascript's build/, pulsar-client's lib/binding/), so they are

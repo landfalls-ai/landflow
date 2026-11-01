@@ -12,6 +12,7 @@ import type {
   Agent,
   AgentConfig,
   AgentSession,
+  AgentTraceSummary,
   McpServerToolConfig,
   NodeToolConfig,
   PendingCall,
@@ -42,6 +43,7 @@ import {
   type HitlRequest,
   type OutgoingMessage,
 } from '../a2a/client';
+import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
 import { callAgent, landflowTags, remoteRunOf, throttled } from '../a2a/traced';
 import { credentials } from '../credentials/vault';
 import { agentToolsFrom, endpointFrom, listMcpTools, resourceAndPromptTools, selectTools } from '../mcp/client';
@@ -233,6 +235,13 @@ export interface A2aToolOptions {
   onPerson?(text: string): void;
 }
 
+/** A remote run with what the agent's mod reported: its usage (unless the task carried its own) and the trace. */
+export function withTrace(remote: RemoteRun, summary: AgentTraceSummary | undefined): RemoteRun {
+  if (!summary) return remote;
+  const usage = remote.usage ?? usageOfTrace(summary);
+  return { ...remote, ...(usage && { usage }), trace: summary };
+}
+
 /** An A2A agent as an `ask_<name>` tool: its card is read when the run starts (an agent that can't be reached is a notice). */
 export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aToolOptions = {}): Promise<BuiltTool | { error: string }> {
   const resolved = registry.resolve(A2A_AGENT);
@@ -250,17 +259,29 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
   const extensions = options.humanInTheLoop !== false && supportsExtension(card, KAGENT_HITL_EXTENSION) ? [KAGENT_HITL_EXTENSION] : [];
   const name = toToolName(`ask_${config.name}`);
 
-  /** Send one message and turn the task it ends with into the tool's outcome. */
+  /**
+   * Send one message and turn the task it ends with into the tool's outcome. A Landflow agent on kagent with the
+   * landflow-harness mod reports what it does to a trace for this call (a2a/agent-trace.ts): its real usage, cost, tool
+   * calls and guardrail stops replace the estimate.
+   */
   async function run(message: OutgoingMessage, ctx: ToolContext, rejections = 0): Promise<ToolOutcome> {
     const metadata = { ...landflowTags({ 'agent.id': ctx.agent.id, 'session.id': ctx.session.id, 'run.id': ctx.runId }), ...message.metadata };
-    const result: A2aResult = await callAgent(endpoint, card, { ...message, metadata }, { caller: 'agent', signal: ctx.signal, extensions, onUpdate: throttled(ctx.progress, card) });
+    const trace = message.text && !message.taskId ? traceFor(endpoint.url) : undefined;
+    const progress = ctx.progress && trace ? (remote: RemoteRun) => ctx.progress!(withTrace(remote, trace.summary())) : ctx.progress;
+    let result: A2aResult;
+    let summary: AgentTraceSummary | undefined;
+    try {
+      result = await callAgent(endpoint, card, { ...withMarker(message, trace), metadata }, { caller: 'agent', signal: ctx.signal, extensions, onUpdate: throttled(progress, card) });
+    } finally {
+      summary = await trace?.close();
+    }
     const contexts = (ctx.session.remoteContexts ??= {});
     if (result.kind === 'message') {
       if (result.message.contextId) contexts[config.id] = { contextId: result.message.contextId };
-      return { output: replyOf(result) ?? `(${card.name} gave no answer)`, remote: { agent: card.name, state: 'completed', steps: [] } };
+      return { output: replyOf(result) ?? `(${card.name} gave no answer)`, remote: withTrace({ agent: card.name, state: 'completed', steps: [] }, summary) };
     }
     const { task } = result;
-    const remote = remoteRunOf(card, task);
+    const remote = withTrace(remoteRunOf(card, task), summary);
     contexts[config.id] = { contextId: task.contextId };
     const state = task.status.state;
     if (state === 'TASK_STATE_COMPLETED') return { output: replyOf(result) ?? `(${card.name} gave no answer)`, remote };

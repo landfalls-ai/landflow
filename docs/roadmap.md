@@ -1024,6 +1024,26 @@ four steps of the approved plan:
 - Next: consults (ask a peer) and hand-offs; tool approvals inside a team (the pause a question uses); live budget use
   on the chart. Paperclip-style autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.
 
+## Claude Code agents report what they use (built 2026-11-01)
+
+kagent's Claude Code harness sends no token usage over A2A, so runs estimated what Claude Code agents spent. Now every
+Claude Code agent Landflow deploys gets Landflow's own mod ([a2a.md](a2a.md#the-landflow-harness-mod)):
+
+- **The latest Claude Code**: `landflow-claude-dev` installs 2.1.316 (mods need 2.1.287) behind a wrapper that answers
+  `claude --version` with kagent's compiled-in 2.1.285, which kagent checks strictly.
+- **landflow-harness** (`apps/web/claude-plugins/landflow-harness`), packed from the host and added to every Claude
+  Code deploy when the credential names a Plugin Registry: a request's marker line gives it a trace URL, and it posts
+  each model request's tokens, model and time, each tool call's, the subagents and the turn's end to
+  `POST /api/agent-trace/:id`. It also guards tool calls (secret files, printing the environment, pushes to main and
+  force pushes, merges, git auth settings, wiping the machine, uploads, writes outside the workspace) and masks tokens
+  and keys in tool results.
+- **In the run**: a call's usage is the real one, priced per request (5.5 models' cache reads at 5% of input, Haiku 5.5's
+  long-context tier); team members carry tokens in and out, cache reads, cost, model and time; the Team tab and the
+  actor sheet show them; the Report has **What each agent used** and the run's cost; guardrail stops and masked secrets
+  are checks.
+- Next: the mod's model calls as their own spans; a per-agent guard mode; traces that work across queue-mode workers;
+  live budget use from the trace while a member works.
+
 ## Planned next
 
 **Runbooks from Landfall war rooms.** After a room closes, turn what the responders did (the timeline, the remediation

@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { artifactShape, safeUrl } from '@/lib/shared/artifact-kinds';
 import type { FileChange, RunChanges } from '@/lib/shared/run-changes';
 import type { RunGitHub } from '@/lib/shared/run-repo';
-import { fmtMs, type RunArtifactItem, type RunCheckItem, type RunModel, type RunSpan } from '@/lib/shared/run-trace-model';
+import { fmtMs, spendLine, type RunArtifactItem, type RunCheckItem, type RunModel, type RunSpan } from '@/lib/shared/run-trace-model';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { ArtifactPreview, PREVIEWED } from './artifact-preview';
@@ -349,7 +349,7 @@ function ActorSheet({ id, model, open }: { id: string; model: RunModel; open: (o
           ['Worked', s.workMs ? fmtMs(s.workMs) : undefined],
           ['Asked', s.asked ? `${s.asked} time${s.asked > 1 ? 's' : ''}` : undefined],
           ['Asked others', s.calls ? `${s.calls} time${s.calls > 1 ? 's' : ''}` : undefined],
-          ['Model', s.modelCalls ? `${s.modelCalls} calls · ${s.tokensIn.toLocaleString()} in · ${s.tokensOut.toLocaleString()} out` : undefined],
+          ['Model', spendLine(s)],
           ['Tools', s.toolCalls ? `${s.toolCalls} calls` : undefined],
           ['Messages', s.messages ? `${s.messages} sent` : undefined],
         ]}

@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { teamSnapshotOf, type TeamSnapshot, type TeamSnapshotMember } from '@/lib/shared/agent-teams';
 import { fixCyclesOf, type FixCycle } from '@/lib/shared/fix-cycles';
 import { resolveRunProfile } from '@/lib/shared/run-profiles';
-import { cut, edgeParts, fmtMs, preview, type RunActorStats, type RunEdge, type RunModel, type RunRound, type RunTurn, type RunTurnItem } from '@/lib/shared/run-trace-model';
+import { cut, edgeParts, fmtMs, preview, spendLine, type RunActorStats, type RunEdge, type RunModel, type RunRound, type RunTurn, type RunTurnItem } from '@/lib/shared/run-trace-model';
 import { Badge } from '../ui/badge';
 import { EmptyState } from '../ui/empty-state';
 import { Avatar, Card, SectionTitle, Tap, ToneBadge, actorColor } from './parts';
@@ -220,14 +220,8 @@ export function ActorCard({ s, open, turns = [], cycles = [], rounds = [] }: { s
         </>
       ),
     });
-  if (s.modelCalls)
-    li.push({
-      text: (
-        <>
-          <b>{s.modelCalls}</b> model calls · <b>{s.tokensIn.toLocaleString()}</b> in · <b>{s.tokensOut.toLocaleString()}</b> out
-        </>
-      ),
-    });
+  const spent = spendLine(s);
+  if (spent) li.push({ text: spent });
   if (s.toolCalls && !s.asked)
     li.push({
       text: (

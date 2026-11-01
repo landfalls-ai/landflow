@@ -13,8 +13,21 @@ import { database, type Database } from '../db';
 export const PRICES_KEY = 'ai_prices';
 
 const round = (value: number) => Math.round(value * 1e6) / 1e6;
-/** Anthropic: a cache read costs 0.1× the input price, a (5-minute) cache write 1.25×. */
-const anthropic = (model: string, input: number, output: number): ModelPrice => ({ provider: 'anthropic', model, input, output, cacheRead: round(input * 0.1), cacheWrite: round(input * 1.25) });
+/**
+ * Anthropic: a (5-minute) cache write costs 1.25× the input price and a cache read 0.1× (0.05× on the 5.5 models). A
+ * model with a long-context tier prices a request whose prompt is over `above` tokens at that tier's prices, whole.
+ */
+const anthropic = (model: string, input: number, output: number, options: { read?: number; long?: { above: number; input: number; output: number } } = {}): ModelPrice => ({
+  provider: 'anthropic',
+  model,
+  input,
+  output,
+  cacheRead: round(input * (options.read ?? 0.1)),
+  cacheWrite: round(input * 1.25),
+  ...(options.long && {
+    longContext: { above: options.long.above, input: options.long.input, output: options.long.output, cacheRead: round(options.long.input * (options.read ?? 0.1)), cacheWrite: round(options.long.input * 1.25) },
+  }),
+});
 /** OpenAI: cached input has its own list price; there is no charge for writing to the cache. */
 const openai = (model: string, input: number, output: number, cacheRead?: number): ModelPrice => ({ provider: 'openai', model, input, output, ...(cacheRead !== undefined && { cacheRead }) });
 
@@ -22,7 +35,7 @@ const openai = (model: string, input: number, output: number, cacheRead?: number
 export const DEFAULT_PRICES: ModelPrice[] = [
   anthropic('claude-fable-5-1', 10, 50),
   anthropic('claude-fable-5', 10, 50),
-  anthropic('claude-opus-5-5', 4, 20),
+  anthropic('claude-opus-5-5', 4, 20, { read: 0.05 }),
   anthropic('claude-opus-5', 5, 25),
   anthropic('claude-opus-4-8', 5, 25),
   anthropic('claude-opus-4-7', 5, 25),
@@ -30,14 +43,14 @@ export const DEFAULT_PRICES: ModelPrice[] = [
   anthropic('claude-opus-4-5', 5, 25),
   anthropic('claude-opus-4-1', 15, 75),
   anthropic('claude-opus-4', 15, 75),
-  anthropic('claude-sonnet-5-5', 2, 10),
+  anthropic('claude-sonnet-5-5', 2, 10, { read: 0.05 }),
   anthropic('claude-sonnet-5', 2, 10),
   anthropic('claude-sonnet-4-6', 3, 15),
   anthropic('claude-sonnet-4-5', 3, 15),
   anthropic('claude-sonnet-4', 3, 15),
   anthropic('claude-3-7-sonnet', 3, 15),
   anthropic('claude-3-5-sonnet', 3, 15),
-  anthropic('claude-haiku-5-5', 0.1, 0.5),
+  anthropic('claude-haiku-5-5', 0.1, 0.5, { long: { above: 100_000, input: 0.5, output: 2.5 } }),
   anthropic('claude-haiku-4-5', 1, 5),
   anthropic('claude-3-5-haiku', 0.8, 4),
   anthropic('claude-3-haiku', 0.25, 1.25),
@@ -65,6 +78,15 @@ const priceSchema = z.object({
   output: z.number().min(0).max(100_000),
   cacheRead: z.number().min(0).max(100_000).optional(),
   cacheWrite: z.number().min(0).max(100_000).optional(),
+  longContext: z
+    .object({
+      above: z.number().int().min(1).max(100_000_000),
+      input: z.number().min(0).max(100_000),
+      output: z.number().min(0).max(100_000),
+      cacheRead: z.number().min(0).max(100_000).optional(),
+      cacheWrite: z.number().min(0).max(100_000).optional(),
+    })
+    .optional(),
 });
 export const priceOverridesSchema = z.array(priceSchema).max(500);
 
@@ -115,11 +137,13 @@ export function findPrice(provider: string, model: string, overrides: ModelPrice
 }
 
 /**
- * Estimated cost in USD. `inputTokens` is the whole prompt; the cached parts (`cacheReadTokens`, `cacheWriteTokens`)
- * are priced at the model's cache prices (the input price when it has none) and the rest at the input price.
+ * Estimated cost in USD of one request. `inputTokens` is the whole prompt; the cached parts (`cacheReadTokens`,
+ * `cacheWriteTokens`) are priced at the model's cache prices (the input price when it has none) and the rest at the input
+ * price. A prompt over the model's long-context threshold is priced at that tier, all of it (Haiku 5.5 over 100K tokens).
  */
-export function estimateCost(price: ModelPrice | undefined, inputTokens: number, outputTokens: number, cacheReadTokens = 0, cacheWriteTokens = 0): number {
-  if (!price) return 0;
+export function estimateCost(base: ModelPrice | undefined, inputTokens: number, outputTokens: number, cacheReadTokens = 0, cacheWriteTokens = 0): number {
+  if (!base) return 0;
+  const price = base.longContext && inputTokens > base.longContext.above ? { ...base, ...base.longContext } : base;
   const cached = Math.min(inputTokens, cacheReadTokens + cacheWriteTokens);
   const read = cached ? Math.min(cacheReadTokens, cached) : 0;
   const write = cached - read;

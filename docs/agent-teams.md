@@ -87,9 +87,12 @@ The **Run a Team** node (`core.runTeam`, under AI) runs a published team as one 
 | Inputs | the flow's items, plus Run an Agent's optional **Chat Model**, **Memory** and **Tool** slots: whatever is connected goes to the **lead**, so a flow keeps its model or a tool such as a GitHub branch check on the team node |
 | Outputs | **Done** and **Needs a person** |
 
-Done carries `{ reply, team: { id, name, version }, members: [{ title, asked, tokens, overBudget? }], usage, activity }`
-(`usage` is the whole team's `{ inputTokens, outputTokens }`: the lead, its agent members and what remote members
-reported); Needs a
+Done carries `{ reply, team: { id, name, version }, members: [{ title, asked, tokens, overBudget?, estimated?,
+inputTokens?, outputTokens?, cacheReadTokens?, costUsd?, model?, requests?, ms? }], usage, activity }` (`usage` is the
+whole team's `{ inputTokens, outputTokens, costUsd? }`: the lead, its agent members and what remote members reported).
+A member's cost is its agent's model price (Ollama's is free), or for a Claude Code member on kagent what its
+landflow-harness mod reported, priced ([a2a.md](a2a.md#the-landflow-harness-mod)); `ms` is the time it spent on its
+requests (the lead's whole run). Needs a
 person the same plus `reason`. `activity` is what the run did, for the canvases: `{ durationMs, turns: [{ member, start,
 end }], moments: [{ at, member, tone, text }], steps: { <title>: count } }` (times in milliseconds since the team started). A team that was never published, a deleted team or an empty message fails the node (or the item, with
 Continue on fail), like Run an Agent does. The node shows the team's name under its title (the hidden `teamName`
@@ -130,8 +133,9 @@ member's face and title above it.
    **Needs a person** and a failed *Review* check is recorded; a review records a passed check (`approved` with
    `VERDICT: APPROVE`, `was asked` without a verdict) or a warn one for changes. A reviewer above or below the member it
    reviews isn't held to it: a manager reads its report's work when it comes back.
-7. **Budgets.** Tokens are counted per member: a Landflow agent's model usage, a remote member's A2A usage. A remote member
-   that reports none is estimated from what crossed the wire (its requests, answers, and its steps' arguments and results,
+7. **Budgets.** Tokens are counted per member: a Landflow agent's model usage, a remote member's A2A usage, and for a
+   Claude Code member on kagent what the landflow-harness mod reported for each request (cache reads included). A remote
+   member that reports none is estimated from what crossed the wire (its requests, answers, and its steps' arguments and results,
    about four characters a token): a floor, so it stops late rather than early. The estimate counts against its budget
    (the check says `about … (estimated: it reports no usage)`, and `members[]` marks it `estimated`) but not in the team's
    `usage`. At 80% a warn *Budget* check is recorded, at 100% a fail one: an agent member stops (`budget`), and its tool

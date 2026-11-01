@@ -5,6 +5,7 @@
  * (lib/server/nodes/run-report.ts) at the end of a flow, where it also records the checks and saves the report.
  * Every fact points at the span it came from.
  */
+import { formatCost } from './ai-usage';
 import type { RunChanges } from './run-changes';
 import type { RunActor, RunCheck } from './run-trace';
 import { AGENT_NOTES_PATH, BUILTIN_CHECKS, profilePattern, type BuiltinCheckId, type ClaimRule, type RunProfile } from './run-profiles';
@@ -62,7 +63,24 @@ export interface RunReport {
   problems: ReportProblem[];
   calls: Array<{ from: string; to: string; count: number }>;
   cycles: Array<{ a: string; b: string; rounds: number }>;
-  actors: Array<{ name: string; type: RunActor['type']; role?: string; workMs: number; steps: number; failedSteps: number; tokens: number; asked: number; results: string[]; made: string[] }>;
+  actors: Array<{
+    name: string;
+    type: RunActor['type'];
+    role?: string;
+    workMs: number;
+    steps: number;
+    failedSteps: number;
+    tokens: number;
+    /** USD, when its usage was priced; the models it named; its model requests. */
+    costUsd?: number;
+    models?: string[];
+    modelCalls?: number;
+    asked: number;
+    results: string[];
+    made: string[];
+  }>;
+  /** What the whole run used, and cost where priced. */
+  usage?: { tokens: number; costUsd?: number };
   artifacts: Array<{ name: string; kind?: string; url?: string; by?: string; spanId: string }>;
   /** The files agents wrote or edited (`changes`), the last step that touched each. */
   files: Array<{ path: string; created: boolean; additions: number; deletions: number; by: string[]; spanId: string }>;
@@ -422,6 +440,9 @@ export function buildRunReport(model: RunModel, profile: RunProfile, options: Re
       steps: a.steps,
       failedSteps: a.failedSteps,
       tokens: a.tokensIn + a.tokensOut,
+      ...(a.priced && { costUsd: Math.round(a.costUsd * 1e6) / 1e6 }),
+      ...(a.models.length && { models: a.models }),
+      ...(a.modelCalls && { modelCalls: a.modelCalls }),
       asked: a.asked,
       results: a.results,
       made: a.artifacts.map((x) => x.artifact.name),
@@ -466,6 +487,7 @@ export function buildRunReport(model: RunModel, profile: RunProfile, options: Re
     calls,
     cycles,
     actors,
+    ...(model.tokens.inputTokens + model.tokens.outputTokens > 0 && { usage: { tokens: model.tokens.inputTokens + model.tokens.outputTokens, ...(model.tokens.costUsd !== undefined && { costUsd: model.tokens.costUsd }) } }),
     artifacts,
     files: (options.changes?.files ?? []).map((f) => ({ path: f.path, created: f.created, additions: f.additions, deletions: f.deletions, by: f.actors.map((a) => a.actor.name), spanId: f.changes.at(-1)!.spanId })),
     timeline,
@@ -491,7 +513,8 @@ export function reportMarkdown(report: Omit<RunReport, 'markdown'>, options: { t
   const lines: string[] = [];
   const failed = report.checks.filter((c) => c.status === 'fail').length;
   lines.push(`## ${options.title ?? 'Run report'}`, '');
-  lines.push(`**${report.verdict === 'fail' ? '✗' : report.verdict === 'warn' ? '!' : '✓'} ${report.label}** · ${report.profile.name} profile · ${fmtMs(report.durationMs)} · ${failed} of ${report.checks.length} check${report.checks.length === 1 ? '' : 's'} failed`, '');
+  const spent = report.usage ? ` · ${report.usage.tokens.toLocaleString('en-US')} tokens${report.usage.costUsd !== undefined ? ` (${formatCost(report.usage.costUsd)})` : ''}` : '';
+  lines.push(`**${report.verdict === 'fail' ? '✗' : report.verdict === 'warn' ? '!' : '✓'} ${report.label}** · ${report.profile.name} profile · ${fmtMs(report.durationMs)}${spent} · ${failed} of ${report.checks.length} check${report.checks.length === 1 ? '' : 's'} failed`, '');
   if (report.reported) lines.push(`**Reported** by ${report.reported.by}: ${quote(report.reported.text, 300)}`, '');
   if (options.summary) lines.push(`**Summary** (written by ${options.summary.by} from the facts below): ${options.summary.text.trim()}`, '');
   if (report.checks.length) {
@@ -525,7 +548,8 @@ export function reportMarkdown(report: Omit<RunReport, 'markdown'>, options: { t
     lines.push('### Each actor', '');
     for (const a of report.actors) {
       const facts = [fmtMs(a.workMs), `${a.steps} step${a.steps === 1 ? '' : 's'}${a.failedSteps ? ` (${a.failedSteps} failed)` : ''}`];
-      if (a.tokens) facts.push(`${a.tokens.toLocaleString('en-US')} tokens`);
+      if (a.tokens) facts.push(`${a.tokens.toLocaleString('en-US')} tokens${a.costUsd !== undefined ? ` (${formatCost(a.costUsd)})` : ''}`);
+      if (a.models?.length) facts.push(a.models.join(', '));
       if (a.asked) facts.push(`asked ×${a.asked}`);
       if (a.results.length) facts.push(a.results.join(', '));
       lines.push(`- **${a.name}**${a.role ? ` (${a.role})` : ''}: ${facts.join(' · ')}${a.made.length ? `; made ${a.made.join(', ')}` : ''}`);

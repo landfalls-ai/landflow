@@ -98,9 +98,13 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
   its time, tokens, how often it was asked and its results. A card opens to the actor's **turns** and shows its **fix
   cycles** ([iterations](#iterations-rounds-turns-and-fix-cycles)). Tokens come from every span that reports usage (a
   model call, an agent or team node, a remote agent's answer); a span keeps what the spans under it don't account for,
-  so a team's total is counted once and each member keeps its own.
-- **Report**: the run report, computed live with the run's profile, plus the counts, failed steps, who called whom,
-  each request's result, cycles, waits and artifacts. **Checked** can pick another profile to look at the run through
+  so a team's total is counted once and each member keeps its own. Cost, cache reads and model requests go the same
+  way where a span reports them: a Claude Code agent on kagent reports its real usage through the landflow-harness mod
+  ([a2a.md](a2a.md#the-landflow-harness-mod)), so its card says "4 model calls · 52,310 in (48,000 cached) · 1,204 out
+  · $0.0213 · claude-sonnet-5-5" and its guardrail stops are checks on its request.
+- **Report**: the run report, computed live with the run's profile, plus the counts (tokens with the run's cost when
+  some was priced), failed steps, who called whom, each request's result, what each agent used (time, model calls,
+  tokens, cost, model), cycles, waits and artifacts. **Checked** can pick another profile to look at the run through
   (a flow without one through Software delivery, say) without changing the flow; the header follows it. **Copy as Markdown** copies it. When a Run report node saved one,
   **Saved report** opens it.
 - **Artifacts**: what the run made (below). Code changes first when agents changed files, then documents, links and data.
@@ -340,8 +344,9 @@ images are not loaded.
 
 ## Not built
 
-- Other agents' own telemetry (Claude Code's model calls between its tool calls) joined by trace id, OTLP and
-  OpenInference export, search and comparison across runs, measures over time, re-running from a span, Copy to editor,
+- A Claude Code agent on kagent reports its usage, cost, tool times and guardrail stops through the landflow-harness
+  mod, folded into its request ([a2a.md](a2a.md#the-landflow-harness-mod)); its model calls between its tool calls aren't
+  spans of their own yet. OTLP and OpenInference export, search and comparison across runs, measures over time, re-running from a span, Copy to editor,
   and pausing a running agent so a person can take over. These are phase 4 in the roadmap.
 - **Content kept** is per workflow, not per project.
 - Claims are extracted with the profile's patterns. No model reads replies that lack a structured block.

@@ -4,6 +4,7 @@
  * and what was reported against what was checked. Pure, so the Run report node can use it too.
  * `until` folds only the events up to a time (the time slider replays a run with it).
  */
+import { formatCost } from './ai-usage';
 import { toolInput, type JournalEvent, type RunActor, type RunArtifact, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from './run-trace';
 
 /** What a request to another agent came to, from evidence (what it delivered), not from what the agent said. */
@@ -77,6 +78,13 @@ export interface RunActorStats {
   workMs: number;
   tokensIn: number;
   tokensOut: number;
+  /** Of `tokensIn`, read from the prompt cache (when reported). */
+  cacheRead: number;
+  /** USD, of the usage that was priced (`priced`: some was). Ollama's is free. */
+  costUsd: number;
+  priced: boolean;
+  /** The models its usage names. */
+  models: string[];
   modelCalls: number;
   toolCalls: number;
   /** Requests addressed to it, and what they came to. */
@@ -586,6 +594,10 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
         workMs: 0,
         tokensIn: 0,
         tokensOut: 0,
+        cacheRead: 0,
+        costUsd: 0,
+        priced: false,
+        models: [],
         modelCalls: 0,
         toolCalls: 0,
         asked: 0,
@@ -607,20 +619,30 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
   const asks: Array<{ from: string; to: string; t: number }> = [];
   let tokensIn = 0;
   let tokensOut = 0;
+  let costUsd: number | undefined;
   // Tokens come from every span that reports usage: a model call, an agent or team node (its own model's calls, its
   // members'), a remote agent's answer. A span keeps what the spans with usage nearest under it don't account for, so
-  // nothing counts twice and each actor keeps its own.
-  const own = new Map<string, TokenCounts>();
+  // nothing counts twice and each actor keeps its own. Cost, cache reads and requests go the same way, where reported.
+  type Own = { inputTokens: number; outputTokens: number; cacheRead: number; cost?: number; requests: number };
+  const own = new Map<string, Own>();
+  const ownOf = (id: string) => own.get(id) ?? own.set(id, { inputTokens: 0, outputTokens: 0, cacheRead: 0, requests: 0 }).get(id)!;
   for (const span of order) {
     if (!span.usage) continue;
-    own.set(span.id, own.get(span.id) ?? { inputTokens: 0, outputTokens: 0 });
-    const mine = own.get(span.id)!;
-    mine.inputTokens += span.usage.inputTokens;
-    mine.outputTokens += span.usage.outputTokens;
+    const mine = ownOf(span.id);
+    const u = span.usage;
+    mine.inputTokens += u.inputTokens;
+    mine.outputTokens += u.outputTokens;
+    mine.cacheRead += u.cacheReadTokens ?? 0;
+    mine.requests += u.requests ?? 0;
+    if (u.costUsd !== undefined) mine.cost = (mine.cost ?? 0) + u.costUsd;
     for (let up = span.parentId ? spans[span.parentId] : undefined; up; up = up.parentId ? spans[up.parentId] : undefined) {
       if (!up.usage) continue;
-      const theirs = own.get(up.id) ?? { inputTokens: 0, outputTokens: 0 };
-      own.set(up.id, { inputTokens: theirs.inputTokens - span.usage.inputTokens, outputTokens: theirs.outputTokens - span.usage.outputTokens });
+      const theirs = ownOf(up.id);
+      theirs.inputTokens -= u.inputTokens;
+      theirs.outputTokens -= u.outputTokens;
+      theirs.cacheRead -= u.cacheReadTokens ?? 0;
+      theirs.requests -= u.requests ?? 0;
+      if (u.costUsd !== undefined) theirs.cost = (theirs.cost ?? 0) - u.costUsd;
       break;
     }
   }
@@ -631,6 +653,15 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
     const output = Math.max(0, used.outputTokens);
     owner.tokensIn += input;
     owner.tokensOut += output;
+    owner.cacheRead += Math.max(0, used.cacheRead);
+    if (span.kind !== 'model') owner.modelCalls += Math.max(0, used.requests);
+    if (used.cost !== undefined) {
+      const cost = Math.max(0, used.cost);
+      owner.costUsd += cost;
+      owner.priced = true;
+      costUsd = (costUsd ?? 0) + cost;
+    }
+    if (span.usage?.model && !owner.models.includes(span.usage.model)) owner.models.push(span.usage.model);
     tokensIn += input;
     tokensOut += output;
   };
@@ -816,7 +847,7 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
     rounds: [],
     turns: {},
     outcome: { reported, checked: { ...count, total, label, tone } },
-    tokens: { inputTokens: tokensIn, outputTokens: tokensOut },
+    tokens: { inputTokens: tokensIn, outputTokens: tokensOut, ...(costUsd !== undefined && { costUsd: Math.round(costUsd * 1e6) / 1e6 }) },
     story: [],
   };
   model.rounds = roundsOf(model);
@@ -1081,6 +1112,23 @@ export function edgeParts(edge: RunEdge): string[] {
 export function quietMs(model: RunModel, now: number): number {
   if (!model.live || !model.lastAt) return 0;
   return Math.max(0, now - ms(model.lastAt));
+}
+
+/**
+ * What an actor's model use came to, in one line: "3 model calls · 12,345 in (9,000 cached) · 678 out · $0.0123 ·
+ * claude-sonnet-5-5". Undefined when it used no tokens here.
+ */
+export function spendLine(s: Pick<RunActorStats, 'modelCalls' | 'tokensIn' | 'tokensOut' | 'cacheRead' | 'costUsd' | 'priced' | 'models'>): string | undefined {
+  if (!s.tokensIn && !s.tokensOut) return undefined;
+  return [
+    s.modelCalls ? `${s.modelCalls} model call${s.modelCalls === 1 ? '' : 's'}` : '',
+    `${s.tokensIn.toLocaleString('en-US')} in${s.cacheRead ? ` (${s.cacheRead.toLocaleString('en-US')} cached)` : ''}`,
+    `${s.tokensOut.toLocaleString('en-US')} out`,
+    s.priced ? formatCost(s.costUsd) : '',
+    s.models.join(', '),
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 /** A readable length of time: "420 ms", "8.4 s", "3m 05s". */

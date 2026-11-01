@@ -6,7 +6,8 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { RUN_PROFILES } from '@/lib/shared/run-profiles';
 import { checksLine, type RunReport } from '@/lib/shared/run-report';
-import { cut, edgeParts, fmtMs, preview, resultOf, textOf, type RunModel } from '@/lib/shared/run-trace-model';
+import { formatCost } from '@/lib/shared/ai-usage';
+import { cut, edgeParts, fmtMs, preview, resultOf, spendLine, textOf, type RunModel } from '@/lib/shared/run-trace-model';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
@@ -106,6 +107,7 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
   const failedChecks = model.checks.filter((c) => c.check.status === 'fail' || c.check.status === 'warn');
   const okChecks = model.checks.filter((c) => c.check.status === 'pass' || c.check.status === 'skip');
   const team = teamOf(model);
+  const spenders = team.filter((a) => a.tokensIn + a.tokensOut > 0);
   const name = (id: string) => model.actors.find((a) => a.actor.id === id)?.actor;
   return (
     <div>
@@ -141,7 +143,7 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
           [fmtMs(model.t1 - model.t0), 'run time'],
           [String(team.length), 'taking part'],
           [String(requests.length), 'requests'],
-          [(model.tokens.inputTokens + model.tokens.outputTokens).toLocaleString(), 'tokens'],
+          [(model.tokens.inputTokens + model.tokens.outputTokens).toLocaleString(), model.tokens.costUsd !== undefined ? `tokens · ${formatCost(model.tokens.costUsd)}` : 'tokens'],
           [String(model.failedSteps.length), 'failed steps'],
           [String(made), 'artifacts'],
         ].map(([v, l]) => (
@@ -293,6 +295,21 @@ export function Report({ model, report, open, profile, onProfile }: { model: Run
                 </Item>
               );
             })}
+          </List>
+        </>
+      )}
+
+      {spenders.length > 0 && (
+        <>
+          <SectionTitle>What each agent used</SectionTitle>
+          <List>
+            {spenders.map((a) => (
+              <Item key={a.actor.id} mark={a.priced ? '$' : '·'} onOpen={() => open({ kind: 'actor', id: a.actor.id })}>
+                <b>{a.actor.name}</b>
+                {a.workMs ? ` · ${fmtMs(a.workMs)}` : ''}
+                <Small>{spendLine(a)}</Small>
+              </Item>
+            ))}
           </List>
         </>
       )}

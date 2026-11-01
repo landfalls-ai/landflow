@@ -327,7 +327,7 @@ Landflow can't make the model stop.
 ### Network for Claude Code
 
 kagent's sandboxes reach only what their Agent is granted: the model, kagent's controller and the MCP servers of their
-tools (Landflow). Everything else fails at DNS (kagent's egress gateway answers NXDOMAIN), so `apk add`, `go get`,
+tools (Landflow, but only for an agent that binds at least one of its tools). Everything else fails at DNS (kagent's egress gateway answers NXDOMAIN), so `apk add`, `go get`,
 `npm install` or `pip install` can't run. An **EgressPolicy** grants more origins, and an Agent gets them only by
 naming it in `egressPolicyRefs`.
 
@@ -337,6 +337,13 @@ naming it in `egressPolicyRefs`.
   namespace's EgressPolicies as toggles with their origins), else the credential's. A name kagent doesn't have is
   refused before anything is written, and a list changed in kagent is drift (`egressPolicies`). kagent applies a change
   to running sessions without a restart.
+- A Claude Code agent with Landflow's mod also gets an EgressPolicy of its own, `<name>-landflow`, with Landflow's
+  origin (the credential's Landflow URL), referenced after the others: the mod reports there even when the agent has no
+  Landflow tools ("The landflow-harness mod" below). It is labelled with the agent, isn't offered in **Network access**,
+  goes when the agent is removed or moves off the mod, and a changed one is drift (`landflowEgress`). Landflow's access
+  Role (`deploy/kind/landflow-access.yaml`) may write EgressPolicies for this; with an older Role that only reads them,
+  the deploy writes the agent without it and says the run reports are missing. A Landflow URL with an IP address can't
+  be an EgressPolicy origin, so no policy is written for one.
 - An EgressPolicy destination can carry a credential: the sandbox sends a placeholder header and the gateway swaps in
   a Secret's value, so the runtime never sees it (for a private git host, for example).
 
@@ -384,6 +391,81 @@ later, pulled from Landflow. In it: Go 1.27.0, Node 22.23.4, pnpm 10.28.2, Pytho
 A Go program with a module dependency built and ran in 17 s, nearly all of it compiling the standard library on a cold
 cache. `pnpm add` and `node` took 1.2 s.
 
+### The landflow-harness mod
+
+kagent's Claude Code harness sends no token usage over A2A, so a run could only estimate what its Claude Code agents
+spent. Claude Code 2.1.287 added mods: a plugin's hooks module that sees every model request, tool call and result. So
+every Claude Code agent Landflow deploys gets Landflow's own mod, **landflow-harness**
+(`apps/web/claude-plugins/landflow-harness`), which does three things:
+
+- **Trace.** A request from a run starts with a line `<!-- landflow-trace <url> -->`. The mod takes the line off the
+  prompt before the model reads it, and until the turn ends posts what Claude Code does to that URL
+  (`POST /api/agent-trace/<id>`): each model request's tokens (input, output, cache reads and writes), model and time,
+  subagents' requests too, the tool calls the API ran itself, each tool call's time and outcome, the subagents it
+  started, and the turn's end. Events go in batches at most every 3 s, and once more before the turn ends, so the run
+  has them when the answer arrives.
+- **Guard.** Before a tool call runs, its rules (`hooks/rules.ts`) refuse what an agent here never needs to do. The
+  model reads the reason as the tool's error and carries on another way:
+
+  | Rule | What it stops |
+  | --- | --- |
+  | `secret-file` | reading `.env` files (not `.env.example` and other templates), `.netrc`, `.git-credentials`, `.pgpass`, SSH keys, AWS, Docker, kube and gh credentials, `*.pem` keys, `credentials.json`/`secrets.yaml`, `/var/run/secrets` and `/proc/*/environ`, with file tools or shell readers (`cat`, `grep`, `cp`…) |
+  | `env-dump` | `printenv`, a bare `env`, `export -p`, `declare -x`, a bare `set`, echoing a variable named like a key or token, `gh auth token` |
+  | `git-push` | force pushes, `+refspec` and `:branch` refspecs, pushes to `main` or `master` |
+  | `git-auth-config` | changing git's `http.*`, `credential.*`, `url.*`, `core.sshCommand` or `include` settings, `-c` included |
+  | `merge` | `gh pr merge`, and merging through `gh api …/pulls/<n>/merge` |
+  | `destructive` | `rm -r` on `/`, `~`, `$HOME` or a system folder, `mkfs`, `dd` onto a device, `chmod -R` on `/`, a fork bomb, writing to a disk |
+  | `upload` | `nc`, `socat`, `telnet`; `curl`/`wget` sending a file (`-T`, `-d @file`, `-F x=@file`) |
+  | `write-outside-workspace` | Write, Edit, MultiEdit and NotebookEdit outside the working directory, `/tmp` and `~/.claude` (the same idea as Claude Code 2.1.314's `permissions.blockWritesOutsideWorkingDirectories`) |
+
+  The rules enforce without a marker too. The marker's `guard=report` only reports what would have been stopped;
+  `guard=off` neither.
+- **Redact.** A tool's result is kept with every token or key it shows masked (`[redacted GitHub token]`): private
+  keys, GitHub, Anthropic, OpenAI, AWS, Slack, Google and npm tokens, Landflow's `lfk_` and `lf_` keys,
+  `Authorization` headers and passwords in URLs. A secret that reached a file or a command's output doesn't reach the
+  model or the transcript.
+
+**Deploying.** The host ships the mod (the host image copies `apps/web/claude-plugins` next to `server.js`;
+`LANDFLOW_CLAUDE_PLUGINS_DIR` points elsewhere). When the credential names a **Plugin Registry**, a deploy to a Claude
+Code Harness packs it like any other plugin, pinned to a hash of its files (`landflow-harness@landflow`, source
+`landflow:builtin`), adds it to the template's plugins, opens Landflow's origin to the sandbox (the `<name>-landflow` EgressPolicy in
+"Network for Claude Code"), and keeps `trace: { url: <Landflow URL>/api/agent-trace, a2aUrl }` in the deployment.
+Without that policy an agent with no Landflow tools couldn't reach the URL: the first live run on 2026-11-01 lost every
+report that way, while the same mod in the same image posted them when run with kagent's arguments by hand. Without a registry kagent can't fetch it, so the agent runs without it. A changed mod is a
+new digest: deploy the agent again to take it.
+
+**Calling.** When the Run a Team node, an agent's A2A tool or the A2A Agent node sends a new request to an A2A URL that
+is a Landflow agent deployed with the mod (its `a2aUrl`, else the kagent name the URL ends with when only one agent has
+it), Landflow opens a trace for that call (`apps/web/src/lib/server/a2a/agent-trace.ts`): a random 18-byte id is the
+URL's only credential, so the route is public. The trace lives in the host's memory while the call runs. When the
+answer comes, Landflow waits up to 2 s for the mod's last batch, closes it (the route then answers 410, and the mod
+stops posting there), and uses what it reported:
+
+- the call's usage: tokens, cache reads, requests and the model, priced per request at the agent's provider (Settings
+  → AI prices; Ollama's are free unless priced there). A team member's usage counts against its budget as real usage,
+  not an estimate;
+- the Team tab's card and the actor sheet show each member's model calls, tokens in (and cached), out, cost and model;
+  the Report tab has **What each agent used** and the run's cost next to its tokens;
+- each tool call the guardrails stopped is a **Guardrail** check on the request (warn: "Stopped Bash: git push origin
+  main (git-push: …)"), and masked secrets a **Secrets masked** check;
+- the Run a Team node's `members` carry `inputTokens`, `outputTokens`, `cacheReadTokens`, `costUsd`, `model`,
+  `requests` and `ms`; the A2A Agent node's item carries `usage` (with `costUsd`) and `trace`.
+
+**Claude Code's version.** kagent 1.0 (alpha17, and rc1 of 2026-10-30) compiles in Claude Code 2.1.285 with a strict
+check: the harness runs `claude --version` and refuses anything else (`claude version mismatch`), and the golden actor
+crashes. Mods need 2.1.287 or later. `deploy/docker/claude-harness-dev.Dockerfile` installs the latest Claude Code
+(`CLAUDE_CODE_VERSION`, 2.1.316 on 2026-10-31) and puts a wrapper at `/usr/local/bin/claude` that answers
+`--version` alone with `<version> (kagent pin 2.1.285)` and runs the real binary for everything else; the build checks
+it. Newer versions also bring what the mod reports: `serverToolUses` on each request (2.1.290), Haiku 5.5 (2.1.293),
+blocking hooks (2.1.295), cache writes by TTL (2.1.300) and `isReadOnly` on tool checks (2.1.304).
+
+Checked live on 2026-11-01: the Reviewer on `landflow-claude-dev` (image `c0f96c18`, Claude Code 2.1.316 behind the
+wrapper) became Ready and the read-only Tech Review flow succeeded (`ex_go8NtdO4Yzqv`), its session restored from the new
+snapshot. Locally, Claude Code 2.1.316 with the mod (`--plugin-dir`) against qwen3-coder on Ollama, in kagent's mode
+(`-p --input-format stream-json`), took the marker off, posted each request's real usage (with Ollama's cache reads),
+each tool's time and the turn's total before the result, refused `cat .env` and `git push origin main`, and a token in
+a file reached the model as `[redacted GitHub token]`.
+
 ## Tests
 
 `apps/web/test/a2a.test.ts` runs against `apps/web/test/fake-a2a.ts`, a fake A2A 1.0 agent shaped like kagent's (card,
@@ -411,12 +493,28 @@ Landflow packed when the credential names a registry, and a plugin changed in ka
 runtime drops the approval server and the plugins; a Codex Harness, an OpenAI model and an unknown plugin are refused.
 `apps/web/test/kagent-oci.test.ts` covers the images: a tar that `tar` extracts (folders, scripts executable, long
 paths split), the same digest on every pack, only the plugin's folder in the layer, the registry's version check and
-headers, no tags or unknown digests, and an image packed again from its deployment.
+headers, no tags or unknown digests, and an image packed again from its deployment; Landflow's own mod packed from the
+host's files without its tests or editor types, its pin changing with a file. The registry deploy test checks that the
+mod is added and the deployment keeps where it reports.
+
+`apps/web/test/claude-harness-mod.test.ts` runs the mod's rules and redaction (`hooks/rules.ts`): what each rule stops
+and lets through, and what is masked. `apps/web/test/agent-trace.test.ts` covers a trace (usage priced per request,
+per model and per subagent, tools, guardrails, masks, the limits, closing), the route (public, 204, 400, 404, 410),
+which calls get a trace, the A2A Agent node's item, and the journal's checks. `apps/web/test/run-team.test.ts` runs a
+team whose remote member reports through the fake agent as the mod would. The hooks themselves are tested with Claude
+Code's kit: `claude plugin test apps/web/claude-plugins/landflow-harness` (a marked request traced with the marker
+gone, a push to main refused and reported, enforcing without a marker and report mode, a token masked), and
+`claude plugin validate` checks the module.
 
 ## Not built
 
 - Remote agents' tokens are recorded (timeline, span, `landflow.a2a.tokens`) but don't count toward an agent's daily or
   monthly AI limits, which count Landflow's own model calls.
+- The landflow-harness mod's trace lives in the memory of the host that made the call: in queue mode a worker's call
+  posts to the main's URL, which doesn't know the trace (404), so the run keeps its estimate. Its guard mode comes only
+  from the marker (no per-agent setting yet), its rules are patterns over the command line (a script that does the
+  same thing gets past them), and a continuation of a paused task (an answer, an approval) carries no marker, so that
+  part is estimated. It needs a Plugin Registry and the Claude Code version wrapper while kagent pins 2.1.285.
 - The dialog doesn't preview the agent card before saving; a wrong URL shows as a notice when a run starts.
 - Landflow doesn't serve A2A itself: other agents can't call a Landflow agent over A2A yet (they can call its tools over
   MCP).

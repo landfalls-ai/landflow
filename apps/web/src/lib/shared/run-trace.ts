@@ -45,6 +45,14 @@ export type SpanStatus = 'running' | 'waiting' | 'success' | 'error' | 'canceled
 export interface TokenCounts {
   inputTokens: number;
   outputTokens: number;
+  /** Of the input, read from and written to the prompt cache, when the model said so. */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** USD, when it was priced (a remote agent's mod reports its real usage; a team prices its members). */
+  costUsd?: number;
+  /** Model requests behind these tokens, when known (a remote agent's, which has no model spans of its own here). */
+  requests?: number;
+  model?: string;
 }
 
 export type RunArtifact = NodeArtifact;

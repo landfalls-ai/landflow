@@ -326,6 +326,11 @@ export interface KagentDeployment {
   plugins?: KagentPlugin[];
   /** The EgressPolicies its Agent references (what its sandbox may reach); absent, the credential's. */
   egressPolicies?: string[];
+  /**
+   * Claude Code with Landflow's landflow-harness mod (docs/a2a.md, "The landflow-harness mod"): where the mod posts what
+   * the agent does (`<landflowUrl>/api/agent-trace`), so a run shows its real tokens, cost and tool calls.
+   */
+  trace?: { url: string; /** The agent's A2A URL then, to know a call goes to it. */ a2aUrl?: string };
 }
 
 /**
@@ -495,6 +500,8 @@ export interface RemoteRun {
   /** What it said between the tool calls, in order with them (`afterSteps`). */
   said?: RemoteSaid[];
   usage?: TokenUsage;
+  /** What the agent reported through Landflow's landflow-harness mod (a Claude Code agent on kagent). */
+  trace?: AgentTraceSummary;
 }
 
 /** One step of a session, as the UI shows it. Entries are upserted by id while a run streams. */
@@ -546,6 +553,65 @@ export type TimelineEntry =
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Of `inputTokens`, read from and written to the prompt cache, when the model said so. */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** What it cost in USD when Landflow priced it from what the agent reported (a remote agent's mod). */
+  costUsd?: number;
+  /** Model requests behind it, when the agent reported them. */
+  requests?: number;
+  /** The model that answered (the last one, when several did). */
+  model?: string;
+}
+
+/** What one model, or one subagent, of a traced agent used (`AgentTraceSummary`). */
+export interface TraceUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  /** Model requests. */
+  requests: number;
+  model?: string;
+}
+
+/** A tool call Landflow's guardrails stopped (or, with guard=report, would have stopped) inside a remote agent. */
+export interface TraceGuardDecision {
+  /** secret-file, env-dump, git-push, git-auth-config, merge, destructive, upload, write-outside-workspace */
+  rule: string;
+  tool: string;
+  action: 'deny' | 'report';
+  /** The command or path, with secrets masked and cut short. */
+  arg?: string;
+  reason?: string;
+  /** The subagent that made the call; absent, the main loop. */
+  agent?: string;
+}
+
+/**
+ * What a Claude Code agent on kagent reported through the landflow-harness mod for one call (server/a2a/agent-trace.ts):
+ * its real token usage and cost, per model and per subagent, its tool calls and what the guardrails stopped.
+ */
+export interface AgentTraceSummary {
+  usage: TraceUsage;
+  models: Array<TraceUsage & { model: string }>;
+  /** The subagents it started, with what each used. */
+  agents: Array<TraceUsage & { id: string; kind?: string; description?: string }>;
+  tools: { calls: number; failed: number; ms: number };
+  /** Time spent waiting on the model, ms (subagents' included, so it can exceed the turn). */
+  modelMs: number;
+  /** The main loop's turn, ms. */
+  turnMs?: number;
+  /** Tool calls the API ran itself (web search, code execution). */
+  serverTools?: number;
+  guard: TraceGuardDecision[];
+  guardMode?: 'enforce' | 'report' | 'off';
+  /** Tool results that had a secret masked, and the kinds. */
+  redacted: number;
+  redactedKinds?: string[];
+  /** The mod's version. */
+  mod?: string;
 }
 
 export interface PendingCall {
