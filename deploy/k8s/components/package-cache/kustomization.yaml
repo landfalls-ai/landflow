@@ -1,0 +1,13 @@
+# Optional: the package cache for the agents' sandboxes (docs/a2a.md, "Network for Claude Code"). One Service, landflow-cache:8080,
+# fronted by nginx: /npm/ Verdaccio, /go/ Athens (modules and the checksum database), /pypi/ proxpi, /apk/ an nginx proxy_cache
+# of Alpine's mirror. Each store has a PersistentVolumeClaim, so a restart keeps what was fetched. Sandboxes in kagent reach no
+# registry directly; they reach this through the bridge (deploy/kind/bridge.yaml).
+#
+# The pods carry part-of=landflow-cache, not landflow: the OrbStack overlay's imagePullPolicy: Never patch is for images built here.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - nginx.yaml
+  - verdaccio.yaml
+  - athens.yaml
+  - proxpi.yaml

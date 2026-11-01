@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landflow-cache-go
+  labels: { app.kubernetes.io/name: landflow-cache-go, app.kubernetes.io/part-of: landflow-cache }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: landflow-cache-go }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: landflow-cache-go, app.kubernetes.io/part-of: landflow-cache }
+    spec:
+      containers:
+        - name: athens
+          image: gomods/athens:v0.16.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: ATHENS_STORAGE_TYPE, value: disk }
+            - { name: ATHENS_DISK_STORAGE_ROOT, value: /var/lib/athens }
+            - { name: ATHENS_PORT, value: ":3000" }
+            # Modules come from proxy.golang.org (Athens defaults to GOPROXY=direct, which needs VCS access); the checksum
+            # database is proxied at /sumdb/sum.golang.org, so GOSUMDB works through this cache.
+            - { name: ATHENS_GO_BINARY_ENV_VARS, value: "GOPROXY=https://proxy.golang.org" }
+            - { name: ATHENS_SUM_DBS, value: "https://sum.golang.org" }
+            - { name: ATHENS_LOG_LEVEL, value: info }
+          ports: [{ name: http, containerPort: 3000 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 768Mi }
+          volumeMounts:
+            - { name: storage, mountPath: /var/lib/athens }
+      volumes:
+        - name: storage
+          persistentVolumeClaim: { claimName: landflow-cache-go }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: landflow-cache-go
+  labels: { app.kubernetes.io/name: landflow-cache-go, app.kubernetes.io/part-of: landflow-cache }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-cache-go
+  labels: { app.kubernetes.io/name: landflow-cache-go, app.kubernetes.io/part-of: landflow-cache }
+spec:
+  selector: { app.kubernetes.io/name: landflow-cache-go }
+  ports: [{ name: http, port: 3000, targetPort: http }]

@@ -912,11 +912,17 @@ Code runtime that write the plugin in this repository and open a draft pull requ
 - **Network for Claude Code** ([a2a.md](a2a.md#network-for-claude-code)): kagent's sandboxes had no egress at all.
   Landflow now writes the Agent's `egressPolicyRefs` (the kagent card's **Network access**, else the credential's
   **Egress Policies**), with drift, and `deploy/kind/egress-dev.yaml` grants the package registries (Alpine, Go, npm,
-  PyPI).
+  PyPI); since 2026-11-01 only through the package cache (below).
 - **A toolchain image for Claude Code** ([a2a.md](a2a.md#a-toolchain-image-for-claude-code)): the Harness
   `landflow-claude-dev` runs Claude Code on one common image (Go, Node with pnpm, Python with uv, a C toolchain), served
   from Landflow's registry by digest. Nothing project-specific is baked in: a project's dependencies come over the
   network. `/v2` serves manifests with their own media type and streams blobs.
+- **A package cache and Go's standard library pre-built** ([a2a.md](a2a.md#network-for-claude-code)): sandboxes reach no
+  registry. `deploy/k8s/components/package-cache` (in the OrbStack overlay) runs `landflow-cache:8080` in `landflow-dev`:
+  nginx in front of Verdaccio (npm), Athens (Go modules and the checksum database), proxpi (PyPI) and an nginx
+  `proxy_cache` of Alpine's mirror, each on a PVC. The bridge carries it to kind, `landflow-dev-packages` allows only
+  its origin, the Harness env points the package tools at it, the image's apk repositories use it, and
+  `GOCACHE=/opt/go-build` holds Go's standard library built at image build time.
 - **The host's data on its volume** on OrbStack (`landflow-data`, local-path), so credentials, agents and the images
   Landflow serves kagent survive a rollout.
 - **GitHub flow steps**: a bundled `github` plugin (`plugins/github`, TypeScript, 7111/7211), one **GitHub** node for
@@ -952,8 +958,8 @@ Code runtime that write the plugin in this repository and open a draft pull requ
 - Next:
   - the team and flow as a template (agents, the workflow and its credentials named) instead of a setup script;
   - GitHub's MCP server as an agent tool, for reviews and comments on the pull request;
-  - caches in the cluster (a Go module proxy, an npm and PyPI mirror) so repeated installs stay local, and Go's
-    standard library pre-built in the image.
+  - project dependencies baked into the image or a warm project cache (the package cache keeps them local, not
+    installed).
 
 ## Run Trace (built 2026-10-31)
 

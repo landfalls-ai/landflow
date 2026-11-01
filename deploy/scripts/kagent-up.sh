@@ -6,7 +6,7 @@
 #      logs going to Landflow's telemetry backend when it runs (the orbstack-observability overlay);
 #   3. the bridge both ways (deploy/kind/bridge.yaml, bridge-otel.yaml);
 #   4. the Harnesses Landflow's agents run on (deploy/kind/harness.yaml, kagent's own runtime, and harness-claude.yaml, Claude
-#      Code), the package registries their sandboxes may reach (deploy/kind/egress-dev.yaml) and a ServiceAccount that may
+#      Code), the package cache their sandboxes may reach (deploy/kind/egress-dev.yaml) and a ServiceAccount that may
 #      write agents in the kagent namespace (deploy/kind/landflow-access.yaml), whose token goes into a Landflow "kagent
 #      cluster" credential, with Landflow's registry for Claude Code plugins and the EgressPolicy every agent references;
 #   5. the example agent: "Text formatter" (deploy/kind/agents/text-formatter.json) created and published in Landflow, then
@@ -44,6 +44,9 @@ step() { printf '\n== %s\n' "$*"; }
 
 [ -x "$KAGENT_CLI" ] || { echo "kagent CLI not found at $KAGENT_CLI (set KAGENT_CLI)" >&2; exit 1; }
 HOST_IP=$(orb -n "$NS" get svc landflow-host -o jsonpath='{.spec.clusterIP}')
+# The package cache (deploy/k8s/components/package-cache, in the orbstack overlay): the sandboxes' only way to a registry.
+CACHE_IP=$(orb -n "$NS" get svc landflow-cache -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+[ -n "$CACHE_IP" ] || { echo "no landflow-cache in $NS: apply the orbstack overlay (kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-observability)" >&2; exit 1; }
 OTEL_IP=$(orb -n "$NS" get svc landflow-lgtm -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
 
 step "kind cluster $CLUSTER"
@@ -56,8 +59,10 @@ fi
 # Agent Substrate's per-actor networking answers ARP for the sandboxes' addresses on the node.
 docker exec "$CLUSTER-control-plane" sysctl -qw net.ipv4.conf.all.proxy_arp=1
 
-step "bridge to Landflow (landflow-host $HOST_IP${OTEL_IP:+, landflow-lgtm $OTEL_IP})"
-k apply -f <(sed "s/LANDFLOW_HOST_IP/$HOST_IP/" deploy/kind/bridge.yaml) 2>/dev/null || true # the kagent namespace may not exist yet
+bridge() { sed -e "s/LANDFLOW_HOST_IP/$HOST_IP/" -e "s/LANDFLOW_CACHE_IP/$CACHE_IP/" deploy/kind/bridge.yaml; }
+
+step "bridge to Landflow (landflow-host $HOST_IP, landflow-cache $CACHE_IP${OTEL_IP:+, landflow-lgtm $OTEL_IP})"
+k apply -f <(bridge) 2>/dev/null || true # the kagent namespace may not exist yet
 if [ -n "$OTEL_IP" ]; then
   k apply -f <(sed "s/LANDFLOW_OTEL_IP/$OTEL_IP/" deploy/kind/bridge-otel.yaml)
 else
@@ -77,7 +82,7 @@ if [ "$(h get values substrate -n ate-system -o json | python3 -c 'import json,s
     --set otel.endpoint=http://landflow-otel.landflow.svc.cluster.local:4317 --set otel.traces.samplingRatio=1.0 --wait --timeout 10m >/dev/null
   echo "Agent Substrate telemetry on"
 fi
-k apply -f <(sed "s/LANDFLOW_HOST_IP/$HOST_IP/" deploy/kind/bridge.yaml)
+k apply -f <(bridge)
 k rollout status deployment/kagent-controller -n kagent --timeout=300s
 
 step "Landflow's access to kagent"

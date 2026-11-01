@@ -14,8 +14,11 @@ namespace: landflow-dev
 resources:
   - namespace.yaml
   - ../../base
-# Uncomment for Postgres and Valkey in the namespace (both images come from Docker Hub unless already local):
-# components:
+# The package cache for the agents' sandboxes (Verdaccio, Athens, proxpi and an Alpine cache behind one Service,
+# landflow-cache:8080; docs/a2a.md). Its images come from Docker Hub unless already local.
+# Uncomment postgres and valkey for those in the namespace (also from Docker Hub):
+components:
+  - ../../components/package-cache
 #   - ../../components/postgres
 #   - ../../components/valkey
 images:
