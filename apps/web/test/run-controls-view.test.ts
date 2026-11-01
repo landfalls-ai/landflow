@@ -36,7 +36,7 @@ describe('run-it-again controls', () => {
     expect(html).toContain('Run it again');
     expect(html).toContain('pinned');
     expect(html).toContain('Manual Trigger');
-    expect(html).toContain('starts here');
+    expect(html).toContain('runs again from here');
     expect(html).toContain('runs again');
     expect(html).toContain('Re-run from here');
     expect(html).toContain('Ask Developer again');
