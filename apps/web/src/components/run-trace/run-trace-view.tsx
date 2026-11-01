@@ -30,6 +30,7 @@ import { LineCommentsProvider, useLineComments } from './line-comments';
 import { Card, ToneBadge, clock } from './parts';
 import { Report } from './report';
 import { MembersAtWork, RerunOfBadge, RunControlsProvider } from './run-controls';
+import { RunTimelineCard } from './run-timeline-card';
 import { TakeOver } from '../editor/team-pause';
 import { DetailSheet, type Open } from './sheet';
 import { Story } from './story';
@@ -487,6 +488,8 @@ function TraceBody({
         <h2 className="break-words text-[16px] font-semibold leading-tight text-t1">{model.run?.name ?? 'Run'}</h2>
         <Head model={model} report={report} now={now} replay={replay} />
       </div>
+
+      <RunTimelineCard model={model} onStory={() => setTab('story')} />
 
       {!replay && <MembersAtWork executionId={executionId} members={working.members} onChanged={() => { working.refresh(); refresh(); }} />}
 

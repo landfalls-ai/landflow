@@ -25,6 +25,9 @@ browser in `localStorage` (`landflow-look`), set on `<html data-look>` before pa
 new look, and read in components with `useLook()` / `useNewLook()` from `components/shell/look-toggle.tsx`. The git
 branch `design-before-blocks` keeps the code as it was before these designs.
 
+What the new look draws so far: a run as a timeline above the Run Trace's tabs and under Running now on Home and the
+Executions page ([run-trace.md](run-trace.md#a-run-as-a-timeline)).
+
 ## Canvas
 
 | | n8n | Landflow | |

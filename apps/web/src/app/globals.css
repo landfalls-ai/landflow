@@ -464,6 +464,45 @@ body {
   tab-size: 2;
 }
 
+/* A run as a timeline (components/run-trace/run-timeline-card.tsx): a ring that grows out of the step at work, in its
+   colour (--halo), and a glint that runs along the filled line while the run goes on. */
+.lf-halo {
+  position: relative;
+}
+.lf-halo::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 2px solid var(--halo, var(--ac));
+  animation: lf-halo 1.8s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes lf-halo {
+  from {
+    opacity: 0.75;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+}
+.lf-glint {
+  background-image: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.85) 50%, transparent 100%);
+  background-size: 40px 100%;
+  background-repeat: no-repeat;
+  animation: lf-glint 2.2s linear infinite;
+}
+@keyframes lf-glint {
+  from {
+    background-position: -40px 0;
+  }
+  to {
+    background-position: calc(100% + 40px) 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

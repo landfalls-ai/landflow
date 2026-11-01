@@ -136,6 +136,27 @@ the run loads, that member's sheet. With `tab=story&turn=<n>` instead it scrolls
 and marks it (a ring and a flash): a team node's ribbon links each turn this way (`turnEntryKey` in
 `shared/run-headlines.ts`).
 
+### A run as a timeline
+
+In the new look ([the look](ui-review.md#the-look)) a card above the tabs shows the run as a timeline
+(`components/run-trace/run-timeline-card.tsx`, built by `runTimeline()` in `lib/shared/run-timeline.ts`):
+
+- **The card**: the face of who leads the run (the team's lead, else its first agent, else the flow's icon), the workflow,
+  who and which team, and a status pill: **On track**, **Needs you**, **Over budget** (a member past the budget its team
+  gave it), **Failed** or **Done**. Below: how long it ran and the tokens it used.
+- **The steps**: for a team run, its members' turns in the order they started (a member asked twice in a row is one
+  step), each named by its result where a [headline](#headlines) gives one ("14 tests pass", "Typecheck failed"), else by
+  what the member does, read from its title or role ("Planned", "Built", "Reviewed"); for any other run, its nodes once
+  each in the order they first ran. While the run goes on, the members not asked yet follow as steps to come, and the
+  run's end closes the line (**Delivered**, **Done**, or **Finish** to come). A long run keeps its first step and the latest
+  ones, so it reads on a phone.
+- **Now**: done steps are green checks joined by a line that fills as the run goes, with a glint running along it while
+  it is live. The member at work sits on its step with its face, a ring growing out of it in its colour, and a bubble
+  saying what it does ("Bash: pnpm test"). A wait for a person pulses amber with what it asks, and **Answer below** scrolls
+  to Needs you; a failure is a red cross with **Re-run from here** ([run it again](#run-it-again)).
+- **Elsewhere**: the same timeline, from each run's own journal, is the card of every run going on under **Running now**
+  on Home and the Executions page (a tap opens its Run Trace).
+
 ### Headlines
 
 A Run a Team node keeps the moments of its run on its output (`activity.moments`: tests pass or fail, a typecheck or

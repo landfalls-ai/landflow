@@ -16,6 +16,8 @@ import { CountUp } from '@/components/ui/count-up';
 import { AppIcon, NodeIcon } from '@/components/ui/icon';
 import { SectionLabel } from '@/components/ui/inputs';
 import { SuggestionsInbox } from '@/components/brain/suggestions-inbox';
+import { LiveRuns } from '@/components/run-trace/run-lists';
+import { useNewLook } from '@/components/shell/look-toggle';
 
 interface Stats {
   workflows: number;
@@ -59,6 +61,7 @@ export default function Overview() {
   const router = useRouter();
   const [stats, setStats] = useState<Stats>();
   const [plugins, setPlugins] = useState<PluginSummary[]>();
+  const newLook = useNewLook();
   const [executions, setExecutions] = useState<ExecutionSummary[]>();
   const [nodeTypes, setNodeTypes] = useState(0);
 
@@ -110,6 +113,8 @@ export default function Overview() {
         </section>
 
         <SuggestionsInbox />
+
+        {newLook && executions && <LiveRuns executions={executions} />}
 
         <section className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[1.4fr_1fr]">
           <Panel title="Recent executions" href="/executions" linkLabel="View all">
