@@ -232,6 +232,18 @@ a recorded team keep the generic who-called-whom graph. The **Story** tab opens 
 its node kept (see [Run Trace](run-trace.md#headlines)). A team member's question waits as a form: Needs you's **Answer**
 opens the run's form page.
 
+### Pause a member and take over
+
+While a team node runs, **Pause** (the node's Now card and tile, the Run Trace) stops one member and lets a person
+steer it. A Landflow agent, the lead included, stops at its next step boundary, keeps its session and waits; the node
+shows it paused, and a **Take over** box takes the next instruction, which is added to the member's conversation as a
+message from the person before it goes on. A remote member is **stopped and redirected**: its A2A task is cancelled
+and the instruction goes to the same conversation as a new message. The wait is in the run's process (a timeout,
+`LANDFLOW_TEAM_PAUSE_MINUTES`, lets the member carry on alone) and does not survive a host restart; see
+[Run Trace](run-trace.md#pause-and-take-over). From the Run Trace a finished run can also **Ask this member again**: the
+team node runs again with the lead told to ask only that member the same message
+([Run it again](run-trace.md#run-it-again)).
+
 ### Turn into a team
 
 On a canvas, a selected **Run an Agent** node that has **A2A Agent** (or Run an Agent) nodes attached as tools gets a

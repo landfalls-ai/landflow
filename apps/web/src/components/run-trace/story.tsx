@@ -13,6 +13,7 @@ import { headlinesOf, type Headline } from '@/lib/shared/run-headlines';
 import { Badge } from '../ui/badge';
 import { EmptyState } from '../ui/empty-state';
 import { Avatar, NowLine, ResultChip, Tap, clock, who } from './parts';
+import { RerunFromHere } from './run-controls';
 import type { Open } from './sheet';
 
 function Head({ children, at }: { children: ReactNode; at: string }) {
@@ -247,13 +248,18 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
     case 'stepfail': {
       const s = entry.span;
       return (
-        <Line tone="bad" icon={<TriangleAlert className="size-4" />} onOpen={() => open({ kind: 'span', id: s.id })} label={`${s.name} failed`}>
-          {who(s.actor)}{' '}
-          <span>
-            {s.name} failed{s.error ? `: ${cut(s.error, 100)}` : ''}
-          </span>
-          <span className="ml-1.5 font-mono text-[11px] text-t3">{clock(entry.at)}</span>
-        </Line>
+        <>
+          <Line tone="bad" icon={<TriangleAlert className="size-4" />} onOpen={() => open({ kind: 'span', id: s.id })} label={`${s.name} failed`}>
+            {who(s.actor)}{' '}
+            <span>
+              {s.name} failed{s.error ? `: ${cut(s.error, 100)}` : ''}
+            </span>
+            <span className="ml-1.5 font-mono text-[11px] text-t3">{clock(entry.at)}</span>
+          </Line>
+          <div className="pb-1 pl-9">
+            <RerunFromHere spanId={s.id} model={model} />
+          </div>
+        </>
       );
     }
     case 'artifact': {

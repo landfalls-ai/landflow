@@ -117,6 +117,9 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
 - **Artifacts**: what the run made (below). Code changes first when agents changed files, then documents, links and data.
 - **The detail sheet**: tap anything to open it. It is a bottom sheet on a phone and a side panel on a wide screen,
   showing the actor and caller, times, input, output or error, and the artifacts and checks inside.
+- **Run it again** (in the detail sheet of a node, a step inside it or a member's request, and under a failed step in
+  the Story and the Trace): see [below](#run-it-again).
+- **Pause and take over** (the strip **At work now**, an agent's sheet, **Needs you**): see [below](#pause-and-take-over).
 - **The time slider**: scrub or replay the run. Tapping a time in the sheet moves it there. A live run follows the end
   until you move the slider.
 
@@ -414,6 +417,52 @@ Set `LANDFLOW_OTLP_TRACES_URL` to an OTLP/HTTP traces endpoint (`http://landflow
 - **Never in the way**: it runs after the run, in the background; spans go out in batches of 200, each request is
   tried twice, and a failure is logged and dropped.
 
+## Run it again
+
+A finished run (a live one can't be re-run from a step) has three ways to go again from a span, all in its detail sheet,
+and **Re-run from here** also sits under every failed step in the Story and the Trace. The sheet shows the flow as a
+column: the steps before the node keep **this run's outputs** (marked *pinned*), the node is *starts here*, and it and
+what follows are *runs again*.
+
+- **Re-run from here** re-runs the flow from the node the span belongs to (`POST /api/executions/:id/rerun` with
+  `scope: 'from'`, the original version of the workflow). The earlier nodes are not run: their outputs are copied from
+  this execution (`planRerun` in `lib/server/runner.ts`, the same re-run the execution page's menu uses). The new execution
+  links back with `rerunOf`; Landflow opens its Run Trace with a toast, and its header says **Re-run from "Run Report" of
+  exec_…** with a link to the earlier run.
+- **Ask Developer again** (on a member's request under a Run a Team node, asked by the lead) sends the same message to the
+  same member in a new turn. It is a re-run of the Run a Team node from this run with the node's message replaced, for
+  that run only, by an instruction to the lead: ask that one member exactly this message, once, ask no one else and report
+  the answer as it came (`askMember: { member, message }` on the rerun route; `lib/server/agent-teams/ask-again.ts`). The
+  saved workflow is not changed (the new execution's workflow snapshot carries the changed message). Because the lead is
+  a model, it may not follow the instruction to the letter; the Story shows what it asked.
+- **Copy to editor** opens the workflow in the editor at `?execution=<id>&pin=<nodeId>`: the editor shows the run on the
+  canvas as **Debug in editor** does and pins the outputs of the steps that ran before that node as test data (`pin=all`
+  pins every step). Fix the flow, then run it: pinned steps return their data instead of running. It is not saved until
+  you save.
+
+## Pause and take over
+
+Stop a team member mid-task, read where it is, write its next instruction and let it go on, without cancelling the run.
+It works on the members of a **Run a Team** node, the lead included, while the run is live.
+
+- **Pause** (a button on the team node's Now card, on the canvas tile, in the Run Trace's **At work now** strip and on an
+  agent's sheet) asks a Landflow agent to stop at its next step boundary, after the model call or tool calls it is in
+  the middle of. It keeps its session. The member shows as paused (an amber frame and a pause badge on the node, **Paused:
+  waiting for you**), and **Needs you** and the Now card show a **Take over** composer: a text box and **Continue**.
+- The instruction is added to the member's conversation as a message from the person ("A person paused you to give you
+  new instructions…") before its loop goes on. **Continue as it was** (an empty box) lets it carry on unchanged.
+- A **remote** member (a2a, on kagent) can't be stopped between steps from outside. Its button is **Stop and redirect**:
+  Landflow cancels the A2A task (`CancelTask`) and sends your instruction to the same conversation (`contextId`) as a new
+  message, so the member keeps what it said but starts a new task; work in the cancelled task's own sandbox may be lost.
+- The journal records it: a `wait` span `<Member> is paused` (attrs `wait: 'pause'`) under the member's request, your
+  instruction as a message from you in it, and the request's state `paused` while it lasts.
+
+How the wait works: the pause is in the memory of the process that runs the execution, inside the team run's open call
+(the lead keeps waiting for its report, and the run stays `running`). It ends with your instruction, when the run is
+stopped, or after `LANDFLOW_TEAM_PAUSE_MINUTES` (default 30), when the member carries on without one and the journal says
+so. A host restart ends the run as any run is interrupted (the pause is not saved), and in queue mode the pause routes
+only reach the process that runs the execution.
+
 ## HTTP API
 
 | Route | What it does |
@@ -422,13 +471,21 @@ Set `LANDFLOW_OTLP_TRACES_URL` to an OTLP/HTTP traces endpoint (`http://landflow
 | `GET /api/executions/:id/changes` | The run's branch compared with its base on GitHub (Repository → Compare, flow's credential): `{ available: true, repository, branch: { base, head, aheadBy, behindBy, totalCommits, url, files: [{ path, status, additions, deletions, patch? }], truncated, note? }, fetchedAt }`, or `{ available: false, reason }`. |
 | `POST /api/executions/:id/checks` | `{ spanId, name, subject?, decision: 'accepted' \| 'sent_back', note? }`: a person's decision on a failed check (`subject` picks one of a span's checks of that name, as a team's Budget for each member). |
 | `POST /api/executions/:id/gate` | `{ decision, note? }`: answers a Run report waiting on its failed checks, and resumes the run. |
+| `POST /api/executions/:id/rerun` | `{ scope: 'from', nodeId, version?, askMember?: { member, message } }`: re-run from a node (the earlier ones keep this run's outputs); `askMember` (the node is a Run a Team) asks one member the same message again. → 202 `{ executionId }` |
+| `GET /api/executions/:id/agents` | the team members of a live execution that can be paused: `{ members: [{ member, kind: 'agent' \| 'remote', state: 'working' \| 'pausing' \| 'paused', since? }] }` |
+| `POST /api/executions/:id/agents/:member/pause` | pause a member (by its title): an agent at its next step boundary, a remote member at once → `{ member, kind, state }` (404 when it isn't working here) |
+| `POST /api/executions/:id/agents/:member/continue` | `{ message? }`: the person's instruction to a paused member, which goes on with it (409 when it isn't paused) |
 | `GET /api/runs/needs-you` | Across the runs you can see: waits for a person (`approval`, `form`, `question`, `gate`) and failed checks of the last 7 days nobody decided on. |
 | `GET /api/runs/search`, `/api/runs/compare?a=&b=`, `/api/runs/measures?workflowId=` | Search, compare and measures across runs ("Search, compare and measures" below). |
 
 ## Not built
 
-- Re-running from a span, Copy to editor, and pausing a running agent so a person can take over. These are phase 4 in
-  the roadmap.
+- Re-running from a span re-runs the flow from a *node*: a step inside an agent (a tool call, a member's turn) can't be
+  re-run on its own, and "Ask again" goes through the lead (a model), not straight to the member. Copy to editor pins
+  the first output with items of each earlier step and does not keep the run's other branches' outputs.
+- Pausing works on the members of a Run a Team node (not a Run an Agent node's agent or a sub-agent), only in the
+  process that runs the execution, and is lost on a host restart. A Landflow agent stops between steps, not in the
+  middle of a model call or a tool; a remote member can only be stopped and redirected.
 - Other agents' own spans (Claude Code's OpenTelemetry) are not joined to the trace by trace id yet.
 - Search reads the journal of runs that have one. It matches the stored text of an event with `LIKE`, so it is not
   ranked or stemmed, and a request reads at most 1,000 candidate runs. A run profile can't define measures of its own

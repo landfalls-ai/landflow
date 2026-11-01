@@ -29,6 +29,7 @@ import { agentSessionJournal } from '../journal/agent-session';
 import { agentModel } from './models';
 import { personaPrompt } from '../../shared/persona';
 import { agentStore, configOf } from './store';
+import type { MemberPause } from '../agent-teams/pause';
 import { buildToolset, dedupe, type BuiltTool, type ToolContext } from './tools';
 
 const MAX_RESULT_CHARS = 16_000;
@@ -67,6 +68,8 @@ export interface TeamRole {
   budgetTokens?: number;
   /** Called with the answer the model is about to give (and the session so far): text back is told to the model (as a message) and the loop goes on. */
   beforeAnswer?(reply: string, session: AgentSession): string | undefined;
+  /** A person may pause the member between steps and give it an instruction (agent-teams/pause.ts). */
+  pause?: MemberPause;
 }
 
 export interface RunResult {
@@ -342,6 +345,16 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     const budget = limits.length ? Math.min(...limits) : 0;
     while (iterations < Math.min(200, Math.max(1, config.settings.maxIterations))) {
       if (request.signal?.aborted) return { reason: 'canceled' };
+      // A person asked for a pause: stop at this step boundary, keep the session, and go on with their instruction.
+      if (request.team?.pause?.requested()) {
+        const lastTool = [...session.timeline].reverse().find((e): e is Extract<TimelineEntry, { type: 'tool' }> => e.type === 'tool');
+        const instruction = await request.team.pause.wait({ summary: lastTool ? `Paused after ${lastTool.label}` : 'Paused before its first step', signal: request.signal });
+        if (request.signal?.aborted) return { reason: 'canceled' };
+        if (instruction) {
+          session.messages.push({ role: 'user', content: `A person paused you to give you new instructions. Follow them, then carry on with your task:\n${instruction}` });
+          upsert({ id: entryId(), type: 'user', text: instruction, at: now(), from: 'A person (took over)' });
+        }
+      }
       if (budget > 0 && session.usage.inputTokens + session.usage.outputTokens >= budget) {
         upsert({ id: entryId(), type: 'notice', message: `Stopped: this session used its ${budget.toLocaleString()}-token budget.`, at: now() });
         return { reason: 'budget' };

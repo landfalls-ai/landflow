@@ -10,6 +10,9 @@ import { Hourglass, Pause, Play, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { decideGate, decideToolApprovals, resolveCheck, useRunJournal, type RunJournal } from '@/lib/client/run-trace';
+import { api } from '@/lib/client/api';
+import { useWorkingMembers } from '@/lib/client/run-controls';
+import type { ExecutionRecord } from '@/lib/shared/types';
 import { RUN_PROFILES, resolveRunProfile } from '@/lib/shared/run-profiles';
 import { foldChanges } from '@/lib/shared/run-changes';
 import { githubOf } from '@/lib/shared/run-repo';
@@ -25,6 +28,8 @@ import { Artifacts } from './artifacts';
 import { LineCommentsProvider, useLineComments } from './line-comments';
 import { Card, ToneBadge, clock } from './parts';
 import { Report } from './report';
+import { MembersAtWork, RerunOfBadge, RunControlsProvider } from './run-controls';
+import { TakeOver } from '../editor/team-pause';
 import { DetailSheet, type Open } from './sheet';
 import { Story } from './story';
 import { Team } from './team';
@@ -63,6 +68,7 @@ function Head({ model, report, now, replay }: { model: RunModel; report?: RunRep
   const waiting = model.status === 'waiting' || model.needsYou.some((n) => n.kind === 'wait');
   return (
     <div className="flex flex-wrap items-center gap-1.5">
+      <RerunOfBadge model={model} />
       {model.live ? (
         <Badge tone="warning">
           <span className="size-1.5 rounded-full bg-warn animate-pulse-soft" />
@@ -179,10 +185,10 @@ function NeedsYou({
         n.kind === 'wait' ? (
           <Card key={`w${n.spanId}`} tone="warn" className="bg-warndim">
             <div className="text-[13px] text-t1">
-              <b>Needs {n.actor.name}</b>
+              <b>{n.attrs.wait === 'pause' ? n.title : `Needs ${n.actor.name}`}</b>
               <span className="text-t2">
                 {' '}
-                · {n.caller ? `${n.caller.name} waiting` : 'waiting'} since {clock(n.since)}
+                · {n.attrs.wait === 'pause' ? 'paused' : n.caller ? `${n.caller.name} waiting` : 'waiting'} since {clock(n.since)}
               </span>
             </div>
             <p className="mt-1 line-clamp-3 text-[13.5px] text-t1">{n.detail ?? n.title}</p>
@@ -219,6 +225,8 @@ function NeedsYou({
                     Reject
                   </Button>
                 </>
+              ) : n.attrs.wait === 'pause' ? (
+                <TakeOver executionId={executionId} member={String(n.attrs.member ?? n.actor.name)} remote={n.attrs.mode === 'redirect'} onDone={onDecided} className="w-full" />
               ) : n.attrs.wait === 'form' ? (
                 // A form wait (a team member's question among them) is answered on the run's form page.
                 <a
@@ -276,11 +284,26 @@ export function RunTraceView({ executionId, executionHref, className }: { execut
 
 /** The trace of a journal the caller already loaded (the execution page reads it once for its view switch). */
 export function RunTraceBody(props: Parameters<typeof TraceBody>[0]) {
+  const { executionId } = props;
+  // Which workflow the run is of and whether it re-ran another: the controls (re-run, copy to the editor) and the header use them.
+  const [meta, setMeta] = useState<Pick<ExecutionRecord, 'workflowId' | 'rerunOf'>>();
+  useEffect(() => {
+    let cancelled = false;
+    setMeta(undefined);
+    api<{ execution: ExecutionRecord }>(`/api/executions/${executionId}`)
+      .then((r) => !cancelled && setMeta({ workflowId: r.execution.workflowId, rerunOf: r.execution.rerunOf }))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [executionId]);
   // Line comments on diffs are kept per run and read by the gate's Send back.
   return (
-    <LineCommentsProvider executionId={props.executionId}>
-      <TraceBody {...props} />
-    </LineCommentsProvider>
+    <RunControlsProvider value={{ executionId, workflowId: meta?.workflowId, rerunOf: meta?.rerunOf }}>
+      <LineCommentsProvider executionId={executionId}>
+        <TraceBody {...props} />
+      </LineCommentsProvider>
+    </RunControlsProvider>
   );
 }
 
@@ -302,6 +325,8 @@ function TraceBody({
   const [busy, setBusy] = useState<string>();
   const [settled, setSettled] = useState<Set<string>>(new Set());
   const [playing, setPlaying] = useState(false);
+
+  const working = useWorkingMembers(executionId, full.live);
 
   // A link from a team node's ribbon (?tab=team&member=Developer) opens that tab, and the member's sheet once it loads.
   const [wanted, setWanted] = useState<string>();
@@ -416,6 +441,8 @@ function TraceBody({
         <h2 className="break-words text-[16px] font-semibold leading-tight text-t1">{model.run?.name ?? 'Run'}</h2>
         <Head model={model} report={report} now={now} replay={replay} />
       </div>
+
+      {!replay && <MembersAtWork executionId={executionId} members={working.members} onChanged={() => { working.refresh(); refresh(); }} />}
 
       <NeedsYou items={needs} executionId={executionId} executionHref={executionHref} open={open} onResolve={onResolve} busy={busy} onDecided={refresh} />
 
