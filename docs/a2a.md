@@ -510,7 +510,9 @@ every Claude Code agent Landflow deploys gets Landflow's own mod, **landflow-har
   image differs per guard (`KagentPlugin.options`). A request can make it stricter for one turn (the marker's
   `guard=strict`), never looser: an `enforce` agent ignores `guard=report` and `guard=off`. The trace's `start` event
   says the mode in force, and Run Trace shows the agent's mod as *read-only on the code* among its connections. Read-only
-  is best effort: a script that writes files itself isn't caught, so pair it with a token that can't push.
+  is best effort: a script that writes files itself isn't caught, so pair it with a token that can't push. Every rule
+  reads each part of a command from the directory an earlier `cd` in it moved to (`cd /tmp && rm -rf work` removes
+  `/tmp/work`, which Read-only allows).
 - **Redact.** A tool's result is kept with every token or key it shows masked (`[redacted GitHub token]`): private
   keys, GitHub, Anthropic, OpenAI, AWS, Slack, Google and npm tokens, Landflow's `lfk_` and `lf_` keys,
   `Authorization` headers and passwords in URLs. A secret that reached a file or a command's output doesn't reach the

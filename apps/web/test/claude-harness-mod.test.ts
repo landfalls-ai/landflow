@@ -130,6 +130,11 @@ describe('the strict guard (read-only on the code)', () => {
     for (const command of ['rm src/old.ts', 'mv a.ts b.ts', 'echo x > src/a.ts', 'cat a >> b.txt', 'sed -i s/a/b/ src/a.ts', 'printf x | tee src/a.ts', 'cp a.ts b.ts', 'touch new.ts', 'npm publish', 'chmod +x run.sh']) {
       expect(strict(command), command).toBe('read-only');
     }
+    // The real run's first command: a fresh clone in /tmp, read from where `cd` went.
+    expect(strict('cd /tmp && rm -rf work && git clone -q --filter=blob:none https://github.com/o/r /tmp/work && cd /tmp/work && git checkout main')).toBeUndefined();
+    expect(strict('cd /tmp/work && rm -rf node_modules')).toBeUndefined();
+    expect(strict('cd /tmp && cd /data/workspace && rm a.ts')).toBe('read-only');
+    expect(strict('cd ~ && rm notes.md')).toBe('read-only');
     for (const command of ['pnpm install && pnpm typecheck', 'go test ./... 2>&1 | tail -20', 'echo "a -> b"', 'cat a.ts > /tmp/a.txt', 'rm -f /tmp/x', 'node -e "1" >/dev/null 2>&1', 'cp src/a.ts /tmp/a.ts', 'grep -rn foo src', 'mkdir -p /tmp/out']) {
       expect(strict(command), command).toBeUndefined();
     }

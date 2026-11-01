@@ -60,6 +60,18 @@ export function guardFile(tool: string, input: Record<string, unknown>, roots: r
   return undefined
 }
 
+/**
+ * The working directory after a segment: `cd dir` moves it (relative to where it was); `cd`, `cd ~` or `cd -` to a place
+ * these rules can't know leaves it unknown (undefined), and later relative paths are judged from the session's directory.
+ */
+export function cdTarget(segment: string, cwd: string): string | undefined {
+  const words = wordsOf(segment)
+  if (words[0] !== 'cd' && words[0] !== 'pushd') return cwd
+  const dir = words.slice(1).find(w => !w.startsWith('-') || w === '-')
+  if (!dir || dir === '-' || dir.startsWith('~') || dir.includes('$')) return undefined
+  return normalPath(dir, cwd)
+}
+
 /** A command line in its parts: `a && b; c | d` → ['a', 'b', 'c', 'd'] (quotes kept as written). */
 export function segments(command: string): string[] {
   return command
@@ -176,9 +188,12 @@ export function guardBash(command: string, cwd = '/'): Verdict | undefined {
   if (/:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/.test(command)) return { rule: 'destructive', reason: 'That is a fork bomb.' }
   if (/>\s*\/dev\/(sd|nvme|vd|xvd)[a-z0-9]*/.test(command)) return { rule: 'destructive', reason: 'That writes over a disk.' }
   if (/\/proc\/[^/\s]+\/environ/.test(command)) return { rule: 'env-dump', reason: 'The environment holds keys and tokens: name the variable you need (one that is not a secret) instead.' }
+  // Each part is read from the directory an earlier `cd` moved to (`cd /tmp && rm -rf work` removes /tmp/work).
+  let here = cwd
   for (const segment of segments(command)) {
-    const verdict = guardSegment(segment, cwd)
+    const verdict = guardSegment(segment, here)
     if (verdict) return verdict
+    here = cdTarget(segment, here) ?? cwd
   }
   return undefined
 }
@@ -278,9 +293,11 @@ export function guardReadOnly(tool: string, input: Record<string, unknown>, cwd 
     return undefined
   }
   if (tool === 'Bash' && typeof input.command === 'string') {
+    let here = cwd
     for (const segment of segments(input.command)) {
-      const verdict = readOnlySegment(segment, cwd)
+      const verdict = readOnlySegment(segment, here)
       if (verdict) return verdict
+      here = cdTarget(segment, here) ?? cwd
     }
   }
   return undefined
