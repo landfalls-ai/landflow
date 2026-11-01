@@ -1063,6 +1063,19 @@ Claude Code agent Landflow deploys gets Landflow's own mod ([a2a.md](a2a.md#the-
   any main (2026-11-01).
   Live budget use from the trace while a member works shows on the team node since 2026-11-01.
 
+## Team notebook (built 2026-11-01)
+
+Agent team members start every run from what they are handed. They now share a notebook ([team-notebook.md](team-notebook.md)):
+
+- **Notes**: facts, decisions, open questions, task status and artifact references, each with its author, run, span and
+  source; run notes (14 days), team notes (30 days after last use, unless verified) and project notes (a person's approval
+  through the second brain's inbox).
+- **Tools**: `note_add`, `note_search`, `note_update`, `note_dispute`, and `note_promote` for managers; Claude Code
+  members on kagent get the same through the MCP server, bound to the run that is waiting on them.
+- **Trust**: notes from outside are tainted until a person verifies them; disputes keep both notes until one is kept;
+  `traceContent: off` keeps provenance and drops excerpts.
+- **See it**: the team's Notebook tab, note moments on the canvas and in the headlines, deep links into the Run Trace.
+
 ## Planned next
 
 **Runbooks from Landfall war rooms.** After a room closes, turn what the responders did (the timeline, the remediation

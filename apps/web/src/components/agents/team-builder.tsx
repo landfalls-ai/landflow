@@ -23,6 +23,7 @@ import { A2A_AGENT, A2aTile } from './a2a-agent-dialog';
 import { AgentAvatar } from './avatar';
 import { Dialog, Field } from './dialog';
 import { ExportPluginDialog } from './export-plugin-dialog';
+import { NotebookTab } from './notebook-tab';
 import { SaveTeamTemplateDialog } from './save-team-template-dialog';
 import { useAgentList, useNodeTypes } from './use-agent-data';
 import { BudgetBar } from '../editor/team-live';
@@ -55,7 +56,22 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [saveTemplate, setSaveTemplate] = useState(false);
-  const fromTemplate = useSearchParams().get('flow');
+  const params = useSearchParams();
+  const fromTemplate = params.get('flow');
+  // The page has two tabs: the chart (members, last run, flows, publishing) and the team's notebook (docs/team-notebook.md).
+  const tab = params.get('tab') === 'notebook' ? 'notebook' : 'chart';
+  const showTab = (next: 'chart' | 'notebook') => {
+    const q = new URLSearchParams(params.toString());
+    if (next === 'chart') q.delete('tab');
+    else q.set('tab', next);
+    router.replace(q.size ? `?${q}` : `/agents/teams/${teamId}`, { scroll: false });
+  };
+  const [noteTotal, setNoteTotal] = useState<number>();
+  useEffect(() => {
+    api<{ counts: { total: number } }>(`/api/agent-teams/${teamId}/notes?scope=team`)
+      .then((r) => setNoteTotal(r.counts.total))
+      .catch(() => setNoteTotal(undefined));
+  }, [teamId, tab]);
   // The flows that run this team (a template made one, or you did): links to them.
   const [flows, setFlows] = useState<Array<{ id: string; name: string; active: boolean }>>([]);
   useEffect(() => {
@@ -249,7 +265,22 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
         }
       />
       <PageBody className="mx-auto w-full max-w-[960px] px-4 sm:px-6">
-        <div className="flex flex-col gap-4">
+        <div role="tablist" aria-label="Team" className="mb-3 flex gap-1 border-b border-hair">
+          {([['chart', 'Chart'], ['notebook', 'Notebook']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => showTab(id)}
+              className={cn('-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] font-semibold transition-colors', tab === id ? 'border-ac text-t1' : 'border-transparent text-t3 hover:text-t1')}
+            >
+              {label}
+              {id === 'notebook' && noteTotal !== undefined && noteTotal > 0 && <span className="rounded-full bg-acdim px-1.5 text-[11px] tabular-nums text-ac">{noteTotal}</span>}
+            </button>
+          ))}
+        </div>
+        {tab === 'notebook' && <NotebookTab teamId={teamId} faces={draft.members.map((m) => ({ title: m.title, agent: memberAgent(m, agents ?? []) }))} />}
+        <div className={cn('flex flex-col gap-4', tab === 'notebook' && 'hidden')}>
           <Field id="team-name" label="Name">
             <Input id="team-name" value={draft.name} onChange={(e) => update((c) => ({ ...c, name: e.target.value }))} placeholder="Plugin team" />
           </Field>

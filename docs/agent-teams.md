@@ -49,6 +49,10 @@ unless asked otherwise (the first one becomes the lead). Removing a member hands
 from reviews. Members not connected to the lead yet are listed under the chart. The page autosaves the draft after a
 pause. Each agent's card on the roster shows the teams it is in.
 
+## The notebook
+
+Members share a notebook: they write notes as they work, search it before they start, and a person reads, verifies and keeps what matters in the team's **Notebook** tab. The lead is given the open questions and decisions in its first message. See [team-notebook.md](team-notebook.md).
+
 ## Publishing
 
 **Publish** snapshots the draft as the next version (`published`, with `version` and `publishedAt`); flows run the
@@ -73,6 +77,7 @@ as agents (`workflows:read` / `workflows:write`).
 | `GET /api/agent-teams/:id/export` | the team as a Claude Code plugin zip ([marketplace.md](marketplace.md#export-agents-as-plugins)); `?marketplace=1`, `?preview=1` |
 | `GET /api/agent-teams/:id/flows` | `{ flows: [{ id, name, active, nodes }] }`: the workflows you can see with a Run a Team node set to this team |
 | `POST /api/agent-teams/:id/template` | `{ name, description?, categories?, setup?, workflowId?, projectId? }` → `{ template }` (201): the team and its agents as a [team template](templates.md) |
+| `GET/POST /api/agent-teams/:id/notes`, `POST/DELETE /api/agent-teams/:id/notes/:noteId` | the team's notebook ([team-notebook.md](team-notebook.md#the-routes)) |
 
 Storage is the `agent_teams` table (migration 1910): `draft` and `published` as JSON, `version` the last published version.
 The code is in `apps/web/src/lib/server/agent-teams/` (`store.ts`, with `teamsOfAgent(agentId)`).

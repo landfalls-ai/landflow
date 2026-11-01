@@ -19,6 +19,7 @@ import { agentStore } from '../agents/store';
 import { validateOps } from '../assistant/ops';
 import { database, type Database } from '../db';
 import { governedSave } from '../governance/saves';
+import { approveProjectNote, NoteError } from '../notebook/approve';
 import { homeProjectId } from '../projects/store';
 import { workflowForCall } from '../publish';
 import { store } from '../store';
@@ -91,6 +92,7 @@ function inScope(p: Proposal, scope?: UsageScope): boolean {
   if (!scope || (!scope.workflows && !scope.agents)) return true;
   if (p.target.type === 'workflow') return Boolean(p.target.id && scope.workflows?.has(p.target.id));
   if (p.target.type === 'agent') return Boolean(p.target.id && scope.agents?.has(p.target.id));
+  if (p.target.type === 'team') return Boolean(p.target.id && scope.teams?.has(p.target.id));
   return false;
 }
 
@@ -256,6 +258,14 @@ export function applyProposal(id: string, options: ApplyOptions = {}, db: Databa
     const add = (list: string[] | undefined, more: string[] | undefined) => [...new Set([...(list ?? []), ...(more ?? [])])];
     agentStore.saveDraft(agent.id, { persona: { ...persona, always: add(persona.always, proposal.agentChange.always), never: add(persona.never, proposal.agentChange.never) } });
     warnings.push('Added to the agent’s draft: publish it to use the new rules');
+  } else if (proposal.notebook) {
+    // A person said yes to keeping a team's note for the project (docs/team-notebook.md#promotion).
+    try {
+      approveProjectNote(proposal.notebook.noteId, options.actorId);
+    } catch (caught) {
+      if (caught instanceof NoteError) throw new ProposalError(caught.message, caught.status);
+      throw caught;
+    }
   } else if (proposal.detector === 'missing-tool') {
     // "Build it": a published workflow that starts from On Usage Event on proposal.applied builds the tool (an agentic
     // flow that writes the plugin, docs/second-brain.md). Applying only records the go-ahead.

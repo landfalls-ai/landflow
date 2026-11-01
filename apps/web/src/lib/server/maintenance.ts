@@ -7,6 +7,7 @@ import { leads } from './cluster/state';
 import { pruneIdempotencyKeys } from './idempotency';
 import { backfillInsights } from './insights';
 import { pruneJournal } from './journal';
+import { noteStore } from './notebook/store';
 import { pruneExecutions } from './settings';
 import { singleton } from './singleton';
 import { logger } from './telemetry';
@@ -23,6 +24,13 @@ function attempt(label: string, fn: () => number): number {
   }
 }
 
+/** The team notebook's time passing (docs/team-notebook.md#how-long-notes-live): expired notes are marked, long-expired ones deleted. */
+function expireNotes(): number {
+  const { expired, deleted } = noteStore.expire();
+  if (expired || deleted) logger.info('team notebook expiry', { 'landflow.notebook.expired': expired, 'landflow.notebook.deleted': deleted });
+  return expired + deleted;
+}
+
 /** Backfill insights (before pruning, so pruned runs are counted), prune, and schedule hourly pruning. Idempotent. */
 export function startDataMaintenance(): { backfilled: number; pruned: number } {
   return singleton('data-maintenance', () => {
@@ -30,6 +38,7 @@ export function startDataMaintenance(): { backfilled: number; pruned: number } {
     const pruned = attempt('execution retention', () => pruneExecutions());
     attempt('idempotency key pruning', () => pruneIdempotencyKeys());
     attempt('run journal retention', () => pruneJournal());
+    attempt('team notebook expiry', expireNotes);
     if (backfilled || pruned) logger.info('platform data ready', { 'landflow.insights.backfilled': backfilled, 'landflow.executions.pruned': pruned });
     const timer = setInterval(() => {
       // Queue mode: the leader main prunes.
@@ -44,6 +53,7 @@ export function startDataMaintenance(): { backfilled: number; pruned: number } {
       if (!leads()) return;
       const removed = attempt('run journal retention', () => pruneJournal());
       if (removed) logger.info('pruned run journal events', { 'landflow.journal.pruned': removed });
+      attempt('team notebook expiry', expireNotes);
     }, DAY_MS);
     daily.unref?.();
     return { backfilled, pruned };

@@ -47,6 +47,8 @@ export interface TeamMoment {
   text: string;
   /** A member's question for a person, in full: the run waits for the answer. For a tool waiting for approval: its input as short text. */
   question?: string;
+  /** A note a member wrote in the team notebook (docs/team-notebook.md): worth a headline. */
+  note?: true;
 }
 
 /** A tool call a member waits to use until a person approves it, as the node tells it. */
@@ -188,6 +190,41 @@ function narrateCommand(command: string): { plain: string; kind?: StepKind } {
   return { plain: word ? `Running ${baseName(word)}` : 'Running a command' };
 }
 
+const NOTE_TOOL = /^(?:mcp__[^_]+__)?(note_add|note_search|note_update|note_dispute|note_promote)$/i;
+const clip = (text: string, max = 90) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
+/** A notebook tool in plain words ("Searching the notebook", "Noting a decision"). */
+function narrateNote(tool: string, a: Record<string, unknown>): string {
+  switch (tool.toLowerCase()) {
+    case 'note_search':
+      return 'Searching the notebook';
+    case 'note_add':
+      return a.kind === 'decision' ? 'Noting a decision' : a.kind === 'open_question' ? 'Noting an open question' : a.kind === 'artifact_ref' ? 'Noting an artifact' : a.kind === 'task_status' ? 'Noting where the work stands' : 'Writing a note';
+    case 'note_update':
+      return a.answer ? 'Answering an open question' : 'Updating a note';
+    case 'note_dispute':
+      return 'Disputing a note';
+    default:
+      return a.to === 'project' ? 'Suggesting a note for the project' : 'Promoting a note to the team';
+  }
+}
+
+/** The moment a notebook write makes ("Reviewer noted: plugins need an icons/ folder"), when the tool wrote something. */
+export function noteMoment(member: string, name: string, args: unknown): Omit<TeamMoment, 'at'> | undefined {
+  const tool = NOTE_TOOL.exec(name)?.[1]?.toLowerCase();
+  const a = argsOf(args) ?? {};
+  const text = typeof a.text === 'string' ? clip(a.text.replace(/\s+/g, ' ').trim()) : '';
+  const answer = typeof a.answer === 'string' ? clip(a.answer.replace(/\s+/g, ' ').trim()) : '';
+  if (tool === 'note_add' && text) {
+    const verb = a.kind === 'decision' ? 'decided' : a.kind === 'open_question' ? 'asked' : a.kind === 'artifact_ref' ? 'noted an artifact' : 'noted';
+    return { member, tone: a.kind === 'decision' ? 'ok' : 'info', text: `${member} ${verb}: ${text}`, note: true };
+  }
+  if (tool === 'note_update' && answer) return { member, tone: 'ok', text: `${member} answered: ${answer}`, note: true };
+  if (tool === 'note_dispute') return { member, tone: 'warn', text: `${member} disputed a note${text ? `: ${text}` : ''}`, note: true };
+  if (tool === 'note_promote') return { member, tone: 'ok', text: a.to === 'project' ? `${member} suggested a note for the project` : `${member} promoted a note to the team`, note: true };
+  return undefined;
+}
+
 /**
  * A step in plain words ("Running the tests", "Reading PLAN.md"), and what it is for when its result matters. A step
  * with no rule keeps its tool's name as a sentence.
@@ -197,6 +234,7 @@ export function narrate(name: string, args?: unknown): { plain: string; kind?: S
   const text = (key: string) => (typeof a[key] === 'string' ? (a[key] as string) : undefined);
   const path = text('file_path') ?? text('filePath') ?? text('path') ?? text('notebook_path');
   const tool = name.replace(/^mcp__[^_]+__/, '').toLowerCase();
+  if (NOTE_TOOL.test(name)) return { plain: narrateNote(tool, a) };
   const command = text('command') ?? text('cmd') ?? (/^(bash|shell|exec|run|terminal)/.test(tool) ? text('value') : undefined);
   if (command && /^(bash|shell|exec|run_command|run|terminal|execute_command)/.test(tool)) return narrateCommand(command);
   if (/^(read|read_file|view|open|cat)/.test(tool)) return { plain: path ? `Reading ${baseName(path)}` : 'Reading a file' };
@@ -437,7 +475,15 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
       if (entry.status === 'running') {
         ownerWorks(owner, entry.label, words);
         command = shortArg(entry.input, 200);
-      } else ownerWorks(owner, 'thinking', 'Thinking it over');
+      } else {
+        // A note written makes a moment, once however often the step is reported.
+        if (entry.status === 'success' && !seen.has(`own:${entry.callId}`)) {
+          seen.set(`own:${entry.callId}`, 'success');
+          const made = noteMoment(owner, entry.tool, entry.input);
+          if (made) moment(made);
+        }
+        ownerWorks(owner, 'thinking', 'Thinking it over');
+      }
       return report();
     }
     if (owner !== lead) askedBy.set(norm(member.title), norm(owner));
@@ -476,6 +522,11 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
       const key = `${entry.callId}:${step.id}`;
       if ((step.status !== 'success' && step.status !== 'error') || seen.get(key) === step.status) continue;
       seen.set(key, step.status);
+      const wrote = step.status === 'success' ? noteMoment(member.title, step.name, step.args) : undefined;
+      if (wrote) {
+        moment(wrote);
+        continue;
+      }
       const made = stepMoment(narrate(step.name, step.args).kind, step.status === 'success', `${textOf(step.output)} ${step.error ?? ''}`);
       if (made) moment({ member: member.title, ...made });
     }

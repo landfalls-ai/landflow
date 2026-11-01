@@ -38,7 +38,7 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
         startedAt: record.startedAt,
         nodeName: node.name,
         members,
-        ...(activity && { durationMs: activity.durationMs, moments: activity.moments.filter((m) => m.tone !== 'info').slice(-5) }),
+        ...(activity && { durationMs: activity.durationMs, moments: activity.moments.filter((m) => m.tone !== 'info' || m.note).slice(-5) }),
       },
     });
   }

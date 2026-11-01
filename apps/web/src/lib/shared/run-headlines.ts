@@ -15,8 +15,8 @@ export interface Headline {
 }
 
 const actorOf = (entry: StoryEntry) => ('span' in entry ? entry.span.actor : 'item' in entry ? entry.item.actor : 'from' in entry ? entry.from : undefined);
-/** Moments worth a headline: results, verdicts, budgets and questions; not each hand-off. */
-const headlineWorthy = (m: TeamMoment) => m.tone !== 'info' || / reported back$|^Branch pushed$|^Committed$|opened$/.test(m.text);
+/** Moments worth a headline: results, verdicts, budgets, questions and notes written to the notebook; not each hand-off. */
+const headlineWorthy = (m: TeamMoment) => m.tone !== 'info' || m.note || / reported back$|^Branch pushed$|^Committed$|opened$/.test(m.text);
 
 /** The moments the team nodes of a run kept (their output's `activity`), placed in time and on the story entry nearest them. */
 export function headlinesOf(model: RunModel): Headline[] {

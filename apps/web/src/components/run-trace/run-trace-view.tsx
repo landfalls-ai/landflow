@@ -336,7 +336,16 @@ function TraceBody({
     setTabState(asked && TABS.some(([id]) => id === asked) ? (asked as Tab) : readTab());
     const member = params.get('member');
     if (member) setWanted(member);
+    // A link from a notebook note (?span=<id>) opens the span the note was written in.
+    const span = params.get('span');
+    if (span) setWantedSpan(span);
   }, []);
+  const [wantedSpan, setWantedSpan] = useState<string>();
+  useEffect(() => {
+    if (!wantedSpan || full.empty) return;
+    if (wantedSpan in full.spans) setTarget({ kind: 'span', id: wantedSpan });
+    setWantedSpan(undefined);
+  }, [wantedSpan, full]);
   useEffect(() => {
     if (!wanted || full.empty) return;
     const stats = full.actors.find((a) => a.actor.name.trim().toLowerCase() === wanted.trim().toLowerCase());

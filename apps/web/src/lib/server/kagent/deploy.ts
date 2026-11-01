@@ -19,6 +19,9 @@ import { credentials } from '../credentials/vault';
 import { database } from '../db';
 import { marketplace } from '../marketplace/service';
 import { logger } from '../telemetry';
+import { agentTeamStore } from '../agent-teams/store';
+import { isTeamMember } from '../notebook/binding';
+import { notebookStubs } from '../notebook/tools';
 import { a2aUrlOf, clusterFrom, KAGENT_API, KAGENT_CREDENTIAL, type KagentCluster } from './cluster';
 import { applyObject, deleteObject, getObject, listObjects, type KubeObject } from './kube';
 import { BUILTIN_URL, builtinPin, imageRef, packPlugin } from './oci';
@@ -107,7 +110,11 @@ export function deployedConfig(agent: Agent): { config: AgentConfig; version: nu
 /** The tools kagent binds: those the runtime builds from the config, without memory (it needs the person the agent talks to). */
 export async function kagentTools(agent: Agent, config: AgentConfig) {
   const toolset = await buildToolset({ ...agent, ...config }, config);
-  return { tools: toolset.tools.filter((tool) => tool.kind !== 'memory'), unavailable: toolset.unavailable };
+  const tools = toolset.tools.filter((tool) => tool.kind !== 'memory');
+  // An agent a team calls as a remote member also serves the team notebook's tools (docs/team-notebook.md): the stubs only
+  // name them, kagent/mcp.ts binds a call to the run that is asking the agent.
+  const inTeam = agentTeamStore.list().some((team) => [team.draft, team.published].some((c) => c && isTeamMember(agent, c.members)));
+  return { tools: inTeam ? [...tools, ...notebookStubs()] : tools, unavailable: toolset.unavailable };
 }
 
 const LOOPBACK = /^(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?)$/i;

@@ -257,4 +257,39 @@ describe('plain words for steps', () => {
     expect(words('check_branch').plain).toBe('Check branch');
     expect(words('mcp__github__createPullRequest').plain).toBe('Create pull request');
   });
+
+  it('reads the notebook tools in plain words', () => {
+    expect(words('note_search', { query: 'how plugins declare icons' }).plain).toBe('Searching the notebook');
+    expect(words('note_add', { kind: 'decision', text: 'x' }).plain).toBe('Noting a decision');
+    expect(words('note_add', { kind: 'open_question', text: 'x' }).plain).toBe('Noting an open question');
+    expect(words('note_add', { kind: 'fact', text: 'x' }).plain).toBe('Writing a note');
+    expect(words('note_update', { id: 'n', answer: 'v2' }).plain).toBe('Answering an open question');
+    expect(words('note_dispute', { id: 'n', text: 'x' }).plain).toBe('Disputing a note');
+    expect(words('note_promote', { id: 'n', to: 'project' }).plain).toBe('Suggesting a note for the project');
+    expect(words('note_promote', { id: 'n' }).plain).toBe('Promoting a note to the team');
+    // Over MCP a Claude Code member's tool carries the server's prefix.
+    expect(words('mcp__landflow-agent__note_add', { kind: 'decision', text: 'x' }).plain).toBe('Noting a decision');
+  });
+
+  it('makes a moment of a note written, once, for a member’s own tool and for a remote member’s step', () => {
+    const fold = teamProgressFolder(['Lead', 'Developer', 'Reviewer']);
+    fold({ type: 'run.started', sessionId: 's1' });
+    const own = (status: 'running' | 'success', callId = 'n1'): AgentStreamEvent => ({
+      type: 'entry',
+      sessionId: 's1',
+      entry: { id: `e_${callId}_${status}`, type: 'tool', callId, tool: 'note_add', label: 'note_add', kind: 'notebook', input: { kind: 'decision', text: 'Each node gets a test against a fake server.' }, status, at } as TimelineEntry,
+    });
+    const running = fold(own('running'))!;
+    expect(running.plain).toBe('Noting a decision');
+    expect(running.moments.filter((m) => m.note)).toEqual([]);
+    fold(own('success'));
+    const done = fold(own('success'))!;
+    expect(done.moments.filter((m) => m.note)).toEqual([expect.objectContaining({ member: 'Lead', tone: 'ok', text: 'Lead decided: Each node gets a test against a fake server.', note: true })]);
+    // A Claude Code member's note arrives as one of its steps.
+    const step: Step = { name: 'mcp__landflow-agent__note_add', status: 'success', args: { kind: 'fact', text: 'plugins need an icons/ folder' }, output: 'Noted (note_x)' };
+    const reviewed = fold(tool('c9', 'Reviewer', 'running', [step]))!;
+    fold(tool('c9', 'Reviewer', 'running', [step]));
+    expect(reviewed.moments.filter((m) => m.note).map((m) => m.text)).toEqual(['Lead decided: Each node gets a test against a fake server.', 'Reviewer noted: plugins need an icons/ folder']);
+    expect(fold.activity().moments.filter((m) => m.note)).toHaveLength(2);
+  });
 });

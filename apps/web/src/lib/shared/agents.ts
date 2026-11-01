@@ -479,8 +479,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = { maxIterations: 12, toolCo
 
 export type SessionSource = 'test' | 'schedule' | 'telegram' | 'slack' | 'teams' | 'workflow' | 'agent' | 'api';
 export type SessionStatus = 'idle' | 'running' | 'awaiting_approval' | 'error';
-/** `flow`: a tool connected to the agent's node in a workflow (Run an Agent), for that run only. */
-export type ToolKind = 'node' | 'workflow' | 'agent' | 'skill' | 'memory' | 'a2a' | 'flow';
+/** `flow`: a tool connected to the agent's node in a workflow (Run an Agent), for that run only. `notebook`: a team run's notebook tools (docs/team-notebook.md). */
+export type ToolKind = 'node' | 'workflow' | 'agent' | 'skill' | 'memory' | 'a2a' | 'flow' | 'notebook';
 
 /** A tool call a remote (A2A) agent made, as its task reports it. */
 export interface RemoteToolStep {

@@ -7,6 +7,7 @@ import { nanoid } from 'nanoid';
 import { memberAgent, rootOf, type QuestionsTo, teamIssues, type AgentTeam, type AgentTeamConfig, type TeamMember, type TeamSummary } from '../../shared/agent-teams';
 import { agentStore } from '../agents/store';
 import { database } from '../db';
+import { noteStore } from '../notebook/store';
 import { homeProjectId } from '../projects/store';
 
 /** What stops a draft from running, members whose agent was deleted included. */
@@ -157,6 +158,8 @@ export const agentTeamStore = {
     return revive(next);
   },
   delete(id: string): boolean {
+    // Its notebook goes with it (docs/team-notebook.md).
+    noteStore.deleteTeam(id);
     return database().delete('agent_teams', { id }) > 0;
   },
   /** The teams an agent is a member of, in the draft or the published version. */

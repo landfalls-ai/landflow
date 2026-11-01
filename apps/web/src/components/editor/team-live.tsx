@@ -11,7 +11,7 @@
  * ringed and the node names it.
  */
 import { useEffect, useState, type ReactNode } from 'react';
-import { Check, ChevronRight, Hourglass, Loader2, Pause, X } from 'lucide-react';
+import { Check, ChevronRight, Hourglass, Loader2, NotebookPen, Pause, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useWorkingMembers } from '@/lib/client/run-controls';
 import { duration } from '@/lib/client/format';
@@ -398,13 +398,15 @@ export function TeamMoments({ moments, elapsed, faces }: { moments: TeamMoment[]
           <span
             key={`${m.at}:${m.text}`}
             className={cn(
-              'flex max-w-[260px] items-center gap-1.5 rounded-full border bg-sf py-0.5 pl-0.5 pr-2.5 text-[11px] font-medium shadow-pop animate-pop',
+              'flex max-w-[260px] items-center gap-1.5 rounded-full border bg-sf py-0.5 pl-0.5 pr-2.5 text-[11px] font-medium shadow-pop',
+              // A note written to the team's notebook settles in like ink on a page, with a ring of its author's colour.
+              m.note ? 'animate-note-in' : 'animate-pop',
               m.tone === 'bad' ? 'border-hair text-rd' : m.tone === 'warn' ? 'border-warn/50 text-t1' : 'border-hair text-t1',
             )}
             title={m.question ? questionText(m.question) : undefined}
           >
             {face ? <AgentAvatar agent={face.face} size={16} round /> : <span className="size-4" />}
-            <span className={cn('size-1.5 shrink-0 rounded-full', TONE[m.tone])} />
+            {m.note ? <NotebookPen className="size-3 shrink-0 text-ac" aria-label="Notebook" /> : <span className={cn('size-1.5 shrink-0 rounded-full', TONE[m.tone])} />}
             <span className="truncate">{m.text}</span>
           </span>
         );
@@ -415,7 +417,7 @@ export function TeamMoments({ moments, elapsed, faces }: { moments: TeamMoment[]
 
 /** A finished run in one line: the results that matter, then each member's steps. */
 export function TeamSummary({ activity, className }: { activity: TeamActivity; className?: string }) {
-  const results = [...new Map(activity.moments.filter((m) => m.tone !== 'info' || / reported back$|^Branch pushed$|^Committed$/.test(m.text)).map((m) => [m.text, m])).values()].slice(-3);
+  const results = [...new Map(activity.moments.filter((m) => m.tone !== 'info' || m.note || / reported back$|^Branch pushed$|^Committed$/.test(m.text)).map((m) => [m.text, m])).values()].slice(-3);
   const steps = Object.entries(activity.steps);
   if (!results.length && !steps.length) return null;
   return (

@@ -1312,6 +1312,47 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS execution_events_at ON execution_events (at)`,
     ],
   },
+  {
+    version: 2010,
+    name: 'team_notes',
+    statements: [
+      // The team notebook (lib/server/notebook/store.ts, docs/team-notebook.md): typed notes a team's members write while a run
+      // goes, kept per run, per team or per project. `source` is JSON ({ executionId, spanId, tool, url, excerpt });
+      // `embedding` a JSON array of numbers (NULL until made, e.g. when Ollama is unreachable); `tainted` is 1 for a note read
+      // from outside the team; `dispute_of` and `superseded_by` link two notes that disagree.
+      `CREATE TABLE IF NOT EXISTS team_notes (
+        id TEXT PRIMARY KEY,
+        team_id TEXT NOT NULL,
+        project_id TEXT,
+        run_id TEXT,
+        workflow_id TEXT,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        status TEXT NOT NULL,
+        author TEXT NOT NULL,
+        author_id TEXT,
+        source TEXT NOT NULL,
+        tainted INTEGER NOT NULL DEFAULT 0,
+        answer TEXT,
+        embedding TEXT,
+        embedding_model TEXT,
+        dispute_of TEXT,
+        superseded_by TEXT,
+        promoted_from TEXT,
+        proposal_id TEXT,
+        verified_at TEXT,
+        verified_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_access_at TEXT NOT NULL,
+        expires_at TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS team_notes_team ON team_notes (team_id, scope)`,
+      `CREATE INDEX IF NOT EXISTS team_notes_run ON team_notes (run_id)`,
+      `CREATE INDEX IF NOT EXISTS team_notes_expires ON team_notes (expires_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1403,6 +1444,7 @@ export const TABLES = {
   proposals: ['id'],
   agent_templates: ['id'],
   agent_teams: ['id'],
+  team_notes: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;
