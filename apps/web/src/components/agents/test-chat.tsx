@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import { Bot, Loader2, RotateCcw, SendHorizontal, Square, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '../ui/badge';
+import { useNewLook } from '../shell/look-toggle';
+import { isAnalyst, sourcesOf } from '@/lib/shared/analyst-chart';
+import type { AgentToolConfig } from '@/lib/shared/agents';
+import { AnalystTimeline, SUGGEST_FIX_MESSAGE, SourceChips } from './analyst-view';
 import { AgentAvatar, type AvatarSource } from './avatar';
 import { TimelineView, TraceChip, type ToolEntry } from './timeline';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
@@ -16,6 +20,7 @@ export function TestChat({
   beforeSend,
   childHref,
   onSessionChange,
+  tools,
 }: {
   agentId: string;
   agentName: string;
@@ -26,7 +31,10 @@ export function TestChat({
   beforeSend: () => Promise<void>;
   childHref?: (entry: ToolEntry) => string | undefined;
   onSessionChange?: () => void;
+  /** The agent's tools: the Platform analyst is drawn with source chips and an answer card in the new look. */
+  tools?: AgentToolConfig[];
 }) {
+  const analyst = useNewLook() && isAnalyst(tools);
   const run = useAgentRun(agentId);
   const [draft, setDraft] = useState('');
   const [deciding, setDeciding] = useState(false);
@@ -53,13 +61,17 @@ export function TestChat({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const send = async () => {
-    const text = draft.trim();
+  const sendText = async (text: string) => {
     if (!text || run.running || run.awaitingApproval) return;
-    setDraft('');
     await beforeSend().catch(() => {});
     await run.send(text);
     onSessionChange?.();
+  };
+  const send = () => {
+    const text = draft.trim();
+    if (!text) return;
+    setDraft('');
+    return sendText(text);
   };
 
   const decide = async (callId: string, approved: boolean) => {
@@ -106,6 +118,8 @@ export function TestChat({
         </button>
       </div>
 
+      {analyst && <SourceChips sources={sourcesOf((tools ?? []).map((t) => ('name' in t ? String(t.name) : '')))} />}
+
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {run.entries.length === 0 && (
           <div className="mt-8 animate-fade-up text-center">
@@ -122,7 +136,18 @@ export function TestChat({
             </div>
           </div>
         )}
-        <TimelineView entries={run.entries} childHref={childHref} onDecide={(callId, approved) => void decide(callId, approved)} deciding={deciding} />
+        {analyst ? (
+          <AnalystTimeline
+            entries={run.entries}
+            running={run.running}
+            childHref={childHref}
+            onDecide={(callId, approved) => void decide(callId, approved)}
+            deciding={deciding}
+            onSuggest={() => void sendText(SUGGEST_FIX_MESSAGE)}
+          />
+        ) : (
+          <TimelineView entries={run.entries} childHref={childHref} onDecide={(callId, approved) => void decide(callId, approved)} deciding={deciding} />
+        )}
         {thinking && (
           <div className="mt-3 flex items-center gap-2.5">
             <div className="grid size-[26px] shrink-0 place-items-center rounded-full border border-acbd bg-acdim text-ac">
