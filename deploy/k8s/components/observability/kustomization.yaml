@@ -36,3 +36,10 @@ patches:
         value:
           name: LANDFLOW_TRACE_URL
           value: "http://landflow-lgtm.landflow-dev.svc.cluster.local:3000/explore?schemaVersion=1&orgId=1&panes=%7B%22t%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22{traceId}%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-24h%22%2C%22to%22%3A%22now%22%7D%7D%7D"
+  # Each finished run's journal goes to the same backend as one trace with OpenInference attributes (docs/run-trace.md,
+  # "Export over OTLP"); it carries the run's own trace id, so it joins the host's spans for that run in Tempo.
+  - target: { kind: Deployment, name: landflow-host }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: LANDFLOW_OTLP_TRACES_URL, value: "http://landflow-lgtm:4318/v1/traces" }

@@ -553,8 +553,14 @@ describe('Run a Team', () => {
       expect(reviewer).not.toHaveProperty('estimated');
       expect((done!.usage as { costUsd?: number }).costUsd).toBeCloseTo(0.00485, 9);
       // The request's span carries the usage and cost; the guardrail stop and the masked secret are checks on it.
-      const ended = events.find((e) => e.type === 'span.ended' && e.usage?.costUsd !== undefined);
+      const ended = events.find((e) => e.type === 'span.ended' && e.usage?.requests !== undefined);
       expect(ended && ended.type === 'span.ended' && ended.usage).toMatchObject({ inputTokens: 10_500, costUsd: 0.00485, requests: 1, model: 'claude-sonnet-5-5' });
+      // Its one model request is a model span under the request, with the same tokens and cost, and no request count of its own.
+      const modelStart = events.find((e) => e.type === 'span.started' && e.kind === 'model');
+      expect(modelStart).toMatchObject({ name: 'claude-sonnet-5-5', parentSpanId: ended!.spanId });
+      const modelEnd = events.find((e) => e.type === 'span.ended' && modelStart && e.spanId === modelStart.spanId);
+      expect(modelEnd && modelEnd.type === 'span.ended' && modelEnd.usage).toMatchObject({ inputTokens: 10_500, outputTokens: 80, cacheReadTokens: 9_000, costUsd: 0.00485, model: 'claude-sonnet-5-5' });
+      expect(modelEnd && modelEnd.type === 'span.ended' && modelEnd.usage).not.toHaveProperty('requests');
       const checks = events.flatMap((e) => (e.type === 'check' ? [e.check] : []));
       expect(checks).toContainEqual(expect.objectContaining({ name: 'Guardrail', status: 'warn', subject: 'Reviewer', message: 'Stopped Bash: git push origin main (git-push: push to your own branch)' }));
       expect(checks).toContainEqual(expect.objectContaining({ name: 'Secrets masked', message: 'Masked secrets in 1 tool result (GitHub token) before the model read them' }));

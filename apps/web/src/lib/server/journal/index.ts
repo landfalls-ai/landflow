@@ -12,6 +12,7 @@ import { logger } from '../telemetry';
 import { spanEvents } from './store';
 import { createTranslator } from './translator';
 import { backfillJournal } from './backfill';
+import { exportRunInBackground } from './otlp-export';
 import { journalOf, releaseJournal } from './writer';
 
 export { liveJournal, journalOf, releaseJournal, resetJournals, Journal } from './writer';
@@ -67,15 +68,21 @@ export function traceSegment(record: Pick<ExecutionRecord, 'executionId' | 'star
     });
     translator.seed(safe(() => spanEvents(record.executionId)) ?? []);
     journal.bindSpans(translator.spanOfNode, translator.actorOfNode);
+    // A run that ended (not one that waits for a person or a timer) goes out over OTLP when its journal is stored.
+    let ended = false;
     return {
       feed(event) {
         try {
+          if (event.type === 'execution.finished' && event.status !== 'waiting') ended = true;
           translator.feed(event);
         } catch (error) {
           logger.warn('could not journal an event', { error: (error as Error).message, 'landflow.execution.id': record.executionId });
         }
       },
-      close: () => releaseJournal(record.executionId),
+      close: () => {
+        releaseJournal(record.executionId);
+        if (ended) exportRunInBackground(record.executionId);
+      },
     };
   } catch (error) {
     logger.warn('could not start the run journal', { error: (error as Error).message, 'landflow.execution.id': record.executionId });

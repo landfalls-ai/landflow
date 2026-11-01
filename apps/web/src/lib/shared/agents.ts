@@ -576,6 +576,22 @@ export interface TraceUsage {
   model?: string;
 }
 
+/** One model request of a traced agent (the journal records each as a `model` span under the agent's request). */
+export interface TraceCall {
+  /** When the request ended, epoch ms, as the mod's clock said (absent: unknown). */
+  at?: number;
+  /** How long it took, ms. */
+  ms: number;
+  model: string;
+  /** The subagent that made it; absent, the main loop. */
+  agent?: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+}
+
 /** A tool call Landflow's guardrails stopped (or, with guard=report, would have stopped) inside a remote agent. */
 export interface TraceGuardDecision {
   /** secret-file, env-dump, git-push, git-auth-config, merge, destructive, upload, write-outside-workspace */
@@ -599,6 +615,8 @@ export interface AgentTraceSummary {
   /** The subagents it started, with what each used. */
   agents: Array<TraceUsage & { id: string; kind?: string; description?: string }>;
   tools: { calls: number; failed: number; ms: number };
+  /** Each model request, in order (the first 300). */
+  calls?: TraceCall[];
   /** Time spent waiting on the model, ms (subagents' included, so it can exceed the turn). */
   modelMs: number;
   /** The main loop's turn, ms. */

@@ -663,6 +663,48 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check), title, detail, actor, spanId, since.',
     responses: { 200: reply('The items, newest first', object({ items: array({ type: 'object' }) }, ['items'])) },
   });
+  add('get', '/api/runs/search', {
+    tag: 'Executions',
+    id: 'searchRuns',
+    summary: 'Search saved runs',
+    description: 'Saved runs of the workflows the caller sees, newest first, matching every filter given. `text` looks in span names, inputs and outputs, messages, artifacts and checks; a run without a journal matches only the filters that need none. Each item: executionId, workflowId, workflowName, status, startedAt, durationMs, matches (where the words were found) and, with a journal filter, failedSteps and failedChecks. `truncated` says the search stopped at the most runs it reads per request.',
+    query: [
+      { name: 'text', description: 'Words to find', schema: { type: 'string' } },
+      { name: 'workflowId', description: 'Only this workflow’s', schema: { type: 'string' } },
+      { name: 'actor', description: 'An agent, model or person, by name or id', schema: { type: 'string' } },
+      { name: 'tool', description: 'A tool call, by name', schema: { type: 'string' } },
+      { name: 'status', description: 'success, error, waiting, canceled…', schema: { type: 'string' } },
+      { name: 'failedSteps', description: 'Some step failed', schema: { type: 'boolean' } },
+      { name: 'failedCheck', description: 'A check failed: by name, empty for any', schema: { type: 'string' } },
+      { name: 'from', description: 'Started on or after (ISO or YYYY-MM-DD)', schema: { type: 'string' } },
+      { name: 'to', description: 'Started on or before (ISO or YYYY-MM-DD)', schema: { type: 'string' } },
+      { name: 'limit', description: 'At most this many (default 20, at most 100)', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+      { name: 'offset', description: 'Skip this many matches', schema: { type: 'integer', minimum: 0, default: 0 } },
+    ],
+    responses: { 200: reply('The matches', object({ items: array({ type: 'object' }), more: { type: 'boolean' }, truncated: { type: 'boolean' } }, ['items', 'more'])) },
+  });
+  add('get', '/api/runs/compare', {
+    tag: 'Executions',
+    id: 'compareRuns',
+    summary: 'Compare two runs',
+    description: 'Each run folded from its journal: duration, tokens in and out, cost, model calls, steps, failed steps, checks (pass, fail, warn), failed checks, artifacts and the same numbers per actor. `delta` is b minus a; `actors` has one entry per actor of either run with both sides and the difference.',
+    query: [
+      { name: 'a', description: 'The first execution id', required: true, schema: { type: 'string' } },
+      { name: 'b', description: 'The second execution id', required: true, schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The comparison', object({ a: { type: 'object' }, b: { type: 'object' }, delta: { type: 'object' }, actors: array({ type: 'object' }) }, ['a', 'b', 'delta', 'actors'])), 400: errorRef('A run is missing'), 404: notFound },
+  });
+  add('get', '/api/runs/measures', {
+    tag: 'Executions',
+    id: 'runMeasures',
+    summary: 'A workflow’s runs as measures over time',
+    description: 'The latest saved runs of a workflow, oldest first: executionId, startedAt, status, durationMs, tokensIn, tokensOut, costUsd, failedSteps and checksFailed.',
+    query: [
+      { name: 'workflowId', description: 'The workflow', required: true, schema: { type: 'string' } },
+      { name: 'limit', description: 'At most this many runs (default 30, at most 100)', schema: { type: 'integer', minimum: 1, maximum: 100, default: 30 } },
+    ],
+    responses: { 200: reply('The points', object({ workflowId: { type: 'string' }, workflowName: { type: 'string' }, runs: array({ type: 'object' }) }, ['workflowId', 'runs'])), 400: errorRef('workflowId is missing'), 404: notFound },
+  });
   add('get', '/api/executions/{id}/feedback', {
     tag: 'Executions',
     id: 'getExecutionFeedback',

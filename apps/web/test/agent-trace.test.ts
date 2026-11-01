@@ -6,11 +6,13 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentTraceSummary } from '@/lib/shared/agents';
-import type { JournalDraft } from '@/lib/shared/run-trace';
+import type { JournalDraft, JournalEvent } from '@/lib/shared/run-trace';
 import { startFakeA2a, type FakeA2a } from './fake-a2a';
 
 const { openTrace, ingestTrace, resetTraces, traceFor, withMarker, usageOfTrace } = await import('@/lib/server/a2a/agent-trace');
 const { traceChecks } = await import('@/lib/server/journal/agent-session');
+const { traceModelCalls } = await import('@/lib/server/journal/trace-calls');
+const { foldJournal } = await import('@/lib/shared/run-trace-model');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
@@ -188,5 +190,71 @@ describe('the run journal', () => {
       ['run/step:c1', 'Guardrail', 'warn', 'Stopped Bash (merge: a person’s call)'],
       ['run/step:c1', 'Secrets masked', 'warn', 'Masked secrets in 2 tool results before the model read them'],
     ]);
+  });
+});
+
+describe('model requests as journal spans', () => {
+  const T0 = Date.parse('2026-11-01T09:00:00.000Z');
+  const member = { id: 'remote:Developer', name: 'Developer', type: 'agent' as const };
+
+  it('keeps each request on the summary, in order, with its time and price', () => {
+    const trace = openTrace({ baseUrl: 'http://landflow.test', provider: 'anthropic' });
+    ingestTrace(trace.id, [
+      { type: 'step', at: T0 + 2_000, ms: 1_500, model: 'claude-sonnet-5-5', input: 1000, output: 50, cacheRead: 500 },
+      { type: 'step', at: T0 + 5_000, ms: 800, agent: 'sub-1', model: 'claude-haiku-5-5', input: 200, output: 20 },
+    ]);
+    const { calls, usage } = trace.summary()!;
+    expect(calls).toEqual([
+      expect.objectContaining({ at: T0 + 2_000, ms: 1_500, model: 'claude-sonnet-5-5', inputTokens: 1500, outputTokens: 50, cacheReadTokens: 500 }),
+      expect.objectContaining({ ms: 800, agent: 'sub-1', model: 'claude-haiku-5-5', inputTokens: 200 }),
+    ]);
+    expect(calls!.reduce((sum, c) => sum + c.costUsd, 0)).toBeCloseTo(usage.costUsd, 5);
+  });
+
+  it('records one model span per request under the request, and the fold counts it once', async () => {
+    const trace = openTrace({ baseUrl: 'http://landflow.test', provider: 'anthropic' });
+    ingestTrace(trace.id, [
+      { type: 'step', at: T0 + 3_000, ms: 1_000, model: 'claude-sonnet-5-5', input: 1000, output: 100, cacheRead: 400, cacheWrite: 50 },
+      { type: 'step', at: T0 + 6_000, ms: 2_000, model: 'claude-sonnet-5-5', input: 500, output: 40 },
+    ]);
+    const summary = (await trace.close(0))!;
+    const drafts: JournalDraft[] = [];
+    traceModelCalls(member, summary, 'node:dev:0', (draft) => void drafts.push(draft));
+    expect(drafts.map((d) => [d.type, d.spanId])).toEqual([
+      ['span.started', 'node:dev:0/model:1'],
+      ['span.ended', 'node:dev:0/model:1'],
+      ['span.started', 'node:dev:0/model:2'],
+      ['span.ended', 'node:dev:0/model:2'],
+    ]);
+    expect(drafts[0]).toMatchObject({ kind: 'model', name: 'claude-sonnet-5-5', parentSpanId: 'node:dev:0', actor: { id: 'model:claude-sonnet-5-5', type: 'model' }, caller: { id: 'remote:Developer' }, at: new Date(T0 + 2_000).toISOString() });
+    expect(drafts[1]).toMatchObject({ status: 'success', at: new Date(T0 + 3_000).toISOString(), usage: { inputTokens: 1450, outputTokens: 100, cacheReadTokens: 400, cacheWriteTokens: 50, model: 'claude-sonnet-5-5' } });
+
+    // The fold: the request keeps the mod's totals; the model spans take their share off it, so nothing counts twice.
+    const usage = usageOfTrace(summary)!;
+    const at = (ms: number) => new Date(T0 + ms).toISOString();
+    const events = [
+      { type: 'span.started', spanId: 'run', kind: 'run', name: 'Flow', actor: { id: 'workflow', name: 'Flow', type: 'system' }, at: at(0) },
+      { type: 'span.started', spanId: 'node:dev:0', parentSpanId: 'run', kind: 'delegate', name: 'Developer', actor: member, at: at(500) },
+      ...drafts.map((d) => ({ ...d, at: d.at ?? at(1000) })),
+      { type: 'span.ended', spanId: 'node:dev:0', status: 'success', usage, at: at(7_000) },
+      { type: 'span.ended', spanId: 'run', status: 'success', at: at(8_000) },
+    ].map((e, i) => ({ ...e, seq: i + 1, executionId: 'ex_m' })) as JournalEvent[];
+    const model = foldJournal(events);
+    expect(model.tokens).toMatchObject({ inputTokens: 1450 + 500, outputTokens: 140 });
+    expect(model.order.filter((s) => s.kind === 'model')).toHaveLength(2);
+    const dev = model.actors.find((a) => a.actor.id === 'remote:Developer');
+    // Whatever the fold credits to the member plus the model spans adds up to the mod's total, once.
+    const all = model.actors.reduce((sum, a) => sum + a.tokensIn, 0);
+    expect(all).toBe(1950);
+    expect(model.actors.reduce((sum, a) => sum + a.modelCalls, 0) + model.order.filter((s) => s.kind === 'model').length).toBeGreaterThanOrEqual(2);
+    expect(dev).toBeDefined();
+  });
+
+  it("leaves a call without a time to the writer's clock", () => {
+    const summary = { usage: { inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, requests: 1 }, models: [], agents: [], tools: { calls: 0, failed: 0, ms: 0 }, modelMs: 0, guard: [], redacted: 0, calls: [{ ms: 100, model: 'm1', inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 }] };
+    const drafts: JournalDraft[] = [];
+    traceModelCalls(member, summary, 'run/step:c9', (d) => void drafts.push(d));
+    expect(drafts[0]).toMatchObject({ spanId: 'run/step:c9/model:1', parentSpanId: 'run/step:c9', name: 'm1' });
+    expect(drafts[0].at).toBeUndefined();
   });
 });

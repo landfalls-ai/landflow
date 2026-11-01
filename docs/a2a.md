@@ -446,6 +446,8 @@ stops posting there), and uses what it reported:
   not an estimate;
 - the Team tab's card and the actor sheet show each member's model calls, tokens in (and cached), out, cost and model;
   the Report tab has **What each agent used** and the run's cost next to its tokens;
+- each model request is a `model` span under the member's request in Run Trace ([run-trace.md](run-trace.md#who-writes-it)),
+  with its tokens, cost, model and time; the request keeps the totals;
 - each tool call the guardrails stopped is a **Guardrail** check on the request (warn: "Stopped Bash: git push origin
   main (git-push: …)"), and masked secrets a **Secrets masked** check;
 - the Run a Team node's `members` carry `inputTokens`, `outputTokens`, `cacheReadTokens`, `costUsd`, `model`,
