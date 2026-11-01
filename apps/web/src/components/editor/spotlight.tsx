@@ -16,7 +16,8 @@ import { cn } from '@/lib/utils';
 import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
 import { Button } from '../ui/button';
 import { useBuildFlow } from './ai-builder';
-import { applyChanges, sendFeedback, suggestionKey, useAssistant, useSuggestions, type ChatItem, type Proposal, type ReplyAction, type ReplyPart, type Suggestion, type TestRun } from './assistant';
+import { useBuilding } from './building';
+import { applyChanges, sendFeedback, suggestionKey, useAssistant, useSuggestions, useWorking, type ChatItem, type Proposal, type ReplyAction, type ReplyPart, type Suggestion, type TestRun } from './assistant';
 import { useEditor } from './store';
 import { OpsDiff, Warnings } from './suggestions-card';
 import { MAX_FIXES, productionNote, publishToProduction, testUntilItRuns } from './test-session';
@@ -197,15 +198,6 @@ function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?
   );
 }
 
-/** The last reply offers "Test and fix" for a flow just drafted. */
-const offersTest = (items: ChatItem[]) => {
-  const last = items.at(-1);
-  return last?.role === 'assistant' && last.parts.some((p) => p.kind === 'action' && p.action === 'test' && !p.state);
-};
-
-/** Spotlight works on its own: drafting a flow, testing and fixing it, or a drafted flow waiting for its test. */
-const useWorking = () => useAssistant((s) => s.drafting || Boolean(s.testing) || offersTest(s.items));
-
 /** Hide the conversation: while Spotlight works, back to its card at the side. */
 function hideConversation(working: boolean) {
   if (working) useAssistant.setState({ detail: false });
@@ -241,7 +233,8 @@ function SessionGroup({ items, render }: { items: ChatItem[]; render: (item: Cha
 function Conversation({ live, status }: { live: boolean; status?: string }) {
   const items = useAssistant((s) => s.items);
   const testing = useAssistant((s) => Boolean(s.testing));
-  const working = useWorking();
+  // Folded to a side card: while Spotlight works on its own, or (new look) while a change is built step by step.
+  const working = useWorking() || useBuilding();
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' });
@@ -483,7 +476,7 @@ export function Spotlight() {
   const hasItems = useAssistant((s) => s.items.length > 0);
   const pending = useAssistant((s) => s.pending || Boolean(s.testing));
   const drafting = useAssistant((s) => s.drafting);
-  const working = useWorking();
+  const working = useWorking() || useBuilding();
   const detail = useAssistant((s) => s.detail);
   const waiting = useAssistant((s) => s.items.reduce((n, item) => n + (item.role === 'assistant' ? item.parts.filter((p) => p.kind === 'proposal' && !p.proposal.state).length : 0), 0));
   const empty = useEditor((s) => s.nodes.length === 0);

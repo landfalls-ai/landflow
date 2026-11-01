@@ -40,6 +40,7 @@ import { WorkflowTabs } from '../shell/workflow-tabs';
 import { prefetchFailure, useAssistant } from './assistant';
 import { BrainCanvasCard } from '../brain/canvas-card';
 import { focusSpotlight, Spotlight, SpotlightActivity } from './spotlight';
+import { BuildCard, BuildProgressBar, GhostEdgeView, GhostNodeView, useGhosts } from './building';
 import { ChatPanel, type ChatApproval, type ChatChunk, type ChatFile, type ChatOutcome } from './chat-panel';
 import { parseClipboard, type ClipboardData } from './clipboard';
 import { FlowEdgeView } from './flow-edge';
@@ -65,8 +66,8 @@ import { followable, useFollowRun } from './follow-run';
 import { pinFromRun } from './pin-from-run';
 import { useFollowWaiting } from './waiting';
 
-const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView };
-const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView };
+const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView, ghost: GhostNodeView };
+const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView, ghost: GhostEdgeView };
 
 type RunResult = { executionId?: string; status: string; lastNodeId?: string; error?: { message: string }; approval?: ChatApproval };
 
@@ -145,7 +146,11 @@ function Canvas({ onSave }: { onSave: () => void }) {
   // collapsed composite's through its named outputs).
   const reports = useCompositeReports();
   const ports = useMemo(() => boxPorts(groups, reports), [groups, reports]);
-  const { nodes, edges } = useMemo<{ nodes: CanvasNode[]; edges: (FlowEdge | GroupProxyEdge)[] }>(() => canvasGraph(groups, stickies, flowNodes, flowEdges, ports), [groups, stickies, flowNodes, flowEdges, ports]);
+  const built = useMemo<{ nodes: CanvasNode[]; edges: (FlowEdge | GroupProxyEdge)[] }>(() => canvasGraph(groups, stickies, flowNodes, flowEdges, ports), [groups, stickies, flowNodes, flowEdges, ports]);
+  // New look: the nodes and connections a change being built adds, as dashed ghosts (./building.tsx). Not in the store.
+  const ghosts = useGhosts();
+  const nodes = useMemo(() => (ghosts.nodes.length ? [...built.nodes, ...(ghosts.nodes as unknown as CanvasNode[])] : built.nodes), [built.nodes, ghosts.nodes]);
+  const edges = useMemo(() => (ghosts.edges.length ? [...built.edges, ...(ghosts.edges as unknown as FlowEdge[])] : built.edges), [built.edges, ghosts.edges]);
   // Read-only (someone else holds the edit lock) swaps the store's editing actions, so re-read them.
   const readOnly = useEditLock((s) => s.readOnly);
   const { onNodesChange, onEdgesChange, onConnect, openNode, openPalette } = useEditor.getState();
@@ -903,6 +908,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
               <EmptyCanvas />
               <CanvasToolbar />
               <SpotlightActivity />
+              <BuildProgressBar />
+              <BuildCard />
               <BrainCanvasCard />
               {/* One dock at the bottom: run controls, then Spotlight. The side padding keeps clear of zoom and the minimap.
                   When the canvas is narrow (a side panel open), Spotlight wraps to its own line above the run controls. */}
