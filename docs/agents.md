@@ -100,6 +100,10 @@ on the agent's page to pick one of four kinds:
 - **Image**: a PNG, JPEG or WebP, cropped to a square and scaled to 256 px in the browser (WebP when the browser can
   encode it), at most 200 KB as a data URL in the agent's config.
 
+An agent made without an avatar through `POST /api/agents` (a script, the CLI, another agent) gets a face drawn from its
+name, the way the New agent dialog gives one, so it doesn't show as a bare robot in team charts; an avatar sent with the
+request, an icon too, is kept.
+
 The tile takes the agent's colour, tinted (**Soft**) or filled (**Solid**). The avatar is presentation only: it never
 reaches the system prompt or kagent.
 

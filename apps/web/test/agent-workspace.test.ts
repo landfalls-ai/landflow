@@ -105,9 +105,12 @@ describe('templates', () => {
     expect(agentStore.get(blank.data.agent.id)?.persona).toBeUndefined();
 
     expect((await call(agentsRoute.POST, 'POST', { templateId: 'nope' })).status).toBe(404);
-    // Without a template, as before.
+    // Without a template or an avatar (a script, another agent): a face from its name, never the bare robot icon.
     const plain = await call<{ agent: { id: string } }>(agentsRoute.POST, 'POST', { name: 'Plain' });
-    expect(agentStore.get(plain.data.agent.id)).toMatchObject({ name: 'Plain', icon: 'bot' });
+    expect(agentStore.get(plain.data.agent.id)).toMatchObject({ name: 'Plain', icon: 'bot', avatar: { kind: 'face', face: randomFace('Plain') } });
+    // An icon asked for stays an icon.
+    const iconic = await call<{ agent: { id: string } }>(agentsRoute.POST, 'POST', { name: 'Iconic', avatar: { kind: 'icon', solid: true } });
+    expect(agentStore.get(iconic.data.agent.id)?.avatar).toEqual({ kind: 'icon', solid: true });
   });
 
   it('saves an agent as a template without its tools, channels, schedules, team or credential, and starts new agents from it', async () => {
