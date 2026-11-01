@@ -1,0 +1,920 @@
+{
+ "protocol": "landflow.plugin/v1",
+ "plugin": {
+  "id": "github",
+  "name": "GitHub",
+  "version": "0.1.0",
+  "description": "Files, one-commit multi-file changes, branches, draft pull requests, issues and comments over the GitHub REST API; reachable over HTTP, gRPC, any installed broker and MCP",
+  "language": "typescript",
+  "sdk": {
+   "name": "landflow-sdk-typescript",
+   "version": "0.2.0"
+  },
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTAiPjxwYXRoIGZpbGw9IiMxNjE2MTQiIGQ9Ik0xMjguMDAxIDBDNTcuMzE3IDAgMCA1Ny4zMDcgMCAxMjguMDAxYzAgNTYuNTU0IDM2LjY3NiAxMDQuNTM1IDg3LjUzNSAxMjEuNDZjNi4zOTcgMS4xODUgOC43NDYtMi43NzcgOC43NDYtNi4xNThjMC0zLjA1Mi0uMTItMTMuMTM1LS4xNzQtMjMuODNjLTM1LjYxIDcuNzQyLTQzLjEyNC0xNS4xMDMtNDMuMTI0LTE1LjEwM2MtNS44MjMtMTQuNzk1LTE0LjIxMy0xOC43My0xNC4yMTMtMTguNzNjLTExLjYxMy03Ljk0NC44NzYtNy43OC44NzYtNy43OGMxMi44NTMuOTAyIDE5LjYyMSAxMy4xOSAxOS42MjEgMTMuMTljMTEuNDE3IDE5LjU2OCAyOS45NDUgMTMuOTExIDM3LjI0OSAxMC42NGMxLjE0OS04LjI3MiA0LjQ2Ni0xMy45MiA4LjEyNy0xNy4xMTZjLTI4LjQzMS0zLjIzNi01OC4zMTgtMTQuMjEyLTU4LjMxOC02My4yNThjMC0xMy45NzUgNS0yNS4zOTQgMTMuMTg4LTM0LjM1OGMtMS4zMjktMy4yMjQtNS43MS0xNi4yNDIgMS4yNC0zMy44NzRjMCAwIDEwLjc0OS0zLjQ0IDM1LjIxIDEzLjEyMWMxMC4yMS0yLjgzNiAyMS4xNi00LjI1OCAzMi4wMzgtNC4zMDdjMTAuODc4LjA0OSAyMS44MzcgMS40NyAzMi4wNjYgNC4zMDdjMjQuNDMxLTE2LjU2IDM1LjE2NS0xMy4xMiAzNS4xNjUtMTMuMTJjNi45NjcgMTcuNjMgMi41ODQgMzAuNjUgMS4yNTUgMzMuODczYzguMjA3IDguOTY0IDEzLjE3MyAyMC4zODMgMTMuMTczIDM0LjM1OGMwIDQ5LjE2My0yOS45NDQgNTkuOTg4LTU4LjQ0NyA2My4xNTdjNC41OTEgMy45NzIgOC42ODIgMTEuNzYyIDguNjgyIDIzLjcwNGMwIDE3LjEyNi0uMTQ4IDMwLjkxLS4xNDggMzUuMTI2YzAgMy40MDcgMi4zMDQgNy4zOTggOC43OTIgNi4xNEMyMTkuMzcgMjMyLjUgMjU2IDE4NC41MzcgMjU2IDEyOC4wMDJDMjU2IDU3LjMwNyAxOTguNjkxIDAgMTI4LjAwMSAwbS04MC4wNiAxODIuMzRjLS4yODIuNjM2LTEuMjgzLjgyNy0yLjE5NC4zOWMtLjkyOS0uNDE3LTEuNDUtMS4yODQtMS4xNS0xLjkyMmMuMjc2LS42NTUgMS4yNzktLjgzOCAyLjIwNS0uMzk5Yy45My40MTggMS40NiAxLjI5MyAxLjEzOSAxLjkzMW02LjI5NiA1LjYxOGMtLjYxLjU2Ni0xLjgwNC4zMDMtMi42MTQtLjU5MWMtLjgzNy0uODkyLS45OTQtMi4wODYtLjM3NS0yLjY2Yy42My0uNTY2IDEuNzg3LS4zMDEgMi42MjYuNTkxYy44MzguOTAzIDEgMi4wODguMzYzIDIuNjZtNC4zMiA3LjE4OGMtLjc4NS41NDUtMi4wNjcuMDM0LTIuODYtMS4xMDRjLS43ODQtMS4xMzgtLjc4NC0yLjUwMy4wMTctMy4wNWMuNzk1LS41NDcgMi4wNTgtLjA1NSAyLjg2MSAxLjA3NWMuNzgyIDEuMTU3Ljc4MiAyLjUyMi0uMDE5IDMuMDhtNy4zMDQgOC4zMjVjLS43MDEuNzc0LTIuMTk2LjU2Ni0zLjI5LS40OWMtMS4xMTktMS4wMzItMS40My0yLjQ5Ni0uNzI2LTMuMjdjLjcxLS43NzYgMi4yMTMtLjU1OCAzLjMxNS40OWMxLjExIDEuMDMgMS40NSAyLjUwNS43MDEgMy4yN205LjQ0MiAyLjgxYy0uMzEgMS4wMDMtMS43NSAxLjQ1OS0zLjE5OSAxLjAzM2MtMS40NDgtLjQzOS0yLjM5NS0xLjYxMy0yLjEwMy0yLjYyNmMuMzAxLTEuMDEgMS43NDctMS40ODQgMy4yMDctMS4wMjhjMS40NDYuNDM2IDIuMzk2IDEuNjAyIDIuMDk1IDIuNjIybTEwLjc0NCAxLjE5M2MuMDM2IDEuMDU1LTEuMTkzIDEuOTMtMi43MTUgMS45NWMtMS41My4wMzQtMi43NjktLjgyLTIuNzg2LTEuODZjMC0xLjA2NSAxLjIwMi0xLjkzMiAyLjczMy0xLjk1OGMxLjUyMi0uMDMgMi43NjguODE4IDIuNzY4IDEuODY4bTEwLjU1NS0uNDA1Yy4xODIgMS4wMy0uODc1IDIuMDg4LTIuMzg3IDIuMzdjLTEuNDg1LjI3MS0yLjg2MS0uMzY1LTMuMDUtMS4zODZjLS4xODQtMS4wNTYuODkzLTIuMTE0IDIuMzc2LTIuMzg3YzEuNTE0LS4yNjMgMi44NjguMzU2IDMuMDYxIDEuNDAzIi8+PC9zdmc+Cjwvc3ZnPgo=",
+  "color": "#24292f",
+  "author": "Landflow"
+ },
+ "nodes": [
+  {
+   "name": "github",
+   "displayName": "GitHub",
+   "description": "Fixed GitHub steps: read and write files, commit several files at once, create branches, open pull requests, comment",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Development"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTAiPjxwYXRoIGZpbGw9IiMxNjE2MTQiIGQ9Ik0xMjguMDAxIDBDNTcuMzE3IDAgMCA1Ny4zMDcgMCAxMjguMDAxYzAgNTYuNTU0IDM2LjY3NiAxMDQuNTM1IDg3LjUzNSAxMjEuNDZjNi4zOTcgMS4xODUgOC43NDYtMi43NzcgOC43NDYtNi4xNThjMC0zLjA1Mi0uMTItMTMuMTM1LS4xNzQtMjMuODNjLTM1LjYxIDcuNzQyLTQzLjEyNC0xNS4xMDMtNDMuMTI0LTE1LjEwM2MtNS44MjMtMTQuNzk1LTE0LjIxMy0xOC43My0xNC4yMTMtMTguNzNjLTExLjYxMy03Ljk0NC44NzYtNy43OC44NzYtNy43OGMxMi44NTMuOTAyIDE5LjYyMSAxMy4xOSAxOS42MjEgMTMuMTljMTEuNDE3IDE5LjU2OCAyOS45NDUgMTMuOTExIDM3LjI0OSAxMC42NGMxLjE0OS04LjI3MiA0LjQ2Ni0xMy45MiA4LjEyNy0xNy4xMTZjLTI4LjQzMS0zLjIzNi01OC4zMTgtMTQuMjEyLTU4LjMxOC02My4yNThjMC0xMy45NzUgNS0yNS4zOTQgMTMuMTg4LTM0LjM1OGMtMS4zMjktMy4yMjQtNS43MS0xNi4yNDIgMS4yNC0zMy44NzRjMCAwIDEwLjc0OS0zLjQ0IDM1LjIxIDEzLjEyMWMxMC4yMS0yLjgzNiAyMS4xNi00LjI1OCAzMi4wMzgtNC4zMDdjMTAuODc4LjA0OSAyMS44MzcgMS40NyAzMi4wNjYgNC4zMDdjMjQuNDMxLTE2LjU2IDM1LjE2NS0xMy4xMiAzNS4xNjUtMTMuMTJjNi45NjcgMTcuNjMgMi41ODQgMzAuNjUgMS4yNTUgMzMuODczYzguMjA3IDguOTY0IDEzLjE3MyAyMC4zODMgMTMuMTczIDM0LjM1OGMwIDQ5LjE2My0yOS45NDQgNTkuOTg4LTU4LjQ0NyA2My4xNTdjNC41OTEgMy45NzIgOC42ODIgMTEuNzYyIDguNjgyIDIzLjcwNGMwIDE3LjEyNi0uMTQ4IDMwLjkxLS4xNDggMzUuMTI2YzAgMy40MDcgMi4zMDQgNy4zOTggOC43OTIgNi4xNEMyMTkuMzcgMjMyLjUgMjU2IDE4NC41MzcgMjU2IDEyOC4wMDJDMjU2IDU3LjMwNyAxOTguNjkxIDAgMTI4LjAwMSAwbS04MC4wNiAxODIuMzRjLS4yODIuNjM2LTEuMjgzLjgyNy0yLjE5NC4zOWMtLjkyOS0uNDE3LTEuNDUtMS4yODQtMS4xNS0xLjkyMmMuMjc2LS42NTUgMS4yNzktLjgzOCAyLjIwNS0uMzk5Yy45My40MTggMS40NiAxLjI5MyAxLjEzOSAxLjkzMW02LjI5NiA1LjYxOGMtLjYxLjU2Ni0xLjgwNC4zMDMtMi42MTQtLjU5MWMtLjgzNy0uODkyLS45OTQtMi4wODYtLjM3NS0yLjY2Yy42My0uNTY2IDEuNzg3LS4zMDEgMi42MjYuNTkxYy44MzguOTAzIDEgMi4wODguMzYzIDIuNjZtNC4zMiA3LjE4OGMtLjc4NS41NDUtMi4wNjcuMDM0LTIuODYtMS4xMDRjLS43ODQtMS4xMzgtLjc4NC0yLjUwMy4wMTctMy4wNWMuNzk1LS41NDcgMi4wNTgtLjA1NSAyLjg2MSAxLjA3NWMuNzgyIDEuMTU3Ljc4MiAyLjUyMi0uMDE5IDMuMDhtNy4zMDQgOC4zMjVjLS43MDEuNzc0LTIuMTk2LjU2Ni0zLjI5LS40OWMtMS4xMTktMS4wMzItMS40My0yLjQ5Ni0uNzI2LTMuMjdjLjcxLS43NzYgMi4yMTMtLjU1OCAzLjMxNS40OWMxLjExIDEuMDMgMS40NSAyLjUwNS43MDEgMy4yN205LjQ0MiAyLjgxYy0uMzEgMS4wMDMtMS43NSAxLjQ1OS0zLjE5OSAxLjAzM2MtMS40NDgtLjQzOS0yLjM5NS0xLjYxMy0yLjEwMy0yLjYyNmMuMzAxLTEuMDEgMS43NDctMS40ODQgMy4yMDctMS4wMjhjMS40NDYuNDM2IDIuMzk2IDEuNjAyIDIuMDk1IDIuNjIybTEwLjc0NCAxLjE5M2MuMDM2IDEuMDU1LTEuMTkzIDEuOTMtMi43MTUgMS45NWMtMS41My4wMzQtMi43NjktLjgyLTIuNzg2LTEuODZjMC0xLjA2NSAxLjIwMi0xLjkzMiAyLjczMy0xLjk1OGMxLjUyMi0uMDMgMi43NjguODE4IDIuNzY4IDEuODY4bTEwLjU1NS0uNDA1Yy4xODIgMS4wMy0uODc1IDIuMDg4LTIuMzg3IDIuMzdjLTEuNDg1LjI3MS0yLjg2MS0uMzY1LTMuMDUtMS4zODZjLS4xODQtMS4wNTYuODkzLTIuMTE0IDIuMzc2LTIuMzg3YzEuNTE0LS4yNjMgMi44NjguMzU2IDMuMDYxIDEuNDAzIi8+PC9zdmc+Cjwvc3ZnPgo=",
+   "color": "#24292f",
+   "subtitle": "{{operation}}: {{resource}}",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "properties": [
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "default": "files",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Branch",
+       "value": "branch"
+      },
+      {
+       "name": "File",
+       "value": "file"
+      },
+      {
+       "name": "Files (One Commit)",
+       "value": "files"
+      },
+      {
+       "name": "Issue",
+       "value": "issue"
+      },
+      {
+       "name": "Pull Request",
+       "value": "pullRequest"
+      },
+      {
+       "name": "Repository",
+       "value": "repository"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "get",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Compare",
+       "value": "compare",
+       "description": "What a branch holds beyond another: commits ahead and behind, and the files changed with their patches",
+       "action": "Compare two branches",
+       "idempotent": true
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Get a repository: default branch, visibility, URLs",
+       "action": "Get a repository",
+       "idempotent": true
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "repository"
+       ]
+      }
+     }
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "get",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Create or Update",
+       "value": "createOrUpdate",
+       "description": "Write one file in one commit",
+       "action": "Create or update a file"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Read a file: decoded content and sha",
+       "action": "Get a file",
+       "idempotent": true
+      },
+      {
+       "name": "List",
+       "value": "list",
+       "description": "List a directory",
+       "action": "List a directory",
+       "idempotent": true
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ]
+      }
+     }
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "get",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Create a branch from a base branch or a commit",
+       "action": "Create a branch"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Get the commit a branch points at: its message, author and the files it changed",
+       "action": "Get a branch",
+       "idempotent": true
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "branch"
+       ]
+      }
+     }
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "create",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Comment",
+       "value": "comment",
+       "description": "Add a comment to the conversation",
+       "action": "Comment on a pull request"
+      },
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Open a pull request (a draft by default)",
+       "action": "Create a pull request"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "action": "Get a pull request",
+       "idempotent": true
+      },
+      {
+       "name": "List Files",
+       "value": "listFiles",
+       "description": "The files a pull request changes",
+       "action": "List the files of a pull request",
+       "idempotent": true
+      },
+      {
+       "name": "Merge",
+       "value": "merge",
+       "description": "Merge a ready (not draft) pull request into its base branch",
+       "action": "Merge a pull request"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest"
+       ]
+      }
+     }
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "create",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Comment",
+       "value": "comment",
+       "description": "Add a comment to an issue",
+       "action": "Comment on an issue"
+      },
+      {
+       "name": "Create",
+       "value": "create",
+       "action": "Create an issue"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ]
+      }
+     }
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "commit",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Commit",
+       "value": "commit",
+       "description": "Commit several files in one commit on a branch, creating the branch if asked to",
+       "action": "Commit several files"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "files"
+       ]
+      }
+     }
+    },
+    {
+     "name": "owner",
+     "displayName": "Owner",
+     "type": "string",
+     "default": "",
+     "description": "The user or organization that owns the repository",
+     "placeholder": "landfalls",
+     "required": true
+    },
+    {
+     "name": "repository",
+     "displayName": "Repository",
+     "type": "string",
+     "default": "",
+     "description": "The repository name, without the owner",
+     "placeholder": "landflow",
+     "required": true
+    },
+    {
+     "name": "compareBase",
+     "displayName": "Base",
+     "type": "string",
+     "default": "",
+     "description": "The branch, tag or commit to compare against; empty means the repository\u2019s default branch",
+     "placeholder": "main",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "repository"
+       ],
+       "operation": [
+        "compare"
+       ]
+      }
+     }
+    },
+    {
+     "name": "compareHead",
+     "displayName": "Head",
+     "type": "string",
+     "default": "",
+     "description": "The branch, tag or commit with the changes",
+     "placeholder": "feature or fork-owner:feature",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "repository"
+       ],
+       "operation": [
+        "compare"
+       ]
+      }
+     }
+    },
+    {
+     "name": "path",
+     "displayName": "Path",
+     "type": "string",
+     "default": "",
+     "description": "The file\u2019s path from the repository root",
+     "placeholder": "docs/readme.md",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "get",
+        "createOrUpdate"
+       ]
+      }
+     }
+    },
+    {
+     "name": "path",
+     "displayName": "Path",
+     "type": "string",
+     "default": "",
+     "description": "The directory\u2019s path from the repository root; empty lists the root",
+     "placeholder": "docs",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "list"
+       ]
+      }
+     }
+    },
+    {
+     "name": "branch",
+     "displayName": "Branch",
+     "type": "string",
+     "default": "",
+     "description": "The branch to read from; empty means the repository\u2019s default branch. A tag or commit SHA also works",
+     "placeholder": "main",
+     "required": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "get",
+        "list"
+       ]
+      }
+     }
+    },
+    {
+     "name": "branch",
+     "displayName": "Branch",
+     "type": "string",
+     "default": "",
+     "description": "The branch to commit to; empty means the repository\u2019s default branch",
+     "placeholder": "main",
+     "required": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "createOrUpdate"
+       ]
+      }
+     }
+    },
+    {
+     "name": "content",
+     "displayName": "Content",
+     "type": "string",
+     "default": "",
+     "description": "The new text of the file (UTF-8)",
+     "typeOptions": {
+      "rows": 8
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "createOrUpdate"
+       ]
+      }
+     }
+    },
+    {
+     "name": "message",
+     "displayName": "Commit Message",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file",
+        "files"
+       ],
+       "operation": [
+        "createOrUpdate",
+        "commit"
+       ]
+      }
+     }
+    },
+    {
+     "name": "sha",
+     "displayName": "File SHA",
+     "type": "string",
+     "default": "",
+     "description": "The blob SHA of the file being replaced. Leave empty to look it up on the branch (a missing file is created)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "file"
+       ],
+       "operation": [
+        "createOrUpdate"
+       ]
+      }
+     }
+    },
+    {
+     "name": "branch",
+     "displayName": "Branch",
+     "type": "string",
+     "default": "",
+     "description": "The branch to commit to",
+     "placeholder": "main",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "files",
+        "branch"
+       ],
+       "operation": [
+        "commit",
+        "create",
+        "get"
+       ]
+      }
+     }
+    },
+    {
+     "name": "files",
+     "displayName": "Files",
+     "type": "json",
+     "default": "[\n  { \"path\": \"docs/example.md\", \"content\": \"Hello\" }\n]",
+     "description": "A JSON array of { \"path\", \"content\" }, or an expression producing one. All of them go into one commit. Add \"encoding\": \"base64\" to an entry for binary content",
+     "required": true,
+     "typeOptions": {
+      "rows": 8
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "files"
+       ],
+       "operation": [
+        "commit"
+       ]
+      }
+     }
+    },
+    {
+     "name": "createBranch",
+     "displayName": "Create Branch If Missing",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to create the branch (from the base below) when it does not exist. Off: a missing branch fails the node",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "files"
+       ],
+       "operation": [
+        "commit"
+       ]
+      }
+     }
+    },
+    {
+     "name": "baseBranch",
+     "displayName": "Base Branch",
+     "type": "string",
+     "default": "",
+     "description": "The branch a new branch starts from; empty means the repository\u2019s default branch",
+     "placeholder": "main",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "files"
+       ],
+       "operation": [
+        "commit"
+       ],
+       "createBranch": [
+        true
+       ]
+      }
+     }
+    },
+    {
+     "name": "baseBranch",
+     "displayName": "Base Branch",
+     "type": "string",
+     "default": "",
+     "description": "The branch the new branch starts from; empty means the repository\u2019s default branch",
+     "placeholder": "main",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "branch"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "baseSha",
+     "displayName": "Base Commit SHA",
+     "type": "string",
+     "default": "",
+     "description": "Start from this commit instead of a base branch\u2019s tip",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "branch"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "pullNumber",
+     "displayName": "Pull Request Number",
+     "type": "number",
+     "default": 0,
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest"
+       ],
+       "operation": [
+        "get",
+        "listFiles",
+        "comment",
+        "merge"
+       ]
+      }
+     }
+    },
+    {
+     "name": "issueNumber",
+     "displayName": "Issue Number",
+     "type": "number",
+     "default": 0,
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "comment"
+       ]
+      }
+     }
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest",
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "body",
+     "displayName": "Body",
+     "type": "string",
+     "default": "",
+     "description": "Markdown",
+     "typeOptions": {
+      "rows": 6
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest",
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "head",
+     "displayName": "Head Branch",
+     "type": "string",
+     "default": "",
+     "description": "The branch with the changes. From a fork use owner:branch",
+     "placeholder": "feature or fork-owner:feature",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "base",
+     "displayName": "Base Branch",
+     "type": "string",
+     "default": "main",
+     "description": "The branch the changes should be merged into",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "draft",
+     "displayName": "Draft",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to open the pull request as a draft",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "commentBody",
+     "displayName": "Comment",
+     "type": "string",
+     "default": "",
+     "description": "Markdown",
+     "required": true,
+     "typeOptions": {
+      "rows": 4
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest",
+        "issue"
+       ],
+       "operation": [
+        "comment"
+       ]
+      }
+     }
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "labels",
+       "displayName": "Labels",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated label names",
+       "placeholder": "bug, triage"
+      },
+      {
+       "name": "assignees",
+       "displayName": "Assignees",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated user logins",
+       "placeholder": "octocat"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "mergeMethod",
+     "displayName": "Merge Method",
+     "type": "options",
+     "default": "squash",
+     "description": "The repository must allow this method",
+     "options": [
+      {
+       "name": "Squash",
+       "value": "squash",
+       "description": "One commit on the base branch"
+      },
+      {
+       "name": "Merge Commit",
+       "value": "merge",
+       "description": "Keep the commits and add a merge commit"
+      },
+      {
+       "name": "Rebase",
+       "value": "rebase",
+       "description": "Replay the commits on the base branch"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest"
+       ],
+       "operation": [
+        "merge"
+       ]
+      }
+     }
+    },
+    {
+     "name": "expectedHeadSha",
+     "displayName": "Only If the Head Is",
+     "type": "string",
+     "default": "",
+     "description": "A commit SHA: merge only if the pull request still points at it, so what was checked is what is merged. Empty: whatever it points at now",
+     "placeholder": "{{ $json.headSha }}",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest"
+       ],
+       "operation": [
+        "merge"
+       ]
+      }
+     }
+    },
+    {
+     "name": "commitTitle",
+     "displayName": "Commit Title",
+     "type": "string",
+     "default": "",
+     "description": "Empty: GitHub\u2019s default (\"Title (#12)\" for a squash)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest"
+       ],
+       "operation": [
+        "merge"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all files (GitHub lists up to 3000) or only up to a limit",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest"
+       ],
+       "operation": [
+        "listFiles"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "description": "Max number of files to return",
+     "typeOptions": {
+      "minValue": 1
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "pullRequest"
+       ],
+       "operation": [
+        "listFiles"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    }
+   ],
+   "usableAsTool": true,
+   "toolDescription": "Do a GitHub step over the REST API: get a repository or compare two branches, read or list files, create or update one file, commit several files in one commit (optionally on a new branch), create or get a branch, open a draft pull request, list its files, comment on a pull request or issue, merge a pull request, create an issue. It cannot delete.",
+   "documentationUrl": "https://docs.github.com/en/rest",
+   "keywords": [
+    "github",
+    "git",
+    "repository",
+    "commit",
+    "branch",
+    "pull request",
+    "pr",
+    "merge",
+    "issue",
+    "file"
+   ],
+   "credentials": [
+    {
+     "name": "githubApi",
+     "required": true
+    }
+   ],
+   "idempotent": false
+  }
+ ],
+ "credentialTypes": [
+  {
+   "name": "githubApi",
+   "displayName": "GitHub API",
+   "description": "A personal access token (classic with the repo scope, or fine-grained with Contents, Pull requests and Issues read and write on the repositories). For GitHub Enterprise Server use https://<host>/api/v3 as the API base URL.",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTAiPjxwYXRoIGZpbGw9IiMxNjE2MTQiIGQ9Ik0xMjguMDAxIDBDNTcuMzE3IDAgMCA1Ny4zMDcgMCAxMjguMDAxYzAgNTYuNTU0IDM2LjY3NiAxMDQuNTM1IDg3LjUzNSAxMjEuNDZjNi4zOTcgMS4xODUgOC43NDYtMi43NzcgOC43NDYtNi4xNThjMC0zLjA1Mi0uMTItMTMuMTM1LS4xNzQtMjMuODNjLTM1LjYxIDcuNzQyLTQzLjEyNC0xNS4xMDMtNDMuMTI0LTE1LjEwM2MtNS44MjMtMTQuNzk1LTE0LjIxMy0xOC43My0xNC4yMTMtMTguNzNjLTExLjYxMy03Ljk0NC44NzYtNy43OC44NzYtNy43OGMxMi44NTMuOTAyIDE5LjYyMSAxMy4xOSAxOS42MjEgMTMuMTljMTEuNDE3IDE5LjU2OCAyOS45NDUgMTMuOTExIDM3LjI0OSAxMC42NGMxLjE0OS04LjI3MiA0LjQ2Ni0xMy45MiA4LjEyNy0xNy4xMTZjLTI4LjQzMS0zLjIzNi01OC4zMTgtMTQuMjEyLTU4LjMxOC02My4yNThjMC0xMy45NzUgNS0yNS4zOTQgMTMuMTg4LTM0LjM1OGMtMS4zMjktMy4yMjQtNS43MS0xNi4yNDIgMS4yNC0zMy44NzRjMCAwIDEwLjc0OS0zLjQ0IDM1LjIxIDEzLjEyMWMxMC4yMS0yLjgzNiAyMS4xNi00LjI1OCAzMi4wMzgtNC4zMDdjMTAuODc4LjA0OSAyMS44MzcgMS40NyAzMi4wNjYgNC4zMDdjMjQuNDMxLTE2LjU2IDM1LjE2NS0xMy4xMiAzNS4xNjUtMTMuMTJjNi45NjcgMTcuNjMgMi41ODQgMzAuNjUgMS4yNTUgMzMuODczYzguMjA3IDguOTY0IDEzLjE3MyAyMC4zODMgMTMuMTczIDM0LjM1OGMwIDQ5LjE2My0yOS45NDQgNTkuOTg4LTU4LjQ0NyA2My4xNTdjNC41OTEgMy45NzIgOC42ODIgMTEuNzYyIDguNjgyIDIzLjcwNGMwIDE3LjEyNi0uMTQ4IDMwLjkxLS4xNDggMzUuMTI2YzAgMy40MDcgMi4zMDQgNy4zOTggOC43OTIgNi4xNEMyMTkuMzcgMjMyLjUgMjU2IDE4NC41MzcgMjU2IDEyOC4wMDJDMjU2IDU3LjMwNyAxOTguNjkxIDAgMTI4LjAwMSAwbS04MC4wNiAxODIuMzRjLS4yODIuNjM2LTEuMjgzLjgyNy0yLjE5NC4zOWMtLjkyOS0uNDE3LTEuNDUtMS4yODQtMS4xNS0xLjkyMmMuMjc2LS42NTUgMS4yNzktLjgzOCAyLjIwNS0uMzk5Yy45My40MTggMS40NiAxLjI5MyAxLjEzOSAxLjkzMW02LjI5NiA1LjYxOGMtLjYxLjU2Ni0xLjgwNC4zMDMtMi42MTQtLjU5MWMtLjgzNy0uODkyLS45OTQtMi4wODYtLjM3NS0yLjY2Yy42My0uNTY2IDEuNzg3LS4zMDEgMi42MjYuNTkxYy44MzguOTAzIDEgMi4wODguMzYzIDIuNjZtNC4zMiA3LjE4OGMtLjc4NS41NDUtMi4wNjcuMDM0LTIuODYtMS4xMDRjLS43ODQtMS4xMzgtLjc4NC0yLjUwMy4wMTctMy4wNWMuNzk1LS41NDcgMi4wNTgtLjA1NSAyLjg2MSAxLjA3NWMuNzgyIDEuMTU3Ljc4MiAyLjUyMi0uMDE5IDMuMDhtNy4zMDQgOC4zMjVjLS43MDEuNzc0LTIuMTk2LjU2Ni0zLjI5LS40OWMtMS4xMTktMS4wMzItMS40My0yLjQ5Ni0uNzI2LTMuMjdjLjcxLS43NzYgMi4yMTMtLjU1OCAzLjMxNS40OWMxLjExIDEuMDMgMS40NSAyLjUwNS43MDEgMy4yN205LjQ0MiAyLjgxYy0uMzEgMS4wMDMtMS43NSAxLjQ1OS0zLjE5OSAxLjAzM2MtMS40NDgtLjQzOS0yLjM5NS0xLjYxMy0yLjEwMy0yLjYyNmMuMzAxLTEuMDEgMS43NDctMS40ODQgMy4yMDctMS4wMjhjMS40NDYuNDM2IDIuMzk2IDEuNjAyIDIuMDk1IDIuNjIybTEwLjc0NCAxLjE5M2MuMDM2IDEuMDU1LTEuMTkzIDEuOTMtMi43MTUgMS45NWMtMS41My4wMzQtMi43NjktLjgyLTIuNzg2LTEuODZjMC0xLjA2NSAxLjIwMi0xLjkzMiAyLjczMy0xLjk1OGMxLjUyMi0uMDMgMi43NjguODE4IDIuNzY4IDEuODY4bTEwLjU1NS0uNDA1Yy4xODIgMS4wMy0uODc1IDIuMDg4LTIuMzg3IDIuMzdjLTEuNDg1LjI3MS0yLjg2MS0uMzY1LTMuMDUtMS4zODZjLS4xODQtMS4wNTYuODkzLTIuMTE0IDIuMzc2LTIuMzg3YzEuNTE0LS4yNjMgMi44NjguMzU2IDMuMDYxIDEuNDAzIi8+PC9zdmc+Cjwvc3ZnPgo=",
+   "documentationUrl": "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens",
+   "properties": [
+    {
+     "name": "accessToken",
+     "displayName": "Access Token",
+     "type": "string",
+     "description": "A personal access token, or an installation token of a GitHub App",
+     "placeholder": "ghp_\u2026 / github_pat_\u2026",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     }
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "API Base URL",
+     "type": "string",
+     "default": "https://api.github.com",
+     "description": "GitHub Enterprise Server: https://<host>/api/v3. Change it otherwise only for a proxy or a test double"
+    }
+   ],
+   "testable": true
+  }
+ ]
+}

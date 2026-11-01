@@ -73,7 +73,7 @@ export function stepWords(span: RunSpan): string | undefined {
   if (span.kind !== 'tool') return undefined;
   const input = typeof span.input === 'object' && span.input !== null ? (span.input as Record<string, unknown>) : undefined;
   const description = typeof input?.description === 'string' ? input.description.trim() : '';
-  const words = description || narrate(span.name, span.input).plain;
+  const words = description || narrate(span.name, span.input, { output: span.output }).plain;
   return words.toLowerCase() === span.name.toLowerCase() ? undefined : words;
 }
 

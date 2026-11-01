@@ -19,6 +19,8 @@ export type NoteStatus = (typeof NOTE_STATUSES)[number];
 export interface NoteSource {
   executionId?: string;
   spanId?: string;
+  /** The name of the workflow step (the team node) that ran the member, when it is known. */
+  step?: string;
   /** The tool call that wrote it (`note_add`). */
   tool?: string;
   /** A page or file it was read from: such a note is `tainted`. */

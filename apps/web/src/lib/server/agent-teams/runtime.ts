@@ -291,6 +291,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       ...(projectId && { projectId }),
       runId: notebookRun,
       ...(request.execution && { workflowId: request.execution.workflowId }),
+      ...(request.execution?.nodeName && { step: request.execution.nodeName }),
       member: { id: member.id, title: member.title },
       manager: reportsOf(config, member.id).length > 0,
       content: notebookContent,

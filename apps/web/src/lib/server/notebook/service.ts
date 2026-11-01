@@ -28,6 +28,8 @@ export interface NotebookBinding {
   /** The execution (a team run has one; a test or an ad-hoc call makes one up). */
   runId: string;
   workflowId?: string;
+  /** The name of the workflow step that runs the team: notes say where they were written. */
+  step?: string;
   member: { id?: string; title: string };
   /** A member with reports (the lead included): may promote and settle. */
   manager: boolean;
@@ -76,6 +78,7 @@ export async function addNote(binding: NotebookBinding, args: Record<string, unk
   const quote = clean(args.quote).slice(0, MAX_QUOTE);
   const source: NoteSource = {
     executionId: binding.runId,
+    ...(binding.step && { step: binding.step }),
     ...(extras.spanId && { spanId: extras.spanId }),
     tool: 'note_add',
     ...(url && { url }),
@@ -168,7 +171,7 @@ export async function disputeNote(binding: NotebookBinding, args: Record<string,
     scope: 'run',
     author: binding.member.title,
     ...(binding.member.id && { authorId: binding.member.id }),
-    source: { executionId: binding.runId, ...(extras.spanId && { spanId: extras.spanId }), tool: 'note_dispute' },
+    source: { executionId: binding.runId, ...(binding.step && { step: binding.step }), ...(extras.spanId && { spanId: extras.spanId }), tool: 'note_dispute' },
     tainted: URL_IN_TEXT.test(text) || Boolean(extras.sawOutside),
     disputes: against.id,
     status: 'disputed',

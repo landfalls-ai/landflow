@@ -71,18 +71,24 @@ A disagreement is a pair, not an edit: the Notebook tab shows the two notes side
 
 ## The tab
 
-- Tiles for the counts (by scope and by status), a search box that ranks by meaning, scope pills, and a **Live** dot while
+- Tiles for the counts of open questions, decisions and facts. They count what the list holds under the scope pill (and
+  `run`), whatever kind is picked, so they always match the groups below; picking a tile filters the list to that kind. A search box that ranks by meaning, scope pills, and a **Live** dot while
   a run is writing (the tab polls every 5 s).
 - Groups: **Disputes**, **Open questions**, **Decisions**, **Facts and the rest**. Each card has the author's face, a status
-  pill, the Run Trace link, a bar for the time it has left, and (for a note from outside) its host with a warning.
-- Actions: Verify, Dispute, Promote (run to team, team to project as a suggestion; the card then shows an inbox chip),
-  Answer and Reopen (open questions), Delete, and an **Add a note** form.
+  pill, a bar for the time it has left, and (for a note from outside) a warning. The pill is amber for `open` and
+  `unverified`, green for `verified` and red for `disputed`. A card reads "by <author> · Run Trace · <step> · <host> · <age>":
+  the Run Trace link, the name of the workflow step that ran the team (kept in the note's `source.step`; older notes have
+  none) and the host of a page it was read from.
+- Actions by state: an open question has **Answer** (and **Reopen** once answered); an unverified note has **Verify**,
+  **Dispute** and **Promote** (run to team, team to project as a suggestion; the card then shows an inbox chip); a disputed
+  note has **Resolve** (keep it, drop what disagrees; a pair shows **Keep this one** on each side). Delete and an **Add a
+  note** form are always there.
 - A note that arrives while the tab is open rings once and a deleted one fades out.
 
 ## On the canvas and in the Run Trace
 
 When a member writes, searches or disputes a note, the team node and the live strip (`team-live.tsx`) say so in plain words
-("Writing a note", "Noting a decision", "Searching the notebook", "Disputing a note") with a notebook-pen icon and an entrance animation, and the run's headlines
+("Noting a fact", "Noting a decision", "Searching the notebook · 3 found", "Disputing a note") with a notebook-pen icon and an entrance animation, and the run's headlines
 include note moments (`shared/run-headlines.ts`, `shared/team-progress.ts`). In the Run Trace each note tool call is a
 step of its member.
 

@@ -87,7 +87,7 @@ The code is in `apps/web/src/lib/server/agent-teams/` (`store.ts`, with `teamsOf
 The team page has two ways to take a team elsewhere. **Export as Claude Code plugin** downloads a plugin zip
 ([marketplace.md](marketplace.md#export-agents-as-plugins)) with a file per Landflow agent and the chart in
 `.landflow/team.json`. **Save as template** keeps the team, its agents and, if you pick one, a flow that runs it, as a
-template that **Use template** recreates with fresh ids and credentials of the new person's choosing ([templates.md](templates.md)).
+template that **Use template** recreates with fresh ids and credentials of the new person's choosing ([templates.md](templates.md)). Team templates have their own category and card in the gallery (the members' faces, **You pick**, **Use template**), and one is built in: **Plugin builders**, the Tech Lead team and the flow that builds, checks and merges a plugin.
 When a team has flows, the page lists them (`GET /api/agent-teams/:id/flows`), and the team a template creates opens with
 its new flow marked.
 
@@ -258,6 +258,15 @@ is "Running the tests"; also installs, typechecks, lint, builds, clones, commits
 Read and Edit name the file, Grep names the pattern, a web fetch names the host, and a tool with no rule keeps its name as
 a sentence ("Check branch"). Captions of other nodes that report progress (an A2A Agent node) use the same words, with the
 exact step in their tooltip.
+
+`narrate(name, args, { output?, cache? })` also reads the notebook tools: "Searching the notebook" while `note_search` runs
+and "Searching the notebook · 3 found" once its result says how many notes it returned, "Noting a decision", "Noting a
+fact" or "Noting an open question" for `note_add` by kind, "Answering a question" (`note_update` with an answer),
+"Disputing a note" and "Promoting a note to the team". A dependency install (pnpm, npm, yarn or bun install/add/ci,
+`go mod download`, `pip install`, `apk add`) reads "Installing dependencies · from the cache" when the member works through
+Landflow's package cache: the folder gets `packageCache` (the titles of the members whose Landflow agent is deployed to
+kagent with a package egress policy, the same policy "Package cache" in its connections shows), and a step whose own output
+names `landflow-cache` counts too. Other installs read "Installing dependencies".
 
 After the run the node keeps the ribbon, a one-line summary of its output's `activity` (the results that mattered and
 each member's step count) and each budgeted member's bar (`activity.usage`), in the editor and on the execution view. A
