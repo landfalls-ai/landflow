@@ -1,6 +1,6 @@
 'use client';
 /** The Team tab: who called whom (a vertical layout, no sideways scroll) and a card per actor. */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ArrowRight, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { teamSnapshotOf, type TeamSnapshot, type TeamSnapshotMember } from '@/lib/shared/agent-teams';
@@ -8,6 +8,7 @@ import { fixCyclesOf, type FixCycle } from '@/lib/shared/fix-cycles';
 import { resolveRunProfile } from '@/lib/shared/run-profiles';
 import { cut, edgeParts, fmtMs, preview, spendLine, type RunActorStats, type RunEdge, type RunModel, type RunRound, type RunTurn, type RunTurnItem } from '@/lib/shared/run-trace-model';
 import { Badge } from '../ui/badge';
+import { ConsultLines } from '../agents/consult-lines';
 import { EmptyState } from '../ui/empty-state';
 import { BudgetBar } from '../editor/team-live';
 import { ConnectionChips } from './connections';
@@ -296,6 +297,7 @@ export function ActorCard({ s, open, turns = [], cycles = [], rounds = [] }: { s
 
 /** The reporting lines of a team run, as recorded: an indented tree, one column, so it reads on a phone. */
 function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel; open: (o: Open) => void }) {
+  const chartRef = useRef<HTMLDivElement>(null);
   const working = new Set(model.working.map((w) => w.actor.name));
   const waiting = new Set(model.needsYou.filter((n) => n.kind === 'wait').map((n) => n.actor?.name));
   const reportsOf = (id: string) => team.members.filter((m) => m.reportsTo === id);
@@ -326,7 +328,7 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
     return (
       <li key={m.id}>
         <Tap onClick={() => open({ kind: 'actor', id: actor.id })} label={m.title} className="rounded-xl">
-          <span className={cn('flex items-center gap-2.5 rounded-xl border bg-sf px-3 py-2', live ? 'animate-pulse-soft border-ac' : 'border-hair')}>
+          <span data-member-id={m.id} className={cn('flex items-center gap-2.5 rounded-xl border bg-sf px-3 py-2', live ? 'animate-pulse-soft border-ac' : 'border-hair')}>
             <Avatar actor={actor} />
             <span className="min-w-0 flex-1">
               <b className="block truncate text-[13px] font-semibold text-t1">{m.title}</b>
@@ -357,7 +359,7 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
   };
   const seen = new Set<string>();
   return (
-    <div>
+    <div ref={chartRef} className="relative pr-6">
       <p className="mb-2 px-0.5 text-[12px] text-t3">
         {team.name}
         {team.version ? ` v${team.version}` : ''}
@@ -366,6 +368,13 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
       <ul role="tree" aria-label="Who reports to whom" className="space-y-1.5">
         {roots.map((m) => row(m, seen))}
       </ul>
+      {/* Dashed "may consult" lines down the right edge, in each member's colour; the list is one column, so brackets read on a phone. */}
+      <ConsultLines
+        containerRef={chartRef}
+        members={team.members}
+        titles={Object.fromEntries(team.members.map((m) => [m.id, m.title]))}
+        colors={Object.fromEntries(team.members.map((m) => [m.id, actorColor(model.actors.find((a) => a.actor.name === m.title)?.actor ?? { id: `member:${m.id}`, type: 'agent' })]))}
+      />
     </div>
   );
 }

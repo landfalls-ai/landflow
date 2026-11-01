@@ -30,6 +30,7 @@ import { useAgentList, useNodeTypes } from './use-agent-data';
 import { BudgetBar } from '../editor/team-live';
 import type { TeamMoment } from '@/lib/shared/team-progress';
 import { faceOf } from './faces';
+import { ConsultLines } from './consult-lines';
 import { newId } from './util';
 
 /** The A2A Agent node's parameters that describe the remote agent (as in the agent builder's A2A dialog). */
@@ -83,6 +84,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
 
   const latest = useRef<AgentTeamConfig>(undefined);
   const dirty = useRef(false);
+  const chartRef = useRef<HTMLDivElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const queue = useRef<Promise<void>>(Promise.resolve());
 
@@ -297,6 +299,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
               </Button>
             </div>
             {draft.members.length === 0 && <p className="rounded-2xl border border-dashed border-hair px-4 py-8 text-center text-[13px] text-t3">No members yet. Add the lead first, then the members who report to it.</p>}
+            <div ref={chartRef} className="relative">
             {tree && (
               <div className="flex flex-col items-center">
                 <div className="w-full sm:max-w-[360px]">{card(tree.member)}</div>
@@ -319,6 +322,14 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{loose.map((m) => card(m))}</div>
               </div>
             )}
+            {/* The "may consult" lines: dashed, in the consulting member's colour, over the cards. */}
+            <ConsultLines
+              containerRef={chartRef}
+              members={draft.members}
+              titles={Object.fromEntries(draft.members.map((m) => [m.id, m.title]))}
+              colors={Object.fromEntries(draft.members.flatMap((m) => { const c = memberAgent(m, agents ?? []); const color = c && faceOf(c).color; return color ? [[m.id, color]] : []; }))}
+            />
+            </div>
           </section>
 
           <LastRun teamId={teamId} faces={draft.members.map((m) => ({ title: m.title, agent: memberAgent(m, agents ?? []) }))} />
@@ -426,7 +437,7 @@ function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddRepor
   const runsOn = member.kind === 'a2a' ? (agent ? `${agent.name} on kagent` : 'Remote agent over A2A') : agent ? 'Landflow agent' : 'Pick an agent';
   return (
     // A card: who (face, title, where it runs), what it does, and its relations in a footer, so cards in a row line up.
-    <article className={cn('flex h-full flex-col overflow-hidden rounded-2xl border bg-sf transition-colors hover:border-bd', lead ? 'border-acbd' : 'border-hair')}>
+    <article data-member-id={member.id} className={cn('flex h-full flex-col overflow-hidden rounded-2xl border bg-sf transition-colors hover:border-bd', lead ? 'border-acbd' : 'border-hair')}>
       <button type="button" onClick={onEdit} className="flex flex-1 flex-col gap-2 p-3 text-left focus-visible:outline-2 focus-visible:outline-ac">
         <span className={cn('-m-3 mb-0 flex items-center gap-3 p-3', lead && 'bg-acdim')}>
           {/* A remote member that calls a Landflow agent on kagent wears that agent's face. */}

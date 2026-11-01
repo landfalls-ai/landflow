@@ -144,6 +144,28 @@ export function chartOrder(config: AgentTeamConfig): TeamMember[] {
   return tree ? walk(tree) : config.members;
 }
 
+/** One "may consult" line between two members: `from` is the one listed first in the team, `mutual` when the other may consult it back. */
+export interface ConsultEdge {
+  from: string;
+  to: string;
+  mutual: boolean;
+}
+
+/** The "may consult" lines of a team for the chart: two members consulting each other make one line; ids not in the team and self-consults are dropped. */
+export function consultEdges(config: { members: readonly { id: string; consults?: string[] }[] }): ConsultEdge[] {
+  const ids = new Set(config.members.map((m) => m.id));
+  const edges = new Map<string, ConsultEdge>();
+  for (const m of config.members) {
+    for (const to of m.consults ?? []) {
+      if (to === m.id || !ids.has(to)) continue;
+      const back = edges.get(`${to}>${m.id}`);
+      if (back) back.mutual = true;
+      else if (!edges.has(`${m.id}>${to}`)) edges.set(`${m.id}>${to}`, { from: m.id, to, mutual: false });
+    }
+  }
+  return [...edges.values()];
+}
+
 /** What stops a team from running, in plain words; empty when it can run. With `agentExists`, members whose agent is gone count too. */
 export function teamIssues(config: AgentTeamConfig, options: { agentExists?: (agentId: string) => boolean } = {}): string[] {
   const issues: string[] = [];
