@@ -42,6 +42,7 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | `LANDFLOW_CODE_IN_PROCESS` | `true` | `false`: no in-process (`node:vm`) JavaScript; every Code node needs the runner |
 | `LANDFLOW_CODE_BINARY_MAX_BYTES` | `6291456` | files a Code node reads (all together) and creates, in the sandbox and in-process |
 | `ANTHROPIC_API_KEY` | – | for the Anthropic Chat Model |
+| `LANDFLOW_GITHUB_MCP_URL` | `http://landflow-github-mcp:8082/` | the GitHub MCP server an agent's GitHub MCP tool uses when it names no URL ([a2a.md](../a2a.md#githubs-mcp-tools-for-agents)); the token is the tool's credential, never a variable |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | the Ollama used by the AI flow builder and the editor assistant, and the default of the Ollama chat and embeddings nodes |
 | `LANDFLOW_BUILDER_MODEL` | `qwen3-coder:30b` | model the AI flow builder and the editor assistant use |
 | `AI_USAGE_RETENTION_DAYS` | `400` | how long per-call AI usage rows (tokens, cost) are kept |

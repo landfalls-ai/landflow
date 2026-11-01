@@ -19,6 +19,8 @@ resources:
 # Uncomment postgres and valkey for those in the namespace (also from Docker Hub):
 components:
   - ../../components/package-cache
+  # GitHub's MCP server for the agents' GitHub MCP tool (docs/a2a.md): no token in it, Landflow sends its credential.
+  - ../../components/github-mcp
 #   - ../../components/postgres
 #   - ../../components/valkey
 images:

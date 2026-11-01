@@ -1075,6 +1075,14 @@ Agent team members start every run from what they are handed. They now share a n
 - **Trust**: notes from outside are tainted until a person verifies them; disputes keep both notes until one is kept;
   `traceContent: off` keeps provenance and drops excerpts.
 - **See it**: the team's Notebook tab, note moments on the canvas and in the headlines, deep links into the Run Trace.
+## GitHub's MCP tools for agents (built 2026-11-01)
+
+Agents read and review pull requests through GitHub's own MCP server ([a2a.md](a2a.md#githubs-mcp-tools-for-agents)): an
+**Add GitHub MCP** capability (an `mcp` tool with `preset: 'github'`), a Bearer Auth credential holding the token, the
+pinned image `ghcr.io/github/github-mcp-server:v2.0.2` as a component in the OrbStack overlay, and a server-side
+allow-list per agent (read for every member; review, line comments and comments for the Reviewer; merging and every
+branch, file and repository write never offered). Kagent members get the same cut through the agents' MCP endpoint, and
+Run Trace shows it with GitHub's mark. Not live-checked against GitHub with a token.
 
 ## Planned next
 

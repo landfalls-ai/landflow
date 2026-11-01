@@ -43,6 +43,7 @@ import { Input, Textarea } from '../ui/inputs';
 import { Dialog, Field, ItemRow, Section, ToggleRow } from './dialog';
 import { KnowledgeDialog, KnowledgeTile, STORE_LABEL } from './knowledge-dialog';
 import { MCP_CLIENT_TOOL, McpServerDialog, McpTile } from './mcp-server-dialog';
+import { GithubMcpDialog, GithubTile, isGithubTool } from './github-mcp-dialog';
 import { A2A_AGENT, A2aAgentDialog, A2aTile } from './a2a-agent-dialog';
 import { useAgentList, useNodeTypes } from './use-agent-data';
 import { newId, type UpdateConfig } from './util';
@@ -626,6 +627,7 @@ type DialogState =
   | { kind: 'workflow'; tool?: WorkflowToolConfig }
   | { kind: 'agent'; tool?: SubAgentConfig }
   | { kind: 'mcp'; tool?: McpServerToolConfig }
+  | { kind: 'github'; tool?: McpServerToolConfig }
   | { kind: 'a2a'; tool?: A2aAgentToolConfig }
   | { kind: 'knowledge'; tool?: KnowledgeBaseToolConfig };
 
@@ -651,7 +653,7 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
         : tool.type === 'workflow'
           ? { kind: 'workflow', tool }
           : tool.type === 'mcp'
-            ? { kind: 'mcp', tool }
+            ? { kind: isGithubTool(tool) ? 'github' : 'mcp', tool }
             : tool.type === 'a2a'
               ? { kind: 'a2a', tool }
               : tool.type === 'knowledge'
@@ -687,9 +689,14 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       title = tool.name;
       subtitle = `Workflow · ${tool.description || 'No description'}`;
     } else if (tool.type === 'mcp') {
-      icon = <McpTile />;
       title = tool.name;
-      subtitle = `MCP server · ${String(tool.parameters.endpointUrl ?? '') || 'No URL'}`;
+      if (isGithubTool(tool)) {
+        icon = <GithubTile />;
+        subtitle = `GitHub MCP · ${tool.access === 'review' ? 'read and review' : 'read only'}`;
+      } else {
+        icon = <McpTile />;
+        subtitle = `MCP server · ${String(tool.parameters.endpointUrl ?? '') || 'No URL'}`;
+      }
     } else if (tool.type === 'a2a') {
       icon = <A2aTile />;
       title = tool.name;
@@ -764,6 +771,9 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
             <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'mcp' })}>
               <Plug className="size-3.5" /> Add MCP server
             </Button>
+            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'github' })}>
+              <GithubTile size={14} /> Add GitHub MCP
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'a2a' })}>
               <RadioTower className="size-3.5" /> Add A2A agent
             </Button>
@@ -823,6 +833,7 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       {dialog?.kind === 'mcp' && (
         <McpServerDialog key={dialog.tool?.id ?? 'new'} tool={dialog.tool} info={nodeTypes?.[MCP_CLIENT_TOOL]} onSave={save} onClose={() => setDialog(null)} />
       )}
+      {dialog?.kind === 'github' && <GithubMcpDialog key={dialog.tool?.id ?? 'new'} tool={dialog.tool} onSave={save} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'a2a' && <A2aAgentDialog key={dialog.tool?.id ?? 'new'} tool={dialog.tool} info={nodeTypes?.[A2A_AGENT]} onSave={save} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'knowledge' && <KnowledgeDialog key={dialog.tool?.id ?? 'new'} agentId={agentId} tool={dialog.tool} onSave={save} onClose={() => setDialog(null)} />}
     </>
