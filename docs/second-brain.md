@@ -194,7 +194,8 @@ In its chat (Test agent), the **new look** draws the analyst differently (the cl
   this turn), with **Show steps** for the raw calls. A call waiting for your approval is always shown in full.
 - **The answer card**: when the turn is done and a `usage_report` with at least two groups came back, one card with the
   period and scope ("This week · Tech Review Workflow", the scope from `workflow_knowledge`), the model's answer, a small
-  SVG bar chart, and up to two of the model's own bullet lines as drivers. The bars are cost, else failures, else event
+  chart (days as columns in time order; workflows, nodes or models as one labelled bar each, biggest first, with its
+  value), and up to two of the model's own bullet lines as drivers. The bars are cost, else failures, else event
   counts, **taken from the tool results** (`lib/shared/analyst-chart.ts`), never parsed from the model's text; a dashed
   line shows a budget when a result states one (`budget`, `costBudget`, `budgetUsd` or `target` on the result or a
   workflow's profile). With nothing chartable the plain answer shows as before.

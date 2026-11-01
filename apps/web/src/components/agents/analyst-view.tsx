@@ -40,8 +40,32 @@ export function SourceChips({ sources }: { sources: AnalystSource[] }) {
   );
 }
 
+/** Values by workflow, node or model: one labelled bar each, biggest first, the biggest in the accent colour, so every bar reads on a phone. */
+function GroupBars({ chart }: { chart: AnalystChart }) {
+  const { points, budget } = chart;
+  const max = Math.max(...points.map((p) => p.value), budget ?? 0) || 1;
+  const peak = Math.max(...points.map((p) => p.value));
+  return (
+    <div role="img" aria-label={`${chart.metricLabel} by ${chart.groupBy}: ${points.map((p) => `${p.label} ${formatMetric(chart.metric, p.value)}`).join(', ')}`} className="flex flex-col gap-1.5">
+      <span className="text-[10.5px] text-t3">{chart.metricLabel}</span>
+      {points.map((p, i) => (
+        <div key={i} className="grid grid-cols-[minmax(0,38%)_minmax(0,1fr)_auto] items-center gap-2 text-[11.5px]">
+          <span className="truncate text-t2" title={p.label}>{p.label}</span>
+          <span className="relative h-2.5 rounded-full bg-acdim">
+            <span className="absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out" style={{ width: `${Math.max(2, (p.value / max) * 100)}%`, background: p.value === peak ? 'var(--viz-1)' : 'color-mix(in oklab, var(--t3) 45%, transparent)' }} />
+            {budget !== undefined && <span aria-hidden className="absolute inset-y-[-3px] border-l border-dashed border-t2" style={{ left: `${(budget / max) * 100}%` }} />}
+          </span>
+          <span className="font-mono tabular-nums text-t1">{formatMetric(chart.metric, p.value)}</span>
+        </div>
+      ))}
+      {budget !== undefined && <span className="text-[10.5px] text-t3">Dashed: budget {formatMetric(chart.metric, budget)}</span>}
+    </div>
+  );
+}
+
 /** Bars of the values the tools returned: the biggest in the accent colour, a dashed line at a stated budget, labelled ends only. */
 export function AnalystChartSvg({ chart }: { chart: AnalystChart }) {
+  if (chart.groupBy !== 'day') return <GroupBars chart={chart} />;
   const W = 300;
   const H = 96;
   const top = 14;

@@ -214,7 +214,8 @@ transport and Valkey Cluster settings).
 | `57c6feb` | Design: building, step by step. In the new look, a change Spotlight builds is watched taking shape: the chat folds into a side card that lists the steps (tool calls as they stream, then the proposal's ops as steps from `planOf()` in `lib/shared/build-steps.ts`) and ticks each off; the nodes the plan adds appear on the canvas as dashed ghosts (the one being made shimmers), new connections draw dashed, and a thin bar shows progress. Nothing changes until Apply; "Ask for a change…" redirects mid-way. The proposal arrives whole, so its steps tick on a short timer; the Agent architect (a dialog, not a canvas card) is not covered | assistant.md#building-step-by-step |
 | `116b2ed` | History row for building, step by step | history.md |
 | `679ba5a` | Design: a run's line says what was answered in words: what the run reported unless it is data (a flow's last output as JSON), else what an agent said last, else a team node's reply | run-trace.md#what-a-run-did-in-one-line |
-| (this change) | Design: a run's line in a list (Home, the team page, the agent page) is headed by its workflow's name | run-trace.md#what-a-run-did-in-one-line |
+| `b062c18` | Design: a run's line in a list (Home, the team page, the agent page) is headed by its workflow's name | run-trace.md#what-a-run-did-in-one-line |
+| (this change) | Design: the analyst's chart draws workflows, nodes and models as one labelled bar each with its value (days stay columns), since unlabelled columns could not be told apart | second-brain.md#the-analyst-agent |
 
 ## What is next
 
