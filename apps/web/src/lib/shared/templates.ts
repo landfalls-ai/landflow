@@ -4,6 +4,8 @@
  * imported template file), and, when LANDFLOW_TEMPLATES_URL points at an n8n-compatible templates API, remote ones
  * converted by the n8n importer. Shapes shared by the API and the pages. No runtime imports.
  */
+import type { AgentTeamConfig } from './agent-teams';
+import type { AgentConfig } from './agents';
 import type { ImportReport, Workflow } from './types';
 
 export const TEMPLATE_CATEGORIES = [
@@ -72,6 +74,37 @@ export interface TemplateProblem {
   message: string;
 }
 
+/**
+ * A team and its agents inside a template (docs/templates.md#team-templates). Members point at `agents[].key` (the agent's
+ * id where the template was saved); the workflow's Run a Team node points at `teamKey`. Credential references in the
+ * agents, the team's remote members and the workflow all point at the template's slots. Using the template gives every
+ * one of them a fresh id and rewrites these references.
+ */
+export interface TemplateBundle {
+  /** The team's id where it was saved: the Run a Team nodes of the template's workflow carry it. */
+  teamKey: string;
+  team: AgentTeamConfig;
+  /** The team was published: using the template publishes the copy when it can run. */
+  teamPublished?: boolean;
+  /** The members that are Landflow agents, and the agents their tools delegate to. */
+  agents: Array<{ key: string; config: AgentConfig; published?: boolean }>;
+  /** The template's workflow uses the team (it is `workflow`); false: the team alone. */
+  hasWorkflow: boolean;
+  /** The id of that workflow where it was saved: an agent's workflow tool pointing at it follows the copy. */
+  workflowKey?: string;
+}
+
+/** What a card says about a team template. */
+export interface TemplateTeamSummary {
+  name: string;
+  members: number;
+  /** Landflow agents included. */
+  agents: number;
+  /** Members called over A2A (their URLs travel as data). */
+  remote: number;
+  hasWorkflow: boolean;
+}
+
 export interface TemplateSummary {
   id: string;
   source: TemplateSource;
@@ -96,6 +129,8 @@ export interface TemplateSummary {
   canEdit?: boolean;
   /** Saved templates a marketplace plugin installed (its flows). */
   origin?: TemplateOrigin;
+  /** A team template: the team (and its agents) comes with the workflow, or alone. */
+  team?: TemplateTeamSummary;
 }
 
 export interface TemplateDetail extends TemplateSummary {
@@ -106,13 +141,15 @@ export interface TemplateDetail extends TemplateSummary {
   dataTables: TemplateDataTable[];
   /** Remote templates: what the n8n importer did with the workflow. */
   report?: ImportReport;
+  /** A team template: the team and its agents (`workflow` has no nodes when the team comes alone). */
+  bundle?: TemplateBundle;
 }
 
 /** A template as an export file, for sharing between instances. */
 export interface TemplateFile {
   kind: 'landflow/template';
   version: 1;
-  template: Pick<TemplateDetail, 'name' | 'description' | 'categories' | 'credentials' | 'setup' | 'dataTables' | 'workflow'>;
+  template: Pick<TemplateDetail, 'name' | 'description' | 'categories' | 'credentials' | 'setup' | 'dataTables' | 'workflow' | 'bundle'>;
 }
 
 export const TEMPLATE_FILE_KIND = 'landflow/template';
@@ -132,13 +169,19 @@ export interface UpdateTemplateRequest {
 /** POST /api/templates/:id/use */
 export interface UseTemplateRequest {
   name?: string;
+  /** A team template: the name of the team it creates (the template's team name otherwise). */
+  teamName?: string;
   folderId?: string;
   /** Slot id → saved credential id; a slot left out (or null) leaves its nodes without a credential. */
   credentials?: Record<string, string | null>;
 }
 
 export interface UseTemplateResult {
-  workflow: Workflow;
+  /** Absent when a team template came without a workflow. */
+  workflow?: Workflow;
+  /** A team template: the team created and the agents created for it (fresh ids). */
+  team?: { id: string; name: string };
+  agents?: Array<{ id: string; name: string }>;
   /** Data tables created for the workflow (existing ones with the same name are reused). */
   createdTables: string[];
   warnings: string[];

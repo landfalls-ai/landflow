@@ -69,9 +69,21 @@ as agents (`workflows:read` / `workflows:write`).
 | `DELETE /api/agent-teams/:id` | `{ ok }` |
 | `POST /api/agent-teams/:id/publish` | `{ team }`; 400 with `issues` while the draft can't run |
 | `POST /api/agent-teams/:id/unpublish` | `{ team }` |
+| `GET /api/agent-teams/:id/export` | the team as a Claude Code plugin zip ([marketplace.md](marketplace.md#export-agents-as-plugins)); `?marketplace=1`, `?preview=1` |
+| `GET /api/agent-teams/:id/flows` | `{ flows: [{ id, name, active, nodes }] }`: the workflows you can see with a Run a Team node set to this team |
+| `POST /api/agent-teams/:id/template` | `{ name, description?, categories?, setup?, workflowId?, projectId? }` → `{ template }` (201): the team and its agents as a [team template](templates.md) |
 
 Storage is the `agent_teams` table (migration 1910): `draft` and `published` as JSON, `version` the last published version.
 The code is in `apps/web/src/lib/server/agent-teams/` (`store.ts`, with `teamsOfAgent(agentId)`).
+
+## Export and templates
+
+The team page has two ways to take a team elsewhere. **Export as Claude Code plugin** downloads a plugin zip
+([marketplace.md](marketplace.md#export-agents-as-plugins)) with a file per Landflow agent and the chart in
+`.landflow/team.json`. **Save as template** keeps the team, its agents and, if you pick one, a flow that runs it, as a
+template that **Use template** recreates with fresh ids and credentials of the new person's choosing ([templates.md](templates.md)).
+When a team has flows, the page lists them (`GET /api/agent-teams/:id/flows`), and the team a template creates opens with
+its new flow marked.
 
 ## Running a team in a flow
 

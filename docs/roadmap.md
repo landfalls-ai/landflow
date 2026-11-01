@@ -950,7 +950,7 @@ Code runtime that write the plugin in this repository and open a draft pull requ
   sent back once (typecheck failing, the Reviewer editing), fixed in round 2 and merged pull request #3 after 41
   minutes.
 - Next:
-  - the team and flow as a template (agents, the workflow and its credentials named) instead of a setup script;
+  - ✅ the team and flow as a template (agents, the workflow and its credentials named) instead of a setup script: built ([templates.md](templates.md)), with agents and teams exported as Claude Code plugins ([marketplace.md](marketplace.md#export-agents-as-plugins));
   - GitHub's MCP server as an agent tool, for reviews and comments on the pull request;
   - caches in the cluster (a Go module proxy, an npm and PyPI mirror) so repeated installs stay local, and Go's
     standard library pre-built in the image.

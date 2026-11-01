@@ -5,8 +5,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { ArrowLeft, Check, Plus, RadioTower, TriangleAlert, Trash2 } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { ArrowLeft, Check, LayoutTemplate, Package, Workflow, Plus, RadioTower, TriangleAlert, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { defaultParameters, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { api, ApiError } from '@/lib/client/api';
@@ -22,6 +22,8 @@ import { Input, Select, Textarea } from '../ui/inputs';
 import { A2A_AGENT, A2aTile } from './a2a-agent-dialog';
 import { AgentAvatar } from './avatar';
 import { Dialog, Field } from './dialog';
+import { ExportPluginDialog } from './export-plugin-dialog';
+import { SaveTeamTemplateDialog } from './save-team-template-dialog';
 import { useAgentList, useNodeTypes } from './use-agent-data';
 import { newId } from './util';
 
@@ -48,6 +50,16 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<{ member?: TeamMember; reportsTo?: string }>();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [saveTemplate, setSaveTemplate] = useState(false);
+  const fromTemplate = useSearchParams().get('flow');
+  // The flows that run this team (a template made one, or you did): links to them.
+  const [flows, setFlows] = useState<Array<{ id: string; name: string; active: boolean }>>([]);
+  useEffect(() => {
+    api<{ flows: Array<{ id: string; name: string; active: boolean }> }>(`/api/agent-teams/${teamId}/flows`)
+      .then((r) => setFlows(r.flows))
+      .catch(() => setFlows([]));
+  }, [teamId]);
 
   const latest = useRef<AgentTeamConfig>(undefined);
   const dirty = useRef(false);
@@ -274,6 +286,23 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
             )}
           </section>
 
+          {flows.length > 0 && (
+            <section aria-label="Flows that run this team" className="rounded-[12px] border border-hair bg-sf px-3.5 py-3">
+              <h2 className="mb-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">{fromTemplate ? 'Created from the template' : 'Flows that run this team'}</h2>
+              <ul className="flex flex-col gap-1.5">
+                {flows.map((f) => (
+                  <li key={f.id}>
+                    <Link href={`/workflows/${f.id}`} className={cn('flex items-center gap-2 rounded-[10px] border px-2.5 py-2 text-[13px] hover:border-ac', f.id === fromTemplate ? 'border-ac bg-acdim' : 'border-hair bg-wl')}>
+                      <Workflow className="size-3.5 shrink-0 text-t3" />
+                      <span className="min-w-0 flex-1 truncate font-semibold text-t1">{f.name}</span>
+                      <span className="shrink-0 text-[11px] text-t3">{f.active ? 'Active' : 'Draft'}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {issues.length > 0 && (
             <div role="status" className="rounded-[12px] border border-warnbd bg-warndim px-3.5 py-3 text-[12px] text-warn">
               <div className="mb-1 flex items-center gap-1.5 font-semibold">
@@ -296,7 +325,13 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
                 Unpublish
               </Button>
             )}
-            <Button variant="ghost" className="ml-auto text-rd" onClick={() => setConfirmDelete(true)}>
+            <Button className="ml-auto" onClick={() => setSaveTemplate(true)}>
+              <LayoutTemplate className="size-3.5" /> Save as template
+            </Button>
+            <Button onClick={() => setExporting(true)}>
+              <Package className="size-3.5" /> Export as Claude Code plugin
+            </Button>
+            <Button variant="ghost" className="text-rd" onClick={() => setConfirmDelete(true)}>
               <Trash2 className="size-3.5" /> Delete team
             </Button>
           </div>
@@ -315,6 +350,8 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
           )}
         </div>
       </PageBody>
+      {saveTemplate && <SaveTeamTemplateDialog teamId={teamId} teamName={draft.name || 'Untitled team'} goal={draft.goal} onClose={() => setSaveTemplate(false)} />}
+      {exporting && <ExportPluginDialog base={`/api/agent-teams/${teamId}`} title={draft.name || 'Untitled team'} onClose={() => setExporting(false)} />}
       {editing && (
         <MemberDialog
           key={editing.member?.id ?? 'new'}

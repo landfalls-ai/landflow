@@ -3,7 +3,7 @@
  * install as Landflow agents and library skills, plus Landflow node plugins the host runs.
  * Types shared by the API routes and the React client (and `flowLink`). No runtime imports.
  */
-import type { AgentSkill } from './agents';
+import type { AgentConfig, AgentSkill } from './agents';
 import type { TemplateDetail } from './templates';
 
 /** Where a marketplace's `.claude-plugin/marketplace.json` comes from. */
@@ -154,6 +154,29 @@ export interface ClaudeAgentFile {
   color?: string;
   /** The system prompt. */
   body: string;
+  /** What a Landflow export put in `.landflow/agents/<file name>.json`: the config Claude Code has no place for. */
+  landflow?: LandflowAgentData;
+}
+
+/** `.landflow/agents/<slug>.json`: an exported agent's Landflow-only data (docs/marketplace.md#export-agents-as-plugins). */
+export const LANDFLOW_AGENT_KIND = 'landflow/agent';
+export interface LandflowAgentData {
+  kind: typeof LANDFLOW_AGENT_KIND;
+  version: 1;
+  /** The agent's id where it was exported: other exported agents' sub-agent tools point at it. */
+  sourceId?: string;
+  /** The config without schedules, channels and credentials. */
+  config: Partial<AgentConfig>;
+  /** The prompt written as the agent file's body: when the body no longer equals it, it was edited and replaces the instructions. */
+  body: string;
+}
+
+/** `.landflow/team.json`: an exported team; members that are Landflow agents name their agent file by `agent` (its slug). */
+export const LANDFLOW_TEAM_KIND = 'landflow/team';
+export interface LandflowTeamData {
+  kind: typeof LANDFLOW_TEAM_KIND;
+  version: 1;
+  team: { name: string; goal?: string; description?: string; members: Array<Record<string, unknown>> };
 }
 
 export interface ClaudeSkillFile {
@@ -206,6 +229,8 @@ export interface PluginDetail {
   unsupported: UnsupportedComponent[];
   nodePlugin?: NodePluginManifest;
   flows: MarketplaceFlow[];
+  /** A team exported with the plugin (`.landflow/team.json`): installing creates it from the plugin's agents. */
+  landflowTeam?: LandflowTeamData;
   readme?: string;
   /** Things that didn't load (a skill without SKILL.md, a file too large…). */
   warnings: string[];
@@ -234,6 +259,8 @@ export interface InstalledPlugin {
   skills: Array<{ id: string; name: string }>;
   /** Templates made from the plugin's flows (instance-wide); uninstall deletes them. */
   templates?: Array<{ id: string; name: string }>;
+  /** The team an exported plugin carried (`.landflow/team.json`); uninstall deletes it. */
+  teams?: Array<{ id: string; name: string }>;
   unsupported: UnsupportedComponent[];
   nodePlugin?: {
     pluginId: string;

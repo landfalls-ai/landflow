@@ -4,7 +4,7 @@
  * Landflow node-plugin manifest, and the components that don't run here yet.
  */
 import type { z } from 'zod';
-import type { ClaudeAgentFile, ClaudeSkillFile, MarketplaceFlow, NodePluginManifest, PluginDetail, UnsupportedComponent } from '../../shared/marketplace';
+import { LANDFLOW_AGENT_KIND, LANDFLOW_TEAM_KIND, type ClaudeAgentFile, type ClaudeSkillFile, type LandflowAgentData, type LandflowTeamData, type MarketplaceFlow, type NodePluginManifest, type PluginDetail, type UnsupportedComponent } from '../../shared/marketplace';
 import { fileSchema } from '../templates/schema';
 import { asText, parseFrontmatter, stringList } from './frontmatter';
 import type { RepoFile, RepoReader } from './reader';
@@ -22,7 +22,7 @@ const TEXT_FILE = /\.(md|markdown|txt|json|ya?ml|toml|csv|xml|html?|rst)$/i;
 /** A marketplace.json plugin entry, as listed. */
 export type MarketplaceEntry = Record<string, unknown> & { name: string; source?: unknown };
 
-type Loaded = Pick<PluginDetail, 'manifest' | 'claudeManifest' | 'agents' | 'skills' | 'unsupported' | 'nodePlugin' | 'flows' | 'readme' | 'warnings'>;
+type Loaded = Pick<PluginDetail, 'manifest' | 'claudeManifest' | 'agents' | 'skills' | 'unsupported' | 'nodePlugin' | 'flows' | 'landflowTeam' | 'readme' | 'warnings'>;
 
 /** A flow file a plugin ships, parsed (a Landflow template file). */
 export interface FlowFile {
@@ -69,6 +69,21 @@ export function parseAgentFile(path: string, text: string): ClaudeAgentFile {
     ...(asText(data.color) && { color: asText(data.color) }),
     body,
   };
+}
+
+/** `.landflow/agents/<slug>.json`, if it is what a Landflow export writes. */
+export function parseAgentData(text: string): LandflowAgentData | undefined {
+  const value = JSON.parse(text) as Partial<LandflowAgentData> | null;
+  if (!value || value.kind !== LANDFLOW_AGENT_KIND || value.version !== 1 || !value.config || typeof value.config !== 'object' || typeof value.body !== 'string') return undefined;
+  return { kind: LANDFLOW_AGENT_KIND, version: 1, ...(typeof value.sourceId === 'string' && { sourceId: value.sourceId }), config: value.config, body: value.body };
+}
+
+/** `.landflow/team.json`, if it is what a Landflow export writes. */
+export function parseTeamData(text: string): LandflowTeamData | undefined {
+  const value = JSON.parse(text) as Partial<LandflowTeamData> | null;
+  const team = value?.team;
+  if (!value || value.kind !== LANDFLOW_TEAM_KIND || value.version !== 1 || !team || typeof team.name !== 'string' || !Array.isArray(team.members)) return undefined;
+  return { kind: LANDFLOW_TEAM_KIND, version: 1, team };
 }
 
 export function parseSkillFile(dir: string, text: string): Omit<ClaudeSkillFile, 'references'> {
@@ -222,6 +237,28 @@ export async function loadPlugin(reader: RepoReader, entry: MarketplaceEntry, fr
     })
   ).filter((a): a is ClaudeAgentFile => Boolean(a));
 
+  // ---- what a Landflow export kept beside the agent files (.landflow/): the agents' own config and the team
+  for (const agent of agents) {
+    const sidecar = `.landflow/agents/${agent.path.split('/').pop()!.replace(/\.md$/i, '')}.json`;
+    if (!has(sidecar)) continue;
+    try {
+      const data = parseAgentData(await reader.text(sidecar));
+      if (data) agent.landflow = data;
+      else warnings.push(`${sidecar}: not a Landflow agent file`);
+    } catch (error) {
+      warnings.push(`${sidecar}: ${(error as Error).message}`);
+    }
+  }
+  let landflowTeam: LandflowTeamData | undefined;
+  if (has('.landflow/team.json')) {
+    try {
+      landflowTeam = parseTeamData(await reader.text('.landflow/team.json'));
+      if (!landflowTeam) warnings.push('.landflow/team.json: not a Landflow team file');
+    } catch (error) {
+      warnings.push(`.landflow/team.json: ${(error as Error).message}`);
+    }
+  }
+
   // ---- skills: skills/ plus listed directories; from the marketplace root, only the listed ones
   const skillDirs = new Set<string>();
   const listed = [...paths(pluginJson?.skills), ...paths(entry.skills)].map((p) => joinRelative('', p));
@@ -326,5 +363,5 @@ export async function loadPlugin(reader: RepoReader, entry: MarketplaceEntry, fr
   const readmePath = files.find((f) => /^readme\.md$/i.test(f.path))?.path;
   if (readmePath) readme = await reader.text(readmePath, 64 * 1024).catch(() => undefined);
 
-  return { manifest, ...(pluginJson && { claudeManifest: true }), agents, skills, unsupported, ...(nodePlugin && { nodePlugin }), flows, ...(readme && { readme }), warnings };
+  return { manifest, ...(pluginJson && { claudeManifest: true }), agents, skills, unsupported, ...(nodePlugin && { nodePlugin }), flows, ...(landflowTeam && { landflowTeam }), ...(readme && { readme }), warnings };
 }

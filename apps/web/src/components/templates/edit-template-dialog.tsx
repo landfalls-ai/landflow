@@ -127,6 +127,7 @@ export function EditTemplateDialog({ template, onClose, onSaved }: { template: T
             ))}
           </Select>
         </Field>
+        {!template.bundle && (
         <Field id="edit-template-workflow" label="Replace the workflow" hint="With a saved workflow’s nodes and connections (its credentials become slots; pinned data is left out).">
           <Select id="edit-template-workflow" value={workflowId} onChange={(e) => setWorkflowId(e.target.value)} disabled={!workflows}>
             <option value="">Keep the template’s workflow</option>
@@ -137,6 +138,7 @@ export function EditTemplateDialog({ template, onClose, onSaved }: { template: T
             ))}
           </Select>
         </Field>
+        )}
         {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
       </form>
     </Dialog>

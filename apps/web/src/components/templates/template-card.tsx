@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Ban, Globe, HardDrive, KeyRound, PackageX, Store } from 'lucide-react';
+import { Ban, Globe, HardDrive, KeyRound, PackageX, Store, Users } from 'lucide-react';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { TEMPLATE_CATEGORIES, type TemplateSummary } from '@/lib/shared/templates';
 import type { NodeTypeInfo } from '@/lib/shared/types';
@@ -86,6 +86,11 @@ export function TemplateCard({ template, types, index, href, remoteLabel }: { te
         <TemplateNodeIcons nodeTypes={template.nodeTypes} types={types} />
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           <ProblemBadge template={template} />
+          {template.team && (
+            <Badge tone="accent" title={`A team of ${template.team.members} (${template.team.agents} agents${template.team.remote ? `, ${template.team.remote} remote` : ''})${template.team.hasWorkflow ? ' with its flow' : ''}`}>
+              <Users className="size-3" /> Team
+            </Badge>
+          )}
           <SourceBadge template={template} remoteLabel={remoteLabel} />
         </span>
       </div>
@@ -104,7 +109,9 @@ export function TemplateCard({ template, types, index, href, remoteLabel }: { te
             </span>
           )}
           <span>
-            {template.nodeCount} node{template.nodeCount === 1 ? '' : 's'}
+            {template.team && !template.team.hasWorkflow
+              ? `${template.team.members} member${template.team.members === 1 ? '' : 's'}`
+              : `${template.nodeCount} node${template.nodeCount === 1 ? '' : 's'}`}
           </span>
         </span>
       </div>

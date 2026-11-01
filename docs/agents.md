@@ -120,6 +120,13 @@ they don't change who can see or run an agent. Marketplace installs put their ag
 Agents that work together with a lead, reporting lines and reviewers are [agent teams](agent-teams.md), a separate thing
 with its own Teams view on this page.
 
+### Taking an agent elsewhere
+
+The builder's **…** menu has **Export JSON** (the config, for **Import JSON**), **Save as template** (a persona to start
+from, never tools) and **Export as Claude Code plugin…**, which downloads the agent as a plugin in Anthropic's format
+that Claude Code installs as it is and Landflow installs back whole ([marketplace.md](marketplace.md#export-agents-as-plugins)).
+`GET /api/agents/:id/export?format=claude-plugin` is the same zip.
+
 ## Building an agent
 
 **Agents** in the sidebar → **New agent** creates a draft from a [template](#templates) or the
