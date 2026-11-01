@@ -1059,6 +1059,15 @@ Claude Code agent Landflow deploys gets Landflow's own mod ([a2a.md](a2a.md#the-
   any main (2026-11-01).
   Live budget use from the trace while a member works shows on the team node since 2026-11-01.
 
+## GitHub's MCP tools for agents (built 2026-11-01)
+
+Agents read and review pull requests through GitHub's own MCP server ([a2a.md](a2a.md#githubs-mcp-tools-for-agents)): an
+**Add GitHub MCP** capability (an `mcp` tool with `preset: 'github'`), a Bearer Auth credential holding the token, the
+pinned image `ghcr.io/github/github-mcp-server:v2.0.2` as a component in the OrbStack overlay, and a server-side
+allow-list per agent (read for every member; review, line comments and comments for the Reviewer; merging and every
+branch, file and repository write never offered). Kagent members get the same cut through the agents' MCP endpoint, and
+Run Trace shows it with GitHub's mark. Not live-checked against GitHub with a token.
+
 ## Planned next
 
 **Runbooks from Landfall war rooms.** After a room closes, turn what the responders did (the timeline, the remediation

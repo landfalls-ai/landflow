@@ -199,6 +199,9 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     done looks like", is recorded in the run trace). A sub-agent runs in its
     own child session (published version if it has one, else its draft) and doesn't see the
     conversation. Delegation stops at the calling agent's *max delegation depth*.
+  - **GitHub MCP** (**Add GitHub MCP**): GitHub's MCP server with a Bearer Auth credential holding a GitHub token, at
+    *Read* or *Read and review* access; the allow-list is enforced on the server and merging and code writes are never
+    offered ([a2a.md](a2a.md#githubs-mcp-tools-for-agents)).
   - **MCP servers** (**Add MCP server**): a name plus the MCP Client Tool's settings (endpoint
     URL, Streamable HTTP or SSE, none / Bearer Auth / Header Auth credential, and all tools, the
     selected ones or all except some). Each run lists the server's tools (all servers in

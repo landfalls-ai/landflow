@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landflow-github-mcp
+  labels: { app.kubernetes.io/name: landflow-github-mcp, app.kubernetes.io/part-of: landflow-github-mcp }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: landflow-github-mcp }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: landflow-github-mcp, app.kubernetes.io/part-of: landflow-github-mcp }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: github-mcp-server
+          # GitHub's own server, v2.0.2 (released 2026-10-08). `http` serves Streamable HTTP and reads the GitHub token from each
+          # request's `Authorization: Bearer` header, so this pod holds no token: Landflow sends the one in its vault.
+          image: ghcr.io/github/github-mcp-server:v2.0.2
+          args:
+            - http
+            - --port=8082
+            - --toolsets=repos,issues,pull_requests,actions
+            # Merging and everything that writes branches, files, repositories or settings is dropped here too, as a second wall
+            # behind Landflow's per-agent allow-list (apps/web/src/lib/server/mcp/github.ts keeps the same list).
+            - --exclude-tools=merge_pull_request,create_pull_request,update_pull_request,update_pull_request_branch,create_branch,create_or_update_file,push_files,delete_file,create_repository,fork_repository,delete_repository,create_repository_ruleset,custom_properties_write,issue_write,sub_issue_write,update_issue_comment,label_write,projects_write,actions_run_trigger,assign_copilot_to_issue,assign_copilot_to_issue_with_intent,request_copilot_review,create_gist,update_gist
+          ports:
+            - { name: http, containerPort: 8082 }
+          readinessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-github-mcp
+  labels: { app.kubernetes.io/name: landflow-github-mcp, app.kubernetes.io/part-of: landflow-github-mcp }
+spec:
+  selector: { app.kubernetes.io/name: landflow-github-mcp }
+  ports:
+    - { name: http, port: 8082, targetPort: http }

@@ -82,6 +82,13 @@ export interface McpServerToolConfig extends ToolBase {
   parameters: Record<string, unknown>;
   /** httpBearerAuth or httpHeaderAuth, by the node's credential names. */
   credentials?: Record<string, CredentialRef>;
+  /**
+   * `github`: GitHub's MCP server (docs/a2a.md). The credential is a Bearer Auth one holding a GitHub token, and the tools are cut
+   * down on the server to `access`'s allow-list (lib/server/mcp/github.ts); `include` and the like are ignored.
+   */
+  preset?: 'github';
+  /** `read` (default): look at pull requests, code and issues. `review`: also review and comment. Merging and writing code are never offered. */
+  access?: 'read' | 'review';
 }
 
 /**

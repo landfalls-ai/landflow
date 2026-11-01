@@ -395,6 +395,57 @@ The token's scope is what limits the agents: a fine-grained token on one reposit
 read and write lets them push any branch, `main` included, so protect `main` with a branch rule if agents must never
 land on it (the flows here only push `agents/*` branches and open draft pull requests).
 
+### GitHub's MCP tools for agents
+
+Agents can read and review pull requests through GitHub's own MCP server, with a GitHub token Landflow holds. It is an
+ordinary MCP server tool of the agent (**Add GitHub MCP** in Capabilities; `type: 'mcp'` with `preset: 'github'` and
+`access: 'read' | 'review'`), so it works for a Landflow agent on its own runtime and, through the agents' MCP endpoint
+(`/api/mcp/agents/:id`, built with `kagentTools`), for a member on kagent, Claude Code included. Nothing else changed in
+that path: kagent calls Landflow, Landflow calls the GitHub MCP server.
+
+- **The server**: `ghcr.io/github/github-mcp-server:v2.0.2` (released 2026-10-08), deployed by the component
+  `deploy/k8s/components/github-mcp` (wired into the OrbStack overlay) as the Service `landflow-github-mcp:8082`, command
+  `http --toolsets=repos,issues,pull_requests,actions --exclude-tools=<every merge and write tool>`. `http` serves
+  Streamable HTTP at `/` and takes the GitHub token from each request's `Authorization: Bearer` header, so the pod holds
+  no token and the manifest has none. Chosen over GitHub's remote server (`api.githubcopilot.com/mcp/`) because it runs
+  on this machine only, its tool names are checkable here (the pinned image was run and its `tools/list` read), and the
+  bundled server's `--exclude-tools` is a second wall; the remote one needs a Copilot-capable token and sends the agent's
+  traffic off the machine. A different server (a remote one, GHES) is the tool's **Server URL**, or
+  `LANDFLOW_GITHUB_MCP_URL` for the default.
+- **The credential**: an existing **Bearer Auth** credential (`core.httpBearerAuth`) whose token is the GitHub one, a
+  fine-grained token on the repository with Pull requests and Contents read, plus Pull requests write for a reviewer.
+  Landflow sends it as the bearer, encrypted at rest like any credential; it never reaches kagent, the sandbox, a
+  manifest or a log. The token's scope is still the outer limit.
+- **The allow-list, per agent, server side** (`apps/web/src/lib/server/mcp/github.ts`). The tools an agent gets are the
+  server's `tools/list` cut down to its access, before they reach the model or kagent, whatever the settings' `include`
+  fields say (they are ignored for the preset), so a hidden tool can't be called by name either:
+  - **Read** (every member): `pull_request_read` (details, diff, files, reviews, review comments, checks),
+    `list_pull_requests`, `search_pull_requests`, `get_file_contents`, `get_repository_tree`, `get_commit`,
+    `list_commits`, `list_branches`, `list_tags`, `get_tag`, releases, `issue_read`, `list_issues`, `search_issues`,
+    `search_code`, `search_commits`, `search_repositories`, `actions_get`, `actions_list`, `get_job_logs`, labels.
+  - **Review** (the Reviewer; read plus): `pull_request_review_write` (create, submit or delete a pending review,
+    resolve a thread), `add_comment_to_pending_review` (a line comment), `add_reply_to_pull_request_comment`,
+    `add_issue_comment`.
+  - **Never**, at either level: `merge_pull_request`, `create_pull_request`, `update_pull_request`,
+    `update_pull_request_branch`, `create_branch`, `create_or_update_file`, `push_files`, `delete_file`, repository
+    create, fork and delete, rulesets, `issue_write`, `sub_issue_write`, `update_issue_comment`, labels, projects,
+    `actions_run_trigger`, Copilot assignment and review requests, gists. Merging stays with the flow. The same list is
+    the pod's `--exclude-tools`. An access that is not `review` is `read`; `get_me`, notifications and the rest of the
+    server's tools aren't offered either, since the list is an allow-list.
+- **Approval**: the tool has the usual **Require approval** switch; on kagent it makes the Claude Code binding split
+  (`?tools=approval`). Review comments are written to GitHub when the agent calls them, so ask for approval where a person
+  should read them first.
+- **The guard** is about the sandbox's own tools (shell, files, `gh`): Read-only still allows `gh pr review` and
+  `gh pr comment`, and the MCP tools above are the other way to do the same, with the token held outside the sandbox. The
+  mod does not look at MCP calls; the allow-list is what limits them.
+- **Run Trace** shows the tool among the agent's connections with GitHub's mark: *GitHub MCP · Tool · pull requests,
+  reviews, line comments* for review access, *read only* otherwise.
+- **Setting up the Tech Lead team**: add **GitHub MCP** with access *Read* to the Planner and Developer and *Read and
+  review* to the Reviewer, then deploy each again, since kagent binds the tools it was deployed with. Verified on
+  2026-11-01: the pinned image started with those flags (also read-only, all capabilities dropped), its `tools/list`
+  was exactly the toolsets minus the excluded tools, and Landflow's client built an agent's tools from it. No call was
+  made to GitHub, as no GitHub token was used.
+
 ### A toolchain image for Claude Code
 
 Installing a toolchain on every run costs time and tokens, so the Harness **landflow-claude-dev** runs Claude Code on
@@ -550,6 +601,9 @@ gone, a push to main refused and reported, enforcing without a marker and report
 
 ## Not built
 
+- GitHub MCP tools hold no per-repository scope of their own (the token's is the limit), cannot be narrowed to single tools
+  beyond the read / review levels, and a review comment is written when it is called: there is no draft of it for a person to
+  read first except the tool's approval switch. The bundled server is not deployed by the compose files.
 - Remote agents' tokens are recorded (timeline, span, `landflow.a2a.tokens`) but don't count toward an agent's daily or
   monthly AI limits, which count Landflow's own model calls.
 - The landflow-harness mod's trace lives in the memory of the host that made the call. In queue mode its id starts with

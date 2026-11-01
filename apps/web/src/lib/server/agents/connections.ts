@@ -49,6 +49,7 @@ function toolConnection(tool: AgentToolConfig): ActorConnection {
       return { kind: 'agent', name: (other?.published?.config ?? other)?.name ?? 'Another agent', detail: 'a Landflow agent', icon: 'lucide:bot', from: 'agent' };
     }
     case 'mcp': {
+      if (tool.preset === 'github') return { kind: 'tool', name: 'GitHub MCP', detail: tool.access === 'review' ? 'Tool · pull requests, reviews, line comments' : 'Tool · pull requests, files, issues (read only)', icon: brandIcon('github'), from: 'agent' };
       const host = hostOf(tool.parameters?.endpointUrl);
       return { kind: 'tool', name: tool.name, detail: host ? `MCP server · ${host}` : 'MCP server', icon: brandIcon('mcp'), from: 'agent' };
     }
