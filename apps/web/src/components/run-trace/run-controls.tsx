@@ -8,16 +8,15 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ExternalLink, Pin, RotateCcw, Undo2 } from 'lucide-react';
+import { ExternalLink, Pin, RotateCcw, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { askMemberAgain, rerunFromNode, type WorkingMember } from '@/lib/client/run-controls';
-import { askAgainOf, copyToEditorHref, rerunPlan } from '@/lib/shared/run-rerun';
+import { askAgainOf, copyToEditorHref, rerunDiagram, rerunPlan, type RerunStep } from '@/lib/shared/run-rerun';
 import type { RunModel } from '@/lib/shared/run-trace-model';
 import { cn } from '@/lib/utils';
-import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { PauseButton } from '../editor/team-pause';
-import { Avatar, Card } from './parts';
+import { Card } from './parts';
 
 export interface RunControls {
   executionId: string;
@@ -48,33 +47,49 @@ function useStarter() {
   return { busy, start };
 }
 
-/** The flow as a column of nodes: the ones before keep this run's outputs, the node and what follows run again. */
-function PinnedRows({ model, spanId }: { model: RunModel; spanId: string }) {
-  const plan = rerunPlan(model, spanId);
-  if (!plan) return null;
-  const row = (span: (typeof plan.again)[number], kind: 'pinned' | 'here' | 'again') => (
-    <li key={span.id} className={cn('flex items-center gap-2.5 px-3 py-2 text-[13px]', kind === 'here' && (span.status === 'error' ? 'bg-rddim' : 'bg-acdim'))}>
-      <Avatar actor={span.actor} size={22} />
-      <span className="min-w-0 flex-1">
-        <b className={cn('block truncate font-semibold', kind === 'pinned' ? 'text-t2' : 'text-t1')}>{span.name}</b>
-        <span className={cn('block truncate text-[11.5px]', span.status === 'error' ? 'text-rd' : 'text-t3')}>{span.status === 'error' ? (span.error ?? 'failed') : span.status}</span>
-      </span>
-      {kind === 'pinned' ? (
-        <Badge tone="muted">
-          <Pin className="size-2.5" /> pinned
-        </Badge>
-      ) : (
-        <Badge tone={kind === 'here' ? 'accent' : 'neutral'}>
-          <RotateCcw className="size-2.5" /> {kind === 'here' ? 'starts here' : 'runs again'}
-        </Badge>
-      )}
-    </li>
-  );
+/**
+ * The re-run as a small diagram: the run's nodes in run order as chips joined by a line (they wrap on a phone). Before the
+ * chosen node: muted with a pin, "kept". The chosen node: ringed, "runs again from here". After it: dashed, "runs again".
+ * A node that failed in this run is red with a cross. One line in plain words under it.
+ */
+function RerunDiagramView({ model, spanId }: { model: RunModel; spanId: string }) {
+  const diagram = rerunDiagram(model, spanId);
+  if (!diagram) return null;
+  const chip = (step: RerunStep, kind: 'kept' | 'here' | 'again') => {
+    const label = kind === 'kept' ? 'kept' : kind === 'here' ? 'runs again from here' : 'runs again';
+    const Icon = step.failed ? X : kind === 'kept' ? Pin : RotateCcw;
+    return (
+      <li key={step.nodeId} className="flex items-center" data-testid={`rerun-chip-${kind}`} data-failed={step.failed || undefined}>
+        <span className="mx-0.5 h-px w-3 shrink-0 bg-bd" aria-hidden />
+        <span
+          className={cn(
+            'inline-flex max-w-[11rem] flex-col rounded-lg border px-2 py-1 leading-tight',
+            kind === 'kept' && 'border-hair bg-sf text-t3',
+            kind === 'here' && 'border-ac bg-acdim text-t1 ring-2 ring-acbd',
+            kind === 'again' && 'border-dashed border-bd bg-sf text-t2',
+            step.failed && 'border-rd text-rd',
+            step.failed && kind !== 'kept' && 'bg-rddim',
+          )}
+        >
+          <b className="truncate text-[12px] font-semibold">{step.name}</b>
+          <span className={cn('inline-flex items-center gap-1 text-[10.5px]', step.failed ? 'text-rd' : 'text-t3')}>
+            <Icon className="size-2.5 shrink-0" aria-hidden /> {step.failed ? `failed, ${label}` : label}
+          </span>
+        </span>
+      </li>
+    );
+  };
   return (
-    <ul className="divide-y divide-hair overflow-hidden rounded-xl border border-hair" aria-label="What a re-run keeps and runs again" data-testid="rerun-rows">
-      {plan.pinned.map((s) => row(s, 'pinned'))}
-      {plan.again.map((s, i) => row(s, i === 0 ? 'here' : 'again'))}
-    </ul>
+    <div className="flex flex-col gap-1.5" data-testid="rerun-diagram">
+      <ol className="-ml-3.5 flex flex-wrap gap-y-1.5" aria-label="What a re-run keeps and runs again">
+        {diagram.kept.map((s) => chip(s, 'kept'))}
+        {chip(diagram.from, 'here')}
+        {diagram.again.map((s) => chip(s, 'again'))}
+      </ol>
+      <p className="text-[12px] text-t3" data-testid="rerun-sentence">
+        {diagram.sentence}
+      </p>
+    </div>
   );
 }
 
@@ -94,12 +109,7 @@ function RerunPanelFor({ controls, model, spanId }: { controls: RunControls; mod
   return (
     <section className="mt-4 flex flex-col gap-2.5" aria-label="Run it again" data-testid="rerun-panel">
       <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Run it again</h3>
-      <PinnedRows model={model} spanId={spanId} />
-      <p className="text-[12px] text-t3">
-        {plan.pinned.length
-          ? `The ${plan.pinned.length} step${plan.pinned.length > 1 ? 's' : ''} before keep${plan.pinned.length > 1 ? '' : 's'} this run's outputs; ${name}${plan.again.length > 1 ? ' and what follows' : ''} run again.`
-          : `${name} is the first step: everything runs again.`}
-      </p>
+      <RerunDiagramView model={model} spanId={spanId} />
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" disabled={live || Boolean(busy)} loading={busy === 'from'} title={live ? 'Wait for the run to end' : undefined} onClick={() => start('from', () => rerunFromNode(executionId, plan.node.nodeId!), `Re-running from “${name}”`)}>
           <RotateCcw className="size-3.5" /> Re-run from here

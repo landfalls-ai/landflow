@@ -41,6 +41,48 @@ export function rerunPlan(model: RunModel, spanId: string): RerunPlan | undefine
   return { node: nodes[index], pinned: nodes.slice(0, index), again: nodes.slice(index) };
 }
 
+export interface RerunStep {
+  name: string;
+  nodeId: string;
+  /** The node failed in this run (in any of its runs, when a loop ran it several times). */
+  failed: boolean;
+}
+
+export interface RerunDiagram {
+  /** The nodes that keep this run's outputs, in run order. */
+  kept: RerunStep[];
+  /** The node the re-run starts at. */
+  from: RerunStep;
+  /** The nodes after it, which run again, in run order. */
+  again: RerunStep[];
+  /** One line in plain words: "Planner and Developer keep this run's outputs; Typecheck runs again, then Review and Merge." */
+  sentence: string;
+}
+
+/** "A", "A and B", "A, B and C". */
+export const joinNames = (names: string[]): string => (names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
+/**
+ * The re-run as a small diagram. The nodes are the ones this run ran, in the order they first ran (a node a loop ran several
+ * times shows once). A span inside a node (a member's request, a tool step) maps to its node. A node that never ran in this
+ * run (a branch not taken) is left out: the diagram shows what happened, not the workflow's graph, so "after" means after in
+ * this run's order. `undefined` when the span is in no node.
+ */
+export function rerunDiagram(model: RunModel, spanId: string): RerunDiagram | undefined {
+  const plan = rerunPlan(model, spanId);
+  if (!plan) return undefined;
+  const failedIds = new Set(model.order.filter((s) => isNodeSpan(s) && s.status === 'error').map((s) => s.nodeId!));
+  const step = (s: RunSpan): RerunStep => ({ name: s.name, nodeId: s.nodeId!, failed: failedIds.has(s.nodeId!) });
+  const [first, ...after] = plan.again;
+  const kept = plan.pinned.map(step);
+  const from = step(first);
+  const again = after.map(step);
+  const parts: string[] = [];
+  if (kept.length) parts.push(`${joinNames(kept.map((k) => k.name))} ${kept.length > 1 ? 'keep' : 'keeps'} this run's outputs`);
+  parts.push(`${from.name} runs again${again.length ? `, then ${joinNames(again.map((a) => a.name))}` : ''}`);
+  return { kept, from, again, sentence: `${parts.join('; ')}.` };
+}
+
 export interface AskAgain {
   /** The Run a Team node. */
   nodeId: string;
