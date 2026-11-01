@@ -89,8 +89,12 @@ export function lineOut(model: RunModel): RunLine['out'] {
     return { label, detail: cut(artifact.artifact.name, 48), ...(artifact.artifact.url && { url: artifact.artifact.url }), ...(artifact.artifact.kind && { kind: artifact.artifact.kind }), tone };
   }
   if (model.live) return { label: 'Working…', detail: model.working.at(-1) ? cut(`${model.working.at(-1)!.actor.name}: ${model.working.at(-1)!.name}`, 60) : undefined, tone };
-  const reported = model.outcome.reported;
-  if (reported) return { label: 'Answered', detail: preview(reported.text, 60), tone };
+  // The reply in words: what the run reported unless that is data (a flow's last output as JSON), else what an agent said
+  // last, else a team node's reply.
+  const words = (t: unknown) => (typeof t === 'string' && t.trim() && !/^\s*[{[]/.test(t) ? t : undefined);
+  const teamReply = model.order.map((s) => (s.output && typeof s.output === 'object' ? (s.output as { reply?: unknown }).reply : undefined)).filter(Boolean).at(-1);
+  const reply = words(model.outcome.reported?.text) ?? words(model.messages.at(-1)?.text) ?? words(teamReply);
+  if (reply || model.outcome.reported) return { label: 'Answered', ...(reply && { detail: preview(reply, 60) }), tone };
   return { label: model.status === 'canceled' ? 'Stopped' : 'Done', tone: model.status === 'canceled' ? 'warn' : 'ok' };
 }
 

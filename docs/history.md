@@ -212,7 +212,8 @@ transport and Valkey Cluster settings).
 | `dc595f3` | Design: a wait asked of a person sits on the member whose turn waits instead of a step of its own, and a run that used no counted tokens leaves them out of its card | run-trace.md#a-run-as-a-timeline |
 | `c002ab2` | Design: the timeline's bubble says what a member does (the tool it runs, else "Thinking…", not its own name), and a team run's last step is its lead's, as "Delivering" with what it does while it works between members | run-trace.md#a-run-as-a-timeline |
 | `57c6feb` | Design: building, step by step. In the new look, a change Spotlight builds is watched taking shape: the chat folds into a side card that lists the steps (tool calls as they stream, then the proposal's ops as steps from `planOf()` in `lib/shared/build-steps.ts`) and ticks each off; the nodes the plan adds appear on the canvas as dashed ghosts (the one being made shimmers), new connections draw dashed, and a thin bar shows progress. Nothing changes until Apply; "Ask for a change…" redirects mid-way. The proposal arrives whole, so its steps tick on a short timer; the Agent architect (a dialog, not a canvas card) is not covered | assistant.md#building-step-by-step |
-| (this change) | History row for building, step by step | history.md |
+| `116b2ed` | History row for building, step by step | history.md |
+| (this change) | Design: a run's line says what was answered in words: what the run reported unless it is data (a flow's last output as JSON), else what an agent said last, else a team node's reply | run-trace.md#what-a-run-did-in-one-line |
 
 ## What is next
 

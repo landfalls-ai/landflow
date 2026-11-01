@@ -130,6 +130,20 @@ describe('a run in one line', () => {
     expect(line.out.label).toBe('Answered');
   });
 
+  it('says what was answered in words, not a flow’s last output as data', () => {
+    const model = foldJournal(
+      journal((add) => {
+        add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Notes', actor: flow });
+        add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Team', actor: lead, nodeId: 'team', attrs: { team } });
+        add(5, { type: 'span.ended', spanId: 'node:team:0', status: 'success', output: { reply: 'Here are the release notes for 0.9.0.' } });
+        add(6, { type: 'span.started', spanId: 'node:pub:0', parentSpanId: 'run', kind: 'step', name: 'Publish', actor: { id: 'node:pub', type: 'system', name: 'Publish' }, nodeId: 'pub' });
+        add(7, { type: 'span.ended', spanId: 'node:pub:0', status: 'success', output: { items: 0 } });
+        add(8, { type: 'span.ended', spanId: 'run', status: 'success', output: { items: 0 } });
+      }),
+    );
+    expect(runLine(model).out).toMatchObject({ label: 'Answered', detail: 'Here are the release notes for 0.9.0.' });
+  });
+
   it('finds the first item’s json however the output keeps it', () => {
     expect(firstJson([[{ json: { a: 1 } }]])).toEqual({ a: 1 });
     expect(firstJson({ json: { b: 2 } })).toEqual({ b: 2 });
