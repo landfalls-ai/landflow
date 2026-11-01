@@ -45,7 +45,7 @@ scope, an admin role) is set in `apps/web/src/lib/server/auth/policy.ts`. The pu
 | `POST /api/executions/:id/retry` | retry a failed (or canceled) run in the background, linked to it: `{ from: 'failed' \| 'start', version: 'original' \| 'current' }` (defaults: from the failed node, original version) → 202 `{ executionId }` |
 | `POST /api/executions/stop-all` | abort every running execution, cancel waiting and queued ones, drop pending automatic retries → `{ running, waiting, queued, retries }` |
 | `POST /api/executions/:id/debug` | debugger: step / continue / stop, breakpoints |
-| `POST /api/ai/build` | `{ prompt }` → a validated flow draft from the local model |
+| `POST /api/ai/build` | `{ prompt }` → a validated flow draft from the local model; the published teams the caller can see go in its prompt, and a Run a Team node's team name becomes its id |
 | `POST /api/assistant/suggest`, `POST /api/assistant/chat`, `POST /api/assistant/feedback` | editor assistant: after-run suggestions, Spotlight's builder chat (SSE; `workflowId` limits it to the node types the workflow allows, `mentions` carries tagged nodes and types, `pending` carries the proposals still waiting for Apply as `[{ summary, ops }]` (at most 20), `session` marks a Test and fix request) and apply/dismiss feedback ([docs/assistant.md](../assistant.md#api)) |
 | `POST /api/expressions/preview` | resolve an expression against sample items (the parameter editor's preview) |
 | `GET/POST /api/plugins`, `PATCH/DELETE /api/plugins/:id`, `POST /api/plugins/:id/refresh`, `POST /api/plugins/scan` | registry |

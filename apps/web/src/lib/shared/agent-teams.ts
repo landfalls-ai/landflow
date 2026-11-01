@@ -241,6 +241,26 @@ export function teamBrief(team: AgentTeam): TeamBrief | undefined {
 }
 
 /** The published teams as prompt text, one line each. */
+const teamKey = (value: string) => value.trim().toLowerCase().replace(/\s+team$/, '');
+
+/**
+ * A Run a Team node's parameters as a model wrote them: models put the team's name ("Release notes desk team") or its
+ * lead's title ("Tech Lead") where the id goes. A name that matches one published team becomes its id, and `teamName` is
+ * filled in from the team, so the node shows it and runs; anything else is left as written.
+ */
+export function withTeamId<T>(parameters: T, teams: readonly TeamBrief[]): T {
+  if (!parameters || typeof parameters !== 'object' || !teams.length) return parameters;
+  const p = parameters as Record<string, unknown>;
+  const written = typeof p.teamId === 'string' ? p.teamId.trim() : '';
+  if (!written || written.includes('{{')) return parameters;
+  const key = teamKey(written);
+  const exact = teams.find((t) => t.id === written);
+  const named = teams.filter((t) => teamKey(t.name) === key);
+  const led = teams.filter((t) => t.members.some((m) => !m.reportsTo && teamKey(m.title) === key));
+  const team = exact ?? (named.length === 1 ? named[0] : !named.length && led.length === 1 ? led[0] : undefined);
+  return team ? ({ ...p, teamId: team.id, teamName: team.name } as T) : parameters;
+}
+
 export function describeTeams(teams: TeamBrief[]): string {
   return teams
     .map((t) => `- “${t.name}” (teamId ${t.id}, v${t.version})${t.goal ? `: ${t.goal.slice(0, 120)}` : ''}. Members: ${t.members.map((m) => `${m.title}${m.reportsTo ? ` (reports to ${m.reportsTo})` : ' (lead)'}`).join(', ')}`)

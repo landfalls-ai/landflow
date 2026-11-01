@@ -310,7 +310,10 @@ in [`lib/shared/turn-into-team.ts`](../apps/web/src/lib/shared/turn-into-team.ts
 [Spotlight](assistant.md#spotlight) is given the published teams (names, ids, members by title and who reports to whom),
 in its context and in the docs of `core.runTeam`, so "run the plugin team on this" proposes a Run a Team node with that team's
 id. A model that writes the team's name or its lead's title where the id goes ("Tech Lead") has it turned into the id, with
-`teamName` filled in, before the proposal reaches the editor. It has a `turnIntoTeam` op (`{"op":"turnIntoTeam","node":"<lead>"}`) for "turn the Tech Lead and its agents into a
+`teamName` filled in, before the proposal reaches the editor. The first draft of an empty flow (`POST /api/ai/build`, the
+builder's "Describe the workflow you want") gets the same list and the same fix (`withTeamId` in
+`lib/shared/agent-teams.ts`): before, it wrote `Release notes desk team` as the id and the run failed with *the selected
+one was deleted*. It has a `turnIntoTeam` op (`{"op":"turnIntoTeam","node":"<lead>"}`) for "turn the Tech Lead and its agents into a
 team": applying the proposal does what the toolbar button does.
 
 ### What is not enforced

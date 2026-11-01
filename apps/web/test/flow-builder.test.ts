@@ -43,3 +43,23 @@ describe('AI builder sample items', () => {
     expect((await buildFlow('answer questions')).pinData?.start).toHaveLength(1);
   });
 });
+
+describe('AI builder teams', () => {
+  const teams = [
+    { id: 'team_desk1', name: 'Release notes desk', version: 1, members: [{ title: 'Editor' }, { title: 'Writer', reportsTo: 'Editor' }] },
+    { id: 'team_tl1', name: 'Tech Lead team', version: 2, members: [{ title: 'Tech Lead' }] },
+  ];
+
+  it('tells the model the published teams, and turns the team name it writes into the id', async () => {
+    answer = JSON.stringify({ name: 'Notes', nodes: [{ key: 'start', type: 'core.manualTrigger', name: 'Start' }, { key: 'team', type: 'core.runTeam', name: 'Run Team', parameters: { teamId: 'Release notes desk team', message: 'Write the notes' } }], connections: [{ from: 'start', to: 'team' }] });
+    const flow = await buildFlow('run the release notes desk', undefined, teams);
+    expect(flow.nodes.find((n) => n.key === 'team')!.parameters).toEqual({ teamId: 'team_desk1', teamName: 'Release notes desk', message: 'Write the notes' });
+    const prompt = JSON.stringify(fake.last('/api/chat')?.body);
+    expect(prompt).toContain('teamId team_desk1');
+    // A lead's title is a name too; a name no team has stays as written (the node then asks for a team).
+    answer = answer.replace('Release notes desk team', 'Tech Lead');
+    expect((await buildFlow('review it', undefined, teams)).nodes.find((n) => n.key === 'team')!.parameters).toMatchObject({ teamId: 'team_tl1', teamName: 'Tech Lead team' });
+    answer = answer.replace('Tech Lead', 'Marketing');
+    expect((await buildFlow('market it', undefined, teams)).nodes.find((n) => n.key === 'team')!.parameters).toMatchObject({ teamId: 'Marketing' });
+  });
+});

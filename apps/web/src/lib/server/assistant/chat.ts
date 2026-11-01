@@ -8,7 +8,7 @@
 import { nanoid } from 'nanoid';
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { AssistantOp, RunDigest } from '@/lib/shared/assistant-ops';
-import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
+import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow } from '@/lib/shared/types';
 import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
@@ -223,8 +223,6 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
   return { ops: cleaned, invented, values };
 }
 
-const teamKey = (value: string) => value.trim().toLowerCase().replace(/\s+team$/, '');
-
 const UNIT_MS = { ms: 1, s: 1000, min: 60_000, h: 3_600_000 } as const;
 type Unit = keyof typeof UNIT_MS;
 const UNIT_NAME: Record<Unit, string> = { ms: 'milliseconds', s: 'seconds', min: 'minutes', h: 'hours' };
@@ -278,18 +276,7 @@ export function unitSlips(ops: unknown, request: string, propertiesOf: (op: Reco
  */
 export function withTeamIds(ops: unknown, teams: readonly TeamBrief[], typeOf: (node: string) => string | undefined = () => undefined): unknown {
   if (!Array.isArray(ops) || !teams.length) return ops;
-  const resolve = (parameters: unknown) => {
-    if (!parameters || typeof parameters !== 'object') return parameters;
-    const p = parameters as Record<string, unknown>;
-    const written = typeof p.teamId === 'string' ? p.teamId.trim() : '';
-    if (!written || written.includes('{{')) return parameters;
-    const key = teamKey(written);
-    const exact = teams.find((t) => t.id === written);
-    const named = teams.filter((t) => teamKey(t.name) === key);
-    const led = teams.filter((t) => t.members.some((m) => !m.reportsTo && teamKey(m.title) === key));
-    const team = exact ?? (named.length === 1 ? named[0] : !named.length && led.length === 1 ? led[0] : undefined);
-    return team ? { ...p, teamId: team.id, teamName: team.name } : parameters;
-  };
+  const resolve = (parameters: unknown) => withTeamId(parameters, teams);
   return ops.map((op) => {
     if (!op || typeof op !== 'object') return op;
     const o = op as Record<string, unknown>;

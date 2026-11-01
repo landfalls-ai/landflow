@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { defaultParameters, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { api, ApiError } from '@/lib/client/api';
 import type { AgentSummary } from '@/lib/shared/agents';
+import { formatTokens } from '@/lib/shared/ai-usage';
 import { managerOf, memberAgent, orgTree, reportsOf, teamIssues, type AgentTeam, type AgentTeamConfig, type OrgNode, type TeamMember } from '@/lib/shared/agent-teams';
 import { cn } from '@/lib/utils';
 import { NodeCredentials } from '../credentials/node-credentials';
@@ -413,7 +414,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
   );
 }
 
-const tokens = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
+const tokens = formatTokens;
 
 function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddReport }: { config: AgentTeamConfig; member: TeamMember; agent?: AgentSummary; lead: boolean; inSection?: boolean; onEdit: () => void; onAddReport?: () => void }) {
   const manager = managerOf(config, member);
