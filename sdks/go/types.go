@@ -241,6 +241,7 @@ type NodeDescriptor struct {
 	Properties      []PropertyDescriptor `json:"properties"`
 	UsableAsTool    bool                 `json:"usableAsTool,omitempty"`
 	ToolDescription string               `json:"toolDescription,omitempty"`
+	Delegates       bool                 `json:"delegates,omitempty"` // hands work to another agent: as a tool the engine adds a required "reason" argument (docs/run-trace.md)
 	// ToolInputSchema is an optional JSON Schema for the tool's arguments.
 	// Without it the host derives one from the primitive properties. The
 	// arguments become the input item's JSON and override same-named parameters.

@@ -983,7 +983,7 @@ approved plan:
   ([run-trace.md](run-trace.md#iterations-rounds-turns-and-fix-cycles)).
 - Still open from the artifacts plan: images, CSV tables, an HTML preview in a sandboxed frame and PDFs in the
   Artifacts tab; line comments on a diff that collect into the gate's Send back text; reasons from delegating nodes of
-  other plugins (they need `delegates`); fix cycles per round; a lead's claims credited with its team's steps.
+  other plugins (the Go and Python SDKs declare `delegates` now; plugins still have to set it); fix cycles per round; a lead's claims credited with its team's steps.
 - Next (phase 4):
   - other agents' spans joined by trace id, starting with Claude Code's own OpenTelemetry;
   - OTLP export with OpenInference kinds;
@@ -1012,9 +1012,14 @@ four steps of the approved plan:
   started it (Stop asks the server, the editor picks a running run up again and keeps a growing live node in view); a
   manager answers from what its reports said (file names it made up send it back once); Spotlight stops once a request
   is proposed and doesn't add back a node it was asked to remove; the AI builder pins one sample item for agent flows.
-- Next: consults (ask a peer) and hand-offs; a person answering a member's question and the run carrying on; a
-  manager's own reports in the live status; reviews across the chart and a reviewer's verdict as the sign-off; live budget use on the chart; the Go and Python SDKs
-  declaring `delegates`. Paperclip-style autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.
+- **Closing the gaps** (2026-11-01): a member's question for a person pauses the run and the team goes on with the
+  answer; a manager's own reports show at work in the live status; reviews are seen to by the nearest manager of both,
+  with a reviewer's `VERDICT:` as the sign-off; a remote member that reports no usage is budgeted on an estimate; a
+  manager's made-up commits, test counts and pull requests send it back like file names, and members are told the
+  tools they have in the run; a span keeps one check per member; the Go and Python SDKs declare `delegates`; the
+  second brain's study knows Run a Team; a renamed team shows its new name on flows.
+- Next: consults (ask a peer) and hand-offs; tool approvals inside a team (the pause a question uses); live budget use
+  on the chart. Paperclip-style autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.
 
 ## Planned next
 

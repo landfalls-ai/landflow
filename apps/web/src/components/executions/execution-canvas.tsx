@@ -24,7 +24,7 @@ import type { NodeRun, NodeTypeInfo, Workflow, WorkflowNode } from '@/lib/shared
 import { EdgeLine } from '../canvas/edge-line';
 import { edgePath, useLane } from '../canvas/edge-path';
 import { activityOfRuns, type TeamActivity, type TeamProgress } from '@/lib/shared/team-progress';
-import { useNodeFace } from '../agents/faces';
+import { useNodeFace, useShownParameters } from '../agents/faces';
 import { useTeamTile } from '../editor/team-live';
 import { TeamStrip } from '../editor/team-strip';
 import { handleId, NodeTile, ranFor } from '../canvas/node-tile';
@@ -201,6 +201,7 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
   const dimmed = ctx.dimIdle && !status;
   const caption = ctx.captions[id];
   const face = useNodeFace(wf.type, wf.parameters);
+  const shown = useShownParameters(wf.type, wf.parameters);
   // A team node becomes the member at work while it runs, and shows what it did after (team-live.tsx).
   const teamId = wf.type === 'core.runTeam' && typeof wf.parameters.teamId === 'string' && wf.parameters.teamId ? wf.parameters.teamId : undefined;
   const live = teamId && ctx.running ? ctx.teams[id] : undefined;
@@ -210,7 +211,7 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
       <NodeTile
         name={wf.name}
         info={ctx.nodeTypes[wf.type]}
-        parameters={wf.parameters}
+        parameters={shown}
         status={status}
         disabled={wf.disabled}
         selected={ctx.selectedNodeId === id}

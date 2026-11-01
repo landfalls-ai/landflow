@@ -381,8 +381,9 @@ export function resultOf(span: RunSpan): [ResultLabel, ResultTone] {
   return ['Left undelivered', 'bad'];
 }
 
-function checkKey(spanId: string, name: string) {
-  return `${spanId}\u0000${name}`;
+/** One check per span, name and subject: a team's Budget for the Developer and for the Planner are two checks on its node. */
+function checkKey(spanId: string, name: string, subject?: string) {
+  return `${spanId}\u0000${name}\u0000${subject ?? ''}`;
 }
 
 export function foldJournal(events: JournalEvent[], options: { until?: string | number; now?: number } = {}): RunModel {
@@ -523,7 +524,7 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
       }
       case 'check': {
         const span = spanFor(event.spanId);
-        const key = checkKey(event.spanId, event.check.name);
+        const key = checkKey(event.spanId, event.check.name, event.check.subject);
         const previous = checkMap.get(key);
         // A person's decision comes as a later event on the same check: it settles that check, it is not a second one.
         const item: RunCheckItem = {

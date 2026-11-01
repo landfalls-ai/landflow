@@ -122,7 +122,7 @@ export function newSession(
   };
 }
 
-function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession): string {
+function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession, extra?: string): string {
   let memory: string | undefined;
   if (config.memory.crossSession) {
     const notes = agentStore.memories(agent.id, session.userId);
@@ -132,7 +132,21 @@ function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession):
       'Use the remember tool for durable facts worth knowing next time.',
     ].join('\n');
   }
-  return personaPrompt(config, { memory, now: new Date() });
+  const prompt = personaPrompt(config, { memory, now: new Date() });
+  return extra ? `${prompt}\n\n${extra}` : prompt;
+}
+
+/**
+ * A team member's tools in this run: its instructions may name a tool the team or the flow doesn't give it here (written
+ * for another flow), and a model told nothing tends to report what that tool would have returned.
+ */
+function toolsInRun(tools: BuiltTool[]): string {
+  const lines = tools.map((t) => `- ${t.name}${t.label && t.label !== t.name ? ` (${t.label})` : ''}`);
+  return [
+    '## Your tools in this run',
+    lines.length ? lines.join('\n') : 'None.',
+    "If your instructions name a tool that isn't listed here, you don't have it in this run: don't say you used it or give what it would have returned.",
+  ].join('\n');
 }
 
 /** The transcript the model sees: the last N user turns, cut at a user message so tool calls stay paired. */
@@ -287,6 +301,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     }
     for (const note of toolset.unavailable) upsert({ id: entryId(), type: 'notice', message: `Tool unavailable: ${note}`, at: now() });
     const byName = new Map(toolset.tools.map((t) => [t.name, t]));
+    const toolNote = request.team ? toolsInRun(toolset.tools) : undefined;
     const specs = toolset.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
     const ctx: ToolContext = {
       agent: { ...agent, ...config },
@@ -332,7 +347,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       iterations++;
       let turn;
       try {
-        turn = await model.generate({ system: systemPrompt(agent, config, session), messages: contextWindow(session.messages), tools: specs, signal: request.signal });
+        turn = await model.generate({ system: systemPrompt(agent, config, session, toolNote), messages: contextWindow(session.messages), tools: specs, signal: request.signal });
       } catch (error) {
         if (isUsageCapError(error)) {
           upsert({ id: entryId(), type: 'notice', message: `Stopped: ${error.message}.`, at: now() });
@@ -423,14 +438,14 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   }
 
   /** Run a tool call (or, with `resume`, answer the remote agent it paused on): its result, or the pause to wait on. */
-  async function execute(call: ToolCall, tool: BuiltTool, ctx: ToolContext, resume?: { state: Record<string, unknown>; approved: boolean }): Promise<ToolResult | { pending: PendingCall }> {
+  async function execute(call: ToolCall, tool: BuiltTool, ctx: ToolContext, resume?: { state: Record<string, unknown>; approved: boolean; answer?: string }): Promise<ToolResult | { pending: PendingCall }> {
     const started = Date.now();
     upsert(toolEntry(call, tool, { status: 'running', approval: undefined }));
     // The remote agent's tool calls as they happen (A2A tools).
     const callCtx: ToolContext = { ...ctx, callId: call.id, callSpan: journalEntry.spanOf(call.id), progress: (remote) => upsert(toolEntry(call, tool, { status: 'running', remote, approval: undefined })) };
     try {
       const outcome = await traceToolCall({ agentId: agent.id, agentName: config.name, tool: call.name, callId: call.id, kind: tool.kind }, () =>
-        resume && tool.resume ? tool.resume(resume.state, resume.approved, callCtx) : tool.invoke(call.input, callCtx),
+        resume && tool.resume ? tool.resume(resume.state, resume.approved, callCtx, resume.answer) : tool.invoke(call.input, callCtx),
       );
       if (outcome.pause) {
         upsert(toolEntry(call, tool, { status: 'awaiting_approval', approval: { message: outcome.pause.message }, durationMs: Date.now() - started, ...(outcome.remote && { remote: outcome.remote }) }));
@@ -463,7 +478,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     // A remote agent's pause: the decision goes to that agent either way, and its answer is the tool's result.
     if (call.remote) {
       if (!tool.resume) return { id: call.callId, name: call.tool, content: `The tool "${call.tool}" can no longer answer the agent that paused.`, isError: true };
-      return execute(asCall, tool, ctx, { state: call.remote.state, approved: call.decision === 'approved' });
+      return execute(asCall, tool, ctx, { state: call.remote.state, approved: call.decision === 'approved', ...(call.answer !== undefined && { answer: call.answer }) });
     }
     if (call.decision === 'approved') return execute(asCall, tool, ctx);
     upsert(toolEntry(asCall, tool, { status: 'denied', error: 'Denied by a person' }));

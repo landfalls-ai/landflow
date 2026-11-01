@@ -132,6 +132,7 @@ SDK environment variables:
   "inputs":  [{ "type": "main" }],
   "outputs": [{ "type": "main" }],       // several main outputs = branches (IF: true/false)
   "usableAsTool": true,                  // can be attached to an AI Agent's ai_tool port
+  "delegates": true,                     // optional: hands work to another agent; as a tool it gets a required `reason` argument
   "properties": [
     { "name": "algorithm", "displayName": "Algorithm", "type": "options", "default": "sha256",
       "options": [ { "name": "SHA-256", "value": "sha256" }, { "name": "MD5", "value": "md5" } ] },

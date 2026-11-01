@@ -71,7 +71,8 @@ attributes.
 - It profiles each workflow (at most 20 per run, only those changed since their last profile):
   - its purpose, written by the model from the outline, or described from the nodes without one;
   - runs, failure rate, p95, cost, its top failure signatures and slowest nodes;
-  - what it depends on (sub-workflows, credentials, agents).
+  - what it depends on (sub-workflows, credentials, agents: a Run an Agent node's, and the Landflow agents of a Run a
+    Team node's team, from the version it runs).
 - It also profiles each agent, node type, credential and the instance.
 - Profiles become **facts** in `brain_facts`: subject, kind (`purpose`, `health`, `cost`, `failure`, `slow`, `change`,
   `dependency`, `usage`, `quality`, `intended`), statement, evidence, confidence, first and last seen, active or

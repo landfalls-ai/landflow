@@ -415,6 +415,15 @@ describe('study', () => {
     const all = await runBrain('effects');
     expect(all).toMatchObject({ expired: 0, effects: 0 });
   });
+
+  it('knows the agents a Run a Team node runs', async () => {
+    const { agentTeamStore } = await import('@/lib/server/agent-teams/store');
+    const leadAgent = agentStore.create({ name: 'Study lead', instructions: 'Lead.' });
+    const team = agentTeamStore.create({ name: 'Study team', members: [{ id: 'm_lead', title: 'Lead', kind: 'agent', agentId: leadAgent.id }] });
+    workflow('wf_team_study', 'Team review', [node('t', 'Start', 'core.manualTrigger'), { ...node('r', 'Review', 'core.runTeam'), parameters: { teamId: team.id, message: 'Review' } }], [['t', 'r']]);
+    await study({ embed: false });
+    expect(facts.getProfile('workflow', 'wf_team_study')?.uses).toContainEqual({ type: 'agent', id: leadAgent.id, name: 'Study lead' });
+  });
 });
 
 describe('the nodes', () => {

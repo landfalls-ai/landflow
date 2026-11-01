@@ -63,7 +63,7 @@ type CheckEvent = Extract<JournalEvent, { type: 'check' }>;
 function failedChecks(now: number): CheckEvent[] {
   const latest = new Map<string, CheckEvent>();
   for (const event of checksSince(new Date(now - CHECK_DAYS * DAY_MS).toISOString())) {
-    if (event.type === 'check') latest.set(`${event.executionId}\u0000${event.spanId}\u0000${event.check.name}`, event);
+    if (event.type === 'check') latest.set(`${event.executionId}\u0000${event.spanId}\u0000${event.check.name}\u0000${event.check.subject ?? ''}`, event);
   }
   return [...latest.values()].filter((event) => event.check.status === 'fail' && !event.check.resolution);
 }

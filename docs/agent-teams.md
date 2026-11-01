@@ -100,7 +100,10 @@ member's face and title above it.
 
 1. The lead runs as a Landflow agent through the same loop as Run an Agent (`runAgent`), with the team's goal in front of the
    message and one tool per direct report: `ask_<title>` (lower snake case: `ask_tech_lead`), described by the member's role
-   and "<title> reports to you", with `message` and a required `reason`. The reason is recorded with the request.
+   and "<title> reports to you", with `message` and a required `reason`. The reason is recorded with the request. Every
+   member that runs as a Landflow agent is also told, under *Your tools in this run*, the tools it has here, and that a
+   tool its instructions name but the list doesn't (written for another flow, like a `Check_branch` the flow doesn't
+   connect) isn't there: not to say it used it or what it would have returned.
 2. A **Landflow agent** member runs its own loop when asked, with *its* reports as tools, so a team can have several
    levels. It keeps one session for the whole run: a second ask continues the first. Tools of its own agent that need
    approval are refused (nobody is there), as for any agent in a flow.
@@ -110,30 +113,48 @@ member's face and title above it.
 4. **Goal ancestry.** Every request a member gets starts with `Team goal: …` and `<manager>'s current task: …` (the
    manager's own task, cut to 600 characters), then the message. An answer to a remote member's question goes as it is.
 5. **Questions.** A remote member's question goes to its manager by default (`questionsTo: manager`): the manager gets it as
-   the tool result and answers with its next call to the same member. With `questionsTo: person` the member's manager is
-   told a person will answer and to finish with what it has, and the run leaves by **Needs a person** with the question as
-   the reason. Tool approvals a remote member waits on are refused, as everywhere in a flow.
-6. **Reviews.** A manager that gives its final answer while work of a report it manages has not been looked at by that
-   report's reviewer (the reviewer was not asked after the work came back) is told, as a message, to ask the reviewer
-   first, and its loop goes on: at most twice. Still unreviewed, the run leaves by **Needs a person** (`<Reviewer> has not
-   reviewed <Member>'s work`) and a failed *Review* check is recorded; a reviewer asked in time records a passed one.
-   Reviews are enforced where reviewer and reviewed share a manager (the usual case).
-7. **Budgets.** Tokens are counted per member: a Landflow agent's model usage, a remote member's A2A usage. At 80% a warn
-   *Budget* check is recorded, at 100% a fail one: an agent member stops (`budget`), and its tool answers that it is over
-   budget and is not called again. The lead's budget stops the lead at the limit and routes the run to Needs a person.
+   the tool result and answers with its next call to the same member. With `questionsTo: person` **the run waits for a
+   person**: the question passes up to the lead (through every manager in between), the node pauses on a form (`<Member>
+   asks`, the question, an Answer field; it shows under Needs you), and the team's state is kept with the node: every
+   session, what each manager was told and heard, the review ledger, budgets. The answer goes down to the member's paused
+   A2A task, and the team goes on from there; the node's activity joins the turns before and after. Outside a flow (a run
+   that can't wait) the old way stays: the manager is told a person will answer, and the run leaves by **Needs a person**
+   with the question. Tool approvals a remote member waits on are refused, as everywhere in a flow.
+6. **Reviews.** A review is seen to by the nearest manager of both the reviewer and the reviewed (their own manager when
+   they share one; the lead when the Reviewer sits under QA and the Developer under the lead). That manager, giving its
+   final answer while the work has not been looked at (the reviewer was not asked after the work came back), is told to
+   ask the reviewer first (`Ask Reviewer through QA (ask_qa)` when it isn't a direct report), and its loop goes on: at most
+   twice. A reviewer's `VERDICT:` line is the sign-off: `VERDICT: CHANGES` (or request changes, reject) holds the manager
+   too, until the work came back and the reviewer was asked again (`Send them to Developer (ask_developer), then ask
+   Reviewer (ask_reviewer) to review it again`). Still unreviewed, or changes never reviewed again, the run leaves by
+   **Needs a person** and a failed *Review* check is recorded; a review records a passed check (`approved` with
+   `VERDICT: APPROVE`, `was asked` without a verdict) or a warn one for changes. A reviewer above or below the member it
+   reviews isn't held to it: a manager reads its report's work when it comes back.
+7. **Budgets.** Tokens are counted per member: a Landflow agent's model usage, a remote member's A2A usage. A remote member
+   that reports none is estimated from what crossed the wire (its requests, answers, and its steps' arguments and results,
+   about four characters a token): a floor, so it stops late rather than early. The estimate counts against its budget
+   (the check says `about … (estimated: it reports no usage)`, and `members[]` marks it `estimated`) but not in the team's
+   `usage`. At 80% a warn *Budget* check is recorded, at 100% a fail one: an agent member stops (`budget`), and its tool
+   answers that it is over budget and is not called again. The lead's budget stops the lead at the limit and routes the
+   run to Needs a person.
 8. **Answers from what was reported.** A manager (the lead, or a member with reports) is told to name only the files,
-   tests, commands and results its reports gave it. If its final answer names a file (`get-alerts.ts`, `PLAN.md`, or the
-   last part of a path) that none of its task, its reports' answers and steps, or its own tools' results mention, it is
-   sent back once to answer the person again without them, and a warn *Grounded* check is recorded; if the answer it
-   gives then still names one, a second warn check says so and the answer stands. A manager that asked nobody is not
-   checked.
+   tests, commands and results its reports gave it. Its final answer is checked against its task, its reports' answers
+   and steps, and its own tools' results for what it could make up: file names (`get-alerts.ts`, `PLAN.md`, or the last
+   part of a path), commits (a short SHA counts when a report gave it in full), test counts (`14/14 tests`, `3 tests
+   passed`, `Tests passed: 14/14`: each number has to sit next to a test word in what it was given) and pull requests
+   (`PR #7`, `/pull/7`). Anything nothing gave it sends it back once to answer the person again without it, told the files
+   its reports did name (or that none did) and to say where its instructions ask for something no report gave; a warn
+   *Grounded* check is recorded. Its next answer replaces that check: a pass when the details are gone, a warn when it
+   still names them (and the answer stands). A manager that asked nobody is not checked.
 9. The run ends when the lead answers. Its answer is `reply`; the lead's other ends (iteration limit, budget) go to Needs a
    person with a reason, an error fails the node.
 
 ### Watching a team work
 
-While a Run a Team node runs it reports who works now and on what (`node.progress`, folded from the lead's stream by
-[`lib/shared/team-progress.ts`](../apps/web/src/lib/shared/team-progress.ts)): the member working, what it does as the step
+While a Run a Team node runs it reports who works now and on what (`node.progress`, folded from the lead's stream, and
+from the stream of every member that is a Landflow agent, by
+[`lib/shared/team-progress.ts`](../apps/web/src/lib/shared/team-progress.ts)): so the Tester a Developer asks shows at work
+too ("Developer asked the Tester"), and the Developer's own tools fill its ticker. The report holds the member working, what it does as the step
 reads ("Bash: pnpm test") and in plain words ("Running the tests"), the command, how many steps it took in this turn, its
 last five steps, every member's state (idle, working, done, failed) and how often it was asked, each member's turns, and
 the moments that matter. On the editor's canvas during a run and on the execution view of a running execution
@@ -193,6 +214,7 @@ team": applying the proposal does what the toolbar button does.
 ### What is not enforced
 
 - Only Landflow agents lead or manage; the lead must be a Landflow agent.
-- A review is enforced between members who share a manager; a reviewer elsewhere in the chart is not asked for.
+- A reviewer that manages the member it reviews (or reports to it) isn't held to the review; a verdict is read from a
+  `VERDICT:` line only.
 - A middle manager's own budget is enforced for agents asked as members; the lead's is checked by the session limit.
 - Heartbeats, a task backlog, consults and hand-offs between peers are not built.

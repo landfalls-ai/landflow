@@ -229,7 +229,8 @@ resources, all named after the deployment (default: the agent's name as a DNS la
 Writing uses server-side apply (field manager `landflow`), so a deploy sets every field Landflow owns back to Landflow's
 value. **Publishing writes the new version too**: the publish answer carries `kagent` (the status, or why kagent
 couldn't be written; the publish itself still happens). Unpublishing leaves kagent's copy as it is; deleting the agent
-removes it from kagent. Landflow never takes over a kagent agent it didn't write (409), and removing deletes only
+removes it from kagent. When kagent can't be reached then, Landflow remembers what it left (the `settings` row
+`kagent.leftovers`) and removes it the next time it deploys an agent to that cluster. Landflow never takes over a kagent agent it didn't write (409), and removing deletes only
 resources labelled with the agent's id. Moving a deployment to another name or cluster removes the old resources.
 
 **Checking that kagent holds the persona.** `GET /api/agents/<id>/kagent` (and the card) reads the resources back and

@@ -494,6 +494,26 @@ describe('routes', () => {
     expect(stored.at(-1)).toMatchObject({ check: { name: 'tests', resolution: { decision: 'sent_back' } } });
   });
 
+  it('settles one member’s check of a team’s node by its subject, and lists the other', async () => {
+    const checks = await import('@/app/api/executions/[id]/checks/route');
+    const needs = await import('@/app/api/runs/needs-you/route');
+    const wf = store.saveWorkflow({ id: 'wf_team_checks', name: 'Team checks', nodes: [], connections: [] });
+    store.saveExecution({ executionId: 'ex_team_checks', workflowId: wf.id, workflowName: 'Team checks', mode: 'manual', status: 'success', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 1, runData: {}, executionOrder: [] });
+    const journal = journalOf('ex_team_checks', { workflowId: wf.id });
+    journal.record({ type: 'span.started', spanId: 'node:team:0', kind: 'agent', name: 'Team', actor: { id: 'node:team', name: 'Team', type: 'agent' } });
+    journal.record({ type: 'check', spanId: 'node:team:0', check: { name: 'Budget', status: 'fail', message: 'Planner was stopped', subject: 'Planner', source: 'builtin' } });
+    journal.record({ type: 'check', spanId: 'node:team:0', check: { name: 'Budget', status: 'fail', message: 'Developer was stopped', subject: 'Developer', source: 'builtin' } });
+    releaseJournal('ex_team_checks');
+    const listed = async () => ((await (await needs.GET()).json()) as { items: Array<{ executionId: string; detail?: string }> }).items.filter((i) => i.executionId === 'ex_team_checks');
+    expect(await listed()).toHaveLength(2);
+    const post = (body: unknown) => checks.POST(new Request('http://localhost/api/executions/ex_team_checks/checks', { method: 'POST', body: JSON.stringify(body) }), { params: Promise.resolve({ id: 'ex_team_checks' }) });
+    const ok = await post({ spanId: 'node:team:0', name: 'Budget', subject: 'Planner', decision: 'accepted' });
+    expect(((await ok.json()) as { check: { subject: string } }).check.subject).toBe('Planner');
+    expect(await listed()).toHaveLength(1);
+    expect((await post({ spanId: 'node:team:0', name: 'Budget', subject: 'Developer', decision: 'accepted' })).status).toBe(200);
+    expect(await listed()).toHaveLength(0);
+  });
+
   it('GET /api/runs/needs-you lists a waiting run that asks a person, not a timer', async () => {
     const needs = await import('@/app/api/runs/needs-you/route');
     const wf = store.saveWorkflow({ id: 'wf_wait', name: 'Waiter', nodes: [node('lead', 'Lead', 'core.aiAgent')], connections: [] });

@@ -27,7 +27,7 @@ Object.assign(process.env, ENV);
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
-const { runWorkflow } = await import('@/lib/server/runner');
+const { runWorkflow, resumeExecution } = await import('@/lib/server/runner');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { agentTeamStore } = await import('@/lib/server/agent-teams/store');
 const { read } = await import('@/lib/server/journal/store');
@@ -79,6 +79,7 @@ function agent(name: string, model: string) {
 }
 const lead = agent('Tech Lead', 'lead-model');
 const developer = agent('Developer agent', 'dev-model');
+const qa = agent('QA agent', 'qa-model');
 
 const remote = (id: string, title: string, extra: Partial<TeamMember> = {}): TeamMember =>
   ({
@@ -179,11 +180,11 @@ describe('Run a Team', () => {
       { title: 'Developer', asked: 1, tokens: expect.any(Number) },
       { title: 'Tester', asked: 1, tokens: expect.any(Number) },
     ]);
-    // What the run did, for the canvases: the lead's direct reports' turns, in order, and the moments.
+    // What the run did, for the canvases: every member's turns in order (the Tester asked by the Developer too), and the moments.
     const activity = done!.activity as { turns: Array<{ member: string; end?: number }>; moments: Array<{ text: string }> };
-    expect(activity.turns.map((t) => t.member)).toEqual(['Tech Lead', 'Planner', 'Tech Lead', 'Planner', 'Tech Lead', 'Developer', 'Tech Lead']);
+    expect(activity.turns.map((t) => t.member)).toEqual(['Tech Lead', 'Planner', 'Tech Lead', 'Planner', 'Tech Lead', 'Developer', 'Tester', 'Developer', 'Tech Lead']);
     expect(activity.turns.every((t) => typeof t.end === 'number')).toBe(true);
-    expect(activity.moments.map((m) => m.text)).toEqual(expect.arrayContaining(['Asked the Planner', 'Planner reported back', 'Asked the Developer', 'Developer reported back']));
+    expect(activity.moments.map((m) => m.text)).toEqual(expect.arrayContaining(['Asked the Planner', 'Planner reported back', 'Asked the Developer', 'Developer asked the Tester', 'Developer reported back']));
     // The planner kept its conversation, and its first request carried the goal.
     const sends = a2a.calls.filter((c) => c.method === 'SendMessage' || c.method === 'SendStreamingMessage');
     const planner = sends.filter((c) => c.params.message?.parts?.[0]?.text?.includes('Hello World') || c.params.message?.parts?.[0]?.text?.includes('and again'));
@@ -239,17 +240,54 @@ describe('Run a Team', () => {
     expect(sends[1].params.message?.taskId).toBeTruthy();
   });
 
-  it('routes a question to a person when the member says so: Needs a person', async () => {
+  it('waits for a person to answer a member’s question, then the team goes on', async () => {
     const t = team([remote('m_plan', 'Planner', { questionsTo: 'person' })]);
-    scripts.set('lead-model', (turn, body) =>
-      turn === 1 ? call('ask_planner', { message: 'ask', reason: 'Need the plan' }) : { text: `Stopped: ${lastTool(body).slice(0, 40)}` },
-    );
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_planner', { message: 'ask', reason: 'Need the plan' }) : { text: `Plan: ${lastTool(body)}` }));
     turns.clear();
-    const { done, needs } = await run(t.id);
-    expect(done).toBeUndefined();
-    expect(needs).toMatchObject({
-      reason: expect.stringContaining('Planner has a question for a person: fake-agent asks'),
-    });
+    a2a.calls.length = 0;
+    const { record } = await run(t.id);
+    // The run waits on a form with the question, the team's state kept with the node.
+    expect(record.status).toBe('waiting');
+    expect(record.wait?.data).toMatchObject({ form: { title: 'Planner asks', description: 'Planner asks:\n- Which colour?' }, teamQuestion: { member: 'Planner' } });
+    const resumed = await resumeExecution(record.executionId, { kind: 'form', outputs: [[{ json: { answer: 'blue' } }]] });
+    resetJournals();
+    expect(resumed.error?.message ?? resumed.status).toBe('success');
+    const done = resumed.runData.Team?.at(-1)?.outputs?.[0]?.[0]?.json as Record<string, unknown>;
+    // The answer went to the Planner's paused task, and the lead answered from what came back.
+    expect(done.reply).toBe('Plan: You said: blue');
+    expect(a2a.calls.filter((c) => c.method !== 'GetTask').at(-1)?.params.message?.taskId).toBeTruthy();
+    expect(done.members).toContainEqual(expect.objectContaining({ title: 'Planner', asked: 1 }));
+    const activity = done.activity as { turns: Array<{ member: string }> };
+    // Before the wait and after: the lead picks the work up again, the Planner takes the answer, the lead finishes.
+    expect(activity.turns.map((x) => x.member)).toEqual(['Tech Lead', 'Planner', 'Tech Lead', 'Planner', 'Tech Lead']);
+  });
+
+  it('takes the answer down to a member’s own report that asked', async () => {
+    const t = team([
+      { id: 'm_dev', title: 'Developer', kind: 'agent', agentId: developer.id, reportsTo: 'm_lead' } as TeamMember,
+      remote('m_test', 'Tester', { reportsTo: 'm_dev', questionsTo: 'person' }),
+    ]);
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_developer', { message: 'Build it', reason: 'Needs code' }) : { text: `Lead: ${lastTool(body)}` }));
+    scripts.set('dev-model', (turn, body) => (turn === 1 ? call('ask_tester', { message: 'ask', reason: 'Check it' }) : { text: `Developer: ${lastTool(body)}` }));
+    turns.clear();
+    const { record } = await run(t.id);
+    expect(record.status).toBe('waiting');
+    expect(record.wait?.data).toMatchObject({ form: { title: 'Tester asks' } });
+    const resumed = await resumeExecution(record.executionId, { kind: 'form', outputs: [[{ json: { answer: 'green' } }]] });
+    resetJournals();
+    expect(resumed.error?.message ?? resumed.status).toBe('success');
+    const done = resumed.runData.Team?.at(-1)?.outputs?.[0]?.[0]?.json as Record<string, unknown>;
+    expect(done.reply).toBe('Lead: Developer: You said: green');
+  });
+
+  it('ends in Needs a person when the run can’t wait for one', async () => {
+    const { runTeam } = await import('@/lib/server/agent-teams/runtime');
+    const t = team([remote('m_plan', 'Planner', { questionsTo: 'person' })]);
+    scripts.set('lead-model', (turn, body) => (turn === 1 ? call('ask_planner', { message: 'ask', reason: 'Need the plan' }) : { text: `Stopped: ${lastTool(body).slice(0, 40)}` }));
+    turns.clear();
+    const result = await runTeam({ team: { id: t.id, name: 'Plugin team' }, config: agentTeamStore.get(t.id)!.published!, message: 'Build it', userId: 'test' });
+    expect(result.waiting).toBeUndefined();
+    expect(result.needsPerson).toContain('Planner has a question for a person: fake-agent asks');
   });
 
   it('makes the manager ask the reviewer before it reports done', async () => {
@@ -275,6 +313,53 @@ describe('Run a Team', () => {
     expect(events.some((e) => e.type === 'check' && e.check.name === 'Review' && e.check.status === 'pass')).toBe(true);
   });
 
+  it('has the nearest manager of both see to a review across the chart', async () => {
+    // The Reviewer reports to QA, the Developer to the lead: the lead sees to the review, through QA.
+    const t = team([
+      remote('m_dev', 'Developer'),
+      { id: 'm_qa', title: 'QA', kind: 'agent', agentId: qa.id, reportsTo: 'm_lead' } as TeamMember,
+      remote('m_rev', 'Reviewer', { reportsTo: 'm_qa', reviews: ['m_dev'] }),
+    ]);
+    scripts.set('lead-model', (turn, body) => {
+      if (turn === 1) return call('ask_developer', { message: 'slug one', reason: 'Build' });
+      if (turn === 2) return { text: 'Built.' };
+      if (turn === 3) {
+        expect(lastUser(body)).toContain("may not report done yet: Developer's work has not been reviewed by Reviewer. Ask Reviewer through QA (ask_qa) to review it first");
+        return call('ask_qa', { message: 'Have the Reviewer review the slug', reason: 'Required review' });
+      }
+      return { text: 'Built and reviewed.' };
+    });
+    scripts.set('qa-model', (turn) => (turn === 1 ? call('ask_reviewer', { message: 'review the slug', reason: 'Asked by the lead' }) : { text: 'The Reviewer looked at it.' }));
+    turns.clear();
+    const { done, needs, events } = await run(t.id);
+    expect(needs).toBeUndefined();
+    expect(done!.reply).toBe('Built and reviewed.');
+    expect(events.filter((e) => e.type === 'check' && e.check.name === 'Review').map((e) => e.type === 'check' && [e.check.status, e.check.message])).toEqual([['pass', "Reviewer was asked to review Developer's work"]]);
+  });
+
+  it('takes a reviewer’s verdict as the sign-off: changes go back to the member, then to the reviewer again', async () => {
+    const t = team([remote('m_dev', 'Developer'), remote('m_rev', 'Reviewer', { reviews: ['m_dev'] })]);
+    scripts.set('lead-model', (turn, body) => {
+      if (turn === 1) return call('ask_developer', { message: 'slug one', reason: 'Build' }, 'd1');
+      if (turn === 2) return call('ask_reviewer', { message: 'VERDICT: CHANGES the slug needs a test', reason: 'Review' }, 'r1');
+      if (turn === 3) return { text: 'Done, the review had notes.' };
+      if (turn === 4) {
+        expect(lastUser(body)).toContain("may not report done yet: Reviewer asked for changes to Developer's work. Send them to Developer (ask_developer), then ask Reviewer (ask_reviewer) to review it again");
+        return call('ask_developer', { message: 'slug one with a test', reason: 'The review asked for a test' }, 'd2');
+      }
+      if (turn === 5) return call('ask_reviewer', { message: 'VERDICT: APPROVE', reason: 'Review again' }, 'r2');
+      return { text: 'Done and approved.' };
+    });
+    turns.clear();
+    const { done, needs, events } = await run(t.id);
+    expect(needs).toBeUndefined();
+    expect(done!.reply).toBe('Done and approved.');
+    expect(events.filter((e) => e.type === 'check' && e.check.name === 'Review').map((e) => e.type === 'check' && [e.check.status, e.check.message])).toEqual([
+      ['warn', "Reviewer asked for changes to Developer's work"],
+      ['pass', "Reviewer approved Developer's work"],
+    ]);
+  });
+
   it('sends the lead back once when its answer names files no report mentioned', async () => {
     const t = team([remote('m_rev', 'Reviewer')]);
     scripts.set('lead-model', (turn, body) => {
@@ -285,7 +370,8 @@ describe('Run a Team', () => {
       }
       if (turn === 2) return { text: 'Reviewed `src/getAlerts.ts` and src/nodes/get-alerts.ts on Node.js: fine.' };
       if (turn === 3) {
-        expect(lastUser(body)).toContain('Your answer names getAlerts.ts, which none of your reports mentioned. Answer the request again for the person who asked');
+        expect(lastUser(body)).toContain('Your answer names getAlerts.ts, which none of your reports mentioned. The files your reports named: get-alerts.ts. Answer the request again for the person who asked');
+        expect(lastUser(body)).toContain("where your instructions ask for something no report gave say it wasn't reported");
         return { text: 'Reviewed get-alerts.ts: fine.' };
       }
       return { text: 'Reviewed getAlerts.ts again.' };
@@ -293,7 +379,11 @@ describe('Run a Team', () => {
     turns.clear();
     const { done, events } = await run(t.id);
     expect(done!.reply).toBe('Reviewed get-alerts.ts: fine.');
-    expect(events.filter((e) => e.type === 'check' && e.check.name === 'Grounded')).toEqual([expect.objectContaining({ check: expect.objectContaining({ status: 'warn', subject: 'Tech Lead', message: "Tech Lead's answer named getAlerts.ts, which no report mentioned" }) })]);
+    // Answered again without it: the check on the node passes (a span keeps one Grounded check per member, the latest).
+    expect(events.filter((e) => e.type === 'check' && e.check.name === 'Grounded')).toEqual([
+      expect.objectContaining({ check: expect.objectContaining({ status: 'warn', subject: 'Tech Lead', message: "Tech Lead's answer named getAlerts.ts, which no report mentioned" }) }),
+      expect.objectContaining({ check: expect.objectContaining({ status: 'pass', subject: 'Tech Lead', message: 'Tech Lead answered again without getAlerts.ts, which no report mentioned' }) }),
+    ]);
   });
 
   it('says so when the answer sent back still names them', async () => {
@@ -309,6 +399,32 @@ describe('Run a Team', () => {
     expect(events.filter((e) => e.type === 'check' && e.check.name === 'Grounded').map((e) => e.type === 'check' && e.check.message)).toEqual([
       "Tech Lead's answer named getAlerts.ts, which no report mentioned",
       "Tech Lead's answer still names getAlerts.ts, which no report mentioned",
+    ]);
+  });
+
+  it('sends the lead back for commits and test counts no report gave, and tells it the tools it has', async () => {
+    const t = team([remote('m_rev', 'Reviewer')]);
+    scripts.set('lead-model', (turn, body) => {
+      if (turn === 1) {
+        // Instructions written for another flow may name a tool the team doesn't give it here.
+        const system = body.messages.find((m) => m.role === 'system')?.content ?? '';
+        expect(system).toContain('## Your tools in this run\n- ask_reviewer (Reviewer)');
+        expect(system).toContain("If your instructions name a tool that isn't listed here, you don't have it in this run");
+        return call('ask_reviewer', { message: 'Review the plugin', reason: 'Review' });
+      }
+      if (turn === 2) return { text: 'Approved at commit 3f9a2c1, 14/14 tests passed, see PR #7.' };
+      if (turn === 3) {
+        expect(lastUser(body)).toContain('Your answer names commit 3f9a2c1, 14/14 tests, PR #7, which none of your reports mentioned. Answer the request again');
+        return { text: 'Approved; the review gave no commit or test count.' };
+      }
+      return { text: 'unused' };
+    });
+    turns.clear();
+    const { done, events } = await run(t.id);
+    expect(done!.reply).toBe('Approved; the review gave no commit or test count.');
+    expect(events.filter((e) => e.type === 'check' && e.check.name === 'Grounded').map((e) => e.type === 'check' && e.check.message)).toEqual([
+      "Tech Lead's answer named commit 3f9a2c1, 14/14 tests, PR #7, which no report mentioned",
+      'Tech Lead answered again without commit 3f9a2c1, 14/14 tests, PR #7, which no report mentioned',
     ]);
   });
 
@@ -352,6 +468,25 @@ describe('Run a Team', () => {
     const usage = done!.usage as { inputTokens: number; outputTokens: number };
     expect(usage.inputTokens + usage.outputTokens).toBe(80);
     expect(events.filter((e) => e.type === 'check' && e.check.name === 'Budget').map((e) => e.type === 'check' && e.check.status)).toEqual(['fail']);
+  });
+
+  it('estimates the usage of a remote member that reports none, and stops it at its budget', async () => {
+    const t = team([remote('m_plan', 'Planner', { budgetTokens: 10 })]);
+    scripts.set('lead-model', (turn, body) => (turn <= 2 ? call('ask_planner', { message: `slug job number ${turn} with enough words to cost tokens`, reason: 'Plan' }, `p${turn}`) : { text: `Result: ${lastTool(body)}` }));
+    turns.clear();
+    a2a.usage = false;
+    try {
+      const { done, events } = await run(t.id);
+      expect(done!.reply).toContain('Planner is over its budget of 10 tokens');
+      expect(done!.members).toContainEqual({ title: 'Planner', asked: 1, tokens: expect.any(Number), estimated: true, overBudget: true });
+      const budget = events.find((e) => e.type === 'check' && e.check.name === 'Budget');
+      expect(budget && budget.type === 'check' && budget.check.message).toMatch(/^Planner used about \d+ of its 10 tokens and was stopped \(estimated: it reports no usage\)$/);
+      // An estimate counts against the budget, not in what the team used: that is the lead's alone here.
+      const usage = done!.usage as { inputTokens: number; outputTokens: number };
+      expect(usage.inputTokens + usage.outputTokens).toBe(60);
+    } finally {
+      a2a.usage = true;
+    }
   });
 
   it('keeps what is connected to the node on the lead', async () => {
@@ -400,6 +535,15 @@ describe('Run a Team', () => {
     });
     expect(record.status).toBe('error');
     expect(record.error?.message).toContain('Publish “Draft” first');
+  });
+});
+
+describe('what an answer names that no report gave', () => {
+  it('reads commits, test counts and pull requests, and finds them in the source as reports write them', async () => {
+    const { ungrounded } = await import('@/lib/server/agent-teams/runtime');
+    const source = 'Pushed a1b2c3d4e5f6 to the branch. Tests  14 passed (14). Opened https://github.com/o/r/pull/12. Colour #10b981.';
+    expect(ungrounded('Commit a1b2c3d, 14/14 tests, Tests passed: 14/14, PR #12 and pull request 12', source)).toEqual([]);
+    expect(ungrounded('Commit 9e8d7c6, 3 tests passed, 12 failed, PR #13, deadbeef and 2026/10 on index.ts', source)).toEqual(['index.ts', 'commit 9e8d7c6', '3 tests passed', '12 failed', 'PR #13']);
   });
 });
 

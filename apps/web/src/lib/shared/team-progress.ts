@@ -219,9 +219,17 @@ function stepMoment(kind: StepKind | undefined, ok: boolean, output: string): Om
 }
 
 /** A member's answer: a review's verdict when it gives one. */
+/** A review's verdict, from its `VERDICT:` line: approve, or changes (request changes, reject). */
+export function verdictOf(output: string): 'approve' | 'changes' | undefined {
+  if (/VERDICT:\s*\**\s*APPROVE/i.test(output)) return 'approve';
+  if (/VERDICT:\s*\**\s*(REQUEST[_ ]CHANGES|CHANGES|REJECT)/i.test(output)) return 'changes';
+  return undefined;
+}
+
 function answerMoment(member: string, output: string): Omit<TeamMoment, 'at'> {
-  if (/VERDICT:\s*\**\s*APPROVE/i.test(output)) return { member, tone: 'ok', text: `${member}: approve` };
-  if (/VERDICT:\s*\**\s*(REQUEST[_ ]CHANGES|CHANGES|REJECT)/i.test(output)) return { member, tone: 'bad', text: `${member} asks for changes` };
+  const verdict = verdictOf(output);
+  if (verdict === 'approve') return { member, tone: 'ok', text: `${member}: approve` };
+  if (verdict === 'changes') return { member, tone: 'bad', text: `${member} asks for changes` };
   return { member, tone: 'info', text: `${member} reported back` };
 }
 
@@ -234,6 +242,7 @@ const msBetween = (start?: string, end?: string) => {
 /**
  * Folds the lead's stream into who works on what. `titles` are the members in chart order, the lead first. One per team
  * run: `fold(event)` returns the report to send, or undefined when the event changes nothing worth showing;
+ * `fold(event, title)` folds the stream of a member that manages others (its own loop: whom it asks, its own tools);
  * `fold.activity()` is what the run did, for the node's output.
  */
 export function teamProgressFolder(titles: string[], now: () => number = Date.now) {
@@ -252,6 +261,12 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
   let current = lead;
   let command: string | undefined;
   let plain: string | undefined;
+  /** Who asked whom, for the members a manager below the lead asked: its manager's stream doesn't take the work back. */
+  const askedBy = new Map<string, string>();
+  const works = (title: string) => {
+    for (let at: string | undefined = norm(current); at; at = askedBy.get(at)) if (at === norm(title)) return true;
+    return false;
+  };
 
   const set = (title: string, patch: Partial<TeamProgressMember>) => {
     const member = members.get(norm(title));
@@ -266,21 +281,21 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
   const moment = (m: Omit<TeamMoment, 'at'>) => {
     moments.push({ at: elapsed(), ...m });
   };
-  /** The lead's own ticker: whom it asked, its own tools. */
-  const leadStep = (id: string, step: TeamStep) => {
-    const list = stepsOf.get(norm(lead)) ?? [];
+  /** A manager's own ticker (the lead's, or a member's that asks others): whom it asked, its own tools. */
+  const ownStep = (owner: string, id: string, step: TeamStep) => {
+    const list = stepsOf.get(norm(owner)) ?? [];
     const at = list.findIndex((s) => (s as TeamStep & { id?: string }).id === id);
     const entry = { ...step, id } as TeamStep & { id: string };
     if (at >= 0) list[at] = entry;
     else list.push(entry);
-    stepsOf.set(norm(lead), list.slice(-STEPS));
+    stepsOf.set(norm(owner), list.slice(-STEPS));
   };
-  const leadWorks = (doing: string, words: string) => {
-    current = lead;
-    turnTo(lead);
+  const ownerWorks = (owner: string, doing: string, words: string) => {
+    current = members.get(norm(owner))?.title ?? owner;
+    turnTo(current);
     command = undefined;
     plain = words;
-    set(lead, { state: 'working', doing });
+    set(owner, { state: 'working', doing });
   };
   const report = (): TeamProgress => {
     const nowMember = members.get(norm(current));
@@ -300,9 +315,12 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
     };
   };
 
-  const fold = function fold(event: AgentStreamEvent): TeamProgress | undefined {
+  const fold = function fold(event: AgentStreamEvent, by: string = lead): TeamProgress | undefined {
+    const owner = members.get(norm(by))?.title ?? by;
+    // A member's own loop starts and ends inside its manager's call to it: that call says when it works and when it is done.
+    if (owner !== lead && (event.type === 'run.started' || event.type === 'run.finished')) return undefined;
     if (event.type === 'run.started') {
-      leadWorks('thinking', 'Planning the work');
+      ownerWorks(lead, 'thinking', 'Planning the work');
       return report();
     }
     if (event.type === 'run.finished') {
@@ -311,47 +329,59 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
       if (last && last.end === undefined) last.end = elapsed();
       current = lead;
       command = undefined;
-      plain = 'Done';
+      // A member's question for a person: the run waits for the answer rather than being done.
+      plain = event.reason === 'awaiting_approval' ? 'Waiting for a person’s answer' : 'Done';
       return report();
     }
     const entry = event.entry;
     if (entry.type === 'assistant') {
-      // Between hand-offs the lead writes; its words don't change who works while a member is still at it.
-      if (norm(current) !== norm(lead)) return undefined;
-      leadWorks('writing', 'Writing');
+      // Between hand-offs a manager writes; its words don't change who works while a member it asked is still at it.
+      if (norm(current) !== norm(owner)) return undefined;
+      ownerWorks(owner, 'writing', 'Writing');
       return report();
     }
     if (entry.type !== 'tool') return undefined;
     const member = members.get(norm(entry.label));
-    // A tool of the lead's own (a branch check): the lead is busy with it.
-    if (!member || norm(member.title) === norm(lead)) {
+    // A tool of the manager's own (a branch check, a member's Bash): it is busy with it.
+    if (!member || norm(member.title) === norm(owner)) {
+      if (owner !== lead && !works(owner)) return undefined;
+      if (owner !== lead) {
+        // A member's own steps count as its work, like a remote member's.
+        const total = totals.get(norm(owner)) ?? new Set<string>();
+        if (!total.has(entry.callId)) counts.set(norm(owner), (counts.get(norm(owner)) ?? 0) + 1);
+        totals.set(norm(owner), total.add(entry.callId));
+      }
       const words = narrate(entry.tool === entry.label ? entry.tool : entry.label, entry.input).plain;
-      leadStep(entry.callId, { name: entry.label, status: entry.status === 'denied' ? 'error' : entry.status, plain: words, ...(entry.durationMs !== undefined && { ms: entry.durationMs }) });
+      ownStep(owner, entry.callId, { name: entry.label, status: entry.status === 'denied' ? 'error' : entry.status, plain: words, ...(entry.durationMs !== undefined && { ms: entry.durationMs }) });
       if (entry.status === 'running') {
-        leadWorks(entry.label, words);
+        ownerWorks(owner, entry.label, words);
         command = shortArg(entry.input, 200);
-      } else leadWorks('thinking', 'Thinking it over');
+      } else ownerWorks(owner, 'thinking', 'Thinking it over');
       return report();
     }
+    if (owner !== lead) askedBy.set(norm(member.title), norm(owner));
     if (!calls.has(entry.callId)) {
       calls.set(entry.callId, member.title);
       member.asked++;
       counts.set(norm(member.title), 0);
-      moment({ member: lead, tone: 'info', text: `Asked the ${member.title}` });
+      moment({ member: owner, tone: 'info', text: owner === lead ? `Asked the ${member.title}` : `${owner} asked the ${member.title}` });
     }
     const steps = entry.remote?.steps ?? [];
     const total = totals.get(norm(member.title)) ?? new Set<string>();
     for (const step of steps) total.add(`${entry.callId}:${step.id}`);
     totals.set(norm(member.title), total);
-    counts.set(norm(member.title), steps.length);
-    stepsOf.set(
-      norm(member.title),
-      steps.slice(-STEPS).map((s) => {
-        const args = shortArg(argsOf(s.args), 200);
-        const ms = msBetween(s.startedAt, s.endedAt);
-        return { name: s.name, status: s.status, plain: narrate(s.name, s.args).plain, ...(args && { args }), ...(ms !== undefined && s.status !== 'running' && { ms }) };
-      }),
-    );
+    // A remote member's steps come with its manager's call; a Landflow agent's come in its own stream (its own ticker).
+    if (entry.remote) {
+      counts.set(norm(member.title), steps.length);
+      stepsOf.set(
+        norm(member.title),
+        steps.slice(-STEPS).map((s) => {
+          const args = shortArg(argsOf(s.args), 200);
+          const ms = msBetween(s.startedAt, s.endedAt);
+          return { name: s.name, status: s.status, plain: narrate(s.name, s.args).plain, ...(args && { args }), ...(ms !== undefined && s.status !== 'running' && { ms }) };
+        }),
+      );
+    }
     for (const step of steps) {
       const key = `${entry.callId}:${step.id}`;
       if ((step.status !== 'success' && step.status !== 'error') || seen.get(key) === step.status) continue;
@@ -362,19 +392,21 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
     if (entry.status === 'running' || entry.status === 'awaiting_approval') {
       const step = [...steps].reverse().find((s) => s.status === 'running' || s.status === 'awaiting_approval') ?? steps.at(-1);
       const reason = typeof entry.input?.reason === 'string' ? entry.input.reason : undefined;
+      // Someone this member asked is at work: the member's call goes on, the live view stays with whoever works.
+      if (works(member.title) && norm(current) !== norm(member.title)) return undefined;
       current = member.title;
       turnTo(member.title);
       command = step ? shortArg(argsOf(step.args), 200) : undefined;
       plain = step ? narrate(step.name, step.args).plain : reason ? `Starting: ${reason.length > 60 ? `${reason.slice(0, 59)}…` : reason}` : 'Starting';
       set(member.title, { state: 'working', doing: step ? stepLine(step) : reason ? `asked: ${reason}` : 'working' });
-      set(lead, { state: 'working', doing: `waiting on ${member.title}` });
-      leadStep(entry.callId, { name: entry.label, status: 'running', plain: `Asking the ${member.title}` });
+      set(owner, { state: 'working', doing: `waiting on ${member.title}` });
+      ownStep(owner, entry.callId, { name: entry.label, status: 'running', plain: `Asking the ${member.title}` });
     } else {
       const ok = entry.status === 'success';
       set(member.title, { state: ok ? 'done' : 'failed' });
-      leadStep(entry.callId, { name: entry.label, status: ok ? 'success' : 'error', plain: `Asked the ${member.title} · ${total.size} ${total.size === 1 ? 'step' : 'steps'}`, ...(entry.durationMs !== undefined && { ms: entry.durationMs }) });
+      ownStep(owner, entry.callId, { name: entry.label, status: ok ? 'success' : 'error', plain: `Asked the ${member.title} · ${total.size} ${total.size === 1 ? 'step' : 'steps'}`, ...(entry.durationMs !== undefined && { ms: entry.durationMs }) });
       moment(ok ? answerMoment(member.title, textOf(entry.output)) : { member: member.title, tone: 'bad', text: `${member.title} failed` });
-      if (norm(current) === norm(member.title)) leadWorks(`reading ${member.title}'s answer`, `Reading the ${member.title}'s answer`);
+      if (works(member.title)) ownerWorks(owner, `reading ${member.title}'s answer`, `Reading the ${member.title}'s answer`);
     }
     return report();
   };
@@ -386,6 +418,20 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
     steps: Object.fromEntries([...members.values()].flatMap((m) => (totals.get(norm(m.title))?.size ? [[m.title, totals.get(norm(m.title))!.size]] : []))),
   });
   return fold;
+}
+
+/** What a run did before it waited for a person, then after: one activity, the second part's times after the first's. */
+export function joinActivity(before: TeamActivity | undefined, after: TeamActivity): TeamActivity {
+  if (!before) return after;
+  const shift = before.durationMs;
+  const steps = { ...before.steps };
+  for (const [member, count] of Object.entries(after.steps)) steps[member] = (steps[member] ?? 0) + count;
+  return {
+    durationMs: shift + after.durationMs,
+    turns: [...before.turns, ...after.turns.map((t) => ({ ...t, start: t.start + shift, ...(t.end !== undefined && { end: t.end + shift }) }))],
+    moments: [...before.moments, ...after.moments.map((m) => ({ ...m, at: m.at + shift }))].slice(-50),
+    steps,
+  };
 }
 
 /** A finished Run a Team node's activity, from its output's first item (undefined for older runs). */

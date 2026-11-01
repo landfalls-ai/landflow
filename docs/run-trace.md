@@ -227,7 +227,8 @@ report's facts only. The report's sections are the same for every flow:
 - the outcome, as reported and as checked;
 - the checks: the six built-in ones, worked out again each time, and every check recorded during the run (a node's
   `ctx.check`, a team's *Grounded*, *Review* and *Budget*, a guardrail's), so a warn or fail from any of them sets the
-  verdict;
+  verdict. A check is one per span, name and subject, and its latest event is its word: a team's Budget for the Planner and
+  for the Developer are two checks on the node, and a Grounded warn the lead answered again without becomes a pass;
 - who called whom;
 - cycles;
 - problems (found by, fixed by, confirmed);
@@ -304,7 +305,7 @@ images are not loaded.
 |---|---|
 | `GET /api/executions/:id/events?after=&limit=` | The journal after `seq` (up to 2000 events): `{ events, last, more }`. A page opened mid-run reads it, then follows the live stream. |
 | `GET /api/executions/:id/changes` | The run's branch compared with its base on GitHub (Repository → Compare, flow's credential): `{ available: true, repository, branch: { base, head, aheadBy, behindBy, totalCommits, url, files: [{ path, status, additions, deletions, patch? }], truncated, note? }, fetchedAt }`, or `{ available: false, reason }`. |
-| `POST /api/executions/:id/checks` | `{ spanId, name, decision: 'accepted' \| 'sent_back', note? }`: a person's decision on a failed check. |
+| `POST /api/executions/:id/checks` | `{ spanId, name, subject?, decision: 'accepted' \| 'sent_back', note? }`: a person's decision on a failed check (`subject` picks one of a span's checks of that name, as a team's Budget for each member). |
 | `POST /api/executions/:id/gate` | `{ decision, note? }`: answers a Run report waiting on its failed checks, and resumes the run. |
 | `GET /api/runs/needs-you` | Across the runs you can see: waits for a person (`approval`, `form`, `question`, `gate`) and failed checks of the last 7 days nobody decided on. |
 

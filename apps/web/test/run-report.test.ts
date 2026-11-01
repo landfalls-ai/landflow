@@ -244,4 +244,24 @@ describe('checks the host recorded', () => {
     expect(report.checks.map((c) => [c.name, c.status])).toEqual([['Grounded', 'warn']]);
     expect(report.verdict).toBe('warn');
   });
+
+  it('keeps one check per member on a team’s node, the latest word of each', () => {
+    const events: JournalEvent[] = [];
+    const add = (e: Record<string, unknown>) => events.push({ seq: events.length + 1, executionId: 'ex_members', at: at(events.length), ...e } as JournalEvent);
+    add({ type: 'span.started', spanId: 'run', kind: 'run', name: 'Review', actor: flow });
+    add({ type: 'span.started', spanId: 'node:lead:0', parentSpanId: 'run', kind: 'agent', name: 'Tech Lead', actor: lead });
+    add({ type: 'check', spanId: 'node:lead:0', check: { name: 'Budget', status: 'warn', message: 'Planner used 80%', subject: 'Planner', source: 'builtin' } });
+    add({ type: 'check', spanId: 'node:lead:0', check: { name: 'Budget', status: 'fail', message: 'Developer was stopped', subject: 'Developer', source: 'builtin' } });
+    add({ type: 'check', spanId: 'node:lead:0', check: { name: 'Grounded', status: 'warn', message: 'named types.ts', subject: 'Tech Lead', source: 'builtin' } });
+    add({ type: 'check', spanId: 'node:lead:0', check: { name: 'Grounded', status: 'pass', message: 'answered again without types.ts', subject: 'Tech Lead', source: 'builtin' } });
+    add({ type: 'span.ended', spanId: 'node:lead:0', status: 'success', output: 'Reviewed the plugin.' });
+    add({ type: 'span.ended', spanId: 'run', status: 'success' });
+    const report = buildRunReport(foldJournal(events), RUN_PROFILES.generic);
+    expect(report.checks.map((c) => [c.name, c.subject, c.status])).toEqual([
+      ['Budget', 'Planner', 'warn'],
+      ['Budget', 'Developer', 'fail'],
+      ['Grounded', 'Tech Lead', 'pass'],
+    ]);
+    expect(report.verdict).toBe('fail');
+  });
 });

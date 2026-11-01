@@ -474,6 +474,21 @@ describe('builder chat', () => {
     expect(result(4)).toContain('“Check” (core.if) is removed by a pending proposal');
   });
 
+  it('adds a node by a removed node’s name when the request asks for a new one, not when it only removes it', async () => {
+    const proposals = async (content: string) => {
+      const { model } = scripted([
+        { toolCalls: [{ id: 'c1', name: 'propose_changes', input: { summary: 'Remove Check', ops: [{ op: 'removeNode', node: 'Check' }] } }] },
+        { toolCalls: [{ id: 'c2', name: 'propose_changes', input: { summary: 'Add Check', ops: [{ op: 'addNode', type: 'core.if', name: 'Check', after: 'Code' }] } }] },
+        { text: 'Done.' },
+      ]);
+      const events: ChatEvent[] = [];
+      await runChat({ messages: [{ role: 'user', content }], workflow: workflow(), model, types, onEvent: (e) => events.push(e) });
+      return events.filter((e) => e.type === 'proposal').map((e) => (e as { summary: string }).summary);
+    };
+    expect(await proposals('Remove the Check node, then add a new Check after Code')).toEqual(['Remove Check', 'Add Check']);
+    expect(await proposals('Add a note and remove the Check node')).toEqual(['Remove Check']);
+  });
+
   it('adds a node of a removed node’s type when the request names that type', async () => {
     const { model } = scripted([
       { toolCalls: [{ id: 'c1', name: 'propose_changes', input: { summary: 'Swap the If', ops: [{ op: 'removeNode', node: 'Check' }, { op: 'addNode', type: 'core.if', name: 'Is it valid', after: 'Code' }] } }] },

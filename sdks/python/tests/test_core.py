@@ -98,6 +98,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(manifest["plugin"]["sdk"]["name"], "landflow-sdk-python")
         self.assertEqual([n["name"] for n in manifest["nodes"]], ["double", "branches", "failing"])
 
+    def test_delegates_flag_reaches_the_manifest(self):
+        class Asks(Node):
+            description = _descriptor("asks", usableAsTool=True, delegates=True)
+
+            def execute(self, ctx):
+                return []
+
+        manifest = Plugin("x", "X", "1", nodes=[Asks(), Double]).manifest()
+        asks, double = manifest["nodes"]
+        self.assertIs(asks["delegates"], True)
+        self.assertNotIn("delegates", double)
+
     def test_defaults_follow_display_options(self):
         class Multi(Node):
             description = _descriptor(

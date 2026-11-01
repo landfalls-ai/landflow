@@ -16,6 +16,7 @@ import { OLLAMA_URL } from '../agents/models';
 import { agentStore } from '../agents/store';
 import { buildToolset } from '../agents/tools';
 import { credentials } from '../credentials/vault';
+import { database } from '../db';
 import { marketplace } from '../marketplace/service';
 import { logger } from '../telemetry';
 import { a2aUrlOf, clusterFrom, KAGENT_API, KAGENT_CREDENTIAL, type KagentCluster } from './cluster';
@@ -252,6 +253,8 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
     ...(input.egressPolicies !== undefined || egressPolicies.length ? { egressPolicies } : {}),
   };
   const saved = agentStore.setKagent(agent.id, deployment) ?? agent;
+  // The cluster answers: what deleted agents left on it while it couldn't goes now.
+  await removeLeftovers(credential.id).catch(() => undefined);
   logger.info('kagent: agent deployed', { agentId, name, namespace: cluster.namespace, version, harness: harness.name, runtime: harness.runtime, plugins: plugins.length });
   return { agent: saved, status: await kagentStatus(saved), unavailable };
 }
@@ -272,9 +275,57 @@ async function deleteOurs(cluster: KagentCluster, kind: string, name: string, ag
   if (object && ours(object, agentId)) await deleteObject(cluster.connection, apiVersionOf(kind), kind, cluster.namespace, name);
 }
 
-async function removeResources(deployment: KagentDeployment, agentId: string) {
+async function removeResources(deployment: Pick<KagentDeployment, 'credential' | 'name'>, agentId: string) {
   const cluster = await clusterOf(deployment.credential);
   for (const [kind, name] of [...objectsOf(deployment.name)].reverse()) await deleteOurs(cluster, kind, name, agentId);
+}
+
+/** What deleted agents left on a kagent that couldn't be reached then (the `settings` row `kagent.leftovers`). */
+interface Leftover {
+  credential: CredentialRef;
+  name: string;
+  agentId: string;
+  since: string;
+}
+const LEFTOVERS_KEY = 'kagent.leftovers';
+
+function leftovers(): Leftover[] {
+  try {
+    const saved = JSON.parse(database().get<{ value: string }>('SELECT value FROM settings WHERE key = ?', LEFTOVERS_KEY)?.value ?? '[]');
+    return Array.isArray(saved) ? (saved as Leftover[]) : [];
+  } catch {
+    return [];
+  }
+}
+const saveLeftovers = (list: Leftover[]) => database().upsert('settings', { key: LEFTOVERS_KEY, value: JSON.stringify(list) });
+
+/** A deleted agent's resources kagent couldn't take: kept to remove the next time Landflow reaches that cluster. */
+export function rememberLeftover(deployment: KagentDeployment, agentId: string) {
+  const list = leftovers().filter((l) => !(l.agentId === agentId && l.name === deployment.name && l.credential.id === deployment.credential.id));
+  saveLeftovers([...list, { credential: deployment.credential, name: deployment.name, agentId, since: new Date().toISOString() }]);
+}
+
+/** Remove what deleted agents left (on the cluster of `credentialId`, or all); what still can't be reached is kept. Returns how many were removed. */
+export async function removeLeftovers(credentialId?: string): Promise<number> {
+  const list = leftovers();
+  if (!list.length) return 0;
+  const kept: Leftover[] = [];
+  for (const item of list) {
+    if (credentialId && item.credential.id !== credentialId) {
+      kept.push(item);
+      continue;
+    }
+    try {
+      await removeResources(item, item.agentId);
+      logger.info('kagent: a deleted agent’s resources removed', { agentId: item.agentId, name: item.name });
+    } catch {
+      kept.push(item);
+    }
+  }
+  // Read again: an agent deleted meanwhile may have added one.
+  const added = leftovers().filter((l) => !list.some((o) => o.agentId === l.agentId && o.name === l.name && o.credential.id === l.credential.id));
+  saveLeftovers([...kept, ...added]);
+  return list.length - kept.length;
 }
 
 /** Delete the agent's resources from kagent and forget the deployment. */

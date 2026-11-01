@@ -644,7 +644,7 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Settle a failed check of a run',
     description: 'A person accepts a failed check as it is, or sends it back for a fix. Written to the journal as a check event with a `resolution`.',
     pathParams: { id: 'The execution id' },
-    body: jsonBody(object({ spanId: { type: 'string' }, name: { type: 'string' }, decision: { type: 'string', enum: ['accepted', 'sent_back'] }, note: { type: 'string' } }, ['spanId', 'name', 'decision'])),
+    body: jsonBody(object({ spanId: { type: 'string' }, name: { type: 'string' }, subject: { type: 'string', description: "Which of the span's checks of that name, when there are several (a team's Budget for each member)" }, decision: { type: 'string', enum: ['accepted', 'sent_back'] }, note: { type: 'string' } }, ['spanId', 'name', 'decision'])),
     responses: { 200: reply('The check with its resolution', object({ check: { type: 'object' } }, ['check'])), 404: notFound, 409: errorRef('The check already has a decision, or did not fail') },
   });
   add('post', '/api/executions/{id}/gate', {

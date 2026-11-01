@@ -4,7 +4,7 @@
  * by id, by the kagent deployment a remote address names (`memberAgent`), or by name. The roster and teams load once
  * per page and are shared: a canvas draws many nodes, and agents rarely change while a page is open.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/client/api';
 import { memberAgent, rootOf, deploymentOf, type AgentTeam } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
@@ -53,6 +53,24 @@ export function useTeamLeads(nodes: ReadonlyArray<{ type: string; parameters?: R
     };
   }, [ids]);
   return leads;
+}
+
+/**
+ * A node's parameters as the canvas shows them: a Run a Team node's `teamName` is the team's name now, not the one saved
+ * with the flow when the team was chosen (a rename on the Agents page shows without editing every flow).
+ */
+export function useShownParameters(type: string, parameters: Record<string, unknown>): Record<string, unknown> {
+  const teamId = type === 'core.runTeam' && typeof parameters.teamId === 'string' ? parameters.teamId : '';
+  const [name, setName] = useState<string>();
+  useEffect(() => {
+    if (!teamId) return setName(undefined);
+    let live = true;
+    void loadTeam(teamId).then((team) => live && setName(team?.draft.name));
+    return () => {
+      live = false;
+    };
+  }, [teamId]);
+  return useMemo(() => (name && name !== parameters.teamName ? { ...parameters, teamName: name } : parameters), [name, parameters]);
 }
 
 /** The roster, once loaded (undefined until then). */

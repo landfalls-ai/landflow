@@ -96,7 +96,7 @@ export interface BuiltTool extends ToolSpec {
   requireApproval: boolean;
   invoke(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome>;
   /** After a pause (ToolOutcome.pause): send the person's decision and carry on. */
-  resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext): Promise<ToolOutcome>;
+  resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext, answer?: string): Promise<ToolOutcome>;
 }
 
 export interface Toolset {
@@ -224,8 +224,12 @@ function describeCard(card: AgentCard, useWhen?: string): string {
 }
 
 export interface A2aToolOptions {
-  /** Where a question the remote agent asks goes: the calling agent (its tool result, the default) or a person (`onPerson` hears it; a team run routes to Needs a person). */
-  questions?: 'caller' | 'person';
+  /**
+   * Where a question the remote agent asks goes: the calling agent (its tool result, the default), a person who answers
+   * later (`person`: `onPerson` hears it and the caller is told to finish without it), or a person the run waits for
+   * (`pause`: the call pauses on the question like an approval, and the person's answer goes to the same task).
+   */
+  questions?: 'caller' | 'person' | 'pause';
   onPerson?(text: string): void;
 }
 
@@ -284,6 +288,15 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
     }
     // A question: the model answers it (or asks the user) with its next call, which goes to the same task.
     const questions = request?.type === 'ask_user_request' ? questionTexts(request) : [statusText(task) ?? 'The agent needs more input'];
+    if (toolOptions.questions === 'pause') {
+      contexts[config.id] = { contextId: task.contextId };
+      const ask = `${card.name} asks:\n${questions.map((q) => `- ${q}`).join('\n')}`;
+      return {
+        output: null,
+        remote,
+        pause: { message: ask, remote: { agent: card.name, calls: [], state: { taskId: task.id, contextId: task.contextId, question: { id: request?.type === 'ask_user_request' ? request.id : '', questions }, ask } } },
+      };
+    }
     if (toolOptions.questions === 'person') {
       contexts[config.id] = { contextId: task.contextId };
       toolOptions.onPerson?.(`${card.name} asks:\n${questions.map((q) => `- ${q}`).join('\n')}`);
@@ -321,9 +334,15 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       }
       return run({ text, ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
     },
-    async resume(state, approved, ctx) {
-      const { taskId, contextId, request } = state as { taskId: string; contextId: string; request: Extract<HitlRequest, { type: 'tool_approval_request' }> };
-      return run(approvalMessage({ id: taskId, contextId }, request, approved, approved ? undefined : 'A person rejected this tool call.'), ctx);
+    async resume(state, approved, ctx, answer) {
+      const { taskId, contextId, request, question } = state as { taskId: string; contextId: string; request?: Extract<HitlRequest, { type: 'tool_approval_request' }>; question?: { id: string; questions: string[] } };
+      // A question a person answered: the answer goes to the same task (as a plain reply when the agent asked without the extension).
+      if (question) {
+        const text = answer?.trim() || 'No one answered: carry on with what you have and say what is still open.';
+        if (!question.id) return run({ text, contextId, taskId }, ctx);
+        return run(answerMessage({ id: taskId, contextId }, { type: 'ask_user_request', id: question.id, questions: question.questions }, [text]), ctx);
+      }
+      return run(approvalMessage({ id: taskId, contextId }, request!, approved, approved ? undefined : 'A person rejected this tool call.'), ctx);
     },
   };
 }

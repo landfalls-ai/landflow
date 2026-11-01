@@ -409,10 +409,13 @@ export async function runChat(input: ChatInput): Promise<void> {
   }
   const outline = () => workflowOutline(working, runs, { types, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
   const latest = input.messages.findLast((m) => m.role === 'user')?.content.toLowerCase() ?? '';
-  /** A node this proposal adds back after a pending proposal removed it: by name, or by type unless the latest message names the type. */
+  /** Whether the latest message asks to add a node by this name ("remove Check and add a new Check after Filter"). */
+  const asksToAdd = (name: string) => new RegExp(`\\b(?:add|insert|put|create|new|another)\\b(?:(?!\\b(?:remove|delete|drop)\\b)[^.!?\\n])*\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(latest);
+  /** A node this proposal adds back after a pending proposal removed it: by name, or by type unless the latest message names the type; not when it asks for one by that name. */
   const addedBack = (ops: AssistantOp[]) =>
     ops.flatMap((op) => {
       if (op.op !== 'addNode') return [];
+      if (op.name && asksToAdd(op.name)) return [];
       const gone = removed.get((op.name ?? '').toLowerCase()) ?? [...removed.values()].find((r) => r.type === op.type && !latest.includes((types.find((t) => t.type === op.type)?.descriptor.displayName ?? op.type).toLowerCase()));
       return gone ? [`“${gone.name}” (${gone.type})`] : [];
     });

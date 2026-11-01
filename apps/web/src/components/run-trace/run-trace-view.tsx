@@ -310,6 +310,7 @@ export function RunTraceBody({
       await resolveCheck(executionId, {
         spanId: item.spanId,
         name: item.check.name,
+        ...(item.check.subject && { subject: item.check.subject }),
         decision,
       });
       setSettled((s) => new Set(s).add(item.id));

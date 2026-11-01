@@ -129,6 +129,7 @@ export function resolveCheck(
   body: {
     spanId: string;
     name: string;
+    subject?: string;
     decision: 'accepted' | 'sent_back';
     note?: string;
   },

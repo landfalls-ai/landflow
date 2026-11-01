@@ -116,6 +116,30 @@ describe('team progress', () => {
     expect(failed.moments.at(-1)).toMatchObject({ tone: 'bad', text: 'Developer failed' });
   });
 
+  it('follows a member that asks its own reports, from its own stream', () => {
+    const fold = teamProgressFolder(['Tech Lead', 'Developer', 'Tester']);
+    fold({ type: 'run.started', sessionId: 's1' });
+    fold(tool('c1', 'Developer', 'running'));
+    // The Developer's own loop: its run starts inside the lead's call, then a tool of its own.
+    expect(fold({ type: 'run.started', sessionId: 's2' }, 'Developer')).toBeUndefined();
+    const own = fold({ type: 'entry', sessionId: 's2', entry: { id: 'e_r', type: 'tool', callId: 'r1', tool: 'read_file', label: 'Read', kind: 'node', input: { path: 'src/main.ts' }, status: 'running', at } as TimelineEntry }, 'Developer')!;
+    expect(own).toMatchObject({ member: 'Developer', doing: 'Read', command: 'src/main.ts' });
+    // It asks the Tester: the Tester works, the Developer waits on it.
+    const nested = fold(tool('t1', 'Tester', 'running', [bash('pnpm test', 'running')]), 'Developer')!;
+    expect(nested).toMatchObject({ member: 'Tester', plain: 'Running the tests' });
+    expect(nested.team.members.find((m) => m.title === 'Developer')).toMatchObject({ state: 'working', doing: 'waiting on Tester' });
+    expect(nested.moments.at(-1)).toMatchObject({ member: 'Developer', text: 'Developer asked the Tester' });
+    // The lead's call to the Developer, reported again, doesn't take the view from the Tester.
+    expect(fold(tool('c1', 'Developer', 'running'))).toBeUndefined();
+    const back = fold(tool('t1', 'Tester', 'success', [bash('pnpm test', 'success', { output: 'Tests  3 passed (3)' })]), 'Developer')!;
+    expect(back).toMatchObject({ member: 'Developer', plain: "Reading the Tester's answer" });
+    expect(fold({ type: 'run.finished', sessionId: 's2', status: 'completed', reason: 'completed', usage: { inputTokens: 1, outputTokens: 1 } } as AgentStreamEvent, 'Developer')).toBeUndefined();
+    const done = fold(tool('c1', 'Developer', 'success', undefined, 'Built it; the Tester says 3 tests pass.'))!;
+    expect(done).toMatchObject({ member: 'Tech Lead', plain: "Reading the Developer's answer" });
+    expect(fold.activity().turns.map((t) => t.member)).toEqual(['Tech Lead', 'Developer', 'Tester', 'Developer', 'Tech Lead']);
+    expect(fold.activity().steps).toMatchObject({ Developer: 1, Tester: 1 });
+  });
+
   it('ignores what says nothing about who works', () => {
     const fold = teamProgressFolder(['Lead', 'Helper']);
     expect(fold({ type: 'entry', sessionId: 's1', entry: { id: 'u', type: 'user', text: 'hi', at } })).toBeUndefined();

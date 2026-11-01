@@ -253,6 +253,16 @@ bits are refused with a readable error. `Token(ctx, fresh)` mints through `POST 
 the token until a minute before its `expires_at`; `RS256Sign` signs any payload. Installation discovery (by repository) is left to
 the plugin.
 
+## Delegating nodes
+
+`NodeDescriptor.Delegates` flags a node that hands work to another agent. Used as an agent's tool, the engine adds a required
+`reason` argument to its schema ("why you are asking and what done looks like") and records it in the run's trace. It is
+left out of the descriptor JSON when false:
+
+```go
+Delegates: true,
+```
+
 ## Capabilities and composite types
 
 `NodeDescriptor.Capabilities` tags a node with stable contract names, lowercase words joined by dots

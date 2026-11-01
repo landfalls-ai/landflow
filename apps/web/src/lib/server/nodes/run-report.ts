@@ -166,7 +166,7 @@ export const runReportNode = defineNode({
     const sendBack = failed.length > 0 && (choice ? choice === 'sent_back' : gate === 'route');
     // Sent back by the gate itself: the failed checks are settled for this round (the next report judges the fix).
     if (sendBack && !choice) {
-      for (const check of failed) if (check.spanId) journal.record({ type: 'check', spanId: check.spanId, check: { name: check.name, status: check.status, resolution: { decision: 'sent_back', by: title } } });
+      for (const check of failed) if (check.spanId) journal.record({ type: 'check', spanId: check.spanId, check: { name: check.name, status: check.status, ...(check.subject && { subject: check.subject }), resolution: { decision: 'sent_back', by: title } } });
     }
     journal.flush();
 

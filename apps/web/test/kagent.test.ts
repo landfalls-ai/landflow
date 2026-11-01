@@ -27,12 +27,15 @@ interface FakeKube {
   url: string;
   objects: Map<string, KubeObject>;
   requests: Array<{ method: string; path: string; contentType?: string; authorization?: string }>;
+  /** Out of reach: every request fails with 503. */
+  down: boolean;
   close(): Promise<void>;
 }
 
 async function startFakeKube(): Promise<FakeKube> {
   const objects = new Map<string, KubeObject>();
   const requests: FakeKube['requests'] = [];
+  const state: FakeKube = { url: '', objects, requests, down: false, close: () => new Promise((resolve) => server.close(() => resolve())) };
   const body = (req: IncomingMessage) => new Promise<string>((resolve) => {
     let text = '';
     req.on('data', (chunk) => (text += chunk));
@@ -45,6 +48,7 @@ async function startFakeKube(): Promise<FakeKube> {
       res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(value));
     };
+    if (state.down) return send(503, { message: 'unavailable' });
     if (req.headers.authorization !== 'Bearer kube-token') return send(401, { message: 'Unauthorized' });
     // /api/v1/namespaces/<ns>/<plural>[/<name>] or /apis/<group>/<version>/namespaces/<ns>/<plural>[/<name>]
     const match = /^\/apis?\/(?:[^/]+\/)?[^/]+\/namespaces\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/.exec(url.pathname);
@@ -69,7 +73,8 @@ async function startFakeKube(): Promise<FakeKube> {
     return found ? send(200, found) : send(404, { message: `${key} not found` });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, objects, requests, close: () => new Promise((resolve) => server.close(() => resolve())) };
+  state.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  return state;
 }
 
 let kube: FakeKube;
@@ -305,6 +310,22 @@ describe('deploying to kagent', () => {
     expect(written()).toHaveLength(5);
     await call(agentRoute.DELETE, agent.id, 'DELETE');
     expect(written()).toEqual([]);
+  });
+
+  it('removes what a deleted agent left while kagent was out of reach the next time it deploys there', async () => {
+    const gone = publishedAgent();
+    await call(kagentRoute.PUT, gone.id, 'PUT', { credentialId: cluster.id, name: 'left-behind' });
+    kube.down = true;
+    try {
+      expect((await call(agentRoute.DELETE, gone.id, 'DELETE')).status).toBe(200);
+    } finally {
+      kube.down = false;
+    }
+    expect(held('agents', 'left-behind')).toBeDefined();
+    const next = publishedAgent();
+    await call(kagentRoute.PUT, next.id, 'PUT', { credentialId: cluster.id, name: 'next-one' });
+    expect(written().filter((k) => k.includes('left-behind'))).toEqual([]);
+    expect(held('agents', 'next-one')).toBeDefined();
   });
 
   it('refuses an Ollama server kagent can’t reach', async () => {

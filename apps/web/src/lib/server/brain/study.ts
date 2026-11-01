@@ -13,6 +13,7 @@
 import type { LanguageModel, Workflow } from '@landflow/engine';
 import type { BrainFact, BrainProfile, FactKind, FactSubject, ProfileStats, ProposalEvidence } from '../../shared/brain';
 import { agentStore } from '../agents/store';
+import { agentTeamStore } from '../agent-teams/store';
 import { workflowOutline } from '../assistant/research';
 import { credentials } from '../credentials/vault';
 import { database, type Database, type SqlValue } from '../db';
@@ -31,6 +32,7 @@ const DAY_MS = 86_400_000;
 const PRODUCTION = "COALESCE(json_extract(attrs, '$.mode'), '') <> 'manual'";
 const STUDY_PURPOSES = 20;
 const MESSAGE_AGENT = 'core.messageAgent';
+const RUN_TEAM = 'core.runTeam';
 export const BRAIN_COLLECTION = 'landflow-brain';
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -96,6 +98,12 @@ function usesOf(workflow: Workflow): BrainProfile['uses'] {
     for (const ref of Object.values(node.credentials ?? {})) add('credential', ref.id, ref.name);
     if (node.type === EXECUTE_WORKFLOW && typeof node.parameters?.workflowId === 'string') add('workflow', node.parameters.workflowId, store.getWorkflow(node.parameters.workflowId)?.name);
     if (node.type === MESSAGE_AGENT && typeof node.parameters?.agentId === 'string') add('agent', node.parameters.agentId, agentStore.get(node.parameters.agentId)?.name);
+    // A team's Landflow agents, from the version the flow runs (published, or the draft it tries).
+    if (node.type === RUN_TEAM && typeof node.parameters?.teamId === 'string') {
+      const team = agentTeamStore.get(node.parameters.teamId);
+      const config = node.parameters.version === 'draft' ? team?.draft : (team?.published ?? team?.draft);
+      for (const member of config?.members ?? []) if (member.kind === 'agent') add('agent', member.agentId, agentStore.get(member.agentId)?.name);
+    }
   }
   return uses;
 }

@@ -8,10 +8,20 @@ import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
 import { chartOrder } from '../../shared/agent-teams';
 import type { AgentStreamEvent } from '../../shared/agents';
-import { teamProgressFolder } from '../../shared/team-progress';
+import { joinActivity, teamProgressFolder, type TeamActivity } from '../../shared/team-progress';
+import type { TeamState } from '../agent-teams/runtime';
 import { streamer } from './agents';
 
 const main = [{ type: 'main' as const }];
+
+/** What the node keeps while a member's question waits for a person: where it was in its items, and the team's state. */
+interface Waiting {
+  itemIndex: number;
+  done: NodeItem[];
+  needsPerson: NodeItem[];
+  state: TeamState;
+  activity: TeamActivity;
+}
 
 export const runTeamNode = defineNode({
   description: {
@@ -85,7 +95,7 @@ export const runTeamNode = defineNode({
       {
         name: 'notice',
         displayName:
-          'The lead runs with the team’s goal; each member is asked by title, with a reason, and reports back. A model, memory and tools connected here go to the lead. Tools that need approval are refused (nobody is there to approve them). Done carries { reply, team, members, activity }; Needs a person adds a reason: a question for a person, a review nobody did, a budget or limit reached.',
+          'The lead runs with the team’s goal; each member is asked by title, with a reason, and reports back. A model, memory and tools connected here go to the lead. Tools that need approval are refused (nobody is there to approve them). A member’s question for a person pauses the run until someone answers it (Needs you, or the form link), then the team goes on. Done carries { reply, team, members, usage, activity }; Needs a person adds a reason: a review nobody did or that asked for changes, a budget or limit reached.',
         type: 'notice',
       },
     ],
@@ -100,9 +110,14 @@ export const runTeamNode = defineNode({
     const tools = connection ? await connection<AgentTool>('ai_tool') : [];
     const send = ctx.sendChunk;
     const items = ctx.getInputData();
-    const done: NodeItem[] = [];
-    const needsPerson: NodeItem[] = [];
-    for (let i = 0; i < Math.max(items.length, 1); i++) {
+    // Back from a wait for a person (a member's question): the items already done, and the team's state to go on from.
+    const saved = ctx.getNodeState?.() as { waiting?: Waiting; $resume?: { kind: string; data?: JsonObject } } | undefined;
+    ctx.setNodeState?.(undefined);
+    const waited = saved?.waiting && saved.$resume ? saved.waiting : undefined;
+    const done: NodeItem[] = waited ? [...waited.done] : [];
+    const needsPerson: NodeItem[] = waited ? [...waited.needsPerson] : [];
+    for (let i = waited?.itemIndex ?? 0; i < Math.max(items.length, 1); i++) {
+      const resume = waited && i === waited.itemIndex ? { state: waited.state, answer: String(saved?.$resume?.data?.answer ?? '').trim() } : undefined;
       try {
         const team = agentTeamStore.get(ctx.getNodeParameter<string>('teamId', i));
         if (!team) throw new NodeOperationError('Choose a team — the selected one was deleted', { itemIndex: i });
@@ -135,6 +150,11 @@ export const runTeamNode = defineNode({
           const report = fold(event);
           if (report) ctx.sendProgress?.(report as unknown as JsonObject);
         };
+        // A member that manages others asks them in its own loop: folded too, so its reports show at work.
+        const onMemberEvent = (title: string, event: AgentStreamEvent) => {
+          const report = fold(event, title);
+          if (report) ctx.sendProgress?.(report as unknown as JsonObject);
+        };
         const result = await runTeam({
           team: { id: team.id, name: config.name },
           config,
@@ -147,8 +167,32 @@ export const runTeamNode = defineNode({
           }),
           ...(memory && { memory }),
           onEvent,
+          onMemberEvent,
+          canWait: Boolean(ctx.putExecutionToWait),
+          ...(resume && { resume }),
         });
         send?.({ type: 'end', itemIndex: i });
+        const activity = joinActivity(resume ? waited?.activity : undefined, fold.activity());
+        if (result.waiting && ctx.putExecutionToWait) {
+          // A member asked a person: the run waits for the answer, then this node runs again and the team goes on.
+          const { member, question, state } = result.waiting;
+          ctx.setNodeState?.({ waiting: { itemIndex: i, done, needsPerson, state, activity } as unknown as JsonObject });
+          ctx.putExecutionToWait({
+            resume: 'form',
+            rerun: true,
+            data: {
+              form: {
+                title: `${member} asks`,
+                description: question,
+                fields: [{ fieldLabel: 'Answer', fieldName: 'answer', fieldType: 'textarea', requiredField: true }],
+                buttonLabel: 'Send the answer',
+              },
+              teamQuestion: { team: config.name, member, question },
+            } as unknown as JsonObject,
+          });
+          ctx.logger.info(`${member} asked a person; waiting for the answer`);
+          return [done, needsPerson];
+        }
         if (result.reason === 'error') {
           const last = [...result.session.timeline].reverse().find((e) => e.type === 'error');
           throw new NodeOperationError(`${config.name} failed: ${last?.type === 'error' ? last.message : 'unknown error'}`, { itemIndex: i });
@@ -164,11 +208,12 @@ export const runTeamNode = defineNode({
             title: m.title,
             asked: m.asked,
             tokens: m.tokens,
+            ...(m.estimated && { estimated: true }),
             ...(m.overBudget && { overBudget: true }),
           })),
           ...(result.needsPerson && { reason: result.needsPerson }),
           usage: { ...result.usage },
-          activity: fold.activity() as unknown as JsonObject,
+          activity: activity as unknown as JsonObject,
         };
         (result.needsPerson ? needsPerson : done).push({
           json,

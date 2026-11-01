@@ -138,7 +138,7 @@ func TestManifestJSONShape(t *testing.T) {
 	if d, ok := flag["default"]; !ok || d != false {
 		t.Errorf("default:false must be kept, got %#v (present=%v)", d, ok)
 	}
-	for _, key := range []string{"usableAsTool", "toolDescription", "categories", "icon"} {
+	for _, key := range []string{"usableAsTool", "toolDescription", "delegates", "categories", "icon"} {
 		if _, ok := behave[key]; ok {
 			t.Errorf("%s should be omitted when empty", key)
 		}
@@ -150,6 +150,28 @@ func TestManifestJSONShape(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte("3"), &v); err != nil || len(v) != 1 || v[0] != 3 {
 		t.Errorf("Version unmarshal number: %v %v", v, err)
+	}
+}
+
+func TestDelegatesJSON(t *testing.T) {
+	d := NodeDescriptor{Name: "ask", Kind: KindAction, Delegates: true}
+	data, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["delegates"] != true {
+		t.Errorf("delegates = %#v, want true", m["delegates"])
+	}
+	d.Delegates = false
+	if data, err = json.Marshal(d); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "delegates") {
+		t.Errorf("delegates must be omitted when false: %s", data)
 	}
 }
 

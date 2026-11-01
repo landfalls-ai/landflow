@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { CircleDot, Copy, Loader2, Play, Power, Settings2, SkipForward, Trash2, UsersRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
-import { useNodeFace } from '../agents/faces';
+import { useNodeFace, useShownParameters } from '../agents/faces';
 import { isCompact, NodeTile, ranFor } from '../canvas/node-tile';
 import { useAssistant } from './assistant';
 import { activityOfRuns } from '@/lib/shared/team-progress';
@@ -69,6 +69,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   const { openNode, openPalette, removeNodes, duplicateNode, updateNode, toggleBreakpoint } = useEditor.getState();
 
   const face = useNodeFace(wf.type, wf.parameters);
+  const shown = useShownParameters(wf.type, wf.parameters);
   // A team node becomes the member at work while it runs, and keeps a summary of what it did after (team-live.tsx).
   const teamId = wf.type === 'core.runTeam' && typeof wf.parameters.teamId === 'string' && wf.parameters.teamId ? wf.parameters.teamId : undefined;
   const live = teamId ? liveTeam(progress?.data) : undefined;
@@ -80,7 +81,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
     <NodeTile
       name={wf.name}
       info={info}
-      parameters={wf.parameters}
+      parameters={shown}
       status={status}
       disabled={wf.disabled}
       selected={selected}

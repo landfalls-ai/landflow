@@ -9,6 +9,8 @@ import { read } from './store';
 export interface CheckDecision {
   spanId: string;
   name: string;
+  /** Which of the span's checks of that name (a team's Budget for each member); any of them when absent. */
+  subject?: string;
   decision: 'accepted' | 'sent_back';
   note?: string;
 }
@@ -22,12 +24,14 @@ export class CheckError extends Error {
   }
 }
 
-/** The latest check event named `name` in `spanId`, found by reading the execution's journal. */
-function latestCheck(executionId: string, spanId: string, name: string): Extract<JournalEvent, { type: 'check' }> | undefined {
+/** The latest check event named `name` in `spanId` (about `subject`, when given), found by reading the execution's journal. */
+function latestCheck(executionId: string, spanId: string, name: string, subject?: string): Extract<JournalEvent, { type: 'check' }> | undefined {
   let found: Extract<JournalEvent, { type: 'check' }> | undefined;
   for (let after = 0; ; ) {
     const page = read(executionId, after, 1000);
-    for (const event of page) if (event.type === 'check' && event.spanId === spanId && event.check.name === name) found = event;
+    for (const event of page) {
+      if (event.type === 'check' && event.spanId === spanId && event.check.name === name && (subject === undefined || event.check.subject === subject)) found = event;
+    }
     if (page.length < 1000) return found;
     after = page[page.length - 1].seq;
   }
@@ -35,7 +39,7 @@ function latestCheck(executionId: string, spanId: string, name: string): Extract
 
 /** Write the decision. Returns the stored check. */
 export function resolveCheck(executionId: string, workflowId: string, input: CheckDecision, by: string): RunCheck {
-  const original = latestCheck(executionId, input.spanId, input.name);
+  const original = latestCheck(executionId, input.spanId, input.name, input.subject);
   if (!original) throw new CheckError('No such check in that span', 404);
   if (original.check.resolution) throw new CheckError('Already settled', 409);
   if (original.check.status !== 'fail') throw new CheckError('Only a failed check needs a decision', 409);

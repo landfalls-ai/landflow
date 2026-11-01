@@ -41,6 +41,8 @@ export interface FakeA2a {
   streaming: boolean;
   /** Serve an A2A 0.3 card instead. */
   legacyCard: boolean;
+  /** Whether a finished task reports its usage (kagent's usage extension). */
+  usage: boolean;
   close(): Promise<void>;
 }
 
@@ -56,16 +58,16 @@ function functionResponse(id: string, name: string, response: Record<string, unk
 
 const textArtifact = (text: string) => ({ artifactId: randomUUID(), parts: [{ text }] });
 
-function complete(task: Task, text: string) {
+function complete(task: Task, text: string, usage = true) {
   task.artifacts.push(textArtifact(text));
   task.status = { state: 'TASK_STATE_COMPLETED' };
-  task.metadata = { [USAGE]: { inputTokens: 120, outputTokens: 30, cachedInputTokens: 0, reasoningTokens: 0, totalTokens: 150 } };
+  if (usage) task.metadata = { [USAGE]: { inputTokens: 120, outputTokens: 30, cachedInputTokens: 0, reasoningTokens: 0, totalTokens: 150 } };
   delete task.pending;
 }
 
 export async function startFakeA2a(): Promise<FakeA2a> {
   const tasks = new Map<string, Task>();
-  const state: FakeA2a = { url: '', calls: [], streaming: false, legacyCard: false, close: async () => {} };
+  const state: FakeA2a = { url: '', calls: [], streaming: false, legacyCard: false, usage: true, close: async () => {} };
 
   /** Run a message: a new task, or the continuation of a paused one. */
   function handle(params: ReceivedCall['params']): Task {
@@ -81,14 +83,14 @@ export async function startFakeA2a(): Promise<FakeA2a> {
         const { callId, text: input } = existing.pending;
         if (decision?.approved) {
           existing.artifacts.push(functionResponse(callId, 'changeCase', { output: { text: input.toUpperCase() } }, 5));
-          complete(existing, input.toUpperCase());
+          complete(existing, input.toUpperCase(), state.usage);
         } else {
           existing.artifacts.push(functionResponse(callId, 'changeCase', { error: `rejected: ${decision?.rejection_reason ?? 'no reason'}` }, 5));
-          complete(existing, `Not changed (${decision?.rejection_reason ?? 'no reason'})`);
+          complete(existing, `Not changed (${decision?.rejection_reason ?? 'no reason'})`, state.usage);
         }
       } else {
         const answer = payload?.type === 'ask_user_response' ? payload.answers?.[0]?.answer?.[0] : text;
-        complete(existing, `You said: ${answer}`);
+        complete(existing, `You said: ${answer}`, state.usage);
       }
       return existing;
     }
@@ -98,7 +100,7 @@ export async function startFakeA2a(): Promise<FakeA2a> {
       const input = text.slice(5);
       const slug = input.toLowerCase().replace(/[^a-z0-9]+/g, '-');
       task.artifacts.push(functionCall('call-1', 'slugify', { text: input }, 1), functionResponse('call-1', 'slugify', { output: { slug } }, 2));
-      complete(task, `The slug is ${slug}`);
+      complete(task, `The slug is ${slug}`, state.usage);
     } else if (text.startsWith('chatty ')) {
       const input = text.slice(7);
       const slug = input.toLowerCase().replace(/[^a-z0-9]+/g, '-');
@@ -108,7 +110,7 @@ export async function startFakeA2a(): Promise<FakeA2a> {
         functionResponse('call-1', 'slugify', { output: { slug } }, 2),
         textArtifact('The slug looks right.'),
       );
-      complete(task, `Done: ${slug}`);
+      complete(task, `Done: ${slug}`, state.usage);
     } else if (text.startsWith('upper ')) {
       const input = text.slice(6);
       task.artifacts.push(
@@ -136,7 +138,7 @@ export async function startFakeA2a(): Promise<FakeA2a> {
     } else if (text === 'fail') {
       task.status = { state: 'TASK_STATE_FAILED', message: { messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ text: 'the model is down' }] } };
     } else {
-      complete(task, `echo: ${text}`);
+      complete(task, `echo: ${text}`, state.usage);
     }
     return task;
   }
@@ -172,7 +174,7 @@ export async function startFakeA2a(): Promise<FakeA2a> {
         return;
       }
       if (rpc.method === 'CancelTask') task.status = { state: 'TASK_STATE_CANCELED' };
-      else if (task.status.state === 'TASK_STATE_WORKING') complete(task, 'finally done');
+      else if (task.status.state === 'TASK_STATE_WORKING') complete(task, 'finally done', state.usage);
       answer(view(task));
       return;
     }

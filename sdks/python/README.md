@@ -116,6 +116,16 @@ plugin = Plugin("github", "GitHub", "0.1.0", nodes=[ListRepos()], credential_typ
 - Credential values are **redacted** from log lines, span attributes, node logs and error messages
   (password fields, keys that look like secrets, and fields the type does not declare).
 
+## Delegating nodes
+
+A node that hands work to another agent sets `"delegates": True` in its descriptor. Used as an agent's tool, the engine adds a
+required `reason` argument to its schema ("why you are asking and what done looks like") and records it in the run's trace.
+Like the other optional flags it passes through as written, so leave the key out rather than setting it to `False`:
+
+```python
+description = {..., "usableAsTool": True, "delegates": True}
+```
+
 ## Capabilities and composite types
 
 A node descriptor may carry `"capabilities": ["ioc.enrich"]`: stable contract tags, lowercase words joined by dots,

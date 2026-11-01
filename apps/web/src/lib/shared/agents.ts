@@ -560,6 +560,8 @@ export interface PendingCall {
    * sent to that agent, which goes on (and may pause again).
    */
   remote?: { agent: string; calls: Array<{ name: string; args?: Record<string, unknown> }>; state: Record<string, unknown> };
+  /** A person's answer, when the remote agent paused on a question for one (a team member's question): sent to it as the reply. */
+  answer?: string;
 }
 
 /** What an approval card shows for a pending call: a remote agent's pause names the agent and the calls it waits on. */
