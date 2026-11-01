@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: landflow-cache-nginx
+  labels: { app.kubernetes.io/name: landflow-cache, app.kubernetes.io/part-of: landflow-cache }
+data:
+  # The image's entrypoint runs envsubst over /etc/nginx/templates/*.template; ${NGINX_LOCAL_RESOLVERS} is the cluster's DNS.
+  default.conf.template: |
+    proxy_cache_path /var/cache/nginx/apk levels=1:2 keys_zone=apk:10m max_size=1500m inactive=60d use_temp_path=off;
+
+    server {
+      listen 8080;
+      server_name _;
+      resolver ${NGINX_LOCAL_RESOLVERS} valid=30s ipv6=off;
+      client_max_body_size 1m;
+      proxy_http_version 1.1;
+      proxy_read_timeout 300s;
+      proxy_connect_timeout 10s;
+
+      location = /healthz { access_log off; return 200 "ok\n"; }
+
+      # npm: tarball URLs in the metadata name this host and /npm/ (url_prefix in Verdaccio's config).
+      location /npm/ {
+        proxy_pass http://landflow-cache-npm:4873/;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+      }
+
+      # Go modules, and the checksum database at /go/sumdb/sum.golang.org (Athens: ATHENS_SUM_DBS).
+      location /go/ {
+        proxy_pass http://landflow-cache-go:3000/;
+        proxy_set_header Host $http_host;
+      }
+
+      # PyPI: pip's /pypi/simple/ is proxpi's /index/. Files are served by proxpi, not redirected to files.pythonhosted.org.
+      location /pypi/simple/ {
+        proxy_pass http://landflow-cache-pypi:5000/index/;
+        proxy_set_header Host $http_host;
+      }
+      location /pypi/ {
+        proxy_pass http://landflow-cache-pypi:5000/;
+        proxy_set_header Host $http_host;
+      }
+
+      # Alpine: /apk/v3.24/main/aarch64/APKINDEX.tar.gz is dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/APKINDEX.tar.gz.
+      # A package never changes under its name, so it is kept 30 days; the index changes, so it is kept an hour.
+      location /apk/ {
+        set $apk_upstream dl-cdn.alpinelinux.org;
+        rewrite ^/apk/(.*)$ /alpine/$1 break;
+        proxy_pass https://$apk_upstream;
+        proxy_ssl_server_name on;
+        proxy_ssl_name dl-cdn.alpinelinux.org;
+        proxy_set_header Host dl-cdn.alpinelinux.org;
+        proxy_cache apk;
+        proxy_cache_lock on;
+        proxy_cache_valid 200 30d;
+        proxy_cache_valid 404 1m;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+        add_header X-Cache-Status $upstream_cache_status always;
+      }
+      location ~ ^/apk/.*/APKINDEX\.tar\.gz$ {
+        set $apk_upstream dl-cdn.alpinelinux.org;
+        rewrite ^/apk/(.*)$ /alpine/$1 break;
+        proxy_pass https://$apk_upstream;
+        proxy_ssl_server_name on;
+        proxy_ssl_name dl-cdn.alpinelinux.org;
+        proxy_set_header Host dl-cdn.alpinelinux.org;
+        proxy_cache apk;
+        proxy_cache_lock on;
+        proxy_cache_valid 200 1h;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+        add_header X-Cache-Status $upstream_cache_status always;
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landflow-cache
+  labels: { app.kubernetes.io/name: landflow-cache, app.kubernetes.io/part-of: landflow-cache }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: landflow-cache }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: landflow-cache, app.kubernetes.io/part-of: landflow-cache }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.29.0-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: NGINX_ENTRYPOINT_LOCAL_RESOLVERS, value: "1" }
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 10m, memory: 24Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - { name: config, mountPath: /etc/nginx/templates }
+            - { name: apk, mountPath: /var/cache/nginx/apk }
+      volumes:
+        - name: config
+          configMap: { name: landflow-cache-nginx }
+        - name: apk
+          persistentVolumeClaim: { claimName: landflow-cache-apk }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: landflow-cache-apk
+  labels: { app.kubernetes.io/name: landflow-cache, app.kubernetes.io/part-of: landflow-cache }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 2Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-cache
+  labels: { app.kubernetes.io/name: landflow-cache, app.kubernetes.io/part-of: landflow-cache }
+spec:
+  selector: { app.kubernetes.io/name: landflow-cache }
+  ports: [{ name: http, port: 8080, targetPort: http }]

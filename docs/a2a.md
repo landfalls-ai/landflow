@@ -331,8 +331,25 @@ tools (Landflow, but only for an agent that binds at least one of its tools). Ev
 `npm install` or `pip install` can't run. An **EgressPolicy** grants more origins, and an Agent gets them only by
 naming it in `egressPolicyRefs`.
 
-- `deploy/kind/egress-dev.yaml` is `landflow-dev-packages`: Alpine's package mirror, the Go module proxy and checksum
-  database, npm and PyPI. `kagent-up.sh` applies it and names it in the credential's **Egress Policies**.
+- `deploy/kind/egress-dev.yaml` is `landflow-dev-packages`, and its only destination is the **package cache**,
+  `http://landflow-cache.landflow.svc.cluster.local:8080`. No registry is reachable directly. `kagent-up.sh` applies it
+  and names it in the credential's **Egress Policies**.
+- The cache is `deploy/k8s/components/package-cache`, part of the OrbStack overlay: one Service `landflow-cache:8080` in
+  `landflow-dev`, fronted by nginx, which routes `/npm/` to Verdaccio 6.2.0 (uplink registry.npmjs.org), `/go/` to
+  Athens v0.16.0 (proxy.golang.org, and the checksum database at `/go/sumdb/sum.golang.org`, so `GOSUMDB` works through
+  it), `/pypi/` to proxpi 1.3.0 (pip's `/pypi/simple/`; `PROXPI_DOWNLOAD_TIMEOUT` is 120 s, because at the default 0.9 s
+  proxpi redirects the client to files.pythonhosted.org, which a sandbox can't reach) and `/apk/` to an nginx
+  `proxy_cache` of dl-cdn.alpinelinux.org (packages kept 30 days, `APKINDEX.tar.gz` one hour; the response header
+  `X-Cache-Status` says HIT or MISS). Each store has a PersistentVolumeClaim (npm, Go and PyPI 5 Gi, Alpine 2 Gi), so a
+  restart keeps what was fetched. Its pods are labelled `part-of: landflow-cache` so the overlay's
+  `imagePullPolicy: Never` patch, for images built here, doesn't apply to them.
+- The bridge brings it to kind the way it brings `landflow-host`: `deploy/kind/bridge.yaml` has a Service
+  `landflow-cache` in kind's `landflow` namespace and an EndpointSlice holding the OrbStack ClusterIP, which
+  `kagent-up.sh` fills in (it stops if the overlay isn't applied). The gateway can allow it by name.
+- The tools are pointed at it in the Harness (`deploy/kind/harness-claude-dev.yaml`, env): `npm_config_registry`
+  (npm and pnpm), `YARN_NPM_REGISTRY_SERVER` with `YARN_UNSAFE_HTTP_WHITELIST`, `COREPACK_NPM_REGISTRY`, `GOPROXY` and
+  `GOSUMDB`, `PIP_INDEX_URL` with `PIP_TRUSTED_HOST`, and `UV_DEFAULT_INDEX` with `UV_INSECURE_HOST`. apk's repositories
+  are rewritten in the image (the Dockerfile's `APK_CACHE` build argument), after the build's own `apk add`.
 - Landflow writes `egressPolicyRefs` on every deploy: the agent's own list (the kagent card's **Network access**, the
   namespace's EgressPolicies as toggles with their origins), else the credential's. A name kagent doesn't have is
   refused before anything is written, and a list changed in kagent is drift (`egressPolicies`). kagent applies a change
@@ -347,9 +364,17 @@ naming it in `egressPolicyRefs`.
 - An EgressPolicy destination can carry a credential: the sandbox sends a placeholder header and the gateway swaps in
   a Secret's value, so the runtime never sees it (for a private git host, for example).
 
-Checked live on 2026-10-31: before the policy, every outside host failed DNS; after referencing it, `apk add go nodejs
-npm python3` took 10 s, `go get` of a module 1.7 s and `npm view` 1.1 s, and github.com, not in the policy, still
-failed to resolve.
+Checked live on 2026-10-31 (with the public registries as the policy's origins, before the cache): before the policy,
+every outside host failed DNS; after referencing it, `apk add go nodejs npm python3` took 10 s, `go get` of a module
+1.7 s and `npm view` 1.1 s, and github.com, not in the policy, still failed to resolve.
+
+Checked live on 2026-11-01 against the cache, from pods in `landflow-dev` and kind's `landflow` namespace: `npm view
+left-pad version`, `go mod download golang.org/x/text@latest` (modules and the checksum database's tiles through
+`/go/sumdb/`), `pip download requests`, an `APKINDEX.tar.gz` and `apk add jq` all worked. A second request for the same
+file was served from the cache: a tarball, a module zip and a wheel took 0.3 s the first time and 3 to 7 ms the second
+(Verdaccio logged one request to registry.npmjs.org for two to the client; proxpi sent no redirect), and the second
+APKINDEX answered `X-Cache-Status: HIT`. From kind, `landflow-cache.landflow.svc.cluster.local:8080/npm/left-pad`
+answered through the bridge.
 
 ### GitHub from the sandbox
 
@@ -374,10 +399,13 @@ land on it (the flows here only push `agents/*` branches and open draft pull req
 
 Installing a toolchain on every run costs time and tokens, so the Harness **landflow-claude-dev** runs Claude Code on
 a common image with what most projects need, and nothing project-specific:
-`deploy/docker/claude-harness-dev.Dockerfile` adds Go (latest; another version comes through the module proxy), Node 22
+`deploy/docker/claude-harness-dev.Dockerfile` adds Go (latest, with its standard library already built into a
+`GOCACHE=/opt/go-build` baked into the image by `go build std`, 182 MB, writable by the sandbox's user, so a project's
+first `go build` compiles only its own code; another Go version comes through the module proxy), Node 22
 with npm and pnpm (Corepack), Python 3.12 with pip and uv, a C toolchain (build-base), curl, jq, ripgrep, unzip and
 openssh-client to kagent's claude-harness image. A project's own dependencies are fetched when the agent installs them,
-through the package EgressPolicy.
+through the package cache (the Harness's env points npm, pnpm, Yarn, Corepack, Go, pip and uv at it, and the image's apk
+repositories at its `/apk/`; see Network for Claude Code).
 
 A Harness's `workload.image` must be pinned by digest and pulled from a registry, and nothing is pushed anywhere, so
 Landflow's registry serves it. `deploy/scripts/claude-harness-dev.sh` builds the image with `--load`, saves it as an
@@ -526,10 +554,13 @@ gone, a push to main refused and reported, enforcing without a marker and report
   marketplace on the host or behind a URL has no commit to pin). Landflow
   doesn't watch kagent: drift shows when the status is read, and a redeploy is a click, not automatic.
 - kagent's own Claude Code image (`landflow-claude`) is Alpine with bash and git only. `landflow-claude-dev` has the
-  common toolchains, but its Go build cache starts cold on every session, and project dependencies are downloaded on
-  every session (no cache in the cluster yet).
-- The package EgressPolicy opens public registries to every agent that references it. There is no per-agent allowlist
-  beyond choosing policies, and no git host is granted yet.
+  common toolchains and Go's standard library already built. Project dependencies are still installed on every session
+  (from the package cache, so they stay local after the first fetch, but they aren't baked into the image), and a
+  project's own packages are compiled on every session.
+- The package EgressPolicy grants the package cache to every agent that references it. There is no per-agent allowlist
+  beyond choosing policies, and no code host is granted yet. The cache has no authentication (anything that reaches
+  `landflow-cache` can read it), and caches only what the four upstreams serve: a private registry or another mirror
+  needs its own origin in a policy.
 - Watching a Tech Lead that calls remote agents: a Run an Agent node's session shows live in the execution view's Agent
   session panel, with each A2A tool entry's `remote.steps` ([agents.md](agents.md#from-workflows)).
 - Sessions on kagent aren't Landflow sessions: their tool calls are traced (`execute_tool`) but don't show in the
