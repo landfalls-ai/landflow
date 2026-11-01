@@ -266,6 +266,10 @@ export function TeamBudgets({ usage, faces, focus, className }: { usage?: TeamUs
         return (
           <div key={u.member} className="flex min-w-0 items-center gap-1.5">
             {face ? <AgentAvatar agent={face.face} size={14} round /> : <span className="size-3.5" />}
+            {/* The title too: faces alone don't say whose bar it is when agents share the default face. */}
+            <span className="max-w-[64px] shrink-0 truncate text-[10px] text-t2" data-testid="team-budget-member">
+              {u.member}
+            </span>
             <BudgetBar usage={u} color={face?.color} className="min-w-0 flex-1" />
           </div>
         );
@@ -306,9 +310,19 @@ function AskHead({ waiting, faces }: { waiting: TeamWaiting; faces: TeamFace[] }
         </span>
       </span>
       <div className="min-w-0 flex-1" aria-live="polite">
-        <div className="truncate text-[14px] font-semibold text-t1" title={waitTitle(waiting, face.title)}>
-          {waitTitle(waiting, face.title)}
-        </div>
+        {waiting.approval ? (
+          // The tool on its own line: on a narrow node "Writer wants to use publish_notes" cut off the one thing to decide on.
+          <div title={waitTitle(waiting, face.title)}>
+            <div className="truncate text-[12px] leading-4 text-t2">{face.title} wants to use</div>
+            <div className="truncate font-mono text-[13px] font-semibold leading-5 text-t1" data-testid="team-wait-tool">
+              {waiting.approval.tool}
+            </div>
+          </div>
+        ) : (
+          <div className="truncate text-[14px] font-semibold text-t1" title={waitTitle(waiting, face.title)}>
+            {waitTitle(waiting, face.title)}
+          </div>
+        )}
         {text && (
           <div className="line-clamp-2 text-[12px] leading-4 text-t2" title={text}>
             {text}
@@ -425,7 +439,9 @@ export function TeamSummary({ activity, className }: { activity: TeamActivity; c
       {results.map((m) => (
         <span
           key={m.text}
-          className={cn('rounded-full px-2 py-px text-[10.5px] font-medium', m.tone === 'ok' ? 'bg-gn/12 text-gn' : m.tone === 'bad' ? 'bg-rd/10 text-rd' : m.tone === 'warn' ? 'bg-warndim text-warn' : 'bg-acdim text-t2')}
+          title={m.text}
+          // One line each: a long decision as a multi-line pill read as a blob; the whole text is on hover.
+          className={cn('max-w-full truncate rounded-full px-2 py-px text-[10.5px] font-medium', m.tone === 'ok' ? 'bg-gn/12 text-gn' : m.tone === 'bad' ? 'bg-rd/10 text-rd' : m.tone === 'warn' ? 'bg-warndim text-warn' : 'bg-acdim text-t2')}
         >
           {m.text}
         </span>

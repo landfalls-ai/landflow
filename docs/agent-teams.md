@@ -222,12 +222,13 @@ the moments that matter. On the editor's canvas during a run and on the executio
   segment to open that member in the Run Trace (`/runs/<execution>?tab=team&member=<title>`: the Team tab with the
   member's sheet open); from the editor it opens in a new tab so the flow stays open.
 - **Budget bars.** A member with a token budget gets a bar under the ticker (the member at work, and any member past 80%)
-  that turns amber at 80% and red once used up, with "42k / 60k" beside it (`~` when estimated: a remote member that
+  that turns amber at 80% and red once used up, each named by the member's title, with "42k / 60k" beside it (`~` when estimated: a remote member that
   reports no usage). Tokens move after each model call of the lead and of agent members (`onUsage` in
   `agents/runtime.ts`), mid-task for a Claude Code member whose landflow-harness mod reports them, and when a member
   answers. The report's `usage` lists each member's tokens and budget.
 - **The roster** above the node shows faces only: the member at work is ringed in its colour, done members have a check,
-  one that failed is ringed red and members not asked yet fade.
+  one that failed is ringed red and members not asked yet fade. While the node waits or is paused the strip sits higher,
+  above the node's *Waiting* pill instead of behind it. The finished summary's chips truncate with the full text on hover.
 - **Moments** appear above the roster for 25 seconds: "Asked the Reviewer", "Tests failed · exit 1", "14 tests pass",
   "Typecheck passed", "Pull request #4 opened", "Branch pushed", "Reviewer: approve" or "Reviewer asks for changes" (from a
   `VERDICT:` line in the answer), "Developer failed", "Developer used 80% of its budget" (amber), "Developer used up its
@@ -238,7 +239,8 @@ the moments that matter. On the editor's canvas during a run and on the executio
   Reviewer", "Reviewer answered Developer" or "Planner handed the task to the Developer". The Now card on a phone says
   the same.
 - **A tool waiting for approval** turns the node amber like a question: the asker's face with an hourglass, "Tech Lead
-  wants to use Comment on pull request", what it would do in a few words (the comment, the command, the path), and
+  wants to use" with the tool's name on its own line below in mono (a long tool name no longer pushes the head off the
+  node), what it would do in a few words (the comment, the command, the path), and
   **Approve** / **Deny** buttons on the node and on the phone card (the same call as Needs you). A moment says "Tech Lead
   asks to use Comment on pull request" (amber). The node reads it from the waiting execution's `wait.data.teamApproval`, so
   a reload or another device shows the same; from the editor the canvas follows the resumed run.

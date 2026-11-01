@@ -120,8 +120,8 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       live={team.tile}
     >
       {teamId ? (
-        // Above the duration a finished node shows over its corner.
-        <NodeToolbar isVisible={!selected && !fixing} position={Position.Top} offset={(compact ? 12 : 14) + (ranFor(status) ? 16 : 0)}>
+        // Above the duration a finished node shows over its corner, and above the Waiting or Paused pill over its top.
+        <NodeToolbar isVisible={!selected && !fixing} position={Position.Top} offset={(compact ? 12 : 14) + (ranFor(status) || status?.state === 'waiting' || status?.state === 'paused' ? 16 : 0)}>
           <TeamStrip teamId={teamId} live={live} moments={team.moments} />
         </NodeToolbar>
       ) : (
