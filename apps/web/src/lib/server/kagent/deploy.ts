@@ -262,31 +262,6 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   token ??= `lfk_${randomBytes(24).toString('base64url')}`;
   const version = agent.published.version;
   const { objects, unavailable } = await compile(agent, agent.published.config, version, name, cluster, token, { harness, plugins, egressPolicies });
-  // A ModelConfig from an earlier deploy stays only while there is a model (publishing needs one, so it always is).
-  for (const object of objects) {
-    if (object.kind !== 'EgressPolicy') {
-      await applyObject(cluster.connection, object);
-      continue;
-    }
-    try {
-      await applyObject(cluster.connection, object);
-    } catch (error) {
-      // An access Role from before Landflow wrote EgressPolicies (deploy/kind/landflow-access.yaml) only reads them: the agent
-      // runs without it, and its mod's reports can't reach Landflow.
-      logger.warn('kagent: Landflow’s EgressPolicy could not be written; the agent’s mod can’t report to Landflow', { agentId, name: object.metadata.name, error: (error as Error).message });
-      unavailable.push('its run reports (Landflow may not write EgressPolicies in this cluster: apply deploy/kind/landflow-access.yaml again)');
-      const spec = objects.find((o) => o.kind === 'Agent')?.spec as { egressPolicyRefs?: Array<{ name: string }> } | undefined;
-      if (spec?.egressPolicyRefs) {
-        spec.egressPolicyRefs = spec.egressPolicyRefs.filter((ref) => ref.name !== object.metadata.name);
-        if (!spec.egressPolicyRefs.length) delete spec.egressPolicyRefs;
-      }
-    }
-  }
-  // An approval server from an earlier deploy goes once nothing needs it (no tool waits for approval, or another runtime).
-  const approval = approvalServerName(name);
-  if (!objects.some((o) => o.metadata.name === approval)) await deleteOurs(cluster, 'RemoteMCPServer', approval, agent.id);
-  // So does Landflow's EgressPolicy once the agent has no mod to report (another runtime, or no registry).
-  if (!objects.some((o) => o.kind === 'EgressPolicy')) await deleteOurs(cluster, 'EgressPolicy', landflowEgressName(name), agent.id).catch(() => undefined);
   const deployment: KagentDeployment = {
     credential,
     name,
@@ -299,7 +274,40 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
     ...(guard !== 'enforce' && plugins.some((pin) => pin.url === BUILTIN_URL) && { guard }),
     ...(plugins.some((pin) => pin.url === BUILTIN_URL) && { trace: { url: `${cluster.landflowUrl}/api/agent-trace`, ...(a2aUrlOf(cluster, name) && { a2aUrl: a2aUrlOf(cluster, name) }) } }),
   };
+  // Saved before kagent reads the objects: it lists the agent's tools from /api/mcp/agents/<id> as soon as they change,
+  // and that serves the deployed version's, so saving after would have it list the old version's and keep them.
   const saved = agentStore.setKagent(agent.id, deployment) ?? agent;
+  try {
+    // A ModelConfig from an earlier deploy stays only while there is a model (publishing needs one, so it always is).
+    for (const object of objects) {
+      if (object.kind !== 'EgressPolicy') {
+        await applyObject(cluster.connection, object);
+        continue;
+      }
+      try {
+        await applyObject(cluster.connection, object);
+      } catch (error) {
+        // An access Role from before Landflow wrote EgressPolicies (deploy/kind/landflow-access.yaml) only reads them: the agent
+        // runs without it, and its mod's reports can't reach Landflow.
+        logger.warn('kagent: Landflow’s EgressPolicy could not be written; the agent’s mod can’t report to Landflow', { agentId, name: object.metadata.name, error: (error as Error).message });
+        unavailable.push('its run reports (Landflow may not write EgressPolicies in this cluster: apply deploy/kind/landflow-access.yaml again)');
+        const spec = objects.find((o) => o.kind === 'Agent')?.spec as { egressPolicyRefs?: Array<{ name: string }> } | undefined;
+        if (spec?.egressPolicyRefs) {
+          spec.egressPolicyRefs = spec.egressPolicyRefs.filter((ref) => ref.name !== object.metadata.name);
+          if (!spec.egressPolicyRefs.length) delete spec.egressPolicyRefs;
+        }
+      }
+    }
+  } catch (error) {
+    // Not written: the deployment stays the one before.
+    agentStore.setKagent(agent.id, previous);
+    throw error;
+  }
+  // An approval server from an earlier deploy goes once nothing needs it (no tool waits for approval, or another runtime).
+  const approval = approvalServerName(name);
+  if (!objects.some((o) => o.metadata.name === approval)) await deleteOurs(cluster, 'RemoteMCPServer', approval, agent.id);
+  // So does Landflow's EgressPolicy once the agent has no mod to report (another runtime, or no registry).
+  if (!objects.some((o) => o.kind === 'EgressPolicy')) await deleteOurs(cluster, 'EgressPolicy', landflowEgressName(name), agent.id).catch(() => undefined);
   // The cluster answers: what deleted agents left on it while it couldn't goes now.
   await removeLeftovers(credential.id).catch(() => undefined);
   logger.info('kagent: agent deployed', { agentId, name, namespace: cluster.namespace, version, harness: harness.name, runtime: harness.runtime, plugins: plugins.length });

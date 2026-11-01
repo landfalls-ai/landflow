@@ -221,13 +221,16 @@ resources, all named after the deployment (default: the agent's name as a DNS la
 | kagent resource | What Landflow writes |
 |---|---|
 | AgentTemplate | `systemPrompt`: the system prompt Landflow's runtime gives the model (`apps/web/src/lib/shared/persona.ts`, the text the Persona tab shows): the persona parts and instructions, the skills with their "use when", the name and the description. `description`: the agent's. `tools`: one MCP binding for the tools that run freely and one with `requireApproval` for those that need approval |
-| RemoteMCPServer | The agent's own tools, served by Landflow at `/api/mcp/agents/<id>`: the tools the runtime builds from the deployed version, run the same way (node, workflow, knowledge base, sub-agent, MCP server and A2A tools, `load_skill`) |
+| RemoteMCPServer | The agent's own tools, served by Landflow at `/api/mcp/agents/<id>`: the tools the runtime builds from the deployed version, run the same way (node, workflow, knowledge base, sub-agent, MCP server and A2A tools, `load_skill`). The annotation `landflow.dev/tools-sha256` hashes the names it serves, so a changed list (a tool added within one version, a server that answers now) changes the object and kagent lists the tools again |
 | ModelConfig | The agent's model: Ollama (the model's server URL, which kagent must reach too), OpenAI or Anthropic (the credential's base URL; the API key goes in the Secret) and the temperature |
 | Agent | The template on the credential's harness |
 | Secret `<name>-landflow` | `authorization`: the token kagent calls the MCP endpoint with (Landflow keeps it sealed with its encryption key), and `api-key` |
 
 Writing uses server-side apply (field manager `landflow`), so a deploy sets every field Landflow owns back to Landflow's
-value. **Publishing writes the new version too**: the publish answer carries `kagent` (the status, or why kagent
+value. Landflow saves the new deployed version before it writes, since kagent lists the agent's tools as soon as the
+objects change and the endpoint serves the deployed version's (saving after had kagent keep the old version's tools: a
+GitHub MCP tool added and published didn't reach the agent); a write kagent refuses puts the earlier deployment back.
+**Publishing writes the new version too**: the publish answer carries `kagent` (the status, or why kagent
 couldn't be written; the publish itself still happens). Unpublishing leaves kagent's copy as it is; deleting the agent
 removes it from kagent. When kagent can't be reached then, Landflow remembers what it left (the `settings` row
 `kagent.leftovers`) and removes it the next time it deploys an agent to that cluster. Landflow never takes over a kagent agent it didn't write (409), and removing deletes only

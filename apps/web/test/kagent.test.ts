@@ -32,6 +32,8 @@ interface FakeKube {
   down: boolean;
   /** Plurals Landflow may only read (an older access Role): writing one is 403. */
   readOnly: Set<string>;
+  /** Called as each object is applied, as kagent's controller would see it. */
+  onApply?: (plural: string, object: KubeObject) => void;
   close(): Promise<void>;
 }
 
@@ -66,6 +68,7 @@ async function startFakeKube(): Promise<FakeKube> {
       const previous = objects.get(key);
       const merged = { ...previous, ...applied, metadata: { ...previous?.metadata, ...applied.metadata, generation: ((previous?.metadata.generation as number) ?? 0) + 1 } } as KubeObject;
       objects.set(key, merged);
+      state.onApply?.(plural, merged);
       return send(200, merged);
     }
     if (req.method === 'DELETE') {
@@ -105,6 +108,7 @@ beforeEach(() => {
   kube.objects.clear();
   for (const [name, spec] of HARNESSES) kube.objects.set(`harnesses/kagent/${name}`, { apiVersion: 'api.kagent.dev/v1alpha3', kind: 'Harness', metadata: { name, namespace: 'kagent' }, spec });
   kube.requests.length = 0;
+  kube.onApply = undefined;
 });
 
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -252,6 +256,32 @@ describe('deploying to kagent', () => {
     credentials.update(cluster.id, { data: { server } });
     const status = (await call<{ status: KagentStatus }>(kagentRoute.GET, agent.id)).data.status;
     expect(status).toMatchObject({ version: 2, outdated: true, inSync: false, drift: [] });
+  });
+
+  it('saves the new version before kagent reads the objects, so its tool listing serves the new tools', async () => {
+    const agent = publishedAgent();
+    await call(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id });
+    const annotation = () => held('remotemcpservers', 'text-formatter')!.metadata.annotations?.['landflow.dev/tools-sha256'];
+    const before = annotation();
+    expect(before).toMatch(/^[0-9a-f]{16}$/);
+    // kagent lists the tools from /api/mcp/agents/<id> as soon as the RemoteMCPServer changes: that serves the deployed version.
+    const seen: Array<number | undefined> = [];
+    kube.onApply = (plural) => {
+      if (plural === 'remotemcpservers') seen.push(agentStore.get(agent.id)!.kagent?.version);
+    };
+    agentStore.saveDraft(agent.id, { tools: agent.published!.config.tools.filter((t) => t.name !== 'Shout') });
+    await call(publishRoute.POST, agent.id, 'POST');
+    expect(seen).toEqual([2]);
+    // A different tool list is a different object, so kagent lists the tools again even within one version.
+    expect(annotation()).not.toBe(before);
+
+    // A deploy kagent refuses leaves the deployment it had.
+    kube.onApply = undefined;
+    kube.readOnly.add('agents');
+    agentStore.saveDraft(agent.id, { instructions: 'You format text. Answer in one word.' });
+    await call(publishRoute.POST, agent.id, 'POST');
+    expect(agentStore.get(agent.id)!.kagent?.version).toBe(2);
+    kube.readOnly.delete('agents');
   });
 
   it('gets the persona built on the Persona tab, compiled the way the runtime compiles it', async () => {
