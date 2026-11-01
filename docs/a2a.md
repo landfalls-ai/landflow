@@ -493,7 +493,7 @@ every Claude Code agent Landflow deploys gets Landflow's own mod, **landflow-har
   | --- | --- |
   | `secret-file` | reading `.env` files (not `.env.example` and other templates), `.netrc`, `.git-credentials`, `.pgpass`, SSH keys, AWS, Docker, kube and gh credentials, `*.pem` keys, `credentials.json`/`secrets.yaml`, `/var/run/secrets` and `/proc/*/environ`, with file tools or shell readers (`cat`, `grep`, `cp`…) |
   | `env-dump` | `printenv`, a bare `env`, `export -p`, `declare -x`, a bare `set`, echoing a variable named like a key or token, `gh auth token` |
-  | `git-push` | force pushes, `+refspec` and `:branch` refspecs, pushes to `main` or `master` |
+  | `git-push` | `--mirror`, `--all` and `--prune` pushes. Force pushes, `+refspec`, `:branch` and `--delete`, and pushes to `main` or `master` are not refused in Normal mode: they are [asked of a person](#asking-a-person) |
   | `git-auth-config` | changing git's `http.*`, `credential.*`, `url.*`, `core.sshCommand` or `include` settings, `-c` included |
   | `merge` | `gh pr merge`, and merging through `gh api …/pulls/<n>/merge` |
   | `destructive` | `rm -r` on `/`, `~`, `$HOME` or a system folder, `mkfs`, `dd` onto a device, `chmod -R` on `/`, a fork bomb, writing to a disk |
@@ -506,7 +506,7 @@ every Claude Code agent Landflow deploys gets Landflow's own mod, **landflow-har
   | Guard | What it does |
   | --- | --- |
   | **Read-only** (`strict`) | the rules above, and the agent is read-only on the code (`read-only`): no Write, Edit, MultiEdit or NotebookEdit outside `/tmp`; no `git commit`, `push`, `merge`, `rebase`, `reset`, `add`, `stash`, `restore`, `clean`, `pull`, new branches or tags, deleting or moving branches, `checkout --`; no `gh pr create/merge/close/edit`, issue, release, repo, label, workflow, secret or gist changes, no `gh api` writes (a pull request's review and line comments are allowed); no `rm`, `mv`, `cp`, `tee`, `touch` or redirections (`>`, `>>`) outside `/tmp`, no `sed -i`/`perl -i`, no publishing packages. Reading, searching, checking out a branch, installing dependencies, running tests and builds, and `gh pr review`/`gh pr comment` go on. For a reviewer |
-  | **Normal** (`enforce`, the default) | the rules above |
+  | **Normal** (`enforce`, the default) | the rules above, and asks a person about the three pushes below instead of refusing them |
   | **Report only** (`report`) | nothing is refused; each stop is reported (`action: report`) |
 
   The deploy writes it into the mod's `plugin.json` as the default of its `guard` option (`userConfig`), so the packed
@@ -516,6 +516,28 @@ every Claude Code agent Landflow deploys gets Landflow's own mod, **landflow-har
   is best effort: a script that writes files itself isn't caught, so pair it with a token that can't push. Every rule
   reads each part of a command from the directory an earlier `cd` in it moved to (`cd /tmp && rm -rf work` removes
   `/tmp/work`, which Read-only allows).
+- <a id="asking-a-person"></a>**Asking a person.** A rule can end in *ask* next to refuse and allow. Normal mode asks about
+  exactly three things, all `git push`: to `main` or `master` (also `HEAD:refs/heads/main`), a force push (`--force`, `-f`,
+  `--force-with-lease`, `--force-if-includes`, a `+refspec`) and deleting a remote branch (`--delete`, `-d`, a `:branch`
+  refspec). Read-only keeps refusing every push, Report only never blocks, and a request without a trace URL has no one
+  to ask, so the push is refused as before. A command with a part that is refused outright (`git push origin main && cat
+  .env`) is refused, never asked. When a command asks:
+  1. the mod posts `{ type: 'ask', askId, command, cwd, reason, agent }` to the trace URL (the command with secrets
+     masked) and waits for the answer by long polling `GET /api/agent-trace/<id>/asks/<askId>?wait=25`, which Landflow
+     holds until a person decides (so the wait costs the hook none of its 10 s budget), for up to 10 minutes;
+  2. Landflow keeps the ask in the `agent_asks` table and writes a wait span under the member's request (`attrs.wait:
+     'approval'`, `attrs.ask`, the command as its input): Run Trace's **Needs you** lists it with Approve / Reject, the
+     live team node says "Developer wants to run git push origin main" with the same buttons, and the cross-run Needs
+     you list has it. **The workflow run is not paused**: the member's A2A call is still going;
+  3. a decision (`POST /api/executions/<id>/asks/<askId>` `{ approved }`, needing the access to the run that deciding its
+     tool approvals needs) ends the wait and writes an **Approval** check on the request (who, what, when; pass for
+     approved, warn for rejected). The mod's next poll returns it: approved, the command runs; denied, Claude Code reads
+     "A person denied: git push origin main";
+  4. no answer in 10 minutes, or the call ends first, closes the ask (an Approval warning says nobody answered in time)
+     and the command is refused with "Nobody answered in time, so this didn't run". A call outside a run, or with five
+     asks open, is denied at once.
+
+  The table is where the three routes meet, so it works when the run is on a worker and the decision comes to a main.
 - **Redact.** A tool's result is kept with every token or key it shows masked (`[redacted GitHub token]`): private
   keys, GitHub, Anthropic, OpenAI, AWS, Slack, Google and npm tokens, Landflow's `lfk_` and `lf_` keys,
   `Authorization` headers and passwords in URLs. A secret that reached a file or a command's output doesn't reach the
@@ -601,8 +623,8 @@ per model and per subagent, tools, guardrails, masks, the limits, closing), the 
 which calls get a trace, the A2A Agent node's item, and the journal's checks. `apps/web/test/run-team.test.ts` runs a
 team whose remote member reports through the fake agent as the mod would. The hooks themselves are tested with Claude
 Code's kit: `claude plugin test apps/web/claude-plugins/landflow-harness` (a marked request traced with the marker
-gone, a push to main refused and reported, enforcing without a marker and report mode, a token masked), and
-`claude plugin validate` checks the module.
+gone, a push to main asked of a person and run or refused by the answer, read-only never asking, enforcing without a marker and report mode, a token masked), and
+`claude plugin validate` checks the module. `apps/web/test/agent-asks.test.ts` covers the asks: the wait in the journal, the polling and decision routes, the Approval check, timeout and the call ending, in one process.
 
 ## Not built
 

@@ -1062,6 +1062,9 @@ Claude Code agent Landflow deploys gets Landflow's own mod ([a2a.md](a2a.md#the-
   or Report only, chosen when it is deployed, and in queue mode a worker's live steps, budgets and real usage show on
   any main (2026-11-01).
   Live budget use from the trace while a member works shows on the team node since 2026-11-01.
+- The guard asks a person about a push to main, a force push and deleting a remote branch instead of refusing them (Normal
+  mode; Read-only still refuses, Report only never blocks): an `ask` event, a wait in Needs you and on the team node, a
+  long-polled answer, an Approval check; the run is not paused ([a2a.md](a2a.md#asking-a-person)). Needs the harness image rebuilt.
 
 ## Team notebook (built 2026-11-01)
 

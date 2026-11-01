@@ -89,7 +89,7 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
 - **The header**: live or finished, the time, who is working on what right now, the outcome as reported (the last
   agent's answer) and as checked (the Run report's verdict in the profile's words, with how many checks failed). A live
   run with no new event for 5 minutes says **Quiet for n min**.
-- **Needs you**: the approvals a run waits for (Approve and Reject in place; a team member's reads "Developer wants to use Comment on pull request" with what it would do, and names the member as the one waiting), a Run report's gate (**Accept as is** or
+- **Needs you**: the approvals a run waits for (Approve and Reject in place; a team member's reads "Developer wants to use Comment on pull request" with what it would do, and names the member as the one waiting; a command its guard asks about reads "Developer wants to run git push origin main", and Approve / Reject decide it through `POST /api/executions/:id/asks/:askId` while the run goes on, see [a2a.md](a2a.md#asking-a-person)), a Run report's gate (**Accept as is** or
   **Send back for a fix**), a form wait such as a team member's question (**Answer** opens the run's form page,
   `/form/waiting/<executionId>`), other waits (**Open to answer**), and failed checks nobody has decided on.
 - **Story** (the default): the run as a conversation. It shows messages, requests between agents (with **Why** they
