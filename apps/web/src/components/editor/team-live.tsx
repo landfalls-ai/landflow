@@ -4,14 +4,16 @@
  * working now (its face, title and what it does in plain words, with its last three steps), a ribbon at its bottom
  * marks each member's turn, and the moments that matter (tests pass, a review's verdict) appear above it for a while.
  * After the run the node keeps the ribbon and a one-line summary from its output's `activity`. On a phone the execution
- * view pins a Now card with the same over the canvas.
+ * view pins a Now card with the same over the canvas. A turn on the ribbon opens that member in the Run Trace; a member
+ * with a budget gets a bar that turns amber at 80% and red when used up; a member's question for a person turns the
+ * node amber, with the question and an Answer button.
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import { Check, ChevronRight, Hourglass, Loader2, X } from 'lucide-react';
 import { duration } from '@/lib/client/format';
 import { chartOrder, memberAgent, type TeamMember } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
-import type { TeamActivity, TeamMoment, TeamProgress, TeamStep, TeamTurn } from '@/lib/shared/team-progress';
+import type { TeamActivity, TeamMoment, TeamProgress, TeamStep, TeamTurn, TeamUsage } from '@/lib/shared/team-progress';
 import { cn } from '@/lib/utils';
 import { AgentAvatar, type AvatarSource } from '../agents/avatar';
 import { faceOf as agentFace, loadRoster, loadTeam } from '../agents/faces';
@@ -152,20 +154,42 @@ function WorkerHead({ live, faces, elapsed }: { live: TeamProgress; faces: TeamF
   );
 }
 
-/** One segment per turn in the member's colour, at the bottom of the node (above its sub-node slots); the open turn grows. */
-export function TeamRibbon({ turns, total, faces, open }: { turns: TeamTurn[]; total: number; faces: TeamFace[]; open?: boolean }) {
+/** Where a member's turn opens: its sheet on the Run Trace's Team tab. */
+export const memberTraceHref = (executionId: string, member: string) => `/runs/${executionId}?tab=team&member=${encodeURIComponent(member)}`;
+
+/** Keeps a tap on a link inside a canvas node from selecting or dragging the node. */
+const own = {
+  onClick: (e: React.MouseEvent) => e.stopPropagation(),
+  onPointerDown: (e: React.PointerEvent) => e.stopPropagation(),
+  onDoubleClick: (e: React.MouseEvent) => e.stopPropagation(),
+};
+
+/**
+ * One segment per turn in the member's colour, at the bottom of the node (above its sub-node slots); the open turn grows.
+ * With `hrefOf`, each segment opens that member's turn in the Run Trace (its tap area is taller than it looks).
+ */
+export function TeamRibbon({ turns, total, faces, open, hrefOf, newTab }: { turns: TeamTurn[]; total: number; faces: TeamFace[]; open?: boolean; hrefOf?: (turn: TeamTurn) => string | undefined; newTab?: boolean }) {
   if (!turns.length || total <= 0) return null;
   return (
-    <div className="mx-4 mb-7 mt-2 flex h-1 shrink-0 gap-px overflow-hidden rounded-full bg-acdim" data-testid="team-ribbon">
+    <div className={cn('mx-4 mb-7 mt-2 flex shrink-0 gap-px rounded-full bg-acdim', hrefOf ? 'h-1.5' : 'h-1 overflow-hidden')} data-testid="team-ribbon">
       {turns.map((turn, i) => {
         const length = Math.max(0, (turn.end ?? total) - turn.start);
         const face = faceByTitle(faces, turn.member);
+        const style = { width: `${(length / total) * 100}%`, background: face?.color ?? 'var(--t3)' };
+        const className = cn('h-full min-w-[3px] transition-[width] duration-500 first:rounded-l-full last:rounded-r-full', open && i === turns.length - 1 && turn.end === undefined && 'animate-pulse-soft');
+        const href = hrefOf?.(turn);
+        if (!href) return <span key={`${i}:${turn.member}`} title={`${turn.member} · ${duration(length)}`} className={className} style={style} />;
         return (
-          <span
+          <a
             key={`${i}:${turn.member}`}
-            title={`${turn.member} · ${duration(length)}`}
-            className={cn('h-full min-w-[3px] transition-[width] duration-500', open && i === turns.length - 1 && turn.end === undefined && 'animate-pulse-soft')}
-            style={{ width: `${(length / total) * 100}%`, background: face?.color ?? 'var(--t3)' }}
+            href={href}
+            {...(newTab && { target: '_blank', rel: 'noopener' })}
+            {...own}
+            title={`${turn.member} · ${duration(length)} · open in the Run trace`}
+            aria-label={`${turn.member}'s turn, ${duration(length)}: open in the Run trace`}
+            data-testid="team-ribbon-turn"
+            className={cn(className, "nodrag nopan relative cursor-pointer transition-transform hover:scale-y-[1.8] focus-visible:scale-y-[1.8] focus-visible:outline-none after:absolute after:inset-x-0 after:-inset-y-3 after:content-['']")}
+            style={style}
           />
         );
       })}
@@ -173,7 +197,94 @@ export function TeamRibbon({ turns, total, faces, open }: { turns: TeamTurn[]; t
   );
 }
 
-const TONE: Record<TeamMoment['tone'], string> = { ok: 'bg-gn', bad: 'bg-rd', info: 'bg-viz-1' };
+const levelOf = (u: TeamUsage): 'ok' | 'warn' | 'bad' | undefined => (!u.budget ? undefined : u.tokens >= u.budget ? 'bad' : u.tokens >= u.budget * 0.8 ? 'warn' : 'ok');
+const kTokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
+
+/** One member's tokens against its budget: a bar in its colour that turns amber at 80% and red once used up. */
+export function BudgetBar({ usage, color, className }: { usage: TeamUsage; color?: string; className?: string }) {
+  const level = levelOf(usage);
+  if (!usage.budget || !level) return null;
+  const share = Math.min(1, usage.tokens / usage.budget);
+  const about = usage.estimated ? 'about ' : '';
+  return (
+    <div className={cn('flex min-w-0 items-center gap-2', className)} data-testid="team-budget" data-level={level} title={`${usage.member} used ${about}${usage.tokens.toLocaleString()} of its ${usage.budget.toLocaleString()} tokens`}>
+      <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-acdim" role="meter" aria-valuemin={0} aria-valuemax={usage.budget} aria-valuenow={Math.min(usage.tokens, usage.budget)} aria-label={`${usage.member}'s budget`}>
+        <span className={cn('block h-full rounded-full transition-[width] duration-700', level === 'bad' && 'bg-rd', level === 'warn' && 'bg-warn animate-pulse-soft')} style={{ width: `${Math.max(2, share * 100)}%`, ...(level === 'ok' && { background: color ?? 'var(--gn)' }) }} />
+      </span>
+      <span className={cn('shrink-0 font-mono text-[10px] tabular-nums', level === 'bad' ? 'text-rd' : level === 'warn' ? 'text-warn' : 'text-t3')}>
+        {usage.estimated ? '~' : ''}
+        {kTokens(usage.tokens)} / {kTokens(usage.budget)}
+      </span>
+    </div>
+  );
+}
+
+/** The budget bars worth showing: every member with a budget, or (`focus`) the one at work and any past 80%. */
+export function TeamBudgets({ usage, faces, focus, className }: { usage?: TeamUsage[]; faces: TeamFace[]; focus?: string; className?: string }) {
+  const shown = (usage ?? []).filter((u) => u.budget && (!focus || norm(u.member) === norm(focus) || levelOf(u) !== 'ok'));
+  if (!shown.length) return null;
+  return (
+    <div className={cn('flex flex-col gap-1', className)} data-testid="team-budgets">
+      {shown.map((u) => {
+        const face = faceByTitle(faces, u.member);
+        return (
+          <div key={u.member} className="flex min-w-0 items-center gap-1.5">
+            {face ? <AgentAvatar agent={face.face} size={14} round /> : <span className="size-3.5" />}
+            <BudgetBar usage={u} color={face?.color} className="min-w-0 flex-1" />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A member's question as asked, without the "X asks:" its team puts in front and the list marks. */
+export const questionText = (question: string) =>
+  question
+    .replace(/^[^\n]*\basks:\s*/i, '')
+    .replace(/^\s*-\s+/gm, '')
+    .trim();
+
+/** The amber head of a node whose run waits on a member's question: the asker's face, "asks", and the question. */
+function AskHead({ waiting, faces }: { waiting: { member: string; question: string }; faces: TeamFace[] }) {
+  const face = faceByTitle(faces, waiting.member) ?? faces[0];
+  const text = questionText(waiting.question);
+  return (
+    <>
+      <span key={face.title} className="relative shrink-0 animate-pop">
+        <AgentAvatar agent={face.face} size={44} />
+        <span className="pointer-events-none absolute -inset-[4px] animate-pulse-soft rounded-[16px] border-2 border-warn" />
+        <span className="absolute -bottom-1.5 -right-1.5 grid size-[18px] place-items-center rounded-full bg-warn text-bg ring-2 ring-sf">
+          <Hourglass className="size-2.5" strokeWidth={3} />
+        </span>
+      </span>
+      <div className="min-w-0 flex-1" aria-live="polite">
+        <div className="truncate text-[14px] font-semibold text-t1">{face.title} asks a person</div>
+        <div className="line-clamp-2 text-[12px] leading-4 text-t2" title={text}>
+          {text}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** The Answer button: the run's waiting form, where the answer goes back to the member that asked. */
+export function AnswerLink({ executionId, className }: { executionId: string; className?: string }) {
+  return (
+    <a
+      href={`/form/waiting/${executionId}`}
+      target="_blank"
+      rel="noopener"
+      {...own}
+      data-testid="team-answer"
+      className={cn('nodrag nopan inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-warn px-4 text-[13px] font-semibold text-bg shadow-sm transition-transform hover:scale-[1.03]', className)}
+    >
+      Answer <ChevronRight className="size-3.5" />
+    </a>
+  );
+}
+
+const TONE: Record<TeamMoment['tone'], string> = { ok: 'bg-gn', bad: 'bg-rd', warn: 'bg-warn', info: 'bg-viz-1' };
 
 /** The latest moments, for a while after they happen, newest at the bottom (next to the node). */
 export function TeamMoments({ moments, elapsed, faces }: { moments: TeamMoment[]; elapsed: number; faces: TeamFace[] }) {
@@ -186,7 +297,11 @@ export function TeamMoments({ moments, elapsed, faces }: { moments: TeamMoment[]
         return (
           <span
             key={`${m.at}:${m.text}`}
-            className={cn('flex max-w-[260px] items-center gap-1.5 rounded-full border border-hair bg-sf py-0.5 pl-0.5 pr-2.5 text-[11px] font-medium shadow-pop animate-pop', m.tone === 'bad' ? 'text-rd' : 'text-t1')}
+            className={cn(
+              'flex max-w-[260px] items-center gap-1.5 rounded-full border bg-sf py-0.5 pl-0.5 pr-2.5 text-[11px] font-medium shadow-pop animate-pop',
+              m.tone === 'bad' ? 'border-hair text-rd' : m.tone === 'warn' ? 'border-warn/50 text-t1' : 'border-hair text-t1',
+            )}
+            title={m.question ? questionText(m.question) : undefined}
           >
             {face ? <AgentAvatar agent={face.face} size={16} round /> : <span className="size-4" />}
             <span className={cn('size-1.5 shrink-0 rounded-full', TONE[m.tone])} />
@@ -206,7 +321,10 @@ export function TeamSummary({ activity, className }: { activity: TeamActivity; c
   return (
     <div className={cn('flex flex-wrap gap-1', className)} data-testid="team-summary">
       {results.map((m) => (
-        <span key={m.text} className={cn('rounded-full px-2 py-px text-[10.5px] font-medium', m.tone === 'ok' ? 'bg-gn/12 text-gn' : m.tone === 'bad' ? 'bg-rd/10 text-rd' : 'bg-acdim text-t2')}>
+        <span
+          key={m.text}
+          className={cn('rounded-full px-2 py-px text-[10.5px] font-medium', m.tone === 'ok' ? 'bg-gn/12 text-gn' : m.tone === 'bad' ? 'bg-rd/10 text-rd' : m.tone === 'warn' ? 'bg-warndim text-warn' : 'bg-acdim text-t2')}
+        >
           {m.text}
         </span>
       ))}
@@ -219,14 +337,54 @@ export function TeamSummary({ activity, className }: { activity: TeamActivity; c
   );
 }
 
+export interface TeamTileOptions {
+  /** The run the node is in: its ribbon's turns open in the Run Trace, its question's Answer goes to its form. */
+  executionId?: string;
+  /** The run waits at this node for a person's answer to a member's question (the execution's `wait.data.teamQuestion`). */
+  waiting?: { member: string; question: string };
+  /** Open the Run Trace in a new tab (from the editor, so the flow stays open). */
+  newTab?: boolean;
+}
+
+/** The question a waiting run's node waits on, from its wait's data (nodes/run-team.ts). */
+export function teamQuestionOf(wait: { nodeId?: string; data?: Record<string, unknown> } | undefined, nodeId: string): { member: string; question: string } | undefined {
+  const q = wait?.nodeId === nodeId ? (wait.data?.teamQuestion as { member?: unknown; question?: unknown } | undefined) : undefined;
+  return q && typeof q.member === 'string' && typeof q.question === 'string' ? { member: q.member, question: q.question } : undefined;
+}
+
+const AMBER = 'var(--warn)';
+
 /**
- * What a Run a Team node's tile shows (NodeTile `live`): while it runs, the member at work with its last steps and the
- * ribbon; once it ran, the summary and the ribbon of its activity. `moments` go above the node, with the roster.
+ * What a Run a Team node's tile shows (NodeTile `live`): while it runs, the member at work with its last steps, budget
+ * bars and the ribbon; once it ran, the summary, the budgets and the ribbon of its activity; while the run waits on a
+ * member's question, the question in amber with an Answer button. `moments` go above the node, with the roster.
  */
-export function useTeamTile(teamId: string | undefined, live: TeamProgress | undefined, activity: TeamActivity | undefined): { tile?: NodeLive; moments?: ReactNode } {
+export function useTeamTile(teamId: string | undefined, live: TeamProgress | undefined, activity: TeamActivity | undefined, options: TeamTileOptions = {}): { tile?: NodeLive; moments?: ReactNode } {
   const faces = useTeamFaces(teamId);
   const elapsed = useElapsed(live);
   if (!faces?.length) return {};
+  const { executionId, newTab } = options;
+  const hrefOf = executionId ? (turn: TeamTurn) => memberTraceHref(executionId, turn.member) : undefined;
+  const asked = options.waiting ?? live?.waiting;
+  if (asked) {
+    const turns = live?.turns ?? activity?.turns;
+    return {
+      tile: {
+        color: AMBER,
+        head: <AskHead waiting={asked} faces={faces} />,
+        body: (
+          <>
+            <div className="mx-4 flex items-center gap-2 border-t border-hair pt-2">
+              {executionId && options.waiting ? <AnswerLink executionId={executionId} /> : <span className="text-[11.5px] text-t3">Waiting for the answer…</span>}
+            </div>
+            <TeamBudgets usage={live?.usage ?? activity?.usage} faces={faces} focus={asked.member} className="mx-4 mt-2" />
+            {turns && <TeamRibbon turns={turns} total={live ? elapsed : (activity?.durationMs ?? 0)} faces={faces} hrefOf={hrefOf} newTab={newTab} />}
+          </>
+        ),
+      },
+      ...(live && { moments: <TeamMoments moments={live.moments} elapsed={elapsed} faces={faces} /> }),
+    };
+  }
   if (live) {
     const worker = faceByTitle(faces, live.member) ?? faces[0];
     return {
@@ -236,7 +394,8 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
         body: (
           <>
             <TeamTicker steps={live.steps} className="mx-4 border-t border-hair pt-2" />
-            <TeamRibbon turns={live.turns} total={elapsed} faces={faces} open />
+            <TeamBudgets usage={live.usage} faces={faces} focus={live.member} className="mx-4 mt-2" />
+            <TeamRibbon turns={live.turns} total={elapsed} faces={faces} open hrefOf={hrefOf} newTab={newTab} />
           </>
         ),
       },
@@ -249,7 +408,8 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
         body: (
           <>
             <TeamSummary activity={activity} className="mx-4 border-t border-hair pt-2" />
-            <TeamRibbon turns={activity.turns} total={activity.durationMs} faces={faces} />
+            <TeamBudgets usage={activity.usage} faces={faces} className="mx-4 mt-2" />
+            <TeamRibbon turns={activity.turns} total={activity.durationMs} faces={faces} hrefOf={hrefOf} newTab={newTab} />
           </>
         ),
       },
@@ -271,6 +431,7 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace }: { teamId: s
   const lead = faces[0];
   const worker = faceByTitle(faces, live.member) ?? lead;
   const words = live.plain ?? live.doing ?? 'Working';
+  if (live.waiting) return <TeamAskCard teamId={teamId} waiting={live.waiting} nodeName={nodeName} />;
   return (
     <section className="rounded-2xl border border-hair bg-sf p-3 shadow-pop" data-testid="team-now-card" aria-live="polite">
       <div className="mb-2 flex items-center justify-between text-[11px] text-t3">
@@ -290,6 +451,7 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace }: { teamId: s
         </div>
       </div>
       <TeamTicker steps={live.steps} className="mt-2.5" />
+      <TeamBudgets usage={live.usage} faces={faces} focus={live.member} className="mt-2.5" />
       <div className="mt-2.5 flex items-center justify-between border-t border-hair pt-2 text-[11.5px] text-t3">
         <span className="truncate">
           {worker === lead ? 'Leading the team' : `For ${lead.title}`}
@@ -301,6 +463,29 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace }: { teamId: s
           </button>
         )}
       </div>
+    </section>
+  );
+}
+
+/** The phone card of a run waiting on a member's question: who asks, the question in full, and the Answer button. */
+export function TeamAskCard({ teamId, waiting, nodeName, executionId }: { teamId: string; waiting: { member: string; question: string }; nodeName: string; executionId?: string }) {
+  const faces = useTeamFaces(teamId);
+  if (!faces?.length) return null;
+  const face = faceByTitle(faces, waiting.member) ?? faces[0];
+  return (
+    <section className="rounded-2xl border border-warn/50 bg-warndim p-3 shadow-pop" data-testid="team-ask-card" aria-live="polite">
+      <div className="mb-2 truncate text-[11px] font-semibold uppercase tracking-[0.06em] text-warn">Needs you · {nodeName}</div>
+      <div className="flex min-w-0 items-start gap-3">
+        <span className="relative shrink-0 animate-pop">
+          <AgentAvatar agent={face.face} size={40} />
+          <span className="pointer-events-none absolute -inset-[3px] animate-pulse-soft rounded-[14px] border-2 border-warn" />
+        </span>
+        <div className="min-w-0">
+          <div className="text-[14px] font-semibold leading-5 text-t1">{face.title} asks</div>
+          <p className="mt-0.5 whitespace-pre-line text-[13px] leading-5 text-t1">{questionText(waiting.question)}</p>
+        </div>
+      </div>
+      {executionId && <AnswerLink executionId={executionId} className="mt-3 w-full" />}
     </section>
   );
 }

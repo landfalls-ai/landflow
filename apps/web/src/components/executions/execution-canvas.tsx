@@ -25,7 +25,7 @@ import { EdgeLine } from '../canvas/edge-line';
 import { edgePath, useLane } from '../canvas/edge-path';
 import { activityOfRuns, type TeamActivity, type TeamProgress } from '@/lib/shared/team-progress';
 import { useNodeFace, useShownParameters } from '../agents/faces';
-import { useTeamTile } from '../editor/team-live';
+import { teamQuestionOf, useTeamTile } from '../editor/team-live';
 import { TeamStrip } from '../editor/team-strip';
 import { handleId, NodeTile, ranFor } from '../canvas/node-tile';
 import { StickyNoteView } from '../canvas/sticky-note';
@@ -181,6 +181,10 @@ interface CanvasState {
   captions: Record<string, string>;
   /** A running team node's report: who works now and on what. */
   teams: Record<string, TeamProgress>;
+  /** The run shown: a team's ribbon opens its turns in the Run Trace, its question's Answer goes to the run's form. */
+  executionId?: string;
+  /** What a waiting run waits for (a team node's question turns it amber). */
+  wait?: WaitInfo;
   /** What each finished team node did (its output's `activity`). */
   activities: Record<string, TeamActivity>;
   running: boolean;
@@ -205,7 +209,10 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
   // A team node becomes the member at work while it runs, and shows what it did after (team-live.tsx).
   const teamId = wf.type === 'core.runTeam' && typeof wf.parameters.teamId === 'string' && wf.parameters.teamId ? wf.parameters.teamId : undefined;
   const live = teamId && ctx.running ? ctx.teams[id] : undefined;
-  const team = useTeamTile(teamId, live, teamId && !live ? ctx.activities[id] : undefined);
+  const team = useTeamTile(teamId, live, teamId && !live ? ctx.activities[id] : undefined, {
+    ...(ctx.executionId && { executionId: ctx.executionId }),
+    ...(teamId && !ctx.running && teamQuestionOf(ctx.wait, id) && { waiting: teamQuestionOf(ctx.wait, id) }),
+  });
   return (
     <div className={cn('relative cursor-pointer transition-[opacity,filter] duration-300', dimmed && 'opacity-40 grayscale')} title={dimmed ? 'Did not run in this execution' : undefined}>
       <NodeTile
@@ -308,6 +315,8 @@ export interface ExecutionCanvasProps {
   captions?: Record<string, string>;
   /** Running team nodes' reports, by node id: the strip above the node lights up the member working. */
   teams?: Record<string, TeamProgress>;
+  /** The execution shown (a team's ribbon opens its turns in its Run Trace). */
+  executionId?: string;
   selectedNodeId?: string;
   onNodeClick?: (nodeId: string) => void;
   className?: string;
@@ -333,7 +342,7 @@ function RefitOnGrow({ moved }: { moved: RefObject<boolean> }) {
   return null;
 }
 
-function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, captions = NO_CAPTIONS, teams = NO_TEAMS, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
+function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, captions = NO_CAPTIONS, teams = NO_TEAMS, executionId, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
   // Groups expanded or collapsed in this view (by id); the rest show as saved. Reset for another workflow.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   useEffect(() => setOverrides({}), [workflow.id]);
@@ -390,6 +399,8 @@ function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId
       active: new Set(activeNodeIds),
       captions,
       teams,
+      executionId,
+      wait,
       activities: Object.fromEntries(workflow.nodes.flatMap((n) => (n.type === 'core.runTeam' && activityOfRuns(runData[n.id]) ? [[n.id, activityOfRuns(runData[n.id])!]] : []))),
       running,
       dimIdle: !running && Object.keys(runData).length > 0,
@@ -397,7 +408,7 @@ function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId
       groupRuns: Object.fromEntries(groups.map((g) => [g.id, summarizeGroupRun(descendantNodeIds(groups, g.id), statuses)])),
       toggleGroup,
     };
-  }, [flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, captions, teams, selectedNodeId, toggleGroup]);
+  }, [flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, captions, teams, executionId, selectedNodeId, toggleGroup]);
 
   return (
     <CanvasContext.Provider value={state}>

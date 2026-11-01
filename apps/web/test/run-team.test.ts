@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { AgentTeamConfig, TeamMember } from '@/lib/shared/agent-teams';
+import type { TeamActivity } from '@/lib/shared/team-progress';
 import { startFakeModels, type FakeReply } from './fake-ai-services';
 import { startFakeA2a } from './fake-a2a';
 
@@ -272,9 +273,14 @@ describe('Run a Team', () => {
     expect(done.reply).toBe('Plan: You said: blue');
     expect(a2a.calls.filter((c) => c.method !== 'GetTask').at(-1)?.params.message?.taskId).toBeTruthy();
     expect(done.members).toContainEqual(expect.objectContaining({ title: 'Planner', asked: 1 }));
-    const activity = done.activity as { turns: Array<{ member: string }> };
+    const activity = done.activity as TeamActivity;
     // Before the wait and after: the lead picks the work up again, the Planner takes the answer, the lead finishes.
     expect(activity.turns.map((x) => x.member)).toEqual(['Tech Lead', 'Planner', 'Tech Lead', 'Planner', 'Tech Lead']);
+    // The question stays a moment of the run (the Story's headlines), with the question in full.
+    expect(activity.moments).toContainEqual(expect.objectContaining({ member: 'Planner', tone: 'warn', text: 'Planner asks a person', question: 'Planner asks:\n- Which colour?' }));
+    // Each member's tokens, across the wait.
+    expect(activity.usage?.map((u) => u.member)).toEqual(['Tech Lead', 'Planner']);
+    expect(activity.usage?.every((u) => u.tokens > 0)).toBe(true);
   });
 
   it('takes the answer down to a member’s own report that asked', async () => {
@@ -479,6 +485,15 @@ describe('Run a Team', () => {
     const usage = done!.usage as { inputTokens: number; outputTokens: number };
     expect(usage.inputTokens + usage.outputTokens).toBe(80);
     expect(events.filter((e) => e.type === 'check' && e.check.name === 'Budget').map((e) => e.type === 'check' && e.check.status)).toEqual(['fail']);
+    // The node's activity keeps the bar and the moment it was used up.
+    const activity = done!.activity as TeamActivity;
+    expect(activity.usage).toContainEqual({ member: 'Developer', tokens: 20, budget: 20 });
+    expect(activity.moments).toContainEqual(expect.objectContaining({ member: 'Developer', tone: 'bad', text: 'Developer used up its budget' }));
+    // The team page reads the same from its last run.
+    const { GET } = await import('@/app/api/agent-teams/[id]/last-run/route');
+    const last = (await (await GET(new Request(`http://localhost/api/agent-teams/${t.id}/last-run`), { params: Promise.resolve({ id: t.id }) })).json()) as { run?: { executionId: string; nodeName: string; members: unknown[] } };
+    expect(last.run).toMatchObject({ nodeName: 'Team' });
+    expect(last.run?.members).toContainEqual(expect.objectContaining({ title: 'Developer', tokens: 20, budgetTokens: 20, overBudget: true }));
   });
 
   it('estimates the usage of a remote member that reports none, and stops it at its budget', async () => {

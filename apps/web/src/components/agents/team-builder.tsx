@@ -23,6 +23,9 @@ import { A2A_AGENT, A2aTile } from './a2a-agent-dialog';
 import { AgentAvatar } from './avatar';
 import { Dialog, Field } from './dialog';
 import { useAgentList, useNodeTypes } from './use-agent-data';
+import { BudgetBar } from '../editor/team-live';
+import type { TeamMoment } from '@/lib/shared/team-progress';
+import { faceOf } from './faces';
 import { newId } from './util';
 
 /** The A2A Agent node's parameters that describe the remote agent (as in the agent builder's A2A dialog). */
@@ -273,6 +276,8 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
               </div>
             )}
           </section>
+
+          <LastRun teamId={teamId} faces={draft.members.map((m) => ({ title: m.title, agent: memberAgent(m, agents ?? []) }))} />
 
           {issues.length > 0 && (
             <div role="status" className="rounded-[12px] border border-warnbd bg-warndim px-3.5 py-3 text-[12px] text-warn">
@@ -558,5 +563,66 @@ function MemberDialog({
         </div>
       </div>
     </Dialog>
+  );
+}
+
+interface LastTeamRun {
+  executionId: string;
+  workflowName: string;
+  status: string;
+  startedAt: string;
+  nodeName: string;
+  durationMs?: number;
+  members: Array<{ title: string; tokens: number; budgetTokens?: number; estimated?: boolean; overBudget?: boolean; costUsd?: number }>;
+  moments?: TeamMoment[];
+}
+
+/** The team's latest run in a flow: when, and what each member used against its budget, with a way into its Run Trace. */
+function LastRun({ teamId, faces }: { teamId: string; faces: Array<{ title: string; agent?: AgentSummary }> }) {
+  const [run, setRun] = useState<LastTeamRun | null>();
+  useEffect(() => {
+    api<{ run?: LastTeamRun }>(`/api/agent-teams/${teamId}/last-run`)
+      .then((r) => setRun(r.run ?? null))
+      .catch(() => setRun(null));
+  }, [teamId]);
+  if (!run || !run.members.length) return null;
+  const when = new Date(run.startedAt);
+  return (
+    <section aria-label="Last run" className="rounded-2xl border border-hair bg-sf p-3.5" data-testid="team-last-run">
+      <div className="mb-2.5 flex items-baseline justify-between gap-2">
+        <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">Last run</h2>
+        <Link href={`/runs/${run.executionId}?tab=team`} className="truncate text-[12px] font-semibold text-t1 hover:underline">
+          {run.workflowName} · {when.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} →
+        </Link>
+      </div>
+      <ul className="flex flex-col gap-2">
+        {run.members.map((m) => {
+          const face = faces.find((f) => f.title === m.title);
+          return (
+            <li key={m.title} className="flex min-w-0 items-center gap-2.5">
+              {face?.agent ? <AgentAvatar agent={faceOf(face.agent)} size={24} /> : <span className="grid size-6 place-items-center rounded-lg bg-acdim text-[11px] font-semibold text-t2">{m.title.charAt(0)}</span>}
+              <span className="w-28 shrink-0 truncate text-[13px] text-t1">{m.title}</span>
+              {m.budgetTokens ? (
+                <BudgetBar usage={{ member: m.title, tokens: m.tokens, budget: m.budgetTokens, ...(m.estimated && { estimated: true }) }} color={face?.agent ? faceOf(face.agent).color : undefined} className="min-w-0 flex-1" />
+              ) : (
+                <span className="font-mono text-[11px] tabular-nums text-t3">
+                  {m.estimated ? '~' : ''}
+                  {tokens(m.tokens)} tokens · no budget
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {run.moments && run.moments.length > 0 && (
+        <div className="mt-2.5 flex flex-wrap gap-1 border-t border-hair pt-2.5">
+          {run.moments.map((m, i) => (
+            <span key={`${m.at}:${i}`} className={cn('rounded-full px-2 py-px text-[11px] font-medium', m.tone === 'ok' ? 'bg-gn/12 text-gn' : m.tone === 'bad' ? 'bg-rd/10 text-rd' : m.tone === 'warn' ? 'bg-warndim text-warn' : 'bg-acdim text-t2')}>
+              {m.text}
+            </span>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

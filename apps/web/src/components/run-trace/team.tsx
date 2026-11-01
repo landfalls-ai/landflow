@@ -9,6 +9,7 @@ import { resolveRunProfile } from '@/lib/shared/run-profiles';
 import { cut, edgeParts, fmtMs, preview, spendLine, type RunActorStats, type RunEdge, type RunModel, type RunRound, type RunTurn, type RunTurnItem } from '@/lib/shared/run-trace-model';
 import { Badge } from '../ui/badge';
 import { EmptyState } from '../ui/empty-state';
+import { BudgetBar } from '../editor/team-live';
 import { ConnectionChips } from './connections';
 import { Avatar, Card, SectionTitle, Tap, ToneBadge, actorColor } from './parts';
 import type { Open } from './sheet';
@@ -317,6 +318,7 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
               <b className="block truncate text-[13px] font-semibold text-t1">{m.title}</b>
               <span className="block truncate text-[11.5px] text-t3">{live ? 'working now' : (m.role ?? (m.kind === 'a2a' ? 'remote agent' : 'agent'))}</span>
               <ConnectionChips connections={connections} max={6} className="mt-1" />
+              {m.budgetTokens ? <BudgetBar usage={{ member: m.title, tokens: stats ? stats.tokensIn + stats.tokensOut : 0, budget: m.budgetTokens }} className="mt-1.5" /> : null}
             </span>
             <span className="flex shrink-0 flex-wrap justify-end gap-1">
               {reviews.length > 0 && <Badge tone="neutral">reviews {reviews.join(', ')}</Badge>}

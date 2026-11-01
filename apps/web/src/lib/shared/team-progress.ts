@@ -3,7 +3,8 @@
  * team works now and on what, folded from the lead's timeline as it streams. The canvases turn the node into the member
  * at work (its face, title and what it does in plain words, with its last steps), mark each turn on a ribbon and show the
  * moments that matter beside it (a failing test, a review's verdict), so a run can be watched without opening it. What
- * the run did stays on the node's output as its `activity`.
+ * the run did stays on the node's output as its `activity`. Each member's tokens so far go with it, against its budget, and
+ * a member's question for a person turns the node amber with the question and an Answer button.
  */
 import type { AgentStreamEvent, RemoteToolStep } from './agents';
 
@@ -35,12 +36,26 @@ export interface TeamTurn {
   end?: number;
 }
 
-/** A result worth a glance (tests pass, a review asks for changes), when it happened and whose it was. */
+/**
+ * A result worth a glance (tests pass, a review asks for changes), when it happened and whose it was. `warn`: a member
+ * near its budget, or asking a person (with the `question`).
+ */
 export interface TeamMoment {
   at: number;
   member: string;
-  tone: 'ok' | 'bad' | 'info';
+  tone: 'ok' | 'bad' | 'warn' | 'info';
   text: string;
+  /** A member's question for a person, in full: the run waits for the answer. */
+  question?: string;
+}
+
+/** What a member used so far, in tokens, against its budget when it has one. */
+export interface TeamUsage {
+  member: string;
+  tokens: number;
+  budget?: number;
+  /** A remote member that reports no usage: estimated from what it read and wrote. */
+  estimated?: boolean;
 }
 
 /** What a team run did, kept on the node's output (`activity`): its turns, its moments and each member's step count. */
@@ -49,6 +64,8 @@ export interface TeamActivity {
   turns: TeamTurn[];
   moments: TeamMoment[];
   steps: Record<string, number>;
+  /** Each member's tokens, against its budget (members that used none and have no budget left out). */
+  usage?: TeamUsage[];
 }
 
 /** The `data` of a team node's progress report. */
@@ -71,6 +88,10 @@ export interface TeamProgress {
   turns: TeamTurn[];
   /** The latest moments, oldest first. */
   moments: TeamMoment[];
+  /** Each member's tokens so far, against its budget. */
+  usage?: TeamUsage[];
+  /** A member asked a person: the run waits for the answer. */
+  waiting?: { member: string; question: string };
   /** Milliseconds since the team started, when this was reported. */
   at: number;
 }
@@ -239,13 +260,22 @@ const msBetween = (start?: string, end?: string) => {
   return Number.isFinite(ms) && ms >= 0 ? ms : undefined;
 };
 
+export interface TeamFolderOptions {
+  /** Each member's token budget for the run, by title. */
+  budgets?: Record<string, number>;
+  /** What members used before (a run going on after a person answered), so the bars and their moments carry on. */
+  usage?: TeamUsage[];
+}
+
 /**
  * Folds the lead's stream into who works on what. `titles` are the members in chart order, the lead first. One per team
  * run: `fold(event)` returns the report to send, or undefined when the event changes nothing worth showing;
  * `fold(event, title)` folds the stream of a member that manages others (its own loop: whom it asks, its own tools);
- * `fold.activity()` is what the run did, for the node's output.
+ * `fold.usage(title, tokens)` takes a member's tokens so far (a moment at 80% and at 100% of its budget);
+ * `fold.waiting(member, question)` marks the question the run now waits on; `fold.activity()` is what the run did, for
+ * the node's output.
  */
-export function teamProgressFolder(titles: string[], now: () => number = Date.now) {
+export function teamProgressFolder(titles: string[], now: () => number = Date.now, options: TeamFolderOptions = {}) {
   const lead = titles[0] ?? 'Lead';
   const startedAt = now();
   const elapsed = () => now() - startedAt;
@@ -261,6 +291,30 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
   let current = lead;
   let command: string | undefined;
   let plain: string | undefined;
+  let waiting: { member: string; question: string } | undefined;
+  const budgets = new Map(Object.entries(options.budgets ?? {}).filter(([, b]) => b > 0).map(([title, b]) => [norm(title), b]));
+  const tokens = new Map<string, { tokens: number; estimated?: boolean }>((options.usage ?? []).map((u) => [norm(u.member), { tokens: u.tokens, ...(u.estimated && { estimated: true }) }]));
+  /** The budget moment each member had: one at 80%, one at 100%. */
+  const flagged = new Map<string, 'warn' | 'bad'>();
+  const levelOf = (key: string): 'warn' | 'bad' | undefined => {
+    const budget = budgets.get(key);
+    const used = tokens.get(key)?.tokens ?? 0;
+    return !budget ? undefined : used >= budget ? 'bad' : used >= budget * 0.8 ? 'warn' : undefined;
+  };
+  for (const key of tokens.keys()) {
+    const level = levelOf(key);
+    if (level) flagged.set(key, level);
+  }
+  const usageList = (): TeamUsage[] | undefined => {
+    const list = [...members.values()].flatMap((m) => {
+      const key = norm(m.title);
+      const used = tokens.get(key);
+      const budget = budgets.get(key);
+      if (!used?.tokens && !budget) return [];
+      return [{ member: m.title, tokens: used?.tokens ?? 0, ...(budget && { budget }), ...(used?.estimated && { estimated: true }) }];
+    });
+    return list.length ? list : undefined;
+  };
   /** Who asked whom, for the members a manager below the lead asked: its manager's stream doesn't take the work back. */
   const askedBy = new Map<string, string>();
   const works = (title: string) => {
@@ -299,6 +353,7 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
   };
   const report = (): TeamProgress => {
     const nowMember = members.get(norm(current));
+    const usage = usageList();
     return {
       member: current,
       agent: current,
@@ -311,6 +366,8 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
       team: { lead, members: [...members.values()].map((m) => ({ ...m })) },
       turns: turns.map((t) => ({ ...t })),
       moments: moments.slice(-MOMENTS).map((m) => ({ ...m })),
+      ...(usage && { usage }),
+      ...(waiting && { waiting: { ...waiting } }),
       at: elapsed(),
     };
   };
@@ -410,13 +467,43 @@ export function teamProgressFolder(titles: string[], now: () => number = Date.no
     }
     return report();
   };
-  /** What the run did: every turn (closed), the moments and each member's step count. */
-  fold.activity = (): TeamActivity => ({
-    durationMs: elapsed(),
-    turns: turns.map((t) => ({ ...t, end: t.end ?? elapsed() })),
-    moments: moments.slice(-50).map((m) => ({ ...m })),
-    steps: Object.fromEntries([...members.values()].flatMap((m) => (totals.get(norm(m.title))?.size ? [[m.title, totals.get(norm(m.title))!.size]] : []))),
-  });
+  /** A member's tokens so far: the report when they changed, with a moment the first time it reaches 80% and 100% of its budget. */
+  fold.usage = (title: string, used: number, estimated = false): TeamProgress | undefined => {
+    const key = norm(title);
+    const before = tokens.get(key);
+    if (before && before.tokens === used && Boolean(before.estimated) === estimated) return undefined;
+    tokens.set(key, { tokens: used, ...(estimated && { estimated: true }) });
+    const level = levelOf(key);
+    const had = flagged.get(key);
+    if (level && had !== level && had !== 'bad') {
+      flagged.set(key, level);
+      const name = members.get(key)?.title ?? title;
+      const about = estimated ? 'about ' : '';
+      moment({ member: name, tone: level, text: level === 'bad' ? `${name} used up its budget` : `${name} used ${about}80% of its budget` });
+    }
+    return report();
+  };
+  /** The run waits for a person's answer to a member's question: a moment with the question, and the node turns to the asker. */
+  fold.waiting = (member: string, question: string): TeamProgress => {
+    const name = members.get(norm(member))?.title ?? member;
+    waiting = { member: name, question };
+    current = name;
+    command = undefined;
+    plain = 'Waiting for a person’s answer';
+    moment({ member: name, tone: 'warn', text: `${name} asks a person`, question });
+    return report();
+  };
+  /** What the run did: every turn (closed), the moments, each member's step count and tokens. */
+  fold.activity = (): TeamActivity => {
+    const usage = usageList();
+    return {
+      durationMs: elapsed(),
+      turns: turns.map((t) => ({ ...t, end: t.end ?? elapsed() })),
+      moments: moments.slice(-50).map((m) => ({ ...m })),
+      steps: Object.fromEntries([...members.values()].flatMap((m) => (totals.get(norm(m.title))?.size ? [[m.title, totals.get(norm(m.title))!.size]] : []))),
+      ...(usage && { usage }),
+    };
+  };
   return fold;
 }
 
@@ -426,11 +513,15 @@ export function joinActivity(before: TeamActivity | undefined, after: TeamActivi
   const shift = before.durationMs;
   const steps = { ...before.steps };
   for (const [member, count] of Object.entries(after.steps)) steps[member] = (steps[member] ?? 0) + count;
+  // The second part's usage carries on from the first's (TeamFolderOptions.usage); a member only the first part names keeps its own.
+  const usage = new Map((before.usage ?? []).map((u) => [u.member, u]));
+  for (const u of after.usage ?? []) usage.set(u.member, u);
   return {
     durationMs: shift + after.durationMs,
     turns: [...before.turns, ...after.turns.map((t) => ({ ...t, start: t.start + shift, ...(t.end !== undefined && { end: t.end + shift }) }))],
     moments: [...before.moments, ...after.moments.map((m) => ({ ...m, at: m.at + shift }))].slice(-50),
     steps,
+    ...(usage.size > 0 && { usage: [...usage.values()] }),
   };
 }
 

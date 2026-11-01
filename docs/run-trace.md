@@ -85,13 +85,15 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
   agent's answer) and as checked (the Run report's verdict in the profile's words, with how many checks failed). A live
   run with no new event for 5 minutes says **Quiet for n min**.
 - **Needs you**: the approvals a run waits for (Approve and Reject in place), a Run report's gate (**Accept as is** or
-  **Send back for a fix**), other waits (**Open to answer**), and failed checks nobody has decided on.
+  **Send back for a fix**), a form wait such as a team member's question (**Answer** opens the run's form page,
+  `/form/waiting/<executionId>`), other waits (**Open to answer**), and failed checks nobody has decided on.
 - **Story** (the default): the run as a conversation. It shows messages, requests between agents (with **Why** they
   were asked) and their result (Delivered, Answered, Left undelivered, Working, Waiting), waits for people, round
   dividers when the flow loops, and artifacts as cards. Failed steps and
   failed checks appear inline. Tool and model calls fold into "n steps" rows that open; each tool call there says what
   it did, in the agent's own words when it gave a `description` (Claude Code does with every command), else in plain
-  words ("Cloning the repository", "Reading get-alerts.ts"), with the tool's name beside it.
+  words ("Cloning the repository", "Reading get-alerts.ts"), with the tool's name beside it. A team run opens with its
+  [headlines](#headlines).
 - **Trace**: the span tree with timing bars, down to a remote agent's single tool calls. A request shows why it was
   asked.
 - **Team**: who called whom, with ×n counts (laid out top to bottom, no sideways scrolling), plus a card per actor with
@@ -115,6 +117,18 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
 
 **Executions** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
 running execution showing who is working on what.
+
+`/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`, `report`) and, once
+the run loads, that member's sheet. A team node's ribbon links each turn this way.
+
+### Headlines
+
+A Run a Team node keeps the moments of its run on its output (`activity.moments`: tests pass or fail, a typecheck or
+build, a pull request opened, a review's verdict, a member near or past its budget, a question for a person). The Story
+opens with them as a row of chips, oldest first: the member's face, a coloured dot (green, red, amber), the words and the
+time. A tap scrolls the story to where it happened (the member's own entry just before it, else whatever the story says
+then) and flashes it. Hand-offs ("Asked the Reviewer") stay out. The placing is in
+[`lib/shared/run-headlines.ts`](../apps/web/src/lib/shared/run-headlines.ts).
 
 On a phone (below 768 px) the app's left rail is a drawer behind a slim top bar with a menu button, so these pages get
 the whole width.

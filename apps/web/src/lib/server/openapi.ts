@@ -729,6 +729,13 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Publish the draft as the next version',
     responses: { 200: teamReply('The team, published'), 400: errorRef('The draft has issues (`issues` lists them)'), 404: notFound },
   });
+  add('get', '/api/agent-teams/{id}/last-run', {
+    tag: 'Agent teams',
+    id: 'getAgentTeamLastRun',
+    summary: 'The team’s latest run in a flow, with each member’s tokens against its budget',
+    description: 'The newest execution whose Run a Team node ran this team: `run` has `executionId`, `workflowName`, `status`, `startedAt`, `nodeName`, `members` (`title`, `tokens`, `budgetTokens`, `estimated`, `overBudget`, `costUsd`), and the run’s `durationMs` and last few `moments`. Empty when the team has not run.',
+    responses: { 200: reply('The latest run, or nothing'), 404: notFound },
+  });
   add('post', '/api/agent-teams/{id}/unpublish', { tag: 'Agent teams', id: 'unpublishAgentTeam', summary: 'Stop flows from running the team', responses: { 200: teamReply('The team, unpublished'), 404: notFound } });
   add('delete', '/api/executions/{id}', {
     tag: 'Executions',

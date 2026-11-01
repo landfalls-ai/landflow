@@ -9,7 +9,7 @@ import { useNodeFace, useShownParameters } from '../agents/faces';
 import { isCompact, NodeTile, ranFor } from '../canvas/node-tile';
 import { useAssistant } from './assistant';
 import { activityOfRuns } from '@/lib/shared/team-progress';
-import { useTeamTile } from './team-live';
+import { teamQuestionOf, useTeamTile } from './team-live';
 import { liveTeam, TeamStrip } from './team-strip';
 import { canTurnNodeIntoTeam, turnIntoTeam } from './turn-into-team';
 import { useEditor, type FlowNode } from './store';
@@ -73,7 +73,11 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   // A team node becomes the member at work while it runs, and keeps a summary of what it did after (team-live.tsx).
   const teamId = wf.type === 'core.runTeam' && typeof wf.parameters.teamId === 'string' && wf.parameters.teamId ? wf.parameters.teamId : undefined;
   const live = teamId ? liveTeam(progress?.data) : undefined;
-  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined);
+  // From the editor the Run Trace opens in a new tab, so the flow stays open.
+  const executionId = useEditor((s) => (teamId ? s.executionId : undefined));
+  const wait = useEditor((s) => (teamId && !s.running && s.wait?.nodeId === id ? s.wait : undefined));
+  const asked = teamQuestionOf(wait, id);
+  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), newTab: true });
   const compact = isCompact(info?.descriptor, wf.parameters, asTool);
   const runNode = (scope: 'from' | 'only') => useEditor.getState().run?.({ kind: 'node', nodeId: id, scope });
 

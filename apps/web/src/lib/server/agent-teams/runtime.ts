@@ -8,7 +8,7 @@
  * chart on the node's span, so the Run Trace can draw it from the record.
  */
 import { toToolName, REASON_DESCRIPTION, type AgentMemory, type AgentTool, type LanguageModel } from '@landflow/engine';
-import type { AgentSession, AgentStreamEvent, RunEndReason, SessionExecution, TokenUsage } from '../../shared/agents';
+import type { AgentSession, AgentStreamEvent, RemoteRun, RunEndReason, SessionExecution, TokenUsage } from '../../shared/agents';
 import { reportsOf, rootOf, type AgentMember, type AgentTeamConfig, type RemoteMember, type TeamMember } from '../../shared/agent-teams';
 import { verdictOf } from '../../shared/team-progress';
 import { agentConnections, remoteConnections } from '../agents/connections';
@@ -85,6 +85,11 @@ export interface TeamRunRequest {
   onMemberEvent?: (title: string, event: AgentStreamEvent) => void;
   /** Whether the run can wait for a person (a flow's): a member's question for a person pauses it instead of ending it. */
   canWait?: boolean;
+  /**
+   * A member's tokens so far, by title, whenever they change: after each model call of an agent member (and the lead), as
+   * a remote member's mod reports them mid-task, and once it answers (`estimated` when it reports none).
+   */
+  onUsage?: (title: string, tokens: number, estimated: boolean) => void;
   /** Going on after a wait: the state saved then (TeamRunResult.waiting) and the person's answer to the question. */
   resume?: { state: TeamState; answer: string };
 }
@@ -282,6 +287,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     if (!guess) delete state.estimated[member.id];
     const now = total(mine);
     state.tokens[member.id] = now;
+    request.onUsage?.(member.title, now, guess);
     const budget = member.budgetTokens;
     if (!budget) return;
     const about = guess ? 'about ' : '';
@@ -289,7 +295,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     if (now >= budget && !state.overBudget.includes(member.id)) {
       state.overBudget.push(member.id);
       check('Budget', 'fail', `${member.title} used ${about}${now.toLocaleString()} of its ${budget.toLocaleString()} tokens and was stopped${why}`, member.title);
-    } else if (now >= budget * 0.8 && !state.warned.includes(member.id)) {
+    } else if (now >= budget * 0.8 && !state.warned.includes(member.id) && !state.overBudget.includes(member.id)) {
       state.warned.push(member.id);
       check('Budget', 'warn', `${member.title} used ${about}${now.toLocaleString()} of its ${budget.toLocaleString()} tokens (80%)${why}`, member.title);
     }
@@ -574,6 +580,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         signal: ctx.signal,
         team: role,
         ...(request.onMemberEvent && { onEvent: (event: AgentStreamEvent) => request.onMemberEvent!(report.title, event) }),
+        onUsage: (usage) => spend(report, usage, true),
       });
       state.sessions[report.id] = result.session;
       spend(report, result.session.usage, true);
@@ -646,9 +653,19 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
             description: describe(report),
             inputSchema: inputSchema(report),
           };
+    /** What it used before this request, and so far in it as its mod reports (no spend: the answer brings the total). */
+    const liveUsage = (remote: RemoteRun) => {
+      const now = remote.usage ?? (remote.trace && { inputTokens: remote.trace.usage.inputTokens, outputTokens: remote.trace.usage.outputTokens });
+      if (now && total(now) > 0) request.onUsage?.(report.title, (state.used[report.id] ? total(state.used[report.id]) : 0) + total(now), false);
+    };
     const renamed = (ctx: ToolContext): ToolContext => ({
       ...ctx,
-      progress: ctx.progress && ((remote) => ctx.progress!({ ...remote, agent: report.title })),
+      progress:
+        ctx.progress &&
+        ((remote) => {
+          liveUsage(remote);
+          ctx.progress!({ ...remote, agent: report.title });
+        }),
     });
     /** The member's answer as the team names it (by title), its usage counted (or estimated). */
     const account = (outcome: ToolOutcome, message: string): ToolOutcome => {
@@ -708,6 +725,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     signal: request.signal,
     ...(request.flow && { flow: request.flow }),
     ...(request.onEvent && { onEvent: request.onEvent }),
+    onUsage: (usage) => spend(root, usage, true),
     team: role,
   });
   session = result.session;

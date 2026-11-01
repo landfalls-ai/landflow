@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { AgentStreamEvent, TimelineEntry } from '@/lib/shared/agents';
-import { activityOfRuns, narrate, teamProgressFolder } from '@/lib/shared/team-progress';
+import { activityOfRuns, joinActivity, narrate, teamProgressFolder } from '@/lib/shared/team-progress';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
 
 const at = '2026-10-31T21:00:00.000Z';
@@ -138,6 +138,49 @@ describe('team progress', () => {
     expect(done).toMatchObject({ member: 'Tech Lead', plain: "Reading the Developer's answer" });
     expect(fold.activity().turns.map((t) => t.member)).toEqual(['Tech Lead', 'Developer', 'Tester', 'Developer', 'Tech Lead']);
     expect(fold.activity().steps).toMatchObject({ Developer: 1, Tester: 1 });
+  });
+
+  it('keeps each member’s tokens against its budget, with a moment at 80% and once used up', () => {
+    const fold = teamProgressFolder(['Lead', 'Developer', 'Reviewer'], Date.now, { budgets: { Developer: 10_000, Nobody: 5 } });
+    fold({ type: 'run.started', sessionId: 's1' });
+    // The lead has no budget: its tokens show, without a bar.
+    expect(fold.usage('Lead', 1_200)!.usage).toEqual([{ member: 'Lead', tokens: 1_200 }, { member: 'Developer', tokens: 0, budget: 10_000 }]);
+    // The same again changes nothing.
+    expect(fold.usage('Lead', 1_200)).toBeUndefined();
+    expect(fold.usage('Developer', 5_000)!.moments.filter((m) => m.tone !== 'info')).toEqual([]);
+    const near = fold.usage('Developer', 8_100)!;
+    expect(near.moments.at(-1)).toMatchObject({ member: 'Developer', tone: 'warn', text: 'Developer used 80% of its budget' });
+    expect(near.usage?.find((u) => u.member === 'Developer')).toEqual({ member: 'Developer', tokens: 8_100, budget: 10_000 });
+    // Once per level: more tokens under the budget make no second moment.
+    expect(fold.usage('Developer', 9_000)!.moments.filter((m) => m.tone === 'warn')).toHaveLength(1);
+    expect(fold.usage('Developer', 10_400)!.moments.at(-1)).toMatchObject({ tone: 'bad', text: 'Developer used up its budget' });
+    // A remote member that reports nothing is estimated.
+    expect(fold.usage('Reviewer', 300, true)!.usage?.find((u) => u.member === 'Reviewer')).toEqual({ member: 'Reviewer', tokens: 300, estimated: true });
+    expect(fold.activity().usage).toEqual([
+      { member: 'Lead', tokens: 1_200 },
+      { member: 'Developer', tokens: 10_400, budget: 10_000 },
+      { member: 'Reviewer', tokens: 300, estimated: true },
+    ]);
+  });
+
+  it('marks the question the run waits on, and carries the usage on after the answer', () => {
+    let clock = 0;
+    const fold = teamProgressFolder(['Lead', 'Developer'], () => clock, { budgets: { Developer: 1_000 } });
+    fold({ type: 'run.started', sessionId: 's1' });
+    fold.usage('Developer', 850);
+    clock = 4_000;
+    const waiting = fold.waiting('developer', 'Developer asks:\n- Which branch should I use?');
+    expect(waiting).toMatchObject({ member: 'Developer', plain: 'Waiting for a person’s answer', waiting: { member: 'Developer', question: 'Developer asks:\n- Which branch should I use?' } });
+    expect(waiting.moments.at(-1)).toMatchObject({ member: 'Developer', tone: 'warn', text: 'Developer asks a person', question: 'Developer asks:\n- Which branch should I use?', at: 4_000 });
+    const before = fold.activity();
+    // The run goes on after the answer: a new fold that starts from what was used, so 80% isn't told twice.
+    const after = teamProgressFolder(['Lead', 'Developer'], () => clock, { budgets: { Developer: 1_000 }, usage: before.usage });
+    after({ type: 'run.started', sessionId: 's1' });
+    expect(after.usage('Developer', 900)!.moments.filter((m) => m.tone === 'warn')).toEqual([]);
+    expect(after.usage('Developer', 1_000)!.moments.at(-1)).toMatchObject({ tone: 'bad' });
+    const joined = joinActivity(before, after.activity());
+    expect(joined.usage).toEqual([{ member: 'Developer', tokens: 1_000, budget: 1_000 }]);
+    expect(joined.moments.map((m) => m.text)).toContain('Developer asks a person');
   });
 
   it('ignores what says nothing about who works', () => {

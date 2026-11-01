@@ -219,6 +219,16 @@ function NeedsYou({
                     Reject
                   </Button>
                 </>
+              ) : n.attrs.wait === 'form' ? (
+                // A form wait (a team member's question among them) is answered on the run's form page.
+                <a
+                  href={`/form/waiting/${executionId}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="inline-flex h-8 items-center rounded-full bg-ac2 px-[15px] text-[13px] font-semibold text-on-ac hover:bg-ac2-hover"
+                >
+                  Answer
+                </a>
               ) : (
                 executionHref && (
                   <Link
@@ -293,7 +303,22 @@ function TraceBody({
   const [settled, setSettled] = useState<Set<string>>(new Set());
   const [playing, setPlaying] = useState(false);
 
-  useEffect(() => setTabState(readTab()), []);
+  // A link from a team node's ribbon (?tab=team&member=Developer) opens that tab, and the member's sheet once it loads.
+  const [wanted, setWanted] = useState<string>();
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const asked = params.get('tab');
+    setTabState(asked && TABS.some(([id]) => id === asked) ? (asked as Tab) : readTab());
+    const member = params.get('member');
+    if (member) setWanted(member);
+  }, []);
+  useEffect(() => {
+    if (!wanted || full.empty) return;
+    const stats = full.actors.find((a) => a.actor.name.trim().toLowerCase() === wanted.trim().toLowerCase());
+    if (!stats) return;
+    setTarget({ kind: 'actor', id: stats.actor.id });
+    setWanted(undefined);
+  }, [wanted, full]);
   const setTab = (t: Tab) => {
     setTabState(t);
     try {

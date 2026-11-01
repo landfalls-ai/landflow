@@ -1021,8 +1021,12 @@ four steps of the approved plan:
   manager's made-up commits, test counts and pull requests send it back like file names, and members are told the
   tools they have in the run; a span keeps one check per member; the Go and Python SDKs declare `delegates`; the
   second brain's study knows Run a Team; a renamed team shows its new name on flows.
-- Next: consults (ask a peer) and hand-offs; tool approvals inside a team (the pause a question uses); live budget use
-  on the chart. Paperclip-style autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.
+- **The live view, finished** (2026-11-01): a member's tokens against its budget as a bar on the node, the Now card, the
+  Run Trace's Team chart and the team page's **Last run** card (amber at 80%, red once used up, with moments for both);
+  a question for a person turns the node amber with the question and an **Answer** button; each turn on the ribbon opens
+  that member in the Run Trace; the Story opens with the run's **Headlines**.
+- Next: consults (ask a peer) and hand-offs; tool approvals inside a team (the pause a question uses). Paperclip-style
+  autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.
 
 ## Claude Code agents report what they use (built 2026-11-01)
 
@@ -1041,8 +1045,8 @@ Claude Code agent Landflow deploys gets Landflow's own mod ([a2a.md](a2a.md#the-
   long-context tier); team members carry tokens in and out, cache reads, cost, model and time; the Team tab and the
   actor sheet show them; the Report has **What each agent used** and the run's cost; guardrail stops and masked secrets
   are checks.
-- Next: the mod's model calls as their own spans; a per-agent guard mode; traces that work across queue-mode workers;
-  live budget use from the trace while a member works.
+- Next: the mod's model calls as their own spans; a per-agent guard mode; traces that work across queue-mode workers.
+  Live budget use from the trace while a member works shows on the team node since 2026-11-01.
 
 ## Planned next
 

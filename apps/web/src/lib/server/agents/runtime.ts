@@ -46,6 +46,8 @@ export interface RunRequest {
   approvals?: 'ask' | 'deny';
   signal?: AbortSignal;
   onEvent?: (event: AgentStreamEvent) => void;
+  /** The session's usage so far, after each model call (a team's budget bars). */
+  onUsage?: (usage: TokenUsage) => void;
   /** Start a new trace (schedules, channels) instead of joining the caller's. */
   rootTrace?: boolean;
   /** What a workflow connected to the agent's node (Run an Agent): a chat model that replaces the agent's, and more tools. */
@@ -360,6 +362,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       // Each model call counts, with the model that answered: a team's report names it beside the agent's tokens.
       session.usage = { inputTokens: session.usage.inputTokens + usage.inputTokens, outputTokens: session.usage.outputTokens + usage.outputTokens, requests: (session.usage.requests ?? 0) + 1, model: model.model };
       recordAgentTokens({ agentId: agent.id, agentName: config.name }, usage);
+      request.onUsage?.(session.usage);
       // Output guardrail: only the final answer is checked; a blocked or sanitized one replaces it in the transcript too.
       let answer = turn.text;
       let changed = false;

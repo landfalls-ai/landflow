@@ -143,7 +143,11 @@ export const runTeamNode = defineNode({
         send?.({ type: 'begin', itemIndex: i });
         // Who works on what, for the canvases (lib/shared/team-progress.ts): the lead's stream, folded. What the run did
         // (turns, moments) goes on the output too, so a finished node shows it.
-        const fold = teamProgressFolder(chartOrder(config).map((m) => m.title));
+        // Members' tokens go with it, against their budgets; a run going on after a person answered carries on from before.
+        const fold = teamProgressFolder(chartOrder(config).map((m) => m.title), Date.now, {
+          budgets: Object.fromEntries(config.members.flatMap((m) => (m.budgetTokens ? [[m.title, m.budgetTokens]] : []))),
+          ...(resume && waited?.activity?.usage && { usage: waited.activity.usage }),
+        });
         const stream = send && streamer(send, i);
         const onEvent = (event: AgentStreamEvent) => {
           stream?.(event);
@@ -153,6 +157,10 @@ export const runTeamNode = defineNode({
         // A member that manages others asks them in its own loop: folded too, so its reports show at work.
         const onMemberEvent = (title: string, event: AgentStreamEvent) => {
           const report = fold(event, title);
+          if (report) ctx.sendProgress?.(report as unknown as JsonObject);
+        };
+        const onUsage = (title: string, tokens: number, estimated: boolean) => {
+          const report = fold.usage(title, tokens, estimated);
           if (report) ctx.sendProgress?.(report as unknown as JsonObject);
         };
         const result = await runTeam({
@@ -168,10 +176,13 @@ export const runTeamNode = defineNode({
           ...(memory && { memory }),
           onEvent,
           onMemberEvent,
+          onUsage,
           canWait: Boolean(ctx.putExecutionToWait),
           ...(resume && { resume }),
         });
         send?.({ type: 'end', itemIndex: i });
+        // The question it waits on turns the node amber, with an Answer button; its moment stays in the activity.
+        if (result.waiting && ctx.putExecutionToWait) ctx.sendProgress?.(fold.waiting(result.waiting.member, result.waiting.question) as unknown as JsonObject);
         const activity = joinActivity(resume ? waited?.activity : undefined, fold.activity());
         if (result.waiting && ctx.putExecutionToWait) {
           // A member asked a person: the run waits for the answer, then this node runs again and the team goes on.

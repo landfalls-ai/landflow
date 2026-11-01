@@ -1,10 +1,15 @@
 'use client';
-/** The Story tab: the run told like a chat. Messages, requests between agents with their result, waits for people, artifacts, failures; quiet spans folded into "n steps". */
-import { useState, type ReactNode } from 'react';
+/**
+ * The Story tab: the run told like a chat. Messages, requests between agents with their result, waits for people,
+ * artifacts, failures; quiet spans folded into "n steps". A team run's moments (tests pass, a review's verdict, a budget
+ * near its end, a question for a person) head it as a row of headlines; a tap scrolls to where it happened.
+ */
+import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronRight, Diamond, Flag, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { cut, fmtMs, preview, textOf, type RunModel, type RunRound, type RunSpan, type StoryEntry } from '@/lib/shared/run-trace-model';
-import { narrate } from '@/lib/shared/team-progress';
+import { narrate, type TeamMoment } from '@/lib/shared/team-progress';
+import { headlinesOf, type Headline } from '@/lib/shared/run-headlines';
 import { Badge } from '../ui/badge';
 import { EmptyState } from '../ui/empty-state';
 import { Avatar, NowLine, ResultChip, Tap, clock, who } from './parts';
@@ -282,12 +287,59 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
   return null;
 }
 
+const DOT: Record<TeamMoment['tone'], string> = { ok: 'bg-gn', bad: 'bg-rd', warn: 'bg-warn', info: 'bg-viz-1' };
+
+/** The run's moments in a row at the top of the story, newest last; a tap scrolls to the moment and flashes it. */
+function Headlines({ items, model }: { items: Headline[]; model: RunModel }) {
+  if (!items.length) return null;
+  const go = (h: Headline) => {
+    const el = h.entryKey ? document.getElementById(`story-${h.entryKey}`) : null;
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.remove('animate-flash');
+    void el.offsetWidth;
+    el.classList.add('animate-flash');
+  };
+  return (
+    <section aria-label="Headlines" className="mb-2" data-testid="story-headlines">
+      <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Headlines</h3>
+      <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
+        {items.slice(-12).map((h, i) => {
+          const actor = model.actors.find((a) => a.actor.name.trim().toLowerCase() === h.moment.member.trim().toLowerCase())?.actor;
+          return (
+            <button
+              key={`${h.at}:${i}`}
+              type="button"
+              onClick={() => go(h)}
+              title={h.moment.question ?? h.moment.text}
+              className={cn(
+                'flex h-8 shrink-0 items-center gap-1.5 rounded-full border bg-sf py-0.5 pl-0.5 pr-3 text-[12px] font-medium shadow-sm transition-transform animate-pop hover:-translate-y-px',
+                h.moment.tone === 'bad' ? 'border-rd/30 text-rd' : h.moment.tone === 'warn' ? 'border-warn/50 text-t1' : 'border-hair text-t1',
+              )}
+              style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+            >
+              {actor ? <Avatar actor={actor} size={26} /> : <span className="size-[26px]" />}
+              <span className={cn('size-1.5 shrink-0 rounded-full', DOT[h.moment.tone])} />
+              <span className="max-w-[220px] truncate">{h.moment.text}</span>
+              <span className="font-mono text-[10.5px] font-normal tabular-nums text-t3">{clock(new Date(h.at).toISOString())}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function Story({ model, open }: { model: RunModel; open: (o: Open) => void }) {
+  const headlines = useMemo(() => (model.empty ? [] : headlinesOf(model)), [model]);
   if (model.empty) return <EmptyState compact title="Nothing recorded yet" hint="The story appears as the run starts." />;
   return (
     <div className="flex flex-col gap-1">
+      <Headlines items={headlines} model={model} />
       {model.story.map((entry) => (
-        <Entry key={entry.key} entry={entry} model={model} open={open} />
+        <div key={entry.key} id={`story-${entry.key}`} className="scroll-mt-24 rounded-xl">
+          <Entry entry={entry} model={model} open={open} />
+        </div>
       ))}
       <p className="mt-3 flex items-center justify-center gap-2 text-center text-[12px] text-t3">
         {model.live ? (

@@ -170,12 +170,24 @@ the moments that matter. On the editor's canvas during a run and on the executio
   lead's face as a small badge ("for Tech Lead"); the line under the title says what it does in plain words, then the exact
   command in small mono, then the clock and the step ("1:06 · step 5"). When the lead takes over again, the node swaps back.
 - **A ticker** under the head shows the last three steps, each with a check, a cross or a spinner and how long it took.
-- **A ribbon** at the bottom of the node has one segment per turn in that member's colour, growing while it works.
+- **A ribbon** at the bottom of the node has one segment per turn in that member's colour, growing while it works. Tap a
+  segment to open that member in the Run Trace (`/runs/<execution>?tab=team&member=<title>`: the Team tab with the
+  member's sheet open); from the editor it opens in a new tab so the flow stays open.
+- **Budget bars.** A member with a token budget gets a bar under the ticker (the member at work, and any member past 80%)
+  that turns amber at 80% and red once used up, with "42k / 60k" beside it (`~` when estimated: a remote member that
+  reports no usage). Tokens move after each model call of the lead and of agent members (`onUsage` in
+  `agents/runtime.ts`), mid-task for a Claude Code member whose landflow-harness mod reports them, and when a member
+  answers. The report's `usage` lists each member's tokens and budget.
 - **The roster** above the node shows faces only: the member at work is ringed in its colour, done members have a check,
   one that failed is ringed red and members not asked yet fade.
 - **Moments** appear above the roster for 25 seconds: "Asked the Reviewer", "Tests failed · exit 1", "14 tests pass",
   "Typecheck passed", "Pull request #4 opened", "Branch pushed", "Reviewer: approve" or "Reviewer asks for changes" (from a
-  `VERDICT:` line in the answer), "Developer failed".
+  `VERDICT:` line in the answer), "Developer failed", "Developer used 80% of its budget" (amber), "Developer used up its
+  budget", "Planner asks a person" (amber, with the question).
+- **A question for a person** turns the node amber: the asker's face with an hourglass, "Planner asks a person", the
+  question, and an **Answer** button that opens the run's waiting form (`/form/waiting/<execution>`); the answer goes back
+  to the member that asked. The node reads it from the waiting execution's `wait.data.teamQuestion`, so a reload or
+  another device shows the same; on a phone the execution view pins a **Needs you** card with the question in full.
 
 Plain words come from `narrate()`: a shell command reads by what its chain ends with (`cd x && pnpm install && pnpm test`
 is "Running the tests"; also installs, typechecks, lint, builds, clones, commits, pushes, `gh pr create` and `gh pr merge`),
@@ -183,8 +195,12 @@ Read and Edit name the file, Grep names the pattern, a web fetch names the host,
 a sentence ("Check branch"). Captions of other nodes that report progress (an A2A Agent node) use the same words, with the
 exact step in their tooltip.
 
-After the run the node keeps the ribbon and a one-line summary of its output's `activity` (the results that mattered and
-each member's step count), in the editor and on the execution view. The execution view's **Agent session** panel follows
+After the run the node keeps the ribbon, a one-line summary of its output's `activity` (the results that mattered and
+each member's step count) and each budgeted member's bar (`activity.usage`), in the editor and on the execution view. A
+run that waited for a person keeps one activity across the wait: the second part's turns and moments follow the first's,
+and its usage carries on, so 80% isn't told twice. The team's page shows a **Last run** card: the flow and time (a link
+into its Run Trace), each member's tokens against its budget, and the run's last results (`GET
+/api/agent-teams/:id/last-run`). The execution view's **Agent session** panel follows
 the lead's session live, its header names the member working ("Tech Lead · Reviewer working"), and it gives way to the
 canvas on a short screen so the flow stays in view. On a phone the execution view pins a **Now card** over the canvas or
 the Run Trace: the face, a sentence ("Reviewer is running the tests"), the command, the ticker and a way into the Run Trace;
@@ -198,7 +214,11 @@ it (a developer's tester hangs under the developer). The node's span carries the
 **Team** tab draws the chart from it, as an indented tree with who reviews whom and how often each was asked, instead of
 guessing from who called whom. Each row has chips for what the member [works with](run-trace.md#what-each-agent-works-with):
 the lead's model, memory, tools and knowledge; a remote member on kagent's Claude Code, model, plugins and network
-policies, with their own logos. The node's usage names the lead's model and counts its model calls. Runs without a recorded team keep the generic who-called-whom graph.
+policies, with their own logos. A member with a budget has a bar under its chips, its tokens in the run against the
+budget (amber at 80%, red once used up). The node's usage names the lead's model and counts its model calls. Runs without
+a recorded team keep the generic who-called-whom graph. The **Story** tab opens with the team's **Headlines**: the moments
+its node kept (see [Run Trace](run-trace.md#headlines)). A team member's question waits as a form: Needs you's **Answer**
+opens the run's form page.
 
 ### Turn into a team
 

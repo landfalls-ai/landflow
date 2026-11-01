@@ -45,7 +45,7 @@ import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
 import { useTeamLeads } from '../agents/faces';
-import { TeamNowCard } from '../editor/team-live';
+import { TeamAskCard, TeamNowCard, teamQuestionOf } from '../editor/team-live';
 import { liveTeam } from '../editor/team-strip';
 import { AgentSessionPanel, type AgentNodeRef } from './agent-session-panel';
 import { ExecutionCanvas } from './execution-canvas';
@@ -737,6 +737,17 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
           </div>
         ) : null;
       })}
+      {/* A run waiting on a team member's question: the question and its Answer button, on a phone over either view. */}
+      {(() => {
+        const node = record.status === 'waiting' && record.wait?.nodeId ? canvasWorkflow?.nodes.find((n) => n.id === record.wait!.nodeId) : undefined;
+        const asked = node && teamQuestionOf(record.wait, node.id);
+        const teamId = typeof node?.parameters.teamId === 'string' ? node.parameters.teamId : undefined;
+        return node && asked && teamId ? (
+          <div className="shrink-0 px-3 pt-3 sm:hidden">
+            <TeamAskCard teamId={teamId} waiting={asked} nodeName={node.name} executionId={executionId} />
+          </div>
+        ) : null;
+      })()}
       {view === 'trace' && (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <RunTraceBody executionId={executionId} executionHref={`/workflows/${record.workflowId}/executions/${executionId}`} journal={journal} />
@@ -758,6 +769,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                 selectedNodeId={livePick && progress[livePick] ? livePick : selection?.nodeId}
                 captions={captions}
                 teams={teams}
+                executionId={executionId}
                 onNodeClick={selectNode}
               />
             ) : (
