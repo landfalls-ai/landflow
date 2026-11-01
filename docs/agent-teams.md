@@ -49,6 +49,19 @@ unless asked otherwise (the first one becomes the lead). Removing a member hands
 from reviews. Members not connected to the lead yet are listed under the chart. The page autosaves the draft after a
 pause. Each agent's card on the roster shows the teams it is in.
 
+**May consult lines.** Each consult is also drawn in the chart as a dashed curve between the two cards, in the consulting
+member's colour (its agent's face colour; the accent when it has none) at reduced opacity, with a dot at the consulted
+end. Two members who may consult each other get one line with a dot at both ends. The lines are measured from where the
+cards are, so they follow the layout: cards side by side are joined from their facing sides, cards in different rows from
+the bottom of the upper to the top of the lower, and cards in one column (a phone, where the grid is one column) by a
+dashed bracket out of their right edges, each line a little further out. They re-measure when the window or a card
+resizes and when members or consults change. Hover or focus a line (it takes the keyboard focus) to see **may consult**
+at its middle and a tooltip, "Developer may consult Reviewer". The Run Trace **Team** tab draws the same lines down the
+right edge of its list. The lines come from `consultEdges` in `lib/shared/agent-teams.ts`, which drops ids not in the team
+and merges mutual pairs (`components/agents/consult-lines.tsx` draws them). They are the standing permission only: the
+page has no live progress, so the active consult is not marked there; the live consult rings both members on the
+canvas node (see [Watching a team work](#watching-a-team-work)).
+
 ## The notebook
 
 Members share a notebook: they write notes as they work, search it before they start, and a person reads, verifies and keeps what matters in the team's **Notebook** tab. The lead is given the open questions and decisions in its first message. See [team-notebook.md](team-notebook.md).
