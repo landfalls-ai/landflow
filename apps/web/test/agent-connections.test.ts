@@ -63,6 +63,26 @@ describe('an agent’s connections', () => {
   });
 });
 
+describe('GitHub MCP in an agent’s connections', () => {
+  const github = (id: string, access: 'read' | 'review') => ({ id, type: 'mcp' as const, name: 'GitHub MCP', preset: 'github' as const, access, parameters: {} });
+  const reviewer = agentStore.publish(agentStore.create({ name: 'Code Reviewer', tools: [github('g1', 'review')] }).id)!;
+  const reader = agentStore.publish(agentStore.create({ name: 'Code Reader', tools: [github('g2', 'read')] }).id)!;
+
+  it('is its own row with the GitHub mark: reviews and line comments at Read and review, reads at Read', () => {
+    expect(agentConnections(reviewer)).toEqual([{ kind: 'tool', name: 'GitHub MCP', detail: 'Tool · pull requests, reviews, line comments', icon: 'brand:github', from: 'agent' }]);
+    expect(agentConnections(reader)).toEqual([{ kind: 'tool', name: 'GitHub MCP', detail: 'Tool · repositories, pull requests, issues (read)', icon: 'brand:github', from: 'agent' }]);
+  });
+
+  it('sits beside the May reach row of the kagent deployment, and is not an ordinary MCP server', () => {
+    agentStore.write({ ...reviewer, kagent: { credential: { id: 'cred_k', name: 'kagent' }, name: 'landflow-code-reviewer', egressPolicies: ['landflow-github'] } });
+    const deployed = agentStore.get(reviewer.id)!;
+    const rows = mergeConnections(kagentConnections(deployed), agentConnections(deployed)).map((c) => `${c.kind}:${c.name}:${c.detail}`);
+    expect(rows).toContain('tool:GitHub MCP:Tool · pull requests, reviews, line comments');
+    expect(rows).toContain('network:GitHub:landflow-github: the gateway adds the token');
+    expect(rows.some((r) => r.includes('MCP server'))).toBe(false);
+  });
+});
+
 describe('a kagent deployment’s connections', () => {
   const reviewer = agentStore.publish(agentStore.create({ name: 'Reviewer', model: { provider: 'ollama', model: 'qwen3-coder:30b' } }).id)!;
   agentStore.write({
