@@ -57,7 +57,7 @@ function Faces({ by }: { by: Line['by'] }) {
 }
 
 /** One run as in → who → out, with the time it took and when. */
-export function RunLineRow({ line, href, onOpen, startedAt, className }: { line: Line; href?: string; onOpen?: () => void; startedAt?: string; className?: string }) {
+export function RunLineRow({ line, name, href, onOpen, startedAt, className }: { line: Line; name?: string; href?: string; onOpen?: () => void; startedAt?: string; className?: string }) {
   const InIcon = IN_ICON[line.in.kind] ?? Workflow;
   const tone = OUT_TONE[line.out.tone];
   const url = safeUrl(line.out.url);
@@ -69,6 +69,7 @@ export function RunLineRow({ line, href, onOpen, startedAt, className }: { line:
       ) : onOpen ? (
         <button type="button" onClick={onOpen} className="absolute inset-0 rounded-2xl" aria-label={`Open the Story: ${line.in.label} to ${line.out.label}`} />
       ) : null}
+      {name && <p className="pointer-events-none relative mb-2 truncate text-[13px] font-semibold text-t1">{name}</p>}
       <div className="pointer-events-none relative grid grid-cols-[minmax(0,1fr)_14px_minmax(0,0.9fr)_14px_minmax(0,1.1fr)] items-center gap-1.5">
         <div className="flex min-w-0 flex-col items-start gap-1">
           <span className="grid size-[30px] place-items-center rounded-lg border border-hair bg-sf2 text-t2">
@@ -135,7 +136,7 @@ export function RunLines({ runs, empty }: { runs: Array<{ id: string; href: stri
       {runs.map((r) => {
         const line = lines?.[r.id];
         return line ? (
-          <RunLineRow key={r.id} line={line} href={r.href} startedAt={r.startedAt} className="animate-in" />
+          <RunLineRow key={r.id} line={line} name={r.name} href={r.href} startedAt={r.startedAt} className="animate-in" />
         ) : (
           <Link key={r.id} href={r.href} className="flex items-center gap-3 rounded-2xl border border-hair bg-sf p-3 hover:bg-acdim/30">
             <span className={cn('size-[30px] shrink-0 rounded-lg bg-acdim', !lines && 'animate-pulse-soft')} />
