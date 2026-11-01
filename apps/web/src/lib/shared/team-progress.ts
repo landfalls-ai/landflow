@@ -83,6 +83,11 @@ export interface TeamActivity {
   steps: Record<string, number>;
   /** Each member's tokens, against its budget (members that used none and have no budget left out). */
   usage?: TeamUsage[];
+  /**
+   * How long each part ran when the run waited for a person in between (ms, in order): `turns` and `moments` count from
+   * the first part's start with the waits left out, and a part is a run of the node of its own (`node:<id>:<n>`).
+   */
+  parts?: number[];
 }
 
 /** The `data` of a team node's progress report. */
@@ -603,6 +608,7 @@ export function joinActivity(before: TeamActivity | undefined, after: TeamActivi
   for (const u of after.usage ?? []) usage.set(u.member, u);
   return {
     durationMs: shift + after.durationMs,
+    parts: [...(before.parts ?? [shift]), ...(after.parts ?? [after.durationMs])],
     turns: [...before.turns, ...after.turns.map((t) => ({ ...t, start: t.start + shift, ...(t.end !== undefined && { end: t.end + shift }) }))],
     moments: [...before.moments, ...after.moments.map((m) => ({ ...m, at: m.at + shift }))].slice(-50),
     steps,

@@ -213,6 +213,9 @@ describe('team progress', () => {
     const joined = joinActivity(before, after.activity());
     expect(joined.usage).toEqual([{ member: 'Developer', tokens: 1_000, budget: 1_000 }]);
     expect(joined.moments.map((m) => m.text)).toContain('Developer asks a person');
+    // Each part's length, so the Story can place the moments of each part on its own node run.
+    expect(joined.parts).toEqual([before.durationMs, joined.durationMs - before.durationMs]);
+    expect(joinActivity(joined, { durationMs: 500, turns: [], moments: [], steps: {} }).parts).toEqual([...joined.parts!, 500]);
   });
 
   it('ignores what says nothing about who works', () => {

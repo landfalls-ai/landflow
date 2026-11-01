@@ -65,6 +65,32 @@ describe('the Story headlines', () => {
     expect(headlinesOf(foldJournal(events(activity))).map((h) => h.moment.text)).toEqual(['Developer noted: plugins need an icons/ folder']);
   });
 
+  it('places the moments of a run that waited for a person on the node run each part was in', () => {
+    // The team worked 20 s, waited 60 s for an approval, then 10 s more: its activity counts 30 s without the wait.
+    const activity: TeamActivity = {
+      durationMs: 30_000,
+      parts: [20_000, 10_000],
+      turns: [],
+      steps: {},
+      moments: [
+        { at: 15_000, member: 'Developer', tone: 'warn', text: 'Developer asks to use publish' },
+        { at: 25_000, member: 'Developer', tone: 'info', text: 'Developer reported back' },
+      ],
+    };
+    let seq = 0;
+    const list: JournalEvent[] = [];
+    const add = (time: number, e: Record<string, unknown>) => list.push({ seq: ++seq, executionId: 'x1', at: at(time), ...e } as JournalEvent);
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Build flow', actor: flow });
+    add(10, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Team', actor: lead, nodeId: 'team' });
+    add(90, { type: 'span.ended', spanId: 'node:team:0', status: 'success' });
+    add(90, { type: 'span.started', spanId: 'node:team:1', parentSpanId: 'run', kind: 'agent', name: 'Team', actor: lead, nodeId: 'team' });
+    add(100, { type: 'span.ended', spanId: 'node:team:1', status: 'success', output: { reply: 'Done', activity } });
+    add(100, { type: 'span.ended', spanId: 'run', status: 'success' });
+    const headlines = headlinesOf(foldJournal(list));
+    // 15 s into the first part (which began 10 s into the run), and 5 s into the second (which began at 90 s).
+    expect(headlines.map((h) => h.at)).toEqual([T0 + 25_000, T0 + 95_000]);
+  });
+
   it('has none for a run without a team node', () => {
     const model = foldJournal(events({ durationMs: 1, turns: [], steps: {}, moments: [] }));
     expect(headlinesOf(model)).toEqual([]);
