@@ -52,6 +52,19 @@ describe('the Story headlines', () => {
     expect('span' in entry && entry.span.actor.name).toBe('Developer');
   });
 
+  it('headlines the notes members wrote, though they are only information', () => {
+    const activity: TeamActivity = {
+      durationMs: 50_000,
+      turns: [],
+      steps: {},
+      moments: [
+        { at: 2_000, member: 'Tech Lead', tone: 'info', text: 'Asked the Developer' },
+        { at: 20_000, member: 'Developer', tone: 'info', text: 'Developer noted: plugins need an icons/ folder', note: true },
+      ],
+    };
+    expect(headlinesOf(foldJournal(events(activity))).map((h) => h.moment.text)).toEqual(['Developer noted: plugins need an icons/ folder']);
+  });
+
   it('has none for a run without a team node', () => {
     const model = foldJournal(events({ durationMs: 1, turns: [], steps: {}, moments: [] }));
     expect(headlinesOf(model)).toEqual([]);

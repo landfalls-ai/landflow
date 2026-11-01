@@ -17,6 +17,12 @@ import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { newSession, runAgent, type TeamRole } from '../agents/runtime';
 import { a2aAgentTool, type BuiltTool, type ToolContext, type ToolOutcome } from '../agents/tools';
 import { liveJournal } from '../journal/writer';
+import { nanoid } from 'nanoid';
+import { contentOf } from '../journal/content';
+import { agentAtEndpoint, openNotebookCall } from '../notebook/binding';
+import { notebookBlock, projectOf, type NotebookBinding } from '../notebook/service';
+import { notebookTools } from '../notebook/tools';
+import { store } from '../store';
 import { issuesOf } from './store';
 
 /** How long a manager's own task is when it goes on to its reports. */
@@ -202,6 +208,8 @@ export function estimateUsage(message: string, outcome: ToolOutcome): TokenUsage
     outputTokens: tokensIn(asText(outcome.output)) + steps.reduce((sum, step) => sum + tokensIn(asText(step.args)), 0),
   };
 }
+/** The run's key as a remote member is told it (see openNotebookFor). */
+const NOTEBOOK_KEY = (key: string) => `Notebook run key: ${key}. If a note tool asks which run, pass this as "run".`;
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
 export const toolNameOf = (title: string) => toToolName(`ask_${title}`).toLowerCase();
@@ -227,6 +235,22 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   // The run's bookkeeping, by member id: plain JSON, saved when the run waits for a person and restored when it goes on.
   const state: TeamState = request.resume ? structuredClone(request.resume.state) : emptyState();
   if (!request.resume) state.tasks[root.id] = request.message;
+  // The team notebook (docs/team-notebook.md): notes belong to this execution, and every member's tools are bound to it, to the
+  // team and to the member, so a note cannot land anywhere else. A run without an execution (a test) makes up an id.
+  const notebookRun = request.execution?.executionId ?? `adhoc_${nanoid(8)}`;
+  const notebookContent = contentOf(request.execution ? store.getWorkflow(request.execution.workflowId)?.settings?.traceContent : undefined);
+  const notebookFor = (member: TeamMember): NotebookBinding => {
+    const projectId = projectOf(request.team.id);
+    return {
+      team: request.team,
+      ...(projectId && { projectId }),
+      runId: notebookRun,
+      ...(request.execution && { workflowId: request.execution.workflowId }),
+      member: { id: member.id, title: member.title },
+      manager: reportsOf(config, member.id).length > 0,
+      content: notebookContent,
+    };
+  };
   const hear = (manager: TeamMember, ...texts: string[]) => (state.heard[manager.id] = [...(state.heard[manager.id] ?? []), ...texts]);
   const raise = (reason: string) => {
     if (!state.needsPerson.includes(reason)) state.needsPerson.push(reason);
@@ -344,11 +368,13 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   };
 
   /** The goal and the manager's own task, in front of every request. */
-  const withAncestry = (manager: TeamMember, message: string) =>
-    [config.goal ? `Team goal: ${config.goal}` : '', state.tasks[manager.id] ? `${manager.title}'s current task: ${cut(state.tasks[manager.id], TASK_CHARS)}` : '', '', message]
+  const withAncestry = (manager: TeamMember, message: string) => {
+    const notebook = notebookBlock(notebookFor(manager));
+    return [config.goal ? `Team goal: ${config.goal}` : '', state.tasks[manager.id] ? `${manager.title}'s current task: ${cut(state.tasks[manager.id], TASK_CHARS)}` : '', ...(notebook ? [notebook] : []), '', message]
       .filter((line, i) => line || i > 0)
       .join('\n')
       .trim();
+  };
 
   const byId = new Map(config.members.map((m) => [m.id, m]));
   /** A member's managers, nearest first. */
@@ -470,9 +496,10 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     };
   }
 
-  /** The tools for a member's direct reports. */
+  /** The tools for a member's direct reports, and the notebook's (bound to this run and this member). */
   async function toolsFor(manager: TeamMember): Promise<BuiltTool[]> {
-    return Promise.all(reportsOf(config, manager.id).map((report) => (report.kind === 'agent' ? agentTool(manager, report) : remoteTool(manager, report))));
+    const delegates = await Promise.all(reportsOf(config, manager.id).map((report) => (report.kind === 'agent' ? agentTool(manager, report) : remoteTool(manager, report))));
+    return [...delegates, ...notebookTools(notebookFor(manager))];
   }
 
   const describe = (report: TeamMember) => {
@@ -658,12 +685,18 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       const now = remote.usage ?? (remote.trace && { inputTokens: remote.trace.usage.inputTokens, outputTokens: remote.trace.usage.outputTokens });
       if (now && total(now) > 0) request.onUsage?.(report.title, (state.used[report.id] ? total(state.used[report.id]) : 0) + total(now), false);
     };
-    const renamed = (ctx: ToolContext): ToolContext => ({
+    /** The call is open to the notebook for as long as the member works (notebook/binding.ts): a note it writes lands on this run. */
+    const openNotebookFor = (member: RemoteMember, ctx: ToolContext) => {
+      const endpoint = typeof member.parameters.agentUrl === 'string' ? member.parameters.agentUrl : undefined;
+      return endpoint && agentAtEndpoint(endpoint) ? openNotebookCall(endpoint, notebookFor(member), ctx.callSpan) : undefined;
+    };
+    const renamed = (ctx: ToolContext, open?: { used(names: string[]): void }): ToolContext => ({
       ...ctx,
       progress:
         ctx.progress &&
         ((remote) => {
           liveUsage(remote);
+          open?.used(remote.steps.map((step) => step.name));
           ctx.progress!({ ...remote, agent: report.title });
         }),
     });
@@ -687,14 +720,26 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           if ('error' in built) throw new Error(built.error);
           const known = ctx.session.remoteContexts?.[report.id];
           // An answer to the remote agent's question goes as it is; a new request carries the goal and the manager's task.
-          const message = known?.question ? text : withAncestry(manager, text);
-          return account(await built.invoke({ ...input, message }, renamed(ctx)), message);
+          // A member that reaches the notebook over MCP (a Landflow agent on kagent) is also told the run's key, to quote when
+          // two runs ask it at once.
+          const open = openNotebookFor(report, ctx);
+          try {
+            const message = known?.question ? text : [withAncestry(manager, text), open && NOTEBOOK_KEY(open.key)].filter(Boolean).join('\n\n');
+            return account(await built.invoke({ ...input, message }, renamed(ctx, open)), message);
+          } finally {
+            open?.close();
+          }
         }),
       // A person answered its question: the answer goes to the task it paused on.
       async resume(saved, approved, ctx, answer) {
         if ('error' in built || !built.resume) throw new Error(`${report.title} can't be reached to take the answer`);
-        const outcome = account(await built.resume(saved, approved, renamed(ctx), answer), answer ?? '');
-        return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome);
+        const open = openNotebookFor(report, ctx);
+        try {
+          const outcome = account(await built.resume(saved, approved, renamed(ctx, open), answer), answer ?? '');
+          return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome);
+        } finally {
+          open?.close();
+        }
       },
     };
   }
@@ -720,7 +765,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const result = await runAgent({
     agent: leadAgent,
     session,
-    ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
+    ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', notebookBlock(notebookFor(root)), request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
     approvals: 'deny',
     signal: request.signal,
     ...(request.flow && { flow: request.flow }),

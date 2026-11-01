@@ -20,6 +20,8 @@ import { agentStore } from '../agents/store';
 import { credentials } from '../credentials/vault';
 import { bearerToken, jsonRpcError, McpServer, MCP_SERVER_VERSION, sameSecret, serveMcpEndpoint, textResult, unauthorized } from '../mcp/server';
 import { traceToolCall } from '../telemetry';
+import { resolveCall } from '../notebook/binding';
+import { callNotebookTool, sawOutside } from '../notebook/tools';
 import { deployedConfig, kagentTools } from './deploy';
 
 export async function handleAgentMcpRequest(request: Request, agentId: string): Promise<Response> {
@@ -53,6 +55,8 @@ function agentMcpServer(agent: Agent, config: AgentConfig, version: number, sign
   server.server.setRequestHandler('tools/call', async (request) => {
     const tool = (await tools()).find((t) => t.name === request.params.name);
     if (!tool) return textResult(`The agent “${config.name}” has no tool ${request.params.name}`, true);
+    const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+    if (tool.kind === 'notebook') return notebookCall(agent, tool.name, args);
     const ctx = toolContext(agent, config, version, signal);
     try {
       const outcome = await traceToolCall({ agentId: agent.id, agentName: config.name, tool: tool.name, callId: `kagent_${nanoid(10)}`, kind: tool.kind }, () =>
@@ -65,6 +69,25 @@ function agentMcpServer(agent: Agent, config: AgentConfig, version: number, sign
     }
   });
   return server;
+}
+
+/**
+ * A note tool from a Claude Code member: bound to the run that is asking this agent (notebook/binding.ts), as the member
+ * the team asked. Refused when no run is, or when several are and the call does not say which.
+ */
+async function notebookCall(agent: Agent, name: string, args: Record<string, unknown>) {
+  const { run, ...rest } = args;
+  const found = resolveCall(agent, typeof run === 'string' ? run : undefined);
+  if ('error' in found) return textResult(found.error, true);
+  const { call } = found;
+  try {
+    const outcome = await traceToolCall({ agentId: agent.id, agentName: agent.name, tool: name, callId: `kagent_${nanoid(10)}`, kind: 'notebook' }, async () => ({
+      output: (await callNotebookTool(call.binding, name, rest, { ...(call.spanId && { spanId: call.spanId }), sawOutside: sawOutside(call.tools) })).text,
+    }));
+    return textResult(outcome.output);
+  } catch (error) {
+    return textResult((error as Error).message, true);
+  }
 }
 
 function toolContext(agent: Agent, config: AgentConfig, version: number, signal: AbortSignal): ToolContext {

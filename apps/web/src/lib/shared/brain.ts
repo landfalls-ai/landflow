@@ -135,7 +135,8 @@ export const DETECTOR_LABELS: Record<DetectorId, string> = {
 };
 
 /** Who wrote a suggestion: a built-in detector, a workflow's Suggest Improvement node, or the Platform analyst agent. */
-export type ProposalSource = 'detector' | 'workflow' | 'analyst';
+/** `notebook`: a team's notebook proposes keeping a note for the project (docs/team-notebook.md). */
+export type ProposalSource = 'detector' | 'workflow' | 'analyst' | 'notebook';
 export type ProposalStatus = 'open' | 'applied' | 'dismissed' | 'snoozed' | 'expired';
 export type ProposalRisk = 'low' | 'medium' | 'high';
 /** Why it was dismissed: `intended` becomes a fact so it isn't suggested again; `wrong` and `not-relevant` quiet the detector. */
@@ -143,7 +144,7 @@ export const DISMISS_REASONS = ['intended', 'not-relevant', 'wrong', 'done'] as 
 export type DismissReason = (typeof DISMISS_REASONS)[number];
 export type ProposalOutcome = 'pending' | 'worked' | 'no-effect' | 'worse';
 
-export type ProposalTargetType = 'workflow' | 'agent' | 'credential' | 'instance';
+export type ProposalTargetType = 'workflow' | 'agent' | 'credential' | 'instance' | 'team';
 
 export interface AgentChange {
   always?: string[];
@@ -192,6 +193,8 @@ export interface Proposal {
   draft?: Workflow;
   /** Rules to add to the target agent's persona (agent quality); applied to its draft. */
   agentChange?: AgentChange;
+  /** Keep a team's note for the project: applying it moves the note to project scope (notebook/approve.ts). */
+  notebook?: { teamId: string; noteId: string };
   warnings?: string[];
   risk: ProposalRisk;
   /** 0..1. */
