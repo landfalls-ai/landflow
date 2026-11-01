@@ -718,9 +718,25 @@ export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }
           <AgentAvatar agent={face.face} size={40} />
           <span className="pointer-events-none absolute -inset-[3px] animate-pulse-soft rounded-[14px] border-2 border-warn" />
         </span>
-        <div className="min-w-0">
-          <div className="text-[14px] font-semibold leading-5 text-t1">{waiting.approval ? waitTitle(waiting, face.title) : `${face.title} asks`}</div>
-          {waitText(waiting) && <p className="mt-0.5 whitespace-pre-line text-[13px] leading-5 text-t1">{waitText(waiting)}</p>}
+        <div className="min-w-0 flex-1">
+          {waiting.approval ? (
+            <div className="text-[14px] font-semibold leading-5 text-t1">
+              {face.title} <span className="font-normal text-t2">wants to {waiting.approval.run ? 'run' : 'use'}</span> <span className="font-mono">{waiting.approval.tool}</span>
+              {waiting.approval.target && <span className="font-normal text-t2"> on {waiting.approval.target}</span>}
+            </div>
+          ) : (
+            <div className="text-[14px] font-semibold leading-5 text-t1">
+              {face.title} <span className="font-normal text-t2">asks you</span>
+            </div>
+          )}
+          <AskedAgo since={waiting.since} className="mt-0.5" />
+          {waiting.approval
+            ? waiting.approval.summary && (
+                <blockquote className="mt-2 whitespace-pre-line rounded-xl border border-warn/30 bg-sf px-3 py-2 text-[13px] leading-5 text-t1" data-testid="team-ask-card-summary">
+                  “{waiting.approval.summary}”
+                </blockquote>
+              )
+            : waitText(waiting) && <p className="mt-1 whitespace-pre-line text-[13px] leading-5 text-t1">{waitText(waiting)}</p>}
         </div>
       </div>
       {executionId && (waiting.approval ? <ApprovalButtons executionId={executionId} onDecide={onDecide} className="mt-3" /> : <AnswerLink executionId={executionId} className="mt-3 w-full" />)}

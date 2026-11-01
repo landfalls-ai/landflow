@@ -335,6 +335,8 @@ describe('Run a Team', () => {
     expect(String(done.reply)).not.toContain('rejected');
     const events = read(record.executionId);
     expect(events).toContainEqual(expect.objectContaining({ type: 'check', check: expect.objectContaining({ name: 'Approval', status: 'pass', subject: 'Developer', message: expect.stringContaining('ana@example.com approved Developer\'s use of Comment on pull request') }) }));
+    // Needs you reads the tool, what it acts on and the member apart from the wait's name.
+    expect(events).toContainEqual(expect.objectContaining({ type: 'span.started', kind: 'wait', name: 'Developer wants to use Comment on pull request on #5: Review passed', attrs: expect.objectContaining({ wait: 'approval', member: 'Developer', tool: 'Comment on pull request', target: '#5', summary: 'Review passed' }) }));
   });
 
   it('tells the member when the person rejects the tool call, and the team goes on without it', async () => {

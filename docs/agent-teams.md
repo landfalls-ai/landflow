@@ -252,7 +252,8 @@ the moments that matter. On the editor's canvas during a run and on the executio
   when it asked ("12:40 · asked 2m ago"), and an **Answer** button that opens the run's waiting form
   (`/form/waiting/<execution>`); the answer goes back to the member that asked. A pill above the node, "Planner asks you:
   <question>" with its own **Answer**, stays until the question is answered, unlike the moments that fade. The node reads it from the waiting execution's `wait.data.teamQuestion`, so a reload or
-  another device shows the same; on a phone the execution view pins a **Needs you** card with the question in full.
+  another device shows the same; on a phone the execution view pins a **Needs you** card with the question in full
+  (for an approval: the tool, what it acts on, when it asked, and what it would do quoted).
 
 Plain words come from `narrate()`: a shell command reads by what its chain ends with (`cd x && pnpm install && pnpm test`
 is "Running the tests"; also installs, typechecks, lint, builds, clones, commits, pushes, `gh pr create` and `gh pr merge`),
@@ -298,7 +299,7 @@ policies, with their own logos. A member with a budget has a bar under its chips
 budget (amber at 80%, red once used up). The node's usage names the lead's model and counts its model calls. Runs without
 a recorded team keep the generic who-called-whom graph. The **Story** tab opens with the team's **Headlines**: the moments
 its node kept (see [Run Trace](run-trace.md#headlines)). A team member's question waits as a form: Needs you's **Answer**
-opens the run's form page; a tool waiting for approval reads "Developer wants to use Comment on pull request: <what>" with
+opens the run's form page; a tool waiting for approval reads "Developer wants to use Comment on pull request on #5" with what it would do quoted, with
 **Approve** / **Reject** in place. Each row shows **may consult X** (a dashed badge) from the recorded chart (`consults` in
 `attrs.team`), and what really happened under the member that asked: **consulted Reviewer ×2**, **handed off to Builder**.
 A consult sits under the request of the member that made it in the Story, as a request to the peer with its reason, and

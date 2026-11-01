@@ -194,7 +194,22 @@ function NeedsYou({
                 · {n.attrs.wait === 'pause' ? 'paused' : typeof n.attrs.member === 'string' ? `${n.attrs.member} waiting` : n.caller ? `${n.caller.name} waiting` : 'waiting'} since {clock(n.since)}
               </span>
             </div>
-            <p className="mt-1 line-clamp-3 text-[13.5px] text-t1">{n.detail ?? n.title}</p>
+            {n.attrs.wait === 'approval' && typeof n.attrs.member === 'string' && typeof n.attrs.tool === 'string' ? (
+              // A team member's tool: what it is and what it acts on, then what it would do, quoted.
+              <>
+                <p className="mt-1 text-[13.5px] text-t1">
+                  {n.attrs.member} wants to use <span className="font-mono font-semibold">{n.attrs.tool}</span>
+                  {typeof n.attrs.target === 'string' && <span className="text-t2"> on {n.attrs.target}</span>}
+                </p>
+                {typeof n.attrs.summary === 'string' && (
+                  <blockquote className="mt-1.5 line-clamp-4 whitespace-pre-line rounded-xl border border-warn/30 bg-sf px-3 py-1.5 text-[13px] leading-5 text-t1" data-testid="needs-you-summary">
+                    “{n.attrs.summary}”
+                  </blockquote>
+                )}
+              </>
+            ) : (
+              <p className="mt-1 line-clamp-3 text-[13.5px] text-t1">{n.detail ?? n.title}</p>
+            )}
             {n.attrs.wait === 'gate' && (comments.length > 0 || noting) && (
               <div className="mt-2 flex flex-col gap-1">
                 <label htmlFor={`note-${n.spanId}`} className="text-[12px] text-t2">

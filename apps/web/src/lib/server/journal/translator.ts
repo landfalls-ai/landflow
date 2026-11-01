@@ -495,7 +495,11 @@ export function createTranslator(options: TranslatorOptions) {
       const team = isObject(data.teamApproval) ? data.teamApproval : undefined;
       if (team) {
         attrs.member = team.member;
-        name = `${String(team.member)} wants to use ${String(team.tool)}${str(team.summary) ? `: ${str(team.summary)}` : ''}`;
+        // Kept apart too, so Needs you can name the target and quote what it would do.
+        attrs.tool = team.tool;
+        if (str(team.target)) attrs.target = str(team.target);
+        if (str(team.summary)) attrs.summary = str(team.summary);
+        name = `${String(team.member)} wants to use ${String(team.tool)}${str(team.target) ? ` on ${str(team.target)}` : ''}${str(team.summary) ? `: ${str(team.summary)}` : ''}`;
       }
     } else if (wait.resume === 'form') {
       // A Run report asking a person about its failed checks (nodes/run-report.ts) is a gate, answered in place.
