@@ -15,7 +15,14 @@ Microsoft Teams channel of an agent (`/api/teams/...`). This resource is `agent-
 |---|---|
 | `name`, `goal`, `description` | the goal is what the team is for; every request inside the team carries it |
 | `members[]` | `kind: 'agent'` (`agentId`) or `kind: 'a2a'` (`parameters` of the A2A Agent node: `agentUrl`, `authentication`, `options`; `credentials`) |
-| per member | `id`, `title` (how its manager calls it), `role` (a sentence: when to ask it), `reportsTo`, `reviews[]`, `consults[]` (peers it **may consult**), `budgetTokens`, `questionsTo` (`manager`, the default, or `person`) |
+| per member | `id`, `title` (how its manager calls it), `role` (a sentence: when to ask it), `reportsTo`, `reviews[]`, `consults[]` (peers it **may consult**), `budgetTokens`, `questionsTo` (`manager`, the default, or `person`); a Landflow agent member may have `model` (provider, model, credential: the model it runs on in this team instead of its agent's) |
+
+**A member's model in this team.** The member dialog's **Model in this team** picks the agent's own model (the default)
+or a Claude model (Opus, Sonnet or Haiku 5.5, with an Anthropic credential or the server's `ANTHROPIC_API_KEY`). The
+agent itself is unchanged; only runs of this team use it, its card shows "On Claude Opus 5.5", and the Run Trace's Works
+with, the member's cost and the Report follow it. For the lead, a model connected to the Run a Team node still wins.
+Making the lead Claude while the members stay local is the "Lead on Claude" setup. A remote member's model is set where
+it runs (kagent).
 
 The types and the checks are in [`apps/web/src/lib/shared/agent-teams.ts`](../apps/web/src/lib/shared/agent-teams.ts).
 

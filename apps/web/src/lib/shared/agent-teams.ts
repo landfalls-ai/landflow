@@ -8,7 +8,7 @@
  * with the Run a Team node (`core.runTeam`); teams live on the Agents page (`/api/agent-teams`, table `agent_teams`).
  * Not to be confused with an agent's `team` label (a grouping on the Agents page) or Microsoft Teams channels.
  */
-import type { CredentialRef } from './agents';
+import type { AgentModel, CredentialRef } from './agents';
 import type { ActorConnection } from './run-trace';
 
 /** Where a member's questions go first: its manager (who may pass them on to a person) or straight to a person. */
@@ -38,6 +38,11 @@ interface MemberBase {
 export interface AgentMember extends MemberBase {
   kind: 'agent';
   agentId: string;
+  /**
+   * The model it runs on in this team, in place of its agent's (the agent itself is unchanged): "the lead on Claude"
+   * while the rest stay local. A model connected to the Run a Team node still wins for the lead.
+   */
+  model?: AgentModel;
 }
 
 export interface RemoteMember extends MemberBase {

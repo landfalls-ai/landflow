@@ -10,7 +10,8 @@ import { ArrowLeft, Check, LayoutTemplate, Package, Workflow, Plus, RadioTower, 
 import { toast } from 'sonner';
 import { defaultParameters, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { api, ApiError } from '@/lib/client/api';
-import type { AgentSummary } from '@/lib/shared/agents';
+import type { AgentModel, AgentSummary } from '@/lib/shared/agents';
+import { useCredentials } from '../credentials/use-credentials';
 import { formatTokens } from '@/lib/shared/ai-usage';
 import { managerOf, memberAgent, orgTree, reportsOf, teamIssues, type AgentTeam, type AgentTeamConfig, type OrgNode, type TeamMember } from '@/lib/shared/agent-teams';
 import { cn } from '@/lib/utils';
@@ -427,13 +428,21 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
 
 const tokens = formatTokens;
 
+/** "Claude Opus 5.5" for the Claude models, else the model's own name. */
+export function modelLabel(model: { provider: string; model: string }): string {
+  const claude = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?/.exec(model.model);
+  if (model.provider === 'anthropic' && claude) return `Claude ${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`;
+  return model.model;
+}
+
 function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddReport }: { config: AgentTeamConfig; member: TeamMember; agent?: AgentSummary; lead: boolean; inSection?: boolean; onEdit: () => void; onAddReport?: () => void }) {
   const manager = managerOf(config, member);
   const reviews = (member.reviews ?? []).map((id) => config.members.find((m) => m.id === id)?.title).filter(Boolean);
   const reviewedBy = config.members.filter((m) => m.reviews?.includes(member.id)).map((m) => m.title);
   const consults = (member.consults ?? []).map((id) => config.members.find((m) => m.id === id)?.title).filter(Boolean);
   // A footer only when it has something to say: a card in a row without one keeps its height (the grid) and its role.
-  const chips = Boolean((manager && !inSection) || reviews.length || reviewedBy.length || consults.length || member.budgetTokens !== undefined || member.questionsTo === 'person');
+  const teamModel = member.kind === 'agent' ? member.model : undefined;
+  const chips = Boolean((manager && !inSection) || reviews.length || reviewedBy.length || consults.length || member.budgetTokens !== undefined || member.questionsTo === 'person' || teamModel);
   const runsOn = member.kind === 'a2a' ? (agent ? `${agent.name} on kagent` : 'Remote agent over A2A') : agent ? 'Landflow agent' : 'Pick an agent';
   return (
     // A card: who (face, title, where it runs), what it does, and its relations in a footer, so cards in a row line up.
@@ -466,6 +475,12 @@ function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddRepor
               May consult {consults.join(', ')}
             </Chip>
           )}
+          {/* Its model in this team, when it isn't its agent's own. */}
+          {teamModel && (
+            <span title={`In this team ${member.title} runs on ${teamModel.model}; its agent keeps its own model`}>
+              <Chip tone="accent">On {modelLabel(teamModel)}</Chip>
+            </span>
+          )}
           {member.budgetTokens !== undefined && <Chip>{tokens(member.budgetTokens)} tokens a run</Chip>}
           {member.questionsTo === 'person' && <Chip>Questions go to a person</Chip>}
           {!manager && !chips && <span className="text-[12px] text-t3">Runs the team</span>}
@@ -477,6 +492,62 @@ function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddRepor
         </div>
       )}
     </article>
+  );
+}
+
+/** The Claude models the team page offers for a member, newest first. */
+const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const;
+
+/**
+ * A member's model in this team: its agent's own, or a Claude model (with an Anthropic credential, else the server's
+ * ANTHROPIC_API_KEY). Only this team changes; the agent keeps its model everywhere else.
+ */
+function TeamModelField({ value, agentModel, onChange }: { value?: AgentModel; agentModel?: string; onChange: (model: AgentModel | undefined) => void }) {
+  const { credentials } = useCredentials();
+  const anthropic = (credentials ?? []).filter((c) => c.type === 'core.anthropicApi');
+  const known = value && value.provider === 'anthropic' && (CLAUDE_MODELS as readonly string[]).includes(value.model);
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Field id="member-model" label="Model in this team" hint={value ? 'Its agent keeps its own model outside this team. Claude is paid per use.' : 'The model its agent is set to.'}>
+        <Select
+          id="member-model"
+          value={value ? `${value.provider}:${value.model}` : ''}
+          onChange={(e) => {
+            if (!e.target.value) return onChange(undefined);
+            const [provider, ...rest] = e.target.value.split(':');
+            if (provider === 'anthropic') onChange({ provider: 'anthropic', model: rest.join(':'), ...(value?.provider === 'anthropic' && value.credential && { credential: value.credential }) });
+          }}
+        >
+          <option value="">Its agent’s own{agentModel ? ` (${agentModel})` : ''}</option>
+          {CLAUDE_MODELS.map((m) => (
+            <option key={m} value={`anthropic:${m}`}>
+              {modelLabel({ provider: 'anthropic', model: m })}
+            </option>
+          ))}
+          {value && !known && <option value={`${value.provider}:${value.model}`}>{value.model}</option>}
+        </Select>
+      </Field>
+      {value?.provider === 'anthropic' && (
+        <Field id="member-model-credential" label="Anthropic credential" hint={anthropic.length ? undefined : 'None yet: the server’s ANTHROPIC_API_KEY is used. Add one under Credentials.'}>
+          <Select
+            id="member-model-credential"
+            value={value.credential?.id ?? ''}
+            onChange={(e) => {
+              const picked = anthropic.find((c) => c.id === e.target.value);
+              const { credential: _drop, ...rest } = value;
+              onChange(picked ? { ...rest, credential: { id: picked.id, name: picked.name } } : rest);
+            }}
+          >
+            <option value="">Server default</option>
+            {anthropic.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
+    </div>
   );
 }
 
@@ -670,6 +741,7 @@ function MemberDialog({
             </Select>
           </Field>
         </div>
+        {value.kind === 'agent' && <TeamModelField value={value.model} agentModel={agents.find((a) => a.id === value.agentId)?.model} onChange={(model) => set({ model } as Partial<TeamMember>)} />}
       </div>
     </Dialog>
   );

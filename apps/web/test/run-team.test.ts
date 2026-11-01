@@ -234,6 +234,37 @@ describe('Run a Team', () => {
     expect((leadReport as { requests?: number }).requests).toBe(4);
   });
 
+  it('runs a member and the lead on the team’s model for them, leaving their agents unchanged', async () => {
+    const baseUrl = fake.url.replace(/\/v1$/, '');
+    const t = team([{ id: 'm_dev', title: 'Developer', kind: 'agent', agentId: developer.id, reportsTo: 'm_lead', model: { provider: 'ollama', model: 'team-dev-model', baseUrl } } as TeamMember]);
+    // The lead too ("Lead on Claude", here a local model the fake server answers).
+    const draft = agentTeamStore.get(t.id)!.draft;
+    agentTeamStore.saveDraft(t.id, { ...draft, members: draft.members.map((m) => (m.id === 'm_lead' ? { ...m, model: { provider: 'ollama', model: 'team-lead-model', baseUrl } } : m)) });
+    agentTeamStore.publish(t.id);
+    scripts.set('team-lead-model', (turn, body) => (turn === 1 ? call('ask_developer', { message: 'Build it', reason: 'Work' }) : { text: `Lead on the team model: ${lastTool(body)}` }));
+    scripts.set('team-dev-model', () => ({ text: 'built on the team model' }));
+    scripts.set('lead-model', () => ({ text: 'wrong model: the agent’s own' }));
+    scripts.set('dev-model', () => ({ text: 'wrong model: the agent’s own' }));
+    turns.clear();
+    const { done } = await run(t.id);
+    expect(done!.reply).toBe('Lead on the team model: built on the team model');
+    expect(done!.members).toContainEqual(expect.objectContaining({ title: 'Developer', model: 'team-dev-model' }));
+    // The team keeps a model only on a Landflow agent member, with a known provider and a name.
+    const { cleanConfig } = await import('@/lib/server/agent-teams/store');
+    const cleaned = cleanConfig({
+      name: 'x',
+      members: [
+        { id: 'a', title: 'A', kind: 'agent', agentId: 'ag', model: { provider: 'anthropic', model: 'claude-opus-5-5', credential: { id: 'cred_1', name: 'Anthropic' } } },
+        { id: 'b', title: 'B', kind: 'agent', agentId: 'ag', reportsTo: 'a', model: { provider: 'nope', model: 'x' } as never },
+        { id: 'c', title: 'C', kind: 'a2a', reportsTo: 'a', parameters: {}, model: { provider: 'anthropic', model: 'claude-opus-5-5' } } as never,
+      ],
+    });
+    expect(cleaned.members.map((m) => (m as { model?: unknown }).model)).toEqual([{ provider: 'anthropic', model: 'claude-opus-5-5', credential: { id: 'cred_1', name: 'Anthropic' } }, undefined, undefined]);
+    // The agents keep their own models.
+    expect(agentStore.get(developer.id)?.published?.config.model?.model).toBe('dev-model');
+    expect(agentStore.get(lead.id)?.published?.config.model?.model).toBe('lead-model');
+  });
+
   it('sends a remote member’s question to its manager, who answers with the next call', async () => {
     const t = team([remote('m_plan', 'Planner')]);
     scripts.set('lead-model', (turn, body) => {

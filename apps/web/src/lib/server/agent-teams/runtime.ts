@@ -13,6 +13,8 @@ import { reportsOf, rootOf, type AgentMember, type AgentTeamConfig, type RemoteM
 import { shortArg, verdictOf } from '../../shared/team-progress';
 import { agentConnections, remoteConnections } from '../agents/connections';
 import { agentStore } from '../agents/store';
+import { agentModel } from '../agents/models';
+import type { Agent, AgentModel } from '../../shared/agents';
 import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { newSession, runAgent, type TeamRole } from '../agents/runtime';
 import { a2aAgentTool, type BuiltTool, type ToolContext, type ToolOutcome } from '../agents/tools';
@@ -311,7 +313,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       if (m.kind === 'a2a') return remoteConnections(typeof m.parameters.agentUrl === 'string' ? m.parameters.agentUrl : undefined);
       const agent = agentStore.get(m.agentId);
       if (!agent) return [];
-      return agentConnections(agent, m.id === root.id ? { model: Boolean(request.flow?.model), memory: Boolean(request.memory) } : {});
+      return agentConnections(withModel(agent, m.model), m.id === root.id ? { model: Boolean(request.flow?.model), memory: Boolean(request.memory) } : {});
     } catch {
       return [];
     }
@@ -383,7 +385,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     if (usage.costUsd !== undefined) return usage.costUsd;
     if (member.kind !== 'agent') return undefined;
     const agent = agentStore.get(member.agentId);
-    const model = (agent?.published?.config ?? agent)?.model;
+    const model = member.model ?? (agent?.published?.config ?? agent)?.model;
     if (!model) return undefined;
     const price = findPrice(model.provider, model.model, priceOverrides());
     if (!price) return model.provider === 'ollama' ? 0 : undefined;
@@ -393,7 +395,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     if (usage?.model) return usage.model;
     if (member.kind !== 'agent') return undefined;
     const agent = agentStore.get(member.agentId);
-    return (agent?.published?.config ?? agent)?.model?.model;
+    return (member.model ?? (agent?.published?.config ?? agent)?.model)?.model;
   };
 
   /**
@@ -706,6 +708,8 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       const result = await runAgent({
         agent,
         session,
+        // The team's model for this member, in place of its agent's.
+        ...(report.model && { flow: { model: await agentModel(report.model) } }),
         ...(text !== undefined && { message: manages ? `${withAncestry(manager, text)}\n\n${REPORT_RULE}` : withAncestry(manager, text) }),
         depth: ctx.depth + 1,
         maxDepth: ctx.maxDepth,
@@ -994,7 +998,8 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', notebookBlock(notebookFor(root)), request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
     approvals,
     signal: request.signal,
-    ...(request.flow && { flow: request.flow }),
+    // A model connected to the node wins; else the team's model for the lead, else its agent's.
+    ...((request.flow || (root.kind === 'agent' && root.model)) && { flow: { ...request.flow, ...(!request.flow?.model && root.kind === 'agent' && root.model && { model: await agentModel(root.model) }) } }),
     ...(request.onEvent && { onEvent: request.onEvent }),
     onUsage: (usage) => spend(root, usage, true),
     team: role,
@@ -1049,4 +1054,10 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     reason: result.reason,
     usage: teamUsage(),
   };
+}
+
+/** The agent as the team runs it: with the team's model for the member in place of its own, for what the chart shows. */
+function withModel(agent: Agent, model: AgentModel | undefined): Agent {
+  if (!model) return agent;
+  return { ...agent, model, ...(agent.published && { published: { ...agent.published, config: { ...agent.published.config, model } } }) };
 }
