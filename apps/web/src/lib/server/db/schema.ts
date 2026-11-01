@@ -1382,6 +1382,14 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS agent_asks_execution ON agent_asks (execution_id, status)`,
     ],
   },
+  {
+    version: 2041,
+    name: 'agent_asks_edited_command',
+    statements: [
+      // The command a person changed before allowing it (lib/server/a2a/agent-asks.ts): the mod runs this one instead of its own.
+      `ALTER TABLE agent_asks ADD COLUMN edited_command TEXT`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

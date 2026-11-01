@@ -11,11 +11,13 @@
  * ringed and the node names it.
  */
 import { useEffect, useState, type ReactNode } from 'react';
-import { Check, ChevronRight, Hourglass, Loader2, NotebookPen, Pause, X } from 'lucide-react';
+import { Check, ChevronRight, FileSearch, Hourglass, Loader2, NotebookPen, Pause, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { decideAsk, useRunAsks, useWorkingMembers } from '@/lib/client/run-controls';
 import { duration, timeAgo } from '@/lib/client/format';
 import { decideToolApprovals } from '@/lib/client/run-trace';
+import { ApprovalSheet, LiveApprovalCard, type DecideFn } from '../run-trace/approval-live';
+import { useNewLook } from '../shell/look-toggle';
 import { chartOrder, memberAgent, type TeamMember } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
 import type { TeamActivity, TeamApprovalWait, TeamMoment, TeamProgress, TeamStep, TeamTurn, TeamUsage } from '@/lib/shared/team-progress';
@@ -366,8 +368,11 @@ export function AnswerLink({ executionId, className }: { executionId: string; cl
  * Approve / Deny a tool a member waits to use, from the node or the phone card: the same call as Needs you
  * (`decideToolApprovals`, POST /api/executions/:id/approvals); `onDecide` replaces it where the page follows the run itself.
  */
-export function ApprovalButtons({ executionId, onDecide, className }: { executionId: string; onDecide?: (approved: boolean) => Promise<void>; className?: string }) {
+export function ApprovalButtons({ executionId, onDecide, className, member }: { executionId: string; onDecide?: DecideFn; className?: string; member?: string }) {
   const [busy, setBusy] = useState<'approve' | 'deny'>();
+  // The new look: Review opens the decision card (the member's reasons, the case, the evidence, Edit) over the page.
+  const newLook = useNewLook();
+  const [reviewing, setReviewing] = useState(false);
   const decide = async (approved: boolean) => {
     setBusy(approved ? 'approve' : 'deny');
     try {
@@ -407,6 +412,25 @@ export function ApprovalButtons({ executionId, onDecide, className }: { executio
       >
         {busy === 'deny' ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" strokeWidth={3} />} Deny
       </button>
+      {newLook && (
+        <>
+          <button
+            type="button"
+            {...own}
+            onClick={(e) => {
+              e.stopPropagation();
+              setReviewing(true);
+            }}
+            data-testid="team-review"
+            title="See why, what it looked at, and edit before approving"
+            aria-label="Review before deciding"
+            className="nodrag nopan inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-warn/60 px-3 text-[13px] font-semibold text-t1 transition-colors hover:bg-warndim"
+          >
+            <FileSearch className="size-3.5" /> Review
+          </button>
+          {reviewing && <ApprovalSheet executionId={executionId} {...(member && { member })} {...(onDecide && { onDecide })} onClose={() => setReviewing(false)} />}
+        </>
+      )}
     </span>
   );
 }
@@ -474,7 +498,7 @@ export interface TeamTileOptions {
   /** The run waits at this node for a person's answer to a member's question, or a tool's approval (the execution's `wait.data`). */
   waiting?: TeamWaiting;
   /** Decide a waiting tool approval where the page follows the run itself (the editor); else the approvals route is called and the page catches up. */
-  onDecide?: (approved: boolean) => Promise<void>;
+  onDecide?: DecideFn;
   /** Open the Run Trace in a new tab (from the editor, so the flow stays open). */
   newTab?: boolean;
 }
@@ -578,7 +602,7 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
             <div className="mx-4 flex items-center gap-2 border-t border-hair pt-2">
               {executionId && (options.waiting || ask) ? (
                 asked.approval ? (
-                  <ApprovalButtons executionId={executionId} onDecide={ask ? async (approved) => { await decideAsk(executionId, ask.id, approved); readAsks(); } : options.onDecide} className="w-full" />
+                  <ApprovalButtons executionId={executionId} member={asked.member} onDecide={ask ? async (approved, edit) => { await decideAsk(executionId, ask.id, approved, edit?.command); readAsks(); } : options.onDecide} className="w-full" />
                 ) : (
                   <AnswerLink executionId={executionId} />
                 )
@@ -706,11 +730,12 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace, executionId }
 }
 
 /** The phone card of a run waiting on a member's question: who asks, the question in full, and the Answer button. */
-export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }: { teamId: string; waiting: TeamWaiting; nodeName: string; executionId?: string; onDecide?: (approved: boolean) => Promise<void> }) {
+export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }: { teamId: string; waiting: TeamWaiting; nodeName: string; executionId?: string; onDecide?: DecideFn }) {
   const faces = useTeamFaces(teamId);
+  const newLook = useNewLook();
   if (!faces?.length) return null;
   const face = faceByTitle(faces, waiting.member) ?? faces[0];
-  return (
+  const classic = (
     <section className="rounded-2xl border border-warn/50 bg-warndim p-3 shadow-pop" data-testid="team-ask-card" aria-live="polite">
       <div className="mb-2 truncate text-[11px] font-semibold uppercase tracking-[0.06em] text-warn">Needs you · {nodeName}</div>
       <div className="flex min-w-0 items-start gap-3">
@@ -742,4 +767,7 @@ export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }
       {executionId && (waiting.approval ? <ApprovalButtons executionId={executionId} onDecide={onDecide} className="mt-3" /> : <AnswerLink executionId={executionId} className="mt-3 w-full" />)}
     </section>
   );
+  // The new look: a tool approval is a decision card with the member's reasons and the evidence it looked at.
+  if (newLook && executionId && waiting.approval) return <LiveApprovalCard executionId={executionId} member={waiting.member} {...(onDecide && { onDecide })} fallback={classic} />;
+  return classic;
 }

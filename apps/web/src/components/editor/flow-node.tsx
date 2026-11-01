@@ -80,7 +80,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   const wait = useEditor((s) => (teamId && !s.running && s.wait?.nodeId === id ? s.wait : undefined));
   const asked = teamQuestionOf(wait, id);
   // A tool a member waits to use: Approve / Deny on the node resume the run, and the canvas follows it like a chat run.
-  const decideInEditor = async (approved: boolean) => {
+  const decideInEditor = async (approved: boolean, edit?: { input?: Record<string, unknown>; callId?: string }) => {
     if (!executionId) return;
     let resumed = false;
     try {
@@ -90,7 +90,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
           useEditor.setState({ running: true, runStatus: 'running', executionId });
         }
         if (event === 'execution' && (data as ExecutionEvent).type !== 'node.chunk') useEditor.getState().applyEvent(data as ExecutionEvent);
-      });
+      }, { ...(edit?.input && { input: edit.input }), ...(edit?.callId && { callId: edit.callId }) });
     } finally {
       if (resumed) useEditor.getState().finishRun();
     }

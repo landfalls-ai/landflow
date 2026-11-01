@@ -13,7 +13,9 @@ import { decideGate, decideToolApprovals, resolveCheck, useRunJournal, type RunJ
 import { api } from '@/lib/client/api';
 import { decideAsk, useWorkingMembers } from '@/lib/client/run-controls';
 import type { ExecutionRecord } from '@/lib/shared/types';
-import { RUN_PROFILES, resolveRunProfile } from '@/lib/shared/run-profiles';
+import { RUN_PROFILES, resolveRunProfile, type RunProfile } from '@/lib/shared/run-profiles';
+import { needsFaces } from '@/lib/shared/approval-evidence';
+import type { RunChanges } from '@/lib/shared/run-changes';
 import { foldChanges } from '@/lib/shared/run-changes';
 import { githubOf } from '@/lib/shared/run-repo';
 import { lineCommentsNote } from '@/lib/shared/line-comments';
@@ -21,7 +23,9 @@ import { buildRunReport, checksLine, type RunReport } from '@/lib/shared/run-rep
 import { cut, fmtMs, foldJournal, preview, quietMs, type NeedsYouItem, type RunCheckItem, type RunModel } from '@/lib/shared/run-trace-model';
 import { turnEntryKey } from '@/lib/shared/run-headlines';
 import { useNow } from '../run/run-status';
+import { useNewLook } from '../shell/look-toggle';
 import { Badge } from '../ui/badge';
+import { ApprovalCard, NeedFaces } from './approval-card';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { Textarea } from '../ui/inputs';
@@ -128,6 +132,10 @@ function NeedsYou({
   onResolve,
   busy,
   onDecided,
+  model,
+  changes,
+  profile,
+  onTab,
 }: {
   items: NeedsYouItem[];
   executionId: string;
@@ -136,7 +144,14 @@ function NeedsYou({
   onResolve: (item: RunCheckItem, decision: 'accepted' | 'sent_back') => void;
   busy?: string;
   onDecided: () => void;
+  /** The run, for the new look's approval card: its words, case and evidence. */
+  model: RunModel;
+  changes: RunChanges;
+  profile: RunProfile;
+  onTab: (tab: Tab) => void;
 }) {
+  const newLook = useNewLook();
+  const faces = useMemo(() => (newLook ? needsFaces(model, items) : []), [newLook, model, items]);
   const [deciding, setDeciding] = useState<string>();
   // Send back's note: the line comments from the Artifacts tab, or what the person wrote over them.
   const store = useLineComments();
@@ -184,8 +199,12 @@ function NeedsYou({
   };
   return (
     <div className="flex flex-col gap-2" aria-label="Needs you">
+      {faces.length > 0 && <NeedFaces faces={faces} className="px-1" />}
       {shown.map((n) =>
-        n.kind === 'wait' ? (
+        // The new look: a tool approval is a decision card with the member's reasons and the evidence it looked at.
+        newLook && n.kind === 'wait' && n.attrs.wait === 'approval' ? (
+          <ApprovalCard key={`w${n.spanId}`} wait={n} model={model} executionId={executionId} executionHref={executionHref} changes={changes} profile={profile} open={open} onTab={(tab, member) => (member && tab === 'team' ? open({ kind: 'actor', id: model.actors.find((a) => a.actor.name.trim().toLowerCase() === member.trim().toLowerCase())?.actor.id ?? '' }) : onTab(tab))} onDecided={onDecided} />
+        ) : n.kind === 'wait' ? (
           <Card key={`w${n.spanId}`} tone="warn" className="bg-warndim">
             <div className="text-[13px] text-t1">
               <b>{n.attrs.wait === 'pause' ? n.title : `Needs ${n.actor.name}`}</b>
@@ -493,7 +512,7 @@ function TraceBody({
 
       {!replay && <MembersAtWork executionId={executionId} members={working.members} onChanged={() => { working.refresh(); refresh(); }} />}
 
-      <NeedsYou items={needs} executionId={executionId} executionHref={executionHref} open={open} onResolve={onResolve} busy={busy} onDecided={refresh} />
+      <NeedsYou items={needs} executionId={executionId} executionHref={executionHref} open={open} onResolve={onResolve} busy={busy} onDecided={refresh} model={model} changes={changes} profile={profileId ? RUN_PROFILES[profileId] : resolveRunProfile(model.run?.attrs.profile)} onTab={setTab} />
 
       <div role="tablist" aria-label="Run views" className="grid grid-cols-5 gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
         {TABS.map(([id, label]) => (

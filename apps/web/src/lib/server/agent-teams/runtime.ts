@@ -113,6 +113,8 @@ export interface TeamDecision {
   approved: boolean;
   by?: string;
   at?: string;
+  /** What the person changed in the call's input: the tool runs with it instead of the member's own. */
+  input?: Record<string, unknown>;
 }
 
 /** A tool call a member waits to use until a person approves it. */
@@ -666,9 +668,10 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       const word = request.resume?.decisions?.[`${owner.id}/${call.callId}`];
       const label = labelOf(session!, call.callId, call.tool);
       Object.assign(call, { decision: word?.approved ? 'approved' : 'denied' });
+      if (word?.approved && word.input) call.input = word.input;
       const when = word?.at ? ` at ${word.at.replace('T', ' ').replace(/:\d\d(?:\.\d+)?Z$/, ' UTC')}` : '';
       if (!word) check('Approval', 'warn', `${owner.title}'s use of ${label} was not approved in time`, owner.title);
-      else check('Approval', word.approved ? 'pass' : 'warn', `${word.by ?? 'A person'} ${word.approved ? 'approved' : 'rejected'} ${owner.title}'s use of ${label}${when}`, owner.title);
+      else check('Approval', word.approved ? 'pass' : 'warn', `${word.by ?? 'A person'} ${word.approved ? 'approved' : 'rejected'} ${owner.title}'s use of ${label}${word.approved && word.input ? ' with changes' : ''}${when}`, owner.title);
     }
   };
 

@@ -137,6 +137,8 @@ interface Answer {
   approved: boolean
   person: boolean
   message?: string
+  /** The command as the person changed it before allowing it: run this one. */
+  command?: string
 }
 
 /**
@@ -166,9 +168,9 @@ async function askPerson($: EngineInterface, state: State, command: string, cwd:
       const response = await $.http.fetch(`${url}/asks/${askId}?wait=${ASK_POLL_S}`, { method: 'GET' })
       if (response.status === 404 || response.status === 410) return unreachable
       const body = (response as unknown as { text: string | (() => Promise<string>) }).text
-      const parsed = JSON.parse((typeof body === 'function' ? await body() : body) || '{}') as { decision?: string; expired?: boolean }
+      const parsed = JSON.parse((typeof body === 'function' ? await body() : body) || '{}') as { decision?: string; expired?: boolean; command?: string }
       failures = 0
-      if (parsed.decision === 'approved') return { approved: true, person: true }
+      if (parsed.decision === 'approved') return { approved: true, person: true, ...(typeof parsed.command === 'string' && parsed.command.trim() && { command: parsed.command }) }
       if (parsed.decision === 'denied') {
         if (parsed.expired) return { approved: false, person: false, message: `Nobody answered in time, so this didn't run: ${shown}` }
         return { approved: false, person: true, message: `A person denied: ${shown}` }
@@ -255,6 +257,12 @@ export const register: Register = (on, options) => {
         if (!answer.person) record(state, { type: 'guard', at: await $.clock.now(), rule: verdict.rule, tool: e.tool, agent: e.agentId, arg: argOf(input), reason: answer.message, action: 'deny' })
         soon($, state, at)
         return { deny: answer.message ?? 'A person denied this command.' }
+      }
+      // A person changed the command before allowing it: it runs instead, unless a rule that nobody can allow stops it.
+      if (answer.command) {
+        const edited = verdictOf(state, e.tool, { ...input, command: answer.command })
+        if (edited && !edited.ask) return { deny: `Landflow's guardrails stopped the edited command (${edited.rule}): ${edited.reason}` }
+        e = { ...e, command: answer.command } as typeof e
       }
     } else if (verdict) {
       const at = await $.clock.now()

@@ -10,16 +10,22 @@ import { Badge } from '../ui/badge';
 import { useNewLook } from '../shell/look-toggle';
 import { RunTimelineLive } from './run-timeline-card';
 import { SectionTitle } from './parts';
+import { NeedFaces } from './approval-card';
+import { listFaces } from '@/lib/shared/approval-evidence';
 
 const KIND: Record<NeedsYouRow['kind'], string> = { approval: 'Approval', form: 'Form', question: 'Question', gate: 'Checks failed', check: 'Check failed' };
 
 /** Waits for a person and failed checks nobody settled, newest first; each opens the run. */
 export function NeedsYouList() {
   const { items } = useNeedsYou();
+  const newLook = useNewLook();
   if (!items?.length) return null;
+  // The new look: who has something for you, across the runs (a dot on each member that waits).
+  const faces = newLook ? listFaces(items.filter((i) => i.member || i.actor?.type === 'agent')) : [];
   return (
     <section aria-label="Needs you">
       <SectionTitle>Needs you · {items.length}</SectionTitle>
+      {faces.length > 0 && <NeedFaces faces={faces} className="mb-2 px-1" />}
       <ul className="divide-y divide-hair overflow-hidden rounded-2xl border border-warnbd bg-warndim">
         {items.map((item) => (
           <li key={`${item.executionId}:${item.spanId ?? item.title}`}>

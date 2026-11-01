@@ -57,6 +57,8 @@ export interface AskRecord {
   status: AskStatus;
   decidedBy?: string;
   decidedAt?: string;
+  /** The command a person changed before allowing it; the mod runs it instead of `command`. */
+  editedCommand?: string;
   createdAt: string;
 }
 
@@ -88,6 +90,7 @@ interface AskRow {
   status: AskStatus;
   decided_by: string | null;
   decided_at: string | null;
+  edited_command?: string | null;
   created_at: string;
 }
 
@@ -104,6 +107,7 @@ const recordOf = (row: AskRow): AskRecord => ({
   status: row.status,
   ...(row.decided_by && { decidedBy: row.decided_by }),
   ...(row.decided_at && { decidedAt: row.decided_at }),
+  ...(row.edited_command && { editedCommand: row.edited_command }),
   createdAt: row.created_at,
 });
 
@@ -123,24 +127,26 @@ function writeJournal(executionId: string, workflowId: string, write: (journal: 
 }
 
 /** Close the ask's wait in the journal: the wait ends and, when a person answered, an Approval check says who decided what. */
-function journalAnswer(row: AskRow, answer: { status: Exclude<AskStatus, 'pending'>; by?: string; at: string }) {
+function journalAnswer(row: AskRow, answer: { status: Exclude<AskStatus, 'pending'>; by?: string; at: string; edited?: string }) {
   writeJournal(row.execution_id, row.workflow_id, (journal) => {
     const who = answer.by ?? 'A person';
     const word = answer.status === 'approved' ? 'approved' : answer.status === 'denied' ? 'rejected' : undefined;
     const subject = row.member ?? undefined;
     if (word) {
       const from: RunActor = { id: `human:${answer.by ?? 'unknown'}`, name: who, type: 'human' };
-      journal.record({ type: 'message', spanId: row.span_id, from, text: `${word === 'approved' ? 'Approved' : 'Rejected'} ${cut(row.command, 200)}`, at: answer.at });
+      journal.record({ type: 'message', spanId: row.span_id, from, text: `${word === 'approved' ? 'Approved' : 'Rejected'} ${cut(answer.edited ?? row.command, 200)}${answer.edited ? ' (edited)' : ''}`, at: answer.at });
+      // The person changed the command: the wait says so, with the command that ran.
+      if (answer.edited) journal.record({ type: 'span.updated', spanId: row.span_id, attrs: { edited: true, editedBy: who, editedCommand: cut(answer.edited, 2000) }, at: answer.at });
       journal.record({
         type: 'check',
         spanId: row.parent_span_id,
         check: {
           name: 'Approval',
           status: word === 'approved' ? 'pass' : 'warn',
-          message: `${who} ${word} ${row.member ? `${row.member}'s ` : ''}command ${cut(row.command, 200)} at ${answer.at.replace('T', ' ').replace(/:\d\d(?:\.\d+)?Z$/, ' UTC')}`,
+          message: `${who} ${word} ${row.member ? `${row.member}'s ` : ''}command ${cut(answer.edited ?? row.command, 200)}${answer.edited ? ' (edited by them from ' + cut(row.command, 80) + ')' : ''} at ${answer.at.replace('T', ' ').replace(/:\d\d(?:\.\d+)?Z$/, ' UTC')}`,
           ...(subject && { subject }),
           source: 'person',
-          evidence: { command: row.command, decision: answer.status, ...(answer.by && { by: answer.by }), at: answer.at },
+          evidence: { command: answer.edited ?? row.command, ...(answer.edited && { original: row.command, edited: true }), decision: answer.status, ...(answer.by && { by: answer.by }), at: answer.at },
         },
         at: answer.at,
       });
@@ -201,6 +207,8 @@ export interface AskAnswer {
   decision: 'pending' | 'approved' | 'denied';
   by?: string;
   at?: string;
+  /** Approved with a command a person changed: the mod runs this one. */
+  command?: string;
   /** Denied because nobody answered in time, or the call ended (the mod says so to Claude Code). */
   expired?: boolean;
 }
@@ -209,7 +217,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function answerOf(row: AskRow | undefined): AskAnswer | undefined {
   if (!row) return undefined;
-  if (row.status === 'approved') return { decision: 'approved', ...(row.decided_by && { by: row.decided_by }), ...(row.decided_at && { at: row.decided_at }) };
+  if (row.status === 'approved') return { decision: 'approved', ...(row.decided_by && { by: row.decided_by }), ...(row.decided_at && { at: row.decided_at }), ...(row.edited_command && { command: row.edited_command }) };
   if (row.status === 'denied') return { decision: 'denied', ...(row.decided_by && { by: row.decided_by }), ...(row.decided_at && { at: row.decided_at }) };
   if (row.status === 'expired' || row.status === 'canceled') return { decision: 'denied', expired: true };
   return { decision: 'pending' };
@@ -266,8 +274,13 @@ export function openAsks(executionId?: string): AskRecord[] {
   return open;
 }
 
-/** A person's decision on an ask of the execution. Throws AskError: 404 no such ask, 409 already answered or past its time. */
-export function decideAsk(executionId: string, id: string, approved: boolean, by?: string): AskRecord {
+/**
+ * A person's decision on an ask of the execution. `command` is what they changed it to before allowing it (approvals only; the
+ * mod runs it instead). Throws AskError: 400 a bad edit, 404 no such ask, 409 already answered or past its time.
+ */
+export function decideAsk(executionId: string, id: string, approved: boolean, by?: string, command?: string): AskRecord {
+  if (command !== undefined && !approved) throw new AskError('Only an approval can carry an edited command', 400);
+  if (command !== undefined && (!command.trim() || command.length > 20_000)) throw new AskError('The edited command must be text, up to 20,000 characters', 400);
   const row = database().get<AskRow>('SELECT * FROM agent_asks WHERE id = ? AND execution_id = ?', id, executionId);
   if (!row) throw new AskError('No such command is waiting for approval', 404);
   if (row.status !== 'pending') throw new AskError(row.status === 'approved' || row.status === 'denied' ? `Already ${row.status === 'approved' ? 'approved' : 'rejected'}` : 'This command is no longer waiting', 409);
@@ -277,9 +290,10 @@ export function decideAsk(executionId: string, id: string, approved: boolean, by
   }
   const at = now();
   const status = approved ? 'approved' : 'denied';
-  const next: AskRow = { ...row, status, decided_by: by ?? null, decided_at: at };
+  const edited = command !== undefined && command.trim() !== row.command.trim() ? command.trim() : undefined;
+  const next: AskRow = { ...row, status, decided_by: by ?? null, decided_at: at, edited_command: edited ?? null };
   database().upsert('agent_asks', next as unknown as Row);
-  journalAnswer(next, { status, ...(by && { by }), at });
+  journalAnswer(next, { status, ...(by && { by }), at, ...(edited && { edited }) });
   return recordOf(next);
 }
 

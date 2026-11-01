@@ -18,8 +18,8 @@ export function openWaitSpan(executionId: string): string | undefined {
   return waits.at(-1);
 }
 
-/** Say `text` as `person` in the open wait span of the execution. Never throws: the journal must not block a decision. */
-export function recordDecision(executionId: string, workflowId: string, person: { id: string; name?: string }, text: string) {
+/** Say `text` as `person` in the open wait span of the execution (`edited`: the person changed the tool's input before approving). Never throws: the journal must not block a decision. */
+export function recordDecision(executionId: string, workflowId: string, person: { id: string; name?: string }, text: string, edited?: { editedBy: string }) {
   try {
     const spanId = openWaitSpan(executionId);
     if (!spanId) return;
@@ -27,6 +27,8 @@ export function recordDecision(executionId: string, workflowId: string, person: 
     const running = liveJournal(executionId);
     const journal = running ?? journalOf(executionId, { workflowId });
     journal.record({ type: 'message', spanId, from, text });
+    // The person changed what the tool would do: the wait says so ("Edited by you" in the Run Trace).
+    if (edited) journal.record({ type: 'span.updated', spanId, attrs: { edited: true, editedBy: edited.editedBy } });
     journal.flush();
     if (!running) releaseJournal(executionId);
   } catch {

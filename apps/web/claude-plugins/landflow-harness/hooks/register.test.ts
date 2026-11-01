@@ -10,6 +10,7 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], answers: Array<Rec
   const posts: Array<{ url: string; events: Array<Record<string, unknown>> }> = []
   const polls: string[] = []
   const ran: string[] = []
+  const commands: string[] = []
   mock.clock(on, { now: 1000 })
   mock.env(on, { HOME: '/data' })
   on('http.fetch', (_, e) => {
@@ -25,13 +26,14 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], answers: Array<Rec
   on('prompt.submit', (_, e) => ({ text: e.text }))
   on('tool.call', (_, e) => {
     ran.push(e.tool)
+    commands.push(String((e as unknown as { command?: string }).command ?? ''))
     return { result: {} }
   })
   on('turn.step', async function* (_, e) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [{ name: 'Bash', input: {} }], stopReason: 'tool_use' as const, usage }
   })
   on('turn.complete', (_, e) => ({ text: e.answer }))
-  return { posts, ran, polls }
+  return { posts, ran, polls, commands }
 }
 
 const events = (posts: Array<{ events: Array<Record<string, unknown>> }>) => posts.flatMap(p => p.events)
@@ -72,6 +74,18 @@ test('a push to main asks a person and runs once they approve', async ($, on) =>
   expect(polls).toHaveLength(2)
   expect(polls[0]).toBe(`${URL}/asks/${ask?.askId}?wait=25`)
   expect(events(posts).some(e => e.type === 'guard')).toBe(false)
+})
+
+test('a push to main a person edited runs as they edited it', async ($, on) => {
+  const { ran, commands } = world(on, [{ decision: 'approved', by: 'ann@example.com', command: 'git push origin fix/alerts' }])
+  await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
+  await $.prompt.submit({ text: `<!-- landflow-trace ${URL} -->\nShip it` })
+  const result = await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
+  await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+
+  expect(result.deny).toBeUndefined()
+  expect(ran).toEqual(['Bash'])
+  expect(commands).toEqual(['git push origin fix/alerts'])
 })
 
 test('a push to main a person denies is refused with their word', async ($, on) => {

@@ -24,8 +24,8 @@ const ASK = { type: 'ask', askId: 'ask-1-abc', command: 'git push origin main', 
 
 const pollAsk = (traceId: string, askId = ASK.askId, wait = 0) =>
   poll.GET(new Request(`http://landflow.test/api/agent-trace/${traceId}/asks/${askId}?wait=${wait}`), { params: Promise.resolve({ id: traceId, askId }) });
-const decideAsk = (executionId: string, askId: string, approved: boolean) =>
-  decide.POST(new Request(`http://landflow.test/api/executions/${executionId}/asks/${askId}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approved }) }), { params: Promise.resolve({ id: executionId, askId }) });
+const decideAsk = (executionId: string, askId: string, approved: boolean, command?: string) =>
+  decide.POST(new Request(`http://landflow.test/api/executions/${executionId}/asks/${askId}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approved, ...(command !== undefined && { command }) }) }), { params: Promise.resolve({ id: executionId, askId }) });
 
 beforeEach(() => {
   resetTraces();
@@ -79,6 +79,28 @@ describe('an ask from a member in a run', () => {
     expect(openAsks(run.executionId)).toEqual([]);
     // Once is enough.
     expect((await decideAsk(run.executionId, id, false)).status).toBe(409);
+  });
+
+  it('approve with an edited command: the poll hands it to the mod, and the journal says it was edited', async () => {
+    const run = fresh();
+    const trace = openTrace({ baseUrl: 'http://landflow.test', run: { ...run, member: 'Developer', spanId: 'req' } });
+    ingestTrace(trace.id, [ASK]);
+    const [{ id }] = openAsks(run.executionId);
+    // Only an approval carries a command, and it must be text.
+    expect((await decideAsk(run.executionId, id, false, 'git push origin fix')).status).toBe(400);
+    expect((await decideAsk(run.executionId, id, true, '')).status).toBe(400);
+    expect((await decideAsk(run.executionId, id, true, 'git push origin fix')).status).toBe(200);
+    expect(await (await pollAsk(trace.id)).json()).toMatchObject({ decision: 'approved', command: 'git push origin fix' });
+    const events = journalOf(run.executionId);
+    expect(events.find((e) => e.type === 'span.updated' && e.spanId.includes('/ask:'))).toMatchObject({ attrs: { edited: true, editedCommand: 'git push origin fix' } });
+    expect(events.find((e) => e.type === 'check')).toMatchObject({ check: { name: 'Approval', status: 'pass', evidence: { command: 'git push origin fix', original: 'git push origin main', edited: true } } });
+    // The same command as asked is not an edit.
+    const again = fresh();
+    const second = openTrace({ baseUrl: 'http://landflow.test', run: { ...again, member: 'Developer', spanId: 'req' } });
+    ingestTrace(second.id, [ASK]);
+    const [{ id: next }] = openAsks(again.executionId);
+    await decideAsk(again.executionId, next, true, ASK.command);
+    expect(await (await pollAsk(second.id)).json()).not.toHaveProperty('command');
   });
 
   it('reject: denied, and the Approval check is a warning', async () => {

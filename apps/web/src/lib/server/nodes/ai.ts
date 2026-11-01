@@ -237,7 +237,8 @@ export const aiAgentNode = defineNode({
         const settled = await Promise.all(
           continuing.pending.calls.map(async (call): Promise<ToolResult> => {
             const decision = decisions[call.id];
-            if (decision?.approved) return invoke(call);
+            // A person may have edited the input: the tool runs with it.
+            if (decision?.approved) return invoke(decision.input ? { ...call, input: decision.input } : call);
             const reason = decision ? `rejected${decision.by ? ` by ${decision.by}` : ''}` : resume?.kind === 'timeout' ? 'not approved in time' : 'not approved';
             run.steps.push({ tool: call.name, input: call.input, output: `Not run: ${reason}`, isError: true });
             send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'failed', output: `Not run: ${reason}` } });
@@ -338,14 +339,22 @@ interface AgentNodeState {
   $resume?: { kind: string; data?: JsonObject; error?: string };
 }
 
-/** A person's decisions, from the approval route (`{ decisions: { [callId]: { approved, by } } }`). */
-export function decisionsOf(resume: AgentNodeState['$resume']): Record<string, { approved: boolean; by?: string; at?: string }> {
+/** A person's decisions, from the approval route (`{ decisions: { [callId]: { approved, by, input? } } }`): `input` is what they edited. */
+export function decisionsOf(resume: AgentNodeState['$resume']): Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject }> {
   const data = resume?.data as { decisions?: unknown; body?: { decisions?: unknown } } | undefined;
   const raw = (data?.decisions ?? data?.body?.decisions) as Record<string, unknown> | undefined;
-  const decisions: Record<string, { approved: boolean; by?: string; at?: string }> = {};
+  const decisions: Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject }> = {};
   for (const [id, value] of Object.entries(raw ?? {})) {
     if (typeof value === 'boolean') decisions[id] = { approved: value };
-    else if (value && typeof value === 'object') decisions[id] = { approved: Boolean((value as { approved?: unknown }).approved), ...(typeof (value as { by?: unknown }).by === 'string' && { by: (value as { by: string }).by }), ...(typeof (value as { at?: unknown }).at === 'string' && { at: (value as { at: string }).at }) };
+    else if (value && typeof value === 'object') {
+      const v = value as { approved?: unknown; by?: unknown; at?: unknown; input?: unknown };
+      decisions[id] = {
+        approved: Boolean(v.approved),
+        ...(typeof v.by === 'string' && { by: v.by }),
+        ...(typeof v.at === 'string' && { at: v.at }),
+        ...(v.approved === true && typeof v.input === 'object' && v.input !== null && !Array.isArray(v.input) ? { input: v.input as JsonObject } : {}),
+      };
+    }
   }
   return decisions;
 }
