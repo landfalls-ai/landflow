@@ -6,6 +6,8 @@
  */
 import type { ExecutionEvent, Workflow, WorkflowNode } from '@landflow/engine';
 import type { JsonObject } from '@landflow/protocol';
+import type { AgentTraceSummary } from '../../shared/agents';
+import { traceModelCalls } from './trace-calls';
 import { mergeConnections, toolInput, type ActorConnection, type JournalDraft, type JournalEvent, type RunActor, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from '../../shared/run-trace';
 
 /** Nodes that are agents when they run in the main flow. */
@@ -65,6 +67,8 @@ interface Remote {
   waits: number;
   /** Ids of the words already journaled. */
   said: Set<string>;
+  /** The mod's model requests were journaled. */
+  modelsDone?: boolean;
 }
 
 const freshRemote = (): Remote => ({ steps: new Map(), waits: 0, said: new Set() });
@@ -440,6 +444,11 @@ export function createTranslator(options: TranslatorOptions) {
       span.actor = { ...span.actor, name: agent };
     }
     remoteEvents(span, item, at);
+    // The landflow-harness mod's model requests: one `model` span each, under the request.
+    if (isObject(item.trace) && Array.isArray(item.trace.calls) && !remote.modelsDone) {
+      remote.modelsDone = true;
+      traceModelCalls(span.actor, item.trace as unknown as AgentTraceSummary, span.id, (draft) => emit(draft));
+    }
   }
 
   function nodeProgress(e: Extract<ExecutionEvent, { type: 'node.progress' }>) {

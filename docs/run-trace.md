@@ -39,7 +39,12 @@ OTel trace id when telemetry recorded one, and a step's own span id in `attrs.ot
 - **Remote agents**: an A2A Agent node's progress (the remote task's state and its tool calls) becomes the remote
   agent's own `tool` spans under the request, whether the node is an agent's tool or a step on the canvas. When the node
   finishes, every step in its result is reconciled, so all steps are kept, not only the latest 20. A step whose result
-  says `isError: true` counts as failed. (Before 2026-11-01 an A2A Agent node on the canvas kept its progress as a text
+  says `isError: true` counts as failed. A Claude Code agent with the landflow-harness mod ([a2a.md](a2a.md#the-landflow-harness-mod))
+  also reports each model request: it is recorded as a `model` span named after the model, under that member's
+  request (`<request>/model:<n>`), with the request's tokens, cache reads and writes, cost and model and its own start
+  and end. The request keeps the mod's totals; the fold counts a model span as one request and takes its share off the
+  request's usage, so nothing counts twice (a model span without a `requests` count is one). The first 300 requests of
+  a call are kept as spans; the totals count all of them. (Before 2026-11-01 an A2A Agent node on the canvas kept its progress as a text
   note and its output cut whole, so those runs show none of its steps or files.)
 - **Landflow agents** started by Run an Agent write their turns, tool calls and sub-agent requests under that node's
   span (`journal/agent-session.ts`). A guardrail that blocked or sanitized a turn becomes a check.
@@ -351,6 +356,50 @@ request numbers in replies become GitHub links. Everything an agent writes is un
 (`react-markdown` with `remark-gfm` and `rehype-sanitize`), links open in a new tab and only when they are http or https, and
 images are not loaded.
 
+## Search, compare and measures
+
+Three routes read across runs, and two screens use them (made for a phone: one column of cards, no wide tables).
+
+- **Search** (`/runs`, **Search runs** in the side bar; `GET /api/runs/search`): words (span names, inputs and outputs,
+  messages, artifacts, checks), workflow, an agent or actor by name, a tool by name, status, **has failed steps**,
+  **a check failed** (by name, or any) and from/to dates. Results are cards (status, workflow, when, how long, the
+  failed steps and checks, and where the words were found) that open `/runs/<id>`, 20 at a time with **Show more**.
+  Only the runs of workflows you can see are searched. The queries are plain SQL on `execution_events` (`LIKE` and
+  `EXISTS`, the same on SQLite and Postgres, no schema change); each candidate run's events are then checked in code,
+  so a word that is only a field name of the stored event doesn't match. A run recorded before Run Trace is searched by
+  workflow, status and date only, until its journal is rebuilt by opening it.
+- **Compare** (`/runs/compare?a=&b=`; pick two cards in the search and press **Compare**; `GET /api/runs/compare`):
+  each run is folded with `foldJournal` and shown as a card: duration, tokens in and out, cost, model calls, steps,
+  failed steps, checks passed, failed and warned, the failed checks' names and the artifacts. The cards sit side by
+  side on a wide screen and stack on a phone; the second shows what changed from the first (a rise is red). Under them,
+  a card per actor of either run with its steps, failed steps, tokens and model calls in both runs and the
+  difference; an actor that took part in only one says so.
+- **Measures over time** (`GET /api/runs/measures?workflowId=`; the chart appears on the search page once a workflow is
+  chosen): the workflow's last runs (30 by default) as duration, tokens in and out, cost, failed steps and failed
+  checks per run. The chart is a line with a dot per run for one measure at a time (duration, tokens or cost), the
+  latest dot larger and labelled with its value, the largest value and the first and last dates on the axes; a run
+  with a failed step, a failed check or an error is a red dot. A run profile can't define measures of its own yet.
+
+## Export over OTLP
+
+Set `LANDFLOW_OTLP_TRACES_URL` to an OTLP/HTTP traces endpoint (`http://landflow-lgtm:4318/v1/traces` in the
+`orbstack-observability` overlay) and every execution's journal is sent there when the run ends
+(`journal/otlp-export.ts`; a run that waits for a person or a timer is sent when it finishes):
+
+- **One trace per execution**, with the run's own OTel trace id when telemetry recorded one (so the spans join the
+  host's spans of that run), else an id derived from the execution. Each journal span is an OTLP span with its parent,
+  start and end, and a status (success OK, error ERROR with the message; a canceled or unfinished span has none). A
+  span's checks, artifacts and messages are span events.
+- **OpenInference attributes**: `openinference.span.kind` is `AGENT` for agent, delegate and handoff spans, `LLM` for
+  model spans, `TOOL` for tool spans, `EVALUATOR` for a Run report (or evaluation) node and `CHAIN` for the rest;
+  `llm.model_name`, `llm.token_count.prompt`, `.completion` and `.total` (and `.prompt_details.cache_read` and
+  `.cache_write`, `llm.cost.total` when reported) where the span has usage; `input.value` and `output.value` with their
+  mime types; `landflow.actor`, `landflow.execution_id`, `landflow.span_kind`, `landflow.status`.
+- **Redaction and size** are the journal's: the export reads what was stored (secrets redacted, content cut by
+  `traceContent`, so `off` sends no inputs or outputs) and cuts each value to 4,000 characters.
+- **Never in the way**: it runs after the run, in the background; spans go out in batches of 200, each request is
+  tried twice, and a failure is logged and dropped.
+
 ## HTTP API
 
 | Route | What it does |
@@ -360,13 +409,18 @@ images are not loaded.
 | `POST /api/executions/:id/checks` | `{ spanId, name, subject?, decision: 'accepted' \| 'sent_back', note? }`: a person's decision on a failed check (`subject` picks one of a span's checks of that name, as a team's Budget for each member). |
 | `POST /api/executions/:id/gate` | `{ decision, note? }`: answers a Run report waiting on its failed checks, and resumes the run. |
 | `GET /api/runs/needs-you` | Across the runs you can see: waits for a person (`approval`, `form`, `question`, `gate`) and failed checks of the last 7 days nobody decided on. |
+| `GET /api/runs/search`, `/api/runs/compare?a=&b=`, `/api/runs/measures?workflowId=` | Search, compare and measures across runs ("Search, compare and measures" below). |
 
 ## Not built
 
-- A Claude Code agent on kagent reports its usage, cost, tool times and guardrail stops through the landflow-harness
-  mod, folded into its request ([a2a.md](a2a.md#the-landflow-harness-mod)); its model calls between its tool calls aren't
-  spans of their own yet. OTLP and OpenInference export, search and comparison across runs, measures over time, re-running from a span, Copy to editor,
-  and pausing a running agent so a person can take over. These are phase 4 in the roadmap.
+- Re-running from a span, Copy to editor, and pausing a running agent so a person can take over. These are phase 4 in
+  the roadmap.
+- Other agents' own spans (Claude Code's OpenTelemetry) are not joined to the trace by trace id yet.
+- Search reads the journal of runs that have one. It matches the stored text of an event with `LIKE`, so it is not
+  ranked or stemmed, and a request reads at most 1,000 candidate runs. A run profile can't define measures of its own
+  yet: the measures over time are the generic ones.
+- The OTLP export sends JSON (not protobuf), once, when a run ends; a run that was waiting is sent when it finishes, and
+  a run the host loses before it ends is never sent.
 - **Content kept** is per workflow, not per project.
 - Claims are extracted with the profile's patterns. No model reads replies that lack a structured block.
 - A remote agent's steps arrive only through its A2A progress and result. A step taken while the progress stream was

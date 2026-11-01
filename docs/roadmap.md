@@ -987,10 +987,13 @@ approved plan:
 - Still open from the artifacts plan: reasons from delegating nodes of other plugins (the Go and Python SDKs declare
   `delegates` now; plugins still have to set it); fix cycles per round; a lead's claims credited with its team's steps;
   line comments shared between people (they live in one browser).
+- **Phase 4, first part** (2026-11-01): a Claude Code member's model requests are `model` spans under its request;
+  `GET /api/runs/search`, `/compare` and `/measures` with a Search runs page, a compare view and a duration, tokens and
+  cost trend; `LANDFLOW_OTLP_TRACES_URL` exports each finished run's journal as one OTLP trace with OpenInference kinds.
 - Next (phase 4):
   - other agents' spans joined by trace id, starting with Claude Code's own OpenTelemetry;
-  - OTLP export with OpenInference kinds;
-  - search and comparison across runs, and each profile's measures over time;
+  - ~~OTLP export with OpenInference kinds~~, ~~search and comparison across runs~~ and the generic measures over time
+    are built (2026-11-01, [run-trace.md](run-trace.md#search-compare-and-measures)); a profile's own measures are open;
   - re-run from a span, and Copy to editor with the run's data pinned;
   - pausing a running agent so a person can take over;
   - **Content kept** per project.

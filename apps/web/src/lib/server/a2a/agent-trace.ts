@@ -22,6 +22,7 @@ import { logger } from '../telemetry';
 const MAX_TRACES = 500;
 const MAX_EVENTS = 5_000;
 const MAX_GUARD = 50;
+const MAX_CALLS = 300;
 /** How long a closed trace answers 410 (the mod stops posting there), ms. */
 const KEEP_CLOSED_MS = 60_000;
 /** An open trace nobody closed (a crashed call) goes after this long, ms. */
@@ -30,12 +31,14 @@ const MAX_AGE_MS = 6 * 60 * 60_000;
 export type GuardMode = 'enforce' | 'report' | 'off';
 
 const count = z.number().finite().min(0).max(1e12).catch(0);
+/** The mod's clock, epoch ms (about 1.8e12 now: over the cap of the counts). */
+const clock = z.number().finite().min(0).max(1e14).catch(0);
 const text = (max: number) => z.string().max(4_000).transform((s) => s.slice(0, max));
 const eventSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('start'), at: count.optional(), mod: text(40).optional(), guard: z.enum(['enforce', 'report', 'off']).optional() }),
+  z.object({ type: z.literal('start'), at: clock.optional(), mod: text(40).optional(), guard: z.enum(['enforce', 'report', 'off']).optional() }),
   z.object({
     type: z.literal('step'),
-    at: count.optional(),
+    at: clock.optional(),
     ms: count.optional(),
     agent: text(80).optional(),
     model: text(120).optional(),
@@ -47,11 +50,11 @@ const eventSchema = z.discriminatedUnion('type', [
     tools: z.array(text(120)).max(100).optional(),
     server: z.array(text(120)).max(100).optional(),
   }),
-  z.object({ type: z.literal('tool'), at: count.optional(), ms: count.optional(), tool: text(120), agent: text(80).optional(), ok: z.boolean().optional(), denied: z.boolean().optional(), arg: text(200).optional() }),
-  z.object({ type: z.literal('guard'), at: count.optional(), rule: text(60), tool: text(120), agent: text(80).optional(), arg: text(200).optional(), reason: text(400).optional(), action: z.enum(['deny', 'report']).optional() }),
-  z.object({ type: z.literal('redact'), at: count.optional(), agent: text(80).optional(), kinds: z.array(text(60)).max(20).optional() }),
-  z.object({ type: z.literal('spawn'), at: count.optional(), agent: text(80), kind: text(80).optional(), description: text(200).optional(), model: text(120).optional() }),
-  z.object({ type: z.literal('turn'), at: count.optional(), ms: count.optional(), agent: text(80).optional(), reason: text(40).optional() }),
+  z.object({ type: z.literal('tool'), at: clock.optional(), ms: count.optional(), tool: text(120), agent: text(80).optional(), ok: z.boolean().optional(), denied: z.boolean().optional(), arg: text(200).optional() }),
+  z.object({ type: z.literal('guard'), at: clock.optional(), rule: text(60), tool: text(120), agent: text(80).optional(), arg: text(200).optional(), reason: text(400).optional(), action: z.enum(['deny', 'report']).optional() }),
+  z.object({ type: z.literal('redact'), at: clock.optional(), agent: text(80).optional(), kinds: z.array(text(60)).max(20).optional() }),
+  z.object({ type: z.literal('spawn'), at: clock.optional(), agent: text(80), kind: text(80).optional(), description: text(200).optional(), model: text(120).optional() }),
+  z.object({ type: z.literal('turn'), at: clock.optional(), ms: count.optional(), agent: text(80).optional(), reason: text(40).optional() }),
 ]);
 type TraceEvent = z.infer<typeof eventSchema>;
 
@@ -116,6 +119,9 @@ function apply(trace: Trace, event: TraceEvent) {
         if (!agent) s.agents.push((agent = { id: event.agent, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, requests: 0 }));
         add(agent);
         agent.model = model;
+      }
+      if ((s.calls ??= []).length < MAX_CALLS) {
+        s.calls.push({ ...(event.at && { at: event.at }), ms: event.ms ?? 0, model, ...(event.agent && { agent: event.agent }), inputTokens: input, outputTokens: output, cacheReadTokens: event.cacheRead ?? 0, cacheWriteTokens: event.cacheWrite ?? 0, costUsd: Math.round(cost * 1e6) / 1e6 });
       }
       s.modelMs += event.ms ?? 0;
       if (event.server?.length) s.serverTools = (s.serverTools ?? 0) + event.server.length;

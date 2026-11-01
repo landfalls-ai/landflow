@@ -45,6 +45,20 @@ export function read(executionId: string, after = 0, limit = 500): JournalEvent[
     .flatMap((row) => parse<JournalEvent>(row.data) ?? []);
 }
 
+const MAX_READ = 20_000;
+
+/** Every event of an execution's journal (the first 20,000). */
+export function readAll(executionId: string): JournalEvent[] {
+  const events: JournalEvent[] = [];
+  for (let after = 0; events.length < MAX_READ; ) {
+    const page = read(executionId, after, 2000);
+    events.push(...page);
+    if (page.length < 2000) break;
+    after = page[page.length - 1].seq;
+  }
+  return events;
+}
+
 /** The check events written since `since` (ISO), oldest first: the needs-you list reads the failed ones. */
 export function checksSince(since: string): JournalEvent[] {
   return database()

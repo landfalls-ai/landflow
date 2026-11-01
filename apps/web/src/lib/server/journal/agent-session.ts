@@ -6,6 +6,7 @@
  */
 import type { AgentSession, AgentTraceSummary, TimelineEntry } from '../../shared/agents';
 import { toolInput, type RunActor } from '../../shared/run-trace';
+import { traceModelCalls } from './trace-calls';
 import { liveJournal, type Journal } from './writer';
 
 const HUMAN: RunActor = { id: 'human', name: 'A person', type: 'human' };
@@ -160,6 +161,7 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
     if (call.remoteWaiting) record({ type: 'span.ended', spanId: `${spanId}/wait`, status: 'success' });
     for (const [id, state] of call.steps) if (state !== 'ended') record({ type: 'span.ended', spanId: `${spanId}/step:${id}`, status: 'canceled' });
     call.ended = true;
+    if (remote?.trace) traceModelCalls(target, remote.trace, spanId, record);
     record({
       type: 'span.ended',
       spanId,
