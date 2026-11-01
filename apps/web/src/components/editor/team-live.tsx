@@ -13,7 +13,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Check, ChevronRight, Hourglass, Loader2, NotebookPen, Pause, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { useWorkingMembers } from '@/lib/client/run-controls';
+import { decideAsk, useRunAsks, useWorkingMembers } from '@/lib/client/run-controls';
 import { duration } from '@/lib/client/format';
 import { decideToolApprovals } from '@/lib/client/run-trace';
 import { chartOrder, memberAgent, type TeamMember } from '@/lib/shared/agent-teams';
@@ -293,7 +293,7 @@ export interface TeamWaiting {
 }
 
 /** "Tech Lead wants to use Comment on pull request" (a tool waiting for approval), else the member's question. */
-const waitTitle = (waiting: TeamWaiting, who: string) => (waiting.approval ? `${who} wants to use ${waiting.approval.tool}` : `${who} asks a person`);
+const waitTitle = (waiting: TeamWaiting, who: string) => (waiting.approval ? `${who} wants to ${waiting.approval.run ? 'run' : 'use'} ${waiting.approval.tool}` : `${who} asks a person`);
 const waitText = (waiting: TeamWaiting) => (waiting.approval ? (waiting.approval.summary ?? '') : questionText(waiting.question));
 
 /** The amber head of a node whose run waits on a member's question or a tool's approval: the asker's face and what it asks. */
@@ -313,7 +313,7 @@ function AskHead({ waiting, faces }: { waiting: TeamWaiting; faces: TeamFace[] }
         {waiting.approval ? (
           // The tool on its own line: on a narrow node "Writer wants to use publish_notes" cut off the one thing to decide on.
           <div title={waitTitle(waiting, face.title)}>
-            <div className="truncate text-[12px] leading-4 text-t2">{face.title} wants to use</div>
+            <div className="truncate text-[12px] leading-4 text-t2">{face.title} wants to {waiting.approval.run ? 'run' : 'use'}</div>
             <div className="truncate font-mono text-[13px] font-semibold leading-5 text-t1" data-testid="team-wait-tool">
               {waiting.approval.tool}
             </div>
@@ -489,10 +489,13 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
   const faces = useTeamFaces(teamId);
   const elapsed = useElapsed(live);
   const working = useWorkingMembers(options.executionId, Boolean(live && options.executionId && !options.waiting));
+  // A command a member's guard asks a person about (a push to main): the run goes on, so the node shows it beside the work.
+  const { asks, refresh: readAsks } = useRunAsks(options.executionId, Boolean(live && options.executionId && !options.waiting && !live.waiting));
   if (!faces?.length) return {};
+  const ask = !options.waiting && !live?.waiting ? asks[0] : undefined;
   const { executionId, newTab } = options;
   const hrefOf = executionId ? (turn: TeamTurn) => memberTraceHref(executionId, turn.member) : undefined;
-  const asked = options.waiting ?? live?.waiting;
+  const asked: TeamWaiting | undefined = options.waiting ?? live?.waiting ?? (ask && { member: ask.member ?? faces[0].title, question: `${ask.member ?? faces[0].title} wants to run ${ask.command}`, approval: { tool: ask.command, run: true, ...(ask.reason && { summary: ask.reason }) } });
   if (asked) {
     const turns = live?.turns ?? activity?.turns;
     return {
@@ -502,9 +505,9 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
         body: (
           <>
             <div className="mx-4 flex items-center gap-2 border-t border-hair pt-2">
-              {executionId && options.waiting ? (
+              {executionId && (options.waiting || ask) ? (
                 asked.approval ? (
-                  <ApprovalButtons executionId={executionId} onDecide={options.onDecide} className="w-full" />
+                  <ApprovalButtons executionId={executionId} onDecide={ask ? async (approved) => { await decideAsk(executionId, ask.id, approved); readAsks(); } : options.onDecide} className="w-full" />
                 ) : (
                   <AnswerLink executionId={executionId} />
                 )

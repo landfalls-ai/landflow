@@ -57,6 +57,8 @@ export interface TeamApprovalWait {
   tool: string;
   /** Its input as a few words: the comment, the command, the path. */
   summary?: string;
+  /** A command the member's guard asks about (a push to main), not a tool: "wants to run". */
+  run?: boolean;
 }
 
 /** Who consults whom while a peer works for another member (or has taken its task over). */
