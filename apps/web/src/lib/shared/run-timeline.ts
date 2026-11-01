@@ -169,7 +169,11 @@ export function runTimeline(model: RunModel, headlines: Headline[] = []): RunTim
   }
   if (wait) {
     const name = wait.actor?.name;
-    const step = [...steps].reverse().find((s) => s.state !== 'next' && (same(s.who, name) || same(s.actor?.name, name) || same(s.who, wait.caller?.name))) ?? steps.findLast((s) => s.state === 'now');
+    // The member whose turn waits (a person is asked on its behalf), else the step at work.
+    const step =
+      [...steps].reverse().find((s) => s.state !== 'next' && (same(s.who, name) || same(s.actor?.name, name) || same(s.who, wait.caller?.name))) ??
+      steps.findLast((s) => s.state === 'waiting') ??
+      steps.findLast((s) => s.state === 'now');
     if (step) {
       step.state = 'waiting';
       step.doing = cut(wait.title, 60);

@@ -99,6 +99,20 @@ describe('a run as a timeline', () => {
     expect(step.doing).toBe('Developer wants to use publish');
   });
 
+  it('puts a wait asked of a person on the member whose turn waits, not on a step of its own', () => {
+    const model = foldJournal(
+      journal((add) => {
+        start(add);
+        add(22, { type: 'span.updated', spanId: 'node:team:0/ask:2', status: 'waiting' });
+        add(25, { type: 'span.started', spanId: 'node:team:0/approval', parentSpanId: 'node:team:0', kind: 'wait', name: 'Developer wants to use publish', actor: { id: 'human:a', type: 'human', name: 'A person' } });
+      }),
+      { now: T0 + 30_000 },
+    );
+    const t = runTimeline(model);
+    expect(t.steps.filter((s) => s.state === 'waiting').map((s) => [s.who, s.doing])).toEqual([['Developer', 'Developer wants to use publish']]);
+    expect(t.steps.some((s) => s.who === 'A person')).toBe(false);
+  });
+
   it('marks the step a run failed on, and a failing result as a failure', () => {
     const activity: TeamActivity = { durationMs: 60_000, turns: [], steps: {}, moments: [{ at: 35_000, member: 'Developer', tone: 'bad', text: 'Typecheck failed' }] };
     const model = foldJournal(

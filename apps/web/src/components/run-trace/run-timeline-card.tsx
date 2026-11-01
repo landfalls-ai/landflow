@@ -28,7 +28,7 @@ const STATUS: Record<TimelineStatus, { label: string; className: string; dot?: b
   done: { label: 'Done', className: 'border-gnbd bg-gndim text-gn' },
 };
 
-const tokensText = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k tokens` : `${n} tokens`);
+const tokensText = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k tokens` : n ? `${n} tokens` : '');
 
 function StatusPill({ status }: { status: TimelineStatus }) {
   const s = STATUS[status];
@@ -171,9 +171,7 @@ export function RunTimelineCard({ model, onStory }: { model: RunModel; onStory?:
         <TimelineSteps timeline={timeline} />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-hair pt-2.5 text-[12px] text-t3">
-        <span>
-          {fmtMs(timeline.ms)} · {tokensText(timeline.tokens)}
-        </span>
+        <span>{[fmtMs(timeline.ms), tokensText(timeline.tokens)].filter(Boolean).join(' · ')}</span>
         <span className="flex-1" />
         {timeline.status === 'needs-you' && (
           <button
@@ -216,7 +214,7 @@ export function RunTimelineLive({ executionId, name }: { executionId: string; na
             </div>
           )}
           <p className="mt-2.5 text-[12px] text-t3">
-            {fmtMs(timeline.ms)} · {tokensText(timeline.tokens)}
+            {[fmtMs(timeline.ms), tokensText(timeline.tokens)].filter(Boolean).join(' · ')}
             {timeline.waiting && <span className="font-medium text-warn"> · {timeline.waiting.title}</span>}
           </p>
         </>
