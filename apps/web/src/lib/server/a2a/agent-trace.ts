@@ -8,13 +8,15 @@
  * A trace lives in this process while its call runs: `openTrace` makes one (an unguessable id is the URL's only
  * credential), the route feeds it, and the caller reads the summary as it grows and once more when the call ends
  * (`close` waits a moment for the mod's last batch). Closed traces answer 410 for a minute, then are forgotten. In
- * queue mode a worker's trace is not seen by the main the mod posts to: the run keeps its estimate there.
+ * queue mode the id starts with the process that holds the trace (`<instance>.<random>`): the main the mod posts to
+ * forwards a batch it doesn't hold to that process's inbox (`forwardTrace`), so a worker's call gets its real usage.
  */
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { AgentTraceSummary, TokenUsage, TraceGuardDecision } from '../../shared/agents';
 import { agentStore } from '../agents/store';
 import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
+import { clusterActive, clusterState } from '../cluster/state';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry';
 
@@ -179,7 +181,9 @@ export function openTrace(options: { baseUrl: string; provider?: string; guard?:
     const oldest = [...traces().values()].sort((a, b) => a.createdAt - b.createdAt)[0];
     if (oldest) traces().delete(oldest.id);
   }
-  const id = randomBytes(18).toString('base64url');
+  const random = randomBytes(18).toString('base64url');
+  // In queue mode the process that holds it is in the id, so another one can pass the mod's batches on (forwardTrace).
+  const id = clusterActive() ? `${Buffer.from(clusterState().config.instanceId).toString('base64url')}.${random}` : random;
   const trace: Trace = { id, provider: (options.provider ?? 'anthropic').toLowerCase(), createdAt: Date.now(), events: 0, done: false, listeners: new Set() };
   traces().set(id, trace);
   const url = `${options.baseUrl.replace(/\/+$/, '')}/api/agent-trace/${id}`;
@@ -222,6 +226,33 @@ export function ingestTrace(id: string, events: unknown[]): IngestResult {
   if (skipped) logger.debug('agent trace: events skipped', { trace: id, skipped });
   if (trace.summary) for (const listener of trace.listeners) listener(structuredClone(trace.summary));
   return 'ok';
+}
+
+/** Ids the route takes: an unguessable part, after the holder's instance in queue mode. */
+export const TRACE_ID = /^(?:[A-Za-z0-9_-]{1,96}\.)?[A-Za-z0-9_-]{16,64}$/;
+
+/** The instance that holds a trace (queue mode), from its id. */
+export function traceHolder(id: string): string | undefined {
+  const dot = id.indexOf('.');
+  if (dot <= 0) return undefined;
+  try {
+    return Buffer.from(id.slice(0, dot), 'base64url').toString('utf8') || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Queue mode: a batch for a trace another process holds goes to that process's inbox (it ingests it, see cluster/index.ts).
+ * True when it was sent on; the answer can't say whether that process still has the trace.
+ */
+export function forwardTrace(id: string, events: unknown[]): boolean {
+  if (!clusterActive()) return false;
+  const holder = traceHolder(id);
+  const { relay, config } = clusterState();
+  if (!holder || !relay || holder === config.instanceId) return false;
+  void relay.send(holder, { t: 'trace', id, events });
+  return true;
 }
 
 /** For tests. */

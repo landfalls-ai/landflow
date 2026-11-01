@@ -40,7 +40,7 @@ import { notifyFailure } from './alerts/service';
 import { TriggerBuffers, triggerBuffers } from './trigger-buffers';
 import { auditCredentialUse } from './audit';
 import { currentActorId } from './auth/context';
-import { bus } from './bus';
+import { bus, isRelayed } from './bus';
 import { workflowScopes } from './composites';
 import { admission, CAPPED_MODES, hasFreeSlot, LIMITED_MODES, maxRuns, priorityOf, queueOrder, RunSkippedError } from './concurrency';
 import { DuplicateRunError, findIdempotent, rememberIdempotent } from './idempotency';
@@ -206,11 +206,25 @@ interface QueueWaiter {
   onReply?: (reply: RunReply) => void;
 }
 /**
- * The latest `node.progress` of each running node, by execution (what a page opened mid-run reads; this process's runs
- * only), with `since`: when the node first reported (a tool sub-node has no node.started to time it from).
+ * The latest `node.progress` of each running node, by execution (what a page opened mid-run reads), with `since`: when
+ * the node first reported (a tool sub-node has no node.started to time it from). This process's runs, and in queue mode
+ * every worker's, whose events reach each main over the bus relay.
  */
 export type NodeProgress = Extract<ExecutionEvent, { type: 'node.progress' }> & { since: string };
 const progressOf = singleton('node-progress', () => new Map<string, Map<string, NodeProgress>>());
+
+/** Keep a run's live progress from its events: the latest per node, gone when the node or the run finishes. */
+function trackProgress(event: ExecutionEvent, executionId: string = event.executionId) {
+  if (event.type === 'node.progress') {
+    let nodes = progressOf.get(executionId);
+    if (!nodes) progressOf.set(executionId, (nodes = new Map()));
+    nodes.set(event.nodeId, { ...event, since: nodes.get(event.nodeId)?.since ?? event.at });
+  } else if (event.type === 'node.finished') progressOf.get(executionId)?.delete(event.nodeId);
+  else if (event.type === 'execution.finished') progressOf.delete(executionId);
+}
+
+// Queue mode: a worker's progress, relayed to this main, is kept like a run of its own.
+singleton('node-progress-relayed', () => bus.subscribe((e) => e.channel === 'execution' && isRelayed(e) && trackProgress(e.event)));
 
 /** What the running nodes of an execution last reported (ctx.sendProgress), by node id. */
 export function liveProgress(executionId: string): Record<string, NodeProgress> {
@@ -627,12 +641,7 @@ async function runSegment(segment: Segment): Promise<ExecutionRecord> {
         if (event.type === 'node.log') {
           logger[event.level](event.message, { 'landflow.execution.id': executionId, 'landflow.node.id': event.nodeId, 'landflow.workflow.id': workflow.id });
         }
-        if (event.type === 'node.progress') {
-          let nodes = progressOf.get(executionId);
-          if (!nodes) progressOf.set(executionId, (nodes = new Map()));
-          nodes.set(event.nodeId, { ...event, since: nodes.get(event.nodeId)?.since ?? event.at });
-        } else if (event.type === 'node.finished') progressOf.get(executionId)?.delete(event.nodeId);
-        else if (event.type === 'execution.finished') progressOf.delete(executionId);
+        trackProgress(event, executionId);
         // Streamed chunks go only to the caller that asked for them (the chat panel, a hosted chat, a streaming webhook).
         if (event.type !== 'node.chunk') bus.publish({ channel: 'execution', workflowId: workflow.id, event });
         segment.onEvent?.(event);

@@ -552,8 +552,10 @@ gone, a push to main refused and reported, enforcing without a marker and report
 
 - Remote agents' tokens are recorded (timeline, span, `landflow.a2a.tokens`) but don't count toward an agent's daily or
   monthly AI limits, which count Landflow's own model calls.
-- The landflow-harness mod's trace lives in the memory of the host that made the call: in queue mode a worker's call
-  posts to the main's URL, which doesn't know the trace (404), so the run keeps its estimate. Its guard is set per agent
+- The landflow-harness mod's trace lives in the memory of the host that made the call. In queue mode its id starts with
+  that process (`<instance>.<random>`, base64url), and the main the mod posts to passes a batch it doesn't hold on to
+  that process's inbox over Valkey (`202`), so a worker's call gets its real usage; a batch for a worker that has gone is
+  lost, and the run keeps its estimate for it. Its guard is set per agent
   at deploy time (read-only, normal, report only); its rules are patterns over the command line (a script that does the
   same thing gets past them), and a continuation of a paused task (an answer, an approval) carries no marker, so that
   part is estimated. It needs a Plugin Registry and the Claude Code version wrapper while kagent pins 2.1.285.

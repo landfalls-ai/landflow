@@ -22,6 +22,7 @@ import type { Workflow } from '@landflow/engine';
 import packageJson from '../../../../package.json';
 import type { EditLockView } from '../../shared/auth';
 import type { ClusterStatus } from '../../shared/cluster';
+import { ingestTrace } from '../a2a/agent-trace';
 import { editLocks } from '../auth/edit-locks';
 import { bus, setBusRelay, type BusEvent } from '../bus';
 import { priorityOf } from '../concurrency';
@@ -161,7 +162,8 @@ async function start(config: ClusterConfig, options: StartClusterOptions): Promi
   const stoppers = state.stoppers;
 
   // Results of the runs this process waits for.
-  await relay.receive<InboxMessage | DebugResultMessage>((message) => (message.t === 'debug-result' ? settleDebugRequest(message) : handleInbox(message)));
+  // A main passes on a landflow-harness batch for a trace this process holds (a worker's call to a Claude Code agent).
+  await relay.receive<InboxMessage | DebugResultMessage>((message) => (message.t === 'debug-result' ? settleDebugRequest(message) : message.t === 'trace' ? void ingestTrace(message.id, message.events) : handleInbox(message)));
   // Cancel, stop-all and the timers handed to the leader.
   await relay.listen<ControlMessage>('control', (message) => void onControl(message));
   state.forward = (message) => {

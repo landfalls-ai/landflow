@@ -1055,7 +1055,8 @@ Claude Code agent Landflow deploys gets Landflow's own mod ([a2a.md](a2a.md#the-
   actor sheet show them; the Report has **What each agent used** and the run's cost; guardrail stops and masked secrets
   are checks.
 - Since then: the mod's model calls are their own spans (`d211811`), and each agent has its own guard, Read-only, Normal
-  or Report only, chosen when it is deployed (2026-11-01). Next: traces that work across queue-mode workers.
+  or Report only, chosen when it is deployed, and in queue mode a worker's live steps, budgets and real usage show on
+  any main (2026-11-01).
   Live budget use from the trace while a member works shows on the team node since 2026-11-01.
 
 ## Planned next

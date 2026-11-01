@@ -60,6 +60,9 @@ const { Relay } = await import('@/lib/server/cluster/relay');
 const { JobWorker, MAX_TAKEOVERS } = await import('@/lib/server/cluster/worker');
 const { idempotencyClaim } = await import('@/lib/server/cluster/dispatch');
 const webhookRoute = await import('@/app/api/webhook/[...path]/route');
+const { liveProgress } = await import('@/lib/server/runner');
+const { openTrace, traceHolder } = await import('@/lib/server/a2a/agent-trace');
+const traceRoute = await import('@/app/api/agent-trace/[id]/route');
 
 // ---------------------------------------------------------------------------
 // Test nodes
@@ -618,6 +621,42 @@ describe('the leader and the relay', () => {
     } finally {
       unsubscribe();
     }
+  });
+
+  it('keeps a worker’s live progress on this main, so a page opened mid-run shows its steps', async () => {
+    const at = new Date().toISOString();
+    const progress: BusEvent = { channel: 'execution', workflowId: 'wf_far', event: { type: 'node.progress', executionId: 'ex_far_live', nodeId: 'team', nodeName: 'Team', data: { member: 'Developer', tokens: 1200 }, at } };
+    await otherRelay.broadcast('bus', progress);
+    await until(() => expect(liveProgress('ex_far_live').team).toMatchObject({ nodeName: 'Team', data: { member: 'Developer', tokens: 1200 }, since: at }));
+    const later = new Date(Date.now() + 1000).toISOString();
+    await otherRelay.broadcast('bus', { ...progress, event: { ...progress.event, data: { member: 'Reviewer' }, at: later } } as BusEvent);
+    await until(() => expect(liveProgress('ex_far_live').team).toMatchObject({ data: { member: 'Reviewer' }, since: at }));
+    await otherRelay.broadcast('bus', { channel: 'execution', workflowId: 'wf_far', event: { type: 'execution.finished', executionId: 'ex_far_live', status: 'success', durationMs: 1, at: later } });
+    await until(() => expect(liveProgress('ex_far_live')).toEqual({}));
+  });
+
+  it('passes the mod’s batches for a worker’s trace on to that worker', async () => {
+    // A trace this process holds names it; a batch another main passes on reaches it.
+    const trace = openTrace({ baseUrl: 'http://cluster.test', provider: 'anthropic' });
+    expect(traceHolder(trace.id)).toBe('main-test');
+    const step = { type: 'step', input: 1200, output: 80, cacheRead: 0, cacheWrite: 0, model: 'claude-sonnet-5-5', tools: [] };
+    await otherRelay.send('main-test', { t: 'trace', id: trace.id, events: [{ type: 'start', guard: 'strict' }, step] });
+    await until(() => expect(trace.summary()).toMatchObject({ usage: { inputTokens: 1200, outputTokens: 80, requests: 1 }, guardMode: 'strict' }));
+    await trace.close(0);
+
+    // A batch for a trace held by a worker this main doesn't have goes to that worker's inbox.
+    const inbox: unknown[] = [];
+    const far = new MemoryCoordinator(hub);
+    await far.subscribe('inbox:worker-far', (raw) => inbox.push(JSON.parse(raw)));
+    const id = `${Buffer.from('worker-far').toString('base64url')}.${'x'.repeat(24)}`;
+    const response = await traceRoute.POST(new Request(`http://cluster.test/api/agent-trace/${id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: [step] }) }), { params: Promise.resolve({ id }) });
+    expect(response.status).toBe(202);
+    await until(() => expect(inbox).toEqual([{ t: 'trace', id, events: [step] }]));
+    await far.close();
+    // A trace nobody holds is still unknown.
+    const lost = 'y'.repeat(24);
+    const unknown = await traceRoute.POST(new Request(`http://cluster.test/api/agent-trace/${lost}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: [step] }) }), { params: Promise.resolve({ id: lost }) });
+    expect(unknown.status).toBe(404);
   });
 
   it('reports the cluster for Settings → Workers', async () => {

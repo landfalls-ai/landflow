@@ -265,6 +265,9 @@ concurrency slots, retries, rate limits, debounce, sign-in limits and debug sess
   not scale-out.
 - **Shared state**: with `LANDFLOW_CONFIG_STORE=database` (the default in queue mode) credentials, settings files, agents,
   their sessions and memory live in Postgres, so any main serves any request (no sticky sessions).
+- **Live runs on any main**: each main keeps the latest `node.progress` of every running node from the relayed events,
+  so a page opened mid-run shows a worker's live steps and team budgets; the landflow-harness mod's reports for a
+  worker's call reach that worker through the main they land on (the trace id names it, the batch goes to its inbox).
 - **Where**: `deploy/compose.queue.yml` runs two mains, two workers and a load balancer; `deploy/k8s/overlays/orbstack-queue`
   runs the same on Kubernetes with Postgres, Valkey and MinIO, and a KEDA example scales workers on the stream's backlog.
 
