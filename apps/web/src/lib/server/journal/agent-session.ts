@@ -5,6 +5,7 @@
  * node in the flow (`kind: 'flow'`) are journaled by the translator from the engine's own events, so they are skipped here.
  */
 import type { AgentSession, AgentTraceSummary, TimelineEntry } from '../../shared/agents';
+import { reviewCommentOf } from '../../shared/review-comments';
 import { toolInput, type RunActor } from '../../shared/run-trace';
 import { traceModelCalls } from './trace-calls';
 import { liveJournal, type Journal } from './writer';
@@ -130,6 +131,8 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
         if ((step.status === 'success' || step.status === 'error') && known !== 'ended') {
           call.steps.set(step.id, 'ended');
           record({ type: 'span.ended', spanId: id, status: step.status, ...(step.output !== undefined && { output: step.output }), ...(step.error && { error: step.error }), at: step.endedAt });
+          // A review or comment the member left through GitHub's MCP tools (`mcp__<server>__<tool>`).
+          if (step.status === 'success') reviewComment(record, id, step.name, step.args, step.output, step.endedAt);
         } else if (step.status === 'awaiting_approval' && known === 'running') {
           call.steps.set(step.id, 'awaiting');
           record({ type: 'span.updated', spanId: id, status: 'waiting' });
@@ -161,6 +164,8 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
     if (call.remoteWaiting) record({ type: 'span.ended', spanId: `${spanId}/wait`, status: 'success' });
     for (const [id, state] of call.steps) if (state !== 'ended') record({ type: 'span.ended', spanId: `${spanId}/step:${id}`, status: 'canceled' });
     call.ended = true;
+    // A Landflow agent's own call of one of GitHub's MCP tools (nodeType core.mcpClientTool, named by the tool).
+    if (entry.status === 'success' && entry.nodeType === 'core.mcpClientTool') reviewComment(record, spanId, entry.tool, entry.input, entry.output, undefined);
     if (remote?.trace) traceModelCalls(target, remote.trace, spanId, record);
     record({
       type: 'span.ended',
@@ -180,6 +185,12 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
     });
     if (remote?.trace) traceChecks(remote.agent, remote.trace, spanId, record);
   }
+}
+
+/** The artifact a review or comment left through GitHub's MCP tools is (lib/shared/review-comments.ts), under the span of the call. */
+function reviewComment(record: Journal['record'], spanId: string, tool: string, args: unknown, output: unknown, at: string | undefined) {
+  const artifact = reviewCommentOf(tool, args, output);
+  if (artifact) record({ type: 'artifact', spanId, artifact, ...(at && { at }) });
 }
 
 /**

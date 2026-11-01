@@ -8,11 +8,13 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronRight, Diamond, Flag, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { cut, fmtMs, preview, textOf, type RunModel, type RunRound, type RunSpan, type StoryEntry } from '@/lib/shared/run-trace-model';
+import { isReviewComment } from '@/lib/shared/review-comments';
 import { narrate, type TeamMoment } from '@/lib/shared/team-progress';
 import { headlinesOf, type Headline } from '@/lib/shared/run-headlines';
 import { Badge } from '../ui/badge';
 import { EmptyState } from '../ui/empty-state';
 import { Avatar, NowLine, ResultChip, Tap, clock, who } from './parts';
+import { ReviewCommentStory } from './review-comment-card';
 import { RerunFromHere } from './run-controls';
 import type { Open } from './sheet';
 
@@ -273,6 +275,7 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
     }
     case 'artifact': {
       const a = entry.item.artifact;
+      if (isReviewComment(a)) return <ReviewCommentStory item={entry.item} open={open} />;
       return (
         <Line icon={<Diamond className="size-4 text-gn" />} onOpen={() => open({ kind: 'artifact', id: entry.item.id })} label={`Artifact ${a.name}`}>
           {who(entry.item.actor)} <span>produced {a.kind ?? 'an artifact'}</span> <b className="font-semibold text-t1">{cut(a.name, 60)}</b>

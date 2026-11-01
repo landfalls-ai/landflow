@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { artifactShape, isCsvPath, isHtmlPath, safeUrl, type ArtifactShape } from '@/lib/shared/artifact-kinds';
 import { lineCommentsNote } from '@/lib/shared/line-comments';
+import { isReviewComment } from '@/lib/shared/review-comments';
 import {
   compareWithBranch,
   diffHunks,
@@ -36,6 +37,7 @@ import { ChangeDiff, DiffView } from './diff-view';
 import { useLineComments } from './line-comments';
 import { Card, SectionTitle, Tap, clock } from './parts';
 import { Doc } from './rich-text';
+import { ReviewCommentArtifact } from './review-comment-card';
 import type { Open } from './sheet';
 
 type BranchFetch = { status: 'idle' | 'loading' } | { status: 'done'; reply: BranchReply };
@@ -569,11 +571,14 @@ export function Artifacts({
     return [...made, ...written];
   }, [model.artifacts, changes.files, shapes]);
   // An image's or a PDF's link opens from its own card; only http(s) links are shown.
-  const links = model.artifacts.filter((a) => safeUrl(a.artifact.url) && shapes.get(a.id) !== 'image' && shapes.get(a.id) !== 'pdf');
-  const data = model.artifacts.filter(hasData);
+  // Reviews and comments left on GitHub have their own cards, so they are neither links nor data.
+  const reviews = model.artifacts.filter((a) => isReviewComment(a.artifact));
+  const plain = model.artifacts.filter((a) => !isReviewComment(a.artifact));
+  const links = plain.filter((a) => safeUrl(a.artifact.url) && shapes.get(a.id) !== 'image' && shapes.get(a.id) !== 'pdf');
+  const data = plain.filter(hasData);
   const byShape = (shape: ArtifactShape) => previews.filter((p) => p.shape === shape);
 
-  if (!changes.files.length && !documents.length && !previews.length && !links.length && !data.length) {
+  if (!changes.files.length && !documents.length && !previews.length && !links.length && !data.length && !reviews.length) {
     return <EmptyState title="Nothing made yet" hint="Documents, files, links and data the run makes appear here." />;
   }
   const parts = [
@@ -584,6 +589,7 @@ export function Artifacts({
       const n = byShape(shape).length;
       return n ? `${n} ${one}${n === 1 ? '' : 's'}` : undefined;
     }),
+    reviews.length ? `${reviews.length} review comment${reviews.length === 1 ? '' : 's'}` : undefined,
     links.length ? `${links.length} link${links.length === 1 ? '' : 's'}` : undefined,
     data.length ? `${data.length} data` : undefined,
   ].filter(Boolean);
@@ -624,6 +630,13 @@ export function Artifacts({
           )
         );
       })}
+      {reviews.length > 0 && (
+        <Group title="Review comments" count={reviews.length}>
+          {reviews.map((a) => (
+            <ReviewCommentArtifact key={a.id} item={a} open={open} />
+          ))}
+        </Group>
+      )}
       {links.length > 0 && (
         <Group title="Links" count={links.length}>
           {links.map((a) => (

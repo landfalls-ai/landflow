@@ -176,6 +176,6 @@ describe('Run Trace connections', () => {
     const reviewer = agentStore.publish(agentStore.create({ name: 'Reviewer', tools: [githubTool('review')] }).id)!;
     const reader = agentStore.publish(agentStore.create({ name: 'Planner', tools: [githubTool('read')] }).id)!;
     expect(agentConnections(reviewer, { model: true })).toEqual([{ kind: 'tool', name: 'GitHub MCP', detail: 'Tool · pull requests, reviews, line comments', icon: 'brand:github', from: 'agent' }]);
-    expect(agentConnections(reader, { model: true })[0]).toMatchObject({ name: 'GitHub MCP', icon: 'brand:github', detail: expect.stringContaining('read only') });
+    expect(agentConnections(reader, { model: true })[0]).toMatchObject({ name: 'GitHub MCP', icon: 'brand:github', detail: 'Tool · repositories, pull requests, issues (read)', from: 'agent' });
   });
 });

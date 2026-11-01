@@ -442,7 +442,10 @@ that path: kagent calls Landflow, Landflow calls the GitHub MCP server.
   `gh pr comment`, and the MCP tools above are the other way to do the same, with the token held outside the sandbox. The
   mod does not look at MCP calls; the allow-list is what limits them.
 - **Run Trace** shows the tool among the agent's connections with GitHub's mark: *GitHub MCP · Tool · pull requests,
-  reviews, line comments* for review access, *read only* otherwise.
+  reviews, line comments* for review access, *Tool · repositories, pull requests, issues (read)* otherwise. A review or
+  comment the member leaves through them is also a **review comment** artifact in the Story and the Artifacts tab, from
+  a Landflow agent's tool call or a Claude Code member's `mcp__<server>__<tool>` step that the mod reported
+  ([run-trace.md](run-trace.md#artifacts-and-code-changes)).
 - **Setting up the Tech Lead team**: add **GitHub MCP** with access *Read* to the Planner and Developer and *Read and
   review* to the Reviewer, then deploy each again, since kagent binds the tools it was deployed with. Verified on
   2026-11-01: the pinned image started with those flags (also read-only, all capabilities dropped), its `tools/list`
