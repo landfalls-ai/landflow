@@ -117,8 +117,12 @@ export const builtinPluginsDir = () => process.env.LANDFLOW_CLAUDE_PLUGINS_DIR |
 /** Kept out of the image: the types Claude Code writes for an editor, the mod's own tests, OS litter. */
 const LEFT_OUT = [/(^|\/)\.claude-plugin\/types(\/|$)/, /\.test\.tsx?$/, /(^|\/)\.DS_Store$/, /(^|\/)node_modules(\/|$)/, /(^|\/)\.gitignore$/];
 
-/** A built-in plugin's files, sorted by path; undefined when it isn't there. */
-export function builtinFiles(name: string): { path: string; body: Buffer }[] | undefined {
+/**
+ * A built-in plugin's files, sorted by path; undefined when it isn't there. `options` become the defaults of the
+ * plugin.json `userConfig` fields of those names (the landflow-harness mod's `guard`): the sandbox sets no options, so
+ * the defaults are what the plugin reads.
+ */
+export function builtinFiles(name: string, options?: Record<string, string>): { path: string; body: Buffer }[] | undefined {
   const root = join(builtinPluginsDir(), name);
   if (!existsSync(join(root, '.claude-plugin', 'plugin.json'))) return undefined;
   const files: { path: string; body: Buffer }[] = [];
@@ -131,22 +135,38 @@ export function builtinFiles(name: string): { path: string; body: Buffer }[] | u
     }
   };
   walk(root, '');
+  if (options && Object.keys(options).length) {
+    const manifest = files.find((file) => file.path === '.claude-plugin/plugin.json');
+    if (manifest) {
+      const json = JSON.parse(manifest.body.toString('utf8')) as { userConfig?: Record<string, { default?: unknown; options?: unknown }> };
+      for (const [key, value] of Object.entries(options)) {
+        const field = json.userConfig?.[key];
+        if (!field) throw new Error(`The plugin ${name} has no option “${key}”`);
+        if (Array.isArray(field.options) && !field.options.includes(value)) throw new Error(`The plugin ${name}’s option “${key}” can’t be “${value}”`);
+        field.default = value;
+      }
+      manifest.body = Buffer.from(`${JSON.stringify(json, null, 2)}\n`);
+    }
+  }
   return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
-/** A built-in plugin pinned to a hash of its files (the commit field), or undefined when the host doesn't ship it. */
-export function builtinPin(name: string = HARNESS_PLUGIN): KagentPlugin | undefined {
-  const files = builtinFiles(name);
+/**
+ * A built-in plugin pinned to a hash of its files (the commit field), or undefined when the host doesn't ship it. With
+ * `options` (its plugin.json defaults, see `builtinFiles`) the files differ, and so do the hash and the image.
+ */
+export function builtinPin(name: string = HARNESS_PLUGIN, options?: Record<string, string>): KagentPlugin | undefined {
+  const files = builtinFiles(name, options);
   if (!files) return undefined;
   const hash = createHash('sha256');
   for (const file of files) hash.update(`${file.path}\0${file.body.length}\0`).update(file.body);
-  return { id: `${name}@landflow`, url: BUILTIN_URL, commit: hash.digest('hex').slice(0, 40), path: name };
+  return { id: `${name}@landflow`, url: BUILTIN_URL, commit: hash.digest('hex').slice(0, 40), path: name, ...(options && Object.keys(options).length && { options }) };
 }
 
 /** The files of a pinned plugin: a built-in one from the host, any other from GitHub at its commit. */
 async function filesOf(pin: KagentPlugin): Promise<{ path: string; body: Buffer }[]> {
   if (pin.url === BUILTIN_URL) {
-    const files = builtinFiles(pin.path ?? pin.id.slice(0, pin.id.lastIndexOf('@')));
+    const files = builtinFiles(pin.path ?? pin.id.slice(0, pin.id.lastIndexOf('@')), pin.options);
     if (!files) throw new Error(`This host doesn’t ship the plugin ${pin.id} (${builtinPluginsDir()})`);
     return files;
   }

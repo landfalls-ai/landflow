@@ -28,14 +28,14 @@ const KEEP_CLOSED_MS = 60_000;
 /** An open trace nobody closed (a crashed call) goes after this long, ms. */
 const MAX_AGE_MS = 6 * 60 * 60_000;
 
-export type GuardMode = 'enforce' | 'report' | 'off';
+export type GuardMode = 'strict' | 'enforce' | 'report' | 'off';
 
 const count = z.number().finite().min(0).max(1e12).catch(0);
 /** The mod's clock, epoch ms (about 1.8e12 now: over the cap of the counts). */
 const clock = z.number().finite().min(0).max(1e14).catch(0);
 const text = (max: number) => z.string().max(4_000).transform((s) => s.slice(0, max));
 const eventSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('start'), at: clock.optional(), mod: text(40).optional(), guard: z.enum(['enforce', 'report', 'off']).optional() }),
+  z.object({ type: z.literal('start'), at: clock.optional(), mod: text(40).optional(), guard: z.enum(['strict', 'enforce', 'report', 'off']).optional() }),
   z.object({
     type: z.literal('step'),
     at: clock.optional(),

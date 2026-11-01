@@ -4,7 +4,7 @@
  * `claude plugin test apps/web/claude-plugins/landflow-harness`. Tokens below are built from parts so no file holds one.
  */
 import { describe, expect, it } from 'vitest';
-import { guardBash, guardFile, normalPath, redact, segments, wordsOf } from '../claude-plugins/landflow-harness/hooks/rules';
+import { guardBash, guardFile, guardReadOnly, normalPath, redact, segments, wordsOf } from '../claude-plugins/landflow-harness/hooks/rules';
 
 const ROOTS = ['/data/workspace', '/tmp', '/data/.claude'];
 const rule = (command: string) => guardBash(command, '/data/workspace')?.rule;
@@ -91,6 +91,48 @@ describe('the landflow-harness guardrails', () => {
   it('says why, in words the model can act on', () => {
     expect(guardBash('git push origin main')?.reason).toContain('push to your own branch');
     expect(guardFile('Read', { file_path: '/x/.env' }, ROOTS)?.reason).toContain('example or template');
+  });
+});
+
+describe('the strict guard (read-only on the code)', () => {
+  const strict = (command: string) => guardReadOnly('Bash', { command }, '/data/workspace')?.rule;
+
+  it('refuses edits outside /tmp and lets scratch notes through', () => {
+    expect(guardReadOnly('Edit', { file_path: 'src/a.ts' }, '/data/workspace')?.rule).toBe('read-only');
+    expect(guardReadOnly('Write', { file_path: '/data/workspace/README.md' }, '/data/workspace')?.reason).toContain('/data/workspace/README.md');
+    expect(guardReadOnly('Write', { file_path: '/tmp/review.md' }, '/data/workspace')).toBeUndefined();
+    expect(guardReadOnly('Read', { file_path: 'src/a.ts' }, '/data/workspace')).toBeUndefined();
+  });
+
+  it('refuses git commands that change the branch or the remote, not reading it', () => {
+    for (const command of ['git commit -am fix', 'git push origin feature', 'git -C repo reset --hard', 'git add .', 'git stash', 'git checkout -b mine', 'git checkout -- src', 'git branch -D old', 'git tag v1', 'git pull']) {
+      expect(strict(command), command).toBe('read-only');
+    }
+    for (const command of ['git status', 'git diff main...HEAD', 'git log --oneline -5', 'git fetch origin', 'git checkout feature/x', 'git stash list', 'git tag -l', 'git branch -a', 'git show HEAD:src/a.ts']) {
+      expect(strict(command), command).toBeUndefined();
+    }
+  });
+
+  it('refuses GitHub writes but lets a review and its comments through', () => {
+    expect(strict('gh pr create --fill')).toBe('read-only');
+    expect(strict('gh pr close 7')).toBe('read-only');
+    expect(strict('gh issue edit 3 --add-label bug')).toBe('read-only');
+    expect(strict('gh api -X DELETE repos/o/r/git/refs/heads/x')).toBe('read-only');
+    expect(strict('gh api repos/o/r/labels -f name=x')).toBe('read-only');
+    expect(strict('gh pr review 7 --comment -b "looks good"')).toBeUndefined();
+    expect(strict('gh pr comment 7 -b "nit"')).toBeUndefined();
+    expect(strict('gh api repos/o/r/pulls/7/comments -f body=x -f path=a.ts')).toBeUndefined();
+    expect(strict('gh pr view 7 --json files')).toBeUndefined();
+    expect(strict('gh api repos/o/r/pulls/7')).toBeUndefined();
+  });
+
+  it('refuses changing files from the shell, not reading, testing or installing', () => {
+    for (const command of ['rm src/old.ts', 'mv a.ts b.ts', 'echo x > src/a.ts', 'cat a >> b.txt', 'sed -i s/a/b/ src/a.ts', 'printf x | tee src/a.ts', 'cp a.ts b.ts', 'touch new.ts', 'npm publish', 'chmod +x run.sh']) {
+      expect(strict(command), command).toBe('read-only');
+    }
+    for (const command of ['pnpm install && pnpm typecheck', 'go test ./... 2>&1 | tail -20', 'echo "a -> b"', 'cat a.ts > /tmp/a.txt', 'rm -f /tmp/x', 'node -e "1" >/dev/null 2>&1', 'cp src/a.ts /tmp/a.ts', 'grep -rn foo src', 'mkdir -p /tmp/out']) {
+      expect(strict(command), command).toBeUndefined();
+    }
   });
 });
 

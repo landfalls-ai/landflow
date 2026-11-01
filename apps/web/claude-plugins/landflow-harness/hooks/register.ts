@@ -1,7 +1,7 @@
 /**
  * landflow-harness (docs/a2a.md, "The landflow-harness mod"): what Landflow adds to its Claude Code agents on kagent.
  *
- * Trace. A request from a Landflow run carries a line `<!-- landflow-trace <url> [guard=enforce|report|off] -->`; the mod
+ * Trace. A request from a Landflow run carries a line `<!-- landflow-trace <url> [guard=strict|enforce|report|off] -->`; the mod
  * takes it off the prompt and, until the turn ends, sends what Claude Code does to that URL: each model request's tokens,
  * model and time (its subagents' too, and the tool calls the API ran itself), each tool call's time and outcome, the
  * subagents it starts, what the guardrails stopped and the turn's end. Events go out in batches as they come, at most
@@ -10,16 +10,18 @@
  * Guard. Before a tool call runs, the rules in ./rules.ts refuse what an agent here never needs to do: read secret
  * files, print the environment, push to main or force-push, merge pull requests, change git's auth settings, delete the
  * machine, upload files, write outside its workspace. The model reads the reason as the tool's error and carries on.
- * `guard=report` only reports what would have been refused; `guard=off` neither. Without a marker the guard enforces.
+ * `guard=report` only reports what would have been refused; `guard=off` neither. `guard=strict` also keeps the agent
+ * read-only on the code (rules.ts `guardReadOnly`). The agent's own mode is the `guard` option, which Landflow sets per
+ * agent when it deploys it (the packed plugin.json's default): a request's marker can make it stricter, never looser.
  *
  * Redact. A tool's result is kept with every token or key it shows masked (`[redacted GitHub token]`), so a secret that
  * reached a file or a command's output never reaches the model or the transcript.
  */
 import type { EngineInterface, Register } from 'claude-code'
-import { guardBash, guardFile, redact, type Verdict } from './rules'
+import { guardBash, guardFile, guardReadOnly, redact, type Verdict } from './rules'
 
 const MARKER = /^[ \t]*<!--[ \t]*landflow-trace[ \t]+(https?:\/\/[^\s>]+)((?:[ \t]+[a-z]+=[a-z]+)*)[ \t]*-->[ \t]*(\r?\n)?/m
-const VERSION = '0.2.0'
+const VERSION = '0.3.0'
 /** Events go out at most this often while a turn runs, ms. */
 const EVERY_MS = 3000
 /** Events kept while Landflow can't be reached; the oldest go first. */
@@ -28,7 +30,11 @@ const MAX_EVENTS = 500
 const ARG_KEYS = ['command', 'file_path', 'notebook_path', 'path', 'pattern', 'url', 'query', 'description', 'skill', 'prompt']
 const ARG_CHARS = 160
 
-type Guard = 'enforce' | 'report' | 'off'
+type Guard = 'strict' | 'enforce' | 'report' | 'off'
+/** From the loosest to the strictest. */
+const GUARDS: readonly Guard[] = ['off', 'report', 'enforce', 'strict']
+const stricter = (a: Guard, b: Guard | undefined): Guard => (b && GUARDS.indexOf(b) > GUARDS.indexOf(a) ? b : a)
+const guardOf = (value: unknown): Guard | undefined => (typeof value === 'string' && (GUARDS as readonly string[]).includes(value) ? (value as Guard) : undefined)
 type TraceEvent = Record<string, string | number | boolean | string[] | undefined>
 /** A content block as a row holds it (ApiContentBlock). */
 type Block = { type: string; [field: string]: unknown }
@@ -37,7 +43,10 @@ type Block = { type: string; [field: string]: unknown }
 interface State {
   /** Where this turn's events go: the URL of its prompt's marker, until the turn ends. */
   target?: string
+  /** This turn's mode: the agent's, or stricter when the marker asks. */
   guard: Guard
+  /** The agent's own mode (the `guard` option), which no marker loosens. */
+  floor: Guard
   /** Where the agent may write: its working directory, /tmp and Claude Code's own folder. */
   roots: string[]
   cwd: string
@@ -59,7 +68,7 @@ function argOf(input: Record<string, unknown>): string | undefined {
 }
 
 function optionsOf(text: string): { guard?: Guard } {
-  const guard = /\bguard=(enforce|report|off)\b/.exec(text)?.[1] as Guard | undefined
+  const guard = /\bguard=(strict|enforce|report|off)\b/.exec(text)?.[1] as Guard | undefined
   return guard ? { guard } : {}
 }
 
@@ -106,6 +115,10 @@ function soon($: EngineInterface, state: State, at: number) {
 /** What the guardrails say about a tool call, if anything. */
 function verdictOf(state: State, tool: string, input: Record<string, unknown>): Verdict | undefined {
   if (state.guard === 'off') return undefined
+  if (state.guard === 'strict') {
+    const verdict = guardReadOnly(tool, input, state.cwd)
+    if (verdict) return verdict
+  }
   if (tool === 'Bash' && typeof input.command === 'string') return guardBash(input.command, state.cwd)
   return guardFile(tool, input, state.roots, state.cwd)
 }
@@ -126,8 +139,9 @@ function maskBlock(block: Block, found: Set<string>): Block {
   return block
 }
 
-export const register: Register = on => {
-  const state: State = { guard: 'enforce', roots: [], cwd: '/', queue: [], sentAt: 0, closed: new Set() }
+export const register: Register = (on, options) => {
+  const floor = guardOf(options.guard) ?? 'enforce'
+  const state: State = { guard: floor, floor, roots: [], cwd: '/', queue: [], sentAt: 0, closed: new Set() }
 
   on('session.start', async ($, e, next) => {
     const home = (await $.env.get('HOME')) ?? ''
@@ -141,7 +155,7 @@ export const register: Register = on => {
     const url = found?.[1]
     if (!found || !url) return next(e)
     state.target = url
-    state.guard = optionsOf(found[2] ?? '').guard ?? 'enforce'
+    state.guard = stricter(state.floor, optionsOf(found[2] ?? '').guard)
     record(state, { type: 'start', at: await $.clock.now(), mod: VERSION, guard: state.guard })
     return next({ ...e, text: e.text.replace(MARKER, '') })
   }).catch(($, e, next) => next(e))
@@ -178,7 +192,7 @@ export const register: Register = on => {
     const verdict = verdictOf(state, e.tool, input)
     if (verdict) {
       const at = await $.clock.now()
-      const refused = state.guard === 'enforce'
+      const refused = state.guard === 'enforce' || state.guard === 'strict'
       record(state, { type: 'guard', at, rule: verdict.rule, tool: e.tool, agent: e.agentId, arg: argOf(input), reason: verdict.reason, action: refused ? 'deny' : 'report' })
       soon($, state, at)
       if (refused) return { deny: `Landflow's guardrails stopped this (${verdict.rule}): ${verdict.reason}` }
@@ -227,7 +241,7 @@ export const register: Register = on => {
         await send($, state, at)
         await send($, state, at)
         state.target = undefined
-        state.guard = 'enforce'
+        state.guard = state.floor
       }
     }
     return next(e)

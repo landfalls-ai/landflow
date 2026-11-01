@@ -21,6 +21,7 @@ const publishRoute = await import('@/app/api/agents/[id]/publish/route');
 const agentRoute = await import('@/app/api/agents/[id]/route');
 const mcpRoute = await import('@/app/api/mcp/agents/[id]/route');
 const { marketplace } = await import('@/lib/server/marketplace/service');
+const { builtinFiles, builtinPin } = await import('@/lib/server/kagent/oci');
 
 /** A Kubernetes API that keeps objects in memory: server-side apply (merged per field), get, list and delete. */
 interface FakeKube {
@@ -538,6 +539,35 @@ describe('on Claude Code', () => {
       pin.mockRestore();
       vi.unstubAllGlobals();
     }
+  });
+
+  it('sets the mod’s guard per agent: its plugin.json default, kept across redeploys, never loosened by a request', async () => {
+    const manifest = (options?: Record<string, string>) => JSON.parse(builtinFiles('landflow-harness', options)!.find((f) => f.path === '.claude-plugin/plugin.json')!.body.toString('utf8')) as { userConfig: { guard: { default: string } } };
+    expect(manifest().userConfig.guard.default).toBe('enforce');
+    expect(manifest({ guard: 'strict' }).userConfig.guard.default).toBe('strict');
+    expect(builtinPin(undefined, { guard: 'strict' })!.commit).not.toBe(builtinPin()!.commit);
+    expect(() => builtinFiles('landflow-harness', { guard: 'loose' })).toThrow(/can’t be “loose”/);
+
+    const withRegistry = credentials.create({ name: 'kind, guarded', type: 'core.kagentApi', data: { ...clusterData(), pluginRegistry: 'http://192.168.1.5:3000/' } });
+    const agent = publishedAgent({ ...DEV, plugins: [] });
+    const bad = await call<{ error: string }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: withRegistry.id, name: 'guarded', harness: 'landflow-claude', guard: 'off' });
+    expect(bad.status).toBe(400);
+    const strict = await call<{ status: KagentStatus }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: withRegistry.id, name: 'guarded', harness: 'landflow-claude', guard: 'strict' });
+    expect(strict.status).toBe(200);
+    const mod = () => agentStore.get(agent.id)!.kagent!.plugins!.find((p) => p.id === 'landflow-harness@landflow')!;
+    expect(agentStore.get(agent.id)!.kagent!.guard).toBe('strict');
+    expect(mod()).toMatchObject({ options: { guard: 'strict' }, commit: builtinPin(undefined, { guard: 'strict' })!.commit });
+    expect(strict.data.status).toMatchObject({ guard: 'strict', inSync: true });
+    const strictImage = mod().oci;
+    // A redeploy (a publish) keeps it; choosing Normal drops it, with another image.
+    await call(kagentRoute.PUT, agent.id, 'PUT', {});
+    expect(agentStore.get(agent.id)!.kagent!.guard).toBe('strict');
+    expect(mod().oci).toBe(strictImage);
+    await call(kagentRoute.PUT, agent.id, 'PUT', { guard: 'enforce' });
+    expect(agentStore.get(agent.id)!.kagent).not.toHaveProperty('guard');
+    expect(mod()).not.toHaveProperty('options');
+    expect(mod().oci).not.toBe(strictImage);
+    await call(kagentRoute.DELETE, agent.id, 'DELETE');
   });
 
   it('moves back to kagent’s own runtime without the approval server or the plugins', async () => {

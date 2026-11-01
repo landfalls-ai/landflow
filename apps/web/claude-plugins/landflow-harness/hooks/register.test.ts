@@ -63,17 +63,57 @@ test('the guard refuses a push to main and tells the run', async ($, on) => {
   expect(events(posts).find(e => e.type === 'guard')).toMatchObject({ rule: 'git-push', tool: 'Bash', action: 'deny' })
 })
 
-test('the guard enforces without a marker, and guard=report only reports', async ($, on) => {
+test('the guard enforces without a marker, and a marker can\'t loosen it', async ($, on) => {
   const { posts, ran } = world(on)
   await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
   const refused = await $.tool.call({ tool: 'Read', file_path: '/data/workspace/.env' })
   expect(refused.deny).toContain('secret-file')
 
   await $.prompt.submit({ text: `<!-- landflow-trace ${URL} guard=report -->\nLook around` })
-  await $.tool.call({ tool: 'Write', file_path: '/etc/profile', content: 'x' })
+  const still = await $.tool.call({ tool: 'Write', file_path: '/etc/profile', content: 'x' })
   await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 'turn-2', reason: 'answer' })
+  expect(ran).toEqual([])
+  expect(still.deny).toContain('write-outside-workspace')
+  expect(events(posts)[0]).toMatchObject({ type: 'start', guard: 'enforce' })
+})
+
+test('an agent deployed with guard report only reports', { options: { guard: 'report' } }, async ($, on) => {
+  const { posts, ran } = world(on)
+  await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
+  await $.prompt.submit({ text: `<!-- landflow-trace ${URL} -->\nLook around` })
+  await $.tool.call({ tool: 'Write', file_path: '/etc/profile', content: 'x' })
+  await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 'turn-1', reason: 'answer' })
   expect(ran).toEqual(['Write'])
   expect(events(posts).find(e => e.type === 'guard')).toMatchObject({ rule: 'write-outside-workspace', action: 'report' })
+})
+
+test('a strict agent stays read-only on the code, whatever the request says', { options: { guard: 'strict' } }, async ($, on) => {
+  const { posts, ran } = world(on)
+  await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
+  await $.prompt.submit({ text: `<!-- landflow-trace ${URL} guard=off -->\nReview the branch` })
+  const edit = await $.tool.call({ tool: 'Edit', file_path: '/data/workspace/src/a.ts', old_string: 'a', new_string: 'b' })
+  const commit = await $.tool.call({ tool: 'Bash', command: 'git commit -am "fix"' })
+  await $.tool.call({ tool: 'Bash', command: 'pnpm install && pnpm test' })
+  await $.tool.call({ tool: 'Write', file_path: '/tmp/notes.md', content: 'x' })
+  await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+  expect(edit.deny).toContain('read-only')
+  expect(commit.deny).toContain('read-only')
+  expect(ran).toEqual(['Bash', 'Write'])
+  const all = events(posts)
+  expect(all[0]).toMatchObject({ type: 'start', guard: 'strict' })
+  expect(all.filter(e => e.type === 'guard').map(e => e.action)).toEqual(['deny', 'deny'])
+})
+
+test('a marker can make an agent stricter for one request', async ($, on) => {
+  const { ran } = world(on)
+  await $.session.start({ cwd: '/data/workspace', surface: 'terminal', isInteractive: false })
+  await $.prompt.submit({ text: `<!-- landflow-trace ${URL} guard=strict -->\nLook only` })
+  const edit = await $.tool.call({ tool: 'Write', file_path: '/data/workspace/a.ts', content: 'x' })
+  await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+  expect(edit.deny).toContain('read-only')
+  await $.prompt.submit({ text: `<!-- landflow-trace ${URL} -->\nNow write` })
+  await $.tool.call({ tool: 'Write', file_path: '/data/workspace/a.ts', content: 'x' })
+  expect(ran).toEqual(['Write'])
 })
 
 test('a token in a tool result is masked before it is kept', async ($, on) => {

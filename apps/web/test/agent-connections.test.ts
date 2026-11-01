@@ -94,6 +94,12 @@ describe('a kagent deployment’s connections', () => {
     expect(kagentConnections(lead)).toEqual([]);
   });
 
+  it('says when the mod keeps the agent read-only, or only reports', () => {
+    const mod = (guard: 'strict' | 'report') => kagentConnections({ ...deployed, kagent: { ...deployed.kagent!, guard } }).find((c) => c.name === 'landflow-harness');
+    expect(mod('strict')).toMatchObject({ detail: 'Landflow’s mod: read-only on the code, usage, redaction', icon: 'lucide:lock' });
+    expect(mod('report')).toMatchObject({ detail: 'Landflow’s mod: usage, guardrails report only, redaction' });
+  });
+
   it('finds the agent behind an A2A URL, by the recorded URL or the kagent name', () => {
     expect(deployedAgentAt('http://kagent:8083/agents/kagent/landflow-reviewer')?.id).toBe(reviewer.id);
     expect(deployedAgentAt('http://host.docker.internal:58083/agents/kagent/landflow-reviewer')?.id).toBe(reviewer.id);
