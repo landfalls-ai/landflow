@@ -452,8 +452,14 @@ Set `LANDFLOW_OTLP_TRACES_URL` to an OTLP/HTTP traces endpoint (`http://landflow
 
 A finished run (a live one can't be re-run from a step) has three ways to go again from a span, all in its detail sheet,
 and **Re-run from here** also sits under every failed step in the Story and the Trace. The sheet shows the flow as a
-column: the steps before the node keep **this run's outputs** (marked *pinned*), the node is *starts here*, and it and
-what follows are *runs again*.
+small diagram above its Re-run button (the small button under a failed step re-runs at once, without one): the run's nodes in run order as a row of chips joined by a line (the row wraps on a
+phone). Nodes before the chosen one are muted with a pin and **kept**; the chosen node has a ring and **runs again from
+here**; the nodes after it have a dashed outline and **runs again**; a node that failed in this run is red with a cross
+(often it is the chosen one). One line under the row says it in words: "Planner and Developer keep this run's outputs;
+Typecheck runs again, then Review and Merge." The diagram shows what this run did (`rerunDiagram` in
+`lib/shared/run-rerun.ts`), not the workflow's graph: a span inside a node (a member's request, a tool step) maps to its
+node, a node a loop ran several times shows once at the place it first ran (red if any of its runs failed), and a node
+that never ran in this run (a branch not taken) is left out, so "after" means after in this run's order.
 
 - **Re-run from here** re-runs the flow from the node the span belongs to (`POST /api/executions/:id/rerun` with
   `scope: 'from'`, the original version of the workflow). The earlier nodes are not run: their outputs are copied from
