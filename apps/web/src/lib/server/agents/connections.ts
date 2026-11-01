@@ -84,7 +84,8 @@ export function agentConnections(agent: Agent, skip: { model?: boolean; memory?:
 function policyConnection(name: string, deployment: string): ActorConnection {
   if (name === `${deployment}-landflow`) return { kind: 'network', name: 'Landflow', detail: 'its run reports and tools', icon: 'lucide:radio', from: 'kagent' };
   if (/github/i.test(name)) return { kind: 'network', name: 'GitHub', detail: `${name}: the gateway adds the token`, icon: brandIcon('github'), from: 'kagent' };
-  if (/package|registry|npm|pypi/i.test(name)) return { kind: 'network', name: 'Package registries', detail: name, icon: 'lucide:package', from: 'kagent' };
+  // Landflow's package policy reaches only the package cache in front of the registries (deploy/k8s/components/package-cache).
+  if (/package|registry|npm|pypi/i.test(name)) return { kind: 'network', name: 'Package cache', detail: `${name} · npm, Go, PyPI, Alpine through landflow-cache`, icon: 'lucide:package', from: 'kagent' };
   return { kind: 'network', name, icon: 'lucide:globe', from: 'kagent' };
 }
 

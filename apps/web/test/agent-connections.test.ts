@@ -87,7 +87,7 @@ describe('a kagent deployment’s connections', () => {
       { kind: 'runtime', name: 'kagent', detail: 'landflow-reviewer · sandbox, hot start', icon: 'brand:kagent', from: 'kagent' },
       { kind: 'plugin', name: 'code-review', detail: 'claude-plugins-official', icon: 'brand:claude', from: 'kagent' },
       { kind: 'plugin', name: 'landflow-harness', detail: 'Landflow’s mod: usage, guardrails, redaction', icon: 'lucide:shield-check', from: 'kagent' },
-      { kind: 'network', name: 'Package registries', detail: 'landflow-dev-packages', icon: 'lucide:package', from: 'kagent' },
+      { kind: 'network', name: 'Package cache', detail: 'landflow-dev-packages · npm, Go, PyPI, Alpine through landflow-cache', icon: 'lucide:package', from: 'kagent' },
       { kind: 'network', name: 'GitHub', detail: 'landflow-github: the gateway adds the token', icon: 'brand:github', from: 'kagent' },
       { kind: 'network', name: 'Landflow', detail: 'its run reports and tools', icon: 'lucide:radio', from: 'kagent' },
     ]);
