@@ -103,6 +103,8 @@ export interface NodeTileProps {
    * `head` replaces the icon and name, `body` sits under them and grows the tile, and `color` tints the running frame.
    */
   live?: NodeLive;
+  /** Names for the sub-node slots by connection type, over the descriptor's: a team node's "Lead's model" (the new look). */
+  slotNames?: Partial<Record<ConnectionType, string>>;
   /** Toolbars and overlays rendered inside the node. */
   children?: ReactNode;
 }
@@ -179,11 +181,15 @@ export function NodeTile(props: NodeTileProps) {
     fresh,
     face,
     live,
+    slotNames,
     children,
   } = props;
   const descriptor = info?.descriptor;
   const kind = descriptor?.kind ?? 'action';
-  const inputs = useMemo(() => indexPorts(descriptor?.inputs ?? [{ type: 'main' }], parameters), [descriptor, parameters]);
+  const inputs = useMemo(
+    () => indexPorts(descriptor?.inputs ?? [{ type: 'main' }], parameters).map((p) => (slotNames?.[p.port.type] ? { ...p, port: { ...p.port, displayName: slotNames[p.port.type] } } : p)),
+    [descriptor, parameters, slotNames],
+  );
   const outputs = useMemo(() => indexPorts(descriptor?.outputs ?? [{ type: 'main' }], parameters), [descriptor, parameters]);
   const mainIn = inputs.filter((p) => p.port.type === 'main');
   const aiIn = inputs.filter((p) => p.port.type !== 'main');

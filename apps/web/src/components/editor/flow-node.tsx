@@ -15,6 +15,10 @@ import { teamQuestionOf, useTeamTile } from './team-live';
 import { liveTeam, TeamStrip } from './team-strip';
 import { canTurnNodeIntoTeam, turnIntoTeam } from './turn-into-team';
 import { useEditor, type FlowNode } from './store';
+import { useNewLook } from '../shell/look-toggle';
+
+/** What a team node's slots feed: the lead, not every member (the new look). */
+const LEAD_SLOTS = { ai_languageModel: "Lead's model", ai_memory: "Lead's memory", ai_tool: "Lead's tools" } as const;
 
 function ToolbarButton({
   onClick,
@@ -95,7 +99,8 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       if (resumed) useEditor.getState().finishRun();
     }
   };
-  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), ...(asked?.approval && { onDecide: decideInEditor }), newTab: true });
+  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), ...(asked?.approval && { onDecide: decideInEditor }), newTab: true, idleRoster: true });
+  const newLook = useNewLook();
   const compact = isCompact(info?.descriptor, wf.parameters, asTool);
   const runNode = (scope: 'from' | 'only') => useEditor.getState().run?.({ kind: 'node', nodeId: id, scope });
 
@@ -118,13 +123,15 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       fresh={fresh}
       face={face}
       live={team.tile}
+      slotNames={newLook && wf.type === 'core.runTeam' ? LEAD_SLOTS : undefined}
     >
-      {teamId ? (
+      {teamId && !team.roster ? (
         // Above the duration a finished node shows over its corner, and above the Waiting or Paused pill over its top.
         <NodeToolbar isVisible={!selected && !fixing} position={Position.Top} offset={(compact ? 12 : 14) + (ranFor(status) || status?.state === 'waiting' || status?.state === 'paused' ? 16 : 0)}>
           <TeamStrip teamId={teamId} live={live} moments={team.moments} />
         </NodeToolbar>
       ) : (
+        !teamId &&
         progress && (
           <NodeToolbar isVisible={!selected && !fixing} position={Position.Top} offset={compact ? 12 : 14}>
             <span
