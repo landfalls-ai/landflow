@@ -151,6 +151,33 @@ Continue on fail), like Run an Agent does. The node shows the team's name under 
 parameter, filled in when the team is picked or turned from a lead), the lead's face instead of the team icon, and every
 member's face and title above it.
 
+### The team node in the editor
+
+In the new look ([ui-review.md](ui-review.md#the-look)) the node's panel and the node itself show the team as the team
+page does, so a team is set up seeing who will work (`components/editor/team-node-panel.tsx`; the words and the split of
+the fields are pure, in `lib/shared/team-node.ts`, tested in `test/team-node.test.ts`):
+
+- **The panel.** The team as a card: the lead's face and the members' faces, its name, *Published v3 · lead and 3
+  members* (or *Not published yet* in amber, or *Draft* when the node runs the draft), **Change** and **Open ↗** (the
+  team's page in a new tab). **Who is on it**: a row per member of the version the node runs, in chart order, with its
+  face, title (the lead marked), first "what I do" line (else its role) and the member cards' chips: where it runs, its
+  budget, how its last turn went. Then the message as **What to ask the lead** and the version, where a member's tool
+  approvals go as choices (**Here and in Needs you**, **Slack**, **Email**, with the chosen one's words under them), the
+  Slack or email fields and **How long to wait** as before, **How it runs** as a small picture (Message → the lead asks
+  the members it manages → Done or Needs a person) with the node's notice behind *More about how a team runs*, and the
+  team's **Last run** as its one line (in → who → out; a tap opens the Run Trace in a new tab). With no team chosen the
+  panel lists the teams as cards to tap (faces, name, goal) and **New team ↗** (the Agents page in a new tab; the list is
+  read again when the window comes back). A team given by an expression is shown as the expression.
+- **The node.** Before it runs, under the lead's face and the team's name: the other members' faces and titles, and
+  *Last run: Answered · 2m 25s · 22k tokens* (the outcome from the run's line, red when it failed, amber when it waits),
+  in place of the roster strip above the node. While it runs or waits, and after a run in the editor, it is the live team
+  node as before. Its slots read **Lead's model**, **Lead's memory** and **Lead's tools**, since what is connected there
+  goes to the lead.
+
+The classic look keeps the generic form and the strip. Either way an options field with nothing chosen says *Choose a
+team…* instead of showing its first option ([protocol.md](protocol.md)): a new node used to look set to a team it hadn't
+saved.
+
 ### How a team run goes
 
 1. The lead runs as a Landflow agent through the same loop as Run an Agent (`runAgent`), with the team's goal in front of the
