@@ -220,7 +220,12 @@ transport and Valkey Cluster settings).
 | `f771c73` | landflow-harness mod 0.4.1 (runs a guarded command as the person edited it, re-checked against the rules); history row for the approval card | a2a.md#asking-a-person |
 | `bf09f52` | Design: the waiting node's Review sits on its own row under Approve and Deny (it covered the node's "Needs a person" output); the decision card keeps a version number inside its sentence ("0.9.0" split the member's words), and a tool that takes no input says so and offers no Edit | run-trace.md#an-approval-with-its-evidence |
 | `7087f24` | Design: while Spotlight builds a change, a ghost that lands outside the canvas view brings the flow and its ghosts into view (KeepGhostsInView, never zooms in). Found trying building step by step live. |
-| (this change) | The repository is public and moved to the landfalls-ai organization (github.com/landfalls-ai/landflow; the old address redirects); the triage page adds the marketplace from there with no token. |
+| `1ae3ba7` | The repository is public and moved to the landfalls-ai organization (github.com/landfalls-ai/landflow; the old address redirects); the triage page adds the marketplace from there with no token. |
+| `8f0812d` | An options field with nothing chosen shows *Choose a team…* instead of its first option: a new Run a Team node looked set to a team but saved `teamId: ""` (generic node, a run with no team, and picking that team changed nothing). `choosePrompt()` in param-form.tsx; test/param-form-options.test.ts. |
+| `4f7adae` | Design: the team node's panel shows the team (new look): team card with faces, Change and Open; a row per member; What to ask the lead; approvals as choices; how it runs; last run line; no team chosen = teams as cards. components/editor/team-node-panel.tsx, lib/shared/team-node.ts, test/team-node.test.ts. |
+| `36518d2` | Design: a team node shows who is on it (new look): before a run the members after the lead and the last run's outcome, in place of the strip; slots read Lead's model / memory / tools (NodeTile `slotNames`). |
+| `fe9230a` | The team node's last run says what Home and the Run Trace say: the run line's outcome, time and tokens (the whole run, a wait for a person included) instead of the team step's own time. |
+| (this change) | History rows for the team node's last-run fix. |
 
 ## What is next
 

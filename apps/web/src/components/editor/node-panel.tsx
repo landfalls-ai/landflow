@@ -18,6 +18,8 @@ import { parseHandle, useEditor } from './store';
 import { SuggestionsCard } from './suggestions-card';
 import { TriggerUrl } from './trigger-url';
 import { syncTeamName } from './turn-into-team';
+import { TeamNodePanel } from './team-node-panel';
+import { useNewLook } from '../shell/look-toggle';
 
 function Segmented<T extends string>({
   value,
@@ -56,6 +58,7 @@ function PaneHeader({ title, children }: { title: string; children?: React.React
 }
 
 export function NodePanel() {
+  const newLook = useNewLook();
   const openNodeId = useEditor((s) => s.openNodeId);
   const node = useEditor((s) => s.nodes.find((n) => n.id === s.openNodeId));
   const info = useEditor((s) => (node ? s.nodeTypes[node.data.wf.type] : undefined));
@@ -328,7 +331,18 @@ export function NodePanel() {
                       onChange={(credentials) => update({ credentials })}
                     />
                   ) : null}
-                  {descriptor ? (
+                  {descriptor && newLook && wf.type === 'core.runTeam' ? (
+                    // The new look: the team as people with jobs, then the message and where approvals go (team-node-panel.tsx).
+                    <TeamNodePanel
+                      properties={descriptor.properties}
+                      values={wf.parameters}
+                      onChange={(parameters) => {
+                        update({ parameters });
+                        if (parameters.teamId !== wf.parameters.teamId) void syncTeamName(openNodeId);
+                      }}
+                      form={{ preview, credentials: wf.credentials, scope: workflowId ? { workflowId } : undefined }}
+                    />
+                  ) : descriptor ? (
                     <ParamForm
                       nodeType={wf.type}
                       properties={descriptor.properties}

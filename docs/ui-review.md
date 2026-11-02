@@ -39,7 +39,10 @@ What the new look draws so far:
   comes from the tool results ([second-brain.md](second-brain.md#the-analyst-agent));
 - building step by step: while Spotlight builds a change, a side card ticks off its steps, the nodes it adds appear on the
   canvas as dashed ghosts (the one being made shimmers), new connections draw dashed, and a thin bar on top of the canvas
-  shows how far the plan is; nothing changes until Apply ([assistant.md](assistant.md#building-step-by-step)).
+  shows how far the plan is; nothing changes until Apply ([assistant.md](assistant.md#building-step-by-step));
+- the team node in the editor: its panel shows the team as a card, a row per member, "What to ask the lead", approvals as
+  choices, how the team runs and its last run; the node shows its members and its last run before it runs, and names its
+  slots "Lead's model / memory / tools" ([agent-teams.md](agent-teams.md#the-team-node-in-the-editor)).
 
 ## Canvas
 

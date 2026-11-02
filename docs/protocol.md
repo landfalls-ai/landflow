@@ -231,7 +231,9 @@ n8n's `displayOptions.show/hide`. Inside a `collection` or `fixedCollection`, a 
 a sibling field and `/key` to a top-level parameter (a plain key no sibling has falls back to the
 top-level one). Changing a parameter in the editor clears parameters whose visible property changes
 (the `operation` after switching `resource`) so they take the new default. Dynamic dropdowns set
-`typeOptions.loadOptionsMethod` and are served by `LoadOptions`.
+`typeOptions.loadOptionsMethod` and are served by `LoadOptions`. An `options` field with nothing chosen (an empty
+default) shows *Choose a team…* (its `placeholder`, else *Choose a/an <field>…*) instead of its first option, which
+would look chosen without being saved.
 
 ## 5. Connection types
 

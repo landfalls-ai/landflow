@@ -18,6 +18,9 @@ import { duration, timeAgo } from '@/lib/client/format';
 import { decideToolApprovals } from '@/lib/client/run-trace';
 import { ApprovalSheet, LiveApprovalCard, type DecideFn } from '../run-trace/approval-live';
 import { useNewLook } from '../shell/look-toggle';
+import { useLastTeamRun } from '../agents/team-run-data';
+import { useRunLines } from '../run-trace/run-line';
+import { lastRunWords, rosterText } from '@/lib/shared/team-node';
 import { chartOrder, memberAgent, type TeamMember } from '@/lib/shared/agent-teams';
 import type { AgentSummary } from '@/lib/shared/agents';
 import type { TeamActivity, TeamApprovalWait, TeamMoment, TeamProgress, TeamStep, TeamTurn, TeamUsage } from '@/lib/shared/team-progress';
@@ -501,6 +504,8 @@ export interface TeamTileOptions {
   onDecide?: DecideFn;
   /** Open the Run Trace in a new tab (from the editor, so the flow stays open). */
   newTab?: boolean;
+  /** The editor, in the new look: before any run the node shows who is on the team and how its last run ended. */
+  idleRoster?: boolean;
 }
 
 /** What a waiting run's node waits on, from its wait's data (nodes/run-team.ts): a member's question, or a tool's approval. */
@@ -573,7 +578,8 @@ const AMBER = 'var(--warn)';
  * bars and the ribbon; once it ran, the summary, the budgets and the ribbon of its activity; while the run waits on a
  * member's question, the question in amber with an Answer button. `moments` go above the node, with the roster.
  */
-export function useTeamTile(teamId: string | undefined, live: TeamProgress | undefined, activity: TeamActivity | undefined, options: TeamTileOptions = {}): { tile?: NodeLive; moments?: ReactNode } {
+export function useTeamTile(teamId: string | undefined, live: TeamProgress | undefined, activity: TeamActivity | undefined, options: TeamTileOptions = {}): { tile?: NodeLive; moments?: ReactNode; roster?: boolean } {
+  const newLook = useNewLook();
   const faces = useTeamFaces(teamId);
   const elapsed = useElapsed(live);
   const working = useWorkingMembers(options.executionId, Boolean(live && options.executionId && !options.waiting));
@@ -661,7 +667,39 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
       },
     };
   }
+  if (options.idleRoster && newLook && teamId) return { tile: { body: <TeamIdle teamId={teamId} faces={faces} /> }, roster: true };
   return {};
+}
+
+/**
+ * A team node before it runs, in the editor's new look: the members after the lead (whose face is the node's), and how
+ * the team's last run ended. The strip above the node then stays away (flow-node.tsx), since this says the same.
+ */
+function TeamIdle({ teamId, faces }: { teamId: string; faces: TeamFace[] }) {
+  const run = useLastTeamRun(teamId);
+  const lines = useRunLines(run && !run.live ? [run.executionId] : []);
+  const others = faces.slice(1);
+  const line = run ? lines?.[run.executionId] : undefined;
+  const tone = line?.out.tone === 'bad' || run?.status === 'error' ? 'text-rd' : line?.out.tone === 'warn' || run?.status === 'waiting' ? 'text-warn' : 'text-gn';
+  return (
+    <div className="mx-4 flex flex-col gap-1.5 border-t border-hair pb-6 pt-2" data-testid="team-idle">
+      {others.length > 0 && (
+        <div className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-t2" title={faces.map((f) => f.title).join(', ')}>
+          <span className="flex shrink-0">
+            {others.slice(0, 5).map((f, i) => (
+              <AgentAvatar key={f.member.id} agent={f.face} size={20} round className={cn('ring-2 ring-sf', i && '-ml-1.5')} />
+            ))}
+          </span>
+          <span className="truncate">{rosterText(others.map((f) => f.title))}</span>
+        </div>
+      )}
+      {run && (
+        <div className="truncate text-[11px] text-t3" title={`${run.workflowName} · ${timeAgo(run.startedAt)}`}>
+          Last run: <span className={cn('font-semibold', tone)}>{lastRunWords(run, line)}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
