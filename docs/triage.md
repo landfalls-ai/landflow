@@ -96,8 +96,7 @@ These are enforced in the nodes, not left to the flow:
 The repo's root holds a marketplace, `.claude-plugin/marketplace.json` (`landflow-soc`), that lists the three plugins
 and their flows. To add it:
 
-- **From GitHub**: add `jhonny-landfalls/landflow`. The repository is private, so the host needs a `GITHUB_TOKEN` that
-  can read it.
+- **From GitHub**: add `landfalls-ai/landflow`. The repository is public, so no token is needed.
 - **From this checkout**: start the host with `LANDFLOW_MARKETPLACE_ALLOW_LOCAL=1` and add the repository's absolute
   path.
 
