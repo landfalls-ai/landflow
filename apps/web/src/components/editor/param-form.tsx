@@ -184,12 +184,22 @@ function ReloadOptions({ state, onClick }: { state: 'idle' | 'loading' | 'error'
   );
 }
 
+/** What an options field with nothing chosen says: its placeholder, else "Choose a team…", "Choose an operation…". */
+export function choosePrompt(property: Pick<PropertyDescriptor, 'displayName' | 'placeholder'>): string {
+  if (property.placeholder) return property.placeholder;
+  const name = property.displayName.toLowerCase();
+  return `Choose ${/^[aeiou]/.test(name) ? 'an' : 'a'} ${name}…`;
+}
+
 function LoadedOptions({ nodeType, property, value, onChange, parameters }: { nodeType: string; property: PropertyDescriptor; value: unknown; onChange: (v: unknown) => void; parameters: Values }) {
   const { method, options, state, error, load } = useLiveOptions(nodeType, property, parameters);
   // n8n's Fixed / Expression switch: type an id the list doesn't have, or an expression.
   const [typed, setTyped] = useState(() => isExpression(value));
 
   const current = options.find((o) => String(o.value) === String(value));
+  // Nothing chosen yet: say so. Without this the browser draws the first option, which looks chosen but is not saved
+  // (a new Run a Team node showed a team and ran with none), and picking that option then changes nothing.
+  const unset = !current && (value === undefined || value === null || value === '');
   return (
     <div>
       <div className="flex gap-1.5">
@@ -200,7 +210,8 @@ function LoadedOptions({ nodeType, property, value, onChange, parameters }: { no
             </DropTarget>
           ) : (
             <Select value={String(value ?? '')} onChange={(e) => onChange(options.find((o) => String(o.value) === e.target.value)?.value ?? e.target.value)}>
-              {!current && value !== undefined && value !== '' && <option value={String(value)}>{String(value)}</option>}
+              {unset && <option value="" disabled>{choosePrompt(property)}</option>}
+              {!current && !unset && <option value={String(value)}>{String(value)}</option>}
               {options.map((option) => (
                 <option key={String(option.value)} value={String(option.value)}>
                   {option.name}
