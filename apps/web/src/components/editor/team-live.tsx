@@ -695,7 +695,7 @@ function TeamIdle({ teamId, faces }: { teamId: string; faces: TeamFace[] }) {
       )}
       {run && (
         <div className="truncate text-[11px] text-t3" title={`${run.workflowName} · ${timeAgo(run.startedAt)}`}>
-          Last run: <span className={cn('font-semibold', tone)}>{lastRunWords(run, line?.out.label)}</span>
+          Last run: <span className={cn('font-semibold', tone)}>{lastRunWords(run, line)}</span>
         </div>
       )}
     </div>

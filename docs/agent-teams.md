@@ -169,8 +169,9 @@ the fields are pure, in `lib/shared/team-node.ts`, tested in `test/team-node.tes
   panel lists the teams as cards to tap (faces, name, goal) and **New team ↗** (the Agents page in a new tab; the list is
   read again when the window comes back). A team given by an expression is shown as the expression.
 - **The node.** Before it runs, under the lead's face and the team's name: the other members' faces and titles, and
-  *Last run: Answered · 2m 25s · 22k tokens* (the outcome from the run's line, red when it failed, amber when it waits),
-  in place of the roster strip above the node. While it runs or waits, and after a run in the editor, it is the live team
+  *Last run: Answered · 2m 25s · 22k tokens* (the outcome, time and tokens from the run's line, so it says what Home and
+  the Run Trace say, a wait for a person included; red when it failed, amber when it waits), in place of the roster strip
+  above the node. While it runs or waits, and after a run in the editor, it is the live team
   node as before. Its slots read **Lead's model**, **Lead's memory** and **Lead's tools**, since what is connected there
   goes to the lead.
 

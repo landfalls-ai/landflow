@@ -89,7 +89,9 @@ describe('the team card and the node', () => {
 
   it('tells the last run in a few words', () => {
     const members = [{ tokens: 12_000 }, { tokens: 10_000 }];
-    expect(lastRunWords({ status: 'success', durationMs: 145_000, members }, 'Answered')).toBe('Answered · 2m 25s · 22k tokens');
+    expect(lastRunWords({ status: 'success', durationMs: 116_000, members })).toBe('Done · 1m 56s · 22k tokens');
+    // The run's line wins, so the node says what Home and the Run Trace say: the whole run, with its wait for a person.
+    expect(lastRunWords({ status: 'success', durationMs: 116_000, members }, { out: { label: 'Answered' }, ms: 145_000, tokens: 58_000 })).toBe('Answered · 2m 25s · 58k tokens');
     expect(lastRunWords({ status: 'error', durationMs: 4_000, members: [] })).toBe('Failed · 4.0 s');
     expect(lastRunWords({ status: 'running', live: true, members })).toBe('Running now · 22k tokens');
   });

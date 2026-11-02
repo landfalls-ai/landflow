@@ -79,9 +79,17 @@ export function rosterText(titles: readonly string[], max = 4): string {
   return titles.length > max ? `${shown} +${titles.length - max}` : shown;
 }
 
-/** The team's last run in a few words: "Answered · 2m 25s · 22k tokens"; `outcome` from the run's line when known. */
-export function lastRunWords(run: { status: string; durationMs?: number; members: ReadonlyArray<{ tokens: number }>; live?: boolean }, outcome?: string): string {
-  const tokens = run.members.reduce((sum, m) => sum + (m.tokens || 0), 0);
-  const how = run.live ? 'Running now' : (outcome ?? (run.status === 'error' ? 'Failed' : run.status === 'waiting' ? 'Waiting for a person' : run.status === 'canceled' ? 'Stopped' : 'Done'));
-  return [how, run.durationMs !== undefined && !run.live ? fmtMs(run.durationMs) : '', tokens ? `${formatTokens(tokens)} tokens` : ''].filter(Boolean).join(' · ');
+/**
+ * The team's last run in a few words: "Answered · 2m 25s · 22k tokens". With the run's line (`GET /api/runs/lines`) its
+ * outcome, time and tokens are the line's, so the node says what Home and the Run Trace say (the whole run, a wait for a
+ * person included); without it, the team step's own time and its members' tokens.
+ */
+export function lastRunWords(
+  run: { status: string; durationMs?: number; members: ReadonlyArray<{ tokens: number }>; live?: boolean },
+  line?: { out: { label: string }; ms: number; tokens: number },
+): string {
+  const tokens = line?.tokens ?? run.members.reduce((sum, m) => sum + (m.tokens || 0), 0);
+  const ms = line?.ms ?? run.durationMs;
+  const how = run.live ? 'Running now' : (line?.out.label ?? (run.status === 'error' ? 'Failed' : run.status === 'waiting' ? 'Waiting for a person' : run.status === 'canceled' ? 'Stopped' : 'Done'));
+  return [how, ms !== undefined && !run.live ? fmtMs(ms) : '', tokens ? `${formatTokens(tokens)} tokens` : ''].filter(Boolean).join(' · ');
 }
