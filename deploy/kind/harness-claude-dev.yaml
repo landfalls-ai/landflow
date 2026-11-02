@@ -1,6 +1,8 @@
 # Claude Code with the common toolchains (docs/a2a.md, "A toolchain image for Claude Code"): landflow-claude's runtime and
-# settings on the image deploy/docker/claude-harness-dev.Dockerfile builds (Go, Node with pnpm, Python with uv, a C
-# toolchain). deploy/scripts/claude-harness-dev.sh puts the image in Landflow's registry and applies this with its digest:
+# settings on the image deploy/docker/claude-harness-dev.Dockerfile builds (Go with its standard library built, Node with pnpm,
+# Python with uv, a C toolchain), with every package tool pointed at the package cache (landflow-cache through the bridge,
+# deploy/kind/bridge.yaml): the only origin the EgressPolicy landflow-dev-packages allows. apk's repositories are in the image.
+# deploy/scripts/claude-harness-dev.sh puts the image in Landflow's registry and applies this with its digest:
 # workload.image must be pinned by digest, and kagent's nodes pull it from Landflow at the Service's private IP.
 apiVersion: api.kagent.dev/v1alpha3
 kind: Harness
@@ -22,6 +24,18 @@ spec:
     - { name: GIT_CONFIG_COUNT, value: "1" }
     - { name: GIT_CONFIG_KEY_0, value: "http.https://github.com/.extraHeader" }
     - { name: GIT_CONFIG_VALUE_0, value: "Authorization: landflow-egress-gateway" }
+    # The package cache: /npm/ (Verdaccio), /go/ (Athens: modules and the checksum database), /pypi/ (proxpi). Plain HTTP,
+    # which these tools allow for a host named here.
+    - { name: npm_config_registry, value: "http://landflow-cache.landflow.svc.cluster.local:8080/npm/" }
+    - { name: YARN_NPM_REGISTRY_SERVER, value: "http://landflow-cache.landflow.svc.cluster.local:8080/npm/" }
+    - { name: YARN_UNSAFE_HTTP_WHITELIST, value: "landflow-cache.landflow.svc.cluster.local" }
+    - { name: COREPACK_NPM_REGISTRY, value: "http://landflow-cache.landflow.svc.cluster.local:8080/npm/" }
+    - { name: GOPROXY, value: "http://landflow-cache.landflow.svc.cluster.local:8080/go" }
+    - { name: GOSUMDB, value: "sum.golang.org http://landflow-cache.landflow.svc.cluster.local:8080/go/sumdb/sum.golang.org" }
+    - { name: PIP_INDEX_URL, value: "http://landflow-cache.landflow.svc.cluster.local:8080/pypi/simple/" }
+    - { name: PIP_TRUSTED_HOST, value: "landflow-cache.landflow.svc.cluster.local" }
+    - { name: UV_DEFAULT_INDEX, value: "http://landflow-cache.landflow.svc.cluster.local:8080/pypi/simple/" }
+    - { name: UV_INSECURE_HOST, value: "landflow-cache.landflow.svc.cluster.local:8080" }
   substrate:
     workerPoolRef: { name: kagent-default }
     snapshotPolicy: { location: s3://ate-snapshots/kagent/ }

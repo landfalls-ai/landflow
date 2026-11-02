@@ -237,7 +237,8 @@ export const aiAgentNode = defineNode({
         const settled = await Promise.all(
           continuing.pending.calls.map(async (call): Promise<ToolResult> => {
             const decision = decisions[call.id];
-            if (decision?.approved) return invoke(call);
+            // A person may have edited the input: the tool runs with it.
+            if (decision?.approved) return invoke(decision.input ? { ...call, input: decision.input } : call);
             const reason = decision ? `rejected${decision.by ? ` by ${decision.by}` : ''}` : resume?.kind === 'timeout' ? 'not approved in time' : 'not approved';
             run.steps.push({ tool: call.name, input: call.input, output: `Not run: ${reason}`, isError: true });
             send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'failed', output: `Not run: ${reason}` } });
@@ -338,14 +339,22 @@ interface AgentNodeState {
   $resume?: { kind: string; data?: JsonObject; error?: string };
 }
 
-/** A person's decisions, from the approval route (`{ decisions: { [callId]: { approved, by } } }`). */
-function decisionsOf(resume: AgentNodeState['$resume']): Record<string, { approved: boolean; by?: string }> {
+/** A person's decisions, from the approval route (`{ decisions: { [callId]: { approved, by, input? } } }`): `input` is what they edited. */
+export function decisionsOf(resume: AgentNodeState['$resume']): Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject }> {
   const data = resume?.data as { decisions?: unknown; body?: { decisions?: unknown } } | undefined;
   const raw = (data?.decisions ?? data?.body?.decisions) as Record<string, unknown> | undefined;
-  const decisions: Record<string, { approved: boolean; by?: string }> = {};
+  const decisions: Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject }> = {};
   for (const [id, value] of Object.entries(raw ?? {})) {
     if (typeof value === 'boolean') decisions[id] = { approved: value };
-    else if (value && typeof value === 'object') decisions[id] = { approved: Boolean((value as { approved?: unknown }).approved), ...(typeof (value as { by?: unknown }).by === 'string' && { by: (value as { by: string }).by }) };
+    else if (value && typeof value === 'object') {
+      const v = value as { approved?: unknown; by?: unknown; at?: unknown; input?: unknown };
+      decisions[id] = {
+        approved: Boolean(v.approved),
+        ...(typeof v.by === 'string' && { by: v.by }),
+        ...(typeof v.at === 'string' && { at: v.at }),
+        ...(v.approved === true && typeof v.input === 'object' && v.input !== null && !Array.isArray(v.input) ? { input: v.input as JsonObject } : {}),
+      };
+    }
   }
   return decisions;
 }
@@ -363,7 +372,7 @@ function messagesPushTool(messages: AgentMessage[], results: ToolResult[], calls
   messages.push({ role: 'tool', results: results.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)) });
 }
 
-interface ApprovalSettings {
+export interface ApprovalSettings {
   needs: (toolName: string) => boolean;
   channel: 'chat' | 'slack' | 'email';
   slackChannel: string;
@@ -373,8 +382,8 @@ interface ApprovalSettings {
   timeoutMinutes: number;
 }
 
-function approvalSettings(ctx: IExecuteContext, itemIndex: number): ApprovalSettings {
-  const mode = String(ctx.getNodeParameter('requireApproval', itemIndex, 'none'));
+/** `mode` overrides the node's Require Approval (the Run a Team node has none: every tool that needs approval asks). */
+export function approvalSettings(ctx: IExecuteContext, itemIndex: number, mode = String(ctx.getNodeParameter('requireApproval', itemIndex, 'none'))): ApprovalSettings {
   const names = new Set(
     String(ctx.getNodeParameter('approvalTools', itemIndex, '') ?? '')
       .split(',')
@@ -403,7 +412,7 @@ function approvalSettings(ctx: IExecuteContext, itemIndex: number): ApprovalSett
  * `data.approval` is what the chat panel, the execution view and POST /api/executions/:id/approvals read;
  * with Slack, each call is posted as a message with Approve / Reject buttons first.
  */
-async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings: ApprovalSettings, calls: ToolCall[]) {
+export async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings: ApprovalSettings, calls: ToolCall[], extra: JsonObject = {}, title?: string) {
   if (!ctx.putExecutionToWait) throw new NodeOperationError('Tool approvals need a host that can pause executions');
   const node = ctx.getNode();
   const approval: JsonObject = {
@@ -413,6 +422,7 @@ async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings:
     channel: settings.channel,
     calls: calls.map((call) => ({ id: call.id, tool: call.name, input: call.input as JsonObject })),
     requestedAt: new Date().toISOString(),
+    ...(title && { title }),
   };
   if (settings.channel === 'slack') {
     if (!settings.slackChannel) throw new NodeOperationError('Set the Slack channel to post approval requests in', { itemIndex });
@@ -422,8 +432,8 @@ async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings:
       const target = { t: 'wf' as const, e: ctx.getExecutionId(), c: call.id };
       const ts = await postMessage(credential, {
         channel: settings.slackChannel,
-        text: `${node.name}: approve ${call.name}?`,
-        blocks: approvalBlocks({ title: `${node.name} wants to run a tool`, tool: call.name, input: call.input, target }),
+        text: `${title ?? node.name}: approve ${call.name}?`,
+        blocks: approvalBlocks({ title: title ?? `${node.name} wants to run a tool`, tool: call.name, input: call.input, target }),
       });
       if (ts) messages[call.id] = ts;
     }
@@ -435,7 +445,7 @@ async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings:
     const target = (call: ToolCall) => ({ t: 'wf' as const, e: ctx.getExecutionId(), c: call.id });
     await sendApprovalEmails({
       to: settings.emails,
-      title: `${node.name} wants to run a tool`,
+      title: title ?? `${node.name} wants to run a tool`,
       calls: calls.map((call) => ({ tool: call.name, input: call.input, target: target(call) })),
       ...(settings.timeoutMinutes > 0 && { note: `Unanswered calls are rejected after ${settings.timeoutMinutes} minutes.` }),
     });
@@ -446,7 +456,7 @@ async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings:
     resume: 'webhook',
     rerun: true,
     ...(settings.timeoutMinutes > 0 && { until: new Date(Date.now() + settings.timeoutMinutes * 60_000).toISOString() }),
-    data: { approval },
+    data: { approval, ...extra },
   });
 }
 
@@ -474,7 +484,7 @@ export const anthropicChatModelNode = defineNode({
     kind: 'subnode',
     supplies: 'ai_languageModel',
     categories: ['AI', 'Models'],
-    icon: 'lucide:sparkles',
+    icon: 'brand:claude',
     color: '#d97757',
     subtitle: '{{model}}',
     credentials: [{ name: 'anthropicApi', required: false }],
@@ -536,7 +546,7 @@ export const ollamaChatModelNode = defineNode({
     kind: 'subnode',
     supplies: 'ai_languageModel',
     categories: ['AI', 'Models'],
-    icon: 'lucide:cpu',
+    icon: 'brand:ollama',
     color: '#71717a',
     subtitle: '{{model}}',
     inputs: [],

@@ -8,7 +8,8 @@
  * with the Run a Team node (`core.runTeam`); teams live on the Agents page (`/api/agent-teams`, table `agent_teams`).
  * Not to be confused with an agent's `team` label (a grouping on the Agents page) or Microsoft Teams channels.
  */
-import type { CredentialRef } from './agents';
+import type { AgentModel, CredentialRef } from './agents';
+import type { ActorConnection } from './run-trace';
 
 /** Where a member's questions go first: its manager (who may pass them on to a person) or straight to a person. */
 export type QuestionsTo = 'manager' | 'person';
@@ -24,6 +25,11 @@ interface MemberBase {
   reportsTo?: string;
   /** Members whose work it must sign off before their manager reports done. */
   reviews?: string[];
+  /**
+   * Peers it may consult or hand its task to, without going through its manager (Landflow agents only: a remote member
+   * has no tools to do it with). The peer answers the member that asked, and counts against its own budget.
+   */
+  consults?: string[];
   /** Tokens it may spend in one run: a warning at 80%, a stop at 100%. Absent: no limit. */
   budgetTokens?: number;
   questionsTo?: QuestionsTo;
@@ -32,6 +38,11 @@ interface MemberBase {
 export interface AgentMember extends MemberBase {
   kind: 'agent';
   agentId: string;
+  /**
+   * The model it runs on in this team, in place of its agent's (the agent itself is unchanged): "the lead on Claude"
+   * while the rest stay local. A model connected to the Run a Team node still wins for the lead.
+   */
+  model?: AgentModel;
 }
 
 export interface RemoteMember extends MemberBase {
@@ -138,6 +149,28 @@ export function chartOrder(config: AgentTeamConfig): TeamMember[] {
   return tree ? walk(tree) : config.members;
 }
 
+/** One "may consult" line between two members: `from` is the one listed first in the team, `mutual` when the other may consult it back. */
+export interface ConsultEdge {
+  from: string;
+  to: string;
+  mutual: boolean;
+}
+
+/** The "may consult" lines of a team for the chart: two members consulting each other make one line; ids not in the team and self-consults are dropped. */
+export function consultEdges(config: { members: readonly { id: string; consults?: string[] }[] }): ConsultEdge[] {
+  const ids = new Set(config.members.map((m) => m.id));
+  const edges = new Map<string, ConsultEdge>();
+  for (const m of config.members) {
+    for (const to of m.consults ?? []) {
+      if (to === m.id || !ids.has(to)) continue;
+      const back = edges.get(`${to}>${m.id}`);
+      if (back) back.mutual = true;
+      else if (!edges.has(`${m.id}>${to}`)) edges.set(`${m.id}>${to}`, { from: m.id, to, mutual: false });
+    }
+  }
+  return [...edges.values()];
+}
+
 /** What stops a team from running, in plain words; empty when it can run. With `agentExists`, members whose agent is gone count too. */
 export function teamIssues(config: AgentTeamConfig, options: { agentExists?: (agentId: string) => boolean } = {}): string[] {
   const issues: string[] = [];
@@ -156,6 +189,11 @@ export function teamIssues(config: AgentTeamConfig, options: { agentExists?: (ag
       if (r === m.id) issues.push(`${m.title} can't review its own work.`);
       else if (!byId.has(r)) issues.push(`${m.title} reviews a member who isn't in the team.`);
     }
+    for (const c of m.consults ?? []) {
+      if (c === m.id) issues.push(`${m.title} can't consult itself.`);
+      else if (!byId.has(c)) issues.push(`${m.title} may consult a member who isn't in the team.`);
+    }
+    if (m.kind === 'a2a' && m.consults?.length) issues.push(`${m.title} is a remote agent, so it can't consult anyone: only Landflow agents have tools to do it with.`);
     if (m.budgetTokens !== undefined && !(m.budgetTokens > 0)) issues.push(`${m.title}'s budget must be more than 0 tokens.`);
     if (m.kind === 'a2a' && reportsOf(config, m.id).length) issues.push(`${m.title} is a remote agent, so nobody can report to it: only Landflow agents can manage.`);
     if (m.kind === 'agent' && !m.agentId) issues.push(`Pick the agent for ${m.title}.`);
@@ -184,7 +222,10 @@ export interface TeamSnapshotMember {
   role?: string;
   reportsTo?: string;
   reviews?: string[];
+  consults?: string[];
   budgetTokens?: number;
+  /** What it works with when the run started: model, tools, knowledge, runtime, plugins, network (lib/server/agents/connections.ts). */
+  connections?: ActorConnection[];
 }
 
 export interface TeamSnapshot {
@@ -227,6 +268,26 @@ export function teamBrief(team: AgentTeam): TeamBrief | undefined {
 }
 
 /** The published teams as prompt text, one line each. */
+const teamKey = (value: string) => value.trim().toLowerCase().replace(/\s+team$/, '');
+
+/**
+ * A Run a Team node's parameters as a model wrote them: models put the team's name ("Release notes desk team") or its
+ * lead's title ("Tech Lead") where the id goes. A name that matches one published team becomes its id, and `teamName` is
+ * filled in from the team, so the node shows it and runs; anything else is left as written.
+ */
+export function withTeamId<T>(parameters: T, teams: readonly TeamBrief[]): T {
+  if (!parameters || typeof parameters !== 'object' || !teams.length) return parameters;
+  const p = parameters as Record<string, unknown>;
+  const written = typeof p.teamId === 'string' ? p.teamId.trim() : '';
+  if (!written || written.includes('{{')) return parameters;
+  const key = teamKey(written);
+  const exact = teams.find((t) => t.id === written);
+  const named = teams.filter((t) => teamKey(t.name) === key);
+  const led = teams.filter((t) => t.members.some((m) => !m.reportsTo && teamKey(m.title) === key));
+  const team = exact ?? (named.length === 1 ? named[0] : !named.length && led.length === 1 ? led[0] : undefined);
+  return team ? ({ ...p, teamId: team.id, teamName: team.name } as T) : parameters;
+}
+
 export function describeTeams(teams: TeamBrief[]): string {
   return teams
     .map((t) => `- “${t.name}” (teamId ${t.id}, v${t.version})${t.goal ? `: ${t.goal.slice(0, 120)}` : ''}. Members: ${t.members.map((m) => `${m.title}${m.reportsTo ? ` (reports to ${m.reportsTo})` : ' (lead)'}`).join(', ')}`)

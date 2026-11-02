@@ -5,11 +5,11 @@
  * runtime is the Harness it runs on: kagent's own, or Claude Code, which also loads the agent's Claude Code plugins.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, ShipWheel, Trash2 } from 'lucide-react';
+import { Eye, Lock, RefreshCw, ShieldCheck, ShipWheel, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { cn } from '@/lib/utils';
-import type { Agent, KagentHarness, KagentRuntime, KagentStatus } from '@/lib/shared/agents';
+import type { Agent, KagentGuard, KagentHarness, KagentRuntime, KagentStatus } from '@/lib/shared/agents';
 import { CredentialDialog } from '../credentials/credential-dialog';
 import { useCredentials } from '../credentials/use-credentials';
 import { Badge } from '../ui/badge';
@@ -47,6 +47,39 @@ const FIELD_LABEL: Record<string, string> = {
   egressPolicies: 'Network access',
   mcpServer: 'MCP server',
 };
+
+/** The landflow-harness mod's guard, as the card offers it (docs/a2a.md, "The landflow-harness mod"). */
+const GUARD: Record<KagentGuard, { label: string; hint: string; icon: typeof Lock }> = {
+  strict: { label: 'Read-only', hint: 'Read-only on the code: no edits outside /tmp, no commits, pushes or GitHub changes; it may install, test and comment on a pull request.', icon: Lock },
+  enforce: { label: 'Normal', hint: 'Refuses what no agent here needs: secret files, printing the environment, pushes to main, merges, writes outside its workspace.', icon: ShieldCheck },
+  report: { label: 'Report only', hint: 'Nothing is refused; the run shows what would have been.', icon: Eye },
+};
+
+/** The guard as three choices; a request can make it stricter, never looser. */
+function GuardChoice({ value, onChange }: { value: KagentGuard; onChange: (guard: KagentGuard) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Guard">
+      {(Object.keys(GUARD) as KagentGuard[]).map((key) => {
+        const { label, icon: Icon, hint } = GUARD[key];
+        const on = value === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            title={hint}
+            onClick={() => onChange(key)}
+            className={cn('inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px]', on ? 'border-ac bg-acdim text-ac' : 'border-hair bg-wl text-t3 hover:text-t1')}
+          >
+            <Icon className="size-3" />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 interface EgressPolicy {
   name: string;
@@ -116,6 +149,8 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
   const [policies, setPolicies] = useState<EgressPolicy[]>();
   // Undefined until changed here: the deploy keeps the agent's list (or the cluster's).
   const [egress, setEgress] = useState<string[]>();
+  // Undefined until changed here: the deploy keeps the agent's guard.
+  const [guard, setGuard] = useState<KagentGuard>();
 
   const published = agent.published;
   const deployedAt = agent.kagent?.deployedAt;
@@ -130,6 +165,7 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
         setHarness(result.status.harness?.name ?? '');
         setPolicies(result.egressPolicies);
         setEgress(undefined);
+        setGuard(undefined);
       }
     } catch (e) {
       toast.error((e as Error).message);
@@ -163,13 +199,17 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
   }, [agent.id, credentialId, undeployed]);
   const chosen = harnesses?.find((h) => h.name === harness);
   const plugins = published?.config.plugins ?? [];
+  // The guard applies to Claude Code: the runtime chosen, else the one deployed, else the cluster's first.
+  const claude = (chosen ?? status?.harness ?? harnesses?.[0])?.runtime === 'claude';
+  const shownGuard: KagentGuard = guard ?? status?.guard ?? 'enforce';
 
   const deploy = async () => {
     setBusy('deploy');
     try {
       const moved = harness && harness !== status?.harness?.name ? { harness } : {};
       const network = egress ? { egressPolicies: egress } : {};
-      const body = status?.deployed ? { ...moved, ...network } : { credentialId, name: name.trim() || slug(agent.name), ...(harness && { harness }), ...network };
+      const guarded = guard ? { guard } : {};
+      const body = status?.deployed ? { ...moved, ...network, ...guarded } : { credentialId, name: name.trim() || slug(agent.name), ...(harness && { harness }), ...network, ...guarded };
       const result = await api<{ agent: Agent; status: KagentStatus; unavailable: string[] }>(`/api/agents/${agent.id}/kagent`, { method: 'PUT', json: body });
       onAgent(result.agent);
       setStatus(result.status);
@@ -248,6 +288,11 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
                 <NetworkAccess policies={policies} value={egress ?? []} onChange={setEgress} />
               </Field>
             )}
+            {claude && (
+              <Field id="kagent-guard" label="Guard" hint={GUARD[shownGuard].hint}>
+                <GuardChoice value={shownGuard} onChange={setGuard} />
+              </Field>
+            )}
           </div>
           {harnessError && <p className="text-[12px] text-t3">The cluster’s Harnesses couldn’t be listed: {harnessError}</p>}
           <div className="flex justify-end">
@@ -285,6 +330,14 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
               <>
                 <dt className="text-t3">Network</dt>
                 <dd className="truncate font-mono text-t1">{status.egressPolicies.join(', ')}</dd>
+              </>
+            )}
+            {status.harness?.runtime === 'claude' && status.plugins?.some((p) => p.id.startsWith('landflow-harness@')) && (
+              <>
+                <dt className="text-t3">Guard</dt>
+                <dd className="truncate text-t1" title={GUARD[status.guard ?? 'enforce'].hint}>
+                  {GUARD[status.guard ?? 'enforce'].label}
+                </dd>
               </>
             )}
             {status.plugins && status.plugins.length > 0 && (
@@ -342,6 +395,11 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
           {policies && policies.length > 0 && (
             <Field id="kagent-network-move" label="Network access" hint={egress ? 'Redeploying writes this list: beyond Landflow and the model, the sandbox reaches only these.' : 'Beyond Landflow and the model, what the sandbox may reach. Change it, then redeploy.'}>
               <NetworkAccess policies={policies} value={egress ?? status.egressPolicies ?? []} onChange={setEgress} />
+            </Field>
+          )}
+          {claude && (
+            <Field id="kagent-guard-move" label="Guard" hint={guard && guard !== (status.guard ?? 'enforce') ? `Redeploying sets it to ${GUARD[guard].label.toLowerCase()}. ${GUARD[guard].hint}` : GUARD[shownGuard].hint}>
+              <GuardChoice value={shownGuard} onChange={setGuard} />
             </Field>
           )}
           {harnesses && harnesses.length > 1 && (

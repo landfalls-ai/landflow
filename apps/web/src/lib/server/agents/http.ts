@@ -40,6 +40,7 @@ export const agentConfigSchema = z
         length: z.enum(['sentence', 'paragraph', 'detailed']),
         language: z.string().max(60),
         signoff: z.string().max(200),
+        whatIDo: z.array(z.string().max(300)).max(10),
         always: z.array(z.string().max(1_000)).max(50),
         never: z.array(z.string().max(1_000)).max(50),
         examples: z.array(z.object({ user: z.string().max(5_000), assistant: z.string().max(5_000) })).max(10),

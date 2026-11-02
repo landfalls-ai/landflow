@@ -38,6 +38,8 @@ export const plugin = definePlugin({
     }
   ],
   nodes: [new GetAlerts(), new GetAlertDetails(), new AcknowledgeAlert],
+  // `file:` icons are inlined from here as data: URLs when the manifest is built.
+  iconDir: new URL('../icons/', import.meta.url),
 });
 
 if (import.meta.url === `file://${process.argv[1]}`) {

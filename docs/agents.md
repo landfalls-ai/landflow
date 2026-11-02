@@ -100,6 +100,10 @@ on the agent's page to pick one of four kinds:
 - **Image**: a PNG, JPEG or WebP, cropped to a square and scaled to 256 px in the browser (WebP when the browser can
   encode it), at most 200 KB as a data URL in the agent's config.
 
+An agent made without an avatar through `POST /api/agents` (a script, the CLI, another agent) gets a face drawn from its
+name, the way the New agent dialog gives one, so it doesn't show as a bare robot in team charts; an avatar sent with the
+request, an icon too, is kept.
+
 The tile takes the agent's colour, tinted (**Soft**) or filled (**Solid**). The avatar is presentation only: it never
 reaches the system prompt or kagent.
 
@@ -119,6 +123,13 @@ New agent dialog) picks an existing team or names a new one; **Remove from <team
 they don't change who can see or run an agent. Marketplace installs put their agents in a team named after the plugin.
 Agents that work together with a lead, reporting lines and reviewers are [agent teams](agent-teams.md), a separate thing
 with its own Teams view on this page.
+
+### Taking an agent elsewhere
+
+The builder's **…** menu has **Export JSON** (the config, for **Import JSON**), **Save as template** (a persona to start
+from, never tools) and **Export as Claude Code plugin…**, which downloads the agent as a plugin in Anthropic's format
+that Claude Code installs as it is and Landflow installs back whole ([marketplace.md](marketplace.md#export-agents-as-plugins)).
+`GET /api/agents/:id/export?format=claude-plugin` is the same zip.
 
 ## Building an agent
 
@@ -140,7 +151,11 @@ Older links still work: `?tab=build` opens Persona and `?tab=settings` opens Saf
 The Persona tab builds the system prompt from parts, instead of one instructions box:
 
 - **Who it is**: the name, a role, who it helps, what it does, and the description (shown in the agent list and to
-  agents that delegate to this one).
+  agents that delegate to this one), and **What I do**: up to three short lines (120 characters each) for the agent's
+  card on a team page ([member cards](agent-teams.md#member-cards)). Left empty, the card takes the first sentences of
+  the mission, then of the instructions (`whatIDoLines()` in `persona.ts`; the roster summary carries them as
+  `whatIDo`). They are display only: `personaPrompt()` never reads them, so editing them leaves the prompt, and the
+  agent deployed on kagent, as they were. The Agent architect writes them for a new agent.
 - **Voice**: tone words (from the list, or your own), the answer length (one sentence, a short paragraph, or as
   detailed as needed), the language it answers in (by default, the one it's written to in), and a sign-off line.
 - **Rules**: an **Always** list and a **Never** list, a sentence each.
@@ -192,6 +207,10 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     done looks like", is recorded in the run trace). A sub-agent runs in its
     own child session (published version if it has one, else its draft) and doesn't see the
     conversation. Delegation stops at the calling agent's *max delegation depth*.
+  - **GitHub MCP** (**Add GitHub MCP**): GitHub's MCP server with a Bearer Auth credential holding a GitHub token, at
+    *Read* or *Read and review* access; the allow-list is enforced on the server and merging and code writes are never
+    offered ([a2a.md](a2a.md#githubs-mcp-tools-for-agents)). The Run Trace lists it as *GitHub MCP* among what the agent
+    works with, and the reviews and comments it leaves appear as artifacts.
   - **MCP servers** (**Add MCP server**): a name plus the MCP Client Tool's settings (endpoint
     URL, Streamable HTTP or SSE, none / Bearer Auth / Header Auth credential, and all tools, the
     selected ones or all except some). Each run lists the server's tools (all servers in

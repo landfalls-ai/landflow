@@ -4,6 +4,7 @@ import { GeistSans } from 'geist/font/sans';
 import { Toaster } from 'sonner';
 import { ViewerProvider } from '@/components/auth/viewer';
 import { Sidebar } from '@/components/shell/sidebar';
+import { lookScript } from '@/components/shell/look-toggle';
 import { themeScript } from '@/components/shell/theme-toggle';
 import { pageViewer } from '@/lib/server/auth/pages';
 import './globals.css';
@@ -20,6 +21,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <script dangerouslySetInnerHTML={{ __html: lookScript }} />
       </head>
       <body className="min-h-screen">
         <ViewerProvider viewer={viewer}>

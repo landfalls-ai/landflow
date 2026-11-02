@@ -5,6 +5,7 @@
  * manual trigger is added when the model forgot one.
  */
 import type { ConnectionType, NodeItem, NodeTypeInfo, PropertyDescriptor } from '@/lib/shared/types';
+import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import { registry } from './plugins/registry';
 
 export interface DraftNode {
@@ -113,9 +114,11 @@ function asItems(rows: unknown): NodeItem[] | undefined {
   return items.length ? items.slice(0, 10) : undefined;
 }
 
-export async function buildFlow(prompt: string, model = DEFAULT_MODEL): Promise<FlowDraft> {
+/** `teams`: the published agent teams the caller can see, so a Run a Team node gets a real team (by id, never a guess). */
+export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = []): Promise<FlowDraft> {
   const types = registry.nodeTypes().filter((t) => t.available);
   const byType = new Map(types.map((t) => [t.type, t]));
+  const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
   const started = Date.now();
   const response = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
@@ -128,7 +131,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL): Promise<
       options: { temperature: 0.2 },
       messages: [
         { role: 'system', content: SYSTEM },
-        { role: 'user', content: `Node catalog:\n${catalog(types)}\n\nBuild this workflow:\n${prompt}` },
+        { role: 'user', content: `Node catalog:\n${catalog(types)}${teamsNote}\n\nBuild this workflow:\n${prompt}` },
       ],
     }),
   }).catch((e: Error) => {
@@ -155,7 +158,9 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL): Promise<
     }
     keys.add(n.key);
     const known = new Set(info.descriptor.properties.map((p) => p.name));
-    const parameters = Object.fromEntries(Object.entries(n.parameters ?? {}).filter(([k]) => known.has(k)));
+    const kept = Object.fromEntries(Object.entries(n.parameters ?? {}).filter(([k]) => known.has(k)));
+    // Models write the team's name where its id goes: the one published team it names becomes the id.
+    const parameters = info.type === 'core.runTeam' ? withTeamId(kept, teams) : kept;
     nodes.push({ key: n.key, type: info.type, name: (n.name ?? info.descriptor.displayName).slice(0, 60), x: 0, y: 0, parameters });
   }
   if (!nodes.length) throw new Error('The model did not produce any usable nodes. Try describing the steps more concretely.');

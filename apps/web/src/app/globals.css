@@ -174,6 +174,10 @@
   --animate-panel: lf-panel 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-flash: lf-flash 1.2s ease-out;
   --animate-node-in: lf-node-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  /* A note that just reached the notebook: it settles in and a ring of its author's colour fades around it. */
+  --animate-note-in: lf-note-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both, lf-note-ring 2.8s ease-out both;
+  --animate-note-out: lf-note-out 0.5s ease-in both;
+  --animate-note-ink: lf-note-ink 0.9s ease-out both;
 }
 
 @keyframes lf-pop {
@@ -244,6 +248,41 @@
   from {
     background-color: var(--acdim);
     box-shadow: inset 3px 0 0 var(--ac);
+  }
+}
+@keyframes lf-note-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+@keyframes lf-note-ring {
+  from {
+    box-shadow: 0 0 0 0 var(--note-glow, var(--ac));
+    background-color: var(--acdim);
+  }
+  35% {
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--note-glow, var(--ac)) 30%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+/* The note that lost a dispute: it fades and sinks. */
+@keyframes lf-note-out {
+  to {
+    opacity: 0.35;
+    transform: translateY(4px) scale(0.985);
+    filter: grayscale(1);
+  }
+}
+/* A line being written: it is revealed from the left, like ink. */
+@keyframes lf-note-ink {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
   }
 }
 @keyframes lf-node-in {
@@ -423,6 +462,45 @@ body {
   font-size: 12.5px;
   line-height: 1.6;
   tab-size: 2;
+}
+
+/* A run as a timeline (components/run-trace/run-timeline-card.tsx): a ring that grows out of the step at work, in its
+   colour (--halo), and a glint that runs along the filled line while the run goes on. */
+.lf-halo {
+  position: relative;
+}
+.lf-halo::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 2px solid var(--halo, var(--ac));
+  animation: lf-halo 1.8s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes lf-halo {
+  from {
+    opacity: 0.75;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+}
+.lf-glint {
+  background-image: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.85) 50%, transparent 100%);
+  background-size: 40px 100%;
+  background-repeat: no-repeat;
+  animation: lf-glint 2.2s linear infinite;
+}
+@keyframes lf-glint {
+  from {
+    background-position: -40px 0;
+  }
+  to {
+    background-position: calc(100% + 40px) 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

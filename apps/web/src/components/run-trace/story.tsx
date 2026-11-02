@@ -1,13 +1,21 @@
 'use client';
-/** The Story tab: the run told like a chat. Messages, requests between agents with their result, waits for people, artifacts, failures; quiet spans folded into "n steps". */
-import { useState, type ReactNode } from 'react';
+/**
+ * The Story tab: the run told like a chat. Messages, requests between agents with their result, waits for people,
+ * artifacts, failures; quiet spans folded into "n steps". A team run's moments (tests pass, a review's verdict, a budget
+ * near its end, a question for a person) head it as a row of headlines; a tap scrolls to where it happened.
+ */
+import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronRight, Diamond, Flag, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { cut, fmtMs, preview, textOf, type RunModel, type RunRound, type RunSpan, type StoryEntry } from '@/lib/shared/run-trace-model';
-import { narrate } from '@/lib/shared/team-progress';
+import { isReviewComment } from '@/lib/shared/review-comments';
+import { narrate, type TeamMoment } from '@/lib/shared/team-progress';
+import { headlinesOf, type Headline } from '@/lib/shared/run-headlines';
 import { Badge } from '../ui/badge';
 import { EmptyState } from '../ui/empty-state';
 import { Avatar, NowLine, ResultChip, Tap, clock, who } from './parts';
+import { ReviewCommentStory } from './review-comment-card';
+import { RerunFromHere } from './run-controls';
 import type { Open } from './sheet';
 
 function Head({ children, at }: { children: ReactNode; at: string }) {
@@ -65,7 +73,7 @@ export function stepWords(span: RunSpan): string | undefined {
   if (span.kind !== 'tool') return undefined;
   const input = typeof span.input === 'object' && span.input !== null ? (span.input as Record<string, unknown>) : undefined;
   const description = typeof input?.description === 'string' ? input.description.trim() : '';
-  const words = description || narrate(span.name, span.input).plain;
+  const words = description || narrate(span.name, span.input, { output: span.output }).plain;
   return words.toLowerCase() === span.name.toLowerCase() ? undefined : words;
 }
 
@@ -168,21 +176,30 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
       const doing = [...model.order].reverse().find((c) => c.id.startsWith(`${s.id}/`) && c.status === 'running' && !c.hidden);
       return (
         <Ev avatar={<Avatar actor={caller ?? s.actor} />} onOpen={() => open({ kind: 'span', id: s.id })} label={`Request to ${s.actor.name}`}>
-          <Head at={entry.at}>
-            {who(caller)}
-            <span>{s.kind === 'handoff' ? 'handed off to' : 'asked'}</span>
-            {who(s.actor)}
-            <Badge tone="muted" className="font-mono font-medium">
-              {s.kind === 'handoff' ? 'handoff' : 'A2A'}
-            </Badge>
-          </Head>
-          {typeof s.attrs.reason === 'string' && s.attrs.reason && (
+          {entry.continued ? (
+            <Head at={entry.at}>
+              {who(s.actor)}
+              <span>went on with</span>
+              {who(caller)}
+              <span>’s request after the wait</span>
+            </Head>
+          ) : (
+            <Head at={entry.at}>
+              {who(caller)}
+              <span>{s.kind === 'handoff' ? 'handed off to' : 'asked'}</span>
+              {who(s.actor)}
+              <Badge tone="muted" className="font-mono font-medium">
+                {s.kind === 'handoff' ? 'handoff' : 'A2A'}
+              </Badge>
+            </Head>
+          )}
+          {!entry.continued && typeof s.attrs.reason === 'string' && s.attrs.reason && (
             <p className="mt-1 break-words text-[12.5px] text-t2">
               <b className="font-semibold text-t1">Why </b>
               {preview(s.attrs.reason, 220)}
             </p>
           )}
-          {s.input !== undefined && <Bubble>{preview(textOf(s.input, 400), 180)}</Bubble>}
+          {!entry.continued && s.input !== undefined && <Bubble>{preview(textOf(s.input, 400), 180)}</Bubble>}
           {running ? (
             <NowLine>
               {s.actor.name} {s.status === 'waiting' ? 'waiting' : 'working'} · {fmtMs(s.ms)}
@@ -190,7 +207,7 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
             </NowLine>
           ) : (
             <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {s.steps > 0 && <Badge tone="neutral">{s.steps} steps</Badge>}
+              {s.steps > 0 && <Badge tone="neutral">{s.steps} {s.steps === 1 ? 'step' : 'steps'}</Badge>}
               {s.failedSteps > 0 && <Badge tone="danger">{s.failedSteps} failed</Badge>}
               <Badge tone="neutral">{fmtMs(s.ms)}</Badge>
             </div>
@@ -242,17 +259,23 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
     case 'stepfail': {
       const s = entry.span;
       return (
-        <Line tone="bad" icon={<TriangleAlert className="size-4" />} onOpen={() => open({ kind: 'span', id: s.id })} label={`${s.name} failed`}>
-          {who(s.actor)}{' '}
-          <span>
-            {s.name} failed{s.error ? `: ${cut(s.error, 100)}` : ''}
-          </span>
-          <span className="ml-1.5 font-mono text-[11px] text-t3">{clock(entry.at)}</span>
-        </Line>
+        <>
+          <Line tone="bad" icon={<TriangleAlert className="size-4" />} onOpen={() => open({ kind: 'span', id: s.id })} label={`${s.name} failed`}>
+            {who(s.actor)}{' '}
+            <span>
+              {s.name} failed{s.error ? `: ${cut(s.error, 100)}` : ''}
+            </span>
+            <span className="ml-1.5 font-mono text-[11px] text-t3">{clock(entry.at)}</span>
+          </Line>
+          <div className="pb-1 pl-9">
+            <RerunFromHere spanId={s.id} model={model} />
+          </div>
+        </>
       );
     }
     case 'artifact': {
       const a = entry.item.artifact;
+      if (isReviewComment(a)) return <ReviewCommentStory item={entry.item} open={open} />;
       return (
         <Line icon={<Diamond className="size-4 text-gn" />} onOpen={() => open({ kind: 'artifact', id: entry.item.id })} label={`Artifact ${a.name}`}>
           {who(entry.item.actor)} <span>produced {a.kind ?? 'an artifact'}</span> <b className="font-semibold text-t1">{cut(a.name, 60)}</b>
@@ -282,13 +305,92 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
   return null;
 }
 
+const DOT: Record<TeamMoment['tone'], string> = { ok: 'bg-gn', bad: 'bg-rd', warn: 'bg-warn', info: 'bg-viz-1' };
+
+/** "4:12" (or "1:04:12"): time into the run. */
+export function intoRun(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = String(total % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
+/** The run's moments in a row at the top of the story, newest last; a tap scrolls to the moment and flashes it. */
+function Headlines({ items, model }: { items: Headline[]; model: RunModel }) {
+  if (!items.length) return null;
+  const go = (h: Headline) => {
+    const el = h.entryKey ? document.getElementById(`story-${h.entryKey}`) : null;
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.remove('animate-flash');
+    void el.offsetWidth;
+    el.classList.add('animate-flash');
+  };
+  return (
+    <section aria-label="Headlines" className="mb-2" data-testid="story-headlines">
+      <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Headlines</h3>
+      <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
+        {items.slice(-12).map((h, i) => {
+          const actor = model.actors.find((a) => a.actor.name.trim().toLowerCase() === h.moment.member.trim().toLowerCase())?.actor;
+          return (
+            <button
+              key={`${h.at}:${i}`}
+              type="button"
+              onClick={() => go(h)}
+              title={h.moment.question ?? h.moment.text}
+              className={cn(
+                'flex h-8 shrink-0 items-center gap-1.5 rounded-full border bg-sf py-0.5 pl-0.5 pr-3 text-[12px] font-medium shadow-sm transition-transform animate-pop hover:-translate-y-px',
+                h.moment.tone === 'bad' ? 'border-rd/30 text-rd' : h.moment.tone === 'warn' ? 'border-warn/50 text-t1' : 'border-hair text-t1',
+              )}
+              style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+            >
+              {actor ? <Avatar actor={actor} size={26} /> : <span className="size-[26px]" />}
+              <span className={cn('size-1.5 shrink-0 rounded-full', DOT[h.moment.tone])} />
+              <span className="max-w-[220px] truncate">{h.moment.text}</span>
+              {/* How far into the run, like the ribbon's turns; the clock time is in the tooltip. */}
+              <span className="font-mono text-[10.5px] font-normal tabular-nums text-t3" title={clock(new Date(h.at).toISOString())} data-testid="story-headline-elapsed">
+                {intoRun(h.at - model.t0)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function Story({ model, open }: { model: RunModel; open: (o: Open) => void }) {
+  const headlines = useMemo(() => (model.empty ? [] : headlinesOf(model)), [model]);
+  const marked = useMemo(() => {
+    const map = new Map<string, TeamMoment[]>();
+    for (const h of headlines) if (h.entryKey) map.set(h.entryKey, [...(map.get(h.entryKey) ?? []), h.moment]);
+    return map;
+  }, [headlines]);
   if (model.empty) return <EmptyState compact title="Nothing recorded yet" hint="The story appears as the run starts." />;
   return (
     <div className="flex flex-col gap-1">
-      {model.story.map((entry) => (
-        <Entry key={entry.key} entry={entry} model={model} open={open} />
-      ))}
+      <Headlines items={headlines} model={model} />
+      {model.story.map((entry) => {
+        const marks = marked.get(entry.key);
+        return (
+          <div key={entry.key} id={`story-${entry.key}`} className="scroll-mt-24 rounded-xl">
+            <Entry entry={entry} model={model} open={open} />
+            {marks && (
+              // The entry a headline points to keeps a mark under it, so it can be found again after the flash.
+              <div className="mb-1 ml-11 flex flex-wrap gap-1" data-testid="story-headline-mark">
+                {marks.map((m, i) => (
+                  <span key={i} className={cn('flex max-w-full items-center gap-1 rounded-full border px-1.5 py-px text-[10.5px] font-medium', m.tone === 'bad' ? 'border-rd/30 text-rd' : m.tone === 'warn' ? 'border-warn/50 text-warn' : 'border-hair text-t2')}>
+                    <span className={cn('size-1.5 shrink-0 rounded-full', DOT[m.tone])} />
+                    <span className="font-semibold">Headline</span>
+                    <span className="truncate">· {m.text}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
       <p className="mt-3 flex items-center justify-center gap-2 text-center text-[12px] text-t3">
         {model.live ? (
           <>

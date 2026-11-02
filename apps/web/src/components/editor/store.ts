@@ -585,6 +585,9 @@ export const useEditor = create<EditorState>((set, get) => {
       const locked = lockedIds();
       if (locked.size) changes = changes.filter((c) => c.type !== 'remove' || !locked.has(c.id));
     }
+    // Ghosts (a change being built, ./building.tsx) are drawn beside the real nodes and are not in the store.
+    changes = changes.filter((c) => !('id' in c && c.id.startsWith('n_ghost-')));
+    if (!changes.length) return;
     const stickyIds = new Set(get().stickies.map((n) => n.id));
     const frameIds = new Set(get().groups.map((n) => n.id));
     const isSticky = (c: NodeChange<CanvasNode>) => ('id' in c ? stickyIds.has(c.id) : c.item.type === 'sticky');

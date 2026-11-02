@@ -40,6 +40,8 @@ export interface ModelPrice {
   cacheRead?: number;
   /** USD per million tokens written to Anthropic's cache. Absent = the input price. */
   cacheWrite?: number;
+  /** A request whose prompt is over `above` tokens is priced at these instead, all of it (Haiku 5.5: $0.50 / $2.50 over 100K). */
+  longContext?: { above: number; input: number; output: number; cacheRead?: number; cacheWrite?: number };
 }
 
 /** GET /api/ai-usage/prices: the built-in defaults and the instance's overrides (Settings → AI prices). */

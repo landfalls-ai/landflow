@@ -40,7 +40,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agent teams';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks';
   id: string;
   summary: string;
   description?: string;
@@ -656,12 +656,79 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ decision: { type: 'string', enum: ['accepted', 'sent_back'] }, note: { type: 'string' } }, ['decision'])),
     responses: { 200: reply('The run after it went on', object({ status: { type: 'string' } }, ['status'])), 404: notFound, 409: errorRef('The run is not waiting on a Run report') },
   });
+  add('get', '/api/executions/{id}/approvals', {
+    tag: 'Executions',
+    id: 'getExecutionApprovals',
+    summary: 'The tool calls a waiting run asks a person to approve',
+    description: 'An AI Agent node’s, or a team member’s, tool calls waiting for approval, with the decisions so far (`calls: [{ id, tool, input }]`, `decisions`). `approval` is null when the run waits for nothing of the kind.',
+    pathParams: { id: 'The execution id' },
+    responses: { 200: reply('The approval', object({ approval: { type: 'object', nullable: true, additionalProperties: true } }, ['approval'])), 404: notFound },
+  });
+  add('post', '/api/executions/{id}/approvals', {
+    tag: 'Executions',
+    id: 'decideExecutionApproval',
+    summary: 'Approve or reject one waiting tool call, optionally with an edited input',
+    description: 'Streams `decision` (`{ status: \'waiting\' | \'resumed\', approval }`), then, once every call has a decision, the resumed run’s `execution` events and a `result`. `input` (only with `approved: true`) is the tool’s input as a person changed it: the tool runs with it instead of the call’s own, and the run’s journal marks the wait `edited` (`editedBy`) and says “Approved … with changes”. It must be a JSON object (up to 200 KB). Errors before anything is decided are JSON: 400 (a bad edit), 404, 409 (already decided, or nothing to approve).',
+    pathParams: { id: 'The execution id' },
+    body: jsonBody(object({ callId: { type: 'string' }, approved: { type: 'boolean' }, input: { type: 'object', additionalProperties: true, description: 'The tool’s input as edited; replaces the call’s own input. Approvals only.' } }, ['callId', 'approved'])),
+    responses: { 200: reply('The decision, then the resumed run', { type: 'string', description: '`event: <name>` and `data: <JSON>` lines' }, 'text/event-stream'), 400: invalid, 404: notFound, 409: errorRef('Already decided, or the run is not waiting for a tool approval') },
+  });
   add('get', '/api/runs/needs-you', {
     tag: 'Executions',
     id: 'listRunsNeedingYou',
     summary: 'What waits for a person across runs',
-    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check), title, detail, actor, spanId, since.',
+    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check), title, detail, actor, member (the team member a tool approval or a guard’s ask is for), spanId, since.',
     responses: { 200: reply('The items, newest first', object({ items: array({ type: 'object' }) }, ['items'])) },
+  });
+  add('get', '/api/runs/lines', {
+    tag: 'Executions',
+    id: 'runLines',
+    summary: 'What runs did, in one line each',
+    description: 'By execution id: `in` (what came in: label, detail, kind), `by` (the lead or agent, the members who worked, the team), `out` (what came out: label, detail, url, tone ok, warn, bad or live), status, ms and tokens. Runs the caller cannot read, and runs without a journal, are left out.',
+    query: [{ name: 'ids', description: 'Execution ids, comma-separated (at most 20)', required: true, schema: { type: 'string' } }],
+    responses: { 200: reply('The lines, by execution id', object({ lines: { type: 'object' } }, ['lines'])), 400: errorRef('No ids, or too many') },
+  });
+  add('get', '/api/runs/search', {
+    tag: 'Executions',
+    id: 'searchRuns',
+    summary: 'Search saved runs',
+    description: 'Saved runs of the workflows the caller sees, newest first, matching every filter given. `text` looks in span names, inputs and outputs, messages, artifacts and checks; a run without a journal matches only the filters that need none. Each item: executionId, workflowId, workflowName, status, startedAt, durationMs, matches (where the words were found) and, with a journal filter, failedSteps and failedChecks. `truncated` says the search stopped at the most runs it reads per request.',
+    query: [
+      { name: 'text', description: 'Words to find', schema: { type: 'string' } },
+      { name: 'workflowId', description: 'Only this workflow’s', schema: { type: 'string' } },
+      { name: 'actor', description: 'An agent, model or person, by name or id', schema: { type: 'string' } },
+      { name: 'tool', description: 'A tool call, by name', schema: { type: 'string' } },
+      { name: 'status', description: 'success, error, waiting, canceled…', schema: { type: 'string' } },
+      { name: 'failedSteps', description: 'Some step failed', schema: { type: 'boolean' } },
+      { name: 'failedCheck', description: 'A check failed: by name, empty for any', schema: { type: 'string' } },
+      { name: 'from', description: 'Started on or after (ISO or YYYY-MM-DD)', schema: { type: 'string' } },
+      { name: 'to', description: 'Started on or before (ISO or YYYY-MM-DD)', schema: { type: 'string' } },
+      { name: 'limit', description: 'At most this many (default 20, at most 100)', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+      { name: 'offset', description: 'Skip this many matches', schema: { type: 'integer', minimum: 0, default: 0 } },
+    ],
+    responses: { 200: reply('The matches', object({ items: array({ type: 'object' }), more: { type: 'boolean' }, truncated: { type: 'boolean' } }, ['items', 'more'])) },
+  });
+  add('get', '/api/runs/compare', {
+    tag: 'Executions',
+    id: 'compareRuns',
+    summary: 'Compare two runs',
+    description: 'Each run folded from its journal: duration, tokens in and out, cost, model calls, steps, failed steps, checks (pass, fail, warn), failed checks, artifacts and the same numbers per actor. `delta` is b minus a; `actors` has one entry per actor of either run with both sides and the difference.',
+    query: [
+      { name: 'a', description: 'The first execution id', required: true, schema: { type: 'string' } },
+      { name: 'b', description: 'The second execution id', required: true, schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The comparison', object({ a: { type: 'object' }, b: { type: 'object' }, delta: { type: 'object' }, actors: array({ type: 'object' }) }, ['a', 'b', 'delta', 'actors'])), 400: errorRef('A run is missing'), 404: notFound },
+  });
+  add('get', '/api/runs/measures', {
+    tag: 'Executions',
+    id: 'runMeasures',
+    summary: 'A workflow’s runs as measures over time',
+    description: 'The latest saved runs of a workflow, oldest first: executionId, startedAt, status, durationMs, tokensIn, tokensOut, costUsd, failedSteps and checksFailed.',
+    query: [
+      { name: 'workflowId', description: 'The workflow', required: true, schema: { type: 'string' } },
+      { name: 'limit', description: 'At most this many runs (default 30, at most 100)', schema: { type: 'integer', minimum: 1, maximum: 100, default: 30 } },
+    ],
+    responses: { 200: reply('The points', object({ workflowId: { type: 'string' }, workflowName: { type: 'string' }, runs: array({ type: 'object' }) }, ['workflowId', 'runs'])), 400: errorRef('workflowId is missing'), 404: notFound },
   });
   add('get', '/api/executions/{id}/feedback', {
     tag: 'Executions',
@@ -697,7 +764,7 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ entryId: { type: 'string', description: 'The id of an assistant entry of the session’s timeline' }, rating: { type: 'string', enum: ['up', 'down'], nullable: true }, comment: { type: 'string', maxLength: 2000 } }, ['entryId', 'rating'])),
     responses: { 200: reply('The feedback now on the reply', object({ feedback: { type: 'object', nullable: true, additionalProperties: true } }, ['feedback'])), 404: notFound },
   });
-  const teamBody = jsonBody(object({ name: { type: 'string' }, goal: { type: 'string' }, description: { type: 'string' }, members: array({ type: 'object', additionalProperties: true }) }), 'The draft: members are `{ id, kind: agent | a2a, title, role, reportsTo, reviews, budgetTokens, questionsTo, agentId | parameters, credentials }`', false);
+  const teamBody = jsonBody(object({ name: { type: 'string' }, goal: { type: 'string' }, description: { type: 'string' }, members: array({ type: 'object', additionalProperties: true }) }), 'The draft: members are `{ id, kind: agent | a2a, title, role, reportsTo, reviews, consults, budgetTokens, questionsTo, agentId | parameters, credentials }`', false);
   const teamReply = (description: string) => reply(description, object({ team: { type: 'object', additionalProperties: true }, issues: array({ type: 'string' }) }, ['team']));
   add('get', '/api/agent-teams', {
     tag: 'Agent teams',
@@ -729,7 +796,85 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Publish the draft as the next version',
     responses: { 200: teamReply('The team, published'), 400: errorRef('The draft has issues (`issues` lists them)'), 404: notFound },
   });
+  add('get', '/api/agent-teams/{id}/last-run', {
+    tag: 'Agent teams',
+    id: 'getAgentTeamLastRun',
+    summary: 'The team’s latest run in a flow, with each member’s tokens against its budget',
+    description: 'The newest execution whose Run a Team node ran this team: `run` has `executionId`, `workflowName`, `status`, `startedAt`, `nodeName`, `members` (`title`, `tokens`, `budgetTokens`, `estimated`, `overBudget`, `costUsd`), and the run’s `durationMs` and last few `moments`. Empty when the team has not run.',
+    responses: { 200: reply('The latest run, or nothing'), 404: notFound },
+  });
+  add('get', '/api/agent-teams/{id}/notes', {
+    tag: 'Agent teams',
+    id: 'listTeamNotes',
+    summary: 'The team’s notebook: notes, counts and search by meaning',
+    description: 'Notes the team’s members wrote while working (docs/team-notebook.md). Query: `scope` (run, team, project), `kind`, `status`, `run` (an execution id), `expired=1` to include expired notes, `q` to rank by meaning (`via` says whether embeddings or keywords did it). Returns `notes`, `counts` and `via`.',
+    responses: { 200: reply('The notes'), 404: notFound },
+  });
+  add('post', '/api/agent-teams/{id}/notes', {
+    tag: 'Agent teams',
+    id: 'addTeamNote',
+    summary: 'Add a note as a person',
+    description: 'A person’s note lands in the team scope, verified. Body: `text` and optional `kind`.',
+    responses: { 201: reply('The note'), 400: invalid, 404: notFound },
+  });
+  add('post', '/api/agent-teams/{id}/notes/{noteId}', {
+    tag: 'Agent teams',
+    id: 'actOnTeamNote',
+    summary: 'Verify, answer, reopen, dispute, resolve, promote or edit a note',
+    description: 'Body `{ action }` with `verify`; `answer` and `dispute` and `edit` (`text`); `reopen`; `resolve` (`keep`: the id of the note that holds); `promote` (`to`: team or project; a project note becomes a suggestion in the second brain’s inbox).',
+    responses: { 200: reply('The note, or the pair, or the promotion'), 201: reply('The disputing note'), 400: invalid, 404: notFound },
+  });
+  add('delete', '/api/agent-teams/{id}/notes/{noteId}', { tag: 'Agent teams', id: 'deleteTeamNote', summary: 'Forget a note', responses: { 200: reply('Deleted'), 404: notFound } });
   add('post', '/api/agent-teams/{id}/unpublish', { tag: 'Agent teams', id: 'unpublishAgentTeam', summary: 'Stop flows from running the team', responses: { 200: teamReply('The team, unpublished'), 404: notFound } });
+  const exportQuery = [
+    { name: 'format', description: '`claude-plugin` (the only format, and the default)', schema: { type: 'string', enum: ['claude-plugin'] } },
+    { name: 'marketplace', description: '`1`: also write `.claude-plugin/marketplace.json`, so the folder is a one-plugin marketplace', schema: { type: 'string' } },
+    { name: 'preview', description: '`1`: answer with the list of files (`{ name, files: [{ path, bytes }] }`) instead of the zip', schema: { type: 'string' } },
+  ];
+  const zipReply = { description: 'The plugin as a zip (`Content-Disposition: attachment; filename="<name>.zip"`), or the file list with `preview=1`', content: { 'application/zip': { schema: { type: 'string', format: 'binary' } }, 'application/json': { schema: object({ name: { type: 'string' }, files: array(object({ path: { type: 'string' }, bytes: { type: 'integer' } }, ['path', 'bytes'])) }, ['name', 'files']) } } };
+  add('get', '/api/agents/{id}/export', {
+    tag: 'Agent teams',
+    id: 'exportAgentPlugin',
+    summary: 'Export an agent as a Claude Code plugin',
+    description: 'A zip in Anthropic’s plugin format (docs/marketplace.md#export-agents-as-plugins): `.claude-plugin/plugin.json`, `agents/<slug>.md` (name, description, tools, model, color; the prompt as the body), `skills/<slug>/SKILL.md`, and `.landflow/agents/<slug>.json` with what only Landflow uses (persona parts, tools, avatar, model provider), which Claude Code ignores and installing the plugin in Landflow reads back. Credentials, schedules and channels are left out.',
+    query: exportQuery,
+    responses: { 200: zipReply, 400: invalid, 404: notFound },
+  });
+  add('get', '/api/agent-teams/{id}/export', {
+    tag: 'Agent teams',
+    id: 'exportAgentTeamPlugin',
+    summary: 'Export a team as a Claude Code plugin',
+    description: 'Like an agent’s export, with a file per Landflow agent in the team, the skills they use, and `.landflow/team.json` with the members, who reports to whom and who reviews (remote A2A members are there only, without credentials).',
+    query: exportQuery,
+    responses: { 200: zipReply, 400: invalid, 404: notFound },
+  });
+  add('get', '/api/agent-teams/{id}/flows', {
+    tag: 'Agent teams',
+    id: 'listAgentTeamFlows',
+    summary: 'The workflows you can see that run the team',
+    description: 'Workflows with a Run a Team node set to this team: the ones “Save as template” can take along.',
+    responses: { 200: reply('The flows', object({ flows: array(object({ id: { type: 'string' }, name: { type: 'string' }, active: { type: 'boolean' }, nodes: { type: 'integer' } }, ['id', 'name', 'active', 'nodes'])) }, ['flows'])), 404: notFound },
+  });
+  add('post', '/api/agent-teams/{id}/template', {
+    tag: 'Agent teams',
+    id: 'saveAgentTeamAsTemplate',
+    summary: 'Save the team as a template',
+    description: 'A template holding the team, every Landflow agent in it (published config, the draft while unpublished), the remote members’ A2A addresses and, with `workflowId`, that workflow (it must have a Run a Team node set to this team). Credentials the agents, remote members and workflow name become slots; no secret leaves. Using the template (`POST /api/templates/{id}/use`) creates all of it with fresh ids. `projectId`: where it is saved (`null`: instance-wide, owners and admins).',
+    body: jsonBody(
+      object(
+        {
+          name: { type: 'string', maxLength: 200 },
+          description: { type: 'string', maxLength: 2000 },
+          categories: array({ type: 'string' }),
+          setup: array({ type: 'string' }),
+          workflowId: { type: 'string', description: 'A workflow you can see that runs this team' },
+          projectId: { type: ['string', 'null'] },
+        },
+        ['name'],
+      ),
+    ),
+    responses: { 201: reply('The template', object({ template: { type: 'object', additionalProperties: true } }, ['template'])), 400: invalid, 403: errorRef('You can’t add templates there'), 404: notFound },
+  });
   add('delete', '/api/executions/{id}', {
     tag: 'Executions',
     id: 'deleteExecution',
@@ -762,9 +907,31 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Re-run an execution',
     description: 'All of it with the same input, from one node (reusing everything before it) or just one node, in the background.',
     body: jsonBody(
-      object({ scope: { type: 'string', enum: ['all', 'from', 'only'], default: 'all' }, nodeId: { type: 'string' }, version: { type: 'string', enum: ['current', 'original'], default: 'current' } }),
+      object({ scope: { type: 'string', enum: ['all', 'from', 'only'], default: 'all' }, nodeId: { type: 'string' }, version: { type: 'string', enum: ['current', 'original'], default: 'current' }, askMember: object({ member: { type: 'string' }, message: { type: 'string' } }, ['member', 'message']) }),
     ),
     responses: { 202: reply('Started', object({ executionId: { type: 'string' } }, ['executionId'])), 400: invalid, 404: notFound },
+  });
+  add('get', '/api/executions/{id}/agents', {
+    tag: 'Executions',
+    id: 'listExecutionAgents',
+    summary: 'Team members at work',
+    description: 'The team members of a running execution that can be paused, and their state (`working`, `pausing`, `paused`). Held in memory by the server that runs it.',
+    responses: { 200: reply('Members', object({ members: { type: 'array', items: object({ member: { type: 'string' }, kind: { type: 'string', enum: ['agent', 'remote'] }, state: { type: 'string', enum: ['working', 'pausing', 'paused'] }, since: { type: 'string' } }) } }, ['members'])) },
+  });
+  add('post', '/api/executions/{id}/agents/{member}/pause', {
+    tag: 'Executions',
+    id: 'pauseExecutionAgent',
+    summary: 'Pause a team member',
+    description: 'A Landflow agent member (the lead too) stops at its next step boundary and waits; a remote (A2A) member is stopped at once (its task is canceled) so it can be redirected. `member` is its title in the team. Answers 404 when it isn’t working in this execution.',
+    responses: { 200: reply('Pausing or paused', object({ member: { type: 'string' }, kind: { type: 'string' }, state: { type: 'string', enum: ['working', 'pausing', 'paused'] } })), 404: notFound, 502: errorRef('The remote agent could not be stopped') },
+  });
+  add('post', '/api/executions/{id}/agents/{member}/continue', {
+    tag: 'Executions',
+    id: 'continueExecutionAgent',
+    summary: 'Take over a paused team member',
+    description: 'Sends the next instruction (a message from the person) to a paused member, which goes on with it. Without `message` it goes on as it was. Answers 409 when the member is not paused.',
+    body: jsonBody(object({ message: { type: 'string', maxLength: 8000 } }), undefined, false),
+    responses: { 200: reply('Going on', object({ member: { type: 'string' }, kind: { type: 'string' }, state: { type: 'string' } })), 404: notFound, 409: errorRef('The member is not paused') },
   });
   add('post', '/api/executions/stop-all', {
     tag: 'Executions',
@@ -974,6 +1141,33 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'Built-in and remote templates can’t be deleted.',
     responses: { 200: reply('Deleted', ok), 400: invalid, 404: notFound },
   });
+  // ---- runbooks from Landfall rooms (docs/runbooks.md) ----
+  const runbookStep = object({ title: { type: 'string' }, approval: { type: 'boolean' }, reason: { type: 'string' }, notes: array({ type: 'string' }), source: { type: 'object' } }, ['title', 'approval', 'notes']);
+  const runbook = object({ id: { type: 'string' }, name: { type: 'string' }, alertKind: { type: 'string' }, room: { type: 'string' }, steps: { type: 'integer' }, approvals: { type: 'integer' }, published: { type: 'boolean' }, updatedAt: { type: 'string' }, url: { type: 'string' }, match: { type: 'string', enum: ['exact', 'similar', 'all'] } }, ['id', 'name', 'alertKind', 'url']);
+  add('get', '/api/runbooks', {
+    tag: 'Runbooks',
+    id: 'listRunbooks',
+    summary: 'List runbooks',
+    description: 'Workflows tagged `runbook` that you can see. With `kind` (an alert title, alertname or kind slug): the ones for that kind, exact before similar, published before draft.',
+    query: [{ name: 'kind', description: 'An alert kind', schema: { type: 'string' } }, { name: 'projectId', description: 'Only this project', schema: { type: 'string' } }],
+    responses: { 200: reply('The runbooks', object({ runbooks: array(runbook) }, ['runbooks'])) },
+  });
+  add('post', '/api/runbooks', {
+    tag: 'Runbooks',
+    id: 'saveRunbook',
+    summary: 'Save reviewed steps as a draft runbook',
+    description: 'Makes a workflow (not active) in `?projectId=` or your personal project: a form wait per step, and an approval form, If and Stop and Error before a step with `approval: true`. Tagged `runbook` and `alert-kind:<slug>`.',
+    body: jsonBody(object({ name: { type: 'string' }, alertKind: { type: 'string' }, description: { type: 'string' }, room: { type: 'string' }, steps: array(runbookStep), background: { type: 'object' }, folderId: { type: 'string' } }, ['name', 'alertKind', 'steps'])),
+    responses: { 201: reply('The draft workflow', object({ workflow: ref('Workflow'), runbook }, ['workflow', 'runbook'])), 400: invalid },
+  });
+  add('post', '/api/runbooks/draft', {
+    tag: 'Runbooks',
+    id: 'draftRunbook',
+    summary: 'Fold a closed Landfall room into runbook steps',
+    description: 'Nothing is saved. `room` is `{ incident, events, outcome? }` (the Landfall node’s Get Room output, plus a Room outcomes row). One step per applied remediation, in order; a step needs approval when the responders marked it risky, it names production, or it uses a changing word. 422 when there is nothing to fold.',
+    body: jsonBody(object({ room: { type: 'object' }, alertKind: { type: 'string' }, name: { type: 'string' } }, ['room'])),
+    responses: { 200: reply('The draft', object({ draft: object({ name: { type: 'string' }, alertKind: { type: 'string' }, description: { type: 'string' }, room: { type: 'string' }, steps: array(runbookStep), skipped: array({ type: 'string' }), background: { type: 'object' } }, ['name', 'alertKind', 'steps']), existing: array(runbook) }, ['draft'])), 400: invalid, 422: errorRef('Nothing to fold') },
+  });
   // ---- composite types (docs/composites.md) ----
   const compositeInfo = object(
     {
@@ -1012,10 +1206,11 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Templates',
     id: 'useTemplate',
     summary: 'Create a workflow from a template',
-    description: 'Each credential slot gets the saved credential picked for it (of the slot’s type); missing data tables are created and URL paths made unique. Saved as an inactive draft.',
+    description: 'Each credential slot gets the saved credential picked for it (of the slot’s type); missing data tables are created and URL paths made unique. Saved as an inactive draft. A team template (`team` in its summary) first creates its agents and its team in the same project with fresh ids (published again if they were), rewrites the member, Run a Team and Run an Agent references, then creates the workflow if it has one; the answer then has `team` and `agents` and `workflow` may be absent.',
     body: jsonBody(
       object({
         name: { type: 'string', maxLength: 200 },
+        teamName: { type: 'string', maxLength: 200, description: 'A team template: the new team’s name' },
         folderId: { type: 'string' },
         credentials: { type: 'object', description: 'Slot id → credential id (null or left out: none yet)', additionalProperties: { type: ['string', 'null'] } },
       }),
@@ -1500,6 +1695,43 @@ function paths(): Record<string, Record<string, Json>> {
   add('get', '/api/mcp/approvals', { tag: 'MCP', id: 'listMcpApprovals', summary: 'MCP tool calls waiting for a person', description: 'The approvals of destructive (or, per grant, every) MCP tool calls that the signed-in user may answer: pending ones and the last day’s answers. Calls from clients that support MCP elicitation are asked through the client instead (lib/server/mcp/approvals.ts).', responses: { 200: reply('The approvals', object({ approvals: array({ type: 'object', additionalProperties: true }) }, ['approvals'])) } });
   add('post', '/api/mcp/approvals/{id}', { tag: 'MCP', id: 'decideMcpApproval', summary: 'Approve or deny an MCP tool call', description: 'Owners, admins, the user the agent acts for and members of a project they share. An approval is good for one repeat of the same call (same tool, same arguments, same caller) for ten minutes.', body: jsonBody(object({ approve: { type: 'boolean' } }, ['approve'])), responses: { 200: reply('Answered', object({ approval: { type: 'object', additionalProperties: true } }, ['approval'])), 403: errorRef('Not yours to answer'), 404: notFound, 409: errorRef('Already answered'), 410: errorRef('Expired') } });
   add('get', '/api/mcp/files/{id}', { tag: 'MCP', id: 'downloadMcpFile', summary: 'A file of an MCP tool result', description: 'The target of a `resource_link` in a tool result: a URL the host signed (`exp`, `t`, `c`, `sig` query parameters), valid until `exp` (LANDFLOW_MCP_FILE_URL_TTL_SECONDS, default 900). No session; 403 for a wrong signature, 410 once expired.', public: true, responses: { 200: { description: 'The bytes', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 403: errorRef('Invalid signature'), 404: notFound, 410: errorRef('Expired') } });
+  add('post', '/api/agent-trace/{id}', {
+    tag: 'Agents',
+    id: 'postAgentTrace',
+    summary: 'Report what a remote agent did for one call',
+    description: 'Posted by Landflow’s landflow-harness mod inside a Claude Code agent on kagent (docs/a2a.md, “The landflow-harness mod”): each model request’s tokens, model and time, each tool call’s time and outcome, the subagents it started, what the guardrails stopped and the secrets it masked. The id Landflow sent with that call (in the request’s first line) is the only credential. Up to 500 events per post and 5,000 per call; events that don’t parse are skipped.',
+    public: true,
+    pathParams: { id: 'The trace id from the request’s `<!-- landflow-trace … -->` line' },
+    body: jsonBody(object({ events: array({ type: 'object', additionalProperties: true }) }, ['events'])),
+    responses: { 202: { description: 'Passed on to the queue-mode process that holds the trace' }, 204: { description: 'Taken' }, 400: invalid, 404: notFound, 410: errorRef('The call has ended: stop posting here'), 413: errorRef('The trace holds all it may') },
+  });
+  add('get', '/api/agent-trace/{id}/asks/{askId}', {
+    tag: 'Agents',
+    id: 'getAgentTraceAsk',
+    summary: 'A person’s answer to a command a remote agent asked about',
+    description: 'Polled by the landflow-harness mod after it posted an `ask` event (a push to main, a force push, deleting a remote branch; docs/a2a.md). `wait` holds the request up to 30 seconds until a person decides. `denied` with `expired` means nobody answered in time or the call ended. The trace id is the only credential.',
+    public: true,
+    pathParams: { id: 'The trace id from the request’s `<!-- landflow-trace … -->` line', askId: 'The id the mod gave the ask' },
+    query: [{ name: 'wait', description: 'Seconds to hold the request while the ask is pending (at most 30)', schema: { type: 'integer', minimum: 0, maximum: 30, default: 0 } }],
+    responses: { 200: reply('The answer', object({ decision: { type: 'string', enum: ['pending', 'approved', 'denied'] }, by: { type: 'string' }, at: { type: 'string' }, command: { type: 'string', description: 'Approved with a command a person changed: the mod runs this one instead' }, expired: { type: 'boolean' } }, ['decision'])), 404: notFound },
+  });
+  add('get', '/api/executions/{id}/asks', {
+    tag: 'Executions',
+    id: 'listExecutionAsks',
+    summary: 'Commands a Claude Code member of the run asks a person about',
+    description: 'The open asks of the run: a command its guard lets a person allow (docs/a2a.md). The run is not paused while they wait.',
+    pathParams: { id: 'The execution id' },
+    responses: { 200: reply('The open asks', object({ asks: array({ type: 'object', additionalProperties: true }) }, ['asks'])), 404: notFound },
+  });
+  add('post', '/api/executions/{id}/asks/{askId}', {
+    tag: 'Executions',
+    id: 'decideExecutionAsk',
+    summary: 'Approve or reject a command a Claude Code member asked about',
+    description: 'Needs the access to the run that deciding its tool approvals needs. The member’s mod polls the decision and runs the command or tells Claude Code a person denied it; the run’s journal gets an Approval check.',
+    pathParams: { id: 'The execution id', askId: 'The ask id (`attrs.ask` of the wait, or from the list)' },
+    body: jsonBody(object({ approved: { type: 'boolean' }, command: { type: 'string', description: 'The command as a person changed it before allowing it (approvals only): the mod runs it instead, and the journal says it was edited' } }, ['approved'])),
+    responses: { 200: reply('Decided', object({ ask: { type: 'object', additionalProperties: true } }, ['ask'])), 400: invalid, 404: notFound, 409: errorRef('Already answered, or nobody answered in time') },
+  });
   add('get', '/api/binary/{id}', { tag: 'Executions', id: 'getBinary', summary: 'The bytes of a stored file', description: 'A file of an execution (`item.binary.<name>.id`) with its Content-Type, size and name; `?download=1` makes it an attachment. Plugins send their `binaryAccess` token as a Bearer token. Answers single HTTP `Range` requests (`bytes=a-b`, `a-`, `-n`) with 206 and `Content-Range`, so video and audio can seek; 416 with `Content-Range: bytes */<size>` when unsatisfiable. Multi-range or malformed headers (and any `If-Range`) get the whole file as 200. Every response carries `Accept-Ranges: bytes`. `HEAD` answers the same headers.', query: [{ name: 'download', description: '`1`: Content-Disposition attachment', schema: { type: 'string' } }], headers: [{ name: 'Range', description: 'One byte range: `bytes=0-99`, `bytes=100-`, `bytes=-500`', schema: { type: 'string' } }], responses: { 200: { description: 'The whole file', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 206: { description: 'The requested part (`Content-Range: bytes a-b/size`)', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 403: errorRef('The token can’t read that file'), 404: notFound, 416: errorRef('Range not satisfiable (`Content-Range: bytes */size`)') } });
   add('get', '/api/mcp/status', { tag: 'MCP', id: 'mcpStatus', summary: 'The MCP gateway and identity configuration', description: 'What Settings → MCP shows: the gateway mode and URL, whether the gateway secret is set, the identity provider, the registry namespace.', responses: { 200: reply('The configuration', { type: 'object' }) } });
   add('get', '/api/mcp/jwks', { tag: 'MCP', id: 'mcpJwks', summary: 'The JWKS of Landflow-issued MCP tokens', description: 'Public. The gateway (agentgateway) validates Landflow-issued tokens against it.', public: true, responses: { 200: reply('RFC 7517 key set', object({ keys: array({ type: 'object' }) }, ['keys'])) } });
@@ -1652,6 +1884,8 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Triggers', description: 'Webhook, form and MCP Server Trigger URLs and their test URLs: public, each checked by its trigger’s own authentication' },
       { name: 'Plugins', description: 'Installed plugins, their transports and transport policies, and broker connections (changes need an owner or admin)' },
       { name: 'Second brain', description: 'The usage ledger, suggestions and what Landflow learned from how it is used (docs/second-brain.md)' },
+      { name: 'Runbooks', description: 'Runbook workflows made from closed Landfall war rooms, found by alert kind (docs/runbooks.md)' },
+      { name: 'Agents', description: 'Agents that run elsewhere (kagent) reporting what they did back to the run that asked them (docs/a2a.md)' },
       { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],

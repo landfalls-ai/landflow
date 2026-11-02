@@ -20,6 +20,33 @@ const list = (items?: string[]) => {
   return kept.length ? kept : undefined;
 };
 
+export const WHAT_I_DO_MAX = 3;
+export const WHAT_I_DO_LENGTH = 120;
+
+const clip = (s: string) => (s.length <= WHAT_I_DO_LENGTH ? s : `${s.slice(0, WHAT_I_DO_LENGTH - 1).replace(/\s+\S*$/, '')}…`);
+/** Short lines for a card: strings, trimmed, no blanks or repeats, at most three of at most 120 characters. */
+const lines = (items?: unknown) => {
+  const kept = [...new Set((Array.isArray(items) ? items : []).filter((s): s is string => typeof s === 'string').map((s) => clip(s.trim())).filter(Boolean))].slice(0, WHAT_I_DO_MAX);
+  return kept.length ? kept : undefined;
+};
+
+/**
+ * The “what I do” lines of a member card: the persona's own, else up to three taken from the start of its mission, then its
+ * instructions (first sentences, list marks dropped, trimmed). Only for display: personaPrompt() never reads them.
+ */
+export function whatIDoLines(agent: { persona?: AgentPersona; instructions?: string }): string[] {
+  const own = lines(agent.persona?.whatIDo);
+  if (own) return own;
+  // A lead-in ("For every request:") says nothing on its own, and a tool's name in brackets ("(ask_writer)") is for the model.
+  const sentences = (source?: string) =>
+    (source ?? '')
+      .split(/\n+|(?<=[.!?])\s+/)
+      .filter((s) => !/:\s*$/.test(s))
+      .map((s) => s.replace(/^\s*(?:#+|[-*•]|\d+[.)])\s*/, '').replace(/\s*\([a-z0-9_]+\)/g, '').replace(/[.:;,\s]+$/, '').trim())
+      .filter((s) => s.length > 2);
+  return lines([...sentences(agent.persona?.mission), ...sentences(agent.instructions)]) ?? [];
+}
+
 /** The persona without blank parts (an example stays while either side is written), or undefined when nothing is filled in. */
 export function cleanPersona(persona?: AgentPersona): AgentPersona | undefined {
   if (!persona) return undefined;
@@ -32,6 +59,7 @@ export function cleanPersona(persona?: AgentPersona): AgentPersona | undefined {
     length: ANSWER_LENGTHS.some((l) => l.value === persona.length) ? persona.length : undefined,
     language: text(persona.language),
     signoff: text(persona.signoff),
+    whatIDo: lines(persona.whatIDo),
     always: list(persona.always),
     never: list(persona.never),
     examples: examples.length ? examples : undefined,

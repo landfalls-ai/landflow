@@ -396,6 +396,62 @@ describe('foldJournal', () => {
     expect([of(developer.id).tokensIn, of(developer.id).tokensOut]).toEqual([800, 200]);
   });
 
+  it('names the lead’s model and counts its calls: the team’s usage carries them, its members’ spans the rest', () => {
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Review', actor: flow });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Tech Lead', actor: lead });
+    add(2, { type: 'span.started', spanId: 'node:team:0/step:a', parentSpanId: 'node:team:0', kind: 'delegate', name: 'Reviewer', actor: { id: 'remote:Reviewer', type: 'agent', name: 'Reviewer' }, caller: lead });
+    add(3, { type: 'span.ended', spanId: 'node:team:0/step:a', status: 'success', usage: { inputTokens: 228584, outputTokens: 875, cacheReadTokens: 210124, costUsd: 0, requests: 16, model: 'qwen3-coder:30b' } });
+    add(4, { type: 'span.ended', spanId: 'node:team:0', status: 'success', usage: { inputTokens: 234027, outputTokens: 1589, cacheReadTokens: 210124, costUsd: 0, requests: 19, model: 'qwen3-coder:30b' } });
+    const of = (folded: ReturnType<typeof foldJournal>, id: string) => folded.actors.find((a) => a.actor.id === id)!;
+    const folded = foldJournal(events);
+    expect(of(folded, lead.id)).toMatchObject({ tokensIn: 5443, tokensOut: 714, modelCalls: 3, models: ['qwen3-coder:30b'] });
+    expect(of(folded, 'remote:Reviewer')).toMatchObject({ modelCalls: 16, models: ['qwen3-coder:30b'] });
+  });
+
+  it('counts a model sub-node’s calls once: its spans are among the requests the team’s usage carries', () => {
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Review', actor: flow });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Tech Lead', actor: lead });
+    for (const [i, input] of [1964, 2177, 2712].entries()) {
+      add(2 + i * 2, { type: 'span.started', spanId: `node:model:${i}`, parentSpanId: 'node:team:0', kind: 'model', name: 'qwen3-coder:30b', actor: { id: 'node:model', type: 'node', name: 'Ollama Chat Model' }, caller: lead });
+      add(3 + i * 2, { type: 'span.ended', spanId: `node:model:${i}`, status: 'success', usage: { inputTokens: input, outputTokens: 100 } });
+    }
+    add(8, { type: 'span.started', spanId: 'node:team:0/step:a', parentSpanId: 'node:team:0', kind: 'delegate', name: 'Reviewer', actor: { id: 'remote:Reviewer', type: 'agent', name: 'Reviewer' }, caller: lead });
+    add(9, { type: 'span.ended', spanId: 'node:team:0/step:a', status: 'success', usage: { inputTokens: 374244, outputTokens: 1495, requests: 24, model: 'qwen3-coder:30b' } });
+    add(10, { type: 'span.ended', spanId: 'node:team:0', status: 'success', usage: { inputTokens: 381097, outputTokens: 1795, requests: 27, model: 'qwen3-coder:30b' } });
+    const folded = foldJournal(events);
+    const of = (id: string) => folded.actors.find((a) => a.actor.id === id)!;
+    expect(of(lead.id)).toMatchObject({ tokensIn: 6853, tokensOut: 300, modelCalls: 3 });
+    expect(of('remote:Reviewer')).toMatchObject({ modelCalls: 24 });
+  });
+
+  it('gives team members what the chart recorded they work with, and keeps a node’s own connections', () => {
+    const { events, add } = journal();
+    const withModel: RunActor = { ...lead, connections: [{ kind: 'model', name: 'qwen3-coder:30b', nodeType: 'core.ollamaChatModel', from: 'flow' }] };
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Review', actor: flow });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Tech Lead', actor: withModel });
+    add(2, {
+      type: 'span.updated',
+      spanId: 'node:team:0',
+      attrs: {
+        team: {
+          id: 'team_1',
+          name: 'Plugin builders',
+          members: [
+            { id: 'm1', title: 'Tech Lead', kind: 'agent', connections: [{ kind: 'tool', name: 'check_branch', nodeType: 'github.github' }] },
+            { id: 'm2', title: 'Reviewer', kind: 'a2a', reportsTo: 'm1', connections: [{ kind: 'runtime', name: 'Claude Code', icon: 'brand:claude' }] },
+          ],
+        },
+      },
+    });
+    add(3, { type: 'span.started', spanId: 'node:team:0/step:a', parentSpanId: 'node:team:0', kind: 'delegate', name: 'Reviewer', actor: { id: 'remote:Reviewer', type: 'agent', name: 'Reviewer' }, caller: lead });
+    const folded = foldJournal(events);
+    const of = (id: string) => folded.actors.find((a) => a.actor.id === id)!.actor.connections?.map((c) => c.name);
+    expect(of(lead.id)).toEqual(['qwen3-coder:30b', 'check_branch']);
+    expect(of('remote:Reviewer')).toEqual(['Claude Code']);
+  });
+
   it('handles an empty journal and cut text', () => {
     const m = foldJournal([]);
     expect(m.empty).toBe(true);
@@ -408,5 +464,94 @@ describe('foldJournal', () => {
     expect(preview('## Outcome\nThe plugin is **built** in `plugins/grafana`.\n- [PR #2](https://x/pull/2)', 200)).toBe('Outcome: The plugin is built in plugins/grafana. PR #2');
     expect(preview('# Plan:\nship it', 200)).toBe('Plan: ship it');
     expect(preview('## Outcome The plugin is built. ## Plan Ship it', 200)).toBe('Outcome The plugin is built. Plan Ship it');
+  });
+});
+
+describe('a request that goes on after its node waited', () => {
+  it('is told as going on, not as a second ask', async () => {
+    const { storyOf } = await import('@/lib/shared/run-trace-model');
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Notes', actor: flow });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Run Team', actor: lead });
+    add(2, { type: 'span.started', spanId: 'node:team:0/step:call_1', parentSpanId: 'node:team:0', kind: 'delegate', name: 'planner', actor: planner, caller: lead, input: 'Write the notes' });
+    add(3, { type: 'span.started', spanId: 'node:team:0/step:call_1/approval', parentSpanId: 'node:team:0/step:call_1', kind: 'wait', name: 'planner wants to use publish', actor: person });
+    add(9, { type: 'span.ended', spanId: 'node:team:0/step:call_1/approval', status: 'success' });
+    add(9, { type: 'span.ended', spanId: 'node:team:0/step:call_1', status: 'success' });
+    add(9, { type: 'span.ended', spanId: 'node:team:0', status: 'success' });
+    add(10, { type: 'span.started', spanId: 'node:team:1', parentSpanId: 'run', kind: 'agent', name: 'Run Team', actor: lead });
+    add(10, { type: 'span.started', spanId: 'node:team:1/step:call_1', parentSpanId: 'node:team:1', kind: 'delegate', name: 'planner', actor: planner, caller: lead, input: 'Write the notes' });
+    add(12, { type: 'span.ended', spanId: 'node:team:1/step:call_1', status: 'success' });
+    add(13, { type: 'span.started', spanId: 'node:team:1/step:call_2', parentSpanId: 'node:team:1', kind: 'delegate', name: 'developer', actor: developer, caller: lead, input: 'Check them' });
+    const asks = storyOf(foldJournal(events)).flatMap((e) => (e.type === 'ask' ? [[e.span.id, Boolean(e.continued)]] : []));
+    expect(asks).toEqual([
+      ['node:team:0/step:call_1', false],
+      ['node:team:1/step:call_1', true],
+      ['node:team:1/step:call_2', false],
+    ]);
+  });
+});
+
+describe('a member waiting on a tool approval', () => {
+  /** The live shape: the wait is journaled for the tool call, for the request and for the run; the request goes on after it. */
+  function approvalRun(resumed: boolean) {
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Notes', actor: flow });
+    add(0, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Run Team', actor: lead, nodeId: 'team' });
+    add(5, { type: 'span.started', spanId: 'node:team:0/step:call_1', parentSpanId: 'node:team:0', kind: 'delegate', name: 'planner', actor: planner, caller: lead, input: 'Write the notes' });
+    add(20, { type: 'span.started', spanId: 'node:team:0/step:call_1/step:call_9', parentSpanId: 'node:team:0/step:call_1', kind: 'tool', name: 'publish', actor: planner });
+    add(20, { type: 'span.started', spanId: 'node:team:0/step:call_1/step:call_9/approval', parentSpanId: 'node:team:0/step:call_1/step:call_9', kind: 'wait', name: 'Approve publish', actor: person, caller: planner, attrs: { wait: 'approval' } });
+    add(20, { type: 'span.started', spanId: 'node:team:0/step:call_1/approval', parentSpanId: 'node:team:0/step:call_1', kind: 'wait', name: 'planner wants to use publish', actor: person, caller: planner, attrs: { wait: 'approval' } });
+    add(20, { type: 'span.started', spanId: 'run/wait:1', parentSpanId: 'run', kind: 'wait', name: 'planner wants to use publish', actor: person, caller: lead, attrs: { wait: 'approval', nodeId: 'team', member: 'planner' } });
+    if (!resumed) return events;
+    add(40, { type: 'span.ended', spanId: 'run/wait:1', status: 'success' });
+    add(40, { type: 'span.ended', spanId: 'node:team:0/step:call_1/step:call_9/approval', status: 'success' });
+    add(40, { type: 'span.ended', spanId: 'node:team:0/step:call_1/approval', status: 'success' });
+    add(40, { type: 'span.ended', spanId: 'node:team:0/step:call_1/step:call_9', status: 'canceled' });
+    add(40, { type: 'span.ended', spanId: 'node:team:0/step:call_1', status: 'canceled' });
+    add(40, { type: 'span.ended', spanId: 'node:team:0', status: 'success' });
+    add(40, { type: 'span.started', spanId: 'node:team:1', parentSpanId: 'run', kind: 'agent', name: 'Run Team', actor: lead, nodeId: 'team' });
+    // The request keeps its first start.
+    add(5, { type: 'span.started', spanId: 'node:team:1/step:call_1', parentSpanId: 'node:team:1', kind: 'delegate', name: 'planner', actor: planner, caller: lead, input: 'Write the notes' });
+    add(45, { type: 'span.ended', spanId: 'node:team:1/step:call_1', status: 'success', output: 'Published' });
+    add(46, { type: 'span.ended', spanId: 'node:team:1', status: 'success' });
+    add(46, { type: 'span.ended', spanId: 'run', status: 'success' });
+    return events;
+  }
+
+  it('tells the wait once, under the request, and the request goes on at the resume', async () => {
+    const { storyOf } = await import('@/lib/shared/run-trace-model');
+    const story = storyOf(foldJournal(approvalRun(true)));
+    expect(story.filter((e) => e.type === 'wait').map((e) => e.type === 'wait' && e.span.id)).toEqual(['node:team:0/step:call_1/approval']);
+    // The first part ended canceled when the node stopped to wait: no "Left undelivered" for it.
+    expect(story.filter((e) => e.type === 'reply').map((e) => e.type === 'reply' && e.span.id)).toEqual(['node:team:1/step:call_1']);
+    const goesOn = story.find((e) => e.type === 'ask' && e.continued);
+    expect(goesOn?.at).toBe(at(40));
+    const order = story.map((e) => e.key);
+    expect(order.indexOf('s:node:team:0/step:call_1/approval')).toBeLessThan(order.indexOf('s:node:team:1/step:call_1'));
+  });
+
+  it('needs a person once while it waits', () => {
+    const waits = foldJournal(approvalRun(false)).needsYou.filter((n) => n.kind === 'wait');
+    expect(waits.map((n) => n.spanId)).toEqual(['run/wait:1']);
+  });
+
+  it('keeps a wait that has no copy, and two waits at different times', async () => {
+    const { storyOf } = await import('@/lib/shared/run-trace-model');
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Notes', actor: flow });
+    add(0, { type: 'span.started', spanId: 'node:wait:0', parentSpanId: 'run', kind: 'step', name: 'Wait', actor: flow, nodeId: 'wait' });
+    add(1, { type: 'span.started', spanId: 'node:team:0', parentSpanId: 'run', kind: 'agent', name: 'Run Team', actor: lead, nodeId: 'team' });
+    add(2, { type: 'span.started', spanId: 'node:team:0/step:call_1', parentSpanId: 'node:team:0', kind: 'delegate', name: 'planner', actor: planner, caller: lead });
+    add(3, { type: 'span.started', spanId: 'node:team:0/step:call_1/wait', parentSpanId: 'node:team:0/step:call_1', kind: 'wait', name: 'planner needs an answer', actor: person, caller: planner });
+    add(4, { type: 'span.ended', spanId: 'node:team:0/step:call_1/wait', status: 'success' });
+    add(6, { type: 'span.started', spanId: 'node:team:0/step:call_1/step:call_2', parentSpanId: 'node:team:0/step:call_1', kind: 'tool', name: 'publish', actor: planner });
+    add(6, { type: 'span.started', spanId: 'node:team:0/step:call_1/step:call_2/approval', parentSpanId: 'node:team:0/step:call_1/step:call_2', kind: 'wait', name: 'Approve publish', actor: person, caller: planner });
+    add(7, { type: 'span.started', spanId: 'run/wait:1', parentSpanId: 'run', kind: 'wait', name: 'Wait until noon', actor: person, attrs: { wait: 'time', nodeId: 'wait' } });
+    const story = storyOf(foldJournal(events));
+    expect(story.filter((e) => e.type === 'wait').map((e) => e.type === 'wait' && e.span.id)).toEqual([
+      'node:team:0/step:call_1/wait',
+      'node:team:0/step:call_1/step:call_2/approval',
+      'run/wait:1',
+    ]);
   });
 });

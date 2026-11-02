@@ -19,6 +19,7 @@ import { nanoid } from 'nanoid';
 import { isPropertyVisible, withPropertyDefaults, type NodeDescriptor } from '@landflow/protocol';
 import {
   isTemplateCategory,
+  type TemplateBundle,
   type TemplateCategory,
   type TemplateCredentialSlot,
   type TemplateDataTable,
@@ -34,6 +35,8 @@ import {
 import { normalizeGroups } from '../../shared/groups';
 import { workflowCompositeIssues } from '../composites';
 import type { FlowPreview } from '../../shared/marketplace';
+import type { AgentTeam } from '../../shared/agent-teams';
+import type { Agent } from '../../shared/agents';
 import type { Workflow, WorkflowNode } from '../../shared/types';
 import { credentials as vault } from '../credentials/vault';
 import { tableInProject } from '../datatables/projects';
@@ -46,14 +49,17 @@ import { projectRoleCan } from '../../shared/projects';
 import { normalizeWorkflow, validateWorkflow } from '../mcp/workflows';
 import { registry } from '../plugins/registry';
 import { workflowSchema } from '../schemas';
+import { agentTeamStore } from '../agent-teams/store';
+import { agentStore } from '../agents/store';
 import { store } from '../store';
 import { BUILTIN_TEMPLATES } from './builtin';
 import { getRemote, remoteBase, remoteLabel, REMOTE_PAGE_SIZE, REMOTE_PREFIX, searchRemotePage } from './remote';
-import { fileSchema, LIMITS, type SaveTemplateInput, type UpdateTemplateInput } from './schema';
+import { fileSchema, LIMITS, type SaveTeamTemplateInput, type SaveTemplateInput, type UpdateTemplateInput } from './schema';
+import { bundleTeam, BundleError, createFromBundle, remapWorkflow, teamSummary, visitAgentCredentials, visitTeamCredentials, type CreatedBundle } from './team';
 import { localTemplates, type LocalTemplate } from './store';
 
 export { BUILTIN_TEMPLATES } from './builtin';
-export { saveTemplateSchema, updateTemplateSchema } from './schema';
+export { saveTeamTemplateSchema, saveTemplateSchema, updateTemplateSchema } from './schema';
 
 /** A template request that can't be served: `status` is the HTTP status. */
 export class TemplateError extends Error {
@@ -169,6 +175,8 @@ function finish(detail: Omit<TemplateDetail, 'usable' | 'problems' | 'nodeTypes'
   const problems = templateProblems(detail.workflow, scopeProject ?? detail.projectId);
   return {
     ...detail,
+    ...(detail.bundle && { team: teamSummary(detail.bundle, detail.credentials, detail.workflow) }),
+    ...(detail.bundle && { categories: [...new Set<TemplateCategory>([...detail.categories, 'agent-teams'])] }),
     nodeTypes: nodeTypesOf(detail.workflow),
     nodeCount: detail.workflow.nodes.length,
     credentials: withSlotNodes(detail.credentials, detail.workflow),
@@ -210,7 +218,7 @@ async function remoteDetail(id: string): Promise<TemplateDetail | undefined> {
   return finish({ ...remote, workflow: { ...remote.workflow, nodes }, credentials: slots });
 }
 
-const summaryOf = ({ workflow: _w, setup: _s, dataTables: _d, report: _r, ...summary }: TemplateDetail): TemplateSummary => summary;
+const summaryOf = ({ workflow: _w, setup: _s, dataTables: _d, report: _r, bundle: _b, ...summary }: TemplateDetail): TemplateSummary => summary;
 
 export interface TemplateListing {
   templates: TemplateSummary[];
@@ -327,6 +335,9 @@ export function instantiate(detail: Pick<TemplateDetail, 'workflow' | 'credentia
 export interface UseHooks {
   createWorkflow(save: () => Workflow, id: string): Workflow;
   createTable(create: () => { id: string; name: string }): { id: string; name: string };
+  /** A team template's agents and team land in the same project. */
+  createAgent?(create: () => Agent): Agent;
+  createTeam?(create: () => AgentTeam): AgentTeam;
   projectId?: string;
 }
 
@@ -345,7 +356,7 @@ export async function useTemplate(id: string, request: UseTemplateRequest, hooks
   for (const slot of detail.credentials) {
     const chosen = request.credentials?.[slot.id];
     if (!chosen) {
-      if (!slot.optional) warnings.push(`${slot.name}: no credential picked; choose one in ${slot.nodes?.length === 1 ? `“${slot.nodes[0]}”` : 'the nodes that need it'} before running`);
+      if (!slot.optional) warnings.push(`${slot.name}: no credential picked; choose one in ${slot.nodes?.length === 1 ? `“${slot.nodes[0]}”` : slot.description ? `the agents (${slot.description.replace(/^Used by /, '')})` : 'the nodes that need it'} before running`);
       continue;
     }
     const credential = vault.get(chosen);
@@ -354,9 +365,11 @@ export async function useTemplate(id: string, request: UseTemplateRequest, hooks
     picks[slot.id] = { id: credential.id, name: credential.name };
   }
 
+  const bundle = detail.bundle;
+  const withWorkflow = !bundle || bundle.hasWorkflow;
   const tableIds = new Map<string, string>();
   const createdTables: string[] = [];
-  for (const table of detail.dataTables) {
+  for (const table of withWorkflow ? detail.dataTables : []) {
     // The project's table of that name is reused; another project's isn't (names are unique per project: it makes its own).
     const existing = dataTables().findTable(table.name, hooks.projectId);
     if (existing && (hooks.projectId === undefined || tableInProject(existing.id, hooks.projectId))) {
@@ -368,14 +381,34 @@ export async function useTemplate(id: string, request: UseTemplateRequest, hooks
     createdTables.push(created.name);
   }
 
-  const built = instantiate(detail, picks, tableIds, takenPaths());
-  const workflowId = `wf_${nanoid(10)}`;
-  const parsed = workflowSchema.safeParse({ ...built, id: workflowId, name: (request.name?.trim() || detail.name).slice(0, LIMITS.name) });
-  if (!parsed.success) throw new TemplateError(`The template’s workflow is invalid: ${parsed.error.issues[0]?.path.join('.')}: ${parsed.error.issues[0]?.message}`, 422);
-  const { folderId: _folder, active: _active, pinData: _pins, ...data } = parsed.data as Workflow;
-  const workflow = hooks.createWorkflow(() => store.saveWorkflow({ ...data, active: false, ...(request.folderId && { folderId: request.folderId }) } as Workflow), workflowId);
-  for (const warning of validateWorkflow(workflow).errors) warnings.push(warning);
-  return { workflow, createdTables, warnings, ...(detail.report && { report: detail.report }) };
+  // A team template makes its agents and team first (with fresh ids), then the workflow that points at them.
+  const workflowId = withWorkflow ? `wf_${nanoid(10)}` : undefined;
+  let made: CreatedBundle | undefined;
+  if (bundle) {
+    made = createFromBundle(bundle, picks, { createAgent: hooks.createAgent ?? ((create) => create()), createTeam: hooks.createTeam ?? ((create) => create()) }, { teamName: request.teamName, workflowId });
+    warnings.push(...made.warnings);
+  }
+  const rollback = () => {
+    if (!made) return;
+    agentTeamStore.delete(made.team.id);
+    for (const agent of made.agents) agentStore.delete(agent.id);
+  };
+  const teamPart = made && { team: { id: made.team.id, name: made.team.draft.name }, agents: made.agents.map((a) => ({ id: a.id, name: a.name })) };
+  if (!workflowId) return { createdTables, warnings, ...teamPart };
+
+  try {
+    const instantiated = instantiate(detail, picks, tableIds, takenPaths());
+    const built = bundle && made ? { ...instantiated, nodes: remapWorkflow(instantiated.nodes, bundle, { id: made.team.id, name: made.team.draft.name }, made.agentIds) } : instantiated;
+    const parsed = workflowSchema.safeParse({ ...built, id: workflowId, name: (request.name?.trim() || detail.name).slice(0, LIMITS.name) });
+    if (!parsed.success) throw new TemplateError(`The template’s workflow is invalid: ${parsed.error.issues[0]?.path.join('.')}: ${parsed.error.issues[0]?.message}`, 422);
+    const { folderId: _folder, active: _active, pinData: _pins, ...data } = parsed.data as Workflow;
+    const workflow = hooks.createWorkflow(() => store.saveWorkflow({ ...data, active: false, ...(request.folderId && { folderId: request.folderId }) } as Workflow), workflowId);
+    for (const warning of validateWorkflow(workflow).errors) warnings.push(warning);
+    return { workflow, createdTables, warnings, ...teamPart, ...(detail.report && { report: detail.report }) };
+  } catch (caught) {
+    rollback();
+    throw caught;
+  }
 }
 
 // ---- save, import, export, delete ---------------------------------------------------------------------------------
@@ -459,6 +492,49 @@ export function saveTemplate(input: SaveTemplateInput, author?: string, actor?: 
   return createdDetail(template, actor);
 }
 
+/** The slot ids a bundle's agents and remote members point at. */
+function bundleSlotIds(bundle: TemplateBundle): Set<string> {
+  const ids = new Set<string>();
+  const collect = (ref: { id: string }) => (ids.add(ref.id), ref);
+  const copy = structuredClone(bundle);
+  for (const agent of copy.agents) visitAgentCredentials(agent.config as never, collect as never);
+  visitTeamCredentials(copy.team as never, collect as never);
+  return ids;
+}
+
+/**
+ * "Save as template" on a team page: the team, its Landflow agents (published config), its remote members as data,
+ * and, if `workflow` is given, that workflow (it must run this team), with every credential turned into a slot.
+ * The caller loaded and checked the team and the workflow.
+ */
+export function saveTeamTemplate(input: SaveTeamTemplateInput, team: AgentTeam, workflow: Workflow | undefined, author?: string, actor?: Actor): TemplateDetail {
+  const projectId = templateProject(actor, input.projectId);
+  let built: ReturnType<typeof bundleTeam>;
+  try {
+    built = bundleTeam(team, workflow);
+  } catch (caught) {
+    if (caught instanceof BundleError) throw new TemplateError(caught.message, caught.status);
+    throw caught;
+  }
+  const description = input.description || team.draft.goal || team.draft.description || workflow?.description || '';
+  const parts = workflow
+    ? templateParts(checkedWorkflow(workflow as unknown as Record<string, unknown>, input.name), input.name, description, built.slots)
+    : { workflow: { id: '', name: input.name, nodes: [], connections: [] } as Workflow, credentials: [], dataTables: [] };
+  const used = new Set(parts.credentials.map((s) => s.id));
+  const template = localTemplates.create({
+    name: input.name,
+    description,
+    categories: categoriesOf(input.categories),
+    setup: input.setup.map((s) => s.trim()).filter(Boolean),
+    ...parts,
+    credentials: [...built.slots, ...parts.credentials.filter((s) => !built.slots.some((b) => b.id === s.id) && used.has(s.id))],
+    bundle: built.bundle,
+    ...(author && { author }),
+    ...(projectId && { projectId }),
+  });
+  return createdDetail(template, actor);
+}
+
 /**
  * Edit a saved template in place (its id, author and creation time stay): name, description, categories, setup
  * steps, its project (`null`: instance-wide), and its workflow, replaced from `source` (a saved workflow the route
@@ -478,6 +554,7 @@ export function updateTemplate(id: string, patch: UpdateTemplateInput, actor?: A
     const projectId = patch.projectId === null ? (actor && !isInstanceAdmin(actor) ? templateProject(actor, null) : undefined) : templateProject(actor, patch.projectId);
     next.projectId = projectId;
   }
+  if (source && current.bundle) throw new TemplateError('A team template’s flow is chosen when it is saved from the team page: save it again from there', 400);
   if (source) {
     const name = next.name ?? current.name;
     Object.assign(next, templateParts(checkedWorkflow(source as unknown as Record<string, unknown>, name), name, next.description ?? current.description));
@@ -508,14 +585,19 @@ function fromFile(data: unknown) {
   const base = portable(source, template.name, template.description);
   const declared = template.credentials.filter((slot, i, all) => all.findIndex((s) => s.id === slot.id) === i);
   const { nodes, slots } = slotCredentials(base, declared);
+  // A team template's slots are used by its agents and remote members, not only by the workflow's nodes.
+  const bundle = template.bundle as TemplateBundle | undefined;
+  const inBundle = bundle ? bundleSlotIds(bundle) : new Set<string>();
+  const kept = [...slots, ...declared.filter((slot) => inBundle.has(slot.id) && !slots.some((s) => s.id === slot.id))];
   return {
     name: template.name,
     description: template.description,
     categories: categoriesOf(template.categories),
-    credentials: slots,
+    credentials: kept,
     setup: template.setup.map((s) => s.trim()).filter(Boolean),
     dataTables: template.dataTables,
     workflow: { ...base, nodes },
+    ...(bundle && { bundle }),
   };
 }
 
@@ -546,9 +628,9 @@ export function previewTemplate(data: unknown): FlowPreview {
 
 /** A template as an export file (any source). */
 export function templateFile(detail: TemplateDetail): TemplateFile {
-  const { name, description, categories, setup, dataTables: tables, workflow } = detail;
+  const { name, description, categories, setup, dataTables: tables, workflow, bundle } = detail;
   const credentials = detail.credentials.map(({ nodes: _nodes, ...slot }) => slot);
-  return { kind: 'landflow/template', version: 1, template: { name, description, categories, credentials, setup, dataTables: tables, workflow: { ...workflow, id: '' } } };
+  return { kind: 'landflow/template', version: 1, template: { name, description, categories, credentials, setup, dataTables: tables, workflow: { ...workflow, id: '' }, ...(bundle && { bundle }) } };
 }
 
 /** Delete a saved template (built-in and remote ones can't be); `actor` must be allowed to edit it. */

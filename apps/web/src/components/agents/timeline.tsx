@@ -60,6 +60,7 @@ const KIND_ICON: Record<ToolKind, string> = {
   memory: 'brain',
   a2a: 'radio-tower',
   flow: 'plug',
+  notebook: 'notebook-pen',
 };
 
 const A2A_COLOR = '#a855f7';

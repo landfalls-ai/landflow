@@ -4,8 +4,10 @@
  * (and sub-agent and A2A requests) as spans, a pause for approval as a wait, a guardrail as a check. Tools connected to the
  * node in the flow (`kind: 'flow'`) are journaled by the translator from the engine's own events, so they are skipped here.
  */
-import type { AgentSession, TimelineEntry } from '../../shared/agents';
+import type { AgentSession, AgentTraceSummary, TimelineEntry } from '../../shared/agents';
+import { reviewCommentOf } from '../../shared/review-comments';
 import { toolInput, type RunActor } from '../../shared/run-trace';
+import { traceModelCalls } from './trace-calls';
 import { liveJournal, type Journal } from './writer';
 
 const HUMAN: RunActor = { id: 'human', name: 'A person', type: 'human' };
@@ -129,6 +131,8 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
         if ((step.status === 'success' || step.status === 'error') && known !== 'ended') {
           call.steps.set(step.id, 'ended');
           record({ type: 'span.ended', spanId: id, status: step.status, ...(step.output !== undefined && { output: step.output }), ...(step.error && { error: step.error }), at: step.endedAt });
+          // A review or comment the member left through GitHub's MCP tools (`mcp__<server>__<tool>`).
+          if (step.status === 'success') reviewComment(record, id, step.name, step.args, step.output, step.endedAt);
         } else if (step.status === 'awaiting_approval' && known === 'running') {
           call.steps.set(step.id, 'awaiting');
           record({ type: 'span.updated', spanId: id, status: 'waiting' });
@@ -160,6 +164,9 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
     if (call.remoteWaiting) record({ type: 'span.ended', spanId: `${spanId}/wait`, status: 'success' });
     for (const [id, state] of call.steps) if (state !== 'ended') record({ type: 'span.ended', spanId: `${spanId}/step:${id}`, status: 'canceled' });
     call.ended = true;
+    // A Landflow agent's own call of one of GitHub's MCP tools (nodeType core.mcpClientTool, named by the tool).
+    if (entry.status === 'success' && entry.nodeType === 'core.mcpClientTool') reviewComment(record, spanId, entry.tool, entry.input, entry.output, undefined);
+    if (remote?.trace) traceModelCalls(target, remote.trace, spanId, record);
     record({
       type: 'span.ended',
       spanId,
@@ -173,7 +180,45 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
         ...(entry.executionId && { executionId: entry.executionId }),
         ...(entry.workflowId && { workflowId: entry.workflowId }),
         ...(remote && { state: remote.state, ...(remote.taskId && { taskId: remote.taskId }), ...(remote.contextId && { contextId: remote.contextId }) }),
+        ...(remote?.trace && { trace: { tools: remote.trace.tools, modelMs: remote.trace.modelMs, models: remote.trace.models.map((m) => m.model), subagents: remote.trace.agents.length, ...(remote.trace.mod && { mod: remote.trace.mod }) } }),
       },
+    });
+    if (remote?.trace) traceChecks(remote.agent, remote.trace, spanId, record);
+  }
+}
+
+/** The artifact a review or comment left through GitHub's MCP tools is (lib/shared/review-comments.ts), under the span of the call. */
+function reviewComment(record: Journal['record'], spanId: string, tool: string, args: unknown, output: unknown, at: string | undefined) {
+  const artifact = reviewCommentOf(tool, args, output);
+  if (artifact) record({ type: 'artifact', spanId, artifact, ...(at && { at }) });
+}
+
+/**
+ * What the landflow-harness mod saw inside a remote agent (a2a/agent-trace.ts) as checks on its request: each tool call
+ * the guardrails stopped (or, in report mode, would have), and the secrets masked in its tool results.
+ */
+export function traceChecks(agent: string, trace: AgentTraceSummary, spanId: string, record: Journal['record']) {
+  for (const stop of trace.guard) {
+    const what = `${stop.tool}${stop.arg ? `: ${stop.arg}` : ''}`;
+    record({
+      type: 'check',
+      spanId,
+      check: {
+        name: 'Guardrail',
+        status: 'warn',
+        message: `${stop.action === 'deny' ? 'Stopped' : 'Would have stopped'} ${what} (${stop.rule}${stop.reason ? `: ${stop.reason}` : ''})`,
+        subject: agent,
+        source: 'builtin',
+        evidence: { rule: stop.rule, tool: stop.tool, action: stop.action, ...(stop.arg && { arg: stop.arg }), ...(stop.agent && { subagent: stop.agent }) },
+      },
+    });
+  }
+  if (trace.redacted) {
+    const kinds = trace.redactedKinds?.length ? ` (${trace.redactedKinds.join(', ')})` : '';
+    record({
+      type: 'check',
+      spanId,
+      check: { name: 'Secrets masked', status: 'warn', message: `Masked secrets in ${trace.redacted} tool result${trace.redacted > 1 ? 's' : ''}${kinds} before the model read them`, subject: agent, source: 'builtin', evidence: { results: trace.redacted, kinds: trace.redactedKinds ?? [] } },
     });
   }
 }

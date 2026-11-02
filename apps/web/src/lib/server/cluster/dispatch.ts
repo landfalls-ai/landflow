@@ -53,7 +53,9 @@ export type InboxMessage =
   | { t: 'reply'; id: string; reply: WireReply }
   | { t: 'done'; id: string; record: ExecutionRecord }
   | { t: 'rejected'; id: string; message: string; status: number }
-  | { t: 'failed'; id: string; message: string };
+  | { t: 'failed'; id: string; message: string }
+  /** A landflow-harness batch for a trace this process holds, posted to another main (../a2a/agent-trace.ts). */
+  | { t: 'trace'; id: string; events: unknown[] };
 
 /** What the main that queued a run in the FIFO wants from it (read by whoever dispatches it later). */
 interface RunOpts {

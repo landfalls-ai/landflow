@@ -47,6 +47,29 @@ export const updateTemplateSchema = z.strictObject({
 
 export type UpdateTemplateInput = z.infer<typeof updateTemplateSchema>;
 
+/** A team template's bundle in a file: the team and agent configs are cleaned by their stores when the template is used. */
+const bundleSchema = z.object({
+  teamKey: z.string().min(1).max(100),
+  team: z.object({ name: z.string().max(200).default(''), goal: z.string().max(1000).optional(), description: z.string().max(1000).optional(), members: z.array(z.record(z.string(), z.unknown())).max(50) }),
+  teamPublished: z.boolean().optional(),
+  agents: z.array(z.object({ key: z.string().min(1).max(100), config: z.record(z.string(), z.unknown()), published: z.boolean().optional() })).max(30),
+  hasWorkflow: z.boolean(),
+  workflowKey: z.string().max(100).optional(),
+});
+
+/** "Save as template" on a team page: the team, its agents, and optionally one workflow that runs it. */
+export const saveTeamTemplateSchema = z.object({
+  name: z.string().trim().min(1).max(LIMITS.name),
+  description: z.string().max(LIMITS.description).default(''),
+  categories: z.array(z.string()).max(8).default([]),
+  setup: z.array(z.string().max(LIMITS.step)).max(LIMITS.setup).default([]),
+  /** A workflow with a Run a Team node set to this team (the caller must see it). */
+  workflowId: z.string().min(1).optional(),
+  projectId: z.string().nullable().optional(),
+});
+
+export type SaveTeamTemplateInput = z.infer<typeof saveTeamTemplateSchema>;
+
 /** A template file, as "Export" writes it. */
 export const fileSchema = z.object({
   kind: z.literal(TEMPLATE_FILE_KIND),
@@ -59,5 +82,6 @@ export const fileSchema = z.object({
     setup: z.array(z.string().max(LIMITS.step)).max(LIMITS.setup).default([]),
     dataTables: z.array(tableSchema).max(LIMITS.tables).default([]),
     workflow: z.record(z.string(), z.unknown()),
+    bundle: bundleSchema.optional(),
   }),
 });

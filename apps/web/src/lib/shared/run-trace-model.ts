@@ -4,7 +4,9 @@
  * and what was reported against what was checked. Pure, so the Run report node can use it too.
  * `until` folds only the events up to a time (the time slider replays a run with it).
  */
-import { toolInput, type JournalEvent, type RunActor, type RunArtifact, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from './run-trace';
+import { teamSnapshotOf } from './agent-teams';
+import { formatCost } from './ai-usage';
+import { mergeConnections, toolInput, type JournalEvent, type RunActor, type RunArtifact, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from './run-trace';
 
 /** What a request to another agent came to, from evidence (what it delivered), not from what the agent said. */
 export type ResultLabel = 'Delivered' | 'Answered' | 'Left undelivered' | 'Working' | 'Waiting';
@@ -77,6 +79,13 @@ export interface RunActorStats {
   workMs: number;
   tokensIn: number;
   tokensOut: number;
+  /** Of `tokensIn`, read from the prompt cache (when reported). */
+  cacheRead: number;
+  /** USD, of the usage that was priced (`priced`: some was). Ollama's is free. */
+  costUsd: number;
+  priced: boolean;
+  /** The models its usage names. */
+  models: string[];
   modelCalls: number;
   toolCalls: number;
   /** Requests addressed to it, and what they came to. */
@@ -252,7 +261,8 @@ export type StoryEntry =
     }
   | { type: 'round'; key: string; at: string; seq: number; round: RunRound }
   | { type: 'agent'; key: string; at: string; seq: number; span: RunSpan }
-  | { type: 'ask'; key: string; at: string; seq: number; span: RunSpan }
+  /** `continued`: the same request going on after its node waited (a person approved a tool), not a second ask. */
+  | { type: 'ask'; key: string; at: string; seq: number; span: RunSpan; continued?: boolean }
   | {
       type: 'reply';
       key: string;
@@ -404,10 +414,12 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
     const known = actorBase.get(actor.id);
     if (!known) actorBase.set(actor.id, { actor: { ...actor }, firstAt: at });
     else {
-      // Later events may know more (a role, the card name of a remote agent).
+      // Later events may know more (a role, the card name of a remote agent, what it works with).
+      const connections = mergeConnections(known.actor.connections, actor.connections);
       known.actor = {
         ...known.actor,
         ...Object.fromEntries(Object.entries(actor).filter(([, v]) => v !== undefined && v !== '')),
+        ...(connections.length && { connections }),
       } as RunActor;
     }
   };
@@ -586,6 +598,10 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
         workMs: 0,
         tokensIn: 0,
         tokensOut: 0,
+        cacheRead: 0,
+        costUsd: 0,
+        priced: false,
+        models: [],
         modelCalls: 0,
         toolCalls: 0,
         asked: 0,
@@ -607,20 +623,32 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
   const asks: Array<{ from: string; to: string; t: number }> = [];
   let tokensIn = 0;
   let tokensOut = 0;
+  let costUsd: number | undefined;
   // Tokens come from every span that reports usage: a model call, an agent or team node (its own model's calls, its
   // members'), a remote agent's answer. A span keeps what the spans with usage nearest under it don't account for, so
-  // nothing counts twice and each actor keeps its own.
-  const own = new Map<string, TokenCounts>();
+  // nothing counts twice and each actor keeps its own. Cost, cache reads and requests go the same way, where reported.
+  type Own = { inputTokens: number; outputTokens: number; cacheRead: number; cost?: number; requests: number };
+  const own = new Map<string, Own>();
+  const ownOf = (id: string) => own.get(id) ?? own.set(id, { inputTokens: 0, outputTokens: 0, cacheRead: 0, requests: 0 }).get(id)!;
   for (const span of order) {
     if (!span.usage) continue;
-    own.set(span.id, own.get(span.id) ?? { inputTokens: 0, outputTokens: 0 });
-    const mine = own.get(span.id)!;
-    mine.inputTokens += span.usage.inputTokens;
-    mine.outputTokens += span.usage.outputTokens;
+    const mine = ownOf(span.id);
+    const u = span.usage;
+    // A model span is one request, said or not: an agent's usage above it counts it among its own.
+    const requests = u.requests ?? (span.kind === 'model' ? 1 : 0);
+    mine.inputTokens += u.inputTokens;
+    mine.outputTokens += u.outputTokens;
+    mine.cacheRead += u.cacheReadTokens ?? 0;
+    mine.requests += requests;
+    if (u.costUsd !== undefined) mine.cost = (mine.cost ?? 0) + u.costUsd;
     for (let up = span.parentId ? spans[span.parentId] : undefined; up; up = up.parentId ? spans[up.parentId] : undefined) {
       if (!up.usage) continue;
-      const theirs = own.get(up.id) ?? { inputTokens: 0, outputTokens: 0 };
-      own.set(up.id, { inputTokens: theirs.inputTokens - span.usage.inputTokens, outputTokens: theirs.outputTokens - span.usage.outputTokens });
+      const theirs = ownOf(up.id);
+      theirs.inputTokens -= u.inputTokens;
+      theirs.outputTokens -= u.outputTokens;
+      theirs.cacheRead -= u.cacheReadTokens ?? 0;
+      theirs.requests -= requests;
+      if (u.costUsd !== undefined) theirs.cost = (theirs.cost ?? 0) - u.costUsd;
       break;
     }
   }
@@ -631,6 +659,15 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
     const output = Math.max(0, used.outputTokens);
     owner.tokensIn += input;
     owner.tokensOut += output;
+    owner.cacheRead += Math.max(0, used.cacheRead);
+    if (span.kind !== 'model') owner.modelCalls += Math.max(0, used.requests);
+    if (used.cost !== undefined) {
+      const cost = Math.max(0, used.cost);
+      owner.costUsd += cost;
+      owner.priced = true;
+      costUsd = (costUsd ?? 0) + cost;
+    }
+    if (span.usage?.model && !owner.models.includes(span.usage.model)) owner.models.push(span.usage.model);
     tokensIn += input;
     tokensOut += output;
   };
@@ -688,6 +725,15 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
   for (const item of checks) if (item.actor && item.check.status === 'fail') statOf(item.actor, item.at).failedChecks.push(item);
   for (const entry of actorBase.values()) statOf(entry.actor, entry.firstAt);
   for (const s of stats.values()) s.actor = actorBase.get(s.actor.id)?.actor ?? s.actor;
+  // A team run records what each member works with on its chart: the member's actor (by name) carries it too.
+  const team = order.map((s) => teamSnapshotOf(s.attrs)).find(Boolean);
+  for (const member of team?.members ?? []) {
+    if (!member.connections?.length) continue;
+    for (const s of stats.values()) {
+      if (s.actor.name !== member.title || s.actor.type !== 'agent') continue;
+      s.actor = { ...s.actor, connections: mergeConnections(s.actor.connections, member.connections) };
+    }
+  }
 
   // Cycles: pairs that asked each other more than once, or back and forth.
   const cycles: RunCycle[] = [];
@@ -720,8 +766,9 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
 
   // Needs a person: open waits, failed checks nobody settled.
   const needsYou: NeedsYouItem[] = [];
+  const echoes = waitEchoes(order, spans);
   for (const span of order) {
-    if (span.kind !== 'wait' || !OPEN(span.status)) continue;
+    if (span.kind !== 'wait' || !OPEN(span.status) || echoes.needsYou.has(span.id)) continue;
     needsYou.push({
       kind: 'wait',
       spanId: span.id,
@@ -816,7 +863,7 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
     rounds: [],
     turns: {},
     outcome: { reported, checked: { ...count, total, label, tone } },
-    tokens: { inputTokens: tokensIn, outputTokens: tokensOut },
+    tokens: { inputTokens: tokensIn, outputTokens: tokensOut, ...(costUsd !== undefined && { costUsd: Math.round(costUsd * 1e6) / 1e6 }) },
     story: [],
   };
   model.rounds = roundsOf(model);
@@ -985,9 +1032,55 @@ function insideRequest(model: RunModel, span: RunSpan): boolean {
   return false;
 }
 
+/**
+ * Waits that repeat another wait for the same pause. A member's tool approval is journaled three times: for its tool call,
+ * for the request it is in (`<request>/approval`) and for the run (`run/wait:<n>`, the engine's wait); a member's question
+ * twice. `story` drops the run's copy and the nested ones (the request's wait has the member and the words), `needsYou`
+ * keeps the run's copy (its actions answer the execution) and drops the others.
+ */
+export function waitEchoes(order: RunSpan[], spans: Record<string, RunSpan>): { story: Set<string>; needsYou: Set<string> } {
+  const waits = order.filter((span) => span.kind === 'wait' && !span.hidden);
+  const overlap = (a: RunSpan, b: RunSpan) => a.t0 <= b.t1 && b.t0 <= a.t1;
+  const story = new Set<string>();
+  const needsYou = new Set<string>();
+  for (const wait of waits) {
+    if (wait.parentId === 'run') {
+      const nodeId = typeof wait.attrs.nodeId === 'string' ? wait.attrs.nodeId : undefined;
+      const echoes = nodeId ? waits.filter((w) => w.parentId !== 'run' && w.id.startsWith(`node:${nodeId}:`) && overlap(w, wait)) : [];
+      if (!echoes.length) continue;
+      story.add(wait.id);
+      for (const echo of echoes) needsYou.add(echo.id);
+      continue;
+    }
+    // Under a span above this one, another wait for the same time: the outer one tells it.
+    for (let p = wait.parentId ? spans[wait.parentId] : undefined; p && p.id !== 'run'; p = p.parentId ? spans[p.parentId] : undefined) {
+      const outer = p.children.some((id) => id !== wait.id && !wait.id.startsWith(`${id}/`) && spans[id]?.kind === 'wait' && !spans[id].hidden && overlap(spans[id], wait));
+      if (outer) {
+        story.add(wait.id);
+        needsYou.add(wait.id);
+        break;
+      }
+    }
+  }
+  return { story, needsYou };
+}
+
 /** The chat-like story: messages, requests with their results, waits, artifacts, failures; quiet spans folded into "n steps". */
 export function storyOf(model: RunModel): StoryEntry[] {
   const raw: StoryEntry[] = [];
+  // A node that waited runs again as node:<id>:<n+1>, and the member's request it was in goes on under the same call id.
+  const requestKey = (id: string) => id.replace(/^(node:[^/:]+):\d+\//, '$1/');
+  const requested = new Set<string>();
+  // A request that goes on after the wait ended canceled when its node stopped to wait: that is not "Left undelivered".
+  const goesOn = new Set<string>();
+  const lastOf = new Map<string, string>();
+  for (const span of model.order) {
+    if (span.hidden || !REQUESTS.has(span.kind)) continue;
+    const before = lastOf.get(requestKey(span.id));
+    if (before) goesOn.add(before);
+    lastOf.set(requestKey(span.id), span.id);
+  }
+  const echoes = waitEchoes(model.order, model.spans);
   for (const m of model.messages) raw.push(m);
   for (const round of model.rounds) raw.push({ type: 'round', key: round.key, at: round.startedAt, seq: round.seq - 0.25, round });
   for (const span of model.order) {
@@ -1005,8 +1098,13 @@ export function storyOf(model: RunModel): StoryEntry[] {
           result: resultOf(span),
         });
     } else if (REQUESTS.has(span.kind)) {
-      raw.push({ type: 'ask', key: `s:${span.id}`, at, seq: span.seq, span });
-      if (span.endedAt)
+      const continued = requested.has(requestKey(span.id));
+      requested.add(requestKey(span.id));
+      // It keeps the request's first start; in the story it goes on when its node runs again.
+      const parent = span.parentId ? model.spans[span.parentId] : undefined;
+      const resumedAt = continued && parent && ms(parent.startedAt) > ms(at) ? parent.startedAt : at;
+      raw.push({ type: 'ask', key: `s:${span.id}`, at: resumedAt, seq: span.seq, span, ...(continued && { continued: true }) });
+      if (span.endedAt && !(goesOn.has(span.id) && span.status === 'canceled'))
         raw.push({
           type: 'reply',
           key: `r:${span.id}`,
@@ -1016,7 +1114,7 @@ export function storyOf(model: RunModel): StoryEntry[] {
           result: resultOf(span),
         });
     } else if (span.kind === 'wait') {
-      raw.push({ type: 'wait', key: `s:${span.id}`, at, seq: span.seq, span });
+      if (!echoes.story.has(span.id)) raw.push({ type: 'wait', key: `s:${span.id}`, at, seq: span.seq, span });
     } else if (QUIET_KINDS.has(span.kind) && !insideRequest(model, span)) {
       if (span.status === 'error')
         raw.push({
@@ -1081,6 +1179,23 @@ export function edgeParts(edge: RunEdge): string[] {
 export function quietMs(model: RunModel, now: number): number {
   if (!model.live || !model.lastAt) return 0;
   return Math.max(0, now - ms(model.lastAt));
+}
+
+/**
+ * What an actor's model use came to, in one line: "3 model calls · 12,345 in (9,000 cached) · 678 out · $0.0123 ·
+ * claude-sonnet-5-5". Undefined when it used no tokens here.
+ */
+export function spendLine(s: Pick<RunActorStats, 'modelCalls' | 'tokensIn' | 'tokensOut' | 'cacheRead' | 'costUsd' | 'priced' | 'models'>): string | undefined {
+  if (!s.tokensIn && !s.tokensOut) return undefined;
+  return [
+    s.modelCalls ? `${s.modelCalls} model call${s.modelCalls === 1 ? '' : 's'}` : '',
+    `${s.tokensIn.toLocaleString('en-US')} in${s.cacheRead ? ` (${s.cacheRead.toLocaleString('en-US')} cached)` : ''}`,
+    `${s.tokensOut.toLocaleString('en-US')} out`,
+    s.priced ? formatCost(s.costUsd) : '',
+    s.models.join(', '),
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 /** A readable length of time: "420 ms", "8.4 s", "3m 05s". */

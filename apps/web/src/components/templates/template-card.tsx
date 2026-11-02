@@ -1,13 +1,17 @@
 'use client';
+import { useState } from 'react';
 import Link from 'next/link';
-import { Ban, Globe, HardDrive, KeyRound, PackageX, Store } from 'lucide-react';
+import { Ban, Globe, HardDrive, KeyRound, LayoutTemplate, PackageX, Store } from 'lucide-react';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { TEMPLATE_CATEGORIES, type TemplateSummary } from '@/lib/shared/templates';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
+import { AgentAvatar } from '@/components/agents/avatar';
 import { Badge, Chip } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { NodeIcon } from '@/components/ui/icon';
-import { plainText } from './use-templates';
+import { UseTemplateDialog } from './use-template-dialog';
+import { plainText, useTemplateDetail } from './use-templates';
 
 const MAX_ICONS = 6;
 
@@ -71,7 +75,74 @@ export function SourceBadge({ template, remoteLabel }: { template: Pick<Template
   return null;
 }
 
-export function TemplateCard({ template, types, index, href, remoteLabel }: { template: TemplateSummary; types: Record<string, NodeTypeInfo>; index: number; href: string; remoteLabel?: string }) {
+/** The "Use template" setup for a card, loading the template when it opens. */
+function UseFromCard({ id, folderId, projectId, onClose }: { id: string; folderId?: string; projectId?: string; onClose: () => void }) {
+  const { template } = useTemplateDetail(id, projectId);
+  return template ? <UseTemplateDialog template={template} folderId={folderId} projectId={projectId ?? template.projectId} onClose={onClose} /> : null;
+}
+
+/**
+ * A team template's card (docs/templates.md#team-templates): the members' faces in a row, what the person picks, and a
+ * "Use template" button that opens the same setup as the template's page, which asks for each credential.
+ */
+function TeamCard({ template, index, href, folderId, projectId }: { template: TemplateSummary; index: number; href: string; folderId?: string; projectId?: string }) {
+  const [using, setUsing] = useState(false);
+  const team = template.team!;
+  return (
+    <div
+      style={{ animationDelay: `${Math.min(index, 18) * 15}ms` }}
+      data-testid="team-template-card"
+      className={cn('group relative flex min-h-[172px] flex-col gap-2.5 rounded-2xl border border-hair bg-sf px-4 py-3.5 text-left transition-colors animate-fade-up hover:border-ac', !template.usable && 'bg-sf2')}
+    >
+      <div className="flex items-center gap-2">
+        <div className="flex items-center" aria-label={`Members: ${team.faces.map((f) => f.name).join(', ')}`}>
+          {team.faces.slice(0, 6).map((face, i) => (
+            <span key={`${face.name}-${i}`} title={face.name} className={cn('rounded-full ring-2 ring-[var(--sf)]', i > 0 && '-ml-2')}>
+              <AgentAvatar agent={face} size={30} round />
+            </span>
+          ))}
+          {team.faces.length > 6 && <span className="pl-1.5 text-[12px] text-t3">+{team.faces.length - 6}</span>}
+        </div>
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          <ProblemBadge template={template} />
+          <SourceBadge template={template} />
+        </span>
+      </div>
+      <div className="min-w-0">
+        <h3 className="line-clamp-2 text-[14px] font-semibold leading-snug text-t1 group-hover:text-ac">
+          <Link href={href} className="after:absolute after:inset-0 after:rounded-2xl focus-visible:outline-none">
+            {template.name}
+          </Link>
+        </h3>
+        <p className="mt-1 line-clamp-3 text-[12px] leading-snug text-t2">{plainText(template.description) || 'No description.'}</p>
+      </div>
+      <div className="mt-auto flex flex-col gap-2">
+        {team.picks.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5" data-testid="you-pick">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">You pick</span>
+            {team.picks.map((pick) => (
+              <Chip key={pick} className="py-0 text-[11px]">
+                {pick}
+              </Chip>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-t3">
+            {team.members} members{team.hasWorkflow ? ' · with its flow' : ''}
+          </span>
+          <Button size="sm" variant="primary" className="relative z-10 ml-auto" disabled={!template.usable} onClick={() => setUsing(true)} title={template.usable ? undefined : template.problems.map((p) => p.message).join('\n')}>
+            <LayoutTemplate className="size-3.5" /> Use template
+          </Button>
+        </div>
+      </div>
+      {using && <UseFromCard id={template.id} folderId={folderId} projectId={projectId ?? template.projectId} onClose={() => setUsing(false)} />}
+    </div>
+  );
+}
+
+export function TemplateCard({ template, types, index, href, remoteLabel, folderId, projectId }: { template: TemplateSummary; types: Record<string, NodeTypeInfo>; index: number; href: string; remoteLabel?: string; folderId?: string; projectId?: string }) {
+  if (template.team) return <TeamCard template={template} index={index} href={href} folderId={folderId} projectId={projectId} />;
   const credentials = template.credentials.filter((c) => !c.optional).length;
   return (
     <Link
@@ -103,9 +174,7 @@ export function TemplateCard({ template, types, index, href, remoteLabel }: { te
               <KeyRound className="size-3" /> {credentials}
             </span>
           )}
-          <span>
-            {template.nodeCount} node{template.nodeCount === 1 ? '' : 's'}
-          </span>
+          <span>{template.nodeCount} node{template.nodeCount === 1 ? '' : 's'}</span>
         </span>
       </div>
     </Link>

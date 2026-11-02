@@ -10,14 +10,22 @@ import { Hourglass, Pause, Play, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { decideGate, decideToolApprovals, resolveCheck, useRunJournal, type RunJournal } from '@/lib/client/run-trace';
-import { RUN_PROFILES, resolveRunProfile } from '@/lib/shared/run-profiles';
+import { api } from '@/lib/client/api';
+import { decideAsk, useWorkingMembers } from '@/lib/client/run-controls';
+import type { ExecutionRecord } from '@/lib/shared/types';
+import { RUN_PROFILES, resolveRunProfile, type RunProfile } from '@/lib/shared/run-profiles';
+import { needsFaces } from '@/lib/shared/approval-evidence';
+import type { RunChanges } from '@/lib/shared/run-changes';
 import { foldChanges } from '@/lib/shared/run-changes';
 import { githubOf } from '@/lib/shared/run-repo';
 import { lineCommentsNote } from '@/lib/shared/line-comments';
 import { buildRunReport, checksLine, type RunReport } from '@/lib/shared/run-report';
 import { cut, fmtMs, foldJournal, preview, quietMs, type NeedsYouItem, type RunCheckItem, type RunModel } from '@/lib/shared/run-trace-model';
+import { turnEntryKey } from '@/lib/shared/run-headlines';
 import { useNow } from '../run/run-status';
+import { useNewLook } from '../shell/look-toggle';
 import { Badge } from '../ui/badge';
+import { ApprovalCard, NeedFaces } from './approval-card';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { Textarea } from '../ui/inputs';
@@ -25,6 +33,9 @@ import { Artifacts } from './artifacts';
 import { LineCommentsProvider, useLineComments } from './line-comments';
 import { Card, ToneBadge, clock } from './parts';
 import { Report } from './report';
+import { MembersAtWork, RerunOfBadge, RunControlsProvider } from './run-controls';
+import { RunTimelineCard } from './run-timeline-card';
+import { TakeOver } from '../editor/team-pause';
 import { DetailSheet, type Open } from './sheet';
 import { Story } from './story';
 import { Team } from './team';
@@ -63,6 +74,7 @@ function Head({ model, report, now, replay }: { model: RunModel; report?: RunRep
   const waiting = model.status === 'waiting' || model.needsYou.some((n) => n.kind === 'wait');
   return (
     <div className="flex flex-wrap items-center gap-1.5">
+      <RerunOfBadge model={model} />
       {model.live ? (
         <Badge tone="warning">
           <span className="size-1.5 rounded-full bg-warn animate-pulse-soft" />
@@ -120,6 +132,10 @@ function NeedsYou({
   onResolve,
   busy,
   onDecided,
+  model,
+  changes,
+  profile,
+  onTab,
 }: {
   items: NeedsYouItem[];
   executionId: string;
@@ -128,7 +144,14 @@ function NeedsYou({
   onResolve: (item: RunCheckItem, decision: 'accepted' | 'sent_back') => void;
   busy?: string;
   onDecided: () => void;
+  /** The run, for the new look's approval card: its words, case and evidence. */
+  model: RunModel;
+  changes: RunChanges;
+  profile: RunProfile;
+  onTab: (tab: Tab) => void;
 }) {
+  const newLook = useNewLook();
+  const faces = useMemo(() => (newLook ? needsFaces(model, items) : []), [newLook, model, items]);
   const [deciding, setDeciding] = useState<string>();
   // Send back's note: the line comments from the Artifacts tab, or what the person wrote over them.
   const store = useLineComments();
@@ -156,10 +179,11 @@ function NeedsYou({
       setDeciding(undefined);
     }
   };
-  const decide = async (spanId: string, approved: boolean) => {
+  const decide = async (spanId: string, approved: boolean, ask?: string) => {
     setDeciding(`${spanId}:${approved}`);
     try {
-      const done = await decideToolApprovals(executionId, approved);
+      // A command a member's guard asks about (the run is not paused): decided by its own route.
+      const done = ask ? Boolean(await decideAsk(executionId, ask, approved)) : await decideToolApprovals(executionId, approved);
       if (done) {
         toast.success(approved ? 'Approved' : 'Rejected');
         onDecided();
@@ -175,17 +199,37 @@ function NeedsYou({
   };
   return (
     <div className="flex flex-col gap-2" aria-label="Needs you">
+      {faces.length > 0 && <NeedFaces faces={faces} className="px-1" />}
       {shown.map((n) =>
-        n.kind === 'wait' ? (
+        // The new look: a tool approval is a decision card with the member's reasons and the evidence it looked at.
+        newLook && n.kind === 'wait' && n.attrs.wait === 'approval' ? (
+          <ApprovalCard key={`w${n.spanId}`} wait={n} model={model} executionId={executionId} executionHref={executionHref} changes={changes} profile={profile} open={open} onTab={(tab, member) => (member && tab === 'team' ? open({ kind: 'actor', id: model.actors.find((a) => a.actor.name.trim().toLowerCase() === member.trim().toLowerCase())?.actor.id ?? '' }) : onTab(tab))} onDecided={onDecided} />
+        ) : n.kind === 'wait' ? (
           <Card key={`w${n.spanId}`} tone="warn" className="bg-warndim">
             <div className="text-[13px] text-t1">
-              <b>Needs {n.actor.name}</b>
+              <b>{n.attrs.wait === 'pause' ? n.title : `Needs ${n.actor.name}`}</b>
               <span className="text-t2">
                 {' '}
-                · {n.caller ? `${n.caller.name} waiting` : 'waiting'} since {clock(n.since)}
+                {/* A team member's tool: the run's wait names the member (its caller is the node, the lead). */}
+                · {n.attrs.wait === 'pause' ? 'paused' : typeof n.attrs.member === 'string' ? `${n.attrs.member} waiting` : n.caller ? `${n.caller.name} waiting` : 'waiting'} since {clock(n.since)}
               </span>
             </div>
-            <p className="mt-1 line-clamp-3 text-[13.5px] text-t1">{n.detail ?? n.title}</p>
+            {n.attrs.wait === 'approval' && typeof n.attrs.member === 'string' && typeof n.attrs.tool === 'string' ? (
+              // A team member's tool: what it is and what it acts on, then what it would do, quoted.
+              <>
+                <p className="mt-1 text-[13.5px] text-t1">
+                  {n.attrs.member} wants to use <span className="font-mono font-semibold">{n.attrs.tool}</span>
+                  {typeof n.attrs.target === 'string' && <span className="text-t2"> on {n.attrs.target}</span>}
+                </p>
+                {typeof n.attrs.summary === 'string' && (
+                  <blockquote className="mt-1.5 line-clamp-4 whitespace-pre-line rounded-xl border border-warn/30 bg-sf px-3 py-1.5 text-[13px] leading-5 text-t1" data-testid="needs-you-summary">
+                    “{n.attrs.summary}”
+                  </blockquote>
+                )}
+              </>
+            ) : (
+              <p className="mt-1 line-clamp-3 text-[13.5px] text-t1">{n.detail ?? n.title}</p>
+            )}
             {n.attrs.wait === 'gate' && (comments.length > 0 || noting) && (
               <div className="mt-2 flex flex-col gap-1">
                 <label htmlFor={`note-${n.spanId}`} className="text-[12px] text-t2">
@@ -212,13 +256,25 @@ function NeedsYou({
                 </>
               ) : n.attrs.wait === 'approval' ? (
                 <>
-                  <Button variant="primary" loading={deciding === `${n.spanId}:true`} disabled={Boolean(deciding)} onClick={() => decide(n.spanId, true)}>
+                  <Button variant="primary" loading={deciding === `${n.spanId}:true`} disabled={Boolean(deciding)} onClick={() => decide(n.spanId, true, typeof n.attrs.ask === 'string' ? n.attrs.ask : undefined)}>
                     Approve
                   </Button>
-                  <Button variant="danger" loading={deciding === `${n.spanId}:false`} disabled={Boolean(deciding)} onClick={() => decide(n.spanId, false)}>
+                  <Button variant="danger" loading={deciding === `${n.spanId}:false`} disabled={Boolean(deciding)} onClick={() => decide(n.spanId, false, typeof n.attrs.ask === 'string' ? n.attrs.ask : undefined)}>
                     Reject
                   </Button>
                 </>
+              ) : n.attrs.wait === 'pause' ? (
+                <TakeOver executionId={executionId} member={String(n.attrs.member ?? n.actor.name)} remote={n.attrs.mode === 'redirect'} onDone={onDecided} className="w-full" />
+              ) : n.attrs.wait === 'form' ? (
+                // A form wait (a team member's question among them) is answered on the run's form page.
+                <a
+                  href={`/form/waiting/${executionId}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="inline-flex h-8 items-center rounded-full bg-ac2 px-[15px] text-[13px] font-semibold text-on-ac hover:bg-ac2-hover"
+                >
+                  Answer
+                </a>
               ) : (
                 executionHref && (
                   <Link
@@ -266,11 +322,26 @@ export function RunTraceView({ executionId, executionHref, className }: { execut
 
 /** The trace of a journal the caller already loaded (the execution page reads it once for its view switch). */
 export function RunTraceBody(props: Parameters<typeof TraceBody>[0]) {
+  const { executionId } = props;
+  // Which workflow the run is of and whether it re-ran another: the controls (re-run, copy to the editor) and the header use them.
+  const [meta, setMeta] = useState<Pick<ExecutionRecord, 'workflowId' | 'rerunOf'>>();
+  useEffect(() => {
+    let cancelled = false;
+    setMeta(undefined);
+    api<{ execution: ExecutionRecord }>(`/api/executions/${executionId}`)
+      .then((r) => !cancelled && setMeta({ workflowId: r.execution.workflowId, rerunOf: r.execution.rerunOf }))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [executionId]);
   // Line comments on diffs are kept per run and read by the gate's Send back.
   return (
-    <LineCommentsProvider executionId={props.executionId}>
-      <TraceBody {...props} />
-    </LineCommentsProvider>
+    <RunControlsProvider value={{ executionId, workflowId: meta?.workflowId, rerunOf: meta?.rerunOf }}>
+      <LineCommentsProvider executionId={executionId}>
+        <TraceBody {...props} />
+      </LineCommentsProvider>
+    </RunControlsProvider>
   );
 }
 
@@ -293,7 +364,52 @@ function TraceBody({
   const [settled, setSettled] = useState<Set<string>>(new Set());
   const [playing, setPlaying] = useState(false);
 
-  useEffect(() => setTabState(readTab()), []);
+  const working = useWorkingMembers(executionId, full.live);
+
+  // A link from a team node's ribbon (?tab=team&member=Developer) opens that tab, and the member's sheet once it loads.
+  const [wanted, setWanted] = useState<string>();
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const asked = params.get('tab');
+    setTabState(asked && TABS.some(([id]) => id === asked) ? (asked as Tab) : readTab());
+    const member = params.get('member');
+    // ?tab=story&member=Developer&turn=2 (a ribbon segment): the Story at that turn, not the member's sheet.
+    const turn = Number(params.get('turn'));
+    if (member && turn > 0 && asked === 'story') setWantedTurn({ member, n: turn });
+    else if (member) setWanted(member);
+    // A link from a notebook note (?span=<id>) opens the span the note was written in.
+    const span = params.get('span');
+    if (span) setWantedSpan(span);
+  }, []);
+  const [wantedSpan, setWantedSpan] = useState<string>();
+  const [wantedTurn, setWantedTurn] = useState<{ member: string; n: number }>();
+  useEffect(() => {
+    if (!wantedTurn || full.empty) return;
+    const key = turnEntryKey(full, wantedTurn.member, wantedTurn.n);
+    if (!key) return;
+    setWantedTurn(undefined);
+    // After the Story has drawn: scroll the turn to the middle and keep it marked a few seconds. No cleanup: clearing
+    // `wantedTurn` re-runs this effect, which would cancel the scroll.
+    setTimeout(() => {
+      const el = document.getElementById(`story-${key}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('animate-flash', 'ring-2', 'ring-viz-1/50');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-viz-1/50'), 4000);
+    }, 150);
+  }, [wantedTurn, full]);
+  useEffect(() => {
+    if (!wantedSpan || full.empty) return;
+    if (wantedSpan in full.spans) setTarget({ kind: 'span', id: wantedSpan });
+    setWantedSpan(undefined);
+  }, [wantedSpan, full]);
+  useEffect(() => {
+    if (!wanted || full.empty) return;
+    const stats = full.actors.find((a) => a.actor.name.trim().toLowerCase() === wanted.trim().toLowerCase());
+    if (!stats) return;
+    setTarget({ kind: 'actor', id: stats.actor.id });
+    setWanted(undefined);
+  }, [wanted, full]);
   const setTab = (t: Tab) => {
     setTabState(t);
     try {
@@ -392,7 +508,11 @@ function TraceBody({
         <Head model={model} report={report} now={now} replay={replay} />
       </div>
 
-      <NeedsYou items={needs} executionId={executionId} executionHref={executionHref} open={open} onResolve={onResolve} busy={busy} onDecided={refresh} />
+      <RunTimelineCard model={model} onStory={() => setTab('story')} />
+
+      {!replay && <MembersAtWork executionId={executionId} members={working.members} onChanged={() => { working.refresh(); refresh(); }} />}
+
+      <NeedsYou items={needs} executionId={executionId} executionHref={executionHref} open={open} onResolve={onResolve} busy={busy} onDecided={refresh} model={model} changes={changes} profile={profileId ? RUN_PROFILES[profileId] : resolveRunProfile(model.run?.attrs.profile)} onTab={setTab} />
 
       <div role="tablist" aria-label="Run views" className="grid grid-cols-5 gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
         {TABS.map(([id, label]) => (

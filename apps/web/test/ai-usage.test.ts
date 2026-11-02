@@ -99,6 +99,19 @@ describe('price table', () => {
     expect(estimateCost(undefined, 1000, 1000)).toBe(0);
   });
 
+  it('prices the 5.5 models: cache reads at 5% of input, and Haiku 5.5 at its long-context tier over 100K', () => {
+    const sonnet = findPrice('anthropic', 'claude-sonnet-5-5')!;
+    expect(sonnet).toMatchObject({ input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 });
+    expect(findPrice('anthropic', 'claude-opus-5-5')).toMatchObject({ input: 4, output: 20, cacheRead: 0.2 });
+    // 10K fresh input, 90K read from the cache, 1K out.
+    expect(estimateCost(sonnet, 100_000, 1_000, 90_000)).toBeCloseTo((10_000 * 2 + 90_000 * 0.1 + 1_000 * 10) / 1e6, 9);
+    const haiku = findPrice('anthropic', 'claude-haiku-5-5')!;
+    expect(haiku.longContext).toMatchObject({ above: 100_000, input: 0.5, output: 2.5 });
+    expect(estimateCost(haiku, 100_000, 1_000)).toBeCloseTo((100_000 * 0.1 + 1_000 * 0.5) / 1e6, 9);
+    // Over the threshold the whole request is at the long-context price.
+    expect(estimateCost(haiku, 200_000, 1_000)).toBeCloseTo((200_000 * 0.5 + 1_000 * 2.5) / 1e6, 9);
+  });
+
   it('formats costs and tokens', () => {
     expect(formatCost(0)).toBe('$0');
     expect(formatCost(0.00002)).toBe('<$0.0001');

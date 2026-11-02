@@ -129,6 +129,13 @@
        "idempotent": true
       },
       {
+       "name": "Get Room",
+       "value": "getRoom",
+       "description": "The incident and its whole timeline in one item: the input of Landflow's \"Make a runbook\" (POST /api/runbooks/draft)",
+       "action": "Get a room with its timeline",
+       "idempotent": true
+      },
+      {
        "name": "Get Many",
        "value": "getAll",
        "description": "List incidents",
@@ -180,6 +187,12 @@
        "value": "addNote",
        "description": "Post a chat message in the room",
        "action": "Add a note"
+      },
+      {
+       "name": "Add Runbook Link",
+       "value": "addRunbookLink",
+       "description": "Post a note in the room that names a Landflow runbook and links to it (Landfall has no field for a link on an alert, so it goes on the timeline)",
+       "action": "Add a runbook link"
       },
       {
        "name": "Get Events",
@@ -661,7 +674,8 @@
        "operation": [
         "getEvents",
         "addEvent",
-        "addNote"
+        "addNote",
+        "addRunbookLink"
        ]
       }
      },
@@ -808,6 +822,41 @@
       }
      },
      "description": "Posted as a chat.message event, as the member who owns the API key"
+    },
+    {
+     "name": "runbookName",
+     "displayName": "Runbook Name",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "timeline"
+       ],
+       "operation": [
+        "addRunbookLink"
+       ]
+      }
+     },
+     "description": "The runbook's name (the Find Runbook node's runbook.name)"
+    },
+    {
+     "name": "runbookUrl",
+     "displayName": "Runbook URL",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "timeline"
+       ],
+       "operation": [
+        "addRunbookLink"
+       ]
+      }
+     },
+     "description": "Where responders open it (the Find Runbook node's runbook.url, made absolute)"
     },
     {
      "name": "incidentId",

@@ -40,6 +40,7 @@ import { WorkflowTabs } from '../shell/workflow-tabs';
 import { prefetchFailure, useAssistant } from './assistant';
 import { BrainCanvasCard } from '../brain/canvas-card';
 import { focusSpotlight, Spotlight, SpotlightActivity } from './spotlight';
+import { BuildCard, BuildProgressBar, GhostEdgeView, GhostNodeView, useGhosts } from './building';
 import { ChatPanel, type ChatApproval, type ChatChunk, type ChatFile, type ChatOutcome } from './chat-panel';
 import { parseClipboard, type ClipboardData } from './clipboard';
 import { FlowEdgeView } from './flow-edge';
@@ -62,10 +63,11 @@ import { PublishControl } from './publish-control';
 import { ListeningBar, listenForTestEvent, stopListening, testTriggerFor, useTestListener } from './test-listener';
 import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from './edit-lock';
 import { followable, useFollowRun } from './follow-run';
+import { pinFromRun } from './pin-from-run';
 import { useFollowWaiting } from './waiting';
 
-const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView };
-const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView };
+const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView, ghost: GhostNodeView };
+const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView, ghost: GhostEdgeView };
 
 type RunResult = { executionId?: string; status: string; lastNodeId?: string; error?: { message: string }; approval?: ChatApproval };
 
@@ -133,6 +135,32 @@ function KeepRunningInView({ moved }: { moved: RefObject<boolean> }) {
   return null;
 }
 
+/**
+ * While a change is being built (new look), a ghost that lands outside the view brings the whole flow and its ghosts into
+ * view, never zooming in: a node added after the last one is often past the right edge.
+ */
+function KeepGhostsInView({ ids }: { ids: string[] }) {
+  const { fitView, getZoom } = useReactFlow();
+  const outside = useStore((s) => {
+    const [x, y, zoom] = s.transform;
+    return ids.some((id) => {
+      const node = s.nodeLookup.get(id);
+      if (!node) return false;
+      const { x: nx, y: ny } = node.internals.positionAbsolute;
+      const w = node.measured?.width ?? 80;
+      const h = node.measured?.height ?? 80;
+      // The node and its label below; Spotlight's bar sits at the bottom.
+      return nx * zoom + x < 8 || (nx + w) * zoom + x > s.width - 8 || ny * zoom + y < 8 || (ny + h + 40) * zoom + y > s.height - 72;
+    });
+  });
+  useEffect(() => {
+    if (!outside || !ids.length) return;
+    const timer = setTimeout(() => void fitView({ padding: { top: '72px', bottom: '120px', left: '48px', right: '48px' }, maxZoom: getZoom(), duration: 400 }), 80);
+    return () => clearTimeout(timer);
+  }, [outside, ids, fitView, getZoom]);
+  return null;
+}
+
 function Canvas({ onSave }: { onSave: () => void }) {
   const flowNodes = useEditor((s) => s.nodes);
   const stickies = useEditor((s) => s.stickies);
@@ -144,7 +172,13 @@ function Canvas({ onSave }: { onSave: () => void }) {
   // collapsed composite's through its named outputs).
   const reports = useCompositeReports();
   const ports = useMemo(() => boxPorts(groups, reports), [groups, reports]);
-  const { nodes, edges } = useMemo<{ nodes: CanvasNode[]; edges: (FlowEdge | GroupProxyEdge)[] }>(() => canvasGraph(groups, stickies, flowNodes, flowEdges, ports), [groups, stickies, flowNodes, flowEdges, ports]);
+  const built = useMemo<{ nodes: CanvasNode[]; edges: (FlowEdge | GroupProxyEdge)[] }>(() => canvasGraph(groups, stickies, flowNodes, flowEdges, ports), [groups, stickies, flowNodes, flowEdges, ports]);
+  // New look: the nodes and connections a change being built adds, as dashed ghosts (./building.tsx). Not in the store.
+  const ghosts = useGhosts();
+  const nodes = useMemo(() => (ghosts.nodes.length ? [...built.nodes, ...(ghosts.nodes as unknown as CanvasNode[])] : built.nodes), [built.nodes, ghosts.nodes]);
+  const edges = useMemo(() => (ghosts.edges.length ? [...built.edges, ...(ghosts.edges as unknown as FlowEdge[])] : built.edges), [built.edges, ghosts.edges]);
+  const ghostKey = ghosts.nodes.map((n) => n.id).join(',');
+  const ghostIds = useMemo(() => (ghostKey ? ghostKey.split(',') : []), [ghostKey]);
   // Read-only (someone else holds the edit lock) swaps the store's editing actions, so re-read them.
   const readOnly = useEditLock((s) => s.readOnly);
   const { onNodesChange, onEdgesChange, onConnect, openNode, openPalette } = useEditor.getState();
@@ -337,6 +371,7 @@ function Canvas({ onSave }: { onSave: () => void }) {
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--canvas-dot)" />
       <KeepRunningInView moved={moved} />
+      <KeepGhostsInView ids={ghostIds} />
       <Controls position="bottom-left" showInteractive={false} className="!bottom-3 !left-3">
         <ControlButton onClick={() => useEditor.getState().undo()} disabled={!canUndo} title="Undo (⌘Z)" aria-label="Undo">
           <Undo2 />
@@ -618,6 +653,12 @@ export function Editor({ workflowId }: { workflowId: string }) {
         record
           .then((r) => {
             if (!r || useEditor.getState().running) return;
+            // "Copy to editor" from the Run Trace: the steps before the asked node keep this run's outputs as pinned test data.
+            const pin = requested ? new URLSearchParams(window.location.search).get('pin') : null;
+            if (pin) {
+              const count = pinFromRun(r.execution, pin);
+              toast.success(count ? `Pinned the outputs of ${count} step${count === 1 ? '' : 's'} from this run` : 'No earlier outputs to pin', { description: 'Fix the flow, then run it: pinned steps return their data instead of running.' });
+            }
             if (followable(r.execution)) useEditor.getState().attachRun(r.execution, r.progress, Boolean(requested));
             else useEditor.getState().loadExecution(r.execution, Boolean(requested));
           })
@@ -896,6 +937,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
               <EmptyCanvas />
               <CanvasToolbar />
               <SpotlightActivity />
+              <BuildProgressBar />
+              <BuildCard />
               <BrainCanvasCard />
               {/* One dock at the bottom: run controls, then Spotlight. The side padding keeps clear of zoom and the minimap.
                   When the canvas is narrow (a side panel open), Spotlight wraps to its own line above the run controls. */}

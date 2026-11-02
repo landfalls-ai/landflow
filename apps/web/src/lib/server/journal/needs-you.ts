@@ -5,6 +5,7 @@
  */
 import type { ExecutionRecord } from '../../shared/types';
 import type { JournalEvent, RunActor, RunCheck } from '../../shared/run-trace';
+import { openAsks } from '../a2a/agent-asks';
 import { liveExecution } from '../runner';
 import { store } from '../store';
 import { openWaitSpan } from './decisions';
@@ -21,6 +22,8 @@ export interface NeedsYouItem {
   title: string;
   detail?: string;
   actor?: RunActor;
+  /** The team member it is for (a member's tool or a guard's ask), when the wait names one. */
+  member?: string;
   spanId?: string;
   /** ISO: when it started waiting, or when the check failed. */
   since: string;
@@ -43,6 +46,9 @@ function waitItem(record: ExecutionRecord): NeedsYouItem | undefined {
   const approval = isObject(data.approval) && Array.isArray(data.approval.calls) ? data.approval : undefined;
   if (approval) {
     const tools = (approval.calls as unknown[]).filter(isObject).map((c) => String(c.tool)).filter(Boolean);
+    // A team member's tool (Run a Team): who wants it, and what for.
+    const team = isObject(data.teamApproval) ? data.teamApproval : undefined;
+    if (team) return { ...base, ...(typeof team.member === 'string' && { member: team.member }), kind: 'approval', title: `${String(team.member)} wants to use ${String(team.tool)}`, detail: typeof team.summary === 'string' && team.summary ? team.summary : record.workflowName };
     return { ...base, kind: 'approval', title: tools.length ? `${wait.nodeName} wants to run ${tools.join(', ')}` : `${wait.nodeName} needs an approval`, detail: record.workflowName };
   }
   if (wait.resume === 'form') {
@@ -80,14 +86,34 @@ export function needsYou(visible: Set<string> | undefined, now = Date.now()): Ne
     if (item?.kind === 'gate') gated.add(record.executionId);
   }
   const names = new Map<string, { workflowId: string; workflowName: string }>();
+  const nameOf = (executionId: string) => {
+    let execution = names.get(executionId);
+    if (!execution) {
+      const record = liveExecution(executionId) ?? store.getExecution(executionId);
+      if (record) names.set(executionId, (execution = { workflowId: record.workflowId, workflowName: record.workflowName }));
+    }
+    return execution;
+  };
+  // A command a Claude Code member asks about (a push to main): the run goes on, a person's word lets it through.
+  for (const ask of openAsks()) {
+    const execution = nameOf(ask.executionId);
+    if (!execution || (visible && !visible.has(execution.workflowId))) continue;
+    items.push({
+      executionId: ask.executionId,
+      workflowId: execution.workflowId,
+      workflowName: execution.workflowName,
+      kind: 'approval',
+      ...(ask.member && { member: ask.member }),
+      title: `${ask.member ?? 'An agent'} wants to run ${ask.command.length > 120 ? `${ask.command.slice(0, 119)}…` : ask.command}`,
+      detail: execution.workflowName,
+      spanId: ask.spanId,
+      since: ask.createdAt,
+    });
+  }
   for (const event of failedChecks(now)) {
     if (gated.has(event.executionId)) continue;
-    let execution = names.get(event.executionId);
-    if (!execution) {
-      const record = liveExecution(event.executionId) ?? store.getExecution(event.executionId);
-      if (!record) continue;
-      names.set(event.executionId, (execution = { workflowId: record.workflowId, workflowName: record.workflowName }));
-    }
+    const execution = nameOf(event.executionId);
+    if (!execution) continue;
     if (visible && !visible.has(execution.workflowId)) continue;
     const actor = spanStart(event.executionId, event.spanId)?.actor;
     const check: RunCheck = event.check;

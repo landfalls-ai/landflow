@@ -190,6 +190,14 @@ class Store {
     return parse<ExecutionRecord>(this.db.get<{ data: string }>('SELECT data FROM executions WHERE id = ?', id)?.data);
   }
 
+  /** The newest finished or waiting executions whose saved record contains `text` (a team id in a flow's snapshot), newest first. */
+  executionsMentioning(text: string, limit = 5): ExecutionRecord[] {
+    const pattern = `%${text.replace(/[%_\\]/g, '\\$&')}%`;
+    return this.db
+      .all<{ data: string }>("SELECT data FROM executions WHERE status <> 'running' AND data LIKE ? ESCAPE '\\' ORDER BY started_at DESC, id DESC LIMIT ?", pattern, Math.max(1, Math.floor(limit)))
+      .flatMap((row) => parse<ExecutionRecord>(row.data) ?? []);
+  }
+
   /** Saved executions in one state, oldest first. */
   executionsWithStatus(status: ExecutionState, workflowId?: string): ExecutionRecord[] {
     const rows = workflowId

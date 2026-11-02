@@ -16,10 +16,14 @@
  * - Claude Code binds a server whole and kagent pauses per server, so the tools that need an approval are on a second
  *   RemoteMCPServer, `<name>-approval` (`?tools=approval`; the first is `?tools=free`);
  * - the agent's Claude Code plugins go in the template's `plugins`: the image Landflow packed at the pinned commit when there
- *   is one (./oci.ts), else the git repository at that commit.
+ *   is one (./oci.ts), else the git repository at that commit;
+ * - with Landflow's landflow-harness mod among them, an **EgressPolicy** `<name>-landflow` opens Landflow's own origin to the
+ *   sandbox, which the Agent references after its other policies: kagent grants an MCP server's origin only to an agent
+ *   that binds tools from it, and the mod posts what it sees to /api/agent-trace/:id on every agent.
  *
  * The object kagent holds is compared with these to find drift (./deploy.ts), so every field here is one Landflow owns.
  */
+import { createHash } from 'node:crypto';
 import type { AgentConfig, KagentPlugin, KagentRuntime } from '../../shared/agents';
 import { personaPrompt } from '../../shared/persona';
 import { KAGENT_API, type KagentCluster } from './cluster';
@@ -28,6 +32,8 @@ import type { KubeObject } from './kube';
 export const AGENT_ID_LABEL = 'landflow.dev/agent-id';
 export const VERSION_ANNOTATION = 'landflow.dev/agent-version';
 export const TOKEN_ANNOTATION = 'landflow.dev/token-sha256';
+/** A hash of the tool names a RemoteMCPServer serves: a changed list changes the object, so kagent lists the tools again. */
+export const TOOLS_ANNOTATION = 'landflow.dev/tools-sha256';
 const MANAGED_BY = { 'app.kubernetes.io/managed-by': 'landflow' };
 export const MCP_TIMEOUT = '120s';
 
@@ -64,6 +70,8 @@ export interface CompileInput {
   plugins?: KagentPlugin[];
   /** EgressPolicies the Agent references: origins its sandbox may reach beyond Landflow and its model. */
   egressPolicies?: string[];
+  /** Claude Code with the landflow-harness mod: open Landflow's origin to the sandbox, which the mod reports to. */
+  landflowEgress?: boolean;
 }
 
 /** A DNS label for kagent from an agent's name: `Text formatter` → `text-formatter`. */
@@ -82,6 +90,8 @@ export function kagentName(name: string): string {
 export const validKagentName = (name: string) => /^[a-z0-9]([-a-z0-9]{0,51}[a-z0-9])?$/.test(name);
 
 export const secretName = (name: string) => `${name}-landflow`;
+/** The EgressPolicy that lets the sandbox reach Landflow (its mod's reports): the Secret's name, as another kind. */
+export const landflowEgressName = (name: string) => `${name}-landflow`;
 /** Claude Code: the RemoteMCPServer with the tools kagent pauses on. */
 export const approvalServerName = (name: string) => `${name}-approval`;
 export const mcpServerPath = (agentId: string) => `/api/mcp/agents/${encodeURIComponent(agentId)}`;
@@ -136,15 +146,34 @@ export function modelSpec(config: AgentConfig, settings: ModelSettings, secret: 
   }
 }
 
+/** An EgressPolicy origin as kagent's schema takes it (scheme, DNS name, port): none for an IP address or a path. */
+const EGRESS_ORIGIN = /^https?:\/\/([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)*[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:\d{1,5})?$/;
+export function egressOrigin(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const origin = new URL(url).origin;
+    return EGRESS_ORIGIN.test(origin) ? origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** A pinned plugin as a template source: its image when Landflow packed one, else its repository at the commit. */
 export const pluginSource = (p: KagentPlugin) => ({ source: p.oci ? { oci: p.oci } : { git: { url: p.url, commit: p.commit }, ...(p.path && { path: p.path }) } });
+
+/** The first 16 hex digits of the sha256 of the sorted names of the tools one server serves. */
+export function toolsHash(tools: ExposedTool[], part?: 'free' | 'approval'): string {
+  const names = tools.filter((t) => !part || Boolean(t.requireApproval) === (part === 'approval')).map((t) => t.name).sort();
+  return createHash('sha256').update(names.join('\n')).digest('hex').slice(0, 16);
+}
 
 function mcpServer(input: CompileInput, name: string, secret: string, tools?: 'free' | 'approval'): KubeObject {
   return {
     apiVersion: KAGENT_API,
     kind: 'RemoteMCPServer',
-    // The token's hash: a new token changes the object, so the controller reads the Secret again.
-    metadata: metadata(input, name, { [TOKEN_ANNOTATION]: input.tokenHash }),
+    // The token's hash: a new token changes the object, so the controller reads the Secret again. The tools' hash: a tool
+    // added or removed within one version (a server that answers now) changes it too, so kagent lists them again.
+    metadata: metadata(input, name, { [TOKEN_ANNOTATION]: input.tokenHash, [TOOLS_ANNOTATION]: toolsHash(input.tools, tools) }),
     spec: {
       description: `The tools of the Landflow agent “${input.config.name}”${tools === 'approval' ? ' that wait for a person’s approval' : ''}`,
       url: `${input.cluster.landflowUrl}${mcpServerPath(input.agentId)}${tools ? `?tools=${tools}` : ''}`,
@@ -161,6 +190,8 @@ export function kagentManifests(input: CompileInput): KubeObject[] {
   const claude = input.runtime === 'claude';
   const model = (claude ? claudeModelSpec : modelSpec)(config, input.model ?? {}, secret);
   const plugins = claude ? (input.plugins ?? []) : [];
+  const landflowOrigin = claude && input.landflowEgress ? egressOrigin(input.cluster.landflowUrl) : undefined;
+  const egress = [...(input.egressPolicies ?? []), ...(landflowOrigin ? [landflowEgressName(name)] : [])];
   return [
     {
       apiVersion: 'v1',
@@ -184,6 +215,9 @@ export function kagentManifests(input: CompileInput): KubeObject[] {
         ...(plugins.length && { plugins: plugins.map(pluginSource) }),
       },
     },
+    ...(landflowOrigin
+      ? [{ apiVersion: KAGENT_API, kind: 'EgressPolicy', metadata: metadata(input, landflowEgressName(name)), spec: { destinations: [{ origin: landflowOrigin }] } }]
+      : []),
     {
       apiVersion: KAGENT_API,
       kind: 'Agent',
@@ -191,7 +225,7 @@ export function kagentManifests(input: CompileInput): KubeObject[] {
       spec: {
         template: { ref: { name } },
         harnessRef: { name: input.harness ?? input.cluster.harness },
-        ...(input.egressPolicies?.length && { egressPolicyRefs: input.egressPolicies.map((policy) => ({ name: policy })) }),
+        ...(egress.length && { egressPolicyRefs: egress.map((policy) => ({ name: policy })) }),
       },
     },
   ];

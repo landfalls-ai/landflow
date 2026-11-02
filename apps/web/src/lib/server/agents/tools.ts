@@ -12,6 +12,7 @@ import type {
   Agent,
   AgentConfig,
   AgentSession,
+  AgentTraceSummary,
   McpServerToolConfig,
   NodeToolConfig,
   PendingCall,
@@ -41,10 +42,13 @@ import {
   type AgentCard,
   type HitlRequest,
   type OutgoingMessage,
+  cancelTask as cancelRemoteTask,
 } from '../a2a/client';
+import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
 import { callAgent, landflowTags, remoteRunOf, throttled } from '../a2a/traced';
 import { credentials } from '../credentials/vault';
 import { agentToolsFrom, endpointFrom, listMcpTools, resourceAndPromptTools, selectTools } from '../mcp/client';
+import { githubMcpUrl, githubToolsOf, isGithubPreset } from '../mcp/github';
 import { registry } from '../plugins/registry';
 import { workflowForCall } from '../publish';
 import { runWorkflow } from '../runner';
@@ -97,6 +101,8 @@ export interface BuiltTool extends ToolSpec {
   invoke(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome>;
   /** After a pause (ToolOutcome.pause): send the person's decision and carry on. */
   resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext, answer?: string): Promise<ToolOutcome>;
+  /** A remote agent: stop the task it works on (A2A CancelTask), so a person can redirect it (agent-teams/pause.ts). */
+  cancelTask?(taskId: string): Promise<void>;
 }
 
 export interface Toolset {
@@ -173,22 +179,28 @@ async function mcpServerTools(config: McpServerToolConfig): Promise<BuiltTool[] 
   const resolved = registry.resolve(MCP_CLIENT_TOOL);
   if ('error' in resolved) return { error: `${config.name}: ${resolved.error}` };
   try {
-    const resolveSecrets = () => credentials.resolveFor({ type: MCP_CLIENT_TOOL, credentials: config.credentials, parameters: config.parameters }, resolved.descriptor);
+    const github = isGithubPreset(config);
+    // GitHub's server: the bundled one unless the agent names another; always a bearer token, which is the credential.
+    const parameters = github
+      ? { ...config.parameters, authentication: 'bearerAuth', endpointUrl: String(config.parameters.endpointUrl ?? '').trim() || githubMcpUrl() }
+      : config.parameters;
+    const resolveSecrets = () => credentials.resolveFor({ type: MCP_CLIENT_TOOL, credentials: config.credentials, parameters }, resolved.descriptor);
     // An OAuth2 credential's token is renewed before the call (it may have expired since the last run).
     const secrets = (await credentials.freshen(resolveSecrets())) ?? resolveSecrets();
-    const endpoint = endpointFrom(config.parameters, secrets);
+    const endpoint = endpointFrom(parameters, secrets);
     // A 401 mid-run (the token was revoked or expired early): renew it by force and use the new header once.
-    if (config.parameters.authentication === 'mcpOAuth2') {
+    if (parameters.authentication === 'mcpOAuth2') {
       endpoint.reauth = async () => {
         const renewed = await credentials.freshen(resolveSecrets(), true);
-        return renewed ? endpointFrom(config.parameters, renewed).headers : undefined;
+        return renewed ? endpointFrom(parameters, renewed).headers : undefined;
       };
     }
-    const { include, includeTools, excludeTools, extras } = config.parameters;
+    const { include, includeTools, excludeTools, extras } = parameters;
     const tools = [
-      ...agentToolsFrom(endpoint, selectTools(await listMcpTools(endpoint), include, includeTools, excludeTools)),
+      // GitHub's server: only what the agent's access allows, whatever the server lists (lib/server/mcp/github.ts).
+      ...agentToolsFrom(endpoint, github ? githubToolsOf(config, await listMcpTools(endpoint)) : selectTools(await listMcpTools(endpoint), include, includeTools, excludeTools)),
       // Resources and prompts as tools (list_resources, read_resource, list_prompts, get_prompt), when the server config asks.
-      ...resourceAndPromptTools(endpoint, Array.isArray(extras) ? extras.map(String) : []),
+      ...(github ? [] : resourceAndPromptTools(endpoint, Array.isArray(extras) ? extras.map(String) : [])),
     ];
     return tools.map((tool) => ({
       // Shown with the MCP Client Tool's icon in the timeline.
@@ -233,6 +245,13 @@ export interface A2aToolOptions {
   onPerson?(text: string): void;
 }
 
+/** A remote run with what the agent's mod reported: its usage (unless the task carried its own) and the trace. */
+export function withTrace(remote: RemoteRun, summary: AgentTraceSummary | undefined): RemoteRun {
+  if (!summary) return remote;
+  const usage = remote.usage ?? usageOfTrace(summary);
+  return { ...remote, ...(usage && { usage }), trace: summary };
+}
+
 /** An A2A agent as an `ask_<name>` tool: its card is read when the run starts (an agent that can't be reached is a notice). */
 export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aToolOptions = {}): Promise<BuiltTool | { error: string }> {
   const resolved = registry.resolve(A2A_AGENT);
@@ -250,17 +269,31 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
   const extensions = options.humanInTheLoop !== false && supportsExtension(card, KAGENT_HITL_EXTENSION) ? [KAGENT_HITL_EXTENSION] : [];
   const name = toToolName(`ask_${config.name}`);
 
-  /** Send one message and turn the task it ends with into the tool's outcome. */
+  /**
+   * Send one message and turn the task it ends with into the tool's outcome. A Landflow agent on kagent with the
+   * landflow-harness mod reports what it does to a trace for this call (a2a/agent-trace.ts): its real usage, cost, tool
+   * calls and guardrail stops replace the estimate.
+   */
   async function run(message: OutgoingMessage, ctx: ToolContext, rejections = 0): Promise<ToolOutcome> {
     const metadata = { ...landflowTags({ 'agent.id': ctx.agent.id, 'session.id': ctx.session.id, 'run.id': ctx.runId }), ...message.metadata };
-    const result: A2aResult = await callAgent(endpoint, card, { ...message, metadata }, { caller: 'agent', signal: ctx.signal, extensions, onUpdate: throttled(ctx.progress, card) });
+    // In a run the member's asks (a push to main its guard puts to a person) show under this request.
+    const where = ctx.session.execution && { executionId: ctx.session.execution.executionId, workflowId: ctx.session.execution.workflowId, nodeId: ctx.session.execution.nodeId, member: ctx.agent.name, ...(ctx.callSpan && { spanId: ctx.callSpan }) };
+    const trace = message.text && !message.taskId ? traceFor(endpoint.url, where || undefined) : undefined;
+    const progress = ctx.progress && trace ? (remote: RemoteRun) => ctx.progress!(withTrace(remote, trace.summary())) : ctx.progress;
+    let result: A2aResult;
+    let summary: AgentTraceSummary | undefined;
+    try {
+      result = await callAgent(endpoint, card, { ...withMarker(message, trace), metadata }, { caller: 'agent', signal: ctx.signal, extensions, onUpdate: throttled(progress, card) });
+    } finally {
+      summary = await trace?.close();
+    }
     const contexts = (ctx.session.remoteContexts ??= {});
     if (result.kind === 'message') {
       if (result.message.contextId) contexts[config.id] = { contextId: result.message.contextId };
-      return { output: replyOf(result) ?? `(${card.name} gave no answer)`, remote: { agent: card.name, state: 'completed', steps: [] } };
+      return { output: replyOf(result) ?? `(${card.name} gave no answer)`, remote: withTrace({ agent: card.name, state: 'completed', steps: [] }, summary) };
     }
     const { task } = result;
-    const remote = remoteRunOf(card, task);
+    const remote = withTrace(remoteRunOf(card, task), summary);
     contexts[config.id] = { contextId: task.contextId };
     const state = task.status.state;
     if (state === 'TASK_STATE_COMPLETED') return { output: replyOf(result) ?? `(${card.name} gave no answer)`, remote };
@@ -324,6 +357,9 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       required: ['message', 'reason'],
     },
     requireApproval: Boolean(config.requireApproval),
+    async cancelTask(taskId) {
+      await cancelRemoteTask(endpoint, taskId);
+    },
     async invoke(input, ctx) {
       const text = String(input.message ?? '').trim();
       if (!text) throw new Error('"message" is empty');

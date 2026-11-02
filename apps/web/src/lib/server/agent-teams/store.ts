@@ -5,8 +5,10 @@
  */
 import { nanoid } from 'nanoid';
 import { memberAgent, rootOf, type QuestionsTo, teamIssues, type AgentTeam, type AgentTeamConfig, type TeamMember, type TeamSummary } from '../../shared/agent-teams';
+import type { AgentModel } from '../../shared/agents';
 import { agentStore } from '../agents/store';
 import { database } from '../db';
+import { noteStore } from '../notebook/store';
 import { homeProjectId } from '../projects/store';
 
 /** What stops a draft from running, members whose agent was deleted included. */
@@ -36,12 +38,32 @@ const COLUMNS = 'id, name, draft, published, version, created_by, created_at, up
 
 const text = (value: unknown, max: number) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 
+/** A member's model for this team: a known provider and a model name, with the agent model's optional parts. */
+function cleanModel(input: unknown): AgentModel | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const m = input as Record<string, unknown>;
+  const provider = m.provider === 'anthropic' || m.provider === 'openai' || m.provider === 'ollama' ? m.provider : undefined;
+  const model = text(m.model, 200);
+  if (!provider || !model) return undefined;
+  const credential = m.credential && typeof m.credential === 'object' ? (m.credential as Record<string, unknown>) : undefined;
+  const id = text(credential?.id, 100);
+  const baseUrl = text(m.baseUrl, 500);
+  return {
+    provider,
+    model,
+    ...(id && { credential: { id, name: text(credential?.name, 200) || id } }),
+    ...(baseUrl && { baseUrl }),
+    ...(typeof m.temperature === 'number' && Number.isFinite(m.temperature) && { temperature: m.temperature }),
+  };
+}
+
 function cleanMember(input: unknown): TeamMember | undefined {
   if (!input || typeof input !== 'object') return undefined;
   const m = input as Record<string, unknown>;
   const id = text(m.id, 40);
   if (!id) return undefined;
   const reviews = Array.isArray(m.reviews) ? [...new Set(m.reviews.filter((r): r is string => typeof r === 'string'))] : [];
+  const consults = Array.isArray(m.consults) ? [...new Set(m.consults.filter((r): r is string => typeof r === 'string'))] : [];
   const role = text(m.role, 500);
   const budget = typeof m.budgetTokens === 'number' && Number.isFinite(m.budgetTokens) ? Math.floor(m.budgetTokens) : undefined;
   const base = {
@@ -50,10 +72,14 @@ function cleanMember(input: unknown): TeamMember | undefined {
     ...(role && { role }),
     ...(typeof m.reportsTo === 'string' && m.reportsTo && { reportsTo: m.reportsTo }),
     ...(reviews.length && { reviews }),
+    ...(consults.length && { consults }),
     ...(budget !== undefined && { budgetTokens: budget }),
     ...((m.questionsTo === 'manager' || m.questionsTo === 'person') && { questionsTo: m.questionsTo as QuestionsTo }),
   };
-  if (m.kind === 'agent') return { ...base, kind: 'agent', agentId: text(m.agentId, 100) };
+  if (m.kind === 'agent') {
+    const model = cleanModel(m.model);
+    return { ...base, kind: 'agent', agentId: text(m.agentId, 100), ...(model && { model }) };
+  }
   if (m.kind === 'a2a') {
     const parameters = m.parameters && typeof m.parameters === 'object' && !Array.isArray(m.parameters) ? (m.parameters as Record<string, unknown>) : {};
     const credentials = m.credentials && typeof m.credentials === 'object' && !Array.isArray(m.credentials) ? (m.credentials as Record<string, never>) : undefined;
@@ -155,6 +181,8 @@ export const agentTeamStore = {
     return revive(next);
   },
   delete(id: string): boolean {
+    // Its notebook goes with it (docs/team-notebook.md).
+    noteStore.deleteTeam(id);
     return database().delete('agent_teams', { id }) > 0;
   },
   /** The teams an agent is a member of, in the draft or the published version. */

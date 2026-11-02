@@ -26,15 +26,17 @@ const DISMISS_LABELS: Array<{ reason: DismissReason; label: string }> = [
 ];
 
 /** What Apply does for this suggestion. */
-export function proposalKind(p: Proposal): 'draft' | 'agent' | 'ops' | 'build' | 'advice' {
+export function proposalKind(p: Proposal): 'draft' | 'agent' | 'ops' | 'build' | 'advice' | 'note' {
   if (p.draft) return 'draft';
+  // A team's notebook asks to keep a note for the project (docs/team-notebook.md).
+  if (p.notebook) return 'note';
   if (p.agentChange) return 'agent';
   // A missing tool: approving it starts the workflows that build one.
   if (p.detector === 'missing-tool') return 'build';
   return p.ops.length ? 'ops' : 'advice';
 }
 
-const APPLY_LABEL = { draft: 'Create workflow', agent: 'Apply', ops: 'Apply', build: 'Build it', advice: 'Mark done' } as const;
+const APPLY_LABEL = { draft: 'Create workflow', agent: 'Apply', ops: 'Apply', build: 'Build it', advice: 'Mark done', note: 'Keep it' } as const;
 
 export interface ProposalActions {
   busy?: string;
@@ -87,7 +89,7 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
           router.push(`/workflows/${result.workflow.id}`);
         } else if (kind === 'build') {
           if (result.started?.length) toast.success(`Approved: ${result.started.map((w) => `“${w.name}”`).join(', ')} builds it`, { action: { label: 'Executions', onClick: () => router.push('/executions') } });
-        } else toast.success('Applied');
+        } else toast.success(kind === 'note' ? 'Kept for the project' : 'Applied');
       });
     },
   };

@@ -38,7 +38,9 @@ export function UseTemplateDialog({ template, folderId, projectId, onClose }: { 
   const { projects } = useProjects();
   const targets = useMemo(() => writableProjects(projects), [projects]);
   const { credentials, types } = useCredentials();
+  const bundle = template.bundle;
   const [name, setName] = useState(template.name);
+  const [teamName, setTeamName] = useState(bundle?.team.name ?? '');
   const [folders, setFolders] = useState<Folder[]>();
   const [folder, setFolder] = useState(folderId ?? '');
   const [project, setProject] = useState(projectId ?? '');
@@ -82,11 +84,17 @@ export function UseTemplateDialog({ template, folderId, projectId, onClose }: { 
     try {
       const result = await api<UseTemplateResult>(`/api/templates/${encodeURIComponent(template.id)}/use${project && !folder ? `?projectId=${encodeURIComponent(project)}` : ''}`, {
         method: 'POST',
-        json: { name: name.trim() || template.name, ...(folder && { folderId: folder }), credentials: Object.fromEntries(Object.entries(picks).filter(([, id]) => id)) },
+        json: { name: name.trim() || template.name, ...(bundle && teamName.trim() && { teamName: teamName.trim() }), ...(folder && { folderId: folder }), credentials: Object.fromEntries(Object.entries(picks).filter(([, id]) => id)) },
       });
       const notes = [result.createdTables.length && `Created data table${result.createdTables.length === 1 ? '' : 's'} ${result.createdTables.map((t) => `“${t}”`).join(', ')}.`, ...result.warnings].filter(Boolean);
-      toast.success(`Created “${result.workflow.name}”`, notes.length ? { description: notes.join(' ') } : undefined);
-      router.push(`/workflows/${result.workflow.id}`);
+      if (result.team) {
+        toast.success(`Created the team “${result.team.name}”${result.agents?.length ? ` and ${result.agents.length} agent${result.agents.length === 1 ? '' : 's'}` : ''}`, notes.length ? { description: notes.join(' ') } : undefined);
+        // The new team's page links to the new flow.
+        router.push(`/agents/teams/${result.team.id}${result.workflow ? `?flow=${encodeURIComponent(result.workflow.id)}` : ''}`);
+        return;
+      }
+      toast.success(`Created “${result.workflow?.name}”`, notes.length ? { description: notes.join(' ') } : undefined);
+      router.push(`/workflows/${result.workflow?.id}`);
     } catch (e) {
       setError((e as Error).message);
       setSaving(false);
@@ -96,7 +104,7 @@ export function UseTemplateDialog({ template, folderId, projectId, onClose }: { 
   return (
     <>
       <Dialog
-        title="Use template"
+        title={bundle ? 'Use team template' : 'Use template'}
         subtitle={template.name}
         icon={<LayoutTemplate className="size-5 text-t2" />}
         onClose={onClose}
@@ -108,7 +116,7 @@ export function UseTemplateDialog({ template, folderId, projectId, onClose }: { 
               Cancel
             </Button>
             <Button size="sm" variant="primary" onClick={() => void submit()} loading={saving}>
-              Create workflow
+              {bundle ? 'Create team' : 'Create workflow'}
             </Button>
           </>
         }
@@ -120,11 +128,18 @@ export function UseTemplateDialog({ template, folderId, projectId, onClose }: { 
             void submit();
           }}
         >
-          <Field id="template-workflow-name" label="Workflow name">
-            <Input id="template-workflow-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={200} autoFocus />
-          </Field>
+          {bundle && (
+            <Field id="template-team-name" label="Team name" hint={`Creates the team and its ${bundle.agents.length} agent${bundle.agents.length === 1 ? '' : 's'}${bundle.hasWorkflow ? ', and the flow that runs it' : ''}.`}>
+              <Input id="template-team-name" value={teamName} onChange={(e) => setTeamName(e.target.value)} maxLength={200} autoFocus />
+            </Field>
+          )}
+          {(!bundle || bundle.hasWorkflow) && (
+            <Field id="template-workflow-name" label="Workflow name">
+              <Input id="template-workflow-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={200} autoFocus={!bundle} />
+            </Field>
+          )}
           {targets.length > 1 && (
-            <Field id="template-project" label="Project" hint="The workflow and the data tables it creates belong to it.">
+            <Field id="template-project" label="Project" hint={bundle ? 'The team, its agents, the workflow and its data tables belong to it.' : 'The workflow and the data tables it creates belong to it.'}>
               <Select
                 id="template-project"
                 value={project}

@@ -5,12 +5,14 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { ArrowLeft, Check, Plus, RadioTower, TriangleAlert, Trash2 } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { ArrowLeft, Check, LayoutTemplate, Package, Workflow, Plus, RadioTower, TriangleAlert, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { defaultParameters, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { api, ApiError } from '@/lib/client/api';
-import type { AgentSummary } from '@/lib/shared/agents';
+import type { AgentModel, AgentSummary } from '@/lib/shared/agents';
+import { useCredentials } from '../credentials/use-credentials';
+import { formatTokens } from '@/lib/shared/ai-usage';
 import { managerOf, memberAgent, orgTree, reportsOf, teamIssues, type AgentTeam, type AgentTeamConfig, type OrgNode, type TeamMember } from '@/lib/shared/agent-teams';
 import { cn } from '@/lib/utils';
 import { NodeCredentials } from '../credentials/node-credentials';
@@ -22,8 +24,22 @@ import { Input, Select, Textarea } from '../ui/inputs';
 import { A2A_AGENT, A2aTile } from './a2a-agent-dialog';
 import { AgentAvatar } from './avatar';
 import { Dialog, Field } from './dialog';
+import { ExportPluginDialog } from './export-plugin-dialog';
+import { NotebookTab } from './notebook-tab';
+import { SaveTeamTemplateDialog } from './save-team-template-dialog';
 import { useAgentList, useNodeTypes } from './use-agent-data';
+import { BudgetBar } from '../editor/team-live';
+import type { TeamMoment } from '@/lib/shared/team-progress';
+import { faceOf } from './faces';
+import { ConsultLines } from './consult-lines';
 import { newId } from './util';
+import { MemberCards } from './member-cards';
+import { modelLabel, useLastTeamRun, type LastTeamRun } from './team-run-data';
+import { RunTimelineLive } from '../run-trace/run-timeline-card';
+import { RunLines } from '../run-trace/run-line';
+import { useNewLook } from '../shell/look-toggle';
+
+export { modelLabel };
 
 /** The A2A Agent node's parameters that describe the remote agent (as in the agent builder's A2A dialog). */
 const SERVER_PROPERTIES = new Set(['agentUrl', 'authentication', 'options']);
@@ -41,6 +57,8 @@ function below(config: AgentTeamConfig, id: string): Set<string> {
 export function TeamBuilder({ teamId }: { teamId: string }) {
   const router = useRouter();
   const agents = useAgentList();
+  const newLook = useNewLook();
+  const lastRun = useLastTeamRun(teamId);
   const [team, setTeam] = useState<AgentTeam>();
   const [draft, setDraft] = useState<AgentTeamConfig>();
   const [loadError, setLoadError] = useState<string>();
@@ -48,9 +66,35 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<{ member?: TeamMember; reportsTo?: string }>();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [saveTemplate, setSaveTemplate] = useState(false);
+  const params = useSearchParams();
+  const fromTemplate = params.get('flow');
+  // The page has two tabs: the chart (members, last run, flows, publishing) and the team's notebook (docs/team-notebook.md).
+  const tab = params.get('tab') === 'notebook' ? 'notebook' : 'chart';
+  const showTab = (next: 'chart' | 'notebook') => {
+    const q = new URLSearchParams(params.toString());
+    if (next === 'chart') q.delete('tab');
+    else q.set('tab', next);
+    router.replace(q.size ? `?${q}` : `/agents/teams/${teamId}`, { scroll: false });
+  };
+  const [noteTotal, setNoteTotal] = useState<number>();
+  useEffect(() => {
+    api<{ counts: { total: number } }>(`/api/agent-teams/${teamId}/notes?scope=team`)
+      .then((r) => setNoteTotal(r.counts.total))
+      .catch(() => setNoteTotal(undefined));
+  }, [teamId, tab]);
+  // The flows that run this team (a template made one, or you did): links to them.
+  const [flows, setFlows] = useState<Array<{ id: string; name: string; active: boolean }>>([]);
+  useEffect(() => {
+    api<{ flows: Array<{ id: string; name: string; active: boolean }> }>(`/api/agent-teams/${teamId}/flows`)
+      .then((r) => setFlows(r.flows))
+      .catch(() => setFlows([]));
+  }, [teamId]);
 
   const latest = useRef<AgentTeamConfig>(undefined);
   const dirty = useRef(false);
+  const chartRef = useRef<HTMLDivElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const queue = useRef<Promise<void>>(Promise.resolve());
 
@@ -159,7 +203,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
       const exists = c.members.some((m) => m.id === member.id);
       return { ...c, members: exists ? c.members.map((m) => (m.id === member.id ? member : m)) : [...c.members, member] };
     });
-  /** Removing a member hands its reports to its manager and drops it from reviews. */
+  /** Removing a member hands its reports to its manager and drops it from reviews and consults. */
   const removeMember = (id: string) =>
     update((c) => {
       const gone = c.members.find((m) => m.id === id);
@@ -167,7 +211,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
         ...c,
         members: c.members
           .filter((m) => m.id !== id)
-          .map((m) => ({ ...m, ...(m.reportsTo === id && { reportsTo: gone?.reportsTo }), ...(m.reviews?.includes(id) && { reviews: m.reviews.filter((r) => r !== id) }) })),
+          .map((m) => ({ ...m, ...(m.reportsTo === id && { reportsTo: gone?.reportsTo }), ...(m.reviews?.includes(id) && { reviews: m.reviews.filter((r) => r !== id) }), ...(m.consults?.includes(id) && { consults: m.consults.filter((r) => r !== id) }) })),
       };
     });
 
@@ -234,13 +278,32 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
         }
       />
       <PageBody className="mx-auto w-full max-w-[960px] px-4 sm:px-6">
-        <div className="flex flex-col gap-4">
+        <div role="tablist" aria-label="Team" className="mb-3 flex gap-1 border-b border-hair">
+          {([['chart', 'Chart'], ['notebook', 'Notebook']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => showTab(id)}
+              className={cn('-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] font-semibold transition-colors', tab === id ? 'border-ac text-t1' : 'border-transparent text-t3 hover:text-t1')}
+            >
+              {label}
+              {id === 'notebook' && noteTotal !== undefined && noteTotal > 0 && <span className="rounded-full bg-acdim px-1.5 text-[11px] tabular-nums text-ac">{noteTotal}</span>}
+            </button>
+          ))}
+        </div>
+        {tab === 'notebook' && <NotebookTab teamId={teamId} faces={draft.members.map((m) => ({ title: m.title, agent: memberAgent(m, agents ?? []) }))} />}
+        <div className={cn('flex flex-col gap-4', tab === 'notebook' && 'hidden')}>
           <Field id="team-name" label="Name">
             <Input id="team-name" value={draft.name} onChange={(e) => update((c) => ({ ...c, name: e.target.value }))} placeholder="Plugin team" />
           </Field>
           <Field id="team-goal" label="Goal" hint="What the team is for: every request inside it carries this.">
             <Textarea id="team-goal" rows={2} value={draft.goal ?? ''} onChange={(e) => update((c) => ({ ...c, goal: e.target.value }))} placeholder="Build approved plugins on a branch, tested and reviewed" />
           </Field>
+
+          {newLook && lastRun?.live && <RunTimelineLive executionId={lastRun.executionId} name={lastRun.workflowName} />}
+          {newLook && lastRun && !lastRun.live && <RunLines runs={[{ id: lastRun.executionId, href: `/runs/${lastRun.executionId}`, name: lastRun.workflowName, startedAt: lastRun.startedAt }]} />}
+          {newLook && <MemberCards config={draft} teamName={draft.name} agents={agents ?? []} run={lastRun} />}
 
           <section aria-label="Org chart">
             <div className="mb-1.5 flex items-center justify-between">
@@ -250,6 +313,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
               </Button>
             </div>
             {draft.members.length === 0 && <p className="rounded-2xl border border-dashed border-hair px-4 py-8 text-center text-[13px] text-t3">No members yet. Add the lead first, then the members who report to it.</p>}
+            <div ref={chartRef} className="relative">
             {tree && (
               <div className="flex flex-col items-center">
                 <div className="w-full sm:max-w-[360px]">{card(tree.member)}</div>
@@ -272,7 +336,33 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{loose.map((m) => card(m))}</div>
               </div>
             )}
+            {/* The "may consult" lines: dashed, in the consulting member's colour, over the cards. */}
+            <ConsultLines
+              containerRef={chartRef}
+              members={draft.members}
+              titles={Object.fromEntries(draft.members.map((m) => [m.id, m.title]))}
+              colors={Object.fromEntries(draft.members.flatMap((m) => { const c = memberAgent(m, agents ?? []); const color = c && faceOf(c).color; return color ? [[m.id, color]] : []; }))}
+            />
+            </div>
           </section>
+
+          <LastRun run={lastRun} faces={draft.members.map((m) => ({ title: m.title, agent: memberAgent(m, agents ?? []) }))} />
+          {flows.length > 0 && (
+            <section aria-label="Flows that run this team" className="rounded-[12px] border border-hair bg-sf px-3.5 py-3">
+              <h2 className="mb-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">{fromTemplate ? 'Created from the template' : 'Flows that run this team'}</h2>
+              <ul className="flex flex-col gap-1.5">
+                {flows.map((f) => (
+                  <li key={f.id}>
+                    <Link href={`/workflows/${f.id}`} className={cn('flex items-center gap-2 rounded-[10px] border px-2.5 py-2 text-[13px] hover:border-ac', f.id === fromTemplate ? 'border-ac bg-acdim' : 'border-hair bg-wl')}>
+                      <Workflow className="size-3.5 shrink-0 text-t3" />
+                      <span className="min-w-0 flex-1 truncate font-semibold text-t1">{f.name}</span>
+                      <span className="shrink-0 text-[11px] text-t3">{f.active ? 'Active' : 'Draft'}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           {issues.length > 0 && (
             <div role="status" className="rounded-[12px] border border-warnbd bg-warndim px-3.5 py-3 text-[12px] text-warn">
@@ -296,7 +386,13 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
                 Unpublish
               </Button>
             )}
-            <Button variant="ghost" className="ml-auto text-rd" onClick={() => setConfirmDelete(true)}>
+            <Button className="ml-auto" onClick={() => setSaveTemplate(true)}>
+              <LayoutTemplate className="size-3.5" /> Save as template
+            </Button>
+            <Button onClick={() => setExporting(true)}>
+              <Package className="size-3.5" /> Export as Claude Code plugin
+            </Button>
+            <Button variant="ghost" className="text-rd" onClick={() => setConfirmDelete(true)}>
               <Trash2 className="size-3.5" /> Delete team
             </Button>
           </div>
@@ -315,6 +411,8 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
           )}
         </div>
       </PageBody>
+      {saveTemplate && <SaveTeamTemplateDialog teamId={teamId} teamName={draft.name || 'Untitled team'} goal={draft.goal} onClose={() => setSaveTemplate(false)} />}
+      {exporting && <ExportPluginDialog base={`/api/agent-teams/${teamId}`} title={draft.name || 'Untitled team'} onClose={() => setExporting(false)} />}
       {editing && (
         <MemberDialog
           key={editing.member?.id ?? 'new'}
@@ -341,18 +439,20 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
   );
 }
 
-const tokens = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
+const tokens = formatTokens;
 
 function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddReport }: { config: AgentTeamConfig; member: TeamMember; agent?: AgentSummary; lead: boolean; inSection?: boolean; onEdit: () => void; onAddReport?: () => void }) {
   const manager = managerOf(config, member);
   const reviews = (member.reviews ?? []).map((id) => config.members.find((m) => m.id === id)?.title).filter(Boolean);
   const reviewedBy = config.members.filter((m) => m.reviews?.includes(member.id)).map((m) => m.title);
+  const consults = (member.consults ?? []).map((id) => config.members.find((m) => m.id === id)?.title).filter(Boolean);
   // A footer only when it has something to say: a card in a row without one keeps its height (the grid) and its role.
-  const chips = Boolean((manager && !inSection) || reviews.length || reviewedBy.length || member.budgetTokens !== undefined || member.questionsTo === 'person');
+  const teamModel = member.kind === 'agent' ? member.model : undefined;
+  const chips = Boolean((manager && !inSection) || reviews.length || reviewedBy.length || consults.length || member.budgetTokens !== undefined || member.questionsTo === 'person' || teamModel);
   const runsOn = member.kind === 'a2a' ? (agent ? `${agent.name} on kagent` : 'Remote agent over A2A') : agent ? 'Landflow agent' : 'Pick an agent';
   return (
     // A card: who (face, title, where it runs), what it does, and its relations in a footer, so cards in a row line up.
-    <article className={cn('flex h-full flex-col overflow-hidden rounded-2xl border bg-sf transition-colors hover:border-bd', lead ? 'border-acbd' : 'border-hair')}>
+    <article data-member-id={member.id} className={cn('flex h-full flex-col overflow-hidden rounded-2xl border bg-sf transition-colors hover:border-bd', lead ? 'border-acbd' : 'border-hair')}>
       <button type="button" onClick={onEdit} className="flex flex-1 flex-col gap-2 p-3 text-left focus-visible:outline-2 focus-visible:outline-ac">
         <span className={cn('-m-3 mb-0 flex items-center gap-3 p-3', lead && 'bg-acdim')}>
           {/* A remote member that calls a Landflow agent on kagent wears that agent's face. */}
@@ -375,6 +475,18 @@ function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddRepor
           {manager && !inSection && <Chip>Reports to {manager.title}</Chip>}
           {reviews.length > 0 && <Chip tone="accent">Reviews {reviews.join(', ')}</Chip>}
           {reviewedBy.length > 0 && <Chip>Reviewed by {reviewedBy.join(', ')}</Chip>}
+          {/* A dashed chip: a standing line between peers, not a reporting line. */}
+          {consults.length > 0 && (
+            <Chip tone="accent" className="border-dashed">
+              May consult {consults.join(', ')}
+            </Chip>
+          )}
+          {/* Its model in this team, when it isn't its agent's own. */}
+          {teamModel && (
+            <span title={`In this team ${member.title} runs on ${teamModel.model}; its agent keeps its own model`}>
+              <Chip tone="accent">On {modelLabel(teamModel)}</Chip>
+            </span>
+          )}
           {member.budgetTokens !== undefined && <Chip>{tokens(member.budgetTokens)} tokens a run</Chip>}
           {member.questionsTo === 'person' && <Chip>Questions go to a person</Chip>}
           {!manager && !chips && <span className="text-[12px] text-t3">Runs the team</span>}
@@ -386,6 +498,62 @@ function MemberCard({ config, member, agent, lead, inSection, onEdit, onAddRepor
         </div>
       )}
     </article>
+  );
+}
+
+/** The Claude models the team page offers for a member, newest first. */
+const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const;
+
+/**
+ * A member's model in this team: its agent's own, or a Claude model (with an Anthropic credential, else the server's
+ * ANTHROPIC_API_KEY). Only this team changes; the agent keeps its model everywhere else.
+ */
+function TeamModelField({ value, agentModel, onChange }: { value?: AgentModel; agentModel?: string; onChange: (model: AgentModel | undefined) => void }) {
+  const { credentials } = useCredentials();
+  const anthropic = (credentials ?? []).filter((c) => c.type === 'core.anthropicApi');
+  const known = value && value.provider === 'anthropic' && (CLAUDE_MODELS as readonly string[]).includes(value.model);
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Field id="member-model" label="Model in this team" hint={value ? 'Its agent keeps its own model outside this team. Claude is paid per use.' : 'The model its agent is set to.'}>
+        <Select
+          id="member-model"
+          value={value ? `${value.provider}:${value.model}` : ''}
+          onChange={(e) => {
+            if (!e.target.value) return onChange(undefined);
+            const [provider, ...rest] = e.target.value.split(':');
+            if (provider === 'anthropic') onChange({ provider: 'anthropic', model: rest.join(':'), ...(value?.provider === 'anthropic' && value.credential && { credential: value.credential }) });
+          }}
+        >
+          <option value="">Its agent’s own{agentModel ? ` (${agentModel})` : ''}</option>
+          {CLAUDE_MODELS.map((m) => (
+            <option key={m} value={`anthropic:${m}`}>
+              {modelLabel({ provider: 'anthropic', model: m })}
+            </option>
+          ))}
+          {value && !known && <option value={`${value.provider}:${value.model}`}>{value.model}</option>}
+        </Select>
+      </Field>
+      {value?.provider === 'anthropic' && (
+        <Field id="member-model-credential" label="Anthropic credential" hint={anthropic.length ? undefined : 'None yet: the server’s ANTHROPIC_API_KEY is used. Add one under Credentials.'}>
+          <Select
+            id="member-model-credential"
+            value={value.credential?.id ?? ''}
+            onChange={(e) => {
+              const picked = anthropic.find((c) => c.id === e.target.value);
+              const { credential: _drop, ...rest } = value;
+              onChange(picked ? { ...rest, credential: { id: picked.id, name: picked.name } } : rest);
+            }}
+          >
+            <option value="">Server default</option>
+            {anthropic.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
+    </div>
   );
 }
 
@@ -438,8 +606,8 @@ function MemberDialog({
 
   const finish = () => {
     const role = value.role?.trim();
-    const { reviews, ...rest } = value;
-    onSave({ ...rest, title: value.title.trim(), ...(role ? { role } : { role: undefined }), ...(reviews?.length && { reviews }) } as TeamMember);
+    const { reviews, consults, ...rest } = value;
+    onSave({ ...rest, title: value.title.trim(), ...(role ? { role } : { role: undefined }), ...(reviews?.length && { reviews }), ...(value.kind === 'agent' && consults?.length && { consults }) } as TeamMember);
   };
 
   return (
@@ -538,6 +706,29 @@ function MemberDialog({
             <p className="mt-1 text-[12px] leading-snug text-t3">Their manager can’t report done until this member signs off their work.</p>
           </fieldset>
         )}
+        {others.length > 0 && value.kind === 'agent' && (
+          <fieldset>
+            <legend className="mb-[5px] text-[12px] font-semibold text-t2">May consult</legend>
+            <div className="space-y-1">
+              {others.map((m) => {
+                const on = value.consults?.includes(m.id) ?? false;
+                return (
+                  <label key={m.id} className="flex cursor-pointer items-center gap-2 rounded-[10px] border border-dashed border-hair bg-wl px-3 py-2 text-[13px] text-t1">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => set({ consults: on ? (value.consults ?? []).filter((r) => r !== m.id) : [...(value.consults ?? []), m.id] })}
+                      className="size-4 accent-[var(--ac)]"
+                    />
+                    {m.title || 'Untitled'}
+                    {on && <Check className="ml-auto size-3.5 text-ac" />}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[12px] leading-snug text-t3">It can ask them a question directly (the answer comes back to it, not to its manager) or hand its task over to them, without going through its manager.</p>
+          </fieldset>
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field id="member-budget" label="Budget" hint="Tokens it may spend in one run. Empty: no limit.">
             <Input
@@ -556,7 +747,74 @@ function MemberDialog({
             </Select>
           </Field>
         </div>
+        {value.kind === 'agent' && <TeamModelField value={value.model} agentModel={agents.find((a) => a.id === value.agentId)?.model} onChange={(model) => set({ model } as Partial<TeamMember>)} />}
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * The team's latest run in a flow: when, and what each member used against its budget, with a way into its Run Trace.
+ * While a run goes on it reads again every few seconds, so the bars fill as the members work; a member its manager never
+ * asked says so beside an empty bar.
+ */
+function LastRun({ run, faces }: { run?: LastTeamRun | null; faces: Array<{ title: string; agent?: AgentSummary }> }) {
+  if (!run || !run.members.length) return null;
+  const when = new Date(run.startedAt);
+  return (
+    <section aria-label={run.live ? 'Running now' : 'Last run'} className={cn('rounded-2xl border bg-sf p-3.5', run.live ? 'border-gn/40' : 'border-hair')} data-testid="team-last-run" data-live={run.live || undefined}>
+      <div className="mb-2.5 flex items-baseline justify-between gap-2">
+        {run.live ? (
+          <h2 className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-gn">
+            <span className="size-1.5 animate-pulse rounded-full bg-gn" aria-hidden />
+            Running now
+          </h2>
+        ) : (
+          <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">Last run</h2>
+        )}
+        <Link href={`/runs/${run.executionId}?tab=team`} className="truncate text-[12px] font-semibold text-t1 hover:underline">
+          {run.workflowName} · {when.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} →
+        </Link>
+      </div>
+      <ul className="flex flex-col gap-2">
+        {run.members.map((m) => {
+          const face = faces.find((f) => f.title === m.title);
+          return (
+            <li key={m.title} className={cn('flex min-w-0 items-center gap-2.5', m.notAsked && 'opacity-60')} data-testid="team-last-run-member" data-not-asked={m.notAsked || undefined}>
+              <span className={cn('relative shrink-0 rounded-lg', m.working && 'ring-2 ring-gn ring-offset-1 ring-offset-sf')}>
+                {face?.agent ? <AgentAvatar agent={faceOf(face.agent)} size={24} /> : <span className="grid size-6 place-items-center rounded-lg bg-acdim text-[11px] font-semibold text-t2">{m.title.charAt(0)}</span>}
+              </span>
+              <span className="w-28 shrink-0 truncate text-[13px] text-t1">
+                {m.title}
+                {m.working && <span className="ml-1 text-[11px] text-gn">· working</span>}
+              </span>
+              {m.notAsked ? (
+                // An empty bar with its budget: the budget is set, the member just wasn't needed.
+                <span className="flex min-w-0 flex-1 items-center gap-2" title={`${m.title} wasn't asked in this run`}>
+                  <span className="h-1 min-w-0 flex-1 rounded-full bg-acdim" />
+                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-t3">not asked{m.budgetTokens ? ` · of ${tokens(m.budgetTokens)}` : ''}</span>
+                </span>
+              ) : m.budgetTokens ? (
+                <BudgetBar usage={{ member: m.title, tokens: m.tokens, budget: m.budgetTokens, ...(m.estimated && { estimated: true }) }} color={face?.agent ? faceOf(face.agent).color : undefined} className="min-w-0 flex-1" />
+              ) : (
+                <span className="font-mono text-[11px] tabular-nums text-t3">
+                  {m.estimated ? '~' : ''}
+                  {tokens(m.tokens)} tokens · no budget
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {run.moments && run.moments.length > 0 && (
+        <div className="mt-2.5 flex flex-wrap gap-1 border-t border-hair pt-2.5">
+          {run.moments.map((m, i) => (
+            <span key={`${m.at}:${i}`} className={cn('rounded-full px-2 py-px text-[11px] font-medium', m.tone === 'ok' ? 'bg-gn/12 text-gn' : m.tone === 'bad' ? 'bg-rd/10 text-rd' : m.tone === 'warn' ? 'bg-warndim text-warn' : 'bg-acdim text-t2')}>
+              {m.text}
+            </span>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

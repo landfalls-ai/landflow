@@ -64,6 +64,9 @@ export const PUBLIC_ROUTES = [
   '/scim/v2',
   // The OCI registry of Claude Code plugins packed for kagent (pull only, by digest): kagent's nodes pull anonymously.
   '/v2',
+  // What Claude Code agents on kagent report through the landflow-harness mod: the unguessable trace id Landflow sent
+  // with the request is the credential (lib/server/a2a/agent-trace.ts).
+  '/api/agent-trace',
 ] as const;
 
 /** `/api/auth` routes that need a signed-in user. */

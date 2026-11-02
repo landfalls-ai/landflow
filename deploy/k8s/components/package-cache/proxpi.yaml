@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landflow-cache-pypi
+  labels: { app.kubernetes.io/name: landflow-cache-pypi, app.kubernetes.io/part-of: landflow-cache }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: landflow-cache-pypi }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: landflow-cache-pypi, app.kubernetes.io/part-of: landflow-cache }
+    spec:
+      containers:
+        - name: proxpi
+          image: epicwink/proxpi:1.3.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: PROXPI_INDEX_URL, value: "https://pypi.org/simple/" }
+            - { name: PROXPI_CACHE_DIR, value: /var/cache/proxpi }
+            - { name: PROXPI_CACHE_SIZE, value: "4294967296" }
+            # The default, 0.9 s, makes proxpi give up on a file it hasn't downloaded yet and redirect the client to
+            # files.pythonhosted.org, which sandboxes cannot reach. Wait for the download instead.
+            - { name: PROXPI_DOWNLOAD_TIMEOUT, value: "120" }
+            - { name: PROXPI_CONNECT_TIMEOUT, value: "10" }
+            - { name: PROXPI_READ_TIMEOUT, value: "60" }
+          ports: [{ name: http, containerPort: 5000 }]
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 96Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: cache, mountPath: /var/cache/proxpi }
+      volumes:
+        - name: cache
+          persistentVolumeClaim: { claimName: landflow-cache-pypi }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: landflow-cache-pypi
+  labels: { app.kubernetes.io/name: landflow-cache-pypi, app.kubernetes.io/part-of: landflow-cache }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-cache-pypi
+  labels: { app.kubernetes.io/name: landflow-cache-pypi, app.kubernetes.io/part-of: landflow-cache }
+spec:
+  selector: { app.kubernetes.io/name: landflow-cache-pypi }
+  ports: [{ name: http, port: 5000, targetPort: http }]

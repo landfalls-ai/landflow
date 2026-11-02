@@ -221,13 +221,16 @@ resources, all named after the deployment (default: the agent's name as a DNS la
 | kagent resource | What Landflow writes |
 |---|---|
 | AgentTemplate | `systemPrompt`: the system prompt Landflow's runtime gives the model (`apps/web/src/lib/shared/persona.ts`, the text the Persona tab shows): the persona parts and instructions, the skills with their "use when", the name and the description. `description`: the agent's. `tools`: one MCP binding for the tools that run freely and one with `requireApproval` for those that need approval |
-| RemoteMCPServer | The agent's own tools, served by Landflow at `/api/mcp/agents/<id>`: the tools the runtime builds from the deployed version, run the same way (node, workflow, knowledge base, sub-agent, MCP server and A2A tools, `load_skill`) |
+| RemoteMCPServer | The agent's own tools, served by Landflow at `/api/mcp/agents/<id>`: the tools the runtime builds from the deployed version, run the same way (node, workflow, knowledge base, sub-agent, MCP server and A2A tools, `load_skill`). The annotation `landflow.dev/tools-sha256` hashes the names it serves, so a changed list (a tool added within one version, a server that answers now) changes the object and kagent lists the tools again |
 | ModelConfig | The agent's model: Ollama (the model's server URL, which kagent must reach too), OpenAI or Anthropic (the credential's base URL; the API key goes in the Secret) and the temperature |
 | Agent | The template on the credential's harness |
 | Secret `<name>-landflow` | `authorization`: the token kagent calls the MCP endpoint with (Landflow keeps it sealed with its encryption key), and `api-key` |
 
 Writing uses server-side apply (field manager `landflow`), so a deploy sets every field Landflow owns back to Landflow's
-value. **Publishing writes the new version too**: the publish answer carries `kagent` (the status, or why kagent
+value. Landflow saves the new deployed version before it writes, since kagent lists the agent's tools as soon as the
+objects change and the endpoint serves the deployed version's (saving after had kagent keep the old version's tools: a
+GitHub MCP tool added and published didn't reach the agent); a write kagent refuses puts the earlier deployment back.
+**Publishing writes the new version too**: the publish answer carries `kagent` (the status, or why kagent
 couldn't be written; the publish itself still happens). Unpublishing leaves kagent's copy as it is; deleting the agent
 removes it from kagent. When kagent can't be reached then, Landflow remembers what it left (the `settings` row
 `kagent.leftovers`) and removes it the next time it deploys an agent to that cluster. Landflow never takes over a kagent agent it didn't write (409), and removing deletes only
@@ -327,22 +330,54 @@ Landflow can't make the model stop.
 ### Network for Claude Code
 
 kagent's sandboxes reach only what their Agent is granted: the model, kagent's controller and the MCP servers of their
-tools (Landflow). Everything else fails at DNS (kagent's egress gateway answers NXDOMAIN), so `apk add`, `go get`,
+tools (Landflow, but only for an agent that binds at least one of its tools). Everything else fails at DNS (kagent's egress gateway answers NXDOMAIN), so `apk add`, `go get`,
 `npm install` or `pip install` can't run. An **EgressPolicy** grants more origins, and an Agent gets them only by
 naming it in `egressPolicyRefs`.
 
-- `deploy/kind/egress-dev.yaml` is `landflow-dev-packages`: Alpine's package mirror, the Go module proxy and checksum
-  database, npm and PyPI. `kagent-up.sh` applies it and names it in the credential's **Egress Policies**.
+- `deploy/kind/egress-dev.yaml` is `landflow-dev-packages`, and its only destination is the **package cache**,
+  `http://landflow-cache.landflow.svc.cluster.local:8080`. No registry is reachable directly. `kagent-up.sh` applies it
+  and names it in the credential's **Egress Policies**.
+- The cache is `deploy/k8s/components/package-cache`, part of the OrbStack overlay: one Service `landflow-cache:8080` in
+  `landflow-dev`, fronted by nginx, which routes `/npm/` to Verdaccio 6.2.0 (uplink registry.npmjs.org), `/go/` to
+  Athens v0.16.0 (proxy.golang.org, and the checksum database at `/go/sumdb/sum.golang.org`, so `GOSUMDB` works through
+  it), `/pypi/` to proxpi 1.3.0 (pip's `/pypi/simple/`; `PROXPI_DOWNLOAD_TIMEOUT` is 120 s, because at the default 0.9 s
+  proxpi redirects the client to files.pythonhosted.org, which a sandbox can't reach) and `/apk/` to an nginx
+  `proxy_cache` of dl-cdn.alpinelinux.org (packages kept 30 days, `APKINDEX.tar.gz` one hour; the response header
+  `X-Cache-Status` says HIT or MISS). Each store has a PersistentVolumeClaim (npm, Go and PyPI 5 Gi, Alpine 2 Gi), so a
+  restart keeps what was fetched. Its pods are labelled `part-of: landflow-cache` so the overlay's
+  `imagePullPolicy: Never` patch, for images built here, doesn't apply to them.
+- The bridge brings it to kind the way it brings `landflow-host`: `deploy/kind/bridge.yaml` has a Service
+  `landflow-cache` in kind's `landflow` namespace and an EndpointSlice holding the OrbStack ClusterIP, which
+  `kagent-up.sh` fills in (it stops if the overlay isn't applied). The gateway can allow it by name.
+- The tools are pointed at it in the Harness (`deploy/kind/harness-claude-dev.yaml`, env): `npm_config_registry`
+  (npm and pnpm), `YARN_NPM_REGISTRY_SERVER` with `YARN_UNSAFE_HTTP_WHITELIST`, `COREPACK_NPM_REGISTRY`, `GOPROXY` and
+  `GOSUMDB`, `PIP_INDEX_URL` with `PIP_TRUSTED_HOST`, and `UV_DEFAULT_INDEX` with `UV_INSECURE_HOST`. apk's repositories
+  are rewritten in the image (the Dockerfile's `APK_CACHE` build argument), after the build's own `apk add`.
 - Landflow writes `egressPolicyRefs` on every deploy: the agent's own list (the kagent card's **Network access**, the
   namespace's EgressPolicies as toggles with their origins), else the credential's. A name kagent doesn't have is
   refused before anything is written, and a list changed in kagent is drift (`egressPolicies`). kagent applies a change
   to running sessions without a restart.
+- A Claude Code agent with Landflow's mod also gets an EgressPolicy of its own, `<name>-landflow`, with Landflow's
+  origin (the credential's Landflow URL), referenced after the others: the mod reports there even when the agent has no
+  Landflow tools ("The landflow-harness mod" below). It is labelled with the agent, isn't offered in **Network access**,
+  goes when the agent is removed or moves off the mod, and a changed one is drift (`landflowEgress`). Landflow's access
+  Role (`deploy/kind/landflow-access.yaml`) may write EgressPolicies for this; with an older Role that only reads them,
+  the deploy writes the agent without it and says the run reports are missing. A Landflow URL with an IP address can't
+  be an EgressPolicy origin, so no policy is written for one.
 - An EgressPolicy destination can carry a credential: the sandbox sends a placeholder header and the gateway swaps in
   a Secret's value, so the runtime never sees it (for a private git host, for example).
 
-Checked live on 2026-10-31: before the policy, every outside host failed DNS; after referencing it, `apk add go nodejs
-npm python3` took 10 s, `go get` of a module 1.7 s and `npm view` 1.1 s, and github.com, not in the policy, still
-failed to resolve.
+Checked live on 2026-10-31 (with the public registries as the policy's origins, before the cache): before the policy,
+every outside host failed DNS; after referencing it, `apk add go nodejs npm python3` took 10 s, `go get` of a module
+1.7 s and `npm view` 1.1 s, and github.com, not in the policy, still failed to resolve.
+
+Checked live on 2026-11-01 against the cache, from pods in `landflow-dev` and kind's `landflow` namespace: `npm view
+left-pad version`, `go mod download golang.org/x/text@latest` (modules and the checksum database's tiles through
+`/go/sumdb/`), `pip download requests`, an `APKINDEX.tar.gz` and `apk add jq` all worked. A second request for the same
+file was served from the cache: a tarball, a module zip and a wheel took 0.3 s the first time and 3 to 7 ms the second
+(Verdaccio logged one request to registry.npmjs.org for two to the client; proxpi sent no redirect), and the second
+APKINDEX answered `X-Cache-Status: HIT`. From kind, `landflow-cache.landflow.svc.cluster.local:8080/npm/left-pad`
+answered through the bridge.
 
 ### GitHub from the sandbox
 
@@ -363,14 +398,71 @@ The token's scope is what limits the agents: a fine-grained token on one reposit
 read and write lets them push any branch, `main` included, so protect `main` with a branch rule if agents must never
 land on it (the flows here only push `agents/*` branches and open draft pull requests).
 
+### GitHub's MCP tools for agents
+
+Agents can read and review pull requests through GitHub's own MCP server, with a GitHub token Landflow holds. It is an
+ordinary MCP server tool of the agent (**Add GitHub MCP** in Capabilities; `type: 'mcp'` with `preset: 'github'` and
+`access: 'read' | 'review'`), so it works for a Landflow agent on its own runtime and, through the agents' MCP endpoint
+(`/api/mcp/agents/:id`, built with `kagentTools`), for a member on kagent, Claude Code included. Nothing else changed in
+that path: kagent calls Landflow, Landflow calls the GitHub MCP server.
+
+- **The server**: `ghcr.io/github/github-mcp-server:v2.0.2` (released 2026-10-08), deployed by the component
+  `deploy/k8s/components/github-mcp` (wired into the OrbStack overlay) as the Service `landflow-github-mcp:8082`, command
+  `http --toolsets=repos,issues,pull_requests,actions --exclude-tools=<every merge and write tool>`. `http` serves
+  Streamable HTTP at `/` and takes the GitHub token from each request's `Authorization: Bearer` header, so the pod holds
+  no token and the manifest has none. Chosen over GitHub's remote server (`api.githubcopilot.com/mcp/`) because it runs
+  on this machine only, its tool names are checkable here (the pinned image was run and its `tools/list` read), and the
+  bundled server's `--exclude-tools` is a second wall; the remote one needs a Copilot-capable token and sends the agent's
+  traffic off the machine. A different server (a remote one, GHES) is the tool's **Server URL**, or
+  `LANDFLOW_GITHUB_MCP_URL` for the default.
+- **The credential**: an existing **Bearer Auth** credential (`core.httpBearerAuth`) whose token is the GitHub one, a
+  fine-grained token on the repository with Pull requests and Contents read, plus Pull requests write for a reviewer.
+  Landflow sends it as the bearer, encrypted at rest like any credential; it never reaches kagent, the sandbox, a
+  manifest or a log. The token's scope is still the outer limit.
+- **The allow-list, per agent, server side** (`apps/web/src/lib/server/mcp/github.ts`). The tools an agent gets are the
+  server's `tools/list` cut down to its access, before they reach the model or kagent, whatever the settings' `include`
+  fields say (they are ignored for the preset), so a hidden tool can't be called by name either:
+  - **Read** (every member): `pull_request_read` (details, diff, files, reviews, review comments, checks),
+    `list_pull_requests`, `search_pull_requests`, `get_file_contents`, `get_repository_tree`, `get_commit`,
+    `list_commits`, `list_branches`, `list_tags`, `get_tag`, releases, `issue_read`, `list_issues`, `search_issues`,
+    `search_code`, `search_commits`, `search_repositories`, `actions_get`, `actions_list`, `get_job_logs`, labels.
+  - **Review** (the Reviewer; read plus): `pull_request_review_write` (create, submit or delete a pending review,
+    resolve a thread), `add_comment_to_pending_review` (a line comment), `add_reply_to_pull_request_comment`,
+    `add_issue_comment`.
+  - **Never**, at either level: `merge_pull_request`, `create_pull_request`, `update_pull_request`,
+    `update_pull_request_branch`, `create_branch`, `create_or_update_file`, `push_files`, `delete_file`, repository
+    create, fork and delete, rulesets, `issue_write`, `sub_issue_write`, `update_issue_comment`, labels, projects,
+    `actions_run_trigger`, Copilot assignment and review requests, gists. Merging stays with the flow. The same list is
+    the pod's `--exclude-tools`. An access that is not `review` is `read`; `get_me`, notifications and the rest of the
+    server's tools aren't offered either, since the list is an allow-list.
+- **Approval**: the tool has the usual **Require approval** switch; on kagent it makes the Claude Code binding split
+  (`?tools=approval`). Review comments are written to GitHub when the agent calls them, so ask for approval where a person
+  should read them first.
+- **The guard** is about the sandbox's own tools (shell, files, `gh`): Read-only still allows `gh pr review` and
+  `gh pr comment`, and the MCP tools above are the other way to do the same, with the token held outside the sandbox. The
+  mod does not look at MCP calls; the allow-list is what limits them.
+- **Run Trace** shows the tool among the agent's connections with GitHub's mark: *GitHub MCP · Tool · pull requests,
+  reviews, line comments* for review access, *Tool · repositories, pull requests, issues (read)* otherwise. A review or
+  comment the member leaves through them is also a **review comment** artifact in the Story and the Artifacts tab, from
+  a Landflow agent's tool call or a Claude Code member's `mcp__<server>__<tool>` step that the mod reported
+  ([run-trace.md](run-trace.md#artifacts-and-code-changes)).
+- **Setting up the Tech Lead team**: add **GitHub MCP** with access *Read* to the Planner and Developer and *Read and
+  review* to the Reviewer, then deploy each again, since kagent binds the tools it was deployed with. Verified on
+  2026-11-01: the pinned image started with those flags (also read-only, all capabilities dropped), its `tools/list`
+  was exactly the toolsets minus the excluded tools, and Landflow's client built an agent's tools from it. No call was
+  made to GitHub, as no GitHub token was used.
+
 ### A toolchain image for Claude Code
 
 Installing a toolchain on every run costs time and tokens, so the Harness **landflow-claude-dev** runs Claude Code on
 a common image with what most projects need, and nothing project-specific:
-`deploy/docker/claude-harness-dev.Dockerfile` adds Go (latest; another version comes through the module proxy), Node 22
+`deploy/docker/claude-harness-dev.Dockerfile` adds Go (latest, with its standard library already built into a
+`GOCACHE=/opt/go-build` baked into the image by `go build std`, 182 MB, writable by the sandbox's user, so a project's
+first `go build` compiles only its own code; another Go version comes through the module proxy), Node 22
 with npm and pnpm (Corepack), Python 3.12 with pip and uv, a C toolchain (build-base), curl, jq, ripgrep, unzip and
 openssh-client to kagent's claude-harness image. A project's own dependencies are fetched when the agent installs them,
-through the package EgressPolicy.
+through the package cache (the Harness's env points npm, pnpm, Yarn, Corepack, Go, pip and uv at it, and the image's apk
+repositories at its `/apk/`; see Network for Claude Code).
 
 A Harness's `workload.image` must be pinned by digest and pulled from a registry, and nothing is pushed anywhere, so
 Landflow's registry serves it. `deploy/scripts/claude-harness-dev.sh` builds the image with `--load`, saves it as an
@@ -383,6 +475,119 @@ Checked live on 2026-10-31: a probe agent deployed on `landflow-claude-dev` had 
 later, pulled from Landflow. In it: Go 1.27.0, Node 22.23.4, pnpm 10.28.2, Python 3.12.16, uv 0.7.22 and gcc 14.2.0.
 A Go program with a module dependency built and ran in 17 s, nearly all of it compiling the standard library on a cold
 cache. `pnpm add` and `node` took 1.2 s.
+
+### The landflow-harness mod
+
+kagent's Claude Code harness sends no token usage over A2A, so a run could only estimate what its Claude Code agents
+spent. Claude Code 2.1.287 added mods: a plugin's hooks module that sees every model request, tool call and result. So
+every Claude Code agent Landflow deploys gets Landflow's own mod, **landflow-harness**
+(`apps/web/claude-plugins/landflow-harness`), which does three things:
+
+- **Trace.** A request from a run starts with a line `<!-- landflow-trace <url> -->`. The mod takes the line off the
+  prompt before the model reads it, and until the turn ends posts what Claude Code does to that URL
+  (`POST /api/agent-trace/<id>`): each model request's tokens (input, output, cache reads and writes), model and time,
+  subagents' requests too, the tool calls the API ran itself, each tool call's time and outcome, the subagents it
+  started, and the turn's end. Events go in batches at most every 3 s, and once more before the turn ends, so the run
+  has them when the answer arrives.
+- **Guard.** Before a tool call runs, its rules (`hooks/rules.ts`) refuse what an agent here never needs to do. The
+  model reads the reason as the tool's error and carries on another way:
+
+  | Rule | What it stops |
+  | --- | --- |
+  | `secret-file` | reading `.env` files (not `.env.example` and other templates), `.netrc`, `.git-credentials`, `.pgpass`, SSH keys, AWS, Docker, kube and gh credentials, `*.pem` keys, `credentials.json`/`secrets.yaml`, `/var/run/secrets` and `/proc/*/environ`, with file tools or shell readers (`cat`, `grep`, `cp`…) |
+  | `env-dump` | `printenv`, a bare `env`, `export -p`, `declare -x`, a bare `set`, echoing a variable named like a key or token, `gh auth token` |
+  | `git-push` | `--mirror`, `--all` and `--prune` pushes. Force pushes, `+refspec`, `:branch` and `--delete`, and pushes to `main` or `master` are not refused in Normal mode: they are [asked of a person](#asking-a-person) |
+  | `git-auth-config` | changing git's `http.*`, `credential.*`, `url.*`, `core.sshCommand` or `include` settings, `-c` included |
+  | `merge` | `gh pr merge`, and merging through `gh api …/pulls/<n>/merge` |
+  | `destructive` | `rm -r` on `/`, `~`, `$HOME` or a system folder, `mkfs`, `dd` onto a device, `chmod -R` on `/`, a fork bomb, writing to a disk |
+  | `upload` | `nc`, `socat`, `telnet`; `curl`/`wget` sending a file (`-T`, `-d @file`, `-F x=@file`) |
+  | `write-outside-workspace` | Write, Edit, MultiEdit and NotebookEdit outside the working directory, `/tmp` and `~/.claude` (the same idea as Claude Code 2.1.314's `permissions.blockWritesOutsideWorkingDirectories`) |
+
+  **The guard per agent.** The Deploy tab's kagent card picks one of three for a Claude Code agent (`guard` on
+  `PUT /api/agents/:id/kagent`, kept across redeploys and publishes):
+
+  | Guard | What it does |
+  | --- | --- |
+  | **Read-only** (`strict`) | the rules above, and the agent is read-only on the code (`read-only`): no Write, Edit, MultiEdit or NotebookEdit outside `/tmp`; no `git commit`, `push`, `merge`, `rebase`, `reset`, `add`, `stash`, `restore`, `clean`, `pull`, new branches or tags, deleting or moving branches, `checkout --`; no `gh pr create/merge/close/edit`, issue, release, repo, label, workflow, secret or gist changes, no `gh api` writes (a pull request's review and line comments are allowed); no `rm`, `mv`, `cp`, `tee`, `touch` or redirections (`>`, `>>`) outside `/tmp`, no `sed -i`/`perl -i`, no publishing packages. Reading, searching, checking out a branch, installing dependencies, running tests and builds, and `gh pr review`/`gh pr comment` go on. For a reviewer |
+  | **Normal** (`enforce`, the default) | the rules above, and asks a person about the three pushes below instead of refusing them |
+  | **Report only** (`report`) | nothing is refused; each stop is reported (`action: report`) |
+
+  The deploy writes it into the mod's `plugin.json` as the default of its `guard` option (`userConfig`), so the packed
+  image differs per guard (`KagentPlugin.options`). A request can make it stricter for one turn (the marker's
+  `guard=strict`), never looser: an `enforce` agent ignores `guard=report` and `guard=off`. The trace's `start` event
+  says the mode in force, and Run Trace shows the agent's mod as *read-only on the code* among its connections. Read-only
+  is best effort: a script that writes files itself isn't caught, so pair it with a token that can't push. Every rule
+  reads each part of a command from the directory an earlier `cd` in it moved to (`cd /tmp && rm -rf work` removes
+  `/tmp/work`, which Read-only allows).
+- <a id="asking-a-person"></a>**Asking a person.** A rule can end in *ask* next to refuse and allow. Normal mode asks about
+  exactly three things, all `git push`: to `main` or `master` (also `HEAD:refs/heads/main`), a force push (`--force`, `-f`,
+  `--force-with-lease`, `--force-if-includes`, a `+refspec`) and deleting a remote branch (`--delete`, `-d`, a `:branch`
+  refspec). Read-only keeps refusing every push, Report only never blocks, and a request without a trace URL has no one
+  to ask, so the push is refused as before. A command with a part that is refused outright (`git push origin main && cat
+  .env`) is refused, never asked. When a command asks:
+  1. the mod posts `{ type: 'ask', askId, command, cwd, reason, agent }` to the trace URL (the command with secrets
+     masked) and waits for the answer by long polling `GET /api/agent-trace/<id>/asks/<askId>?wait=25`, which Landflow
+     holds until a person decides (so the wait costs the hook none of its 10 s budget), for up to 10 minutes;
+  2. Landflow keeps the ask in the `agent_asks` table and writes a wait span under the member's request (`attrs.wait:
+     'approval'`, `attrs.ask`, the command as its input): Run Trace's **Needs you** lists it with Approve / Reject, the
+     live team node says "Developer wants to run git push origin main" with the same buttons, and the cross-run Needs
+     you list has it. **The workflow run is not paused**: the member's A2A call is still going;
+  3. a decision (`POST /api/executions/<id>/asks/<askId>` `{ approved }`, needing the access to the run that deciding its
+     tool approvals needs) ends the wait and writes an **Approval** check on the request (who, what, when; pass for
+     approved, warn for rejected). The mod's next poll returns it: approved, the command runs; denied, Claude Code reads
+     "A person denied: git push origin main";
+  4. no answer in 10 minutes, or the call ends first, closes the ask (an Approval warning says nobody answered in time)
+     and the command is refused with "Nobody answered in time, so this didn't run". A call outside a run, or with five
+     asks open, is denied at once.
+
+  The table is where the three routes meet, so it works when the run is on a worker and the decision comes to a main.
+- **Redact.** A tool's result is kept with every token or key it shows masked (`[redacted GitHub token]`): private
+  keys, GitHub, Anthropic, OpenAI, AWS, Slack, Google and npm tokens, Landflow's `lfk_` and `lf_` keys,
+  `Authorization` headers and passwords in URLs. A secret that reached a file or a command's output doesn't reach the
+  model or the transcript.
+
+**Deploying.** The host ships the mod (the host image copies `apps/web/claude-plugins` next to `server.js`;
+`LANDFLOW_CLAUDE_PLUGINS_DIR` points elsewhere). When the credential names a **Plugin Registry**, a deploy to a Claude
+Code Harness packs it like any other plugin, pinned to a hash of its files (`landflow-harness@landflow`, source
+`landflow:builtin`), adds it to the template's plugins, opens Landflow's origin to the sandbox (the `<name>-landflow` EgressPolicy in
+"Network for Claude Code"), and keeps `trace: { url: <Landflow URL>/api/agent-trace, a2aUrl }` in the deployment.
+Without that policy an agent with no Landflow tools couldn't reach the URL: the first live run on 2026-11-01 lost every
+report that way, while the same mod in the same image posted them when run with kagent's arguments by hand. Without a registry kagent can't fetch it, so the agent runs without it. A changed mod is a
+new digest: deploy the agent again to take it.
+
+**Calling.** When the Run a Team node, an agent's A2A tool or the A2A Agent node sends a new request to an A2A URL that
+is a Landflow agent deployed with the mod (its `a2aUrl`, else the kagent name the URL ends with when only one agent has
+it), Landflow opens a trace for that call (`apps/web/src/lib/server/a2a/agent-trace.ts`): a random 18-byte id is the
+URL's only credential, so the route is public. The trace lives in the host's memory while the call runs. When the
+answer comes, Landflow waits up to 2 s for the mod's last batch, closes it (the route then answers 410, and the mod
+stops posting there), and uses what it reported:
+
+- the call's usage: tokens, cache reads, requests and the model, priced per request at the agent's provider (Settings
+  → AI prices; Ollama's are free unless priced there). A team member's usage counts against its budget as real usage,
+  not an estimate;
+- the Team tab's card and the actor sheet show each member's model calls, tokens in (and cached), out, cost and model;
+  the Report tab has **What each agent used** and the run's cost next to its tokens;
+- each model request is a `model` span under the member's request in Run Trace ([run-trace.md](run-trace.md#who-writes-it)),
+  with its tokens, cost, model and time; the request keeps the totals;
+- each tool call the guardrails stopped is a **Guardrail** check on the request (warn: "Stopped Bash: git push origin
+  main (git-push: …)"), and masked secrets a **Secrets masked** check;
+- the Run a Team node's `members` carry `inputTokens`, `outputTokens`, `cacheReadTokens`, `costUsd`, `model`,
+  `requests` and `ms`; the A2A Agent node's item carries `usage` (with `costUsd`) and `trace`.
+
+**Claude Code's version.** kagent 1.0 (alpha17, and rc1 of 2026-10-30) compiles in Claude Code 2.1.285 with a strict
+check: the harness runs `claude --version` and refuses anything else (`claude version mismatch`), and the golden actor
+crashes. Mods need 2.1.287 or later. `deploy/docker/claude-harness-dev.Dockerfile` installs the latest Claude Code
+(`CLAUDE_CODE_VERSION`, 2.1.316 on 2026-10-31) and puts a wrapper at `/usr/local/bin/claude` that answers
+`--version` alone with `<version> (kagent pin 2.1.285)` and runs the real binary for everything else; the build checks
+it. Newer versions also bring what the mod reports: `serverToolUses` on each request (2.1.290), Haiku 5.5 (2.1.293),
+blocking hooks (2.1.295), cache writes by TTL (2.1.300) and `isReadOnly` on tool checks (2.1.304).
+
+Checked live on 2026-11-01: the Reviewer on `landflow-claude-dev` (image `c0f96c18`, Claude Code 2.1.316 behind the
+wrapper) became Ready and the read-only Tech Review flow succeeded (`ex_go8NtdO4Yzqv`), its session restored from the new
+snapshot. Locally, Claude Code 2.1.316 with the mod (`--plugin-dir`) against qwen3-coder on Ollama, in kagent's mode
+(`-p --input-format stream-json`), took the marker off, posted each request's real usage (with Ollama's cache reads),
+each tool's time and the turn's total before the result, refused `cat .env` and `git push origin main`, and a token in
+a file reached the model as `[redacted GitHub token]`.
 
 ## Tests
 
@@ -411,12 +616,33 @@ Landflow packed when the credential names a registry, and a plugin changed in ka
 runtime drops the approval server and the plugins; a Codex Harness, an OpenAI model and an unknown plugin are refused.
 `apps/web/test/kagent-oci.test.ts` covers the images: a tar that `tar` extracts (folders, scripts executable, long
 paths split), the same digest on every pack, only the plugin's folder in the layer, the registry's version check and
-headers, no tags or unknown digests, and an image packed again from its deployment.
+headers, no tags or unknown digests, and an image packed again from its deployment; Landflow's own mod packed from the
+host's files without its tests or editor types, its pin changing with a file. The registry deploy test checks that the
+mod is added and the deployment keeps where it reports.
+
+`apps/web/test/claude-harness-mod.test.ts` runs the mod's rules and redaction (`hooks/rules.ts`): what each rule stops
+and lets through, and what is masked. `apps/web/test/agent-trace.test.ts` covers a trace (usage priced per request,
+per model and per subagent, tools, guardrails, masks, the limits, closing), the route (public, 204, 400, 404, 410),
+which calls get a trace, the A2A Agent node's item, and the journal's checks. `apps/web/test/run-team.test.ts` runs a
+team whose remote member reports through the fake agent as the mod would. The hooks themselves are tested with Claude
+Code's kit: `claude plugin test apps/web/claude-plugins/landflow-harness` (a marked request traced with the marker
+gone, a push to main asked of a person and run or refused by the answer, read-only never asking, enforcing without a marker and report mode, a token masked), and
+`claude plugin validate` checks the module. `apps/web/test/agent-asks.test.ts` covers the asks: the wait in the journal, the polling and decision routes, the Approval check, timeout and the call ending, in one process.
 
 ## Not built
 
+- GitHub MCP tools hold no per-repository scope of their own (the token's is the limit), cannot be narrowed to single tools
+  beyond the read / review levels, and a review comment is written when it is called: there is no draft of it for a person to
+  read first except the tool's approval switch. The bundled server is not deployed by the compose files.
 - Remote agents' tokens are recorded (timeline, span, `landflow.a2a.tokens`) but don't count toward an agent's daily or
   monthly AI limits, which count Landflow's own model calls.
+- The landflow-harness mod's trace lives in the memory of the host that made the call. In queue mode its id starts with
+  that process (`<instance>.<random>`, base64url), and the main the mod posts to passes a batch it doesn't hold on to
+  that process's inbox over Valkey (`202`), so a worker's call gets its real usage; a batch for a worker that has gone is
+  lost, and the run keeps its estimate for it. Its guard is set per agent
+  at deploy time (read-only, normal, report only); its rules are patterns over the command line (a script that does the
+  same thing gets past them), and a continuation of a paused task (an answer, an approval) carries no marker, so that
+  part is estimated. It needs a Plugin Registry and the Claude Code version wrapper while kagent pins 2.1.285.
 - The dialog doesn't preview the agent card before saving; a wrong URL shows as a notice when a run starts.
 - Landflow doesn't serve A2A itself: other agents can't call a Landflow agent over A2A yet (they can call its tools over
   MCP).
@@ -426,10 +652,13 @@ headers, no tags or unknown digests, and an image packed again from its deployme
   marketplace on the host or behind a URL has no commit to pin). Landflow
   doesn't watch kagent: drift shows when the status is read, and a redeploy is a click, not automatic.
 - kagent's own Claude Code image (`landflow-claude`) is Alpine with bash and git only. `landflow-claude-dev` has the
-  common toolchains, but its Go build cache starts cold on every session, and project dependencies are downloaded on
-  every session (no cache in the cluster yet).
-- The package EgressPolicy opens public registries to every agent that references it. There is no per-agent allowlist
-  beyond choosing policies, and no git host is granted yet.
+  common toolchains and Go's standard library already built. Project dependencies are still installed on every session
+  (from the package cache, so they stay local after the first fetch, but they aren't baked into the image), and a
+  project's own packages are compiled on every session.
+- The package EgressPolicy grants the package cache to every agent that references it. There is no per-agent allowlist
+  beyond choosing policies, and no code host is granted yet. The cache has no authentication (anything that reaches
+  `landflow-cache` can read it), and caches only what the four upstreams serve: a private registry or another mirror
+  needs its own origin in a policy.
 - Watching a Tech Lead that calls remote agents: a Run an Agent node's session shows live in the execution view's Agent
   session panel, with each A2A tool entry's `remote.steps` ([agents.md](agents.md#from-workflows)).
 - Sessions on kagent aren't Landflow sessions: their tool calls are traced (`execute_tool`) but don't show in the

@@ -6,21 +6,35 @@
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
-import { chartOrder } from '../../shared/agent-teams';
+import { chartOrder, type TeamMember } from '../../shared/agent-teams';
 import type { AgentStreamEvent } from '../../shared/agents';
-import { joinActivity, teamProgressFolder, type TeamActivity } from '../../shared/team-progress';
+import { joinActivity, PACKAGE_POLICY, teamProgressFolder, type TeamActivity } from '../../shared/team-progress';
+import { shortArg, targetOf } from '../../shared/team-progress';
+import { agentStore } from '../agents/store';
+import { agentAtEndpoint } from '../notebook/binding';
 import type { TeamState } from '../agent-teams/runtime';
+import { SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL } from '../slack';
 import { streamer } from './agents';
+import { approvalSettings, askForApproval, decisionsOf } from './ai';
 
 const main = [{ type: 'main' as const }];
 
-/** What the node keeps while a member's question waits for a person: where it was in its items, and the team's state. */
+/** What the node keeps while a member's question or tool approval waits for a person: where it was in its items, and the team's state. */
 interface Waiting {
+  /** What the run waits on (absent in runs saved before approvals: a question). */
+  kind?: 'question' | 'approval';
   itemIndex: number;
   done: NodeItem[];
   needsPerson: NodeItem[];
   state: TeamState;
   activity: TeamActivity;
+}
+
+/** Whether a member's sandbox works through Landflow's package cache: the Landflow agent behind it (or at its A2A address) is deployed to kagent with a package egress policy. */
+function worksThroughCache(member: TeamMember): boolean {
+  const url = member.kind === 'a2a' && typeof member.parameters.agentUrl === 'string' ? member.parameters.agentUrl : undefined;
+  const agent = member.kind === 'agent' ? agentStore.get(member.agentId) : url ? agentAtEndpoint(url) : undefined;
+  return Boolean(agent?.kagent?.egressPolicies?.some((policy) => PACKAGE_POLICY.test(policy)));
 }
 
 export const runTeamNode = defineNode({
@@ -45,6 +59,11 @@ export const runTeamNode = defineNode({
     outputs: [
       { type: 'main', displayName: 'Done' },
       { type: 'main', displayName: 'Needs a person' },
+    ],
+    // Posting a tool approval to Slack (the same credentials as the AI Agent node's).
+    credentials: [
+      { name: SLACK_CREDENTIAL, required: true, displayOptions: { show: { approvalChannel: ['slack'], slackAuthentication: ['accessToken'] } } },
+      { name: SLACK_OAUTH2_CREDENTIAL, required: true, displayOptions: { show: { approvalChannel: ['slack'], slackAuthentication: ['oAuth2'] } } },
     ],
     properties: [
       {
@@ -93,9 +112,71 @@ export const runTeamNode = defineNode({
         ],
       },
       {
+        name: 'approvalChannel',
+        displayName: 'Ask For Tool Approvals In',
+        type: 'options',
+        default: 'chat',
+        noDataExpression: true,
+        options: [
+          { name: 'Chat / Execution View', value: 'chat', description: 'Approve or Deny buttons on the node, in Needs you and in the waiting execution' },
+          { name: 'Slack', value: 'slack', description: 'A message with Approve and Reject buttons (needs the app’s Interactivity URL)' },
+          { name: 'Email', value: 'email', description: 'An email with signed, single-use Approve and Reject links (the host’s SMTP, LANDFLOW_SMTP_HOST)' },
+        ],
+        description: 'Where a person is asked when a member wants to use a tool that needs approval',
+      },
+      {
+        name: 'slackAuthentication',
+        displayName: 'Slack Authentication',
+        type: 'options',
+        default: 'accessToken',
+        noDataExpression: true,
+        options: [
+          { name: 'Bot Token', value: 'accessToken' },
+          { name: 'OAuth2 (Installed App)', value: 'oAuth2' },
+        ],
+        displayOptions: { show: { approvalChannel: ['slack'] } },
+      },
+      {
+        name: 'slackChannel',
+        displayName: 'Slack Channel',
+        type: 'string',
+        default: '',
+        required: true,
+        placeholder: 'C0123456789',
+        description: 'Channel ID (or a member ID for a DM) to post approval requests in',
+        displayOptions: { show: { approvalChannel: ['slack'] } },
+      },
+      {
+        name: 'slackApprovers',
+        displayName: 'Approvers',
+        type: 'string',
+        default: '',
+        placeholder: 'U0123ABCD, U0456EFGH',
+        description: 'Slack member IDs allowed to decide, comma-separated. Empty: anyone who can see the message.',
+        displayOptions: { show: { approvalChannel: ['slack'] } },
+      },
+      {
+        name: 'approvalEmails',
+        displayName: 'Approver Emails',
+        type: 'string',
+        default: '',
+        required: true,
+        placeholder: 'ana@example.com, ben@example.com',
+        description: 'Each address gets one email per waiting tool call with its own Approve and Reject links; the first decision counts.',
+        displayOptions: { show: { approvalChannel: ['email'] } },
+      },
+      {
+        name: 'approvalTimeoutMinutes',
+        displayName: 'Approval Timeout (Minutes)',
+        type: 'number',
+        default: 0,
+        typeOptions: { minValue: 0 },
+        description: 'Refuse the waiting tool calls after this long. 0: wait until someone decides.',
+      },
+      {
         name: 'notice',
         displayName:
-          'The lead runs with the team’s goal; each member is asked by title, with a reason, and reports back. A model, memory and tools connected here go to the lead. Tools that need approval are refused (nobody is there to approve them). A member’s question for a person pauses the run until someone answers it (Needs you, or the form link), then the team goes on. Done carries { reply, team, members, usage, activity }; Needs a person adds a reason: a review nobody did or that asked for changes, a budget or limit reached.',
+          'The lead runs with the team’s goal; each member is asked by title, with a reason, and reports back. A model, memory and tools connected here go to the lead. A tool that needs approval pauses the run: the member waits until a person approves or denies it (Approve / Deny on the node and under Needs you, or in Slack or by email), then the team goes on. A member’s question for a person pauses the run until someone answers it (Needs you, or the form link), then the team goes on. Done carries { reply, team, members, usage, activity } (each member’s tokens, and its cost, model and time where known); Needs a person adds a reason: a review nobody did or that asked for changes, a budget or limit reached.',
         type: 'notice',
       },
     ],
@@ -114,10 +195,14 @@ export const runTeamNode = defineNode({
     const saved = ctx.getNodeState?.() as { waiting?: Waiting; $resume?: { kind: string; data?: JsonObject } } | undefined;
     ctx.setNodeState?.(undefined);
     const waited = saved?.waiting && saved.$resume ? saved.waiting : undefined;
+    const decisions = waited?.kind === 'approval' ? decisionsOf(saved?.$resume) : undefined;
     const done: NodeItem[] = waited ? [...waited.done] : [];
     const needsPerson: NodeItem[] = waited ? [...waited.needsPerson] : [];
     for (let i = waited?.itemIndex ?? 0; i < Math.max(items.length, 1); i++) {
-      const resume = waited && i === waited.itemIndex ? { state: waited.state, answer: String(saved?.$resume?.data?.answer ?? '').trim() } : undefined;
+      const resume =
+        waited && i === waited.itemIndex
+          ? { state: waited.state, answer: waited.kind === 'approval' ? '' : String(saved?.$resume?.data?.answer ?? '').trim(), ...(decisions && { decisions }) }
+          : undefined;
       try {
         const team = agentTeamStore.get(ctx.getNodeParameter<string>('teamId', i));
         if (!team) throw new NodeOperationError('Choose a team — the selected one was deleted', { itemIndex: i });
@@ -143,7 +228,12 @@ export const runTeamNode = defineNode({
         send?.({ type: 'begin', itemIndex: i });
         // Who works on what, for the canvases (lib/shared/team-progress.ts): the lead's stream, folded. What the run did
         // (turns, moments) goes on the output too, so a finished node shows it.
-        const fold = teamProgressFolder(chartOrder(config).map((m) => m.title));
+        // Members' tokens go with it, against their budgets; a run going on after a person answered carries on from before.
+        const fold = teamProgressFolder(chartOrder(config).map((m) => m.title), Date.now, {
+          budgets: Object.fromEntries(config.members.flatMap((m) => (m.budgetTokens ? [[m.title, m.budgetTokens]] : []))),
+          ...(resume && waited?.activity?.usage && { usage: waited.activity.usage }),
+          packageCache: config.members.filter((m) => worksThroughCache(m)).map((m) => m.title),
+        });
         const stream = send && streamer(send, i);
         const onEvent = (event: AgentStreamEvent) => {
           stream?.(event);
@@ -153,6 +243,10 @@ export const runTeamNode = defineNode({
         // A member that manages others asks them in its own loop: folded too, so its reports show at work.
         const onMemberEvent = (title: string, event: AgentStreamEvent) => {
           const report = fold(event, title);
+          if (report) ctx.sendProgress?.(report as unknown as JsonObject);
+        };
+        const onUsage = (title: string, tokens: number, estimated: boolean) => {
+          const report = fold.usage(title, tokens, estimated);
           if (report) ctx.sendProgress?.(report as unknown as JsonObject);
         };
         const result = await runTeam({
@@ -168,15 +262,34 @@ export const runTeamNode = defineNode({
           ...(memory && { memory }),
           onEvent,
           onMemberEvent,
+          onUsage,
           canWait: Boolean(ctx.putExecutionToWait),
           ...(resume && { resume }),
         });
         send?.({ type: 'end', itemIndex: i });
+        // The question it waits on turns the node amber, with an Answer button; its moment stays in the activity.
+        if (result.waiting && ctx.putExecutionToWait) {
+          const { approval } = result.waiting;
+          const first = approval?.calls[0];
+          ctx.sendProgress?.(
+            fold.waiting(result.waiting.member, result.waiting.question, approval && first && { tool: approval.calls.map((c) => c.label).join(', '), ...(shortArg(first.input, 140) && { summary: shortArg(first.input, 140) }), ...(targetOf(first.input) && { target: targetOf(first.input) }) }) as unknown as JsonObject,
+          );
+        }
         const activity = joinActivity(resume ? waited?.activity : undefined, fold.activity());
         if (result.waiting && ctx.putExecutionToWait) {
           // A member asked a person: the run waits for the answer, then this node runs again and the team goes on.
-          const { member, question, state } = result.waiting;
-          ctx.setNodeState?.({ waiting: { itemIndex: i, done, needsPerson, state, activity } as unknown as JsonObject });
+          const { member, question, state, approval } = result.waiting;
+          ctx.setNodeState?.({ waiting: { kind: approval ? 'approval' : 'question', itemIndex: i, done, needsPerson, state, activity } as unknown as JsonObject });
+          if (approval) {
+            // A member wants to use a tool that needs approval: the wait looks like the AI Agent node's, so Needs you, the
+            // execution view, Slack and email decide it the same way; `teamApproval` is what the team node itself reads.
+            const settings = approvalSettings(ctx, i, 'all');
+            const calls = approval.calls.map((c) => ({ id: c.id, name: c.label, input: c.input as JsonObject }));
+            const first = approval.calls[0];
+            await askForApproval(ctx, i, settings, calls, { teamApproval: { team: config.name, member, tool: approval.calls.map((c) => c.label).join(', '), summary: shortArg(first.input, 140) ?? null, target: targetOf(first.input) ?? null } }, question);
+            ctx.logger.info(`${member} wants to use ${approval.calls.map((c) => c.label).join(', ')}; waiting for an approval`);
+            return [done, needsPerson];
+          }
           ctx.putExecutionToWait({
             resume: 'form',
             rerun: true,
@@ -210,6 +323,12 @@ export const runTeamNode = defineNode({
             tokens: m.tokens,
             ...(m.estimated && { estimated: true }),
             ...(m.overBudget && { overBudget: true }),
+            ...(m.inputTokens !== undefined && { inputTokens: m.inputTokens, outputTokens: m.outputTokens ?? 0 }),
+            ...(m.cacheReadTokens && { cacheReadTokens: m.cacheReadTokens }),
+            ...(m.costUsd !== undefined && { costUsd: m.costUsd }),
+            ...(m.model && { model: m.model }),
+            ...(m.requests && { requests: m.requests }),
+            ...(m.ms && { ms: m.ms }),
           })),
           ...(result.needsPerson && { reason: result.needsPerson }),
           usage: { ...result.usage },

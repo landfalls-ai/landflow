@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Activity, BookOpenText, Bot, ChartColumn, House, KeyRound, LayoutTemplate, Menu, Puzzle, Settings, Store, Table2, Workflow, X } from 'lucide-react';
+import { Activity, BookOpenCheck, BookOpenText, Bot, ChartColumn, House, KeyRound, LayoutTemplate, Menu, Puzzle, Search, Settings, Store, Table2, Workflow, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveConnected, useLiveEvents } from '@/lib/client/live';
@@ -13,6 +13,7 @@ import { useViewer } from '../auth/viewer';
 import { ProjectSwitcher } from '../projects/project-switcher';
 import { StatusDot } from '../ui/badge';
 import { EnvironmentBadge } from './environment-badge';
+import { LookToggle } from './look-toggle';
 import { ThemeToggle } from './theme-toggle';
 
 const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string; icon: typeof House; preview?: boolean }> }> = [
@@ -24,8 +25,10 @@ const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string;
       { href: '/templates', label: 'Templates', icon: LayoutTemplate },
       { href: '/agents', label: 'Agents', icon: Bot, preview: true },
       { href: '/executions', label: 'Executions', icon: Activity },
+      { href: '/runs', label: 'Search runs', icon: Search },
       { href: '/insights', label: 'Insights', icon: ChartColumn },
       { href: '/data-tables', label: 'Data tables', icon: Table2 },
+      { href: '/runbooks', label: 'Runbooks', icon: BookOpenCheck },
       { href: '/credentials', label: 'Credentials', icon: KeyRound },
     ],
   },
@@ -148,7 +151,10 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
           <StatusDot status={connected ? 'online' : 'offline'} />
           {connected ? 'Live' : 'Reconnecting…'}
         </div>
-        <ThemeToggle />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <ThemeToggle />
+          <LookToggle />
+        </div>
       </div>
       <div className="mt-2 border-t border-hair pt-2">
         <UserMenu />

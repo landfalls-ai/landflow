@@ -133,6 +133,8 @@ interface PendingWait {
   outputs: NodeItem[][];
   logs?: LogEntry[];
   startedAt: number;
+  /** When the node asked to wait: a node that works first (a team waiting on an approval) asks well after it started. */
+  askedAt: number;
 }
 
 const RESUMED: Record<ResumeKind, string> = {
@@ -791,7 +793,7 @@ class WorkflowRun {
   private suspend(stack: StackEntry[], parked: Parked): { wait: ExecutionWait; state: ResumeState } {
     const pending = this.pendingWait!;
     const since = new Date(pending.startedAt).toISOString();
-    const wait: ExecutionWait = { ...pending.request, nodeId: pending.node.id, nodeName: pending.node.name, since };
+    const wait: ExecutionWait = { ...pending.request, nodeId: pending.node.id, nodeName: pending.node.name, since: new Date(pending.askedAt).toISOString() };
     const waiting = {
       nodeId: pending.node.id,
       inputs: pending.inputs,
@@ -966,7 +968,7 @@ class WorkflowRun {
           telemetry.span.setAttributes({ 'landflow.node.status': 'waiting', 'landflow.wait.resume': wait.resume, ...(wait.until && { 'landflow.wait.until': wait.until }) });
           telemetry.ended = true;
           telemetry.span.end();
-          this.pendingWait = { request: wait, node, inputs: effectiveInputs, outputs: response.outputs, ...(response.logs && { logs: response.logs }), startedAt: started };
+          this.pendingWait = { request: wait, node, inputs: effectiveInputs, outputs: response.outputs, ...(response.logs && { logs: response.logs }), startedAt: started, askedAt: Date.now() };
           return response.outputs;
         }
         const logs = throttled ? [throttled, ...(response.logs ?? [])] : response.logs;

@@ -47,6 +47,16 @@ const pause = defineNode({
   },
 });
 
+/** Works for a moment, then asks to wait: a team node waits on an approval well after it started. */
+const slowPause = defineNode({
+  description: { name: 'slowPause', displayName: 'Slow pause', description: '', version: 1, kind: 'action', inputs: main, outputs: main, properties: [] },
+  async execute(ctx) {
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    ctx.putExecutionToWait!({ resume: 'webhook' });
+    return [ctx.getInputData()];
+  },
+});
+
 /** A tiny Loop Over Items: output 0 = done (everything that came back), output 1 = the next batch of one. */
 const loop = defineNode({
   description: { name: 'loop', displayName: 'Loop', description: '', version: 1, kind: 'action', inputs: main, outputs: [...main, ...main], properties: [] },
@@ -70,7 +80,7 @@ const stuck = defineNode({
   execute: () => new Promise<NodeItem[]>(() => {}),
 });
 
-const registry: Record<string, INodeType> = { trigger, set, merge, pause, loop, stuck };
+const registry: Record<string, INodeType> = { trigger, set, merge, pause, slowPause, loop, stuck };
 const resolver: NodeTypeResolver = {
   resolve(type) {
     const node = registry[type.replace(/^t\./, '')];
@@ -116,6 +126,16 @@ describe('waiting executions', () => {
     expect(events[0]).toMatchObject({ type: 'execution.started', resumed: true });
     // Only the new runs are streamed.
     expect(events.filter((e) => e.type === 'node.finished').map((e) => e.type === 'node.finished' && e.nodeId)).toEqual(['w', 'd']);
+  });
+
+  it('dates the wait from when the node asked, not from when it started', async () => {
+    const events: ExecutionEvent[] = [];
+    const first = await run(wf([n('a', 'trigger'), n('w', 'slowPause')], [c('a', 'w')]), { onEvent: (event) => events.push(event) });
+    const started = events.find((e) => e.type === 'node.started' && e.nodeId === 'w');
+    expect(first.status).toBe('waiting');
+    expect(Date.parse(first.wait!.since) - Date.parse(started!.at)).toBeGreaterThanOrEqual(50);
+    // The node's own run still counts from its start.
+    expect(first.resumeState?.waiting.startedAt).toBe(started!.at);
   });
 
   it('continues a time wait with what the node returned', async () => {

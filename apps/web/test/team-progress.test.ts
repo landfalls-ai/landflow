@@ -5,7 +5,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { AgentStreamEvent, TimelineEntry } from '@/lib/shared/agents';
-import { activityOfRuns, narrate, teamProgressFolder } from '@/lib/shared/team-progress';
+import { activityOfRuns, joinActivity, narrate, targetOf, teamProgressFolder } from '@/lib/shared/team-progress';
+import { teamQuestionOf } from '@/components/editor/team-live';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
 
 const at = '2026-10-31T21:00:00.000Z';
@@ -140,6 +141,84 @@ describe('team progress', () => {
     expect(fold.activity().steps).toMatchObject({ Developer: 1, Tester: 1 });
   });
 
+  it('keeps each member’s tokens against its budget, with a moment at 80% and once used up', () => {
+    const fold = teamProgressFolder(['Lead', 'Developer', 'Reviewer'], Date.now, { budgets: { Developer: 10_000, Nobody: 5 } });
+    fold({ type: 'run.started', sessionId: 's1' });
+    // The lead has no budget: its tokens show, without a bar.
+    expect(fold.usage('Lead', 1_200)!.usage).toEqual([{ member: 'Lead', tokens: 1_200 }, { member: 'Developer', tokens: 0, budget: 10_000 }]);
+    // The same again changes nothing.
+    expect(fold.usage('Lead', 1_200)).toBeUndefined();
+    expect(fold.usage('Developer', 5_000)!.moments.filter((m) => m.tone !== 'info')).toEqual([]);
+    const near = fold.usage('Developer', 8_100)!;
+    expect(near.moments.at(-1)).toMatchObject({ member: 'Developer', tone: 'warn', text: 'Developer used 80% of its budget' });
+    expect(near.usage?.find((u) => u.member === 'Developer')).toEqual({ member: 'Developer', tokens: 8_100, budget: 10_000 });
+    // Once per level: more tokens under the budget make no second moment.
+    expect(fold.usage('Developer', 9_000)!.moments.filter((m) => m.tone === 'warn')).toHaveLength(1);
+    expect(fold.usage('Developer', 10_400)!.moments.at(-1)).toMatchObject({ tone: 'bad', text: 'Developer used up its budget' });
+    // A remote member that reports nothing is estimated.
+    expect(fold.usage('Reviewer', 300, true)!.usage?.find((u) => u.member === 'Reviewer')).toEqual({ member: 'Reviewer', tokens: 300, estimated: true });
+    expect(fold.activity().usage).toEqual([
+      { member: 'Lead', tokens: 1_200 },
+      { member: 'Developer', tokens: 10_400, budget: 10_000 },
+      { member: 'Reviewer', tokens: 300, estimated: true },
+    ]);
+  });
+
+  it('marks a tool waiting for approval as a moment that names the tool and what it would do', () => {
+    const fold = teamProgressFolder(['Tech Lead', 'Developer']);
+    fold({ type: 'run.started', sessionId: 's1' });
+    const waiting = fold.waiting('Tech Lead', 'Tech Lead wants to use Comment on pull request', { tool: 'Comment on pull request', summary: 'Review passed: 14 tests' });
+    expect(waiting).toMatchObject({ member: 'Tech Lead', plain: 'Waiting for a person’s approval', waiting: { member: 'Tech Lead', approval: { tool: 'Comment on pull request' } } });
+    expect(waiting.moments.at(-1)).toMatchObject({ member: 'Tech Lead', tone: 'warn', text: 'Tech Lead asks to use Comment on pull request', question: 'Review passed: 14 tests' });
+  });
+
+  it('shows a consult with both members at work, and a hand-off as a moment', () => {
+    const peer = (callId: string, tool: string, status: 'running' | 'success', owner = 'Developer'): AgentStreamEvent => ({
+      type: 'entry',
+      sessionId: 's1',
+      entry: { id: `e_${callId}_${status}`, type: 'tool', callId, tool, label: 'Reviewer', kind: 'agent', input: { message: 'q', reason: 'how tests fake the API' }, status, at, ...(status === 'success' && { output: 'Use the fake server' }) } as TimelineEntry,
+    });
+    const fold = teamProgressFolder(['Tech Lead', 'Developer', 'Reviewer']);
+    fold({ type: 'run.started', sessionId: 's1' });
+    fold(tool('c1', 'Developer', 'running'));
+    // The Developer's own stream: it consults the Reviewer.
+    const consulting = fold(peer('c2', 'consult_reviewer', 'running'), 'Developer')!;
+    expect(consulting).toMatchObject({ member: 'Reviewer', consulting: { from: 'Developer', to: 'Reviewer', kind: 'consult' }, plain: 'Asking the Reviewer how tests fake the API' });
+    expect(consulting.steps[0]).toMatchObject({ status: 'running', plain: 'Asking the Reviewer how tests fake the API' });
+    expect(consulting.moments.at(-1)).toMatchObject({ member: 'Developer', text: 'Developer consults the Reviewer' });
+    const answered = fold(peer('c2', 'consult_reviewer', 'success'), 'Developer')!;
+    expect(answered.consulting).toBeUndefined();
+    expect(answered).toMatchObject({ member: 'Developer', plain: "Reading the Reviewer's answer" });
+    expect(answered.moments.at(-1)).toMatchObject({ text: 'Reviewer answered Developer' });
+    // A hand-off says so.
+    const handed = fold(peer('c3', 'hand_off_to_reviewer', 'running'), 'Developer')!;
+    expect(handed.consulting).toMatchObject({ kind: 'handoff' });
+    expect(handed.moments.at(-1)).toMatchObject({ member: 'Developer', text: 'Developer handed the task to the Reviewer' });
+  });
+
+  it('marks the question the run waits on, and carries the usage on after the answer', () => {
+    let clock = 0;
+    const fold = teamProgressFolder(['Lead', 'Developer'], () => clock, { budgets: { Developer: 1_000 } });
+    fold({ type: 'run.started', sessionId: 's1' });
+    fold.usage('Developer', 850);
+    clock = 4_000;
+    const waiting = fold.waiting('developer', 'Developer asks:\n- Which branch should I use?');
+    expect(waiting).toMatchObject({ member: 'Developer', plain: 'Waiting for a person’s answer', waiting: { member: 'Developer', question: 'Developer asks:\n- Which branch should I use?' } });
+    expect(waiting.moments.at(-1)).toMatchObject({ member: 'Developer', tone: 'warn', text: 'Developer asks a person', question: 'Developer asks:\n- Which branch should I use?', at: 4_000 });
+    const before = fold.activity();
+    // The run goes on after the answer: a new fold that starts from what was used, so 80% isn't told twice.
+    const after = teamProgressFolder(['Lead', 'Developer'], () => clock, { budgets: { Developer: 1_000 }, usage: before.usage });
+    after({ type: 'run.started', sessionId: 's1' });
+    expect(after.usage('Developer', 900)!.moments.filter((m) => m.tone === 'warn')).toEqual([]);
+    expect(after.usage('Developer', 1_000)!.moments.at(-1)).toMatchObject({ tone: 'bad' });
+    const joined = joinActivity(before, after.activity());
+    expect(joined.usage).toEqual([{ member: 'Developer', tokens: 1_000, budget: 1_000 }]);
+    expect(joined.moments.map((m) => m.text)).toContain('Developer asks a person');
+    // Each part's length, so the Story can place the moments of each part on its own node run.
+    expect(joined.parts).toEqual([before.durationMs, joined.durationMs - before.durationMs]);
+    expect(joinActivity(joined, { durationMs: 500, turns: [], moments: [], steps: {} }).parts).toEqual([...joined.parts!, 500]);
+  });
+
   it('ignores what says nothing about who works', () => {
     const fold = teamProgressFolder(['Lead', 'Helper']);
     expect(fold({ type: 'entry', sessionId: 's1', entry: { id: 'u', type: 'user', text: 'hi', at } })).toBeUndefined();
@@ -171,6 +250,29 @@ describe('plain words for steps', () => {
     expect(words('Bash', JSON.stringify({ command: 'pnpm lint' })).plain).toBe('Linting');
   });
 
+  it('says an install went through the package cache when the member works through it, or its own output names the cache', () => {
+    const install = { command: 'cd /tmp/work && pnpm install --ignore-scripts' };
+    expect(narrate('Bash', install, { cache: true })).toEqual({ plain: 'Installing dependencies · from the cache', kind: 'install' });
+    expect(narrate('Bash', install, { output: 'Progress: resolved 1, GET http://landflow-cache.landflow.svc.cluster.local:8080/npm/zod' })).toEqual({ plain: 'Installing dependencies · from the cache', kind: 'install' });
+    expect(narrate('Bash', install).plain).toBe('Installing dependencies');
+    for (const command of ['npm install', 'yarn add zod', 'go mod download', 'pip install -r requirements.txt', 'apk add --no-cache git']) {
+      expect(narrate('Bash', { command }, { cache: true }).plain).toBe('Installing dependencies · from the cache');
+      expect(narrate('Bash', { command }).plain).toBe('Installing dependencies');
+    }
+    // Only installs: a test run through the cache is still a test run.
+    expect(narrate('Bash', { command: 'pnpm test' }, { cache: true }).plain).toBe('Running the tests');
+  });
+
+  it('puts "from the cache" on the live node for the members that work through the cache', () => {
+    const fold = teamProgressFolder(['Lead', 'Developer'], Date.now, { packageCache: ['developer'] });
+    fold({ type: 'run.started', sessionId: 's1' });
+    const step: Step = { name: 'Bash', status: 'running', args: { command: 'pnpm install' } };
+    expect(fold(tool('c1', 'Developer', 'running', [step]))!.plain).toBe('Installing dependencies · from the cache');
+    const other = teamProgressFolder(['Lead', 'Developer']);
+    other({ type: 'run.started', sessionId: 's1' });
+    expect(other(tool('c1', 'Developer', 'running', [step]))!.plain).toBe('Installing dependencies');
+  });
+
   it('reads file, search and web tools, and falls back to the tool name', () => {
     expect(words('Read', { file_path: '/tmp/work/plugins/grafana/src/nodes/get-alerts.ts' }).plain).toBe('Reading get-alerts.ts');
     expect(words('Edit', { file_path: '/w/README.md' }).plain).toBe('Editing README.md');
@@ -181,5 +283,73 @@ describe('plain words for steps', () => {
     expect(words('TodoWrite', {}).plain).toBe('Updating the to-do list');
     expect(words('check_branch').plain).toBe('Check branch');
     expect(words('mcp__github__createPullRequest').plain).toBe('Create pull request');
+  });
+
+  it('reads the notebook tools in plain words', () => {
+    expect(words('note_search', { query: 'how plugins declare icons' }).plain).toBe('Searching the notebook');
+    expect(words('note_add', { kind: 'decision', text: 'x' }).plain).toBe('Noting a decision');
+    expect(words('note_add', { kind: 'open_question', text: 'x' }).plain).toBe('Noting an open question');
+    expect(words('note_add', { kind: 'fact', text: 'x' }).plain).toBe('Noting a fact');
+    expect(words('note_add', { text: 'x' }).plain).toBe('Noting a fact');
+    expect(words('note_update', { id: 'n', answer: 'v2' }).plain).toBe('Answering a question');
+    expect(words('note_update', { id: 'n', status: 'verified' }).plain).toBe('Updating a note');
+    expect(words('note_dispute', { id: 'n', text: 'x' }).plain).toBe('Disputing a note');
+    expect(words('note_promote', { id: 'n', to: 'project' }).plain).toBe('Suggesting a note for the project');
+    expect(words('note_promote', { id: 'n' }).plain).toBe('Promoting a note to the team');
+    // A search says how many notes it found once its result is known.
+    const search = { query: 'icons' };
+    expect(narrate('note_search', search, { output: '3 notes (matched by meaning):\n- [note_a] fact ...' }).plain).toBe('Searching the notebook · 3 found');
+    expect(narrate('note_search', search, { output: '1 note (matched by keywords):\n- [note_a] fact ...' }).plain).toBe('Searching the notebook · 1 found');
+    expect(narrate('note_search', search, { output: 'Nothing in the notebook matches “zebra”.' }).plain).toBe('Searching the notebook · 0 found');
+    expect(narrate('note_search', search, { output: { content: [{ type: 'text', text: '2 notes (matched by meaning):' }] } }).plain).toBe('Searching the notebook · 2 found');
+    expect(narrate('note_search', search, { output: undefined }).plain).toBe('Searching the notebook');
+    // Over MCP a Claude Code member's tool carries the server's prefix.
+    expect(words('mcp__landflow-agent__note_add', { kind: 'decision', text: 'x' }).plain).toBe('Noting a decision');
+  });
+
+  it('makes a moment of a note written, once, for a member’s own tool and for a remote member’s step', () => {
+    const fold = teamProgressFolder(['Lead', 'Developer', 'Reviewer']);
+    fold({ type: 'run.started', sessionId: 's1' });
+    const own = (status: 'running' | 'success', callId = 'n1'): AgentStreamEvent => ({
+      type: 'entry',
+      sessionId: 's1',
+      entry: { id: `e_${callId}_${status}`, type: 'tool', callId, tool: 'note_add', label: 'note_add', kind: 'notebook', input: { kind: 'decision', text: 'Each node gets a test against a fake server.' }, status, at } as TimelineEntry,
+    });
+    const running = fold(own('running'))!;
+    expect(running.plain).toBe('Noting a decision');
+    expect(running.moments.filter((m) => m.note)).toEqual([]);
+    fold(own('success'));
+    const done = fold(own('success'))!;
+    expect(done.moments.filter((m) => m.note)).toEqual([expect.objectContaining({ member: 'Lead', tone: 'ok', text: 'Lead decided: Each node gets a test against a fake server.', note: true })]);
+    // A Claude Code member's note arrives as one of its steps.
+    const step: Step = { name: 'mcp__landflow-agent__note_add', status: 'success', args: { kind: 'fact', text: 'plugins need an icons/ folder' }, output: 'Noted (note_x)' };
+    const reviewed = fold(tool('c9', 'Reviewer', 'running', [step]))!;
+    fold(tool('c9', 'Reviewer', 'running', [step]));
+    expect(reviewed.moments.filter((m) => m.note).map((m) => m.text)).toEqual(['Lead decided: Each node gets a test against a fake server.', 'Reviewer noted: plugins need an icons/ folder']);
+    expect(fold.activity().moments.filter((m) => m.note)).toHaveLength(2);
+  });
+});
+
+describe('what a waiting member asks for', () => {
+  it('names what a tool acts on: a pull request or issue number first, then a path or branch', () => {
+    expect(targetOf({ owner: 'o', repo: 'r', pull_number: 5, body: 'LGTM' })).toBe('#5');
+    expect(targetOf({ issueNumber: '12' })).toBe('#12');
+    expect(targetOf({ path: 'src/nodes/get-alerts.ts', line: 42 })).toBe('src/nodes/get-alerts.ts');
+    expect(targetOf({ branch: 'plugins/alerts' })).toBe('plugins/alerts');
+    expect(targetOf({ path: `plugins/${'a'.repeat(60)}/index.ts` })).toMatch(/^….{47}$/);
+    expect(targetOf({ text: 'Review passed' })).toBeUndefined();
+    expect(targetOf(undefined)).toBeUndefined();
+  });
+
+  it('reads a question or an approval off the wait, with when it was asked and what it is on', () => {
+    const since = '2026-11-01T12:40:00.000Z';
+    expect(teamQuestionOf({ nodeId: 'n1', since, data: { teamQuestion: { member: 'Developer', question: 'Alertmanager v2?' } } }, 'n1')).toEqual({ member: 'Developer', question: 'Alertmanager v2?', since });
+    expect(teamQuestionOf({ nodeId: 'n1', since, data: { teamApproval: { member: 'Reviewer', tool: 'add_issue_comment', summary: 'Tests cover the fake server.', target: '#5' } } }, 'n1')).toEqual({
+      member: 'Reviewer',
+      question: 'Reviewer wants to use add_issue_comment',
+      approval: { tool: 'add_issue_comment', summary: 'Tests cover the fake server.', target: '#5' },
+      since,
+    });
+    expect(teamQuestionOf({ nodeId: 'n2', since, data: { teamQuestion: { member: 'Developer', question: 'x' } } }, 'n1')).toBeUndefined();
   });
 });

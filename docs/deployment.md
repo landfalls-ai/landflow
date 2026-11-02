@@ -301,7 +301,7 @@ Tests: `(cd apps/web && LANDFLOW_INTEGRATION=oidc,smtp npx vitest run test/oidc.
 
 | Image | Built from | Runs |
 |---|---|---|
-| `landflow/host:dev` | [`docker/host.Dockerfile`](../deploy/docker/host.Dockerfile) | `node apps/web/server.js` (Next standalone output) as `node` (uid 1000), data in `/data`; queue-mode workers run `node worker.mjs` (an esbuild bundle of `pnpm worker`) from the same image |
+| `landflow/host:dev` | [`docker/host.Dockerfile`](../deploy/docker/host.Dockerfile) | `node apps/web/server.js` (Next standalone output) as `node` (uid 1000), data in `/data`; queue-mode workers run `node worker.mjs` (an esbuild bundle of `pnpm worker`) from the same image; `apps/web/claude-plugins` (the landflow-harness mod packed for kagent's Claude Code agents, [a2a.md](a2a.md#the-landflow-harness-mod)) is copied next to `server.js` |
 | `landflow/plugin-text-toolkit:dev`, `landflow/plugin-messaging:dev`, `landflow/plugin-github:dev` | [`docker/node-plugin.Dockerfile`](../deploy/docker/node-plugin.Dockerfile) | `tsx src/main.ts` as `node` |
 | `landflow/plugin-py-insights:dev`, `landflow/plugin-productivity:dev` | [`docker/python-plugin.Dockerfile`](../deploy/docker/python-plugin.Dockerfile) | `python main.py` (SDK with `grpc` and `otel` extras) as uid 10001 |
 | `landflow/plugin-go-crypto:dev`, `landflow/plugin-google-workspace:dev`, `landflow/plugin-databases:dev` | [`docker/go-plugin.Dockerfile`](../deploy/docker/go-plugin.Dockerfile) | static binary on Alpine as uid 10001 |
@@ -505,6 +505,7 @@ diff, and overlays for the differences between clusters. A Helm chart would add 
 | `k8s/base/host/` | `landflow-host` Deployment (one replica, `Recreate`: SQLite in `/data`), its Service (`3000`, gRPC registry `7070`), a 5 Gi PVC, and RBAC: a ServiceAccount with a **Role** (not a ClusterRole) allowing `get`/`list`/`watch` on `services` and `endpointslices` in its own namespace |
 | `k8s/base/plugins/` | a Deployment and a Service per plugin: Service label `landflow.dev/plugin: "true"`, annotation `landflow.dev/grpc-port: grpc`, readiness on `GET /landflow/v1/health`, `LANDFLOW_REGISTRY_URL=off`, non-root with a read-only root filesystem |
 | `k8s/components/postgres` | optional: Postgres 16 + pgvector (StatefulSet), and the host on it (`LANDFLOW_DB=postgres`, `DATABASE_URL`) |
+| `k8s/components/package-cache` | the package cache for kagent's sandboxes (in the `orbstack` overlay): Service `landflow-cache:8080`, nginx in front of Verdaccio, Athens, proxpi and an Alpine `proxy_cache`, each on a PVC ([a2a.md](a2a.md#network-for-claude-code)) |
 | `k8s/components/valkey` | optional: Valkey 8 and `LANDFLOW_VALKEY_URL` for queue mode |
 | `k8s/components/external-services` | optional: Postgres and Valkey elsewhere, from a Secret `landflow-external` you create (`database-url`, `valkey-url`) |
 | `k8s/components/cluster-discovery` | optional: discovery in every namespace: a **ClusterRole** (`get`/`list`/`watch` on `services` and `endpointslices`, nothing else) bound to `landflow-host`, and `LANDFLOW_K8S_NAMESPACES=*` |

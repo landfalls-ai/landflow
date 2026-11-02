@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deploymentOf, memberAgent, orgTree, rootOf, teamIssues, type AgentTeamConfig, type TeamMember } from '@/lib/shared/agent-teams';
+import { consultEdges, deploymentOf, memberAgent, orgTree, rootOf, teamIssues, type AgentTeamConfig, type TeamMember } from '@/lib/shared/agent-teams';
 
 const remote = (id: string, title: string, extra: Partial<TeamMember> = {}): TeamMember => ({ id, title, kind: 'a2a', reportsTo: 'm_lead', parameters: { agentUrl: `http://kagent/${id}` }, ...extra }) as TeamMember;
 
@@ -52,6 +52,17 @@ describe('agent teams', () => {
     expect(teamIssues(team)).toContain('Two members share a title: titles are how managers call them.');
   });
 
+  it('checks who a member may consult: someone in the team, not itself, and not from a remote member', () => {
+    const team = pluginTeam();
+    team.members[2] = { ...team.members[2], consults: ['m_dev', 'm_gone'] } as TeamMember;
+    team.members[3] = { ...team.members[3], consults: ['m_rev'] } as TeamMember;
+    team.members[1] = { ...team.members[1], consults: ['m_plan'] } as TeamMember;
+    const issues = teamIssues(team);
+    expect(issues).toContain("Developer may consult a member who isn't in the team.");
+    expect(issues.some((i) => i.includes("can't consult itself"))).toBe(true);
+    expect(issues.some((i) => i.includes("can't consult anyone"))).toBe(true);
+  });
+
   it('finds the Landflow agent behind a member, also one called on kagent', () => {
     const agents = [
       { id: 'ag_lead', name: 'Tech Lead' },
@@ -67,5 +78,23 @@ describe('agent teams', () => {
     // Only kagent's controller route names an agent: a bare path is some other A2A server.
     expect(deploymentOf('http://kagent/dev')).toBeUndefined();
     expect(deploymentOf('')).toBeUndefined();
+  });
+});
+
+describe('consultEdges', () => {
+  const m = (id: string, consults?: string[]) => ({ id, consults });
+  it('lists each consult once, from the member that may ask to the peer', () => {
+    expect(consultEdges({ members: [m('a', ['b']), m('b'), m('c', ['a'])] })).toEqual([
+      { from: 'a', to: 'b', mutual: false },
+      { from: 'c', to: 'a', mutual: false },
+    ]);
+  });
+  it('makes one marked line of two members consulting each other', () => {
+    expect(consultEdges({ members: [m('a', ['b']), m('b', ['a'])] })).toEqual([{ from: 'a', to: 'b', mutual: true }]);
+    expect(consultEdges({ members: [m('b', ['a']), m('a', ['b', 'b'])] })).toEqual([{ from: 'b', to: 'a', mutual: true }]);
+  });
+  it('drops ids that are not in the team and self-consults', () => {
+    expect(consultEdges({ members: [m('a', ['gone', 'a', 'b']), m('b')] })).toEqual([{ from: 'a', to: 'b', mutual: false }]);
+    expect(consultEdges({ members: [] })).toEqual([]);
   });
 });

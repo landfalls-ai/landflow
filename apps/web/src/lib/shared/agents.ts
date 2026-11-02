@@ -82,6 +82,13 @@ export interface McpServerToolConfig extends ToolBase {
   parameters: Record<string, unknown>;
   /** httpBearerAuth or httpHeaderAuth, by the node's credential names. */
   credentials?: Record<string, CredentialRef>;
+  /**
+   * `github`: GitHub's MCP server (docs/a2a.md). The credential is a Bearer Auth one holding a GitHub token, and the tools are cut
+   * down on the server to `access`'s allow-list (lib/server/mcp/github.ts); `include` and the like are ignored.
+   */
+  preset?: 'github';
+  /** `read` (default): look at pull requests, code and issues. `review`: also review and comment. Merging and writing code are never offered. */
+  access?: 'read' | 'review';
 }
 
 /**
@@ -238,6 +245,8 @@ export interface AgentPersona {
   language?: string;
   /** A line it ends every answer with. */
   signoff?: string;
+  /** Up to three short lines for the member cards on a team page ("Reviews every pull request"). Never part of the prompt. */
+  whatIDo?: string[];
   /** Rules, a sentence each. */
   always?: string[];
   never?: string[];
@@ -326,7 +335,22 @@ export interface KagentDeployment {
   plugins?: KagentPlugin[];
   /** The EgressPolicies its Agent references (what its sandbox may reach); absent, the credential's. */
   egressPolicies?: string[];
+  /** Claude Code: the landflow-harness mod's guard for this agent (absent: `enforce`). A request can't loosen it. */
+  guard?: KagentGuard;
+  /**
+   * Claude Code with Landflow's landflow-harness mod (docs/a2a.md, "The landflow-harness mod"): where the mod posts what
+   * the agent does (`<landflowUrl>/api/agent-trace`), so a run shows its real tokens, cost and tool calls.
+   */
+  trace?: { url: string; /** The agent's A2A URL then, to know a call goes to it. */ a2aUrl?: string };
 }
+
+/**
+ * How strictly the landflow-harness mod guards a Claude Code agent (docs/a2a.md, "The landflow-harness mod"): `strict`
+ * keeps it read-only on the code (a reviewer), `enforce` refuses what no agent here needs to do (the default), `report`
+ * only reports what would have been refused.
+ */
+export type KagentGuard = 'strict' | 'enforce' | 'report';
+export const KAGENT_GUARDS: readonly KagentGuard[] = ['strict', 'enforce', 'report'];
 
 /**
  * A Claude Code plugin as kagent fetches it: a git repository at one commit and the plugin's folder in it, and the image
@@ -340,6 +364,8 @@ export interface KagentPlugin {
   path?: string;
   /** `<registry>/plugins/<marketplace>/<plugin>@sha256:…` */
   oci?: string;
+  /** A built-in plugin's options Landflow wrote as its plugin.json defaults (the landflow-harness mod's `guard`). */
+  options?: Record<string, string>;
 }
 
 /** What runs an agent on kagent: its own ADK runtime, Claude Code, Codex, or an image of one's own. */
@@ -371,6 +397,8 @@ export interface KagentStatus {
   plugins?: KagentPlugin[];
   /** The EgressPolicies its Agent references. */
   egressPolicies?: string[];
+  /** Claude Code: the mod's guard for this agent. */
+  guard?: KagentGuard;
   version?: number;
   deployedAt?: string;
   /** The agent's A2A endpoint on kagent's controller, as Landflow reaches it. */
@@ -399,6 +427,8 @@ export interface AgentSummary {
   /** The persona's role and tones, for the roster's cards. */
   role?: string;
   tones?: string[];
+  /** The member card's “what I do” lines: the persona's own, else the first sentences of its mission or instructions (whatIDoLines). */
+  whatIDo?: string[];
   model?: string;
   tools: number;
   skills: number;
@@ -460,8 +490,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = { maxIterations: 12, toolCo
 
 export type SessionSource = 'test' | 'schedule' | 'telegram' | 'slack' | 'teams' | 'workflow' | 'agent' | 'api';
 export type SessionStatus = 'idle' | 'running' | 'awaiting_approval' | 'error';
-/** `flow`: a tool connected to the agent's node in a workflow (Run an Agent), for that run only. */
-export type ToolKind = 'node' | 'workflow' | 'agent' | 'skill' | 'memory' | 'a2a' | 'flow';
+/** `flow`: a tool connected to the agent's node in a workflow (Run an Agent), for that run only. `notebook`: a team run's notebook tools (docs/team-notebook.md). */
+export type ToolKind = 'node' | 'workflow' | 'agent' | 'skill' | 'memory' | 'a2a' | 'flow' | 'notebook';
 
 /** A tool call a remote (A2A) agent made, as its task reports it. */
 export interface RemoteToolStep {
@@ -495,6 +525,8 @@ export interface RemoteRun {
   /** What it said between the tool calls, in order with them (`afterSteps`). */
   said?: RemoteSaid[];
   usage?: TokenUsage;
+  /** What the agent reported through Landflow's landflow-harness mod (a Claude Code agent on kagent). */
+  trace?: AgentTraceSummary;
 }
 
 /** One step of a session, as the UI shows it. Entries are upserted by id while a run streams. */
@@ -546,6 +578,83 @@ export type TimelineEntry =
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Of `inputTokens`, read from and written to the prompt cache, when the model said so. */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** What it cost in USD when Landflow priced it from what the agent reported (a remote agent's mod). */
+  costUsd?: number;
+  /** Model requests behind it, when the agent reported them. */
+  requests?: number;
+  /** The model that answered (the last one, when several did). */
+  model?: string;
+}
+
+/** What one model, or one subagent, of a traced agent used (`AgentTraceSummary`). */
+export interface TraceUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  /** Model requests. */
+  requests: number;
+  model?: string;
+}
+
+/** One model request of a traced agent (the journal records each as a `model` span under the agent's request). */
+export interface TraceCall {
+  /** When the request ended, epoch ms, as the mod's clock said (absent: unknown). */
+  at?: number;
+  /** How long it took, ms. */
+  ms: number;
+  model: string;
+  /** The subagent that made it; absent, the main loop. */
+  agent?: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+}
+
+/** A tool call Landflow's guardrails stopped (or, with guard=report, would have stopped) inside a remote agent. */
+export interface TraceGuardDecision {
+  /** secret-file, env-dump, git-push, git-auth-config, merge, destructive, upload, write-outside-workspace */
+  rule: string;
+  tool: string;
+  action: 'deny' | 'report';
+  /** The command or path, with secrets masked and cut short. */
+  arg?: string;
+  reason?: string;
+  /** The subagent that made the call; absent, the main loop. */
+  agent?: string;
+}
+
+/**
+ * What a Claude Code agent on kagent reported through the landflow-harness mod for one call (server/a2a/agent-trace.ts):
+ * its real token usage and cost, per model and per subagent, its tool calls and what the guardrails stopped.
+ */
+export interface AgentTraceSummary {
+  usage: TraceUsage;
+  models: Array<TraceUsage & { model: string }>;
+  /** The subagents it started, with what each used. */
+  agents: Array<TraceUsage & { id: string; kind?: string; description?: string }>;
+  tools: { calls: number; failed: number; ms: number };
+  /** Each model request, in order (the first 300). */
+  calls?: TraceCall[];
+  /** Time spent waiting on the model, ms (subagents' included, so it can exceed the turn). */
+  modelMs: number;
+  /** The main loop's turn, ms. */
+  turnMs?: number;
+  /** Tool calls the API ran itself (web search, code execution). */
+  serverTools?: number;
+  guard: TraceGuardDecision[];
+  guardMode?: 'strict' | 'enforce' | 'report' | 'off';
+  /** Tool results that had a secret masked, and the kinds. */
+  redacted: number;
+  redactedKinds?: string[];
+  /** The mod's version. */
+  mod?: string;
 }
 
 export interface PendingCall {

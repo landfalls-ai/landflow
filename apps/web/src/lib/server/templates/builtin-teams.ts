@@ -1,0 +1,511 @@
+/**
+ * The built-in agent-team templates (docs/templates.md#team-templates): a team, its Landflow agents and the flow that runs
+ * it, in one template. Written from a team that ran for real, with every id, credential and repository left out: credentials
+ * are slots the setup step fills in, the team and agents get fresh ids when the template is used.
+ */
+import type { AgentConfig } from '../../shared/agents';
+import type { AgentTeamConfig } from '../../shared/agent-teams';
+import type { TemplateDetail } from '../../shared/templates';
+import type { Workflow } from '../../shared/types';
+
+const TECH_LEAD = {
+  name: 'Tech Lead',
+  description: 'Coordinates the Planner, Developer and Reviewer over A2A to build a plugin from an approved suggestion',
+  icon: 'users',
+  color: '#10b981',
+  avatar: {
+    kind: 'face',
+    face: {
+      skin: '#a3693f',
+      hair: 'short',
+      hairColor: '#1f1a17',
+      eyes: 'calm',
+      brows: 'focused',
+      mouth: 'smile',
+      beard: 'stubble',
+      glasses: 'square',
+      extra: 'headset',
+    },
+  },
+  team: 'Engineering',
+  model: {
+    provider: 'ollama',
+    model: 'qwen3-coder:30b',
+    baseUrl: 'http://host.docker.internal:11434',
+    temperature: 0,
+  },
+  persona: {
+    role: 'Tech lead of a team of Claude Code agents',
+    audience: 'The person who approved the suggestion and reviews the pull request',
+    mission: 'Get an approved suggestion built, tested and reviewed on a branch, by delegating to the team',
+    tones: ['Calm', 'Organised'],
+  },
+  instructions: 'You are the Tech Lead of a team of Claude Code agents on kagent: the Planner, the Developer and the Reviewer. You coordinate them over A2A to turn an approved suggestion into a plugin on a branch. You never write code yourself. Each of them works in its own sandbox on a fresh clone of the same branch, so the work passes between them through commits on that branch and through the messages you send.\n\nYour tools: Planner, Developer and Reviewer (each takes a `message`), and Check_branch (takes the branch name and returns the commit the branch points at, with its message).\n\nDo these steps, one tool call at a time:\n1. Planner: the suggestion, the plugin name, the branch, and: write plugins/<name>/PLAN.md and push it to the branch. Then Check_branch to confirm the plan commit is there.\n2. Developer: the plugin name, the branch, the plan\'s main points, and: build the plugin from PLAN.md, make its tests and typecheck pass, push it to the branch. Then Check_branch.\n3. Reviewer: the plugin name and the branch: review it.\n4. If the Reviewer\'s first line is "VERDICT: CHANGES", send the Developer exactly those issues (copied into the message) to fix and push, Check_branch, then ask the Reviewer again. At most 2 rounds of fixes.\nEvery message must carry everything the agent needs (the plugin name, the branch, what to do): they don\'t see this conversation or each other\'s answers.\n\nFinish with a report in Markdown:\n## Outcome\nOne line: the plugin, the branch and the Reviewer\'s final verdict.\n## Plan\n## What was built\nFiles and commits (short SHAs from Check_branch).\n## Tests\n## Review\n## Conversation\nOne line per message you sent, in order: who you asked, what for, and what they answered.',
+  skills: [],
+  tools: [],
+  schedules: [],
+  channels: [],
+  memory: {
+    crossSession: false,
+  },
+  settings: {
+    maxIterations: 16,
+    toolConcurrency: 1,
+    sessionTokenBudget: 0,
+    maxDelegationDepth: 2,
+  },
+} as unknown as AgentConfig;
+
+const TEAM = {
+  name: 'Tech Lead team',
+  goal: 'Build approved plugins on a branch, tested and reviewed, ready to merge',
+  members: [
+    {
+      id: 'lead',
+      title: 'Tech Lead',
+      kind: 'agent',
+      agentId: 'tech-lead',
+    },
+    {
+      id: 'planner',
+      title: 'Planner',
+      role: 'The Planner, Claude Code on kagent: clones the repo, studies how plugins are built, writes plugins/<name>/PLAN.md and pushes it to the branch. Argument: `message` with the suggestion, the plugin name and the branch.',
+      reportsTo: 'lead',
+      questionsTo: 'manager',
+      kind: 'a2a',
+      parameters: {
+        agentUrl: 'http://host.docker.internal:58083/agents/kagent/landflow-planner',
+        authentication: 'none',
+        options: {
+          timeout: 3600000,
+          humanInTheLoop: true,
+        },
+      },
+    },
+    {
+      id: 'developer',
+      title: 'Developer',
+      role: 'The Developer, Claude Code on kagent: clones the branch, builds the plugin from PLAN.md (or fixes the Reviewer\'s issues), runs its tests and typecheck, and pushes. Argument: `message` with the plugin name, the branch and what to build or fix.',
+      reportsTo: 'lead',
+      questionsTo: 'manager',
+      kind: 'a2a',
+      parameters: {
+        agentUrl: 'http://host.docker.internal:58083/agents/kagent/landflow-developer',
+        authentication: 'none',
+        options: {
+          timeout: 3600000,
+          humanInTheLoop: true,
+        },
+      },
+    },
+    {
+      id: 'reviewer',
+      title: 'Reviewer',
+      role: 'The Reviewer, Claude Code on kagent: clones the branch, runs the tests and typecheck, reviews the diff against PLAN.md; answers VERDICT: APPROVE or VERDICT: CHANGES with numbered issues. Argument: `message` with the plugin name and the branch.',
+      reportsTo: 'lead',
+      reviews: ['developer'],
+      budgetTokens: 1000000,
+      questionsTo: 'manager',
+      kind: 'a2a',
+      parameters: {
+        agentUrl: 'http://host.docker.internal:58083/agents/kagent/landflow-reviewer',
+        authentication: 'none',
+        options: {
+          timeout: 3600000,
+          humanInTheLoop: true,
+        },
+      },
+    },
+  ],
+} as unknown as AgentTeamConfig;
+
+const FLOW = {
+  nodes: [
+    {
+      id: 'trigger',
+      name: 'Suggestion approved',
+      type: 'core.usageTrigger',
+      typeVersion: 1,
+      position: [0, 0],
+      parameters: {
+        kinds: ['proposal.applied'],
+        workflowId: '',
+        detector: 'missing-tool',
+      },
+    },
+    {
+      id: 'brief',
+      name: 'Brief',
+      type: 'core.code',
+      typeVersion: 1,
+      position: [280, 0],
+      parameters: {
+        mode: 'each',
+        codeEach: 'const p = $json.proposal ?? {};\nconst name = (p.target && p.target.name) || String(p.title || \'tool\').replace(/^Build a tool for /, \'\');\nconst slug = name.toLowerCase().replace(/[^a-z0-9]+/g, \'-\').replace(/^-+|-+$/g, \'\') || \'tool\';\nconst short = String(p.id || Date.now()).replace(/[^a-z0-9]/gi, \'\').slice(-6).toLowerCase();\n// One branch per run, so a re-run on the same suggestion starts clean.\nconst run = String((typeof $execution !== \'undefined\' && $execution && $execution.id) || Date.now()).replace(/[^a-z0-9]/gi, \'\').slice(-4).toLowerCase();\nreturn {\n  proposalId: p.id ?? null,\n  title: p.title ?? `Build a tool for ${name}`,\n  why: p.why ?? \'\',\n  effect: p.effect ?? \'\',\n  evidence: (p.evidence ?? []).map((e) => `- ${e.label}: ${e.value}`).join(\'\\n\'),\n  appliedBy: p.appliedBy ?? null,\n  name,\n  slug,\n  branch: `agents/${slug}-plugin-${short}-${run}`,\n};',
+      },
+    },
+    {
+      id: 'branch',
+      name: 'Create branch',
+      type: 'github.github',
+      typeVersion: 1,
+      position: [560, 0],
+      parameters: {
+        resource: 'branch',
+        operation: 'create',
+        owner: 'your-org',
+        repository: 'your-repo',
+        branch: '{{ $json.branch }}',
+        baseBranch: 'main',
+      },
+      credentials: {
+        githubApi: {
+          id: 'github',
+          name: 'GitHub',
+        },
+      },
+    },
+    {
+      id: 'lead',
+      name: 'Tech Lead',
+      type: 'core.runTeam',
+      typeVersion: 1,
+      position: [1120, 0],
+      parameters: {
+        message: '{{ $json.message }}',
+        teamId: 'tech-lead-team',
+        teamName: 'Tech Lead team',
+        version: 'published',
+      },
+    },
+    {
+      id: 'model',
+      name: 'qwen3-coder (Ollama)',
+      type: 'core.ollamaChatModel',
+      typeVersion: 1,
+      position: [1038, 200],
+      parameters: {
+        baseUrl: 'http://host.docker.internal:11434',
+        model: 'qwen3-coder:30b',
+        temperature: 0,
+      },
+    },
+    {
+      id: 'memory',
+      name: 'Memory per suggestion',
+      type: 'core.simpleMemory',
+      typeVersion: 1,
+      position: [1208, 200],
+      parameters: {
+        turns: 40,
+      },
+    },
+    {
+      id: 'check',
+      name: 'Check branch',
+      type: 'github.github',
+      typeVersion: 1,
+      position: [1378, 200],
+      parameters: {
+        resource: 'branch',
+        operation: 'get',
+        owner: 'your-org',
+        repository: 'your-repo',
+        branch: '{{ $fromAI(\'which_branch\', \'The branch to check, e.g. agents/grafana-plugin-abc123\', \'string\') }}',
+      },
+      credentials: {
+        githubApi: {
+          id: 'github',
+          name: 'GitHub',
+        },
+      },
+      notes: 'Check_branch: the commit a branch points at (SHA and message), to confirm an agent\'s push landed. Argument: `which_branch`.',
+    },
+    {
+      id: 'task',
+      name: 'Task for the Tech Lead',
+      type: 'core.code',
+      typeVersion: 1,
+      position: [840, 0],
+      parameters: {
+        mode: 'each',
+        codeEach: 'const b = $(\'Brief\').item.json;\nconst me = $(\'Task for the Tech Lead\');\n// Round 1 comes from Create branch; a later round from the Run report\'s "Send back", with the failed checks.\nif (!$json.sendBack) {\n  return {\n    round: 1,\n    message: `An approved suggestion from Landflow\'s second brain needs building.\n\nSuggestion: ${b.title}\nWhy: ${b.why}\nEffect: ${b.effect}\nEvidence:\n${b.evidence}\n\nPlugin name: ${b.slug} (directory plugins/${b.slug}, package @landflow/plugin-${b.slug})\nBranch: ${b.branch} (already created from main in the repository the GitHub nodes name)\n\nGet it planned, built, tested and reviewed on that branch with your team, then report.`,\n  };\n}\nconst round = (me.isExecuted ? Number(me.item.json.round) || 1 : 1) + 1;\nreturn {\n  round,\n  message: `The Run report checked your team\'s work on ${b.branch} against the record of what each agent did, and sent it back (round ${round} of 3). It merges only when every check passes.\n\n${$json.sendBack}\n\nHave the Developer fix this on the same branch and push, check the branch, then have the Reviewer review again (the Reviewer only reads and runs: it must not edit, commit or push). Then report as before.`,\n};',
+      },
+      notes: 'Round 1: the suggestion. Later rounds: the checks the Run report failed. 3 rounds in all.',
+    },
+    {
+      id: 'report',
+      name: 'Run report',
+      type: 'core.runReport',
+      typeVersion: 1,
+      position: [1552, 0],
+      parameters: {
+        profile: 'flow',
+        gate: 'route',
+        title: 'Run report: {{ $(\'Brief\').item.json.name }} plugin',
+        summarize: false,
+      },
+      notes: 'Checks what each agent said against what it did (Software delivery): tests and typecheck, the Reviewer only reads, every change pushed. Passed: merge. Send back: another round.',
+    },
+    {
+      id: 'pr',
+      name: 'Open PR',
+      type: 'github.github',
+      typeVersion: 1,
+      position: [1984, -85],
+      parameters: {
+        resource: 'pullRequest',
+        operation: 'create',
+        owner: 'your-org',
+        repository: 'your-repo',
+        title: '{{ $(\'Brief\').item.json.name }} plugin (built by Landflow agents)',
+        body: 'Built by Landflow\'s agents from the approved suggestion **{{ $(\'Brief\').item.json.title }}** (`{{ $(\'Brief\').item.json.proposalId }}`).\n\n{{ $(\'Tech Lead\').item.json.reply }}\n\n---\nThe Tech Lead (a Landflow agent) coordinated the Planner, the Developer and the Reviewer, Claude Code agents on kagent, over A2A. Each worked in its own sandbox on a clone of this branch. Landflow\'s Run report checked what each agent said against what it did; every check passed, so the flow merges this pull request. The report is the first comment.',
+        head: '{{ $(\'Brief\').item.json.branch }}',
+        base: 'main',
+        draft: false,
+      },
+      credentials: {
+        githubApi: {
+          id: 'github',
+          name: 'GitHub',
+        },
+      },
+    },
+    {
+      id: 'comment',
+      name: 'Post the run report',
+      type: 'github.github',
+      typeVersion: 1,
+      position: [2264, -85],
+      parameters: {
+        resource: 'pullRequest',
+        operation: 'comment',
+        owner: 'your-org',
+        repository: 'your-repo',
+        pullNumber: '{{ $(\'Open PR\').item.json.number }}',
+        commentBody: '{{ $(\'Run report\').item.json.report }}',
+      },
+      credentials: {
+        githubApi: {
+          id: 'github',
+          name: 'GitHub',
+        },
+      },
+    },
+    {
+      id: 'merge',
+      name: 'Merge PR',
+      type: 'github.github',
+      typeVersion: 1,
+      position: [2544, -85],
+      parameters: {
+        resource: 'pullRequest',
+        operation: 'merge',
+        owner: 'your-org',
+        repository: 'your-repo',
+        pullNumber: '{{ $(\'Open PR\').item.json.number }}',
+        mergeMethod: 'squash',
+        expectedHeadSha: '{{ $(\'Open PR\').item.json.headSha }}',
+      },
+      credentials: {
+        githubApi: {
+          id: 'github',
+          name: 'GitHub',
+        },
+      },
+      notes: 'Squash-merges into main, only if the pull request still points at the commit the Run report checked.',
+    },
+    {
+      id: 'rounds',
+      name: 'Rounds left?',
+      type: 'core.if',
+      typeVersion: 1,
+      position: [1984, 85],
+      parameters: {
+        conditions: {
+          condition: [
+            {
+              left: '{{ $(\'Task for the Tech Lead\').item.json.round }}',
+              operator: 'lt',
+              right: '3',
+            },
+          ],
+        },
+        combinator: 'and',
+      },
+    },
+    {
+      id: 'draft',
+      name: 'Open draft PR for a person',
+      type: 'github.github',
+      typeVersion: 1,
+      position: [2264, 85],
+      parameters: {
+        resource: 'pullRequest',
+        operation: 'create',
+        owner: 'your-org',
+        repository: 'your-repo',
+        title: '{{ $(\'Brief\').item.json.name }} plugin (built by Landflow agents, needs a person)',
+        body: 'Built by Landflow\'s agents from the approved suggestion **{{ $(\'Brief\').item.json.title }}** (`{{ $(\'Brief\').item.json.proposalId }}`).\n\n**Not merged.** The Run report\'s checks still failed after {{ $(\'Task for the Tech Lead\').item.json.round }} rounds of fixes, so a person decides.\n\n{{ $(\'Run report\').item.json.report }}\n\n---\nThe Tech Lead (a Landflow agent) coordinated the Planner, the Developer and the Reviewer, Claude Code agents on kagent, over A2A. Each worked in its own sandbox on a clone of this branch.',
+        head: '{{ $(\'Brief\').item.json.branch }}',
+        base: 'main',
+        draft: true,
+      },
+      credentials: {
+        githubApi: {
+          id: 'github',
+          name: 'GitHub',
+        },
+      },
+    },
+  ],
+  connections: [
+    {
+      id: 'e_trigger_0_brief_0_main',
+      type: 'main',
+      source: 'trigger',
+      sourceIndex: 0,
+      target: 'brief',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_brief_0_branch_0_main',
+      type: 'main',
+      source: 'brief',
+      sourceIndex: 0,
+      target: 'branch',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_branch_0_task_0_main',
+      type: 'main',
+      source: 'branch',
+      sourceIndex: 0,
+      target: 'task',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_task_0_lead_0_main',
+      type: 'main',
+      source: 'task',
+      sourceIndex: 0,
+      target: 'lead',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_lead_0_report_0_main',
+      type: 'main',
+      source: 'lead',
+      sourceIndex: 0,
+      target: 'report',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_report_0_pr_0_main',
+      type: 'main',
+      source: 'report',
+      sourceIndex: 0,
+      target: 'pr',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_pr_0_comment_0_main',
+      type: 'main',
+      source: 'pr',
+      sourceIndex: 0,
+      target: 'comment',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_comment_0_merge_0_main',
+      type: 'main',
+      source: 'comment',
+      sourceIndex: 0,
+      target: 'merge',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_report_1_rounds_0_main',
+      type: 'main',
+      source: 'report',
+      sourceIndex: 1,
+      target: 'rounds',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_rounds_0_task_0_main',
+      type: 'main',
+      source: 'rounds',
+      sourceIndex: 0,
+      target: 'task',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_rounds_1_draft_0_main',
+      type: 'main',
+      source: 'rounds',
+      sourceIndex: 1,
+      target: 'draft',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_model_0_lead_0_ai_languageModel',
+      type: 'ai_languageModel',
+      source: 'model',
+      sourceIndex: 0,
+      target: 'lead',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_memory_0_lead_0_ai_memory',
+      type: 'ai_memory',
+      source: 'memory',
+      sourceIndex: 0,
+      target: 'lead',
+      targetIndex: 0,
+    },
+    {
+      id: 'e_check_0_lead_0_ai_tool',
+      type: 'ai_tool',
+      source: 'check',
+      sourceIndex: 0,
+      target: 'lead',
+      targetIndex: 0,
+    },
+  ],
+} as unknown as Pick<Workflow, 'nodes' | 'connections'>;
+
+export const BUILTIN_TEAM_TEMPLATES: TemplateDetail[] = [
+  {
+    id: 'plugin-builders',
+    source: 'builtin',
+    name: 'Plugin builders',
+    description: 'A Tech Lead with a Planner, Developer and Reviewer on Claude Code, and the flow that builds, checks and merges a plugin.',
+    categories: ['agent-teams', 'engineering', 'ai'],
+    nodeTypes: [],
+    nodeCount: 0,
+    credentials: [{ id: 'github', type: 'github.githubApi', name: 'GitHub', description: 'A personal access token that can create branches, open and merge pull requests in the repository.' }],
+    author: 'Landflow',
+    usable: true,
+    problems: [],
+    workflow: { id: '', name: 'Build plugins from suggestions', description: 'When a person clicks Build it on a Missing tool suggestion: a branch, then the Tech Lead (a Landflow agent) runs its team over A2A (the Planner, Developer and Reviewer, Claude Code agents on kagent). The Run report checks what each agent said against what it did: when every check passes, a pull request opens and is merged; otherwise the failed checks go back to the Tech Lead, up to 3 rounds, then a draft pull request waits for a person.', ...FLOW, settings: {
+  timeoutSeconds: 14400,
+  runProfile: 'software',
+} },
+    setup: [
+      'Deploy the Planner, Developer and Reviewer as Claude Code agents on kagent (landflow-planner, landflow-developer, landflow-reviewer), and set their A2A addresses on the three members of the new team.',
+      'Pick or add your GitHub credential, and replace `your-org` and `your-repo` with the repository in the GitHub nodes (**Create branch**, **Check branch**, **Open PR**, **Post the run report**, **Merge PR**, **Open draft PR for a person**).',
+      'Pick the model the Tech Lead runs on in **qwen3-coder (Ollama)**: an Ollama model, or swap in a Claude one.',
+      'The flow starts when a person approves a Missing tool suggestion on the Home page; turn it on after the first dry run.',
+    ],
+    dataTables: [],
+    bundle: {
+      teamKey: 'tech-lead-team',
+      team: TEAM,
+      teamPublished: true,
+      agents: [{ key: 'tech-lead', config: TECH_LEAD, published: true }],
+      hasWorkflow: true,
+      workflowKey: 'build-plugins',
+    },
+  },
+];

@@ -11,7 +11,7 @@ import { gunzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { KagentPlugin } from '@/lib/shared/agents';
 
-const { packPlugin, repositoryOf, imageRef, tarOf, MANIFEST_TYPE } = await import('@/lib/server/kagent/oci');
+const { packPlugin, repositoryOf, imageRef, tarOf, MANIFEST_TYPE, builtinPin, builtinFiles, BUILTIN_URL } = await import('@/lib/server/kagent/oci');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { dataDir } = await import('@/lib/server/db');
 const route = await import('@/app/v2/[[...path]]/route');
@@ -84,6 +84,49 @@ describe('packing a plugin', () => {
     expect(repositoryOf('mattpocock-skills@claude-plugins-official')).toBe('plugins/claude-plugins-official/mattpocock-skills');
     expect(repositoryOf('My_Plugin@Acme.Tools')).toBe('plugins/acme-tools/my-plugin');
     expect(imageRef('192.168.1.5:3000', PIN, `sha256:${'0'.repeat(64)}`)).toBe(`192.168.1.5:3000/plugins/acme-tools/tdd-kit@sha256:${'0'.repeat(64)}`);
+  });
+});
+
+describe('Landflow’s own plugins', () => {
+  it('pins the landflow-harness mod the host ships to a hash of its files, without its tests or editor types', async () => {
+    const pin = builtinPin()!;
+    expect(pin).toEqual({ id: 'landflow-harness@landflow', url: BUILTIN_URL, commit: expect.stringMatching(/^[0-9a-f]{40}$/), path: 'landflow-harness' });
+    const paths = builtinFiles('landflow-harness')!.map((f) => f.path);
+    expect(paths).toEqual(expect.arrayContaining(['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.ts', 'hooks/rules.ts']));
+    expect(paths.some((p) => p.endsWith('.test.ts') || p.includes('.claude-plugin/types') || p.endsWith('.gitignore'))).toBe(false);
+    // The same files, the same pin and image.
+    expect(builtinPin()).toEqual(pin);
+    const digest = await packPlugin(pin);
+    rmSync(join(dataDir(), 'oci'), { recursive: true, force: true });
+    expect(await packPlugin(pin)).toBe(digest);
+    const manifest = JSON.parse((await (await pull(`plugins/landflow/landflow-harness/manifests/${digest}`)).text()) as string);
+    const tar = gunzipSync(Buffer.from(await (await pull(`plugins/landflow/landflow-harness/blobs/${manifest.layers[0].digest}`)).arrayBuffer())).toString('latin1');
+    expect(tar).toContain('hooks/register.ts');
+    expect(tar).not.toContain('register.test.ts');
+  });
+
+  it('changes the pin when a file changes, and refuses a plugin the host doesn’t ship', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'landflow-builtin-'));
+    const previous = process.env.LANDFLOW_CLAUDE_PLUGINS_DIR;
+    process.env.LANDFLOW_CLAUDE_PLUGINS_DIR = dir;
+    try {
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(join(dir, 'landflow-harness', '.claude-plugin', 'types'), { recursive: true });
+      mkdirSync(join(dir, 'landflow-harness', 'hooks'), { recursive: true });
+      writeFileSync(join(dir, 'landflow-harness', '.claude-plugin', 'plugin.json'), '{"name":"landflow-harness"}');
+      writeFileSync(join(dir, 'landflow-harness', '.claude-plugin', 'types', 'index.d.ts'), 'export {}');
+      writeFileSync(join(dir, 'landflow-harness', 'hooks', 'register.ts'), 'export const register = () => {}');
+      const first = builtinPin()!;
+      expect(builtinFiles('landflow-harness')!.map((f) => f.path)).toEqual(['.claude-plugin/plugin.json', 'hooks/register.ts']);
+      writeFileSync(join(dir, 'landflow-harness', 'hooks', 'register.ts'), 'export const register = (on) => {}');
+      expect(builtinPin()!.commit).not.toBe(first.commit);
+      expect(builtinPin('nothing-here')).toBeUndefined();
+      await expect(packPlugin({ id: 'nothing-here@landflow', url: BUILTIN_URL, commit: '0'.repeat(40), path: 'nothing-here' })).rejects.toThrow(/doesn’t ship the plugin nothing-here@landflow/);
+    } finally {
+      if (previous === undefined) delete process.env.LANDFLOW_CLAUDE_PLUGINS_DIR;
+      else process.env.LANDFLOW_CLAUDE_PLUGINS_DIR = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

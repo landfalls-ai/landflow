@@ -24,6 +24,8 @@ export const rawRetentionDays = () => {
 export interface UsageScope {
   workflows?: Set<string>;
   agents?: Set<string>;
+  /** Agent teams (the notebook's project suggestions). */
+  teams?: Set<string>;
 }
 
 /** An ISO time from `from`/`to` (ISO or YYYY-MM-DD), else `fallback`. */

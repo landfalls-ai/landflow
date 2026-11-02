@@ -79,6 +79,52 @@ templates that installing adds to Templates, each with a read-only [share page](
 Other files in a skill folder (scripts, assets, examples) aren't used. The drawer says how many
 there are.
 
+## Export agents as plugins
+
+The reverse of the table above: an agent, or a whole [team](agent-teams.md), downloads as a Claude Code plugin in
+Anthropic's format, so it installs in Claude Code and in any Landflow instance. **Export as Claude Code plugin…** is in
+the agent builder's **…** menu and on the team page; both show the files the zip will hold as a tree before downloading,
+with a switch for `marketplace.json`.
+
+```text
+<name>/
+  .claude-plugin/plugin.json        name, version (1.0.0), description, author, keywords, agents and skills lists
+  .claude-plugin/marketplace.json   optional: the folder as a one-plugin marketplace (source "./")
+  agents/<slug>.md                  frontmatter name, description, tools, model, color; the prompt as the body
+  skills/<slug>/SKILL.md            frontmatter name, description (when to use), allowed-tools; instructions as the body
+  skills/<slug>/references/…        the skill's reference files
+  .landflow/agents/<slug>.json      what only Landflow has (below); Claude Code never opens this folder
+  .landflow/team.json               a team's members and relations
+  README.md
+```
+
+| Landflow | Claude Code file |
+|---|---|
+| name, description | `name` (a slug) and `description` of the agent file; the real name and description are in `.landflow/` |
+| persona parts, instructions, skills list | the body: the same system prompt the agent runs with (`personaPrompt`) |
+| model | `sonnet`, `opus` or `haiku` for the Anthropic ids behind those aliases, the `claude-…` id for other Anthropic models, `inherit` for any other provider |
+| colour | the nearest of Claude Code's colour names |
+| skills | one `skills/<slug>/` each (a skill two agents share is written once); `allowedTools` become `allowed-tools`, and the agent file's `tools` is their union |
+
+`.landflow/agents/<slug>.json` (`landflow/agent`, version 1) holds the agent's config without schedules, channels and
+credentials: persona parts, instructions, tools, skills (ids, `allowedTools`, references), avatar or face, icon, colour,
+team label, model with provider and base URL, memory, settings, guardrails, plugins; plus `sourceId` (the agent's id) and
+`body` (the prompt written as the agent file's body). `.landflow/team.json` (`landflow/team`) holds the team's name, goal
+and members; a member that is a Landflow agent names its agent file (`agent: <slug>`), a remote (A2A) member keeps its
+address and options without credentials.
+
+Installing the exported plugin in Landflow reads these back (`agentFromClaude` takes `ClaudeAgentFile.landflow`): the
+agent comes back with its name, description, persona, instructions, skills, tools, avatar, model and team label.
+If someone edited the agent file's body since the export, the body is the instructions and the persona parts are dropped
+(they were already in the old body). Sub-agent tools follow the copies created by the same install, and `team.json` becomes
+a team of those agents (listed on the installed plugin as `teams`; uninstalling deletes it). Plugin installs from other
+authors are unchanged.
+
+Not exported: schedules, channels and every credential reference (they are bound to this instance), workflow tools'
+workflows (their ids mean nothing elsewhere), kagent deployments, and a team's flows (use a [team template](templates.md)
+for those). Claude Code ignores tools it has no equivalent of, so a Landflow agent's node, MCP and knowledge tools only
+work again once the plugin is installed in Landflow.
+
 ## Flows
 
 A flow is a Landflow template file: the JSON a template's **Export** downloads and
@@ -256,6 +302,7 @@ variables above. It does **not** get the host's API keys, `LANDFLOW_ENCRYPTION_K
 | `DELETE /api/marketplaces/installed/:pluginId` | `{ removed: { agents, skills, nodePlugin, flows? } }` (`pluginId` = `name@marketplace`, URL-encoded; `flows` counts the templates removed) |
 | `GET /api/marketplaces/installed/:pluginId/logs` | `{ lines }` |
 | `POST /api/marketplaces/installed/:pluginId/restart` | `{ installed }` |
+| `GET /api/agents/:id/export`, `GET /api/agent-teams/:id/export` | `?format=claude-plugin` (the default), `&marketplace=1`, `&preview=1`: the agent or team as a Claude Code plugin zip (`Content-Disposition: attachment`), or with `preview=1` `{ name, files: [{ path, bytes }] }` ([above](#export-agents-as-plugins)); `404` for an unknown agent or team, `400` for another format. Same access as reading the agent or team |
 | `GET /api/skills` | `{ skills: LibrarySkill[] }` (an `AgentSkill` plus `source` and `installedAt`) |
 
 The types are in `apps/web/src/lib/shared/marketplace.ts`.

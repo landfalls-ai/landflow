@@ -71,7 +71,7 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/transports')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/credentials')) return { scope: 'admin' };
 
-  if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites'].some(under)) {
+  if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites', '/api/runbooks'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };
   }
   if (under('/api/ai') || under('/api/assistant')) return { scope: 'workflows:write' };
@@ -137,7 +137,7 @@ function resourceAction(kind: ResourceRule['kind'], rest: string, method: string
   if (kind === 'workflow' && sub('policy') && !READ_METHODS.has(method)) return 'move';
   // Starting, retrying or stopping runs and chats; credentials' OAuth2 Connect writes the token.
   if (kind === 'workflow' && (sub('run') || sub('execute') || sub('listen') || (sub('evaluations') && method === 'POST'))) return 'run';
-  if (kind === 'execution' && (sub('retry') || sub('rerun') || sub('debug') || sub('stop') || sub('approvals'))) return READ_METHODS.has(method) ? 'read' : 'run';
+  if (kind === 'execution' && (sub('retry') || sub('rerun') || sub('debug') || sub('stop') || sub('approvals') || sub('asks') || sub('agents'))) return READ_METHODS.has(method) ? 'read' : 'run';
   if (kind === 'agent' && (sub('chat') || (sub('sessions') && !READ_METHODS.has(method)))) return 'run';
   if (kind === 'credential' && sub('oauth2')) return 'update';
   if (READ_METHODS.has(method)) return 'read';

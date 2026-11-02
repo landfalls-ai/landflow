@@ -102,6 +102,9 @@ plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests
 deploy/scripts/smoke.sh code                       # the dockerised code runner: health + network/file-system isolation
 ```
 
+The host's suite runs its files in parallel, so `apps/web/vitest.config.ts` gives each test 20 s and each hook 30 s:
+the marketplace, cluster runtime and MCP file-approval tests timed out at the defaults under that load.
+
 `pnpm test` runs the TypeScript packages' suites in one go. After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
 `pnpm gen:proto` (re-embeds the proto and regenerates the JSON Schema).
 

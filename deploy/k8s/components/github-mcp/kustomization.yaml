@@ -1,0 +1,10 @@
+# GitHub's MCP server for agents (docs/a2a.md, "GitHub's MCP tools for agents"): one Service, landflow-github-mcp:8082, answering
+# Streamable HTTP at /. It holds no GitHub token: Landflow sends the Bearer Auth credential the agent's GitHub MCP tool names.
+# Only Landflow's host calls it; kagent's agents reach it through the host's agent MCP endpoint, never directly.
+#
+# The pods carry part-of=landflow-github-mcp, not landflow: the OrbStack overlay's imagePullPolicy: Never patch is for images built
+# here, and this one is GitHub's, pulled from ghcr.io (pull it first with `docker --context orbstack pull` if the cluster can't).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - github-mcp.yaml

@@ -21,6 +21,7 @@ const publishRoute = await import('@/app/api/agents/[id]/publish/route');
 const agentRoute = await import('@/app/api/agents/[id]/route');
 const mcpRoute = await import('@/app/api/mcp/agents/[id]/route');
 const { marketplace } = await import('@/lib/server/marketplace/service');
+const { builtinFiles, builtinPin } = await import('@/lib/server/kagent/oci');
 
 /** A Kubernetes API that keeps objects in memory: server-side apply (merged per field), get, list and delete. */
 interface FakeKube {
@@ -29,13 +30,17 @@ interface FakeKube {
   requests: Array<{ method: string; path: string; contentType?: string; authorization?: string }>;
   /** Out of reach: every request fails with 503. */
   down: boolean;
+  /** Plurals Landflow may only read (an older access Role): writing one is 403. */
+  readOnly: Set<string>;
+  /** Called as each object is applied, as kagent's controller would see it. */
+  onApply?: (plural: string, object: KubeObject) => void;
   close(): Promise<void>;
 }
 
 async function startFakeKube(): Promise<FakeKube> {
   const objects = new Map<string, KubeObject>();
   const requests: FakeKube['requests'] = [];
-  const state: FakeKube = { url: '', objects, requests, down: false, close: () => new Promise((resolve) => server.close(() => resolve())) };
+  const state: FakeKube = { url: '', objects, requests, down: false, readOnly: new Set(), close: () => new Promise((resolve) => server.close(() => resolve())) };
   const body = (req: IncomingMessage) => new Promise<string>((resolve) => {
     let text = '';
     req.on('data', (chunk) => (text += chunk));
@@ -55,6 +60,7 @@ async function startFakeKube(): Promise<FakeKube> {
     if (!match) return send(404, { message: 'not found' });
     const [, namespace, plural, name] = match;
     const key = `${plural}/${namespace}/${name}`;
+    if (req.method !== 'GET' && state.readOnly.has(plural)) return send(403, { message: `${plural} is forbidden` });
     if (req.method === 'PATCH') {
       expect(req.headers['content-type']).toBe('application/apply-patch+yaml');
       expect(url.searchParams.get('fieldManager')).toBe('landflow');
@@ -62,6 +68,7 @@ async function startFakeKube(): Promise<FakeKube> {
       const previous = objects.get(key);
       const merged = { ...previous, ...applied, metadata: { ...previous?.metadata, ...applied.metadata, generation: ((previous?.metadata.generation as number) ?? 0) + 1 } } as KubeObject;
       objects.set(key, merged);
+      state.onApply?.(plural, merged);
       return send(200, merged);
     }
     if (req.method === 'DELETE') {
@@ -101,6 +108,7 @@ beforeEach(() => {
   kube.objects.clear();
   for (const [name, spec] of HARNESSES) kube.objects.set(`harnesses/kagent/${name}`, { apiVersion: 'api.kagent.dev/v1alpha3', kind: 'Harness', metadata: { name, namespace: 'kagent' }, spec });
   kube.requests.length = 0;
+  kube.onApply = undefined;
 });
 
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -248,6 +256,32 @@ describe('deploying to kagent', () => {
     credentials.update(cluster.id, { data: { server } });
     const status = (await call<{ status: KagentStatus }>(kagentRoute.GET, agent.id)).data.status;
     expect(status).toMatchObject({ version: 2, outdated: true, inSync: false, drift: [] });
+  });
+
+  it('saves the new version before kagent reads the objects, so its tool listing serves the new tools', async () => {
+    const agent = publishedAgent();
+    await call(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id });
+    const annotation = () => held('remotemcpservers', 'text-formatter')!.metadata.annotations?.['landflow.dev/tools-sha256'];
+    const before = annotation();
+    expect(before).toMatch(/^[0-9a-f]{16}$/);
+    // kagent lists the tools from /api/mcp/agents/<id> as soon as the RemoteMCPServer changes: that serves the deployed version.
+    const seen: Array<number | undefined> = [];
+    kube.onApply = (plural) => {
+      if (plural === 'remotemcpservers') seen.push(agentStore.get(agent.id)!.kagent?.version);
+    };
+    agentStore.saveDraft(agent.id, { tools: agent.published!.config.tools.filter((t) => t.name !== 'Shout') });
+    await call(publishRoute.POST, agent.id, 'POST');
+    expect(seen).toEqual([2]);
+    // A different tool list is a different object, so kagent lists the tools again even within one version.
+    expect(annotation()).not.toBe(before);
+
+    // A deploy kagent refuses leaves the deployment it had.
+    kube.onApply = undefined;
+    kube.readOnly.add('agents');
+    agentStore.saveDraft(agent.id, { instructions: 'You format text. Answer in one word.' });
+    await call(publishRoute.POST, agent.id, 'POST');
+    expect(agentStore.get(agent.id)!.kagent?.version).toBe(2);
+    kube.readOnly.delete('agents');
   });
 
   it('gets the persona built on the Persona tab, compiled the way the runtime compiles it', async () => {
@@ -487,7 +521,7 @@ describe('on Claude Code', () => {
     credentials.update(cluster.id, { data: { ...clusterData(), egressPolicies: '' } });
   });
 
-  it('writes each plugin as the image Landflow packed when the credential names its registry', async () => {
+  it('writes each plugin as the image Landflow packed when the credential names its registry, and adds Landflow’s mod', async () => {
     const pin = vi.spyOn(marketplace, 'claudePlugin').mockImplementation(async () => ({ ...PIN }));
     const tree = { tree: [{ path: '.claude-plugin/plugin.json', type: 'blob', size: 22 }] };
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
@@ -499,14 +533,71 @@ describe('on Claude Code', () => {
       const agent = publishedAgent(DEV);
       const deployed = await call<{ status: KagentStatus }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: withRegistry.id, name: 'packed', harness: 'landflow-claude' });
       expect(deployed.status).toBe(200);
-      const [source] = (held('agenttemplates', 'packed')!.spec as { plugins: Array<{ source: { oci: string } }> }).plugins;
+      const [source, harness] = (held('agenttemplates', 'packed')!.spec as { plugins: Array<{ source: { oci: string } }> }).plugins;
       expect(source.source.oci).toMatch(/^192\.168\.1\.5:3000\/plugins\/claude-plugins-official\/mattpocock-skills@sha256:[0-9a-f]{64}$/);
-      expect(agentStore.get(agent.id)!.kagent!.plugins).toEqual([{ ...PIN, oci: source.source.oci }]);
+      // The landflow-harness mod, packed from the host's own files (claude-plugins/), and where it reports.
+      expect(harness.source.oci).toMatch(/^192\.168\.1\.5:3000\/plugins\/landflow\/landflow-harness@sha256:[0-9a-f]{64}$/);
+      const deployment = agentStore.get(agent.id)!.kagent!;
+      expect(deployment.plugins).toEqual([{ ...PIN, oci: source.source.oci }, { id: 'landflow-harness@landflow', url: 'landflow:builtin', commit: expect.stringMatching(/^[0-9a-f]{40}$/), path: 'landflow-harness', oci: harness.source.oci }]);
+      expect(deployment.trace).toEqual({ url: 'http://landflow.test:3000/api/agent-trace', a2aUrl: 'http://kagent.test:8083/agents/kagent/packed' });
+      // The sandbox may reach Landflow, where the mod reports: kagent only opens an MCP server's origin to an agent with tools.
+      expect(held('egresspolicies', 'packed-landflow')).toMatchObject({ metadata: { labels: { 'landflow.dev/agent-id': agent.id } }, spec: { destinations: [{ origin: 'http://landflow.test:3000' }] } });
+      expect(held('agents', 'packed')!.spec).toMatchObject({ egressPolicyRefs: [{ name: 'packed-landflow' }] });
       expect(deployed.data.status).toMatchObject({ inSync: true, drift: [] });
+      // It isn't one to choose for other agents, and a changed one is drift.
+      const listed = await (kagentRoute.GET as unknown as Handler)(new Request(`http://localhost/api/agents/${agent.id}/kagent?credentialId=${withRegistry.id}`), ctx(agent.id));
+      expect(((await listed.json()) as { egressPolicies: Array<{ name: string }> }).egressPolicies.map((p) => p.name)).not.toContain('packed-landflow');
+      (held('egresspolicies', 'packed-landflow')!.spec as Record<string, unknown>).destinations = [];
+      const drifted = await call<{ status: KagentStatus }>(kagentRoute.GET, agent.id);
+      expect(drifted.data.status.drift.map((d) => d.field)).toEqual(['landflowEgress']);
+
+      // A Role that only reads EgressPolicies: the agent is written without it, and the deploy says what it lacks.
+      kube.readOnly.add('egresspolicies');
+      kube.objects.delete('egresspolicies/kagent/packed-landflow');
+      const limited = await call<{ status: KagentStatus; unavailable: string[] }>(kagentRoute.PUT, agent.id, 'PUT', {});
+      expect(limited.status).toBe(200);
+      expect(held('agents', 'packed')!.spec).not.toHaveProperty('egressPolicyRefs');
+      expect(limited.data.unavailable).toEqual([expect.stringContaining('run reports')]);
+      kube.readOnly.clear();
+
+      // Removing the agent removes it.
+      await call(kagentRoute.PUT, agent.id, 'PUT', {});
+      expect(held('egresspolicies', 'packed-landflow')).toBeDefined();
+      await call(kagentRoute.DELETE, agent.id, 'DELETE');
+      expect(held('egresspolicies', 'packed-landflow')).toBeUndefined();
     } finally {
       pin.mockRestore();
       vi.unstubAllGlobals();
     }
+  });
+
+  it('sets the mod’s guard per agent: its plugin.json default, kept across redeploys, never loosened by a request', async () => {
+    const manifest = (options?: Record<string, string>) => JSON.parse(builtinFiles('landflow-harness', options)!.find((f) => f.path === '.claude-plugin/plugin.json')!.body.toString('utf8')) as { userConfig: { guard: { default: string } } };
+    expect(manifest().userConfig.guard.default).toBe('enforce');
+    expect(manifest({ guard: 'strict' }).userConfig.guard.default).toBe('strict');
+    expect(builtinPin(undefined, { guard: 'strict' })!.commit).not.toBe(builtinPin()!.commit);
+    expect(() => builtinFiles('landflow-harness', { guard: 'loose' })).toThrow(/can’t be “loose”/);
+
+    const withRegistry = credentials.create({ name: 'kind, guarded', type: 'core.kagentApi', data: { ...clusterData(), pluginRegistry: 'http://192.168.1.5:3000/' } });
+    const agent = publishedAgent({ ...DEV, plugins: [] });
+    const bad = await call<{ error: string }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: withRegistry.id, name: 'guarded', harness: 'landflow-claude', guard: 'off' });
+    expect(bad.status).toBe(400);
+    const strict = await call<{ status: KagentStatus }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: withRegistry.id, name: 'guarded', harness: 'landflow-claude', guard: 'strict' });
+    expect(strict.status).toBe(200);
+    const mod = () => agentStore.get(agent.id)!.kagent!.plugins!.find((p) => p.id === 'landflow-harness@landflow')!;
+    expect(agentStore.get(agent.id)!.kagent!.guard).toBe('strict');
+    expect(mod()).toMatchObject({ options: { guard: 'strict' }, commit: builtinPin(undefined, { guard: 'strict' })!.commit });
+    expect(strict.data.status).toMatchObject({ guard: 'strict', inSync: true });
+    const strictImage = mod().oci;
+    // A redeploy (a publish) keeps it; choosing Normal drops it, with another image.
+    await call(kagentRoute.PUT, agent.id, 'PUT', {});
+    expect(agentStore.get(agent.id)!.kagent!.guard).toBe('strict');
+    expect(mod().oci).toBe(strictImage);
+    await call(kagentRoute.PUT, agent.id, 'PUT', { guard: 'enforce' });
+    expect(agentStore.get(agent.id)!.kagent).not.toHaveProperty('guard');
+    expect(mod()).not.toHaveProperty('options');
+    expect(mod().oci).not.toBe(strictImage);
+    await call(kagentRoute.DELETE, agent.id, 'DELETE');
   });
 
   it('moves back to kagent’s own runtime without the approval server or the plugins', async () => {

@@ -20,7 +20,7 @@ import { getPath } from './paths';
 import { parseJsonReply } from './structured';
 
 const credentials = [{ name: 'openAiApi', required: true }];
-const OPENAI = { icon: 'lucide:aperture', color: '#10a37f' };
+const OPENAI = { icon: 'brand:openai', color: '#10a37f' };
 
 /** Models that can't chat (OpenAI's catalogue mixes them in). */
 const NOT_CHAT = /(embed|tts|whisper|transcribe|dall-e|image|moderation|realtime|audio|search|instruct|davinci|babbage)/i;

@@ -94,6 +94,16 @@ More guards cover what local models get wrong (all in `lib/server/assistant/chat
 - **Echoed notes**: the model sometimes copies the notes it gets in the history (`[Proposed “…”: applied]`, `[Test run 2 failed: …]`) into its reply; those lines are removed. More wordings of "it's done" count as claims too: "was set up", "will now", "now sends …".
 - **Tool-call parse errors**: Ollama parses tool calls itself, and some samples fail its parser (qwen3-coder's XML: `XML syntax error … element <parameter> closed by </function>`, a 500). The Ollama adapter retries those up to twice, and in a stream only while nothing has been shown yet. This also covers the AI Agent on an Ollama model.
 
+### Building, step by step
+
+In the new look ([ui-review.md](ui-review.md#the-look)), a change Spotlight builds in the builder chat is watched taking shape instead of read afterwards. While the reply is going, and while a proposal waits for Apply, the conversation folds into a card at the top left of the canvas (the same place as the test-and-fix card) and the canvas stays in view:
+
+- **Steps you can follow.** The card lists the steps of the change, each ticked off with a small pop as it finishes, and names the parts of the one in progress (*Wiring the connections: Ask for approval → Approved · Ask for approval → Deny*). Tool calls are the first steps, as they stream (*Read the workflow · 4 nodes*, *Searched nodes for “slack”*). The proposal's ops are the rest, one step per added node (*Add Ask for approval · If · after Code*), one for consecutive connections (*Wire 3 connections*), and one per parameter edit, rename, removal, team and settings change. `buildSteps()` and `planOf()` in `lib/shared/build-steps.ts` derive them, pure and unit-tested (`test/build-steps.test.ts`); `planOf()` runs the ops through `applyOps()`, so a step only exists for an op that would apply. A proposal arrives whole, not as a stream, so the editor ticks its steps off one by one on a short timer (about half a second each): the steps and ghosts show the plan taking shape, not the model's progress.
+- **The canvas fills in.** The nodes the plan adds appear as dashed ghosts at the positions `applyOps()` gives them (after their source node), each when its step is reached; the one being made shimmers, and new connections are drawn as dashed violet lines when their step is reached. Ghosts are extra nodes and edges handed to React Flow beside the real ones (`GhostNodeView`, `GhostEdgeView` in `components/editor/building.tsx`); they are not in the editor's store, are not selectable or draggable and are never saved. A thin bar on top of the canvas shows how far the plan is (done steps over all; it never reaches the end while the assistant is still working). A ghost that lands outside the view (a node added after the last one is often past the right edge) brings the whole flow and its ghosts into view, without zooming in (`KeepGhostsInView` in `components/editor/editor.tsx`).
+- **Still a plan.** Nothing in the workflow changes until **Apply** in the card (the same `applyChanges()` path, one Undo in the toast; **Dismiss** drops the plan and the ghosts). *Ask for a change…* under the steps sends a follow-up like the chat does; when the reply is still going, it is stopped first, so the follow-up redirects it. ⤢ shows the whole conversation instead (⤡ or **esc** folds it back); a reply with no proposal (an answer, an explanation) never shows the card.
+
+Test and fix and the empty-canvas draft keep their own card. The Agent architect (a dialog with a draft preview, not a canvas) does not show steps this way yet. The classic look draws none of this: the conversation and its proposal card work as before.
+
 ### Test and fix
 
 **Test and fix** (`components/editor/test-session.ts`) runs the workflow and, while a run doesn't pass, has the assistant fix it and runs it again. It starts from the button at the end of an empty-canvas draft, or from the *Test it and fix what fails* bubble on any workflow with a trigger. Starting it is your go-ahead for the fixes: each is applied as it comes, with its own Undo. Spotlight's stop button (or ■ on its card) ends the session; a run already going finishes.
@@ -122,10 +132,10 @@ Proposals use `lib/shared/assistant-ops.ts`. A node reference is a node **name**
 
 | Op | Fields | Notes |
 |---|---|---|
-| `addNode` | `type`, `ref?`, `name?`, `parameters?`, `after?`, `before?`, `output?` | `after`: the new node is wired from that node's `output`. If the new node is a sub-node, it attaches to `after` instead. `before`: inserts the node in front of another. Whatever fed that node feeds the new one, and the downstream nodes move one column right. Names are made unique, and defaults are filled in |
-| `setParameters` | `node`, `parameters` | Merged one parameter at a time, in declaration order, the way the editor sets them: dependent fields reset and new defaults fill in |
+| `addNode` | `type`, `ref?`, `name?`, `parameters?`, `after?`, `before?`, `output?` | `after`: the new node is wired from that node's `output`. If the new node is a sub-node, it attaches to `after` instead; a node the same ops then `connect` to `after` as a tool (or model, memory) is only that, and the main edge goes. `before`: inserts the node in front of another. Whatever fed that node feeds the new one, and the downstream nodes move one column right. Names are made unique, and defaults are filled in |
+| `setParameters` | `node`, `parameters` | Merged one parameter at a time, in declaration order, the way the editor sets them: dependent fields reset and new defaults fill in. A bare `$fromAI` (or the call without braces) becomes `{{ $fromAI('<name>', '<display name>', '<type>') }}`, what **Let the model decide** writes; `addNode` parameters too |
 | `connect` | `from`, `to`, `output?`, `input?`, `type?` | A connection that already exists counts as done, not as a second edge. Edges touching a sub-node take its capability type. An agent → sub-node edge is flipped to run sub-node → agent. A Merge's inputs fill in turn. On a port with a connection limit, the new edge replaces the oldest |
-| `disconnect` | `from`, `to`, `type?` | Works in either direction |
+| `disconnect` | `from`, `to`, `type?` | The edges from `from` to `to`; when there are none, a sub-node edge the other way (they run sub-node → agent). "Disconnect Lead → Check Branch" removes the main edge after the lead, not the tool edge into it |
 | `removeNode` | `node` | Its connections and pinned data go too |
 | `renameNode` | `node`, `name` | `$('Old')` and `$node["Old"]` in other nodes' parameters are renamed too |
 | `turnIntoTeam` | `node` | a Run an Agent node with agents attached as tools becomes one Run a Team node; applying it saves the team ([agent-teams.md](agent-teams.md#turn-into-a-team)) |
@@ -141,9 +151,9 @@ The server runs it against the registry's available node types. The editor runs 
 ### Warnings
 
 `structuralWarnings(before, after)` flags:
-- a node that lost its only input;
+- a node that lost its only input (not one attached to an agent as a tool, which needs none);
 - a single-input node that now gets input from two nodes (an insert that forgot its disconnect);
-- a new node with no input, or a new sub-node attached to nothing;
+- a new node with no input (unless attached as a tool), or a new sub-node attached to nothing;
 - a new root node missing a required sub-node (for example, an AI Agent without a chat model).
 
 ## API

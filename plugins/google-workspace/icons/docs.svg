@@ -1,6 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Simple Icons 16.36.0, CC0-1.0 -->
   <rect width="48" height="48" rx="12" fill="#4285F4"/>
-  <path d="M15 9h12l8 8v20a2 2 0 0 1-2 2H15a2 2 0 0 1-2-2V11a2 2 0 0 1 2-2Z" fill="#fff"/>
-  <path d="M27 9v6a2 2 0 0 0 2 2h6Z" fill="#c6dafc"/>
-  <path d="M18 23h12M18 27.5h12M18 32h8" fill="none" stroke="#4285F4" stroke-width="2.4" stroke-linecap="round"/>
+  <svg x="11" y="11" width="26" height="26" viewBox="0 0 24 24"><path fill="#fff" d="M14.727 6.727H14V0H4.91c-.905 0-1.637.732-1.637 1.636v20.728c0 .904.732 1.636 1.636 1.636h14.182c.904 0 1.636-.732 1.636-1.636V6.727h-6zm-.545 10.455H7.09v-1.364h7.09v1.364zm2.727-3.273H7.091v-1.364h9.818v1.364zm0-3.273H7.091V9.273h9.818v1.363zM14.727 6h6l-6-6v6z"/></svg>
 </svg>

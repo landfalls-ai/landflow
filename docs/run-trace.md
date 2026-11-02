@@ -39,7 +39,12 @@ OTel trace id when telemetry recorded one, and a step's own span id in `attrs.ot
 - **Remote agents**: an A2A Agent node's progress (the remote task's state and its tool calls) becomes the remote
   agent's own `tool` spans under the request, whether the node is an agent's tool or a step on the canvas. When the node
   finishes, every step in its result is reconciled, so all steps are kept, not only the latest 20. A step whose result
-  says `isError: true` counts as failed. (Before 2026-11-01 an A2A Agent node on the canvas kept its progress as a text
+  says `isError: true` counts as failed. A Claude Code agent with the landflow-harness mod ([a2a.md](a2a.md#the-landflow-harness-mod))
+  also reports each model request: it is recorded as a `model` span named after the model, under that member's
+  request (`<request>/model:<n>`), with the request's tokens, cache reads and writes, cost and model and its own start
+  and end. The request keeps the mod's totals; the fold counts a model span as one request and takes its share off the
+  request's usage, so nothing counts twice (a model span without a `requests` count is one). The first 300 requests of
+  a call are kept as spans; the totals count all of them. (Before 2026-11-01 an A2A Agent node on the canvas kept its progress as a text
   note and its output cut whole, so those runs show none of its steps or files.)
 - **Landflow agents** started by Run an Agent write their turns, tool calls and sub-agent requests under that node's
   span (`journal/agent-session.ts`). A guardrail that blocked or sanitized a turn becomes a check.
@@ -84,36 +89,163 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
 - **The header**: live or finished, the time, who is working on what right now, the outcome as reported (the last
   agent's answer) and as checked (the Run report's verdict in the profile's words, with how many checks failed). A live
   run with no new event for 5 minutes says **Quiet for n min**.
-- **Needs you**: the approvals a run waits for (Approve and Reject in place), a Run report's gate (**Accept as is** or
-  **Send back for a fix**), other waits (**Open to answer**), and failed checks nobody has decided on.
+- **Needs you**: the approvals a run waits for (Approve and Reject in place; a team member's reads "Developer wants to use Comment on pull request on #5" with what it would do quoted under it (the wait's `attrs.tool`, `attrs.target`, `attrs.summary`), and names the member as the one waiting; a command its guard asks about reads "Developer wants to run git push origin main", and Approve / Reject decide it through `POST /api/executions/:id/asks/:askId` while the run goes on, see [a2a.md](a2a.md#asking-a-person)), a Run report's gate (**Accept as is** or
+  **Send back for a fix**), a form wait such as a team member's question (**Answer** opens the run's form page,
+  `/form/waiting/<executionId>`), other waits (**Open to answer**), and failed checks nobody has decided on.
 - **Story** (the default): the run as a conversation. It shows messages, requests between agents (with **Why** they
   were asked) and their result (Delivered, Answered, Left undelivered, Working, Waiting), waits for people, round
   dividers when the flow loops, and artifacts as cards. Failed steps and
   failed checks appear inline. Tool and model calls fold into "n steps" rows that open; each tool call there says what
   it did, in the agent's own words when it gave a `description` (Claude Code does with every command), else in plain
-  words ("Cloning the repository", "Reading get-alerts.ts"), with the tool's name beside it.
+  words ("Cloning the repository", "Reading get-alerts.ts"), with the tool's name beside it ("1 step" for one). A
+  request a member picks up again after a wait (its tool was approved, the run resumed) reads *Writer went on with
+  Editor's request after the wait* instead of a second ask, at the time the run resumed, and its first part shows no
+  *Left undelivered*. A Run a Team node's own turns carry its lead's title. One wait is told once: a member's tool approval
+  is journaled for the tool call, for the member's request and for the run, and the Story keeps the request's (who waits,
+  for what), while **Needs you** keeps the run's (its buttons answer the execution); `waitEchoes` in
+  `lib/shared/run-trace-model.ts` picks them. A team run opens with its [headlines](#headlines).
 - **Trace**: the span tree with timing bars, down to a remote agent's single tool calls. A request shows why it was
   asked.
 - **Team**: who called whom, with ×n counts (laid out top to bottom, no sideways scrolling), plus a card per actor with
-  its time, tokens, how often it was asked and its results. A card opens to the actor's **turns** and shows its **fix
+  its time, tokens, how often it was asked, its results and chips for what it [works with](#what-each-agent-works-with). A card opens to the actor's **turns** and shows its **fix
   cycles** ([iterations](#iterations-rounds-turns-and-fix-cycles)). Tokens come from every span that reports usage (a
   model call, an agent or team node, a remote agent's answer); a span keeps what the spans under it don't account for,
-  so a team's total is counted once and each member keeps its own.
-- **Report**: the run report, computed live with the run's profile, plus the counts, failed steps, who called whom,
-  each request's result, cycles, waits and artifacts. **Checked** can pick another profile to look at the run through
+  so a team's total is counted once and each member keeps its own. Cost, cache reads and model requests go the same
+  way where a span reports them: a Claude Code agent on kagent reports its real usage through the landflow-harness mod
+  ([a2a.md](a2a.md#the-landflow-harness-mod)), so its card says "4 model calls · 52,310 in (48,000 cached) · 1,204 out
+  · $0.0213 · claude-sonnet-5-5" and its guardrail stops are checks on its request.
+- **Report**: the run report, computed live with the run's profile, plus the counts (tokens with the run's cost when
+  some was priced), failed steps, who called whom, each request's result, what each agent used (time, model calls,
+  tokens, cost, model with its provider's logo), cycles, waits and artifacts. **Checked** can pick another profile to look at the run through
   (a flow without one through Software delivery, say) without changing the flow; the header follows it. **Copy as Markdown** copies it. When a Run report node saved one,
   **Saved report** opens it.
 - **Artifacts**: what the run made (below). Code changes first when agents changed files, then documents, links and data.
 - **The detail sheet**: tap anything to open it. It is a bottom sheet on a phone and a side panel on a wide screen,
   showing the actor and caller, times, input, output or error, and the artifacts and checks inside.
+- **Run it again** (in the detail sheet of a node, a step inside it or a member's request, and under a failed step in
+  the Story and the Trace): see [below](#run-it-again).
+- **Pause and take over** (the strip **At work now**, an agent's sheet, **Needs you**): see [below](#pause-and-take-over).
 - **The time slider**: scrub or replay the run. Tapping a time in the sheet moves it there. A live run follows the end
   until you move the slider.
 
 **Executions** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
 running execution showing who is working on what.
 
+`/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`, `report`) and, once
+the run loads, that member's sheet. With `tab=story&turn=<n>` instead it scrolls the Story to the member's `n`th turn
+and marks it (a ring and a flash): a team node's ribbon links each turn this way (`turnEntryKey` in
+`shared/run-headlines.ts`).
+
+### A run as a timeline
+
+In the new look ([the look](ui-review.md#the-look)) a card above the tabs shows the run as a timeline
+(`components/run-trace/run-timeline-card.tsx`, built by `runTimeline()` in `lib/shared/run-timeline.ts`):
+
+- **The card**: the face of who leads the run (the team's lead, else its first agent, else the flow's icon), the workflow,
+  who and which team, and a status pill: **On track**, **Needs you**, **Over budget** (a member past the budget its team
+  gave it), **Failed** or **Done**. Below: how long it ran and the tokens it used.
+- **The steps**: for a team run, its members' turns in the order they started (a member asked twice in a row is one
+  step), each named by its result where a [headline](#headlines) gives one ("14 tests pass", "Typecheck failed"), else by
+  what the member does, read from its title or role ("Planned", "Built", "Reviewed"); for any other run, its nodes once
+  each in the order they first ran. While the run goes on, the members not asked yet follow as steps to come, and the
+  run's end closes the line (**Delivered**, **Done**, or **Finish** to come), under the team's lead for a team run: while
+  the lead works between its members, it sits there as **Delivering** with what it does. A long run keeps its first step and the latest
+  ones, so it reads on a phone.
+- **Now**: done steps are green checks joined by a line that fills as the run goes, with a glint running along it while
+  it is live. The member at work sits on its step with its face, a ring growing out of it in its colour, and a bubble
+  saying what it does (the tool it runs, "Bash: pnpm test", else "Thinking…"). A wait for a person pulses amber with what it asks, and **Answer below** scrolls
+  to Needs you; a failure is a red cross with **Re-run from here** ([run it again](#run-it-again)).
+- **Elsewhere**: the same timeline, from each run's own journal, is the card of every run going on under **Running now**
+  on Home and the Executions page, and of the team's run on its team page while it works (a tap opens its Run Trace).
+
+### What a run did, in one line
+
+Also in the new look, a run can read as one line (`components/run-trace/run-line.tsx`, built by `runLine()` in
+`lib/shared/run-line.ts`): **what came in** (the trigger with its icon and what it carried: a pull request's number and
+title, a chat message, an email's subject, a form, a schedule, a webhook, or "Run by you"), **who did it** (the agent's
+face, or the team's lead with the faces of the members who had a turn), and **what came out** (the best of the run's
+artifacts, delivered ones first, then pull requests, reviews, published notes, commits, tickets, documents; else the reply
+as "Answered"), green when done, amber with what it asks when it waits for you, red with the error when it failed. A tap
+on the result opens it (a pull request on GitHub); the rest of the row opens the run.
+
+- **Run Trace**: once a run is over, the [timeline](#a-run-as-a-timeline) above the tabs folds into its line (**Show the
+  steps** opens it again; a tap on the line opens the Story).
+- **Home**: the recent runs are lines; runs going on show as timelines under Running now.
+- **The team page**: the team's last run as a line (its timeline while it runs); **the agent page**: the last three runs
+  the agent took part in, at the top of its Sessions tab.
+- The lines come from `GET /api/runs/lines?ids=…` (at most 20 runs), folded on the server from each run's journal and
+  cached by its last event like the run digests.
+
+### An approval with its evidence
+
+In the new look, a run that waits for a person to approve a tool call (a team member's tool that needs approval, a
+published note, a command the guard asks about) shows a **decision card** (`components/run-trace/approval-card.tsx`)
+instead of a title and two buttons, so the person decides with the reasons in front of them:
+
+- **In its own words.** The member's face and name, and what it wants and recommends: the reason it was asked (an ask's
+  `reason`, else the reason on its latest turn) and its last words before the wait, one or two sentences, cut
+  (`approvalWords()` in `lib/shared/approval-case.ts`).
+- **The case.** What the tool acts on (`plugins · #5`), the tool's readable name and its input made readable
+  (`approvalCase(wait, model)`): a review as its verdict (approve, request changes, comment) and its text; a command in
+  mono; a file write as its path; anything else as `key: value` lines, cut.
+- **What it looked at.** The evidence the run already records, only rows that have data (`approvalEvidence(model, wait)`
+  in `lib/shared/approval-evidence.ts`): when it asked, its checks (and the tests the team kept as headlines), the code it
+  changed (+/- and files, from the run's [changes](#artifacts-and-code-changes)), its [fix cycles](#fix-cycles), its
+  budget used against its own and the run's time. Each row opens its place in the Run Trace: a detail sheet, or a tab
+  (`?tab=story&member=Reviewer`).
+- **Buttons named by the action.** *Post review & approve*, *Post review & request changes*, *Run the command*, *Publish
+  notes*, *Write the file*, else *Approve: <tool>*; then **Edit** and **Deny**.
+- **Edit.** Opens the input (a review's verdict and body, the command, or the input as JSON for anything else).
+  **Approve with these changes** sends the edited input with the approval and the tool runs with it instead of the
+  member's own. The journal marks the wait `edited: true` with `editedBy`, says "Approved … with changes", and the
+  Approval check says it too; the wait's detail sheet shows an **Edited by you** badge. A guard's ask (a command) sends the
+  edited command: the mod's poll hands it back and the mod runs it instead (still stopped by the rules nobody can allow).
+
+The card is the Needs you section's, and the waiting node's: from the editor, **Review** next to Approve / Deny on the node
+opens it in a sheet, and the execution view's phone card is it (both read the run's journal). Needs you also gets a row of
+**faces** across the top, a dot on each member that waits (and on the Executions page's list, one face per member with
+something for you across runs). The classic look keeps its title and buttons; the edit works through the API in both
+looks (`POST /api/executions/:id/approvals` with `input`, `POST /api/executions/:id/asks/:askId` with `command`).
+
+### Headlines
+
+A Run a Team node keeps the moments of its run on its output (`activity.moments`: tests pass or fail, a typecheck or
+build, a pull request opened, a review's verdict, a member near or past its budget, a question for a person). The Story
+opens with them as a row of chips, oldest first: the member's face, a coloured dot (green, red, amber), the words and how
+far into the run it happened ("4:12"; the clock time on hover). A tap scrolls the story to where it happened (the
+member's own entry just before it, else whatever the story says then) and flashes it, and that entry keeps a
+"Headline · <words>" mark under it so it can be found again. Hand-offs ("Asked the Reviewer") stay out. The placing is in
+[`lib/shared/run-headlines.ts`](../apps/web/src/lib/shared/run-headlines.ts). A team run that waited for a person
+(a tool approval, a question) runs its node twice and keeps one activity on the second: its times leave the wait out, and
+`activity.parts` gives each part's length, so a moment from before the wait sits on the first node run and one from after
+on the second (before, every moment of such a run read a whole wait late).
+
 On a phone (below 768 px) the app's left rail is a drawer behind a slim top bar with a menu button, so these pages get
 the whole width.
+
+### What each agent works with
+
+Each agent actor carries its **connections** (`RunActor.connections`): its model, memory, knowledge, tools, skills, the
+agents it can ask, where it runs, its plugins and what its sandbox may reach. They show as chips on its card and on the
+team chart, and as a **Works with** list in its sheet (name, kind, one line of detail, and where it is set: in the flow,
+in the agent's settings, on kagent). Each wears the thing's own icon: the node type's (a plugin's logo), else a brand's
+(`brand:<slug>` from `lib/shared/brand-icons.ts`: Ollama, Anthropic, Claude, OpenAI, Gemini, Mistral, Hugging Face,
+GitHub, Kubernetes, Docker, MCP, kagent, PostgreSQL, SQLite), else its kind's.
+
+| Where | What the run records |
+|---|---|
+| An agent node in the flow | Its sub-nodes when the span starts: the chat model (model name, the node's name and server), memory (turns), tools (a node's resource and operation), knowledge (a vector store or retriever: its collection), A2A and agent sub-nodes as agents it can ask. Disabled sub-nodes are left out. |
+| A Run an Agent node | The agent's published settings beside the sub-nodes, without the model or memory a sub-node already gives (`lib/server/agents/connections.ts`). |
+| An A2A Agent node or tool, a team's remote member | When the URL is a Landflow agent deployed to kagent (by the URL its deployment recorded, else the kagent name it ends with): **Claude Code** (when it has plugins, the mod or a Claude harness) and **kagent** (the deployment's name, sandbox and hot start), its Claude Code plugins (the landflow-harness mod among them), each EgressPolicy (GitHub, the package cache, Landflow) and the agent's own model, tools and skills. Any other URL: an A2A agent and its host. |
+| A team | Each member's connections on the chart the node's span records (`attrs.team.members[].connections`); the lead's leaves out the model and memory the flow gives. The model folds them onto the member's actor by title. |
+
+**GitHub MCP** is its own row for an agent that has GitHub's MCP tools (`preset: 'github'`, [a2a.md](a2a.md#githubs-mcp-tools-for-agents)),
+with the GitHub mark and kind *Tool*: *Tool · pull requests, reviews, line comments* at *Read and review*, *Tool ·
+repositories, pull requests, issues (read)* at *Read*. It sits beside the *May reach · GitHub* row of the agent's kagent
+deployment (the gateway adds the token) and is never shown as an ordinary MCP server.
+
+A team node's usage names the lead's model, and an agent session counts each of its model calls, so the lead's card and
+the report say "3 model calls · 5,443 in · 714 out · $0 · qwen3-coder:30b" beside a member's reported usage.
 
 ## Iterations: rounds, turns and fix cycles
 
@@ -284,8 +416,23 @@ The **Artifacts** tab (code in `components/run-trace/artifacts.tsx`) opens every
   **page** (HTML) shows in a frame with `sandbox=""` (no script, forms, navigation or same origin) behind a policy that
   loads nothing from the network, and its links do nothing; **Show the source** gives the text. `.csv` and `.html` files
   agents wrote show here too, from their last text.
+- **Review comments**: what a member left on GitHub through its MCP tools (described below), one card each.
 - **Links**: artifacts with an http(s) URL (pull requests, commits), except images and PDFs, which open from their own
   cards. **Data**: JSON artifacts as a collapsible tree.
+
+**Review comments.** When a member's GitHub MCP call succeeds and leaves a review or a comment, the journal records an
+artifact of kind `review_comment` under that call's span (`lib/shared/review-comments.ts`, written by
+`lib/server/journal/agent-session.ts`): `pull_request_review_write` (a review created with a verdict, or a pending one
+submitted: `APPROVE`, `REQUEST_CHANGES` or `COMMENT`; a pending review, a deleted one and a resolved thread leave
+nothing), `add_comment_to_pending_review` (a comment on a file and line), `add_reply_to_pull_request_comment` and
+`add_issue_comment`. Its `text` is the body, its `url` the link GitHub returned when it returned one, and its `data` the
+`repository` (`owner/repo`), the pull request or issue `number`, the `path` and `line` when given, the `verdict` and the
+`action` (`line`, `review`, `reply`, `comment`). Both paths feed it: a Landflow agent's tool call (a Run an Agent node, a
+team member) and a Claude Code member's `mcp__<server>__<tool>` step that the landflow-harness mod reported, read when the
+step ends in success; a call to a tool with other arguments than GitHub's (`owner`, `repo`) is not one. The Story tells it
+in the member's words as a turn with the body quoted (*Reviewer commented on src/nodes/get-alerts.ts line 42*,
+*Reviewer reviewed pull request #5: approve*), and the Artifacts tab lists it under **Review comments** with the link. With
+run content off, the body is not kept.
 
 **Where the changes come from.** `lib/shared/run-changes.ts` folds the journal: a remote agent's `Write`, `Edit` and
 `MultiEdit` tool steps (their `input` is the Claude Code tool input; a remote agent's arguments that arrive as JSON text are
@@ -328,6 +475,102 @@ request numbers in replies become GitHub links. Everything an agent writes is un
 (`react-markdown` with `remark-gfm` and `rehype-sanitize`), links open in a new tab and only when they are http or https, and
 images are not loaded.
 
+## Search, compare and measures
+
+Three routes read across runs, and two screens use them (made for a phone: one column of cards, no wide tables).
+
+- **Search** (`/runs`, **Search runs** in the side bar; `GET /api/runs/search`): words (span names, inputs and outputs,
+  messages, artifacts, checks), workflow, an agent or actor by name, a tool by name, status, **has failed steps**,
+  **a check failed** (by name, or any) and from/to dates. Results are cards (status, workflow, when, how long, the
+  failed steps and checks, and where the words were found) that open `/runs/<id>`, 20 at a time with **Show more**.
+  Only the runs of workflows you can see are searched. The queries are plain SQL on `execution_events` (`LIKE` and
+  `EXISTS`, the same on SQLite and Postgres, no schema change); each candidate run's events are then checked in code,
+  so a word that is only a field name of the stored event doesn't match. A run recorded before Run Trace is searched by
+  workflow, status and date only, until its journal is rebuilt by opening it.
+- **Compare** (`/runs/compare?a=&b=`; pick two cards in the search and press **Compare**; `GET /api/runs/compare`):
+  each run is folded with `foldJournal` and shown as a card: duration, tokens in and out, cost, model calls, steps,
+  failed steps, checks passed, failed and warned, the failed checks' names and the artifacts. The cards sit side by
+  side on a wide screen and stack on a phone; the second shows what changed from the first (a rise is red). Under them,
+  a card per actor of either run with its steps, failed steps, tokens and model calls in both runs and the
+  difference; an actor that took part in only one says so.
+- **Measures over time** (`GET /api/runs/measures?workflowId=`; the chart appears on the search page once a workflow is
+  chosen): the workflow's last runs (30 by default) as duration, tokens in and out, cost, failed steps and failed
+  checks per run. The chart is a line with a dot per run for one measure at a time (duration, tokens or cost), the
+  latest dot larger and labelled with its value, the largest value and the first and last dates on the axes; a run
+  with a failed step, a failed check or an error is a red dot. A run profile can't define measures of its own yet.
+
+## Export over OTLP
+
+Set `LANDFLOW_OTLP_TRACES_URL` to an OTLP/HTTP traces endpoint (`http://landflow-lgtm:4318/v1/traces` in the
+`orbstack-observability` overlay) and every execution's journal is sent there when the run ends
+(`journal/otlp-export.ts`; a run that waits for a person or a timer is sent when it finishes):
+
+- **One trace per execution**, with the run's own OTel trace id when telemetry recorded one (so the spans join the
+  host's spans of that run), else an id derived from the execution. Each journal span is an OTLP span with its parent,
+  start and end, and a status (success OK, error ERROR with the message; a canceled or unfinished span has none). A
+  span's checks, artifacts and messages are span events.
+- **OpenInference attributes**: `openinference.span.kind` is `AGENT` for agent, delegate and handoff spans, `LLM` for
+  model spans, `TOOL` for tool spans, `EVALUATOR` for a Run report (or evaluation) node and `CHAIN` for the rest;
+  `llm.model_name`, `llm.token_count.prompt`, `.completion` and `.total` (and `.prompt_details.cache_read` and
+  `.cache_write`, `llm.cost.total` when reported) where the span has usage; `input.value` and `output.value` with their
+  mime types; `landflow.actor`, `landflow.execution_id`, `landflow.span_kind`, `landflow.status`.
+- **Redaction and size** are the journal's: the export reads what was stored (secrets redacted, content cut by
+  `traceContent`, so `off` sends no inputs or outputs) and cuts each value to 4,000 characters.
+- **Never in the way**: it runs after the run, in the background; spans go out in batches of 200, each request is
+  tried twice, and a failure is logged and dropped.
+
+## Run it again
+
+A finished run (a live one can't be re-run from a step) has three ways to go again from a span, all in its detail sheet,
+and **Re-run from here** also sits under every failed step in the Story and the Trace. The sheet shows the flow as a
+small diagram above its Re-run button (the small button under a failed step re-runs at once, without one): the run's nodes in run order as a row of chips joined by a line (the row wraps on a
+phone). Nodes before the chosen one are muted with a pin and **kept**; the chosen node has a ring and **runs again from
+here**; the nodes after it have a dashed outline and **runs again**; a node that failed in this run is red with a cross
+(often it is the chosen one). One line under the row says it in words: "Planner and Developer keep this run's outputs;
+Typecheck runs again, then Review and Merge." The diagram shows what this run did (`rerunDiagram` in
+`lib/shared/run-rerun.ts`), not the workflow's graph: a span inside a node (a member's request, a tool step) maps to its
+node, a node a loop ran several times shows once at the place it first ran (red if any of its runs failed), and a node
+that never ran in this run (a branch not taken) is left out, so "after" means after in this run's order.
+
+- **Re-run from here** re-runs the flow from the node the span belongs to (`POST /api/executions/:id/rerun` with
+  `scope: 'from'`, the original version of the workflow). The earlier nodes are not run: their outputs are copied from
+  this execution (`planRerun` in `lib/server/runner.ts`, the same re-run the execution page's menu uses). The new execution
+  links back with `rerunOf`; Landflow opens its Run Trace with a toast, and its header says **Re-run from "Run Report" of
+  exec_…** with a link to the earlier run.
+- **Ask Developer again** (on a member's request under a Run a Team node, asked by the lead) sends the same message to the
+  same member in a new turn. It is a re-run of the Run a Team node from this run with the node's message replaced, for
+  that run only, by an instruction to the lead: ask that one member exactly this message, once, ask no one else and report
+  the answer as it came (`askMember: { member, message }` on the rerun route; `lib/server/agent-teams/ask-again.ts`). The
+  saved workflow is not changed (the new execution's workflow snapshot carries the changed message). Because the lead is
+  a model, it may not follow the instruction to the letter; the Story shows what it asked.
+- **Copy to editor** opens the workflow in the editor at `?execution=<id>&pin=<nodeId>`: the editor shows the run on the
+  canvas as **Debug in editor** does and pins the outputs of the steps that ran before that node as test data (`pin=all`
+  pins every step). Fix the flow, then run it: pinned steps return their data instead of running. It is not saved until
+  you save.
+
+## Pause and take over
+
+Stop a team member mid-task, read where it is, write its next instruction and let it go on, without cancelling the run.
+It works on the members of a **Run a Team** node, the lead included, while the run is live.
+
+- **Pause** (a button on the team node's Now card, on the canvas tile, in the Run Trace's **At work now** strip and on an
+  agent's sheet) asks a Landflow agent to stop at its next step boundary, after the model call or tool calls it is in
+  the middle of. It keeps its session. The member shows as paused (an amber frame and a pause badge on the node, **Paused:
+  waiting for you**), and **Needs you** and the Now card show a **Take over** composer: a text box and **Continue**.
+- The instruction is added to the member's conversation as a message from the person ("A person paused you to give you
+  new instructions…") before its loop goes on. **Continue as it was** (an empty box) lets it carry on unchanged.
+- A **remote** member (a2a, on kagent) can't be stopped between steps from outside. Its button is **Stop and redirect**:
+  Landflow cancels the A2A task (`CancelTask`) and sends your instruction to the same conversation (`contextId`) as a new
+  message, so the member keeps what it said but starts a new task; work in the cancelled task's own sandbox may be lost.
+- The journal records it: a `wait` span `<Member> is paused` (attrs `wait: 'pause'`) under the member's request, your
+  instruction as a message from you in it, and the request's state `paused` while it lasts.
+
+How the wait works: the pause is in the memory of the process that runs the execution, inside the team run's open call
+(the lead keeps waiting for its report, and the run stays `running`). It ends with your instruction, when the run is
+stopped, or after `LANDFLOW_TEAM_PAUSE_MINUTES` (default 30), when the member carries on without one and the journal says
+so. A host restart ends the run as any run is interrupted (the pause is not saved), and in queue mode the pause routes
+only reach the process that runs the execution.
+
 ## HTTP API
 
 | Route | What it does |
@@ -336,17 +579,35 @@ images are not loaded.
 | `GET /api/executions/:id/changes` | The run's branch compared with its base on GitHub (Repository → Compare, flow's credential): `{ available: true, repository, branch: { base, head, aheadBy, behindBy, totalCommits, url, files: [{ path, status, additions, deletions, patch? }], truncated, note? }, fetchedAt }`, or `{ available: false, reason }`. |
 | `POST /api/executions/:id/checks` | `{ spanId, name, subject?, decision: 'accepted' \| 'sent_back', note? }`: a person's decision on a failed check (`subject` picks one of a span's checks of that name, as a team's Budget for each member). |
 | `POST /api/executions/:id/gate` | `{ decision, note? }`: answers a Run report waiting on its failed checks, and resumes the run. |
+| `POST /api/executions/:id/rerun` | `{ scope: 'from', nodeId, version?, askMember?: { member, message } }`: re-run from a node (the earlier ones keep this run's outputs); `askMember` (the node is a Run a Team) asks one member the same message again. → 202 `{ executionId }` |
+| `GET /api/executions/:id/agents` | the team members of a live execution that can be paused: `{ members: [{ member, kind: 'agent' \| 'remote', state: 'working' \| 'pausing' \| 'paused', since? }] }` |
+| `POST /api/executions/:id/agents/:member/pause` | pause a member (by its title): an agent at its next step boundary, a remote member at once → `{ member, kind, state }` (404 when it isn't working here) |
+| `POST /api/executions/:id/agents/:member/continue` | `{ message? }`: the person's instruction to a paused member, which goes on with it (409 when it isn't paused) |
+| `POST /api/executions/:id/approvals` | `{ callId, approved, input? }`: decide a waiting tool call; `input` (a JSON object, with `approved: true`) is the tool's input as a person edited it, and the tool runs with it ([an approval with its evidence](#an-approval-with-its-evidence)). SSE: `decision`, then the resumed run. |
 | `GET /api/runs/needs-you` | Across the runs you can see: waits for a person (`approval`, `form`, `question`, `gate`) and failed checks of the last 7 days nobody decided on. |
+| `GET /api/runs/search`, `/api/runs/compare?a=&b=`, `/api/runs/measures?workflowId=` | Search, compare and measures across runs ("Search, compare and measures" below). |
 
 ## Not built
 
-- Other agents' own telemetry (Claude Code's model calls between its tool calls) joined by trace id, OTLP and
-  OpenInference export, search and comparison across runs, measures over time, re-running from a span, Copy to editor,
-  and pausing a running agent so a person can take over. These are phase 4 in the roadmap.
+- Re-running from a span re-runs the flow from a *node*: a step inside an agent (a tool call, a member's turn) can't be
+  re-run on its own, and "Ask again" goes through the lead (a model), not straight to the member. Copy to editor pins
+  the first output with items of each earlier step and does not keep the run's other branches' outputs.
+- Pausing works on the members of a Run a Team node (not a Run an Agent node's agent or a sub-agent), only in the
+  process that runs the execution, and is lost on a host restart. A Landflow agent stops between steps, not in the
+  middle of a model call or a tool; a remote member can only be stopped and redirected.
+- Other agents' own spans (Claude Code's OpenTelemetry) are not joined to the trace by trace id yet.
+- Search reads the journal of runs that have one. It matches the stored text of an event with `LIKE`, so it is not
+  ranked or stemmed, and a request reads at most 1,000 candidate runs. A run profile can't define measures of its own
+  yet: the measures over time are the generic ones.
+- The OTLP export sends JSON (not protobuf), once, when a run ends; a run that was waiting is sent when it finishes, and
+  a run the host loses before it ends is never sent.
 - **Content kept** is per workflow, not per project.
 - Claims are extracted with the profile's patterns. No model reads replies that lack a structured block.
 - A remote agent's steps arrive only through its A2A progress and result. A step taken while the progress stream was
   down shows up only when the result reconciles it.
 - Built-in checks see only what the journal recorded. A tool that fails silently (exit code 0) passes.
 - Models, memory and other non-tool sub-nodes can't report artifacts or checks.
+- Connections are what the flow and the agent's published settings said when the span started: a tool an agent
+  didn't call still shows, and a change made during the run doesn't. A kagent agent's runtime is told from its
+  deployment (plugins, the mod, the harness name), not read from the cluster.
 - A trace rebuilt from an older run's data has no progress notes, artifacts, checks or decisions.

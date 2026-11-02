@@ -175,6 +175,7 @@ export const Landfall = defineNode({
         options: [
           { name: 'Declare', value: 'declare', description: 'Declare an incident (POST /incidents)', action: 'Declare an incident' },
           { name: 'Get', value: 'get', description: 'Get the folded state of an incident', action: 'Get an incident', idempotent: true },
+          { name: 'Get Room', value: 'getRoom', description: 'The incident and its whole timeline in one item: the input of Landflow\'s "Make a runbook" (POST /api/runbooks/draft)', action: 'Get a room with its timeline', idempotent: true },
           { name: 'Get Many', value: 'getAll', description: 'List incidents', action: 'Get many incidents', idempotent: true },
           { name: 'Open Manually', value: 'openManually', description: 'Open a room through the manual trigger route (never suppressed, no dedup)', action: 'Open an incident manually' },
           { name: 'Open From Alert', value: 'openFromAlert', description: 'Send an alert to Landfall; it opens a room, attaches to an open one with the same dedup key, or ignores it', action: 'Open an incident from an alert' },
@@ -191,6 +192,7 @@ export const Landfall = defineNode({
         options: [
           { name: 'Add Event', value: 'addEvent', description: 'Append an event; expectedSeq is read for you and retried once on a conflict', action: 'Add a timeline event' },
           { name: 'Add Note', value: 'addNote', description: 'Post a chat message in the room', action: 'Add a note' },
+          { name: 'Add Runbook Link', value: 'addRunbookLink', description: 'Post a note in the room that names a Landflow runbook and links to it (Landfall has no field for a link on an alert, so it goes on the timeline)', action: 'Add a runbook link' },
           { name: 'Get Events', value: 'getEvents', description: 'Read timeline events', action: 'Get timeline events', idempotent: true },
         ],
       },
@@ -294,7 +296,7 @@ export const Landfall = defineNode({
       },
 
       // Timeline
-      incidentId('timeline', ['getEvents', 'addEvent', 'addNote']),
+      incidentId('timeline', ['getEvents', 'addEvent', 'addNote', 'addRunbookLink']),
       {
         name: 'returnAll',
         displayName: 'Return All',
@@ -327,6 +329,9 @@ export const Landfall = defineNode({
       { name: 'eventType', displayName: 'Event Type', type: 'string', required: true, default: '', placeholder: 'chat.message', displayOptions: show('timeline', ['addEvent']), description: 'Landfall refuses agent.step, incident.triggered, severity.proposed and a few other server-owned types' },
       { name: 'payload', displayName: 'Payload (JSON)', type: 'json', default: '{}', typeOptions: { rows: 6 }, displayOptions: show('timeline', ['addEvent']) },
       { name: 'text', displayName: 'Text', type: 'string', required: true, default: '', typeOptions: { rows: 3 }, displayOptions: show('timeline', ['addNote']), description: 'Posted as a chat.message event, as the member who owns the API key' },
+
+      { name: 'runbookName', displayName: 'Runbook Name', type: 'string', default: '', displayOptions: show('timeline', ['addRunbookLink']), description: 'The runbook\'s name (the Find Runbook node\'s runbook.name)' },
+      { name: 'runbookUrl', displayName: 'Runbook URL', type: 'string', required: true, default: '', displayOptions: show('timeline', ['addRunbookLink']), description: 'Where responders open it (the Find Runbook node\'s runbook.url, made absolute)' },
 
       // Remediation
       incidentId('remediation', ['recordAppliedExternally']),
@@ -436,6 +441,14 @@ async function incidentOperation(ctx: IExecuteContext, api: ApiContext, credenti
       const through = Number(ctx.getNodeParameter('throughSeq', i, -1));
       return await new Org(api, credentials).getState(requireString(ctx, 'incidentId', 'Incident ID', i), through >= 0 ? through : undefined);
     }
+    case 'getRoom': {
+      const org = new Org(api, credentials);
+      const id = requireString(ctx, 'incidentId', 'Incident ID', i);
+      const { state } = await org.getState(id);
+      // Without a limit Landfall returns every event.
+      const events = await org.getEvents(id);
+      return { incident: { id, ...(state as JsonObject) }, events };
+    }
     case 'getAll': {
       const org = new Org(api, credentials);
       const returnAll = ctx.getNodeParameter<boolean>('returnAll', i, false);
@@ -477,6 +490,12 @@ async function timelineOperation(ctx: IExecuteContext, org: Org, operation: stri
     }
     case 'addNote':
       return await org.addEvent(id, 'chat.message', { text: requireString(ctx, 'text', 'Text', i) });
+    case 'addRunbookLink': {
+      const url = requireString(ctx, 'runbookUrl', 'Runbook URL', i);
+      if (!/^https?:\/\//i.test(url)) throw new NodeOperationError('Runbook URL must be an absolute http(s) link', { itemIndex: i });
+      const name = String(ctx.getNodeParameter('runbookName', i, '') ?? '').trim();
+      return await org.addEvent(id, 'chat.message', { text: `Runbook${name ? `: ${name}` : ''}\n${url}` });
+    }
     default:
       throw unsupported('timeline', operation);
   }

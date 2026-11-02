@@ -1312,6 +1312,84 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS execution_events_at ON execution_events (at)`,
     ],
   },
+  {
+    version: 2010,
+    name: 'team_notes',
+    statements: [
+      // The team notebook (lib/server/notebook/store.ts, docs/team-notebook.md): typed notes a team's members write while a run
+      // goes, kept per run, per team or per project. `source` is JSON ({ executionId, spanId, tool, url, excerpt });
+      // `embedding` a JSON array of numbers (NULL until made, e.g. when Ollama is unreachable); `tainted` is 1 for a note read
+      // from outside the team; `dispute_of` and `superseded_by` link two notes that disagree.
+      `CREATE TABLE IF NOT EXISTS team_notes (
+        id TEXT PRIMARY KEY,
+        team_id TEXT NOT NULL,
+        project_id TEXT,
+        run_id TEXT,
+        workflow_id TEXT,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        status TEXT NOT NULL,
+        author TEXT NOT NULL,
+        author_id TEXT,
+        source TEXT NOT NULL,
+        tainted INTEGER NOT NULL DEFAULT 0,
+        answer TEXT,
+        embedding TEXT,
+        embedding_model TEXT,
+        dispute_of TEXT,
+        superseded_by TEXT,
+        promoted_from TEXT,
+        proposal_id TEXT,
+        verified_at TEXT,
+        verified_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_access_at TEXT NOT NULL,
+        expires_at TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS team_notes_team ON team_notes (team_id, scope)`,
+      `CREATE INDEX IF NOT EXISTS team_notes_run ON team_notes (run_id)`,
+      `CREATE INDEX IF NOT EXISTS team_notes_expires ON team_notes (expires_at)`,
+    ],
+  },
+  {
+    version: 2040,
+    name: 'agent_asks',
+    statements: [
+      // Commands a Claude Code member's guard asks a person about (lib/server/a2a/agent-asks.ts, docs/a2a.md): one row per ask,
+      // where the trace route that takes the ask, the route that records the decision and the route the mod polls meet (in queue
+      // mode they run in different processes). `trace_key` is a hash of the call's trace id (the id is the mod's credential),
+      // `mod_id` the id the mod gave the ask, `status` pending | approved | denied | expired | canceled.
+      `CREATE TABLE IF NOT EXISTS agent_asks (
+        id TEXT PRIMARY KEY,
+        trace_key TEXT NOT NULL,
+        mod_id TEXT NOT NULL,
+        execution_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        span_id TEXT NOT NULL,
+        parent_span_id TEXT NOT NULL,
+        member TEXT,
+        command TEXT NOT NULL,
+        cwd TEXT,
+        reason TEXT,
+        status TEXT NOT NULL,
+        decided_by TEXT,
+        decided_at TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS agent_asks_trace ON agent_asks (trace_key, mod_id)`,
+      `CREATE INDEX IF NOT EXISTS agent_asks_execution ON agent_asks (execution_id, status)`,
+    ],
+  },
+  {
+    version: 2041,
+    name: 'agent_asks_edited_command',
+    statements: [
+      // The command a person changed before allowing it (lib/server/a2a/agent-asks.ts): the mod runs this one instead of its own.
+      `ALTER TABLE agent_asks ADD COLUMN edited_command TEXT`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1403,6 +1481,8 @@ export const TABLES = {
   proposals: ['id'],
   agent_templates: ['id'],
   agent_teams: ['id'],
+  team_notes: ['id'],
+  agent_asks: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

@@ -14,7 +14,7 @@ export const kagentCredential = defineCredentialType({
   displayName: 'kagent cluster',
   description:
     'A Kubernetes cluster running kagent 1.0. Landflow writes published agents there (their system prompt, model and tools) with a ServiceAccount token that may manage kagent’s Agents, AgentTemplates, ModelConfigs, RemoteMCPServers and Secrets in the namespace.',
-  icon: 'lucide:ship-wheel',
+  icon: 'brand:kagent',
   documentationUrl: 'https://kagent.dev/docs',
   properties: [
     { name: 'server', displayName: 'Kubernetes API Server', type: 'string', default: '', required: true, placeholder: 'https://host.docker.internal:6443' },

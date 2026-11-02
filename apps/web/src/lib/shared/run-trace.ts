@@ -25,6 +25,34 @@ export interface RunActor {
   role?: string;
   /** The node type, for its icon. */
   nodeType?: string;
+  /** What it works with: its model, memory, tools, knowledge, skills, plugins, where it runs and what it may reach. */
+  connections?: ActorConnection[];
+}
+
+/**
+ * Something an actor works with, as the run recorded it: a model sub-node of the flow, a tool in the agent's settings,
+ * the runtime and plugins of its kagent deployment. Shown as chips with the thing's own icon (a node type's, a brand's).
+ */
+export interface ActorConnection {
+  kind: 'model' | 'memory' | 'tool' | 'knowledge' | 'skill' | 'agent' | 'runtime' | 'plugin' | 'network';
+  name: string;
+  /** One line: the provider and server of a model, a tool's resource and operation, a store and its embeddings. */
+  detail?: string;
+  /** The node type, for its icon. */
+  nodeType?: string;
+  /** An icon when there is no node type: `brand:<slug>` (lib/shared/brand-icons.ts) or `lucide:<name>`. */
+  icon?: string;
+  /** Where it is set: a sub-node in the flow, the agent's own settings, its kagent deployment. */
+  from?: 'flow' | 'agent' | 'kagent';
+}
+
+export const CONNECTION_KINDS: ReadonlyArray<ActorConnection['kind']> = ['runtime', 'model', 'memory', 'knowledge', 'tool', 'skill', 'agent', 'plugin', 'network'];
+
+/** Connections together, each once (by kind and name; the first one's details win), in CONNECTION_KINDS order. */
+export function mergeConnections(...lists: Array<ActorConnection[] | undefined>): ActorConnection[] {
+  const out = new Map<string, ActorConnection>();
+  for (const list of lists) for (const c of list ?? []) if (c?.name && !out.has(`${c.kind}\u0000${c.name}`)) out.set(`${c.kind}\u0000${c.name}`, c);
+  return [...out.values()].sort((a, b) => CONNECTION_KINDS.indexOf(a.kind) - CONNECTION_KINDS.indexOf(b.kind));
 }
 
 /**
@@ -45,6 +73,14 @@ export type SpanStatus = 'running' | 'waiting' | 'success' | 'error' | 'canceled
 export interface TokenCounts {
   inputTokens: number;
   outputTokens: number;
+  /** Of the input, read from and written to the prompt cache, when the model said so. */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** USD, when it was priced (a remote agent's mod reports its real usage; a team prices its members). */
+  costUsd?: number;
+  /** Model requests behind these tokens, when known (a remote agent's, which has no model spans of its own here). */
+  requests?: number;
+  model?: string;
 }
 
 export type RunArtifact = NodeArtifact;

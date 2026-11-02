@@ -26,6 +26,8 @@ export interface ApprovalDecision {
   /** "slack:U123", a user's email, or absent. */
   by?: string;
   at: string;
+  /** The input a person changed before approving: the tool runs with it instead of the call's own. */
+  input?: JsonObject;
 }
 
 /** What `wait.data.approval` holds. */
@@ -36,6 +38,8 @@ export interface PendingApproval {
   channel: 'chat' | 'slack' | 'email';
   calls: ApprovalCall[];
   requestedAt?: string;
+  /** What the request says it wants, when not the node's "wants to run a tool" (a team member's: "Developer wants to use …"). */
+  title?: string;
   decisions?: Record<string, ApprovalDecision>;
   slack?: { channel: string; messages?: Record<string, string>; approvers?: string[] };
   email?: { to: string[] };
@@ -58,6 +62,8 @@ export function pendingApproval(record: Pick<ExecutionRecord, 'status' | 'wait'>
 
 export type DecisionOutcome = { status: 'waiting'; approval: PendingApproval } | { status: 'resumed'; record: ExecutionRecord };
 
+const isJsonObject = (value: unknown): value is JsonObject => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -68,8 +74,12 @@ export async function decideApproval(
   executionId: string,
   callId: string,
   approved: boolean,
-  options: { by?: string; slackUser?: string; onEvent?: (event: ExecutionEvent) => void; streaming?: boolean } = {},
+  options: { by?: string; slackUser?: string; onEvent?: (event: ExecutionEvent) => void; streaming?: boolean; input?: JsonObject } = {},
 ): Promise<DecisionOutcome> {
+  if (options.input !== undefined) {
+    if (!approved) throw new ApprovalError('Only an approval can carry an edited input', 400);
+    if (!isJsonObject(options.input)) throw new ApprovalError('The edited input must be a JSON object', 400);
+  }
   // A Slack click can come in while the node is still on its way into waiting.
   let stored = liveExecution(executionId) ? undefined : store.getExecution(executionId);
   for (let tries = 0; tries < 40 && liveExecution(executionId); tries++) {
@@ -90,11 +100,11 @@ export async function decideApproval(
 
   // Read, change and save in one synchronous step: two clicks can't overwrite each other.
   const by = options.by ?? (options.slackUser ? `slack:${options.slackUser}` : undefined);
-  const decisions = { ...approval.decisions, [callId]: { approved, ...(by && { by }), at: new Date().toISOString() } };
+  const decisions = { ...approval.decisions, [callId]: { approved, ...(by && { by }), at: new Date().toISOString(), ...(options.input && { input: options.input }) } };
   const next: PendingApproval = { ...approval, decisions };
   store.saveExecution({ ...stored, wait: { ...stored.wait!, data: { ...stored.wait!.data, approval: next as unknown as JsonObject } } });
   // Said in the run's journal, in the wait it answers (before the resume ends that wait): web, Slack and email alike.
-  recordDecision(executionId, stored.workflowId, { id: by ?? 'unknown', name: by }, `${approved ? 'Approved' : 'Rejected'} ${call.tool}`);
+  recordDecision(executionId, stored.workflowId, { id: by ?? 'unknown', name: by }, `${approved ? 'Approved' : 'Rejected'} ${call.tool}${options.input ? ' with changes' : ''}`, options.input ? { editedBy: by ?? 'A person' } : undefined);
   void updateSlackMessage(stored, next, call, decisions[callId]).catch((error: Error) =>
     logger.warn('could not update the Slack approval message', { 'landflow.execution.id': executionId, error: error.message }),
   );
@@ -122,6 +132,6 @@ async function updateSlackMessage(record: ExecutionRecord, approval: PendingAppr
     channel: approval.slack.channel,
     ts,
     text: `${call.tool}: ${decision.approved ? 'approved' : 'rejected'}`,
-    blocks: decidedBlocks({ title: `${approval.nodeName} wants to run a tool`, tool: call.tool, input: call.input, approved: decision.approved, user, ...(!user && decision.by && { note: decision.by }) }),
+    blocks: decidedBlocks({ title: approval.title ?? `${approval.nodeName} wants to run a tool`, tool: call.tool, input: call.input, approved: decision.approved, user, ...(!user && decision.by && { note: decision.by }) }),
   });
 }

@@ -4,12 +4,14 @@ import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
 import { CircleDot, Copy, Loader2, Play, Power, Settings2, SkipForward, Trash2, UsersRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { ExecutionEvent } from '@/lib/shared/types';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
+import { decideToolApprovals } from '@/lib/client/run-trace';
 import { useNodeFace, useShownParameters } from '../agents/faces';
 import { isCompact, NodeTile, ranFor } from '../canvas/node-tile';
 import { useAssistant } from './assistant';
 import { activityOfRuns } from '@/lib/shared/team-progress';
-import { useTeamTile } from './team-live';
+import { teamQuestionOf, useTeamTile } from './team-live';
 import { liveTeam, TeamStrip } from './team-strip';
 import { canTurnNodeIntoTeam, turnIntoTeam } from './turn-into-team';
 import { useEditor, type FlowNode } from './store';
@@ -73,7 +75,27 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   // A team node becomes the member at work while it runs, and keeps a summary of what it did after (team-live.tsx).
   const teamId = wf.type === 'core.runTeam' && typeof wf.parameters.teamId === 'string' && wf.parameters.teamId ? wf.parameters.teamId : undefined;
   const live = teamId ? liveTeam(progress?.data) : undefined;
-  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined);
+  // From the editor the Run Trace opens in a new tab, so the flow stays open.
+  const executionId = useEditor((s) => (teamId ? s.executionId : undefined));
+  const wait = useEditor((s) => (teamId && !s.running && s.wait?.nodeId === id ? s.wait : undefined));
+  const asked = teamQuestionOf(wait, id);
+  // A tool a member waits to use: Approve / Deny on the node resume the run, and the canvas follows it like a chat run.
+  const decideInEditor = async (approved: boolean, edit?: { input?: Record<string, unknown>; callId?: string }) => {
+    if (!executionId) return;
+    let resumed = false;
+    try {
+      await decideToolApprovals(executionId, approved, (event, data) => {
+        if (event === 'decision' && (data as { status?: string }).status === 'resumed' && !resumed) {
+          resumed = true;
+          useEditor.setState({ running: true, runStatus: 'running', executionId });
+        }
+        if (event === 'execution' && (data as ExecutionEvent).type !== 'node.chunk') useEditor.getState().applyEvent(data as ExecutionEvent);
+      }, { ...(edit?.input && { input: edit.input }), ...(edit?.callId && { callId: edit.callId }) });
+    } finally {
+      if (resumed) useEditor.getState().finishRun();
+    }
+  };
+  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), ...(asked?.approval && { onDecide: decideInEditor }), newTab: true });
   const compact = isCompact(info?.descriptor, wf.parameters, asTool);
   const runNode = (scope: 'from' | 'only') => useEditor.getState().run?.({ kind: 'node', nodeId: id, scope });
 
@@ -98,8 +120,8 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       live={team.tile}
     >
       {teamId ? (
-        // Above the duration a finished node shows over its corner.
-        <NodeToolbar isVisible={!selected && !fixing} position={Position.Top} offset={(compact ? 12 : 14) + (ranFor(status) ? 16 : 0)}>
+        // Above the duration a finished node shows over its corner, and above the Waiting or Paused pill over its top.
+        <NodeToolbar isVisible={!selected && !fixing} position={Position.Top} offset={(compact ? 12 : 14) + (ranFor(status) || status?.state === 'waiting' || status?.state === 'paused' ? 16 : 0)}>
           <TeamStrip teamId={teamId} live={live} moments={team.moments} />
         </NodeToolbar>
       ) : (

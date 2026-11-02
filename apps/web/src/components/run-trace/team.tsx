@@ -1,14 +1,17 @@
 'use client';
 /** The Team tab: who called whom (a vertical layout, no sideways scroll) and a card per actor. */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ArrowRight, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { teamSnapshotOf, type TeamSnapshot, type TeamSnapshotMember } from '@/lib/shared/agent-teams';
 import { fixCyclesOf, type FixCycle } from '@/lib/shared/fix-cycles';
 import { resolveRunProfile } from '@/lib/shared/run-profiles';
-import { cut, edgeParts, fmtMs, preview, type RunActorStats, type RunEdge, type RunModel, type RunRound, type RunTurn, type RunTurnItem } from '@/lib/shared/run-trace-model';
+import { cut, edgeParts, fmtMs, preview, spendLine, type RunActorStats, type RunEdge, type RunModel, type RunRound, type RunTurn, type RunTurnItem } from '@/lib/shared/run-trace-model';
 import { Badge } from '../ui/badge';
+import { ConsultLines } from '../agents/consult-lines';
 import { EmptyState } from '../ui/empty-state';
+import { BudgetBar } from '../editor/team-live';
+import { ConnectionChips } from './connections';
 import { Avatar, Card, SectionTitle, Tap, ToneBadge, actorColor } from './parts';
 import type { Open } from './sheet';
 
@@ -220,14 +223,8 @@ export function ActorCard({ s, open, turns = [], cycles = [], rounds = [] }: { s
         </>
       ),
     });
-  if (s.modelCalls)
-    li.push({
-      text: (
-        <>
-          <b>{s.modelCalls}</b> model calls · <b>{s.tokensIn.toLocaleString()}</b> in · <b>{s.tokensOut.toLocaleString()}</b> out
-        </>
-      ),
-    });
+  const spent = spendLine(s);
+  if (spent) li.push({ text: spent });
   if (s.toolCalls && !s.asked)
     li.push({
       text: (
@@ -283,6 +280,7 @@ export function ActorCard({ s, open, turns = [], cycles = [], rounds = [] }: { s
             <span className="block truncate text-[12px] text-t3">{s.actor.role ?? (s.actor.type === 'human' ? 'person' : s.actor.type)}</span>
           </div>
         </div>
+        <ConnectionChips connections={s.actor.connections} className="mt-2" />
         <ul className="mt-2 space-y-1 text-[12.5px] text-t2">
           {li.map((x, i) => (
             <li key={i} className={cn('break-words', x.bad && 'text-rd')}>
@@ -299,29 +297,58 @@ export function ActorCard({ s, open, turns = [], cycles = [], rounds = [] }: { s
 
 /** The reporting lines of a team run, as recorded: an indented tree, one column, so it reads on a phone. */
 function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel; open: (o: Open) => void }) {
+  const chartRef = useRef<HTMLDivElement>(null);
   const working = new Set(model.working.map((w) => w.actor.name));
   const waiting = new Set(model.needsYou.filter((n) => n.kind === 'wait').map((n) => n.actor?.name));
   const reportsOf = (id: string) => team.members.filter((m) => m.reportsTo === id);
   const roots = team.members.filter((m) => !m.reportsTo || !team.members.some((x) => x.id === m.reportsTo));
   const titleOf = (id: string) => team.members.find((m) => m.id === id)?.title;
+  // What happened between peers: a member's consults and hand-offs, counted from the requests it made (consult_<title>, hand_off_to_<title>).
+  const peerCalls = (title: string) => {
+    const counts = new Map<string, { to: string; kind: 'consulted' | 'handed off to'; n: number }>();
+    for (const span of model.order) {
+      const tool = typeof span.attrs.tool === 'string' ? span.attrs.tool : '';
+      if (span.kind !== 'delegate' || span.caller?.name !== title || !/^(consult_|hand_off_to_)/.test(tool)) continue;
+      const kind = tool.startsWith('consult_') ? ('consulted' as const) : ('handed off to' as const);
+      const key = `${kind}:${span.name}`;
+      counts.set(key, { to: span.name, kind, n: (counts.get(key)?.n ?? 0) + 1 });
+    }
+    return [...counts.values()];
+  };
   const row = (m: TeamSnapshotMember, seen: Set<string>): React.ReactNode => {
     if (seen.has(m.id)) return null;
     seen.add(m.id);
     const stats = model.actors.find((a) => a.actor.name === m.title);
     const actor = stats?.actor ?? { id: `member:${m.id}`, name: m.title, type: 'agent' as const };
+    const connections = actor.connections?.length ? actor.connections : m.connections;
     const live = working.has(m.title) || waiting.has(m.title);
     const reviews = (m.reviews ?? []).map(titleOf).filter(Boolean);
+    const mayConsult = (m.consults ?? []).map(titleOf).filter(Boolean);
+    const didConsult = peerCalls(m.title);
     return (
       <li key={m.id}>
         <Tap onClick={() => open({ kind: 'actor', id: actor.id })} label={m.title} className="rounded-xl">
-          <span className={cn('flex items-center gap-2.5 rounded-xl border bg-sf px-3 py-2', live ? 'animate-pulse-soft border-ac' : 'border-hair')}>
+          <span data-member-id={m.id} className={cn('flex items-center gap-2.5 rounded-xl border bg-sf px-3 py-2', live ? 'animate-pulse-soft border-ac' : 'border-hair')}>
             <Avatar actor={actor} />
             <span className="min-w-0 flex-1">
               <b className="block truncate text-[13px] font-semibold text-t1">{m.title}</b>
               <span className="block truncate text-[11.5px] text-t3">{live ? 'working now' : (m.role ?? (m.kind === 'a2a' ? 'remote agent' : 'agent'))}</span>
+              <ConnectionChips connections={connections} max={6} className="mt-1" />
+              {m.budgetTokens ? <BudgetBar usage={{ member: m.title, tokens: stats ? stats.tokensIn + stats.tokensOut : 0, budget: m.budgetTokens }} className="mt-1.5" /> : null}
             </span>
             <span className="flex shrink-0 flex-wrap justify-end gap-1">
               {reviews.length > 0 && <Badge tone="neutral">reviews {reviews.join(', ')}</Badge>}
+              {mayConsult.length > 0 && (
+                <Badge tone="muted" className="border-dashed" title="May consult these peers without going through its manager">
+                  may consult {mayConsult.join(', ')}
+                </Badge>
+              )}
+              {didConsult.map((c) => (
+                <Badge key={`${c.kind}:${c.to}`} tone="accent" className="border-dashed">
+                  {c.kind} {c.to}
+                  {c.n > 1 ? ` ×${c.n}` : ''}
+                </Badge>
+              ))}
               {stats && stats.asked > 0 && <Badge tone="neutral">asked ×{stats.asked}</Badge>}
             </span>
           </span>
@@ -332,7 +359,7 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
   };
   const seen = new Set<string>();
   return (
-    <div>
+    <div ref={chartRef} className="relative pr-6">
       <p className="mb-2 px-0.5 text-[12px] text-t3">
         {team.name}
         {team.version ? ` v${team.version}` : ''}
@@ -341,6 +368,13 @@ function TeamChart({ team, model, open }: { team: TeamSnapshot; model: RunModel;
       <ul role="tree" aria-label="Who reports to whom" className="space-y-1.5">
         {roots.map((m) => row(m, seen))}
       </ul>
+      {/* Dashed "may consult" lines down the right edge, in each member's colour; the list is one column, so brackets read on a phone. */}
+      <ConsultLines
+        containerRef={chartRef}
+        members={team.members}
+        titles={Object.fromEntries(team.members.map((m) => [m.id, m.title]))}
+        colors={Object.fromEntries(team.members.map((m) => [m.id, actorColor(model.actors.find((a) => a.actor.name === m.title)?.actor ?? { id: `member:${m.id}`, type: 'agent' })]))}
+      />
     </div>
   );
 }

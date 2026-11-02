@@ -5,8 +5,8 @@
  * event with the method, route pattern, status and outcome (2xx/3xx success, 401/403 denied, otherwise failure).
  * Nothing reads the request body, and only the route pattern is kept (no query string, no parameter values beyond
  * the target id). Paths that change nothing anyone audits, or that fire constantly (edit-lock heartbeats, plugin
- * announcements, public webhooks and form resumes, Slack callbacks, MCP JSON-RPC, editor helpers like load-options
- * and expression previews, assistant chats, binary uploads), are skipped.
+ * announcements, public webhooks and form resumes, Slack callbacks, MCP JSON-RPC, remote agents' trace batches, editor
+ * helpers like load-options and expression previews, assistant chats, binary uploads), are skipped.
  *
  * The response carries the request id as `X-Request-Id` (taken from the request's own header when it is sane).
  */
@@ -39,6 +39,7 @@ const SKIP: RegExp[] = [
   /^\/api\/agents\/[^/]+\/chat$/,
   /^\/api\/agents\/[^/]+\/sessions\//,
   /^\/api\/binary(\/|$)/,
+  /^\/api\/agent-trace\//,
   /^\/api\/credentials\/test$/,
   /^\/api\/auth\/saml\/acs$/,
 ];

@@ -9,6 +9,7 @@
  */
 import type { StickyNote, Workflow, WorkflowConnection, WorkflowGroup, WorkflowNode } from '@landflow/engine';
 import { NODE_TILE, NODE_WIDE_TILE, frameAround, nodeBox } from '../../shared/groups';
+import { BUILTIN_TEAM_TEMPLATES } from './builtin-teams';
 import type { TemplateCategory, TemplateCredentialSlot, TemplateDataTable, TemplateDetail } from '../../shared/templates';
 
 type Slot = TemplateCredentialSlot & { key: string };
@@ -133,7 +134,7 @@ const ORDERS: TemplateDataTable = {
   ],
 };
 
-export const BUILTIN_TEMPLATES: TemplateDetail[] = [
+const WORKFLOW_TEMPLATES: TemplateDetail[] = [
   template({
     id: 'ollama-chat-agent',
     name: 'Private AI chat with Ollama',
@@ -834,3 +835,6 @@ export const BUILTIN_TEMPLATES: TemplateDetail[] = [
     links: [main('chat', 'agent'), model('gpt', 'agent'), memory('memory', 'agent'), tool('orders', 'agent')],
   }),
 ];
+
+/** Every built-in template: the workflows above, then the agent teams. */
+export const BUILTIN_TEMPLATES: TemplateDetail[] = [...WORKFLOW_TEMPLATES, ...BUILTIN_TEAM_TEMPLATES];

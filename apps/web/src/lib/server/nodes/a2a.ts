@@ -30,6 +30,8 @@ import {
   type AgentCard,
   type HitlRequest,
 } from '../a2a/client';
+import type { AgentTraceSummary } from '../../shared/agents';
+import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
 import { callAgent, landflowTags, taskCall, throttled } from '../a2a/traced';
 import { CUT } from '../journal/content';
 
@@ -108,6 +110,13 @@ export function resultItem(card: AgentCard, result: A2aResult): JsonObject {
     ...(data.length > 0 && { data: data as JsonObject[] }),
     ...(usage && { usage: usage as JsonObject }),
   };
+}
+
+/** An item with what the agent's mod reported: its usage (unless the task carried its own) and the trace. */
+export function withTraced(item: JsonObject, summary: AgentTraceSummary | undefined): JsonObject {
+  if (!summary) return item;
+  const usage = item.usage ?? usageOfTrace(summary);
+  return { ...item, ...(usage && { usage: usage as JsonObject }), trace: summary as unknown as JsonObject };
 }
 
 /** How many of the latest steps a progress report carries. */
@@ -345,6 +354,7 @@ export const a2aAgentNode = defineNode({
         // Tags for finding this run from the agent's side (kagent documents copying them onto its spans; see lib/server/a2a/traced.ts).
         const metadata = landflowTags({ 'workflow.id': ctx.getWorkflowId(), 'execution.id': ctx.getExecutionId(), 'node.name': ctx.getNode().name });
         let result: A2aResult;
+        let traced: AgentTraceSummary | undefined;
         if (operation === 'sendMessage') {
           const text = String(ctx.getNodeParameter('message', i) ?? '').trim();
           if (!text) throw new NodeOperationError('The message is empty', { itemIndex: i });
@@ -355,7 +365,14 @@ export const a2aAgentNode = defineNode({
             const answer = answerMessage({ id: remembered.taskId, contextId: remembered.contextId }, request, [text]);
             result = await callAgent(endpoint, card, { ...answer, metadata: { ...metadata, ...answer.metadata } }, send);
           } else {
-            result = await callAgent(endpoint, card, { text, metadata, ...(contextId && { contextId }), ...(remembered?.taskId && { taskId: remembered.taskId }) }, send);
+            // A Landflow agent on kagent with the landflow-harness mod reports its real usage, cost and tool calls here.
+            const message = { text, metadata, ...(contextId && { contextId }), ...(remembered?.taskId && { taskId: remembered.taskId }) };
+            const trace = message.taskId ? undefined : traceFor(endpoint.url, ctx.getExecutionId() && ctx.getWorkflowId() ? { executionId: ctx.getExecutionId()!, workflowId: ctx.getWorkflowId()!, nodeId: ctx.getNode().id, member: ctx.getNode().name } : undefined);
+            try {
+              result = await callAgent(endpoint, card, withMarker(message, trace), send);
+            } finally {
+              traced = await trace?.close();
+            }
           }
         } else {
           const taskId = String(ctx.getNodeParameter('taskId', i) ?? '').trim();
@@ -381,7 +398,7 @@ export const a2aAgentNode = defineNode({
           }
         }
         if (operation !== 'cancelTask') assertNotFailed(card, result, i);
-        const item = resultItem(card, result);
+        const item = withTraced(resultItem(card, result), traced);
         if (asTool && operation === 'sendMessage') {
           const contextId = result.kind === 'message' ? result.message.contextId : result.task.contextId;
           const request = result.kind === 'task' ? hitlRequestOf(result.task) : undefined;

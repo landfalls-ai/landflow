@@ -8,7 +8,7 @@
 import { nanoid } from 'nanoid';
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { AssistantOp, RunDigest } from '@/lib/shared/assistant-ops';
-import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
+import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow } from '@/lib/shared/types';
 import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
@@ -134,6 +134,7 @@ How to work:
 - Teams: an agent team (Agents page → Teams) is a lead with members who report to it, with reviews and budgets; the Run a Team node (core.runTeam, parameters teamId and teamName, message) runs a published one as a single step, with Done and Needs a person outputs. When the user wants a team that already exists, add that node with its teamId and teamName from "Published agent teams" below; the chat model, memory and tools attached to the node go to the lead. When the user wants a lead and the agents under it turned into a team, propose {"op":"turnIntoTeam","node":"<the lead>"}: applying it creates and publishes the team and swaps the nodes, so never tell the person to create a team first or to pick one afterwards. The same action is "Turn into a team" in the toolbar of a selected Run an Agent node that has agents as tools. Never invent a teamId.
 - Expressions read the current item with "{{ $json.field }}" and other nodes with "{{ $('Node name').item.json.field }}".
 - Never make up ids, channels, email addresses, URLs or keys the user didn't give: leave those parameters empty and say the user fills them in.
+- A tool attached to an agent: a value the agent should choose when it calls the tool (a branch, a file path, an issue or pull request number, a message) is the expression {{ $fromAI('<parameter name>', '<what it is>', 'string' | 'number' | 'boolean') }}, never a bare $fromAI; fixed values (the owner, the repository, a channel) are set plainly. Credentials are the person's to pick: never set one, name the one to pick in your closing sentence.
 - After proposing, say in one or two sentences what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied or made. Don't repeat the ops in prose.
 - When asked whether a test run's result does what the user asked for, read the output of the last step with get_run_data and compare it with the request: if it falls short (wrong items, a filter that keeps everything, fields missing), propose the change; if it does what was asked, say so in one sentence and propose nothing.
 - When a message reports a failed test run, read the failing node's run data with get_run_data, find the cause and propose the smallest change that fixes it, without asking first. If only the user can fix it (a credential, an id, an account), say what to do in one sentence and propose nothing.
@@ -222,8 +223,6 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
   return { ops: cleaned, invented, values };
 }
 
-const teamKey = (value: string) => value.trim().toLowerCase().replace(/\s+team$/, '');
-
 const UNIT_MS = { ms: 1, s: 1000, min: 60_000, h: 3_600_000 } as const;
 type Unit = keyof typeof UNIT_MS;
 const UNIT_NAME: Record<Unit, string> = { ms: 'milliseconds', s: 'seconds', min: 'minutes', h: 'hours' };
@@ -277,18 +276,7 @@ export function unitSlips(ops: unknown, request: string, propertiesOf: (op: Reco
  */
 export function withTeamIds(ops: unknown, teams: readonly TeamBrief[], typeOf: (node: string) => string | undefined = () => undefined): unknown {
   if (!Array.isArray(ops) || !teams.length) return ops;
-  const resolve = (parameters: unknown) => {
-    if (!parameters || typeof parameters !== 'object') return parameters;
-    const p = parameters as Record<string, unknown>;
-    const written = typeof p.teamId === 'string' ? p.teamId.trim() : '';
-    if (!written || written.includes('{{')) return parameters;
-    const key = teamKey(written);
-    const exact = teams.find((t) => t.id === written);
-    const named = teams.filter((t) => teamKey(t.name) === key);
-    const led = teams.filter((t) => t.members.some((m) => !m.reportsTo && teamKey(m.title) === key));
-    const team = exact ?? (named.length === 1 ? named[0] : !named.length && led.length === 1 ? led[0] : undefined);
-    return team ? { ...p, teamId: team.id, teamName: team.name } : parameters;
-  };
+  const resolve = (parameters: unknown) => withTeamId(parameters, teams);
   return ops.map((op) => {
     if (!op || typeof op !== 'object') return op;
     const o = op as Record<string, unknown>;

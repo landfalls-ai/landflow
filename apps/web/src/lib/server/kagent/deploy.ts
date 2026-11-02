@@ -11,7 +11,7 @@
  * than resolving them again.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import type { Agent, AgentConfig, CredentialRef, KagentDeployment, KagentDrift, KagentHarness, KagentPlugin, KagentRuntime, KagentStatus } from '../../shared/agents';
+import type { Agent, AgentConfig, CredentialRef, KagentDeployment, KagentDrift, KagentGuard, KagentHarness, KagentPlugin, KagentRuntime, KagentStatus } from '../../shared/agents';
 import { OLLAMA_URL } from '../agents/models';
 import { agentStore } from '../agents/store';
 import { buildToolset } from '../agents/tools';
@@ -19,10 +19,13 @@ import { credentials } from '../credentials/vault';
 import { database } from '../db';
 import { marketplace } from '../marketplace/service';
 import { logger } from '../telemetry';
+import { agentTeamStore } from '../agent-teams/store';
+import { isTeamMember } from '../notebook/binding';
+import { notebookStubs } from '../notebook/tools';
 import { a2aUrlOf, clusterFrom, KAGENT_API, KAGENT_CREDENTIAL, type KagentCluster } from './cluster';
 import { applyObject, deleteObject, getObject, listObjects, type KubeObject } from './kube';
-import { imageRef, packPlugin } from './oci';
-import { AGENT_ID_LABEL, approvalServerName, kagentManifests, kagentName, secretName, validKagentName, type ExposedTool, type ModelSettings } from './manifests';
+import { BUILTIN_URL, builtinPin, imageRef, packPlugin } from './oci';
+import { AGENT_ID_LABEL, approvalServerName, kagentManifests, kagentName, landflowEgressName, secretName, validKagentName, type ExposedTool, type ModelSettings } from './manifests';
 
 export class KagentError extends Error {
   constructor(
@@ -41,6 +44,7 @@ const objectsOf = (name: string) =>
     ['RemoteMCPServer', approvalServerName(name)],
     ['ModelConfig', name],
     ['AgentTemplate', name],
+    ['EgressPolicy', landflowEgressName(name)],
     ['Agent', name],
   ] as const;
 const apiVersionOf = (kind: string) => (kind === 'Secret' ? 'v1' : KAGENT_API);
@@ -68,6 +72,8 @@ export async function kagentEgressPolicies(credential: CredentialRef): Promise<A
   const cluster = await clusterOf(credential);
   const objects = await listObjects(cluster.connection, KAGENT_API, 'EgressPolicy', cluster.namespace);
   return objects
+    // Not the ones Landflow writes for an agent (its own origin, for the mod's reports).
+    .filter((object) => !object.metadata.labels?.[AGENT_ID_LABEL])
     .map((object) => ({ name: object.metadata.name, origins: ((specOf(object).destinations as Array<{ origin?: string }> | undefined) ?? []).flatMap((d) => d.origin ?? []) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -104,7 +110,11 @@ export function deployedConfig(agent: Agent): { config: AgentConfig; version: nu
 /** The tools kagent binds: those the runtime builds from the config, without memory (it needs the person the agent talks to). */
 export async function kagentTools(agent: Agent, config: AgentConfig) {
   const toolset = await buildToolset({ ...agent, ...config }, config);
-  return { tools: toolset.tools.filter((tool) => tool.kind !== 'memory'), unavailable: toolset.unavailable };
+  const tools = toolset.tools.filter((tool) => tool.kind !== 'memory');
+  // An agent a team calls as a remote member also serves the team notebook's tools (docs/team-notebook.md): the stubs only
+  // name them, kagent/mcp.ts binds a call to the run that is asking the agent.
+  const inTeam = agentTeamStore.list().some((team) => [team.draft, team.published].some((c) => c && isTeamMember(agent, c.members)));
+  return { tools: inTeam ? [...tools, ...notebookStubs()] : tools, unavailable: toolset.unavailable };
 }
 
 const LOOPBACK = /^(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?)$/i;
@@ -164,6 +174,7 @@ async function compile(agent: Agent, config: AgentConfig, version: number, name:
       runtime: harness.runtime,
       ...(plugins && { plugins }),
       ...(egressPolicies?.length && { egressPolicies }),
+      landflowEgress: Boolean(plugins?.some((pin) => pin.url === BUILTIN_URL)),
     }),
     unavailable,
   };
@@ -173,7 +184,7 @@ async function compile(agent: Agent, config: AgentConfig, version: number, name:
  * Claude Code: the config's plugins, each resolved from its marketplace and pinned to the commit it is at now, and packed
  * into an image when the cluster pulls plugins from Landflow's registry.
  */
-async function pinPlugins(config: AgentConfig, cluster: KagentCluster): Promise<KagentPlugin[]> {
+async function pinPlugins(config: AgentConfig, cluster: KagentCluster, guard: KagentGuard = 'enforce'): Promise<KagentPlugin[]> {
   const pins: KagentPlugin[] = [];
   for (const id of config.plugins ?? []) {
     let pin: KagentPlugin;
@@ -191,6 +202,18 @@ async function pinPlugins(config: AgentConfig, cluster: KagentCluster): Promise<
     }
     pins.push(pin);
   }
+  // Landflow's own mod (docs/a2a.md, "The landflow-harness mod"): real usage, tool calls and guardrails, with this agent's
+  // guard as its plugin.json default. Only from the registry: kagent can't fetch it from anywhere else.
+  const registry = cluster.pluginRegistry;
+  const harness = registry ? builtinPin(undefined, guard === 'enforce' ? undefined : { guard }) : undefined;
+  if (registry && harness && !pins.some((pin) => pin.id === harness.id)) {
+    try {
+      harness.oci = imageRef(registry, harness, await packPlugin(harness));
+      pins.push(harness);
+    } catch (error) {
+      logger.warn('kagent: the landflow-harness mod could not be packed; the agent runs without it', { error: (error as Error).message });
+    }
+  }
   return pins;
 }
 
@@ -201,7 +224,7 @@ const ours = (object: KubeObject | undefined, agentId: string) => !object || obj
  * Write the published agent to kagent under `name` (default: the last name, else the agent's name as a DNS label). The token
  * kagent calls the agent's tools with is kept across deploys; moving to another name or cluster removes the old resources.
  */
-export async function deployToKagent(agentId: string, input: { credential?: CredentialRef; name?: string; harness?: string; egressPolicies?: string[] } = {}): Promise<{ agent: Agent; status: KagentStatus; unavailable: string[] }> {
+export async function deployToKagent(agentId: string, input: { credential?: CredentialRef; name?: string; harness?: string; egressPolicies?: string[]; guard?: KagentGuard } = {}): Promise<{ agent: Agent; status: KagentStatus; unavailable: string[] }> {
   const agent = agentStore.get(agentId);
   if (!agent) throw new KagentError('Agent not found', 404);
   if (!agent.published) throw new KagentError('Publish the agent first: kagent runs the published version');
@@ -220,7 +243,9 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   const previous = agent.kagent;
   const sameCluster = previous?.credential.id === credential.id;
   const harness = await harnessOf(cluster, input.harness?.trim() || (sameCluster && previous?.harness) || cluster.harness);
-  const plugins = harness.runtime === 'claude' ? await pinPlugins(agent.published.config, cluster) : [];
+  // The mod's guard: the one asked for, else the one deployed last (on any cluster: it is the agent's, not the cluster's).
+  const guard: KagentGuard = input.guard ?? previous?.guard ?? 'enforce';
+  const plugins = harness.runtime === 'claude' ? await pinPlugins(agent.published.config, cluster, guard) : [];
   // The agent's own list (an empty one: none), else the one deployed last on this cluster, else the cluster's.
   const egressPolicies = input.egressPolicies ?? (sameCluster ? previous?.egressPolicies : undefined) ?? cluster.egressPolicies ?? [];
   await checkEgressPolicies(cluster, egressPolicies);
@@ -237,11 +262,6 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   token ??= `lfk_${randomBytes(24).toString('base64url')}`;
   const version = agent.published.version;
   const { objects, unavailable } = await compile(agent, agent.published.config, version, name, cluster, token, { harness, plugins, egressPolicies });
-  // A ModelConfig from an earlier deploy stays only while there is a model (publishing needs one, so it always is).
-  for (const object of objects) await applyObject(cluster.connection, object);
-  // An approval server from an earlier deploy goes once nothing needs it (no tool waits for approval, or another runtime).
-  const approval = approvalServerName(name);
-  if (!objects.some((o) => o.metadata.name === approval)) await deleteOurs(cluster, 'RemoteMCPServer', approval, agent.id);
   const deployment: KagentDeployment = {
     credential,
     name,
@@ -251,8 +271,43 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
     token: credentials.sealSecret(token),
     ...(plugins.length && { plugins }),
     ...(input.egressPolicies !== undefined || egressPolicies.length ? { egressPolicies } : {}),
+    ...(guard !== 'enforce' && plugins.some((pin) => pin.url === BUILTIN_URL) && { guard }),
+    ...(plugins.some((pin) => pin.url === BUILTIN_URL) && { trace: { url: `${cluster.landflowUrl}/api/agent-trace`, ...(a2aUrlOf(cluster, name) && { a2aUrl: a2aUrlOf(cluster, name) }) } }),
   };
+  // Saved before kagent reads the objects: it lists the agent's tools from /api/mcp/agents/<id> as soon as they change,
+  // and that serves the deployed version's, so saving after would have it list the old version's and keep them.
   const saved = agentStore.setKagent(agent.id, deployment) ?? agent;
+  try {
+    // A ModelConfig from an earlier deploy stays only while there is a model (publishing needs one, so it always is).
+    for (const object of objects) {
+      if (object.kind !== 'EgressPolicy') {
+        await applyObject(cluster.connection, object);
+        continue;
+      }
+      try {
+        await applyObject(cluster.connection, object);
+      } catch (error) {
+        // An access Role from before Landflow wrote EgressPolicies (deploy/kind/landflow-access.yaml) only reads them: the agent
+        // runs without it, and its mod's reports can't reach Landflow.
+        logger.warn('kagent: Landflow’s EgressPolicy could not be written; the agent’s mod can’t report to Landflow', { agentId, name: object.metadata.name, error: (error as Error).message });
+        unavailable.push('its run reports (Landflow may not write EgressPolicies in this cluster: apply deploy/kind/landflow-access.yaml again)');
+        const spec = objects.find((o) => o.kind === 'Agent')?.spec as { egressPolicyRefs?: Array<{ name: string }> } | undefined;
+        if (spec?.egressPolicyRefs) {
+          spec.egressPolicyRefs = spec.egressPolicyRefs.filter((ref) => ref.name !== object.metadata.name);
+          if (!spec.egressPolicyRefs.length) delete spec.egressPolicyRefs;
+        }
+      }
+    }
+  } catch (error) {
+    // Not written: the deployment stays the one before.
+    agentStore.setKagent(agent.id, previous);
+    throw error;
+  }
+  // An approval server from an earlier deploy goes once nothing needs it (no tool waits for approval, or another runtime).
+  const approval = approvalServerName(name);
+  if (!objects.some((o) => o.metadata.name === approval)) await deleteOurs(cluster, 'RemoteMCPServer', approval, agent.id);
+  // So does Landflow's EgressPolicy once the agent has no mod to report (another runtime, or no registry).
+  if (!objects.some((o) => o.kind === 'EgressPolicy')) await deleteOurs(cluster, 'EgressPolicy', landflowEgressName(name), agent.id).catch(() => undefined);
   // The cluster answers: what deleted agents left on it while it couldn't goes now.
   await removeLeftovers(credential.id).catch(() => undefined);
   logger.info('kagent: agent deployed', { agentId, name, namespace: cluster.namespace, version, harness: harness.name, runtime: harness.runtime, plugins: plugins.length });
@@ -377,7 +432,8 @@ function driftOf(expected: KubeObject[], actual: Map<string, KubeObject | undefi
       check('template', want.template, have.template);
       check('harness', want.harnessRef, have.harnessRef);
       check('egressPolicies', want.egressPolicyRefs ?? [], have.egressPolicyRefs ?? []);
-    } else if (object.kind === 'RemoteMCPServer') check('mcpServer', { url: want.url, headersFrom: want.headersFrom }, { url: have.url, headersFrom: have.headersFrom });
+    } else if (object.kind === 'EgressPolicy') check('landflowEgress', want.destinations, have.destinations);
+    else if (object.kind === 'RemoteMCPServer') check('mcpServer', { url: want.url, headersFrom: want.headersFrom }, { url: have.url, headersFrom: have.headersFrom });
   }
   return drift;
 }
@@ -402,6 +458,7 @@ export async function kagentStatus(agent: Agent): Promise<KagentStatus> {
     outdated,
     ...(deployment.plugins && { plugins: deployment.plugins }),
     ...(deployment.egressPolicies && { egressPolicies: deployment.egressPolicies }),
+    ...(deployment.guard && { guard: deployment.guard }),
   };
   try {
     const cluster = await clusterOf(deployment.credential);

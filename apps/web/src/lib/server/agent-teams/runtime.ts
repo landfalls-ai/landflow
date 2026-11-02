@@ -8,19 +8,32 @@
  * chart on the node's span, so the Run Trace can draw it from the record.
  */
 import { toToolName, REASON_DESCRIPTION, type AgentMemory, type AgentTool, type LanguageModel } from '@landflow/engine';
-import type { AgentSession, AgentStreamEvent, RunEndReason, SessionExecution, TokenUsage } from '../../shared/agents';
+import type { AgentSession, AgentStreamEvent, RemoteRun, RunEndReason, SessionExecution, TokenUsage } from '../../shared/agents';
 import { reportsOf, rootOf, type AgentMember, type AgentTeamConfig, type RemoteMember, type TeamMember } from '../../shared/agent-teams';
-import { verdictOf } from '../../shared/team-progress';
+import { shortArg, verdictOf } from '../../shared/team-progress';
+import { agentConnections, remoteConnections } from '../agents/connections';
 import { agentStore } from '../agents/store';
+import { agentModel } from '../agents/models';
+import type { Agent, AgentModel } from '../../shared/agents';
+import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { newSession, runAgent, type TeamRole } from '../agents/runtime';
 import { a2aAgentTool, type BuiltTool, type ToolContext, type ToolOutcome } from '../agents/tools';
 import { liveJournal } from '../journal/writer';
+import { nanoid } from 'nanoid';
+import { contentOf } from '../journal/content';
+import { agentAtEndpoint, openNotebookCall } from '../notebook/binding';
+import { notebookBlock, projectOf, type NotebookBinding } from '../notebook/service';
+import { notebookTools } from '../notebook/tools';
+import { store } from '../store';
+import { holdMember } from './pause';
 import { issuesOf } from './store';
 
 /** How long a manager's own task is when it goes on to its reports. */
 const TASK_CHARS = 600;
 /** How often a manager is sent back to ask a reviewer before it may report done. */
 const MAX_REVIEW_NUDGES = 2;
+/** How many consults or hand-offs may follow one another (a member consults a peer who consults another): no more below this. */
+const MAX_CONSULT_HOPS = 2;
 /** What a manager is told to keep its answer to: it sees its reports' answers, not their work. */
 const REPORT_RULE = 'When you answer, name only the files, tests, commands and results your reports gave you, as they wrote them; don\'t add details nobody reported.';
 
@@ -83,8 +96,40 @@ export interface TeamRunRequest {
   onMemberEvent?: (title: string, event: AgentStreamEvent) => void;
   /** Whether the run can wait for a person (a flow's): a member's question for a person pauses it instead of ending it. */
   canWait?: boolean;
-  /** Going on after a wait: the state saved then (TeamRunResult.waiting) and the person's answer to the question. */
-  resume?: { state: TeamState; answer: string };
+  /**
+   * A member's tokens so far, by title, whenever they change: after each model call of an agent member (and the lead), as
+   * a remote member's mod reports them mid-task, and once it answers (`estimated` when it reports none).
+   */
+  onUsage?: (title: string, tokens: number, estimated: boolean) => void;
+  /**
+   * Going on after a wait: the state saved then (TeamRunResult.waiting), the person's answer to a question, or their
+   * decisions on the tool calls waiting for approval (by call id, as `waiting.approval` named them).
+   */
+  resume?: { state: TeamState; answer: string; decisions?: Record<string, TeamDecision> };
+}
+
+/** A person's word on a tool call: from the approval route (`by` is who, `at` when). */
+export interface TeamDecision {
+  approved: boolean;
+  by?: string;
+  at?: string;
+  /** What the person changed in the call's input: the tool runs with it instead of the member's own. */
+  input?: Record<string, unknown>;
+}
+
+/** A tool call a member waits to use until a person approves it. */
+export interface TeamApprovalCall {
+  /** `<member id>/<call id>`: the key of the decision. */
+  id: string;
+  tool: string;
+  label: string;
+  input: Record<string, unknown>;
+}
+
+/** The tool calls the run waits on, and the member that wants them. */
+export interface TeamApproval {
+  member: string;
+  calls: TeamApprovalCall[];
 }
 
 /** What a team run keeps between asks, as JSON: saved when it waits for a person, restored when it goes on. By member id. */
@@ -113,6 +158,10 @@ export interface TeamState {
   heard: Record<string, string[]>;
   /** Per member: review reminders sent, whether it was sent back for made-up details, for which, and what it still named after. */
   roles: Record<string, { nudges: number; grounded: 'no' | 'sent' | 'checked'; sentFor: string[]; unverified?: string[] }>;
+  /** Per member: time spent answering its requests, ms (absent in runs saved before it was kept). */
+  ms?: Record<string, number>;
+  /** Per member that handed its task to a peer in its running turn: the peer and its answer, which becomes the member's result. */
+  handoffs?: Record<string, { to: string; answer: string }>;
 }
 
 const emptyState = (): TeamState => ({
@@ -132,6 +181,7 @@ const emptyState = (): TeamState => ({
   told: {},
   heard: {},
   roles: {},
+  ms: {},
 });
 
 export interface MemberReport {
@@ -142,6 +192,18 @@ export interface MemberReport {
   /** A remote member that reports no usage: its tokens are estimated from what went to it and came back. */
   estimated?: true;
   overBudget?: true;
+  /** Its input and output tokens, and of the input what came from the prompt cache (when reported). */
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  /** USD: what its mod reported, priced (a remote member), or its model's price (an agent member). */
+  costUsd?: number;
+  /** The model it ran on, as it reported it (else its agent's). */
+  model?: string;
+  /** Model requests, when reported. */
+  requests?: number;
+  /** Time spent answering its requests (the lead: its whole run), ms. */
+  ms?: number;
 }
 
 export interface TeamRunResult {
@@ -153,11 +215,21 @@ export interface TeamRunResult {
   reason: RunEndReason;
   /** What the whole team used: the lead, its agent members and the usage remote members reported. */
   usage: TokenUsage;
-  /** The run waits for a person: who asked what, and the state to go on from (TeamRunRequest.resume). */
-  waiting?: { member: string; question: string; state: TeamState };
+  /**
+   * The run waits for a person: who asked what, and the state to go on from (TeamRunRequest.resume). With `approval`, the
+   * wait is for a tool call that needs approval, not a question (`question` then says what the member wants to do).
+   */
+  waiting?: { member: string; question: string; state: TeamState; approval?: TeamApproval };
 }
 
 const total = (usage: { inputTokens: number; outputTokens: number }) => usage.inputTokens + usage.outputTokens;
+
+/** Two usages together: tokens add up, and cost, cache reads and requests where either has them; the later model wins. */
+export function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const sum = (key: 'cacheReadTokens' | 'cacheWriteTokens' | 'costUsd' | 'requests') => (a[key] !== undefined || b[key] !== undefined ? { [key]: (a[key] ?? 0) + (b[key] ?? 0) } : {});
+  const model = b.model ?? a.model;
+  return { inputTokens: a.inputTokens + b.inputTokens, outputTokens: a.outputTokens + b.outputTokens, ...sum('cacheReadTokens'), ...sum('cacheWriteTokens'), ...sum('costUsd'), ...sum('requests'), ...(model && { model }) };
+}
 /** About four characters a token. */
 const tokensIn = (text: string) => Math.ceil(text.length / 4);
 const asText = (value: unknown) => (typeof value === 'string' ? value : value === undefined ? '' : JSON.stringify(value));
@@ -173,9 +245,23 @@ export function estimateUsage(message: string, outcome: ToolOutcome): TokenUsage
     outputTokens: tokensIn(asText(outcome.output)) + steps.reduce((sum, step) => sum + tokensIn(asText(step.args)), 0),
   };
 }
+/** The run's key as a remote member is told it (see openNotebookFor). */
+const NOTEBOOK_KEY = (key: string) => `Notebook run key: ${key}. If a note tool asks which run, pass this as "run".`;
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
 export const toolNameOf = (title: string) => toToolName(`ask_${title}`).toLowerCase();
+export const consultToolNameOf = (title: string) => toToolName(`consult_${title}`).toLowerCase();
+export const handOffToolNameOf = (title: string) => toToolName(`hand_off_to_${title}`).toLowerCase();
+
+/** How a wait for approval reads: "Developer wants to use Comment on pull request". */
+export const approvalText = (approval: TeamApproval) => `${approval.member} wants to use ${approval.calls.map((c) => c.label).join(', ')}`;
+
+type Mode = 'ask' | 'consult' | 'handoff';
+/** The members in a call chain (the lead down to the member running) and how many consults or hand-offs are in it. */
+interface Trail {
+  ids: string[];
+  hops: number;
+}
 
 export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const { config } = request;
@@ -198,9 +284,41 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   // The run's bookkeeping, by member id: plain JSON, saved when the run waits for a person and restored when it goes on.
   const state: TeamState = request.resume ? structuredClone(request.resume.state) : emptyState();
   if (!request.resume) state.tasks[root.id] = request.message;
+  // The team notebook (docs/team-notebook.md): notes belong to this execution, and every member's tools are bound to it, to the
+  // team and to the member, so a note cannot land anywhere else. A run without an execution (a test) makes up an id.
+  const notebookRun = request.execution?.executionId ?? `adhoc_${nanoid(8)}`;
+  const notebookContent = contentOf(request.execution ? store.getWorkflow(request.execution.workflowId)?.settings?.traceContent : undefined);
+  const notebookFor = (member: TeamMember): NotebookBinding => {
+    const projectId = projectOf(request.team.id);
+    return {
+      team: request.team,
+      ...(projectId && { projectId }),
+      runId: notebookRun,
+      ...(request.execution && { workflowId: request.execution.workflowId }),
+      ...(request.execution?.nodeName && { step: request.execution.nodeName }),
+      member: { id: member.id, title: member.title },
+      manager: reportsOf(config, member.id).length > 0,
+      content: notebookContent,
+    };
+  };
   const hear = (manager: TeamMember, ...texts: string[]) => (state.heard[manager.id] = [...(state.heard[manager.id] ?? []), ...texts]);
   const raise = (reason: string) => {
     if (!state.needsPerson.includes(reason)) state.needsPerson.push(reason);
+  };
+
+  /**
+   * What a member works with, for the chart: an agent's settings (the lead's model and memory when the flow doesn't give
+   * them), a remote member's kagent deployment (Claude Code, its model, plugins and network) or its host.
+   */
+  const connectionsOf = (m: TeamMember) => {
+    try {
+      if (m.kind === 'a2a') return remoteConnections(typeof m.parameters.agentUrl === 'string' ? m.parameters.agentUrl : undefined);
+      const agent = agentStore.get(m.agentId);
+      if (!agent) return [];
+      return agentConnections(withModel(agent, m.model), m.id === root.id ? { model: Boolean(request.flow?.model), memory: Boolean(request.memory) } : {});
+    } catch {
+      return [];
+    }
   };
 
   if (journal && !request.resume) {
@@ -216,15 +334,20 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
             version: request.config.version,
           }),
           ...(config.goal && { goal: config.goal }),
-          members: config.members.map((m) => ({
-            id: m.id,
-            title: m.title,
-            kind: m.kind,
-            ...(m.role && { role: m.role }),
-            ...(m.reportsTo && { reportsTo: m.reportsTo }),
-            ...(m.reviews?.length && { reviews: m.reviews }),
-            ...(m.budgetTokens && { budgetTokens: m.budgetTokens }),
-          })),
+          members: config.members.map((m) => {
+            const connections = connectionsOf(m);
+            return {
+              id: m.id,
+              title: m.title,
+              kind: m.kind,
+              ...(m.role && { role: m.role }),
+              ...(m.reportsTo && { reportsTo: m.reportsTo }),
+              ...(m.reviews?.length && { reviews: m.reviews }),
+              ...(m.consults?.length && { consults: m.consults }),
+              ...(m.budgetTokens && { budgetTokens: m.budgetTokens }),
+              ...(connections.length > 0 && { connections }),
+            };
+          }),
         },
       },
     });
@@ -234,11 +357,12 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const spend = (member: TeamMember, usage: TokenUsage, set = false, guess = false) => {
     const ledger = guess ? state.estimated : state.used;
     const before = ledger[member.id];
-    const mine = set || !before ? { ...usage } : { inputTokens: before.inputTokens + usage.inputTokens, outputTokens: before.outputTokens + usage.outputTokens };
+    const mine = set || !before ? { ...usage } : addUsage(before, usage);
     ledger[member.id] = mine;
     if (!guess) delete state.estimated[member.id];
     const now = total(mine);
     state.tokens[member.id] = now;
+    request.onUsage?.(member.title, now, guess);
     const budget = member.budgetTokens;
     if (!budget) return;
     const about = guess ? 'about ' : '';
@@ -246,18 +370,62 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     if (now >= budget && !state.overBudget.includes(member.id)) {
       state.overBudget.push(member.id);
       check('Budget', 'fail', `${member.title} used ${about}${now.toLocaleString()} of its ${budget.toLocaleString()} tokens and was stopped${why}`, member.title);
-    } else if (now >= budget * 0.8 && !state.warned.includes(member.id)) {
+    } else if (now >= budget * 0.8 && !state.warned.includes(member.id) && !state.overBudget.includes(member.id)) {
       state.warned.push(member.id);
       check('Budget', 'warn', `${member.title} used ${about}${now.toLocaleString()} of its ${budget.toLocaleString()} tokens (80%)${why}`, member.title);
     }
   };
 
+  const timed = (member: TeamMember, started: number) => {
+    const ms = (state.ms ??= {});
+    ms[member.id] = (ms[member.id] ?? 0) + (Date.now() - started);
+  };
+
+  /** USD a member's usage cost: what its mod reported (priced), else its agent's model's price (none for a remote guess). */
+  const costOf = (member: TeamMember, usage: TokenUsage | undefined): number | undefined => {
+    if (!usage) return undefined;
+    if (usage.costUsd !== undefined) return usage.costUsd;
+    if (member.kind !== 'agent') return undefined;
+    const agent = agentStore.get(member.agentId);
+    const model = member.model ?? (agent?.published?.config ?? agent)?.model;
+    if (!model) return undefined;
+    const price = findPrice(model.provider, model.model, priceOverrides());
+    if (!price) return model.provider === 'ollama' ? 0 : undefined;
+    return estimateCost(price, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens ?? 0, usage.cacheWriteTokens ?? 0);
+  };
+  const modelOf = (member: TeamMember, usage: TokenUsage | undefined): string | undefined => {
+    if (usage?.model) return usage.model;
+    if (member.kind !== 'agent') return undefined;
+    const agent = agentStore.get(member.agentId);
+    return (member.model ?? (agent?.published?.config ?? agent)?.model)?.model;
+  };
+
+  /**
+   * What the whole team used, its cost where some member's was priced. Its model is the lead's: the team node's span is
+   * the lead's, so what the members' own spans don't account for (the lead's calls) is told with the lead's model.
+   */
+  const teamUsage = (): TokenUsage => {
+    let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+    for (const member of config.members) {
+      const used = state.used[member.id];
+      if (!used) continue;
+      const cost = costOf(member, used);
+      const { model: _model, ...rest } = used;
+      usage = addUsage(usage, { ...rest, ...(cost !== undefined && { costUsd: cost }) });
+    }
+    const lead = root && modelOf(root, state.used[root.id]);
+    if (lead) usage.model = lead;
+    return usage.costUsd !== undefined ? { ...usage, costUsd: Math.round(usage.costUsd * 1e6) / 1e6 } : usage;
+  };
+
   /** The goal and the manager's own task, in front of every request. */
-  const withAncestry = (manager: TeamMember, message: string) =>
-    [config.goal ? `Team goal: ${config.goal}` : '', state.tasks[manager.id] ? `${manager.title}'s current task: ${cut(state.tasks[manager.id], TASK_CHARS)}` : '', '', message]
+  const withAncestry = (manager: TeamMember, message: string) => {
+    const notebook = notebookBlock(notebookFor(manager));
+    return [config.goal ? `Team goal: ${config.goal}` : '', state.tasks[manager.id] ? `${manager.title}'s current task: ${cut(state.tasks[manager.id], TASK_CHARS)}` : '', ...(notebook ? [notebook] : []), '', message]
       .filter((line, i) => line || i > 0)
       .join('\n')
       .trim();
+  };
 
   const byId = new Map(config.members.map((m) => [m.id, m]));
   /** A member's managers, nearest first. */
@@ -330,6 +498,11 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       tools: [],
       title: member.title,
       ...(member.budgetTokens && { budgetTokens: member.budgetTokens }),
+      // A member that handed its task to a peer is done once the peer has answered.
+      stopAfterTools: () => {
+        const handed = state.handoffs?.[member.id];
+        return handed ? `Handed the task to ${byId.get(handed.to)?.title ?? 'a peer'}.` : undefined;
+      },
       beforeAnswer(reply, session) {
         const pending = unreviewed(member);
         if (!pending.length) {
@@ -379,10 +552,14 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     };
   }
 
-  /** The tools for a member's direct reports. */
-  async function toolsFor(manager: TeamMember): Promise<BuiltTool[]> {
-    return Promise.all(reportsOf(config, manager.id).map((report) => (report.kind === 'agent' ? agentTool(manager, report) : remoteTool(manager, report))));
+  /** The tools for a member's direct reports, the peers it may consult or hand its task to, and the notebook's (bound to this run and this member). */
+  async function toolsFor(manager: TeamMember, trail: Trail = { ids: [manager.id], hops: 0 }): Promise<BuiltTool[]> {
+    const reports = await Promise.all(reportsOf(config, manager.id).map((report) => (report.kind === 'agent' ? agentTool(manager, report, 'ask', trail) : remoteTool(manager, report, 'ask'))));
+    return [...reports, ...(await peerTools(manager, trail)), ...notebookTools(notebookFor(manager))];
   }
+
+  /** Members running a turn now: a peer is consulted only when it is free (one session each). */
+  const running = new Set<string>();
 
   const describe = (report: TeamMember) => {
     const reviewing = config.members.filter((m) => report.reviews?.includes(m.id)).map((m) => m.title);
@@ -405,7 +582,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   });
 
   /** What every delegate tool does around the call: the budget, the count, then what the answer settles. A pause settles nothing yet. */
-  async function guarded(manager: TeamMember, report: TeamMember, input: Record<string, unknown>, work: (message: string) => Promise<ToolOutcome>): Promise<ToolOutcome> {
+  async function guarded(manager: TeamMember, report: TeamMember, input: Record<string, unknown>, work: (message: string) => Promise<ToolOutcome>, mode: Mode = 'ask'): Promise<ToolOutcome> {
     const text = String(input.message ?? '').trim();
     if (!text) throw new Error('"message" is empty');
     if (state.overBudget.includes(report.id)) {
@@ -414,16 +591,24 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       };
     }
     state.asked[report.id] = (state.asked[report.id] ?? 0) + 1;
-    const outcome = await work(text);
-    return outcome.pause ? outcome : settle(manager, report, text, outcome);
+    const started = Date.now();
+    try {
+      const outcome = await work(text);
+      return outcome.pause ? outcome : settle(manager, report, text, outcome, mode);
+    } finally {
+      timed(report, started);
+    }
   }
 
   /** A member answered: what its manager heard, the work delivered, the review ledger. */
-  function settle(manager: TeamMember, report: TeamMember, text: string, outcome: ToolOutcome): ToolOutcome {
+  function settle(manager: TeamMember, report: TeamMember, text: string, outcome: ToolOutcome, mode: Mode = 'ask'): ToolOutcome {
     const answer = typeof outcome.output === 'string' ? outcome.output : JSON.stringify(outcome.output ?? '');
     hear(manager, text, answer, outcome.remote ? JSON.stringify(outcome.remote.steps ?? []) : '');
     state.clock++;
+    // A consult answers a question: it is neither work delivered nor a review. A hand-off delivers the work.
+    if (mode === 'consult') return outcome;
     state.delivered[report.id] = state.clock;
+    if (mode === 'handoff') return outcome;
     // A reviewer asked after the work was delivered has looked at it; its verdict, when it gives one, is the sign-off.
     state.reviewed[report.id] = state.clock;
     const verdict = verdictOf(answer);
@@ -445,7 +630,52 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     return call && { ask: String(call.remote!.state.ask), asker: String(call.remote!.state.asker ?? call.remote!.agent) };
   };
 
-  async function agentTool(manager: TeamMember, report: AgentMember): Promise<BuiltTool> {
+  /** The name a tool call went by in a session's timeline (the tool's label), else its tool name. */
+  const labelOf = (session: AgentSession, callId: string, tool: string) => {
+    const entry = session.timeline.find((e) => e.type === 'tool' && e.callId === callId);
+    return entry?.type === 'tool' ? entry.label : tool;
+  };
+
+  /** What a paused session waits on: a question for a person, or tool calls that need approval (its own, or passed up from a member below). */
+  type Block = { kind: 'question'; ask: string; asker: string } | { kind: 'approval'; approval: TeamApproval };
+  const blockOf = (session: AgentSession, owner: TeamMember): Block | undefined => {
+    const pending = session.pending;
+    const question = questionOf(pending);
+    if (question) return { kind: 'question', ...question };
+    const passed = pending?.calls.find((c) => c.remote?.state.approval);
+    if (passed) return { kind: 'approval', approval: passed.remote!.state.approval as TeamApproval };
+    const own = pending?.calls.filter((c) => !c.remote) ?? [];
+    if (!own.length) return undefined;
+    return { kind: 'approval', approval: { member: owner.title, calls: own.map((c) => ({ id: `${owner.id}/${c.callId}`, tool: c.tool, label: labelOf(session, c.callId, c.tool), input: c.input as Record<string, unknown> })) } };
+  };
+  /** The pause a member's manager gets while the member waits on a person. */
+  const pauseOf = (member: TeamMember, block: Block): NonNullable<ToolOutcome['pause']> =>
+    block.kind === 'question'
+      ? { message: block.ask, remote: { agent: member.title, calls: [], state: { member: member.id, ask: block.ask, asker: block.asker } } }
+      : { message: approvalText(block.approval), remote: { agent: member.title, calls: [], state: { member: member.id, approval: block.approval as unknown as Record<string, unknown> } } };
+
+  /**
+   * The person's word goes into a paused session: its own tool calls get their decision (a check says who decided what and
+   * when; one nobody decided in time is refused), a question gets the answer, and a call waiting on a member below is let
+   * through to it.
+   */
+  const applyWord = (owner: TeamMember, session: AgentSession | undefined, answer: string) => {
+    for (const call of session?.pending?.calls ?? []) {
+      if (call.remote) {
+        if (typeof call.remote.state.ask === 'string' || call.remote.state.approval) Object.assign(call, { decision: 'approved', answer });
+        continue;
+      }
+      const word = request.resume?.decisions?.[`${owner.id}/${call.callId}`];
+      const label = labelOf(session!, call.callId, call.tool);
+      Object.assign(call, { decision: word?.approved ? 'approved' : 'denied' });
+      if (word?.approved && word.input) call.input = word.input;
+      const when = word?.at ? ` at ${word.at.replace('T', ' ').replace(/:\d\d(?:\.\d+)?Z$/, ' UTC')}` : '';
+      if (!word) check('Approval', 'warn', `${owner.title}'s use of ${label} was not approved in time`, owner.title);
+      else check('Approval', word.approved ? 'pass' : 'warn', `${word.by ?? 'A person'} ${word.approved ? 'approved' : 'rejected'} ${owner.title}'s use of ${label}${word.approved && word.input ? ' with changes' : ''}${when}`, owner.title);
+    }
+  };
+
+  async function agentTool(manager: TeamMember, report: AgentMember, mode: Mode, trail: Trail): Promise<BuiltTool> {
     /** Run the member's loop: with `text`, a new ask; without, going on from the question it paused on. */
     const runMember = async (ctx: ToolContext, text?: string): Promise<ToolOutcome> => {
       const agent = agentStore.get(report.agentId);
@@ -469,21 +699,31 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         });
         if (request.execution) session.execution = request.execution;
       }
+      // A person may pause this member between steps and give it an instruction (pause.ts).
+      const held = request.execution && holdMember(request.execution.executionId, report.title, 'agent', { under: ctx.callSpan, actor: { id: `agent:${agent.id}`, name: report.title, type: 'agent' } });
       const role: TeamRole = {
         ...roleFor(report),
-        tools: await toolsFor(report),
+        tools: await toolsFor(report, { ids: [...trail.ids, report.id], hops: trail.hops + (mode === 'ask' ? 0 : 1) }),
         ...(ctx.callSpan && { under: ctx.callSpan }),
+        ...(held && { pause: held }),
       };
+      running.add(report.id);
       const result = await runAgent({
         agent,
         session,
+        // The team's model for this member, in place of its agent's.
+        ...(report.model && { flow: { model: await agentModel(report.model) } }),
         ...(text !== undefined && { message: manages ? `${withAncestry(manager, text)}\n\n${REPORT_RULE}` : withAncestry(manager, text) }),
         depth: ctx.depth + 1,
         maxDepth: ctx.maxDepth,
-        approvals: 'deny',
+        approvals,
         signal: ctx.signal,
         team: role,
         ...(request.onMemberEvent && { onEvent: (event: AgentStreamEvent) => request.onMemberEvent!(report.title, event) }),
+        onUsage: (usage) => spend(report, usage, true),
+      }).finally(() => {
+        held?.release();
+        running.delete(report.id);
       });
       state.sessions[report.id] = result.session;
       spend(report, result.session.usage, true);
@@ -493,13 +733,19 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         throw new Error(last?.type === 'error' ? last.message : `${report.title} failed`);
       }
       if (result.reason === 'awaiting_approval') {
-        const question = questionOf(result.session.pending);
-        if (!question) throw new Error(`${report.title} waits for an approval no one can give in a team run`);
-        return { output: null, pause: { message: question.ask, remote: { agent: report.title, calls: [], state: { member: report.id, ...question } } }, ...child };
+        const block = blockOf(result.session, report);
+        if (!block) throw new Error(`${report.title} waits for an approval no one can give in a team run`);
+        return { output: null, pause: pauseOf(report, block), ...child };
       }
       if (result.reason === 'budget') {
         if (!state.overBudget.includes(report.id)) state.overBudget.push(report.id);
         return { output: `${report.title} used up its token budget before it could answer.${result.reply ? ` Its last words: ${result.reply}` : ''}`, ...child };
+      }
+      // A member that handed its task to a peer answers with the peer's answer: its manager gets that as the result of its ask.
+      const handed = state.handoffs?.[report.id];
+      if (handed) {
+        delete state.handoffs![report.id];
+        return { output: `${handed.answer}\n\n(${report.title} handed this task to ${byId.get(handed.to)?.title ?? 'a peer'}, who answered.)`, ...child };
       }
       return { output: result.reply !== undefined ? marked(report, result.reply) : `(${report.title} gave no answer)`, ...child };
     };
@@ -510,19 +756,18 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       description: describe(report),
       inputSchema: inputSchema(report),
       requireApproval: false,
-      invoke: (input, ctx) => guarded(manager, report, input, (text) => runMember(ctx, text)),
-      // The person answered the question one of its reports asked: the answer goes down to the call it paused on.
+      invoke: (input, ctx) => guarded(manager, report, input, (text) => runMember(ctx, text), mode),
+      // The person answered the question one of its reports asked, or decided its tool calls: it goes down to the calls it paused on.
       async resume(_saved, _approved, ctx, answer) {
-        const pending = state.sessions[report.id]?.pending;
-        if (!pending) throw new Error(`${report.title} has no question waiting`);
-        for (const call of pending.calls) if (call.remote && typeof call.remote.state.ask === 'string') Object.assign(call, { decision: 'approved', answer: answer ?? '' });
+        if (!state.sessions[report.id]?.pending) throw new Error(`${report.title} has nothing waiting`);
+        applyWord(report, state.sessions[report.id], answer ?? '');
         const outcome = await runMember(ctx);
-        return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome);
+        return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome, mode);
       },
     };
   }
 
-  async function remoteTool(manager: TeamMember, report: RemoteMember): Promise<BuiltTool> {
+  async function remoteTool(manager: TeamMember, report: RemoteMember, mode: Mode): Promise<BuiltTool> {
     const toPerson = report.questionsTo === 'person';
     const built = await a2aAgentTool(
       {
@@ -556,9 +801,25 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
             description: describe(report),
             inputSchema: inputSchema(report),
           };
-    const renamed = (ctx: ToolContext): ToolContext => ({
+    /** What it used before this request, and so far in it as its mod reports (no spend: the answer brings the total). */
+    const liveUsage = (remote: RemoteRun) => {
+      const now = remote.usage ?? (remote.trace && { inputTokens: remote.trace.usage.inputTokens, outputTokens: remote.trace.usage.outputTokens });
+      if (now && total(now) > 0) request.onUsage?.(report.title, (state.used[report.id] ? total(state.used[report.id]) : 0) + total(now), false);
+    };
+    /** The call is open to the notebook for as long as the member works (notebook/binding.ts): a note it writes lands on this run. */
+    const openNotebookFor = (member: RemoteMember, ctx: ToolContext) => {
+      const endpoint = typeof member.parameters.agentUrl === 'string' ? member.parameters.agentUrl : undefined;
+      return endpoint && agentAtEndpoint(endpoint) ? openNotebookCall(endpoint, notebookFor(member), ctx.callSpan) : undefined;
+    };
+    const renamed = (ctx: ToolContext, open?: { used(names: string[]): void }): ToolContext => ({
       ...ctx,
-      progress: ctx.progress && ((remote) => ctx.progress!({ ...remote, agent: report.title })),
+      progress:
+        ctx.progress &&
+        ((remote) => {
+          liveUsage(remote);
+          open?.used(remote.steps.map((step) => step.name));
+          ctx.progress!({ ...remote, agent: report.title });
+        }),
     });
     /** The member's answer as the team names it (by title), its usage counted (or estimated). */
     const account = (outcome: ToolOutcome, message: string): ToolOutcome => {
@@ -572,6 +833,57 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         ...(outcome.pause && { pause: { message: ask, remote: { ...outcome.pause.remote, agent: report.title, state: { ...outcome.pause.remote.state, ask, asker: report.title } } } }),
       };
     };
+    /**
+     * Send `message` so a person can stop the task and redirect it (pause.ts): the task is canceled, the person's instruction
+     * goes to the same conversation as a new message, and its answer is the call's.
+     */
+    const redirectable = async (ctx: ToolContext, input: Record<string, unknown>, first: string, open?: { used(names: string[]): void }): Promise<ToolOutcome> => {
+      if ('error' in built) throw new Error(built.error);
+      const send = (message: string, c: ToolContext) => built.invoke({ ...input, message }, c);
+      if (!request.execution) return account(await send(first, renamed(ctx, open)), first);
+      const attempt = { taskId: undefined as string | undefined, contextId: undefined as string | undefined, stopped: false, abort: new AbortController() };
+      const held = holdMember(request.execution.executionId, report.title, 'remote', {
+        under: ctx.callSpan,
+        actor: { id: `remote:${report.title}`, name: report.title, type: 'agent' },
+        async stop() {
+          attempt.stopped = true;
+          if (attempt.taskId) await built.cancelTask?.(attempt.taskId).catch(() => {});
+          attempt.abort.abort();
+        },
+      });
+      try {
+        let message = first;
+        for (;;) {
+          Object.assign(attempt, { taskId: undefined, contextId: undefined, stopped: false, abort: new AbortController() });
+          const stop = () => attempt.abort.abort();
+          if (ctx.signal?.aborted) stop();
+          else ctx.signal?.addEventListener('abort', stop, { once: true });
+          const own = renamed(ctx, open);
+          const watching: ToolContext = {
+            ...own,
+            signal: attempt.abort.signal,
+            progress: (remote) => {
+              attempt.taskId = remote.taskId ?? attempt.taskId;
+              attempt.contextId = remote.contextId ?? attempt.contextId;
+              own.progress?.(remote);
+            },
+          };
+          try {
+            return account(await send(message, watching), message);
+          } catch (error) {
+            if (!attempt.stopped || ctx.signal?.aborted) throw error;
+            if (attempt.contextId) (ctx.session.remoteContexts ??= {})[report.id] = { contextId: attempt.contextId };
+            const instruction = await held.wait({ summary: `Stopped ${report.title} to redirect it`, signal: ctx.signal });
+            if (ctx.signal?.aborted) throw error;
+            message = instruction ? `A person stopped you and says:\n${instruction}` : 'A person stopped you and let you go on: carry on with your task from where you stopped.';
+          } finally {
+            ctx.signal?.removeEventListener('abort', stop);
+          }
+        }
+      } finally {
+        held.release();
+      }
+    };
     return {
       ...base,
       requireApproval: false,
@@ -580,24 +892,96 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           if ('error' in built) throw new Error(built.error);
           const known = ctx.session.remoteContexts?.[report.id];
           // An answer to the remote agent's question goes as it is; a new request carries the goal and the manager's task.
-          const message = known?.question ? text : withAncestry(manager, text);
-          return account(await built.invoke({ ...input, message }, renamed(ctx)), message);
-        }),
+          // A member that reaches the notebook over MCP (a Landflow agent on kagent) is also told the run's key, to quote when
+          // two runs ask it at once.
+          const open = openNotebookFor(report, ctx);
+          try {
+            const message = known?.question ? text : [withAncestry(manager, text), open && NOTEBOOK_KEY(open.key)].filter(Boolean).join('\n\n');
+            return await redirectable(ctx, input, message, open);
+          } finally {
+            open?.close();
+          }
+        }, mode),
       // A person answered its question: the answer goes to the task it paused on.
       async resume(saved, approved, ctx, answer) {
         if ('error' in built || !built.resume) throw new Error(`${report.title} can't be reached to take the answer`);
-        const outcome = account(await built.resume(saved, approved, renamed(ctx), answer), answer ?? '');
-        return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome);
+        const open = openNotebookFor(report, ctx);
+        try {
+          const outcome = account(await built.resume(saved, approved, renamed(ctx, open), answer), answer ?? '');
+          return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome, mode);
+        } finally {
+          open?.close();
+        }
       },
     };
   }
 
+  /**
+   * The tools of a member for its peers (`consults`): `consult_<title>` asks a peer a question and the answer comes back to
+   * the member that asked (not to its manager); `hand_off_to_<title>` passes the member's task and notes to the peer, which
+   * works on it while the member steps out, and the peer's answer goes to the member's manager as the result of the ask.
+   * Only Landflow agents have these tools (a remote member has none to call), though a peer may be a remote member. A peer
+   * already in the chain is not offered, and one busy with another request says so: no loops.
+   */
+  async function peerTools(member: TeamMember, trail: Trail): Promise<BuiltTool[]> {
+    if (member.kind !== 'agent' || trail.hops >= MAX_CONSULT_HOPS) return [];
+    const peers = (member.consults ?? []).flatMap((id) => {
+      const peer = byId.get(id);
+      return peer && peer.id !== member.id && !trail.ids.includes(peer.id) ? [peer] : [];
+    });
+    const tools: BuiltTool[] = [];
+    for (const peer of peers) {
+      for (const mode of ['consult', 'handoff'] as const) {
+        const base = peer.kind === 'agent' ? await agentTool(member, peer, mode, trail) : await remoteTool(member, peer, mode);
+        const handOff = mode === 'handoff';
+        const role = peer.role?.trim().replace(/\.$/, '');
+        const ready = (outcome: ToolOutcome): ToolOutcome => {
+          if (!handOff || outcome.pause) return outcome;
+          // A peer over its budget answered nothing: the task isn't handed off.
+          if (state.overBudget.includes(peer.id)) return outcome;
+          state.handoffs = { ...state.handoffs, [member.id]: { to: peer.id, answer: asText(outcome.output) } };
+          check('Hand-off', 'pass', `${member.title} handed the task to ${peer.title}`, member.title);
+          return { ...outcome, output: `You handed the task to ${peer.title}, who has finished it; its answer goes to your manager as yours. Your turn is over: reply with one short line saying so.` };
+        };
+        tools.push({
+          ...base,
+          name: handOff ? handOffToolNameOf(peer.title) : consultToolNameOf(peer.title),
+          label: peer.title,
+          description: handOff
+            ? [role, `${peer.title} is your peer`, `hand your task to ${peer.title} when it is better placed than you to finish it: it works on it with your notes and its answer goes to your manager as your result, and your turn ends`].filter(Boolean).join('. ') + '.'
+            : [role, `${peer.title} is your peer, not your report`, 'consult it when you need its knowledge: its answer comes back to you'].filter(Boolean).join('. ') + '.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              message: {
+                type: 'string',
+                description: handOff
+                  ? `Your notes for ${peer.title}: what you did and found, and what is left. It does not see your conversation`
+                  : `What to ask ${peer.title}. It does not see your conversation: say what it needs to know`,
+              },
+              reason: { type: 'string', description: REASON_DESCRIPTION },
+            },
+            required: ['message', 'reason'],
+          },
+          invoke: async (input, ctx) => {
+            if (running.has(peer.id)) return { output: `${peer.title} is busy with another request right now. Ask your manager, or go on without it.` };
+            return ready(await base.invoke(input, ctx));
+          },
+          ...(base.resume && { resume: async (...args: Parameters<NonNullable<BuiltTool['resume']>>) => ready(await base.resume!(...args)) }),
+        });
+      }
+    }
+    return tools;
+  }
+
   // The lead: the node's session (or the one saved when the run waited), its journal under the node's span.
   const userId = request.userId;
+  /** Tools that need approval pause the run where a person can decide (a flow's); elsewhere they are refused. */
+  const approvals = request.canWait ? ('ask' as const) : ('deny' as const);
   let session: AgentSession;
   if (request.resume?.state.lead) {
     session = request.resume.state.lead;
-    for (const call of session.pending?.calls ?? []) if (call.remote && typeof call.remote.state.ask === 'string') Object.assign(call, { decision: 'approved', answer: request.resume.answer });
+    applyWord(root, session, request.resume.answer);
   } else {
     session = newSession(leadAgent, {
       source: 'workflow',
@@ -608,38 +992,75 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     if (request.execution) session.execution = request.execution;
     state.told[root.id] = request.message;
   }
-  const role: TeamRole = { ...roleFor(root), tools: await toolsFor(root) };
+  const heldLead = request.execution && holdMember(request.execution.executionId, root.title, 'agent', { under: nodeSpan(), actor: { id: `agent:${leadAgent.id}`, name: root.title, type: 'agent' } });
+  const role: TeamRole = { ...roleFor(root), tools: await toolsFor(root), ...(heldLead && { pause: heldLead }) };
+  const leadStarted = Date.now();
   const result = await runAgent({
     agent: leadAgent,
     session,
-    ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
-    approvals: 'deny',
+    ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', notebookBlock(notebookFor(root)), request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
+    approvals,
     signal: request.signal,
-    ...(request.flow && { flow: request.flow }),
+    // A model connected to the node wins; else the team's model for the lead, else its agent's.
+    ...((request.flow || (root.kind === 'agent' && root.model)) && { flow: { ...request.flow, ...(!request.flow?.model && root.kind === 'agent' && root.model && { model: await agentModel(root.model) }) } }),
     ...(request.onEvent && { onEvent: request.onEvent }),
+    onUsage: (usage) => spend(root, usage, true),
     team: role,
-  });
+  }).finally(() => heldLead?.release());
   session = result.session;
+  timed(root, leadStarted);
   spend(root, session.usage, true);
-  const question = result.reason === 'awaiting_approval' ? questionOf(session.pending) : undefined;
-  if (result.reason === 'awaiting_approval' && !question) raise(`${root.title} waits for an approval no one can give in a team run`);
-  if (request.memory && result.reason !== 'error' && !question) await request.memory.save(request.memoryKey || 'default', session.messages);
+  const block = result.reason === 'awaiting_approval' ? blockOf(session, root) : undefined;
+  if (result.reason === 'awaiting_approval' && !block) raise(`${root.title} waits for an approval no one can give in a team run`);
+  // A lead that handed its task to a peer answers with the peer's answer.
+  const handed = state.handoffs?.[root.id];
+  if (handed) delete state.handoffs![root.id];
+  // Outside a flow nobody can approve: the tool was refused, and the run leaves by Needs a person with what was wanted.
+  if (!request.canWait) {
+    const sessions = [[root.title, session] as const, ...config.members.flatMap((m) => (state.sessions[m.id] ? [[m.title, state.sessions[m.id]] as const] : []))];
+    for (const [title, s] of sessions) {
+      for (const e of s.timeline) if (e.type === 'tool' && e.status === 'denied' && e.error?.includes("needs a person's approval")) raise(`${title} wanted to use ${e.label}, which needs a person's approval`);
+    }
+  }
+  if (request.memory && result.reason !== 'error' && !block) await request.memory.save(request.memoryKey || 'default', session.messages);
   if (result.reason === 'budget') raise(`${root.title} used up its budget or limit (${root.budgetTokens ? `${root.budgetTokens.toLocaleString()} tokens` : 'tokens'})`);
   else if (result.reason === 'max_iterations') raise(`${root.title} did not reach an answer within its iteration limit`);
 
   return {
-    ...(result.reply !== undefined && { reply: marked(root, result.reply) }),
+    ...(result.reply !== undefined && { reply: handed ? handed.answer : marked(root, result.reply) }),
     ...(state.needsPerson.length && { needsPerson: state.needsPerson.join('; ') }),
-    ...(question && { waiting: { member: question.asker, question: question.ask, state: { ...state, lead: session } } }),
-    members: config.members.map((m) => ({
-      title: m.title,
-      asked: m.id === root.id ? 1 : (state.asked[m.id] ?? 0),
-      tokens: state.tokens[m.id] ?? 0,
-      ...(state.estimated[m.id] && { estimated: true as const }),
-      ...(state.overBudget.includes(m.id) && { overBudget: true as const }),
-    })),
+    ...(block && {
+      waiting:
+        block.kind === 'question'
+          ? { member: block.asker, question: block.ask, state: { ...state, lead: session } }
+          : { member: block.approval.member, question: approvalText(block.approval), state: { ...state, lead: session }, approval: block.approval },
+    }),
+    members: config.members.map((m) => {
+      const used = state.used[m.id];
+      const cost = costOf(m, used);
+      const model = modelOf(m, used);
+      return {
+        title: m.title,
+        asked: m.id === root.id ? 1 : (state.asked[m.id] ?? 0),
+        tokens: state.tokens[m.id] ?? 0,
+        ...(state.estimated[m.id] && { estimated: true as const }),
+        ...(state.overBudget.includes(m.id) && { overBudget: true as const }),
+        ...(used && { inputTokens: used.inputTokens, outputTokens: used.outputTokens }),
+        ...(used?.cacheReadTokens && { cacheReadTokens: used.cacheReadTokens }),
+        ...(cost !== undefined && { costUsd: Math.round(cost * 1e6) / 1e6 }),
+        ...(model && { model }),
+        ...(used?.requests && { requests: used.requests }),
+        ...(state.ms?.[m.id] && { ms: state.ms[m.id] }),
+      };
+    }),
     session,
     reason: result.reason,
-    usage: Object.values(state.used).reduce((sum, u) => ({ inputTokens: sum.inputTokens + u.inputTokens, outputTokens: sum.outputTokens + u.outputTokens }), { inputTokens: 0, outputTokens: 0 }),
+    usage: teamUsage(),
   };
+}
+
+/** The agent as the team runs it: with the team's model for the member in place of its own, for what the chart shows. */
+function withModel(agent: Agent, model: AgentModel | undefined): Agent {
+  if (!model) return agent;
+  return { ...agent, model, ...(agent.published && { published: { ...agent.published, config: { ...agent.published.config, model } } }) };
 }

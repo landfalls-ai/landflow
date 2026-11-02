@@ -13,7 +13,7 @@ export const mcpOAuth2ApiCredential = defineCredentialType({
   displayName: 'MCP OAuth2 API',
   description:
     'For an MCP server that signs users in with OAuth (the MCP authorization spec): Connect finds the server\'s authorization server, registers Landflow there (dynamic client registration) unless you give a Client ID, and signs in with PKCE. The access token is renewed for you.',
-  icon: 'lucide:plug-zap',
+  icon: 'brand:mcp',
   documentationUrl: 'https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization',
   extends: ['oAuth2Api'],
   properties: [

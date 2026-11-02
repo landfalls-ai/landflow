@@ -602,7 +602,7 @@ No migrations: a template's marketplace origin is kept in its document.
   port another process already held: the free-port probe bound 127.0.0.1 only, which macOS allows beside a wildcard
   listener. It now also connects to the port and binds every interface (with a test).
 - What remains: the Landfall and threat intel calls are checked against fakes, not the live services; share pages need
-  sign-in; runbooks aren't built from closed rooms yet.
+  sign-in.
 
 ## Composite nodes (built 2026-10-29)
 
@@ -912,11 +912,17 @@ Code runtime that write the plugin in this repository and open a draft pull requ
 - **Network for Claude Code** ([a2a.md](a2a.md#network-for-claude-code)): kagent's sandboxes had no egress at all.
   Landflow now writes the Agent's `egressPolicyRefs` (the kagent card's **Network access**, else the credential's
   **Egress Policies**), with drift, and `deploy/kind/egress-dev.yaml` grants the package registries (Alpine, Go, npm,
-  PyPI).
+  PyPI); since 2026-11-01 only through the package cache (below).
 - **A toolchain image for Claude Code** ([a2a.md](a2a.md#a-toolchain-image-for-claude-code)): the Harness
   `landflow-claude-dev` runs Claude Code on one common image (Go, Node with pnpm, Python with uv, a C toolchain), served
   from Landflow's registry by digest. Nothing project-specific is baked in: a project's dependencies come over the
   network. `/v2` serves manifests with their own media type and streams blobs.
+- **A package cache and Go's standard library pre-built** ([a2a.md](a2a.md#network-for-claude-code)): sandboxes reach no
+  registry. `deploy/k8s/components/package-cache` (in the OrbStack overlay) runs `landflow-cache:8080` in `landflow-dev`:
+  nginx in front of Verdaccio (npm), Athens (Go modules and the checksum database), proxpi (PyPI) and an nginx
+  `proxy_cache` of Alpine's mirror, each on a PVC. The bridge carries it to kind, `landflow-dev-packages` allows only
+  its origin, the Harness env points the package tools at it, the image's apk repositories use it, and
+  `GOCACHE=/opt/go-build` holds Go's standard library built at image build time.
 - **The host's data on its volume** on OrbStack (`landflow-data`, local-path), so credentials, agents and the images
   Landflow serves kagent survive a rollout.
 - **GitHub flow steps**: a bundled `github` plugin (`plugins/github`, TypeScript, 7111/7211), one **GitHub** node for
@@ -950,10 +956,10 @@ Code runtime that write the plugin in this repository and open a draft pull requ
   sent back once (typecheck failing, the Reviewer editing), fixed in round 2 and merged pull request #3 after 41
   minutes.
 - Next:
-  - the team and flow as a template (agents, the workflow and its credentials named) instead of a setup script;
+  - ✅ the team and flow as a template (agents, the workflow and its credentials named) instead of a setup script: built ([templates.md](templates.md)), with agents and teams exported as Claude Code plugins ([marketplace.md](marketplace.md#export-agents-as-plugins));
   - GitHub's MCP server as an agent tool, for reviews and comments on the pull request;
-  - caches in the cluster (a Go module proxy, an npm and PyPI mirror) so repeated installs stay local, and Go's
-    standard library pre-built in the image.
+  - project dependencies baked into the image or a warm project cache (the package cache keeps them local, not
+    installed).
 
 ## Run Trace (built 2026-10-31)
 
@@ -987,12 +993,15 @@ approved plan:
 - Still open from the artifacts plan: reasons from delegating nodes of other plugins (the Go and Python SDKs declare
   `delegates` now; plugins still have to set it); fix cycles per round; a lead's claims credited with its team's steps;
   line comments shared between people (they live in one browser).
+- **Phase 4, first part** (2026-11-01): a Claude Code member's model requests are `model` spans under its request;
+  `GET /api/runs/search`, `/compare` and `/measures` with a Search runs page, a compare view and a duration, tokens and
+  cost trend; `LANDFLOW_OTLP_TRACES_URL` exports each finished run's journal as one OTLP trace with OpenInference kinds.
 - Next (phase 4):
   - other agents' spans joined by trace id, starting with Claude Code's own OpenTelemetry;
-  - OTLP export with OpenInference kinds;
-  - search and comparison across runs, and each profile's measures over time;
-  - re-run from a span, and Copy to editor with the run's data pinned;
-  - pausing a running agent so a person can take over;
+  - ~~OTLP export with OpenInference kinds~~, ~~search and comparison across runs~~ and the generic measures over time
+    are built (2026-11-01, [run-trace.md](run-trace.md#search-compare-and-measures)); a profile's own measures are open;
+  - ~~re-run from a span, and Copy to editor with the run's data pinned~~ and ~~pausing a running agent so a person can
+    take over~~ are built (2026-11-01, [run-trace.md](run-trace.md#run-it-again));
   - **Content kept** per project.
 
 ## Agent teams (built 2026-10-31)
@@ -1021,14 +1030,74 @@ four steps of the approved plan:
   manager's made-up commits, test counts and pull requests send it back like file names, and members are told the
   tools they have in the run; a span keeps one check per member; the Go and Python SDKs declare `delegates`; the
   second brain's study knows Run a Team; a renamed team shows its new name on flows.
-- Next: consults (ask a peer) and hand-offs; tool approvals inside a team (the pause a question uses); live budget use
-  on the chart. Paperclip-style autonomy (heartbeats, a team inbox of tasks) is left out on purpose for now.
+- **The live view, finished** (2026-11-01): a member's tokens against its budget as a bar on the node, the Now card, the
+  Run Trace's Team chart and the team page's **Last run** card (amber at 80%, red once used up, with moments for both);
+  a question for a person turns the node amber with the question and an **Answer** button; each turn on the ribbon opens
+  that member in the Run Trace; the Story opens with the run's **Headlines**.
+- **Tool approvals and consults** (2026-11-01): a tool that needs approval pauses a team run for a person (Needs you,
+  Slack or email, **Approve** / **Deny** on the node and the phone card; the decision is an *Approval* check); members
+  may **consult** peers and **hand a task over** (`consults`, the `consult_` and `hand_off_to_` tools), shown on the node
+  with both members ringed, on the team page as dashed chips and in the Run Trace under the member that asked.
+- Next: tools of a Claude Code member on kagent asking for approval; Paperclip-style autonomy (heartbeats, a team inbox of
+  tasks) is left out on purpose for now.
+
+## Claude Code agents report what they use (built 2026-11-01)
+
+kagent's Claude Code harness sends no token usage over A2A, so runs estimated what Claude Code agents spent. Now every
+Claude Code agent Landflow deploys gets Landflow's own mod ([a2a.md](a2a.md#the-landflow-harness-mod)):
+
+- **The latest Claude Code**: `landflow-claude-dev` installs 2.1.316 (mods need 2.1.287) behind a wrapper that answers
+  `claude --version` with kagent's compiled-in 2.1.285, which kagent checks strictly.
+- **landflow-harness** (`apps/web/claude-plugins/landflow-harness`), packed from the host and added to every Claude
+  Code deploy when the credential names a Plugin Registry: a request's marker line gives it a trace URL, and it posts
+  each model request's tokens, model and time, each tool call's, the subagents and the turn's end to
+  `POST /api/agent-trace/:id`. It also guards tool calls (secret files, printing the environment, pushes to main and
+  force pushes, merges, git auth settings, wiping the machine, uploads, writes outside the workspace) and masks tokens
+  and keys in tool results.
+- **In the run**: a call's usage is the real one, priced per request (5.5 models' cache reads at 5% of input, Haiku 5.5's
+  long-context tier); team members carry tokens in and out, cache reads, cost, model and time; the Team tab and the
+  actor sheet show them; the Report has **What each agent used** and the run's cost; guardrail stops and masked secrets
+  are checks.
+- Since then: the mod's model calls are their own spans (`d211811`), and each agent has its own guard, Read-only, Normal
+  or Report only, chosen when it is deployed, and in queue mode a worker's live steps, budgets and real usage show on
+  any main (2026-11-01).
+  Live budget use from the trace while a member works shows on the team node since 2026-11-01.
+- The guard asks a person about a push to main, a force push and deleting a remote branch instead of refusing them (Normal
+  mode; Read-only still refuses, Report only never blocks): an `ask` event, a wait in Needs you and on the team node, a
+  long-polled answer, an Approval check; the run is not paused ([a2a.md](a2a.md#asking-a-person)). Needs the harness image rebuilt.
+
+## Team notebook (built 2026-11-01)
+
+Agent team members start every run from what they are handed. They now share a notebook ([team-notebook.md](team-notebook.md)):
+
+- **Notes**: facts, decisions, open questions, task status and artifact references, each with its author, run, span and
+  source; run notes (14 days), team notes (30 days after last use, unless verified) and project notes (a person's approval
+  through the second brain's inbox).
+- **Tools**: `note_add`, `note_search`, `note_update`, `note_dispute`, and `note_promote` for managers; Claude Code
+  members on kagent get the same through the MCP server, bound to the run that is waiting on them.
+- **Trust**: notes from outside are tainted until a person verifies them; disputes keep both notes until one is kept;
+  `traceContent: off` keeps provenance and drops excerpts.
+- **See it**: the team's Notebook tab, note moments on the canvas and in the headlines, deep links into the Run Trace.
+
+## GitHub's MCP tools for agents (built 2026-11-01)
+
+Agents read and review pull requests through GitHub's own MCP server ([a2a.md](a2a.md#githubs-mcp-tools-for-agents)): an
+**Add GitHub MCP** capability (an `mcp` tool with `preset: 'github'`), a Bearer Auth credential holding the token, the
+pinned image `ghcr.io/github/github-mcp-server:v2.0.2` as a component in the OrbStack overlay, and a server-side
+allow-list per agent (read for every member; review, line comments and comments for the Reviewer; merging and every
+branch, file and repository write never offered). Kagent members get the same cut through the agents' MCP endpoint, and
+Run Trace shows it with GitHub's mark. Not live-checked against GitHub with a token.
+
+## Runbooks from Landfall war rooms (built 2026-11-01)
+
+A closed room's applied remediations, chat and outcome fold into a draft workflow ([runbooks.md](runbooks.md)): a form wait per
+step, an approval before risky or production-changing steps, tagged by alert kind. **Runbooks** in the sidebar makes and
+lists them; the **Find Runbook** node and the triage flow name the matching one and link it in the new room (**Timeline →
+Add Runbook Link**); **Incident → Get Room** reads a room for it. Deterministic, no model.
 
 ## Planned next
 
-**Runbooks from Landfall war rooms.** After a room closes, turn what the responders did (the timeline, the remediation
-records, the "Room outcomes" rows) into a dedicated runbook in Landflow: a workflow with the steps, the approvals it
-needs, and a link back from Landfall's alerts of the same kind. The other follow-ups above are candidates too.
+The follow-ups above are candidates, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).
 
 ## Not planned
 

@@ -1,6 +1,6 @@
 # The two directions between Landflow (OrbStack cluster, namespace landflow-dev) and kagent (kind cluster landflow-kagent).
-# Applied to the kind cluster by deploy/scripts/kagent-up.sh, which fills in LANDFLOW_HOST_IP: the ClusterIP of
-# landflow-host in the OrbStack cluster. OrbStack routes cluster IPs to every container on its engine, kind's node included,
+# Applied to the kind cluster by deploy/scripts/kagent-up.sh, which fills in LANDFLOW_HOST_IP and LANDFLOW_CACHE_IP: the
+# ClusterIPs of landflow-host and landflow-cache (the package cache, deploy/k8s/components/package-cache) in the OrbStack cluster. OrbStack routes cluster IPs to every container on its engine, kind's node included,
 # so a kagent agent reaches Landflow as http://landflow-host.landflow.svc.cluster.local:3000 (a name in kind's own DNS, so
 # kagent's egress gateway can allow it by hostname). bridge-otel.yaml does the same for Landflow's telemetry backend.
 #
@@ -28,6 +28,26 @@ metadata:
 addressType: IPv4
 ports: [{ name: http, port: 3000, protocol: TCP }]
 endpoints: [{ addresses: ["LANDFLOW_HOST_IP"] }]
+---
+# The package cache: the only registry a sandbox may reach (deploy/kind/egress-dev.yaml). A sandbox uses it as
+# http://landflow-cache.landflow.svc.cluster.local:8080/{npm,go,pypi,apk}/.
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-cache
+  namespace: landflow
+spec:
+  ports: [{ name: http, port: 8080, targetPort: 8080, protocol: TCP }]
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: landflow-cache-orbstack
+  namespace: landflow
+  labels: { kubernetes.io/service-name: landflow-cache }
+addressType: IPv4
+ports: [{ name: http, port: 8080, protocol: TCP }]
+endpoints: [{ addresses: ["LANDFLOW_CACHE_IP"] }]
 ---
 apiVersion: v1
 kind: Service

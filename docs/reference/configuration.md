@@ -7,6 +7,7 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | Variable | Default | |
 |---|---|---|
 | `LANDFLOW_DATA_DIR` | `apps/web/.data` | data directory: the SQLite database (`landflow.db`), credentials, binary files, the Claude Code plugin images packed for kagent (`oci/`) and the other host files |
+| `LANDFLOW_CLAUDE_PLUGINS_DIR` | `<cwd>/claude-plugins` (`apps/web/claude-plugins`) | where Landflow's own Claude Code plugins are (the landflow-harness mod), packed into images for kagent's Claude Code agents ([a2a.md](../a2a.md#the-landflow-harness-mod)) |
 | `LANDFLOW_DB` | `sqlite` | `postgres` keeps the store in Postgres (`DATABASE_URL`); one host per database |
 | `DATABASE_URL` | – | Postgres connection string for `LANDFLOW_DB=postgres`, e.g. the infra stack's `postgres://landflow:landflow-dev-only@127.0.0.1:55432/landflow` |
 | `LANDFLOW_EXECUTIONS_MODE` | `regular` | `queue`: mains enqueue production runs on Valkey for workers (`pnpm worker`) and elect a leader ("Queue mode, workers and high availability") |
@@ -41,6 +42,7 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | `LANDFLOW_CODE_IN_PROCESS` | `true` | `false`: no in-process (`node:vm`) JavaScript; every Code node needs the runner |
 | `LANDFLOW_CODE_BINARY_MAX_BYTES` | `6291456` | files a Code node reads (all together) and creates, in the sandbox and in-process |
 | `ANTHROPIC_API_KEY` | – | for the Anthropic Chat Model |
+| `LANDFLOW_GITHUB_MCP_URL` | `http://landflow-github-mcp:8082/` | the GitHub MCP server an agent's GitHub MCP tool uses when it names no URL ([a2a.md](../a2a.md#githubs-mcp-tools-for-agents)); the token is the tool's credential, never a variable |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | the Ollama used by the AI flow builder and the editor assistant, and the default of the Ollama chat and embeddings nodes |
 | `LANDFLOW_BUILDER_MODEL` | `qwen3-coder:30b` | model the AI flow builder and the editor assistant use |
 | `AI_USAGE_RETENTION_DAYS` | `400` | how long per-call AI usage rows (tokens, cost) are kept |
@@ -58,6 +60,10 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | `LANDFLOW_METRICS_PROMETHEUS` | `true` | serve `GET /api/metrics` |
 | `LANDFLOW_TRACE_CONTENT` | `full` | how much of a run's content the Run Trace journal keeps (docs/run-trace.md): `full` (inputs, outputs and texts, each event cut to 32 KB), `summaries` (every text cut to 400 characters) or `off` (names, statuses and errors only). A workflow's setting `traceContent` overrides it |
 | `LANDFLOW_TRACE_RETENTION_DAYS` | `30` | days the Run Trace journal is kept; older events are pruned once a day (by the leader in queue mode). `0` keeps them until their execution is deleted. Deleting or pruning an execution deletes its events |
+| `LANDFLOW_TEAM_PAUSE_MINUTES` | `30` | how long a paused team member waits for a person's instruction before it carries on without one ([run-trace.md](../run-trace.md#pause-and-take-over)) |
+| `LANDFLOW_NOTEBOOK_EMBEDDINGS` | on | `off` stops the team notebook from asking Ollama for embeddings; search then matches words ([team-notebook.md](../team-notebook.md#search-by-meaning)) |
+| `LANDFLOW_NOTEBOOK_EMBED_MODEL` | `nomic-embed-text` | the Ollama model that embeds team notes |
+| `LANDFLOW_OTLP_TRACES_URL` | – | an OTLP/HTTP traces endpoint (e.g. `http://landflow-lgtm:4318/v1/traces`). Set, each execution's Run Trace journal is sent there as one trace once the run ends (not while it waits for a person or a timer): spans with parent links, times and status, and OpenInference attributes (`openinference.span.kind` AGENT, LLM, TOOL, CHAIN or EVALUATOR, `llm.model_name`, `llm.token_count.prompt` and `.completion`, `input.value`, `output.value`, `landflow.actor`, `landflow.execution_id`). What goes out is what the journal stored (redacted, cut by `LANDFLOW_TRACE_CONTENT`; input and output values cut again to 4,000 characters). JSON over HTTP, headers from `OTEL_EXPORTER_OTLP_TRACES_HEADERS` or `OTEL_EXPORTER_OTLP_HEADERS`; sent in batches of 200 spans, a failed request tried once more, and a failure is logged and never fails or delays the run. The `orbstack-observability` overlay sets it to the bundled collector |
 | `LANDFLOW_TRACE_URL` | – | trace link template, e.g. `http://localhost:16686/trace/{traceId}` |
 | `LANDFLOW_BINARY_STORE` | `filesystem` | where files live: `filesystem` or `s3` |
 | `LANDFLOW_BINARY_DIR` | `<data dir>/binary` | the filesystem store's directory |

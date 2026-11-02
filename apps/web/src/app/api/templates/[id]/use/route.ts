@@ -3,7 +3,8 @@
  * <credential id> } }`. Credentials are checked against their slot's type, missing data tables are created, URL paths
  * made unique; the workflow is saved as an inactive draft in `?projectId=` (else the folder's project, else the
  * caller's personal project), with its data tables: the project's table of a template's table name is reused,
- * another project's never.
+ * another project's never. A team template (`teamName?` names the team) first creates its agents and team in the same
+ * project with fresh ids, then the workflow (if it has one) pointing at them; the answer then has `team` and `agents`.
  */
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
@@ -19,6 +20,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 const bodySchema = z.object({
   name: z.string().max(200).optional(),
+  teamName: z.string().max(200).optional(),
   folderId: z.string().optional(),
   credentials: z.record(z.string(), z.string().nullable()).optional(),
 });
@@ -36,6 +38,8 @@ export const POST = handler(async (request: Request, ctx: Ctx) => {
       projectId,
       createWorkflow: (save, workflowId) => createIn(projectId, 'workflow', save, (w: Workflow) => w.id, workflowId),
       createTable: (create) => createIn(projectId, 'dataTable', create, (t) => t.id),
+      createAgent: (create) => createIn(projectId, 'agent', create, (a) => a.id),
+      createTeam: (create) => createIn(projectId, 'agentTeam', create, (t) => t.id),
     });
     const created = (result as { workflow?: { id?: string } }).workflow?.id;
     recordUsage({ kind: 'template.used', ...(created && { workflowId: created }), ...(viewer?.id && { actorId: viewer.id }), attrs: { templateId: id, template: template.name } });

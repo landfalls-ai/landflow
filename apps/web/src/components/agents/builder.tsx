@@ -17,6 +17,7 @@ import {
   FlaskConical,
   Loader2,
   MoreHorizontal,
+  Package,
   Pencil,
   Rocket,
   Trash2,
@@ -52,9 +53,12 @@ import { PluginsCard } from './plugins-card';
 import { SaveTemplateDialog } from './save-template-dialog';
 import { SkillsCard } from './skills-card';
 import { TestChat } from './test-chat';
+import { useNewLook } from '../shell/look-toggle';
+import { AgentLastRuns } from '../run-trace/run-line';
 import type { ToolEntry } from './timeline';
 import { TriggersCard } from './triggers-card';
 import { useAgentData, useAgentList } from './use-agent-data';
+import { ExportPluginDialog } from './export-plugin-dialog';
 import { canTest, configOf, downloadJson, parseAgentFile, sameConfig, setupSteps, slug, type UpdateConfig } from './util';
 
 export const BUILDER_TABS = ['persona', 'abilities', 'deploy', 'safety', 'sessions', 'evaluations'] as const;
@@ -218,6 +222,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
   const agents = useAgentList();
   const teams = [...new Set((agents ?? []).flatMap((a) => (a.team ? [a.team] : [])))].sort((a, b) => a.localeCompare(b));
   const [agent, setAgent] = useState<Agent>();
+  const newLook = useNewLook();
   const [draft, setDraft] = useState<AgentConfig>();
   const [loadError, setLoadError] = useState<string>();
   const [save, setSave] = useState<SaveState>('saved');
@@ -226,7 +231,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
   const [testing, setTesting] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [modal, setModal] = useState<
-    { kind: 'description' } | { kind: 'delete' } | { kind: 'template' } | { kind: 'import'; config: Partial<AgentConfig>; file: string } | null
+    { kind: 'description' } | { kind: 'delete' } | { kind: 'template' } | { kind: 'plugin' } | { kind: 'import'; config: Partial<AgentConfig>; file: string } | null
   >(null);
   const [description, setDescription] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -604,6 +609,14 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
                   <MenuItem
                     onClick={() => {
                       close();
+                      setModal({ kind: 'plugin' });
+                    }}
+                  >
+                    <Package /> Export as Claude Code plugin…
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      close();
                       setModal({ kind: 'template' });
                     }}
                   >
@@ -700,13 +713,14 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
                 <SettingsTab config={draft} update={update} agentId={agentId} />
               </div>
             )}
+            {tab === 'sessions' && newLook && !sessionId && <AgentLastRuns agentName={agent.name} />}
             {tab === 'sessions' && <SessionsTab agentId={agentId} sessionId={sessionId} onOpen={(id) => go('sessions', id)} childHref={childHref} />}
             {tab === 'evaluations' && <EvaluationsTab agentId={agentId} />}
           </div>
         </div>
       </div>
 
-      {testing && <TestChat agentId={agentId} agentName={draft.name} look={draft} onClose={() => setTesting(false)} beforeSend={persist} childHref={childHref} />}
+      {testing && <TestChat agentId={agentId} agentName={draft.name} look={draft} onClose={() => setTesting(false)} beforeSend={persist} childHref={childHref} tools={draft.tools} />}
 
       {modal?.kind === 'description' && (
         <Dialog
@@ -745,6 +759,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
           </Field>
         </Dialog>
       )}
+      {modal?.kind === 'plugin' && <ExportPluginDialog base={`/api/agents/${agentId}`} title={draft.name} onClose={() => setModal(null)} />}
       {modal?.kind === 'template' && (
         <SaveTemplateDialog agent={{ id: agentId, name: draft.name, description: draft.description }} onClose={() => setModal(null)} />
       )}

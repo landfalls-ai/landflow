@@ -4,6 +4,7 @@
  * projects (node types, credentials, the instance). A workflow that reads usage (Landflow Usage, On Usage Event) sees
  * what the person who created it sees; a workflow nobody created (seeded) and an agent's tools see their own project.
  */
+import { agentTeamStore } from '../agent-teams/store';
 import { agentStore } from '../agents/store';
 import { getUser } from '../auth/users';
 import { canResource, isInstanceAdmin, visibleIds } from '../projects/access';
@@ -16,7 +17,8 @@ import type { Proposal } from '../../shared/brain';
 export function scopeForActor(actor: Actor): UsageScope | undefined {
   const workflows = visibleIds(actor, 'workflow', store.listWorkflows().map((w) => w.id));
   const agents = visibleIds(actor, 'agent', agentStore.list().map((a) => a.id));
-  return workflows || agents ? { workflows: workflows ?? new Set(), agents: agents ?? new Set() } : undefined;
+  const teams = visibleIds(actor, 'agentTeam', agentTeamStore.list().map((t) => t.id));
+  return workflows || agents || teams ? { workflows: workflows ?? new Set(), agents: agents ?? new Set(), teams: teams ?? new Set(agentTeamStore.list().map((t) => t.id)) } : undefined;
 }
 
 export function scopeForWorkflow(workflowId: string | undefined): UsageScope | undefined {
@@ -62,5 +64,6 @@ export function canProposal(actor: Actor, proposal: Pick<Proposal, 'target'>, ac
   const { type, id } = proposal.target;
   if (type === 'workflow' && id) return canResource(actor, 'workflow', id, action);
   if (type === 'agent' && id) return canResource(actor, 'agent', id, action);
+  if (type === 'team' && id) return canResource(actor, 'agentTeam', id, action);
   return isInstanceAdmin(actor);
 }

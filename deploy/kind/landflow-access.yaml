@@ -13,12 +13,14 @@ metadata:
   name: landflow-agents
   namespace: kagent
 rules:
+  # EgressPolicies too: the shared ones an agent may reference (written by hand or kagent-up.sh) are listed, and each Claude
+  # Code agent with Landflow's mod gets its own, <name>-landflow, opening Landflow's origin for the mod's reports.
   - apiGroups: [api.kagent.dev]
-    resources: [agents, agenttemplates, modelconfigs, remotemcpservers]
+    resources: [agents, agenttemplates, modelconfigs, remotemcpservers, egresspolicies]
     verbs: [get, list, watch, create, update, patch, delete]
-  # Harnesses to run on, and EgressPolicies an agent may reference (what its sandbox reaches; written by hand or kagent-up.sh).
+  # Harnesses to run on.
   - apiGroups: [api.kagent.dev]
-    resources: [harnesses, egresspolicies]
+    resources: [harnesses]
     verbs: [get, list]
   # The token kagent calls an agent's tools with, and a model's API key.
   - apiGroups: [""]

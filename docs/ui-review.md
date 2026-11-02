@@ -13,6 +13,33 @@ Legend: ✅ on par with n8n · ➕ beyond n8n · ◐ partial · ✗ missing
 | Overview | Workflows / Credentials / Executions tabs, insight KPIs | Home: four KPI cards with coloured top bars, count-up numbers, recent executions, plugin list with brand icons | ✅ |
 | Workflows list | Cards with name, last updated, owner; folders, search, tag filter, sort, import | Rows with node icons tinted by node colour, description, tags, active badge, node count; nested folders with a breadcrumb (drag a workflow onto a folder or a breadcrumb step, or Move to folder), search across folders, tag filter, sort by updated / name / created, Import from a Landflow or n8n file with a report | ✅ |
 | Theme | Light, dark, system | Light, dark, system (Landfall tokens) | ✅ |
+| Look | — | **New** or **Classic** under the theme switch ([the look](#the-look)) | ➕ |
+
+### The look
+
+A second switch under the theme switch picks the look: **New** (the default) draws the run cards and timelines from the
+design review against blocks.diy (a run as a timeline, what a run did in one line, an approval with its evidence, team
+members as cards, the analyst answering with a chart, building step by step); **Classic** draws the screens as they were
+before them. Only the drawing changes: every feature, route and button works the same in both. The choice is kept per
+browser in `localStorage` (`landflow-look`), set on `<html data-look>` before paint so a classic page never flashes the
+new look, and read in components with `useLook()` / `useNewLook()` from `components/shell/look-toggle.tsx`. The git
+branch `design-before-blocks` keeps the code as it was before these designs.
+
+What the new look draws so far:
+
+- a run as a timeline above the Run Trace's tabs, under Running now on Home and the Executions page, and on the team page
+  while the team works ([run-trace.md](run-trace.md#a-run-as-a-timeline));
+- what a run did, in one line (in → who → out): Home's recent runs, a finished run's Run Trace, the team's last run and
+  the agent's last runs ([run-trace.md](run-trace.md#what-a-run-did-in-one-line));
+- an approval with its evidence: the member's reasons, the case, what it looked at, buttons named by the action and Edit, in
+  Needs you and on the waiting node, with a row of faces for who has something for you
+  ([run-trace.md](run-trace.md#an-approval-with-its-evidence));
+- team members as cards above the team chart ([agent-teams.md](agent-teams.md#member-cards));
+- the analyst answering with a chart: source chips, one "Looking across N sources…" line, and an answer card whose chart
+  comes from the tool results ([second-brain.md](second-brain.md#the-analyst-agent));
+- building step by step: while Spotlight builds a change, a side card ticks off its steps, the nodes it adds appear on the
+  canvas as dashed ghosts (the one being made shimmers), new connections draw dashed, and a thin bar on top of the canvas
+  shows how far the plan is; nothing changes until Apply ([assistant.md](assistant.md#building-step-by-step)).
 
 ## Canvas
 

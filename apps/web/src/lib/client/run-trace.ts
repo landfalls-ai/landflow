@@ -101,6 +101,8 @@ export interface NeedsYouRow {
   title: string;
   detail?: string;
   actor?: RunActor;
+  /** The team member it is for, when the wait names one. */
+  member?: string;
   spanId?: string;
   since: string;
 }
@@ -147,9 +149,16 @@ export function decideGate(executionId: string, decision: 'accepted' | 'sent_bac
 
 /**
  * Decide the tool calls an execution waits on (the AI Agent node's approvals). Returns false when the wait is not a tool
- * approval (a form, an approval node): the caller sends the person to the execution instead.
+ * approval (a form, an approval node): the caller sends the person to the execution instead. `onEvent` follows the resumed
+ * run's stream (the editor applies it to its canvas).
  */
-export async function decideToolApprovals(executionId: string, approved: boolean): Promise<boolean> {
+export async function decideToolApprovals(
+  executionId: string,
+  approved: boolean,
+  onEvent: (event: string, data: unknown) => void = () => {},
+  /** `input`: the tool's input as a person edited it (an approval only); it goes with the call `callId`, else the first open one. */
+  edit: { input?: Record<string, unknown>; callId?: string } = {},
+): Promise<boolean> {
   const { approval } = await api<{
     approval: {
       calls: Array<{ id: string }>;
@@ -158,6 +167,7 @@ export async function decideToolApprovals(executionId: string, approved: boolean
   }>(`/api/executions/${executionId}/approvals`);
   if (!approval) return false;
   const open = approval.calls.filter((call) => approval.decisions?.[call.id] === undefined);
-  for (const call of open) await streamEvents(`/api/executions/${executionId}/approvals`, { callId: call.id, approved }, () => {});
+  const edited = approved && edit.input ? (open.find((call) => call.id === edit.callId) ?? open[0])?.id : undefined;
+  for (const call of open) await streamEvents(`/api/executions/${executionId}/approvals`, { callId: call.id, approved, ...(edit.input && call.id === edited && { input: edit.input }) }, onEvent);
   return true;
 }

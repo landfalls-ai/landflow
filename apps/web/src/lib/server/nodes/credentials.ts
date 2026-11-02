@@ -11,7 +11,7 @@ export const openAiApiCredential = defineCredentialType({
   name: 'openAiApi',
   displayName: 'OpenAI API',
   description: 'OpenAI, or any OpenAI-compatible server: Ollama (http://127.0.0.1:11434/v1), vLLM, LM Studio, OpenRouter…',
-  icon: 'lucide:aperture',
+  icon: 'brand:openai',
   documentationUrl: 'https://platform.openai.com/api-keys',
   properties: [
     {
@@ -80,7 +80,7 @@ export const anthropicApiCredential = defineCredentialType({
   name: 'anthropicApi',
   displayName: 'Anthropic API',
   description: 'An Anthropic API key for the Anthropic Chat Model. Without one, the server’s ANTHROPIC_API_KEY or `ant` profile is used.',
-  icon: 'lucide:sparkles',
+  icon: 'brand:anthropic',
   documentationUrl: 'https://console.anthropic.com/settings/keys',
   properties: [
     { name: 'apiKey', displayName: 'API Key', type: 'string', required: true, typeOptions: { password: true } },

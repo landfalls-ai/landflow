@@ -6,13 +6,17 @@ import { cn } from '@/lib/utils';
 import { artifactShape, safeUrl } from '@/lib/shared/artifact-kinds';
 import type { FileChange, RunChanges } from '@/lib/shared/run-changes';
 import type { RunGitHub } from '@/lib/shared/run-repo';
-import { fmtMs, type RunArtifactItem, type RunCheckItem, type RunModel, type RunSpan } from '@/lib/shared/run-trace-model';
+import { fmtMs, spendLine, type RunArtifactItem, type RunCheckItem, type RunModel, type RunSpan } from '@/lib/shared/run-trace-model';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { ArtifactPreview, PREVIEWED } from './artifact-preview';
 import { ChangeDiff } from './diff-view';
+import { ConnectionList } from './connections';
 import { Avatar, ResultChip, SectionTitle, Tap, ValueBlock, clock, who } from './parts';
 import { Doc, TextBlock } from './rich-text';
+import { RerunPanel, useRunControls } from './run-controls';
+import { TeamPauseBar } from '../editor/team-pause';
+import { useNewLook } from '../shell/look-toggle';
 
 export type Open = {
   kind: 'span' | 'artifact' | 'check' | 'actor';
@@ -169,6 +173,7 @@ function SpanSheet({
   const edits = span.kind === 'tool' ? changes?.files.flatMap((f) => f.changes.filter((c) => c.spanId === span.id).map((c) => ({ file: f.path, c }))) : undefined;
   const kids = span.children.map((id) => model.spans[id]).filter((s) => s && !s.hidden);
   const attrs = Object.entries(span.attrs).filter(([k]) => k !== 'hidden');
+  const newLook = useNewLook();
   return (
     <>
       <div className="flex flex-wrap items-center gap-1.5 pb-3">
@@ -176,6 +181,12 @@ function SpanSheet({
         {span.state && <Badge tone="muted">{span.state}</Badge>}
         {(span.kind === 'delegate' || span.kind === 'handoff') && <ResultChip span={span} />}
         <Badge tone="muted">{span.kind}</Badge>
+        {/* A person changed what the tool would do before approving it (the approval card's Edit). */}
+        {newLook && span.attrs.edited === true && (
+          <Badge tone="warning" title={typeof span.attrs.editedBy === 'string' ? `Edited by ${span.attrs.editedBy}` : undefined}>
+            Edited by {typeof span.attrs.editedBy === 'string' && span.attrs.editedBy !== 'A person' ? 'you' : 'a person'}
+          </Badge>
+        )}
       </div>
       <Facts
         rows={[
@@ -204,6 +215,7 @@ function SpanSheet({
         <Value label="Came back" value={span.output} repo={repo} />
         <Value label="Error" value={span.error} tone="error" repo={repo} />
       </div>
+      {span.id !== 'run' && span.kind !== 'wait' && span.kind !== 'model' && <RerunPanel model={model} spanId={span.id} />}
       {span.checks.length > 0 && (
         <>
           <SectionTitle>Checks</SectionTitle>
@@ -338,22 +350,30 @@ function CheckSheet({
 }
 
 function ActorSheet({ id, model, open }: { id: string; model: RunModel; open: (o: Open) => void }) {
+  const controls = useRunControls();
   const s = model.actors.find((a) => a.actor.id === id);
   if (!s) return <p className="text-[13px] text-t3">Not involved yet.</p>;
   const spans = model.order.filter((x) => x.actor.id === id && !x.hidden && x.id !== 'run' && x.kind !== 'model');
   return (
     <>
+      {controls && model.live && s.actor.type === 'agent' && <TeamPauseBar executionId={controls.executionId} member={s.actor.name} className="pb-3" />}
       <Facts
         rows={[
           ['Is', s.actor.role ?? s.actor.type],
           ['Worked', s.workMs ? fmtMs(s.workMs) : undefined],
           ['Asked', s.asked ? `${s.asked} time${s.asked > 1 ? 's' : ''}` : undefined],
           ['Asked others', s.calls ? `${s.calls} time${s.calls > 1 ? 's' : ''}` : undefined],
-          ['Model', s.modelCalls ? `${s.modelCalls} calls · ${s.tokensIn.toLocaleString()} in · ${s.tokensOut.toLocaleString()} out` : undefined],
+          ['Model', spendLine(s)],
           ['Tools', s.toolCalls ? `${s.toolCalls} calls` : undefined],
           ['Messages', s.messages ? `${s.messages} sent` : undefined],
         ]}
       />
+      {s.actor.connections?.length ? (
+        <>
+          <SectionTitle>Works with · {s.actor.connections.length}</SectionTitle>
+          <ConnectionList connections={s.actor.connections} />
+        </>
+      ) : null}
       {spans.length > 0 && (
         <>
           <SectionTitle>What it did · {spans.length}</SectionTitle>
