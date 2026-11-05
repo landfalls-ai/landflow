@@ -1,0 +1,123 @@
+# The two policy engines Landflow's tool access can ask (docs/agents.md "Tool access"): Open Policy Agent and OpenFGA, side by side.
+# Use one of them: set LANDFLOW_TOOL_POLICY=opa with LANDFLOW_TOOL_POLICY_URL=http://opa:8181/v1/data/landflow/tools, or
+# LANDFLOW_TOOL_POLICY=openfga with LANDFLOW_TOOL_POLICY_URL=http://openfga:8080 and LANDFLOW_OPENFGA_STORE_ID (the store id that
+# deploy/scripts/openfga-tool-policy.sh setup prints; OPENFGA_URL points it at a port-forward). The policy below is the example of
+# deploy/tool-policy/opa; OpenFGA keeps its store in memory here, so a restart forgets it: use its Postgres datastore for a real one.
+#   kubectl --context orbstack -n landflow-dev apply -f deploy/k8s/examples/tool-policy/tool-policy.yaml
+# Not part of the base: an example, with a policy that is yours to write.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policy
+data:
+  tools.rego: |
+    package landflow.tools
+
+    import rego.v1
+
+    default result := "allow"
+
+    result := "deny" if {
+      input.tool == "refund_order"
+      not input.caller.id in data.landflow.refunders
+    }
+
+    result := "deny" if {
+      input.tool == "send_email"
+      input.caller.source in {"schedule", "telegram", "slack", "teams"}
+    }
+
+    result := "ask" if {
+      input.tool == "read_orders"
+      input.caller.source == "test"
+    }
+  data.json: |
+    { "landflow": { "refunders": ["usr_replace_with_a_landflow_user_id"] } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  labels: { app.kubernetes.io/name: opa }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: opa }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: opa }
+    spec:
+      containers:
+        - name: opa
+          image: openpolicyagent/opa@sha256:cb56d754605b3a8042f5e67671d1f54fd71a3059511e653b3d841c5d46183083
+          # The two files by name: a ConfigMap mount also holds ..data symlinks that OPA would load again as duplicate rules.
+          args: ["run", "--server", "--addr=0.0.0.0:8181", "/policy/tools.rego", "/policy/data.json"]
+          ports:
+            - { name: http, containerPort: 8181 }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: policy, mountPath: /policy, readOnly: true }
+      volumes:
+        - name: policy
+          configMap: { name: opa-policy }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+spec:
+  selector: { app.kubernetes.io/name: opa }
+  ports:
+    - { name: http, port: 8181, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openfga
+  labels: { app.kubernetes.io/name: openfga }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: openfga }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: openfga }
+    spec:
+      containers:
+        - name: openfga
+          image: openfga/openfga@sha256:efde89d24487da1a8bc37d85b61341f1fb7024943a1ded65f4b7d51a75666688
+          args: ["run"]
+          env:
+            - { name: OPENFGA_DATASTORE_ENGINE, value: memory }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openfga
+spec:
+  selector: { app.kubernetes.io/name: openfga }
+  ports:
+    - { name: http, port: 8080, targetPort: http }

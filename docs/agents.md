@@ -515,6 +515,14 @@ may do with each of the agent's tools (*may use it*, *needs approval* or *may no
 using the rules on screen (saved or not) and the engine the environment names. It builds the agent's tools and calls none
 (`POST /api/agents/:id/access/test`).
 
+**Running an engine here.** Two compose profiles in `deploy/compose.infra.yml` start one, pinned by digest and bound to
+loopback. `tool-policy-opa` serves `deploy/tool-policy/opa` (an example policy and its data, reloaded when edited) at
+`http://127.0.0.1:58181/v1/data/landflow/tools`. `tool-policy-openfga` serves OpenFGA at `http://127.0.0.1:58080` in memory;
+`deploy/scripts/openfga-tool-policy.sh setup` creates the store with the model in `deploy/tool-policy/openfga/model.json` and prints
+the variables, `grant <store> <user|*> <agent> <tool>` lets a user (or everyone) use a tool and `check` asks the question
+Landflow asks. A tool nobody was granted is denied, so grant the tools you want used. On Kubernetes,
+`deploy/k8s/examples/tool-policy/tool-policy.yaml` runs both as an example (`http://opa:8181`, `http://openfga:8080`).
+
 `LANDFLOW_TOOL_POLICY_TOKEN` is sent as a bearer token. An engine that can't be reached within 3 seconds denies the tool
 (`LANDFLOW_TOOL_POLICY_FAIL=open` allows it instead). Switching engines changes these variables and nothing else.
 
