@@ -25,6 +25,14 @@ interface Call {
   remoteWaiting: boolean;
 }
 
+/** A notice from one of the agent layers, as a Run Trace check; undefined for any other notice. */
+export function layerCheck(message: string): { name: string; status: 'pass' | 'warn'; message: string } | undefined {
+  if (message.startsWith('Tool access: ')) return { name: 'Tool access', status: 'warn', message: message.slice('Tool access: '.length) };
+  if (message.startsWith('Routed to ')) return { name: 'Model router', status: 'pass', message };
+  if (message.startsWith('Answered from the response cache')) return { name: 'Response cache', status: 'pass', message };
+  return undefined;
+}
+
 export interface AgentJournal {
   (entry: TimelineEntry): void;
   /** The span a tool call of this session is recorded under, once its entry was journaled. */
@@ -68,6 +76,15 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
           check: { name: `${entry.stage === 'input' ? 'Input' : 'Output'} guardrail`, status: entry.action === 'blocked' ? 'fail' : 'warn', message: found || (entry.action === 'blocked' ? 'Blocked' : 'Sanitized'), subject: agent.name, source: 'builtin', evidence: { action: entry.action, violations: entry.violations.map((v) => ({ ...v })) } },
           at: entry.at,
         });
+        return;
+      }
+      if (entry.type === 'notice') {
+        // The layers' decisions (docs/agents.md "Layers") as checks: who may use which tool, which model answered, what the cache did.
+        const layer = layerCheck(entry.message);
+        if (layer && !guardrails.has(entry.id)) {
+          guardrails.add(entry.id);
+          record({ type: 'check', spanId: parent, check: { ...layer, subject: agent.name, source: 'builtin' }, at: entry.at } as never);
+        }
         return;
       }
       if (entry.type !== 'tool' || entry.kind === 'flow') return;

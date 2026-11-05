@@ -47,7 +47,7 @@ OTel trace id when telemetry recorded one, and a step's own span id in `attrs.ot
   a call are kept as spans; the totals count all of them. (Before 2026-11-01 an A2A Agent node on the canvas kept its progress as a text
   note and its output cut whole, so those runs show none of its steps or files.)
 - **Landflow agents** started by Run an Agent write their turns, tool calls and sub-agent requests under that node's
-  span (`journal/agent-session.ts`). A guardrail that blocked or sanitized a turn becomes a check.
+  span (`journal/agent-session.ts`). A guardrail that blocked or sanitized a turn becomes a check, and so does each decision of the agent layers (docs/agents.md): a tool withheld or put behind approval for the caller (*Tool access*, a warning), the model router sending the request to the cheap model (*Model router*) and an answer from the response cache (*Response cache*).
 - **People**: approving or rejecting a tool call (from the web, Slack or email) is a message in the wait it answers.
   So is answering a Run report's gate.
 - **Plugins** in every SDK report artifacts and checks (below).
