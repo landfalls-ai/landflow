@@ -226,6 +226,7 @@ transport and Valkey Cluster settings).
 | `36518d2` | Design: a team node shows who is on it (new look): before a run the members after the lead and the last run's outcome, in place of the strip; slots read Lead's model / memory / tools (NodeTile `slotNames`). |
 | `fe9230a` | The team node's last run says what Home and the Run Trace say: the run line's outcome, time and tokens (the whole run, a wait for a person included) instead of the team step's own time. |
 | (this change) | History rows for the team node's last-run fix. |
+| (voice) | Voice, step 1: a microphone in Spotlight records, `POST /api/assistant/transcribe` turns it into text through an OpenAI-compatible speech-to-text server (`LANDFLOW_STT_*`), and the text lands in the box to edit. Push-to-talk only; no spoken replies yet. |
 
 ## What is next
 

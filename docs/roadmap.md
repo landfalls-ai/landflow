@@ -1101,5 +1101,5 @@ The follow-ups above are candidates, among them making a runbook automatically w
 
 ## Not planned
 
-Later, maybe: browser use, an agent code sandbox, voice, and prompt management. Not planned:
+Later, maybe: browser use, an agent code sandbox, spoken replies and realtime voice (dictation into Spotlight is built), and prompt management. Not planned:
 RPA, process mining, an app builder, and a chat hub (n8n is retiring its own).
