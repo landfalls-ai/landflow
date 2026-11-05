@@ -303,6 +303,37 @@ describe('agent versions', () => {
     expect(agentStore.summaries().find((s) => s.id === agent.id)?.draftChanged).toBe(true);
     expect(agentStore.unpublish(agent.id)!.published).toBeUndefined();
   });
+
+  it('restores an earlier version into the draft without publishing it, and names what changed', async () => {
+    const { diffConfigs } = await import('@/lib/shared/agents');
+    const { configOf } = await import('@/lib/server/agents/store');
+    const agent = makeAgent({ instructions: 'first' });
+    agentStore.publish(agent.id);
+    agentStore.saveDraft(agent.id, { instructions: 'second', description: 'changed' });
+    const v2 = agentStore.publish(agent.id)!;
+    expect(diffConfigs(v2.history[1]!.config, v2.history[0]!.config).map((c) => c.field)).toEqual(['description', 'instructions']);
+
+    const restored = agentStore.restore(agent.id, 1)!;
+    expect(restored.instructions).toBe('first');
+    expect(restored.published?.version).toBe(2);
+    expect(diffConfigs(configOf(restored), v2.history[1]!.config)).toEqual([]);
+    expect(agentStore.restore(agent.id, 99)).toBeUndefined();
+  });
+
+  it('restores a version that lacked the optional parts without keeping the draft\'s cache, router or access rules', () => {
+    const agent = makeAgent({ instructions: 'plain' });
+    agentStore.publish(agent.id);
+    agentStore.saveDraft(agent.id, {
+      cache: { enabled: true, ttlSeconds: 60 },
+      router: { mode: 'auto', maxChars: 100, allowTools: false, cheapModel: { provider: 'ollama', model: 'small' } },
+      access: { rules: [{ id: 'r', tool: '*', who: {}, effect: 'deny' }] },
+    });
+    expect(agentStore.get(agent.id)!.cache).toBeDefined();
+    const restored = agentStore.restore(agent.id, 1)!;
+    expect(restored.cache).toBeUndefined();
+    expect(restored.router).toBeUndefined();
+    expect(restored.access).toBeUndefined();
+  });
 });
 
 describe('agent nodes', () => {

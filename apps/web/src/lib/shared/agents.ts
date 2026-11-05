@@ -4,6 +4,9 @@
  */
 import type { AgentMessage } from '@landflow/engine';
 import type { GuardrailsConfig, Replacement } from '../server/guardrails';
+import type { AgentAccess } from './agent-access';
+import type { AgentCache } from './agent-cache';
+import type { AgentRouter } from './agent-router';
 import type { AgentFace } from './faces';
 
 export type { AgentMessage };
@@ -290,6 +293,12 @@ export interface AgentConfig {
   memory: { crossSession: boolean };
   settings: AgentSettings;
   guardrails?: AgentGuardrails;
+  /** Which model answers: the agent's own, or a cheaper one for easy requests (shared/agent-router.ts). Absent = always the agent's own. */
+  router?: AgentRouter;
+  /** Answer a repeated question from a stored answer (shared/agent-cache.ts). Absent = off. */
+  cache?: AgentCache;
+  /** Which tools which callers may use (shared/agent-access.ts). Absent = every caller may use every tool. */
+  access?: AgentAccess;
   /**
    * Claude Code plugins from the added marketplaces, as `<plugin>@<marketplace>`: on kagent's Claude Code runtime, Claude
    * Code loads each whole (its agents, skills, commands, hooks and MCP servers). Other runtimes don't use them.
@@ -480,6 +489,47 @@ export const PLUGIN_ID = /^[^@\s]+@[^@\s]+$/;
 export function cleanPlugins(plugins: string[] | undefined): string[] | undefined {
   const kept = [...new Set((plugins ?? []).map((id) => id.trim()).filter((id) => PLUGIN_ID.test(id)))];
   return kept.length ? kept : undefined;
+}
+
+/** One part of an agent's config that two versions disagree on. */
+export interface ConfigChange {
+  field: string;
+  label: string;
+  before: string;
+  after: string;
+}
+
+const DIFF_FIELDS: Array<[keyof AgentConfig, string]> = [
+  ['name', 'Name'],
+  ['description', 'Description'],
+  ['model', 'Model'],
+  ['persona', 'Persona'],
+  ['instructions', 'Instructions'],
+  ['skills', 'Skills'],
+  ['tools', 'Tools'],
+  ['schedules', 'Schedules'],
+  ['channels', 'Channels'],
+  ['memory', 'Memory'],
+  ['settings', 'Limits'],
+  ['guardrails', 'Guardrails'],
+  ['router', 'Router'],
+  ['cache', 'Response cache'],
+  ['access', 'Tool access'],
+  ['plugins', 'Plugins'],
+  ['team', 'Team'],
+];
+
+const show = (value: unknown): string => (value === undefined ? '' : typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+
+/** The fields that differ between two configs, for the version history's "what changed". Look (icon, color, avatar) is left out. */
+export function diffConfigs(before: AgentConfig, after: AgentConfig): ConfigChange[] {
+  const changes: ConfigChange[] = [];
+  for (const [field, label] of DIFF_FIELDS) {
+    const a = show(before[field]);
+    const b = show(after[field]);
+    if (a !== b) changes.push({ field, label, before: a, after: b });
+  }
+  return changes;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = { maxIterations: 12, toolConcurrency: 5, sessionTokenBudget: 0, maxDelegationDepth: 2 };

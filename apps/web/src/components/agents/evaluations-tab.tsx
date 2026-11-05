@@ -15,6 +15,7 @@ import { OnlineEvalPanel, type OnlineEvalPatch } from '../evaluations/online-eva
 import { Button } from '../ui/button';
 import { Popover } from '../ui/popover';
 import { Section } from './dialog';
+import { EvalGateCard } from './eval-gate-card';
 
 function GradeSession({ agentId, onGraded }: { agentId: string; onGraded: () => void }) {
   const [sessions, setSessions] = useState<SessionSummary[]>();
@@ -97,6 +98,8 @@ export function EvaluationsTab({ agentId }: { agentId: string }) {
   };
 
   return (
+    <div className="space-y-6">
+    <EvalGateCard agentId={agentId} />
     <Section
       icon={<Gauge className="size-4" />}
       title="Online evaluations"
@@ -113,5 +116,6 @@ export function EvaluationsTab({ agentId }: { agentId: string }) {
         />
       )}
     </Section>
+    </div>
   );
 }

@@ -1,0 +1,77 @@
+# agentgateway as an LLM gateway in the cluster: one OpenAI-compatible endpoint (http://llm-gateway:3000/v1) in front of the
+# models, so the agents' model setting never names a provider. The config is the same file the compose profile runs
+# (deploy/llm-gateway/config.yaml); here Ollama is the one the OrbStack host runs, reached as host.internal.
+# Apply it next to Landflow, in its namespace:
+#   kubectl --context orbstack -n landflow-dev apply -f deploy/k8s/examples/llm-gateway/llm-gateway.yaml
+# Then give an agent an OpenAI model with the base URL http://llm-gateway:3000/v1 and the model name `ollama/qwen3.8`.
+# Not part of the base: it is an example, and the models it lists are yours to choose.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-gateway
+data:
+  config.yaml: |
+    # yaml-language-server: $schema=https://agentgateway.dev/schema/config
+    config:
+      adminAddr: "0.0.0.0:15000"
+      logging:
+        level: info
+    llm:
+      port: 3000
+      models:
+        - name: "ollama/qwen3.8"
+          provider: ollama
+          params:
+            model: qwen3.8:latest
+            baseUrl: http://host.internal:11434/v1
+        - name: "ollama/qwen3-coder"
+          provider: ollama
+          params:
+            model: qwen3-coder:30b
+            baseUrl: http://host.internal:11434/v1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-gateway
+  labels: { app.kubernetes.io/name: llm-gateway }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: llm-gateway }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: llm-gateway }
+    spec:
+      containers:
+        - name: gateway
+          image: cr.agentgateway.dev/agentgateway:v1.6.0@sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+          args: ["-f", "/config/config.yaml"]
+          ports:
+            - { name: llm, containerPort: 3000 }
+            - { name: admin, containerPort: 15000 }
+          readinessProbe:
+            httpGet: { path: /healthz/ready, port: 15021 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: llm-gateway }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-gateway
+spec:
+  selector: { app.kubernetes.io/name: llm-gateway }
+  ports:
+    - { name: llm, port: 3000, targetPort: llm }

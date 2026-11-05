@@ -20,6 +20,9 @@ export function useDictation(onText: (text: string) => void) {
   const recorder = useRef<MediaRecorder | null>(null);
   const cancelled = useRef(false);
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  /** A start is under way (the microphone prompt may still be open): a second click must not open a second recorder. */
+  const starting = useRef(false);
+  const elapsed = useRef(0);
   const callback = useRef(onText);
   callback.current = onText;
 
@@ -39,13 +42,18 @@ export function useDictation(onText: (text: string) => void) {
   }, [stop]);
 
   const start = useCallback(async () => {
+    if (starting.current || recorder.current) return;
     setError('');
     if (!dictationSupported()) return setError('This browser can’t record audio');
+    starting.current = true;
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
+      starting.current = false;
       return setError('Allow the microphone to dictate');
+    } finally {
+      starting.current = false;
     }
     const mimeType = TYPES.find((t) => MediaRecorder.isTypeSupported(t));
     const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
@@ -71,13 +79,13 @@ export function useDictation(onText: (text: string) => void) {
     };
     recorder.current = rec;
     rec.start();
+    elapsed.current = 0;
     setSeconds(0);
     setState('recording');
     timer.current = setInterval(() => {
-      setSeconds((s) => {
-        if (s + 1 >= MAX_SECONDS) stop();
-        return s + 1;
-      });
+      elapsed.current += 1;
+      setSeconds(elapsed.current);
+      if (elapsed.current >= MAX_SECONDS) stop();
     }, 1000);
   }, [stop]);
 

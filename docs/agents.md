@@ -399,6 +399,155 @@ Only one run can be active per session.
   latest report from `GET /api/executions/:id` (`progress`) and then the live `node.progress`
   events ([a2a.md](a2a.md#the-a2a-agent-node)).
 
+## Version history and restore
+
+Each publish snapshots the agent as a version (the last 20 are kept). The builder's **Publish** menu lists them
+with **Changed:**, the fields that differ from the version before (name, model, persona, instructions, tools,
+limits and so on; the look is left out). **Restore** copies a version into the draft and publishes nothing, so you
+can read it, test it and publish it as a new version. `POST /api/agents/:id/restore { version }`.
+
+## Layers
+
+The top of **Abilities** is a checklist of the layers around the agent's model, in the order a request passes through
+them: **system prompt**, **knowledge**, **tools**, **tool access**, **guardrails**, **model router**, **cache**,
+**evals** and **traces**. Each shows what is set (or why it matters), and **Set up** opens the tab and scrolls to the
+setting. A layer that cannot apply is greyed out (no tools means nothing to restrict; the response cache skips agents with
+tools or memory; the prompt cache is on by default for Anthropic). The score ("6 of 8") counts the layers that apply.
+It reads the draft's config and the number of eval test cases, so it needs no component of its own
+(`lib/shared/agent-layers.ts`).
+
+## Model router
+
+**Abilities → Model router** sends short, simple requests to a cheaper model and keeps the agent's own model for
+everything else. Switch it on, choose the cheap model (any provider the agent could use: a local Ollama model, or an
+OpenAI-compatible gateway through an OpenAI credential), and set what "easy" means:
+
+- a message of at most **N characters** (default 400, up to 20,000);
+- the agent has **no tools**, unless **Also when the agent has tools** is on (a small model calls tools less reliably);
+- a resumed run (after an approval) and a run in a workflow's Run an Agent node that brings its own model always use the
+  agent's own model.
+
+The choice is made once per run, from the message, by a plain rule with no model call, so it is predictable. When the
+cheap model answers, the session shows a notice (`Routed to <model>: short request (31 characters)`). The router is part
+of the agent's config: it is versioned, diffed (**Changed: Router**), exported and restored like the rest. The code is
+`lib/shared/agent-router.ts` (the rule) and one line in `lib/server/agents/runtime.ts`.
+
+Because the cheap model is just a model setting, the components behind it are swappable: point it at Ollama today and at
+a gateway (agentgateway, LiteLLM, OpenRouter) tomorrow without touching the agent.
+
+**An LLM gateway.** `deploy/llm-gateway/config.yaml` runs agentgateway (the data plane the MCP gateway already uses, and the
+one kgateway's own docs recommend now that its Envoy-based AI Gateway is deprecated) as one OpenAI-compatible endpoint in
+front of the models: `docker compose -p landflow-infra -f deploy/compose.infra.yml --profile llm-gateway up -d llm-gateway`
+serves `http://127.0.0.1:54100/v1` (admin UI on 55100). Make an **OpenAI API** credential with that base URL and no key, and an
+agent (or the router's cheap model) with the OpenAI provider and a model name from the config (`ollama/qwen3.8`). Each model
+the gateway offers is one entry in its config; the agent never names a provider. On Kubernetes,
+`deploy/k8s/examples/llm-gateway/llm-gateway.yaml` is the same gateway as a ConfigMap, Deployment and Service
+(`http://llm-gateway:3000/v1`).
+
+## Prompt cache
+
+Agents on an Anthropic model mark their system prompt and last tool as cache breakpoints (`cache_control: ephemeral`),
+so an agent loop that resends the same prefix on every iteration pays the cached-read price for it. It is always on for
+agents (it changes no answer); a prefix under the model's minimum length is simply not cached. The cached tokens show in
+the session's usage, the cost ledger prices them (Settings → AI prices has the cache read and write prices) and Run Trace
+shows them. Other chat model nodes are unchanged. OpenAI-compatible providers cache automatically on their side, and an
+agent deployed to kagent gets whatever its runtime does: kagent itself only reports `cachedInputTokens`, and has no
+response or semantic cache.
+
+## Response cache
+
+**Abilities → Response cache** answers a question asked again, word for word, from a stored answer with no model call.
+Switch it on and choose how long an answer is kept (10 seconds to 30 days, default an hour). Case and runs of spaces are
+ignored; nothing else is, so "hours?" and "opening hours?" are different questions, unless the semantic cache below is on.
+**Similar questions.** Switch on **Also answer questions that mean the same** and a question with no word-for-word match
+is embedded (an Ollama embedding model, `nomic-embed-text` by default, on the agent's Ollama server or `OLLAMA_URL`) and
+compared with the stored ones; the closest at or above the threshold (0.7 to 0.99, default 0.92, higher is stricter)
+answers, and the session says which question it was like and how alike (`similar to "…", 92% alike`). The same
+conditions apply as for the exact cache (an answer the router's cheap model gave is not stored, and the eval gate's runs neither read nor fill the cache), and an edit to the persona, model or guardrails starts a fresh cache. If the
+embedding model can't be reached the run goes on with the agent's own model and a notice says so. The store is a
+`SemanticStore` and the embedder a function (`lib/server/agents/semantic-cache.ts`), so a vector database or another
+embedding model can replace either without touching the runtime.
+
+The Insights page adds an **Agent layers** card with the same numbers for every agent over the chosen period, and an
+**Estimated saved** tile, also shown as "saving about $x" on each card's line. It is an estimate from the price table
+(Settings → AI prices): for each answer the router's cheap model gave, what the agent's own model would have charged for the
+same tokens less what the cheap one charged (a local model costs nothing), and for each cache answer the average cost of the
+agent's own answers in the same sessions. With no price for the agent's model, or no answers of its own to average, the
+figure is zero and is not shown.
+
+The card, like the Model router's, ends with a line such as "Of the last 40 requests, 12 (30%) were answered from the
+cache", counted from the notices in the agent's newest 200 sessions (`GET /api/agents/:id/layer-stats`).
+
+A run is cached only when its answer depends on nothing but the question and the agent's config:
+
+- it is the **first message** of a session (a later turn depends on the conversation);
+- the agent has **no tools** (a tool answer may depend on live data);
+- **cross-session memory** is off;
+- no workflow or team supplies its own model or tools.
+
+The key is a hash of the agent, its answer-shaping config (model, persona, instructions, skills, tools, guardrails,
+router, plugins) and the question, so editing any of them starts a fresh cache; a version published earlier keeps its own
+answers. A hit shows as a notice in the session (`Answered from the response cache: no model call.`) and uses no tokens.
+The answer stored is the one the person got, after the output guardrail. The card shows how many answers are kept and how
+often they were served again, with **Clear**; `GET/DELETE /api/agents/:id/cache`. Answers (at most 1,000 per agent) live
+in `agent_response_cache` (migration 2043) behind the `ResponseCache` interface in
+`lib/server/agents/response-cache.ts`, so the database adapter can be replaced by Valkey or a gateway's cache.
+
+## Tool access
+
+**Abilities → Tool access** decides which callers may use which tools, so one agent can read for everyone and refund
+only for admins. Each rule names a **tool** (as the model sees it, or `*`), **who** it is for (a role, one user's id, a
+source such as the test chat, a schedule, Telegram, Slack, a workflow or the API; every field given must match) and an
+**effect**: *may use it*, *needs approval* or *may not use it*. The first rule that matches decides; a tool no rule
+matches is allowed, so an agent without rules behaves exactly as before.
+
+The check runs once at the start of a run, before the model sees any tool. A denied tool is withheld (the session shows
+`<tool> is not available to you`), and an *ask* tool is offered behind the approval flow that already exists (so in a
+schedule or workflow, where nobody can approve, it is refused). The caller is the session's user; a role is known only for
+a person signed in to Landflow (`owner`, `admin` or `member`).
+
+**External policy engines.** The rules are the default adapter of a small port (`lib/server/agents/policy.ts`). Set
+`LANDFLOW_TOOL_POLICY` to ask an engine too, and the most restrictive answer of the rules and the engine wins:
+
+| `LANDFLOW_TOOL_POLICY` | Needs | Asks |
+|---|---|---|
+| `rules` (default) | nothing | only the agent's own rules |
+| `opa` | `LANDFLOW_TOOL_POLICY_URL`, the rule's data URL (for example `http://opa:8181/v1/data/landflow/tools/result`; a package URL such as `.../landflow/tools` also works, the nested `result` is read) | `POST { input: { caller, agentId, tool, kind } }`; the `result` may be `allow`, `ask`, `deny` or a boolean |
+| `openfga` | `LANDFLOW_TOOL_POLICY_URL` (the server) and `LANDFLOW_OPENFGA_STORE_ID` | `POST /stores/<id>/check` with `user:<id>` `can_use` `tool:<agentId>/<tool>`; no means deny |
+
+**Try a caller.** Under the rules, **What can they do?** takes a user id, a role and a source and shows what that caller
+may do with each of the agent's tools (*may use it*, *needs approval* or *may not use it*, with the engine's reason),
+using the rules on screen (saved or not) and the engine the environment names. It builds the agent's tools and calls none
+(`POST /api/agents/:id/access/test`).
+
+**Running an engine here.** Two compose profiles in `deploy/compose.infra.yml` start one, pinned by digest and bound to
+loopback. `tool-policy-opa` serves `deploy/tool-policy/opa` (an example policy and its data, reloaded when edited) at
+`http://127.0.0.1:58181/v1/data/landflow/tools`. `tool-policy-openfga` serves OpenFGA at `http://127.0.0.1:58080` in memory;
+`deploy/scripts/openfga-tool-policy.sh setup` creates the store with the model in `deploy/tool-policy/openfga/model.json` and prints
+the variables, `grant <store> <user|*> <agent> <tool>` lets a user (or everyone) use a tool and `check` asks the question
+Landflow asks. A tool nobody was granted is denied, so grant the tools you want used. On Kubernetes,
+`deploy/k8s/examples/tool-policy/tool-policy.yaml` runs both as an example (`http://opa:8181`, `http://openfga:8080`).
+
+`LANDFLOW_TOOL_POLICY_TOKEN` is sent as a bearer token. An engine that can't be reached within 3 seconds denies the tool
+(`LANDFLOW_TOOL_POLICY_FAIL=open` allows it instead). Switching engines changes these variables and nothing else.
+
+## Eval gate
+
+The **Evaluations** tab starts with **Eval gate**: questions the agent must keep answering well, each with an
+optional expected answer. **Run on the draft** asks the agent every case (approvals denied, on sessions that are
+deleted afterwards, so they never show in Sessions or reach online grading) and an LLM judge scores each reply 1–5:
+*correctness* against the expected answer, or *helpfulness* when there is none. The judge is the online-grading judge
+model, else the agent's own.
+
+**Publish** runs the same check when the agent has cases. The publish is held (409, with the verdict and the run) when
+the draft averages under 3 / 5, or more than 0.5 under the published version's last average. The builder says why and
+offers **Publish anyway** (`{ "skipEval": true }`). A publish that passes saves its run as the new version's baseline;
+a first publish is held only by the 3 / 5 floor. An agent without cases publishes as before.
+
+Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
+published version). Cases (at most 50 per agent) and the last 30 runs live in `agent_eval_cases` and
+`agent_eval_runs` (migration 2042); deleting the agent removes them.
+
 ## Evaluations
 
 The **Evaluations** tab grades the agent's conversations online, with an LLM judge:

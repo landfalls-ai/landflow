@@ -27,7 +27,7 @@ export function AutoTextarea({ className, value, ...props }: TextareaHTMLAttribu
   return <Textarea ref={ref} value={value} className={cn('resize-none overflow-y-auto', className)} {...props} />;
 }
 
-function ModelPicker({ model, onChange }: { model: AgentModel; onChange: (patch: Partial<AgentModel>) => void }) {
+export function ModelPicker({ model, onChange }: { model: AgentModel; onChange: (patch: Partial<AgentModel>) => void }) {
   const [options, setOptions] = useState<ModelOption[]>([]);
   const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [error, setError] = useState<string>();

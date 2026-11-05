@@ -120,7 +120,11 @@ export function anthropicUsage(usage: { input_tokens: number; output_tokens: num
   };
 }
 
-export function anthropicModel(options: { model: string; effort: Effort; maxTokens: number; fallback: boolean; apiKey?: string; baseUrl?: string; credentialId?: string }): LanguageModel {
+/**
+ * `promptCache` marks the system prompt and the last tool as cache breakpoints (Anthropic's `cache_control`), so an agent loop that
+ * resends the same prefix on every iteration pays the cached-read price for it. Prompts under the model's minimum are simply not cached.
+ */
+export function anthropicModel(options: { model: string; effort: Effort; maxTokens: number; fallback: boolean; apiKey?: string; baseUrl?: string; credentialId?: string; promptCache?: boolean }): LanguageModel {
   let client: Anthropic;
   try {
     // A selected Anthropic credential wins; otherwise the SDK resolves ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or an `ant auth login` profile.
@@ -149,13 +153,14 @@ export function anthropicModel(options: { model: string; effort: Effort; maxToke
     const params = {
       model: options.model,
       max_tokens: options.maxTokens,
-      ...(system && { system }),
+      ...(system && { system: options.promptCache ? [{ type: 'text' as const, text: system, cache_control: { type: 'ephemeral' as const } }] : system }),
       messages: toAnthropicMessages(messages),
       ...(tools.length && {
-        tools: tools.map((tool: ToolSpec) => ({
+        tools: tools.map((tool: ToolSpec, index) => ({
           name: tool.name,
           description: tool.description,
           input_schema: tool.inputSchema as Anthropic.Beta.BetaTool.InputSchema,
+          ...(options.promptCache && index === tools.length - 1 && { cache_control: { type: 'ephemeral' as const } }),
         })),
       }),
       output_config: { effort: options.effort },

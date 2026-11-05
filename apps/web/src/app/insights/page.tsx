@@ -20,6 +20,7 @@ import { change, formatMinutes, formatRate, formatRunTime } from '@/components/i
 import { FAILED_COLOR, RunsChart, SUCCEEDED_COLOR } from '@/components/insights/runs-chart';
 import { BrainPanel } from '@/components/brain/brain-panel';
 import { WorkflowTable } from '@/components/insights/workflow-table';
+import { AgentLayersCard } from '@/components/insights/agent-layers-card';
 
 const PERIODS: { value: InsightsPeriod; label: string; previous: string; days: number }[] = [
   { value: '24h', label: '24 hours', previous: 'previous 24 hours', days: 1 },
@@ -185,6 +186,8 @@ export default function InsightsPage() {
           )}
           <CostKpi key={`cost-${period}`} usage={shownUsage} index={KPIS.length} />
         </div>
+
+        <AgentLayersCard days={meta.days} label={meta.label} />
 
         <Card className="px-4 pb-3 pt-3.5">
           <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">

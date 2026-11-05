@@ -19,13 +19,18 @@ import type {
   TokenUsage,
 } from '../../shared/agents';
 import { agentScope, isUsageCapError, runInUsageScope } from '../ai-usage';
-import { currentActorId } from '../auth/context';
+import { currentActorId, requestAuth } from '../auth/context';
+import { applyToolPolicy } from './policy';
 import { bus } from '../bus';
 import { notifyApprovalEmails } from '../approval-email';
 import { singleton } from '../singleton';
 import { activeTraceIds, logger, recordAgentTokens, recordApproval, traceAgentRun, traceToolCall, traceUrl } from '../telemetry';
 import { applyGuardrail, guardrailEntry, ruleActive } from './guardrails';
 import { agentSessionJournal } from '../journal/agent-session';
+import { uncacheable } from '../../shared/agent-cache';
+import { chooseTier } from '../../shared/agent-router';
+import { cacheKey, responseCache } from './response-cache';
+import { configHash, embedderFor, semanticCache } from './semantic-cache';
 import { agentModel } from './models';
 import { personaPrompt } from '../../shared/persona';
 import { agentStore, configOf } from './store';
@@ -298,15 +303,32 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   async function loop(): Promise<{ reason: RunEndReason; reply?: string }> {
     let model;
     let toolset;
+    /** Tools the agent has before the access policy: the response cache looks at these, so a caller denied every tool can't fill it for one who may use them. */
+    let toolsOffered = 0;
+    let accessNotes: string[] = [];
+    /** The router sent this run to the cheap model: its answer is not stored, so the agent's own model still answers the same question later. */
+    let routedToCheap = false;
     try {
-      model = request.flow?.model ?? (await agentModel(config.model));
       toolset = await buildToolset(agent, config, request.flow?.tools);
       if (request.team?.tools.length) toolset = { ...toolset, tools: dedupe([...toolset.tools, ...request.team.tools]) };
+      toolsOffered = toolset.tools.length;
+      // Tool access by caller: tools this caller may not use are withheld; some may need a person's approval for them.
+      const role = requestAuth()?.principal?.user.id === session.userId ? requestAuth()?.principal?.user.role : undefined;
+      const access = await applyToolPolicy(toolset.tools, { agentId: agent.id, caller: { id: session.userId, ...(role && { role }), source: session.source }, access: config.access, ...(request.signal && { signal: request.signal }) });
+      toolset = { ...toolset, tools: access.tools };
+      accessNotes = access.notes;
+      // The model router: a short, simple request goes to the cheap model. A workflow's own model (Run an Agent) always wins.
+      const route = request.flow?.model ? undefined : chooseTier(config.router, { ...(request.message !== undefined && { message: request.message }), toolCount: toolset.tools.length });
+      const cheap = route?.tier === 'cheap' ? config.router?.cheapModel : undefined;
+      model = request.flow?.model ?? (await agentModel(cheap ?? config.model));
+      if (cheap) routedToCheap = true;
+      if (cheap) upsert({ id: entryId(), type: 'notice', message: `Routed to ${cheap.model}: ${route?.reason}`, at: now() });
     } catch (error) {
       upsert({ id: entryId(), type: 'error', message: (error as Error).message, at: now() });
       return { reason: 'error' };
     }
     for (const note of toolset.unavailable) upsert({ id: entryId(), type: 'notice', message: `Tool unavailable: ${note}`, at: now() });
+    for (const note of accessNotes) upsert({ id: entryId(), type: 'notice', message: `Tool access: ${note}`, at: now() });
     const byName = new Map(toolset.tools.map((t) => [t.name, t]));
     const toolNote = request.team ? toolsInRun(toolset.tools) : undefined;
     const specs = toolset.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
@@ -345,6 +367,41 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       if (stopped !== undefined) {
         session.messages.push({ role: 'assistant', text: stopped, toolCalls: [] });
         return { reason: 'completed', reply: stopped };
+      }
+    }
+
+    // The response cache: a repeated question, word for word, gets the stored answer with no model call. Only a first message to an
+    // agent without tools or memory is eligible (shared/agent-cache.ts), so the answer depends on nothing but the question and the config.
+    const first = session.messages[0];
+    const question = request.message !== undefined && first?.role === 'user' && typeof first.content === 'string' ? first.content : undefined;
+    const skip = session.userId === 'evaluation' ? 'it is an evaluation run (the eval gate must ask the model, and must not fill the cache)' : question === undefined ? 'it is a resumed run' : uncacheable({ cache: config.cache, messageCount: session.messages.length, toolCount: toolsOffered, memory: config.memory.crossSession, borrowed: Boolean(request.flow || request.team) });
+    const cacheId = question !== undefined && !skip ? cacheKey(agent.id, config, question) : undefined;
+    let questionVector: number[] | undefined;
+    if (cacheId) {
+      const stored = responseCache.get(cacheId);
+      if (stored !== undefined) {
+        session.messages.push({ role: 'assistant', text: stored, toolCalls: [] });
+        upsert({ id: entryId(), type: 'notice', message: 'Answered from the response cache: no model call.', at: now() });
+        upsert({ id: entryId(), type: 'assistant', text: stored, at: now(), model: 'response cache' });
+        return { reason: 'completed', reply: stored };
+      }
+      // Nothing word for word: a stored question that means the same may answer (an embedding model failing only skips this).
+      const semantic = config.cache?.semantic;
+      if (semantic?.enabled && question !== undefined) {
+        try {
+          questionVector = await embedderFor(semantic)(question, request.signal);
+          const similar = semanticCache.find(agent.id, configHash(agent.id, config), questionVector, semantic.threshold);
+          if (similar) {
+            session.messages.push({ role: 'assistant', text: similar.reply, toolCalls: [] });
+            upsert({ id: entryId(), type: 'notice', message: `Answered from the response cache: no model call (similar to "${similar.question.slice(0, 80)}", ${Math.round(similar.similarity * 100)}% alike).`, at: now() });
+            upsert({ id: entryId(), type: 'assistant', text: similar.reply, at: now(), model: 'response cache' });
+            return { reason: 'completed', reply: similar.reply };
+          }
+        } catch (caught) {
+          if (request.signal?.aborted) return { reason: 'canceled' };
+          questionVector = undefined;
+          upsert({ id: entryId(), type: 'notice', message: `Similar-question cache skipped: ${(caught as Error).message}`, at: now() });
+        }
       }
     }
 
@@ -404,6 +461,11 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           session.messages.push({ role: 'user', content: nudge });
           upsert({ id: entryId(), type: 'notice', message: nudge, at: now() });
           continue;
+        }
+        // Store the answer the person got (after the output guardrail), unless the run left the first turn (a nudge sent it round again).
+        if (cacheId && !routedToCheap && answer.trim() && config.cache && session.messages.length === 2) {
+          responseCache.set(agent.id, cacheId, answer, config.cache.ttlSeconds);
+          if (questionVector && question !== undefined) semanticCache.add({ agentId: agent.id, configHash: configHash(agent.id, config), question, reply: answer, vector: questionVector, ttlSeconds: config.cache.ttlSeconds });
         }
         return { reason: 'completed', reply: answer };
       }
