@@ -12,6 +12,7 @@ import type { AgentConfig } from '@/lib/shared/agents';
 import { Button } from '../ui/button';
 import { Input, Select } from '../ui/inputs';
 import { Field, Section, ToggleRow } from './dialog';
+import { LayerStatsLine } from './layer-stats-line';
 import type { UpdateConfig } from './util';
 
 const UNITS = [
@@ -80,6 +81,7 @@ export function CacheCard({ agentId, config, update }: { agentId: string; config
             Clear
           </Button>
         </div>
+        <LayerStatsLine agentId={agentId} kind="cached" />
       </div>
     </Section>
   );

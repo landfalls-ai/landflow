@@ -745,7 +745,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
                   <ModelCard config={draft} update={update} />
                 </div>
                 <div id="section-router" className="scroll-mt-20">
-                  <RouterCard config={draft} update={update} />
+                  <RouterCard agentId={agentId} config={draft} update={update} />
                 </div>
                 <div id="section-cache" className="scroll-mt-20">
                   <CacheCard agentId={agentId} config={draft} update={update} />

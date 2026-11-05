@@ -8,10 +8,11 @@ import { DEFAULT_ROUTER, ROUTER_MAX_CHARS_LIMIT, type AgentRouter } from '@/lib/
 import type { AgentConfig, AgentModel } from '@/lib/shared/agents';
 import { Input, Select } from '../ui/inputs';
 import { Field, Section, ToggleRow } from './dialog';
+import { LayerStatsLine } from './layer-stats-line';
 import { ModelPicker } from './model-card';
 import { DEFAULT_OLLAMA_URL, PROVIDERS, type UpdateConfig } from './util';
 
-export function RouterCard({ config, update }: { config: AgentConfig; update: UpdateConfig }) {
+export function RouterCard({ agentId, config, update }: { agentId: string; config: AgentConfig; update: UpdateConfig }) {
   const router: AgentRouter = config.router ?? DEFAULT_ROUTER;
   const set = (patch: Partial<AgentRouter>) => update((c) => ({ ...c, router: { ...(c.router ?? DEFAULT_ROUTER), ...patch } }));
   const cheap = router.cheapModel;
@@ -70,6 +71,7 @@ export function RouterCard({ config, update }: { config: AgentConfig; update: Up
             {!cheap?.model && <p className="text-[12px] text-t3">Choose the cheap model to switch routing on.</p>}
           </>
         )}
+        <LayerStatsLine agentId={agentId} kind="routed" />
       </div>
     </Section>
   );

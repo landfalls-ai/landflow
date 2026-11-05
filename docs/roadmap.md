@@ -1104,8 +1104,8 @@ a publish that scores worse than the published version on the agent's own test c
 tier header are still open); and **prompt caching** of the system prompt and tools for Anthropic agents
 ([agents.md](agents.md#prompt-cache)); and an exact-match **response cache** ([agents.md](agents.md#response-cache)).
 Also built: **tool access by caller** ([agents.md](agents.md#tool-access): per-agent rules, plus OPA or OpenFGA through
-one port) and a **layers checklist** with a fix per missing layer ([agents.md](agents.md#layers)). Open, later: a semantic
-cache, a cache hit-rate tile and a "savings from routing" tile in Insights, a test panel for tool access, and the kgateway
+one port) and a **layers checklist** with a fix per missing layer ([agents.md](agents.md#layers)). The router and cache cards now say how many of the newest requests each handled ([agents.md](agents.md#layers)). Open, later: a semantic
+cache, Insights tiles for the same numbers, a test panel for tool access, and the kgateway
 manifests that put a gateway in front of the model port.
 
 ## Planned next

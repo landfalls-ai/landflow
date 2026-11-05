@@ -450,6 +450,8 @@ response or semantic cache.
 **Abilities → Response cache** answers a question asked again, word for word, from a stored answer with no model call.
 Switch it on and choose how long an answer is kept (10 seconds to 30 days, default an hour). Case and runs of spaces are
 ignored; nothing else is, so "hours?" and "opening hours?" are different questions (a semantic cache is not built).
+The card, like the Model router's, ends with a line such as "Of the last 40 requests, 12 (30%) were answered from the
+cache", counted from the notices in the agent's newest 200 sessions (`GET /api/agents/:id/layer-stats`).
 
 A run is cached only when its answer depends on nothing but the question and the agent's config:
 
