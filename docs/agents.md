@@ -468,7 +468,12 @@ embedding model can't be reached the run goes on with the agent's own model and 
 `SemanticStore` and the embedder a function (`lib/server/agents/semantic-cache.ts`), so a vector database or another
 embedding model can replace either without touching the runtime.
 
-The Insights page adds an **Agent layers** card with the same numbers for every agent over the chosen period.
+The Insights page adds an **Agent layers** card with the same numbers for every agent over the chosen period, and an
+**Estimated saved** tile, also shown as "saving about $x" on each card's line. It is an estimate from the price table
+(Settings → AI prices): for each answer the router's cheap model gave, what the agent's own model would have charged for the
+same tokens less what the cheap one charged (a local model costs nothing), and for each cache answer the average cost of the
+agent's own answers in the same sessions. With no price for the agent's model, or no answers of its own to average, the
+figure is zero and is not shown.
 
 The card, like the Model router's, ends with a line such as "Of the last 40 requests, 12 (30%) were answered from the
 cache", counted from the notices in the agent's newest 200 sessions (`GET /api/agents/:id/layer-stats`).
