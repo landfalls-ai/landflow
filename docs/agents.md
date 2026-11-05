@@ -468,6 +468,8 @@ embedding model can't be reached the run goes on with the agent's own model and 
 `SemanticStore` and the embedder a function (`lib/server/agents/semantic-cache.ts`), so a vector database or another
 embedding model can replace either without touching the runtime.
 
+The Insights page adds an **Agent layers** card with the same numbers for every agent over the chosen period.
+
 The card, like the Model router's, ends with a line such as "Of the last 40 requests, 12 (30%) were answered from the
 cache", counted from the notices in the agent's newest 200 sessions (`GET /api/agents/:id/layer-stats`).
 

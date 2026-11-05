@@ -18,11 +18,12 @@ export interface LayerStats {
 
 const SESSIONS_SCANNED = 200;
 
-/** Counts one set of sessions. */
-export function countLayerEvents(sessions: AgentSession[]): LayerStats {
+/** Counts one set of sessions; with `since` (an ISO time), only the steps from then on. */
+export function countLayerEvents(sessions: AgentSession[], since?: string): LayerStats {
   const stats: LayerStats = { sessions: sessions.length, requests: 0, routed: 0, cached: 0 };
   for (const session of sessions) {
     for (const entry of session.timeline) {
+      if (since && entry.at < since) continue;
       if (entry.type === 'user') stats.requests++;
       else if (entry.type === 'notice') {
         if (entry.message.startsWith('Routed to ')) stats.routed++;
@@ -39,4 +40,22 @@ export function layerStats(agentId: string): LayerStats {
     .map((summary) => agentStore.getSession(summary.id))
     .filter((session): session is AgentSession => Boolean(session));
   return countLayerEvents(sessions);
+}
+
+/** Every agent's numbers added up, for the Insights page: the steps since `since`, in each agent's newest sessions. */
+export function layerTotals(since: string): LayerStats {
+  const total: LayerStats = { sessions: 0, requests: 0, routed: 0, cached: 0 };
+  for (const agent of agentStore.list()) {
+    const sessions = agentStore
+      .listSessions(agent.id, SESSIONS_SCANNED)
+      .filter((summary) => summary.updatedAt >= since)
+      .map((summary) => agentStore.getSession(summary.id))
+      .filter((session): session is AgentSession => Boolean(session));
+    const stats = countLayerEvents(sessions, since);
+    total.sessions += stats.sessions;
+    total.requests += stats.requests;
+    total.routed += stats.routed;
+    total.cached += stats.cached;
+  }
+  return total;
 }
