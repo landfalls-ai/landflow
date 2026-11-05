@@ -239,6 +239,7 @@ transport and Valkey Cluster settings).
 | (policy engines) | OPA and OpenFGA as things you can run: the compose profiles `tool-policy-opa` and `tool-policy-openfga` (pinned by digest, loopback), an example Rego policy and OpenFGA model in `deploy/tool-policy/`, `scripts/openfga-tool-policy.sh` (setup, grant, check) and a Kubernetes example; all started and queried for real, in compose and in `landflow-dev` (OPA gave allow, ask and deny as designed; OpenFGA honoured a grant, a missing grant and a wildcard). A Kubernetes ConfigMap mount made OPA load the policy three times, so the example names its two files. |
 | (savings) | Insights' **Agent layers** card gets an **Estimated saved** tile, and each router and cache card says "saving about $x": routing is the agent's own model's price for the cheap model's tokens less the cheap model's, the cache is the average cost of the agent's own answers per cache answer (`lib/server/agents/layer-savings.ts`, from the price table; no new storage). |
 | (layers in Run Trace) | The last item of the layers plan: in a workflow's run, the agent layers' decisions are checks in Run Trace: *Tool access* (a tool withheld or needing approval for the caller, a warning), *Model router* and *Response cache* (`journal/agent-session.ts`, `layerCheck`). |
+| (tsx for the web app) | `apps/web` declares `tsx` (its `worker` script and the `audit-chain` test run it, but only `packages/protocol` had it), so the `audit-chain` test no longer fails on a fresh install. |
 
 ## What is next
 
