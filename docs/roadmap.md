@@ -1095,6 +1095,19 @@ step, an approval before risky or production-changing steps, tagged by alert kin
 lists them; the **Find Runbook** node and the triage flow name the matching one and link it in the new room (**Timeline →
 Add Runbook Link**); **Incident → Get Room** reads a room for it. Deterministic, no model.
 
+## Eight layers around a model
+
+Compared a reel on what surrounds a model (system prompt, RAG, tools, access, guardrails, cache, router,
+observability and evals) with Landflow. Built: **version restore** and the **eval gate** ([agents.md](agents.md#eval-gate)):
+a publish that scores worse than the published version on the agent's own test cases is held; and the **model router**
+([agents.md](agents.md#model-router)): easy requests go to a cheaper model by a plain rule (the savings tile and a gateway
+tier header are still open); and **prompt caching** of the system prompt and tools for Anthropic agents
+([agents.md](agents.md#prompt-cache)); and an exact-match **response cache** ([agents.md](agents.md#response-cache)).
+Also built: **tool access by caller** ([agents.md](agents.md#tool-access): per-agent rules, plus OPA or OpenFGA through
+one port) and a **layers checklist** with a fix per missing layer ([agents.md](agents.md#layers)). Open, later: a semantic
+cache, a cache hit-rate tile and a "savings from routing" tile in Insights, a test panel for tool access, and the kgateway
+manifests that put a gateway in front of the model port.
+
 ## Planned next
 
 The follow-ups above are candidates, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).

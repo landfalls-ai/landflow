@@ -1,4 +1,6 @@
 import { agentConfigSchema, asConfig } from '@/lib/server/agents/http';
+import { deleteAgentEvals } from '@/lib/server/agents/eval-gate';
+import { responseCache } from '@/lib/server/agents/response-cache';
 import { agentStore } from '@/lib/server/agents/store';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { rememberLeftover, removeFromKagent } from '@/lib/server/kagent/deploy';
@@ -34,6 +36,8 @@ export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
     });
   }
   if (!agentStore.delete(id)) return error('Agent not found', 404);
+  deleteAgentEvals(id);
+  responseCache.clear(id);
   forgetDeleted('agent', id);
   return json({ ok: true });
 });

@@ -114,6 +114,24 @@ describe('model adapters stream tokens', () => {
     expect(tool.toolCalls).toEqual([{ id: 'call_1', name: 'calculator', input: { expression: '6*7' } }]);
   });
 
+  it('Anthropic: prompt caching marks the system prompt and the last tool, and is off unless asked for', async () => {
+    const tools = [
+      { name: 'first', description: 'a', inputSchema: { type: 'object' } },
+      { name: 'last', description: 'b', inputSchema: { type: 'object' } },
+    ];
+    const cached = anthropicModel({ model: 'claude-test', effort: 'low', maxTokens: 1024, fallback: false, promptCache: true, apiKey: 'sk-ant-test', baseUrl: fake.origin });
+    await cached.generate({ system: 'You are brief.', messages: user('Hello'), tools, onToken: () => {} });
+    const sent = fake.last('/v1/messages')!.body as { system: unknown; tools: Array<{ name: string; cache_control?: unknown }> };
+    expect(sent.system).toEqual([{ type: 'text', text: 'You are brief.', cache_control: { type: 'ephemeral' } }]);
+    expect(sent.tools.map((t) => [t.name, Boolean(t.cache_control)])).toEqual([['first', false], ['last', true]]);
+
+    const plain = anthropicModel({ model: 'claude-test', effort: 'low', maxTokens: 1024, fallback: false, apiKey: 'sk-ant-test', baseUrl: fake.origin });
+    await plain.generate({ system: 'You are brief.', messages: user('Hello'), tools, onToken: () => {} });
+    const unmarked = fake.last('/v1/messages')!.body as { system: unknown; tools: Array<{ cache_control?: unknown }> };
+    expect(unmarked.system).toBe('You are brief.');
+    expect(unmarked.tools.some((t) => t.cache_control)).toBe(false);
+  });
+
   it('thinkFilter hides tags split across deltas', () => {
     const filter = thinkFilter();
     const out = ['Hi <thi', 'nk>do not', ' show</th', 'ink> there', ' <', 'b>bold</b>'].map(filter).join('');

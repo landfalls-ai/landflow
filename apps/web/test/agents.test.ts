@@ -303,6 +303,22 @@ describe('agent versions', () => {
     expect(agentStore.summaries().find((s) => s.id === agent.id)?.draftChanged).toBe(true);
     expect(agentStore.unpublish(agent.id)!.published).toBeUndefined();
   });
+
+  it('restores an earlier version into the draft without publishing it, and names what changed', async () => {
+    const { diffConfigs } = await import('@/lib/shared/agents');
+    const { configOf } = await import('@/lib/server/agents/store');
+    const agent = makeAgent({ instructions: 'first' });
+    agentStore.publish(agent.id);
+    agentStore.saveDraft(agent.id, { instructions: 'second', description: 'changed' });
+    const v2 = agentStore.publish(agent.id)!;
+    expect(diffConfigs(v2.history[1]!.config, v2.history[0]!.config).map((c) => c.field)).toEqual(['description', 'instructions']);
+
+    const restored = agentStore.restore(agent.id, 1)!;
+    expect(restored.instructions).toBe('first');
+    expect(restored.published?.version).toBe(2);
+    expect(diffConfigs(configOf(restored), v2.history[1]!.config)).toEqual([]);
+    expect(agentStore.restore(agent.id, 99)).toBeUndefined();
+  });
 });
 
 describe('agent nodes', () => {

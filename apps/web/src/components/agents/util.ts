@@ -12,6 +12,9 @@ import {
   type AgentToolConfig,
   type ModelProvider,
 } from '@/lib/shared/agents';
+import { cleanAccess } from '@/lib/shared/agent-access';
+import { cleanCache } from '@/lib/shared/agent-cache';
+import { cleanRouter } from '@/lib/shared/agent-router';
 import { cleanAvatar } from '@/lib/shared/faces';
 import { cleanPersona, hasPrompt } from '@/lib/shared/persona';
 
@@ -45,6 +48,9 @@ export function configOf(source: Agent | AgentConfig): AgentConfig {
   const plugins = cleanPlugins(source.plugins);
   const avatar = cleanAvatar(source.avatar);
   const team = cleanTeam(source.team);
+  const router = cleanRouter(source.router);
+  const cache = cleanCache(source.cache);
+  const access = cleanAccess(source.access);
   return {
     name: source.name,
     description: source.description ?? '',
@@ -62,6 +68,9 @@ export function configOf(source: Agent | AgentConfig): AgentConfig {
     memory: { crossSession: Boolean(source.memory?.crossSession) },
     settings: { ...DEFAULT_AGENT_SETTINGS, ...source.settings },
     ...(source.guardrails && ((source.guardrails.input || source.guardrails.output) ? { guardrails: source.guardrails } : {})),
+    ...(router && { router }),
+    ...(cache && { cache }),
+    ...(access && { access }),
     ...(plugins && { plugins }),
   };
 }
