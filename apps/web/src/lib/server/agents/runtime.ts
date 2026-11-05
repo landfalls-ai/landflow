@@ -304,6 +304,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     let toolset;
     /** Tools the agent has before the access policy: the response cache looks at these, so a caller denied every tool can't fill it for one who may use them. */
     let toolsOffered = 0;
+    let accessNotes: string[] = [];
     try {
       toolset = await buildToolset(agent, config, request.flow?.tools);
       if (request.team?.tools.length) toolset = { ...toolset, tools: dedupe([...toolset.tools, ...request.team.tools]) };
@@ -311,7 +312,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       // Tool access by caller: tools this caller may not use are withheld; some may need a person's approval for them.
       const role = requestAuth()?.principal?.user.id === session.userId ? requestAuth()?.principal?.user.role : undefined;
       const access = await applyToolPolicy(toolset.tools, { agentId: agent.id, caller: { id: session.userId, ...(role && { role }), source: session.source }, access: config.access, ...(request.signal && { signal: request.signal }) });
-      toolset = { ...toolset, tools: access.tools, unavailable: [...toolset.unavailable, ...access.notes] };
+      toolset = { ...toolset, tools: access.tools };
+      accessNotes = access.notes;
       // The model router: a short, simple request goes to the cheap model. A workflow's own model (Run an Agent) always wins.
       const route = request.flow?.model ? undefined : chooseTier(config.router, { ...(request.message !== undefined && { message: request.message }), toolCount: toolset.tools.length });
       const cheap = route?.tier === 'cheap' ? config.router?.cheapModel : undefined;
@@ -322,6 +324,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       return { reason: 'error' };
     }
     for (const note of toolset.unavailable) upsert({ id: entryId(), type: 'notice', message: `Tool unavailable: ${note}`, at: now() });
+    for (const note of accessNotes) upsert({ id: entryId(), type: 'notice', message: `Tool access: ${note}`, at: now() });
     const byName = new Map(toolset.tools.map((t) => [t.name, t]));
     const toolNote = request.team ? toolsInRun(toolset.tools) : undefined;
     const specs = toolset.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));

@@ -41,7 +41,9 @@ async function post(url: string, body: unknown, signal?: AbortSignal): Promise<u
 /** OPA: `{ input }` in, `{ result }` out. The result is `allow` / `ask` / `deny`, or a boolean (true allows). */
 export const opaEngine: PolicyEngine = async (request, signal) => {
   const answer = (await post(env('LANDFLOW_TOOL_POLICY_URL'), { input: request }, signal)) as { result?: unknown };
-  const result = answer.result;
+  let result = answer.result;
+  // Asked for a package (…/landflow/tools) rather than a rule (…/landflow/tools/result), OPA nests the rule: `{ result: { result } }`.
+  if (result && typeof result === 'object' && 'result' in result) result = (result as { result: unknown }).result;
   if (result === true || result === 'allow') return { effect: 'allow' };
   if (result === 'ask') return { effect: 'ask', reason: 'policy: ask' };
   return { effect: 'deny', reason: 'policy: deny' };

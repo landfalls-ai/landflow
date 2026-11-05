@@ -485,7 +485,7 @@ a person signed in to Landflow (`owner`, `admin` or `member`).
 | `LANDFLOW_TOOL_POLICY` | Needs | Asks |
 |---|---|---|
 | `rules` (default) | nothing | only the agent's own rules |
-| `opa` | `LANDFLOW_TOOL_POLICY_URL`, the rule's data URL (for example `http://opa:8181/v1/data/landflow/tools`) | `POST { input: { caller, agentId, tool, kind } }`; the `result` may be `allow`, `ask`, `deny` or a boolean |
+| `opa` | `LANDFLOW_TOOL_POLICY_URL`, the rule's data URL (for example `http://opa:8181/v1/data/landflow/tools/result`; a package URL such as `.../landflow/tools` also works, the nested `result` is read) | `POST { input: { caller, agentId, tool, kind } }`; the `result` may be `allow`, `ask`, `deny` or a boolean |
 | `openfga` | `LANDFLOW_TOOL_POLICY_URL` (the server) and `LANDFLOW_OPENFGA_STORE_ID` | `POST /stores/<id>/check` with `user:<id>` `can_use` `tool:<agentId>/<tool>`; no means deny |
 
 `LANDFLOW_TOOL_POLICY_TOKEN` is sent as a bearer token. An engine that can't be reached within 3 seconds denies the tool

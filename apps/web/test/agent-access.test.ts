@@ -94,6 +94,11 @@ describe('the OPA and OpenFGA adapters', () => {
     const effects = [];
     for (let i = 0; i < 5; i++) effects.push((await opaEngine(request)).effect);
     expect(effects).toEqual(['allow', 'ask', 'deny', 'allow', 'deny']);
+    // A package path answers with the rule nested inside, as a real OPA does.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ result: { result: 'deny' } }))));
+    expect((await opaEngine(request)).effect).toBe('deny');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ result: { result: 'ask' } }))));
+    expect((await opaEngine(request)).effect).toBe('ask');
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('http://opa.test/v1/data/landflow/tools');
     expect(JSON.parse(String(init.body))).toEqual({ input: request });
