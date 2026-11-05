@@ -227,6 +227,7 @@ transport and Valkey Cluster settings).
 | `fe9230a` | The team node's last run says what Home and the Run Trace say: the run line's outcome, time and tokens (the whole run, a wait for a person included) instead of the team step's own time. |
 | (this change) | History rows for the team node's last-run fix. |
 | (voice) | Voice, step 1: a microphone in Spotlight records, `POST /api/assistant/transcribe` turns it into text through an OpenAI-compatible speech-to-text server (`LANDFLOW_STT_*`), and the text lands in the box to edit. Push-to-talk only; no spoken replies yet. |
+| (readme) | The README as a full platform overview: what is in the box, a tour in full-width desktop screenshots (home, plugins, editor, dictation, agents, teams, Run Trace, Marketplace), core concepts, every area, Mermaid architecture diagrams, quick start, local models and dictation setup. |
 
 ## What is next
 
