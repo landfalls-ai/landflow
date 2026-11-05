@@ -244,7 +244,7 @@ sequenceDiagram
     E-->>U: node.started, node.finished, node.chunk
   end
   E->>S: finished, error or waiting
-  Note over S,E: A wait, form or approval parks the run;<br/>a timer or a call resumes it from its checkpoint
+  Note over S,E: A wait, form or approval parks the run, and<br/>a timer or a call resumes it from its checkpoint
 ```
 
 A run can stop and come back. A Wait node, a form, an approval or a sub-execution saves the run as `waiting` with its resume state, and a timer, a call to `/api/waiting/<id>` or the child's result resumes it on the version it started with. A crash leaves it `running`, and the next boot, or another worker once the lease runs out, continues from the last checkpoint.
