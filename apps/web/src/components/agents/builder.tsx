@@ -751,7 +751,7 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
                   <CacheCard agentId={agentId} config={draft} update={update} />
                 </div>
                 <div id="section-access" className="scroll-mt-20">
-                  <AccessCard config={draft} update={update} />
+                  <AccessCard agentId={agentId} config={draft} update={update} />
                 </div>
                 <SkillsCard config={draft} update={update} />
                 <div id="section-capabilities" className="scroll-mt-20 space-y-4">

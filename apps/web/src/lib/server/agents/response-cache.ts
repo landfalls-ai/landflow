@@ -18,7 +18,7 @@ export interface ResponseCache {
 }
 
 /** Only what decides the answer: the look, the schedules and the channels can change without making an answer wrong. */
-function answerShape(config: AgentConfig) {
+export function answerShape(config: AgentConfig) {
   return { model: config.model, persona: config.persona, instructions: config.instructions, skills: config.skills, tools: config.tools, guardrails: config.guardrails, router: config.router, plugins: config.plugins };
 }
 

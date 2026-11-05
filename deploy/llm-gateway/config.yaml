@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# agentgateway as an LLM gateway in front of the model port (docs/agents.md "Model router"): one OpenAI-compatible endpoint,
+# /v1/chat/completions on :3000, that Landflow's agents (an OpenAI model with this URL as its base URL) or the cheap model of
+# the router can call. Behind it, any provider: add a `models` entry per provider and the agents never change.
+# Run it with the `llm-gateway` profile of deploy/compose.infra.yml, or on Kubernetes with deploy/k8s/examples/llm-gateway.
+# agentgateway is the Linux Foundation project kgateway's own docs point to for AI traffic (its Envoy-based AI Gateway is
+# deprecated from kgateway 2.2); this is the same data plane the MCP gateway uses (deploy/mcp-gateway).
+config:
+  adminAddr: "0.0.0.0:15000"
+  logging:
+    level: info
+llm:
+  port: 3000
+  models:
+    # One entry per model the gateway offers: the name callers ask for, and the model it becomes at the provider.
+    # Add entries for other models and providers; the agents keep calling this one endpoint.
+    - name: "ollama/qwen3.8"
+      provider: ollama
+      params:
+        model: qwen3.8:latest
+        baseUrl: http://host.docker.internal:11434/v1
+    - name: "ollama/qwen3-coder"
+      provider: ollama
+      params:
+        model: qwen3-coder:30b
+        baseUrl: http://host.docker.internal:11434/v1

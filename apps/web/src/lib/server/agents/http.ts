@@ -54,7 +54,13 @@ export const agentConfigSchema = z
     channels: z.array(z.object({ id: z.string(), type: z.enum(['telegram', 'slack', 'teams']), credential: ref }).passthrough()).optional(),
     memory: z.object({ crossSession: z.boolean() }).optional(),
     guardrails: z.object({ input: guardrailRule.optional(), output: guardrailRule.optional() }).optional(),
-    cache: z.object({ enabled: z.boolean(), ttlSeconds: z.number().int().min(10).max(30 * 86_400) }).optional(),
+    cache: z
+      .object({
+        enabled: z.boolean(),
+        ttlSeconds: z.number().int().min(10).max(30 * 86_400),
+        semantic: z.object({ enabled: z.boolean(), threshold: z.number().min(0.7).max(0.99), model: z.string().max(200), baseUrl: z.string().max(500).optional() }).optional(),
+      })
+      .optional(),
     access: z
       .object({
         rules: z

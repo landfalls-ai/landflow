@@ -30,6 +30,7 @@ import { agentSessionJournal } from '../journal/agent-session';
 import { uncacheable } from '../../shared/agent-cache';
 import { chooseTier } from '../../shared/agent-router';
 import { cacheKey, responseCache } from './response-cache';
+import { configHash, embedderFor, semanticCache } from './semantic-cache';
 import { agentModel } from './models';
 import { personaPrompt } from '../../shared/persona';
 import { agentStore, configOf } from './store';
@@ -372,6 +373,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     const question = request.message !== undefined && first?.role === 'user' && typeof first.content === 'string' ? first.content : undefined;
     const skip = question === undefined ? 'it is a resumed run' : uncacheable({ cache: config.cache, messageCount: session.messages.length, toolCount: toolsOffered, memory: config.memory.crossSession, borrowed: Boolean(request.flow || request.team) });
     const cacheId = question !== undefined && !skip ? cacheKey(agent.id, config, question) : undefined;
+    let questionVector: number[] | undefined;
     if (cacheId) {
       const stored = responseCache.get(cacheId);
       if (stored !== undefined) {
@@ -379,6 +381,24 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         upsert({ id: entryId(), type: 'notice', message: 'Answered from the response cache: no model call.', at: now() });
         upsert({ id: entryId(), type: 'assistant', text: stored, at: now(), model: 'response cache' });
         return { reason: 'completed', reply: stored };
+      }
+      // Nothing word for word: a stored question that means the same may answer (an embedding model failing only skips this).
+      const semantic = config.cache?.semantic;
+      if (semantic?.enabled && question !== undefined) {
+        try {
+          questionVector = await embedderFor(semantic)(question, request.signal);
+          const similar = semanticCache.find(agent.id, configHash(agent.id, config), questionVector, semantic.threshold);
+          if (similar) {
+            session.messages.push({ role: 'assistant', text: similar.reply, toolCalls: [] });
+            upsert({ id: entryId(), type: 'notice', message: `Answered from the response cache: no model call (similar to "${similar.question.slice(0, 80)}", ${Math.round(similar.similarity * 100)}% alike).`, at: now() });
+            upsert({ id: entryId(), type: 'assistant', text: similar.reply, at: now(), model: 'response cache' });
+            return { reason: 'completed', reply: similar.reply };
+          }
+        } catch (caught) {
+          if (request.signal?.aborted) return { reason: 'canceled' };
+          questionVector = undefined;
+          upsert({ id: entryId(), type: 'notice', message: `Similar-question cache skipped: ${(caught as Error).message}`, at: now() });
+        }
       }
     }
 
@@ -440,7 +460,10 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           continue;
         }
         // Store the answer the person got (after the output guardrail), unless the run left the first turn (a nudge sent it round again).
-        if (cacheId && answer.trim() && config.cache && session.messages.length === 2) responseCache.set(agent.id, cacheId, answer, config.cache.ttlSeconds);
+        if (cacheId && answer.trim() && config.cache && session.messages.length === 2) {
+          responseCache.set(agent.id, cacheId, answer, config.cache.ttlSeconds);
+          if (questionVector && question !== undefined) semanticCache.add({ agentId: agent.id, configHash: configHash(agent.id, config), question, reply: answer, vector: questionVector, ttlSeconds: config.cache.ttlSeconds });
+        }
         return { reason: 'completed', reply: answer };
       }
       const denied = justDenied;

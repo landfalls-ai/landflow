@@ -55,6 +55,8 @@ describe('applyToolPolicy', () => {
     expect(forViewer.tools.find((t) => t.name === 'read_orders')?.requireApproval).toBe(true);
     expect(forViewer.notes.some((n) => /refund_order is not available/.test(n))).toBe(true);
 
+    expect(forViewer.decisions.map((d) => [d.tool, d.effect])).toEqual([['read_orders', 'ask'], ['refund_order', 'deny'], ['send_email', 'allow']]);
+
     const forAdmin = await applyToolPolicy(tools, { agentId: 'ag_1', caller: admin, access, engine: undefined });
     expect(names(forAdmin.tools)).toEqual(['read_orders', 'refund_order', 'send_email']);
     expect(forAdmin.tools.find((t) => t.name === 'read_orders')?.requireApproval).toBe(false);

@@ -9,7 +9,7 @@
 #   docker compose -f deploy/compose.infra.yml --profile kafka --profile rabbitmq --profile nats up -d   # + tier 1 brokers
 #   docker compose -f deploy/compose.infra.yml --profile git up -d git-ssh                    # + throwaway SSH Git server (run infra/git/gen-keys.sh first)
 #   docker compose -f deploy/compose.infra.yml --profile valkey-cluster up -d --wait         # + a 6-node Valkey Cluster (3 primaries, 3 replicas) on 127.0.0.1:56411-56416
-#   ... profiles mqtt, artemis, pulsar, pubsub, servicebus (tier 2 brokers), mcp-gateway (agentgateway)
+#   ... profiles mqtt, artemis, pulsar, pubsub, servicebus (tier 2 brokers), mcp-gateway (agentgateway), llm-gateway (agentgateway in front of the models)
 #
 # Ports, credentials and URLs: docs/deployment.md. Defaults live here; deploy/.env overrides them.
 # Every credential is for local development only.
@@ -547,6 +547,23 @@ services:
     command: ["chown", "65532:65532", "/data"]
     volumes:
       - mcp-gateway-data:/data
+
+  llm-gateway:
+    # agentgateway 1.6 as an LLM gateway in front of the model port (docs/agents.md "Model router", docs/deployment.md): one
+    # OpenAI-compatible endpoint, http://127.0.0.1:54100/v1/chat/completions, for any provider listed in llm-gateway/config.yaml
+    # (a local Ollama on the host to begin with). Landflow's agents use it as an OpenAI model with this base URL.
+    # The admin API and UI (http://127.0.0.1:55100/ui) have no authentication: loopback only. Distroless: no healthcheck.
+    image: cr.agentgateway.dev/agentgateway:v1.6.0@sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+    profiles: [llm-gateway]
+    restart: unless-stopped
+    command: ["-f", "/config/config.yaml"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_LLM_GATEWAY_PORT:-54100}:3000"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_LLM_GATEWAY_ADMIN_PORT:-55100}:15000"
+    volumes:
+      - ./llm-gateway/config.yaml:/config/config.yaml:ro
 
   git-ssh:
     # A throwaway SSH Git server (user `git`, key login only) for Settings → Source control's SSH tests. Dev only:

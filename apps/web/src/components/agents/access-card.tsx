@@ -3,8 +3,10 @@
  * Abilities tab → Tool access: which callers may use which tools. The first rule that matches the caller and the tool decides;
  * with no match a tool is allowed. An external policy engine (OPA, OpenFGA) can restrict further (docs/agents.md "Tool access").
  */
+import { useState } from 'react';
 import { Plus, ShieldHalf, Trash2 } from 'lucide-react';
 import { nanoid } from 'nanoid';
+import { api } from '@/lib/client/api';
 import { cleanAccess, type AccessEffect, type AccessRule } from '@/lib/shared/agent-access';
 import type { AgentConfig, SessionSource } from '@/lib/shared/agents';
 import { ROLES } from '@/lib/shared/auth';
@@ -30,7 +32,85 @@ const EFFECTS: Array<{ value: AccessEffect; label: string }> = [
   { value: 'deny', label: 'may not use it' },
 ];
 
-export function AccessCard({ config, update }: { config: AgentConfig; update: UpdateConfig }) {
+interface Decision {
+  tool: string;
+  label: string;
+  effect: AccessEffect;
+  reason?: string;
+}
+
+const EFFECT_TEXT: Record<AccessEffect, string> = { allow: 'may use it', ask: 'needs approval', deny: 'may not use it' };
+
+/** "What could this caller do?": runs the tools through the policy a run uses, with the rules on screen, and calls nothing. */
+function TestPanel({ agentId, rules }: { agentId: string; rules: AccessRule[] }) {
+  const [id, setId] = useState('');
+  const [role, setRole] = useState('');
+  const [source, setSource] = useState<SessionSource>('api');
+  const [decisions, setDecisions] = useState<Decision[]>();
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string>();
+
+  const check = async () => {
+    setBusy(true);
+    setProblem(undefined);
+    try {
+      const result = await api<{ decisions: Decision[] }>(`/api/agents/${agentId}/access/test`, {
+        method: 'POST',
+        json: { caller: { id: id.trim() || 'someone', ...(role && { role }), source }, rules },
+      });
+      setDecisions(result.decisions);
+    } catch (e) {
+      setDecisions(undefined);
+      setProblem((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-[10px] border border-hair bg-wl p-3">
+      <span className="text-[12px] font-medium text-t3">Try a caller</span>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <Input aria-label="Caller's user id" placeholder="User id (optional)" value={id} onChange={(e) => setId(e.target.value)} />
+        <Select aria-label="Caller's role" value={role} onChange={(e) => setRole(e.target.value)}>
+          <option value="">No role</option>
+          {ROLES.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </Select>
+        <Select aria-label="Caller comes from" value={source} onChange={(e) => setSource(e.target.value as SessionSource)}>
+          {SOURCES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <Button size="sm" variant="outline" disabled={busy} onClick={() => void check()}>
+        {busy ? 'Checking…' : 'What can they do?'}
+      </Button>
+      {problem && <p className="text-[12px] text-red-400">{problem}</p>}
+      {decisions && !decisions.length && <p className="text-[12px] text-t3">The agent has no tools.</p>}
+      {decisions && decisions.length > 0 && (
+        <ul className="space-y-1 text-[12px]">
+          {decisions.map((d) => (
+            <li key={d.tool} className="flex items-center justify-between gap-2">
+              <span className="truncate">{d.label}</span>
+              <span className={d.effect === 'deny' ? 'text-red-400' : d.effect === 'ask' ? 'text-amber-400' : 'text-t3'}>
+                {EFFECT_TEXT[d.effect]}
+                {d.reason ? ` (${d.reason})` : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function AccessCard({ agentId, config, update }: { agentId: string; config: AgentConfig; update: UpdateConfig }) {
   const rules = config.access?.rules ?? [];
   const setRules = (next: AccessRule[]) => update((c) => {
     const { access: _access, ...rest } = c;
@@ -88,6 +168,7 @@ export function AccessCard({ config, update }: { config: AgentConfig; update: Up
         <Button size="sm" variant="outline" onClick={() => setRules([...rules, { id: `rule_${nanoid(6)}`, tool: '*', who: {}, effect: 'ask' }])}>
           <Plus className="size-3.5" /> Add a rule
         </Button>
+        <TestPanel agentId={agentId} rules={rules} />
       </div>
     </Section>
   );

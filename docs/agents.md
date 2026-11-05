@@ -433,7 +433,16 @@ of the agent's config: it is versioned, diffed (**Changed: Router**), exported a
 `lib/shared/agent-router.ts` (the rule) and one line in `lib/server/agents/runtime.ts`.
 
 Because the cheap model is just a model setting, the components behind it are swappable: point it at Ollama today and at
-a gateway (kgateway, Envoy AI Gateway, LiteLLM, OpenRouter) tomorrow without touching the agent.
+a gateway (agentgateway, LiteLLM, OpenRouter) tomorrow without touching the agent.
+
+**An LLM gateway.** `deploy/llm-gateway/config.yaml` runs agentgateway (the data plane the MCP gateway already uses, and the
+one kgateway's own docs recommend now that its Envoy-based AI Gateway is deprecated) as one OpenAI-compatible endpoint in
+front of the models: `docker compose -p landflow-infra -f deploy/compose.infra.yml --profile llm-gateway up -d llm-gateway`
+serves `http://127.0.0.1:54100/v1` (admin UI on 55100). Make an **OpenAI API** credential with that base URL and no key, and an
+agent (or the router's cheap model) with the OpenAI provider and a model name from the config (`ollama/qwen3.8`). Each model
+the gateway offers is one entry in its config; the agent never names a provider. On Kubernetes,
+`deploy/k8s/examples/llm-gateway/llm-gateway.yaml` is the same gateway as a ConfigMap, Deployment and Service
+(`http://llm-gateway:3000/v1`).
 
 ## Prompt cache
 
@@ -449,7 +458,16 @@ response or semantic cache.
 
 **Abilities → Response cache** answers a question asked again, word for word, from a stored answer with no model call.
 Switch it on and choose how long an answer is kept (10 seconds to 30 days, default an hour). Case and runs of spaces are
-ignored; nothing else is, so "hours?" and "opening hours?" are different questions (a semantic cache is not built).
+ignored; nothing else is, so "hours?" and "opening hours?" are different questions, unless the semantic cache below is on.
+**Similar questions.** Switch on **Also answer questions that mean the same** and a question with no word-for-word match
+is embedded (an Ollama embedding model, `nomic-embed-text` by default, on the agent's Ollama server or `OLLAMA_URL`) and
+compared with the stored ones; the closest at or above the threshold (0.7 to 0.99, default 0.92, higher is stricter)
+answers, and the session says which question it was like and how alike (`similar to "…", 92% alike`). The same
+conditions apply as for the exact cache, and an edit to the persona, model or guardrails starts a fresh cache. If the
+embedding model can't be reached the run goes on with the agent's own model and a notice says so. The store is a
+`SemanticStore` and the embedder a function (`lib/server/agents/semantic-cache.ts`), so a vector database or another
+embedding model can replace either without touching the runtime.
+
 The card, like the Model router's, ends with a line such as "Of the last 40 requests, 12 (30%) were answered from the
 cache", counted from the notices in the agent's newest 200 sessions (`GET /api/agents/:id/layer-stats`).
 
@@ -489,6 +507,11 @@ a person signed in to Landflow (`owner`, `admin` or `member`).
 | `rules` (default) | nothing | only the agent's own rules |
 | `opa` | `LANDFLOW_TOOL_POLICY_URL`, the rule's data URL (for example `http://opa:8181/v1/data/landflow/tools/result`; a package URL such as `.../landflow/tools` also works, the nested `result` is read) | `POST { input: { caller, agentId, tool, kind } }`; the `result` may be `allow`, `ask`, `deny` or a boolean |
 | `openfga` | `LANDFLOW_TOOL_POLICY_URL` (the server) and `LANDFLOW_OPENFGA_STORE_ID` | `POST /stores/<id>/check` with `user:<id>` `can_use` `tool:<agentId>/<tool>`; no means deny |
+
+**Try a caller.** Under the rules, **What can they do?** takes a user id, a role and a source and shows what that caller
+may do with each of the agent's tools (*may use it*, *needs approval* or *may not use it*, with the engine's reason),
+using the rules on screen (saved or not) and the engine the environment names. It builds the agent's tools and calls none
+(`POST /api/agents/:id/access/test`).
 
 `LANDFLOW_TOOL_POLICY_TOKEN` is sent as a bearer token. An engine that can't be reached within 3 seconds denies the tool
 (`LANDFLOW_TOOL_POLICY_FAIL=open` allows it instead). Switching engines changes these variables and nothing else.

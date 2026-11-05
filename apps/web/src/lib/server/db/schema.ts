@@ -1431,6 +1431,26 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS agent_response_cache_agent ON agent_response_cache (agent_id, expires_at)`,
     ],
   },
+  {
+    version: 2044,
+    name: 'agent_semantic_cache',
+    statements: [
+      // Questions kept with their embedding for the semantic cache (lib/server/agents/semantic-cache.ts). `config_hash` is a hash of the agent's
+      // answer-shaping config, so an edit starts a fresh cache; `vector` is a JSON array of numbers; `hits` counts the times it was served.
+      `CREATE TABLE IF NOT EXISTS agent_semantic_cache (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        config_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        hits INTEGER NOT NULL DEFAULT 0,
+        question TEXT NOT NULL,
+        reply TEXT NOT NULL,
+        vector TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS agent_semantic_cache_agent ON agent_semantic_cache (agent_id, config_hash, expires_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1527,6 +1547,7 @@ export const TABLES = {
   agent_eval_cases: ['id'],
   agent_eval_runs: ['id'],
   agent_response_cache: ['id'],
+  agent_semantic_cache: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

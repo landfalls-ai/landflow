@@ -72,6 +72,8 @@ export interface ToolAccess {
   tools: BuiltTool[];
   /** One line per tool that was withheld or now needs approval, for the run's notices. */
   notes: string[];
+  /** The decision for every tool, in the order given (the test panel shows these). */
+  decisions: Array<{ tool: string; label: string; effect: ToolDecision['effect']; reason?: string }>;
 }
 
 /** The tools this caller may use: denied ones removed, `ask` ones behind approval. Nothing changes without rules or an engine. */
@@ -80,10 +82,11 @@ export async function applyToolPolicy(
   context: { agentId: string; caller: Caller; access: AgentAccess | undefined; engine?: PolicyEngine | undefined; signal?: AbortSignal },
 ): Promise<ToolAccess> {
   const engine = context.engine === undefined ? configuredEngine() : context.engine;
-  if (!context.access?.rules.length && !engine) return { tools, notes: [] };
+  if (!context.access?.rules.length && !engine) return { tools, notes: [], decisions: tools.map((t) => ({ tool: t.name, label: t.label, effect: 'allow' as const })) };
   const failOpen = env('LANDFLOW_TOOL_POLICY_FAIL').toLowerCase() === 'open';
   const kept: BuiltTool[] = [];
   const notes: string[] = [];
+  const decided: ToolAccess['decisions'] = [];
   for (const tool of tools) {
     const decisions = [decideByRules(context.access, context.caller, tool.name)];
     if (engine) {
@@ -94,11 +97,12 @@ export async function applyToolPolicy(
       }
     }
     const decision = mostRestrictive(decisions);
+    decided.push({ tool: tool.name, label: tool.label, effect: decision.effect, ...(decision.reason && { reason: decision.reason }) });
     if (decision.effect === 'deny') notes.push(`${tool.label} is not available to you${decision.reason ? ` (${decision.reason})` : ''}`);
     else if (decision.effect === 'ask' && !tool.requireApproval) {
       notes.push(`${tool.label} needs a person's approval for you${decision.reason ? ` (${decision.reason})` : ''}`);
       kept.push({ ...tool, requireApproval: true });
     } else kept.push(tool);
   }
-  return { tools: kept, notes };
+  return { tools: kept, notes, decisions: decided };
 }
