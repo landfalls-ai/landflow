@@ -319,6 +319,21 @@ describe('agent versions', () => {
     expect(diffConfigs(configOf(restored), v2.history[1]!.config)).toEqual([]);
     expect(agentStore.restore(agent.id, 99)).toBeUndefined();
   });
+
+  it('restores a version that lacked the optional parts without keeping the draft\'s cache, router or access rules', () => {
+    const agent = makeAgent({ instructions: 'plain' });
+    agentStore.publish(agent.id);
+    agentStore.saveDraft(agent.id, {
+      cache: { enabled: true, ttlSeconds: 60 },
+      router: { mode: 'auto', maxChars: 100, allowTools: false, cheapModel: { provider: 'ollama', model: 'small' } },
+      access: { rules: [{ id: 'r', tool: '*', who: {}, effect: 'deny' }] },
+    });
+    expect(agentStore.get(agent.id)!.cache).toBeDefined();
+    const restored = agentStore.restore(agent.id, 1)!;
+    expect(restored.cache).toBeUndefined();
+    expect(restored.router).toBeUndefined();
+    expect(restored.access).toBeUndefined();
+  });
 });
 
 describe('agent nodes', () => {

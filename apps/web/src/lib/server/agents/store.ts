@@ -474,7 +474,10 @@ class AgentStore {
   restore(id: string, version: number): Agent | undefined {
     const agent = this.backend.get(id);
     const config = agent?.history.find((v) => v.version === version)?.config;
-    return agent && config ? this.saveDraft(id, config) : undefined;
+    if (!agent || !config) return undefined;
+    // The version's config replaces the draft's, so a part the version never had (a cache, a router, access rules) does not stay behind.
+    const { model: _model, persona: _persona, guardrails: _guardrails, router: _router, cache: _cache, access: _access, plugins: _plugins, ...rest } = agent;
+    return this.write({ ...rest, ...normalizeConfig(config), updatedAt: new Date().toISOString() });
   }
 
   unpublish(id: string): Agent | undefined {

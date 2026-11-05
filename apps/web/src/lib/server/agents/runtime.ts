@@ -306,6 +306,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     /** Tools the agent has before the access policy: the response cache looks at these, so a caller denied every tool can't fill it for one who may use them. */
     let toolsOffered = 0;
     let accessNotes: string[] = [];
+    /** The router sent this run to the cheap model: its answer is not stored, so the agent's own model still answers the same question later. */
+    let routedToCheap = false;
     try {
       toolset = await buildToolset(agent, config, request.flow?.tools);
       if (request.team?.tools.length) toolset = { ...toolset, tools: dedupe([...toolset.tools, ...request.team.tools]) };
@@ -319,6 +321,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       const route = request.flow?.model ? undefined : chooseTier(config.router, { ...(request.message !== undefined && { message: request.message }), toolCount: toolset.tools.length });
       const cheap = route?.tier === 'cheap' ? config.router?.cheapModel : undefined;
       model = request.flow?.model ?? (await agentModel(cheap ?? config.model));
+      if (cheap) routedToCheap = true;
       if (cheap) upsert({ id: entryId(), type: 'notice', message: `Routed to ${cheap.model}: ${route?.reason}`, at: now() });
     } catch (error) {
       upsert({ id: entryId(), type: 'error', message: (error as Error).message, at: now() });
@@ -371,7 +374,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     // agent without tools or memory is eligible (shared/agent-cache.ts), so the answer depends on nothing but the question and the config.
     const first = session.messages[0];
     const question = request.message !== undefined && first?.role === 'user' && typeof first.content === 'string' ? first.content : undefined;
-    const skip = question === undefined ? 'it is a resumed run' : uncacheable({ cache: config.cache, messageCount: session.messages.length, toolCount: toolsOffered, memory: config.memory.crossSession, borrowed: Boolean(request.flow || request.team) });
+    const skip = session.userId === 'evaluation' ? 'it is an evaluation run (the eval gate must ask the model, and must not fill the cache)' : question === undefined ? 'it is a resumed run' : uncacheable({ cache: config.cache, messageCount: session.messages.length, toolCount: toolsOffered, memory: config.memory.crossSession, borrowed: Boolean(request.flow || request.team) });
     const cacheId = question !== undefined && !skip ? cacheKey(agent.id, config, question) : undefined;
     let questionVector: number[] | undefined;
     if (cacheId) {
@@ -460,7 +463,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           continue;
         }
         // Store the answer the person got (after the output guardrail), unless the run left the first turn (a nudge sent it round again).
-        if (cacheId && answer.trim() && config.cache && session.messages.length === 2) {
+        if (cacheId && !routedToCheap && answer.trim() && config.cache && session.messages.length === 2) {
           responseCache.set(agent.id, cacheId, answer, config.cache.ttlSeconds);
           if (questionVector && question !== undefined) semanticCache.add({ agentId: agent.id, configHash: configHash(agent.id, config), question, reply: answer, vector: questionVector, ttlSeconds: config.cache.ttlSeconds });
         }

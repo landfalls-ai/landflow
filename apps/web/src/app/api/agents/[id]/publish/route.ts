@@ -4,7 +4,7 @@
  * unpublishing leaves kagent's copy as it is.
  */
 import { adoptRun, checkPublish, EvalGateError, type GateResult } from '@/lib/server/agents/eval-gate';
-import { agentStore } from '@/lib/server/agents/store';
+import { agentStore, configOf } from '@/lib/server/agents/store';
 import { error, handler, json } from '@/lib/server/http';
 import { redeployIfDeployed } from '@/lib/server/kagent/deploy';
 import { hasPrompt } from '@/lib/shared/persona';
@@ -24,6 +24,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!hasPrompt(current)) return error('Describe the persona or add instructions before publishing');
   const body = await request.json().catch(() => ({}));
   let gate: GateResult | undefined;
+  const checked = JSON.stringify(configOf(current));
   if (!(body as { skipEval?: unknown })?.skipEval) {
     try {
       gate = await checkPublish(id, { signal: request.signal });
@@ -31,6 +32,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
       return error(`The eval gate could not run: ${(caught as Error).message}. Publish with the check skipped to go ahead.`, caught instanceof EvalGateError ? caught.status : 502);
     }
     if (!gate.verdict.ok) return json({ gate }, 409);
+    // The builder autosaves while the cases run: what was scored must be what is published.
+    const now = agentStore.get(id);
+    if (!now || JSON.stringify(configOf(now)) !== checked) return error('The draft changed while the eval gate was checking it. Publish again to check the new draft.', 409);
   }
   const agent = agentStore.publish(id)!;
   if (gate?.run && agent.published) adoptRun(gate.run, agent.published.version);

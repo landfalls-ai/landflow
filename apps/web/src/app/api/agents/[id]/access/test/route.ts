@@ -1,8 +1,9 @@
 /**
  * Tool access test panel (docs/agents.md "Tool access"): what could this caller do?
- * POST { caller: { id, role?, source }, config? } — runs the agent's tools through the same policy a run uses (its rules, and OPA or
- * OpenFGA when LANDFLOW_TOOL_POLICY names one) and answers allow, ask or deny for each tool. `config` tries rules that are not saved yet
- * (the draft being edited); without it the saved draft is used. Nothing runs and no tool is called.
+ * POST { caller: { id, role?, source }, rules? } — runs the agent's tools through the same policy a run uses (its rules, and OPA or
+ * OpenFGA when LANDFLOW_TOOL_POLICY names one) and answers allow, ask or deny for each tool. `rules` tries rules that are not saved yet
+ * (the ones being edited); without them the saved draft's are used. No tool is called (an MCP server or A2A agent is contacted to read
+ * its tools, as at the start of a run).
  */
 import { z } from 'zod';
 import { cleanAccess } from '@/lib/shared/agent-access';

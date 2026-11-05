@@ -87,15 +87,20 @@ export async function applyToolPolicy(
   const kept: BuiltTool[] = [];
   const notes: string[] = [];
   const decided: ToolAccess['decisions'] = [];
-  for (const tool of tools) {
-    const decisions = [decideByRules(context.access, context.caller, tool.name)];
-    if (engine) {
+  // The engine is asked about every tool at once (a slow engine costs one timeout, not one per tool); answers are applied in tool order.
+  const answers = await Promise.all(
+    tools.map(async (tool): Promise<ToolDecision | undefined> => {
+      if (!engine) return undefined;
       try {
-        decisions.push(await engine({ caller: context.caller, agentId: context.agentId, tool: tool.name, kind: tool.kind }, context.signal));
+        return await engine({ caller: context.caller, agentId: context.agentId, tool: tool.name, kind: tool.kind }, context.signal);
       } catch (error) {
-        if (!failOpen) decisions.push({ effect: 'deny', reason: `the policy engine could not be reached (${(error as Error).message})` });
+        return failOpen ? undefined : { effect: 'deny', reason: `the policy engine could not be reached (${(error as Error).message})` };
       }
-    }
+    }),
+  );
+  for (const [index, tool] of tools.entries()) {
+    const answer = answers[index];
+    const decisions = [decideByRules(context.access, context.caller, tool.name), ...(answer ? [answer] : [])];
     const decision = mostRestrictive(decisions);
     decided.push({ tool: tool.name, label: tool.label, effect: decision.effect, ...(decision.reason && { reason: decision.reason }) });
     if (decision.effect === 'deny') notes.push(`${tool.label} is not available to you${decision.reason ? ` (${decision.reason})` : ''}`);

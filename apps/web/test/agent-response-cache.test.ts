@@ -97,6 +97,23 @@ describe('the response cache in a run', () => {
     expect(calls).toBe(before + 1);
   });
 
+  it('does not store an answer the router\'s cheap model gave, or one an evaluation run asked for', async () => {
+    calls = 0;
+    const routed = make({ router: { mode: 'auto', maxChars: 400, allowTools: false, cheapModel: { provider: 'ollama', model: 'small' } } });
+    await ask(routed, 'Short question');
+    await ask(routed, 'Short question');
+    expect(calls).toBe(2);
+    expect(responseCache.stats(routed.id).entries).toBe(0);
+
+    const agent = make();
+    const evaluation = () => runAgent({ agent, session: newSession(agent, { source: 'test', userId: 'evaluation', version: 'draft' }), message: 'Same question' });
+    calls = 0;
+    await evaluation();
+    await evaluation();
+    expect(calls).toBe(2);
+    expect(responseCache.stats(agent.id).entries).toBe(0);
+  });
+
   it('drops an answer once it has expired', async () => {
     const agent = make();
     const key = cacheKey(agent.id, configOf(agent), 'Old question');

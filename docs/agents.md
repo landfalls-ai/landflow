@@ -463,7 +463,7 @@ ignored; nothing else is, so "hours?" and "opening hours?" are different questio
 is embedded (an Ollama embedding model, `nomic-embed-text` by default, on the agent's Ollama server or `OLLAMA_URL`) and
 compared with the stored ones; the closest at or above the threshold (0.7 to 0.99, default 0.92, higher is stricter)
 answers, and the session says which question it was like and how alike (`similar to "…", 92% alike`). The same
-conditions apply as for the exact cache, and an edit to the persona, model or guardrails starts a fresh cache. If the
+conditions apply as for the exact cache (an answer the router's cheap model gave is not stored, and the eval gate's runs neither read nor fill the cache), and an edit to the persona, model or guardrails starts a fresh cache. If the
 embedding model can't be reached the run goes on with the agent's own model and a notice says so. The store is a
 `SemanticStore` and the embedder a function (`lib/server/agents/semantic-cache.ts`), so a vector database or another
 embedding model can replace either without touching the runtime.

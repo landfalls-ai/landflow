@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { Plus, ShieldHalf, Trash2 } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
-import { cleanAccess, type AccessEffect, type AccessRule } from '@/lib/shared/agent-access';
+import type { AccessEffect, AccessRule } from '@/lib/shared/agent-access';
 import type { AgentConfig, SessionSource } from '@/lib/shared/agents';
 import { ROLES } from '@/lib/shared/auth';
 import { Button } from '../ui/button';
@@ -112,11 +112,9 @@ function TestPanel({ agentId, rules }: { agentId: string; rules: AccessRule[] })
 
 export function AccessCard({ agentId, config, update }: { agentId: string; config: AgentConfig; update: UpdateConfig }) {
   const rules = config.access?.rules ?? [];
-  const setRules = (next: AccessRule[]) => update((c) => {
-    const { access: _access, ...rest } = c;
-    const access = cleanAccess({ rules: next });
-    return { ...rest, ...(access && { access }) };
-  });
+  // The rules stay as typed (even a blank tool name while it is being edited) and an empty list is sent as an empty list: the server
+  // cleans them (cleanAccess) and a missing key would not clear the saved rules.
+  const setRules = (next: AccessRule[]) => update((c) => ({ ...c, access: { rules: next } }));
   const change = (id: string, patch: Partial<AccessRule>) => setRules(rules.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   const changeWho = (id: string, patch: Partial<AccessRule['who']>) => setRules(rules.map((r) => (r.id === id ? { ...r, who: { ...r.who, ...patch } } : r)));
 
