@@ -226,6 +226,8 @@ export interface AgentGuardrails {
   input?: AgentGuardrail;
   /** Applied to the final answer before it is sent. */
   output?: AgentGuardrail;
+  /** Applied to what each tool returns before the model reads it (text an attacker can plant: an email, a web page, a ticket). */
+  toolResult?: AgentGuardrail;
 }
 
 export type AnswerLength = 'sentence' | 'paragraph' | 'detailed';
@@ -614,12 +616,14 @@ export type TimelineEntry =
   | {
       id: string;
       type: 'guardrail';
-      stage: 'input' | 'output';
+      stage: 'input' | 'output' | 'tool';
       action: 'blocked' | 'sanitized';
       /** What was found; matches are masked. */
       violations: Array<{ check: string; type: string; match?: string; confidence?: number; reason?: string }>;
       /** blocked: the reply that went out instead. */
       reply?: string;
+      /** The tool whose result a tool-result guardrail checked. */
+      tool?: string;
       at: string;
     }
   | { id: string; type: 'error'; message: string; at: string }

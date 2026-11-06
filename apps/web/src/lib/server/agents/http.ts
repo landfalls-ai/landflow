@@ -53,7 +53,7 @@ export const agentConfigSchema = z
     schedules: z.array(z.object({ id: z.string(), prompt: z.string(), frequency: z.enum(['hourly', 'daily', 'weekly', 'monthly', 'cron']) }).passthrough()).optional(),
     channels: z.array(z.object({ id: z.string(), type: z.enum(['telegram', 'slack', 'teams']), credential: ref }).passthrough()).optional(),
     memory: z.object({ crossSession: z.boolean() }).optional(),
-    guardrails: z.object({ input: guardrailRule.optional(), output: guardrailRule.optional() }).optional(),
+    guardrails: z.object({ input: guardrailRule.optional(), output: guardrailRule.optional(), toolResult: guardrailRule.optional() }).optional(),
     cache: z
       .object({
         enabled: z.boolean(),

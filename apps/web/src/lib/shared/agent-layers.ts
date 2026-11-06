@@ -28,7 +28,7 @@ export function agentLayers(config: AgentConfig, facts: LayerFacts): Layer[] {
   const hasTools = tools.length > 0;
   const knowledge = tools.filter((t) => t.type === 'knowledge').length;
   const rules = config.access?.rules.length ?? 0;
-  const guarded = Boolean(config.guardrails?.input || config.guardrails?.output);
+  const guarded = Boolean(config.guardrails?.input || config.guardrails?.output || config.guardrails?.toolResult);
   const routed = config.router?.mode === 'auto' && Boolean(config.router.cheapModel?.model);
   const provider = config.model?.provider;
   return [

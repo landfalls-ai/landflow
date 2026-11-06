@@ -330,6 +330,27 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     for (const note of toolset.unavailable) upsert({ id: entryId(), type: 'notice', message: `Tool unavailable: ${note}`, at: now() });
     for (const note of accessNotes) upsert({ id: entryId(), type: 'notice', message: `Tool access: ${note}`, at: now() });
     const byName = new Map(toolset.tools.map((t) => [t.name, t]));
+    // What this run's knowledge bases returned: the passages the output rule's grounded check judges the answer against.
+    const passages: string[] = [];
+    const hasKnowledge = toolset.tools.some((t) => t.knowledge);
+    // Tool-result guardrail: each result is checked before the model reads it. A blocked one reaches the model as a failed call
+    // (the rule's reply says it was withheld); a sanitized one is cleaned. Errors we wrote ourselves are not checked.
+    const toolRule = config.guardrails?.toolResult;
+    const guardResults = (results: ToolResult[]): Promise<ToolResult[]> =>
+      Promise.all(
+        results.map(async (result) => {
+          let next = result;
+          if (!result.isError && ruleActive(toolRule)) {
+            const checked = await applyGuardrail(toolRule, 'tool', result.content, { model: () => agentModel(config.model), signal: request.signal, log: (m) => logger.warn(m) });
+            if (checked.action !== 'pass') {
+              upsert(guardrailEntry(entryId(), 'tool', checked, now(), result.name));
+              next = { ...result, content: checked.text, ...(checked.action === 'blocked' && { isError: true }) };
+            }
+          }
+          if (!next.isError && byName.get(next.name)?.knowledge) passages.push(next.content);
+          return next;
+        }),
+      );
     const toolNote = request.team ? toolsInRun(toolset.tools) : undefined;
     const specs = toolset.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
     const ctx: ToolContext = {
@@ -359,7 +380,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         return { reason: 'awaiting_approval' };
       }
       const order = pendingOrder(session.messages);
-      session.messages.push({ role: 'tool', results: settled.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)) });
+      session.messages.push({ role: 'tool', results: (await guardResults(settled)).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)) });
       // A rejected remote call isn't a rejected tool: the agent heard the reason and answered, so the model may ask it again.
       justDenied = new Set(pending.calls.filter((c) => c.decision === 'denied' && !c.remote).map((c) => c.tool));
       delete session.pending;
@@ -445,7 +466,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       let changed = false;
       const outRule = config.guardrails?.output;
       if (!turn.toolCalls.length && ruleActive(outRule)) {
-        const checked = await applyGuardrail(outRule, 'output', answer, { model: async () => model, signal: request.signal, log: (m) => logger.warn(m) });
+        const checked = await applyGuardrail(outRule, 'output', answer, { model: async () => model, signal: request.signal, log: (m) => logger.warn(m), ...(hasKnowledge && { context: passages.join('\n\n---\n\n') }) });
         if (checked.action !== 'pass') {
           upsert(guardrailEntry(entryId(), 'output', checked, now()));
           answer = checked.text;
@@ -500,7 +521,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         return { reason: 'awaiting_approval' };
       }
       const order = turn.toolCalls.map((c) => c.id);
-      session.messages.push({ role: 'tool', results: results.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)) });
+      session.messages.push({ role: 'tool', results: (await guardResults(results)).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)) });
       const stopped = request.team?.stopAfterTools?.();
       if (stopped !== undefined) {
         session.messages.push({ role: 'assistant', text: stopped, toolCalls: [] });

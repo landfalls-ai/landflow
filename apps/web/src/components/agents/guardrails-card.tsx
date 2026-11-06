@@ -15,10 +15,14 @@ import type { UpdateConfig } from './util';
 /** The Guardrails node's PII entities (server/guardrails.ts). */
 const PII_ENTITIES = ['EMAIL_ADDRESS', 'PHONE_NUMBER', 'CREDIT_CARD', 'IBAN_CODE', 'IP_ADDRESS', 'US_SSN', 'CRYPTO'] as const;
 const DEFAULT_REPLY = 'Sorry, I can’t help with that request.';
-const emptyRule = (stage: 'input' | 'output'): AgentGuardrail => ({
+type Stage = 'input' | 'output' | 'tool';
+/** The rule of each stage lives under this key of the agent's guardrails. */
+const KEY = { input: 'input', output: 'output', tool: 'toolResult' } as const;
+/** An empty reply on the tool-result stage means the server's own wording (what the model reads in place of the result). */
+const emptyRule = (stage: Stage): AgentGuardrail => ({
   enabled: true,
   action: 'block',
-  reply: stage === 'input' ? DEFAULT_REPLY : 'Sorry, I can’t share that answer.',
+  reply: stage === 'input' ? DEFAULT_REPLY : stage === 'tool' ? '' : 'Sorry, I can’t share that answer.',
   checks: {},
 });
 
@@ -45,7 +49,7 @@ function ListField({ id, value, placeholder, onChange }: { id: string; value: st
   );
 }
 
-function RuleEditor({ stage, rule, onChange }: { stage: 'input' | 'output'; rule: AgentGuardrail; onChange: (rule: AgentGuardrail) => void }) {
+function RuleEditor({ stage, rule, onChange }: { stage: Stage; rule: AgentGuardrail; onChange: (rule: AgentGuardrail) => void }) {
   const { checks } = rule;
   const setChecks = (patch: Partial<AgentGuardrail['checks']>) => {
     const next = { ...checks, ...patch };
@@ -71,7 +75,7 @@ function RuleEditor({ stage, rule, onChange }: { stage: 'input' | 'output'; rule
             </Select>
           </Field>
         ) : (
-          <Field id={id('reply')} label="Reply when blocked" hint={stage === 'input' ? 'Sent instead of running the agent' : 'Sent instead of the agent’s answer'}>
+          <Field id={id('reply')} label="Reply when blocked" hint={stage === 'input' ? 'Sent instead of running the agent' : stage === 'tool' ? 'What the model reads instead of the result; leave empty for the standard notice' : 'Sent instead of the agent’s answer'}>
             <Textarea id={id('reply')} rows={2} value={rule.reply} onChange={(e) => onChange({ ...rule, reply: e.target.value })} />
           </Field>
         )}
@@ -97,6 +101,17 @@ function RuleEditor({ stage, rule, onChange }: { stage: 'input' | 'output'; rule
         )}
         {!sanitize && (
           <>
+            {stage !== 'tool' && (
+              <ToggleRow title="Stay on topic" description="Flag anything outside the subjects you list, judged by the agent’s model" checked={Boolean(checks.topical)} onChange={(on) => setChecks({ topical: on ? { prompt: '', threshold: 0.7 } : undefined })} />
+            )}
+            {stage !== 'tool' && checks.topical && (
+              <Field id={id('topical')} label="What the agent may talk about" hint="Greetings and short follow-ups count as on topic">
+                <Textarea id={id('topical')} rows={2} value={checks.topical.prompt} placeholder="Parcel delivery, refunds and our policies" onChange={(e) => setChecks({ topical: { ...checks.topical!, prompt: e.target.value } })} />
+              </Field>
+            )}
+            {stage === 'output' && (
+              <ToggleRow title="Grounded in the knowledge base" description="Flag an answer the passages its knowledge base returned do not support. Only runs for an agent that has a knowledge base; one more model call per answer." checked={Boolean(checks.grounded)} onChange={(on) => setChecks({ grounded: on ? { threshold: 0.7 } : undefined })} />
+            )}
             <ToggleRow title="Moderation" description="Not-safe-for-work, hateful or violent content, judged by the agent’s model" checked={Boolean(checks.nsfw)} onChange={(on) => setChecks({ nsfw: on ? { threshold: 0.7 } : undefined })} />
             <div className="rounded-[10px] border border-hair bg-wl px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
@@ -133,23 +148,24 @@ function RuleEditor({ stage, rule, onChange }: { stage: 'input' | 'output'; rule
 }
 
 export function GuardrailsCard({ config, update }: { config: AgentConfig; update: UpdateConfig }) {
-  const set = (stage: 'input' | 'output', rule: AgentGuardrail | undefined) =>
+  const set = (stage: Stage, rule: AgentGuardrail | undefined) =>
     update((c) => {
-      const guardrails: AgentGuardrails = { ...c.guardrails, [stage]: rule };
-      if (!guardrails[stage]) delete guardrails[stage];
+      const key = KEY[stage];
+      const guardrails: AgentGuardrails = { ...c.guardrails, [key]: rule };
+      if (!guardrails[key]) delete guardrails[key];
       const { guardrails: _old, ...rest } = c;
-      return guardrails.input || guardrails.output ? { ...rest, guardrails } : rest;
+      return guardrails.input || guardrails.output || guardrails.toolResult ? { ...rest, guardrails } : rest;
     });
   return (
-    <Section icon={<ShieldCheck className="size-4" />} title="Guardrails" description="Check what people send the agent and what it answers: block it with a reply of your own, or sanitize it. What a guardrail did shows in the session and its trace.">
+    <Section icon={<ShieldCheck className="size-4" />} title="Guardrails" description="Check what people send the agent, what its tools return and what it answers: block it with a reply of your own, or sanitize it. What a guardrail did shows in the session and its trace.">
       <div className="space-y-5">
-        {(['input', 'output'] as const).map((stage) => {
-          const rule = config.guardrails?.[stage];
+        {(['input', 'tool', 'output'] as const).map((stage) => {
+          const rule = config.guardrails?.[KEY[stage]];
           return (
             <div key={stage} className="space-y-3">
               <ToggleRow
-                title={stage === 'input' ? 'Input guardrails' : 'Output guardrails'}
-                description={stage === 'input' ? 'Each user message, before the model sees it' : 'The final answer, before it is sent'}
+                title={stage === 'input' ? 'Input guardrails' : stage === 'tool' ? 'Tool result guardrails' : 'Output guardrails'}
+                description={stage === 'input' ? 'Each user message, before the model sees it' : stage === 'tool' ? 'What each tool returns, before the model reads it: an email, web page or ticket can carry planted instructions' : 'The final answer, before it is sent'}
                 checked={Boolean(rule?.enabled)}
                 onChange={(on) => set(stage, on ? { ...(rule ?? emptyRule(stage)), enabled: true } : rule && { ...rule, enabled: false })}
               />
