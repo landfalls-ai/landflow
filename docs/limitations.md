@@ -51,6 +51,10 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Allow-list watcher** polls once a second and needs a window on two passes, so a stray window can be visible for about two seconds. Firefox runs with its content sandbox disabled (the container is the boundary). The app list is fixed at `editor` and `browser` by the image.
 - **Egress** proxy is a small Python HTTP/CONNECT allow-list by host name, not by path; it does not filter DNS beyond that.
 
+## SAP plugin (built 2026-11-07)
+
+- **SAP** ([sap.md](sap.md)): phases 1 to 4 only, tested against a fake S/4HANA server. Phase 0 (a real account) was skipped, so the spec's UNVERIFIED list stands. No SAML (phase 5), no real-system run (phase 6), no broker connection for events (the event trigger takes a webhook), no deletions in the poll trigger, no `$batch` writes, no deep insert.
+
 ## Debugging, chat with agents, Browser and Web Search (built 2026-11-07)
 
 - **Debugging over the instance MCP server**: the expression field check reads only the top-level fields of what a node writes, from its `outputSchema` or the last five runs, so a field that appears only in some runs, or after the workflow changed, can raise a warning that does not apply. It covers JavaScript Code nodes and `{{ }}` expressions, not Python code or computed keys. `run_node` runs one node on the input you pin: `$('Other node')` reads nothing unless `fromExecution` is given. `get_plugin_logs` has nothing for plugins started with `LANDFLOW_PLUGINS`; only marketplace-installed node plugins keep logs.

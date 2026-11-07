@@ -24,6 +24,8 @@
     "plugin:agent-shell": "pnpm --filter @landflow/plugin-agent-shell start",
     "plugin:web-search": "pnpm --filter @landflow/plugin-web-search start",
     "plugin:ai-sdk": "pnpm --filter @landflow/plugin-ai-sdk start",
+    "plugin:sap": "pnpm --filter @landflow/plugin-sap start",
+    "fake-s4": "pnpm --filter @landflow/plugin-sap fake-s4",
     "plugin:messaging": "pnpm --filter @landflow/plugin-messaging start",
     "plugin:productivity": "cd plugins/productivity && (test -x .venv/bin/python && .venv/bin/python main.py || python3 main.py)",
     "plugin:google": "cd plugins/google-workspace && go run .",

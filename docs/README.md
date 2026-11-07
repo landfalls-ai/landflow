@@ -39,6 +39,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Runbooks made from closed Landfall war rooms, found by alert kind | [runbooks.md](runbooks.md) | [triage.md](triage.md) |
 | Integrations: messaging, productivity, Google Workspace, databases | [features/integrations.md](features/integrations.md) | each plugin's README |
 | Web Search: SearXNG, Brave Search and Tavily as an agent tool, titles, links and snippets only | [web-search.md](web-search.md) | [plugins/web-search](../plugins/web-search/README.md) |
+| SAP S/4HANA Cloud: an OData node with presets, safe writes with approvals, a poll trigger and an event trigger (opt-in plugin, `pnpm plugin:sap`) | [sap.md](sap.md) | [plugins/sap](../plugins/sap/README.md) |
 | Browser: read a page, run listed steps, extract values, take a screenshot, packaged as its own image | [plugins/browser](../plugins/browser/README.md) | [deployment.md](deployment.md#browser-plugin) |
 | Desktop: see and use a disposable virtual desktop (screenshot, click, type) in a locked-down container, from a flow or as an agent tool (opt-in plugin; no Anthropic run yet) | [features/desktop.md](features/desktop.md) | [plugins/desktop](../plugins/desktop/README.md), [deployment.md](deployment.md#desktop-plugin) |
 | Agent Shell: a safe in-memory bash an agent can use as a tool, no host files and no network (opt-in plugin) | [plugins/agent-shell](../plugins/agent-shell/README.md) | [research/just-bash-verdict.md](research/just-bash-verdict.md) |

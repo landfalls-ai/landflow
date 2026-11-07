@@ -65,7 +65,7 @@ services:
       LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
       # Plugins announce themselves; the scan (at boot and the Plugins page's "Scan network")
       # probes the plugin services instead of the container's own 127.0.0.1.
-      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github,browser,agent-shell,web-search,desktop
+      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github,browser,agent-shell,web-search,desktop,sap
       LANDFLOW_SCAN_PORTS: 7101-7107,7111-7117,7201-7207,7211-7217
       # Base of links the host hands out (resume URLs, error-workflow links): the published port.
       LANDFLOW_PUBLIC_URL: http://localhost:${LANDFLOW_HOST_PORT:-53000}
@@ -316,6 +316,28 @@ services:
       LANDFLOW_ADVERTISE_HOST: web-search
       LANDFLOW_SEARCH_SEARXNG_URL: ${LANDFLOW_SEARCH_SEARXNG_URL:-}
       LANDFLOW_SEARCH_DENY_DOMAINS: ${LANDFLOW_SEARCH_DENY_DOMAINS:-}
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  # SAP plugin (plugins/sap): SAP S/4HANA Cloud over OData; credentials live in saved credentials. Optional: the profile `sap`.
+  # LANDFLOW_SAP_ALLOWED_HOSTS limits the hosts it may call (comma separated, `.suffix` matches subdomains; no default here: name your
+  # tenant, for example .s4hana.cloud.sap). Tests and docs use a fake server only.
+  sap:
+    <<: *plugin
+    profiles: [sap]
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-sap:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: sap, HTTP_PORT: "7116", GRPC_PORT: "7216" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: sap
+      LANDFLOW_SAP_ALLOWED_HOSTS: ${LANDFLOW_SAP_ALLOWED_HOSTS:-}
+      LANDFLOW_SAP_METADATA_TTL_SECONDS: ${LANDFLOW_SAP_METADATA_TTL_SECONDS:-3600}
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
