@@ -50,12 +50,14 @@ function within(request: string, ceiling: string): boolean {
 
 /**
  * The allow-list for a call: what the node asks for, held inside the operator's ceiling (`LANDFLOW_BROWSER_ALLOWED_DOMAINS`)
- * when one is set. A call with no allow-list is refused rather than left open.
+ * when one is set. With none named it is the URL's own host (`defaultHost`); a call with no allow-list at all is refused rather than left open.
  */
-export function effectiveDomains(requested: string[], ceiling: string[]): string[] {
+export function effectiveDomains(requested: string[], ceiling: string[], defaultHost?: string): string[] {
   if (requested.length === 0) {
+    // Nothing named: the page's own host, when the operator's ceiling (if any) allows it; else the ceiling itself.
+    if (defaultHost && (!ceiling.length || ceiling.some((c) => matches(defaultHost, c)))) return [defaultHost];
     if (ceiling.length) return ceiling;
-    throw new BrowserError('No allowed domains', 'Name the sites this node may visit in "Allowed Domains" (for example example.com, *.example.org). A browser with no allow-list is refused.');
+    throw new BrowserError('No allowed domains', 'Name the sites this node may visit in "Allowed Domains" (for example example.com, *.example.org), or give a URL so its own site is used. A browser with no allow-list is refused.');
   }
   if (ceiling.length) {
     const outside = requested.filter((d) => !ceiling.some((c) => within(d, c)));
@@ -77,7 +79,8 @@ export function checkUrl(raw: string, domains: string[]): URL {
   return url;
 }
 
-export type StepAction = 'click' | 'fill' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'hover' | 'scroll' | 'wait' | 'back' | 'reload';
+export const EXTRACT_ACTIONS = ['getText', 'getValue', 'getAttr'] as const;
+export type StepAction = 'getText' | 'getValue' | 'getAttr' | 'click' | 'fill' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'hover' | 'scroll' | 'wait' | 'back' | 'reload';
 export interface Step {
   action: StepAction;
   /** A ref from a snapshot (`@e3`) or a selector. */
@@ -87,13 +90,19 @@ export interface Step {
   direction?: 'up' | 'down' | 'left' | 'right';
   pixels?: number;
   ms?: number;
+  /** Extract steps: the key under `results`. */
+  name?: string;
+  /** getAttr: the attribute to read. */
+  attr?: string;
 }
+
+export const isExtract = (action: string) => (EXTRACT_ACTIONS as readonly string[]).includes(action);
 
 /** Words people (and models) use for a step's parts, mapped to ours. Any other field is an error, so a typo is not silently dropped. */
 const TARGET_KEYS = ['target', 'selector', 'ref', 'element'];
 const TEXT_KEYS = ['text', 'value', 'option'];
 const MS_KEYS = ['ms', 'milliseconds', 'durationMs'];
-const STEP_KEYS = new Set(['action', 'key', 'direction', 'pixels', 'seconds', ...TARGET_KEYS, ...TEXT_KEYS, ...MS_KEYS]);
+const STEP_KEYS = new Set(['action', 'key', 'direction', 'pixels', 'seconds', 'name', 'attr', ...TARGET_KEYS, ...TEXT_KEYS, ...MS_KEYS]);
 
 /** A step as written, with the aliases resolved to `target`, `text` and `ms`. */
 export function normalizeStep(raw: unknown): Step {
@@ -101,7 +110,7 @@ export function normalizeStep(raw: unknown): Step {
   const step = raw as Record<string, unknown>;
   const action = String(step.action ?? '');
   const unknown = Object.keys(step).filter((k) => !STEP_KEYS.has(k));
-  if (unknown.length) throw new BrowserError(`Step "${action}" has an unknown field: ${unknown.join(', ')}`, 'Fields are action, target (or selector), text (or value), key, direction, pixels and ms (or milliseconds, seconds).');
+  if (unknown.length) throw new BrowserError(`Step "${action}" has an unknown field: ${unknown.join(', ')}`, 'Fields are action, target (or selector), text (or value), key, direction, pixels, ms (or milliseconds, seconds), and for Extract name and attr.');
   const pick = (keys: string[]) => keys.map((k) => step[k]).find((v) => v !== undefined && v !== null && v !== '');
   const target = pick(TARGET_KEYS);
   const text = pick(TEXT_KEYS);
@@ -113,21 +122,30 @@ export function normalizeStep(raw: unknown): Step {
     ...(step.key !== undefined && { key: String(step.key) }),
     ...(step.direction !== undefined && { direction: step.direction as Step['direction'] }),
     ...(step.pixels !== undefined && { pixels: Number(step.pixels) }),
+    ...(step.name !== undefined && step.name !== '' && { name: String(step.name) }),
+    ...(step.attr !== undefined && step.attr !== '' && { attr: String(step.attr) }),
     ...(ms !== undefined ? { ms: Number(ms) } : step.seconds !== undefined ? { ms: Number(step.seconds) * 1000 } : {}),
   };
 }
 
-const NEEDS_TARGET = new Set<StepAction>(['click', 'fill', 'type', 'select', 'check', 'uncheck', 'hover']);
+const NEEDS_TARGET = new Set<StepAction>(['getText', 'getValue', 'getAttr', 'click', 'fill', 'type', 'select', 'check', 'uncheck', 'hover']);
 
 /** The CLI words for one step. Only these actions exist: no eval, upload, download, cookies or network control. */
 export function stepArgs(input: Step | Record<string, unknown>): string[] {
   const step = normalizeStep(input);
   const a = step.action;
-  if (!['click', 'fill', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'wait', 'back', 'reload'].includes(a)) {
-    throw new BrowserError(`Unknown step "${String(a)}"`, 'Use click, fill, type, press, select, check, uncheck, hover, scroll, wait, back or reload.');
+  if (!['getText', 'getValue', 'getAttr', 'click', 'fill', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'wait', 'back', 'reload'].includes(a)) {
+    throw new BrowserError(`Unknown step "${String(a)}"`, 'Use click, fill, type, press, select, check, uncheck, hover, scroll, wait, back, reload, or getText, getValue, getAttr to extract.');
   }
   if (NEEDS_TARGET.has(a) && !step.target) throw new BrowserError(`Step "${a}" needs a target`, 'Use a ref from a snapshot (@e3) or a selector.');
   switch (a) {
+    case 'getText':
+      return ['get', 'text', step.target!];
+    case 'getValue':
+      return ['get', 'value', step.target!];
+    case 'getAttr':
+      if (!step.attr) throw new BrowserError('Step "getAttr" needs an attribute', 'Name it in "attr", for example href.');
+      return ['get', 'attr', step.target!, step.attr];
     case 'fill':
     case 'type':
     case 'select':
@@ -146,6 +164,15 @@ export function stepArgs(input: Step | Record<string, unknown>): string[] {
     default:
       return [a, step.target!];
   }
+}
+
+/**
+ * Extracted text comes back fenced by the CLI (`--content-boundaries`) in a marker with a random nonce. The value a flow
+ * reads is the text inside; the fence stays on everything else (the snapshot). The text is still untrusted page content.
+ */
+export function unfence(text: string): string {
+  const m = /^--- AGENT_BROWSER_PAGE_CONTENT nonce=(\S+)[^\n]*---\n([\s\S]*)\n--- END_AGENT_BROWSER_PAGE_CONTENT nonce=\1 ---$/.exec(text.trim());
+  return m ? m[2] : text;
 }
 
 export interface SessionOptions {
@@ -178,7 +205,7 @@ export class BrowserSession {
     const { stdout, stderr, code } = await this.exec([...this.globals(), ...args], { timeoutMs: this.options.timeoutMs });
     if (code !== 0) {
       const text = (stderr || stdout).trim();
-      if (/ENOENT|not found/i.test(text) && !text.includes('\n')) throw new BrowserError('agent-browser is not installed', 'Install it with `npm i -g agent-browser` (or `brew install agent-browser`), then `agent-browser install`.');
+      if (/ENOENT|command not found/i.test(text) && !text.includes('\n')) throw new BrowserError('agent-browser is not installed', 'Install it with `npm i -g agent-browser` (or `brew install agent-browser`), then `agent-browser install`.');
       throw new BrowserError(`agent-browser ${args[0]} failed`, text.slice(0, 600) || `exit code ${code}`);
     }
     return stdout.trim();

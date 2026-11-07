@@ -12,7 +12,8 @@ function fake(replies: Record<string, string> = {}, fail?: (args: string[]) => s
   const calls: Call[] = [];
   const exec = async (args: string[]) => {
     calls.push(args);
-    const command = args.slice(args.indexOf('--content-boundaries') >= 0 ? 7 : 2);
+    const at = args.indexOf('--max-output');
+    const command = args.slice(at >= 0 ? at + 2 + (args[at + 2] === '--headed' ? 1 : 0) : 2);
     const bad = fail?.(args);
     if (bad) return { stdout: '', stderr: bad, code: 1 };
     if (command[0] === 'screenshot') await writeFile(command[command.length - 1], Buffer.from('PNGDATA'));
@@ -38,6 +39,10 @@ describe('allow-list', () => {
   it('parses domains and refuses a call with none', () => {
     expect(parseDomains('Example.com, *.example.org\nfoo.dev')).toEqual(['example.com', '*.example.org', 'foo.dev']);
     expect(() => effectiveDomains([], [])).toThrow(/No allowed domains/);
+    // With none named, the URL's own host; the ceiling wins when it does not cover that host.
+    expect(effectiveDomains([], [], 'example.com')).toEqual(['example.com']);
+    expect(effectiveDomains([], ['*.example.com'], 'a.example.com')).toEqual(['a.example.com']);
+    expect(effectiveDomains([], ['other.com'], 'example.com')).toEqual(['other.com']);
   });
 
   it('keeps a node inside the operator ceiling, and uses the ceiling when the node names none', () => {
@@ -78,6 +83,11 @@ describe('steps', () => {
     expect(() => stepArgs('click' as never)).toThrow(/must be an object/);
     expect(() => stepArgs({ action: 'click' })).toThrow(/needs a target/);
     expect(() => stepArgs({ action: 'fill', target: '@e1' })).toThrow(/needs text/);
+    expect(stepArgs({ action: 'getText', target: '#msg', name: 'confirmation' })).toEqual(['get', 'text', '#msg']);
+    expect(stepArgs({ action: 'getValue', target: '#q' })).toEqual(['get', 'value', '#q']);
+    expect(stepArgs({ action: 'getAttr', target: 'a', attr: 'href' })).toEqual(['get', 'attr', 'a', 'href']);
+    expect(() => stepArgs({ action: 'getAttr', target: 'a' })).toThrow(/needs an attribute/);
+    expect(() => stepArgs({ action: 'getText' })).toThrow(/needs a target/);
   });
 });
 
@@ -101,8 +111,8 @@ describe('Browser node', () => {
     const response = await runNode(new Browser(exec), request({ ...base, url: 'https://evil.com', operation: 'read' }), extras);
     expect(response.error?.message).toMatch(/evil.com is not an allowed domain/);
     expect(commands(calls)).toEqual([]);
-    const none = await runNode(new Browser(exec), request({ url: 'https://example.com', operation: 'read' }), extras);
-    expect(none.error?.message).toMatch(/No allowed domains/);
+    const none = await runNode(new Browser(exec), request({ url: 'not a url', operation: 'read' }), extras);
+    expect(none.error?.message).toMatch(/Not a URL/);
   });
 
   it('runs steps in order, returns the page after them, and passes interactive-only', async () => {
@@ -110,9 +120,54 @@ describe('Browser node', () => {
     const steps = JSON.stringify([{ action: 'fill', target: 'input[name=q]', text: 'landflow' }, { action: 'press', key: 'Enter' }]);
     const response = await runNode(new Browser(exec), request({ ...base, operation: 'act', steps, options: { interactiveOnly: true, headed: true } }), extras);
     expect(response.error).toBeUndefined();
-    expect(response.outputs[0][0].json).toMatchObject({ stepsRun: 2 });
+    expect(response.outputs[0][0].json).toMatchObject({ stepsRun: 2, steps: [{ action: 'fill', target: 'input[name=q]', ok: true }, { action: 'press', ok: true }] });
+    expect(response.outputs[0][0].json).not.toHaveProperty('results');
     expect(commands(calls)).toEqual(['open https://example.com/a', 'fill input[name=q] landflow', 'press Enter', 'snapshot -c -i', 'get url', 'get title', 'close']);
     expect(calls[0]).toContain('--headed');
+  });
+
+  it('runs the step builder first, extracts into results and unwraps the fence on text', async () => {
+    const fence = '--- AGENT_BROWSER_PAGE_CONTENT nonce=abc123 origin=https://example.com/a ---\nThanks, ticket 42\n--- END_AGENT_BROWSER_PAGE_CONTENT nonce=abc123 ---';
+    const { calls, exec } = fake({ 'get text': fence, 'get value': 'a@b.c', 'get attr': '/next' });
+    const stepList = { step: [{ action: 'fill', target: '#email', text: 'a@b.c' }, { action: 'press', target: '', text: 'Enter' }, { action: 'getText', target: '#msg', text: 'confirmation' }, { action: 'getAttr', target: 'a.next', text: 'next:href' }] };
+    const steps = JSON.stringify([{ action: 'getValue', selector: '#email', name: 'email' }]);
+    const response = await runNode(new Browser(exec), request({ ...base, operation: 'act', stepList, steps }), extras);
+    expect(response.error).toBeUndefined();
+    expect(response.outputs[0][0].json).toMatchObject({ stepsRun: 5, results: { confirmation: 'Thanks, ticket 42', next: '/next', email: 'a@b.c' } });
+    expect(commands(calls).slice(1, 6)).toEqual(['fill #email a@b.c', 'press Enter', 'get text #msg', 'get attr a.next href', 'get value #email']);
+    expect(calls[0]).toContain('--content-boundaries');
+  });
+
+  it('names the failing step, and a repeated Extract name', async () => {
+    const failing = fake({}, (args) => (args.includes('click') ? 'Element not found: #send' : undefined));
+    const steps = JSON.stringify([{ action: 'fill', target: '#a', text: 'x' }, { action: 'click', target: '#send' }]);
+    const response = await runNode(new Browser(failing.exec), request({ ...base, operation: 'act', steps }), extras);
+    expect(response.error?.message).toBe('Step 2 of 2 (click #send) failed');
+    expect(response.error?.description).toContain('Element not found');
+    expect(response.error?.description).toContain('Steps 1-1 ran');
+    expect(commands(failing.calls).at(-1)).toBe('close');
+    const dup = JSON.stringify([{ action: 'getText', target: 'a', name: 'x' }, { action: 'getText', target: 'b', name: 'x' }]);
+    const twice = await runNode(new Browser(fake().exec), request({ ...base, operation: 'act', steps: dup }), extras);
+    expect(twice.error?.message).toMatch(/Two Extract steps are named "x"/);
+  });
+
+  it('can attach a screenshot after the steps, and honours the moved headed switch', async () => {
+    const { calls, exec } = fake({ 'get title': 'Done' });
+    const response = await runNode(new Browser(exec), request({ ...base, operation: 'act', screenshotAfter: true, headed: true, steps: '[]' }), extras);
+    expect(response.error).toBeUndefined();
+    const [item] = response.outputs[0];
+    expect(Buffer.from(item.binary!.data.data!, 'base64').toString()).toBe('PNGDATA');
+    expect(item.json).toMatchObject({ stepsRun: 0, steps: [] });
+    expect(calls[0]).toContain('--headed');
+    const offByDefault = await runNode(new Browser(fake().exec), request({ ...base, operation: 'act', steps: '[]' }), extras);
+    expect(offByDefault.outputs[0][0].binary).toBeUndefined();
+  });
+
+  it('defaults Allowed Domains to the URL host, and blocks other hosts for the call', async () => {
+    const { calls, exec } = fake();
+    const response = await runNode(new Browser(exec), request({ url: 'https://shop.example.com/x', operation: 'read' }), extras);
+    expect(response.error).toBeUndefined();
+    expect(calls[0]).toEqual(expect.arrayContaining(['--allowed-domains', 'shop.example.com']));
   });
 
   it('rejects bad step JSON and unknown actions, still closing the session', async () => {
@@ -147,7 +202,7 @@ describe('Browser node', () => {
 
   it('declares the fields it outputs, for the nodes after it', () => {
     const schema = plugin.nodes[0].description.outputSchema as { properties: Record<string, unknown> };
-    expect(Object.keys(schema.properties)).toEqual(['url', 'title', 'snapshot', 'stepsRun']);
+    expect(Object.keys(schema.properties)).toEqual(['url', 'title', 'snapshot', 'stepsRun', 'steps', 'results']);
   });
 
   it('is one node, not idempotent, with a small concurrency default and an MCP tool', () => {
