@@ -21,6 +21,7 @@
     "plugin:github": "pnpm --filter @landflow/plugin-github start",
     "plugin:browser": "pnpm --filter @landflow/plugin-browser start",
     "plugin:web-search": "pnpm --filter @landflow/plugin-web-search start",
+    "plugin:ai-sdk": "pnpm --filter @landflow/plugin-ai-sdk start",
     "plugin:messaging": "pnpm --filter @landflow/plugin-messaging start",
     "plugin:productivity": "cd plugins/productivity && (test -x .venv/bin/python && .venv/bin/python main.py || python3 main.py)",
     "plugin:google": "cd plugins/google-workspace && go run .",
