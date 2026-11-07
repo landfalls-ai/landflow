@@ -20,6 +20,7 @@
     "plugin:go": "cd plugins/go-crypto && go run .",
     "plugin:github": "pnpm --filter @landflow/plugin-github start",
     "plugin:browser": "pnpm --filter @landflow/plugin-browser start",
+    "plugin:desktop": "pnpm --filter @landflow/plugin-desktop start",
     "plugin:agent-shell": "pnpm --filter @landflow/plugin-agent-shell start",
     "plugin:web-search": "pnpm --filter @landflow/plugin-web-search start",
     "plugin:ai-sdk": "pnpm --filter @landflow/plugin-ai-sdk start",
