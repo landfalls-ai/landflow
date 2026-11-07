@@ -11,8 +11,8 @@
 import type { Span as SdkSpan, SpanProcessor } from '@opentelemetry/sdk-trace';
 import type { JsonObject, PropertyDescriptor } from '@landflow/protocol';
 
-/** Names of addresses and kinds (`tokenUrl`, `tokenType`) are not secrets. */
-export const SECRET_KEY = /^(?!.*(?:url|uri|endpoint|host|type)$).*(?:token|secret|password|authorization|api[-_]?key|cookie)/i;
+/** Names of addresses, kinds and usage counts (`tokenUrl`, `tokenType`, `gen_ai.usage.input_tokens`) are not secrets. */
+export const SECRET_KEY = /^(?!.*(?:url|uri|endpoint|host|type|tokens)$).*(?:token|secret|password|authorization|api[-_]?key|cookie)/i;
 export const REDACTED = '[REDACTED]';
 
 /** Shorter values are not registered: scrubbing "1" or "on" out of every log line would destroy the logs. */

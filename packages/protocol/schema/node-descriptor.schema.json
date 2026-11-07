@@ -229,6 +229,9 @@
     "usableAsTool": {
       "type": "boolean"
     },
+    "meterAiUsage": {
+      "type": "boolean"
+    },
     "toolDescription": {
       "type": "string"
     },

@@ -35,6 +35,7 @@ export const workflowNodeSchema = z.object({
   retryOnFail: z.boolean().optional(),
   maxTries: z.number().int().min(1).max(10).optional(),
   waitBetweenTriesMs: z.number().int().min(0).max(60_000).optional(),
+  retryBackoff: z.enum(['fixed', 'exponential']).optional(),
   /** Fail an attempt of the node that takes longer (retries and "continue on error" apply). */
   timeoutSeconds: z.number().min(0.1).max(86_400).optional(),
   alwaysOutputData: z.boolean().optional(),

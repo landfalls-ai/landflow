@@ -893,6 +893,38 @@ function paths(): Record<string, Record<string, Json>> {
       409: errorRef('The execution already ended'),
     },
   });
+  add('get', '/api/executions/{id}/debug-tokens', {
+    tag: 'Executions',
+    id: 'listDebugTokens',
+    summary: 'List the debug tokens of an execution',
+    description: 'Yours for this execution (owners and admins: everyone’s), live, expired and revoked; never the token itself.',
+    responses: { 200: reply('The tokens', object({ tokens: array({ type: 'object' }) }, ['tokens'])), 404: notFound },
+  });
+  add('post', '/api/executions/{id}/debug-tokens', {
+    tag: 'Executions',
+    id: 'createDebugToken',
+    summary: 'Mint a debug token for an execution',
+    description:
+      'A short-lived read-only token bound to this execution, for an agent that explains a failed run: it opens `explain_failure`, `get_run_trace` and `get_execution` at `/api/mcp` for this execution and nothing else, redacted of credentials and `$vars`, audited per call. The token is returned once. See docs/specs/19-debug-token.md.',
+    body: jsonBody(
+      object({ ttlSeconds: { type: 'integer', minimum: 60, maximum: 86400, default: 3600 }, scopes: array({ type: 'string', enum: ['executions:read', 'trace:read'] }), label: { type: 'string', maxLength: 100 } }),
+      undefined,
+      false,
+    ),
+    responses: {
+      201: reply('The token (shown once) and its record', object({ token: { type: 'string' }, record: { type: 'object' }, mcp: object({ enabled: { type: 'boolean' }, path: { type: 'string' } }) }, ['token', 'record'])),
+      400: invalid,
+      404: notFound,
+      409: errorRef('The execution already has too many live debug tokens'),
+    },
+  });
+  add('delete', '/api/executions/{id}/debug-tokens/{tokenId}', {
+    tag: 'Executions',
+    id: 'revokeDebugToken',
+    summary: 'Revoke a debug token',
+    description: 'Its minter, owners and admins. The token stops working on its next call.',
+    responses: { 200: reply('Revoked', object({ ok: { type: 'boolean' }, revoked: { type: 'boolean' }, record: { type: 'object' } }, ['ok', 'revoked'])), 404: notFound },
+  });
   add('post', '/api/executions/{id}/retry', {
     tag: 'Executions',
     id: 'retryExecution',

@@ -790,7 +790,8 @@ in [`apps/web/src/lib/shared/agents.ts`](../apps/web/src/lib/shared/agents.ts).
   files from chat apps yet). Discord and Linear channels would follow the same pattern; Slack modals
   aren't handled, and a Teams bot only answers (no proactive messages).
 - **Knowledge.** Knowledge bases take uploads in the builder or are filled by workflows (the data
-  loader reads files too). No web search capability; an HTTP Request node can stand in. The test
+  loader reads files too). Web search comes from the Web Search node (SearXNG, Brave or Tavily), added to an agent as a tool ([web-search.md](web-search.md)); it returns titles, links and
+  snippets only, so pair it with the Browser node to read a page. The test
   chat takes no file uploads (the hosted chat of a workflow does).
 - **Cost and limits.** Daily token and cost limits and a monthly cost limit per agent, plus the
   session token budget; no per-model routing yet. Schedules and channel pollers run on the

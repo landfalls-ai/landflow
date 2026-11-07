@@ -7,7 +7,7 @@ import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
 import { opsArgument, withEarlierRefs, recoverToolCalls, runChat, withoutApplyRequests, withoutAppliedClaims, withoutEchoedNotes, withoutInventedIds, withoutMadeUpIds, withoutRepeats, withTeamIds, unitSlips, MAX_STEPS, type ChatEvent } from '@/lib/server/assistant/chat';
 import { registryLookup, validateOps } from '@/lib/server/assistant/ops';
-import { nodeDocs, searchNodes } from '@/lib/server/assistant/research';
+import { nodeDocs, outputFields, searchNodes } from '@/lib/server/assistant/research';
 import { suggestAfterRun } from '@/lib/server/assistant/suggest';
 
 let types: NodeTypeInfo[];
@@ -232,6 +232,15 @@ describe('assistant ops', () => {
   it('docs give a collection field’s label, where its unit is, and its range', () => {
     const docs = nodeDocs(types.find((t) => t.type === 'core.a2aAgent')!);
     expect(docs).toContain('timeout (number, “Timeout (ms)”, 1000–3600000)');
+  });
+
+  it('docs name the fields a node writes, from its output schema', () => {
+    const d = { ...types.find((t) => t.type === 'core.a2aAgent')!.descriptor, outputSchema: { type: 'object', properties: { url: { type: 'string' }, snapshot: { type: 'string', description: 'the page as text' }, stepsRun: { type: 'number' } } } };
+    expect(outputFields(d)).toBe('url (string); snapshot (string) — the page as text; stepsRun (number)');
+    const info = { ...types.find((t) => t.type === 'core.a2aAgent')!, descriptor: d };
+    expect(nodeDocs(info)).toContain('Each output item has: url (string); snapshot (string) — the page as text; stepsRun (number).');
+    expect(outputFields({ ...d, outputSchema: undefined })).toBe('');
+    expect(nodeDocs(types.find((t) => t.type === 'core.a2aAgent')!)).not.toContain('Each output item has');
   });
 
   it('attaches a node added after an agent and connected to it as a tool as that only, not also as a step after it', () => {

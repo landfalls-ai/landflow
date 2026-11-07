@@ -219,6 +219,11 @@ export interface NodeDescriptor {
   properties: PropertyDescriptor[];
   /** Any action node flagged here can be attached to an agent's ai_tool port. */
   usableAsTool?: boolean;
+  /**
+   * The node calls a model itself and reports each call with `ctx.model`. The host then refuses a call once an AI usage cap
+   * is reached (the reported usage is counted either way). Absent: reports are counted, but nothing is refused up front.
+   */
+  meterAiUsage?: boolean;
   /** Description given to the model when used as a tool (defaults to `description`). */
   toolDescription?: string;
   /**
@@ -369,6 +374,8 @@ export interface CompositeStarterNode {
   onError?: 'stop' | 'continue';
   retryOnFail?: boolean;
   maxTries?: number;
+  waitBetweenTriesMs?: number;
+  retryBackoff?: 'fixed' | 'exponential';
   slot?: string;
 }
 
@@ -602,8 +609,32 @@ export interface NodeCheck {
   evidence?: JsonObject;
 }
 
-/** An artifact or check a node reported, with when (ISO; the host's receive time when absent). */
-export type NodeRecord = (({ type: 'artifact' } & NodeArtifact) | ({ type: 'check' } & NodeCheck)) & { at?: string };
+/**
+ * One model call a node made on its own (`ctx.model`): a plugin that talks to a model itself reports what it used, so the
+ * host counts it like its own model nodes' calls (AI usage, price, caps) and shows it as a `model` step in Run Trace.
+ * Declare `meterAiUsage` on the node so the host also refuses the call once a cap is reached.
+ */
+export interface NodeModelCall {
+  /** A label for the call when the node makes several (`summarize`, `judge`); the step is named after the model without it. */
+  name?: string;
+  /** The model id the provider answered with. */
+  model: string;
+  /** Who served it (`gen_ai.system`): ollama, anthropic, openai, google… Used to price the call. */
+  provider: string;
+  /** The whole prompt, cached tokens included. */
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  durationMs?: number;
+  finishReason?: string;
+  /** The prompt and the answer. The host's run-trace content setting (`traceContent`) decides what the trace keeps of them. */
+  prompt?: string;
+  answer?: string;
+}
+
+/** An artifact, check or model call a node reported, with when (ISO; the host's receive time when absent). */
+export type NodeRecord = (({ type: 'artifact' } & NodeArtifact) | ({ type: 'check' } & NodeCheck) | ({ type: 'model' } & NodeModelCall)) & { at?: string };
 
 export interface ExecuteResponse {
   /** outputs[i] = the items emitted on main output i. */

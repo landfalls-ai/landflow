@@ -235,7 +235,10 @@ function Conversation({ live, status }: { live: boolean; status?: string }) {
   const items = useAssistant((s) => s.items);
   const testing = useAssistant((s) => Boolean(s.testing));
   // Folded to a side card: while Spotlight works on its own, or (new look) while a change is built step by step.
-  const working = useWorking() || useBuilding();
+  // Both hooks every render: `useWorking() || useBuilding()` skips the second when the first is true, and React's hook order changes.
+  const isWorking = useWorking();
+  const isBuilding = useBuilding();
+  const working = isWorking || isBuilding;
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' });
@@ -477,7 +480,10 @@ export function Spotlight() {
   const hasItems = useAssistant((s) => s.items.length > 0);
   const pending = useAssistant((s) => s.pending || Boolean(s.testing));
   const drafting = useAssistant((s) => s.drafting);
-  const working = useWorking() || useBuilding();
+  // Both hooks every render: `useWorking() || useBuilding()` skips the second when the first is true, and React's hook order changes.
+  const isWorking = useWorking();
+  const isBuilding = useBuilding();
+  const working = isWorking || isBuilding;
   const detail = useAssistant((s) => s.detail);
   const waiting = useAssistant((s) => s.items.reduce((n, item) => n + (item.role === 'assistant' ? item.parts.filter((p) => p.kind === 'proposal' && !p.proposal.state).length : 0), 0));
   const empty = useEditor((s) => s.nodes.length === 0);

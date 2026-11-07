@@ -65,8 +65,10 @@ import {
 } from '@landflow/protocol';
 import type { ContextExtras, WaitRequest } from '@landflow/sdk';
 import {
+  isToolOutputWithImages,
   toToolName,
   type AgentMemory,
+  type ToolImage,
   type AgentTool,
   type AiDocument,
   type DocumentLoader,
@@ -167,6 +169,16 @@ interface NodeTelemetry {
 
 const now = () => new Date().toISOString();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The longest an exponential retry waits between two tries. */
+export const MAX_RETRY_WAIT_MS = 60_000;
+
+/** How long to wait after the `attempt`th try (1-based) failed: the node's wait as is, or doubled after each failure when its backoff is exponential. */
+export function retryDelayMs(node: Pick<WorkflowNode, 'waitBetweenTriesMs' | 'retryBackoff'>, attempt: number): number {
+  const base = node.waitBetweenTriesMs ?? 1000;
+  if (node.retryBackoff !== 'exponential') return base;
+  return Math.min(base * 2 ** Math.max(0, attempt - 1), MAX_RETRY_WAIT_MS);
+}
 
 export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<ExecutionResult> {
   return new WorkflowRun(options).run();
@@ -981,7 +993,7 @@ class WorkflowRun {
             ? caught
             : new NodeExecutionError((caught as Error).message ?? String(caught), node);
         telemetry.span.recordException(lastError);
-        if (attempt < maxTries) await sleep(node.waitBetweenTriesMs ?? 1000);
+        if (attempt < maxTries) await sleep(retryDelayMs(node, attempt));
       } finally {
         limit?.clear();
       }
@@ -1332,6 +1344,8 @@ class WorkflowRun {
         invoke: (input, signal) =>
           this.trackSubRun(root, subNode, 'tool', { json: input as JsonObject }, async () => {
             const result = await tool.invoke(input, signal);
+            // Images are kept by reference: the run's record shows their type and size, never their bytes.
+            if (isToolOutputWithImages(result)) return { result, output: { json: { text: result.text, images: result.images.map(imageLabel) } as JsonObject } };
             return { result, output: { json: (isObject(result) ? result : { result }) as JsonObject } };
           }),
       } satisfies AgentTool;
@@ -1451,7 +1465,10 @@ class WorkflowRun {
           this.emitRecords(subNode, response, root.id);
           if (response.error) throw new NodeExecutionError(response.error.message, subNode, response.error.description);
           const out = response.outputs[0] ?? [];
-          const result = out.length === 1 ? out[0].json : out.map((item) => item.json);
+          const json = out.length === 1 ? out[0].json : out.map((item) => item.json);
+          // A node that attached images (the Browser's Screenshot, a chart) hands them to the model with its text.
+          const images = out.flatMap(toolImages).slice(0, MAX_TOOL_IMAGES);
+          const result = images.length ? { text: JSON.stringify(json) ?? '', images, value: json } : json;
           return { result, output: out.length === 1 ? out[0] : { json: { items: out.map((i) => i.json) } as JsonObject } };
         }),
     };
@@ -1525,6 +1542,22 @@ function previewDocuments(documents: AiDocument[]): JsonObject[] {
     ...(doc.id !== undefined && { id: doc.id }),
     ...(doc.score !== undefined && { score: doc.score }),
   }));
+}
+
+const MAX_TOOL_IMAGES = 4;
+const TOOL_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** The image files of an item's binary data, as references the model can be shown. */
+function toolImages(item: NodeItem): ToolImage[] {
+  return Object.values(item.binary ?? {})
+    .filter((ref) => TOOL_IMAGE_TYPES.has((ref.mimeType ?? '').toLowerCase().split(';')[0].trim()) && (ref.id || ref.data))
+    .map((ref) => ({ mimeType: ref.mimeType.toLowerCase().split(';')[0].trim(), ref, ...(ref.fileName && { fileName: ref.fileName }) }));
+}
+
+/** What the run record keeps of an image: its type and size. */
+function imageLabel(image: ToolImage): JsonObject {
+  const size = image.ref?.fileSize ?? (image.data ? Math.floor((image.data.length * 3) / 4) : 0);
+  return { mimeType: image.mimeType, size, ...(image.ref?.id && { ref: image.ref.id }) };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

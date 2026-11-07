@@ -4,7 +4,7 @@
  * and Run an Agent, which runs a published agent as a step of the flow with the chat model,
  * memory and tools connected to it.
  */
-import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
+import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem, type StreamChunk } from '@landflow/sdk';
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
 import type { AgentStreamEvent } from '../../shared/agents';
 
@@ -178,6 +178,14 @@ export const messageAgentNode = defineNode({
         displayOptions: { show: { conversation: ['key'] } },
       },
       {
+        name: 'toolImagesKept',
+        displayName: 'Tool Images to Keep',
+        type: 'number',
+        default: 2,
+        typeOptions: { minValue: 0, maxValue: 10 },
+        description: 'When the agent’s tools return images (a screenshot), only this many of the newest go back to the model on each turn; older ones are dropped and their text kept',
+      },
+      {
         name: 'notice',
         displayName:
           'Connect a chat model to use it instead of the agent’s own, tools (a vector store in Retrieve Documents (As Tool) mode is a knowledge base) to add to its capabilities for this run, and a memory to keep the conversation in. Tools that require approval are refused in workflow runs (nobody is there to approve them).',
@@ -226,9 +234,10 @@ export const messageAgentNode = defineNode({
           session,
           message,
           approvals: 'deny',
+          toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
           ...((model || tools.length) && { flow: { ...(model && { model }), ...(tools.length && { tools }) } }),
           // The chat panel and streaming triggers get the agent's answers and tool calls as they happen.
-          ...(send && { onEvent: streamer(send, i) }),
+          ...(send && { onEvent: streamer(send, i, { id: agent.id, name: agent.name, ...(agent.avatar && { face: agent.avatar as unknown as JsonObject }) }) }),
         });
         send?.({ type: 'end', itemIndex: i });
         if (result.reason === 'error') {
@@ -272,18 +281,20 @@ export const messageAgentNode = defineNode({
 });
 
 /** An agent's timeline as the chat chunks of the AI Agent node: its answers, and its tool calls as they start and end. */
-export function streamer(send: NonNullable<IExecuteContext['sendChunk']>, itemIndex: number) {
+export function streamer(send: NonNullable<IExecuteContext['sendChunk']>, itemIndex: number, agent?: StreamChunk['agent']) {
   let wrote = false;
+  /** The chunks carry who wrote them when the node labels its agent (the chat page shows it). */
+  const label = agent ? { agent } : {};
   return (event: AgentStreamEvent) => {
     if (event.type !== 'entry') return;
     const { entry } = event;
     if (entry.type === 'assistant' && entry.text.trim()) {
-      send({ type: 'item', itemIndex, content: `${wrote ? '\n\n' : ''}${entry.text}` });
+      send({ type: 'item', itemIndex, ...label, content: `${wrote ? '\n\n' : ''}${entry.text}` });
       wrote = true;
     } else if (entry.type === 'tool') {
       const status = entry.status === 'running' ? 'started' : entry.status === 'success' ? 'finished' : 'failed';
       const output = entry.error ?? (entry.output === undefined ? undefined : typeof entry.output === 'string' ? entry.output : JSON.stringify(entry.output));
-      send({ type: 'tool', itemIndex, tool: { id: entry.callId, name: entry.tool, status, input: entry.input as JsonObject, ...(output !== undefined && { output: output.slice(0, 2_000) }) } });
+      send({ type: 'tool', itemIndex, ...label, tool: { id: entry.callId, name: entry.tool, status, input: entry.input as JsonObject, ...(output !== undefined && { output: output.slice(0, 2_000) }) } });
     }
   };
 }

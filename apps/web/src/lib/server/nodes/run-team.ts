@@ -234,7 +234,7 @@ export const runTeamNode = defineNode({
           ...(resume && waited?.activity?.usage && { usage: waited.activity.usage }),
           packageCache: config.members.filter((m) => worksThroughCache(m)).map((m) => m.title),
         });
-        const stream = send && streamer(send, i);
+        const stream = send && streamer(send, i, { id: team.id, name: config.name });
         const onEvent = (event: AgentStreamEvent) => {
           stream?.(event);
           const report = fold(event);

@@ -7,7 +7,8 @@ import type { AuthInfo } from '@modelcontextprotocol/server';
 import { withAuth } from '../auth/context';
 import { getProject } from '../projects/store';
 import { authenticateInstanceRequest, mcpAccess, type InstanceCaller } from './instance';
-import { instanceServer } from './instance-tools';
+import { debugTokenServer } from './debug-token-server';
+import { executionDigest, instanceServer } from './instance-tools';
 import { projectServerPath } from './project-servers';
 import { jsonRpcError, serveMcpEndpoint } from './server';
 
@@ -18,7 +19,7 @@ export async function serveInstance(request: Request, projectId?: string): Promi
   if (projectId && !getProject(projectId)) return jsonRpcError(404, -32001, `No project “${projectId}”`);
   const caller = await authenticateInstanceRequest(request, projectId);
   if (caller instanceof Response) return caller;
-  const authInfo: AuthInfo = { token: '', clientId: caller.kind === 'user' ? caller.user.id : 'instance', scopes: [], extra: { caller } };
+  const authInfo: AuthInfo = { token: '', clientId: caller.kind === 'user' ? caller.user.id : caller.kind === 'debug' ? `debug:${caller.record.id}` : 'instance', scopes: [], extra: { caller } };
   // One factory for the endpoint (the SDK keeps the latest one per key): the caller rides in `authInfo`.
   const key = projectId ? `request:${projectServerPath(projectId)}` : 'request:/api/mcp';
   const serve = () =>
@@ -27,6 +28,7 @@ export async function serveInstance(request: Request, projectId?: string): Promi
       request,
       (info) => {
         const who = callerOf(info.authInfo);
+        if (who?.kind === 'debug') return debugTokenServer(who.token, who.record, { digest: executionDigest });
         return instanceServer(who?.kind === 'user' ? who.actor : undefined, who?.scope);
       },
       authInfo,

@@ -1451,6 +1451,32 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS agent_semantic_cache_agent ON agent_semantic_cache (agent_id, config_hash, expires_at)`,
     ],
   },
+  {
+    version: 2045,
+    name: 'debug_tokens',
+    statements: [
+      // Debug tokens (docs/specs/19-debug-token.md, lib/server/auth/debug-tokens.ts): short-lived, read-only, bound to one
+      // execution; only the SHA-256 of the token is kept. `scopes` is a JSON list, `use_count` counts audited tool calls.
+      `CREATE TABLE IF NOT EXISTS debug_tokens (
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL,
+        hint TEXT NOT NULL,
+        label TEXT NOT NULL,
+        execution_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        scopes TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        revoked_by TEXT,
+        last_used_at TEXT,
+        use_count BIGINT NOT NULL DEFAULT 0
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS debug_tokens_hash ON debug_tokens (token_hash)`,
+      `CREATE INDEX IF NOT EXISTS debug_tokens_execution ON debug_tokens (execution_id)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1474,6 +1500,7 @@ export const TABLES = {
   sessions: ['id'],
   api_keys: ['id'],
   auth_tokens: ['id'],
+  debug_tokens: ['id'],
   workflow_publications: ['workflow_id'],
   workflow_publish_log: ['id'],
   node_static_data: ['workflow_id', 'node_id'],

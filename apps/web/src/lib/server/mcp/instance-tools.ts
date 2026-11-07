@@ -27,6 +27,7 @@ import { inScope, type McpScope } from './project-servers';
 import { createIn } from '../projects/http';
 import type { ResourceAction } from '../../shared/projects';
 import { MCP_SERVER_VERSION, textResult } from './server';
+import { registerDebugTools } from './debug-tools';
 import { normalizeWorkflow, validateWorkflow, type WorkflowInput } from './workflows';
 
 const INSTRUCTIONS = `Landflow is an n8n-like workflow platform. A workflow is a graph of nodes: a trigger starts it, items (JSON objects) flow along "main" connections from left to right, and each node processes the items it gets.
@@ -35,7 +36,8 @@ How to build one:
 1. Find node types with search_node_types (or list_node_types), then read their parameters with get_node_type. Types are "<plugin>.<name>", e.g. core.manualTrigger, core.httpRequest, core.set, core.if, core.code.
 2. Write nodes with a unique name, a type and parameters. Ids, positions and default parameters are filled in. Expressions go in {{ }}, e.g. "{{ $json.title }}" or "{{ $('Node name').item.json.id }}".
 3. Connections go from source to target by node name. "sourceIndex" picks the output (If/Filter: 0 = true, 1 = false). AI sub-nodes (chat models, memory, tools) connect from the sub-node to the root node with type ai_languageModel, ai_memory or ai_tool.
-4. validate_workflow, then create_workflow or update_workflow (nodes and connections given to update_workflow replace the current ones), then execute_workflow to test and get_execution to see each node's output.
+4. validate_workflow (it warns when an expression reads a field the node before it does not write), then create_workflow or update_workflow (nodes and connections given to update_workflow replace the current ones), then execute_workflow to test and get_execution to see each node's output.
+5. When a run fails: explain_failure (failing node, resolved parameters, sample input, upstream fields, what to check), get_run_trace (the journal), get_plugin_logs (a node plugin's output), then run_node to reproduce on a pinned input and retry_execution to continue after a fix.
 Credentials can't be created here: nodes that need one get it chosen in the editor (the workflow's url).
 
 ${PARAMETER_FORMATS}`;
@@ -105,7 +107,7 @@ function nodeTypeSummary(info: NodeTypeInfo) {
 }
 
 /** One execution in brief: status, error, and per node its runs, item counts and errors; the last node's output. */
-function executionDigest(record: ExecutionRecord, includeData: boolean) {
+export function executionDigest(record: ExecutionRecord, includeData: boolean) {
   const names = record.nodeNames ?? Object.fromEntries((record.workflow?.nodes ?? []).map((n) => [n.id, n.name]));
   const nodes = [...new Set(record.executionOrder)].map((nodeId) => {
     const runs = record.runData[nodeId] ?? [];
@@ -352,7 +354,7 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
     {
       title: 'Get a node type',
       description:
-        'A node type in full: its parameters (name, type, default, options, required, when they show), inputs and outputs, credentials, and whether it can be an AI tool. Use the parameter names in a node\'s "parameters".',
+        'A node type in full: its parameters (name, type, default, options, required, when they show), inputs and outputs, credentials, whether it can be an AI tool, and its outputSchema (the fields one output item holds, when the node declares it). Use the parameter names in a node\'s "parameters".',
       inputSchema: z.object({ type: z.string().describe('e.g. "core.httpRequest"') }),
       annotations: READ_ONLY,
     },
@@ -368,6 +370,7 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
         outputs: descriptor.outputs,
         ...(descriptor.credentials?.length && { credentials: descriptor.credentials }),
         ...(descriptor.toolDescription && { toolDescription: descriptor.toolDescription }),
+        ...(descriptor.outputSchema && { outputSchema: descriptor.outputSchema }),
         properties: descriptor.properties,
       });
     },
@@ -465,6 +468,17 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
       return record ? json(executionDigest(record, Boolean(includeData))) : failure(`Execution ${id} not found`);
     },
   );
+
+  registerDebugTools(server, {
+    actor,
+    scope,
+    denied: (id, action) => denied(id, action),
+    inScope: (id) => inScope(scope, id),
+    json,
+    failure,
+    workflowUrl,
+    digest: executionDigest,
+  });
 
   return server;
 }

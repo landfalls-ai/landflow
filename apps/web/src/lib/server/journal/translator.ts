@@ -464,9 +464,53 @@ export function createTranslator(options: TranslatorOptions) {
     update(span.id, { note: short(message), at: e.at });
   }
 
+  /**
+   * A model call a plugin node made itself (`ctx.model`, a `model` record): a `model` span named after the model under the node's
+   * step, with its tokens, finish reason and duration. The prompt is the span's input and the answer its output, so the
+   * run's `traceContent` setting cuts or drops them like any other content (journal/content.ts).
+   */
+  function modelRecord(e: Extract<ExecutionEvent, { type: 'node.record' }>, parent: string, endedAt: string) {
+    const call = e.record as Extract<typeof e.record, { type: 'model' }>;
+    const index = (counts.get(`${parent}/model`) ?? 0) + 1;
+    counts.set(`${parent}/model`, index);
+    const spanId = `${parent}/model:${index}`;
+    const ms = typeof call.durationMs === 'number' && call.durationMs > 0 ? call.durationMs : undefined;
+    const startedAt = ms === undefined ? endedAt : new Date(Math.max(0, Date.parse(endedAt) - ms)).toISOString();
+    const caller = spans.get(parent)?.actor ?? workflowActor;
+    const node = nodes.get(e.nodeId);
+    spans.set(spanId, { id: spanId, kind: 'model', actor: { id: `model:${call.model}`, name: call.model, type: 'model', ...(node && { nodeType: node.type }) }, parent, open: false, status: 'success' });
+    emit({
+      type: 'span.started',
+      spanId,
+      parentSpanId: parent,
+      kind: 'model',
+      name: call.model,
+      actor: { id: `model:${call.model}`, name: call.model, type: 'model', ...(node && { nodeType: node.type }) },
+      caller,
+      ...(call.prompt !== undefined && { input: call.prompt }),
+      attrs: { provider: call.provider, ...(node && { nodeType: node.type, nodeName: e.nodeName }), ...(ms !== undefined && { durationMs: ms }), ...(call.finishReason && { finishReason: call.finishReason }) },
+      at: startedAt,
+    });
+    emit({
+      type: 'span.ended',
+      spanId,
+      status: 'success',
+      ...(call.answer !== undefined && { output: { text: call.answer } }),
+      usage: {
+        inputTokens: call.inputTokens,
+        outputTokens: call.outputTokens,
+        ...(call.cacheReadTokens && { cacheReadTokens: call.cacheReadTokens }),
+        ...(call.cacheWriteTokens && { cacheWriteTokens: call.cacheWriteTokens }),
+        model: call.model,
+      },
+      at: endedAt,
+    });
+  }
+
   function nodeRecord(e: Extract<ExecutionEvent, { type: 'node.record' }>) {
     const spanId = spanOfNode(e.nodeId) ?? 'run';
     const at = when(e.record.at, e.at);
+    if (e.record.type === 'model') return modelRecord(e, spanId, at);
     const { type, at: _at, ...fields } = e.record;
     if (type === 'artifact') emit({ type: 'artifact', spanId, artifact: fields as Extract<typeof e.record, { type: 'artifact' }>, at });
     else {

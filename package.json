@@ -19,6 +19,10 @@
     "plugin:py": "cd plugins/py-insights && (test -x .venv/bin/python && .venv/bin/python main.py || python3 main.py)",
     "plugin:go": "cd plugins/go-crypto && go run .",
     "plugin:github": "pnpm --filter @landflow/plugin-github start",
+    "plugin:browser": "pnpm --filter @landflow/plugin-browser start",
+    "plugin:agent-shell": "pnpm --filter @landflow/plugin-agent-shell start",
+    "plugin:web-search": "pnpm --filter @landflow/plugin-web-search start",
+    "plugin:ai-sdk": "pnpm --filter @landflow/plugin-ai-sdk start",
     "plugin:messaging": "pnpm --filter @landflow/plugin-messaging start",
     "plugin:productivity": "cd plugins/productivity && (test -x .venv/bin/python && .venv/bin/python main.py || python3 main.py)",
     "plugin:google": "cd plugins/google-workspace && go run .",
@@ -27,7 +31,8 @@
     "plugin:triage": "pnpm --filter @landflow/plugin-triage start",
     "plugin:threat-intel": "cd plugins/threat-intel && go run .",
     "fake-landfall": "pnpm --filter @landflow/plugin-landfall fake-landfall",
-    "dev:all": "concurrently -k -n web,ts,py,go,msg,prod,google,db -c magenta,blue,yellow,cyan,green,red,white,gray \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\""
+    "dev:all": "concurrently -k -n web,ts,py,go,msg,prod,google,db -c magenta,blue,yellow,cyan,green,red,white,gray \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\"",
+    "dev:all:browser": "concurrently -k -n web,ts,py,go,msg,prod,google,db,browser -c magenta,blue,yellow,cyan,green,red,white,gray,black \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:browser\""
   },
   "devDependencies": {
     "concurrently": "^10.0.6",

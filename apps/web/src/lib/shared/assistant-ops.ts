@@ -51,6 +51,7 @@ export interface NodeSettingsPatch {
   retryOnFail?: boolean;
   maxTries?: number;
   waitBetweenTriesMs?: number;
+  retryBackoff?: 'fixed' | 'exponential';
   onError?: 'stop' | 'continue';
   timeoutSeconds?: number;
   alwaysOutputData?: boolean;
@@ -65,10 +66,11 @@ export interface WorkflowSettingsPatch {
   retryBaseDelaySeconds?: number;
 }
 
-const NODE_SETTINGS: Record<keyof NodeSettingsPatch, 'boolean' | 'number' | 'onError'> = {
+const NODE_SETTINGS: Record<keyof NodeSettingsPatch, 'boolean' | 'number' | 'onError' | 'backoff'> = {
   retryOnFail: 'boolean',
   maxTries: 'number',
   waitBetweenTriesMs: 'number',
+  retryBackoff: 'backoff',
   onError: 'onError',
   timeoutSeconds: 'number',
   alwaysOutputData: 'boolean',
@@ -82,7 +84,7 @@ const WORKFLOW_SETTINGS: Record<keyof WorkflowSettingsPatch, 'string' | 'number'
 };
 
 /** The settings of `raw` that `allowed` names, with the right types; undefined when none is left. */
-function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError'>): T | undefined {
+function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError' | 'backoff'>): T | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
@@ -91,6 +93,7 @@ function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number
     else if (kind === 'number' && typeof value === 'number' && Number.isFinite(value) && value >= 0) out[key] = value;
     else if (kind === 'string' && typeof value === 'string' && value.trim()) out[key] = value.trim();
     else if (kind === 'onError' && (value === 'stop' || value === 'continue')) out[key] = value;
+    else if (kind === 'backoff' && (value === 'fixed' || value === 'exponential')) out[key] = value;
   }
   return Object.keys(out).length ? (out as T) : undefined;
 }
@@ -776,6 +779,79 @@ export function structuralWarnings(before: Workflow, after: Workflow, lookup: De
     }
   }
   return warnings;
+}
+
+/** Node types that decide a path: with nothing after them they do nothing. */
+const BRANCH_TYPES = new Set(['core.if', 'core.filter', 'core.switch']);
+/** Node types that only reshape items: with nothing reading them they are leftovers. */
+const SHAPING_TYPES = new Set(['core.set', 'core.code', 'core.noOp', 'core.sort', 'core.limit', 'core.removeDuplicates', 'core.aggregate']);
+
+/** The ids reached from `id` leaving through main output `index` only (the first hop is that output). */
+function reachedFrom(workflow: Workflow, id: string, index: number): Set<string> {
+  const seen = new Set<string>();
+  const queue = workflow.connections.filter((c) => c.source === id && c.type === 'main' && (c.sourceIndex ?? 0) === index).map((c) => c.target);
+  while (queue.length) {
+    const current = queue.pop()!;
+    // A loop back to the branching node starts over rather than joining branches.
+    if (seen.has(current) || current === id) continue;
+    seen.add(current);
+    for (const c of workflow.connections) if (c.source === current && c.type === 'main') queue.push(c.target);
+  }
+  return seen;
+}
+
+/**
+ * Wiring mistakes a build can leave: a new connection from one branch of an If / Switch to a node a sibling branch also
+ * reaches (the success path wired into the rejection), and a new node nothing reads that isn't a final action. The
+ * first is sent back for a fix; the second can be an unfinished build, so it is only shown on the card.
+ */
+export function wiringWarnings(before: Workflow, after: Workflow, lookup: DescriptorLookup): { branches: string[]; purpose: string[] } {
+  const warnings: string[] = [];
+  const purpose: string[] = [];
+  const name = (id: string) => after.nodes.find((n) => n.id === id)?.name ?? id;
+  const typeOf = (id: string) => after.nodes.find((n) => n.id === id)?.type ?? '';
+  const isNew = (c: WorkflowConnection) => !before.connections.some((b) => b.id === c.id);
+  for (const source of after.nodes) {
+    const descriptor = lookup(source.type);
+    const outs = new Set(after.connections.filter((c) => c.source === source.id && c.type === 'main').map((c) => c.sourceIndex ?? 0));
+    const branches = BRANCH_TYPES.has(source.type) || (descriptor?.outputs.filter((p) => p.type === 'main').length ?? 0) > 1;
+    if (!branches || outs.size < 2) continue;
+    for (const c of after.connections.filter((x) => x.source === source.id && x.type === 'main' && isNew(x))) {
+      // A Merge joins branches on purpose.
+      if (typeOf(c.target) === 'core.merge') continue;
+      const mine = c.sourceIndex ?? 0;
+      const other = [...outs].find((o) => o !== mine && reachedFrom(after, source.id, o).has(c.target));
+      if (other !== undefined) warnings.push(`“${name(c.target)}” is reached from both output ${mine} and output ${other} of “${source.name}”: one branch leads into the other`);
+    }
+  }
+  const existed = new Set(before.nodes.map((n) => n.id));
+  for (const node of after.nodes) {
+    if (existed.has(node.id)) continue;
+    const descriptor = lookup(node.type);
+    if (!descriptor || descriptor.kind !== 'action' || !descriptor.outputs.some((p) => p.type === 'main')) continue;
+    if (after.connections.some((c) => c.source === node.id)) continue;
+    const parents = after.connections.filter((c) => c.target === node.id && c.type === 'main');
+    const sideStub = parents.some((p) => after.connections.some((c) => c.source === p.source && c.type === 'main' && c.target !== node.id && (c.sourceIndex ?? 0) === (p.sourceIndex ?? 0)));
+    if (BRANCH_TYPES.has(node.type) || (SHAPING_TYPES.has(node.type) && sideStub)) purpose.push(`new node “${node.name}” has no purpose: nothing reads its output`);
+  }
+  return { branches: warnings, purpose };
+}
+
+const SWALLOWS = /catch\s*(?:\([^)]*\))?\s*\{[^}]*\breturn\b|\.catch\s*\(\s*(?:\([^)]*\)|\w*)\s*=>\s*(?:\{[^}]*return\b|[^)]*\))|continueOnFail/;
+
+/** Ops that make a node stop failing instead of fixing why it fails: onError continue, or code that catches and returns. */
+export function swallowWarnings(ops: AssistantOp[]): string[] {
+  const out: string[] = [];
+  for (const op of ops) {
+    if (op.op === 'setNodeSettings' && op.settings.onError === 'continue') out.push(`“${op.node}” is set to continue on error: the failure is hidden, not fixed`);
+    const parameters = op.op === 'setParameters' ? op.parameters : op.op === 'addNode' ? op.parameters : undefined;
+    const node = op.op === 'setParameters' ? op.node : op.op === 'addNode' ? (op.name ?? op.type) : '';
+    if (!parameters) continue;
+    for (const [key, value] of Object.entries(parameters)) {
+      if (typeof value === 'string' && /code/i.test(key) && SWALLOWS.test(value)) out.push(`“${node}” catches its error and returns normally: the failure is hidden, not fixed`);
+    }
+  }
+  return [...new Set(out)];
 }
 
 // ---------------------------------------------------------------------------

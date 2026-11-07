@@ -7,7 +7,7 @@
  * - GET  /chat/<key>/config               title, initial messages, uploads… for the script
  * - GET  /chat/<key>/session?sessionId=   the session's earlier messages ("Load Previous Session"), with their ratings
  * - POST /chat/<key>/feedback             `{ sessionId, executionId, rating: 'up' | 'down' | null, comment? }`: rate an answer
- * - POST /chat/<key>                      a message: JSON `{ sessionId, message }` or multipart (`files`) →
+ * - POST /chat/<key>                      a message: JSON `{ sessionId, message, agentKey? }` or multipart (`files`) →
  *                                         SSE / NDJSON chunks then `done` (Streaming), or `{ output, sessionId }`
  * - OPTIONS                               CORS preflight
  *
@@ -18,8 +18,10 @@
  * webhook mode (production: counted in Insights, held by concurrency limits).
  */
 import { context } from '@opentelemetry/api';
+import type { ExecutionEvent } from '@landflow/engine';
 import { deleteExecutionBinary } from '@/lib/server/binary/access';
 import {
+  agentSessionId,
   appendTranscript,
   basicAuthOk,
   chatItem,
@@ -30,16 +32,19 @@ import {
   MAX_CHAT_FILES,
   mimeAllowed,
   originAllowed,
+  pickAgent,
+  visibleTranscript,
   validSessionId,
   type ChatFile,
   type PublicChatConfig,
+  chatStartNodeId,
 } from '@/lib/server/chat';
 import { CHAT_CLIENT_JS, chatPageHtml } from '@/lib/server/chat-client';
 import { cleanComment, isRating, setFeedback } from '@/lib/server/chat-feedback';
 import { handler } from '@/lib/server/http';
 import { liveExecution, newExecutionId, RunBufferedError, runWorkflow, RunSkippedError, turnedDown } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
-import { replyText, runStream, streamFormatOf } from '@/lib/server/streaming';
+import { chunkAgent, replyText, runStream, streamFormatOf } from '@/lib/server/streaming';
 import { logger, startTrigger } from '@/lib/server/telemetry';
 
 export const dynamic = 'force-dynamic';
@@ -106,6 +111,10 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
         allowFileUploads: config.allowFileUploads,
         allowedFilesMimeTypes: config.allowedFilesMimeTypes,
         feedback: true,
+        // Label and face only: never the node behind an agent.
+        ...(config.roster.length && { agents: config.roster.map((r) => ({ key: r.key, label: r.label, ...(r.face && { face: r.face }) })) }),
+        voice: config.voice,
+        ...(config.voice !== 'off' && { ...(config.voiceLang && { voiceLang: config.voiceLang }), voiceSend: config.voiceSend }),
         customCss: config.customCss,
       },
       200,
@@ -127,15 +136,17 @@ export const OPTIONS = handler(async (request: Request, { params }: Ctx) => {
 });
 
 /** The message from a JSON or multipart body. */
-async function readMessage(request: Request, config: PublicChatConfig): Promise<{ sessionId: string; message: string; files: ChatFile[] } | { error: string; status: number }> {
+async function readMessage(request: Request, config: PublicChatConfig): Promise<{ sessionId: string; message: string; files: ChatFile[]; agentKey?: unknown } | { error: string; status: number }> {
   const type = request.headers.get('content-type') ?? '';
   let sessionId: unknown;
   let message: unknown;
+  let agentKey: unknown;
   const files: ChatFile[] = [];
   if (type.includes('multipart/form-data')) {
     const form = await request.formData();
     sessionId = form.get('sessionId');
     message = form.get('message') ?? form.get('chatInput') ?? '';
+    agentKey = form.get('agentKey') ?? undefined;
     for (const entry of form.getAll('files')) {
       if (typeof entry === 'string') continue;
       if (!config.allowFileUploads) return { error: 'This chat doesn’t take files', status: 400 };
@@ -146,7 +157,7 @@ async function readMessage(request: Request, config: PublicChatConfig): Promise<
       files.push({ fileName: entry.name || 'file', mimeType, data: new Uint8Array(await entry.arrayBuffer()) });
     }
   } else {
-    let body: { sessionId?: unknown; message?: unknown; chatInput?: unknown };
+    let body: { sessionId?: unknown; message?: unknown; chatInput?: unknown; agentKey?: unknown };
     try {
       body = (await request.json()) as typeof body;
     } catch {
@@ -154,12 +165,13 @@ async function readMessage(request: Request, config: PublicChatConfig): Promise<
     }
     sessionId = body.sessionId;
     message = body.message ?? body.chatInput;
+    agentKey = body.agentKey;
   }
   if (!validSessionId(sessionId)) return { error: 'sessionId must be 1–128 letters, digits, dots, dashes, colons or underscores', status: 400 };
   const text = typeof message === 'string' ? message.trim() : '';
   if (!text && !files.length) return { error: 'The message is empty', status: 400 };
   if (text.length > MAX_MESSAGE_CHARS) return { error: `Messages can be up to ${MAX_MESSAGE_CHARS} characters`, status: 413 };
-  return { sessionId, message: text, files };
+  return { sessionId, message: text, files, agentKey };
 }
 
 /** Rate an answer: the execution must be this chat's, and (when its trigger item is still there) of this session. */
@@ -195,12 +207,27 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const parsed = await readMessage(request, config);
   if ('error' in parsed) return jsonResponse({ error: parsed.error }, parsed.status, access.cors);
 
+  // A visitor may name only an agent on the roster; nothing named: the flow's lead (the trigger's own start).
+  const picked = pickAgent(config.roster, parsed.agentKey);
+  if ('error' in picked) return jsonResponse({ error: picked.error }, 400, access.cors);
+  const agent = picked.entry;
   const executionId = newExecutionId();
-  const item = await chatItem({ chatInput: parsed.message, sessionId: parsed.sessionId, files: parsed.files }, executionId);
+  const item = await chatItem(
+    {
+      chatInput: parsed.message,
+      // The picked agent keeps its own memory (`<sessionId>:<agentKey>`); the visible transcript stays under the visitor's session.
+      sessionId: agent ? agentSessionId(parsed.sessionId, agent.key) : parsed.sessionId,
+      files: parsed.files,
+      ...(agent && { extra: { agentKey: agent.key, visitorSessionId: parsed.sessionId, ...(agent.seesTranscript && config.loadPreviousSession && { transcript: visibleTranscript(workflow.id, parsed.sessionId) }) } }),
+    },
+    executionId,
+  );
   const at = new Date().toISOString();
   const fileList = parsed.files.map((f) => ({ fileName: f.fileName, mimeType: f.mimeType }));
   const streaming = config.responseMode === 'streaming';
   const stream = streaming ? runStream(streamFormatOf(request), { executionId }) : undefined;
+  // Who wrote the answer, when the flow labels its agents (the last labelled text chunk).
+  let speaker: ReturnType<typeof chunkAgent>;
   const trigger = startTrigger({ source: 'chat', workflowId: workflow.id, nodeName: node.name });
   let started = false;
   let markStarted!: () => void;
@@ -209,14 +236,21 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     runWorkflow({
       workflow,
       mode: 'webhook',
-      startNodeId: node.id,
+      // A flow that routes on `agentKey` is started at the trigger, so its Guardrails run for the picked agent too.
+      startNodeId: chatStartNodeId(workflow, node, agent),
       triggerItems: [item],
       executionId,
       onStart: () => {
         started = true;
         markStarted();
       },
-      ...(stream && { streaming: true, onEvent: stream.onEvent }),
+      ...(stream && {
+        streaming: true,
+        onEvent: (event: ExecutionEvent) => {
+          if (event.type === 'node.chunk' && event.chunk.type === 'item') speaker = chunkAgent(event.chunk) ?? speaker;
+          stream.onEvent(event);
+        },
+      }),
     }),
   );
   // The transcript, for "Load Previous Session": the question now, the answer once the run ends.
@@ -224,7 +258,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     (record) => {
       trigger.end();
       const reply = record.status === 'success' ? replyText(record) : '';
-      if (config.loadPreviousSession) appendTranscript(workflow.id, parsed.sessionId, [{ role: 'user', text: parsed.message, at, ...(fileList.length && { files: fileList }) }, ...(reply ? [{ role: 'assistant' as const, text: reply, at: new Date().toISOString(), executionId: record.executionId }] : [])]);
+      if (config.loadPreviousSession) appendTranscript(workflow.id, parsed.sessionId, [{ role: 'user', text: parsed.message, at, ...(agent && { agentKey: agent.key, agentName: agent.label }), ...(fileList.length && { files: fileList }) }, ...(reply ? [{ role: 'assistant' as const, text: reply, at: new Date().toISOString(), executionId: record.executionId, ...(agent ? { agentKey: agent.key, agentName: speaker?.name ?? agent.label } : speaker && { agentKey: speaker.id, agentName: speaker.name }) }] : [])]);
       return record;
     },
     (caught: unknown) => {

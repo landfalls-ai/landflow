@@ -101,7 +101,7 @@ All credentials are **for local development and tests only**.
 | Azure Service Bus emulator 2.0 (`servicebus`) | AMQP `localhost:55675`, management + `/health` http://localhost:55300 | `servicebus:5672`, `servicebus:5300` | `Endpoint=sb://localhost:55675;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;`; static entities from [`infra/servicebus/Config.json`](../deploy/infra/servicebus/Config.json); SQL backend `servicebus-sql` (Azure SQL Edge, `sa` / `Landflow-dev-only1`, not published) |
 | agentgateway 1.6 (`mcp-gateway`) | MCP http://localhost:54000/mcp, admin API + UI http://localhost:55000 (`/ui`) | `mcp-gateway:4000`, `mcp-gateway:15000` | none (the admin API has no authentication: loopback only); targets in SQLite in `mcp-gateway-data` |
 | **Landflow host** (app) | http://localhost:53000 | `web:3000`, gRPC registry `web:7070` | owner `owner@landflow.test` / `landflow-dev-only` (`LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`) |
-| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211` (HTTP/gRPC) | |
+| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211`, `browser:7112/7212` (profile `browser`) (HTTP/gRPC) | |
 | Code runner (app) | http://127.0.0.1:53300 (through `code-runner-port`) | `code-runner:7300`, on the internal `landflow-code` network only | header `x-landflow-runner-secret: landflow-code-runner-dev-only` |
 | **Queue mode** load balancer | http://localhost:53080 | `lb:3000` | owner `owner@landflow.test` / `landflow-dev-only` |
 | Queue mode mains | http://localhost:53081, http://localhost:53082 | `main-1:3000`, `main-2:3000` | same |
@@ -305,6 +305,7 @@ Tests: `(cd apps/web && LANDFLOW_INTEGRATION=oidc,smtp npx vitest run test/oidc.
 | `landflow/plugin-text-toolkit:dev`, `landflow/plugin-messaging:dev`, `landflow/plugin-github:dev` | [`docker/node-plugin.Dockerfile`](../deploy/docker/node-plugin.Dockerfile) | `tsx src/main.ts` as `node` |
 | `landflow/plugin-py-insights:dev`, `landflow/plugin-productivity:dev` | [`docker/python-plugin.Dockerfile`](../deploy/docker/python-plugin.Dockerfile) | `python main.py` (SDK with `grpc` and `otel` extras) as uid 10001 |
 | `landflow/plugin-go-crypto:dev`, `landflow/plugin-google-workspace:dev`, `landflow/plugin-databases:dev` | [`docker/go-plugin.Dockerfile`](../deploy/docker/go-plugin.Dockerfile) | static binary on Alpine as uid 10001 |
+| `landflow/plugin-browser:dev` (profile `browser`) | [`plugins/browser/Dockerfile`](../plugins/browser/Dockerfile) | `tsx src/main.ts` as `node` on Debian with Chrome and agent-browser, headless: see [Browser plugin](#browser-plugin) |
 | `landflow/code-runner:dev` | [`docker/code-runner.Dockerfile`](../deploy/docker/code-runner.Dockerfile) | `node dist/main.mjs` (esbuild bundle) on Node 26 + CPython 3 (standard library) as uid 10001; `code-runner-port` runs `node dist/forward.mjs` from the same image |
 
 All builds use the repository root as context; [`/.dockerignore`](../.dockerignore) keeps out `node_modules`, `.next`, `.data`, venvs and Go binaries. Every image has a healthcheck: the host's `GET /api/health`, each plugin's `GET /landflow/v1/health`. Build one image on its own with, for example:
@@ -465,6 +466,21 @@ Runner settings (environment of `services/code-runner`; the compose file maps th
 | `CODE_RUNNER_TMPDIR` | the OS temp directory | where work directories go |
 | `CODE_RUNNER_JS_ALLOW_BUILTIN` | the list above | Node built-ins `require` may load, comma-separated, or `*` |
 | `CODE_RUNNER_GUARDS` / `CODE_RUNNER_OS_SANDBOX` | on / on | `off` for diagnostics only |
+
+## Browser plugin
+
+The [Browser plugin](../plugins/browser/README.md) drives Chrome through Vercel's agent-browser CLI, so it needs both. It is **optional everywhere** and is a **separate image on the code-runner pattern**: [`plugins/browser/Dockerfile`](../plugins/browser/Dockerfile) (Debian, because Chrome for Testing needs glibc; not the Alpine [`node-plugin.Dockerfile`](../deploy/docker/node-plugin.Dockerfile), which has no browser). The image is large; it was written without being built, so the first build is the check of the `agent-browser install --with-deps` step.
+
+| Where | How |
+|---|---|
+| Dev server | `pnpm dev:all` leaves it out, since it needs the CLI and Chrome on the Mac (`npm i -g agent-browser && agent-browser install`). `pnpm dev:all:browser` is `dev:all` plus `pnpm plugin:browser` (HTTP `:7112`, gRPC `:7212`). |
+| Compose | The `browser` service is in the `browser` profile: `COMPOSE_BAKE=false docker compose -f deploy/compose.yml --profile browser up -d --build --wait`. A plain `up` neither builds nor starts it. The host's scan already lists `browser` and ports `7112`/`7212`, so it is found once it runs. |
+| Kubernetes | A component, off by default: build `landflow/plugin-browser:k8s-dev` with the command in [`components/browser/kustomization.yaml`](../deploy/k8s/components/browser/kustomization.yaml), then uncomment `- ../../components/browser` in the OrbStack overlay. The Service is labelled for discovery like the other plugins. |
+
+- **Headless only in a container.** There is no display, so the image always runs Chrome headless. `LANDFLOW_BROWSER_HEADED=1` and a node's **Show the Browser Window** are for a desktop (the dev server on the Mac); in a container they have nothing to draw on.
+- **Set `LANDFLOW_BROWSER_ALLOWED_DOMAINS`.** It is the operator's ceiling (comma separated, `*.example.com` includes subdomains): every node's list must sit inside it. Left empty, each node is limited only by its own **Allowed Domains**, which default to the URL's site, so a flow can send the browser to any site you let it name. Compose reads it from the environment (`LANDFLOW_BROWSER_ALLOWED_DOMAINS` in `deploy/.env`); on Kubernetes edit the env var in `components/browser/browser.yaml`. Page text a node returns is untrusted data.
+- **Container limits.** Read-only root filesystem with a tmpfs `/tmp` (and `HOME`) and a 512 MiB `/dev/shm`, no capabilities, no privilege escalation, 2 GiB of memory (`LANDFLOW_BROWSER_MEM_LIMIT`). Chrome's own sandbox needs privileges the container drops, so the image starts Chrome with `--no-sandbox` (`AGENT_BROWSER_ARGS`): the container is the boundary. Each call starts its own Chrome and the plugin runs two at once.
+- Unlike the code runner, the container needs a route out: it fetches the pages. Its network is the app network, so the allow-list is the only fence on where it goes.
 
 ## Integration tests (databases plugin)
 

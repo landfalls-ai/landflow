@@ -335,6 +335,7 @@ credential tests get a span too.
 | Client span (non-HTTP) | `await ctx.span('smtp.send', attrs, fn, { kind: 'client' })` | `ctx.span(...)` (internal only) | `ctx.DBSpan(landflow.DBSpanInfo{…}, fn)` for databases |
 | Gauge | `ctx.metrics.gauge('x.depth').set(v, attrs)` | `ctx.metrics.gauge(...).set(v, attrs)` | `ctx.Metrics().Gauge(...).Set(v, attrs)` |
 | Traced HTTP | `ctx.http(url, init)`, a fetch with a client span and `traceparent` | `ctx.http.request(method, url, …)` | `landflow.HTTPClient(ctx)`, an `*http.Client` with `otelhttp` |
+| Model call (AI usage) | `ctx.model({ model, provider, inputTokens, outputTokens, … })`, see [protocol.md](protocol.md) | return a `model` record by hand | return a `model` record by hand |
 | Logger | `ctx.logger.info(msg, attrs)` | `ctx.logger.info(msg, **attrs)` | `ctx.Logger.With(attrs...).Info(msg)` (`Logger` is a field; `Info(format, args...)` stays printf-style for compatibility) |
 
 Spans and metrics are no-ops, never errors, when telemetry is disabled. The Python SDK works
@@ -412,6 +413,7 @@ the call may start, then prices and records what it used.
   `landflow.ai.caps_reached`. The credential and user caps read the same message form: *AI usage cap
   reached: credential “Team OpenAI” today used 2,200 tokens of its 1,500 tokens limit (Settings → AI
   prices → AI usage caps)*; a zero or empty limit means no cap.
+- **AI usage of plugin nodes**: a remote plugin node that returns a `model` record ([protocol.md](protocol.md), `ctx.model`) is counted like the models node: priced, one `ai_usage` row (Insights, `ExecutionRecord.aiUsage`, the per-credential and per-user caps through the credential tag on the request, the `ai.call` ledger event) and the `landflow.ai.tokens` metric (`ai-usage/plugin.ts`, `withAiUsage`). A call over a cap fails the node and run with the same `UsageCapError`; a node with `meterAiUsage` is refused before it runs once a cap is reached. Several records in one response are all counted before the error is thrown.
 - **Cost alerts**: an alert rule of kind *AI cost* (Settings → Alerts, a threshold percent, default
   80) sends a message through its channels when a workflow, agent, credential or user cap reaches the
   threshold, once per cap per period (day or month; `alert_state`, migration 1820), checked when usage

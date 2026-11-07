@@ -1,10 +1,11 @@
 import vm from 'node:vm';
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { toToolName, type AgentMemory, type AgentMessage, type AgentTool, type ToolCall, type ToolResult } from '@landflow/engine';
+import { splitToolOutput, toToolName, type AgentMemory, type AgentMessage, type AgentTool, type ToolCall, type ToolResult } from '@landflow/engine';
 import { credentialIdOf } from '../ai-usage/credential-id';
 import { parseAddresses, sendApprovalEmails } from '../approval-email';
 import { mailConfigured } from '../auth/mail';
 import { approvalBlocks, postMessage, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential } from '../slack';
+import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from './tool-images';
 import { BINARY_INPUT_OPTIONS, MEMORY_FILE_OPTIONS, optionalAttachments, reattachRemembered, withoutAttachmentData, type MediaOptions } from './attachments';
 import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY, isFallbackModel } from './fallback';
 import { anthropicModel, ollamaModel } from './models';
@@ -155,6 +156,26 @@ export const aiAgentNode = defineNode({
           { name: 'maxIterations', displayName: 'Max Iterations', type: 'number', default: 8, typeOptions: { minValue: 1, maxValue: 30 } },
           { name: 'sessionId', displayName: 'Session Key', type: 'string', default: '{{ $json.sessionId }}', description: 'Memory is kept per session key' },
           { name: 'returnIntermediateSteps', displayName: 'Return Intermediate Steps', type: 'boolean', default: true },
+          {
+            name: 'toolImagesKept',
+            displayName: 'Tool Images to Keep',
+            type: 'number',
+            default: DEFAULT_KEPT_TOOL_IMAGES,
+            typeOptions: { minValue: 0, maxValue: 10 },
+            description: 'When tools return images (a screenshot), only this many of the newest go back to the model on each turn; older ones are dropped and their text kept',
+          },
+          {
+            name: 'toolImages',
+            displayName: 'Send Tool Images',
+            type: 'options',
+            default: 'auto',
+            description: 'Whether images tools return reach the model. A model that can’t see them gets the text and a note instead.',
+            options: [
+              { name: 'Automatic', value: 'auto', description: 'Send them to models known to see images (Claude, most OpenAI-compatible models, Ollama vision models by name)' },
+              { name: 'Always', value: 'send', description: 'Send them, for a local model that sees images under a name Landflow does not know' },
+              { name: 'Never', value: 'text', description: 'Text only, with a note' },
+            ],
+          },
           ...BINARY_INPUT_OPTIONS,
           ...MEMORY_FILE_OPTIONS,
         ],
@@ -182,6 +203,8 @@ export const aiAgentNode = defineNode({
       const options = ctx.getNodeParameter<AgentOptions>('options', i) ?? {};
       const maxIterations = Math.min(30, Math.max(1, Number(options.maxIterations ?? 8)));
       const system = String(ctx.getNodeParameter('systemMessage', i) ?? '');
+      const toolImagesKept = options.toolImagesKept === undefined || options.toolImagesKept === null || Number.isNaN(Number(options.toolImagesKept)) ? DEFAULT_KEPT_TOOL_IMAGES : Number(options.toolImagesKept);
+      const toolImagesMode: ToolImageMode = options.toolImages === 'send' || options.toolImages === 'text' ? options.toolImages : 'auto';
       const approval = approvalSettings(ctx, i);
       const continuing = progress && progress.item === i ? progress : undefined;
 
@@ -218,10 +241,14 @@ export const aiAgentNode = defineNode({
         send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'started', input: call.input as JsonObject } });
         try {
           const output = await tool.invoke(call.input);
-          run.steps.push({ tool: call.name, input: call.input, output });
-          const content = typeof output === 'string' ? output : JSON.stringify(output);
-          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'finished', output: content.slice(0, 2_000) } });
-          return { id: call.id, name: call.name, content };
+          const { text: content, images: returned } = splitToolOutput(output);
+          // Images are kept by reference: memory, the journal and the stream never carry their bytes.
+          const images = returned.length ? await storeToolImages(ctx, returned) : [];
+          const labels = images.map(imageSizeLabel);
+          run.steps.push({ tool: call.name, input: call.input, output: images.length ? content : output, ...(images.length && { images: images.map((image) => ({ mimeType: image.mimeType, size: image.ref?.fileSize ?? 0, ...(image.ref?.id && { ref: image.ref.id }) })) }) });
+          const shown = labels.length ? `${content.slice(0, 2_000)}\n[${labels.map((l) => `image: ${l}`).join('; ')}]` : content.slice(0, 2_000);
+          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'finished', output: shown } });
+          return { id: call.id, name: call.name, content, ...(images.length && { images }) };
         } catch (error) {
           const message = (error as Error).message;
           run.steps.push({ tool: call.name, input: call.input, output: message, isError: true });
@@ -263,7 +290,7 @@ export const aiAgentNode = defineNode({
               send({ type: 'item', itemIndex: i, content: delta });
             }
           : undefined;
-        const turn = await model.generate({ system, messages: run.messages, tools, ...(onToken && { onToken }) });
+        const turn = await model.generate({ system, messages: await hydrateToolImages(ctx, run.messages, { model, keep: toolImagesKept, mode: toolImagesMode }), tools, ...(onToken && { onToken }) });
         run.usage.inputTokens += turn.usage?.inputTokens ?? 0;
         run.usage.outputTokens += turn.usage?.outputTokens ?? 0;
         run.messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls, ...(turn.raw && { raw: turn.raw }) });
@@ -315,13 +342,15 @@ interface AgentOptions extends MediaOptions {
   rememberedAttachments?: boolean;
   rememberedAttachmentsMaxMb?: number;
   maxIterations?: number;
+  toolImagesKept?: number;
+  toolImages?: string;
   sessionId?: string;
   returnIntermediateSteps?: boolean;
   passthroughBinaryImages?: boolean;
   binaryPropertyNames?: string;
 }
 
-type Step = { tool: string; input: unknown; output: unknown; isError?: boolean };
+type Step = { tool: string; input: unknown; output: unknown; isError?: boolean; images?: Array<{ mimeType: string; size: number; ref?: string }> };
 
 interface ItemRun {
   messages: AgentMessage[];

@@ -19,8 +19,15 @@ const reporter = defineNode({
     return [{ json: {} }];
   },
 });
+const modeller = defineNode({
+  description: description('modeller'),
+  execute: (ctx) => {
+    ctx.model({ model: 'qwen', provider: 'ollama', inputTokens: 12, outputTokens: 5, durationMs: 40, finishReason: 'stop', prompt: 'hi s3cret', answer: 'hello' });
+    return [{ json: {} }];
+  },
+});
 const quiet = defineNode({ description: description('quiet'), execute: () => [{ json: {} }] });
-const plugin = definePlugin({ info: { id: 'rec', name: 'Rec', version: '1' }, nodes: [reporter, quiet] });
+const plugin = definePlugin({ info: { id: 'rec', name: 'Rec', version: '1' }, nodes: [reporter, quiet, modeller] });
 const handle = createFetchHandler(plugin);
 
 const request = (node = 'reporter', parameters = {}): ExecuteRequest => ({
@@ -62,7 +69,7 @@ describe('records', () => {
   it('go to onRecord instead when the host gives one', async () => {
     const live: NodeRecord[] = [];
     const response = await runNode(reporter, request(), { onRecord: (r) => live.push(r) });
-    expect(live.map((r) => r.name)).toEqual(['PR #7: Fix it', 'tests']);
+    expect(live.map((r) => (r as { name: string }).name)).toEqual(['PR #7: Fix it', 'tests']);
     expect(response.records).toBeUndefined();
   });
 
@@ -84,4 +91,15 @@ describe('records', () => {
       expect((await transports[transport](request('quiet'))).records).toBeUndefined();
     });
   }
+
+  it('carry a model call: tokens, finish reason, content masked', async () => {
+    const response = await runNode(modeller, request('modeller'), { onRecord: undefined });
+    expect(response.records).toEqual([expect.objectContaining({ type: 'model', model: 'qwen', provider: 'ollama', inputTokens: 12, outputTokens: 5, finishReason: 'stop', answer: 'hello' })]);
+    const over = await runNode(modeller, { ...request('modeller'), credentials: { c: { apiKey: 's3cret' } } });
+    expect(JSON.stringify(over.records)).not.toContain('s3cret');
+    for (const transport of ['http', 'grpc'] as const) {
+      const got = await transports[transport](request('modeller'));
+      expect(got.records?.[0]).toMatchObject({ type: 'model', inputTokens: 12, outputTokens: 5, durationMs: 40 });
+    }
+  });
 });
