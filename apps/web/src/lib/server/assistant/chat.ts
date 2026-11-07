@@ -464,6 +464,7 @@ export async function runChat(input: ChatInput): Promise<void> {
   let proposed = false;
   /** Whether a fix request that proposed nothing was sent back for a proposal. */
   let pressed = false;
+  let applyRetried = false;
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
   const sent = new Set<string>();
   /** What the user and the editor said, for telling a given id from a made-up one. */
@@ -612,7 +613,7 @@ export async function runChat(input: ChatInput): Promise<void> {
         const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
         const shown = result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied. If the latest message asks for something this doesn't cover yet, propose it now (the nodes above are in the workflow for you to connect to); if it's all proposed, stop and say in one line what the cards do.`, `Proposed ${count}`);
-        onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: validated.warnings });
+        onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: [...validated.warnings, ...validated.cautions] });
         proposed = true;
         recordSuggestions(['proposal']);
         return shown;
@@ -651,6 +652,17 @@ export async function runChat(input: ChatInput): Promise<void> {
         finished = false;
         history.push({ role: 'user', content: 'Nothing was proposed: only a propose_changes call changes the workflow. Call propose_changes with the fix now, or, if only I can fix it, say what to do in one sentence.' });
         continue;
+      }
+      // The reply says to apply a card that was never made: say so and ask once more, instead of ending the turn.
+      if (finished && !input.session && !proposed && !waiting.size && APPLY_REQUEST.test(text)) {
+        if (!applyRetried) {
+          applyRetried = true;
+          finished = false;
+          onEvent({ type: 'text', text: '(No change card was created, so there is nothing to apply yet. Trying again.)' });
+          history.push({ role: 'user', content: 'You told me to click Apply, but no proposal exists: nothing was shown to me. Call propose_changes now with the change, or say plainly that you are not changing anything.' });
+          continue;
+        }
+        onEvent({ type: 'text', text: '(Still no change card: nothing was proposed, so there is nothing to apply.)' });
       }
       if (finished) break;
       const results: ToolResult[] = [];

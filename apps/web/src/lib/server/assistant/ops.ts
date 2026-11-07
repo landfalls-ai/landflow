@@ -3,7 +3,7 @@
  * applyOps() with the available node types, like the flow builder validates
  * its drafts. What comes back is safe for the editor to apply.
  */
-import { applyOps, parseOps, structuralWarnings, type AssistantOp, type DescriptorLookup } from '@/lib/shared/assistant-ops';
+import { applyOps, parseOps, structuralWarnings, swallowWarnings, wiringWarnings, type AssistantOp, type DescriptorLookup } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import { newCompositeErrors, serverCompositeLookup } from '../composites';
 import { availableTypes, mainOutputs } from './research';
@@ -21,6 +21,8 @@ export interface ValidatedOps {
   ignored: string[];
   /** What the applied ops leave dangling (see structuralWarnings). */
   warnings: string[];
+  /** Warnings shown on the card without sending the change back (a fix that hides an error instead of fixing it). */
+  cautions: string[];
   /** The workflow with the ops applied. */
   workflow: Workflow;
 }
@@ -29,11 +31,13 @@ export interface ValidatedOps {
 export function validateOps(workflow: Workflow, raw: unknown, lookup: DescriptorLookup = registryLookup()): ValidatedOps {
   const parsed = parseOps(raw);
   const result = applyOps(workflow, parsed.ops, lookup);
+  const wiring = wiringWarnings(workflow, result.workflow, lookup);
   return {
     ops: result.applied,
     dropped: [...parsed.dropped, ...result.dropped],
     ignored: result.ignored,
-    warnings: [...structuralWarnings(workflow, result.workflow, lookup), ...compositeWarnings(workflow, result.workflow, lookup)],
+    warnings: [...structuralWarnings(workflow, result.workflow, lookup), ...wiring.branches, ...compositeWarnings(workflow, result.workflow, lookup)],
+    cautions: [...wiring.purpose, ...swallowWarnings(result.applied)],
     workflow: result.workflow,
   };
 }

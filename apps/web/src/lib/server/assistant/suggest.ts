@@ -114,7 +114,7 @@ export function readSuggestions(reply: string, workflow: Workflow, types: NodeTy
       confidence: Math.min(1, Math.max(0, confidence > 1 ? confidence / 100 : confidence)),
       ops: complete ? validated.ops : [],
       ...(notes.length && { dropped: notes }),
-      ...(complete && validated.warnings.length && { warnings: validated.warnings }),
+      ...(complete && (validated.warnings.length || validated.cautions.length) && { warnings: [...validated.warnings, ...validated.cautions] }),
     });
   }
   // A failed node's fix first, then by confidence; the same change twice (a fix restated as a tweak) once.
