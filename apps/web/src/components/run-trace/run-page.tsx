@@ -5,9 +5,17 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { ExecutionRecord } from '@/lib/shared/types';
+import { jsonRenderEnabled } from '@/lib/shared/ui-spec';
 import { RunTraceView } from './run-trace-view';
+import { JsonRenderGallery } from './ui-cards';
 
+/** Under LANDFLOW_JSON_RENDER, /runs/json-render-gallery shows the spec cards (dev page). */
 export function RunPage({ executionId }: { executionId: string }) {
+  if (jsonRenderEnabled() && executionId === 'json-render-gallery') return <JsonRenderGallery />;
+  return <RunPageOf executionId={executionId} />;
+}
+
+function RunPageOf({ executionId }: { executionId: string }) {
   const [record, setRecord] = useState<Pick<ExecutionRecord, 'workflowId' | 'workflowName'>>();
   useEffect(() => {
     api<{ execution: ExecutionRecord }>(`/api/executions/${executionId}`)

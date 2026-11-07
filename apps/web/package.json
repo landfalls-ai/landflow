@@ -19,6 +19,8 @@
     "@google-cloud/pubsub": "6.3.1",
     "@grpc/grpc-js": "^1.14.6",
     "@grpc/proto-loader": "^0.8.1",
+    "@json-render/core": "0.21.2",
+    "@json-render/react": "0.21.2",
     "@kubernetes/client-node": "2.0.0",
     "@landflow/engine": "workspace:*",
     "@landflow/protocol": "workspace:*",
