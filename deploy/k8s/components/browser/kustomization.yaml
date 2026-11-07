@@ -1,0 +1,10 @@
+# The Browser plugin (plugins/browser): its own image with Chrome and the agent-browser CLI, so it is a component and not
+# part of the base. Build it first (the Dockerfile is plugins/browser/Dockerfile, not one under deploy/docker):
+#   docker --context orbstack buildx build --builder orbstack --load -f plugins/browser/Dockerfile \
+#     --build-arg HTTP_PORT=7112 --build-arg GRPC_PORT=7212 -t landflow/plugin-browser:k8s-dev .
+# Enable it with `- ../../components/browser` in an overlay's components (the orbstack overlay has it commented out).
+# The pod runs headless; set LANDFLOW_BROWSER_ALLOWED_DOMAINS in browser.yaml to limit every node to those sites.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - browser.yaml

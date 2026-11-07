@@ -28,7 +28,8 @@
     "plugin:triage": "pnpm --filter @landflow/plugin-triage start",
     "plugin:threat-intel": "cd plugins/threat-intel && go run .",
     "fake-landfall": "pnpm --filter @landflow/plugin-landfall fake-landfall",
-    "dev:all": "concurrently -k -n web,ts,py,go,msg,prod,google,db -c magenta,blue,yellow,cyan,green,red,white,gray \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\""
+    "dev:all": "concurrently -k -n web,ts,py,go,msg,prod,google,db -c magenta,blue,yellow,cyan,green,red,white,gray \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\"",
+    "dev:all:browser": "concurrently -k -n web,ts,py,go,msg,prod,google,db,browser -c magenta,blue,yellow,cyan,green,red,white,gray,black \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:browser\""
   },
   "devDependencies": {
     "concurrently": "^10.0.6",

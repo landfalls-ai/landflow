@@ -21,6 +21,8 @@ components:
   - ../../components/package-cache
   # GitHub's MCP server for the agents' GitHub MCP tool (docs/a2a.md): no token in it, Landflow sends its credential.
   - ../../components/github-mcp
+  # The Browser plugin (Chrome inside; build landflow/plugin-browser:k8s-dev first, see components/browser): off by default.
+#   - ../../components/browser
 #   - ../../components/postgres
 #   - ../../components/valkey
 images:
@@ -33,6 +35,7 @@ images:
   - { name: landflow/plugin-google-workspace, newTag: k8s-dev }
   - { name: landflow/plugin-databases, newTag: k8s-dev }
   - { name: landflow/plugin-github, newTag: k8s-dev }
+  - { name: landflow/plugin-browser, newTag: k8s-dev } # only used with components/browser
 generatorOptions:
   disableNameSuffixHash: true
   labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: config }
