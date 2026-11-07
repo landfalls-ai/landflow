@@ -11,11 +11,53 @@ export interface ToolCall {
   input: Record<string, unknown>;
 }
 
+/**
+ * An image a tool returned. Stored by reference: `ref` points at the stored file (memory, the journal and saved run
+ * state keep only that). `data` (base64, no `data:` prefix) is present only in flight: a tool that has just made the
+ * bytes, or the copy the agent node loads from `ref` for the one model call that sends it.
+ */
+export interface ToolImage {
+  mimeType: string;
+  ref?: BinaryRef;
+  data?: string;
+  fileName?: string;
+}
+
 export interface ToolResult {
   id: string;
   name: string;
   content: string;
   isError?: boolean;
+  /** Images the tool returned, shown to the model next to `content` (see `splitToolOutput`). */
+  images?: ToolImage[];
+}
+
+/**
+ * What a tool may return to hand the model images: the text for the model and the journal, and the images (by `ref`
+ * or inline `data`). `value` is the plain result the tool would have returned without images, for consumers that
+ * cannot show images. A tool that returns anything else behaves as before.
+ */
+export interface ToolOutputWithImages {
+  text: string;
+  images: ToolImage[];
+  value?: unknown;
+}
+
+export function isToolOutputWithImages(output: unknown): output is ToolOutputWithImages {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return false;
+  const { text, images } = output as { text?: unknown; images?: unknown };
+  return (
+    typeof text === 'string' &&
+    Array.isArray(images) &&
+    images.length > 0 &&
+    images.every((image) => image && typeof image === 'object' && typeof (image as ToolImage).mimeType === 'string' && ((image as ToolImage).data !== undefined || (image as ToolImage).ref !== undefined))
+  );
+}
+
+/** A tool's return value as the model's text and its images (none for a plain value). */
+export function splitToolOutput(output: unknown): { text: string; images: ToolImage[] } {
+  if (isToolOutputWithImages(output)) return { text: output.text, images: output.images };
+  return { text: typeof output === 'string' ? output : (JSON.stringify(output) ?? ''), images: [] };
 }
 
 /**

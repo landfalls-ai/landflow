@@ -11,7 +11,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { NodeOperationError, type JsonObject } from '@landflow/sdk';
-import type { AgentMessage, LanguageModel, ModelAttachment, ModelTurn, ToolCall, ToolSpec } from '@landflow/engine';
+import type { AgentMessage, LanguageModel, ModelAttachment, ModelTurn, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { Attributes } from '@opentelemetry/api';
 import { credentialIdOf } from '../ai-usage/credential-id';
 import { traceChat, traceEmbeddings } from '../telemetry';
@@ -73,6 +73,17 @@ function anthropicAttachments(attachments: ModelAttachment[]): Anthropic.Beta.Be
   });
 }
 
+/** The images of a tool result that carry their bytes (the agent node loads them for the call; stored copies are references only). */
+export function sentImages(result: ToolResult): Array<{ mimeType: string; data: string }> {
+  return (result.images ?? []).flatMap((image) => (image.data ? [{ mimeType: image.mimeType, data: image.data }] : []));
+}
+
+/** A tool turn's images as the synthetic user message of providers whose tool messages are text only. */
+function toolImageNote(results: ToolResult[]): string {
+  const names = [...new Set(results.filter((r) => sentImages(r).length).map((r) => r.name))].join(', ');
+  return `Image(s) returned by ${names} (see the tool result text above):`;
+}
+
 export function toAnthropicMessages(messages: AgentMessage[]): Anthropic.Beta.BetaMessageParam[] {
   return messages.map((message): Anthropic.Beta.BetaMessageParam => {
     if (message.role === 'user') {
@@ -86,7 +97,13 @@ export function toAnthropicMessages(messages: AgentMessage[]): Anthropic.Beta.Be
         content: message.results.map((result) => ({
           type: 'tool_result' as const,
           tool_use_id: result.id,
-          content: result.content,
+          // Images the tool returned go inside the result, after its text (Anthropic accepts image blocks there).
+          content: sentImages(result).length
+            ? [
+                { type: 'text' as const, text: result.content || 'Image attached.' },
+                ...sentImages(result).map((image) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: image.mimeType as 'image/png', data: image.data } })),
+              ]
+            : result.content,
           ...(result.isError && { is_error: true }),
         })),
       };
@@ -340,6 +357,9 @@ export function ollamaModel(options: { baseUrl: string; model: string; temperatu
         });
       } else {
         for (const result of message.results) wire.push({ role: 'tool', content: result.content, tool_name: result.name });
+        // Tool messages are text: the images follow as a user message.
+        const images = message.results.flatMap((result) => sentImages(result).map((image) => image.data));
+        if (images.length) wire.push({ role: 'user', content: toolImageNote(message.results), images });
       }
     }
     const body = JSON.stringify({
@@ -627,8 +647,20 @@ export function toOpenAiMessages(system: string | undefined, messages: AgentMess
   const wire: OpenAiMessage[] = system ? [{ role: 'system', content: system }] : [];
   for (const message of messages) {
     if (message.role === 'user') wire.push({ role: 'user', content: message.attachments?.length ? openAiParts(message.content, message.attachments) : message.content });
-    else if (message.role === 'tool') for (const result of message.results) wire.push({ role: 'tool', tool_call_id: result.id, content: result.content });
-    else {
+    else if (message.role === 'tool') {
+      for (const result of message.results) wire.push({ role: 'tool', tool_call_id: result.id, content: result.content });
+      // The API takes only text in tool messages: the images follow as a user message.
+      const images = message.results.flatMap(sentImages);
+      if (images.length) {
+        wire.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: toolImageNote(message.results) },
+            ...images.map((image): OpenAiContentPart => ({ type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } })),
+          ],
+        });
+      }
+    } else {
       wire.push({
         role: 'assistant',
         content: message.text || (message.toolCalls.length ? null : ''),
