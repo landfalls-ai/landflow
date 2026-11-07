@@ -111,6 +111,54 @@ export function chatRoster(workflow: Workflow, node: WorkflowNode): RosterEntry[
   return out;
 }
 
+const GUARDRAILS = 'core.guardrails';
+
+/** Nodes reachable from `from` along main connections, never walking through a node for which `stop` is true (a stopped node is reached, not left). */
+function reach(workflow: Workflow, from: string, stop: (n: WorkflowNode) => boolean = () => false): Set<string> {
+  const byId = new Map(workflow.nodes.map((n) => [n.id, n] as const));
+  const seen = new Set<string>();
+  const queue = [from];
+  while (queue.length) {
+    const id = queue.shift()!;
+    if (id !== from && stop(byId.get(id)!)) continue;
+    for (const c of workflow.connections) {
+      if (c.source !== id || c.type !== 'main' || seen.has(c.target) || !byId.has(c.target)) continue;
+      seen.add(c.target);
+      queue.push(c.target);
+    }
+  }
+  return seen;
+}
+
+/**
+ * Whether a roster target is reached through the flow itself: some node between the trigger and the target (a Switch or
+ * If) reads `agentKey`, so the run starts at the trigger and every node on the way (a Guardrails node) runs for the
+ * picked agent too. Otherwise the target is started directly and skips what lies before it.
+ */
+export function rosterRoutedFromTrigger(workflow: Workflow, trigger: WorkflowNode, targetId: string): boolean {
+  const fromTrigger = reach(workflow, trigger.id);
+  if (!fromTrigger.has(targetId)) return false;
+  return workflow.nodes.some((n) => n.id !== targetId && !n.disabled && fromTrigger.has(n.id) && JSON.stringify(n.parameters ?? {}).includes('agentKey') && reach(workflow, n.id).has(targetId));
+}
+
+/** The node a chat run starts at: the trigger for the lead and for an agent the flow routes; else the picked agent's own node. */
+export function chatStartNodeId(workflow: Workflow, trigger: WorkflowNode, agent?: RosterEntry): string {
+  return agent && !rosterRoutedFromTrigger(workflow, trigger, agent.targetId) ? agent.targetId : trigger.id;
+}
+
+/**
+ * Roster targets a visitor can reach without passing a Guardrails node, in a flow that has one: the run starts at
+ * the target itself, or the flow routes to it by a path around the guardrail. Empty when nothing is wrong (no roster,
+ * not public, no Guardrails node in the flow, or every target routed through it).
+ */
+export function unguardedRosterTargets(workflow: Workflow): string[] {
+  const trigger = workflow.nodes.find((n) => n.type === CHAT_TRIGGER && !n.disabled && (n.parameters as Record<string, unknown>).public === true);
+  if (!trigger || !workflow.nodes.some((n) => n.type === GUARDRAILS && !n.disabled)) return [];
+  const roster = chatRoster(workflow, trigger);
+  const open = reach(workflow, trigger.id, (n) => n.type === GUARDRAILS && !n.disabled);
+  return roster.filter((r) => !rosterRoutedFromTrigger(workflow, trigger, r.targetId) || open.has(r.targetId)).map((r) => workflow.nodes.find((n) => n.id === r.targetId)!.name);
+}
+
 /** The roster entry a visitor named, or an error: a key off the roster never reaches a node. `undefined` entry: the lead (nothing named). */
 export function pickAgent(roster: RosterEntry[], agentKey: unknown): { entry?: RosterEntry } | { error: string } {
   if (agentKey === undefined || agentKey === null || agentKey === '') return {};

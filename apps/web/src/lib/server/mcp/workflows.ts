@@ -8,6 +8,7 @@ import { nanoid } from 'nanoid';
 import { defaultParameters, defaultVersionOf, indexedPorts, isPropertyVisible, withPropertyDefaults, type NodeDescriptor } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import { registry } from '../plugins/registry';
+import { unguardedRosterTargets } from '../chat';
 import { workflowSchema } from '../schemas';
 import { store } from '../store';
 import type { ExecutionRecord } from '../../shared/types';
@@ -180,6 +181,14 @@ export function validateWorkflow(input: unknown): WorkflowValidation {
   }
   if (workflow.nodes.length && ![...descriptors.values()].some((d) => d.kind === 'trigger')) {
     warnings.push('No trigger node: the workflow can only run from a node you choose (add core.manualTrigger, core.webhook, core.schedule…)');
+  }
+  try {
+    const open = unguardedRosterTargets(workflow as Workflow);
+    if (open.length) {
+      warnings.push(`Public chat: ${open.map((n) => `"${n}"`).join(', ')} can be picked by visitors without passing the Guardrails node. Connect the trigger through Guardrails to a Switch on agentKey that routes to each agent.`);
+    }
+  } catch {
+    // Never blocks validation.
   }
   const loose = workflow.nodes.filter((n) => workflow.nodes.length > 1 && !connected.has(n.id));
   if (loose.length) warnings.push(`Not connected: ${loose.map((n) => `"${n.name}"`).join(', ')}`);

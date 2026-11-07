@@ -37,6 +37,7 @@ import {
   validSessionId,
   type ChatFile,
   type PublicChatConfig,
+  chatStartNodeId,
 } from '@/lib/server/chat';
 import { CHAT_CLIENT_JS, chatPageHtml } from '@/lib/server/chat-client';
 import { cleanComment, isRating, setFeedback } from '@/lib/server/chat-feedback';
@@ -235,7 +236,8 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     runWorkflow({
       workflow,
       mode: 'webhook',
-      startNodeId: agent ? agent.targetId : node.id,
+      // A flow that routes on `agentKey` is started at the trigger, so its Guardrails run for the picked agent too.
+      startNodeId: chatStartNodeId(workflow, node, agent),
       triggerItems: [item],
       executionId,
       onStart: () => {

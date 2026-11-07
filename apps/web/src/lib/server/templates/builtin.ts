@@ -911,7 +911,7 @@ const WORKFLOW_TEMPLATES: TemplateDetail[] = [
       id: 'chat-with-a-team',
       name: 'Chat with a team',
       description:
-        'A public chat that a lead agent answers and hands to two specialists when it should. The page shows who answered and who was asked, a Guardrails node screens what visitors type, and the lead saves what it learns to a data table.',
+        'A public chat that a lead agent answers and hands to two specialists when it should. The page shows who answered and who was asked, a Guardrails node screens what visitors type (also when they pick a specialist from the roster), and the lead saves what it learns to a data table.',
       categories: ['ai', 'support'],
       setup: [
         'Using the template creates the lead and the two specialists (Billing and Technical) as agents: open each in the agent builder to set its model, persona and knowledge.',
@@ -920,8 +920,23 @@ const WORKFLOW_TEMPLATES: TemplateDetail[] = [
       ],
       dataTables: [CHAT_NOTES],
       nodes: [
-        node('chat', 'When chat message received', 'chatTrigger', [0, 0], { public: true, title: 'Ask the team', initialMessages: 'Hi! Ask me anything: I will bring in the right specialist.' }),
+        node('chat', 'When chat message received', 'chatTrigger', [0, 0], {
+          public: true,
+          title: 'Ask the team',
+          initialMessages: 'Hi! Ask me anything: I will bring in the right specialist.',
+          roster: { agent: [{ key: 'billing', label: 'Billing', face: '🧾', target: 'Billing' }, { key: 'technical', label: 'Technical', face: '🛠️', target: 'Technical' }] },
+        }),
         node('guard', 'Screen the message', 'guardrails', [260, 0], { operation: 'check', text: '{{ $json.chatInput }}' }),
+        node('route', 'Who was asked?', 'switch', [390, -60], {
+          mode: 'rules',
+          rules: {
+            values: [
+              { conditions: { condition: [{ left: '{{ $json.agentKey }}', operator: 'equals', right: 'billing' }] }, combinator: 'and' },
+              { conditions: { condition: [{ left: '{{ $json.agentKey }}', operator: 'equals', right: 'technical' }] }, combinator: 'and' },
+            ],
+          },
+          options: { fallbackOutput: 'extra' },
+        }),
         node('lead', 'Lead', 'messageAgent', [520, -6], { agentId: 'lead', message: '{{ $json.chatInput }}', conversation: 'key', sessionKey: '{{ $json.sessionId }}' }),
         node('refuse', 'Politely decline', 'set', [520, 140], { mode: 'manual', fields: fields([{ name: 'output', type: 'string', value: 'Sorry, I can’t help with that message.' }]), includeOtherFields: false }),
         node('memory', 'Simple Memory', 'simpleMemory', [440, 340]),
@@ -933,7 +948,7 @@ const WORKFLOW_TEMPLATES: TemplateDetail[] = [
           columns: columns({ visitor: "{{ $fromAI('visitor', 'How the visitor introduced themselves, or empty', 'string') }}", note: "{{ $fromAI('note', 'What to follow up on', 'string') }}" }),
         }),
       ],
-      links: [main('chat', 'guard'), main('guard', 'lead', 0), main('guard', 'refuse', 1), memory('memory', 'lead'), tool('billing', 'lead'), tool('tech', 'lead'), tool('notes', 'lead')],
+      links: [main('chat', 'guard'), main('guard', 'route', 0), main('route', 'billing', 0), main('route', 'tech', 1), main('route', 'lead', 4), main('guard', 'refuse', 1), memory('memory', 'lead'), tool('billing', 'lead'), tool('tech', 'lead'), tool('notes', 'lead')],
     }),
     CHAT_TEAM,
   ),

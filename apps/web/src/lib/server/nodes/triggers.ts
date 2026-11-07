@@ -215,7 +215,7 @@ export const chatTrigger = defineNode({
         placeholder: 'Add agent',
         default: {},
         description:
-          'Optional. The page shows these above the input; picking one starts the run at its node instead of the flow’s first node (the flow’s lead stays the default). Visitors can reach only the nodes listed here. A picked agent skips the nodes between the trigger and it (such as Guardrails) and keeps its own memory per visitor session.',
+          'Optional. The page shows these above the input; picking one starts the run at its node instead of the flow’s first node (the flow’s lead stays the default). Visitors can reach only the nodes listed here. A picked agent keeps its own memory per visitor session. To run it through your Guardrails, connect the trigger through Guardrails to a Switch on agentKey that routes to each agent (the Chat with a team template does); otherwise the run starts at the agent’s own node and skips the nodes before it.',
         displayOptions: whenPublic,
         groups: [
           {
