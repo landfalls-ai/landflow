@@ -65,8 +65,8 @@ services:
       LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
       # Plugins announce themselves; the scan (at boot and the Plugins page's "Scan network")
       # probes the plugin services instead of the container's own 127.0.0.1.
-      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github,browser,agent-shell,web-search
-      LANDFLOW_SCAN_PORTS: 7101-7107,7111-7114,7201-7207,7211-7214
+      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github,browser,agent-shell,web-search,desktop
+      LANDFLOW_SCAN_PORTS: 7101-7107,7111-7117,7201-7207,7211-7217
       # Base of links the host hands out (resume URLs, error-workflow links): the published port.
       LANDFLOW_PUBLIC_URL: http://localhost:${LANDFLOW_HOST_PORT:-53000}
       # Where plugins fetch and upload item files (/api/binary): the host on the compose network.
@@ -271,6 +271,32 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  # Desktop plugin (plugins/desktop): disposable virtual desktops an agent can see and use (docs/features/desktop.md).
+  # Optional: the profile `desktop`. It starts sandbox containers (landflow/desktop-sandbox:dev, build it first with
+  # services/desktop-sandbox/Dockerfile) on the Docker engine through the mounted socket, so anyone who can call this plugin
+  # can start containers: local use only. The sandboxes carry their own limits, no network and no mounts.
+  desktop:
+    <<: *plugin
+    profiles: [desktop]
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-desktop:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: plugins/desktop/Dockerfile
+      args: { HTTP_PORT: "7117", GRPC_PORT: "7217" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: desktop
+      LANDFLOW_DESKTOP_APPS: ${LANDFLOW_DESKTOP_APPS:-}
+      LANDFLOW_DESKTOP_ALLOWED_HOSTS: ${LANDFLOW_DESKTOP_ALLOWED_HOSTS:-}
+    user: root
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m,mode=1777
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
