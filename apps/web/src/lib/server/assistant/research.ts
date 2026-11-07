@@ -5,7 +5,7 @@
  * suggest.ts and the chat tools turn these into prompt text.
  */
 import { indexedPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
-import type { RunDigest } from '@/lib/shared/assistant-ops';
+import { collectionShape, type RunDigest } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow, WorkflowNode } from '@/lib/shared/types';
 import { registry } from '../plugins/registry';
 
@@ -44,6 +44,11 @@ function describeProperty(p: PropertyDescriptor, parameters?: Record<string, unk
   if (parameters && p.displayOptions && !isPropertyVisible(p, parameters)) parts.push('[hidden with the current parameters]');
   const fields = p.values ?? p.groups?.flatMap((g) => g.values);
   if (fields?.length) parts.push(`fields: ${fields.slice(0, 10).map(describeField).join(', ')}`);
+  // Each field's allowed option values, then the exact stored shape: a model that only sees "fixedCollection" writes a flat list.
+  const choices = fields?.filter((f) => f.options?.length && !f.typeOptions?.loadOptionsMethod).map((f) => `${f.name} ∈ ${f.options!.slice(0, 24).map((o) => JSON.stringify(o.value)).join('|')}${f.options!.length > 24 ? '|…' : ''}`);
+  if (choices?.length) parts.push(`field options: ${choices.join('; ')}`);
+  const shape = collectionShape(p);
+  if (shape) parts.push(`— ${shape}`);
   return `- ${parts.join(' ')}`;
 }
 
