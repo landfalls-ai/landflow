@@ -397,6 +397,24 @@ describe('a Landflow agent session in a run', () => {
     expect(events.find((e) => e.spanId.endsWith('c3') && e.type === 'span.ended')).toMatchObject({ status: 'error', error: 'timeout' });
   });
 
+  it('records the layers\' decisions (tool access, the router, the cache) as checks', async () => {
+    const { agentSessionJournal, layerCheck } = await import('@/lib/server/journal/agent-session');
+    const journal = journalOf('ex_agent_layers', { workflowId: 'wf_a' });
+    journal.bindSpans((nodeId) => (nodeId === 'agentnode' ? 'node:agentnode:0' : undefined));
+    const entry = agentSessionJournal({ execution: { workflowId: 'wf_a', executionId: 'ex_agent_layers', nodeId: 'agentnode' } }, { id: 'ag_1', name: 'Analyst' });
+    const at = '2026-11-05T10:00:00.000Z';
+    entry({ id: 'n1', type: 'notice', message: 'Tool access: Refund is not available to you (policy: deny)', at });
+    entry({ id: 'n1', type: 'notice', message: 'Tool access: Refund is not available to you (policy: deny)', at });
+    entry({ id: 'n2', type: 'notice', message: 'Routed to qwen3.8: short request (31 characters)', at });
+    entry({ id: 'n3', type: 'notice', message: 'Answered from the response cache: no model call.', at });
+    entry({ id: 'n4', type: 'notice', message: 'Stopped: budget', at });
+    releaseJournal('ex_agent_layers');
+    const checks = journalStore.read('ex_agent_layers').filter((e) => e.type === 'check');
+    expect(checks.map((e) => ('check' in e ? [e.check.name, e.check.status] : []))).toEqual([['Tool access', 'warn'], ['Model router', 'pass'], ['Response cache', 'pass']]);
+    expect(checks[0]).toMatchObject({ check: { message: 'Refund is not available to you (policy: deny)', source: 'builtin', subject: 'Analyst' } });
+    expect(layerCheck('Something else')).toBeUndefined();
+  });
+
   it('speaks as its node in a flow, so the run has one actor for the agent', async () => {
     const { agentSessionJournal } = await import('@/lib/server/journal/agent-session');
     const journal = journalOf('ex_agent_node', { workflowId: 'wf_a' });

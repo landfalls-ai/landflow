@@ -45,6 +45,8 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | `LANDFLOW_GITHUB_MCP_URL` | `http://landflow-github-mcp:8082/` | the GitHub MCP server an agent's GitHub MCP tool uses when it names no URL ([a2a.md](../a2a.md#githubs-mcp-tools-for-agents)); the token is the tool's credential, never a variable |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | the Ollama used by the AI flow builder and the editor assistant, and the default of the Ollama chat and embeddings nodes |
 | `LANDFLOW_BUILDER_MODEL` | `qwen3-coder:30b` | model the AI flow builder and the editor assistant use |
+| `LANDFLOW_TOOL_POLICY` / `LANDFLOW_TOOL_POLICY_URL` / `LANDFLOW_OPENFGA_STORE_ID` / `LANDFLOW_TOOL_POLICY_TOKEN` / `LANDFLOW_TOOL_POLICY_FAIL` | `rules` / – / – / – / `closed` | an external policy engine (`opa` or `openfga`) that also decides which tools an agent's caller may use; an unreachable engine denies unless `LANDFLOW_TOOL_POLICY_FAIL=open` ([agents.md](../agents.md#tool-access)) |
+| `LANDFLOW_STT_URL` / `LANDFLOW_STT_MODEL` / `LANDFLOW_STT_API_KEY` | `http://127.0.0.1:8000/v1` / `whisper-1` / – | the OpenAI-compatible speech-to-text server behind Spotlight's microphone ([assistant.md](../assistant.md#spotlight)) |
 | `AI_USAGE_RETENTION_DAYS` | `400` | how long per-call AI usage rows (tokens, cost) are kept |
 | `LANDFLOW_BRAIN` | `true` | `false` turns the [second brain](../second-brain.md) off: no usage ledger, no detectors, no study |
 | `USAGE_RETENTION_DAYS` | `90` | how long raw usage events are kept; daily rollups are kept 400 days |

@@ -9,7 +9,7 @@
 #   docker compose -f deploy/compose.infra.yml --profile kafka --profile rabbitmq --profile nats up -d   # + tier 1 brokers
 #   docker compose -f deploy/compose.infra.yml --profile git up -d git-ssh                    # + throwaway SSH Git server (run infra/git/gen-keys.sh first)
 #   docker compose -f deploy/compose.infra.yml --profile valkey-cluster up -d --wait         # + a 6-node Valkey Cluster (3 primaries, 3 replicas) on 127.0.0.1:56411-56416
-#   ... profiles mqtt, artemis, pulsar, pubsub, servicebus (tier 2 brokers), mcp-gateway (agentgateway)
+#   ... profiles mqtt, artemis, pulsar, pubsub, servicebus (tier 2 brokers), mcp-gateway (agentgateway), llm-gateway (agentgateway in front of the models)
 #
 # Ports, credentials and URLs: docs/deployment.md. Defaults live here; deploy/.env overrides them.
 # Every credential is for local development only.
@@ -547,6 +547,49 @@ services:
     command: ["chown", "65532:65532", "/data"]
     volumes:
       - mcp-gateway-data:/data
+
+  llm-gateway:
+    # agentgateway 1.6 as an LLM gateway in front of the model port (docs/agents.md "Model router", docs/deployment.md): one
+    # OpenAI-compatible endpoint, http://127.0.0.1:54100/v1/chat/completions, for any provider listed in llm-gateway/config.yaml
+    # (a local Ollama on the host to begin with). Landflow's agents use it as an OpenAI model with this base URL.
+    # The admin API and UI (http://127.0.0.1:55100/ui) have no authentication: loopback only. Distroless: no healthcheck.
+    image: cr.agentgateway.dev/agentgateway:v1.6.0@sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+    profiles: [llm-gateway]
+    restart: unless-stopped
+    command: ["-f", "/config/config.yaml"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_LLM_GATEWAY_PORT:-54100}:3000"
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_LLM_GATEWAY_ADMIN_PORT:-55100}:15000"
+    volumes:
+      - ./llm-gateway/config.yaml:/config/config.yaml:ro
+
+  tool-policy-opa:
+    # Open Policy Agent as Landflow's tool access engine (docs/agents.md "Tool access"): LANDFLOW_TOOL_POLICY=opa and
+    # LANDFLOW_TOOL_POLICY_URL=http://127.0.0.1:58181/v1/data/landflow/tools. The policy and its data are mounted from
+    # tool-policy/opa; edit them and OPA reloads them. Loopback only; distroless, so no Docker healthcheck.
+    image: openpolicyagent/opa@sha256:cb56d754605b3a8042f5e67671d1f54fd71a3059511e653b3d841c5d46183083
+    profiles: [tool-policy-opa]
+    restart: unless-stopped
+    command: ["run", "--server", "--watch", "--addr=0.0.0.0:8181", "/policy"]
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_TOOL_POLICY_OPA_PORT:-58181}:8181"
+    volumes:
+      - ./tool-policy/opa:/policy:ro
+
+  tool-policy-openfga:
+    # OpenFGA as Landflow's tool access engine: LANDFLOW_TOOL_POLICY=openfga, LANDFLOW_TOOL_POLICY_URL=http://127.0.0.1:58080 and the
+    # store id that scripts/openfga-tool-policy.sh setup prints. In memory (a restart forgets the store: run setup again); for a
+    # real one use the Postgres datastore of landflow-infra. Loopback only; distroless, so no Docker healthcheck.
+    image: openfga/openfga@sha256:efde89d24487da1a8bc37d85b61341f1fb7024943a1ded65f4b7d51a75666688
+    profiles: [tool-policy-openfga]
+    restart: unless-stopped
+    command: ["run"]
+    environment:
+      OPENFGA_DATASTORE_ENGINE: memory
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_TOOL_POLICY_OPENFGA_PORT:-58080}:8080"
 
   git-ssh:
     # A throwaway SSH Git server (user `git`, key login only) for Settings → Source control's SSH tests. Dev only:

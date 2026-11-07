@@ -108,6 +108,8 @@ export interface BuiltTool extends ToolSpec {
   label: string;
   nodeType?: string;
   requireApproval: boolean;
+  /** A knowledge base search: what it returns is what the output guardrail's grounded check judges an answer against. */
+  knowledge?: boolean;
   invoke(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome>;
   /** After a pause (ToolOutcome.pause): send the person's decision and carry on. */
   resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext, answer?: string): Promise<ToolOutcome>;

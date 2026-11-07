@@ -1111,6 +1111,29 @@ Built by parallel workstreams ([the plan](specs/17-parallel-build-plan.md), note
 **Debug token** (W1c, [spec 19](specs/19-debug-token.md)), first half built: a short-lived read-only token bound to one execution (`landflow debug-token`), accepted only by `explain_failure`, `get_run_trace` and `get_execution`, redacted, audited per call, expiring, listed and revocable. Open: the one-node local override (it needs its own design for what the local plugin may see) and a Settings or execution-page UI for tokens.
 **Image tool results** ([spec 18](specs/18-desktop-agent-node.md), phase 1): tools can return images to the AI Agent node (`{ text, images }`, or a node tool's `item.binary`), stored by reference and read back last-N. **Built later the same day:** the persona runtime (Run an Agent, teams, members) and image limits (1568 px, 4 MB, sharp); `LANDFLOW_TOOL_IMAGES_KEPT`. Open: `computer` toolset blocks, the Desktop node, a thumbnail in Run Trace, a setting in AgentSettings.
 **Specified, not built:** the rest of [spec 18](specs/18-desktop-agent-node.md), a Desktop agent node driving a disposable virtual desktop.
+## Eight layers around a model
+
+Compared a reel on what surrounds a model (system prompt, RAG, tools, access, guardrails, cache, router,
+observability and evals) with Landflow. Built: **version restore** and the **eval gate** ([agents.md](agents.md#eval-gate)):
+a publish that scores worse than the published version on the agent's own test cases is held; and the **model router**
+([agents.md](agents.md#model-router)): easy requests go to a cheaper model by a plain rule (the savings tile and a gateway
+tier header are still open); and **prompt caching** of the system prompt and tools for Anthropic agents
+([agents.md](agents.md#prompt-cache)); and an exact-match **response cache** ([agents.md](agents.md#response-cache)).
+Also built: **tool access by caller** ([agents.md](agents.md#tool-access): per-agent rules, plus OPA or OpenFGA through
+one port) and a **layers checklist** with a fix per missing layer ([agents.md](agents.md#layers)). The router and cache cards now say how many of the newest requests each handled ([agents.md](agents.md#layers)). Also built: a **semantic cache**
+([agents.md](agents.md#response-cache)), a **test panel** for tool access ([agents.md](agents.md#tool-access)) and an **LLM
+gateway** (agentgateway as a compose profile and a Kubernetes example, [agents.md](agents.md#model-router); kgateway's own
+Envoy AI Gateway is deprecated, so the plan's kgateway item became agentgateway). The Insights page has an **Agent layers** card with the same numbers
+for every agent.
+
+A second pass over the reel's scenes (what each shows against what Landflow has) found three guardrail gaps, all built
+([agents.md](agents.md#building-an-agent)): a **tool-result guardrail stage** (an email or web page the agent reads can carry planted
+instructions, which the input stage never saw), a **grounded** output check (does the answer follow from the passages the
+agent's knowledge bases returned?) and **stay on topic** in the builder (the engine had it; the builder did not offer it).
+
+Then **Jev and AWS Strands Decider as guardrail judges** ([agents.md](agents.md#building-an-agent)): TypeSafe AI’s Jev and AWS’s open-source Strands Decider are decision models (text and
+yes/no questions in, a probability per question out), so it cannot be a chat provider; it answers the guardrail checks that need a
+model instead, from a *TypeSafe API* credential chosen on the rule. Open: a Decide node, the model router and cost counting.
 
 ## Planned next
 
@@ -1119,4 +1142,5 @@ The follow-ups above are candidates, among them making a runbook automatically w
 ## Not planned
 
 Later, maybe: an agent code sandbox, and prompt management. Not planned:
+Later, maybe: browser use, an agent code sandbox, spoken replies and realtime voice (dictation into Spotlight is built), and prompt management. Not planned:
 RPA, process mining, an app builder, and a chat hub (n8n is retiring its own).

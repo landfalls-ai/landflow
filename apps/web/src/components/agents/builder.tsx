@@ -30,9 +30,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { api } from '@/lib/client/api';
+import { api, ApiError } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
-import type { Agent, AgentConfig, KagentStatus } from '@/lib/shared/agents';
+import { diffConfigs, type Agent, type AgentConfig, type KagentStatus } from '@/lib/shared/agents';
 import { Badge, Chip } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
@@ -45,6 +45,10 @@ import { GuardrailsCard } from './guardrails-card';
 import { KagentCard } from './kagent-card';
 import { Dialog, Field } from './dialog';
 import { ModelCard } from './model-card';
+import { RouterCard } from './router-card';
+import { CacheCard } from './cache-card';
+import { AccessCard } from './access-card';
+import { LayersCard } from './layers-card';
 import { EvaluationsTab } from './evaluations-tab';
 import { PersonaTab } from './persona-tab';
 import { SessionsTab } from './sessions-tab';
@@ -327,17 +331,20 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
     window.history.replaceState(null, '', `/agents/${agentId}${query ? `?${query}` : ''}`);
   };
 
-  const publish = async () => {
+  const publish = async (skipEval = false) => {
     setPublishing(true);
     try {
       await persist();
-      const { agent: next, kagent } = await api<{ agent: Agent; kagent?: KagentStatus | { error: string } }>(`/api/agents/${agentId}/publish`, { method: 'POST' });
+      const { agent: next, kagent } = await api<{ agent: Agent; kagent?: KagentStatus | { error: string } }>(`/api/agents/${agentId}/publish`, { method: 'POST', json: { skipEval } });
       setAgent(next);
       if (kagent && 'error' in kagent) toast.warning(`Published v${next.published?.version ?? ''}, but kagent still has v${next.kagent?.version ?? '?'}: ${kagent.error}`);
       else toast.success(`Published v${next.published?.version ?? ''}${kagent ? ' and written to kagent' : ''}`);
       void useAgentData.getState().loadAgents();
     } catch (e) {
-      toast.error((e as Error).message);
+      // The eval gate held the publish: say why, and offer to go ahead.
+      const verdict = e instanceof ApiError && e.status === 409 ? (e.body as { gate?: { verdict?: { reason?: string } } } | undefined)?.gate?.verdict : undefined;
+      if (verdict) toast.warning(`Held by the eval gate. ${verdict.reason ?? ''}`, { duration: 15_000, action: { label: 'Publish anyway', onClick: () => void publish(true) } });
+      else toast.error((e as Error).message);
     } finally {
       setPublishing(false);
     }
@@ -354,6 +361,22 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
       toast.error((e as Error).message);
     } finally {
       setPublishing(false);
+    }
+  };
+
+  /** Copy an earlier version into the draft; publishing it is a separate step. */
+  const restore = async (version: number) => {
+    try {
+      clearTimeout(timer.current);
+      dirty.current = false;
+      const { agent: next } = await api<{ agent: Agent }>(`/api/agents/${agentId}/restore`, { method: 'POST', json: { version } });
+      setAgent(next);
+      const config = configOf(next);
+      latest.current = config;
+      setDraft(config);
+      toast.success(`v${version} is in the draft. Publish to make it live.`);
+    } catch (e) {
+      toast.error((e as Error).message);
     }
   };
 
@@ -392,6 +415,14 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
     requestAnimationFrame(() => {
       document.getElementById(target.section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       if (target.field) document.getElementById(target.field)?.focus({ preventScroll: true });
+    });
+  };
+
+  /** The Layers card's "Set up": open the tab and scroll to the setting. */
+  const jumpTo = (fix: { tab: BuilderTab; section?: string }) => {
+    go(fix.tab);
+    requestAnimationFrame(() => {
+      if (fix.section) document.getElementById(fix.section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   };
 
@@ -567,12 +598,30 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
                         <MenuSeparator />
                         <MenuLabel>History</MenuLabel>
                         <div className="max-h-40 overflow-y-auto">
-                          {agent.history.map((v) => (
-                            <div key={v.version} className="flex items-center justify-between px-2.5 py-1 text-[12px] text-t2">
-                              <span className="font-mono">v{v.version}</span>
-                              <span className="text-t3">{timeAgo(v.publishedAt)}</span>
-                            </div>
-                          ))}
+                          {agent.history.map((v, i) => {
+                            const older = agent.history[i + 1];
+                            const changes = older ? diffConfigs(older.config, v.config).map((c) => c.label) : [];
+                            return (
+                              <div key={v.version} className="px-2.5 py-1 text-[12px] text-t2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-mono">v{v.version}</span>
+                                  <span className="text-t3">{timeAgo(v.publishedAt)}</span>
+                                  <button
+                                    type="button"
+                                    className="rounded px-1 text-[11px] text-ac hover:bg-acdim"
+                                    disabled={sameConfig(draft, v.config)}
+                                    onClick={() => {
+                                      close();
+                                      void restore(v.version);
+                                    }}
+                                  >
+                                    Restore
+                                  </button>
+                                </div>
+                                {changes.length > 0 && <div className="truncate text-[11px] text-t3">Changed: {changes.join(', ')}</div>}
+                              </div>
+                            );
+                          })}
                         </div>
                       </>
                     )}
@@ -691,8 +740,18 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
             )}
             {tab === 'abilities' && (
               <div className="space-y-4">
+                <LayersCard agentId={agentId} config={draft} onFix={jumpTo} />
                 <div id="section-model" className="scroll-mt-20">
                   <ModelCard config={draft} update={update} />
+                </div>
+                <div id="section-router" className="scroll-mt-20">
+                  <RouterCard agentId={agentId} config={draft} update={update} />
+                </div>
+                <div id="section-cache" className="scroll-mt-20">
+                  <CacheCard agentId={agentId} config={draft} update={update} />
+                </div>
+                <div id="section-access" className="scroll-mt-20">
+                  <AccessCard agentId={agentId} config={draft} update={update} />
                 </div>
                 <SkillsCard config={draft} update={update} />
                 <div id="section-capabilities" className="scroll-mt-20 space-y-4">
@@ -709,7 +768,9 @@ export function AgentBuilder({ agentId, initialTab = 'persona', initialSession }
             )}
             {tab === 'safety' && (
               <div className="space-y-4">
-                <GuardrailsCard config={draft} update={update} />
+                <div id="section-guardrails" className="scroll-mt-20">
+                  <GuardrailsCard config={draft} update={update} />
+                </div>
                 <SettingsTab config={draft} update={update} agentId={agentId} />
               </div>
             )}

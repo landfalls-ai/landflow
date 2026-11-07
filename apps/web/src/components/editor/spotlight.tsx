@@ -10,7 +10,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
-import { ArrowUp, Check, ChevronDown, ChevronRight, CircleCheck, CircleX, Loader2, Maximize2, MessageSquare, Minimize2, Play, Rocket, Sparkles, Square, SquarePen, Wrench, X } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, ChevronRight, CircleCheck, CircleX, Loader2, Maximize2, MessageSquare, Mic, Minimize2, Play, Rocket, Sparkles, Square, SquarePen, Wrench, X } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { cn } from '@/lib/utils';
 import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
@@ -19,6 +19,7 @@ import { useBuildFlow } from './ai-builder';
 import { useBuilding } from './building';
 import { applyChanges, sendFeedback, suggestionKey, useAssistant, useSuggestions, useWorking, type ChatItem, type Proposal, type ReplyAction, type ReplyPart, type Suggestion, type TestRun } from './assistant';
 import { useEditor } from './store';
+import { dictationSupported, useDictation } from './use-dictation';
 import { OpsDiff, Warnings } from './suggestions-card';
 import { MAX_FIXES, productionNote, publishToProduction, testUntilItRuns } from './test-session';
 
@@ -502,6 +503,15 @@ export function Spotlight() {
   const [withoutSelection, setWithoutSelection] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const live = pending || drafting;
+  // Speech lands in the box to edit, appended to what's typed; it is never sent by voice alone.
+  const dictation = useDictation((spoken) => {
+    const typed = inputValue.current.trim();
+    setText(typed ? `${typed} ${spoken}` : spoken);
+  });
+  const [canDictate, setCanDictate] = useState(false);
+  useEffect(() => setCanDictate(dictationSupported()), []);
+  const inputValue = useRef('');
+  inputValue.current = draft;
   // While Spotlight works on its own, the conversation waits in its card at the side (unless asked for).
   const showConversation = open && hasItems && (!working || detail);
 
@@ -720,6 +730,24 @@ export function Spotlight() {
           </button>
         )}
         {!focused && !draft && !hasItems && <kbd className="mb-[9px] shrink-0 rounded border border-hair px-1 font-mono text-[10.5px] text-t3">⌘I</kbd>}
+        {canDictate && !live && (
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => (dictation.state === 'recording' ? dictation.stop() : void dictation.start())}
+            disabled={dictation.state === 'transcribing'}
+            aria-label={dictation.state === 'recording' ? 'Stop recording' : 'Dictate'}
+            aria-pressed={dictation.state === 'recording'}
+            title={dictation.error || (dictation.state === 'recording' ? 'Stop and transcribe' : 'Dictate (speech goes into the box to edit)')}
+            className={cn(
+              'mb-[2px] flex h-8 shrink-0 items-center gap-1 rounded-full px-2 text-t2 transition-colors hover:bg-acdim hover:text-t1 disabled:opacity-60',
+              dictation.state === 'recording' && 'bg-rd/15 text-rd hover:bg-rd/20 hover:text-rd',
+              dictation.error && 'text-rd',
+            )}
+          >
+            {dictation.state === 'transcribing' ? <Loader2 className="size-4 animate-spin" /> : dictation.state === 'recording' ? <Square className="size-3.5 animate-pulse" fill="currentColor" /> : <Mic className="size-4" />}
+            {dictation.state === 'recording' && <span className="font-mono text-[11.5px] tabular-nums">{Math.floor(dictation.seconds / 60)}:{String(dictation.seconds % 60).padStart(2, '0')}</span>}
+          </button>
+        )}
         {live ? (
           <button
             onClick={() => useAssistant.getState().stop()}

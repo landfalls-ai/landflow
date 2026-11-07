@@ -11,6 +11,7 @@ const guardrailRule = z.object({
   action: z.enum(['block', 'sanitize']),
   reply: z.string().max(5_000),
   replacement: z.enum(['redact', 'mask']).optional(),
+  judge: z.object({ provider: z.string().min(1).max(64), credential: ref.optional(), model: z.string().max(200).optional() }).optional(),
   checks: z.object({}).passthrough(),
 });
 
@@ -53,7 +54,36 @@ export const agentConfigSchema = z
     schedules: z.array(z.object({ id: z.string(), prompt: z.string(), frequency: z.enum(['hourly', 'daily', 'weekly', 'monthly', 'cron']) }).passthrough()).optional(),
     channels: z.array(z.object({ id: z.string(), type: z.enum(['telegram', 'slack', 'teams']), credential: ref }).passthrough()).optional(),
     memory: z.object({ crossSession: z.boolean() }).optional(),
-    guardrails: z.object({ input: guardrailRule.optional(), output: guardrailRule.optional() }).optional(),
+    guardrails: z.object({ input: guardrailRule.optional(), output: guardrailRule.optional(), toolResult: guardrailRule.optional() }).optional(),
+    cache: z
+      .object({
+        enabled: z.boolean(),
+        ttlSeconds: z.number().int().min(10).max(30 * 86_400),
+        semantic: z.object({ enabled: z.boolean(), threshold: z.number().min(0.7).max(0.99), model: z.string().max(200), baseUrl: z.string().max(500).optional() }).optional(),
+      })
+      .optional(),
+    access: z
+      .object({
+        rules: z
+          .array(
+            z.object({
+              id: z.string().max(64),
+              tool: z.string().min(1).max(200),
+              who: z.object({ role: z.string().max(64).optional(), user: z.string().max(200).optional(), source: z.enum(['test', 'schedule', 'telegram', 'slack', 'teams', 'workflow', 'agent', 'api']).optional() }),
+              effect: z.enum(['allow', 'ask', 'deny']),
+            }),
+          )
+          .max(100),
+      })
+      .optional(),
+    router: z
+      .object({
+        mode: z.enum(['fixed', 'auto']),
+        cheapModel: z.object({ provider: z.enum(['anthropic', 'openai', 'ollama']), model: z.string(), credential: ref.optional(), baseUrl: z.string().optional(), temperature: z.number().min(0).max(2).optional() }).optional(),
+        maxChars: z.number().int().min(20).max(20_000),
+        allowTools: z.boolean(),
+      })
+      .optional(),
     plugins: z.array(z.string().max(200).regex(PLUGIN_ID, 'A plugin is <plugin>@<marketplace>')).max(20).optional(),
     settings: z
       .object({

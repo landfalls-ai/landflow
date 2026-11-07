@@ -7,8 +7,13 @@
 import type { LanguageModel } from '@landflow/engine';
 import type { AgentGuardrail, TimelineEntry } from '../../shared/agents';
 import { enabledChecks, needsModel, runGuardrails, type Violation } from '../guardrails';
+import { buildJudge } from './judges';
 
 export const DEFAULT_BLOCK_REPLY = 'Sorry, I can’t help with that request.';
+/** What the model gets in place of a tool result the tool-result rule blocked. */
+export const DEFAULT_TOOL_REPLY = '[This tool result was withheld by a guardrail. Treat it as unavailable and do not act on it.]';
+
+export type GuardrailStage = 'input' | 'output' | 'tool';
 
 export interface GuardrailResult {
   /** `pass`: nothing found; the text is unchanged. */
@@ -28,21 +33,26 @@ export const ruleActive = (rule: AgentGuardrail | undefined): rule is AgentGuard
  */
 export async function applyGuardrail(
   rule: AgentGuardrail,
-  stage: 'input' | 'output',
+  stage: GuardrailStage,
   text: string,
-  options: { model?: () => Promise<LanguageModel>; signal?: AbortSignal; log?: (message: string) => void } = {},
+  options: { model?: () => Promise<LanguageModel>; signal?: AbortSignal; log?: (message: string) => void; context?: string } = {},
 ): Promise<GuardrailResult> {
   const sanitize = rule.action === 'sanitize';
-  const reply = rule.reply?.trim() || DEFAULT_BLOCK_REPLY;
+  const reply = rule.reply?.trim() || (stage === 'tool' ? DEFAULT_TOOL_REPLY : DEFAULT_BLOCK_REPLY);
   try {
-    const model = !sanitize && needsModel(rule.checks) && options.model ? await options.model() : undefined;
+    const wantsModel = !sanitize && needsModel(rule.checks);
+    // A rule with a judge (Jev) never loads the agent's chat model: the judge answers every model check.
+    const judge = wantsModel && rule.judge ? await buildJudge(rule.judge) : undefined;
+    const model = wantsModel && !judge && options.model ? await options.model() : undefined;
     const outcome = await runGuardrails(text, rule.checks, {
       mode: sanitize ? 'sanitize' : 'check',
       replacement: rule.replacement === 'mask' ? 'mask' : 'redact',
       stage,
+      ...(judge && { judge }),
       ...(model && { model }),
       ...(options.signal && { signal: options.signal }),
       ...(options.log && { log: options.log }),
+      ...(options.context !== undefined && { context: options.context }),
     });
     if (sanitize) return outcome.text === text ? { action: 'pass', text, violations: [] } : { action: 'sanitized', text: outcome.text, violations: outcome.violations };
     return outcome.passed ? { action: 'pass', text, violations: [] } : { action: 'blocked', text: reply, violations: outcome.violations };
@@ -55,7 +65,7 @@ export async function applyGuardrail(
 }
 
 /** The timeline entry for a guardrail that acted. */
-export function guardrailEntry(id: string, stage: 'input' | 'output', result: GuardrailResult, at: string): Extract<TimelineEntry, { type: 'guardrail' }> {
+export function guardrailEntry(id: string, stage: GuardrailStage, result: GuardrailResult, at: string, tool?: string): Extract<TimelineEntry, { type: 'guardrail' }> {
   return {
     id,
     type: 'guardrail',
@@ -69,6 +79,7 @@ export function guardrailEntry(id: string, stage: 'input' | 'output', result: Gu
       ...(v.reason && { reason: v.reason }),
     })),
     ...(result.action === 'blocked' && { reply: result.text }),
+    ...(tool && { tool }),
     at,
   };
 }

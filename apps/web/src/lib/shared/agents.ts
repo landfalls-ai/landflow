@@ -4,6 +4,9 @@
  */
 import type { AgentMessage } from '@landflow/engine';
 import type { GuardrailsConfig, Replacement } from '../server/guardrails';
+import type { AgentAccess } from './agent-access';
+import type { AgentCache } from './agent-cache';
+import type { AgentRouter } from './agent-router';
 import type { AgentFace } from './faces';
 
 export type { AgentMessage };
@@ -215,14 +218,32 @@ export interface AgentGuardrail {
   reply: string;
   /** sanitize: `redact` puts <EMAIL_ADDRESS>, `mask` keeps the last characters. */
   replacement?: Replacement;
+  /** The checks that need a model (injection with the model, stay on topic, grounded, moderation, custom) are judged by this service instead of the agent's model. */
+  judge?: AgentJudge;
   checks: GuardrailsConfig;
 }
+
+/** A guardrail judge: a service named by `provider` (a key of `JUDGE_PROVIDERS`), with the credential it needs. */
+export interface AgentJudge {
+  provider: string;
+  credential?: CredentialRef;
+  /** For a provider with a choice of models. */
+  model?: string;
+}
+
+/** The judges the builder offers. The server's registry (server/agents/judges.ts) must know each `value`. */
+export const JUDGE_PROVIDERS: Array<{ value: string; label: string; credentialType: string; description: string }> = [
+  { value: 'typesafe', label: 'Jev (TypeSafe AI)', credentialType: 'core.typesafeApi', description: 'A hosted yes/no model: cheaper than a chat call, and it never sees your agent’s prompt' },
+  { value: 'strands', label: 'Strands Decider (AWS)', credentialType: 'core.strandsDeciderApi', description: 'AWS’s open-source yes/no model, served from your own machine or cluster: nothing leaves your network' },
+];
 
 export interface AgentGuardrails {
   /** Applied to each user message before the model sees it. */
   input?: AgentGuardrail;
   /** Applied to the final answer before it is sent. */
   output?: AgentGuardrail;
+  /** Applied to what each tool returns before the model reads it (text an attacker can plant: an email, a web page, a ticket). */
+  toolResult?: AgentGuardrail;
 }
 
 export type AnswerLength = 'sentence' | 'paragraph' | 'detailed';
@@ -290,6 +311,12 @@ export interface AgentConfig {
   memory: { crossSession: boolean };
   settings: AgentSettings;
   guardrails?: AgentGuardrails;
+  /** Which model answers: the agent's own, or a cheaper one for easy requests (shared/agent-router.ts). Absent = always the agent's own. */
+  router?: AgentRouter;
+  /** Answer a repeated question from a stored answer (shared/agent-cache.ts). Absent = off. */
+  cache?: AgentCache;
+  /** Which tools which callers may use (shared/agent-access.ts). Absent = every caller may use every tool. */
+  access?: AgentAccess;
   /**
    * Claude Code plugins from the added marketplaces, as `<plugin>@<marketplace>`: on kagent's Claude Code runtime, Claude
    * Code loads each whole (its agents, skills, commands, hooks and MCP servers). Other runtimes don't use them.
@@ -482,6 +509,47 @@ export function cleanPlugins(plugins: string[] | undefined): string[] | undefine
   return kept.length ? kept : undefined;
 }
 
+/** One part of an agent's config that two versions disagree on. */
+export interface ConfigChange {
+  field: string;
+  label: string;
+  before: string;
+  after: string;
+}
+
+const DIFF_FIELDS: Array<[keyof AgentConfig, string]> = [
+  ['name', 'Name'],
+  ['description', 'Description'],
+  ['model', 'Model'],
+  ['persona', 'Persona'],
+  ['instructions', 'Instructions'],
+  ['skills', 'Skills'],
+  ['tools', 'Tools'],
+  ['schedules', 'Schedules'],
+  ['channels', 'Channels'],
+  ['memory', 'Memory'],
+  ['settings', 'Limits'],
+  ['guardrails', 'Guardrails'],
+  ['router', 'Router'],
+  ['cache', 'Response cache'],
+  ['access', 'Tool access'],
+  ['plugins', 'Plugins'],
+  ['team', 'Team'],
+];
+
+const show = (value: unknown): string => (value === undefined ? '' : typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+
+/** The fields that differ between two configs, for the version history's "what changed". Look (icon, color, avatar) is left out. */
+export function diffConfigs(before: AgentConfig, after: AgentConfig): ConfigChange[] {
+  const changes: ConfigChange[] = [];
+  for (const [field, label] of DIFF_FIELDS) {
+    const a = show(before[field]);
+    const b = show(after[field]);
+    if (a !== b) changes.push({ field, label, before: a, after: b });
+  }
+  return changes;
+}
+
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = { maxIterations: 12, toolConcurrency: 5, sessionTokenBudget: 0, maxDelegationDepth: 2 };
 
 // ---------------------------------------------------------------------------
@@ -564,12 +632,14 @@ export type TimelineEntry =
   | {
       id: string;
       type: 'guardrail';
-      stage: 'input' | 'output';
+      stage: 'input' | 'output' | 'tool';
       action: 'blocked' | 'sanitized';
       /** What was found; matches are masked. */
       violations: Array<{ check: string; type: string; match?: string; confidence?: number; reason?: string }>;
       /** blocked: the reply that went out instead. */
       reply?: string;
+      /** The tool whose result a tool-result guardrail checked. */
+      tool?: string;
       at: string;
     }
   | { id: string; type: 'error'; message: string; at: string }

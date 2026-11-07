@@ -1392,6 +1392,67 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 2042,
+    name: 'agent_eval_gate',
+    statements: [
+      // Test cases a standalone agent is checked against before a publish (lib/server/agents/eval-gate.ts), and each run of them.
+      // `data` is the case or the run (with every case's reply, score and reasoning); `average` and `version` list runs without parsing it.
+      `CREATE TABLE IF NOT EXISTS agent_eval_cases (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        data TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS agent_eval_cases_agent ON agent_eval_cases (agent_id, created_at)`,
+      `CREATE TABLE IF NOT EXISTS agent_eval_runs (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        version TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        average REAL NOT NULL,
+        data TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS agent_eval_runs_agent ON agent_eval_runs (agent_id, created_at)`,
+    ],
+  },
+  {
+    version: 2043,
+    name: 'agent_response_cache',
+    statements: [
+      // Answers of agents with the response cache on (lib/server/agents/response-cache.ts). `id` is a hash of the agent's config and
+      // the question; `expires_at` is an ISO time; `hits` counts the times the answer was served again.
+      `CREATE TABLE IF NOT EXISTS agent_response_cache (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        hits INTEGER NOT NULL DEFAULT 0,
+        reply TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS agent_response_cache_agent ON agent_response_cache (agent_id, expires_at)`,
+    ],
+  },
+  {
+    version: 2044,
+    name: 'agent_semantic_cache',
+    statements: [
+      // Questions kept with their embedding for the semantic cache (lib/server/agents/semantic-cache.ts). `config_hash` is a hash of the agent's
+      // answer-shaping config, so an edit starts a fresh cache; `vector` is a JSON array of numbers; `hits` counts the times it was served.
+      `CREATE TABLE IF NOT EXISTS agent_semantic_cache (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        config_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        hits INTEGER NOT NULL DEFAULT 0,
+        question TEXT NOT NULL,
+        reply TEXT NOT NULL,
+        vector TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS agent_semantic_cache_agent ON agent_semantic_cache (agent_id, config_hash, expires_at)`,
+    ],
+  },
+  {
+    version: 2045,
     name: 'debug_tokens',
     statements: [
       // Debug tokens (docs/specs/19-debug-token.md, lib/server/auth/debug-tokens.ts): short-lived, read-only, bound to one
@@ -1510,6 +1571,10 @@ export const TABLES = {
   agent_teams: ['id'],
   team_notes: ['id'],
   agent_asks: ['id'],
+  agent_eval_cases: ['id'],
+  agent_eval_runs: ['id'],
+  agent_response_cache: ['id'],
+  agent_semantic_cache: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

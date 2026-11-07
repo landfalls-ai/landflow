@@ -69,6 +69,7 @@ export function knowledgeTool(config: KnowledgeBaseToolConfig): BuiltTool | { er
   const topK = Math.min(50, Math.max(1, Number(config.topK) || 4));
   return {
     kind: 'node',
+    knowledge: true,
     nodeType: KNOWLEDGE_STORE_NODE[config.store],
     name: toToolName(config.name || `search_${config.collection}`),
     label,

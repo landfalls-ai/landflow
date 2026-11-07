@@ -19,7 +19,7 @@ Each tool call is an `mcp.tool.call` audit event (actor anonymous, `via: debug-t
 
 CLI (`packages/cli/README.md` has the row): `landflow debug-token --execution <id> [--ttl 1h] [--scopes executions:read,trace:read] [--label t]`, `--list`, `--revoke <token id>`.
 
-No new environment variable. New table `debug_tokens` (migration 2042, listed in `TABLES`).
+No new environment variable. New table `debug_tokens` (migration 2045, listed in `TABLES`).
 
 ## docs/limitations.md
 
@@ -42,4 +42,4 @@ New page: [specs/19-debug-token.md](../19-debug-token.md) (if the specs list is 
 
 ## Files touched outside the strict list (small, for the integrator to know)
 
-- `lib/server/mcp/identity.ts` (an explicit 403 for a debug token at plugin and project MCP endpoints), `lib/server/mcp/instance.ts` and `instance-route.ts` (the `debug` caller kind and its server), `lib/server/mcp/instance-tools.ts` (`export` on `executionDigest`), `lib/server/openapi.ts` (three operations), `lib/server/db/schema.ts` (migration 2042 and `TABLES`).
+- `lib/server/mcp/identity.ts` (an explicit 403 for a debug token at plugin and project MCP endpoints), `lib/server/mcp/instance.ts` and `instance-route.ts` (the `debug` caller kind and its server), `lib/server/mcp/instance-tools.ts` (`export` on `executionDigest`), `lib/server/openapi.ts` (three operations), `lib/server/db/schema.ts` (migration 2045 and `TABLES`).

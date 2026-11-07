@@ -13,7 +13,7 @@ shown to have done nothing else.
 ## What it is
 
 A **debug token** (`lf_dbg_` and 43 random characters) minted for one execution by someone who can read it. Only its SHA-256 is stored
-(table `debug_tokens`, migration 2042). It is **not** a JWT and **not** an API key: no existing verifier (MCP JWTs, `lf_` API keys, the
+(table `debug_tokens`, migration 2045). It is **not** a JWT and **not** an API key: no existing verifier (MCP JWTs, `lf_` API keys, the
 instance access token, the identity provider) can mistake it for theirs, and it is no one's `Principal`.
 
 | | |

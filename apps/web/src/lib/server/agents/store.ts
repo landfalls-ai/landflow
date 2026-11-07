@@ -24,6 +24,9 @@ import {
   type KagentDeployment,
   type SessionSummary,
 } from '../../shared/agents';
+import { cleanAccess } from '../../shared/agent-access';
+import { cleanCache } from '../../shared/agent-cache';
+import { cleanRouter } from '../../shared/agent-router';
 import { cleanAvatar } from '../../shared/faces';
 import { cleanPersona, whatIDoLines } from '../../shared/persona';
 import { deleteAgentSessionFeedback } from '../chat-feedback';
@@ -65,6 +68,9 @@ export function normalizeConfig(input: Partial<AgentConfig>): AgentConfig {
   const plugins = cleanPlugins(input.plugins);
   const avatar = cleanAvatar(input.avatar);
   const team = cleanTeam(input.team);
+  const router = cleanRouter(input.router);
+  const cache = cleanCache(input.cache);
+  const access = cleanAccess(input.access);
   return {
     name: (input.name ?? '').trim() || 'Untitled agent',
     description: input.description ?? '',
@@ -81,7 +87,10 @@ export function normalizeConfig(input: Partial<AgentConfig>): AgentConfig {
     channels: input.channels ?? [],
     memory: { crossSession: Boolean(input.memory?.crossSession) },
     settings: { ...DEFAULT_AGENT_SETTINGS, ...input.settings },
-    ...(input.guardrails && ((input.guardrails.input || input.guardrails.output) ? { guardrails: input.guardrails } : {})),
+    ...(input.guardrails && ((input.guardrails.input || input.guardrails.output || input.guardrails.toolResult) ? { guardrails: input.guardrails } : {})),
+    ...(router && { router }),
+    ...(cache && { cache }),
+    ...(access && { access }),
     ...(plugins && { plugins }),
   };
 }
@@ -448,7 +457,7 @@ class AgentStore {
     const agent = this.backend.get(id);
     if (!agent) return undefined;
     // The optional parts come from the new config only, so a cleared model, persona, guardrails or plugin list stays cleared.
-    const { model: _model, persona: _persona, guardrails: _guardrails, plugins: _plugins, ...rest } = agent;
+    const { model: _model, persona: _persona, guardrails: _guardrails, router: _router, cache: _cache, access: _access, plugins: _plugins, ...rest } = agent;
     return this.write({ ...rest, ...normalizeConfig({ ...configOf(agent), ...config }), updatedAt: new Date().toISOString() });
   }
 
@@ -459,6 +468,16 @@ class AgentStore {
     const published = { version, publishedAt: new Date().toISOString(), config: configOf(agent) };
     const history = [published, ...agent.history].slice(0, MAX_HISTORY);
     return this.write({ ...agent, published, history, updatedAt: published.publishedAt });
+  }
+
+  /** Put an earlier version's config back into the draft. Nothing is published: the person (or the eval gate) does that. */
+  restore(id: string, version: number): Agent | undefined {
+    const agent = this.backend.get(id);
+    const config = agent?.history.find((v) => v.version === version)?.config;
+    if (!agent || !config) return undefined;
+    // The version's config replaces the draft's, so a part the version never had (a cache, a router, access rules) does not stay behind.
+    const { model: _model, persona: _persona, guardrails: _guardrails, router: _router, cache: _cache, access: _access, plugins: _plugins, ...rest } = agent;
+    return this.write({ ...rest, ...normalizeConfig(config), updatedAt: new Date().toISOString() });
   }
 
   unpublish(id: string): Agent | undefined {
