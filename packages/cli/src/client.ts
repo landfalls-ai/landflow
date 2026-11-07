@@ -21,7 +21,7 @@ export class Client {
   constructor(
     readonly url: string,
     readonly apiKey: string | undefined,
-    private readonly fetchImpl: typeof fetch = fetch,
+    readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
   private href(path: string, query?: Query): string {
