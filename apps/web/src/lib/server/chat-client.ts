@@ -41,6 +41,34 @@ const SPOKEN_JS = String.raw`function spokenText(text, agentName) {
 export const spokenText = new Function(`${SPOKEN_JS}; return spokenText;`)() as (text: unknown, agentName?: string) => string;
 
 /**
+ * Complete sentences at the start of a growing text, for reading a reply while it streams. A sentence ends at . ! ? or an
+ * ellipsis (with closing quotes or brackets) followed by white space, or at a line break; the last, unfinished one waits
+ * unless `final`. A run with no end for 240 characters is cut at its last space. Returns `{ sentences, used }`: the
+ * trimmed sentences and how many characters of `text` they took. Plain ES5 source, shared by the script and the tests.
+ */
+const SENTENCES_JS = String.raw`function takeSentences(text, final) {
+  var s = String(text == null ? '' : text), out = [], used = 0, start = 0, i = 0;
+  function push(end) { var piece = s.slice(start, end).replace(/^\s+|\s+$/g, ''); if (piece) out.push(piece); start = end; used = end; }
+  while (i < s.length) {
+    var c = s.charAt(i);
+    if (c === '\n') { push(i + 1); i++; continue; }
+    if (/[.!?\u2026]/.test(c)) {
+      var j = i + 1;
+      while (j < s.length && /[.!?\u2026"'\u201d\u2019)\]]/.test(s.charAt(j))) j++;
+      if (j < s.length && /\s/.test(s.charAt(j))) { push(j); i = j; continue; }
+      i = j; continue;
+    }
+    i++;
+    if (i - start >= 240 && /\s/.test(c)) push(i);
+  }
+  if (final && start < s.length) push(s.length);
+  return { sentences: out, used: used };
+}`;
+
+/** The sentence splitter, for tests. */
+export const takeSentences = new Function(`${SENTENCES_JS}; return takeSentences;`)() as (text: unknown, final?: boolean) => { sentences: string[]; used: number };
+
+/**
  * The face shown beside an answering agent: an emoji the node sent, else the roster entry's face (matched by key or name),
  * else the agent's own avatar (an image, initials, or a letter on its skin tone), else the first letter. Plain ES5 source,
  * shared by the script and the tests. Returns `{ text, image?, bg? }`.
@@ -144,8 +172,10 @@ const CLIENT = `(function () {
   var base = new URL(script.src, location.href).origin + '/chat/' + encodeURIComponent(key);
   var storageKey = 'landflow-chat:' + key;
   var authKey = 'landflow-chat-auth:' + key;
+  var speakKey = 'landflow-chat-speak:' + key;
   var STYLE = __STYLE__;
   __SPOKEN__
+  __SENTENCES__
   __FACE__
 
   function el(tag, attrs, children) {
@@ -329,7 +359,7 @@ const CLIENT = `(function () {
       headers['content-type'] = 'application/json';
     }
     var reply = null, streamed = '', tools = {}, answerId = '', speaker = null, anyLabel = false, failed = false;
-    var parts = [{ text: '', agent: null }];
+    var parts = [{ text: '', agent: null, said: 0 }];
     function replyNode() { if (!reply) { typing.remove(); reply = bubble('bot', '', null, speaker); } return reply; }
     /** A delegation (a tool call with a reason) reads "asked <Agent>: <reason>". */
     function askLine(name, reason) {
@@ -349,11 +379,11 @@ const CLIENT = `(function () {
             if (chunk.type === 'item' && chunk.content) {
               if (chunk.agent && chunk.agent.name) anyLabel = true;
               // Once agents are labelled, a change of speaker starts a new bubble.
-              if (anyLabel && reply && (chunk.agent ? chunk.agent.id : '') !== (speaker ? speaker.id : '')) { reply = null; streamed = ''; parts.push({ text: '', agent: null }); }
+              if (anyLabel && reply && (chunk.agent ? chunk.agent.id : '') !== (speaker ? speaker.id : '')) { reply = null; streamed = ''; parts.push({ text: '', agent: null, said: 0 }); }
               speaker = chunk.agent && chunk.agent.name ? chunk.agent : null;
               parts[parts.length - 1].agent = speaker;
               parts[parts.length - 1].text += chunk.content;
-              streamed += chunk.content; replyNode().innerHTML = render(streamed); scroll(); }
+              streamed += chunk.content; replyNode().innerHTML = render(streamed); scroll(); readAloud(parts[parts.length - 1], false); }
             else if (chunk.type === 'tool' && chunk.tool) {
               var known = tools[chunk.tool.id];
               var reason = chunk.tool.input && typeof chunk.tool.input.reason === 'string' ? chunk.tool.input.reason : '';
@@ -374,9 +404,17 @@ const CLIENT = `(function () {
         return response.json().then(function (data) { if (data.executionId) answerId = data.executionId; var out = typeof data.output === 'string' ? data.output : JSON.stringify(data.output); parts[0].text = out; replyNode().innerHTML = render(out); });
       })
       .catch(function (error) { failed = true; typing.remove(); bubble('error', error.message || 'Could not reach the chat'); })
-      .then(function () { typing.remove(); if (reply && answerId) feedbackRow(answerId); if (reply && !failed && voice.speakOn) parts.forEach(function (part) { speakText(spokenText(part.text, part.agent && part.agent.name)); }); setBusy(false); scroll(); input.focus(); });
+      .then(function () { typing.remove(); if (reply && answerId) feedbackRow(answerId); if (reply && !failed) parts.forEach(function (part) { readAloud(part, true); }); setBusy(false); scroll(); input.focus(); });
   }
 
+  /** Read what a part has newly finished: each complete sentence while it streams, the rest once the reply is done. */
+  function readAloud(part, final) {
+    if (!voice.speakOn || !voice.synth) return;
+    var clean = spokenText(part.text, part.agent && part.agent.name);
+    var next = takeSentences(clean.slice(part.said), final);
+    part.said += next.used;
+    next.sentences.forEach(speakText);
+  }
   function stopSpeaking() { if (voice.synth) { try { voice.synth.cancel(); } catch (e) {} } }
   function speakText(text) {
     if (!voice.synth || !text) return;
@@ -434,9 +472,13 @@ const CLIENT = `(function () {
   /** The speaker toggle: read each finished reply aloud. */
   function speakerButton() {
     var button = el('button', { class: 'speak', type: 'button', title: 'Read replies aloud', 'aria-label': 'Read replies aloud', 'aria-pressed': 'false', text: '\\ud83d\\udd0a' });
+    // Remembered between page loads (private browsing may refuse storage: then it is per load).
+    try { voice.speakOn = localStorage.getItem(speakKey) === '1'; } catch (e) {}
+    button.setAttribute('aria-pressed', String(voice.speakOn));
     button.addEventListener('click', function () {
       voice.speakOn = !voice.speakOn;
       button.setAttribute('aria-pressed', String(voice.speakOn));
+      try { if (voice.speakOn) localStorage.setItem(speakKey, '1'); else localStorage.removeItem(speakKey); } catch (e) {}
       if (!voice.speakOn) stopSpeaking();
     });
     return button;
@@ -555,7 +597,7 @@ const CLIENT = `(function () {
 `;
 
 /** The script served at /chat/widget.js. */
-export const CHAT_CLIENT_JS = CLIENT.replace('__STYLE__', () => JSON.stringify(STYLE)).replace('__SPOKEN__', () => SPOKEN_JS).replace('__FACE__', () => FACE_JS);
+export const CHAT_CLIENT_JS = CLIENT.replace('__STYLE__', () => JSON.stringify(STYLE)).replace('__SPOKEN__', () => SPOKEN_JS).replace('__SENTENCES__', () => SENTENCES_JS).replace('__FACE__', () => FACE_JS);
 
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (c) => ESCAPES[c]);

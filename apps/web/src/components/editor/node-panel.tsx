@@ -138,7 +138,13 @@ export function NodePanel() {
       }
       frontier = next;
     }
-    return { items: inputItems, nodeOutputs, nodeNames: upstream };
+    return {
+      items: inputItems,
+      nodeOutputs,
+      nodeNames: upstream,
+      workflowNodes: nodes.map((n) => ({ id: n.id, name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters as Record<string, unknown> })),
+      self: openNodeId ?? undefined,
+    };
   }, [nodes, edges, allRuns, inputItems, openNodeId]);
 
   if (!node || !openNodeId) return null;

@@ -1,5 +1,6 @@
 /** Triggers: manual, webhook, chat, schedule and error. Forms are in forms.ts, agent and sub-workflow calls in agents.ts. */
 import { defineNode } from '@landflow/sdk';
+import { ROSTER_TARGET_TYPES, WORKFLOW_NODES_METHOD } from '../../shared/chat-roster-hints';
 import { authenticationProperty, ipWhitelistOption, webhookAuthCredentials } from './webhook-auth';
 
 const out = [{ type: 'main' as const }];
@@ -225,7 +226,16 @@ export const chatTrigger = defineNode({
               { name: 'key', displayName: 'Key', type: 'string', default: '', noDataExpression: true, placeholder: 'billing', description: 'What the page sends (letters, digits, dashes, underscores)' },
               { name: 'label', displayName: 'Label', type: 'string', default: '', noDataExpression: true, placeholder: 'Billing' },
               { name: 'face', displayName: 'Face', type: 'string', default: '', noDataExpression: true, placeholder: '🧾', description: 'An emoji shown on the chip. Empty: the first letter of the label.' },
-              { name: 'target', displayName: 'Node', type: 'string', default: '', noDataExpression: true, placeholder: 'Billing agent', description: 'The name (or id) of a Run an Agent, Run a Team or AI Agent node in this workflow' },
+              {
+                name: 'target',
+                displayName: 'Node',
+                type: 'string',
+                default: '',
+                noDataExpression: true,
+                placeholder: 'Billing agent',
+                description: 'The name (or id) of a Run an Agent, Run a Team or AI Agent node in this workflow. The editor lists this workflow’s; a name typed here is accepted too.',
+                typeOptions: { loadOptionsMethod: `${WORKFLOW_NODES_METHOD}${ROSTER_TARGET_TYPES.join('|')}` },
+              },
               {
                 name: 'seesTranscript',
                 displayName: 'Sees the Conversation',
