@@ -407,7 +407,7 @@ function Field({ nodeType, property, value, onChange, parameters }: { nodeType: 
             language={languageOf(property.typeOptions?.language, property.type)}
             rows={property.typeOptions?.rows ?? 8}
             aria-label={property.displayName}
-            value={typeof value === 'string' ? value : JSON.stringify(value ?? property.default ?? '', null, 2)}
+            value={typeof value === 'string' ? value : typeof (value ?? property.default) === 'string' ? String(value ?? property.default) : JSON.stringify(value ?? property.default ?? '', null, 2)}
             onChange={onChange}
           />
         </div>
@@ -530,7 +530,7 @@ function FixedCollectionField({ nodeType, property, value, onChange }: { nodeTyp
                         <Trash2 className="size-3.5" />
                       </button>
                     </div>
-                    <div className={cn('grid gap-2', group.values.length === 3 ? 'grid-cols-[1fr_auto_1fr] items-end' : 'grid-cols-1')}>
+                    <div className={cn('grid gap-2', group.values.length === 3 && group.values[1].type === 'options' && group.values[0].type !== 'options' ? 'grid-cols-[1fr_auto_1fr] items-end' : 'grid-cols-1')}>
                       {group.values.map((child) =>
                         isNestedVisible(child, entry, root) ? (
                           <Field key={child.name} nodeType={nodeType} property={child} value={entry[child.name]} parameters={entry} onChange={(v) => write(entries.map((e, i) => (i === index ? { ...e, [child.name]: v } : e)))} />

@@ -101,7 +101,7 @@ All credentials are **for local development and tests only**.
 | Azure Service Bus emulator 2.0 (`servicebus`) | AMQP `localhost:55675`, management + `/health` http://localhost:55300 | `servicebus:5672`, `servicebus:5300` | `Endpoint=sb://localhost:55675;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;`; static entities from [`infra/servicebus/Config.json`](../deploy/infra/servicebus/Config.json); SQL backend `servicebus-sql` (Azure SQL Edge, `sa` / `Landflow-dev-only1`, not published) |
 | agentgateway 1.6 (`mcp-gateway`) | MCP http://localhost:54000/mcp, admin API + UI http://localhost:55000 (`/ui`) | `mcp-gateway:4000`, `mcp-gateway:15000` | none (the admin API has no authentication: loopback only); targets in SQLite in `mcp-gateway-data` |
 | **Landflow host** (app) | http://localhost:53000 | `web:3000`, gRPC registry `web:7070` | owner `owner@landflow.test` / `landflow-dev-only` (`LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`) |
-| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211`, `browser:7112/7212` (profile `browser`), `web-search:7113/7213` (profile `web-search`), `agent-shell:7114/7214` (profile `agent-shell`) (HTTP/gRPC) | |
+| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211`, `browser:7112/7212` (profile `browser`), `web-search:7113/7213` (profile `web-search`), `agent-shell:7114/7214` (profile `agent-shell`), `sap:7116/7216` (profile `sap`, k8s component `components/sap`) (HTTP/gRPC) | |
 | Code runner (app) | http://127.0.0.1:53300 (through `code-runner-port`) | `code-runner:7300`, on the internal `landflow-code` network only | header `x-landflow-runner-secret: landflow-code-runner-dev-only` |
 | **Queue mode** load balancer | http://localhost:53080 | `lb:3000` | owner `owner@landflow.test` / `landflow-dev-only` |
 | Queue mode mains | http://localhost:53081, http://localhost:53082 | `main-1:3000`, `main-2:3000` | same |
@@ -466,6 +466,10 @@ Runner settings (environment of `services/code-runner`; the compose file maps th
 | `CODE_RUNNER_TMPDIR` | the OS temp directory | where work directories go |
 | `CODE_RUNNER_JS_ALLOW_BUILTIN` | the list above | Node built-ins `require` may load, comma-separated, or `*` |
 | `CODE_RUNNER_GUARDS` / `CODE_RUNNER_OS_SANDBOX` | on / on | `off` for diagnostics only |
+
+## Desktop plugin
+
+The [Desktop plugin](../plugins/desktop/README.md) starts disposable desktop containers (`services/desktop-sandbox`, image `landflow/desktop-sandbox:dev`) through the Docker CLI. **Optional, local only.** Build the sandbox image first (`COMPOSE_BAKE=false docker --context orbstack buildx build --builder orbstack --load -t landflow/desktop-sandbox:dev services/desktop-sandbox`). Dev server: `LANDFLOW_DESKTOP_DOCKER_CONTEXT=orbstack pnpm plugin:desktop` (7117 / 7217). Compose: profile `desktop` (`--profile desktop`), whose plugin container mounts `/var/run/docker.sock`: anyone who can run the Desktop node can start containers on that engine, so keep it off a shared host and set `LANDFLOW_DESKTOP_APPS` and `LANDFLOW_DESKTOP_ALLOWED_HOSTS`. There is no Kubernetes component. Sandboxes are named and labelled `landflow-desktop-*` and the plugin's janitor removes only those.
 
 ## Browser plugin
 

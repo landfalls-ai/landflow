@@ -67,6 +67,8 @@ export const PUBLIC_ROUTES = [
   // What Claude Code agents on kagent report through the landflow-harness mod: the unguessable trace id Landflow sent
   // with the request is the credential (lib/server/a2a/agent-trace.ts).
   '/api/agent-trace',
+  // The one-node local override: a `runs:debug` debug token is the credential (lib/server/debug-node/run.ts).
+  '/api/debug-node',
 ] as const;
 
 /** `/api/auth` routes that need a signed-in user. */

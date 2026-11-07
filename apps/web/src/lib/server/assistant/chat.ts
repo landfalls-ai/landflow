@@ -14,7 +14,7 @@ import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
 import { assistantModel, modelLabel } from './model';
-import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
+import { redundantBranches, registryLookup, unknownReferenceCautions, validateOps, withoutRepeatedAdds } from './ops';
 import { availableTypes, catalogSummary, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 
 /** The most model calls for one message. A reply stops sooner when two steps in a row add nothing new. */
@@ -541,6 +541,7 @@ export async function runChat(input: ChatInput): Promise<void> {
         const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(teamed, known(), typeText);
         for (const value of values) invented.add(value);
         const validated = validateOps(working, proposedOps, lookup);
+        if (validated.ops.length) validated.cautions.push(...(await unknownReferenceCautions(working, validated.workflow, lookup)));
         const back = addedBack(validated.ops);
         if (back.length) {
           return result(

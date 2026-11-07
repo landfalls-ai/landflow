@@ -4,7 +4,7 @@
  * its drafts. What comes back is safe for the editor to apply.
  */
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
-import { agentWiringWarnings, applyOps, collectionWarnings, credentialWarnings, parseOps, structuralWarnings, swallowWarnings, wiringWarnings, type AssistantOp, type DescriptorLookup } from '@/lib/shared/assistant-ops';
+import { agentWiringWarnings, applyOps, collectionWarnings, credentialWarnings, parseOps, referenceParameters, serviceCredentialWarnings, structuralWarnings, unknownReferenceWarnings, swallowWarnings, wiringWarnings, type AssistantOp, type DescriptorLookup } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import { newCompositeErrors, serverCompositeLookup } from '../composites';
 import { availableTypes, mainOutputs } from './research';
@@ -49,9 +49,52 @@ export function validateOps(workflow: Workflow, raw: unknown, lookup: Descriptor
       ...wiring.purpose,
       ...swallowWarnings(result.applied),
       ...credentialWarnings(workflow, result.workflow, lookup, (c, parameters, d) => isPropertyVisible(c, withPropertyDefaults(d.properties, parameters))),
+      ...serviceCredentialWarnings(workflow, result.workflow),
     ],
     workflow: result.workflow,
   };
+}
+
+/**
+ * Reference parameters (a data table, a workflow, an agent: choices the host lists) the ops set to a value that is not
+ * in the real list: a made-up id. Loads each list the way the editor's picker does; a list that cannot be loaded (it
+ * needs a credential, the plugin is down) claims nothing. Shown as cautions on the card.
+ */
+export async function unknownReferenceCautions(before: Workflow, after: Workflow, lookup: DescriptorLookup = registryLookup()): Promise<string[]> {
+  const refs = referenceParameters(before, after, lookup);
+  if (!refs.length) return [];
+  const [{ registry }, { withTableScope }, { homeProjectId }, { routeActor }] = await Promise.all([
+    import('../plugins/registry'),
+    import('../datatables/projects'),
+    import('../projects'),
+    import('../projects/http'),
+  ]);
+  const projectId = (() => {
+    try {
+      return homeProjectId('workflow', after.id);
+    } catch {
+      return undefined;
+    }
+  })();
+  const actor = (() => {
+    try {
+      return routeActor();
+    } catch {
+      return undefined;
+    }
+  })();
+  const lists = new Map<string, string[] | undefined>();
+  for (const ref of refs) {
+    const key = `${ref.type}|${ref.method}|${JSON.stringify(ref.parameters)}`;
+    if (lists.has(key)) continue;
+    try {
+      const options = await withTableScope({ projectId, ...(actor && { actor }) } as Parameters<typeof withTableScope>[0], () => registry.loadOptions(ref.type, ref.method, ref.parameters as never));
+      lists.set(key, options.map((o) => String(o.value)));
+    } catch {
+      lists.set(key, undefined);
+    }
+  }
+  return unknownReferenceWarnings(refs, (ref) => lists.get(`${ref.type}|${ref.method}|${JSON.stringify(ref.parameters)}`));
 }
 
 /** What the ops break in the workflow's composites (docs/composites.md), read with the same node descriptors. */

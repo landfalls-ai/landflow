@@ -976,6 +976,95 @@ export function credentialWarnings(
   return out;
 }
 
+/** Hosts of services that need a credential, by the name a person knows them under. */
+const SERVICE_HOSTS: Array<[RegExp, string]> = [
+  [/(^|\.)slack\.com$/, 'Slack'],
+  [/(^|\.)github\.com$/, 'GitHub'],
+  [/(^|\.)openai\.com$/, 'OpenAI'],
+  [/(^|\.)anthropic\.com$/, 'Anthropic'],
+  [/(^|\.)notion\.com$|(^|\.)notion\.so$/, 'Notion'],
+  [/(^|\.)stripe\.com$/, 'Stripe'],
+  [/(^|\.)discord\.com$/, 'Discord'],
+  [/(^|\.)telegram\.org$/, 'Telegram'],
+  [/(^|\.)airtable\.com$/, 'Airtable'],
+  [/(^|\.)atlassian\.net$/, 'Atlassian'],
+  [/(^|\.)hubspot\.com$/, 'HubSpot'],
+  [/(^|\.)sendgrid\.com$/, 'SendGrid'],
+  [/(^|\.)twilio\.com$/, 'Twilio'],
+  [/(^|\.)googleapis\.com$/, 'Google'],
+];
+const AUTH_HINT = /authorization|bearer\s|api[-_ ]?key|x-api-key|access[-_]?token/i;
+
+/** A node that calls a known service's API (a URL parameter on slack.com, github.com, …) with no credential and no auth header: the person picks one. */
+export function serviceCredentialWarnings(before: Workflow, after: Workflow): string[] {
+  const out: string[] = [];
+  for (const node of after.nodes) {
+    const was = before.nodes.find((n) => n.id === node.id);
+    if (was && JSON.stringify(was.parameters) === JSON.stringify(node.parameters)) continue;
+    if (node.credentials && Object.keys(node.credentials).length) continue;
+    if (AUTH_HINT.test(JSON.stringify(node.parameters ?? {}))) continue;
+    for (const value of Object.values(node.parameters ?? {})) {
+      if (typeof value !== 'string' || !/^=?\s*https?:\/\//i.test(value)) continue;
+      let host = '';
+      try {
+        host = new URL(value.replace(/^=\s*/, '')).hostname.toLowerCase();
+      } catch {
+        continue;
+      }
+      const service = SERVICE_HOSTS.find(([re]) => re.test(host))?.[1];
+      if (service) {
+        out.push(`“${node.name}” calls ${service} (${host}) with no credential: add a ${service} credential in the node's panel or the call will be refused`);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** A reference parameter (its choices come from a list the host loads: data tables, credentials, workflows, agents…) set by the ops. */
+export interface ReferenceParameter {
+  node: string;
+  type: string;
+  property: string;
+  label: string;
+  method: string;
+  /** The node's parameters after the ops: the list may depend on them. */
+  parameters: Record<string, unknown>;
+  values: string[];
+}
+
+/** The reference parameters the ops set to a literal value (not an expression, not empty). Node-name pickers are left out: they list the workflow's own nodes. */
+export function referenceParameters(before: Workflow, after: Workflow, lookup: DescriptorLookup): ReferenceParameter[] {
+  const out: ReferenceParameter[] = [];
+  for (const node of after.nodes) {
+    const d = lookup(node.type);
+    if (!d) continue;
+    const was = before.nodes.find((n) => n.id === node.id);
+    for (const p of d.properties) {
+      const method = p.typeOptions?.loadOptionsMethod;
+      if (!method || method.startsWith('workflowNodes:')) continue;
+      const value = node.parameters?.[p.name];
+      if (was && JSON.stringify(was.parameters?.[p.name]) === JSON.stringify(value)) continue;
+      const values = (Array.isArray(value) ? value : [value]).filter((v): v is string => typeof v === 'string' && v.trim() !== '' && !v.startsWith('=') && !v.includes('{{'));
+      if (values.length) out.push({ node: node.name, type: node.type, property: p.name, label: p.displayName, method, parameters: node.parameters ?? {}, values });
+    }
+  }
+  return out;
+}
+
+/** A warning for each reference value that is not in the list the host loaded. `known` returns that list, or undefined when it could not be loaded (then nothing is claimed). */
+export function unknownReferenceWarnings(refs: ReferenceParameter[], known: (ref: ReferenceParameter) => string[] | undefined): string[] {
+  const out: string[] = [];
+  for (const ref of refs) {
+    const list = known(ref);
+    if (!list || !list.length) continue;
+    for (const value of ref.values) {
+      if (!list.includes(value)) out.push(`“${ref.node}”: ${ref.label} “${value}” is not one of the ${list.length} that exist (${list.slice(0, 5).join(', ')}${list.length > 5 ? ', …' : ''}): pick a real one in the node's panel`);
+    }
+  }
+  return out;
+}
+
 const SWALLOWS =/catch\s*(?:\([^)]*\))?\s*\{[^}]*\breturn\b|\.catch\s*\(\s*(?:\([^)]*\)|\w*)\s*=>\s*(?:\{[^}]*return\b|[^)]*\))|continueOnFail/;
 
 /** Ops that make a node stop failing instead of fixing why it fails: onError continue, or code that catches and returns. */
