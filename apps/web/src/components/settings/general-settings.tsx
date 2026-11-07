@@ -4,7 +4,7 @@
  * retention (keep at most N, delete older than D days), with "Prune now".
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Eraser, Globe, History, Save } from 'lucide-react';
+import { Blocks, Eraser, Globe, History, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import type { InstanceSettings } from '@/lib/shared/platform';
@@ -14,6 +14,7 @@ import { FieldLabel, Input, SectionLabel, Select } from '@/components/ui/inputs'
 
 interface SettingsView {
   settings: InstanceSettings;
+  jsonRender: boolean;
   hostTimezone: string;
   executions: { stored: number; prunable: number };
 }
@@ -59,14 +60,14 @@ export function GeneralSettings() {
   }, []);
 
   const zones = useMemo(() => (view && draft ? timeZones(draft.timezone, view.hostTimezone) : []), [view, draft]);
-  const dirty = Boolean(view && draft && JSON.stringify(view.settings) !== JSON.stringify(draft));
+  const dirty = Boolean(view && draft && JSON.stringify({ ...view.settings, jsonRender: 0 }) !== JSON.stringify({ ...draft, jsonRender: 0 }));
 
   const save = async () => {
     if (!draft) return;
     setSaving(true);
     setError(undefined);
     try {
-      const next = await api<SettingsView>('/api/settings', { method: 'PATCH', json: draft });
+      const next = await api<SettingsView>('/api/settings', { method: 'PATCH', json: { timezone: draft.timezone, executions: draft.executions } });
       setView(next);
       setDraft(next.settings);
       toast.success('Settings saved');
@@ -87,6 +88,21 @@ export function GeneralSettings() {
       toast.error((e as Error).message);
     } finally {
       setPruning(false);
+    }
+  };
+
+  const [switching, setSwitching] = useState(false);
+  const switchJsonRender = async (on: boolean) => {
+    setSwitching(true);
+    try {
+      const next = await api<SettingsView>('/api/settings', { method: 'PATCH', json: { jsonRender: on } });
+      setView((v) => v && { ...v, jsonRender: next.jsonRender, settings: { ...v.settings, jsonRender: next.settings.jsonRender } });
+      setDraft((d) => d && { ...d, jsonRender: next.settings.jsonRender });
+      toast.success(`json-render ${next.jsonRender ? 'on' : 'off'}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSwitching(false);
     }
   };
 
@@ -168,6 +184,23 @@ export function GeneralSettings() {
             <Eraser className="size-3.5" /> Prune now
           </Button>
         </div>
+      </Card>
+
+      <Card className="px-5 py-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Blocks className="size-4 text-t3" strokeWidth={1.8} />
+          <SectionLabel>Experimental</SectionLabel>
+        </div>
+        <label className="flex items-start gap-3 text-[13px] text-t1">
+          <input type="checkbox" className="mt-0.5 size-4" checked={view.jsonRender} disabled={switching} onChange={(e) => void switchJsonRender(e.target.checked)} aria-label="json-render spec cards" />
+          <span>
+            json-render spec cards
+            <span className="mt-1 block text-[12px] leading-relaxed text-t3">
+              A prototype for model-written cards in Run Trace; nothing produces specs yet. On: the dev page at /runs/json-render-gallery appears, without a rebuild. Only the owner can switch it.
+              {view.settings.jsonRender === undefined ? ' Following the LANDFLOW_JSON_RENDER default.' : ''}
+            </span>
+          </span>
+        </label>
       </Card>
 
       {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd animate-fade-up">{error}</div>}

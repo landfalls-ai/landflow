@@ -1,7 +1,7 @@
 'use client';
 /**
  * Run Trace cards drawn from a model-written spec with json-render (docs/research/json-render-verdict.md), behind the
- * LANDFLOW_JSON_RENDER flag. The spec is validated first (lib/shared/ui-spec.ts); only the result reaches the renderer.
+ * json-render setting. The spec is validated first (lib/shared/ui-spec.ts); only the result reaches the renderer.
  * The provider is mounted with no handlers, navigate, functions or directives, so the spec cannot trigger anything; an unknown component is dropped
  * and the card says so in plain text. One column, cards not tables.
  */
@@ -9,8 +9,9 @@ import { defineCatalog } from '@json-render/core';
 import { defineRegistry, JSONUIProvider, Renderer } from '@json-render/react';
 import { schema } from '@json-render/react/schema';
 import { Check, CircleAlert, Clock, Loader2, ShieldQuestion } from 'lucide-react';
-import { approvalProps, CARD_DESCRIPTIONS, diffProps, jsonRenderEnabled, parseUiSpec, statusProps } from '@/lib/shared/ui-spec';
+import { approvalProps, CARD_DESCRIPTIONS, diffProps, parseUiSpec, statusProps } from '@/lib/shared/ui-spec';
 import { cn } from '@/lib/utils';
+import { useJsonRender } from './use-json-render';
 
 export const catalog = defineCatalog(schema, {
   components: {
@@ -68,9 +69,13 @@ export const { registry } = defineRegistry(catalog, {
   },
 });
 
-/** One card from an untrusted spec (an object or JSON text). Off by default: renders nothing unless the flag is set. */
-export function SpecCard({ spec, className }: { spec: unknown; className?: string }) {
-  if (!jsonRenderEnabled()) return null;
+/**
+ * One card from an untrusted spec (an object or JSON text). Renders nothing unless json-render is on: `enabled` when the
+ * caller already knows it, else the host's setting (useJsonRender).
+ */
+export function SpecCard({ spec, className, enabled }: { spec: unknown; className?: string; enabled?: boolean }) {
+  const reported = useJsonRender(enabled !== undefined);
+  if (!(enabled ?? reported)) return null;
   const { spec: safe, problems } = parseUiSpec(spec);
   return (
     <div className={className} data-testid="spec-card">
@@ -89,16 +94,17 @@ export const GALLERY: { label: string; spec: unknown }[] = [
   { label: 'Malicious props (rejected)', spec: card('Status', { title: { $state: '/secrets' }, status: 'ok', onClick: 'alert(1)', href: 'javascript:alert(1)' }) },
 ];
 
-/** The dev gallery: the three cards, then what an unknown component and malicious props do. Shown at /runs/json-render-gallery under the flag. */
+/** The dev gallery: the three cards, then what an unknown component and malicious props do. Shown at /runs/json-render-gallery when json-render is on (Settings → General). */
 export function JsonRenderGallery() {
-  if (!jsonRenderEnabled()) return null;
+  const on = useJsonRender();
+  if (!on) return null;
   return (
     <div className="mx-auto flex max-w-md flex-col gap-3 p-3">
       <h1 className="text-[15px] font-semibold text-t1">json-render cards (dev)</h1>
       {GALLERY.map((g) => (
         <section key={g.label} className="flex flex-col gap-1">
           <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">{g.label}</div>
-          <SpecCard spec={g.spec} />
+          <SpecCard spec={g.spec} enabled />
         </section>
       ))}
     </div>

@@ -171,3 +171,48 @@ describe('retention in the store', () => {
     expect(ids()).toHaveLength(5);
   });
 });
+
+describe('json-render setting', () => {
+  afterAll(() => {
+    delete process.env.LANDFLOW_JSON_RENDER;
+  });
+  it('follows the environment until a choice is saved, then the choice wins, and null goes back', () => {
+    delete process.env.LANDFLOW_JSON_RENDER;
+    updateSettings({ jsonRender: null });
+    expect(getSettings().jsonRender).toBeUndefined();
+    expect(settings.jsonRenderOn()).toBe(false);
+    process.env.LANDFLOW_JSON_RENDER = '1';
+    expect(settings.jsonRenderOn()).toBe(true);
+    updateSettings({ jsonRender: false });
+    expect(getSettings().jsonRender).toBe(false);
+    expect(settings.jsonRenderOn()).toBe(false);
+    delete process.env.LANDFLOW_JSON_RENDER;
+    updateSettings({ jsonRender: true });
+    expect(settings.jsonRenderOn()).toBe(true);
+    // Other patches keep it.
+    updateSettings({ timezone: 'UTC' });
+    expect(getSettings().jsonRender).toBe(true);
+    updateSettings({ jsonRender: null });
+    expect(getSettings().jsonRender).toBeUndefined();
+  });
+  it('validates the patch and works through the file store too', () => {
+    expect(settingsPatchSchema.safeParse({ jsonRender: 'yes' }).success).toBe(false);
+    expect(settingsPatchSchema.safeParse({ jsonRender: null }).success).toBe(true);
+    const file = new SettingsFile(join(dataDir, 'settings-jr.json'));
+    expect(file.update({ jsonRender: true }).jsonRender).toBe(true);
+    expect(file.update({ timezone: 'UTC' }).jsonRender).toBe(true);
+    expect(file.update({ jsonRender: null }).jsonRender).toBeUndefined();
+  });
+  it('is reported by GET /api/settings and saved by PATCH (the synthetic owner)', async () => {
+    const route = await import('@/app/api/settings/route');
+    updateSettings({ jsonRender: null });
+    const get = async () => (await (await route.GET(new Request('http://x/api/settings'))).json()) as { jsonRender: boolean; settings: { jsonRender?: boolean } };
+    expect((await get()).jsonRender).toBe(false);
+    const patch = (body: unknown) => route.PATCH(new Request('http://x/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }));
+    expect((await patch({ jsonRender: true })).status).toBe(200);
+    expect(await get()).toMatchObject({ jsonRender: true, settings: { jsonRender: true } });
+    expect((await patch({ jsonRender: 'x' })).status).toBe(400);
+    await patch({ jsonRender: null });
+    expect((await get()).jsonRender).toBe(false);
+  });
+});

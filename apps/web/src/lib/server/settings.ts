@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { InstanceSettings, RetentionSettings } from '../shared/platform';
 import type { ExecutionSummary } from '../shared/types';
+import { jsonRenderEnabled } from '../shared/ui-spec';
 import { database, type Database } from './db';
 import { INSTANCE_SETTINGS } from './db/rows';
 import { atomicWrite, store } from './store';
@@ -51,12 +52,14 @@ const retentionSchema = z.object({
 });
 
 /** A complete, valid settings document. */
-export const instanceSettingsSchema = z.object({ timezone: timezoneSchema, executions: retentionSchema });
+export const instanceSettingsSchema = z.object({ timezone: timezoneSchema, executions: retentionSchema, jsonRender: z.boolean().optional() });
 
 /** PATCH /api/settings: any subset; `executions` merges field by field. */
 export const settingsPatchSchema = z.strictObject({
   timezone: timezoneSchema.optional(),
   executions: retentionSchema.partial().strict().optional(),
+  /** true/false saves the choice; null goes back to the environment default. */
+  jsonRender: z.boolean().nullable().optional(),
 });
 export type SettingsPatch = z.infer<typeof settingsPatchSchema>;
 
@@ -71,6 +74,7 @@ function withDefaults(saved: Partial<InstanceSettings>): InstanceSettings {
   const maxCount = retentionSchema.shape.maxCount.safeParse(saved.executions?.maxCount);
   const maxAgeDays = retentionSchema.shape.maxAgeDays.safeParse(saved.executions?.maxAgeDays);
   return {
+    ...(typeof saved.jsonRender === 'boolean' ? { jsonRender: saved.jsonRender } : {}),
     timezone: timezone.success ? timezone.data : defaults.timezone,
     executions: {
       maxCount: maxCount.success ? maxCount.data : defaults.executions.maxCount,
@@ -80,7 +84,8 @@ function withDefaults(saved: Partial<InstanceSettings>): InstanceSettings {
 }
 
 function merged(current: InstanceSettings, patch: SettingsPatch): InstanceSettings {
-  return instanceSettingsSchema.parse({ timezone: patch.timezone ?? current.timezone, executions: { ...current.executions, ...patch.executions } });
+  const jsonRender = patch.jsonRender === undefined ? current.jsonRender : (patch.jsonRender ?? undefined);
+  return instanceSettingsSchema.parse({ timezone: patch.timezone ?? current.timezone, executions: { ...current.executions, ...patch.executions }, ...(jsonRender === undefined ? {} : { jsonRender }) });
 }
 
 /** Settings backed by one JSON file. */
@@ -133,6 +138,11 @@ export function getSettings(): InstanceSettings {
 
 export function updateSettings(patch: SettingsPatch): InstanceSettings {
   return instance.update(patch);
+}
+
+/** Whether the json-render prototype is on: the saved setting, else the environment default. */
+export function jsonRenderOn(): boolean {
+  return jsonRenderEnabled(getSettings().jsonRender);
 }
 
 /** The instance's default time zone (Settings → General). */

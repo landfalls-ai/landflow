@@ -14,6 +14,8 @@ export interface InstanceSettings {
   /** IANA time zone used when a workflow doesn't set one (Date & Time nodes, Insights days; schedules once the scheduler reads it). */
   timezone: string;
   executions: RetentionSettings;
+  /** json-render spec cards (docs/research/json-render-verdict.md). Unset: LANDFLOW_JSON_RENDER decides; a saved true/false wins. */
+  jsonRender?: boolean;
 }
 
 /** A `$vars.NAME` value. */

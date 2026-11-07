@@ -4,12 +4,17 @@
  * (only the named fields, plain strings, capped lengths, no `{ $state }`-style expressions, no URLs or HTML), no children, no
  * state and no actions. An element of an unknown type, or with props that fail, is dropped and reported; nothing is ever
  * executed. The Approval card only points at an approval that already exists: deciding it stays on the approval path.
- * Behind the LANDFLOW_JSON_RENDER flag (off by default).
+ * Behind the json-render setting (Settings → General; LANDFLOW_JSON_RENDER is its default; off otherwise).
  */
 import { z } from 'zod';
 
-/** The flag. The browser only sees NEXT_PUBLIC_LANDFLOW_JSON_RENDER (inlined at build); the server reads either. */
-export function jsonRenderEnabled(): boolean {
+/**
+ * The flag. `saved` is the instance setting (Settings → General, `jsonRender`): when set it wins. Unset, the environment
+ * decides: `LANDFLOW_JSON_RENDER=1` (server) or `NEXT_PUBLIC_LANDFLOW_JSON_RENDER=1` (inlined at build, so the browser
+ * sees it too). The browser passes the value GET /api/settings reports (`jsonRender`), never a build-time constant alone.
+ */
+export function jsonRenderEnabled(saved?: boolean): boolean {
+  if (typeof saved === 'boolean') return saved;
   return process.env.LANDFLOW_JSON_RENDER === '1' || process.env.NEXT_PUBLIC_LANDFLOW_JSON_RENDER === '1';
 }
 
