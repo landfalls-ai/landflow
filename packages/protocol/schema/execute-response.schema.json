@@ -229,6 +229,64 @@
               "status"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "model"
+              },
+              "name": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "inputTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "outputTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheReadTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheWriteTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "durationMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "finishReason": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "answer": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "model",
+              "provider",
+              "inputTokens",
+              "outputTokens"
+            ],
+            "additionalProperties": false
           }
         ]
       }

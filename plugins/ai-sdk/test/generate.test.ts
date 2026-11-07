@@ -100,6 +100,7 @@ describe('descriptor', () => {
   it('is not a tool and takes no key as a parameter', () => {
     const d = new GenerateWithAiSdk().description;
     expect(d.usableAsTool).toBe(false);
+    expect(d.meterAiUsage).toBe(true);
     const names = d.properties.map((p) => p.name);
     expect(names).toEqual(['provider', 'model', 'system', 'prompt', 'jsonSchema', 'options']);
     expect(JSON.stringify(d.properties)).not.toMatch(/apiKey/i);
@@ -207,5 +208,26 @@ describe('errors', () => {
     expect(failed(await run({ provider: 'openaiCompatible', model: 'm', prompt: 'x' }, openAiCred()))).toBeTruthy();
     const r = await run({ provider: 'openaiCompatible', model: 'm', prompt: 'x' }, openAiCred(), true);
     expect(first(r).error).toBeTruthy();
+  });
+});
+
+describe('usage reported to the host', () => {
+  it('reports one model record per call: model, provider, tokens, duration, finish reason, prompt and answer', async () => {
+    reply = () => openAiReply('Hi there', 'fake-model-1');
+    const r = (await run({ provider: 'openaiCompatible', model: 'fake-model-1', system: 'Be brief', prompt: 'Say hi' }, openAiCred())) as any;
+    expect(r.records).toHaveLength(1);
+    expect(r.records[0]).toMatchObject({ type: 'model', model: 'fake-model-1', provider: 'openaiCompatible', inputTokens: 11, outputTokens: 7, finishReason: 'stop', prompt: 'Be brief\n\nSay hi', answer: 'Hi there' });
+    expect(r.records[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('reports nothing for a call that failed', async () => {
+    const r = (await run({ provider: 'openaiCompatible', model: 'm', prompt: '' }, openAiCred())) as any;
+    expect(r.error).toBeDefined();
+    expect(r.records).toBeUndefined();
+  });
+
+  it('does not put the prompt in spans unless the option is on, even though the record carries it', async () => {
+    await run({ provider: 'openaiCompatible', model: 'm', prompt: 'a secret question' }, openAiCred());
+    expect(JSON.stringify(spans.spans.map(attrsOf))).not.toContain('a secret question');
   });
 });
