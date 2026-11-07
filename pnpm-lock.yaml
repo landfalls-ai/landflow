@@ -43,6 +43,12 @@ importers:
       '@grpc/proto-loader':
         specifier: ^0.8.1
         version: 0.8.1
+      '@json-render/core':
+        specifier: 0.21.2
+        version: 0.21.2(zod@4.6.7)
+      '@json-render/react':
+        specifier: 0.21.2
+        version: 0.21.2(react@19.3.1)(zod@4.6.7)
       '@kubernetes/client-node':
         specifier: 2.0.0
         version: 2.0.0
@@ -1221,6 +1227,16 @@ packages:
     engines: {node: '>= 10.16.0'}
     peerDependencies:
       jsep: ^0.4.0||^1.0.0
+
+  '@json-render/core@0.21.2':
+    resolution: {integrity: sha512-xd1XGLMtlxOfkxn9tTRnX3HnfpF71qIRkmWzCXswnfboaM1Q1Xd2r/rvbKaUlSvFMFVXLRIfkC5guIZ/AhR1Yw==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@json-render/react@0.21.2':
+    resolution: {integrity: sha512-3Aio+UO1wMyA9dnKx/mb6ThKTmpwXQi1e7CMlHAEGMKRVIN6BVL/xlNxmfmmUaBeT0gjEXyhZdZvf4htyj9ulA==}
+    peerDependencies:
+      react: ^19.2.3
 
   '@kubernetes/client-node@2.0.0':
     resolution: {integrity: sha512-Jx2cRxEVb4XkDNiR/cg8SX9dH6ZHdMhKmZdQcfhn2vdBWHdb2ldwM0P3I0dK4msYhFmC6TCODsNHH144IpA06w==}
@@ -4672,6 +4688,17 @@ snapshots:
   '@jsep-plugin/regex@1.1.0(jsep@1.6.0)':
     dependencies:
       jsep: 1.6.0
+
+  '@json-render/core@0.21.2(zod@4.6.7)':
+    dependencies:
+      zod: 4.6.7
+
+  '@json-render/react@0.21.2(react@19.3.1)(zod@4.6.7)':
+    dependencies:
+      '@json-render/core': 0.21.2(zod@4.6.7)
+      react: 19.3.1
+    transitivePeerDependencies:
+      - zod
 
   '@kubernetes/client-node@2.0.0':
     dependencies:
