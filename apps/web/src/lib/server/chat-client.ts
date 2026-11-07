@@ -40,6 +40,33 @@ const SPOKEN_JS = String.raw`function spokenText(text, agentName) {
 /** The reading rules, for tests and any other caller. */
 export const spokenText = new Function(`${SPOKEN_JS}; return spokenText;`)() as (text: unknown, agentName?: string) => string;
 
+/**
+ * The face shown beside an answering agent: an emoji the node sent, else the roster entry's face (matched by key or name),
+ * else the agent's own avatar (an image, initials, or a letter on its skin tone), else the first letter. Plain ES5 source,
+ * shared by the script and the tests. Returns `{ text, image?, bg? }`.
+ */
+const FACE_JS = String.raw`function speakerFace(agent, roster) {
+  var name = String(agent.name || '');
+  var letter = name.charAt(0).toUpperCase();
+  var f = agent.face;
+  if (typeof f === 'string' && f && !/^(https?:|data:|\/)/.test(f)) return { text: f };
+  var list = roster || [];
+  for (var i = 0; i < list.length; i++) {
+    var e = list[i];
+    if (e.face && (e.key === agent.id || e.key === agent.key || String(e.label || '').toLowerCase() === name.toLowerCase())) return { text: e.face };
+  }
+  if (f && typeof f === 'object') {
+    if (f.kind === 'image' && typeof f.image === 'string' && /^data:image\/(png|jpe?g|webp);/.test(f.image)) return { text: letter, image: f.image };
+    if (f.kind === 'initials' && f.initials) return { text: String(f.initials).slice(0, 2).toUpperCase() };
+    var skin = f.face && f.face.skin;
+    if (f.kind === 'face' && typeof skin === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(skin)) return { text: letter, bg: skin };
+  }
+  return { text: letter };
+}`;
+
+/** The speaker's face, for tests. */
+export const speakerFace = new Function(`${FACE_JS}; return speakerFace;`)() as (agent: { id?: string; key?: string; name?: string; face?: unknown }, roster?: Array<{ key: string; label?: string; face?: string }>) => { text: string; image?: string; bg?: string };
+
 const STYLE = `
 :host { all: initial; }
 * { box-sizing: border-box; }
@@ -119,6 +146,7 @@ const CLIENT = `(function () {
   var authKey = 'landflow-chat-auth:' + key;
   var STYLE = __STYLE__;
   __SPOKEN__
+  __FACE__
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
@@ -179,8 +207,11 @@ const CLIENT = `(function () {
   function scroll() { log.scrollTop = log.scrollHeight; }
   /** Who answers, above a bubble: a face (an emoji, else the first letter of the name) and the name. */
   function who(agent) {
-    var face = typeof agent.face === 'string' && agent.face && !/^(https?:|data:|\\/)/.test(agent.face) ? agent.face : String(agent.name).charAt(0).toUpperCase();
-    return el('div', { class: 'who' }, [el('span', { class: 'face', text: face }), el('span', { text: String(agent.name) })]);
+    var look = speakerFace(agent, config && config.agents);
+    var face = el('span', { class: 'face', text: look.image ? '' : look.text });
+    if (look.bg) face.style.background = look.bg;
+    if (look.image) { var img = el('img', { src: look.image, alt: '' }); img.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover'; face.appendChild(img); }
+    return el('div', { class: 'who' }, [face, el('span', { text: String(agent.name) })]);
   }
   function bubble(role, text, files, agent) {
     if (role === 'bot' && agent && agent.name) log.appendChild(who(agent));
@@ -524,7 +555,7 @@ const CLIENT = `(function () {
 `;
 
 /** The script served at /chat/widget.js. */
-export const CHAT_CLIENT_JS = CLIENT.replace('__STYLE__', () => JSON.stringify(STYLE)).replace('__SPOKEN__', () => SPOKEN_JS);
+export const CHAT_CLIENT_JS = CLIENT.replace('__STYLE__', () => JSON.stringify(STYLE)).replace('__SPOKEN__', () => SPOKEN_JS).replace('__FACE__', () => FACE_JS);
 
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (c) => ESCAPES[c]);

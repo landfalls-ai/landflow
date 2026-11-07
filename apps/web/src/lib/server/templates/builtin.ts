@@ -142,7 +142,7 @@ const specialist = (name: string, role: string, mission: string, instructions: s
     color: '#7c3aed',
     avatar: { kind: 'face', face: { skin, hair: 'short', hairColor: '#2b2118', eyes: 'calm', brows: 'soft', mouth: 'smile' } },
     team: 'Support',
-    model: { provider: 'ollama', model: 'qwen3:8b', baseUrl: 'http://host.docker.internal:11434', temperature: 0.2 },
+    model: { provider: 'ollama', model: 'qwen3-coder:30b', temperature: 0.2 },
     persona: { role, audience: 'Visitors of a public chat', mission, tones: ['Friendly', 'Clear'] },
     instructions,
     skills: [],
@@ -217,7 +217,7 @@ const WORKFLOW_TEMPLATES: TemplateDetail[] = [
       'Open the chat at the bottom of the canvas and say hello.',
     ],
     nodes: [
-      node('chat', 'When chat message received', 'chatTrigger', [0, 0]),
+      node('chat', 'When chat message received', 'chatTrigger', [0, 120]),
       node('agent', 'AI Agent', 'aiAgent', [260, -6], { systemMessage: 'You are a friendly assistant. Answer briefly and use the calculator for any arithmetic.' }),
       node('model', 'Ollama Chat Model', 'ollamaChatModel', [240, 200], { model: 'qwen3-coder:30b' }),
       node('memory', 'Simple Memory', 'simpleMemory', [350, 200], { turns: 10 }),
@@ -891,7 +891,7 @@ const WORKFLOW_TEMPLATES: TemplateDetail[] = [
     setup: ['Pick or add your OpenAI credential.', 'Fill the **Orders** data table (the JSON API endpoint template writes to it).', 'Ask in the chat: “What did ada@example.com order?”'],
     dataTables: [ORDERS],
     nodes: [
-      node('chat', 'When chat message received', 'chatTrigger', [0, 0]),
+      node('chat', 'When chat message received', 'chatTrigger', [0, 120]),
       node('agent', 'AI Agent', 'aiAgent', [260, -6], { systemMessage: 'You help the team look up orders. Use the Orders tool with the customer’s email; never invent orders. Answer with a short list.' }),
       node('gpt', 'OpenAI Chat Model', 'openAiChatModel', [220, 200], { model: 'gpt-5-mini' }, { uses: [SLOT.openai] }),
       node('memory', 'Simple Memory', 'simpleMemory', [330, 200]),
@@ -914,20 +914,21 @@ const WORKFLOW_TEMPLATES: TemplateDetail[] = [
         'A public chat that a lead agent answers and hands to two specialists when it should. The page shows who answered and who was asked, a Guardrails node screens what visitors type (also when they pick a specialist from the roster), and the lead saves what it learns to a data table.',
       categories: ['ai', 'support'],
       setup: [
+        'Install [Ollama](https://ollama.com) where Landflow runs and pull the model the agents use: `ollama pull qwen3-coder:30b` (the same as the other local templates). The address is `OLLAMA_URL` (`http://127.0.0.1:11434` unless the host sets it, as the Docker and Kubernetes deployments do). To use another model or provider, change it per agent in the agent builder.',
         'Using the template creates the lead and the two specialists (Billing and Technical) as agents: open each in the agent builder to set its model, persona and knowledge.',
         'Turn on **Make Chat Publicly Available** on the trigger and publish: the chat answers at `/chat/<path>`.',
         'Ask “Why was I charged twice?”: the page shows the lead, a line “asked Billing: …” and the specialist’s answer.',
       ],
       dataTables: [CHAT_NOTES],
       nodes: [
-        node('chat', 'When chat message received', 'chatTrigger', [0, 0], {
+        node('chat', 'When chat message received', 'chatTrigger', [0, 120], {
           public: true,
           title: 'Ask the team',
           initialMessages: 'Hi! Ask me anything: I will bring in the right specialist.',
           roster: { agent: [{ key: 'billing', label: 'Billing', face: '🧾', target: 'Billing' }, { key: 'technical', label: 'Technical', face: '🛠️', target: 'Technical' }] },
         }),
-        node('guard', 'Screen the message', 'guardrails', [260, 0], { operation: 'check', text: '{{ $json.chatInput }}' }),
-        node('route', 'Who was asked?', 'switch', [390, -60], {
+        node('guard', 'Screen the message', 'guardrails', [280, 120], { operation: 'check', text: '{{ $json.chatInput }}' }),
+        node('route', 'Who was asked?', 'switch', [640, 90], {
           mode: 'rules',
           rules: {
             values: [
@@ -937,12 +938,12 @@ const WORKFLOW_TEMPLATES: TemplateDetail[] = [
           },
           options: { fallbackOutput: 'extra' },
         }),
-        node('lead', 'Lead', 'messageAgent', [520, -6], { agentId: 'lead', message: '{{ $json.chatInput }}', conversation: 'key', sessionKey: '{{ $json.sessionId }}' }),
-        node('refuse', 'Politely decline', 'set', [520, 140], { mode: 'manual', fields: fields([{ name: 'output', type: 'string', value: 'Sorry, I can’t help with that message.' }]), includeOtherFields: false }),
-        node('memory', 'Simple Memory', 'simpleMemory', [440, 340]),
-        node('billing', 'Billing', 'messageAgent', [570, 340], { agentId: 'billing', message: "{{ $fromAI('message', 'The full question for the specialist', 'string') }}" }),
-        node('tech', 'Technical', 'messageAgent', [700, 340], { agentId: 'technical', message: "{{ $fromAI('message', 'The full question for the specialist', 'string') }}" }),
-        node('notes', 'Chat notes', 'dataTable', [830, 340], {
+        node('lead', 'Lead', 'messageAgent', [940, 120], { agentId: 'lead', message: '{{ $json.chatInput }}', conversation: 'key', sessionKey: '{{ $json.sessionId }}' }),
+        node('refuse', 'Politely decline', 'set', [280, 330], { mode: 'manual', fields: fields([{ name: 'output', type: 'string', value: 'Sorry, I can’t help with that message.' }]), includeOtherFields: false }),
+        node('memory', 'Simple Memory', 'simpleMemory', [540, 480]),
+        node('billing', 'Billing', 'messageAgent', [780, 460], { agentId: 'billing', message: "{{ $fromAI('message', 'The full question for the specialist', 'string', $json.chatInput) }}" }),
+        node('tech', 'Technical', 'messageAgent', [1120, 460], { agentId: 'technical', message: "{{ $fromAI('message', 'The full question for the specialist', 'string', $json.chatInput) }}" }),
+        node('notes', 'Chat notes', 'dataTable', [1460, 460], {
           operation: 'insert',
           dataTableId: 'Chat notes',
           columns: columns({ visitor: "{{ $fromAI('visitor', 'How the visitor introduced themselves, or empty', 'string') }}", note: "{{ $fromAI('note', 'What to follow up on', 'string') }}" }),
