@@ -20,6 +20,7 @@
     "plugin:go": "cd plugins/go-crypto && go run .",
     "plugin:github": "pnpm --filter @landflow/plugin-github start",
     "plugin:browser": "pnpm --filter @landflow/plugin-browser start",
+    "plugin:agent-shell": "pnpm --filter @landflow/plugin-agent-shell start",
     "plugin:web-search": "pnpm --filter @landflow/plugin-web-search start",
     "plugin:messaging": "pnpm --filter @landflow/plugin-messaging start",
     "plugin:productivity": "cd plugins/productivity && (test -x .venv/bin/python && .venv/bin/python main.py || python3 main.py)",
