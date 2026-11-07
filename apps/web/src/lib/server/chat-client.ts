@@ -55,6 +55,12 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .send { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
 .send:disabled { opacity: .5; cursor: default; }
 .attach { background: var(--bubble); color: var(--fg); }
+.roster { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; border-top: 1px solid var(--line); }
+.roster .hint { width: 100%; font-size: 12px; color: var(--muted); }
+.chip { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 20px; background: var(--bubble); color: var(--fg); font: inherit; cursor: pointer; }
+.chip .face { width: 22px; height: 22px; border-radius: 50%; background: var(--bg); display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+@media (max-width: 600px) { .roster { flex-direction: column; } .chip { width: 100%; min-height: 48px; font-size: 15px; } }
 .picked { padding: 0 14px 8px; font-size: 12px; color: var(--muted); }
 .fb { align-self: flex-start; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: -4px; }
 .thumb { border: 1px solid transparent; background: transparent; border-radius: 8px; padding: 2px 7px; cursor: pointer; font: inherit; font-size: 13px; color: var(--muted); opacity: .7; }
@@ -129,6 +135,7 @@ const CLIENT = `(function () {
   var sessionId = stored() || newId();
   var busy = false;
   var picked = [];
+  var agentKey = '';
   var log, input, sendButton, fileInput, pickedLine, titleNode, subtitleNode, panelNode;
   var customStyle = null;
   function applyCss(css) {
@@ -248,9 +255,12 @@ const CLIENT = `(function () {
       body = new FormData();
       body.append('sessionId', sessionId);
       body.append('message', text);
+      if (agentKey) body.append('agentKey', agentKey);
       files.forEach(function (file) { body.append('files', file, file.name); });
     } else {
-      body = JSON.stringify({ sessionId: sessionId, message: text });
+      var payload = { sessionId: sessionId, message: text };
+      if (agentKey) payload.agentKey = agentKey;
+      body = JSON.stringify(payload);
       headers['content-type'] = 'application/json';
     }
     var reply = null, streamed = '', tools = {}, answerId = '', speaker = null, anyLabel = false;
@@ -358,8 +368,19 @@ const CLIENT = `(function () {
       controls.unshift(el('button', { class: 'attach', type: 'button', title: 'Attach files', 'aria-label': 'Attach files', text: '📎', onclick: function () { fileInput.click(); } }), fileInput);
     }
     controls.push(sendButton);
+    var rosterRow = null;
+    if (config.agents && config.agents.length) {
+      rosterRow = el('div', { class: 'roster', role: 'group', 'aria-label': 'Who do you want to ask?' });
+      var chips = config.agents.map(function (agent) {
+        var face = typeof agent.face === 'string' && agent.face ? agent.face : String(agent.label).charAt(0).toUpperCase();
+        var chip = el('button', { class: 'chip', type: 'button', 'aria-pressed': 'false', 'data-agent': agent.key }, [el('span', { class: 'face', text: face }), el('span', { text: agent.label })]);
+        chip.addEventListener('click', function () { agentKey = agentKey === agent.key ? '' : agent.key; chips.forEach(function (c) { c.setAttribute('aria-pressed', String(c.getAttribute('data-agent') === agentKey)); }); input.focus(); });
+        return chip;
+      });
+      chips.forEach(function (chip) { rosterRow.appendChild(chip); });
+    }
     var area = frame();
-    [el('header', {}, [el('div', { class: 'titles' }, [titleNode, subtitleNode]), el('div', { style: 'display:flex;gap:6px' }, buttons)]), log, pickedLine, el('form', { onsubmit: send }, controls)].forEach(function (node) { area.appendChild(node); });
+    [el('header', {}, [el('div', { class: 'titles' }, [titleNode, subtitleNode]), el('div', { style: 'display:flex;gap:6px' }, buttons)]), log, rosterRow, pickedLine, el('form', { onsubmit: send }, controls)].forEach(function (node) { if (node) area.appendChild(node); });
     if (mode === 'fullscreen') document.title = config.title || document.title;
     applyCss(config.customCss);
     start();
