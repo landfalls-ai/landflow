@@ -43,6 +43,9 @@ header button { border: 1px solid var(--line); background: transparent; color: v
 .tool::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .tool.running::before { background: var(--accent); animation: pulse 1s infinite; }
 .tool.failed::before { background: #dc2626; }
+.who { align-self: flex-start; display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: -6px; }
+.who .face { width: 20px; height: 20px; border-radius: 50%; background: var(--bubble); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
+.ask { align-self: flex-start; font-size: 12px; color: var(--muted); font-style: italic; }
 .typing { align-self: flex-start; color: var(--muted); font-size: 13px; }
 @keyframes pulse { 50% { opacity: .3; } }
 form { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; gap: 8px; align-items: flex-end; }
@@ -134,7 +137,13 @@ const CLIENT = `(function () {
   }
 
   function scroll() { log.scrollTop = log.scrollHeight; }
-  function bubble(role, text, files) {
+  /** Who answers, above a bubble: a face (an emoji, else the first letter of the name) and the name. */
+  function who(agent) {
+    var face = typeof agent.face === 'string' && agent.face && !/^(https?:|data:|\\/)/.test(agent.face) ? agent.face : String(agent.name).charAt(0).toUpperCase();
+    return el('div', { class: 'who' }, [el('span', { class: 'face', text: face }), el('span', { text: String(agent.name) })]);
+  }
+  function bubble(role, text, files, agent) {
+    if (role === 'bot' && agent && agent.name) log.appendChild(who(agent));
     var node = el('div', { class: 'msg ' + role });
     node.innerHTML = render(text || '');
     if (files && files.length) node.appendChild(el('div', { class: 'files', text: '📎 ' + files.map(function (f) { return f.fileName; }).join(', ') }));
@@ -191,7 +200,7 @@ const CLIENT = `(function () {
     if (!config.loadPreviousSession || !stored()) return;
     request('/session?sessionId=' + encodeURIComponent(sessionId))
       .then(function (r) { return r.ok ? r.json() : { messages: [] }; })
-      .then(function (data) { (data.messages || []).forEach(function (m) { bubble(m.role === 'assistant' ? 'bot' : 'user', m.text, m.files); if (m.role === 'assistant' && m.executionId) feedbackRow(m.executionId, m.feedback); }); })
+      .then(function (data) { (data.messages || []).forEach(function (m) { bubble(m.role === 'assistant' ? 'bot' : 'user', m.text, m.files, m.agentName ? { id: m.agentKey, name: m.agentName } : null); if (m.role === 'assistant' && m.executionId) feedbackRow(m.executionId, m.feedback); }); })
       .catch(function () {});
   }
 
@@ -244,8 +253,15 @@ const CLIENT = `(function () {
       body = JSON.stringify({ sessionId: sessionId, message: text });
       headers['content-type'] = 'application/json';
     }
-    var reply = null, streamed = '', tools = {}, answerId = '';
-    function replyNode() { if (!reply) { typing.remove(); reply = bubble('bot', ''); } return reply; }
+    var reply = null, streamed = '', tools = {}, answerId = '', speaker = null, anyLabel = false;
+    function replyNode() { if (!reply) { typing.remove(); reply = bubble('bot', '', null, speaker); } return reply; }
+    /** A delegation (a tool call with a reason) reads "asked <Agent>: <reason>". */
+    function askLine(name, reason) {
+      var node = el('div', { class: 'ask', text: 'asked ' + String(name).replace(/_/g, ' ') + ': ' + reason });
+      log.appendChild(node);
+      scroll();
+      return node;
+    }
     request('', { method: 'POST', body: body, headers: headers })
       .then(function (response) {
         var type = response.headers.get('content-type') || '';
@@ -254,9 +270,17 @@ const CLIENT = `(function () {
         if (!response.ok) throw new Error('HTTP ' + response.status);
         if (type.indexOf('event-stream') >= 0 || type.indexOf('ndjson') >= 0) {
           return readStream(response, function (chunk) {
-            if (chunk.type === 'item' && chunk.content) { streamed += chunk.content; replyNode().innerHTML = render(streamed); scroll(); }
+            if (chunk.type === 'item' && chunk.content) {
+              if (chunk.agent && chunk.agent.name) anyLabel = true;
+              // Once agents are labelled, a change of speaker starts a new bubble.
+              if (anyLabel && reply && (chunk.agent ? chunk.agent.id : '') !== (speaker ? speaker.id : '')) { reply = null; streamed = ''; }
+              speaker = chunk.agent && chunk.agent.name ? chunk.agent : null;
+              streamed += chunk.content; replyNode().innerHTML = render(streamed); scroll(); }
             else if (chunk.type === 'tool' && chunk.tool) {
               var known = tools[chunk.tool.id];
+              var reason = chunk.tool.input && typeof chunk.tool.input.reason === 'string' ? chunk.tool.input.reason : '';
+              if (known && known.className === 'ask') { if (chunk.tool.status === 'failed' && known.textContent.indexOf('(failed)') < 0) known.textContent += ' (failed)'; return; }
+              if (!known && reason) { tools[chunk.tool.id] = askLine(chunk.tool.name, reason); return; }
               var state = chunk.tool.status === 'started' ? 'running' : chunk.tool.status;
               if (known) { known.className = 'tool ' + state; known.textContent = (state === 'failed' ? 'Failed: ' : state === 'approval' ? 'Waiting for approval: ' : 'Used ') + chunk.tool.name; }
               else tools[chunk.tool.id] = toolLine(chunk.tool.name, state);
