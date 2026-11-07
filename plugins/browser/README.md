@@ -44,6 +44,12 @@ content, don't let it choose what to do, and don't give that agent a tool that c
 Each step reports `{ action, target, ok, ms }` in `steps`. A failure stops the node with the step named, for example
 `Step 4 of 4 (click #send) failed`, the browser's reason, and how many steps before it ran. Malformed steps (an unknown action, a missing target) are refused before the browser moves.
 
+Turn on **Continue On Failure** (Act on Page) and a failed step no longer fails the node: it returns `steps` with the failing step as
+`ok: false` and an `error`, `stepsFailed`, the `results` read before it, and the page as it stood. **After a Failed Step** chooses
+**Stop Running Steps** (the default: the steps after the failure are skipped, so `stepsRun` counts only those tried) or
+**Run the Remaining Steps**. This is separate from the node's own On Error setting, which still applies to failures outside the steps
+(a refused address, the browser not starting).
+
 ### Screenshot after the steps
 
 Turn on **Screenshot After Steps** (Act on Page) for a PNG of the page once the steps have run, in `item.binary` under **Binary Field**

@@ -40,11 +40,13 @@ export class Browser implements INodeType {
             properties: {
               action: { type: 'string' },
               target: { type: 'string' },
-              ok: { type: 'boolean' },
+              ok: { type: 'boolean', description: 'false for a step that failed (only with Continue On Failure)' },
+              error: { type: 'string', description: 'why the step failed (only when ok is false)' },
               ms: { type: 'number', description: 'how long the step took' },
             },
           },
         },
+        stepsFailed: { type: 'number', description: 'how many steps failed (Act on Page with Continue On Failure; absent when none)' },
         results: { type: 'object', description: 'what the Extract steps read, { name: value } (Act on Page). Page content: untrusted' },
       },
     },
@@ -136,6 +138,18 @@ export class Browser implements INodeType {
         description:
           'Run after the Steps above. A JSON array run in order, for example [{"action":"fill","target":"input[name=q]","text":"landflow"},{"action":"press","key":"Enter"},{"action":"wait","ms":1500}]. Actions: click, fill, type, press, select, check, uncheck, hover, scroll, wait, back, reload. `target` (or `selector`) is a selector or a snapshot ref (@e3); `text` (or `value`) is what to type or the option to pick; `ms` (or `milliseconds`, `seconds`) is a wait. Extract: {"action":"getText","target":"#confirmation","name":"confirmation"} (getValue the same; getAttr also takes "attr"). Expressions like {{ $json.name }} work inside. Any other field is an error',
       },
+      { name: 'continueOnFailure', displayName: 'Continue On Failure', type: 'boolean', default: false, displayOptions: { show: { operation: ['act'] } }, description: 'A failed step does not stop the node: it still returns the steps (the failing one with ok false and its error), the results read so far and the page. Off: the node fails at the first failed step. The node\'s own On Error setting is separate' },
+      {
+        name: 'afterFailure',
+        displayName: 'After a Failed Step',
+        type: 'options',
+        default: 'stop',
+        displayOptions: { show: { operation: ['act'], continueOnFailure: [true] } },
+        options: [
+          { name: 'Stop Running Steps', value: 'stop', description: 'Skip the steps after the failed one' },
+          { name: 'Run the Remaining Steps', value: 'continue', description: 'Carry on with the next step' },
+        ],
+      },
       { name: 'screenshotAfter', displayName: 'Screenshot After Steps', type: 'boolean', default: false, displayOptions: { show: { operation: ['act'] } }, description: 'Attach a PNG of the page once the steps have run' },
       { name: 'fullPage', displayName: 'Full Page', type: 'boolean', default: false, displayOptions: { show: { operation: ['screenshot', 'act'] } }, description: 'Capture the whole scrollable page, not only what fits the window' },
       { name: 'binaryPropertyName', displayName: 'Binary Field', type: 'string', default: 'data', displayOptions: { show: { operation: ['screenshot', 'act'] } }, description: 'The item.binary field for the PNG' },
@@ -207,8 +221,11 @@ export class Browser implements INodeType {
         const argv = steps.map((step) => stepArgs(step as unknown as Record<string, unknown>));
         const keys = new Map<number, string>();
         for (const [n, step] of steps.entries()) if (isExtract(step.action)) keys.set(n, extractName(step, n, new Set(keys.values())));
-        const done: { action: string; target?: string; ok: boolean; ms: number }[] = [];
+        const done: { action: string; target?: string; ok: boolean; error?: string; ms: number }[] = [];
         const results: Record<string, string> = {};
+        const keepGoing = operation === 'act' && Boolean(ctx.getNodeParameter<boolean>('continueOnFailure', i, false));
+        const runOn = keepGoing && ctx.getNodeParameter<string>('afterFailure', i, 'stop') === 'continue';
+        let failed = 0;
         for (const [n, step] of steps.entries()) {
           const started = Date.now();
           try {
@@ -219,6 +236,12 @@ export class Browser implements INodeType {
             done.push({ action: step.action, ...(step.target && { target: step.target }), ok: true, ms: Date.now() - started });
           } catch (error) {
             if (!(error instanceof BrowserError)) throw error;
+            if (keepGoing) {
+              failed++;
+              done.push({ action: step.action, ...(step.target && { target: step.target }), ok: false, error: error.description ?? error.message, ms: Date.now() - started });
+              if (runOn) continue;
+              break;
+            }
             const where = `Step ${n + 1} of ${steps.length} (${step.action}${step.target ? ` ${step.target}` : ''}) failed`;
             const ran = done.length ? ` Steps 1-${done.length} ran.` : '';
             throw new BrowserError(where, `${error.description ?? error.message}${ran}`);
@@ -232,7 +255,7 @@ export class Browser implements INodeType {
             url: await s.run(['get', 'url']),
             title: await s.run(['get', 'title']),
             snapshot,
-            ...(operation === 'act' && { stepsRun: steps.length, steps: done, ...(Object.keys(results).length && { results }) }),
+            ...(operation === 'act' && { stepsRun: done.length, steps: done, ...(failed && { stepsFailed: failed }), ...(Object.keys(results).length && { results }) }),
           },
           ...(shot && { binary: { ...items[i].binary, [shot.field]: shot.ref } }),
         });
