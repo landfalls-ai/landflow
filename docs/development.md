@@ -14,6 +14,8 @@ pnpm install
 (cd plugins/productivity && ./setup.sh)       # the same for the Python integrations
 pnpm dev:all                                  # host on :3000 + the seven plugins (7101–7107 HTTP, 7201–7207 gRPC)
 pnpm dev:all:browser                          # the same plus the Browser plugin (7112 / 7212; needs agent-browser and Chrome on the Mac)
+pnpm dev:all:agent-shell                      # the same plus the Agent Shell plugin (7114 / 7214)
+pnpm dev:all:web-search                       # the same plus the Web Search plugin (7113 / 7213; needs a SearXNG URL or an API key credential)
 docker compose -f deploy/compose.infra.yml up -d --wait   # Postgres, Valkey, Mailpit, MinIO, OpenBao (optional)
 ```
 

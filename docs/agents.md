@@ -404,7 +404,7 @@ Only one run can be active per session.
   All Data*. **Run** in the editor starts from it too, with empty example values for each argument.
 - **Run an Agent** (`core.messageAgent`, formerly "Message an Agent"; the type is unchanged) runs
   a published agent as a step of the flow. The agent brings its persona, skills, capabilities,
-  guardrails and usage limits. Like the AI Agent, the node has three optional sub-node ports:
+  guardrails and usage limits. Used as a tool, the node (like Run a Team) takes `message` and a required `reason`. Tool images: the node's **Tool Images to Keep** option, else the agent's **Tool images to keep** (Settings tab), else `LANDFLOW_TOOL_IMAGES_KEPT`, else 2; Run Trace shows each image as a thumbnail ([features/ai.md](features/ai.md)). Like the AI Agent, the node has three optional sub-node ports:
   - **Chat Model**: a chat model node (Ollama, Anthropic, OpenAI…) that replaces the agent's own
     model for this run.
   - **Tool**: any `usableAsTool` node, an MCP Client Tool, or a vector store in *Retrieve
