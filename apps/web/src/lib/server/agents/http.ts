@@ -11,6 +11,7 @@ const guardrailRule = z.object({
   action: z.enum(['block', 'sanitize']),
   reply: z.string().max(5_000),
   replacement: z.enum(['redact', 'mask']).optional(),
+  judge: z.object({ provider: z.string().min(1).max(64), credential: ref.optional(), model: z.string().max(200).optional() }).optional(),
   checks: z.object({}).passthrough(),
 });
 

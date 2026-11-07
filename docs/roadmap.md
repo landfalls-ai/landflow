@@ -1115,6 +1115,10 @@ A second pass over the reel's scenes (what each shows against what Landflow has)
 instructions, which the input stage never saw), a **grounded** output check (does the answer follow from the passages the
 agent's knowledge bases returned?) and **stay on topic** in the builder (the engine had it; the builder did not offer it).
 
+Then **Jev and AWS Strands Decider as guardrail judges** ([agents.md](agents.md#building-an-agent)): TypeSafe AI’s Jev and AWS’s open-source Strands Decider are decision models (text and
+yes/no questions in, a probability per question out), so it cannot be a chat provider; it answers the guardrail checks that need a
+model instead, from a *TypeSafe API* credential chosen on the rule. Open: a Decide node, the model router and cost counting.
+
 ## Planned next
 
 The follow-ups above are candidates, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).

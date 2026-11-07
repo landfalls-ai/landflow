@@ -11,7 +11,7 @@ import { landflowUsageNode, suggestImprovementNode, usageTriggerNode } from './u
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
 import { aiStep } from './composites';
-import { anthropicApiCredential, cohereApiCredential, httpBasicAuthCredential, httpBearerAuthCredential, httpHeaderAuthCredential, jwtAuthCredential, openAiApiCredential } from './credentials';
+import { anthropicApiCredential, cohereApiCredential, httpBasicAuthCredential, httpBearerAuthCredential, httpHeaderAuthCredential, jwtAuthCredential, openAiApiCredential, strandsDeciderApiCredential, typesafeApiCredential } from './credentials';
 import { oAuth2ApiCredential } from './oauth2-credential';
 import { mcpOAuth2ApiCredential } from './mcp-oauth-credential';
 import { sshPrivateKeyCredential } from './ssh-credential';
@@ -129,5 +129,5 @@ export const corePlugin = definePlugin({
     evaluationNode,
   ],
   composites: [aiStep],
-  credentialTypes: [openAiApiCredential, anthropicApiCredential, cohereApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, mcpOAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential, microsoftBotCredential, sshPrivateKeyCredential, kagentCredential],
+  credentialTypes: [openAiApiCredential, anthropicApiCredential, typesafeApiCredential, strandsDeciderApiCredential, cohereApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, mcpOAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential, microsoftBotCredential, sshPrivateKeyCredential, kagentCredential],
 });

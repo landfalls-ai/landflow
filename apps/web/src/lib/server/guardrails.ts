@@ -79,6 +79,8 @@ export interface GuardrailsOptions {
   replacement?: Replacement;
   /** The chat model for the model checks. */
   model?: LanguageModel;
+  /** A judge for the model checks in place of the chat model (a decision model such as Jev); it wins when both are set. */
+  judge?: Judge;
   signal?: AbortSignal;
   /** Where the check sits (an agent's `input` or `output`), recorded on its span. */
   stage?: string;
@@ -451,11 +453,14 @@ export const MODEL_CHECK_PROMPTS = {
     `The assistant may only discuss the following:\n${scope}\n\nFlag the text if it is about something else. Greetings, thanks and short follow-ups to an on-topic conversation are on-topic.`,
 };
 
-interface Verdict {
+export interface Verdict {
   flagged: boolean;
   confidence: number;
   reason?: string;
 }
+
+/** Whether `text` should be flagged under `instructions`, optionally against `context` (the passages a grounded check uses). */
+export type Judge = (instructions: string, text: string, signal?: AbortSignal, context?: string) => Promise<Verdict>;
 
 /** Ask the model for a verdict on `text` under `instructions`; the text is data to judge, never instructions to follow. */
 export async function modelVerdict(model: LanguageModel, instructions: string, text: string, signal?: AbortSignal, context?: string): Promise<Verdict> {
@@ -471,6 +476,10 @@ export async function modelVerdict(model: LanguageModel, instructions: string, t
   // A "not flagged" verdict with a high confidence means "surely fine".
   return { flagged: Boolean(value.flagged), confidence: value.flagged ? confidence : Math.min(confidence, 1 - confidence), ...(value.reason && { reason: value.reason }) };
 }
+
+/** The verdict from the judge when there is one, else from the chat model. */
+const judgeText = (options: GuardrailsOptions, instructions: string, text: string, context?: string): Promise<Verdict> =>
+  options.judge ? options.judge(instructions, text, options.signal, context) : modelVerdict(options.model as LanguageModel, instructions, text, options.signal, context);
 
 // ---------------------------------------------------------------------------
 // Masking and replacement
@@ -588,9 +597,9 @@ export async function runGuardrails(text: string, config: GuardrailsConfig, opti
       let confidence = heuristics.confidence;
       let reason = heuristics.reasons.join('; ');
       let error: string | undefined;
-      if (config.jailbreak?.useModel && options.model && confidence < limit) {
+      if (config.jailbreak?.useModel && (options.judge || options.model) && confidence < limit) {
         try {
-          const verdict = await modelVerdict(options.model, config.jailbreak.prompt?.trim() || MODEL_CHECK_PROMPTS.jailbreak, text, options.signal);
+          const verdict = await judgeText(options, config.jailbreak.prompt?.trim() || MODEL_CHECK_PROMPTS.jailbreak, text);
           if (verdict.flagged && verdict.confidence > confidence) {
             confidence = verdict.confidence;
             reason = verdict.reason ?? 'flagged by the model';
@@ -616,11 +625,11 @@ export async function runGuardrails(text: string, config: GuardrailsConfig, opti
         ? (config.custom ?? []).filter((c) => c.prompt.trim()).map((c) => ({ check: 'custom' as const, name: c.name.trim() || 'Custom', instructions: c.prompt, threshold: threshold(c.threshold) }))
         : []),
     ];
-    if (modelChecks.length && !options.model) throw new Error(`These checks need a chat model: ${modelChecks.map((c) => c.name ?? c.check).join(', ')}`);
+    if (modelChecks.length && !options.model && !options.judge) throw new Error(`These checks need a chat model: ${modelChecks.map((c) => c.name ?? c.check).join(', ')}`);
     const verdicts = await Promise.all(
       modelChecks.map(async (c) => {
         try {
-          const verdict = await modelVerdict(options.model as LanguageModel, c.instructions, text, options.signal, c.context);
+          const verdict = await judgeText(options, c.instructions, text, c.context);
           return verdictReport(c.check, c.name, verdict.flagged ? verdict.confidence : 0, c.threshold, verdict.reason, undefined, options.log);
         } catch (err) {
           if (options.signal?.aborted) throw err;

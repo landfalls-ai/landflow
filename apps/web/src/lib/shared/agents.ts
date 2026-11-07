@@ -218,8 +218,24 @@ export interface AgentGuardrail {
   reply: string;
   /** sanitize: `redact` puts <EMAIL_ADDRESS>, `mask` keeps the last characters. */
   replacement?: Replacement;
+  /** The checks that need a model (injection with the model, stay on topic, grounded, moderation, custom) are judged by this service instead of the agent's model. */
+  judge?: AgentJudge;
   checks: GuardrailsConfig;
 }
+
+/** A guardrail judge: a service named by `provider` (a key of `JUDGE_PROVIDERS`), with the credential it needs. */
+export interface AgentJudge {
+  provider: string;
+  credential?: CredentialRef;
+  /** For a provider with a choice of models. */
+  model?: string;
+}
+
+/** The judges the builder offers. The server's registry (server/agents/judges.ts) must know each `value`. */
+export const JUDGE_PROVIDERS: Array<{ value: string; label: string; credentialType: string; description: string }> = [
+  { value: 'typesafe', label: 'Jev (TypeSafe AI)', credentialType: 'core.typesafeApi', description: 'A hosted yes/no model: cheaper than a chat call, and it never sees your agent’s prompt' },
+  { value: 'strands', label: 'Strands Decider (AWS)', credentialType: 'core.strandsDeciderApi', description: 'AWS’s open-source yes/no model, served from your own machine or cluster: nothing leaves your network' },
+];
 
 export interface AgentGuardrails {
   /** Applied to each user message before the model sees it. */

@@ -6,6 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { defineCredentialType, type NodeOperationError } from '@landflow/sdk';
 import { OPENAI_BASE_URL, openAiConnection, openAiModels } from './models';
+import { STRANDS_BASE_URL, TYPESAFE_BASE_URL, strandsConnection, systemOneDecide, typesafeConnection, typesafeModels } from './systemone';
 
 export const openAiApiCredential = defineCredentialType({
   name: 'openAiApi',
@@ -108,6 +109,50 @@ export const anthropicApiCredential = defineCredentialType({
       if (error instanceof Anthropic.APIConnectionError) return { ok: false, message: `Cannot reach ${baseUrl || 'the Anthropic API'}: ${error.message}` };
       if (error instanceof Anthropic.APIError) return { ok: false, message: `Anthropic API error ${error.status ?? ''}: ${error.message}`.replace(' :', ':') };
       throw error;
+    }
+  },
+});
+
+/** TypeSafe AI's Jev, a decision model: agent guardrails can use it as their judge (see ./typesafe). */
+export const typesafeApiCredential = defineCredentialType({
+  name: 'typesafeApi',
+  displayName: 'TypeSafe API',
+  description: 'An API key for TypeSafe AI’s Jev, a fast yes/no model that agent guardrails can use as their judge instead of the agent’s chat model.',
+  icon: 'lucide:scale',
+  documentationUrl: 'https://docs.typesafe.ai',
+  properties: [
+    { name: 'apiKey', displayName: 'API Key', type: 'string', required: true, typeOptions: { password: true } },
+    { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: '', placeholder: TYPESAFE_BASE_URL, description: 'Optional: a gateway or compatible host in front of the API' },
+  ],
+  async test(data) {
+    try {
+      const models = await typesafeModels(typesafeConnection(data));
+      return { ok: true, message: `API key accepted: ${models.length} models available` };
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
+  },
+});
+
+/** AWS's Strands Decider, an open-source decision model you serve yourself (`strands-decider serve <model> --port 8000`): same API as Jev. */
+export const strandsDeciderApiCredential = defineCredentialType({
+  name: 'strandsDeciderApi',
+  displayName: 'Strands Decider',
+  description: 'The address of a Strands Decider server (AWS, open source, Apache-2.0) that agent guardrails can use as their judge. Runs on your own machine or cluster.',
+  icon: 'lucide:scale',
+  documentationUrl: 'https://github.com/strands-labs/strands-decider',
+  properties: [
+    { name: 'baseUrl', displayName: 'Server address', type: 'string', required: true, default: STRANDS_BASE_URL, description: 'Where `strands-decider serve` listens; /v1/systemone is added to it' },
+    { name: 'apiKey', displayName: 'API Key', type: 'string', default: '', typeOptions: { password: true }, description: 'Only if you put a gateway in front of the server' },
+    { name: 'model', displayName: 'Model name', type: 'string', default: '', description: 'Only if your server expects one in the request' },
+  ],
+  async test(data) {
+    try {
+      // A tiny real question: the server has no model list to read.
+      const result = await systemOneDecide(strandsConnection(data), 'ping', { ok: 'Is this a greeting?' });
+      return { ok: true, message: `Connected: ${result.model} answered` };
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
     }
   },
 });
