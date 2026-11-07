@@ -168,6 +168,16 @@ interface NodeTelemetry {
 const now = () => new Date().toISOString();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The longest an exponential retry waits between two tries. */
+export const MAX_RETRY_WAIT_MS = 60_000;
+
+/** How long to wait after the `attempt`th try (1-based) failed: the node's wait as is, or doubled after each failure when its backoff is exponential. */
+export function retryDelayMs(node: Pick<WorkflowNode, 'waitBetweenTriesMs' | 'retryBackoff'>, attempt: number): number {
+  const base = node.waitBetweenTriesMs ?? 1000;
+  if (node.retryBackoff !== 'exponential') return base;
+  return Math.min(base * 2 ** Math.max(0, attempt - 1), MAX_RETRY_WAIT_MS);
+}
+
 export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<ExecutionResult> {
   return new WorkflowRun(options).run();
 }
@@ -981,7 +991,7 @@ class WorkflowRun {
             ? caught
             : new NodeExecutionError((caught as Error).message ?? String(caught), node);
         telemetry.span.recordException(lastError);
-        if (attempt < maxTries) await sleep(node.waitBetweenTriesMs ?? 1000);
+        if (attempt < maxTries) await sleep(retryDelayMs(node, attempt));
       } finally {
         limit?.clear();
       }

@@ -139,7 +139,7 @@ Proposals use `lib/shared/assistant-ops.ts`. A node reference is a node **name**
 | `removeNode` | `node` | Its connections and pinned data go too |
 | `renameNode` | `node`, `name` | `$('Old')` and `$node["Old"]` in other nodes' parameters are renamed too |
 | `turnIntoTeam` | `node` | a Run an Agent node with agents attached as tools becomes one Run a Team node; applying it saves the team ([agent-teams.md](agent-teams.md#turn-into-a-team)) |
-| `setNodeSettings` | `node`, `settings` | A node's settings, not its parameters: `retryOnFail`, `maxTries`, `waitBetweenTriesMs`, `onError`, `timeoutSeconds`, `alwaysOutputData`, `disabled`. Other keys are dropped. The [second brain](second-brain.md) uses it for retries |
+| `setNodeSettings` | `node`, `settings` | A node's settings, not its parameters: `retryOnFail`, `maxTries`, `waitBetweenTriesMs`, `retryBackoff` (`fixed` or `exponential`), `onError`, `timeoutSeconds`, `alwaysOutputData`, `disabled`. Other keys are dropped. The [second brain](second-brain.md) uses it for retries |
 | `setWorkflowSettings` | `settings` | `errorWorkflowId`, `timeoutSeconds`, `retryMaxAttempts`, `retryBaseDelaySeconds`; other keys are dropped |
 
 `applyOps(workflow, ops, lookup)` is pure: workflow in, workflow out. It is also the validator. Validation follows the same rules as the flow builder:

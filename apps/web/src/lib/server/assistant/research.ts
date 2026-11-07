@@ -47,6 +47,19 @@ function describeProperty(p: PropertyDescriptor, parameters?: Record<string, unk
   return `- ${parts.join(' ')}`;
 }
 
+/**
+ * The fields of one output item, from the node's `outputSchema`: `name (type) — what it holds`, so a later node reads the
+ * field the node really writes (`$json.snapshot`) rather than one it guessed. Empty when the node declares no schema.
+ */
+export function outputFields(d: NodeTypeInfo['descriptor']): string {
+  const properties = (d.outputSchema as { properties?: Record<string, { type?: unknown; description?: unknown }> } | undefined)?.properties;
+  if (!properties || typeof properties !== 'object') return '';
+  return Object.entries(properties)
+    .slice(0, 12)
+    .map(([name, p]) => `${name}${typeof p?.type === 'string' ? ` (${p.type})` : ''}${typeof p?.description === 'string' ? ` — ${p.description}` : ''}`)
+    .join('; ');
+}
+
 /** Everything the registry knows about a node type, as prompt text. With `parameters`, hidden fields are marked. */
 export function nodeDocs(info: NodeTypeInfo, parameters?: Record<string, unknown>): string {
   const d = info.descriptor;
@@ -56,6 +69,8 @@ export function nodeDocs(info: NodeTypeInfo, parameters?: Record<string, unknown
     `${info.pluginId === 'core' ? 'Built in' : `${info.pluginName} plugin (${info.language})`}. ${d.description}`,
     `Inputs: ${ports(d.inputs)}. Outputs: ${ports(d.outputs)}.`,
   ];
+  const fields = outputFields(d);
+  if (fields) lines.push(`Each output item has: ${fields}.`);
   if (d.credentials?.length) lines.push(`Credentials: ${d.credentials.map((c) => `${c.name}${c.required ? ' (required)' : ''}`).join(', ')}.`);
   if (d.documentationUrl) lines.push(`Docs: ${d.documentationUrl}`);
   const properties = d.properties.filter((p) => p.type !== 'notice');

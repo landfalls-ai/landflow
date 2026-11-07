@@ -7,6 +7,7 @@
 import type { ConnectionType, NodeItem, NodeTypeInfo, PropertyDescriptor } from '@/lib/shared/types';
 import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import { registry } from './plugins/registry';
+import { outputFields } from './assistant/research';
 
 export interface DraftNode {
   key: string;
@@ -100,7 +101,7 @@ function catalog(types: NodeTypeInfo[]): string {
         .map(describeProperty)
         .join('; ');
       const where = t.pluginId === 'core' ? 'built in' : `${t.pluginName} plugin, ${t.language}`;
-      return `- ${t.type} — ${d.displayName} [${d.kind}${d.supplies ? `, supplies ${d.supplies}` : ''}${d.usableAsTool ? ', usable as tool' : ''}] (${where}): ${d.description}${outputs.length > 1 ? ` Outputs: ${outputs.map((o, i) => `${i}=${o.displayName ?? i}`).join(', ')}.` : ''}${params ? `\n  params: ${params}` : ''}`;
+      return `- ${t.type} — ${d.displayName} [${d.kind}${d.supplies ? `, supplies ${d.supplies}` : ''}${d.usableAsTool ? ', usable as tool' : ''}] (${where}): ${d.description}${outputs.length > 1 ? ` Outputs: ${outputs.map((o, i) => `${i}=${o.displayName ?? i}`).join(', ')}.` : ''}${outputFields(d) ? ` Output item: ${outputFields(d)}.` : ''}${params ? `\n  params: ${params}` : ''}`;
     })
     .join('\n');
 }

@@ -40,6 +40,8 @@ export interface WorkflowNode {
   retryOnFail?: boolean;
   maxTries?: number;
   waitBetweenTriesMs?: number;
+  /** `fixed` (the default) waits `waitBetweenTriesMs` before every retry; `exponential` doubles it after each failed try, up to a minute. */
+  retryBackoff?: 'fixed' | 'exponential';
   /** Fail an attempt that runs longer than this (its abort signal fires); retries and "continue on error" apply. */
   timeoutSeconds?: number;
   alwaysOutputData?: boolean;

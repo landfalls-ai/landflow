@@ -387,6 +387,27 @@ export function NodePanel() {
                       />
                     </SettingRow>
                   )}
+                  {wf.retryOnFail && (
+                    <SettingRow label="Wait between tries (ms)" hint="Before the first retry; the most is a minute">
+                      <Input
+                        type="number"
+                        min={0}
+                        max={60_000}
+                        value={wf.waitBetweenTriesMs ?? 1000}
+                        onChange={(e) => update({ waitBetweenTriesMs: Math.max(0, Math.min(60_000, Math.round(Number(e.target.value) || 0))) })}
+                        aria-label="Wait between tries (ms)"
+                        className="w-24"
+                      />
+                    </SettingRow>
+                  )}
+                  {wf.retryOnFail && (
+                    <SettingRow label="Backoff" hint="Exponential doubles the wait after each failed try, up to a minute">
+                      <Select value={wf.retryBackoff ?? 'fixed'} onChange={(e) => update({ retryBackoff: e.target.value as 'fixed' | 'exponential' })} className="w-40">
+                        <option value="fixed">Fixed</option>
+                        <option value="exponential">Exponential</option>
+                      </Select>
+                    </SettingRow>
+                  )}
                   <SettingRow label="Timeout (seconds)" hint="Fail a try that takes longer; retries and On error apply. Empty: no timeout">
                     <Input
                       type="number"

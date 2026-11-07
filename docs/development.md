@@ -16,7 +16,7 @@ pnpm dev:all                                  # host on :3000 + the seven plugin
 docker compose -f deploy/compose.infra.yml up -d --wait   # Postgres, Valkey, Mailpit, MinIO, OpenBao (optional)
 ```
 
-`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github` runs one plugin, and
+`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|browser` runs one plugin, and
 `pnpm worker` runs a queue-mode worker. The host keeps its data in `apps/web/.data` (SQLite, `credentials.json`,
 `encryption.key`). Don't edit those files by hand: use the UI, the API or the [CLI](features/cli.md).
 [deployment.md, "Using the infra from the dev server on the host"](deployment.md#using-the-infra-from-the-dev-server-on-the-host)
@@ -90,7 +90,7 @@ Every suite, from the repository root. All of them run offline.
 pnpm typecheck                                     # every TypeScript package
 for p in protocol transports engine sdk cli; do (cd packages/$p && npx vitest run); done
 (cd services/code-runner && npx vitest run)
-for p in messaging text-toolkit github landfall triage; do (cd plugins/$p && npx vitest run); done
+for p in messaging text-toolkit github landfall triage browser; do (cd plugins/$p && npx vitest run); done
 (cd sdks/go && go test ./...)
 (cd sdks/go/transport && go test -race -count=1 -run Claim .)
 for k in kafka amqp nats valkey mqtt amqp1 sqs pubsub pulsar servicebus; do (cd sdks/go/transport/$k && go test ./...); done

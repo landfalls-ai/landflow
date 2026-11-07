@@ -51,6 +51,7 @@ export interface NodeSettingsPatch {
   retryOnFail?: boolean;
   maxTries?: number;
   waitBetweenTriesMs?: number;
+  retryBackoff?: 'fixed' | 'exponential';
   onError?: 'stop' | 'continue';
   timeoutSeconds?: number;
   alwaysOutputData?: boolean;
@@ -65,10 +66,11 @@ export interface WorkflowSettingsPatch {
   retryBaseDelaySeconds?: number;
 }
 
-const NODE_SETTINGS: Record<keyof NodeSettingsPatch, 'boolean' | 'number' | 'onError'> = {
+const NODE_SETTINGS: Record<keyof NodeSettingsPatch, 'boolean' | 'number' | 'onError' | 'backoff'> = {
   retryOnFail: 'boolean',
   maxTries: 'number',
   waitBetweenTriesMs: 'number',
+  retryBackoff: 'backoff',
   onError: 'onError',
   timeoutSeconds: 'number',
   alwaysOutputData: 'boolean',
@@ -82,7 +84,7 @@ const WORKFLOW_SETTINGS: Record<keyof WorkflowSettingsPatch, 'string' | 'number'
 };
 
 /** The settings of `raw` that `allowed` names, with the right types; undefined when none is left. */
-function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError'>): T | undefined {
+function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError' | 'backoff'>): T | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
@@ -91,6 +93,7 @@ function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number
     else if (kind === 'number' && typeof value === 'number' && Number.isFinite(value) && value >= 0) out[key] = value;
     else if (kind === 'string' && typeof value === 'string' && value.trim()) out[key] = value.trim();
     else if (kind === 'onError' && (value === 'stop' || value === 'continue')) out[key] = value;
+    else if (kind === 'backoff' && (value === 'fixed' || value === 'exponential')) out[key] = value;
   }
   return Object.keys(out).length ? (out as T) : undefined;
 }

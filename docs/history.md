@@ -226,6 +226,9 @@ transport and Valkey Cluster settings).
 | `36518d2` | Design: a team node shows who is on it (new look): before a run the members after the lead and the last run's outcome, in place of the strip; slots read Lead's model / memory / tools (NodeTile `slotNames`). |
 | `fe9230a` | The team node's last run says what Home and the Run Trace say: the run line's outcome, time and tokens (the whole run, a wait for a person included) instead of the team step's own time. |
 | (this change) | History rows for the team node's last-run fix. |
+| (this change) | Browser plugin on Vercel's agent-browser (read, act, screenshot; required allow-list, operator ceiling, fenced page text) and `retryBackoff: exponential` for node retries with the wait in the node's Settings; Streamdown, the Workflow SDK and durable timers looked at and left out | roadmap.md#browser-plugin-and-retry-backoff-2026-11-07 |
+| (this change) | Spotlight: fixed `useWorking() || useBuilding()` (a conditional hook call) in `spotlight.tsx`; Spotlight's node docs and the flow-builder catalog list a node's output fields from `outputSchema` (`outputFields()` in assistant/research.ts); the Browser node declares its output and accepts `selector`/`value`/`milliseconds`/`seconds` and rejects unknown step fields | roadmap.md#browser-plugin-and-retry-backoff-2026-11-07 |
+| (this change) | Workflow SDK spike notes, and specs 16 (chat with agents) and 17 (the parallel build plan) | research/workflow-sdk-spike.md |
 
 ## What is next
 

@@ -3,6 +3,8 @@ import { defineNode, NodeOperationError, type INodeType, type NodeItem } from '@
 import {
   executeWorkflow,
   inProcessNodeType,
+  retryDelayMs,
+  MAX_RETRY_WAIT_MS,
   type AgentTool,
   type ExecutionEvent,
   type LanguageModel,
@@ -211,6 +213,22 @@ describe('executeWorkflow', () => {
     const result = await run(wf([n('a', 'trigger'), n('b', 'flaky', {}, { retryOnFail: true, maxTries: 3, waitBetweenTriesMs: 1 })], [c('a', 'b')]));
     expect(result.status).toBe('success');
     expect(flakyCalls).toBe(3);
+  });
+
+  it('waits longer after each failed try with exponential backoff', async () => {
+    expect(retryDelayMs({ waitBetweenTriesMs: 100 }, 1)).toBe(100);
+    expect(retryDelayMs({ waitBetweenTriesMs: 100 }, 4)).toBe(100);
+    expect(retryDelayMs({ waitBetweenTriesMs: 100, retryBackoff: 'fixed' }, 3)).toBe(100);
+    expect([1, 2, 3, 4].map((attempt) => retryDelayMs({ waitBetweenTriesMs: 100, retryBackoff: 'exponential' }, attempt))).toEqual([100, 200, 400, 800]);
+    expect(retryDelayMs({ retryBackoff: 'exponential' }, 2)).toBe(2000);
+    expect(retryDelayMs({ waitBetweenTriesMs: 30_000, retryBackoff: 'exponential' }, 5)).toBe(MAX_RETRY_WAIT_MS);
+    flakyCalls = 0;
+    const started = Date.now();
+    const result = await run(wf([n('a', 'trigger'), n('b', 'flaky', {}, { retryOnFail: true, maxTries: 3, waitBetweenTriesMs: 30, retryBackoff: 'exponential' })], [c('a', 'b')]));
+    expect(result.status).toBe('success');
+    expect(flakyCalls).toBe(3);
+    // Two failed tries wait 30 ms then 60 ms before the third succeeds.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(85);
   });
 
   it('passes data through disabled nodes', async () => {

@@ -1095,11 +1095,15 @@ step, an approval before risky or production-changing steps, tagged by alert kin
 lists them; the **Find Runbook** node and the triage flow name the matching one and link it in the new room (**Timeline →
 Add Runbook Link**); **Incident → Get Room** reads a room for it. Deterministic, no model.
 
+## Browser plugin and retry backoff (2026-11-07)
+
+From the review of [Vercel's open source](https://vercel.com/oss) for what Landflow could use. **Built:** a **Browser** node plugin on Vercel's agent-browser CLI (read a page, run listed steps, take a screenshot; a required allow-list of sites, an operator ceiling, fenced and capped page text, no shell) in [plugins/browser](../plugins/browser/README.md); and `retryBackoff: exponential` for node retries, with the wait between tries now in the node's Settings. **Looked at and left out:** the Workflow SDK (a replay engine for compiled code; Landflow already checkpoints, resumes and re-arms timers, and its graphs are user-drawn data), Streamdown (the app renders no streamed markdown; the one `react-markdown` use is a finished document with stricter rules than Streamdown's defaults), and a durable timer table (timers already re-arm from the store at boot). **Checked live:** the Browser node filled and submitted a real form (served locally) in a seven-node flow Spotlight built, and the ticket it extracted matched the one computed independently. That run found and fixed a Spotlight bug (a conditional hook call, `useWorking() || useBuilding()`, made React's hook order change whenever a build began) and added output fields to what Spotlight reads about a node. The Workflow SDK spike (interpreter workflow, Local and Postgres worlds, a 200-node graph, a `kill -9`) is in [the research notes](research/workflow-sdk-spike.md). **Still open:** json-render for Run Trace cards, an AI SDK model node with `@ai-sdk/otel`, just-bash as an agent shell tool, and a capped deepsec scan.
+
 ## Planned next
 
 The follow-ups above are candidates, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).
 
 ## Not planned
 
-Later, maybe: browser use, an agent code sandbox, voice, and prompt management. Not planned:
+Later, maybe: an agent code sandbox, voice, and prompt management. Not planned:
 RPA, process mining, an app builder, and a chat hub (n8n is retiring its own).
