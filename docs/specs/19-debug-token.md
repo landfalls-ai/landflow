@@ -25,6 +25,19 @@ instance access token, the identity provider) can mistake it for theirs, and it 
 | Use cap | 1,000 tool calls per token, and 20 live tokens per execution, so a leak or a loop is bounded. |
 | Where | `POST /api/executions/:id/debug-tokens` (mint, once-shown), `GET` the same path (list yours; owners and admins: all), `DELETE /api/executions/:id/debug-tokens/:tokenId` (revoke). CLI: `landflow debug-token`. |
 
+## Debug access dialog (built 2026-11-07)
+
+The Run Trace page (`/runs/:executionId`, `components/run-trace/run-page.tsx`) has a **Debug access** button in its header that opens
+`components/run-trace/debug-access.tsx`: a bottom sheet on a phone, a centred dialog from 768 px, one column either way. It uses the three routes
+above and adds none:
+
+- **Mint**: pick the scopes (both by default; at least one), the lifetime (15 minutes, 1 hour, 4 hours, 24 hours) and an optional label, then
+  "Mint a token". The token is shown once with a copy button, and under it ready snippets for the host the page was opened on: `claude mcp add --transport http landflow-debug <origin>/api/mcp --header "Authorization: Bearer …"`,
+  a `.mcp.json` entry, and a `curl` that lists the three tools (`lib/shared/debug-token-snippets.ts`). "I have copied it" returns to the form; the token cannot be shown again.
+- **List**: the run's tokens (yours; owners and admins see everyone's) as cards: `lf_dbg_…` and the last four characters, state (live, revoked, expired, used up), scopes, expiry, last use and number of calls. The list refreshes every 5 seconds while the dialog is open, so an agent's first call shows up.
+- **Revoke**: a button on each live token; the row stays, marked revoked, and the next call with the token answers 401.
+- It shows a note when the host's MCP server is off, since the token has nothing to open until it is on. `landflow debug-bundle` is not offered a snippet: it still needs the person's key.
+
 ## Threat model
 
 Assets: the run's data (inputs and outputs of every node, which may hold personal data), the workflow's node parameters, and the secrets that
@@ -109,6 +122,6 @@ input only), and how the host reaches a laptop (a tunnel the developer opens, ne
 
 ## Open points
 
-- A page in Settings or on the execution view to mint, list and revoke tokens (today REST and the CLI).
+- A page in Settings listing every token of the instance (the dialog below covers one run at a time).
 - A per-minter cap, and the debug-bundle path with a token.
 - The in-token redaction misses a secret in free text under an ordinary key.
