@@ -81,7 +81,7 @@ describe('debug-node', () => {
   });
 
   it('refuses an unlisted host, an unrun node, bad arguments, and leaves no live token behind', async () => {
-    const unlisted = await cli(['debug-node', execution, 'Shout', '--plugin-url', 'http://localhost:' + local.port, '--json']);
+    const unlisted = await cli(['debug-node', execution, 'Shout', '--plugin-url', 'http://tunnel.example.test:' + local.port, '--json']);
     expect(unlisted.code).not.toBe(0);
     expect(JSON.stringify(unlisted.json)).toMatch(/not on the owner/);
     expect((await cli(['debug-node', execution, 'Start', '--plugin-url', local.url])).code).toBe(3); // never ran in this execution
