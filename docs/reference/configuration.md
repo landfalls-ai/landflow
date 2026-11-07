@@ -126,3 +126,5 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | `LANDFLOW_GIT_TIMEOUT_MS` | `120000` | per git command of Settings → Source control |
 | `LANDFLOW_METRICS_PUBLIC` | `false` | `true` lets Prometheus scrape `/api/metrics` without an API key |
 | plugin side: `LANDFLOW_REGISTRY_URL`, `LANDFLOW_ADVERTISE_HOST`, `LANDFLOW_HTTP_PORT`, `LANDFLOW_GRPC_PORT`, `LANDFLOW_REGISTRY_SECRET` | | see docs/protocol.md |
+| `LANDFLOW_SEARCH_SEARXNG_URL` | – | read by the Web Search plugin, not the host: the SearXNG base URL it uses when the SearXNG credential names none ([web-search.md](../web-search.md)) |
+| `LANDFLOW_SEARCH_DENY_DOMAINS` | – | read by the Web Search plugin: comma-separated domains (subdomains included) the node refuses as `site` and drops from results |

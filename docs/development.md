@@ -13,10 +13,11 @@ pnpm install
 (cd plugins/py-insights && ./setup.sh)        # .venv with the Python SDK, gRPC, MCP and broker extras
 (cd plugins/productivity && ./setup.sh)       # the same for the Python integrations
 pnpm dev:all                                  # host on :3000 + the seven plugins (7101–7107 HTTP, 7201–7207 gRPC)
+pnpm dev:all:browser                          # the same plus the Browser plugin (7112 / 7212; needs agent-browser and Chrome on the Mac)
 docker compose -f deploy/compose.infra.yml up -d --wait   # Postgres, Valkey, Mailpit, MinIO, OpenBao (optional)
 ```
 
-`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|browser` runs one plugin, and
+`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|browser|web-search` runs one plugin (`web-search` on 7113 / 7213), and
 `pnpm worker` runs a queue-mode worker. The host keeps its data in `apps/web/.data` (SQLite, `credentials.json`,
 `encryption.key`). Don't edit those files by hand: use the UI, the API or the [CLI](features/cli.md).
 [deployment.md, "Using the infra from the dev server on the host"](deployment.md#using-the-infra-from-the-dev-server-on-the-host)
