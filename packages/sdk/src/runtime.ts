@@ -201,6 +201,7 @@ function buildContext(node: INodeType, request: ExecuteRequest, logs: LogEntry[]
     },
     artifact: (artifact) => report({ type: 'artifact', ...artifact }),
     check: (check) => report({ type: 'check', ...check }),
+    model: (call) => report({ type: 'model', ...call }),
     getPollState: <T extends JsonObject>() => request.pollState as T | undefined,
     setPollState: (state: JsonObject) => {
       poll.value = state;

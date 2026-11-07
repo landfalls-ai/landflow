@@ -33,6 +33,7 @@ import { withExtends } from '../credentials/extends';
 import { freshCredentials, withFreshTokens } from '../credentials/oauth2-runtime';
 import { withExternalSecrets } from '../secrets/runtime';
 import { withGovernance } from '../governance/policy';
+import { withAiUsage } from '../ai-usage/plugin';
 import { bus } from '../bus';
 import { singleton } from '../singleton';
 import { withSpan, withTransportChoice } from '../telemetry';
@@ -768,7 +769,8 @@ export class PluginRegistry implements NodeTypeResolver, AutoSource {
     const resolved = this.resolveType(type);
     // External secrets innermost: `$secrets` in credentials resolve after token renewal, and responses are redacted.
     // Governance outermost: a node type the policy blocks fails before anything else runs (lib/server/governance/policy.ts).
-    return 'error' in resolved ? resolved : withGovernance(withBinaryData(withFreshTokens(withExternalSecrets(resolved))));
+    // AI usage just inside it: a node that reports its own model calls (`ctx.model`) is counted and capped (lib/server/ai-usage/plugin.ts).
+    return 'error' in resolved ? resolved : withGovernance(withAiUsage(withBinaryData(withFreshTokens(withExternalSecrets(resolved)))));
   }
 
   private resolveType(type: string): ResolvedNodeType | { error: string } {

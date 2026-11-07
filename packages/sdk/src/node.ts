@@ -24,6 +24,7 @@ import type {
   NodeDescriptor,
   NodeArtifact,
   NodeCheck,
+  NodeModelCall,
   NodeItem,
   NodeRef,
   PluginInfo,
@@ -201,6 +202,12 @@ export interface IExecuteContext extends IBaseContext {
   artifact(artifact: NodeArtifact): void;
   /** Report the outcome of a check the node made: tests passed, a reply cites its source, a refund is within policy. Delivered like `artifact`. */
   check(check: NodeCheck): void;
+  /**
+   * Report a model call this node made itself (a plugin that talks to a model): the host counts its tokens in AI usage, prices it,
+   * applies the AI usage caps (see `meterAiUsage` on the descriptor) and shows it as a `model` step under the node in Run Trace.
+   * Delivered like `artifact`; credential values are masked in the text fields.
+   */
+  model(call: NodeModelCall): void;
 }
 
 /** A sub-node's context. In-process sub-nodes can pull their own sub-nodes too (a document loader its text splitter). */

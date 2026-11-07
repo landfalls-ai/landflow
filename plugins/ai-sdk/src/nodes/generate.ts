@@ -121,6 +121,8 @@ export class GenerateWithAiSdk implements INodeType {
     },
     // A model call costs money and is not repeatable: no tool use, no broker redelivery.
     usableAsTool: false,
+    // Each call is reported with ctx.model: the host counts it in AI usage, applies the AI usage caps and shows a `model` step in Run Trace.
+    meterAiUsage: true,
     properties: [
       {
         name: 'provider',
@@ -181,6 +183,7 @@ export class GenerateWithAiSdk implements INodeType {
         const model = buildModel(ctx, provider, modelId, Boolean(schema));
         const record = options.recordContent === true;
 
+        const started = Date.now();
         const json = await ctx.span('ai-sdk.generate', { 'ai_sdk.provider': provider, 'gen_ai.request.model': modelId }, async (span) => {
           // No tracer is passed: the integration uses the OpenTelemetry global that serve() registered, and the
           // active context, so the AI SDK's spans are children of this span and in the same trace.
@@ -197,6 +200,19 @@ export class GenerateWithAiSdk implements INodeType {
           });
           const inputTokens = result.usage?.inputTokens ?? 0;
           const outputTokens = result.usage?.outputTokens ?? 0;
+          // The host's trace content setting (traceContent) decides what Run Trace keeps of the prompt and the answer; spans stay governed by `recordContent`.
+          ctx.model({
+            model: result.response?.modelId ?? modelId,
+            provider,
+            inputTokens,
+            outputTokens,
+            ...(result.usage?.inputTokenDetails?.cacheReadTokens && { cacheReadTokens: result.usage.inputTokenDetails.cacheReadTokens }),
+            ...(result.usage?.inputTokenDetails?.cacheWriteTokens && { cacheWriteTokens: result.usage.inputTokenDetails.cacheWriteTokens }),
+            durationMs: Date.now() - started,
+            finishReason: result.finishReason,
+            prompt: system ? `${system}\n\n${prompt}` : prompt,
+            answer: result.text,
+          });
           return {
             text: result.text,
             ...(schema && { output: result.output as unknown as JsonObject }),
