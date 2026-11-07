@@ -7,6 +7,7 @@
 import type { ConnectionType, NodeItem, NodeTypeInfo, PropertyDescriptor } from '@/lib/shared/types';
 import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import { registry } from './plugins/registry';
+import { collectionShape } from '@/lib/shared/assistant-ops';
 import { outputFields } from './assistant/research';
 
 export interface DraftNode {
@@ -88,7 +89,8 @@ ${PARAMETER_FORMATS}`;
 function describeProperty(p: PropertyDescriptor): string {
   const options = p.options?.map((o) => String(o.value)).slice(0, 8);
   const hint = p.description ? ` "${p.description.slice(0, 90)}"` : '';
-  return `${p.name} (${p.type}${options?.length ? `: ${options.join('|')}` : ''}${p.default !== undefined && typeof p.default !== 'object' && p.default !== '' ? `, default ${JSON.stringify(p.default)}` : ''})${hint}`;
+  const shape = collectionShape(p);
+  return `${p.name} (${p.type}${options?.length ? `: ${options.join('|')}` : ''}${p.default !== undefined && typeof p.default !== 'object' && p.default !== '' ? `, default ${JSON.stringify(p.default)}` : ''})${hint}${shape ? ` [${shape}]` : ''}`;
 }
 
 function catalog(types: NodeTypeInfo[]): string {
@@ -113,6 +115,26 @@ function asItems(rows: unknown): NodeItem[] | undefined {
   if (!Array.isArray(rows)) return undefined;
   const items = rows.filter((r) => r && typeof r === 'object' && !Array.isArray(r)).map((json) => ({ json: json as NodeItem['json'] }));
   return items.length ? items.slice(0, 10) : undefined;
+}
+
+/** Keys a model copies from a chat trigger's world onto a manual trigger's test item. */
+const TRIGGER_JUNK = new Set(['chatInput', 'sessionId', 'action', 'parameters', 'type', 'typeVersion']);
+
+/**
+ * Test data for the trigger. Models pin the trigger's own parameters or a `chatInput` on a manual trigger: those keys come
+ * out, and with nothing left, or nothing a node that names the fields it reads (`$json.x`) would read, there is no pin.
+ */
+export function cleanTestItems(items: NodeItem[] | undefined, trigger: Pick<DraftNode, 'key'> | undefined, nodes: DraftNode[]): NodeItem[] | undefined {
+  if (!items || !trigger) return undefined;
+  const own = new Set(Object.keys(nodes.find((n) => n.key === trigger.key)?.parameters ?? {}));
+  const cleaned = items
+    .map((item) => ({ ...item, json: Object.fromEntries(Object.entries(item.json).filter(([k]) => !TRIGGER_JUNK.has(k) && !own.has(k))) as NodeItem['json'] }))
+    .filter((item) => Object.keys(item.json).length);
+  if (!cleaned.length) return undefined;
+  const text = JSON.stringify(nodes.filter((n) => n.key !== trigger.key).map((n) => n.parameters ?? {}));
+  // When the flow names the fields it reads and the items carry none of them, the items are noise on the trigger.
+  const read = new Set([...text.matchAll(/\$json(?:\.|\[\\?['"])(\w+)/g), ...text.matchAll(/\.json\.(\w+)/g)].map((m) => m[1]));
+  return read.size && !cleaned.some((item) => Object.keys(item.json).some((k) => read.has(k))) ? undefined : cleaned;
 }
 
 /** `teams`: the published agent teams the caller can see, so a Run a Team node gets a real team (by id, never a guess). */
@@ -199,7 +221,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
     nodes.unshift(trigger);
     for (const root of roots) edges.push([trigger.key, root.key, 0, 'main']);
   }
-  const testItems = asItems(raw.testData)?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
+  const testItems = cleanTestItems(asItems(raw.testData), trigger, nodes)?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
   const pinData = trigger && trigger.type === 'core.manualTrigger' && testItems ? { [trigger.key]: testItems } : undefined;
   return { name: (raw.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped };
 }

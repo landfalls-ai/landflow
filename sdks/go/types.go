@@ -260,6 +260,9 @@ type NodeDescriptor struct {
 	// Capabilities are stable contract tags ("ioc.enrich"): lowercase words joined by dots. Composite slots
 	// select nodes by them (NodeMatcher.Capability), unlike Categories, which only group the node creator.
 	Capabilities []string `json:"capabilities,omitempty"`
+	// MeterAiUsage says the node calls a model and reports each call with ExecuteContext.Model: the host counts those
+	// calls in AI usage and refuses the node before it runs once a cap is reached (docs/protocol.md "Model records").
+	MeterAiUsage bool `json:"meterAiUsage,omitempty"`
 }
 
 // NodeCredentialRequirement names a credential type a node can use, by the
@@ -490,11 +493,33 @@ type Check struct {
 	Evidence map[string]any
 }
 
-// Record is one entry of ExecuteResponse.records: an artifact (Type "artifact")
-// or a check (Type "check"), with when it was reported (RFC 3339).
+// ModelCall is one model call a node made (ExecuteContext.Model): the host prices it, counts it in AI usage and the
+// caps, and shows it as a model step under the node in Run Trace.
+type ModelCall struct {
+	// Name labels the call when the node makes several ("summarize", "judge"); the step is named after the model without it.
+	Name string
+	// Model is the model id the provider answered with; Provider who served it (gen_ai.system: ollama, anthropic,
+	// openai, google...), used to price the call.
+	Model    string
+	Provider string
+	// InputTokens is the whole prompt, cached tokens included.
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	DurationMs       int64
+	FinishReason     string
+	// Prompt and Answer: the host's trace content setting decides what Run Trace keeps of them.
+	Prompt string
+	Answer string
+}
+
+// Record is one entry of ExecuteResponse.records: an artifact (Type "artifact"),
+// a check (Type "check") or a model call (Type "model"), with when it was
+// reported (RFC 3339).
 type Record struct {
 	Type     string         `json:"type"`
-	Name     string         `json:"name"`
+	Name     string         `json:"name,omitempty"`
 	Kind     string         `json:"kind,omitempty"`
 	URL      string         `json:"url,omitempty"`
 	MimeType string         `json:"mimeType,omitempty"`
@@ -505,6 +530,18 @@ type Record struct {
 	Subject  string         `json:"subject,omitempty"`
 	Evidence map[string]any `json:"evidence,omitempty"`
 	At       string         `json:"at,omitempty"`
+
+	// Model records (Type "model"). The token counts are pointers so a zero is still sent: the protocol requires them.
+	Model            string `json:"model,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	InputTokens      *int   `json:"inputTokens,omitempty"`
+	OutputTokens     *int   `json:"outputTokens,omitempty"`
+	CacheReadTokens  int    `json:"cacheReadTokens,omitempty"`
+	CacheWriteTokens int    `json:"cacheWriteTokens,omitempty"`
+	DurationMs       int64  `json:"durationMs,omitempty"`
+	FinishReason     string `json:"finishReason,omitempty"`
+	Prompt           string `json:"prompt,omitempty"`
+	Answer           string `json:"answer,omitempty"`
 }
 
 // NodeErrorPayload is the wire form of a node failure.

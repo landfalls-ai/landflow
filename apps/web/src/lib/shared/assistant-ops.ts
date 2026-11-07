@@ -837,7 +837,146 @@ export function wiringWarnings(before: Workflow, after: Workflow, lookup: Descri
   return { branches: warnings, purpose };
 }
 
-const SWALLOWS = /catch\s*(?:\([^)]*\))?\s*\{[^}]*\breturn\b|\.catch\s*\(\s*(?:\([^)]*\)|\w*)\s*=>\s*(?:\{[^}]*return\b|[^)]*\))|continueOnFail/;
+// ---------------------------------------------------------------------------
+// Collections, agent sub-nodes and credentials
+// ---------------------------------------------------------------------------
+
+const isExpression = (value: unknown) => typeof value === 'string' && (value.includes('{{') || value.startsWith('='));
+const plain = (value: unknown) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/** A sample value for a field: its first option, its default, or a placeholder by type. */
+function sampleValue(f: PropertyDescriptor): unknown {
+  if (f.options?.length) return f.options[0].value;
+  if (f.default !== undefined && f.default !== '' && typeof f.default !== 'object') return f.default;
+  return f.type === 'number' ? 0 : f.type === 'boolean' ? false : '…';
+}
+
+const shortOptions = (f: PropertyDescriptor, max = 20) => {
+  const values = (f.options ?? []).map((o) => JSON.stringify(o.value));
+  return values.slice(0, max).join('|') + (values.length > max ? `|… (${values.length} in all)` : '');
+};
+
+/**
+ * How a collection / fixedCollection is stored in `node.parameters`, spelled out: group names, field names, the values an
+ * options field allows and a one-line example. A model that only sees "fixedCollection" writes a flat array.
+ * Empty for other types.
+ */
+export function collectionShape(p: PropertyDescriptor): string {
+  const fieldText = (f: PropertyDescriptor) => `${f.name}: ${f.options?.length && !f.typeOptions?.loadOptionsMethod ? shortOptions(f) : f.type}`;
+  const row = (fields: PropertyDescriptor[]) => `{ ${fields.slice(0, 8).map(fieldText).join(', ')} }`;
+  const example = (fields: PropertyDescriptor[]) => JSON.stringify(Object.fromEntries(fields.slice(0, 4).map((f) => [f.name, sampleValue(f)])));
+  if (p.type === 'collection' && p.values?.length) return `stored as one object { ${p.values.slice(0, 10).map(fieldText).join(', ')} }, e.g. ${example(p.values)}`;
+  if (p.type === 'fixedCollection' && p.groups?.length) {
+    const many = Boolean(p.typeOptions?.multipleValues);
+    const groups = p.groups.map((g) => `"${g.name}": ${many ? `[${row(g.values)}, …]` : row(g.values)}`).join(', ');
+    const g = p.groups[0];
+    return `stored as an object keyed by group, ${many ? 'each group a list of rows' : 'each group one row'}: { ${groups} }, e.g. {"${g.name}":${many ? `[${example(g.values)}]` : example(g.values)}}`;
+  }
+  return '';
+}
+
+/** Problems with one parameter value against its descriptor: wrong shape, unknown keys, an option that doesn't exist. */
+function valueProblems(p: PropertyDescriptor, value: unknown, label: string): string[] {
+  if (value === undefined || value === null || isExpression(value)) return [];
+  if (p.type === 'options') {
+    if (p.typeOptions?.loadOptionsMethod || !p.options?.length || plain(value) || Array.isArray(value)) return [];
+    return p.options.some((o) => String(o.value) === String(value)) ? [] : [`${label}: ${JSON.stringify(value)} is not one of ${shortOptions(p)}`];
+  }
+  if (p.type === 'collection' && p.values) {
+    if (!plain(value)) return [`${label} must be one object, ${collectionShape(p)}`];
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, v]) => {
+      const field = p.values!.find((f) => f.name === key);
+      return field ? valueProblems(field, v, `${label}.${key}`) : [`${label} has no field “${key}” (fields: ${p.values!.map((f) => f.name).join(', ')})`];
+    });
+  }
+  if (p.type === 'fixedCollection' && p.groups) {
+    if (!plain(value)) return [`${label} must be an object keyed by group, ${collectionShape(p)}`];
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, group]) => {
+      const g = p.groups!.find((x) => x.name === key);
+      if (!g) return [`${label} has no group “${key}” (groups: ${p.groups!.map((x) => x.name).join(', ')}); ${collectionShape(p)}`];
+      if (p.typeOptions?.multipleValues && !Array.isArray(group)) return [`${label}.${key} must be a list of rows, [{…}, …]`];
+      return (Array.isArray(group) ? group : [group]).flatMap((r, i) => {
+        if (!plain(r)) return [`${label}.${key}[${i}] must be an object with ${g.values.map((f) => f.name).join(', ')}`];
+        return Object.entries(r as Record<string, unknown>).flatMap(([k, v]) => {
+          const field = g.values.find((f) => f.name === k);
+          return field ? valueProblems(field, v, `${label}.${key}[${i}].${k}`) : [`${label}.${key}[${i}] has no field “${k}” (fields: ${g.values.map((f) => f.name).join(', ')})`];
+        });
+      });
+    });
+  }
+  return [];
+}
+
+/**
+ * Parameters a proposal writes in a shape the node can't read: a fixedCollection that isn't `{ group: [rows] }`, a key the
+ * collection doesn't have (`value` for `text`), an option value the list doesn't contain (an invented action). Checked on
+ * new nodes and nodes whose parameters changed; sent back once like the other structural warnings.
+ */
+export function collectionWarnings(before: Workflow, after: Workflow, lookup: DescriptorLookup): string[] {
+  const out: string[] = [];
+  for (const node of after.nodes) {
+    const was = before.nodes.find((n) => n.id === node.id);
+    const descriptor = lookup(node.type);
+    if (!descriptor) continue;
+    for (const p of descriptor.properties) {
+      const value = node.parameters[p.name];
+      if (value === undefined || (was && JSON.stringify(was.parameters[p.name]) === JSON.stringify(value))) continue;
+      out.push(...valueProblems(p, value, `“${node.name}” ${p.name}`));
+    }
+  }
+  return [...new Set(out)].slice(0, 6);
+}
+
+/**
+ * Nodes that serve an agent, wired wrongly. A new tool node (usable as a tool) placed after an agent as a normal step
+ * runs once when the agent is done instead of being called by it; it needs an ai_tool connection. A new sub-node with only
+ * a main connection never reaches the agent's model / tool / memory input.
+ */
+export function agentWiringWarnings(before: Workflow, after: Workflow, lookup: DescriptorLookup): string[] {
+  const out: string[] = [];
+  const existed = new Set(before.nodes.map((n) => n.id));
+  const name = (id: string) => after.nodes.find((n) => n.id === id)?.name ?? id;
+  for (const node of after.nodes) {
+    if (existed.has(node.id)) continue;
+    const d = lookup(node.type);
+    if (!d || d.kind === 'trigger') continue;
+    if (after.connections.some((c) => c.source === node.id && c.type !== 'main')) continue;
+    if (d.kind === 'subnode') {
+      if (after.connections.some((c) => (c.source === node.id || c.target === node.id) && c.type === 'main')) {
+        out.push(`“${node.name}” supplies an agent (${d.supplies ?? 'ai_*'}): attach it to the agent with an ${d.supplies ?? 'ai_*'} connection, not a main one`);
+      }
+      continue;
+    }
+    const agents = after.connections
+      .filter((c) => c.target === node.id && c.type === 'main')
+      .map((c) => c.source)
+      .filter((id) => lookup(after.nodes.find((n) => n.id === id)?.type ?? '')?.inputs.some((p) => p.type === 'ai_tool'));
+    if (d.usableAsTool && agents.length) out.push(`“${node.name}” is wired after “${name(agents[0])}” as a normal step; if the agent should call it as a tool, attach it with an ai_tool connection (connect type ai_tool) instead`);
+  }
+  return out;
+}
+
+/** Nodes that need a credential none of the ops can set: the person picks it in the node's panel. `visible`: whether the slot shows with these parameters. */
+export function credentialWarnings(
+  before: Workflow,
+  after: Workflow,
+  lookup: DescriptorLookup,
+  visible: (credential: NonNullable<NodeDescriptor['credentials']>[number], parameters: Record<string, unknown>, descriptor: NodeDescriptor) => boolean,
+): string[] {
+  const out: string[] = [];
+  for (const node of after.nodes) {
+    const was = before.nodes.find((n) => n.id === node.id);
+    if (was && JSON.stringify(was.parameters) === JSON.stringify(node.parameters)) continue;
+    const d = lookup(node.type);
+    if (!d) continue;
+    for (const c of d.credentials ?? []) {
+      if (c.required && visible(c, node.parameters, d) && !node.credentials?.[c.name]) out.push(`“${node.name}” needs the credential ${c.name} and none is set: pick one in the node's panel`);
+    }
+  }
+  return out;
+}
+
+const SWALLOWS =/catch\s*(?:\([^)]*\))?\s*\{[^}]*\breturn\b|\.catch\s*\(\s*(?:\([^)]*\)|\w*)\s*=>\s*(?:\{[^}]*return\b|[^)]*\))|continueOnFail/;
 
 /** Ops that make a node stop failing instead of fixing why it fails: onError continue, or code that catches and returns. */
 export function swallowWarnings(ops: AssistantOp[]): string[] {

@@ -382,6 +382,20 @@ describe('roles', () => {
     expect(canManageUser(member, member, { kind: 'remove' })).toBe(false);
   });
 
+  it('json-render is the owner’s to switch: members are refused, admins can change other settings but not it', async () => {
+    const settingsRoute = await import('@/app/api/settings/route');
+    const member = await addUser('jr-max@example.com', 'member', 'JrMax');
+    const admin = await addUser('jr-ada@example.com', 'admin', 'JrAda');
+    const patch = (session: string, body: unknown) => call(settingsRoute.PATCH, '/api/settings', { method: 'PATCH', body, session });
+    expect((await call(settingsRoute.GET, '/api/settings', { session: member.session })).body.jsonRender).toBe(false);
+    expect((await patch(member.session, { jsonRender: true })).status).toBe(403);
+    expect((await patch(admin.session, { jsonRender: true })).status).toBe(403);
+    expect((await patch(admin.session, { timezone: 'UTC' })).status).toBe(200);
+    expect((await patch(ownerSession, { jsonRender: true })).body.jsonRender).toBe(true);
+    expect((await call(settingsRoute.GET, '/api/settings', { session: member.session })).body.jsonRender).toBe(true);
+    expect((await patch(ownerSession, { jsonRender: null })).body.jsonRender).toBe(false);
+  });
+
   it('members can’t manage users, settings or variables; admins can’t invite admins; the owner can', async () => {
     const member = await addUser('max@example.com', 'member', 'Max');
     const admin = await addUser('ada@example.com', 'admin', 'Ada');

@@ -197,6 +197,8 @@ export interface AgentSettings {
   sessionTokenBudget: number;
   /** How deep sub-agents may delegate further (1–5). */
   maxDelegationDepth: number;
+  /** Newest tool images (a screenshot) sent to the model each turn, 0–10; absent: LANDFLOW_TOOL_IMAGES_KEPT, else 2. A Run an Agent or Run a Team node's own setting wins. */
+  toolImagesKept?: number;
   /** Usage limits across all sessions (0 or absent = none): tokens per day, USD per day, USD per calendar month (instance time zone). */
   dailyTokenLimit?: number;
   dailyCostLimit?: number;
@@ -614,6 +616,8 @@ export type TimelineEntry =
       nodeType?: string;
       input: Record<string, unknown>;
       output?: unknown;
+      /** Images the tool returned, by reference to the binary store (never the bytes): Run Trace shows them as thumbnails. */
+      images?: Array<{ mimeType: string; size: number; ref?: string }>;
       error?: string;
       status: 'running' | 'success' | 'error' | 'awaiting_approval' | 'denied';
       durationMs?: number;

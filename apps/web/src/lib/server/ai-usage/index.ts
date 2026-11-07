@@ -88,6 +88,13 @@ export class AiUsageMeter implements UsageMeter {
     return estimateCost(findPrice(call.provider, call.model, this.prices.overrides), call.inputTokens, call.outputTokens, call.cacheReadTokens, call.cacheWriteTokens);
   }
 
+  /** The price of a call for display (Run Trace): the same pricing as `cost`, and whether the model has a price at all (an unknown one is $0). */
+  price(call: { provider: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }): { cost: number; priced: boolean } {
+    if (!this.prices || Date.now() - this.prices.at > PRICE_CACHE_MS) this.prices = { at: Date.now(), overrides: priceOverrides(this.db()) };
+    const price = findPrice(call.provider, call.model, this.prices.overrides);
+    return { cost: estimateCost(price, call.inputTokens, call.outputTokens, call.cacheReadTokens, call.cacheWriteTokens), priced: price !== undefined };
+  }
+
   /** Forget cached overrides (after Settings saves new prices). */
   invalidatePrices() {
     this.prices = undefined;

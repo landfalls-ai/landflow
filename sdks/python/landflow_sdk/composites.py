@@ -42,6 +42,10 @@ def validate_capabilities(capabilities: Any, where: str) -> None:
             raise DescriptorError(f"{where}: capability {tag!r} must be a lowercase dotted tag like 'ioc.enrich'")
 
 
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _values(value: Any) -> list[Any]:
     return list(value) if isinstance(value, list) else [value]
 
@@ -189,6 +193,19 @@ def composite_problems(composite: Any) -> list[str]:
                     add(f"starter node \"{node['id']}\": position must be [x, y]")
                 ids.add(node["id"])
                 known(node.get("slot"), f"starter node \"{node['id']}\"")
+                at_node = f"starter node \"{node['id']}\""
+                if node.get("onError") not in (None, "stop", "continue"):
+                    add(f"{at_node}: onError {node.get('onError')!r} must be 'stop' or 'continue'")
+                if "retryOnFail" in node and not isinstance(node["retryOnFail"], bool):
+                    add(f"{at_node}: retryOnFail must be true or false")
+                tries = node.get("maxTries")
+                if tries is not None and not (_is_int(tries) and tries > 0):
+                    add(f"{at_node}: maxTries must be a positive integer")
+                wait = node.get("waitBetweenTriesMs")
+                if wait is not None and not (_is_int(wait) and 0 <= wait <= 60_000):
+                    add(f"{at_node}: waitBetweenTriesMs must be an integer from 0 to 60000")
+                if node.get("retryBackoff") not in (None, "fixed", "exponential"):
+                    add(f"{at_node}: retryBackoff {node.get('retryBackoff')!r} must be 'fixed' or 'exponential'")
             for conn in starter["connections"]:
                 if not isinstance(conn, dict) or conn.get("source") not in ids or conn.get("target") not in ids:
                     source = conn.get("source") if isinstance(conn, dict) else conn

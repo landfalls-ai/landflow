@@ -109,7 +109,7 @@ class El {
 interface Page { root: El; buttons: string[]; spoken: string[]; cancelled: number; sent: unknown[]; recs: Array<Record<string, unknown>>; input: El }
 
 /** Run the script against `cfg`, with `win` as the browser's speech APIs. */
-async function load(cfg: Record<string, unknown>, win: Record<string, unknown>): Promise<Page> {
+async function load(cfg: Record<string, unknown>, win: Record<string, unknown>, opts: { store?: Record<string, string>; stream?: string[]; heard?: number[] } = {}): Promise<Page> {
   const body = new El('body');
   const spoken: string[] = [];
   const sent: unknown[] = [];
@@ -139,12 +139,19 @@ async function load(cfg: Record<string, unknown>, win: Record<string, unknown>):
     document,
     navigator: { language: 'en-GB' },
     location: { href: 'http://chat.test/chat/k' },
-    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    localStorage: opts.store
+      ? { getItem: (k: string) => opts.store![k] ?? null, setItem: (k: string, v: string) => { opts.store![k] = v; }, removeItem: (k: string) => { delete opts.store![k]; } }
+      : { getItem: () => null, setItem: () => {}, removeItem: () => {} },
     sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
     crypto: { randomUUID: () => 'abc' },
     fetch: (url: string, init?: { method?: string; body?: string }) => {
       if (String(url).endsWith('/config')) return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(cfg), headers: { get: () => 'application/json' } });
       sent.push(init?.body && JSON.parse(init.body));
+      if (opts.stream) {
+        const lines = [...opts.stream];
+        const body = { getReader: () => ({ read: () => { opts.heard?.push(spoken.length); const next = lines.shift(); return Promise.resolve(next === undefined ? { done: true } : { done: false, value: new TextEncoder().encode(`data: ${next}\n`) }); } }) };
+        return Promise.resolve({ ok: true, status: 200, headers: { get: () => 'text/event-stream' }, body });
+      }
       return Promise.resolve({ ok: true, status: 200, headers: { get: () => 'application/json' }, json: () => Promise.resolve({ output: 'Reply with `code`.\n```x\nno\n```\nDone.' }) });
     },
     URL,
@@ -239,5 +246,65 @@ describe('the voice buttons in the client', () => {
   it('has large tap targets on a phone', () => {
     expect(CHAT_CLIENT_JS).toMatch(/@media \(max-width: 600px\) \{ \.mic, \.speak, \.send \{ height: 48px/);
     expect(CHAT_CLIENT_JS).toContain('touch-action: none');
+  });
+});
+
+describe('the speaker toggle is remembered', () => {
+  it('starts on when it was left on, and saves each change', async () => {
+    const store: Record<string, string> = { 'landflow-chat-speak:k': '1' };
+    const page = await load({ voice: 'inout', responseMode: 'lastNode' }, FULL, { store });
+    const speak = find(page, 'speak');
+    expect(speak.getAttribute('aria-pressed')).toBe('true');
+    speak.click();
+    expect(speak.getAttribute('aria-pressed')).toBe('false');
+    expect(store['landflow-chat-speak:k']).toBeUndefined();
+    speak.click();
+    expect(store['landflow-chat-speak:k']).toBe('1');
+  });
+  it('starts off by default and reads once a remembered toggle is on', async () => {
+    const off = await load({ voice: 'inout' }, FULL, { store: {} });
+    expect(find(off, 'speak').getAttribute('aria-pressed')).toBe('false');
+    const store = { 'landflow-chat-speak:k': '1' };
+    const page = await load({ voice: 'inout', responseMode: 'lastNode' }, FULL, { store });
+    page.input.value = 'hi';
+    page.root.all().find((e) => e.tagName === 'form')!.fire('submit');
+    await settle();
+    expect(page.spoken).toEqual(['Reply with.', 'Done.']);
+  });
+  it('works when the browser refuses storage, and the microphone still stops speech', async () => {
+    const store = new Proxy({}, { get() { throw new Error('denied'); }, set() { throw new Error('denied'); } }) as Record<string, string>;
+    const page = await load({ voice: 'inout' }, FULL, { store });
+    const speak = find(page, 'speak');
+    expect(speak.getAttribute('aria-pressed')).toBe('false');
+    speak.click();
+    expect(speak.getAttribute('aria-pressed')).toBe('true');
+    const before = page.cancelled;
+    find(page, 'mic').fire('pointerdown');
+    expect(page.cancelled).toBeGreaterThan(before);
+  });
+});
+
+describe('reading a reply while it streams', () => {
+  const item = (content: string, agent?: { id: string; name: string }) => JSON.stringify({ type: 'item', content, ...(agent && { agent }) });
+  it('reads each completed sentence as it arrives, never code, and the rest at the end', async () => {
+    const heard: number[] = [];
+    const lines = [item('Hello the'), item('re. Use `rm'), item(' -rf` now. Look:\n```sh\nls\n'), item('```\nBilling is'), item(' fine. Bye'), JSON.stringify({ type: 'done', status: 'success', executionId: 'e1' })];
+    const page = await load({ voice: 'inout', responseMode: 'streaming' }, FULL, { store: { 'landflow-chat-speak:k': '1' }, stream: lines, heard });
+    page.input.value = 'go';
+    page.root.all().find((e) => e.tagName === 'form')!.fire('submit');
+    await settle();
+    expect(page.spoken).toEqual(['Hello there.', 'Use now.', 'Look:', 'Billing is fine.', 'Bye']);
+    // Spoken before the stream ended: after the second chunk the first sentence was out already.
+    expect(heard[2]).toBe(1);
+    expect(heard[heard.length - 1]).toBeLessThan(page.spoken.length);
+    expect(page.spoken.join(' ')).not.toMatch(/rm|ls|`/);
+  });
+  it('reads nothing while the speaker is off', async () => {
+    const lines = [item('One. Two. '), JSON.stringify({ type: 'done', status: 'success' })];
+    const page = await load({ voice: 'inout', responseMode: 'streaming' }, FULL, { store: {}, stream: lines });
+    page.input.value = 'go';
+    page.root.all().find((e) => e.tagName === 'form')!.fire('submit');
+    await settle();
+    expect(page.spoken).toEqual([]);
   });
 });

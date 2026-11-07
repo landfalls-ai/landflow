@@ -12,6 +12,12 @@ describe('ui-spec catalog validation', () => {
     process.env.LANDFLOW_JSON_RENDER = '1';
     expect(jsonRenderEnabled()).toBe(true);
   });
+  it('a saved setting wins over the environment, either way', () => {
+    expect(jsonRenderEnabled(true)).toBe(true);
+    process.env.LANDFLOW_JSON_RENDER = '1';
+    expect(jsonRenderEnabled(false)).toBe(false);
+    expect(jsonRenderEnabled(undefined)).toBe(true);
+  });
   it('accepts the three cards, also as JSON text', () => {
     expect(parseUiSpec(one('Status', { title: 'T', status: 'running' })).spec?.elements.c.type).toBe('Status');
     expect(parseUiSpec(one('Diff', { path: 'a.ts', lines: [{ kind: 'add', text: 'x' }] })).spec).not.toBeNull();

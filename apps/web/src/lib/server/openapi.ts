@@ -40,7 +40,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks';
   id: string;
   summary: string;
   description?: string;
@@ -1109,6 +1109,28 @@ function paths(): Record<string, Record<string, Json>> {
   });
   add('delete', '/api/variables/{key}', { tag: 'Variables', id: 'deleteVariable', summary: 'Delete a variable', responses: { 200: reply('Deleted', ok), 404: notFound } });
 
+  // ---- settings ----
+  const settingsDoc = object({
+    timezone: { type: 'string' },
+    executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }),
+    jsonRender: { type: 'boolean', description: 'Saved json-render choice; absent while the LANDFLOW_JSON_RENDER default applies' },
+  });
+  add('get', '/api/settings', {
+    tag: 'Settings',
+    id: 'getSettings',
+    summary: 'Get the instance settings',
+    description: '`jsonRender` is the json-render flag as it stands: the saved choice, else the `LANDFLOW_JSON_RENDER` default.',
+    responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' }, hostTimezone: { type: 'string' }, executions: object({ stored: { type: 'integer' }, prunable: { type: 'integer' } }) })) },
+  });
+  add('patch', '/api/settings', {
+    tag: 'Settings',
+    id: 'updateSettings',
+    summary: 'Change the instance settings',
+    description: 'Any subset. `jsonRender` (`true`, `false`, or `null` for the environment default) is the owner’s: an admin gets 403.',
+    body: jsonBody(object({ timezone: { type: 'string' }, executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }), jsonRender: { type: ['boolean', 'null'] } })),
+    responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' } })), 400: invalid, 403: errorRef('Not the owner (json-render)') },
+  });
+
   // ---- templates ----
   const templateReply = (description: string) => reply(description, object({ template: ref('Template') }, ['template']));
   add('get', '/api/templates', {
@@ -1909,6 +1931,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Workflows', description: 'Workflows, their versions, and running them' },
       { name: 'Executions', description: 'Runs: history, run data, stop, retry and re-run' },
       { name: 'Data tables', description: 'Built-in tables workflows read and write' },
+      { name: 'Settings', description: 'Instance settings: time zone, execution retention and the json-render switch' },
       { name: 'Variables', description: 'Instance variables (`$vars`); changing them needs an owner or admin' },
       { name: 'Templates', description: 'The templates library: start workflows from templates, save and share your own' },
       { name: 'Audit', description: 'The audit log (owners and admins; project admins their projects’ events), its hash chain and four-eyes publish requests' },

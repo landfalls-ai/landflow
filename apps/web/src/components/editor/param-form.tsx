@@ -9,6 +9,7 @@ import { changeParameter, isPropertyVisible, withPropertyDefaults } from '@landf
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { NodeItem, PropertyDescriptor } from '@/lib/shared/types';
+import { sessionKeyProblem, WORKFLOW_NODES_METHOD, type HintNode } from '@/lib/shared/chat-roster-hints';
 import { FIELD_DRAG_TYPE } from '../run/data-view';
 import { Input, Select, Switch } from '../ui/inputs';
 import { sampleOf, type CompletionData } from './expression-completions';
@@ -26,6 +27,9 @@ export interface PreviewData {
   nodeOutputs: Record<string, NodeItem[]>;
   /** Nodes `$('Name')` can refer to, upstream first (for expression suggestions). */
   nodeNames?: string[];
+  /** Every node of the workflow, for pickers of its own nodes (`workflowNodes:` options) and the node being edited. */
+  workflowNodes?: HintNode[];
+  self?: string;
 }
 
 const PreviewContext = createContext<PreviewData | undefined>(undefined);
@@ -289,10 +293,60 @@ function UseSecret({ onPick }: { onPick: (value: string) => void }) {
   );
 }
 
+/**
+ * A string that names one of the workflow's own nodes (`workflowNodes:<types>`): a list of those nodes, and "Other…" for a
+ * name or id typed by hand (a node not yet added, another workflow's convention). Under a roster's Node field it also
+ * says when the node's Session Key stops a picked agent from having its own memory.
+ */
+function WorkflowNodeSelect({ property, value, onChange }: { property: PropertyDescriptor; value: unknown; onChange: (v: unknown) => void }) {
+  const preview = useContext(PreviewContext);
+  const types = String(property.typeOptions?.loadOptionsMethod ?? '').slice(WORKFLOW_NODES_METHOD.length).split('|');
+  const candidates = (preview?.workflowNodes ?? []).filter((n) => types.includes(n.type) && n.id !== preview?.self);
+  const text = value === undefined || value === null ? '' : String(value);
+  const chosen = candidates.find((n) => n.name === text || n.id === text);
+  const [other, setOther] = useState(false);
+  const typed = other || (text !== '' && !chosen);
+  const trigger = preview?.workflowNodes?.find((n) => n.id === preview.self);
+  const problem = chosen && trigger ? sessionKeyProblem(chosen as HintNode, trigger) : undefined;
+  return (
+    <div>
+      <Label property={property} />
+      <div className="flex gap-1.5">
+        <div className="flex-1">
+          <Select
+            aria-label={property.displayName}
+            value={typed ? '__other' : chosen ? chosen.name : ''}
+            onChange={(e) => {
+              if (e.target.value === '__other') {
+                setOther(true);
+                return;
+              }
+              setOther(false);
+              onChange(e.target.value);
+            }}
+          >
+            <option value="" disabled>{candidates.length ? 'Choose a node…' : 'No agent, team or AI Agent node yet'}</option>
+            {candidates.map((n) => (
+              <option key={n.id} value={n.name}>
+                {n.name}
+              </option>
+            ))}
+            <option value="__other">Other (type a name or id)…</option>
+          </Select>
+        </div>
+      </div>
+      {typed && <Input className="mt-1.5" value={text} placeholder={property.placeholder} aria-label={`${property.displayName} (typed)`} onChange={(e) => onChange(e.target.value)} />}
+      {problem && <div className="mt-1 text-[12px] text-warn">{problem}</div>}
+    </div>
+  );
+}
+
 function Field({ nodeType, property, value, onChange, parameters }: { nodeType: string; property: PropertyDescriptor; value: unknown; onChange: (v: unknown) => void; parameters: Values }) {
   const expression = isExpression(value);
   const credentialField = useContext(ExpressionDataContext)?.scope === 'credential';
   const exprClass = expression ? 'border-acbd bg-acdim font-mono' : '';
+
+  if (property.type === 'string' && property.typeOptions?.loadOptionsMethod?.startsWith(WORKFLOW_NODES_METHOD)) return <WorkflowNodeSelect property={property} value={value} onChange={onChange} />;
 
   switch (property.type) {
     case 'notice':

@@ -75,6 +75,18 @@ describe('withAiUsage', () => {
     expect(executionUsage(scope)).toBeUndefined();
   });
 
+  it('hands the records of a call that goes over a cap to the engine, so Run Trace still shows it', async () => {
+    const scope = executionScope({ executionId: 'ex_pai_cap3', workflowId: 'wf_pai', settings: { aiMaxTokensPerExecution: 100 } });
+    const seen: unknown[] = [];
+    const error = await runInUsageScope(scope, () => withAiUsage(resolved([model(90, 30)])).execute(request(), { onRecord: (r: unknown) => seen.push(r) } as never)).catch((e) => e);
+    expect(isUsageCapError(error)).toBe(true);
+    expect(seen).toMatchObject([{ type: 'model', model: 'qwen-test', inputTokens: 90, outputTokens: 30 }]);
+    // Without a cap error the engine emits the records itself: none are sent twice.
+    const ok: unknown[] = [];
+    await runInUsageScope(executionScope({ executionId: 'ex_pai_ok', workflowId: 'wf_pai' }), () => withAiUsage(resolved([model(5, 5)])).execute(request(), { onRecord: (r: unknown) => ok.push(r) } as never));
+    expect(ok).toEqual([]);
+  });
+
   it('stops a run whose call goes over the per-execution token cap, with the same UsageCapError', async () => {
     const scope = executionScope({ executionId: 'ex_pai_cap', workflowId: 'wf_pai', settings: { aiMaxTokensPerExecution: 100 } });
     const error = await runInUsageScope(scope, () => withAiUsage(resolved([model(90, 30)])).execute(request())).catch((e) => e);
@@ -98,13 +110,13 @@ describe('withAiUsage', () => {
 
 describe('Run Trace', () => {
   const workflow: Workflow = { id: 'wf_pai', name: 'AI SDK', nodes: [{ id: 'gen', name: 'Generate', type: 'ai-sdk.generate', typeVersion: 1, position: [0, 0], parameters: {} }], connections: [] };
-  const feed = () => {
+  const feed = (call: ReturnType<typeof model> = model(100, 20)) => {
     const drafts: JournalDraft[] = [];
     const translator = createTranslator({ workflow, executionId: 'ex_pai', emit: (d) => drafts.push(d) });
     const at = (s: number) => new Date(Date.parse('2026-11-07T10:00:00.000Z') + s * 1000).toISOString();
     const events = [
       { type: 'node.started', executionId: 'ex_pai', nodeId: 'gen', nodeName: 'Generate', source: 'main', at: at(0) },
-      { type: 'node.record', executionId: 'ex_pai', nodeId: 'gen', nodeName: 'Generate', record: { ...model(100, 20), at: at(3) }, at: at(3) },
+      { type: 'node.record', executionId: 'ex_pai', nodeId: 'gen', nodeName: 'Generate', record: { ...call, at: at(3) }, at: at(3) },
       { type: 'node.finished', executionId: 'ex_pai', nodeId: 'gen', nodeName: 'Generate', source: 'main', status: 'success', durationMs: 3000, itemCounts: [1], run: { startedAt: at(0), durationMs: 3000, status: 'success', source: 'main', inputs: [[]], outputs: [[{ json: { text: 'the answer', usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 } } }]] }, at: at(3) },
     ] as unknown as ExecutionEvent[];
     for (const event of events) translator.feed(event);
@@ -118,6 +130,23 @@ describe('Run Trace', () => {
     expect(Date.parse(start.at!)).toBe(Date.parse('2026-11-07T10:00:03.000Z') - 50);
     const end = drafts.find((d) => d.type === 'span.ended' && d.spanId === start.spanId);
     expect(end).toMatchObject({ status: 'success', output: { text: 'the answer' }, usage: { inputTokens: 100, outputTokens: 20, model: 'qwen-test' } });
+  });
+
+  const modelSpan = (drafts: JournalDraft[]) => {
+    const start = drafts.find((d) => d.type === 'span.started' && d.kind === 'model') as Extract<JournalDraft, { type: 'span.started' }>;
+    return { start, end: drafts.find((d) => d.type === 'span.ended' && d.spanId === start.spanId) as Extract<JournalDraft, { type: 'span.ended' }> };
+  };
+
+  it('prices the span like the models node: a known model has a cost', () => {
+    const { start, end } = modelSpan(feed({ ...model(100_000, 20_000), model: 'gpt-5', provider: 'openai' }));
+    expect(end.usage?.costUsd).toBeCloseTo(0.325, 6);
+    expect(start.attrs).not.toHaveProperty('costNote');
+  });
+
+  it('prices an unknown or local model at zero and says so', () => {
+    const { start, end } = modelSpan(feed());
+    expect(end.usage?.costUsd).toBe(0);
+    expect(start.attrs).toMatchObject({ costNote: 'No price for this model: counted as $0' });
   });
 
   it('keeps the prompt and answer only as far as the trace content setting allows', () => {

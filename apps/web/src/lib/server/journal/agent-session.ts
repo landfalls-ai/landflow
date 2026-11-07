@@ -188,7 +188,8 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
       type: 'span.ended',
       spanId,
       status: entry.status === 'success' ? 'success' : entry.status === 'denied' ? 'canceled' : 'error',
-      ...(entry.output !== undefined && { output: entry.output }),
+      // A tool that returned images: the text as before and the images' references, so Run Trace can show them.
+      ...(entry.output !== undefined && { output: entry.images?.length ? { text: entry.output, images: entry.images } : entry.output }),
       ...(entry.error && { error: entry.error }),
       ...(remote?.usage && { usage: remote.usage }),
       attrs: {

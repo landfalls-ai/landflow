@@ -339,6 +339,33 @@ describe('debug tokens', () => {
     expect((await callTool(token, 'get_execution', { id: execA })).status).toBe(401);
   });
 
+  it('lists what the Debug access dialog shows: prefix hint, scopes, expiry, last use and uses, revoked rows included, never the token', async () => {
+    const { body: { token, record } } = await mint(member, execA2, { label: 'ui list', scopes: ['trace:read'], ttlSeconds: 900 });
+    const read = async (user: typeof member, executionId = execA2) => {
+      const response = await asRoute(mintRoute.GET)(new Request(`${INSTANCE}/api/executions/${executionId}/debug-tokens`, { headers: cookieOf(user) }), { params: Promise.resolve({ id: executionId }) });
+      const text = await response.text();
+      return { text, tokens: (JSON.parse(text) as { tokens: Array<Record<string, unknown>> }).tokens };
+    };
+    const before = (await read(member)).tokens.find((t) => t.id === record.id)!;
+    expect(before).toMatchObject({ hint: token.slice(-4), label: 'ui list', scopes: ['trace:read'], uses: 0 });
+    expect(before.lastUsedAt).toBeUndefined();
+    expect(Date.parse(before.expiresAt as string) - Date.parse(before.createdAt as string)).toBe(900_000);
+    // The token works, and the list shows its use.
+    expect((await callTool(token, 'get_run_trace', { id: execA2 })).status).toBe(200);
+    const used = (await read(member)).tokens.find((t) => t.id === record.id)!;
+    expect(used.uses).toBe(1);
+    expect(typeof used.lastUsedAt).toBe('string');
+    // Revoked through the route, it stays listed as revoked and is refused at once.
+    const done = await asRoute(revokeRoute.DELETE)(new Request(`${INSTANCE}/api/executions/${execA2}/debug-tokens/${record.id}`, { method: 'DELETE', headers: cookieOf(member) }), { params: Promise.resolve({ id: execA2, tokenId: record.id }) });
+    expect(done.status).toBe(200);
+    const after = await read(member);
+    expect(after.tokens.find((t) => t.id === record.id)).toMatchObject({ revokedAt: expect.any(String) });
+    expect(after.text).not.toContain(token);
+    expect((await callTool(token, 'get_run_trace', { id: execA2 })).status).toBe(401);
+    // Someone who cannot read the run sees none of it.
+    expect((await read(outsider)).text).toBe('{"error":"Execution not found"}');
+  });
+
   it('stops after its use cap and limits live tokens per execution', async () => {
     const { token, record } = dbt.mintDebugToken(member, { executionId: execA2, workflowId: 'wf_dbg_a' });
     for (let i = 0; i < dbt.DEBUG_TOKEN_MAX_USES; i++) dbt.recordDebugUse(record.id);

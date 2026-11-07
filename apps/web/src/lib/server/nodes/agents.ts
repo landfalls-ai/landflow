@@ -139,7 +139,9 @@ export const messageAgentNode = defineNode({
     color: '#a855f7',
     keywords: ['agent', 'assistant', 'delegate', 'ask', 'message an agent', 'persona', 'knowledge base'],
     usableAsTool: true,
-    toolDescription: 'Ask another agent to do something. Argument: `message` (the full task, the agent does not see this conversation).',
+    // Delegating: the tool also takes a required `reason`, which the chat page shows as "asked <Agent>: <reason>".
+    delegates: true,
+    toolDescription: 'Ask another agent to do something. Arguments: `message` (the full task, the agent does not see this conversation) and `reason`.',
     // Like the AI Agent's ports, all optional: the agent brings its own model and capabilities.
     inputs: [
       { type: 'main' },
@@ -210,7 +212,9 @@ export const messageAgentNode = defineNode({
         const agent = agentStore.get(agentId);
         if (!agent) throw new NodeOperationError('Choose an agent — the selected one was deleted', { itemIndex: i });
         if (!agent.published) throw new NodeOperationError(`Publish “${agent.name}” first`, { description: 'Workflows run the published version of an agent.', itemIndex: i });
-        const message = String(ctx.getNodeParameter('message', i) ?? '').trim();
+        // A message that comes out empty ($fromAI with no argument, as when a roster pick starts the run here) falls back to the chat input.
+        const chatInput = items[i]?.json?.chatInput;
+        const message = (String(ctx.getNodeParameter('message', i) ?? '').trim() || (typeof chatInput === 'string' ? chatInput.trim() : '')).trim();
         if (!message) throw new NodeOperationError('The message is empty', { itemIndex: i });
         const key = ctx.getNodeParameter<string>('conversation', i) === 'key' ? String(ctx.getNodeParameter('sessionKey', i) ?? '').trim() : '';
         const userId = `workflow:${ctx.getWorkflowId() ?? 'unknown'}`;

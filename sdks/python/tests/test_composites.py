@@ -121,6 +121,20 @@ class CompositeValidationTests(unittest.TestCase):
         self.check(lambda c: c["rules"].append({"rule": "reaches", "to": "nope"}), 'a reaches rule names unknown slot "nope"')
         self.check(lambda c: c["starter"]["nodes"][0].update(slot="nope"), 'starter node "a" names unknown slot "nope"')
 
+    def test_starter_retry_fields_pass_through_and_are_checked(self):
+        retry = {"onError": "continue", "retryOnFail": True, "maxTries": 3, "waitBetweenTriesMs": 1500, "retryBackoff": "exponential"}
+        c = composite()
+        c["starter"]["nodes"][0].update(retry)
+        # The wire form is kept exactly: the manifest carries the fields the host's schema accepts.
+        self.assertEqual(make(c).manifest()["composites"][0]["starter"]["nodes"][0], c["starter"]["nodes"][0])
+        node = lambda c: c["starter"]["nodes"][0]
+        self.check(lambda c: node(c).update(waitBetweenTriesMs=60_001), "waitBetweenTriesMs must be an integer from 0 to 60000")
+        self.check(lambda c: node(c).update(waitBetweenTriesMs=-1), "waitBetweenTriesMs")
+        self.check(lambda c: node(c).update(retryBackoff="linear"), "retryBackoff 'linear' must be 'fixed' or 'exponential'")
+        self.check(lambda c: node(c).update(maxTries=0), "maxTries must be a positive integer")
+        self.check(lambda c: node(c).update(onError="fallback"), "onError 'fallback' must be 'stop' or 'continue'")
+        self.check(lambda c: node(c).update(retryOnFail="yes"), "retryOnFail must be true or false")
+
     def test_starter_connection_unknown_node(self):
         self.check(lambda c: c["starter"]["connections"][0].update(target="zzz"), "names an unknown node")
 

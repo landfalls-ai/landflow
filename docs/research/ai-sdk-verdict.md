@@ -66,7 +66,7 @@ Scratch host on 3210, plugin on 7115/7215, local Ollama `qwen3.8:latest`. Run `e
 | Providers | Anthropic, Ollama, OpenAI-compatible | those plus Google (Gemini), and anything else with an AI SDK provider package |
 | Role | Sub-node an agent, chain or classifier calls; tools, attachments, streaming, effort, fallback | A standalone action: prompt in, text, usage and model out |
 | Governance | Counts in `landflow.ai.*` metrics, the AI usage caps and credential-id attribution; `gen_ai.chat` span in the run's trace | The same counting through the reported `model` record (usage, caps, `landflow.ai.tokens`) |
-| Run Trace | Yes (model spans, usage, Agent connections) | A `model` span from the reported record (no cost); the AI SDK's own spans only in OTLP |
+| Run Trace | Yes (model spans, usage, Agent connections) | A `model` span from the reported record, priced (unknown models $0 with a note), also for a capped call; the AI SDK's own spans only in OTLP |
 | Tool calling, multi-step | Yes | Not exposed (single `generateText` step) |
 
 The AI SDK gain is real but small for Landflow today: **Google/Gemini, plus a long tail of providers** (Mistral, Groq,

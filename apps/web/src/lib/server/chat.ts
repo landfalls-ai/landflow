@@ -19,6 +19,7 @@ import { storeBinary } from './binary/access';
 import type { FeedbackRating } from '../shared/chat-feedback';
 import { feedbackBySession } from './chat-feedback';
 import { database } from './db';
+import { sessionKeyProblem } from '../shared/chat-roster-hints';
 import { productionWorkflows } from './publish';
 
 export const CHAT_TRIGGER = 'core.chatTrigger';
@@ -157,6 +158,38 @@ export function unguardedRosterTargets(workflow: Workflow): string[] {
   const roster = chatRoster(workflow, trigger);
   const open = reach(workflow, trigger.id, (n) => n.type === GUARDRAILS && !n.disabled);
   return roster.filter((r) => !rosterRoutedFromTrigger(workflow, trigger, r.targetId) || open.has(r.targetId)).map((r) => workflow.nodes.find((n) => n.id === r.targetId)!.name);
+}
+
+/**
+ * Roster targets whose Session Key stops a picked agent having its own memory (a fixed string, or read from the trigger
+ * by name). Empty when there is no public chat or roster. Nothing is rewritten; validation and the trigger panel show it.
+ */
+export function rosterSessionKeyProblems(workflow: Workflow): string[] {
+  const trigger = workflow.nodes.find((n) => n.type === CHAT_TRIGGER && !n.disabled && (n.parameters as Record<string, unknown>).public === true);
+  if (!trigger) return [];
+  return chatRoster(workflow, trigger).flatMap((entry) => {
+    const target = workflow.nodes.find((n) => n.id === entry.targetId)!;
+    const problem = sessionKeyProblem(target, trigger);
+    return problem ? [problem] : [];
+  });
+}
+
+/**
+ * The visitor session an execution answered, read from the run itself: the trigger's item when the trigger ran, else the
+ * start node's input (a picked agent is started directly, so the trigger never ran; its item carries `visitorSessionId`).
+ */
+export function answeredSession(record: { runData: Record<string, Array<{ inputs?: NodeItem[][]; outputs?: NodeItem[][] }> | undefined> }, triggerId: string): string | undefined {
+  const visitor = (json: unknown) => {
+    const j = json as { visitorSessionId?: unknown; sessionId?: unknown } | undefined;
+    return typeof j?.visitorSessionId === 'string' ? j.visitorSessionId : typeof j?.sessionId === 'string' ? j.sessionId : undefined;
+  };
+  const fromTrigger = visitor(record.runData[triggerId]?.[0]?.outputs?.[0]?.[0]?.json);
+  if (fromTrigger) return fromTrigger;
+  for (const runs of Object.values(record.runData)) {
+    const found = (runs?.[0]?.inputs?.[0]?.[0]?.json as { visitorSessionId?: unknown } | undefined)?.visitorSessionId;
+    if (typeof found === 'string') return found;
+  }
+  return undefined;
 }
 
 /** The roster entry a visitor named, or an error: a key off the roster never reaches a node. `undefined` entry: the lead (nothing named). */

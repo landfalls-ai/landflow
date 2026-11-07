@@ -49,6 +49,15 @@ export const runTeamNode = defineNode({
     color: '#a855f7',
     subtitle: '{{teamName}}',
     keywords: ['team', 'agents', 'org chart', 'lead', 'delegate', 'review', 'multi-agent', 'crew', 'run a team'],
+    // Delegating, like Run an Agent: used as a tool it also takes a required `reason`, which the chat shows as "asked <Team>: <reason>".
+    usableAsTool: true,
+    delegates: true,
+    toolDescription: 'Ask a team of agents to do something. Arguments: `message` (the full task, the team does not see this conversation) and `reason`.',
+    toolInputSchema: {
+      type: 'object',
+      properties: { message: { type: 'string', description: 'The full task for the team’s lead' } },
+      required: ['message'],
+    },
     // Run an Agent's ports and names (short, so the labels fit under the node), all optional: what is connected goes to the lead.
     inputs: [
       { type: 'main' },
@@ -110,6 +119,14 @@ export const runTeamNode = defineNode({
             description: 'What is being edited now (for trying a change)',
           },
         ],
+      },
+      {
+        name: 'toolImagesKept',
+        displayName: 'Tool Images to Keep',
+        type: 'number',
+        default: 2,
+        typeOptions: { minValue: 0, maxValue: 10 },
+        description: 'When the lead’s tools return images (a screenshot), only this many of the newest go back to the model on each turn; older ones are dropped and their text kept. Members use their own agent’s “Tool images to keep” setting.',
       },
       {
         name: 'approvalChannel',
@@ -256,6 +273,7 @@ export const runTeamNode = defineNode({
           userId: `workflow:${ctx.getWorkflowId() ?? 'unknown'}`,
           execution,
           signal: ctx.signal,
+          toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
           ...((model || tools.length) && {
             flow: { ...(model && { model }), ...(tools.length && { tools }) },
           }),

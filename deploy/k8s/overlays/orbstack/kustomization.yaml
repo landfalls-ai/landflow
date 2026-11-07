@@ -23,6 +23,9 @@ components:
   - ../../components/github-mcp
   # The Browser plugin (Chrome inside; build landflow/plugin-browser:k8s-dev first, see components/browser): off by default.
 #   - ../../components/browser
+  # Agent Shell and Web Search plugins (build landflow/plugin-<name>:k8s-dev first, see each component): off by default.
+#   - ../../components/agent-shell
+#   - ../../components/web-search
 #   - ../../components/postgres
 #   - ../../components/valkey
 images:
@@ -36,6 +39,8 @@ images:
   - { name: landflow/plugin-databases, newTag: k8s-dev }
   - { name: landflow/plugin-github, newTag: k8s-dev }
   - { name: landflow/plugin-browser, newTag: k8s-dev } # only used with components/browser
+  - { name: landflow/plugin-agent-shell, newTag: k8s-dev } # only used with components/agent-shell
+  - { name: landflow/plugin-web-search, newTag: k8s-dev } # only used with components/web-search
 generatorOptions:
   disableNameSuffixHash: true
   labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: config }

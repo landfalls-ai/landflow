@@ -151,6 +151,30 @@ describe('Browser node', () => {
     expect(twice.error?.message).toMatch(/Two Extract steps are named "x"/);
   });
 
+  it('with Continue On Failure, returns the failing step as ok:false plus the results read so far', async () => {
+    const steps = JSON.stringify([
+      { action: 'getText', target: '#a', name: 'first' },
+      { action: 'click', target: '#send' },
+      { action: 'getText', target: '#b', name: 'second' },
+    ]);
+    const fail = (args: string[]) => (args.includes('click') ? 'Element not found: #send' : undefined);
+    const stop = fake({ 'get text': 'hello', snapshot: '- page' }, fail);
+    const stopped = await runNode(new Browser(stop.exec), request({ ...base, operation: 'act', steps, continueOnFailure: true }), extras);
+    expect(stopped.error).toBeUndefined();
+    expect(stopped.outputs[0][0].json).toMatchObject({
+      stepsRun: 2,
+      stepsFailed: 1,
+      snapshot: '- page',
+      results: { first: 'hello' },
+      steps: [{ action: 'getText', ok: true }, { action: 'click', target: '#send', ok: false, error: expect.stringContaining('Element not found') }],
+    });
+    expect(commands(stop.calls).filter((c) => c.startsWith('get text'))).toEqual(['get text #a']);
+    expect(commands(stop.calls).at(-1)).toBe('close');
+    const go = fake({ 'get text': 'hello' }, fail);
+    const carried = await runNode(new Browser(go.exec), request({ ...base, operation: 'act', steps, continueOnFailure: true, afterFailure: 'continue' }), extras);
+    expect(carried.outputs[0][0].json).toMatchObject({ stepsRun: 3, stepsFailed: 1, results: { first: 'hello', second: 'hello' }, steps: [{ ok: true }, { ok: false }, { ok: true }] });
+  });
+
   it('can attach a screenshot after the steps, and honours the moved headed switch', async () => {
     const { calls, exec } = fake({ 'get title': 'Done' });
     const response = await runNode(new Browser(exec), request({ ...base, operation: 'act', screenshotAfter: true, headed: true, steps: '[]' }), extras);
@@ -202,7 +226,7 @@ describe('Browser node', () => {
 
   it('declares the fields it outputs, for the nodes after it', () => {
     const schema = plugin.nodes[0].description.outputSchema as { properties: Record<string, unknown> };
-    expect(Object.keys(schema.properties)).toEqual(['url', 'title', 'snapshot', 'stepsRun', 'steps', 'results']);
+    expect(Object.keys(schema.properties)).toEqual(['url', 'title', 'snapshot', 'stepsRun', 'steps', 'stepsFailed', 'results']);
   });
 
   it('is one node, not idempotent, with a small concurrency default and an MCP tool', () => {

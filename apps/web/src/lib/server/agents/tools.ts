@@ -9,6 +9,7 @@ import { defaultVersionOf, PROTOCOL_VERSION, type ExecuteRequest, type JsonObjec
 import { ExpressionResolver, isToolOutputWithImages, type ToolImage, REASON_DESCRIPTION, deriveToolSchema, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
 import { binaryAccessFor } from '../binary/access';
 import { binaryToolImages } from '../nodes/tool-images';
+import { holdSessionImages } from './session-images';
 import type {
   A2aAgentToolConfig,
   Agent,
@@ -84,9 +85,10 @@ export interface ToolContext {
 
 /**
  * Where a run's files (screenshots a tool returns) are stored: with the workflow execution the agent runs in, so they go
- * when it does; else under the run, which the hourly sweep removes once it is old (a chat's images can't be read back after that).
+ * when it does; else under the session (session-images.ts), kept as long as the session is, so a chat's images can be read back.
  */
-export const binaryScopeFor = (ctx: Pick<ToolContext, 'session' | 'runId'>): string => ctx.session?.execution?.executionId ?? ctx.runId;
+export const binaryScopeFor = (ctx: Pick<ToolContext, 'session' | 'runId'>): string =>
+  ctx.session?.execution?.executionId ?? (ctx.session?.id ? holdSessionImages(ctx.session.id) : ctx.runId);
 
 export interface ToolOutcome {
   output: unknown;
@@ -439,7 +441,8 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
       const creds = credentials.resolveFor({ type: config.nodeType, credentials: config.credentials, parameters: config.parameters }, descriptor);
       const request: ExecuteRequest = {
         protocol: PROTOCOL_VERSION,
-        executionId: ctx.runId,
+        // Also where the host writes the files an in-process node stores (a screenshot): the execution's or the session's scope.
+        executionId: binaryScopeFor(ctx),
         workflowId: `agent:${ctx.agent.id}`,
         mode: 'tool',
         node: { id: config.id, name: config.name, type: config.nodeType, typeVersion: defaultVersionOf(descriptor) },

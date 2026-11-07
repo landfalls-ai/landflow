@@ -161,6 +161,28 @@ func (c *ExecuteContext) Check(k Check) {
 	})
 }
 
+// Model reports one model call this node made: the host prices it, counts it in AI usage and the caps (declare
+// NodeDescriptor.MeterAiUsage so the node is also refused once a cap is reached) and shows it as a model step under
+// the node in Run Trace. Credential values are masked in the text fields; negative counts are sent as zero.
+func (c *ExecuteContext) Model(m ModelCall) {
+	count := func(n int) int {
+		if n < 0 {
+			return 0
+		}
+		return n
+	}
+	in, out := count(m.InputTokens), count(m.OutputTokens)
+	d := m.DurationMs
+	if d < 0 {
+		d = 0
+	}
+	c.addRecord(Record{
+		Type: "model", Name: RedactString(c, m.Name), Model: RedactString(c, m.Model), Provider: m.Provider,
+		InputTokens: &in, OutputTokens: &out, CacheReadTokens: count(m.CacheReadTokens), CacheWriteTokens: count(m.CacheWriteTokens),
+		DurationMs: d, FinishReason: m.FinishReason, Prompt: RedactString(c, m.Prompt), Answer: RedactString(c, m.Answer),
+	})
+}
+
 func (c *ExecuteContext) addRecord(r Record) {
 	r.At = time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	c.recordMu.Lock()
@@ -168,7 +190,7 @@ func (c *ExecuteContext) addRecord(r Record) {
 	c.records = append(c.records, r)
 }
 
-// Records returns the artifacts and checks reported so far, in order.
+// Records returns the artifacts, checks and model calls reported so far, in order.
 func (c *ExecuteContext) Records() []Record {
 	c.recordMu.Lock()
 	defer c.recordMu.Unlock()

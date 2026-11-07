@@ -22,6 +22,7 @@ import type { ExecutionEvent } from '@landflow/engine';
 import { deleteExecutionBinary } from '@/lib/server/binary/access';
 import {
   agentSessionId,
+  answeredSession,
   appendTranscript,
   basicAuthOk,
   chatItem,
@@ -188,8 +189,9 @@ async function postFeedback(request: Request, found: NonNullable<ReturnType<type
   if (body.rating !== null && !isRating(body.rating)) return jsonResponse({ error: "rating is 'up', 'down' or null (take it back)" }, 400, cors);
   const record = liveExecution(body.executionId) ?? store.getExecution(body.executionId);
   if (!record || record.workflowId !== workflow.id) return jsonResponse({ error: 'That answer doesn’t belong to this chat' }, 404, cors);
-  const asked = (record.runData[node.id]?.[0]?.outputs?.[0]?.[0]?.json as { sessionId?: unknown } | undefined)?.sessionId;
-  if (typeof asked === 'string' && asked !== body.sessionId) return jsonResponse({ error: 'That answer belongs to another session' }, 403, cors);
+  // The trigger's item when it ran, else the picked agent's own input (the trigger never ran): both name the visitor's session.
+  const asked = answeredSession(record, node.id);
+  if (asked !== undefined && asked !== body.sessionId) return jsonResponse({ error: 'That answer belongs to another session' }, 403, cors);
   const feedback = setFeedback({ kind: 'execution', workflowId: workflow.id, executionId: body.executionId, sessionId: body.sessionId }, body.rating, { comment: cleanComment(body.comment), source: 'chat' });
   return jsonResponse({ ok: true, feedback: feedback ?? null }, 200, cors);
 }

@@ -101,7 +101,7 @@ All credentials are **for local development and tests only**.
 | Azure Service Bus emulator 2.0 (`servicebus`) | AMQP `localhost:55675`, management + `/health` http://localhost:55300 | `servicebus:5672`, `servicebus:5300` | `Endpoint=sb://localhost:55675;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;`; static entities from [`infra/servicebus/Config.json`](../deploy/infra/servicebus/Config.json); SQL backend `servicebus-sql` (Azure SQL Edge, `sa` / `Landflow-dev-only1`, not published) |
 | agentgateway 1.6 (`mcp-gateway`) | MCP http://localhost:54000/mcp, admin API + UI http://localhost:55000 (`/ui`) | `mcp-gateway:4000`, `mcp-gateway:15000` | none (the admin API has no authentication: loopback only); targets in SQLite in `mcp-gateway-data` |
 | **Landflow host** (app) | http://localhost:53000 | `web:3000`, gRPC registry `web:7070` | owner `owner@landflow.test` / `landflow-dev-only` (`LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`) |
-| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211`, `browser:7112/7212` (profile `browser`) (HTTP/gRPC) | |
+| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211`, `browser:7112/7212` (profile `browser`), `web-search:7113/7213` (profile `web-search`), `agent-shell:7114/7214` (profile `agent-shell`) (HTTP/gRPC) | |
 | Code runner (app) | http://127.0.0.1:53300 (through `code-runner-port`) | `code-runner:7300`, on the internal `landflow-code` network only | header `x-landflow-runner-secret: landflow-code-runner-dev-only` |
 | **Queue mode** load balancer | http://localhost:53080 | `lb:3000` | owner `owner@landflow.test` / `landflow-dev-only` |
 | Queue mode mains | http://localhost:53081, http://localhost:53082 | `main-1:3000`, `main-2:3000` | same |
@@ -469,7 +469,7 @@ Runner settings (environment of `services/code-runner`; the compose file maps th
 
 ## Browser plugin
 
-The [Browser plugin](../plugins/browser/README.md) drives Chrome through Vercel's agent-browser CLI, so it needs both. It is **optional everywhere** and is a **separate image on the code-runner pattern**: [`plugins/browser/Dockerfile`](../plugins/browser/Dockerfile) (Debian, because Chrome for Testing needs glibc; not the Alpine [`node-plugin.Dockerfile`](../deploy/docker/node-plugin.Dockerfile), which has no browser). The image is large; it was written without being built, so the first build is the check of the `agent-browser install --with-deps` step.
+The [Browser plugin](../plugins/browser/README.md) drives Chrome through Vercel's agent-browser CLI, so it needs both. It is **optional everywhere** and is a **separate image on the code-runner pattern**: [`plugins/browser/Dockerfile`](../plugins/browser/Dockerfile) (Debian, because Chrome for Testing needs glibc; not the Alpine [`node-plugin.Dockerfile`](../deploy/docker/node-plugin.Dockerfile), which has no browser). The image is large. It was built and run on arm64 (2026-11-07), and the amd64 install step was run in a Debian container: on amd64 `agent-browser install --with-deps` installs the Debian libraries and Chrome for Testing; on arm64 (Apple Silicon, the OrbStack engine here) Chrome for Testing has no Linux build, so the image installs Debian's `chromium` instead. Either way `/opt/agent-browser/chrome` is a symlink to the browser and `AGENT_BROWSER_EXECUTABLE_PATH` names it (the CLI does not honour `AGENT_BROWSER_HOME`; `AGENT_BROWSER_ARGS=--no-sandbox` is honoured). `AGENT_BROWSER_VERSION` is pinned to 0.41.2.
 
 | Where | How |
 |---|---|
@@ -481,6 +481,20 @@ The [Browser plugin](../plugins/browser/README.md) drives Chrome through Vercel'
 - **Set `LANDFLOW_BROWSER_ALLOWED_DOMAINS`.** It is the operator's ceiling (comma separated, `*.example.com` includes subdomains): every node's list must sit inside it. Left empty, each node is limited only by its own **Allowed Domains**, which default to the URL's site, so a flow can send the browser to any site you let it name. Compose reads it from the environment (`LANDFLOW_BROWSER_ALLOWED_DOMAINS` in `deploy/.env`); on Kubernetes edit the env var in `components/browser/browser.yaml`. Page text a node returns is untrusted data.
 - **Container limits.** Read-only root filesystem with a tmpfs `/tmp` (and `HOME`) and a 512 MiB `/dev/shm`, no capabilities, no privilege escalation, 2 GiB of memory (`LANDFLOW_BROWSER_MEM_LIMIT`). Chrome's own sandbox needs privileges the container drops, so the image starts Chrome with `--no-sandbox` (`AGENT_BROWSER_ARGS`): the container is the boundary. Each call starts its own Chrome and the plugin runs two at once.
 - Unlike the code runner, the container needs a route out: it fetches the pages. Its network is the app network, so the allow-list is the only fence on where it goes.
+
+## Agent Shell and Web Search plugins
+
+Two ordinary Node plugins on [`deploy/docker/node-plugin.Dockerfile`](../deploy/docker/node-plugin.Dockerfile) (Alpine, `tsx src/main.ts` as `node`), both **optional**.
+
+| | Agent Shell ([README](../plugins/agent-shell/README.md)) | Web Search ([README](../plugins/web-search/README.md)) |
+|---|---|---|
+| Ports | HTTP `7114`, gRPC `7214` | HTTP `7113` (MCP at `/mcp`), gRPC `7213` |
+| Dev server | `pnpm plugin:agent-shell`; `pnpm dev:all:agent-shell` is `dev:all` plus it | `pnpm plugin:web-search`; `pnpm dev:all:web-search` is `dev:all` plus it |
+| Compose | profile `agent-shell`: `COMPOSE_BAKE=false docker compose -f deploy/compose.yml --profile agent-shell up -d --build --wait` | profile `web-search`: the same with `--profile web-search` |
+| Kubernetes | component `components/agent-shell`, image `landflow/plugin-agent-shell:k8s-dev` | component `components/web-search`, image `landflow/plugin-web-search:k8s-dev` |
+| Settings | none: just-bash has no host files and no network | `LANDFLOW_SEARCH_SEARXNG_URL` (the SearXNG instance, when no SearXNG credential names one) and `LANDFLOW_SEARCH_DENY_DOMAINS` (operator deny-list); keys for Brave and Tavily are saved credentials |
+
+Both services run with a read-only root filesystem, a small tmpfs `/tmp`, no capabilities and no privilege escalation. The host's scan (`LANDFLOW_SCAN_HOSTS`, `LANDFLOW_SCAN_PORTS`) lists both services and the ports `7113`/`7114` and `7213`/`7214`. Build the Kubernetes images with the command at the top of each component's `kustomization.yaml`, then uncomment the component in the OrbStack overlay. Web Search needs a route out to its provider; the Agent Shell does not.
 
 ## Integration tests (databases plugin)
 
