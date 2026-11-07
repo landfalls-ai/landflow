@@ -87,7 +87,7 @@ export function normalizeConfig(input: Partial<AgentConfig>): AgentConfig {
     channels: input.channels ?? [],
     memory: { crossSession: Boolean(input.memory?.crossSession) },
     settings: { ...DEFAULT_AGENT_SETTINGS, ...input.settings },
-    ...(input.guardrails && ((input.guardrails.input || input.guardrails.output) ? { guardrails: input.guardrails } : {})),
+    ...(input.guardrails && ((input.guardrails.input || input.guardrails.output || input.guardrails.toolResult) ? { guardrails: input.guardrails } : {})),
     ...(router && { router }),
     ...(cache && { cache }),
     ...(access && { access }),

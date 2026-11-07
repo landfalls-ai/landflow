@@ -73,7 +73,7 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
         record({
           type: 'check',
           spanId: parent,
-          check: { name: `${entry.stage === 'input' ? 'Input' : 'Output'} guardrail`, status: entry.action === 'blocked' ? 'fail' : 'warn', message: found || (entry.action === 'blocked' ? 'Blocked' : 'Sanitized'), subject: agent.name, source: 'builtin', evidence: { action: entry.action, violations: entry.violations.map((v) => ({ ...v })) } },
+          check: { name: `${entry.stage === 'input' ? 'Input' : entry.stage === 'tool' ? 'Tool result' : 'Output'} guardrail`, status: entry.action === 'blocked' ? 'fail' : 'warn', message: `${entry.tool ? `${entry.tool}: ` : ''}${found || (entry.action === 'blocked' ? 'Blocked' : 'Sanitized')}`, subject: agent.name, source: 'builtin', evidence: { action: entry.action, violations: entry.violations.map((v) => ({ ...v })) } },
           at: entry.at,
         });
         return;

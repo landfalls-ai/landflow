@@ -1110,6 +1110,11 @@ gateway** (agentgateway as a compose profile and a Kubernetes example, [agents.m
 Envoy AI Gateway is deprecated, so the plan's kgateway item became agentgateway). The Insights page has an **Agent layers** card with the same numbers
 for every agent.
 
+A second pass over the reel's scenes (what each shows against what Landflow has) found three guardrail gaps, all built
+([agents.md](agents.md#building-an-agent)): a **tool-result guardrail stage** (an email or web page the agent reads can carry planted
+instructions, which the input stage never saw), a **grounded** output check (does the answer follow from the passages the
+agent's knowledge bases returned?) and **stay on topic** in the builder (the engine had it; the builder did not offer it).
+
 ## Planned next
 
 The follow-ups above are candidates, among them making a runbook automatically when a room ends and steps that call a plugin instead of asking a person ([runbooks.md](runbooks.md#not-built)).

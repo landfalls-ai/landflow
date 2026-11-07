@@ -421,7 +421,7 @@ export function TimelineView({
                 <div className="animate-in rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12.5px] leading-snug text-t1">
                   <div className="flex items-center gap-1.5 font-semibold">
                     <ShieldAlert className="size-3.5 shrink-0 text-amber-600" />
-                    {entry.stage === 'input' ? 'Input' : 'Output'} guardrail {entry.action}
+                    {entry.stage === 'input' ? 'Input' : entry.stage === 'tool' ? 'Tool result' : 'Output'} guardrail {entry.action}
                   </div>
                   <ul className="mt-1 space-y-0.5 text-t2">
                     {entry.violations.map((v, i) => (
