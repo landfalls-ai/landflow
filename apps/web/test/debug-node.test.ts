@@ -138,12 +138,27 @@ describe('one-node local override', () => {
     expect(normalizeAllowedHost('localhost:7000')).toBe('localhost:7000');
   });
 
+  it('treats localhost, 127.0.0.1 and [::1] as one host, in both directions', () => {
+    const byIp = { enabled: true, allowedHosts: ['127.0.0.1:7000'] };
+    expect(checkPluginUrl('http://localhost:7000', byIp).ok).toBe(true);
+    expect(checkPluginUrl('http://[::1]:7000', byIp).ok).toBe(true);
+    expect(checkPluginUrl('http://localhost:7001', byIp).ok).toBe(false);
+    const byName = { enabled: true, allowedHosts: ['localhost:7000', '[::1]:8000'] };
+    expect(checkPluginUrl('http://127.0.0.1:7000', byName).ok).toBe(true);
+    expect(checkPluginUrl('http://localhost:8000', byName).ok).toBe(true);
+    expect(checkPluginUrl('http://127.0.0.1:7001', byName).ok).toBe(false);
+    const portless = { enabled: true, allowedHosts: ['localhost'] };
+    expect(checkPluginUrl('http://127.0.0.1:9999', portless).ok).toBe(true);
+    // loopback equivalence never widens to other hosts
+    for (const url of ['http://10.0.0.1:7000', 'http://169.254.169.254:7000', 'http://127.0.0.2:7000', 'http://0.0.0.0:7000']) expect(checkPluginUrl(url, byIp).ok, url).toBe(false);
+  });
+
   it('checks plugin URLs against the list', () => {
     const settings = { enabled: true, allowedHosts: ['127.0.0.1', 'tunnel.example.dev', 'localhost:7000'] };
     expect(checkPluginUrl('http://127.0.0.1:9999', settings).ok).toBe(true);
     expect(checkPluginUrl('https://tunnel.example.dev/x', settings).ok).toBe(true);
     expect(checkPluginUrl('http://localhost:7000', settings).ok).toBe(true);
-    for (const url of ['http://localhost:7001', 'http://169.254.169.254/latest', 'http://10.0.0.1', 'http://tunnel.example.dev.evil.com', 'http://user:pw@127.0.0.1', 'ftp://127.0.0.1', 'file:///etc/passwd', 'not a url']) {
+    for (const url of ['http://169.254.169.254/latest', 'http://10.0.0.1', 'http://tunnel.example.dev.evil.com', 'http://user:pw@127.0.0.1', 'ftp://127.0.0.1', 'file:///etc/passwd', 'not a url']) {
       expect(checkPluginUrl(url, settings).ok, url).toBe(false);
     }
   });
@@ -215,7 +230,7 @@ describe('one-node local override', () => {
   it('calls only allowed hosts', async () => {
     const minted = await mintRun();
     const token = minted.body.token as string;
-    for (const pluginUrl of ['http://localhost:' + fixed.port, 'http://169.254.169.254/latest/meta-data', 'http://10.1.2.3:80', 'http://tunnel.example.dev.attacker.test', 'file:///etc/passwd', 'nonsense']) {
+    for (const pluginUrl of ['http://127.0.0.2:' + fixed.port, 'http://169.254.169.254/latest/meta-data', 'http://10.1.2.3:80', 'http://tunnel.example.dev.attacker.test', 'file:///etc/passwd', 'nonsense']) {
       const refused = await run(token, { executionId: exec, node: 'Shout', pluginUrl });
       expect(refused.status, pluginUrl).toBe(403);
     }

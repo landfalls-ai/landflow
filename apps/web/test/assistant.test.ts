@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LanguageModel, ModelTurn, Workflow } from '@landflow/engine';
 import { applyOps, describeOps, digestRun, parseOps, structuralWarnings, type AssistantOp } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo } from '@/lib/shared/types';
@@ -6,7 +6,7 @@ import type { GenerateInput } from '@/lib/server/nodes/models';
 import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
 import { opsArgument, withEarlierRefs, recoverToolCalls, runChat, withoutApplyRequests, withoutAppliedClaims, withoutEchoedNotes, withoutInventedIds, withoutMadeUpIds, withoutRepeats, withTeamIds, unitSlips, MAX_STEPS, type ChatEvent } from '@/lib/server/assistant/chat';
-import { registryLookup, validateOps } from '@/lib/server/assistant/ops';
+import { registryLookup, unknownReferenceCautions, validateOps } from '@/lib/server/assistant/ops';
 import { nodeDocs, outputFields, searchNodes } from '@/lib/server/assistant/research';
 import { suggestAfterRun } from '@/lib/server/assistant/suggest';
 
@@ -839,5 +839,42 @@ describe('multi-part requests, pending proposals, branches and loops', () => {
     const [notify] = proposalsOf(again);
     expect(proposalsOf(again)).toHaveLength(1);
     expect(notify.ops).toEqual([{ op: 'addNode', ref: 'n', type: 'core.set', name: 'Notify', after: 'Merge PR' }]);
+  });
+});
+
+describe('warnings for made-up references and missing service credentials', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const insert = (id: string): AssistantOp[] => [{ op: 'addNode', ref: 't', type: 'core.dataTable', name: 'Save row', after: 'Code', parameters: { operation: 'insert', dataTableId: id } }];
+
+  it('warns when a data table id is not in the real list, and stays quiet for a real one or an expression', async () => {
+    const spy = vi.spyOn(registry, 'loadOptions').mockResolvedValue([{ name: 'Leads', value: 'tbl_real' }]);
+    const check = async (id: string) => {
+      const v = validateOps(workflow(), insert(id), lookup());
+      return unknownReferenceCautions(workflow(), v.workflow, lookup());
+    };
+    const made = await check('table_12345');
+    expect(made).toHaveLength(1);
+    expect(made[0]).toMatch(/Data Table “table_12345” is not one of the 1 that exist \(tbl_real\)/);
+    expect(await check('tbl_real')).toEqual([]);
+    expect(await check('={{ $json.table }}')).toEqual([]);
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it('claims nothing when the list cannot be loaded or is empty', async () => {
+    const spy = vi.spyOn(registry, 'loadOptions').mockRejectedValue(new Error('needs a credential'));
+    const v = validateOps(workflow(), insert('table_12345'), lookup());
+    expect(await unknownReferenceCautions(workflow(), v.workflow, lookup())).toEqual([]);
+    spy.mockResolvedValue([]);
+    expect(await unknownReferenceCautions(workflow(), v.workflow, lookup())).toEqual([]);
+  });
+
+  it('warns for an HTTP Request to a known service host with no credential, not with one or an auth header or another host', () => {
+    const http = (parameters: Record<string, unknown>): AssistantOp[] => [{ op: 'addNode', ref: 'h', type: 'core.httpRequest', name: 'Post to Slack', after: 'Code', parameters }];
+    const slack = validateOps(workflow(), http({ method: 'POST', url: 'https://slack.com/api/chat.postMessage' }), lookup());
+    expect(slack.cautions.some((c) => /“Post to Slack” calls Slack \(slack\.com\) with no credential/.test(c))).toBe(true);
+    const other = validateOps(workflow(), http({ url: 'https://example.org/hook' }), lookup());
+    expect(other.cautions.some((c) => /calls .* with no credential/.test(c))).toBe(false);
+    const hdr = validateOps(workflow(), http({ url: 'https://slack.com/api/x', headers: { header: [{ name: 'Authorization', value: 'Bearer x' }] } }), lookup());
+    expect(hdr.cautions.some((c) => /calls Slack/.test(c))).toBe(false);
   });
 });

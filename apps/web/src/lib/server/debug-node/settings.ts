@@ -73,6 +73,14 @@ export function updateDebugNodeSettings(patch: z.infer<typeof debugNodePatchSche
   return next;
 }
 
+const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Loopback names are one host: `localhost`, `127.0.0.1` and `[::1]` all become `localhost` (the port suffix is kept). */
+function canonicalHost(entry: string): string {
+  const m = /^(\[::1\]|[^:]+)(:\d+)?$/.exec(entry);
+  return m && LOOPBACK_NAMES.has(m[1]) ? `localhost${m[2] ?? ''}` : entry;
+}
+
 /** The plugin URL if the host may call it: http(s), no credentials, a host on the list (with the port, when the entry names one). */
 export function checkPluginUrl(raw: string, settings = getDebugNodeSettings()): { ok: true; url: URL } | { ok: false; reason: string } {
   let url: URL;
@@ -83,8 +91,11 @@ export function checkPluginUrl(raw: string, settings = getDebugNodeSettings()): 
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return { ok: false, reason: 'The plugin URL must be http or https' };
   if (url.username || url.password) return { ok: false, reason: 'The plugin URL must not carry credentials' };
-  const host = url.hostname.toLowerCase();
-  const listed = settings.allowedHosts.some((entry) => entry === host || (url.port !== '' && entry === `${host}:${url.port}`));
+  const host = canonicalHost(url.hostname.toLowerCase());
+  const listed = settings.allowedHosts.some((raw) => {
+    const entry = canonicalHost(raw);
+    return entry === host || (url.port !== '' && entry === `${host}:${url.port}`);
+  });
   if (!listed) return { ok: false, reason: `The host “${url.host}” is not on the owner’s allowed list for local node overrides` };
   return { ok: true, url };
 }

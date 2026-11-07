@@ -82,6 +82,11 @@ export function Trace({ model, open }: { model: RunModel; open: (o: Open) => voi
                 {OP[s.kind] ?? s.kind}
                 {label}
               </span>
+              {s.kind === 'model' && typeof s.attrs.costNote === 'string' && s.attrs.costNote && (
+                <span className="shrink-0 rounded bg-nudim px-1 text-[11px] text-warn" title={s.attrs.costNote} data-testid="no-price-hint">
+                  no price: counted as $0
+                </span>
+              )}
               <div className="relative h-1.5 min-w-0 flex-1 rounded-full bg-nudim" aria-hidden>
                 <i
                   className={cn('absolute inset-y-0 rounded-full', running && 'animate-pulse-soft')}

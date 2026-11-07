@@ -298,8 +298,8 @@ function DebugAccessDialog({ executionId, onClose }: { executionId: string; onCl
             <p className="mt-1 text-[12px] leading-snug text-t3">Lets one node of a run be run against a plugin on a developer&apos;s machine. Off by default. The host calls only the hosts listed here, never anything else.</p>
             {isOwner ? (
               <div className="mt-2 flex flex-col gap-2">
-                <FieldLabel className="mb-0">Allowed hosts (one per line: a tunnel name or localhost)</FieldLabel>
-                <Textarea rows={3} value={hostsText} onChange={(e) => setHostsText(e.target.value)} placeholder={'127.0.0.1\nmy-tunnel.example.dev'} aria-label="Allowed hosts" className="font-mono text-[12px]" />
+                <FieldLabel className="mb-0">Allowed hosts (one per line: a tunnel name, or localhost, which also covers 127.0.0.1 and ::1)</FieldLabel>
+                <Textarea rows={3} value={hostsText} onChange={(e) => setHostsText(e.target.value)} placeholder={'localhost:7392\nmy-tunnel.example.dev'} aria-label="Allowed hosts" className="font-mono text-[12px]" />
                 <Button variant="outline" size="sm" className="h-9 w-full" loading={savingOverride} onClick={() => void saveOverride({ allowedHosts: hostsText.split(/\n|,/).map((h) => h.trim()).filter(Boolean) })}>
                   Save allowed hosts
                 </Button>
