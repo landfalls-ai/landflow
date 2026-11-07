@@ -239,6 +239,24 @@ describe('inserting and proposing', () => {
     expect(c.compositeIssues({ ...wf, groups: wf.groups!.map((x) => (x.id === g.id ? typed : x)) }, own)).toEqual([]);
   });
 
+  it('keeps the retry wait and backoff through propose, validate and insert', async () => {
+    const { compositeTypeSchema } = await import('@landflow/protocol');
+    const wf = triageFlow();
+    const g = frame(wf);
+    delete g.composite;
+    const chain = wf.nodes.find((n) => n.type === 'core.chainLlm')!;
+    Object.assign(chain, { retryOnFail: true, maxTries: 4, waitBetweenTriesMs: 2500, retryBackoff: 'exponential' });
+    const proposed = c.proposeComposite(wf, g.id, lookup)!;
+    const starter = proposed.descriptor.starter!.nodes.find((n) => n.type === 'core.chainLlm')!;
+    expect(starter).toMatchObject({ maxTries: 4, waitBetweenTriesMs: 2500, retryBackoff: 'exponential' });
+    const parsed = compositeTypeSchema.parse(JSON.parse(JSON.stringify(proposed.descriptor)));
+    expect(parsed.starter!.nodes.find((n) => n.type === 'core.chainLlm')).toMatchObject({ waitBetweenTriesMs: 2500, retryBackoff: 'exponential' });
+    let i = 0;
+    const made = c.instantiateComposite('local.x', parsed, { x: 0, y: 0 }, { takenNames: [], newId: () => `n${++i}`, groupId: 'g' });
+    expect(made.nodes.find((n) => n.type === 'core.chainLlm')).toMatchObject({ retryOnFail: true, maxTries: 4, waitBetweenTriesMs: 2500, retryBackoff: 'exponential' });
+    expect(compositeTypeSchema.safeParse({ ...JSON.parse(JSON.stringify(proposed.descriptor)), starter: { nodes: [{ ...starter, retryBackoff: 'weird' }], connections: [] } }).success).toBe(false);
+  });
+
   it('makes identifiers from labels', () => {
     expect(c.identifierFrom('AI triage (fail-open)')).toBe('aiTriageFailOpen');
     expect(c.identifierFrom('3 step')).toBe('composite3Step');

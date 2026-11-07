@@ -369,6 +369,8 @@ export interface CompositeStarterNode {
   onError?: 'stop' | 'continue';
   retryOnFail?: boolean;
   maxTries?: number;
+  waitBetweenTriesMs?: number;
+  retryBackoff?: 'fixed' | 'exponential';
   slot?: string;
 }
 

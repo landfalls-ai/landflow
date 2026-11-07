@@ -508,6 +508,8 @@ export function instantiateComposite(type: string, descriptor: CompositeTypeDesc
       ...(n.onError && { onError: n.onError }),
       ...(n.retryOnFail && { retryOnFail: true }),
       ...(n.maxTries && { maxTries: n.maxTries }),
+      ...(n.waitBetweenTriesMs !== undefined && { waitBetweenTriesMs: n.waitBetweenTriesMs }),
+      ...(n.retryBackoff && { retryBackoff: n.retryBackoff }),
     } as WorkflowNode;
   });
   const connections: WorkflowConnection[] = (descriptor.starter?.connections ?? []).flatMap((c) => {
@@ -611,6 +613,8 @@ export function proposeComposite(workflow: Graph, groupId: string, lookup: Pick<
         ...(n.onError && n.onError !== 'stop' && { onError: n.onError }),
         ...(n.retryOnFail && { retryOnFail: true }),
         ...(n.maxTries && { maxTries: n.maxTries }),
+        ...(n.waitBetweenTriesMs !== undefined && { waitBetweenTriesMs: n.waitBetweenTriesMs }),
+        ...(n.retryBackoff && { retryBackoff: n.retryBackoff }),
         slot: slotOfNode.get(n.id)!,
       })),
       connections: workflow.connections.filter((c) => memberSet.has(c.source) && memberSet.has(c.target)).map((c) => ({ source: c.source, sourceIndex: c.sourceIndex, target: c.target, targetIndex: c.targetIndex, ...(c.type !== 'main' && { type: c.type }) })),
