@@ -13,6 +13,33 @@
  * (sanitized by the server) is added to the shadow root after the built-in styles.
  */
 
+/**
+ * What a reply sounds like when read aloud. Plain ES5 source, shared by the script and by the tests (compiled once
+ * with `new Function`): code blocks and inline code, links' addresses, "asked X: ..." lines, Markdown marks and a
+ * leading "<Agent>:" label are dropped. Tool calls never reach this (they are not reply text).
+ */
+const SPOKEN_JS = String.raw`function spokenText(text, agentName) {
+  var s = String(text == null ? '' : text);
+  s = s.replace(/\x60\x60\x60[\s\S]*?(?:\x60\x60\x60|$)/g, ' ');
+  s = s.replace(/~~~[\s\S]*?(?:~~~|$)/g, ' ');
+  s = s.replace(/^[ \t]*asked [^\n:]{1,80}:.*$/gim, ' ');
+  s = s.replace(/\x60[^\x60\n]*\x60/g, ' ');
+  s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');
+  s = s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+  s = s.replace(/https?:\/\/[^\s<)]+/gi, ' ');
+  if (agentName) {
+    var name = String(agentName).replace(/[.*+?^\x24{}()|[\]\\]/g, '\\$&');
+    s = s.replace(new RegExp('^\\s*(?:\\*\\*|__)?' + name + '(?:\\*\\*|__)?\\s*:\\s*', 'i'), '');
+  }
+  s = s.replace(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+|\d+[.)][ \t]+)/gm, '');
+  s = s.replace(/[*~]+/g, '').replace(/(^|\s)_+|_+(?=\s|$|[.,!?;:])/g, '$1').replace(/\|/g, ' ');
+  s = s.replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{2,}/g, '\n').replace(/ ([.,!?;:])/g, '$1');
+  return s.trim();
+}`;
+
+/** The reading rules, for tests and any other caller. */
+export const spokenText = new Function(`${SPOKEN_JS}; return spokenText;`)() as (text: unknown, agentName?: string) => string;
+
 const STYLE = `
 :host { all: initial; }
 * { box-sizing: border-box; }
@@ -55,6 +82,10 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .send { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
 .send:disabled { opacity: .5; cursor: default; }
 .attach { background: var(--bubble); color: var(--fg); }
+.mic, .speak { border: 1px solid var(--line); border-radius: 10px; height: 40px; min-width: 44px; padding: 0 10px; background: var(--bubble); color: var(--fg); font: inherit; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.mic.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.speak[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+@media (max-width: 600px) { .mic, .speak, .send { height: 48px; min-width: 52px; } .mic { min-width: 60px; font-size: 18px; } }
 .roster { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; border-top: 1px solid var(--line); }
 .roster .hint { width: 100%; font-size: 12px; color: var(--muted); }
 .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 20px; background: var(--bubble); color: var(--fg); font: inherit; cursor: pointer; }
@@ -87,6 +118,7 @@ const CLIENT = `(function () {
   var storageKey = 'landflow-chat:' + key;
   var authKey = 'landflow-chat-auth:' + key;
   var STYLE = __STYLE__;
+  __SPOKEN__
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
@@ -136,6 +168,7 @@ const CLIENT = `(function () {
   var busy = false;
   var picked = [];
   var agentKey = '';
+  var voice = { synth: null, rec: null, listening: false, speakOn: false };
   var log, input, sendButton, fileInput, pickedLine, titleNode, subtitleNode, panelNode;
   var customStyle = null;
   function applyCss(css) {
@@ -241,6 +274,7 @@ const CLIENT = `(function () {
     var text = input.value.trim();
     if (busy || (!text && !picked.length)) return;
     store(sessionId);
+    stopSpeaking();
     var files = picked;
     bubble('user', text, files.map(function (f) { return { fileName: f.name }; }));
     input.value = '';
@@ -263,7 +297,8 @@ const CLIENT = `(function () {
       body = JSON.stringify(payload);
       headers['content-type'] = 'application/json';
     }
-    var reply = null, streamed = '', tools = {}, answerId = '', speaker = null, anyLabel = false;
+    var reply = null, streamed = '', tools = {}, answerId = '', speaker = null, anyLabel = false, failed = false;
+    var parts = [{ text: '', agent: null }];
     function replyNode() { if (!reply) { typing.remove(); reply = bubble('bot', '', null, speaker); } return reply; }
     /** A delegation (a tool call with a reason) reads "asked <Agent>: <reason>". */
     function askLine(name, reason) {
@@ -283,8 +318,10 @@ const CLIENT = `(function () {
             if (chunk.type === 'item' && chunk.content) {
               if (chunk.agent && chunk.agent.name) anyLabel = true;
               // Once agents are labelled, a change of speaker starts a new bubble.
-              if (anyLabel && reply && (chunk.agent ? chunk.agent.id : '') !== (speaker ? speaker.id : '')) { reply = null; streamed = ''; }
+              if (anyLabel && reply && (chunk.agent ? chunk.agent.id : '') !== (speaker ? speaker.id : '')) { reply = null; streamed = ''; parts.push({ text: '', agent: null }); }
               speaker = chunk.agent && chunk.agent.name ? chunk.agent : null;
+              parts[parts.length - 1].agent = speaker;
+              parts[parts.length - 1].text += chunk.content;
               streamed += chunk.content; replyNode().innerHTML = render(streamed); scroll(); }
             else if (chunk.type === 'tool' && chunk.tool) {
               var known = tools[chunk.tool.id];
@@ -298,15 +335,92 @@ const CLIENT = `(function () {
               if (chunk.executionId) answerId = chunk.executionId;
               if (chunk.status === 'error') throw new Error((chunk.error && chunk.error.message) || 'Something went wrong');
               var output = typeof chunk.output === 'string' ? chunk.output : '';
-              if (output) { streamed = output; replyNode().innerHTML = render(output); }
+              if (output) { streamed = output; parts[parts.length - 1].text = output; replyNode().innerHTML = render(output); }
               else if (!streamed) replyNode().innerHTML = render(chunk.status === 'waiting' ? 'Waiting for someone to approve a step…' : '(no reply)');
             }
           });
         }
-        return response.json().then(function (data) { if (data.executionId) answerId = data.executionId; replyNode().innerHTML = render(typeof data.output === 'string' ? data.output : JSON.stringify(data.output)); });
+        return response.json().then(function (data) { if (data.executionId) answerId = data.executionId; var out = typeof data.output === 'string' ? data.output : JSON.stringify(data.output); parts[0].text = out; replyNode().innerHTML = render(out); });
       })
-      .catch(function (error) { typing.remove(); bubble('error', error.message || 'Could not reach the chat'); })
-      .then(function () { typing.remove(); if (reply && answerId) feedbackRow(answerId); setBusy(false); scroll(); input.focus(); });
+      .catch(function (error) { failed = true; typing.remove(); bubble('error', error.message || 'Could not reach the chat'); })
+      .then(function () { typing.remove(); if (reply && answerId) feedbackRow(answerId); if (reply && !failed && voice.speakOn) parts.forEach(function (part) { speakText(spokenText(part.text, part.agent && part.agent.name)); }); setBusy(false); scroll(); input.focus(); });
+  }
+
+  function stopSpeaking() { if (voice.synth) { try { voice.synth.cancel(); } catch (e) {} } }
+  function speakText(text) {
+    if (!voice.synth || !text) return;
+    text.split('\\n').forEach(function (piece) {
+      if (!piece.trim()) return;
+      var utterance = new window.SpeechSynthesisUtterance(piece);
+      var lang = config.voiceLang || document.documentElement.lang;
+      if (lang) utterance.lang = lang;
+      voice.synth.speak(utterance);
+    });
+  }
+  /** The push-to-talk button: hold to speak, the words fill the input, release sends (when "send when I stop" is on). */
+  function micButton(Recognition) {
+    var button = el('button', { class: 'mic', type: 'button', title: 'Hold to talk', 'aria-label': 'Hold to talk', text: '\\ud83c\\udf99' });
+    var base = '', heard = '';
+    function begin(event) {
+      if (voice.listening || busy) return;
+      if (event) event.preventDefault();
+      stopSpeaking();
+      var rec = new Recognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      var lang = config.voiceLang || document.documentElement.lang || navigator.language;
+      if (lang) rec.lang = lang;
+      base = input.value ? input.value.replace(/\\s+$/, '') + ' ' : '';
+      heard = '';
+      rec.onresult = function (e) {
+        var text = '';
+        for (var i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
+        heard = text.trim();
+        input.value = base + heard;
+      };
+      rec.onerror = function (e) {
+        if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) pickedLine.textContent = 'The microphone is blocked. Allow it in the browser to talk.';
+      };
+      rec.onend = function () {
+        voice.listening = false; voice.rec = null; button.classList.remove('on'); button.setAttribute('aria-pressed', 'false');
+        if (heard && config.voiceSend !== false) send();
+      };
+      voice.rec = rec; voice.listening = true;
+      button.classList.add('on'); button.setAttribute('aria-pressed', 'true');
+      pickedLine.textContent = '';
+      try { rec.start(); } catch (err) { voice.listening = false; voice.rec = null; button.classList.remove('on'); button.setAttribute('aria-pressed', 'false'); }
+    }
+    function end() { if (voice.rec) { try { voice.rec.stop(); } catch (e) {} } }
+    button.setAttribute('aria-pressed', 'false');
+    button.addEventListener('pointerdown', function (e) { try { button.setPointerCapture(e.pointerId); } catch (x) {} begin(e); });
+    button.addEventListener('pointerup', end);
+    button.addEventListener('pointercancel', end);
+    button.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    button.addEventListener('keydown', function (e) { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) begin(e); });
+    button.addEventListener('keyup', function (e) { if (e.key === ' ' || e.key === 'Enter') end(); });
+    return button;
+  }
+  /** The speaker toggle: read each finished reply aloud. */
+  function speakerButton() {
+    var button = el('button', { class: 'speak', type: 'button', title: 'Read replies aloud', 'aria-label': 'Read replies aloud', 'aria-pressed': 'false', text: '\\ud83d\\udd0a' });
+    button.addEventListener('click', function () {
+      voice.speakOn = !voice.speakOn;
+      button.setAttribute('aria-pressed', String(voice.speakOn));
+      if (!voice.speakOn) stopSpeaking();
+    });
+    return button;
+  }
+  /** The voice buttons the trigger asks for and this browser can do (none otherwise: iOS Safari has speech out, not always speech in). */
+  function voiceControls() {
+    var list = [];
+    if (config.voice !== 'in' && config.voice !== 'inout') return list;
+    var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (Recognition) list.push(micButton(Recognition));
+    if (config.voice === 'inout' && window.speechSynthesis && window.SpeechSynthesisUtterance) {
+      voice.synth = window.speechSynthesis;
+      list.push(speakerButton());
+    }
+    return list;
   }
 
   var inner = null;
@@ -367,6 +481,7 @@ const CLIENT = `(function () {
       } });
       controls.unshift(el('button', { class: 'attach', type: 'button', title: 'Attach files', 'aria-label': 'Attach files', text: '📎', onclick: function () { fileInput.click(); } }), fileInput);
     }
+    voiceControls().forEach(function (button) { controls.push(button); });
     controls.push(sendButton);
     var rosterRow = null;
     if (config.agents && config.agents.length) {
@@ -409,7 +524,7 @@ const CLIENT = `(function () {
 `;
 
 /** The script served at /chat/widget.js. */
-export const CHAT_CLIENT_JS = CLIENT.replace('__STYLE__', JSON.stringify(STYLE));
+export const CHAT_CLIENT_JS = CLIENT.replace('__STYLE__', () => JSON.stringify(STYLE)).replace('__SPOKEN__', () => SPOKEN_JS);
 
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (c) => ESCAPES[c]);

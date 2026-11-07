@@ -70,6 +70,12 @@ export interface PublicChatConfig {
   basicAuth?: { user: string; password: string };
   /** Agents the visitor can pick (the trigger's roster); empty: the flow's own start. */
   roster: RosterEntry[];
+  /** Browser speech buttons: none, the microphone, or the microphone and a speaker toggle. */
+  voice: 'off' | 'in' | 'inout';
+  /** A language tag for speech; empty: the page's. */
+  voiceLang: string;
+  /** Send on releasing the microphone. */
+  voiceSend: boolean;
 }
 
 /** One agent on a chat's roster: what the page may name, and the node it starts. */
@@ -183,6 +189,9 @@ export function chatConfig(workflow: Workflow, node: WorkflowNode): PublicChatCo
       .filter(Boolean),
     customCss: sanitizeCustomCss(text(p.customCss)),
     roster: chatRoster(workflow, node),
+    voice: p.voice === 'in' || p.voice === 'inout' ? p.voice : 'off',
+    voiceLang: text(p.voiceLang).trim().slice(0, 35),
+    voiceSend: p.voiceSend !== false,
     ...(p.authentication === 'basicAuth' && { basicAuth: { user: text(p.basicAuthUser), password: text(p.basicAuthPassword) } }),
   };
 }

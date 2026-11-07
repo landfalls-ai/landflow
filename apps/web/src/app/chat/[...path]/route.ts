@@ -112,6 +112,8 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
         feedback: true,
         // Label and face only: never the node behind an agent.
         ...(config.roster.length && { agents: config.roster.map((r) => ({ key: r.key, label: r.label, ...(r.face && { face: r.face }) })) }),
+        voice: config.voice,
+        ...(config.voice !== 'off' && { ...(config.voiceLang && { voiceLang: config.voiceLang }), voiceSend: config.voiceSend }),
         customCss: config.customCss,
       },
       200,
