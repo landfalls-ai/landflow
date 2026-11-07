@@ -40,7 +40,12 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Integrations: messaging, productivity, Google Workspace, databases | [features/integrations.md](features/integrations.md) | each plugin's README |
 | Web Search: SearXNG, Brave Search and Tavily as an agent tool, titles, links and snippets only | [web-search.md](web-search.md) | [plugins/web-search](../plugins/web-search/README.md) |
 | Browser: read a page, run listed steps, extract values, take a screenshot, packaged as its own image | [plugins/browser](../plugins/browser/README.md) | [deployment.md](deployment.md#browser-plugin) |
-| Specs: proposals written before the code (chat with agents, the parallel build plan, the Desktop agent node) | [specs/README.md](specs/README.md) | |
+| Agent Shell: a safe in-memory bash an agent can use as a tool, no host files and no network (opt-in plugin) | [plugins/agent-shell](../plugins/agent-shell/README.md) | [research/just-bash-verdict.md](research/just-bash-verdict.md) |
+| AI SDK: a Generate with AI SDK node over Ollama, OpenAI-compatible, Anthropic or Google, with OpenTelemetry spans (opt-in plugin, `pnpm plugin:ai-sdk`) | [research/ai-sdk-verdict.md](research/ai-sdk-verdict.md) | [limitations.md](limitations.md#debugging-chat-with-agents-browser-and-web-search-built-2026-11-07) |
+| Spec cards in Run Trace drawn with json-render, behind `LANDFLOW_JSON_RENDER` | [research/json-render-verdict.md](research/json-render-verdict.md) | [reference/configuration.md](reference/configuration.md) |
+| Debug token: a read-only key to one execution for a debugging agent (`landflow debug-token`) | [specs/19-debug-token.md](specs/19-debug-token.md) | [reference/api.md](reference/api.md), [features/cli.md](features/cli.md) |
+| Images in tool results: a tool can return a screenshot or other image to the AI Agent's model | [features/ai.md](features/ai.md) | [specs/18-desktop-agent-node.md](specs/18-desktop-agent-node.md) |
+| Specs: proposals written before the code (chat with agents, the parallel build plan, the Desktop agent node, the debug token) | [specs/README.md](specs/README.md) | |
 | Files and binary data | [features/files.md](features/files.md) | [protocol.md](protocol.md) §11 |
 | Settings, variables, data tables, insights | [features/settings-and-data.md](features/settings-and-data.md) | |
 | Authentication: users, roles, projects, API keys, OIDC, SAML, SCIM | [features/authentication.md](features/authentication.md) | |
@@ -111,6 +116,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | [services/landflow-bridge](../services/landflow-bridge/README.md) | broker kinds for plugins whose SDK lacks a driver |
 | [plugins/text-toolkit](../plugins/text-toolkit/README.md), [py-insights](../plugins/py-insights/README.md), [go-crypto](../plugins/go-crypto/README.md) | the example plugins, one per SDK |
 | [plugins/messaging](../plugins/messaging/README.md), [productivity](../plugins/productivity/README.md), [google-workspace](../plugins/google-workspace/README.md), [databases](../plugins/databases/README.md), [github](../plugins/github/README.md), [browser](../plugins/browser/README.md), [web-search](../plugins/web-search/README.md) | the integration plugins |
+| [research/json-render-verdict](research/json-render-verdict.md), [ai-sdk-verdict](research/ai-sdk-verdict.md), [just-bash-verdict](research/just-bash-verdict.md) | what each Vercel open-source prototype showed and whether to keep it (all three stay as flags) |
 | [research/workflow-sdk-spike](research/workflow-sdk-spike.md) | a test of Vercel's Workflow SDK as a home for runs: events per node, replay cost, crash recovery |
 | [plugins/triage](../plugins/triage/README.md), [landfall](../plugins/landfall/README.md), [threat-intel](../plugins/threat-intel/README.md) | the triage plugins ([triage.md](triage.md)) |
 | [deploy/k8s/examples/keda](../deploy/k8s/examples/keda/README.md) | KEDA autoscaling examples |

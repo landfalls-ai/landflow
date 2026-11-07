@@ -77,3 +77,5 @@ Pages are untrusted, and a page can carry instructions meant for the model that 
 
 Broker transports and the MCP face are set as in the other plugins ([transports.md](../../docs/transports.md)). Concurrency defaults
 to 2 calls at once, since each call starts a Chrome.
+
+As an agent tool, the screenshot reaches a vision model as an image (the AI Agent node passes `item.binary` images to the model; see docs/features/ai.md).

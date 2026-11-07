@@ -17,7 +17,7 @@ pnpm dev:all:browser                          # the same plus the Browser plugin
 docker compose -f deploy/compose.infra.yml up -d --wait   # Postgres, Valkey, Mailpit, MinIO, OpenBao (optional)
 ```
 
-`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|browser|web-search` runs one plugin (`web-search` on 7113 / 7213), and
+`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|browser|web-search|agent-shell|ai-sdk` runs one plugin (`web-search` on 7113 / 7213, `agent-shell` on 7114 / 7214, `ai-sdk` on 7115 / 7215; the last two are opt-in and not in `dev:all`), and
 `pnpm worker` runs a queue-mode worker. The host keeps its data in `apps/web/.data` (SQLite, `credentials.json`,
 `encryption.key`). Don't edit those files by hand: use the UI, the API or the [CLI](features/cli.md).
 [deployment.md, "Using the infra from the dev server on the host"](deployment.md#using-the-infra-from-the-dev-server-on-the-host)
