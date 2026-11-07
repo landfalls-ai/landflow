@@ -8,6 +8,7 @@ import type { ExecutionRecord } from '@/lib/shared/types';
 import { jsonRenderEnabled } from '@/lib/shared/ui-spec';
 import { RunTraceView } from './run-trace-view';
 import { JsonRenderGallery } from './ui-cards';
+import { DebugAccessButton } from './debug-access';
 
 /** Under LANDFLOW_JSON_RENDER, /runs/json-render-gallery shows the spec cards (dev page). */
 export function RunPage({ executionId }: { executionId: string }) {
@@ -30,6 +31,7 @@ function RunPageOf({ executionId }: { executionId: string }) {
           <ArrowLeft className="size-4" /> Execution
         </Link>
         <span className="min-w-0 truncate text-[14px] font-semibold text-t1">{record?.workflowName ?? 'Run trace'}</span>
+        <DebugAccessButton executionId={executionId} />
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <RunTraceView executionId={executionId} executionHref={href} />
