@@ -416,13 +416,64 @@ class ExecuteContext(_TelemetryContext):
             record["evidence"] = to_jsonable(dict(evidence))
         self._add_record(record)
 
+    def model(
+        self,
+        model: str,
+        provider: str,
+        input_tokens: int,
+        output_tokens: int,
+        *,
+        name: str | None = None,
+        cache_read_tokens: int | None = None,
+        cache_write_tokens: int | None = None,
+        duration_ms: int | None = None,
+        finish_reason: str | None = None,
+        prompt: str | None = None,
+        answer: str | None = None,
+    ) -> None:
+        """Report one model call this node made (a ``model`` record).
+
+        The host prices it, counts it in AI usage and the caps (declare ``meterAiUsage: True`` in the node description so
+        the node is also refused once a cap is reached) and shows it as a ``model`` step under the node in Run Trace.
+        ``input_tokens`` is the whole prompt, cached tokens included; ``provider`` is who served it (``ollama``,
+        ``anthropic``, ``openai``...), used to price the call; ``name`` labels the call when the node makes several.
+        ``prompt`` and ``answer`` are cut by the host's trace content setting. Text fields are redacted like logs;
+        negative counts are sent as zero.
+        """
+
+        def count(value: int | float | None) -> int:
+            return max(0, round(value or 0))
+
+        record: dict[str, Any] = {
+            "type": "model",
+            "model": redact_text(str(model)),
+            "provider": str(provider),
+            "inputTokens": count(input_tokens),
+            "outputTokens": count(output_tokens),
+        }
+        if name:
+            record["name"] = redact_text(str(name))
+        if cache_read_tokens:
+            record["cacheReadTokens"] = count(cache_read_tokens)
+        if cache_write_tokens:
+            record["cacheWriteTokens"] = count(cache_write_tokens)
+        if duration_ms is not None:
+            record["durationMs"] = count(duration_ms)
+        if finish_reason:
+            record["finishReason"] = str(finish_reason)
+        if prompt is not None:
+            record["prompt"] = redact_text(str(prompt))
+        if answer is not None:
+            record["answer"] = redact_text(str(answer))
+        self._add_record(record)
+
     def _add_record(self, record: dict[str, Any]) -> None:
         record["at"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         self._records.append(record)
 
     @property
     def records(self) -> list[dict[str, Any]]:
-        """The artifacts and checks reported so far, in order (what goes into ``ExecuteResponse.records``)."""
+        """The artifacts, checks and model calls reported so far, in order (what goes into ``ExecuteResponse.records``)."""
         return self._records
 
     # -------------------------------------------------------------- polling

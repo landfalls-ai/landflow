@@ -7,6 +7,7 @@
 import type { ExecutionEvent, Workflow, WorkflowNode } from '@landflow/engine';
 import type { JsonObject } from '@landflow/protocol';
 import type { AgentTraceSummary } from '../../shared/agents';
+import { aiUsageMeter } from '../ai-usage';
 import { traceModelCalls } from './trace-calls';
 import { mergeConnections, toolInput, type ActorConnection, type JournalDraft, type JournalEvent, type RunActor, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from '../../shared/run-trace';
 
@@ -478,6 +479,13 @@ export function createTranslator(options: TranslatorOptions) {
     const startedAt = ms === undefined ? endedAt : new Date(Math.max(0, Date.parse(endedAt) - ms)).toISOString();
     const caller = spans.get(parent)?.actor ?? workflowActor;
     const node = nodes.get(e.nodeId);
+    // Priced like the usage ledger and the models node (ai-usage prices); a model without a price counts as $0, and says so.
+    let price: { cost: number; priced: boolean } | undefined;
+    try {
+      price = aiUsageMeter().price(call);
+    } catch {
+      price = undefined;
+    }
     spans.set(spanId, { id: spanId, kind: 'model', actor: { id: `model:${call.model}`, name: call.model, type: 'model', ...(node && { nodeType: node.type }) }, parent, open: false, status: 'success' });
     emit({
       type: 'span.started',
@@ -488,7 +496,7 @@ export function createTranslator(options: TranslatorOptions) {
       actor: { id: `model:${call.model}`, name: call.model, type: 'model', ...(node && { nodeType: node.type }) },
       caller,
       ...(call.prompt !== undefined && { input: call.prompt }),
-      attrs: { provider: call.provider, ...(node && { nodeType: node.type, nodeName: e.nodeName }), ...(ms !== undefined && { durationMs: ms }), ...(call.finishReason && { finishReason: call.finishReason }) },
+      attrs: { provider: call.provider, ...(node && { nodeType: node.type, nodeName: e.nodeName }), ...(ms !== undefined && { durationMs: ms }), ...(call.finishReason && { finishReason: call.finishReason }), ...(price && !price.priced && { costNote: 'No price for this model: counted as $0' }) },
       at: startedAt,
     });
     emit({
@@ -501,6 +509,7 @@ export function createTranslator(options: TranslatorOptions) {
         outputTokens: call.outputTokens,
         ...(call.cacheReadTokens && { cacheReadTokens: call.cacheReadTokens }),
         ...(call.cacheWriteTokens && { cacheWriteTokens: call.cacheWriteTokens }),
+        ...(price && { costUsd: price.cost }),
         model: call.model,
       },
       at: endedAt,

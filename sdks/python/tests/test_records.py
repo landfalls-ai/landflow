@@ -58,7 +58,17 @@ class BadStatus(Node):
         return [{}]
 
 
-PLUGIN = Plugin("rec", "Rec", "1", nodes=[Reporter(), Failing(), Quiet(), BadStatus()])
+class Modeler(Node):
+    description = {**_description("modeler"), "meterAiUsage": True}
+
+    def execute(self, ctx):
+        ctx.model("qwen3.8:latest", "ollama", 20, 0, name="summarize", cache_read_tokens=16, duration_ms=120,
+                  finish_reason="stop", prompt="tell me", answer="ok")
+        ctx.model("m", "ollama", -5, 3.4)
+        return [{}]
+
+
+PLUGIN = Plugin("rec", "Rec", "1", nodes=[Reporter(), Failing(), Quiet(), BadStatus(), Modeler()])
 
 
 def _request(node: str) -> dict:
@@ -81,6 +91,26 @@ class RecordsTests(unittest.TestCase):
         self.assertEqual(records[1]["status"], "fail")
         self.assertEqual(records[1]["evidence"], {"failed": 2})
         self.assertTrue(records[0]["at"].endswith("Z"))
+
+    def test_model_records(self):
+        first, second = PLUGIN.execute(_request("modeler"))["records"]
+        self.assertEqual(
+            {k: v for k, v in first.items() if k != "at"},
+            {"type": "model", "name": "summarize", "model": "qwen3.8:latest", "provider": "ollama", "inputTokens": 20,
+             "outputTokens": 0, "cacheReadTokens": 16, "durationMs": 120, "finishReason": "stop", "prompt": "tell me",
+             "answer": "ok"},
+        )
+        self.assertTrue(first["at"].endswith("Z"))
+        # Negative counts are zero, rounded; absent options are absent.
+        self.assertEqual({k: v for k, v in second.items() if k != "at"},
+                         {"type": "model", "model": "m", "provider": "ollama", "inputTokens": 0, "outputTokens": 3})
+
+    def test_model_record_survives_http_and_grpc(self):
+        response = PLUGIN.execute(_request("modeler"))
+        self.assertEqual(json.loads(json.dumps(response["records"])), response["records"])
+        if grpc_server is not None:
+            back = grpc_server.execute_response_from_proto(grpc_server.execute_response_to_proto(response))
+            self.assertEqual(back["records"], response["records"])
 
     def test_absent_when_none(self):
         self.assertNotIn("records", PLUGIN.execute(_request("quiet")))

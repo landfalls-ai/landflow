@@ -65,7 +65,11 @@ export function withAiUsage(resolved: ResolvedNodeType): ResolvedNodeType {
           capped ??= error;
         }
       }
-      if (capped) throw capped;
+      // The run stops here, before the engine would emit the response's records: hand them over now so Run Trace still shows each counted call.
+      if (capped) {
+        for (const call of response.records ?? []) if (call.type === 'model') extras?.onRecord?.(call);
+        throw capped;
+      }
       return response;
     },
   };
