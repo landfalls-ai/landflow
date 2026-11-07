@@ -208,6 +208,37 @@ export const chatTrigger = defineNode({
         displayOptions: whenPublic,
       },
       {
+        name: 'roster',
+        displayName: 'Agents the Visitor Can Pick',
+        type: 'fixedCollection',
+        typeOptions: { multipleValues: true },
+        placeholder: 'Add agent',
+        default: {},
+        description:
+          'Optional. The page shows these above the input; picking one starts the run at its node instead of the flow’s first node (the flow’s lead stays the default). Visitors can reach only the nodes listed here. A picked agent skips the nodes between the trigger and it (such as Guardrails) and keeps its own memory per visitor session.',
+        displayOptions: whenPublic,
+        groups: [
+          {
+            name: 'agent',
+            displayName: 'Agent',
+            values: [
+              { name: 'key', displayName: 'Key', type: 'string', default: '', noDataExpression: true, placeholder: 'billing', description: 'What the page sends (letters, digits, dashes, underscores)' },
+              { name: 'label', displayName: 'Label', type: 'string', default: '', noDataExpression: true, placeholder: 'Billing' },
+              { name: 'face', displayName: 'Face', type: 'string', default: '', noDataExpression: true, placeholder: '🧾', description: 'An emoji shown on the chip. Empty: the first letter of the label.' },
+              { name: 'target', displayName: 'Node', type: 'string', default: '', noDataExpression: true, placeholder: 'Billing agent', description: 'The name (or id) of a Run an Agent, Run a Team or AI Agent node in this workflow' },
+              {
+                name: 'seesTranscript',
+                displayName: 'Sees the Conversation',
+                type: 'boolean',
+                default: true,
+                noDataExpression: true,
+                description: 'Give the agent the visible conversation so far, read-only, as the `transcript` field of its input item',
+              },
+            ],
+          },
+        ],
+      },
+      {
         name: 'customCss',
         displayName: 'Custom CSS',
         type: 'string',

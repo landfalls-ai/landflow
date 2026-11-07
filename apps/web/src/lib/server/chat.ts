@@ -35,7 +35,7 @@ export interface ChatFile {
 }
 
 /** The trigger item of one chat message, its files stored in the execution's scope. */
-export async function chatItem(message: { chatInput: string; sessionId: string; files?: ChatFile[] }, executionId: string): Promise<NodeItem> {
+export async function chatItem(message: { chatInput: string; sessionId: string; files?: ChatFile[]; extra?: JsonObject }, executionId: string): Promise<NodeItem> {
   const binary: NonNullable<NodeItem['binary']> = {};
   for (const [index, file] of (message.files ?? []).slice(0, MAX_CHAT_FILES).entries()) {
     binary[`data${index}`] = await storeBinary(executionId, file.data, { mimeType: file.mimeType || 'application/octet-stream', fileName: file.fileName });
@@ -45,6 +45,7 @@ export async function chatItem(message: { chatInput: string; sessionId: string; 
       sessionId: message.sessionId,
       action: 'sendMessage',
       chatInput: message.chatInput,
+      ...message.extra,
       ...(message.files?.length && { files: message.files.map((f) => ({ fileName: f.fileName, mimeType: f.mimeType, fileSize: f.data.byteLength })) as unknown as JsonObject[] }),
     },
     ...(Object.keys(binary).length && { binary }),
@@ -67,6 +68,58 @@ export interface PublicChatConfig {
   /** The trigger's Custom CSS, sanitized (see `sanitizeCustomCss`). */
   customCss: string;
   basicAuth?: { user: string; password: string };
+  /** Agents the visitor can pick (the trigger's roster); empty: the flow's own start. */
+  roster: RosterEntry[];
+}
+
+/** One agent on a chat's roster: what the page may name, and the node it starts. */
+export interface RosterEntry {
+  key: string;
+  label: string;
+  face?: string;
+  /** The node id the run starts at. Never sent to visitors. */
+  targetId: string;
+  /** Whether the agent is given the visible conversation (read-only). */
+  seesTranscript: boolean;
+}
+
+const ROSTER_KEY = /^[\w-]{1,40}$/;
+
+/** The roster of a chat trigger: valid entries only (a key, a label, a target that is an enabled node of the flow other than the trigger). */
+export function chatRoster(workflow: Workflow, node: WorkflowNode): RosterEntry[] {
+  const raw = (node.parameters as Record<string, unknown>).roster;
+  const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && Array.isArray((raw as { agent?: unknown }).agent) ? (raw as { agent: unknown[] }).agent : [];
+  const out: RosterEntry[] = [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object') continue;
+    const e = entry as Record<string, unknown>;
+    const key = text(e.key).trim();
+    const target = text(e.target).trim();
+    const label = text(e.label).trim() || key;
+    if (!ROSTER_KEY.test(key) || !target || out.some((r) => r.key === key)) continue;
+    const found = workflow.nodes.find((n) => n.id === target) ?? workflow.nodes.find((n) => n.name === target);
+    if (!found || found.disabled || found.id === node.id || found.type === CHAT_TRIGGER) continue;
+    const face = text(e.face).trim();
+    out.push({ key, label: label.slice(0, 60), ...(face && { face: face.slice(0, 16) }), targetId: found.id, seesTranscript: e.seesTranscript !== false });
+  }
+  return out;
+}
+
+/** The roster entry a visitor named, or an error: a key off the roster never reaches a node. `undefined` entry: the lead (nothing named). */
+export function pickAgent(roster: RosterEntry[], agentKey: unknown): { entry?: RosterEntry } | { error: string } {
+  if (agentKey === undefined || agentKey === null || agentKey === '') return {};
+  const entry = typeof agentKey === 'string' ? roster.find((r) => r.key === agentKey) : undefined;
+  return entry ? { entry } : { error: 'That agent isn’t available in this chat' };
+}
+
+/** The memory session of an agent picked from the roster: `<sessionId>:<agentKey>`, so a specialist keeps its own history. */
+export const agentSessionId = (sessionId: string, agentKey: string) => `${sessionId}:${agentKey}`;
+
+/** What the picked agent sees of the visible conversation: the last messages, read-only. */
+export function visibleTranscript(workflowId: string, sessionId: string, limit = 20): JsonObject[] {
+  return loadTranscript(workflowId, sessionId)
+    .slice(-limit)
+    .map((m) => ({ role: m.role, text: m.text.slice(0, 4000), ...(m.agentName && { agentName: m.agentName }) }));
 }
 
 /** Longest Custom CSS kept (characters). */
@@ -129,6 +182,7 @@ export function chatConfig(workflow: Workflow, node: WorkflowNode): PublicChatCo
       .map((origin) => origin.trim().replace(/\/+$/, ''))
       .filter(Boolean),
     customCss: sanitizeCustomCss(text(p.customCss)),
+    roster: chatRoster(workflow, node),
     ...(p.authentication === 'basicAuth' && { basicAuth: { user: text(p.basicAuthUser), password: text(p.basicAuthPassword) } }),
   };
 }
