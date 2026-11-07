@@ -4,7 +4,8 @@
  * (`data: {…}` events, for `Accept: text/event-stream`) or NDJSON (one JSON object per line, n8n's format).
  *
  * Each chunk: `{ type: 'begin' | 'item' | 'end' | 'tool' | 'error', content?, tool?, metadata: { nodeId, nodeName,
- * itemIndex, timestamp } }`. The last one: `{ type: 'done', executionId, status, output?, error? }` with the
+ * itemIndex, timestamp }, agent?: { id, name, face? } }`. `agent` is there only when the node that wrote the chunk labels
+ * it (see `chunkAgent`); a flow without labels streams exactly as before. The last one: `{ type: 'done', executionId, status, output?, error? }` with the
  * reply text (chat) or the last node's output, or `waiting` with the approval the run waits for.
  */
 import type { ExecutionEvent } from '@landflow/engine';
@@ -21,13 +22,30 @@ export const STREAM_HEADERS: Record<StreamFormat, Record<string, string>> = {
   ndjson: { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no' },
 };
 
+/** Who wrote a chunk: an agent's id and name, and how it looks (an emoji, an image URL or an avatar object). */
+export interface ChunkAgent {
+  id: string;
+  name: string;
+  face?: string | JsonObject;
+}
+
+/** The label a chunk carries (`chunk.agent`, set by the node that writes it), or undefined when absent or malformed. */
+export function chunkAgent(chunk: unknown): ChunkAgent | undefined {
+  const raw = (chunk as { agent?: unknown } | null)?.agent as Record<string, unknown> | undefined;
+  if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || typeof raw.name !== 'string' || !raw.id || !raw.name) return undefined;
+  const face = typeof raw.face === 'string' ? raw.face.slice(0, 2_000) : raw.face && typeof raw.face === 'object' && !Array.isArray(raw.face) ? (raw.face as JsonObject) : undefined;
+  return { id: raw.id.slice(0, 200), name: raw.name.slice(0, 200), ...(face !== undefined && { face }) };
+}
+
 /** A node.chunk event as a wire chunk. */
 export function wireChunk(event: Extract<ExecutionEvent, { type: 'node.chunk' }>): JsonObject {
   const { chunk } = event;
+  const agent = chunkAgent(chunk);
   return {
     type: chunk.type,
     ...(chunk.content !== undefined && { content: chunk.content }),
     ...(chunk.tool && { tool: chunk.tool as unknown as JsonObject }),
+    ...(agent && { agent: agent as unknown as JsonObject }),
     metadata: { nodeId: event.nodeId, nodeName: event.nodeName, itemIndex: chunk.itemIndex ?? 0, timestamp: Date.parse(event.at) || Date.now() },
   };
 }

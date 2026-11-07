@@ -207,6 +207,9 @@ export interface ChatMessage {
   files?: Array<{ fileName: string; mimeType: string }>;
   /** An answer: the execution that wrote it, which the feedback buttons rate. */
   executionId?: string;
+  /** An answer: the agent that wrote it (`agent.id`, `agent.name` on the stream), when the flow labels its agents. */
+  agentKey?: string;
+  agentName?: string;
   /** The rating it got, if any. */
   feedback?: { rating: FeedbackRating; comment?: string };
 }
@@ -222,7 +225,7 @@ export function loadTranscript(workflowId: string, sessionId: string): ChatMessa
   );
   const ratings = feedbackBySession(workflowId, sessionId);
   return rows.map((row) => {
-    let data: { files?: ChatMessage['files']; executionId?: string } = {};
+    let data: { files?: ChatMessage['files']; executionId?: string; agentKey?: string; agentName?: string } = {};
     try {
       data = row.data ? (JSON.parse(row.data) as typeof data) : {};
     } catch {
@@ -235,6 +238,8 @@ export function loadTranscript(workflowId: string, sessionId: string): ChatMessa
       at: row.at,
       ...(data.files?.length && { files: data.files }),
       ...(data.executionId && { executionId: data.executionId }),
+      ...(data.agentKey && { agentKey: data.agentKey }),
+      ...(data.agentName && { agentName: data.agentName }),
       ...(rated && { feedback: { rating: rated.rating, ...(rated.comment && { comment: rated.comment }) } }),
     };
   });
@@ -254,7 +259,15 @@ export function appendTranscript(workflowId: string, sessionId: string, messages
         role: message.role,
         text: message.text.slice(0, 100_000),
         at: message.at,
-        data: message.files?.length || message.executionId ? JSON.stringify({ ...(message.files?.length && { files: message.files }), ...(message.executionId && { executionId: message.executionId }) }) : null,
+        data:
+          message.files?.length || message.executionId || message.agentKey || message.agentName
+            ? JSON.stringify({
+                ...(message.files?.length && { files: message.files }),
+                ...(message.executionId && { executionId: message.executionId }),
+                ...(message.agentKey && { agentKey: message.agentKey.slice(0, 200) }),
+                ...(message.agentName && { agentName: message.agentName.slice(0, 200) }),
+              })
+            : null,
       });
     }
     // Keep the newest messages only.
