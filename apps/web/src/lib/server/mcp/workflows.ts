@@ -9,6 +9,9 @@ import { defaultParameters, defaultVersionOf, indexedPorts, isPropertyVisible, w
 import type { Workflow } from '@landflow/engine';
 import { registry } from '../plugins/registry';
 import { workflowSchema } from '../schemas';
+import { store } from '../store';
+import type { ExecutionRecord } from '../../shared/types';
+import { checkExpressionFields, describeIssue, fieldsOfItems, outputSchemaOf, schemaFields, type KnownFields } from './expression-fields';
 
 export interface WorkflowValidation {
   valid: boolean;
@@ -180,5 +183,49 @@ export function validateWorkflow(input: unknown): WorkflowValidation {
   }
   const loose = workflow.nodes.filter((n) => workflow.nodes.length > 1 && !connected.has(n.id));
   if (loose.length) warnings.push(`Not connected: ${loose.map((n) => `"${n.name}"`).join(', ')}`);
+  // Expressions that read a field the node before them doesn't write (only where its fields are known).
+  try {
+    const workflowId = (input as { id?: unknown } | null)?.id;
+    const lastRun = lastRunFields(typeof workflowId === 'string' ? workflowId : undefined);
+    for (const issue of checkExpressionFields(
+      workflow,
+      (node) => descriptors.get(node.id),
+      (node) => {
+        const descriptor = descriptors.get(node.id);
+        const declared = descriptor && schemaFields(outputSchemaOf(descriptor, parametersOf.get(node.id) ?? node.parameters));
+        return declared ? { fields: declared, from: 'outputSchema' } : lastRun(node.id);
+      },
+    )) {
+      warnings.push(describeIssue(issue));
+    }
+  } catch {
+    // A failed check never blocks validation.
+  }
   return { valid: !errors.length, errors, warnings };
+}
+
+/**
+ * What each node of a saved workflow wrote in its most recent runs (the newest five executions), as the fields of its
+ * output items; nothing for a draft or a node that never produced output.
+ */
+export function lastRunFields(workflowId: string | undefined): (nodeId: string) => KnownFields | undefined {
+  const records: ExecutionRecord[] = [];
+  let loaded = false;
+  const load = () => {
+    loaded = true;
+    if (!workflowId) return;
+    for (const summary of store.listExecutions({ workflowId, limit: 5 })) {
+      const record = store.getExecution(summary.id);
+      if (record) records.push(record);
+    }
+  };
+  return (nodeId) => {
+    if (!loaded) load();
+    for (const record of records) {
+      const run = [...(record.runData[nodeId] ?? [])].reverse().find((r) => r.status === 'success' && r.source === 'main');
+      const fields = fieldsOfItems(run?.outputs[0] as Array<{ json: Record<string, unknown> }> | undefined);
+      if (fields) return { fields, from: 'last run' };
+    }
+    return undefined;
+  };
 }
