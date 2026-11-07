@@ -82,3 +82,69 @@ func TestRecords(t *testing.T) {
 		t.Errorf("quiet records = %+v", quiet.Records)
 	}
 }
+
+type modelNode struct{}
+
+func (modelNode) Description() NodeDescriptor {
+	return NodeDescriptor{Name: "modeler", DisplayName: "Modeler", Description: "Calls a model", Version: V(1), MeterAiUsage: true}
+}
+
+func (modelNode) Execute(ctx *ExecuteContext) ([][]Item, error) {
+	ctx.Model(ModelCall{Model: "qwen3.8:latest", Provider: "ollama", InputTokens: 20, OutputTokens: 0, CacheReadTokens: 16, DurationMs: 120,
+		FinishReason: "stop", Prompt: "tell me", Answer: "ok", Name: "summarize"})
+	ctx.Model(ModelCall{Model: "m", Provider: "ollama", InputTokens: -5, OutputTokens: 3})
+	return [][]Item{ctx.InputData(0)}, nil
+}
+
+func TestModelRecords(t *testing.T) {
+	p := NewPlugin(PluginInfo{ID: "mod", Name: "Mod", Version: "1"}, modelNode{})
+	resp, err := p.Execute(context.Background(), execReq("mod.modeler", nil))
+	if err != nil || len(resp.Records) != 2 {
+		t.Fatalf("records = %+v (%v)", resp.Records, err)
+	}
+	data, _ := json.Marshal(resp.Records[0])
+	var wire map[string]any
+	_ = json.Unmarshal(data, &wire)
+	want := map[string]any{"type": "model", "name": "summarize", "model": "qwen3.8:latest", "provider": "ollama", "inputTokens": 20.0, "outputTokens": 0.0,
+		"cacheReadTokens": 16.0, "durationMs": 120.0, "finishReason": "stop", "prompt": "tell me", "answer": "ok"}
+	for k, v := range want {
+		if wire[k] != v {
+			t.Errorf("wire[%s] = %v, want %v", k, wire[k], v)
+		}
+	}
+	if _, ok := wire["cacheWriteTokens"]; ok {
+		t.Errorf("zero cacheWriteTokens should be omitted: %v", wire)
+	}
+	if at, _ := wire["at"].(string); !strings.HasSuffix(at, "Z") {
+		t.Errorf("at = %v", wire["at"])
+	}
+	// A negative count is sent as zero; with no name the key is absent.
+	data, _ = json.Marshal(resp.Records[1])
+	wire = nil
+	_ = json.Unmarshal(data, &wire)
+	if wire["inputTokens"] != 0.0 || wire["outputTokens"] != 3.0 {
+		t.Errorf("clamped = %v", wire)
+	}
+	if _, ok := wire["name"]; ok {
+		t.Errorf("empty name should be omitted: %v", wire)
+	}
+
+	msg, err := executeResponseToProto(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytes, _ := proto.Marshal(msg)
+	var decoded pb.ExecuteResponse
+	if err := proto.Unmarshal(bytes, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	back, err := ExecuteResponseFromProto(&decoded)
+	if err != nil || !reflect.DeepEqual(back.Records, resp.Records) {
+		t.Errorf("round trip = %+v (%v)", back.Records, err)
+	}
+
+	desc, _ := json.Marshal(modelNode{}.Description())
+	if !strings.Contains(string(desc), `"meterAiUsage":true`) {
+		t.Errorf("descriptor = %s", desc)
+	}
+}
