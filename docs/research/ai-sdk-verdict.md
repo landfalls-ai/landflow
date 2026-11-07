@@ -1,12 +1,11 @@
 # AI SDK multi-provider node and OpenTelemetry spans: verdict (W5b)
 
 **Verdict: keep as a flag (an opt-in plugin, off by default). Do not replace the models node, and do not adopt it into the
-engine.** One caveat blocks the part the spec most wanted: the spans do not reach Run Trace today (see below).
+engine.** Updated 2026-11-07: the node reports each call to the host (`ctx.model`), which shows it as a `model` span in Run Trace and counts it in AI usage and caps; the AI SDK's own OTel spans still go to OTLP only.
 
 Prototype: `plugins/ai-sdk` (`@landflow/plugin-ai-sdk`, HTTP 7115, gRPC 7215, `pnpm plugin:ai-sdk`), one node,
 **Generate with AI SDK**. Tests (`pnpm --filter @landflow/plugin-ai-sdk test`, 10 tests) run against fake OpenAI-compatible,
-Anthropic and Google servers on loopback and assert the spans with an in-memory exporter. No real model API was called;
-the local Ollama had only an embedding model, so there was no live check.
+Anthropic and Google servers on loopback and assert the spans with an in-memory exporter. The first version ran against fakes only; the fix was checked live (below).
 
 ## What was checked on npm (2026-11-07)
 
@@ -41,26 +40,24 @@ quickly. No `ollama-ai-provider-v2` was added: Ollama's OpenAI-compatible `/v1` 
    `gen_ai.response.model`, `gen_ai.usage.*`, finish reasons). They go through the plugin's span processors (redaction,
    `span.end` log lines, OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set).
 
-**Do they appear in Run Trace? Not yet.** Run Trace is built from the engine's events by the journal translator
-(`apps/web/src/lib/server/journal/translator.ts`); it never reads a plugin's spans. What exists today:
-
-- With an OTLP backend set for the host and the plugin, the plugin's spans and the host's spans (and the Run Trace OTLP
-  export, which reuses the run's OTel trace id) are **one trace in that backend**. That is the "next to Run Trace data" view.
-- Inside Landflow, the node's output carries `usage` and `model`, so a flow can show tokens, but a Run Trace `model` span for
-  this node is **not** created. Closing that gap needs host work outside this prototype: either the translator maps a node
-  result's `usage`/`model` to a `model` span, or the node reports it through `node.record` (as the GitHub plugin does). Not
-  built.
+**Do they appear in Run Trace?** The AI SDK's own spans do not: Run Trace is built from the engine's events by the journal
+translator (`apps/web/src/lib/server/journal/translator.ts`), which never reads a plugin's spans. The node instead reports
+each call as a `model` record (`ctx.model`, `meterAiUsage: true`), and the translator (`modelRecord`) turns it into a `model`
+span under the node's step: named by the model, tokens and model as usage, duration, `provider` and `finishReason` as
+attributes, the prompt as the span's input and the answer as its output (cut or dropped by `traceContent`). The host also
+prices the record and counts it in AI usage and the caps (`ai-usage/plugin.ts`). With an OTLP backend set for the host and
+the plugin, the plugin's spans and the host's spans are still **one trace in that backend**.
 
 ## Findings from the prototype
 
-- **A bug in the SDK's redaction hides the token counts.** `SECRET_KEY` in `packages/sdk/src/redact.ts` matches "token", so
-  the redaction processor replaces `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` with `[REDACTED]` on every
-  AI SDK span. Fix: exempt `gen_ai.usage.*` (or keys ending `_tokens`). The test accepts both values until then. Out of this
-  task's paths, so unfixed.
 - Prompts and answers are **not** in spans by default (`recordInputs`/`recordOutputs` false); an option turns it on.
 - Structured output works through `Output.object({ schema: jsonSchema(...) })`; Ollama and OpenAI-compatible servers get
   `response_format: json_schema`.
 - `ctx.getCredentials` supplies every key; the descriptor has no key parameter (asserted).
+
+## Live check (2026-11-07)
+
+Scratch host on 3210, plugin on 7115/7215, local Ollama `qwen3.8:latest`. Run `ex_U6JcqwyH5Irx`: 20 in, 60 out; `ExecutionRecord.aiUsage` and `GET /api/insights/ai-usage` show ollama/qwen3.8:latest, 1 call, $0; Run Trace shows the `Generate with AI SDK` step with a child `qwen3.8:latest · 20 in · 60 out` and the prompt, answer and `finishReason: stop` in its details. A workflow with `aiMaxTokensPerExecution: 50` failed the node and run with "AI usage cap reached: this execution used 101 tokens of its 50 tokens limit".
 
 ## Compared with the existing models node
 
@@ -68,13 +65,13 @@ quickly. No `ollama-ai-provider-v2` was added: Ollama's OpenAI-compatible `/v1` 
 |---|---|---|
 | Providers | Anthropic, Ollama, OpenAI-compatible | those plus Google (Gemini), and anything else with an AI SDK provider package |
 | Role | Sub-node an agent, chain or classifier calls; tools, attachments, streaming, effort, fallback | A standalone action: prompt in, text, usage and model out |
-| Governance | Counts in `landflow.ai.*` metrics, the AI usage caps and credential-id attribution; `gen_ai.chat` span in the run's trace | None of those: a plugin call is outside the usage caps and the per-credential counters |
-| Run Trace | Yes (model spans, usage, Agent connections) | No (spans only in OTLP) |
+| Governance | Counts in `landflow.ai.*` metrics, the AI usage caps and credential-id attribution; `gen_ai.chat` span in the run's trace | The same counting through the reported `model` record (usage, caps, `landflow.ai.tokens`) |
+| Run Trace | Yes (model spans, usage, Agent connections) | A `model` span from the reported record (no cost); the AI SDK's own spans only in OTLP |
 | Tool calling, multi-step | Yes | Not exposed (single `generateText` step) |
 
 The AI SDK gain is real but small for Landflow today: **Google/Gemini, plus a long tail of providers** (Mistral, Groq,
 Bedrock, Vertex, OpenRouter) for the price of one more dependency each. The models node already covers the three
-providers in use, with the governance and Run Trace integration the plugin lacks. Replacing it would lose those and rewrite
+providers in use, with tool calling, attachments and streaming the plugin lacks. Replacing it would lose those and rewrite
 ~870 lines plus tool, attachment and streaming handling that the AI SDK would have to be bent to match.
 
 ## Maintenance cost
@@ -90,7 +87,6 @@ providers in use, with the governance and Run Trace integration the plugin lacks
 
 1. **Keep as a flag:** ship the plugin off by default (not in `dev:all`), for Google and other providers a user wants in a
    flow without a models-node change. Document it in `docs/` once the integrator picks it up.
-2. **Before any wider adoption**, in this order: fix the redaction of `gen_ai.usage.*` in the SDK; make the node report
-   `usage` and `model` to the host (a `model` span in Run Trace) and count them against the AI usage caps; decide whether
-   Google belongs in the models node natively (a small adapter) instead.
+2. **Before any wider adoption**: decide whether Google belongs in the models node natively (a small adapter) instead.
+   The redaction fix (b209b6e) and the usage, caps and Run Trace reporting are done.
 3. **Drop** the idea of replacing the models node with the AI SDK.

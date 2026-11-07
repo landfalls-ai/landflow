@@ -223,6 +223,8 @@ SDKs expose `ctx.artifact(…)` and `ctx.check(…)` (TypeScript), `ctx.artifact
 `ctx.check(name, status, …)` (Python), `ctx.Artifact(landflow.Artifact{…})` and `ctx.Check(landflow.Check{…})` (Go);
 credential values are masked in the text fields. Schema: `schema/execute-response.schema.json`.
 
+**Model records.** A third NodeRecord shape, `type: "model"`, reports one model call: `{ model, provider, inputTokens, outputTokens, cacheReadTokens?, cacheWriteTokens?, durationMs, finishReason, prompt, answer, name }`. It is additive (gRPC already carries records as dynamic JSON, so no proto change); older hosts ignore it and older plugins are unaffected. A node descriptor may set `meterAiUsage` (optional boolean) to say its calls count in AI usage; the host then also refuses the node before it runs once a cap is reached. The host prices each `model` record, counts it in AI usage and the caps ([observability.md](observability.md#token-and-cost-tracking)) and shows it as a `model` span in Run Trace ([run-trace.md](run-trace.md)). The TypeScript SDK exposes `ctx.model(call)` beside `ctx.artifact` and `ctx.check`, masking credential values in the text fields.
+
 ## 4. Property types
 
 `string` · `number` · `boolean` · `options` · `multiOptions` · `json` · `code` · `collection` ·
