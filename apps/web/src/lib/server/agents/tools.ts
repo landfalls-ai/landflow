@@ -6,7 +6,9 @@
  * plus built-in tools for skills and cross-session memory.
  */
 import { defaultVersionOf, PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
-import { ExpressionResolver, isToolOutputWithImages, REASON_DESCRIPTION, deriveToolSchema, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
+import { ExpressionResolver, isToolOutputWithImages, type ToolImage, REASON_DESCRIPTION, deriveToolSchema, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
+import { binaryAccessFor } from '../binary/access';
+import { binaryToolImages } from '../nodes/tool-images';
 import type {
   A2aAgentToolConfig,
   Agent,
@@ -80,8 +82,16 @@ export interface ToolContext {
   callSpan?: string;
 }
 
+/**
+ * Where a run's files (screenshots a tool returns) are stored: with the workflow execution the agent runs in, so they go
+ * when it does; else under the run, which the hourly sweep removes once it is old (a chat's images can't be read back after that).
+ */
+export const binaryScopeFor = (ctx: Pick<ToolContext, 'session' | 'runId'>): string => ctx.session?.execution?.executionId ?? ctx.runId;
+
 export interface ToolOutcome {
   output: unknown;
+  /** Images the tool returned (a screenshot): inline bytes or references; the runtime stores them and shows them to a model that sees. */
+  images?: ToolImage[];
   workflowId?: string;
   executionId?: string;
   childAgentId?: string;
@@ -164,8 +174,8 @@ export function flowTool(tool: AgentTool): BuiltTool {
     requireApproval: false,
     async invoke(input, ctx) {
       const output = await tool.invoke(input, ctx.signal);
-      // Images a tool returns are not shown in this runtime yet: it keeps the plain result it had before.
-      return { output: isToolOutputWithImages(output) ? (output.value ?? output.text) : output };
+      // A tool's images go to the runtime, which stores them and shows them to a model that can see; the plain result stays the output.
+      return isToolOutputWithImages(output) ? { output: output.value ?? output.text, images: output.images } : { output };
     },
   };
 }
@@ -435,11 +445,15 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
         itemParameters: [parameters],
         inputs: [items],
         ...(Object.keys(creds).length > 0 && { credentials: creds }),
+        // So a plugin can store a file over 64 KiB (a full-page screenshot) and hand back a reference.
+        binaryAccess: binaryAccessFor(binaryScopeFor(ctx), [items]),
       };
       const response = await resolved.execute(request, { signal: ctx.signal });
       if (response.error) throw new Error([response.error.message, response.error.description].filter(Boolean).join(' — '));
       const out = response.outputs[0] ?? [];
-      return { output: out.length === 1 ? out[0].json : out.map((item) => item.json) };
+      // A screenshot the node attaches (item.binary) reaches the model as an image, up to four per call.
+      const images = out.flatMap((item) => binaryToolImages(item.binary)).slice(0, 4);
+      return { output: out.length === 1 ? out[0].json : out.map((item) => item.json), ...(images.length && { images }) };
     },
   };
 }

@@ -30,7 +30,9 @@ import { agentModel } from './models';
 import { personaPrompt } from '../../shared/persona';
 import { agentStore, configOf } from './store';
 import type { MemberPause } from '../agent-teams/pause';
-import { buildToolset, dedupe, type BuiltTool, type ToolContext } from './tools';
+import { buildToolset, binaryScopeFor, dedupe, type BuiltTool, type ToolContext } from './tools';
+import { hostBinaryClient, storeBinary } from '../binary/access';
+import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from '../nodes/tool-images';
 
 const MAX_RESULT_CHARS = 16_000;
 const MAX_USER_TURNS_IN_CONTEXT = 30;
@@ -49,6 +51,8 @@ export interface RunRequest {
   onEvent?: (event: AgentStreamEvent) => void;
   /** The session's usage so far, after each model call (a team's budget bars). */
   onUsage?: (usage: TokenUsage) => void;
+  /** Images tools return (a screenshot): how many of the newest go to the model each turn (default 2, or LANDFLOW_TOOL_IMAGES_KEPT) and whether it sees them. */
+  toolImages?: { keep?: number; mode?: ToolImageMode };
   /** Start a new trace (schedules, channels) instead of joining the caller's. */
   rootTrace?: boolean;
   /** What a workflow connected to the agent's node (Run an Agent): a chat model that replaces the agent's, and more tools. */
@@ -160,6 +164,21 @@ function toolsInRun(tools: BuiltTool[]): string {
 function contextWindow(messages: AgentMessage[]): AgentMessage[] {
   const starts = messages.flatMap((m, i) => (m.role === 'user' ? [i] : []));
   return starts.length > MAX_USER_TURNS_IN_CONTEXT ? messages.slice(starts[starts.length - MAX_USER_TURNS_IN_CONTEXT]) : messages;
+}
+
+/** How many tool images to keep: the run's setting, else LANDFLOW_TOOL_IMAGES_KEPT, else 2 (0 to 10). */
+function keptToolImages(request: RunRequest): number {
+  const value = request.toolImages?.keep ?? (process.env.LANDFLOW_TOOL_IMAGES_KEPT ? Number(process.env.LANDFLOW_TOOL_IMAGES_KEPT) : DEFAULT_KEPT_TOOL_IMAGES);
+  return Number.isFinite(value) ? Math.min(10, Math.max(0, Math.floor(value))) : DEFAULT_KEPT_TOOL_IMAGES;
+}
+
+/** The binary store as the helpers tool-images.ts reads and writes with (files go under the run's scope). */
+function storeHelpers(scope: string) {
+  const client = hostBinaryClient(scope);
+  return {
+    prepareBinaryData: (data: unknown, fileName?: string, mimeType?: string) => storeBinary(scope, data as Buffer, { fileName, mimeType }),
+    binaryToBuffer: async (ref: Parameters<typeof client.read>[0]) => Buffer.from(await client.read(ref)),
+  } as unknown as Parameters<typeof storeToolImages>[0]['helpers'];
 }
 
 function asContent(output: unknown): string {
@@ -369,7 +388,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       iterations++;
       let turn;
       try {
-        turn = await model.generate({ system: systemPrompt(agent, config, session, toolNote), messages: contextWindow(session.messages), tools: specs, signal: request.signal });
+        turn = await model.generate({ system: systemPrompt(agent, config, session, toolNote), messages: await hydrateToolImages({ helpers: storeHelpers(binaryScopeFor(ctx)), logger: { warn: (m: string) => logger.warn(m) } as never }, contextWindow(session.messages), { model, keep: keptToolImages(request), mode: request.toolImages?.mode }), tools: specs, signal: request.signal });
       } catch (error) {
         if (isUsageCapError(error)) {
           upsert({ id: entryId(), type: 'notice', message: `Stopped: ${error.message}.`, at: now() });
@@ -480,10 +499,14 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         upsert(toolEntry(call, tool, { status: 'awaiting_approval', approval: { message: outcome.pause.message }, durationMs: Date.now() - started, ...(outcome.remote && { remote: outcome.remote }) }));
         return { pending: { callId: call.id, tool: call.name, input: call.input, remote: outcome.pause.remote } };
       }
+      // Images are kept by reference: the transcript holds the stored file's reference, the timeline and journal a label.
+      const images = outcome.images?.length ? await storeToolImages({ helpers: storeHelpers(binaryScopeFor(ctx)) }, outcome.images) : [];
+      const labels = images.map((image) => `[image: ${imageSizeLabel(image)}]`);
+      const shown = !labels.length ? outcome.output : typeof outcome.output === 'string' ? `${outcome.output}\n${labels.join(' ')}` : { result: outcome.output, images: labels };
       upsert(
         toolEntry(call, tool, {
           status: 'success',
-          output: outcome.output,
+          output: shown,
           approval: undefined,
           durationMs: Date.now() - started,
           ...(outcome.workflowId && { workflowId: outcome.workflowId }),
@@ -493,7 +516,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           ...(outcome.remote && { remote: outcome.remote }),
         }),
       );
-      return { id: call.id, name: call.name, content: asContent(outcome.output) };
+      return { id: call.id, name: call.name, content: asContent(outcome.output), ...(images.length && { images }) };
     } catch (error) {
       const message = (error as Error).message;
       upsert(toolEntry(call, tool, { status: 'error', error: message, approval: undefined, durationMs: Date.now() - started }));

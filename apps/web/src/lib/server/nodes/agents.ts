@@ -178,6 +178,14 @@ export const messageAgentNode = defineNode({
         displayOptions: { show: { conversation: ['key'] } },
       },
       {
+        name: 'toolImagesKept',
+        displayName: 'Tool Images to Keep',
+        type: 'number',
+        default: 2,
+        typeOptions: { minValue: 0, maxValue: 10 },
+        description: 'When the agent’s tools return images (a screenshot), only this many of the newest go back to the model on each turn; older ones are dropped and their text kept',
+      },
+      {
         name: 'notice',
         displayName:
           'Connect a chat model to use it instead of the agent’s own, tools (a vector store in Retrieve Documents (As Tool) mode is a knowledge base) to add to its capabilities for this run, and a memory to keep the conversation in. Tools that require approval are refused in workflow runs (nobody is there to approve them).',
@@ -226,6 +234,7 @@ export const messageAgentNode = defineNode({
           session,
           message,
           approvals: 'deny',
+          toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
           ...((model || tools.length) && { flow: { ...(model && { model }), ...(tools.length && { tools }) } }),
           // The chat panel and streaming triggers get the agent's answers and tool calls as they happen.
           ...(send && { onEvent: streamer(send, i, { id: agent.id, name: agent.name, ...(agent.avatar && { face: agent.avatar as unknown as JsonObject }) }) }),
