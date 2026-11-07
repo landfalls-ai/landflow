@@ -26,6 +26,7 @@ components:
   # Agent Shell and Web Search plugins (build landflow/plugin-<name>:k8s-dev first, see each component): off by default.
 #   - ../../components/agent-shell
 #   - ../../components/web-search
+#   - ../../components/sap
 #   - ../../components/postgres
 #   - ../../components/valkey
 images:
@@ -41,6 +42,7 @@ images:
   - { name: landflow/plugin-browser, newTag: k8s-dev } # only used with components/browser
   - { name: landflow/plugin-agent-shell, newTag: k8s-dev } # only used with components/agent-shell
   - { name: landflow/plugin-web-search, newTag: k8s-dev } # only used with components/web-search
+  - { name: landflow/plugin-sap, newTag: k8s-dev } # only used with components/sap
 generatorOptions:
   disableNameSuffixHash: true
   labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: config }

@@ -7,6 +7,7 @@
   "scripts": {
     "start": "tsx src/main.ts",
     "dev": "tsx watch src/main.ts",
+    "fake-s4": "tsx test/fake-s4.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
