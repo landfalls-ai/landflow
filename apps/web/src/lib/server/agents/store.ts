@@ -24,6 +24,7 @@ import {
   type KagentDeployment,
   type SessionSummary,
 } from '../../shared/agents';
+import { releaseSessionImages } from './session-images';
 import { cleanAccess } from '../../shared/agent-access';
 import { cleanCache } from '../../shared/agent-cache';
 import { cleanRouter } from '../../shared/agent-router';
@@ -186,7 +187,10 @@ class FileAgents implements AgentBackend {
   remove(id: string): boolean {
     if (!this.agents.delete(id)) return false;
     rmSync(join(this.agentsDir, `${id}.json`), { force: true });
-    for (const summary of this.sessions.get(id) ?? []) rmSync(join(this.sessionsDir, `${summary.id}.json`), { force: true });
+    for (const summary of this.sessions.get(id) ?? []) {
+      rmSync(join(this.sessionsDir, `${summary.id}.json`), { force: true });
+      releaseSessionImages(summary.id);
+    }
     this.sessions.delete(id);
     rmSync(join(this.memoryDir, `${id}.json`), { force: true });
     return true;
@@ -217,7 +221,10 @@ class FileAgents implements AgentBackend {
     atomicWrite(join(this.sessionsDir, `${saved.id}.json`), saved);
     const list = (this.sessions.get(saved.agentId) ?? []).filter((s) => s.id !== saved.id);
     list.unshift(summarizeSession(saved));
-    for (const stale of list.splice(MAX_SESSIONS_PER_AGENT)) rmSync(join(this.sessionsDir, `${stale.id}.json`), { force: true });
+    for (const stale of list.splice(MAX_SESSIONS_PER_AGENT)) {
+      rmSync(join(this.sessionsDir, `${stale.id}.json`), { force: true });
+      releaseSessionImages(stale.id);
+    }
     this.sessions.set(saved.agentId, list);
   }
 
@@ -227,6 +234,7 @@ class FileAgents implements AgentBackend {
     if (index < 0) return false;
     list.splice(index, 1);
     rmSync(join(this.sessionsDir, `${id}.json`), { force: true });
+    releaseSessionImages(id);
     return true;
   }
 
@@ -308,6 +316,7 @@ class DatabaseAgents implements AgentBackend {
   remove(id: string): boolean {
     const db = this.sql;
     return db.transaction(() => {
+      for (const { id: sessionId } of db.all<{ id: string }>('SELECT id FROM agent_sessions WHERE agent_id = ?', id)) releaseSessionImages(sessionId);
       db.delete('agent_sessions', { agent_id: id });
       db.delete('agent_memory', { agent_id: id });
       return db.delete('agent_definitions', { id }) > 0;
@@ -342,13 +351,18 @@ class DatabaseAgents implements AgentBackend {
     db.transaction(() => {
       db.upsert('agent_sessions', sessionRow(saved));
       const stale = db.all<{ id: string }>('SELECT id FROM agent_sessions WHERE agent_id = ? ORDER BY updated_at DESC LIMIT -1 OFFSET ?', saved.agentId, MAX_SESSIONS_PER_AGENT);
-      for (const { id } of stale) db.delete('agent_sessions', { id });
+      for (const { id } of stale) {
+        db.delete('agent_sessions', { id });
+        releaseSessionImages(id);
+      }
     });
   }
 
   deleteSession(agentId: string, id: string): boolean {
     if (!this.sql.get('SELECT id FROM agent_sessions WHERE id = ? AND agent_id = ?', id, agentId)) return false;
-    return this.sql.delete('agent_sessions', { id }) > 0;
+    const removed = this.sql.delete('agent_sessions', { id }) > 0;
+    if (removed) releaseSessionImages(id);
+    return removed;
   }
 
   memories(agentId: string, userId: string): MemoryNote[] {

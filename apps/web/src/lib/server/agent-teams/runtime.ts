@@ -86,6 +86,8 @@ export interface TeamRunRequest {
   /** The task, for the lead. */
   message: string;
   flow?: { model?: LanguageModel; tools?: AgentTool[] };
+  /** How many tool images the lead keeps; absent: its agent's setting, else LANDFLOW_TOOL_IMAGES_KEPT. Members always use their own agent's setting. */
+  toolImages?: { keep?: number };
   memory?: AgentMemory;
   memoryKey?: string;
   userId: string;
@@ -998,6 +1000,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const result = await runAgent({
     agent: leadAgent,
     session,
+    ...(request.toolImages && { toolImages: request.toolImages }),
     ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', notebookBlock(notebookFor(root)), request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
     approvals,
     signal: request.signal,

@@ -172,8 +172,8 @@ function contextWindow(messages: AgentMessage[]): AgentMessage[] {
 }
 
 /** How many tool images to keep: the run's setting, else LANDFLOW_TOOL_IMAGES_KEPT, else 2 (0 to 10). */
-function keptToolImages(request: RunRequest): number {
-  const value = request.toolImages?.keep ?? (process.env.LANDFLOW_TOOL_IMAGES_KEPT ? Number(process.env.LANDFLOW_TOOL_IMAGES_KEPT) : DEFAULT_KEPT_TOOL_IMAGES);
+function keptToolImages(request: RunRequest, settings?: { toolImagesKept?: number }): number {
+  const value = request.toolImages?.keep ?? settings?.toolImagesKept ?? (process.env.LANDFLOW_TOOL_IMAGES_KEPT ? Number(process.env.LANDFLOW_TOOL_IMAGES_KEPT) : DEFAULT_KEPT_TOOL_IMAGES);
   return Number.isFinite(value) ? Math.min(10, Math.max(0, Math.floor(value))) : DEFAULT_KEPT_TOOL_IMAGES;
 }
 
@@ -466,7 +466,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       iterations++;
       let turn;
       try {
-        turn = await model.generate({ system: systemPrompt(agent, config, session, toolNote), messages: await hydrateToolImages({ helpers: storeHelpers(binaryScopeFor(ctx)), logger: { warn: (m: string) => logger.warn(m) } as never }, contextWindow(session.messages), { model, keep: keptToolImages(request), mode: request.toolImages?.mode }), tools: specs, signal: request.signal });
+        turn = await model.generate({ system: systemPrompt(agent, config, session, toolNote), messages: await hydrateToolImages({ helpers: storeHelpers(binaryScopeFor(ctx)), logger: { warn: (m: string) => logger.warn(m) } as never }, contextWindow(session.messages), { model, keep: keptToolImages(request, config.settings), mode: request.toolImages?.mode }), tools: specs, signal: request.signal });
       } catch (error) {
         if (isUsageCapError(error)) {
           upsert({ id: entryId(), type: 'notice', message: `Stopped: ${error.message}.`, at: now() });
@@ -590,6 +590,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         toolEntry(call, tool, {
           status: 'success',
           output: shown,
+          ...(images.length && { images: images.map((image) => ({ mimeType: image.mimeType, size: image.ref?.fileSize ?? 0, ...(image.ref?.id && { ref: image.ref.id }) })) }),
           approval: undefined,
           durationMs: Date.now() - started,
           ...(outcome.workflowId && { workflowId: outcome.workflowId }),

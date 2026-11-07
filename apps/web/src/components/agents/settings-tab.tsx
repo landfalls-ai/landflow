@@ -9,7 +9,7 @@ import { Input } from '../ui/inputs';
 import { Field, Section } from './dialog';
 import type { UpdateConfig } from './util';
 
-type LoopKey = Exclude<keyof AgentSettings, UsageKey | 'approvalEmails'>;
+type LoopKey = Exclude<keyof AgentSettings, UsageKey | 'approvalEmails' | 'toolImagesKept'>;
 type UsageKey = 'dailyTokenLimit' | 'dailyCostLimit' | 'monthlyCostLimit';
 
 const FIELDS: Array<{
@@ -191,6 +191,11 @@ export function SettingsTab({ config, update, agentId }: { config: AgentConfig; 
           ))}
         </div>
         <p className="mt-3 text-[12px] leading-snug text-t3">Costs are estimates from the price table in Settings → AI prices; local models such as Ollama count as free unless priced there.</p>
+      </Section>
+      <Section icon={<Gauge className="size-4" />} title="Tool images" description="When a tool returns an image (a screenshot), a vision model gets only the newest ones on each turn.">
+        <Field id="setting-toolImagesKept" label="Tool images to keep" hint="0–10. Unset: the host default (LANDFLOW_TOOL_IMAGES_KEPT, else 2). A Run an Agent or Run a Team node's own setting wins for runs from a flow.">
+          <NumberSetting id="setting-toolImagesKept" value={config.settings.toolImagesKept ?? 2} min={0} max={10} onChange={(v) => update((c) => ({ ...c, settings: { ...c.settings, toolImagesKept: v } }))} />
+        </Field>
       </Section>
       <Section icon={<Mail className="size-4" />} title="Approvals by email" description="Besides the chat that asked, tools that need approval can be approved or rejected from a link in an email.">
         <ApprovalEmails emails={config.settings.approvalEmails ?? []} onChange={(emails) => update((c) => ({ ...c, settings: { ...c.settings, approvalEmails: emails } }))} />
