@@ -137,6 +137,8 @@ function resourceAction(kind: ResourceRule['kind'], rest: string, method: string
   if (kind === 'workflow' && sub('policy') && !READ_METHODS.has(method)) return 'move';
   // Starting, retrying or stopping runs and chats; credentials' OAuth2 Connect writes the token.
   if (kind === 'workflow' && (sub('run') || sub('execute') || sub('listen') || (sub('evaluations') && method === 'POST'))) return 'run';
+  // Debug tokens (docs/specs/19-debug-token.md): minting one needs no more than reading the execution (the token reads less than its minter).
+  if (kind === 'execution' && sub('debug-tokens')) return 'read';
   if (kind === 'execution' && (sub('retry') || sub('rerun') || sub('debug') || sub('stop') || sub('approvals') || sub('asks') || sub('agents'))) return READ_METHODS.has(method) ? 'read' : 'run';
   if (kind === 'agent' && (sub('chat') || (sub('sessions') && !READ_METHODS.has(method)))) return 'run';
   if (kind === 'credential' && sub('oauth2')) return 'update';

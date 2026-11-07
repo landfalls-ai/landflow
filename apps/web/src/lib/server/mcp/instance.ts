@@ -12,6 +12,8 @@ import { sameSecret, unauthorized, jsonRpcError, bearerToken } from './server';
 import { authenticateMcpRequest, GATEWAY_SECRET_HEADER, McpAuthError, mcpAuthErrorResponse, type McpCaller } from './identity';
 import type { McpScope } from './project-servers';
 import { getUser, type UserRecord } from '../auth/users';
+import { looksLikeDebugToken, verifyDebugToken, type DebugTokenRecord } from '../auth/debug-tokens';
+import { recordAudit } from '../audit';
 import type { Actor } from '../projects/access';
 import type { Role } from '../../shared/auth';
 
@@ -76,7 +78,9 @@ export function verifyMcpToken(token: string | undefined): boolean {
 /** Who is calling the instance server: the instance (its access token: no per-user checks) or a Landflow user (their permissions apply). */
 export type InstanceCaller =
   | { kind: 'instance'; scope?: McpScope }
-  | { kind: 'user'; actor: Actor; user: UserRecord; via: string; scope?: McpScope };
+  | { kind: 'user'; actor: Actor; user: UserRecord; via: string; scope?: McpScope }
+  /** A debug token: no user, no project scope; the server is the three-tool one of ./debug-token-server.ts. */
+  | { kind: 'debug'; token: string; record: DebugTokenRecord };
 
 /** The scope a call runs under: the project of the URL, and of a project-scoped token; a token for another project than the URL's is refused (undefined and a `Response`). */
 function scopeOf(projectId: string | undefined, tokenProject: string | undefined): McpScope | undefined | Response {
@@ -114,6 +118,16 @@ export async function authenticateInstanceRequest(request: Request, projectId?: 
     }
   }
   const bearer = bearerToken(request);
+  if (looksLikeDebugToken(bearer)) {
+    if (projectId) return jsonRpcError(403, -32003, 'A debug token works at /api/mcp only');
+    const checked = verifyDebugToken(bearer);
+    if (checked.ok) return { kind: 'debug', token: bearer as string, record: checked.record };
+    if (checked.record) {
+      recordAudit({ action: 'mcp.tool.call', outcome: 'denied', target: { type: 'execution', id: checked.record.executionId }, summary: `Debug token refused (${checked.reason}) for execution ${checked.record.executionId}`, details: { via: 'debug-token', debugId: checked.record.id, reason: checked.reason }, actor: 'anonymous' });
+    }
+    const why = { invalid: 'Invalid debug token', expired: 'This debug token has expired', revoked: 'This debug token was revoked', exhausted: 'This debug token has used up its calls', user: 'This debug token is no longer allowed' }[checked.reason];
+    return unauthorized(why);
+  }
   if (verifyMcpToken(bearer)) return { kind: 'instance', ...(projectId && { scope: { projectId } }) };
   if (bearer) {
     // Not the access token: a user's Landflow MCP token, identity provider token or API key.

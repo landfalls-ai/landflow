@@ -20,6 +20,7 @@ import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } 
 import { can, type Role } from '../../shared/auth';
 import { API_KEY_PREFIX, SESSION_COOKIE } from '../../shared/auth-paths';
 import { verifyApiKey } from '../auth/api-keys';
+import { looksLikeDebugToken } from '../auth/debug-tokens';
 import { readCookie } from '../auth/cookies';
 import { sameSecret } from '../auth/passwords';
 import { sessionUser } from '../auth/sessions';
@@ -268,6 +269,8 @@ export async function authenticateMcpRequest(request: Request, resource: { plugi
   // 2. A bearer token: an API key, a Landflow-issued MCP token, or the identity provider's access token.
   const bearer = bearerOf(request);
   if (bearer) {
+    // A debug token reads one execution through /api/mcp and does nothing else (docs/specs/19-debug-token.md).
+    if (looksLikeDebugToken(bearer)) throw new McpAuthError('A debug token works only for explain_failure, get_run_trace and get_execution at /api/mcp', 403, challenge);
     if (bearer.startsWith(API_KEY_PREFIX)) {
       const checked = verifyApiKey(bearer);
       if (!checked.ok) throw new McpAuthError(checked.reason === 'expired' ? 'This API key has expired' : 'Invalid API key', 401, challenge);
