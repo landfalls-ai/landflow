@@ -6,8 +6,9 @@
  */
 import { useEffect, useState } from 'react';
 import { Plus, ShieldCheck, Trash2 } from 'lucide-react';
-import type { AgentConfig, AgentGuardrail, AgentGuardrails } from '@/lib/shared/agents';
+import { JUDGE_PROVIDERS, type AgentConfig, type AgentGuardrail, type AgentGuardrails } from '@/lib/shared/agents';
 import { Button } from '../ui/button';
+import { useCredentials } from '../credentials/use-credentials';
 import { Input, Select, Textarea } from '../ui/inputs';
 import { Field, Section, ToggleRow } from './dialog';
 import type { UpdateConfig } from './util';
@@ -58,6 +59,9 @@ function RuleEditor({ stage, rule, onChange }: { stage: Stage; rule: AgentGuardr
   };
   const sanitize = rule.action === 'sanitize';
   const id = (name: string) => `gr-${stage}-${name}`;
+  const { credentials } = useCredentials();
+  const judgeProvider = JUDGE_PROVIDERS.find((p) => p.value === rule.judge?.provider);
+  const judgeOptions = (credentials ?? []).filter((c) => c.type === judgeProvider?.credentialType);
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -80,6 +84,50 @@ function RuleEditor({ stage, rule, onChange }: { stage: Stage; rule: AgentGuardr
           </Field>
         )}
       </div>
+      {!sanitize && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field id={id('judge')} label="Judge the model checks with" hint={judgeProvider?.description ?? 'The agent’s own model answers each model check'}>
+            <Select
+              id={id('judge')}
+              value={rule.judge?.provider ?? ''}
+              onChange={(e) => {
+                const { judge: _old, ...rest } = rule;
+                // The credential belongs to the provider, so the choice starts over; when only one exists, take it.
+                const options = (credentials ?? []).filter((c) => c.type === JUDGE_PROVIDERS.find((p) => p.value === e.target.value)?.credentialType);
+                onChange(e.target.value ? { ...rest, judge: { provider: e.target.value, ...(options.length === 1 && { credential: { id: options[0].id, name: options[0].name } }) } } : rest);
+              }}
+            >
+              <option value="">The agent’s model</option>
+              {JUDGE_PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+              {rule.judge && !judgeProvider && <option value={rule.judge.provider}>{rule.judge.provider} (unknown)</option>}
+            </Select>
+          </Field>
+          {judgeProvider && (
+            <Field id={id('judge-credential')} label="Credential" hint={judgeOptions.length || !credentials ? undefined : `Add a credential of this type under Credentials`}>
+              <Select
+                id={id('judge-credential')}
+                value={rule.judge?.credential?.id ?? ''}
+                onChange={(e) => {
+                  const picked = judgeOptions.find((c) => c.id === e.target.value);
+                  onChange({ ...rule, judge: { ...rule.judge!, ...(picked ? { credential: { id: picked.id, name: picked.name } } : { credential: undefined }) } });
+                }}
+              >
+                <option value="">Choose…</option>
+                {rule.judge?.credential && !judgeOptions.some((c) => c.id === rule.judge?.credential?.id) && <option value={rule.judge.credential.id}>{rule.judge.credential.name} (missing)</option>}
+                {judgeOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+        </div>
+      )}
       <div className="space-y-2">
         <ToggleRow title="Personal data (PII)" description="Emails, phone numbers, card numbers, IBANs, IP addresses, SSNs, crypto wallets" checked={Boolean(checks.pii)} onChange={(on) => setChecks({ pii: on ? { entities: [...PII_ENTITIES] } : undefined })} />
         <ToggleRow title="Secret keys" description="API keys, tokens and private keys" checked={Boolean(checks.secrets)} onChange={(on) => setChecks({ secrets: on ? { permissiveness: 'balanced' } : undefined })} />

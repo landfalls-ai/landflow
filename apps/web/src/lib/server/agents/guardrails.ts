@@ -7,6 +7,7 @@
 import type { LanguageModel } from '@landflow/engine';
 import type { AgentGuardrail, TimelineEntry } from '../../shared/agents';
 import { enabledChecks, needsModel, runGuardrails, type Violation } from '../guardrails';
+import { buildJudge } from './judges';
 
 export const DEFAULT_BLOCK_REPLY = 'Sorry, I can’t help with that request.';
 /** What the model gets in place of a tool result the tool-result rule blocked. */
@@ -39,11 +40,15 @@ export async function applyGuardrail(
   const sanitize = rule.action === 'sanitize';
   const reply = rule.reply?.trim() || (stage === 'tool' ? DEFAULT_TOOL_REPLY : DEFAULT_BLOCK_REPLY);
   try {
-    const model = !sanitize && needsModel(rule.checks) && options.model ? await options.model() : undefined;
+    const wantsModel = !sanitize && needsModel(rule.checks);
+    // A rule with a judge (Jev) never loads the agent's chat model: the judge answers every model check.
+    const judge = wantsModel && rule.judge ? await buildJudge(rule.judge) : undefined;
+    const model = wantsModel && !judge && options.model ? await options.model() : undefined;
     const outcome = await runGuardrails(text, rule.checks, {
       mode: sanitize ? 'sanitize' : 'check',
       replacement: rule.replacement === 'mask' ? 'mask' : 'redact',
       stage,
+      ...(judge && { judge }),
       ...(model && { model }),
       ...(options.signal && { signal: options.signal }),
       ...(options.log && { log: options.log }),

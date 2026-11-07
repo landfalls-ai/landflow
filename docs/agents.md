@@ -298,8 +298,28 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   the guardrail's span. It judges against what the search returned, not against the truth:
   a wrong document still grounds a wrong answer.
 
+  **Judge** (`judge: { provider, credential }` on a rule): the checks that need a model
+  (injection with the model, stay on topic, grounded, moderation, custom) are answered by a
+  judge service instead of the agent's model. A judge is any function from (what to flag, the
+  text, optional passages) to a verdict, so a provider is a small registration
+  (`server/agents/judges.ts`: its credential type and how to build the judge; the builder's
+  list is `JUDGE_PROVIDERS` in `shared/agents.ts`). Two are built, both decision models that
+  speak the same System One API (`POST /v1/systemone`, `server/nodes/systemone.ts`):
+  `typesafe`, TypeSafe AI's hosted **Jev** (a *TypeSafe API* credential: key, optional base URL),
+  and `strands`, AWS's open-source **Strands Decider** (a *Strands Decider* credential: the
+  address of a server you run with `strands-decider serve <model> --port 8000`; a key and a model
+  name are optional). The Strands server runs on your own machine or cluster, so nothing leaves
+  your network. A decision model is not
+  a chat model: each check becomes one yes/no question ("should this text be flagged?") whose
+  probability of yes is the confidence, compared with the check's threshold as usual. It is
+  faster and cheaper than a chat call, and the agent's own model is never loaded for those
+  checks. The credential holds the key and an optional base URL (default
+  `https://api.typesafe.ai` for Jev). A 429 or 529 is retried (honouring
+  `retry-after`); any other failure fails closed, like every guardrail. Only block rules use a
+  judge (sanitize rules run no model checks).
+
   Each stage has an action. **Block** checks the text (the model-based checks use the agent's
-  own model) and, when something is found, answers with the stage's *reply* (a default is used
+  own model, or the rule's judge) and, when something is found, answers with the stage's *reply* (a default is used
   if empty); a blocked input never reaches the model and the run ends `completed`. **Sanitize**
   replaces what the pattern checks find (redacted or masked) and goes on; model-based checks
   are skipped. A check that cannot run fails closed: the text is blocked. The transcript keeps
