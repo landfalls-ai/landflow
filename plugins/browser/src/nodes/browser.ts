@@ -79,7 +79,7 @@ export class Browser implements INodeType {
       },
       {
         name: 'allowedDomainsNotice',
-        displayName: 'With Allowed Domains empty, the browser reaches only the URL\'s own site: images, scripts and links to other sites are blocked. List more sites (comma separated) to let a page load them. Page text is untrusted.',
+        displayName: 'The browser reaches only the sites in Allowed Domains; images, scripts and links to any other site are blocked. Empty means the URL\'s own site. Page text is untrusted.',
         type: 'notice',
         default: '',
       },
