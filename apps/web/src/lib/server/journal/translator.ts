@@ -5,7 +5,7 @@
  * a resumed segment in another process continues the same journal: `seed` rebuilds what is open from the stored events.
  */
 import type { ExecutionEvent, Workflow, WorkflowNode } from '@landflow/engine';
-import type { JsonObject } from '@landflow/protocol';
+import type { BinaryRef, JsonObject } from '@landflow/protocol';
 import type { AgentTraceSummary } from '../../shared/agents';
 import { aiUsageMeter } from '../ai-usage';
 import { traceModelCalls } from './trace-calls';
@@ -96,6 +96,16 @@ function usageIn(json: unknown): TokenCounts | undefined {
     ...count('requests'),
     ...(typeof usage.model === 'string' && usage.model && { model: usage.model }),
   };
+}
+
+/** An image a node tool attached (the Browser's Screenshot): its reference goes with the result, never the bytes. */
+function withImages(item: Item, binary: Record<string, BinaryRef> | undefined): Item {
+  if (Array.isArray(item.images)) return item;
+  const images = Object.values(binary ?? {})
+    .filter((ref) => /^image\/(png|jpe?g|gif|webp)/i.test(ref.mimeType ?? '') && ref.id)
+    .slice(0, 4)
+    .map((ref) => ({ mimeType: ref.mimeType.toLowerCase().split(';')[0].trim(), size: ref.fileSize ?? 0, ref: ref.id }));
+  return images.length ? { ...item, images } : item;
 }
 
 const isRemoteRun = (data: JsonObject) => Array.isArray(data.steps) || (typeof data.agent === 'string' && typeof data.state === 'string');
@@ -314,7 +324,7 @@ export function createTranslator(options: TranslatorOptions) {
         if (str(item.state)) span.remote!.state = item.asksCaller === true ? 'completed' : String(item.state);
       }
     } else if (total > 1) output = { items: total };
-    else if (item) output = item;
+    else if (item) output = span.kind === 'tool' ? withImages(item, e.run.outputs?.[0]?.[0]?.binary) : item;
     else output = { items: 0 };
 
     // A chat or form trigger's input is the first thing said in the run.

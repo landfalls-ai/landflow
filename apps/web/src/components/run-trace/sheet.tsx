@@ -14,6 +14,7 @@ import { ChangeDiff } from './diff-view';
 import { ConnectionList } from './connections';
 import { Avatar, ResultChip, SectionTitle, Tap, ValueBlock, clock, who } from './parts';
 import { Doc, TextBlock } from './rich-text';
+import { imagesOf, ToolImages, withoutImages } from './tool-images';
 import { RerunPanel, useRunControls } from './run-controls';
 import { TeamPauseBar } from '../editor/team-pause';
 import { useNewLook } from '../shell/look-toggle';
@@ -212,7 +213,8 @@ function SpanSheet({
         ) : (
           <Value label="Asked" value={span.input} repo={repo} />
         )}
-        <Value label="Came back" value={span.output} repo={repo} />
+        <ToolImages images={imagesOf(span.output)} />
+        <Value label="Came back" value={withoutImages(span.output)} repo={repo} />
         <Value label="Error" value={span.error} tone="error" repo={repo} />
       </div>
       {span.id !== 'run' && span.kind !== 'wait' && span.kind !== 'model' && <RerunPanel model={model} spanId={span.id} />}

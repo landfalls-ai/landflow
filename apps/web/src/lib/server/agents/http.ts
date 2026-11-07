@@ -91,6 +91,7 @@ export const agentConfigSchema = z
         toolConcurrency: z.number().int().min(1).max(20),
         sessionTokenBudget: z.number().int().min(0),
         maxDelegationDepth: z.number().int().min(1).max(5),
+        toolImagesKept: z.number().int().min(0).max(10),
         dailyTokenLimit: z.number().int().min(0),
         dailyCostLimit: z.number().min(0),
         monthlyCostLimit: z.number().min(0),
