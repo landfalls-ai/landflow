@@ -18,6 +18,7 @@
  * webhook mode (production: counted in Insights, held by concurrency limits).
  */
 import { context } from '@opentelemetry/api';
+import type { ExecutionEvent } from '@landflow/engine';
 import { deleteExecutionBinary } from '@/lib/server/binary/access';
 import {
   appendTranscript,
@@ -39,7 +40,7 @@ import { cleanComment, isRating, setFeedback } from '@/lib/server/chat-feedback'
 import { handler } from '@/lib/server/http';
 import { liveExecution, newExecutionId, RunBufferedError, runWorkflow, RunSkippedError, turnedDown } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
-import { replyText, runStream, streamFormatOf } from '@/lib/server/streaming';
+import { chunkAgent, replyText, runStream, streamFormatOf } from '@/lib/server/streaming';
 import { logger, startTrigger } from '@/lib/server/telemetry';
 
 export const dynamic = 'force-dynamic';
@@ -201,6 +202,8 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const fileList = parsed.files.map((f) => ({ fileName: f.fileName, mimeType: f.mimeType }));
   const streaming = config.responseMode === 'streaming';
   const stream = streaming ? runStream(streamFormatOf(request), { executionId }) : undefined;
+  // Who wrote the answer, when the flow labels its agents (the last labelled text chunk).
+  let speaker: ReturnType<typeof chunkAgent>;
   const trigger = startTrigger({ source: 'chat', workflowId: workflow.id, nodeName: node.name });
   let started = false;
   let markStarted!: () => void;
@@ -216,7 +219,13 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
         started = true;
         markStarted();
       },
-      ...(stream && { streaming: true, onEvent: stream.onEvent }),
+      ...(stream && {
+        streaming: true,
+        onEvent: (event: ExecutionEvent) => {
+          if (event.type === 'node.chunk' && event.chunk.type === 'item') speaker = chunkAgent(event.chunk) ?? speaker;
+          stream.onEvent(event);
+        },
+      }),
     }),
   );
   // The transcript, for "Load Previous Session": the question now, the answer once the run ends.
@@ -224,7 +233,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     (record) => {
       trigger.end();
       const reply = record.status === 'success' ? replyText(record) : '';
-      if (config.loadPreviousSession) appendTranscript(workflow.id, parsed.sessionId, [{ role: 'user', text: parsed.message, at, ...(fileList.length && { files: fileList }) }, ...(reply ? [{ role: 'assistant' as const, text: reply, at: new Date().toISOString(), executionId: record.executionId }] : [])]);
+      if (config.loadPreviousSession) appendTranscript(workflow.id, parsed.sessionId, [{ role: 'user', text: parsed.message, at, ...(fileList.length && { files: fileList }) }, ...(reply ? [{ role: 'assistant' as const, text: reply, at: new Date().toISOString(), executionId: record.executionId, ...(speaker && { agentKey: speaker.id, agentName: speaker.name }) }] : [])]);
       return record;
     },
     (caught: unknown) => {

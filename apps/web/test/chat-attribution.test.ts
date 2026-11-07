@@ -6,7 +6,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { ExecutionEvent } from '@landflow/engine';
+import type { ExecutionEvent, Workflow } from '@landflow/engine';
+import { defineNode, definePlugin } from '@landflow/sdk';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -22,6 +23,21 @@ const { BUILTIN_TEMPLATES } = await import('@/lib/server/templates/builtin');
 const templates = await import('@/lib/server/templates');
 const { normalizeWorkflow, validateWorkflow } = await import('@/lib/server/mcp/workflows');
 registry.registerBuiltin(corePlugin);
+const store = (await import('@/lib/server/store')).store;
+const { publishDraft } = await import('@/lib/server/publish');
+const chatRoute = await import('@/app/chat/[...path]/route');
+
+// A node that answers as a labelled agent, the way Run an Agent does.
+const labelled = defineNode({
+  description: { name: 'labelledAnswer', displayName: 'Labelled answer', description: 'Test node', version: 1, kind: 'action', inputs: [{ type: 'main' }], outputs: [{ type: 'main' }], properties: [] },
+  async execute(ctx) {
+    ctx.sendChunk?.({ type: 'begin', itemIndex: 0 });
+    ctx.sendChunk?.({ type: 'item', itemIndex: 0, content: 'Refunds take 5 days.', agent: { id: 'ag_billing', name: 'Billing', face: '🧾' } });
+    ctx.sendChunk?.({ type: 'end', itemIndex: 0 });
+    return [[{ json: { output: 'Refunds take 5 days.' } }]];
+  },
+});
+registry.registerBuiltin(definePlugin({ info: { id: 'chattest', name: 'Chat test', version: '0.0.1', description: 'test', icon: 'lucide:bot', color: '#000', author: 'test' }, nodes: [labelled] }));
 
 type Chunk = Extract<ExecutionEvent, { type: 'node.chunk' }>['chunk'];
 const event = (chunk: Chunk & { agent?: unknown }) => ({ type: 'node.chunk', executionId: 'e1', nodeId: 'n1', nodeName: 'Lead', chunk, at: '2026-11-07T10:00:00.000Z' }) as Extract<ExecutionEvent, { type: 'node.chunk' }>;
@@ -47,6 +63,23 @@ describe('agent labels on the wire', () => {
   it('keeps the reason of a delegation on the tool chunk', () => {
     const wire = wireChunk(event({ type: 'tool', tool: { id: 't1', name: 'Billing', status: 'started', input: { message: 'Refund?', reason: 'A billing question' } } }));
     expect((wire.tool as unknown as { input: { reason: string } }).input.reason).toBe('A billing question');
+  });
+});
+
+describe('the agent nodes label their chunks', () => {
+  it('streamer() adds the label to text and tool chunks, and nothing without one', async () => {
+    const { streamer } = await import('@/lib/server/nodes/agents');
+    const sent: unknown[] = [];
+    const entries = [
+      { type: 'entry', entry: { type: 'assistant', text: 'Hello' } },
+      { type: 'entry', entry: { type: 'tool', callId: 'c1', tool: 'Billing', status: 'running', input: { message: 'm', reason: 'r' } } },
+    ] as never[];
+    const label = { id: 'ag_1', name: 'Lead' };
+    entries.forEach(streamer((c) => sent.push(c), 0, label));
+    expect(sent).toMatchObject([{ type: 'item', agent: label }, { type: 'tool', agent: label, tool: { input: { reason: 'r' } } }]);
+    const plain: unknown[] = [];
+    entries.forEach(streamer((c) => plain.push(c), 0));
+    expect(plain.some((c) => 'agent' in (c as object))).toBe(false);
   });
 });
 
@@ -102,5 +135,38 @@ describe('the "Chat with a team" template', () => {
     const runs = used.workflow!.nodes.filter((n) => n.type === 'core.messageAgent');
     expect(runs).toHaveLength(3);
     for (const n of runs) expect(ids.has(String(n.parameters.agentId))).toBe(true);
+  });
+});
+
+describe('a labelled chunk through the chat route into the transcript', () => {
+  const flow = (id: string, node: string): Workflow => ({
+    id,
+    name: id,
+    nodes: [
+      { id: 'Chat', name: 'Chat', type: 'core.chatTrigger', typeVersion: 1, position: [0, 0], parameters: { public: true } },
+      { id: 'Answer', name: 'Answer', type: node, typeVersion: 1, position: [200, 0], parameters: node === 'core.set' ? { mode: 'manual', fields: { values: [{ name: 'output', type: 'string', value: 'Plain.' }] }, includeOtherFields: false } : {} },
+    ],
+    connections: [{ id: 'c1', type: 'main', source: 'Chat', target: 'Answer', sourceIndex: 0, targetIndex: 0 }],
+  });
+  const ask = (path: string, sessionId: string) =>
+    chatRoute.POST(new Request(`http://chat.test/chat/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' }, body: JSON.stringify({ sessionId, message: 'Refund?' }) }), { params: Promise.resolve({ path: [path] }) });
+
+  it('streams the label and stores agentKey and agentName on the answer', async () => {
+    store.saveWorkflow(flow('wf_attr_labelled', 'chattest.labelledAnswer'));
+    await publishDraft('wf_attr_labelled', 'tester', 'chat');
+    const lines = (await (await ask('wf_attr_labelled', 'sess1')).text()).trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.find((l) => l.type === 'item')).toMatchObject({ content: 'Refunds take 5 days.', agent: { id: 'ag_billing', name: 'Billing', face: '🧾' } });
+    const [, answer] = loadTranscript('wf_attr_labelled', 'sess1');
+    expect(answer).toMatchObject({ role: 'assistant', text: 'Refunds take 5 days.', agentKey: 'ag_billing', agentName: 'Billing' });
+  });
+
+  it('a flow without labels stores and streams as before', async () => {
+    store.saveWorkflow(flow('wf_attr_plain', 'core.set'));
+    await publishDraft('wf_attr_plain', 'tester', 'chat');
+    const lines = (await (await ask('wf_attr_plain', 'sess2')).text()).trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.every((l) => !('agent' in l))).toBe(true);
+    const [, answer] = loadTranscript('wf_attr_plain', 'sess2');
+    expect(answer).toMatchObject({ role: 'assistant', text: 'Plain.' });
+    expect(answer).not.toHaveProperty('agentKey');
   });
 });

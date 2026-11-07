@@ -11,18 +11,18 @@ Rows for the integrator (W2a edited none of the shared docs).
 
 | Where | Change |
 |---|---|
-| Stream chunk (`node.chunk` wire chunk, SSE and NDJSON) | optional `agent: { id, name, face? }` (`face` is a string or an avatar object); absent for unlabelled nodes |
+| Stream chunk (`node.chunk` wire chunk, SSE and NDJSON) | optional `agent: { id, name, face? }` (`face` is a string or an avatar object), also typed as `StreamChunk.agent` in the SDK; absent for unlabelled nodes |
 | `GET /chat/<key>/history` message | optional `agentKey`, `agentName` on assistant messages |
 
 ## docs/limitations.md
 
-- Nothing yet sets `agent` on chunks: the AI Agent, Run an Agent and Run a Team nodes do not label their chunks, so a page shows no names until they do (needs `StreamChunk.agent` in `packages/sdk/src/node.ts` and `streamer()` in `nodes/agents.ts` / `nodes/run-team.ts`). The route does not yet store `agentKey` / `agentName` when it appends an answer (`app/chat/[...path]/route.ts`).
+- Run an Agent labels its chunks with the agent's id, name and avatar; Run a Team with the team's id and name (one label per team node, not per member). The AI Agent, chains and other nodes stay unlabelled. The chat route stores `agentKey` / `agentName` from the last labelled text chunk, so only Streaming Response Mode stores them (a "When Last Node Finishes" chat has no chunks).
 - Agent faces are avatar objects; the page shows an emoji face or the first letter, not the drawn face.
 - The template's agents run on an Ollama model (`qwen3:8b` at host.docker.internal:11434), like the Plugin builders template: change it in the agent builder.
 
 ## docs/roadmap.md
 
-Chat with agents (spec 16), step 1 (attribution on the wire and in transcripts, the page, the template) built; the labelling emitters and the route storing the label are the next piece, then step 2 (roster, W2b).
+Chat with agents (spec 16), step 1 built (labels from Run an Agent and Run a Team, stored on the transcript, shown on the page, the template); next step 2 (roster, W2b). Open: labels for non-streaming chats and for the AI Agent node.
 
 ## docs/history.md
 

@@ -143,6 +143,8 @@ export interface StreamChunk {
   itemIndex?: number;
   /** `tool`: the call, and where it is (`started`, `finished`, `failed`, `approval` when it waits for a person). */
   tool?: { id: string; name: string; status: 'started' | 'finished' | 'failed' | 'approval'; input?: JsonObject; output?: string };
+  /** Who wrote the chunk (an agent or team node labels its own): shown above the answer in the hosted chat. `face` is an emoji, an image URL or an avatar object. */
+  agent?: { id: string; name: string; face?: string | JsonObject };
 }
 
 export interface IExecuteContext extends IBaseContext {
