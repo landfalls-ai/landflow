@@ -6,7 +6,7 @@
  * plus built-in tools for skills and cross-session memory.
  */
 import { defaultVersionOf, PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
-import { ExpressionResolver, REASON_DESCRIPTION, deriveToolSchema, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
+import { ExpressionResolver, isToolOutputWithImages, REASON_DESCRIPTION, deriveToolSchema, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
 import type {
   A2aAgentToolConfig,
   Agent,
@@ -163,7 +163,9 @@ export function flowTool(tool: AgentTool): BuiltTool {
     label: tool.name,
     requireApproval: false,
     async invoke(input, ctx) {
-      return { output: await tool.invoke(input, ctx.signal) };
+      const output = await tool.invoke(input, ctx.signal);
+      // Images a tool returns are not shown in this runtime yet: it keeps the plain result it had before.
+      return { output: isToolOutputWithImages(output) ? (output.value ?? output.text) : output };
     },
   };
 }
