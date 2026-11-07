@@ -14,6 +14,7 @@ import { can, hasScope, type Action, type Viewer } from '../../shared/auth';
 import { API_KEY_HEADER, API_KEY_PREFIX, isPublicPath, PATH_HEADER, SESSION_COOKIE } from '../../shared/auth-paths';
 import { verifyApiKey } from './api-keys';
 import { requestAuth, type Principal, type RequestAuth } from './context';
+import { looksLikeDebugToken } from './debug-tokens';
 import { readCookie } from './cookies';
 import { protectedWriteRefusal } from '../environments/protection';
 import { checkResourceRule } from '../projects/access';
@@ -47,6 +48,10 @@ export type Resolved = { ok: true; principal?: Principal } | { ok: false; status
 
 /** Who the request's credentials belong to. An API key that doesn't check out fails (no fallback to the cookie). */
 export function resolvePrincipal(request: Request): Resolved {
+  // A debug token is no one's credential: it opens three read-only MCP tools at /api/mcp and nothing here (docs/specs/19-debug-token.md).
+  if (looksLikeDebugToken(bearerToken(request)) || looksLikeDebugToken(request.headers.get(API_KEY_HEADER)?.trim())) {
+    return { ok: false, status: 401, message: 'A debug token only works for explain_failure, get_run_trace and get_execution at /api/mcp' };
+  }
   const key = apiKeyOf(request);
   if (key) {
     const checked = verifyApiKey(key);

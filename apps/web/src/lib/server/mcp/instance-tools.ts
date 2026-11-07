@@ -107,7 +107,7 @@ function nodeTypeSummary(info: NodeTypeInfo) {
 }
 
 /** One execution in brief: status, error, and per node its runs, item counts and errors; the last node's output. */
-function executionDigest(record: ExecutionRecord, includeData: boolean) {
+export function executionDigest(record: ExecutionRecord, includeData: boolean) {
   const names = record.nodeNames ?? Object.fromEntries((record.workflow?.nodes ?? []).map((n) => [n.id, n.name]));
   const nodes = [...new Set(record.executionOrder)].map((nodeId) => {
     const runs = record.runData[nodeId] ?? [];

@@ -14,6 +14,7 @@ import { auditCommands } from './commands/audit';
 import { authCommands } from './commands/auth';
 import { dataCommands } from './commands/data';
 import { debugCommands } from './commands/debug';
+import { debugTokenCommands } from './commands/debug-token';
 import { envCommands } from './commands/env';
 import { runCommands } from './commands/runs';
 import { syncCommands } from './commands/sync';
@@ -27,7 +28,7 @@ export type { Io } from './command';
 export { EXIT } from './errors';
 export { VERSION } from './version';
 
-export const COMMANDS: Command[] = [...authCommands, ...workflowCommands, ...runCommands, ...transferCommands, ...dataCommands, ...syncCommands, ...envCommands, ...auditCommands, ...debugCommands];
+export const COMMANDS: Command[] = [...authCommands, ...workflowCommands, ...runCommands, ...transferCommands, ...dataCommands, ...syncCommands, ...envCommands, ...auditCommands, ...debugCommands, ...debugTokenCommands];
 
 const GLOBAL_FLAGS: FlagSpecs = {
   json: { type: 'boolean', description: 'Print one JSON document (stable shapes; errors too)' },
