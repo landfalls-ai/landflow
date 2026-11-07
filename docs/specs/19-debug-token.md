@@ -1,6 +1,6 @@
 # Debug token: a read-only key to one failed run
 
-Status: built (2026-11-07), workstream W1c of the [parallel build plan](17-parallel-build-plan.md). Part of the [specs](README.md).
+Status: built (2026-11-07, the one-node local override the same day), workstream W1c of the [parallel build plan](17-parallel-build-plan.md). Part of the [specs](README.md).
 
 ## Problem
 
@@ -94,7 +94,7 @@ holds only the token reads through MCP, which is what `explain_failure` is for.
 ## What it must NOT allow
 
 - Reading any other execution, workflow, credential, variable, data table, agent, plugin log or setting.
-- Running, retrying, stopping, or changing anything: no `execute_workflow`, `retry_execution`, `run_node`, `update_workflow`, `create_workflow`.
+- Running, retrying, stopping, or changing anything (the read scopes; the separate `runs:debug` scope below is the one exception): no `execute_workflow`, `retry_execution`, `run_node`, `update_workflow`, `create_workflow`.
 - Being accepted by a REST route, a per-plugin or per-project MCP endpoint, the gateway, the binary route, SCIM or the metrics route.
 - Minting or extending tokens, or acting as a user (it has no principal and no session).
 - Outliving 24 hours, being renewed, or surviving revocation, the minter's removal, or its own cap.
@@ -111,14 +111,41 @@ holds only the token reads through MCP, which is what `explain_failure` is for.
 - **Anonymous actor in the audit log, minter in the details.**
 - **No renewal, no "forever".** A longer investigation mints a new token.
 
-## Later: one-node local override (not built)
+## One-node local override (built 2026-11-07)
 
-The second half of W1c in the plan: run one node of a remote workflow against a plugin build on the developer's laptop for one debug run. It needs a
-debug **run** capability, which is write-like (it executes code and may call external systems), so it must not ride on this read-only token. The sketch:
-a separate scope (`runs:debug`) that cannot be minted together with the read scopes by default, bound to one node and one execution, a transport override
-in `lib/server/plugins/*` that routes that node type to a URL the developer gives for that run only, and the same audit, TTL and revocation rules. The
-design note for it comes first: what the local plugin may see (the node's input, never credentials: the host would call it with the node's resolved
-input only), and how the host reaches a laptop (a tunnel the developer opens, never an inbound connection the host initiates by itself).
+Run one node of a recorded execution against a plugin build on the developer's laptop, for one debug run. It is write-like (the host
+executes code that is not the registered plugin, and that code may call external systems), so it does **not** ride on the read-only token: it
+is a separate scope, behind an owner setting that is **off by default**.
+
+| | |
+|---|---|
+| Setting | The "Local node override" card of the Debug access dialog on the Run Trace page (`GET/PATCH /api/settings/debug-node`, owners only to change). `enabled` (default false) and `allowedHosts`. While off, no `runs:debug` token can be minted and none works (also checked on every use, so turning it off kills live tokens). |
+| Scope | `runs:debug`, alone: minting it with `executions:read` or `trace:read` is a 400 ("mint a separate token"). There is no setting that lifts this. |
+| Binding | One execution and one **node** (name or id, which must have run in that execution), fixed at mint (`debug_tokens.node_id`, `node_name`, migration 2046). Another node answers 403, another execution 404. |
+| Who mints | Someone who can **run** the workflow, not only read it (a viewer gets 403). The token stops working when the minter is deactivated or loses that access. |
+| Lifetime and use | 15 minutes by default, 1 hour at most. **Single use**: the use is spent by inserting the token id in `debug_node_runs` (primary key, so two racing calls cannot both pass). A refusal (wrong node, URL not allowed) does not spend it; a plugin that fails or is unreachable does. |
+| Input | Only the input of the node's **recorded** run (`runData[node].at(-1).inputs`) and its parameters resolved against it. The caller sends no input of its own. |
+| What the plugin sees | `ExecuteRequest` with the node, resolved parameters, that input, mode `manual`, an execution id of `debug_<id>`: **no credentials, no `$secrets`**, `$vars` read `[redacted]`. It does see the recorded input as it is (unredacted, the plugin has to work on it): that is the data of the run, handed to a laptop the owner allowed. |
+| Where the host calls | `pluginUrl` + `/landflow/v1/execute` (the HTTP protocol), only when `pluginUrl`'s host is on the owner's allow-list. Entries are DNS names (a tunnel the developer opens) or loopback (`localhost`, `127.0.0.1`, `::1`), optional port; no wildcards, no other IP literal (so no private network, link-local or metadata address), http or https, no credentials in the URL, **no redirects**, 30 s limit, 8 MiB limit. The host never reaches out on its own: the developer names the URL in the call. |
+| Result | Returned to the caller only, tagged `debugRun: true` with a note, status `success` or `error`, output items (50 at most), logs. **Not written** to the execution (outputs, steps, journal untouched) and no execution is created; only metadata (`debug_node_runs`: token, node, host, times, status) is kept. Redacted like the other debug tools. |
+| Audit | `debug.node.run`, actor anonymous (the minter in `details.mintedBy`), written **before** the plugin is called ("no event, no data"; if it cannot be stored the call is refused): outcome `success` for the use, `failure` if the plugin failed, `denied` for each refusal with `reason` (`other node`, `other execution`, `plugin url`, `scope`, `disabled`, `exhausted`, `expired`, `revoked`, `never ran`). Mint and revoke are the usual `mcp.token.issue` / `mcp.token.revoke`. Changing the setting is `settings.update`. |
+| Where | `POST /api/debug-node` (public path, the `runs:debug` token as bearer; REST, MCP and every other route still refuse the token: the MCP debug server lists three tools and each refuses this scope). CLI: `landflow debug-node <execution> <node> --plugin-url http://localhost:PORT`, which mints a token with the person's key and spends it at once (and revokes it if the call was refused). Dialog: the "Run one node on my local plugin" option, with a warning, a node picker and a curl snippet. |
+
+Code: `lib/server/debug-node/settings.ts` (setting, allow-list, URL check), `lib/server/debug-node/run.ts` (the run), `app/api/debug-node/route.ts`,
+`app/api/settings/debug-node/route.ts`, `lib/server/auth/debug-tokens.ts` (scope, binding, single use), `packages/cli/src/commands/debug-node.ts`.
+Tests: `apps/web/test/debug-node.test.ts`, `packages/cli/test/debug-node.test.ts`; the localhost plugin they serve is
+`apps/web/test/fixtures/debug-demo-plugin.ts` (a "production" build that fails on digits and a "local" fixed one; `tsx apps/web/test/fixtures/debug-demo-main.ts <port> <buggy|fixed>`).
+
+### Limits (honest)
+
+- HTTP only: a node reached over gRPC or a broker in production is called over HTTP in the override, and the developer's plugin must serve the HTTP protocol (the SDKs do).
+- Not an MCP tool: an agent that holds only a token over MCP cannot start a debug run; it is REST or the CLI (the token server's tools all refuse `runs:debug`).
+- A node needs a recorded run with input: a node that never ran in that execution cannot be replayed; so for a failure at the first node the input is the trigger's.
+- Nodes that read other nodes (`$('Name')`) see the recorded outputs of the last run of those nodes; sub-nodes (AI tools, memory) and loops are not reconstructed, and a node that needs host services (binary data, the workflow's static data, `ctx` callbacks into the host) will not find them.
+- The allow-list trusts a tunnel hostname: DNS is not pinned, so a name that later resolves to a private address is called there. Use tunnel names you control; loopback entries only work when the host runs on the developer's own machine.
+- The recorded input is sent to the plugin unredacted. The owner's setting and allow-list are the control; there is no per-user allow-list and no approval step.
+- Calls to external systems made by the local plugin are the plugin's own: the host cannot see or limit them.
+- Not tested: a real tunnel (ngrok, cloudflared); the checks used localhost.
 
 ## Open points
 

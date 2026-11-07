@@ -4,7 +4,9 @@
  *
  * - Format `lf_dbg_<random>`: opaque, not a JWT, so no existing verifier (MCP JWTs, API keys, the instance access token,
  *   the identity provider) can mistake it for theirs. Only the SHA-256 is kept, in `debug_tokens` (migration 2042).
- * - Scopes: `executions:read` (get_execution, explain_failure) and `trace:read` (get_run_trace). Nothing else exists.
+ * - Scopes: `executions:read` (get_execution, explain_failure) and `trace:read` (get_run_trace), and `runs:debug`: the
+ *   one-node local override, which is write-like, so it is never minted with a read scope, is bound to one node, works once,
+ *   and only while the owner's setting is on (lib/server/debug-node/).
  * - TTL: 1 hour by default, at least one minute, at most 24 hours. A use cap (DEBUG_TOKEN_MAX_USES calls) bounds a leak.
  * - The token acts for nobody: it is not a `Principal`, the REST guard refuses it (guard.ts) and so does every MCP
  *   endpoint but `/api/mcp` (identity.ts, instance.ts). There it opens a server of three tools (mcp/debug-token-server.ts).
@@ -15,11 +17,18 @@ import type { Role } from '../../shared/auth';
 import { canResource } from '../projects/access';
 import { authDb } from './db';
 import { randomToken, tokenHash } from './passwords';
+import { getDebugNodeSettings } from '../debug-node/settings';
 import { getUser, type UserRecord } from './users';
 
 export const DEBUG_TOKEN_PREFIX = 'lf_dbg_';
 export const DEBUG_TOKEN_SCOPES = ['executions:read', 'trace:read'] as const;
-export type DebugTokenScope = (typeof DEBUG_TOKEN_SCOPES)[number];
+/** The write-like scope: run ONE node of the recorded execution against a plugin the developer serves. Never mixed with the read scopes. */
+export const DEBUG_RUN_SCOPE = 'runs:debug' as const;
+export type DebugTokenScope = (typeof DEBUG_TOKEN_SCOPES)[number] | typeof DEBUG_RUN_SCOPE;
+/** A `runs:debug` token is single use and short: at most an hour (15 minutes by default). */
+export const DEBUG_RUN_DEFAULT_TTL_SECONDS = 900;
+export const DEBUG_RUN_MAX_TTL_SECONDS = 3600;
+export const maxUsesOf = (scopes: readonly string[]) => (scopes.includes(DEBUG_RUN_SCOPE) ? 1 : DEBUG_TOKEN_MAX_USES);
 
 export const DEBUG_TOKEN_DEFAULT_TTL_SECONDS = 3600;
 export const DEBUG_TOKEN_MIN_TTL_SECONDS = 60;
@@ -46,6 +55,8 @@ interface Row {
   execution_id: string;
   workflow_id: string;
   scopes: string;
+  node_id: string | null;
+  node_name: string | null;
   created_by: string;
   created_at: string;
   expires_at: string;
@@ -63,6 +74,9 @@ export interface DebugTokenRecord {
   executionId: string;
   workflowId: string;
   scopes: DebugTokenScope[];
+  /** A `runs:debug` token: the one node it may run. */
+  nodeId?: string;
+  nodeName?: string;
   createdBy: string;
   createdAt: string;
   expiresAt: string;
@@ -79,6 +93,7 @@ const fromRow = (row: Row): DebugTokenRecord => ({
   executionId: row.execution_id,
   workflowId: row.workflow_id,
   scopes: parseDebugScopes(JSON.parse(row.scopes) as unknown),
+  ...(row.node_id && { nodeId: row.node_id, nodeName: row.node_name ?? row.node_id }),
   createdBy: row.created_by,
   createdAt: row.created_at,
   expiresAt: row.expires_at,
@@ -90,12 +105,12 @@ const fromRow = (row: Row): DebugTokenRecord => ({
 
 export function parseDebugScopes(value: unknown): DebugTokenScope[] {
   const list = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\s,]+/) : [];
-  return [...new Set(list.filter((s): s is DebugTokenScope => (DEBUG_TOKEN_SCOPES as readonly string[]).includes(String(s))))];
+  return [...new Set(list.filter((s): s is DebugTokenScope => (DEBUG_TOKEN_SCOPES as readonly string[]).includes(String(s)) || s === DEBUG_RUN_SCOPE))];
 }
 
 export const looksLikeDebugToken = (token: string | undefined): boolean => Boolean(token?.startsWith(DEBUG_TOKEN_PREFIX));
 
-export const isLive = (record: Pick<DebugTokenRecord, 'revokedAt' | 'expiresAt' | 'uses'>, now = Date.now()) => !record.revokedAt && Date.parse(record.expiresAt) > now && record.uses < DEBUG_TOKEN_MAX_USES;
+export const isLive = (record: Pick<DebugTokenRecord, 'revokedAt' | 'expiresAt' | 'uses' | 'scopes'>, now = Date.now()) => !record.revokedAt && Date.parse(record.expiresAt) > now && record.uses < maxUsesOf(record.scopes);
 
 /**
  * Mint a token for `user` on one execution of `workflowId` (the caller has checked the execution exists). The user must be
@@ -103,17 +118,28 @@ export const isLive = (record: Pick<DebugTokenRecord, 'revokedAt' | 'expiresAt' 
  */
 export function mintDebugToken(
   user: UserRecord,
-  input: { executionId: string; workflowId: string; ttlSeconds?: number; scopes?: readonly string[]; label?: string },
+  input: { executionId: string; workflowId: string; ttlSeconds?: number; scopes?: readonly string[]; label?: string; node?: { id: string; name: string } },
   now = Date.now(),
 ): { token: string; record: DebugTokenRecord } {
   if (user.disabledAt) throw new DebugTokenError('This account is deactivated', 403);
   if (!canResource({ id: user.id, role: user.role as Role }, 'workflow', input.workflowId, 'read')) throw new DebugTokenError('Execution not found', 404);
-  const ttl = input.ttlSeconds ?? DEBUG_TOKEN_DEFAULT_TTL_SECONDS;
-  if (!Number.isInteger(ttl) || ttl < DEBUG_TOKEN_MIN_TTL_SECONDS || ttl > DEBUG_TOKEN_MAX_TTL_SECONDS) {
-    throw new DebugTokenError(`The lifetime must be between ${DEBUG_TOKEN_MIN_TTL_SECONDS / 60} minute and ${DEBUG_TOKEN_MAX_TTL_SECONDS / 3600} hours`);
-  }
   const requested = input.scopes?.length ? [...new Set(input.scopes)] : undefined;
-  if (requested?.some((scope) => !(DEBUG_TOKEN_SCOPES as readonly string[]).includes(scope))) throw new DebugTokenError(`The scopes are ${DEBUG_TOKEN_SCOPES.join(' and ')}`);
+  if (requested?.some((scope) => !(DEBUG_TOKEN_SCOPES as readonly string[]).includes(scope) && scope !== DEBUG_RUN_SCOPE)) {
+    throw new DebugTokenError(`The scopes are ${DEBUG_TOKEN_SCOPES.join(', ')} and ${DEBUG_RUN_SCOPE}`);
+  }
+  const running = Boolean(requested?.includes(DEBUG_RUN_SCOPE));
+  if (running) {
+    // The write-like scope: never with a read scope, only while the owner allows it, for someone who may run the workflow, for one node.
+    if (requested!.length > 1) throw new DebugTokenError(`“${DEBUG_RUN_SCOPE}” cannot be minted together with a read scope: mint a separate token`);
+    if (!getDebugNodeSettings().enabled) throw new DebugTokenError('Local node overrides are off: an owner turns them on in the Local node override card of the Debug access dialog (Run Trace page)', 403);
+    if (!canResource({ id: user.id, role: user.role as Role }, 'workflow', input.workflowId, 'run')) throw new DebugTokenError('You can read this workflow but not run it, so you cannot mint a runs:debug token', 403);
+    if (!input.node) throw new DebugTokenError(`“${DEBUG_RUN_SCOPE}” is bound to one node: name it (node)`);
+  } else if (input.node) throw new DebugTokenError('A node binds only a runs:debug token');
+  const ttl = input.ttlSeconds ?? (running ? DEBUG_RUN_DEFAULT_TTL_SECONDS : DEBUG_TOKEN_DEFAULT_TTL_SECONDS);
+  const maxTtl = running ? DEBUG_RUN_MAX_TTL_SECONDS : DEBUG_TOKEN_MAX_TTL_SECONDS;
+  if (!Number.isInteger(ttl) || ttl < DEBUG_TOKEN_MIN_TTL_SECONDS || ttl > maxTtl) {
+    throw new DebugTokenError(`The lifetime must be between ${DEBUG_TOKEN_MIN_TTL_SECONDS / 60} minute and ${maxTtl / 3600} hour${maxTtl > 3600 ? 's' : ''}`);
+  }
   const scopes = (requested as DebugTokenScope[] | undefined) ?? [...DEBUG_TOKEN_SCOPES];
   const db = authDb();
   purgeDebugTokens({ now }); // dead rows older than a week go with the next mint
@@ -128,6 +154,8 @@ export function mintDebugToken(
     execution_id: input.executionId,
     workflow_id: input.workflowId,
     scopes: JSON.stringify(scopes),
+    node_id: running ? input.node!.id : null,
+    node_name: running ? input.node!.name : null,
     created_by: user.id,
     created_at: new Date(now).toISOString(),
     expires_at: new Date(now + ttl * 1000).toISOString(),
@@ -191,7 +219,7 @@ export function verifyDebugToken(token: string | undefined, now = Date.now()): D
   const record = fromRow(row);
   if (record.revokedAt) return { ok: false, reason: 'revoked', record };
   if (Date.parse(record.expiresAt) <= now) return { ok: false, reason: 'expired', record };
-  if (record.uses >= DEBUG_TOKEN_MAX_USES) return { ok: false, reason: 'exhausted', record };
+  if (record.uses >= maxUsesOf(record.scopes)) return { ok: false, reason: 'exhausted', record };
   const user = getUser(record.createdBy);
   if (!user || user.disabledAt || !canResource({ id: user.id, role: user.role as Role }, 'workflow', record.workflowId, 'read')) return { ok: false, reason: 'user', record };
   return { ok: true, record, user };

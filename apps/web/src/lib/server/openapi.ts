@@ -905,9 +905,9 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'createDebugToken',
     summary: 'Mint a debug token for an execution',
     description:
-      'A short-lived read-only token bound to this execution, for an agent that explains a failed run: it opens `explain_failure`, `get_run_trace` and `get_execution` at `/api/mcp` for this execution and nothing else, redacted of credentials and `$vars`, audited per call. The token is returned once. See docs/specs/19-debug-token.md.',
+      'A short-lived read-only token bound to this execution, for an agent that explains a failed run: it opens `explain_failure`, `get_run_trace` and `get_execution` at `/api/mcp` for this execution and nothing else, redacted of credentials and `$vars`, audited per call. The token is returned once. `runs:debug` (alone, never with a read scope, with `node`) mints the one-node local override token instead: single use, 1 hour at most, only while an owner has turned the override on, and only for someone who may run the workflow. See docs/specs/19-debug-token.md.',
     body: jsonBody(
-      object({ ttlSeconds: { type: 'integer', minimum: 60, maximum: 86400, default: 3600 }, scopes: array({ type: 'string', enum: ['executions:read', 'trace:read'] }), label: { type: 'string', maxLength: 100 } }),
+      object({ ttlSeconds: { type: 'integer', minimum: 60, maximum: 86400, default: 3600 }, scopes: array({ type: 'string', enum: ['executions:read', 'trace:read', 'runs:debug'] }), label: { type: 'string', maxLength: 100 }, node: { type: 'string', maxLength: 200, description: 'Required for, and only for, `runs:debug`: the node the token may run once' } }),
       undefined,
       false,
     ),
@@ -917,6 +917,38 @@ function paths(): Record<string, Record<string, Json>> {
       404: notFound,
       409: errorRef('The execution already has too many live debug tokens'),
     },
+  });
+  add('post', '/api/debug-node', {
+    tag: 'Executions',
+    id: 'runDebugNode',
+    summary: 'Run one node of a recorded execution against a local plugin (debug run)',
+    description:
+      'Bearer: a `runs:debug` debug token (not a session or an API key). Runs the one node the token is bound to, with the input it had in the recorded execution and its resolved parameters (never credentials), against the plugin at `pluginUrl`: a host the owner allow-listed in the Local node override card of the Debug access dialog (Run Trace page). Single use. The answer is tagged `debugRun: true` and is not written to the execution. Audited as `debug.node.run`. See docs/specs/19-debug-token.md.',
+    public: true,
+    body: jsonBody(object({ executionId: { type: 'string' }, node: { type: 'string' }, pluginUrl: { type: 'string', format: 'uri' } }, ['executionId', 'node', 'pluginUrl'])),
+    responses: {
+      200: reply('The debug result', object({ debugRun: { type: 'boolean' }, status: { type: 'string', enum: ['success', 'error'] }, output: array({ type: 'object' }) }, ['debugRun', 'status'])),
+      401: errorRef('Unknown, expired, revoked or already used token'),
+      403: errorRef('Override off, another node, a plugin URL that is not allowed, or not a runs:debug token'),
+      404: notFound,
+      409: errorRef('The recorded execution never ran the node'),
+      502: errorRef('The plugin could not be reached or failed'),
+    },
+  });
+  add('get', '/api/settings/debug-node', {
+    tag: 'Settings',
+    id: 'getDebugNodeSettings',
+    summary: 'The local node override setting',
+    description: 'Off by default. `allowedHosts`: the DNS names (tunnels) and loopback addresses the host may call for a debug run.',
+    responses: { 200: reply('The setting', object({ enabled: { type: 'boolean' }, allowedHosts: array({ type: 'string' }) }, ['enabled', 'allowedHosts'])) },
+  });
+  add('patch', '/api/settings/debug-node', {
+    tag: 'Settings',
+    id: 'updateDebugNodeSettings',
+    summary: 'Turn the local node override on or off, and set the allowed hosts',
+    description: 'Owners only. Hosts are DNS names or loopback addresses with an optional port; no wildcards and no other IP literals.',
+    body: jsonBody(object({ enabled: { type: 'boolean' }, allowedHosts: array({ type: 'string' }) }), undefined, false),
+    responses: { 200: reply('The setting', object({ enabled: { type: 'boolean' }, allowedHosts: array({ type: 'string' }) }, ['enabled', 'allowedHosts'])), 400: invalid, 403: errorRef('Not an owner') },
   });
   add('delete', '/api/executions/{id}/debug-tokens/{tokenId}', {
     tag: 'Executions',

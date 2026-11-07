@@ -117,6 +117,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'mcp.grant.delete': 'Removed an MCP tool grant',
   'plugin.mcp_exposure': 'Changed a plugin’s “Expose to agents”',
   'mcp.tool.call': 'Called an MCP tool',
+  'debug.node.run': 'Ran one node of a recorded run against a local plugin (debug run)',
   'marketplace.install': 'Installed from a marketplace',
   'marketplace.uninstall': 'Uninstalled a marketplace plugin',
   'audit.export': 'Exported the audit log',
