@@ -3,7 +3,8 @@
  * applyOps() with the available node types, like the flow builder validates
  * its drafts. What comes back is safe for the editor to apply.
  */
-import { applyOps, parseOps, structuralWarnings, swallowWarnings, wiringWarnings, type AssistantOp, type DescriptorLookup } from '@/lib/shared/assistant-ops';
+import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import { agentWiringWarnings, applyOps, collectionWarnings, credentialWarnings, parseOps, structuralWarnings, swallowWarnings, wiringWarnings, type AssistantOp, type DescriptorLookup } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import { newCompositeErrors, serverCompositeLookup } from '../composites';
 import { availableTypes, mainOutputs } from './research';
@@ -36,8 +37,19 @@ export function validateOps(workflow: Workflow, raw: unknown, lookup: Descriptor
     ops: result.applied,
     dropped: [...parsed.dropped, ...result.dropped],
     ignored: result.ignored,
-    warnings: [...structuralWarnings(workflow, result.workflow, lookup), ...wiring.branches, ...compositeWarnings(workflow, result.workflow, lookup)],
-    cautions: [...wiring.purpose, ...swallowWarnings(result.applied)],
+    warnings: [
+      ...structuralWarnings(workflow, result.workflow, lookup),
+      ...wiring.branches,
+      ...agentWiringWarnings(workflow, result.workflow, lookup),
+      ...collectionWarnings(workflow, result.workflow, lookup),
+      ...compositeWarnings(workflow, result.workflow, lookup),
+    ],
+    // Shown on the card, not sent back: the person picks a credential, the model can't.
+    cautions: [
+      ...wiring.purpose,
+      ...swallowWarnings(result.applied),
+      ...credentialWarnings(workflow, result.workflow, lookup, (c, parameters, d) => isPropertyVisible(c, withPropertyDefaults(d.properties, parameters))),
+    ],
     workflow: result.workflow,
   };
 }
