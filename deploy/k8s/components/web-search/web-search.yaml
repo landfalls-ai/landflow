@@ -1,0 +1,75 @@
+# Web Search (TypeScript SDK, SearXNG / Brave / Tavily). The Service's label makes the host discover it; the
+# annotation names its gRPC port.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plugin-web-search
+  labels: { app.kubernetes.io/name: plugin-web-search, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: plugin }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: plugin-web-search }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: plugin-web-search, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: plugin }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # the image's `node` user
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: plugin
+          image: landflow/plugin-web-search:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 7113 }
+            - { name: grpc, containerPort: 7213 }
+          envFrom:
+            - configMapRef: { name: landflow-transport, optional: true }
+            - configMapRef: { name: landflow-transport-web-search, optional: true }
+            - secretRef: { name: landflow-transport, optional: true }
+          env:
+            - { name: LANDFLOW_REGISTRY_URL, value: "off" }
+            - { name: LANDFLOW_MCP, value: "off" }
+            - name: LANDFLOW_REGISTRY_SECRET # answers the host's challenge on GetManifest (docs/protocol.md §13)
+              valueFrom: { secretKeyRef: { name: landflow-registry, key: secret, optional: true } }
+            # SearXNG base URL when no SearXNG credential names one, and the operator's deny-list (comma separated, subdomains
+            # included). Keys for Brave and Tavily are saved credentials, not environment.
+            - { name: LANDFLOW_SEARCH_SEARXNG_URL, value: "" }
+            - { name: LANDFLOW_SEARCH_DENY_DOMAINS, value: "" }
+          readinessProbe:
+            httpGet: { path: /landflow/v1/health, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /landflow/v1/health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plugin-web-search
+  labels: { app.kubernetes.io/name: plugin-web-search, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: plugin, landflow.dev/plugin: "true" }
+  annotations:
+    landflow.dev/grpc-port: grpc
+spec:
+  selector: { app.kubernetes.io/name: plugin-web-search }
+  ports:
+    - { name: grpc, port: 7213, targetPort: grpc, appProtocol: grpc }
+    - { name: http, port: 7113, targetPort: http }

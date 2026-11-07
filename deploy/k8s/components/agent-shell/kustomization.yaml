@@ -1,0 +1,9 @@
+# The Agent Shell plugin (plugins/agent-shell): a normal Node plugin on deploy/docker/node-plugin.Dockerfile, a component so the
+# base stays as it is. Build it first:
+#   docker --context orbstack buildx build --builder orbstack --load -f deploy/docker/node-plugin.Dockerfile \
+#     --build-arg PLUGIN=agent-shell --build-arg HTTP_PORT=7114 --build-arg GRPC_PORT=7214 -t landflow/plugin-agent-shell:k8s-dev .
+# Enable it with `- ../../components/agent-shell` in an overlay's components (the orbstack overlay has it commented out).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - agent-shell.yaml

@@ -65,8 +65,8 @@ services:
       LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
       # Plugins announce themselves; the scan (at boot and the Plugins page's "Scan network")
       # probes the plugin services instead of the container's own 127.0.0.1.
-      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github,browser
-      LANDFLOW_SCAN_PORTS: 7101-7107,7111,7112,7201-7207,7211,7212
+      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github,browser,agent-shell,web-search
+      LANDFLOW_SCAN_PORTS: 7101-7107,7111-7114,7201-7207,7211-7214
       # Base of links the host hands out (resume URLs, error-workflow links): the published port.
       LANDFLOW_PUBLIC_URL: http://localhost:${LANDFLOW_HOST_PORT:-53000}
       # Where plugins fetch and upload item files (/api/binary): the host on the compose network.
@@ -254,6 +254,47 @@ services:
     security_opt: ["no-new-privileges:true"]
     pids_limit: 512
     mem_limit: ${LANDFLOW_BROWSER_MEM_LIMIT:-2g}
+
+  # Agent Shell plugin (plugins/agent-shell): just-bash, a simulated bash over an in-memory filesystem; no host files, no
+  # network. Optional: the profile `agent-shell` keeps it out of a plain `up`.
+  agent-shell:
+    <<: *plugin
+    profiles: [agent-shell]
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-agent-shell:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: agent-shell, HTTP_PORT: "7114", GRPC_PORT: "7214" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: agent-shell
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  # Web Search plugin (plugins/web-search): SearXNG, Brave Search or Tavily; keys live in saved credentials. Optional:
+  # the profile `web-search`. LANDFLOW_SEARCH_SEARXNG_URL is the SearXNG base URL (no default here: name your instance),
+  # LANDFLOW_SEARCH_DENY_DOMAINS the operator's deny-list (comma separated).
+  web-search:
+    <<: *plugin
+    profiles: [web-search]
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-web-search:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: web-search, HTTP_PORT: "7113", GRPC_PORT: "7213" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: web-search
+      LANDFLOW_SEARCH_SEARXNG_URL: ${LANDFLOW_SEARCH_SEARXNG_URL:-}
+      LANDFLOW_SEARCH_DENY_DOMAINS: ${LANDFLOW_SEARCH_DENY_DOMAINS:-}
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
 
   # Sandboxed Code node runner (services/code-runner): every JavaScript or Python snippet runs in a fresh child
   # process. The container is the security boundary: it joins only the internal `code` network (no route out; the
