@@ -133,9 +133,10 @@ export const sapTrigger = defineNode({
 
       const previous = ctx.getPollState<PollState>() as PollState;
       const from = Date.parse(previous.cursor) - overlap;
-      const read = await window(from, 'asc', limit);
+      // The window holds records seen before: ask for that many more, so they do not use up the page.
+      const read = await window(from, 'asc', Math.min(limit + Object.keys(previous.seen ?? {}).length, 6000));
       const records = read.records.map(shape);
-      const step = advance(records, previous, property, overlap, scope, read.hasMore);
+      const step = advance(records, previous, property, overlap, scope, read.hasMore, limit);
       ctx.setPollState(step.state);
       span.setAttribute('sap.rows', step.fresh.length);
       span.setAttribute('sap.has_more', read.hasMore);

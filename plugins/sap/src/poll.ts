@@ -58,10 +58,21 @@ export interface Advance {
 
 /**
  * Takes the records of the window (ordered oldest first) and the previous state; returns what is new and the next state. `records`
- * without a timestamp are emitted by signature but do not move the cursor.
+ * without a timestamp are emitted by signature but do not move the cursor. The window holds records already seen, so the caller reads
+ * `maxFresh` plus the seen count and `maxFresh` limits what is taken.
  */
-export function advance(records: JsonObject[], previous: PollState | undefined, property: string, overlap: number, scope: string, pageFull = false): Advance {
+export function advance(all: JsonObject[], previous: PollState | undefined, property: string, overlap: number, scope: string, pageFull = false, maxFresh = Infinity): Advance {
   const seen = previous?.seen ?? {};
+  // At most `maxFresh` new records are taken, oldest first; the rest wait for the next poll (the cursor stays before them).
+  let taken = 0;
+  let cut = all.length;
+  for (let i = 0; i < all.length; i++) {
+    if (!(signature(all[i]) in seen) && ++taken >= maxFresh) {
+      cut = i + 1;
+      break;
+    }
+  }
+  const records = all.slice(0, cut);
   const before = previous ? Date.parse(previous.cursor) : 0;
   const fresh: JsonObject[] = [];
   let cursor = Number.isFinite(before) ? before : 0;
