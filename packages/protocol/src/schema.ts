@@ -220,6 +220,8 @@ export const compositeTypeSchema: z.ZodType<CompositeTypeDescriptor> = z
             onError: z.enum(['stop', 'continue']).optional(),
             retryOnFail: z.boolean().optional(),
             maxTries: z.number().int().positive().optional(),
+            waitBetweenTriesMs: z.number().int().min(0).max(60_000).optional(),
+            retryBackoff: z.enum(['fixed', 'exponential']).optional(),
             slot: z.string().optional(),
           }),
         ),
