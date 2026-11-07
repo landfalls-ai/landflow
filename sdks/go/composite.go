@@ -101,7 +101,10 @@ type CompositeStarterNode struct {
 	OnError     string         `json:"onError,omitempty"`
 	RetryOnFail bool           `json:"retryOnFail,omitempty"`
 	MaxTries    int            `json:"maxTries,omitempty"`
-	Slot        string         `json:"slot,omitempty"`
+	// WaitBetweenTriesMs and RetryBackoff ("fixed" or "exponential") apply when RetryOnFail is set.
+	WaitBetweenTriesMs int    `json:"waitBetweenTriesMs,omitempty"`
+	RetryBackoff       string `json:"retryBackoff,omitempty"`
+	Slot               string `json:"slot,omitempty"`
 }
 
 // CompositeStarterConnection joins two starter nodes by id.
