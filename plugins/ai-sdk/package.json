@@ -1,0 +1,30 @@
+{
+  "name": "@landflow/plugin-ai-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Generate with AI SDK: text or structured output from Ollama, an OpenAI-compatible endpoint, Anthropic or Google through the Vercel AI SDK, with AI SDK spans emitted as OpenTelemetry.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "4.0.87",
+    "@ai-sdk/google": "4.0.104",
+    "@ai-sdk/openai-compatible": "3.0.77",
+    "@ai-sdk/otel": "1.0.149",
+    "@landflow/sdk": "workspace:*",
+    "@landflow/transports": "workspace:*",
+    "@opentelemetry/api": "1.9.1",
+    "ai": "7.0.149",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@landflow/protocol": "workspace:*",
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "vitest": "^5.0.5"
+  }
+}
