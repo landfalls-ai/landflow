@@ -5,14 +5,22 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { ExecutionRecord } from '@/lib/shared/types';
-import { jsonRenderEnabled } from '@/lib/shared/ui-spec';
 import { RunTraceView } from './run-trace-view';
 import { JsonRenderGallery } from './ui-cards';
+import { useJsonRender } from './use-json-render';
 
-/** Under LANDFLOW_JSON_RENDER, /runs/json-render-gallery shows the spec cards (dev page). */
+/**
+ * With json-render on (Settings → General, read at runtime), /runs/json-render-gallery shows the spec cards (dev page).
+ * Off, it is just an id no run has: the usual page for a run that does not exist.
+ */
 export function RunPage({ executionId }: { executionId: string }) {
-  if (jsonRenderEnabled() && executionId === 'json-render-gallery') return <JsonRenderGallery />;
-  return <RunPageOf executionId={executionId} />;
+  return executionId === 'json-render-gallery' ? <GalleryOrRun executionId={executionId} /> : <RunPageOf executionId={executionId} />;
+}
+
+function GalleryOrRun({ executionId }: { executionId: string }) {
+  const on = useJsonRender();
+  if (on === undefined) return null;
+  return on ? <JsonRenderGallery /> : <RunPageOf executionId={executionId} />;
 }
 
 function RunPageOf({ executionId }: { executionId: string }) {

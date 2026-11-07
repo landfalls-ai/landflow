@@ -2,7 +2,7 @@
 
 Part of the [Landflow docs](../README.md). W5a of the [parallel build plan](../specs/17-parallel-build-plan.md): can Run Trace draw cards from a model-written JSON spec with Vercel's [json-render](https://github.com/vercel-labs/json-render)?
 
-**Verdict: keep as a flag (`LANDFLOW_JSON_RENDER=1`, off by default).** It works and costs little, but only behind a validator Landflow writes itself, and nothing in Run Trace produces specs yet, so it should not be on by default or built on further until a real source of specs exists.
+**Verdict: keep as a flag (a switch in Settings → General, off by default; `LANDFLOW_JSON_RENDER=1` sets its default).** It works and costs little, but only behind a validator Landflow writes itself, and nothing in Run Trace produces specs yet, so it should not be on by default or built on further until a real source of specs exists.
 
 ## What was built
 
@@ -36,6 +36,6 @@ json-render's spec format is more than data. A prop can be `{ "$state": "/path" 
 
 ## Known gaps and follow-ups
 
-- The flag's browser side is `NEXT_PUBLIC_LANDFLOW_JSON_RENDER=1` (inlined at build); `LANDFLOW_JSON_RENDER=1` alone enables the server side only. A settings entry or a `next.config` `env` line would need edits outside this change's paths.
+- The flag is a runtime setting: the owner switches it in Settings → General (`jsonRender` in the instance settings, no rebuild); the browser reads it from `GET /api/settings`. Until a choice is saved, `LANDFLOW_JSON_RENDER=1` (or `NEXT_PUBLIC_LANDFLOW_JSON_RENDER=1`) is the default; a saved true or false wins.
 - The dev page lives inside the run route under the id `json-render-gallery`, because adding an `app/` route was outside the allowed paths.
 - Adopting would mean: a place to attach a spec to a span or artifact, `catalog.prompt()` in the agent persona, and a decision path for an Approval card that goes through the existing approval route.

@@ -92,6 +92,12 @@ describe('OpenAPI document', () => {
     }
   });
 
+  it('documents the settings routes, with json-render the owner’s', () => {
+    expect(doc.paths['/api/settings'].get['x-landflow-scope']).toBe('workflows:read');
+    expect(doc.paths['/api/settings'].patch['x-landflow-scope']).toBe('admin');
+    expect(String(doc.paths['/api/settings'].patch.description)).toContain('owner');
+  });
+
   it('documents running, the API key routes as session-only and variables writes as admin', () => {
     expect(doc.paths['/api/workflows/{id}/run'].post['x-landflow-scope']).toBe('run');
     expect(doc.paths['/api/workflows/{id}/execute'].post['x-landflow-scope']).toBe('run');
