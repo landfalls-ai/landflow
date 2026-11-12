@@ -1021,7 +1021,7 @@ function ViewSwitch({ view, onChange }: { view: 'steps' | 'canvas'; onChange: (v
           type="button"
           aria-pressed={view === key}
           onClick={() => onChange(key)}
-          className={cn('h-10 rounded-full px-4 text-[13px] font-semibold', view === key ? 'bg-acdim text-ac' : 'text-t2')}
+          className={cn('h-11 rounded-full px-4 text-[13px] font-semibold', view === key ? 'bg-acdim text-ac' : 'text-t2')}
         >
           {label}
         </button>

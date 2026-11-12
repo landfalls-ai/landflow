@@ -7,7 +7,7 @@
  * (what production triggers run) is marked; publishing an older one rolls back. A version can also be scheduled to
  * go live at a chosen time (./publish-schedules); versions with a schedule waiting say so.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { CalendarClock, History, Loader2, Rocket, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -23,6 +23,8 @@ import { SectionLabel } from '../ui/inputs';
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { ScheduleForm, ScheduleRows, useSchedules } from './publish-schedules';
 import { useEditor } from './store';
+import { usePhone } from '@/lib/client/use-phone';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 
 export const useVersionHistory = create<{ open: boolean; setOpen: (open: boolean) => void }>((set) => ({ open: false, setOpen: (open) => set({ open }) }));
 
@@ -62,6 +64,10 @@ function DiffDetail({ diff }: { diff: VersionDiff }) {
 
 export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
   const open = useVersionHistory((s) => s.open);
+  // A phone: full screen, the list over the preview, as a dialog that keeps the focus (docs/mobile.md#sheets-and-dialogs).
+  const phone = usePhone();
+  const frame = useRef<HTMLDivElement>(null);
+  useDialogFocus(frame, phone && open);
   const workflowId = useEditor((s) => s.workflowId);
   const dirty = useEditor((s) => s.dirty);
   const nodeTypes = useEditor((s) => s.nodeTypes);
@@ -163,15 +169,17 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
   const isCurrent = version?.id === newestId && !dirty;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-overlay p-6" onMouseDown={close}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-overlay p-6 max-md:p-0" onMouseDown={close}>
       <div
-        role="region"
+        ref={frame}
+        role={phone ? 'dialog' : 'region'}
+        aria-modal={phone || undefined}
         aria-label="Version history"
         onMouseDown={(e) => e.stopPropagation()}
-        className="flex h-full max-h-[820px] w-full max-w-[1320px] animate-in overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop"
+        className="flex h-full max-h-[820px] w-full max-w-[1320px] animate-in overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop max-md:max-h-none max-md:flex-col max-md:rounded-none max-md:border-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]"
       >
         {/* list */}
-        <div className="flex w-[330px] shrink-0 flex-col border-r border-hair bg-sf2">
+        <div className="flex w-[330px] shrink-0 flex-col border-r border-hair bg-sf2 max-md:max-h-[40dvh] max-md:w-full max-md:border-b max-md:border-r-0">
           <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-hair px-4">
             <History className="size-4 text-t2" />
             <span className="text-[14px] font-semibold text-t1">Version history</span>
@@ -286,7 +294,7 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
                   <RotateCcw className="size-3.5" /> Restore this version
                 </Button>
               ))}
-            <Button variant="ghost" size="icon-sm" onClick={close} aria-label="Close version history">
+            <Button variant="ghost" size="icon-sm" onClick={close} aria-label="Close version history" className="max-md:size-11">
               <X className="size-4" />
             </Button>
           </div>

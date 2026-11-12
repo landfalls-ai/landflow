@@ -81,7 +81,7 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
           }}
           aria-label="Execution actions"
           aria-expanded={open}
-          className={cn('relative z-10 grid size-7 place-items-center rounded-full text-t3 transition-colors hover:bg-acdim hover:text-t1', open && 'bg-acdim text-t1')}
+          className={cn('relative z-10 grid size-7 place-items-center rounded-full text-t3 transition-colors hover:bg-acdim hover:text-t1 max-md:size-11', open && 'bg-acdim text-t1')}
         >
           <MoreHorizontal className="size-4" />
         </button>
@@ -94,7 +94,7 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
             <p className="text-[13px] font-semibold text-t1">Delete this execution?</p>
             <p className="mt-1 text-[12px] text-t2">It is removed from the history for good.</p>
             <div className="mt-3 flex justify-end gap-2">
-              <button onClick={() => setConfirm(false)} className="h-7 rounded-full px-3 text-[12px] font-semibold text-t2 hover:bg-acdim">
+              <button onClick={() => setConfirm(false)} className="h-7 rounded-full px-3 text-[12px] font-semibold max-md:h-11 max-md:px-4 text-t2 hover:bg-acdim">
                 Cancel
               </button>
               <button
@@ -102,7 +102,7 @@ function RowMenu({ execution, onChanged }: { execution: ExecutionSummary; onChan
                   close();
                   void remove();
                 }}
-                className="h-7 rounded-full border border-rdbd bg-rddim px-3 text-[12px] font-semibold text-rd hover:border-rd"
+                className="h-7 rounded-full border border-rdbd bg-rddim px-3 text-[12px] font-semibold text-rd hover:border-rd max-md:h-11 max-md:px-4"
               >
                 Delete
               </button>
@@ -192,7 +192,7 @@ function Row({ execution, now, index, isNew, onChanged }: { execution: Execution
       style={isNew ? NEW_ROW : { animationDelay: `${Math.min(index, 20) * 20}ms` }}
     >
       {/* The whole row is a link; the menu sits above it. */}
-      <Link href={hrefOf(execution)} className="absolute inset-0" aria-label={`Open execution ${execution.id} of ${execution.workflowName}`} />
+      <Link href={hrefOf(execution)} className="absolute inset-0" aria-label={`Open the run of ${execution.workflowName}, ${execution.status} (${execution.id})`} />
       <span className={cn('absolute inset-y-0 left-0 w-[3px]', RUN_STATE[state].bar)} />
       <div role="cell" className="flex min-w-0 items-center gap-1.5 max-md:col-start-1 max-md:row-start-1 max-md:flex-wrap">
         <span className="truncate font-semibold text-t1">{execution.workflowName}</span>
@@ -468,7 +468,7 @@ function ExecutionsInner() {
         </div>
 
         <div role="table" aria-label="Executions" className="overflow-hidden rounded-2xl border border-hair bg-sf">
-          <div role="row" className={cn('grid items-center gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3 max-md:hidden', COLS)}>
+          <div role="row" className={cn('grid items-center gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3 max-md:sr-only', COLS)}>
             <span role="columnheader">Workflow</span>
             <span role="columnheader">Status</span>
             <span role="columnheader">Started</span>

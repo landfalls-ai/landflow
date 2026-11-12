@@ -7,29 +7,36 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
+import { usePhone } from '@/lib/client/use-phone';
+import { Sheet } from './sheet';
 
 interface PopoverProps {
   trigger: (state: { open: boolean; toggle: () => void }) => ReactNode;
   children: ReactNode | ((close: () => void) => ReactNode);
   align?: 'start' | 'end';
   className?: string;
+  /** On a phone the popover is a bottom sheet (docs/mobile.md#sheets-and-dialogs): its heading, or else its name for a screen reader. */
+  title?: string;
+  label?: string;
 }
 
-export function Popover({ trigger, children, align = 'end', className }: PopoverProps) {
+export function Popover({ trigger, children, align = 'end', className, title, label }: PopoverProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left?: number; right?: number }>();
   const anchor = useRef<HTMLSpanElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
+  const phone = usePhone();
 
   useLayoutEffect(() => {
-    if (!open || !anchor.current) return;
+    if (!open || !anchor.current || phone) return;
     const rect = anchor.current.getBoundingClientRect();
     setPos(align === 'end' ? { top: rect.bottom + 6, right: window.innerWidth - rect.right } : { top: rect.bottom + 6, left: rect.left });
-  }, [open, align]);
+  }, [open, align, phone]);
 
   useEffect(() => {
-    if (!open) return;
+    // A phone's sheet closes on its backdrop, Escape and Close; the keyboard opening resizes the page.
+    if (!open || phone) return;
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
       if (!panel.current?.contains(target) && !anchor.current?.contains(target)) setOpen(false);
@@ -46,14 +53,20 @@ export function Popover({ trigger, children, align = 'end', className }: Popover
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', close);
     };
-  }, [open, close]);
+  }, [open, close, phone]);
 
   return (
     <>
       <span ref={anchor} className="inline-flex">
         {trigger({ open, toggle: () => setOpen((o) => !o) })}
       </span>
+      {phone && (
+        <Sheet open={open} onClose={close} title={title} label={label ?? title ?? 'Menu'} className="[&_[role=menuitem]]:min-h-11 [&_[role=menuitem]]:items-center [&_[role=menuitem]]:text-[15px]">
+          {typeof children === 'function' ? children(close) : children}
+        </Sheet>
+      )}
       {open &&
+        !phone &&
         pos &&
         createPortal(
           <div

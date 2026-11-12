@@ -4,54 +4,33 @@
  * the dialog role, keeps the focus inside while open (Tab wraps), closes on Escape or a tap on the backdrop, and gives
  * the focus back to what opened it. Portalled to <body>, so no scroll container clips it.
  */
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useDialogFocus } from './use-dialog-focus';
 
-const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
-
-export function Sheet({ open, onClose, title, children, footer, className }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; className?: string }) {
+/** `title` is the heading; without one (a menu), `label` names the dialog for a screen reader. */
+export function Sheet({
+  open,
+  onClose,
+  title,
+  label,
+  children,
+  footer,
+  className,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title?: ReactNode;
+  label?: string;
+  children: ReactNode;
+  footer?: ReactNode;
+  className?: string;
+}) {
   const panel = useRef<HTMLDivElement>(null);
   const titleId = useId();
-  // The latest onClose, without re-running the effect: an inline callback would move the focus on every render.
-  const close = useRef(onClose);
-  useEffect(() => {
-    close.current = onClose;
-  });
-  useEffect(() => {
-    if (!open) return;
-    const opener = document.activeElement as HTMLElement | null;
-    const el = panel.current;
-    el?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        close.current();
-      } else if (e.key === 'Tab' && el) {
-        const items = [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((i) => i.offsetParent !== null);
-        if (!items.length) return;
-        const first = items[0];
-        const last = items[items.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener('keydown', onKey, true);
-    // The page under it doesn't scroll.
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey, true);
-      document.body.style.overflow = overflow;
-      opener?.focus?.();
-    };
-  }, [open]);
+  useDialogFocus(panel, open, { onEscape: onClose, lockScroll: true });
   if (!open || typeof document === 'undefined') return null;
   return createPortal(
     <div className="fixed inset-0 z-[60] flex items-end justify-center md:items-center">
@@ -60,7 +39,8 @@ export function Sheet({ open, onClose, title, children, footer, className }: { o
         ref={panel}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={titleId}
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : label}
         className={cn(
           'relative flex max-h-[85dvh] w-full flex-col overflow-hidden border border-hair bg-sf shadow-pop animate-fade-up',
           'rounded-t-2xl pb-[env(safe-area-inset-bottom)] md:max-w-[480px] md:rounded-2xl md:pb-0',

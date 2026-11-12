@@ -109,7 +109,7 @@ export function CanvasMenu() {
         const index = items.indexOf(document.activeElement as HTMLButtonElement);
         items[(index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
       }}
-      className="fixed z-50 min-w-[230px] animate-in rounded-xl border border-hair bg-sf p-1 text-[13px] shadow-pop"
+      className="fixed z-50 min-w-[230px] animate-in rounded-xl border border-hair bg-sf p-1 text-[13px] shadow-pop max-md:[&_[role=menuitem]]:min-h-11"
     >
       {single ? (
         <>

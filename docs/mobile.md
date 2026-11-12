@@ -102,6 +102,33 @@ The sheet is `Sheet` (`components/ui/sheet.tsx`): a bottom sheet on a phone and 
 `role="dialog"`, focus kept inside (Tab wraps, Escape closes), the page's scroll locked and focus returned to the button
 that opened it.
 
+## Sheets and dialogs
+
+On a phone, what floats on a desktop rises from the bottom or takes the screen:
+
+- **Menus and confirmations** (`Popover` in `components/ui/popover.tsx`: the workflow's ⋯, Publish, row menus, the
+  project switcher, delete confirmations) open as a bottom sheet (`Sheet`) with 44 px rows, closed by Close, Escape or a
+  tap on the backdrop.
+- **Dialogs** (the shell in `components/agents/dialog.tsx` that Share, Move, Import, Save as template, folders and the
+  agent dialogs use; credentials; data tables) are bottom sheets, full width, up to 92% of the screen, with a 44 px Close.
+- **Full screen:** the node picker (**What happens next?**), version history (the list above the preview) and the node
+  editor.
+- **Focus.** Each of these is a dialog to a screen reader (`role="dialog"`, `aria-modal`), and `useDialogFocus`
+  (`components/ui/use-dialog-focus.ts`) moves the focus in, keeps Tab inside, and gives it back to what opened it; only
+  the topmost dialog takes the keys, so a credential opened from an agent's dialog closes first. The More drawer is one
+  too, and Escape closes it. On a desktop menus and dialogs keep their place and their focus behaviour.
+
+## Accessibility
+
+- 44 px targets on a phone: the tab bar, the More drawer's links and user menu, Spotlight's header buttons, Send, Stop,
+  Dictate and Autonomous, the node editor's panes, the Steps | Canvas switch, an Executions card's menu and its
+  confirmation, the canvas menu's rows.
+- The Runs tab reads its badge as *3 waiting for you*; an Executions card's link reads the workflow and how the run
+  ended; on a phone the Executions table keeps its column headings for a screen reader (hidden on screen).
+- The Steps view says, in one line read out as a run moves, which step runs, which failed and why, or how many ran. An
+  Off step has a dashed border instead of being faded, so its text keeps its contrast.
+- Motion: everything that animates stops under *Reduce motion* (`app/globals.css`).
+
 ## Settings and agents
 
 - **Settings** is a list on a phone: each section as a row with its hint (Time zone and execution retention, $vars for
@@ -123,9 +150,8 @@ that opened it.
 8. ~~Runs on the step cards~~ (the Execute bar stays at the foot in place of the Logs panel).
 9. ~~Spotlight's dock with three heights~~.
 10. ~~Executions as cards~~.
-11. Sheets and full-screen dialogs, with dialog roles and focus kept inside (`Sheet` is in, used by Filters; the other
-    dialogs are still the desktop's).
+11. ~~Sheets and full-screen dialogs~~.
 12. ~~No sideways scrolling~~.
 13. ~~The agent page and Settings on a phone~~.
 14. ~~Lighter filters~~.
-15. An accessibility pass.
+15. ~~An accessibility pass~~ (above).

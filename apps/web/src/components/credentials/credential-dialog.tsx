@@ -22,6 +22,8 @@ import { AppIcon } from '../ui/icon';
 import { FieldLabel, Input } from '../ui/inputs';
 import { OAuth2Connection, OAuth2Presets } from './oauth2-connect';
 import { useCredentialStore } from './use-credentials';
+import { useDialogFocus } from '../ui/use-dialog-focus';
+import { usePhone } from '@/lib/client/use-phone';
 
 type TestResult = { ok: boolean; message?: string; durationMs?: number };
 
@@ -111,6 +113,10 @@ export function CredentialDialog({
 }) {
   const types = useCredentialStore((s) => s.types) ?? [];
   const [type, setType] = useState<string | undefined>(allowedTypes?.length === 1 ? allowedTypes[0] : undefined);
+  const panel = useRef<HTMLDivElement>(null);
+  const phone = usePhone();
+  // A phone: a bottom sheet that keeps the focus inside (docs/mobile.md#sheets-and-dialogs).
+  useDialogFocus(panel, phone);
   const [existing, setExisting] = useState<CredentialDetail>();
   const [name, setName] = useState('');
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -239,12 +245,14 @@ export function CredentialDialog({
 
   const picking = !type && !credentialId;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6 animate-in" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6 animate-in max-md:items-end max-md:p-0" onMouseDown={onClose}>
       <div
+        ref={panel}
         role="dialog"
+        aria-modal={phone || undefined}
         aria-label={existing ? `Edit ${existing.name}` : 'New credential'}
         onMouseDown={(e) => e.stopPropagation()}
-        className="flex max-h-[min(720px,90vh)] w-[560px] flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop animate-panel"
+        className="flex max-h-[min(720px,90vh)] w-[560px] flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop animate-panel max-md:w-full max-md:!max-w-none max-md:max-h-[92dvh] max-md:rounded-b-none max-md:pb-[env(safe-area-inset-bottom)]"
       >
         <header className="flex items-center gap-3 border-b border-hair px-5 py-3.5">
           {!picking && !credentialId && (!allowedTypes || allowedTypes.length > 1) && (
@@ -264,7 +272,7 @@ export function CredentialDialog({
               <BookOpen className="size-3.5" /> Docs
             </a>
           )}
-          <Button size="icon-sm" variant="ghost" onClick={onClose} aria-label="Close">
+          <Button size="icon-sm" variant="ghost" onClick={onClose} aria-label="Close" className="max-md:size-11">
             <X className="size-4" />
           </Button>
         </header>

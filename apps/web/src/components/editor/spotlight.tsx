@@ -321,7 +321,7 @@ function AutonomousSwitch() {
       title={on ? 'Autonomous: Spotlight applies its changes and tests and fixes the flow by itself. Click to ask first.' : 'Asks before applying and testing. Click to let Spotlight do it by itself.'}
       onClick={() => set(!on)}
       className={cn(
-        'flex h-5 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10.5px] font-semibold transition-colors',
+        'flex h-5 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10.5px] font-semibold transition-colors max-md:h-9 max-md:px-2.5',
         on ? 'border-acbd bg-acdim text-ac' : 'border-hair text-t3 hover:text-t1',
       )}
     >
@@ -757,11 +757,11 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
           )}
           <AutonomousSwitch />
           {(live || testing) && (
-            <button title="Stop" aria-label="Stop" onClick={stop} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd disabled:opacity-40">
+            <button title="Stop" aria-label="Stop" onClick={stop} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd disabled:opacity-40 max-md:size-11">
               <Square className="size-3" fill="currentColor" />
             </button>
           )}
-          <button title="New conversation" aria-label="New conversation" onClick={reset} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1">
+          <button title="New conversation" aria-label="New conversation" onClick={reset} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:size-11">
             <SquarePen className="size-3.5" />
           </button>
           <button
@@ -775,7 +775,7 @@ export function SpotlightPanel({ hiddenOnPhone = false }: { hiddenOnPhone?: bool
               // Folding on a desktop hides this button: the strip that unfolds it takes the focus.
               if (!collapsed) requestAnimationFrame(() => document.querySelector<HTMLElement>('aside[aria-label="Spotlight"] button[aria-label="Show Spotlight"]')?.focus());
             }}
-            className="grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1"
+            className="grid size-7 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:size-11"
           >
             <PanelRightClose className="hidden size-4 md:block" />
             <ChevronDown className={cn('size-4 transition-transform md:hidden', collapsed && 'rotate-180')} />
@@ -1136,7 +1136,7 @@ function Composer() {
             aria-pressed={dictation.state === 'recording'}
             title={dictation.error || (dictation.state === 'recording' ? 'Stop and transcribe' : 'Dictate (speech goes into the box to edit)')}
             className={cn(
-              'mb-[2px] flex h-8 shrink-0 items-center gap-1 rounded-full px-2 text-t2 transition-colors hover:bg-acdim hover:text-t1 disabled:opacity-60',
+              'mb-[2px] flex h-8 shrink-0 items-center gap-1 rounded-full px-2 text-t2 transition-colors hover:bg-acdim hover:text-t1 disabled:opacity-60 max-md:h-11 max-md:min-w-11 max-md:justify-center',
               dictation.state === 'recording' && 'bg-rd/15 text-rd hover:bg-rd/20 hover:text-rd',
               dictation.error && 'text-rd',
             )}
@@ -1150,7 +1150,7 @@ function Composer() {
             onClick={() => useAssistant.getState().stop()}
             aria-label="Stop"
             title="Stop"
-            className="mb-[2px] grid size-8 shrink-0 place-items-center rounded-full border border-bd text-t2 transition-colors hover:border-rd hover:text-rd disabled:opacity-50"
+            className="mb-[2px] grid size-8 shrink-0 place-items-center rounded-full border border-bd text-t2 transition-colors hover:border-rd hover:text-rd disabled:opacity-50 max-md:size-11"
           >
             <Square className="size-3" fill="currentColor" />
           </button>
@@ -1159,7 +1159,7 @@ function Composer() {
             onClick={() => void submit(draft)}
             disabled={!draft.trim()}
             aria-label="Send"
-            className="mb-[2px] grid size-8 shrink-0 place-items-center rounded-full bg-ac2 text-on-ac transition-all hover:scale-105 disabled:opacity-30 disabled:hover:scale-100"
+            className="mb-[2px] grid size-8 shrink-0 place-items-center rounded-full bg-ac2 text-on-ac transition-all hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 max-md:size-11"
           >
             <ArrowUp className="size-4" />
           </button>
