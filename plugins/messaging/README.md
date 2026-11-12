@@ -24,8 +24,9 @@ keeps the flow going.
 |---|---|---|
 | **Telegram** (`messaging.telegram`) | Message → Send Message, Send Photo / Document / Audio / Video (URL or file_id, or **Binary File**: the item's file uploaded as multipart), Edit Message Text, Delete Chat Message, Send Chat Action (typing, upload_photo…) · Chat → Get · File → Get (downloads into `item.binary`) | Additional Fields: caption, file name, parse mode, disable notification, disable link preview, reply to message ID |
 | **Telegram Trigger** (`messaging.telegramTrigger`) | poll trigger, default every 30 s | "Trigger On": `*`, message, edited_message, channel_post, callback_query; **Download Files** puts an incoming photo / document / audio / video / voice into `item.binary.data`. See below |
-| **Slack** (`messaging.slack`) | Message → Send (`chat.postMessage`: text, optional Block Kit JSON, reply in thread), Update, Delete, Get Permalink · Channel → Get Many (Return All / Limit, cursor pagination, Simplify) · User → Get by Email (`users.lookupByEmail`, Simplify) · Reaction → Add · File → Upload (an item file via `files.getUploadURLExternal` and `files.completeUploadExternal`, shared in a channel or thread with a title and message), Get (`files.info`, downloading `url_private_download` into item.binary) | Channel picker loads `conversations.list` live |
-| **Slack Trigger** (`messaging.slackTrigger`) | app webhook trigger (docs/protocol.md §12), Events API | Events (multi-select: message, app_mention, reaction_added / removed, channel_created / rename, member_joined_channel, file_shared / public, team_join, user_change, link_shared, app_home_opened, or Any Event); filters Watch Whole Workspace / Channel(s), Ignore Bot Messages, Ignore Message Edits and Deletes. See [Slack Trigger](#slack-trigger) |
+| **Slack** (`messaging.slack`) | Message → Send (`chat.postMessage`: text, optional Block Kit JSON, reply in thread), Update, Delete, Get Permalink, **Get Many Since** and **Get** (activity items, see [Slack activity](#slack-activity)) · Channel → Get Many (Return All / Limit, cursor pagination, Simplify, **Name Patterns** such as `customer-*`) · User → Get by Email (`users.lookupByEmail`, Simplify), **Get Many** (`users.list` with email and title; bots and deactivated members only when asked) · Reaction → Add · File → Upload (an item file via `files.getUploadURLExternal` and `files.completeUploadExternal`, shared in a channel or thread with a title and message), Get (`files.info`, downloading `url_private_download` into item.binary) | Channel picker loads `conversations.list` live |
+| **Slack Trigger** (`messaging.slackTrigger`) | app webhook trigger (docs/protocol.md §12), Events API | Events (multi-select: message, app_mention, reaction_added / removed, channel_created / rename, member_joined_channel, file_shared / public, team_join, user_change, link_shared, app_home_opened, or Any Event); filters Watch Whole Workspace / Channel(s), **Channel Name Filter** (`customer-*`), Ignore Bot Messages, Ignore Message Edits and Deletes. See [Slack Trigger](#slack-trigger) |
+| **Slack Activity Trigger** (`messaging.slackActivityTrigger`) | app webhook trigger, Events API | A message posted in a channel whose name matches **Channel Names**, as an [activity item](../../docs/protocol.md#16-activity-items). See [Slack activity](#slack-activity) |
 | **Discord** (`messaging.discord`) | Connection Type **Bot Token**: Message → Send (content, embeds JSON, TTS, reply), Get Many (Return All / Limit, paged with `before`, Simplify), Delete, React with Emoji · **Webhook**: Message → Send (content, username, avatar URL, embeds JSON) · both: option **Attachments** uploads item files with the message (`multipart/form-data`: `payload_json` + `files[n]`, up to 10) | Server and channel pickers (`/users/@me/guilds`, `/guilds/{id}/channels`). A 429 waits `retry_after` (up to 10 s) and retries once |
 | **WhatsApp Business Cloud** (`messaging.whatsApp`) | Message → Send (Message Type: text, or image / document / audio / video with caption and filename; Media Source **URL**, **Binary File** (uploaded to `/{phone-number-id}/media`, then sent by ID) or **Media ID**), Send Template (name, language, components JSON) · Media → Upload (item file → media ID), Get (media ID → temporary URL → bytes into `item.binary`; Download off: details only) | Sender phone number picker loads `/{businessAccountId}/phone_numbers` |
 | **Twilio** (`messaging.twilio`) | Message → Send SMS, Send MMS (media URLs), Send WhatsApp (`whatsapp:` is added to From and To), Get, List (To, From, date sent; paged by `next_page_uri`) · Call → Make (inline TwiML or a TwiML URL), Get, List (To, From, status, start time) · Message → Get Media (the files of a received MMS / WhatsApp message into `item.binary`, one item per file) · Recording → Download (MP3 or WAV into `item.binary`), List (optionally of one call) | Bodies go up form-encoded. From may be a number or a Messaging Service SID (`MG…`). Errors keep Twilio's code (`Twilio API error 400 (code 21211): …`) with a hint for common ones. A 429 waits `Retry-After` (up to 10 s, never past the call's deadline) and retries once. See [Twilio](#twilio) |
@@ -65,12 +66,45 @@ default 300 s); a missing, wrong or stale signature, or a credential without a s
 is answered before any filter; `event_callback` events pass the **Events** selection (a message that mentions the bot is both `message` and
 `app_mention`: select one), **Ignore Message Edits and Deletes** (default on: `message_changed`, `message_deleted`), **Ignore Bot Messages**
 (default on: `bot_id`, subtype `bot_message`, the app's own user), and, unless **Watch Whole Workspace** (default on) is on, **Channel(s)** (IDs,
-comma-separated; matched against `event.channel`, `event.item.channel`, `event.channel.id`, `event.channel_id`). Everything else is answered
+comma-separated; matched against `event.channel`, `event.item.channel`, `event.channel.id`, `event.channel_id`) and the **Channel Name Filter**
+(patterns; the channel's name is looked up with `conversations.info`, needs `channels:read`, and kept six hours in the static data). Everything else is answered
 `200 {"ignored": …}` so Slack does not retry. The idempotency key is the `event_id`: Slack's retries (`X-Slack-Retry-Num`, sent when
 it saw no answer within 3 s) start no second run.
 
 Item: `{eventId, eventTime, teamId, apiAppId, type, event, authorizations, channel, user, text, ts, threadTs, raw}` (`raw` is the whole
 envelope, `event` the inner event; `ts` is the event's own timestamp, a reaction's message `ts` for reactions). A manual run outputs nothing.
+
+### Slack activity
+
+Slack messages as [activity items](../../docs/protocol.md#16-activity-items) (`source: slack`), so a flow can take them the same way as
+Google Drive, Calendar or Notion changes:
+
+- `sourceId` is `slack:<team>:<channel>:<ts>`; `url` the permalink (built from the workspace URL `auth.test` gives, a reply with its
+  `thread_ts`); `actorEmail` the author's email (`users.info`, needs `users:read` and `users:read.email`; looked up once per person);
+  `kind` is `work.discussion`; `title` is `#channel: first line`; `summary` the text with Slack markup made readable, at most 600 characters.
+- Hints come from the channel's name: **Customer Channel Prefix** (default `customer-`: `#customer-acme` gives `customerHint: acme`),
+  **Initiative Channel Prefix** (e.g. `proj-`) and **Team Map** (`eng-*=R&D`, one per line, first match).
+- Joins, topic changes, pins, edits and deletions are skipped; so are bots unless **Include Bot Messages** is on (the app's own never count).
+- Private channels, group DMs and DMs are left out unless **Include Private Channels and DMs** is on (and the app has `groups:history`,
+  `mpim:history`, `im:history`).
+
+**Slack Activity Trigger.** Same setup as the [Slack Trigger](#slack-trigger) (Signing Secret, publish, paste the Request URL), subscribed
+to the `message.channels` bot event (plus `message.groups`, `message.mpim`, `message.im` for private ones). A message in a channel whose
+name matches **Channel Names** (patterns; `*` is every channel the app is in) starts a run with one activity item; **Include Thread
+Replies** is on by default. The signature is checked as above (bad or stale: 401), `url_verification` answered, the `event_id` is the
+idempotency key, and channel names and emails are cached six hours in the static data. A manual run outputs nothing.
+
+**Message → Get Many Since** is the catch-up and backfill path: the messages posted after **Since** (an ISO time or a Slack timestamp;
+empty: the last 24 hours) in the channels matching **Channel Names** (or **Channel IDs Instead**), oldest first, each with
+`cursor` = its `ts`. Pass the last item's `cursor` back as Since to continue. It pages `conversations.history` (200 per call) and,
+with **Include Thread Replies**, `conversations.replies` for threads with new replies; a 429 waits `Retry-After` (at most 30 s) and retries.
+Channels the app is not in are skipped and named in the log (invite it with `/invite`). **Message → Get** returns one message (a thread
+reply too) by channel and `ts` as an activity item with its full `text`.
+
+**Rate limits.** Since 29 May 2025 Slack limits `conversations.history` and `conversations.replies` for apps installed from outside
+the Marketplace to one call a minute and 15 messages per call; apps a workspace builds for itself (internal apps) keep the normal
+limits ([Slack changelog](https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps)). Create your own
+internal Slack app for these operations.
 
 ### Telegram Trigger
 
@@ -106,7 +140,7 @@ point at a proxy or a test double. Tokens and passwords are `password` fields: m
 |---|---|---|---|
 | `telegramApi` | Access Token, Base URL (`https://api.telegram.org`) | `getMe` → "Authenticated as @bot" | Message [@BotFather](https://t.me/BotFather), `/newbot`, copy the token. Add the bot to groups; users must message it first |
 | `slackApi` | Access Token, Base URL (`https://slack.com/api`) | `auth.test` → team and user | api.slack.com/apps → Create App → OAuth & Permissions → bot scopes `chat:write`, `channels:read`, `groups:read`, `reactions:write`, `users:read`, `users:read.email` (plus `files:write` and `files:read` for files) → Install → copy the **Bot User OAuth Token** (`xoxb-…`). Invite the bot to private channels |
-| `slackOAuth2Api` | extends `oAuth2Api`: Client ID and Secret, Bot Scopes (comma-separated, default `chat:write,channels:read,groups:read,reactions:write,users:read,users:read.email,files:write,files:read`), Base URL, Signing Secret; URLs fixed to Slack's v2 OAuth, authorization code | `auth.test` → team and user | Create the app at api.slack.com/apps, add the redirect URL the dialog shows under OAuth & Permissions → Redirect URLs, then **Connect**. The bot token (`xoxb-…`) is stored by the host and renewed when token rotation is on. Nodes only get the `accessToken`, not the rest of Slack's token response: the **Slack Trigger** reads the team and the bot user with `auth.test`. For the trigger also set the Signing Secret and paste its Request URL (`{public URL}/api/webhook/app/<workflow id>/<node id>`, shown in the Publish menu) into Event Subscriptions |
+| `slackOAuth2Api` | extends `oAuth2Api`: Client ID and Secret, Bot Scopes (comma-separated, default `chat:write,channels:read,channels:history,groups:read,reactions:write,users:read,users:read.email,files:write,files:read`; `channels:history` was added for the activity operations, so an app connected before needs reinstalling), Base URL, Signing Secret; URLs fixed to Slack's v2 OAuth, authorization code | `auth.test` → team and user | Create the app at api.slack.com/apps, add the redirect URL the dialog shows under OAuth & Permissions → Redirect URLs, then **Connect**. The bot token (`xoxb-…`) is stored by the host and renewed when token rotation is on. Nodes only get the `accessToken`, not the rest of Slack's token response: the **Slack Trigger** reads the team and the bot user with `auth.test`. For the trigger also set the Signing Secret and paste its Request URL (`{public URL}/api/webhook/app/<workflow id>/<node id>`, shown in the Publish menu) into Event Subscriptions |
 | `discordBotApi` | Bot Token, Base URL (`https://discord.com/api/v10`) | `GET /users/@me` | discord.com/developers → New Application → Bot → Reset Token. Invite it with OAuth2 → URL Generator (`bot` scope; View Channels, Send Messages, Read Message History, Add Reactions, Manage Messages) |
 | `discordOAuth2Api` | extends `oAuth2Api`: Client ID and Secret, Scope (`identify guilds`), optional Bot Token, Base URL; URLs fixed to Discord's, PKCE | `GET /users/@me` | Add the redirect URL under OAuth2 in your application, then **Connect**. Discord only lets bots post to channels: enter the Bot Token for message operations, otherwise the access token is sent as a Bearer (enough for the Guilds list) |
 | `discordWebhookApi` | Webhook URL (secret: it embeds its token) | `GET` the webhook URL | Channel settings → Integrations → Webhooks → New Webhook → Copy Webhook URL |

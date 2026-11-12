@@ -20,6 +20,7 @@ import { serve } from '@landflow/sdk/serve';
 import { Discord, discordBotApi, discordOAuth2Api, discordWebhookApi } from './nodes/discord';
 import { EmailSend, smtp } from './nodes/email-send';
 import { Slack, slackApi, slackOAuth2Api } from './nodes/slack';
+import { SlackActivityTrigger } from './nodes/slack-activity-trigger';
 import { SlackTrigger } from './nodes/slack-trigger';
 import { Telegram, telegramApi } from './nodes/telegram';
 import { TelegramTrigger } from './nodes/telegram-trigger';
@@ -36,7 +37,7 @@ export const plugin = definePlugin({
     color: '#229ED9',
     author: 'Landflow',
   },
-  nodes: [Telegram, TelegramTrigger, Slack, SlackTrigger, Discord, WhatsApp, Twilio, EmailSend],
+  nodes: [Telegram, TelegramTrigger, Slack, SlackTrigger, SlackActivityTrigger, Discord, WhatsApp, Twilio, EmailSend],
   credentialTypes: [telegramApi, slackApi, slackOAuth2Api, discordBotApi, discordOAuth2Api, discordWebhookApi, whatsAppApi, twilioApi, smtp],
   // `file:` icons (plugin, nodes and credential types) are inlined from here as data: URLs when the manifest is built.
   iconDir: new URL('../icons/', import.meta.url),

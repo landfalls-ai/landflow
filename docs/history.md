@@ -271,6 +271,7 @@ transport and Valkey Cluster settings).
 | Commit | What it built | Documented in |
 |---|---|---|
 | (activity items) | One shape for a change in an outside tool, the **activity item** (`source`, stable `sourceId`, `url`, `actorEmail`, `occurredAt`, a suggested `kind`, `title`, `summary` ≤ 600, team, initiative and customer hints, trimmed `raw`, optional `cursor`): a JSON Schema in `packages/protocol/activity-items`, a builder in each SDK (`activityItem`, `landflow.ActivityItem`, `activity_item`) and shared cases all three SDKs run | [protocol.md](protocol.md#16-activity-items) |
+| (Slack activity) | Slack as an activity source: Message → **Get Many Since** (history across channels matching `customer-*`-style patterns since a time or cursor, paged, replies optional, oldest first) and **Get** (one message with full text), User → **Get Many** (members with email), Channel → Get Many by name pattern, the **Slack Activity Trigger** (Events API, signature checked, one activity item per message, lookups cached in static data) and a Channel Name Filter on the Slack Trigger; private channels and DMs only behind an option; tests against a fake workspace | [plugins/messaging](../plugins/messaging/README.md#slack-activity), [integrations.md](features/integrations.md) |
 
 ## What is next
 
