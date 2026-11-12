@@ -16,3 +16,6 @@ export const usePhone = () =>
     () => window.matchMedia(QUERY).matches,
     () => false,
   );
+
+/** The same check outside React, for an event handler: false on the server. */
+export const isPhone = () => typeof window !== 'undefined' && window.matchMedia(QUERY).matches;

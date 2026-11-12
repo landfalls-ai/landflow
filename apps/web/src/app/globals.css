@@ -525,6 +525,10 @@ body {
   body:has(nav[data-tabbar]) main {
     padding-bottom: calc(56px + env(safe-area-inset-bottom));
   }
+  /* The full-screen node editor covers Spotlight's sheet: toasts go just above its Run bar instead. */
+  body:has([data-node-editor]) {
+    --toast-bottom: calc(72px + env(safe-area-inset-bottom)) !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -12,3 +12,10 @@ describe('full-screen pages on a phone', () => {
     for (const path of ['/', '/workflows', '/agents', '/executions', '/runs', '/runs/compare', '/credentials', '/settings']) expect(fullScreen(path), path).toBe(false);
   });
 });
+
+describe('the phone check outside React', () => {
+  it('is false off a browser, so a desktop or the server never takes a tap as a phone’s', async () => {
+    const { isPhone } = await import('@/lib/client/use-phone');
+    expect(isPhone()).toBe(false);
+  });
+});
