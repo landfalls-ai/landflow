@@ -247,7 +247,7 @@ describe('Credentials', () => {
   });
 
   it('declares OAuth2 with minimal scopes and the activity schemas on the reads', () => {
-    const oauth = plugin.credentialTypes.find((c) => c.name === 'linearOAuth2Api')!;
+    const oauth = plugin.credentialTypes!.find((c) => c.name === 'linearOAuth2Api')!;
     expect(oauth.extends).toEqual(['oAuth2Api']);
     expect(oauth.properties.find((p) => p.name === 'scope')!.default).toBe('read,issues:create,comments:create');
     expect(oauth.properties.find((p) => p.name === 'accessTokenUrl')!.default).toBe('https://api.linear.app/oauth/token');
