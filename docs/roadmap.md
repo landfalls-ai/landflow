@@ -1195,8 +1195,14 @@ of them ([protocol.md §16](protocol.md#16-activity-items), [integrations.md](fe
 - **Notion**: the **Notion Trigger** (under chosen roots), Page → Get Many Changed Since and Get Content, User → Get
   Many with email, Comment → Create.
 
-**Next:** Phase B (Linear, Attio and Fathom plugins, each with a trigger, reads and actions) and Phase C (the `work.*`
-event kinds declared, and one ingest template per source: trigger → Record Event plus Entity upserts). Open from Phase
+**Built (Phase B):** the [Linear](../plugins/linear/README.md), [Attio](../plugins/attio/README.md) and
+[Fathom](../plugins/fathom/README.md) plugins (TypeScript, 7116–7118): each a trigger that registers its own signed
+webhook, Get Many Changed Since and Get as activity items, users with email, and actions that create (Linear issues,
+links and comments; Attio notes, tasks and list entries), none that delete or merge. In `pnpm dev:all`, compose and
+the Kubernetes base.
+
+**Next:** Phase C (the `work.*` event kinds declared, and one ingest template per source: trigger → Record Event plus
+Entity upserts). Open from Phase
 A: a Notion webhook trigger once Notion can create subscriptions over its API; push channels for Drive and Calendar
 once app webhooks can renew themselves; Slack message edits and deletions; the Directory's groups and org units.
 

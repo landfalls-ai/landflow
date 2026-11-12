@@ -68,4 +68,15 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Google Drive and Calendar** ([plugins/google-workspace](../plugins/google-workspace/README.md#activity-items)) poll (every 5 minutes by default): their push channels expire within a week and Landflow's app webhooks have no renewal step. A Drive poll reads at most 20 pages of 1,000 changes (the rest at the next poll); a Doc's summary costs one export per changed Doc. A Calendar sync token that Google expires (410) takes a new baseline: the changes in between are not output. One Calendar Trigger watches one calendar.
 - **Google Directory** reads users only (no groups or org units), and a service account must impersonate an admin with the directory scope delegated.
 - **Notion** ([plugins/productivity](../plugins/productivity/README.md#notion-activity)) polls search, which lags behind edits: the trigger looks back 5 minutes and queries root databases directly, but a page outside a root database that reaches the index later than that is missed. Teamspaces are not in Notion's API, so `teamHint` stays empty; page text in a summary is the first 40 blocks; a deleted page is not output. Notion's webhooks are created by hand in its settings and carry ids only, so there is no Notion webhook trigger.
-- **Checked against fakes only**: Slack, Google and Notion activity were tested against local fakes of their APIs, not a real workspace.
+- **Linear** ([plugins/linear](../plugins/linear/README.md#limits)) lists newest first only, so Get Many Changed Since reads
+  every page after Since and sorts (5,000 at most); a poll's `actorEmail` is the creator (Linear's reads don't say who
+  edited), the trigger's is the real actor; creating the webhook needs an admin key or the `admin` scope; the Issue and
+  Project Update payload shapes aren't documented, so the mapper fills hints from the API.
+- **Attio** ([plugins/attio](../plugins/attio/README.md#limits)) has no "updated at": **Any Value Changed** scans every
+  row (5,000 at most) for the newest value change, **Stage Changed** and **Created** filter on the server; events carry
+  no time or diff; webhooks need HTTPS and a workspace token, and their secret is shown once, so republishing makes a
+  new webhook.
+- **Fathom** ([plugins/fathom](../plugins/fathom/README.md#limits-and-gaps)) has no get-by-id (Meeting → Get scans the
+  list) and no documented order (the list is read and sorted); no OAuth2 credential (its authorize URL isn't documented
+  and OAuth apps can't read summaries or transcripts); users are admin only. Transcripts are off unless asked.
+- **Checked against fakes only**: Slack, Google, Notion, Linear, Attio and Fathom activity were tested against local fakes of their APIs, not a real workspace.

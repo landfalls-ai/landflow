@@ -33,7 +33,7 @@ SDK's README. Part of the [Landflow docs](../README.md).
 | `LANDFLOW_ENCRYPTION_KEY` | generated into `.data/encryption.key` | key for the credentials vault: 64 hex characters, or a passphrase (hashed with SHA-256) |
 | `LANDFLOW_REGISTRY_GRPC_PORT` | `7070` | gRPC RegistryService (`off` to disable) |
 | `LANDFLOW_PLUGINS` | – | static plugin endpoints |
-| `LANDFLOW_SCAN_HOSTS` / `LANDFLOW_SCAN_PORTS` | `127.0.0.1` / `7100-7299` | pull discovery (the compose file sets the ports to `7101-7107,7111-7114,7201-7207,7211-7214`) |
+| `LANDFLOW_SCAN_HOSTS` / `LANDFLOW_SCAN_PORTS` | `127.0.0.1` / `7100-7299` | pull discovery (the compose file sets the ports to `7101-7107,7111-7114,7116-7118,7201-7207,7211-7214,7216-7218`) |
 | `LANDFLOW_SCAN_ON_START` | `true` | scan at boot |
 | `LANDFLOW_PLUGIN_DISCOVERY` | – | `kubernetes`: discover plugins from labelled Services; `LANDFLOW_K8S_NAMESPACES` (`*`: every namespace), `LANDFLOW_K8S_SPREAD` (`pods`: calls spread over the ready pods, or `service`), `LANDFLOW_K8S_CONTEXT`, `LANDFLOW_K8S_ADDRESS`, `LANDFLOW_K8S_CLUSTER_DOMAIN`, `LANDFLOW_K8S_LABEL_SELECTOR`, `LANDFLOW_K8S_RESYNC_SECONDS` in [deployment.md, "Kubernetes"](../deployment.md#kubernetes) |
 | `LANDFLOW_EXECUTE_TIMEOUT_MS` | `120000` | per remote Execute call (and per call to the code runner) |

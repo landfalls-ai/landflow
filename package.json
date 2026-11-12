@@ -30,8 +30,11 @@
     "plugin:landfall": "pnpm --filter @landflow/plugin-landfall start",
     "plugin:triage": "pnpm --filter @landflow/plugin-triage start",
     "plugin:threat-intel": "cd plugins/threat-intel && go run .",
+    "plugin:linear": "pnpm --filter @landflow/plugin-linear start",
+    "plugin:attio": "pnpm --filter @landflow/plugin-attio start",
+    "plugin:fathom": "pnpm --filter @landflow/plugin-fathom start",
     "fake-landfall": "pnpm --filter @landflow/plugin-landfall fake-landfall",
-    "dev:all": "concurrently -k -n web,ts,py,go,msg,prod,google,db -c magenta,blue,yellow,cyan,green,red,white,gray \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\"",
+    "dev:all": "concurrently -k -n web,ts,py,go,msg,prod,google,db,linear,attio,fathom -c magenta,blue,yellow,cyan,green,red,white,gray,blue,green,yellow \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:linear\" \"pnpm plugin:attio\" \"pnpm plugin:fathom\"",
     "dev:all:browser": "concurrently -k -n web,ts,py,go,msg,prod,google,db,browser -c magenta,blue,yellow,cyan,green,red,white,gray,black \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:browser\"",
     "dev:all:agent-shell": "concurrently -k -n web,ts,py,go,msg,prod,google,db,shell -c magenta,blue,yellow,cyan,green,red,white,gray,black \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:agent-shell\"",
     "dev:all:web-search": "concurrently -k -n web,ts,py,go,msg,prod,google,db,search -c magenta,blue,yellow,cyan,green,red,white,gray,black \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:web-search\""
