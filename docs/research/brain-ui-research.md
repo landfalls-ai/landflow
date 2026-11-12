@@ -35,5 +35,9 @@ should Landflow's page take from them? This is a summary of public product pages
 | A briefing, not a dashboard | The home leads with **Shared across teams**, then suggestions and teams |
 | Phone first | One column of cards everywhere |
 
+After seeing the first version (a page of cards), the user asked for the brain to be explored like an LLM wiki
+repository in an editor, keeping Spotlight: the files, tree, tabs, Outline, Backlinks and Source view come from that,
+and from the LLM-wiki pattern of plain Markdown files with an `index.md` and a `log.md`.
+
 Not taken yet: filing a good answer back as a fact or page, and a detector that turns shared work into a suggestion
 addressed to both teams ([roadmap.md](../roadmap.md#the-brain-page-built-2026-11-12)).

@@ -12,7 +12,7 @@ and post suggestions next to the built-in ones.
  AI call, action)   index               Platform analyst    Apply with a diff   facts
 ```
 
-Try it: open **Brain** in the sidebar, scroll to **What Landflow knows** and press **Run now** (owners and admins). Then open Home: suggestions
+Try it: open **Brain** in the sidebar, then **What Landflow knows** (the gear at the bottom left), and press **Run now** (owners and admins). Then open Home: suggestions
 show up in the **Suggestions** card, and on the canvas of the workflow they are about.
 
 ## Principles
@@ -141,9 +141,10 @@ The first tick is 30 s after start.
 - **The canvas**: a "N suggestions" pill at the top left of the workflow it is about. It folds out into a side card,
   and the canvas stays visible. Apply here changes the open canvas (one undo), and you save it like any edit. Clicking
   the node name selects the node.
-- **[The Brain page](#the-brain-page)** (`/brain`): the brain as a wiki, a page per entity, Ask, and what more than one
-  team worked on.
-- **Brain → What Landflow knows** (at the foot of the Brain page; it was on Insights, which now links to it):
+- **[The Brain page](#the-brain-page)** (`/brain`): the brain as a repository of Markdown files in an editor's workbench,
+  a file per entity, Spotlight to ask it, and what more than one team worked on.
+- **Brain → What Landflow knows** (the gear at the foot of the Brain page's activity bar; it was on Insights, which now
+  links to it):
   - the ledger's size, the facts, the model, and when the brain last studied and detected;
   - a search over the facts;
   - each detector's record (made, applied, dismissed, quieted) with **Run**, which runs that detector alone, and
@@ -236,45 +237,66 @@ about that no workflow holds: `initiative`, `person`, `customer` and `system` (o
 
 #### The Brain page
 
-`/brain` (**Brain** in the sidebar) reads the brain as a wiki. Every entity is a page; the `work.*` events the
-[activity integrations](features/integrations.md#work-ingest-templates) record are its sources; the model writes the
-prose and a person keeps the facts. One column of cards, so it reads the same on a phone.
+`/brain` (**Brain** in the sidebar) opens the brain as a repository of Markdown files in an editor's workbench, in the
+manner of an LLM-kept wiki: every entity is a file, the `work.*` events the
+[activity integrations](features/integrations.md#work-ingest-templates) record are its sources, the model writes the
+prose and a person keeps the facts. Spotlight asks it questions.
 
 - **Work joins pages by its hints.** A `work.*` event names its pages through `customer` and `initiative` (matched by id or
   by the id a template makes from a name: "Acme" and `#customer-acme` both meet `acme`) and through `actor`, the email of a
   person page (its `email` attribute or its id). Its team is the event's `team`, else that person's `department`.
-- **Home.**
-  - **Ask** on top: one box over everything below.
-  - **Shared across teams**: customers and initiatives two or more teams worked on in the last 7 days, most teams first,
-    each with its teams, people and latest items. No other product flags this, and it is what the Company Brain is
-    for: the same work twice, or a chance to talk.
-  - **Suggestions**: the open ones, with their buttons as in the inbox.
-  - **Teams this week**: each team's work and the pages it touched most.
-  - **Needs a person**: initiatives and customers without an owner, pages quiet for 30 days, and summaries written
-    before their latest work.
-  - **Pages**: the directory, filtered by type and text, busiest first; **Latest work** with the kinds counted; and
-    **What Landflow knows** (status, fact search, detectors with Run and Backtest, the analyst, Run now).
-- **A page** (`/brain/<type>/<id>`):
+- **The files.** `initiatives/`, `customers/`, `people/<department>/` and `systems/`, a file per entity named from its
+  name (`kestrel-bank.md`); `index.md`, the week's briefing; and `log.md`, the latest work with a heading per day. The
+  Explorer marks each file with its work this week, an **S** when two or more teams worked on it this week, and amber
+  with **!** when it needs a person.
+- **The workbench.**
+  - **Activity bar**: Explorer (Open Editors, the tree, the open file's **Outline** and its **Backlinks**: the pages
+    whose summary links to it or whose description names it, and the pages sharing its work), **Search** (pages, facts
+    and the latest work), **Timeline** (the latest work as a history), and **What Landflow knows** (status, fact
+    search, detectors with Run and Backtest, the analyst, Run now; it moved here from Insights), which opens as a tab.
+  - **Tabs**: one click opens a file in the preview tab (italic), which the next replaces; a double click or a change
+    keeps it. Breadcrumbs show its path. The tabs and the side bar's width are kept in the browser, and the address
+    names the open file (`/brain`, `/brain/log`, `/brain/settings`, `/brain/<type>/<id>`).
+  - **Preview or Source** (⌘⇧V): the Preview is the page with its controls; the Source is the same file as Markdown
+    (`lib/shared/brain-files.ts`): frontmatter (type, owner, teams, sources, attributes, when the summary was written),
+    the summary with its `[[type/id|Name]]` links and `[n]` references, then the work, people, related pages, facts,
+    suggestions and mentions. In the Source, a link opens its page and a reference jumps to its work line. **Copy**
+    takes the Markdown. The Source is read-only.
+  - **Spotlight** at the bottom of the editor, as in the workflow editor (⌘I): one bar, bubbles with questions about the
+    open file, and the conversation above the bar. With a page open, the question is about that page (the `@` chip)
+    until the chip is removed. Each answer has page links, which open tabs, and its numbered sources, folded.
+  - **Quick open** (⌘P or ⌘K): go to a file by name or path, `>` for commands (open index or log, toggle Source,
+    Problems, Suggestions, run the brain), or send what was typed to Spotlight.
+  - **Panel** (⌘J): **Problems** (initiatives and customers without an owner, pages quiet for 30 days, summaries behind
+    their work) and **Suggestions** with their buttons. **Status bar**: problems, shared pages, open suggestions, pages
+    and facts, the last study, the model.
+  - **On a phone**: the side bar is a drawer behind the Files button, with the views at its top; tabs scroll; Spotlight
+    and the status bar stay at the bottom.
+- **index.md**: **Shared across teams** (customers and initiatives two or more teams worked on in the last 7 days, most
+  teams first, with their teams, people and latest items: no other product flags this, and it is what the Company
+  Brain is for), **Suggestions**, **Teams this week** and **Needs a person**.
+- **A page**:
   - **Kept by people**: name, what it is and owner, editable by editors of its project (`PATCH /api/entities/…`), and
-    chips for owner (amber when none), teams, sources and last work.
-  - **Written by the brain**: a summary of 2–4 paragraphs, marked with the model and when, with page links
-    (`[[type/id|Name]]`) and numbered references (`[n]`) to the work below; a reference scrolls to its item. It is
-    written the first time the page is opened with a model and work to go on, again on **Regenerate**, and shows **new
-    work since** when the page's facts or work changed after it (a hash of what it was written from, table
-    `brain_pages`, migration 2065). The model sees only the page, its facts, its last 40 work items, its people and
-    related pages, all within what the reader can open. Links to pages the reader can't open become plain names, and a
-    page's name the model wrote plainly is linked on its first mention.
-  - **Ask about this page**: Ask with the page first and its work ranked up.
+    chips for owner (amber when none, not on people), teams, sources and last work.
+  - **Summary, written by the brain**: 2–4 paragraphs, marked with the model and when, with page links and numbered
+    references to the work below; a reference scrolls to its item. It is written the first time the page is opened
+    with a model and work to go on, again on **Regenerate**, and shows **new work since** when the page's facts or work
+    changed after it (a hash of what it was written from, table `brain_pages`, migration 2065). The model sees only the
+    page, its facts, its last 40 work items, its people and related pages, each with its name, all within what the
+    reader can open. Links to pages the reader can't open become plain names, and a page's name the model wrote plainly
+    is linked on its first mention.
   - **Work** (90 days, numbered), **People** (or **Works with** on a person's page), **Related pages** (the pages named
-    in the same work, with how often), **Facts** with **Add a fact**, **Suggestions**, **Mentioned in** (pages whose
-    summary links here or whose description names it) and **Attributes**.
-- **Ask** (`POST /api/brain/ask`) finds pages by words in names, descriptions, owners and attributes, facts by search (by
-  meaning too when embeddings are on), and work by words and by the pages found; then the model answers from those
-  alone, in a few sentences with page links and numbered work. Without a model it returns what it found.
+    in the same work, with how often), **Facts** with **Add a fact**, **Suggestions** and **Mentioned in**.
+- **Ask** (`POST /api/brain/ask`, what Spotlight calls) finds pages by words in names, descriptions, owners and
+  attributes, facts by search (by meaning too when embeddings are on), and work by words and by the pages found; then
+  the model answers from those alone, in a few sentences with page links and numbered work. Without a model it returns
+  what it found.
 - **Walls.** Everything goes through the reader's scope: a page, a link, a person or a work item from a project the reader
   can't open is not shown, not linked and not sent to the model.
-- Code: `brain/wiki.ts`, `lib/shared/brain-wiki.ts`, `components/brain/wiki/`, `app/brain/`; routes under
-  `app/api/brain/wiki/` and `app/api/brain/ask/`. Tests: `apps/web/test/brain-wiki.test.ts`. Why it looks this way:
+- Code: `brain/wiki.ts`, `lib/shared/brain-wiki.ts`, `lib/shared/brain-files.ts` (the tree and the Markdown),
+  `components/brain/wiki/` (`workbench.tsx`, `side-views.tsx`, `spotlight.tsx`, `source-view.tsx`, `page-doc.tsx`,
+  `index-doc.tsx`), `app/brain/[[...path]]/`; routes under `app/api/brain/wiki/` and `app/api/brain/ask/`. Tests:
+  `apps/web/test/brain-wiki.test.ts`, `apps/web/test/brain-files.test.ts`. Why it looks this way:
   [research/brain-ui-research.md](research/brain-ui-research.md).
 
 #### The vector collections

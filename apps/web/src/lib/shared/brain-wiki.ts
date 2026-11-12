@@ -33,6 +33,8 @@ export interface WikiEntry {
   name: string;
   description?: string;
   owner?: string;
+  /** A person's department (their `department` attribute): the folder the workbench files them under. */
+  department?: string;
   /** Work naming it in the last 7 and 30 days. */
   week: number;
   month: number;

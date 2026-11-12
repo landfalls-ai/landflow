@@ -1,24 +1,27 @@
 'use client';
 /**
- * Pieces of the Brain page (docs/second-brain.md#the-brain-page): text the brain wrote, with `[[type/id]]` links as page
- * links and `[n]` as references to work; a work item with its source, who and when; page links with a type icon; and the
- * Ask box with its answer. One column, so a phone reads them as they are.
+ * Pieces of the Brain workbench (docs/second-brain.md#the-brain-page): text the brain wrote, with `[[type/id]]` links as
+ * page links and `[n]` as references to work; a work item with its source, who and when; page links with a type icon,
+ * which open a tab in the workbench (WikiNav) rather than leave it; and a section with the anchor the Outline uses.
  */
-import { Fragment, useState, type ReactNode } from 'react';
+import { createContext, Fragment, useContext, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowUpRight, Building2, Rocket, Send, Server, Sparkles, User } from 'lucide-react';
-import { api } from '@/lib/client/api';
+import { ArrowUpRight, Building2, Rocket, Server, Sparkles, User } from 'lucide-react';
 import { timeAgo } from '@/lib/client/format';
 import { cn } from '@/lib/utils';
 import type { EntityType } from '@/lib/shared/brain';
-import type { WikiAnswer, WikiLink, WorkItem } from '@/lib/shared/brain-wiki';
+import { sectionId } from '@/lib/shared/brain-files';
+import type { WikiLink, WorkItem } from '@/lib/shared/brain-wiki';
 import { Chip } from '../../ui/badge';
-import { Button } from '../../ui/button';
 
 export const TYPE_ICON: Record<EntityType, typeof User> = { initiative: Rocket, person: User, customer: Building2, system: Server };
 export const TYPE_PLURAL: Record<EntityType, string> = { initiative: 'Initiatives', person: 'People', customer: 'Customers', system: 'Systems' };
 
 export const pageHref = (ref: string) => `/brain/${ref}`;
+
+/** How the workbench opens a page: a tab, not a navigation. Outside it, links are plain links. */
+export const WikiNav = createContext<((ref: string) => void) | undefined>(undefined);
+export const useWikiNav = () => useContext(WikiNav);
 
 const SOURCES: Record<string, string> = {
   slack: 'Slack',
@@ -40,10 +43,18 @@ export const kindLabel = (kind: string) => {
 
 /** A link to a page, with its type's icon. */
 export function PageLink({ refId, name, className }: { refId: string; name: string; className?: string }) {
+  const open = useWikiNav();
   const type = refId.split('/')[0] as EntityType;
   const Icon = TYPE_ICON[type] ?? Sparkles;
   return (
-    <Link href={pageHref(refId)} className={cn('inline-flex items-center gap-1 rounded-md px-0.5 font-medium text-ac hover:underline', className)}>
+    <Link
+      href={pageHref(refId)}
+      onClick={(e) => {
+        if (!open || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
+        open(refId);
+      }}
+      className={cn('inline-flex items-center gap-1 rounded-md px-0.5 font-medium text-ac hover:underline', className)}>
       <Icon className="size-3 shrink-0" aria-hidden />
       {name}
     </Link>
@@ -95,9 +106,9 @@ function inline(text: string, names: Map<string, string>, onCite?: (n: number) =
 }
 
 /** One work item: source and kind, the title (to the original), who and when, and the pages it names. */
-export function WorkRow({ item, number, names, highlight }: { item: WorkItem; number?: number; names?: Map<string, string>; highlight?: boolean }) {
+export function WorkRow({ item, number, names, highlight, idPrefix = 'work' }: { item: WorkItem; number?: number; names?: Map<string, string>; highlight?: boolean; idPrefix?: string }) {
   return (
-    <li id={number ? `work-${number}` : undefined} className={cn('flex gap-3 px-3 py-2.5 transition-colors', highlight && 'bg-acdim')}>
+    <li id={number ? `${idPrefix}-${number}` : undefined} className={cn('flex gap-3 px-3 py-2.5 transition-colors', highlight && 'bg-acdim')}>
       {number !== undefined && <span className="mt-0.5 w-5 shrink-0 text-right text-[11px] font-semibold tabular-nums text-t3">{number}</span>}
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-t3">
@@ -138,12 +149,12 @@ export function WorkRow({ item, number, names, highlight }: { item: WorkItem; nu
   );
 }
 
-export function WorkList({ items, names, numbered, highlight, empty = 'No work yet.' }: { items: WorkItem[]; names?: Map<string, string>; numbered?: boolean; highlight?: number; empty?: string }) {
+export function WorkList({ items, names, numbered, highlight, idPrefix, empty = 'No work yet.' }: { items: WorkItem[]; names?: Map<string, string>; numbered?: boolean; highlight?: number; idPrefix?: string; empty?: string }) {
   if (!items.length) return <p className="text-[12px] text-t3">{empty}</p>;
   return (
     <ol className="divide-y divide-hair overflow-hidden rounded-xl border border-hair">
       {items.map((item, i) => (
-        <WorkRow key={item.id} item={item} names={names} {...(numbered && { number: i + 1 })} highlight={highlight === i + 1} />
+        <WorkRow key={item.id} item={item} names={names} idPrefix={idPrefix} {...(numbered && { number: i + 1 })} highlight={highlight === i + 1} />
       ))}
     </ol>
   );
@@ -167,98 +178,12 @@ export function WrittenBy({ model, at, stale, children }: { model?: string; at?:
   );
 }
 
-/** Ask the brain: one box; the answer with its page links and numbered sources. `about` asks from a page. */
-export function AskBox({ about, aboutName, placeholder, autoFocus }: { about?: string; aboutName?: string; placeholder?: string; autoFocus?: boolean }) {
-  const [question, setQuestion] = useState('');
-  const [asking, setAsking] = useState(false);
-  const [answer, setAnswer] = useState<WikiAnswer>();
-  const [error, setError] = useState<string>();
-  const [cited, setCited] = useState<number>();
-
-  const ask = async () => {
-    const q = question.trim();
-    if (!q || asking) return;
-    setAsking(true);
-    setError(undefined);
-    setCited(undefined);
-    try {
-      setAnswer(await api<WikiAnswer>('/api/brain/ask', { method: 'POST', json: { question: q, ...(about && { about }) } }));
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setAsking(false);
-    }
-  };
-
-  const names = new Map([...(answer?.pages ?? []).map((p) => [`${p.type}/${p.id}`, p.name] as const), ...(answer?.links ?? []).map((l) => [l.ref, l.name] as const)]);
-  const cite = (n: number) => {
-    setCited(n);
-    document.getElementById(`work-${n}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
-
+/** A titled section of a file, like a Markdown `##`: its anchor is the one the Outline scrolls to. */
+export function Section({ title, count, action, children }: { title: string; count?: number; action?: ReactNode; children: ReactNode }) {
   return (
-    <div className="space-y-3">
-      <form
-        className="flex items-center gap-2 rounded-2xl border border-bd bg-sf px-3 py-1.5 focus-within:border-ac"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void ask();
-        }}
-      >
-        <Sparkles className="size-4 shrink-0 text-viz-7" aria-hidden />
-        <input
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          placeholder={placeholder ?? (aboutName ? `Ask about ${aboutName}` : 'Ask the brain: who is working on…, what changed with…, is anyone else…')}
-          aria-label="Ask the brain"
-          autoFocus={autoFocus}
-          className="h-9 min-w-0 flex-1 bg-transparent text-[13.5px] text-t1 outline-none placeholder:text-t3"
-        />
-        <Button type="submit" size="sm" variant="primary" loading={asking} disabled={!question.trim()} aria-label="Ask">
-          <Send className="size-3.5" />
-        </Button>
-      </form>
-      {error && <p className="text-[12px] text-rd">{error}</p>}
-      {answer && (
-        <div className="space-y-3 rounded-2xl border border-hair bg-sf px-4 py-3.5 animate-fade-up">
-          {answer.answer ? (
-            <>
-              <WrittenBy model={answer.model} />
-              <WikiText text={answer.answer} links={answer.links} onCite={cite} />
-            </>
-          ) : (
-            <p className="text-[12px] text-t3">{answer.note ?? (answer.model ? 'The brain found nothing to answer from.' : 'No model is set for the brain (LANDFLOW_BRAIN_MODEL), so here is what it found.')}</p>
-          )}
-          {answer.pages.length > 0 && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
-              <span className="text-t3">Pages</span>
-              {answer.pages.map((p) => (
-                <PageLink key={`${p.type}/${p.id}`} refId={`${p.type}/${p.id}`} name={p.name} />
-              ))}
-            </div>
-          )}
-          {answer.facts.length > 0 && (
-            <ul className="space-y-1 text-[12px] text-t2">
-              {answer.facts.slice(0, 6).map((f) => (
-                <li key={f.id}>
-                  <span className="font-medium text-t1">{f.subjectName ?? f.subjectId}</span> · {f.statement}
-                </li>
-              ))}
-            </ul>
-          )}
-          {answer.work.length > 0 && <WorkList items={answer.work} names={names} numbered highlight={cited} />}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** A titled section of a page. */
-export function Section({ title, count, action, children, id }: { title: string; count?: number; action?: ReactNode; children: ReactNode; id?: string }) {
-  return (
-    <section id={id} className="space-y-2.5">
-      <div className="flex items-center gap-2">
-        <h2 className="text-[13px] font-semibold text-t1">{title}</h2>
+    <section id={sectionId(title)} className="scroll-mt-4 space-y-2.5">
+      <div className="flex items-center gap-2 border-b border-hair pb-1.5">
+        <h2 className="text-[15px] font-semibold text-t1">{title}</h2>
         {count !== undefined && <span className="text-[12px] tabular-nums text-t3">{count}</span>}
         {action && <div className="ml-auto">{action}</div>}
       </div>

@@ -1,185 +1,117 @@
 'use client';
 /**
- * /brain/:type/:id: one page of the brain (docs/second-brain.md#the-brain-page). The facts a person keeps (name, what it
- * is, owner) apart from what the model writes: a summary with links to other pages and numbered references to the work
- * it read, marked as written by the brain, with when and which model, and "new work since" once it is behind. Then Ask
- * about this page, the work, the people, the related pages, the facts, the suggestions, and the pages that mention it.
+ * An entity's file in the Brain workbench, as its Preview (docs/second-brain.md#the-brain-page). What a person keeps
+ * (name, what it is, owner) apart from what the model writes: a summary with links to other pages and numbered
+ * references to the work it read, marked as written by the brain, with when and which model, and "new work since" once
+ * it is behind. Then the work, the people, the related pages, the facts, the suggestions and the pages that mention it,
+ * each a section the Outline lists. Its Source view is `pageMarkdown` (lib/shared/brain-files.ts).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
-import { ChevronRight, Pencil, Plus, RefreshCw, Sparkles } from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
-import { ENTITY_LABELS, FACT_KINDS, type EntityType, type FactKind } from '@/lib/shared/brain';
+import { ENTITY_LABELS, FACT_KINDS, type FactKind } from '@/lib/shared/brain';
+import { peopleTitle } from '@/lib/shared/brain-files';
 import type { WikiPage, WikiSummary } from '@/lib/shared/brain-wiki';
-import { Card, PageBody, PageHeader } from '../../shell/page-header';
+import { Card } from '../../shell/page-header';
 import { Chip } from '../../ui/badge';
 import { Button } from '../../ui/button';
-import { EmptyState } from '../../ui/empty-state';
 import { Input, Select, Textarea } from '../../ui/inputs';
 import { ProposalCard, useProposalActions } from '../proposal-card';
-import { AskBox, PageLink, Section, sourceLabel, TYPE_ICON, TYPE_PLURAL, WikiText, WorkList, WrittenBy } from './parts';
+import { PageLink, Section, sourceLabel, TYPE_ICON, WikiText, WorkList, WrittenBy } from './parts';
 
-export function BrainPage({ type, id }: { type: string; id: string }) {
-  const ref = `${type}/${id}`;
-  const [page, setPage] = useState<WikiPage>();
-  const [missing, setMissing] = useState<string>();
+/** `onChanged` reloads the page (an edit, a fact, a decided suggestion); `onSummary` keeps a new summary without a reload. */
+export function PageDoc({ page, onChanged, onSummary }: { page: WikiPage; onChanged: () => void; onSummary: (summary: WikiSummary) => void }) {
+  const ref = `${page.entity.type}/${page.entity.id}`;
   const [cited, setCited] = useState<number>();
-
-  const load = useCallback(() => {
-    api<WikiPage>(`/api/brain/wiki/${encodeURIComponent(type)}/${encodeURIComponent(id)}`)
-      .then((p) => {
-        setPage(p);
-        setMissing(undefined);
-      })
-      .catch((e: Error) => setMissing(e.message));
-  }, [type, id]);
-  useEffect(load, [load]);
-
   const names = useMemo(() => {
-    const out = new Map<string, string>();
-    if (!page) return out;
-    out.set(ref, page.entity.name);
+    const out = new Map<string, string>([[ref, page.entity.name]]);
     for (const r of page.related) out.set(r.ref, r.name);
     for (const p of page.people) if (p.ref) out.set(p.ref, p.name);
     for (const l of page.summary?.links ?? []) out.set(l.ref, l.name);
     return out;
   }, [page, ref]);
-
-  const actions = useProposalActions({ onDone: (pid) => setPage((p) => p && { ...p, proposals: p.proposals.filter((x) => x.id !== pid) }) });
-
-  if (missing && !page) {
-    return (
-      <>
-        <PageHeader title="Brain" />
-        <PageBody className="mx-auto w-full max-w-3xl">
-          <EmptyState title="No such page" hint={`${missing}. It may have been removed, or it is in a project you can’t open.`} action={<Link href="/brain" className="text-[13px] font-medium text-ac hover:underline">Back to the Brain</Link>} />
-        </PageBody>
-      </>
-    );
-  }
-
-  const Icon = TYPE_ICON[page?.entity.type ?? (type as EntityType)] ?? TYPE_ICON.initiative;
+  const actions = useProposalActions({ onDone: onChanged });
   const cite = (n: number) => {
     setCited(n);
     document.getElementById(`work-${n}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
-  const sources = page ? [...new Set(page.work.map((w) => sourceLabel(w.source)))] : [];
+  const sources = [...new Set(page.work.map((w) => sourceLabel(w.source)))];
+  const Icon = TYPE_ICON[page.entity.type];
 
   return (
-    <>
-      <PageHeader
-        title={
-          <span className="flex items-center gap-1.5">
-            <Link href="/brain" className="text-t3 hover:text-t1">
-              Brain
-            </Link>
-            <ChevronRight className="size-3.5 text-t3" aria-hidden />
-            <Link href={`/brain#pages`} className="hidden text-t3 hover:text-t1 sm:inline">
-              {TYPE_PLURAL[type as EntityType] ?? 'Pages'}
-            </Link>
-            <ChevronRight className="hidden size-3.5 text-t3 sm:inline" aria-hidden />
-            <span className="truncate">{page?.entity.name ?? id}</span>
-          </span>
-        }
-      />
-      <PageBody className="mx-auto w-full max-w-3xl space-y-7">
-        {!page && <div className="h-48 rounded-2xl bg-acdim animate-pulse-soft" />}
-        {page && (
-          <>
-            <Header page={page} sources={sources} onSaved={load} Icon={Icon} />
-            <SummaryCard page={page} onCite={cite} onWritten={(summary) => setPage((p) => p && { ...p, summary })} />
-            <AskBox about={ref} aboutName={page.entity.name} />
+    <article className="space-y-7">
+      <Header page={page} sources={sources} onSaved={onChanged} Icon={Icon} />
+      <Section title="Summary">
+        <SummaryCard page={page} onCite={cite} onWritten={onSummary} />
+      </Section>
 
-            <Section title="Work" count={page.work.length} id="work">
-              <p className="-mt-1 text-[12px] text-t3">What the work flows recorded naming this page in the last 90 days, newest first. The numbers are what the summary cites.</p>
-              <WorkList items={page.work} names={names} numbered highlight={cited} empty="No work names this page yet." />
-            </Section>
+      <Section title="Work" count={page.work.length}>
+        <p className="-mt-1 text-[12px] text-t3">What the work flows recorded naming this page in the last 90 days, newest first. The numbers are what the summary cites.</p>
+        <WorkList items={page.work} names={names} numbered highlight={cited} empty="No work names this page yet." />
+      </Section>
 
-            {page.people.length > 0 && (
-              <Section title={page.entity.type === 'person' ? 'Works with' : 'People'} count={page.people.length}>
-                <Card className="divide-y divide-hair p-0">
-                  {page.people.map((p) => (
-                    <div key={p.ref ?? p.email ?? p.name} className="flex items-center gap-2 px-4 py-2 text-[12.5px]">
-                      {p.ref ? <PageLink refId={p.ref} name={p.name} /> : <span className="font-medium text-t1">{p.name}</span>}
-                      {p.team && <span className="text-t3">{p.team}</span>}
-                      <span className="ml-auto tabular-nums text-t3">
-                        {p.events} item{p.events === 1 ? '' : 's'}
-                      </span>
-                    </div>
-                  ))}
-                </Card>
-              </Section>
-            )}
+      {page.people.length > 0 && (
+        <Section title={peopleTitle(page.entity.type)} count={page.people.length}>
+          <div className="divide-y divide-hair rounded-xl border border-hair">
+            {page.people.map((p) => (
+              <div key={p.ref ?? p.email ?? p.name} className="flex items-center gap-2 px-3 py-2 text-[12.5px]">
+                {p.ref ? <PageLink refId={p.ref} name={p.name} /> : <span className="font-medium text-t1">{p.name}</span>}
+                {p.team && <span className="text-t3">{p.team}</span>}
+                <span className="ml-auto tabular-nums text-t3">
+                  {p.events} item{p.events === 1 ? '' : 's'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
-            {page.related.length > 0 && (
-              <Section title="Related pages" count={page.related.length}>
-                <div className="flex flex-wrap gap-2">
-                  {page.related.map((r) => (
-                    <Link key={r.ref} href={`/brain/${r.ref}`} className="inline-flex items-center gap-1.5 rounded-full border border-hair bg-sf px-3 py-1 text-[12.5px] text-t1 hover:border-ac">
-                      <RelatedIcon type={r.type} />
-                      {r.name}
-                      <span className="text-[11px] tabular-nums text-t3" title="Work items naming both">
-                        {r.shared}
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-              </Section>
-            )}
+      {page.related.length > 0 && (
+        <Section title="Related pages" count={page.related.length}>
+          <div className="flex flex-wrap gap-2">
+            {page.related.map((r) => (
+              <span key={r.ref} className="inline-flex items-center gap-1 rounded-full border border-hair bg-sf px-2.5 py-0.5 text-[12.5px]">
+                <PageLink refId={r.ref} name={r.name} />
+                <span className="text-[11px] tabular-nums text-t3" title="Work items naming both">
+                  {r.shared}
+                </span>
+              </span>
+            ))}
+          </div>
+        </Section>
+      )}
 
-            <Facts page={page} onAdded={load} />
+      <Facts page={page} onAdded={onChanged} />
 
-            {page.proposals.length > 0 && (
-              <Section title="Suggestions" count={page.proposals.length}>
-                <div className="space-y-2">
-                  {page.proposals.map((p) => (
-                    <ProposalCard key={p.id} proposal={p} actions={actions} compact />
-                  ))}
-                </div>
-              </Section>
-            )}
+      {page.proposals.length > 0 && (
+        <Section title="Suggestions" count={page.proposals.length}>
+          <div className="space-y-2">
+            {page.proposals.map((p) => (
+              <ProposalCard key={p.id} proposal={p} actions={actions} compact />
+            ))}
+          </div>
+        </Section>
+      )}
 
-            {page.mentionedIn.length > 0 && (
-              <Section title="Mentioned in" count={page.mentionedIn.length}>
-                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12.5px]">
-                  {page.mentionedIn.map((m) => (
-                    <PageLink key={m.ref} refId={m.ref} name={m.name} />
-                  ))}
-                </div>
-              </Section>
-            )}
+      {page.mentionedIn.length > 0 && (
+        <Section title="Mentioned in" count={page.mentionedIn.length}>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12.5px]">
+            {page.mentionedIn.map((m) => (
+              <PageLink key={m.ref} refId={m.ref} name={m.name} />
+            ))}
+          </div>
+        </Section>
+      )}
 
-            {Object.keys(page.entity.attrs).length > 0 && (
-              <Section title="Attributes">
-                <Card className="divide-y divide-hair p-0">
-                  {Object.entries(page.entity.attrs).map(([k, v]) => (
-                    <div key={k} className="flex gap-3 px-4 py-2 text-[12.5px]">
-                      <span className="w-28 shrink-0 text-t3">{k}</span>
-                      <span className="min-w-0 text-t1 [overflow-wrap:anywhere]">{String(v)}</span>
-                    </div>
-                  ))}
-                </Card>
-              </Section>
-            )}
-
-            <p className="text-[11.5px] text-t3">
-              Added by {page.entity.source} {timeAgo(page.entity.createdAt)} · changed {timeAgo(page.entity.updatedAt)}
-            </p>
-          </>
-        )}
-      </PageBody>
-    </>
+      <p className="text-[11.5px] text-t3">
+        Added by {page.entity.source} {timeAgo(page.entity.createdAt)} · changed {timeAgo(page.entity.updatedAt)}
+      </p>
+    </article>
   );
 }
 
-function RelatedIcon({ type }: { type: keyof typeof TYPE_ICON }) {
-  const Icon = TYPE_ICON[type];
-  return <Icon className="size-3 text-t3" aria-hidden />;
-}
-
-/** Name, what it is and owner: the part a person keeps, editable by the page's editors. Chips for teams, sources, last work. */
 function Header({ page, sources, onSaved, Icon }: { page: WikiPage; sources: string[]; onSaved: () => void; Icon: (typeof TYPE_ICON)[keyof typeof TYPE_ICON] }) {
   const { entity } = page;
   const [editing, setEditing] = useState(false);
@@ -207,7 +139,7 @@ function Header({ page, sources, onSaved, Icon }: { page: WikiPage; sources: str
           <Icon className="size-4.5" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="text-[20px] font-semibold leading-tight text-t1 [overflow-wrap:anywhere]">{entity.name}</h2>
+          <h1 className="text-[24px] font-semibold leading-tight text-t1 [overflow-wrap:anywhere]">{entity.name}</h1>
           <div className="mt-0.5 text-[12px] text-t3">
             {ENTITY_LABELS[entity.type]}
             {email && ` · ${email}`}
@@ -245,7 +177,7 @@ function Header({ page, sources, onSaved, Icon }: { page: WikiPage; sources: str
       )}
 
       <div className="flex flex-wrap gap-1.5 text-[11.5px]">
-        <Chip tone={entity.owner ? 'neutral' : 'warning'}>Owner: {entity.ownerName ?? entity.owner ?? 'none'}</Chip>
+        {(entity.owner || entity.type !== 'person') && <Chip tone={entity.owner ? 'neutral' : 'warning'}>Owner: {entity.ownerName ?? entity.owner ?? 'none'}</Chip>}
         {page.teams.map((t) => (
           <Chip key={t.team} tone="accent">
             {t.team} · {t.events}

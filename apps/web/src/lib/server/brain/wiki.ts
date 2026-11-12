@@ -143,6 +143,7 @@ export function wikiHome(scope: UsageScope | undefined, viewer: Viewer, db: Data
       name: e.name,
       ...(e.description && { description: e.description }),
       ...((e.ownerName ?? e.owner) && { owner: e.ownerName ?? e.owner }),
+      ...(e.type === 'person' && typeof e.attrs.department === 'string' && e.attrs.department.trim() && { department: e.attrs.department.trim() }),
       week: s?.week ?? 0,
       month: s?.month ?? 0,
       ...(s?.lastAt && { lastAt: s.lastAt }),
