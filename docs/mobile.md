@@ -99,6 +99,14 @@ The sheet is `Sheet` (`components/ui/sheet.tsx`): a bottom sheet on a phone and 
 `role="dialog"`, focus kept inside (Tab wraps, Escape closes), the page's scroll locked and focus returned to the button
 that opened it.
 
+## Settings and agents
+
+- **Settings** is a list on a phone: each section as a row with its hint (Time zone and execution retention, $vars for
+  expressions…). A tap opens it alone, with **‹ Settings** to go back; the address keeps its `#section`, so a link to
+  `/settings#users` opens Users. A desktop keeps the sections beside the page.
+- **An agent's page** keeps its header on screen as you scroll, and every change saves itself (its ✓ is read out as
+  *Saved* on a phone), so there is no Save to reach for.
+
 ## What's next
 
 1. ~~Touch and type baseline~~ (above; the 44 px targets are done for the tab bar, the editor's back arrow and the header
@@ -116,6 +124,6 @@ that opened it.
 11. Sheets and full-screen dialogs, with dialog roles and focus kept inside (`Sheet` is in, used by Filters; the other
     dialogs are still the desktop's).
 12. ~~No sideways scrolling~~.
-13. The agent page and Settings on a phone.
+13. ~~The agent page and Settings on a phone~~.
 14. ~~Lighter filters~~.
 15. An accessibility pass.

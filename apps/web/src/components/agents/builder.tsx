@@ -111,7 +111,8 @@ function SaveIndicator({ state, onRetry }: { state: SaveState; onRetry: () => vo
   return (
     <span className="flex shrink-0 items-center gap-1 text-[12px] text-t3" aria-live="polite">
       {state === 'saved' ? <Check className="size-3" /> : <Loader2 className="size-3 animate-spin" />}
-      <span className="hidden sm:inline">{state === 'saved' ? 'Saved' : 'Saving…'}</span>
+      {/* A phone has no room for the word: it is still read out. */}
+      <span className="max-sm:sr-only">{state === 'saved' ? 'Saved' : 'Saving…'}</span>
     </span>
   );
 }
