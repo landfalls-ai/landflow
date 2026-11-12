@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Activity, BookOpenCheck, BookOpenText, Bot, Brain, ChartColumn, Ellipsis, House, KeyRound, LayoutTemplate, PanelLeftClose, PanelLeftOpen, Puzzle, Search, Settings, Store, Table2, Workflow, X } from 'lucide-react';
 import { useNeedsYou } from '@/lib/client/run-trace';
 import { cn } from '@/lib/utils';
@@ -16,6 +16,7 @@ import { StatusDot } from '../ui/badge';
 import { EnvironmentBadge } from './environment-badge';
 import { LookToggle } from './look-toggle';
 import { ThemeToggle } from './theme-toggle';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 
 const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string; icon: typeof House; preview?: boolean }> }> = [
   {
@@ -93,9 +94,12 @@ function TabBar({ pathname, more, onMore }: { pathname: string; more: boolean; o
             <Icon className={cn('size-[22px]', active && 'text-ac')} strokeWidth={active ? 2 : 1.7} />
             {label}
             {href === '/executions' && waiting > 0 && (
-              <span aria-label={`${waiting} waiting for you`} className="absolute left-1/2 top-1.5 ml-2 min-w-[18px] rounded-full bg-warn px-1 text-center text-[10.5px] font-semibold leading-[18px] text-bg">
-                {waiting > 99 ? '99+' : waiting}
-              </span>
+              <>
+                <span aria-hidden className="absolute left-1/2 top-1.5 ml-2 min-w-[18px] rounded-full bg-warn px-1 text-center text-[10.5px] font-semibold leading-[18px] text-bg">
+                  {waiting > 99 ? '99+' : waiting}
+                </span>
+                <span className="sr-only">, {waiting} waiting for you</span>
+              </>
             )}
           </Link>
         );
@@ -136,6 +140,9 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
   // Folded on a desktop only: the phone drawer always shows the labels.
   const folded = railCollapsed && !open;
   const label = folded ? 'md:hidden' : '';
+  // The phone drawer is a dialog: focus goes in and stays, Escape closes it (docs/mobile.md#the-shell).
+  const drawer = useRef<HTMLElement>(null);
+  useDialogFocus(drawer, open, { onEscape: onClose });
 
   const load = () => api<{ plugins: PluginSummary[] }>('/api/plugins').then((r) => setPlugins(r.plugins)).catch(() => {});
   useEffect(() => {
@@ -148,13 +155,17 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
 
   return (
     <aside
+      ref={drawer}
+      role={open ? 'dialog' : undefined}
+      aria-modal={open || undefined}
+      aria-label={open ? 'Menu' : undefined}
       className={cn(
-        'top-0 h-screen w-[196px] shrink-0 flex-col border-r border-hair bg-sf2 px-1.5 py-2.5 transition-[width] duration-150 md:sticky md:z-30 md:flex md:shadow-none',
+        'top-0 h-screen max-md:h-dvh w-[196px] shrink-0 flex-col border-r border-hair bg-sf2 px-1.5 py-2.5 transition-[width] duration-150 md:sticky md:z-30 md:flex md:shadow-none',
         folded && 'md:w-[56px]',
         open ? 'fixed left-0 z-50 flex overflow-y-auto shadow-pop' : 'hidden',
       )}
     >
-      <button type="button" aria-label="Close the menu" onClick={onClose} className="absolute right-1.5 top-2.5 grid size-8 place-items-center rounded-lg text-t3 hover:bg-acdim hover:text-t1 md:hidden">
+      <button type="button" aria-label="Close the menu" onClick={onClose} className="absolute right-1.5 top-1.5 grid size-11 place-items-center rounded-lg text-t3 hover:bg-acdim hover:text-t1 md:hidden">
         <X className="size-4" />
       </button>
       <div className={cn('mb-2 flex items-center gap-1', folded && 'md:flex-col')}>
@@ -193,7 +204,7 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
                   aria-current={active ? 'page' : undefined}
                   aria-label={folded ? item.label : undefined}
                   title={folded ? item.label : undefined}
-                  className={cn('flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13px] transition-colors duration-[120ms]', folded && 'md:justify-center md:px-0', active ? 'bg-acdim font-semibold text-t1' : 'text-t2 hover:bg-acdim hover:text-t1')}
+                  className={cn('flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13px] transition-colors duration-[120ms] max-md:h-11 max-md:text-[14px]', folded && 'md:justify-center md:px-0', active ? 'bg-acdim font-semibold text-t1' : 'text-t2 hover:bg-acdim hover:text-t1')}
                 >
                   <Icon className="size-[18px] shrink-0" strokeWidth={1.7} />
                   <span className={cn('truncate', label)}>{item.label}</span>

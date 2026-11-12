@@ -649,7 +649,7 @@ function QuickOpen({ tree, onClose, onOpen, onAsk, commands }: { tree?: BrainTre
   };
   return (
     <div className="fixed inset-0 z-50 flex justify-center bg-black/30 px-3 pt-[12vh]" onMouseDown={onClose}>
-      <div className="h-fit w-full max-w-[600px] overflow-hidden rounded-xl border border-bd bg-sf shadow-pop" onMouseDown={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label="Go to a page" className="h-fit w-full max-w-[600px] overflow-hidden rounded-xl border border-bd bg-sf shadow-pop" onMouseDown={(e) => e.stopPropagation()}>
         <input
           autoFocus
           value={q}

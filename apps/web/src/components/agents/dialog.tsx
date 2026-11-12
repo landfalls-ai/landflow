@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Switch } from '../ui/inputs';
+import { useDialogFocus } from '../ui/use-dialog-focus';
+import { usePhone } from '@/lib/client/use-phone';
 
 export function Dialog({
   title,
@@ -27,6 +29,8 @@ export function Dialog({
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  // A phone: a bottom sheet that keeps the focus inside (docs/mobile.md#sheets-and-dialogs).
+  useDialogFocus(panel, usePhone());
 
   // Capture phase, and only for the topmost dialog: Escape closes a credential dialog opened from this one first.
   useEffect(() => {
@@ -42,13 +46,13 @@ export function Dialog({
   }, [onClose]);
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-3 animate-in sm:p-6" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-3 animate-in sm:p-6 max-md:items-end max-md:p-0" onMouseDown={onClose}>
       <div
         ref={panel}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="flex max-h-[min(760px,92vh)] w-full flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop animate-panel"
+        className="flex max-h-[min(760px,92vh)] w-full flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop animate-panel max-md:!max-w-none max-md:max-h-[92dvh] max-md:rounded-b-none max-md:pb-[env(safe-area-inset-bottom)]"
         style={{ maxWidth: width }}
         onMouseDown={(e) => e.stopPropagation()}
       >
@@ -60,7 +64,7 @@ export function Dialog({
             </h2>
             {subtitle && <div className="truncate text-[12px] text-t3">{subtitle}</div>}
           </div>
-          <button onClick={onClose} aria-label="Close" className="grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1">
+          <button onClick={onClose} aria-label="Close" className="grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:size-11">
             <X className="size-4" />
           </button>
         </div>

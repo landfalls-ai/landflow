@@ -69,7 +69,7 @@ function Frame({ title, kicker, onClose, children }: { title: string; kicker?: R
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="grid size-9 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1"
+            className="grid size-9 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1 max-md:size-11"
           >
             <X className="size-4" />
           </button>

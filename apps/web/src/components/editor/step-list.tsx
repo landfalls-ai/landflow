@@ -57,6 +57,7 @@ export function StepList() {
 
   return (
     <div className="absolute inset-0 z-10 overflow-y-auto bg-bg px-3 pt-14 pb-28">
+      <RunStatus ids={steps.map((step) => step.id)} />
       <ol aria-label="Steps" className="flex flex-col gap-2">
         {steps.map((step, i) => (
           <li key={step.id} style={{ marginLeft: Math.min(step.depth, 4) * 14 }}>
@@ -82,6 +83,25 @@ export function StepList() {
   );
 }
 
+/** One line read out as a run moves through the steps (the cards change silently): what runs, what failed, or that all ran. */
+function RunStatus({ ids }: { ids: string[] }) {
+  const line = useEditor((s) => {
+    const at = (state: string) => ids.findIndex((id) => s.statuses[id]?.state === state);
+    const name = (i: number) => s.nodes.find((n) => n.id === ids[i])?.data.wf.name ?? '';
+    const failed = at('error');
+    if (failed >= 0) return `Step ${failed + 1}, “${name(failed)}”, failed: ${s.statuses[ids[failed]]?.error ?? ''}`;
+    const running = at('running');
+    if (running >= 0) return `Running step ${running + 1}, “${name(running)}”`;
+    const ran = ids.filter((id) => s.statuses[id]?.state === 'success').length;
+    return ran ? `${ran} of ${ids.length} steps ran` : '';
+  });
+  return (
+    <p role="status" className="sr-only">
+      {line}
+    </p>
+  );
+}
+
 function StepCard({ id, index, attached, then }: { id: string; index: number; attached: string[]; then: string[] }) {
   const wf = useEditor((s) => s.nodes.find((n) => n.id === id)?.data.wf);
   const info = useEditor((s) => (wf ? s.nodeTypes[wf.type] : undefined));
@@ -95,7 +115,7 @@ function StepCard({ id, index, attached, then }: { id: string; index: number; at
   const items = status?.itemCounts?.reduce((a, b) => a + b, 0);
   const tone = state === 'error' ? 'border-rdbd' : state === 'success' ? 'border-gnbd' : state === 'running' || state === 'waiting' || state === 'paused' ? 'border-acbd' : 'border-hair';
   return (
-    <div className={cn('rounded-2xl border bg-sf', tone, wf.disabled && 'opacity-60')}>
+    <div className={cn('rounded-2xl border bg-sf', tone, wf.disabled && 'border-dashed')}>
       <button type="button" onClick={() => open(id)} className="flex w-full items-center gap-3 px-3 py-2.5 text-left">
         <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-hair bg-wl">
           <NodeIcon icon={info?.descriptor.icon} size={18} className="text-t1" strokeWidth={1.6} />

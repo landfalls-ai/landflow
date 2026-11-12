@@ -21,6 +21,8 @@ import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
 import { api } from '@/lib/client/api';
 import { useEditor, type PaletteRequest } from './store';
+import { usePhone } from '@/lib/client/use-phone';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 
 type Mode = 'trigger' | 'next' | 'ai_languageModel' | 'ai_memory' | 'ai_tool' | 'ai_embedding' | 'ai_document' | 'ai_textSplitter' | 'ai_retriever' | 'ai_reranker';
 type View = { kind: 'root' } | { kind: 'triggers' } | { kind: 'category'; key: string } | { kind: 'plugin'; pluginId: string };
@@ -157,6 +159,9 @@ function IconBox({ color, children, round, image }: { color: string; children: R
 
 export function NodeCreator() {
   const request = useEditor((s) => s.palette);
+  // A phone: the picker takes the whole screen, as a dialog that keeps the focus (docs/mobile.md#sheets-and-dialogs).
+  const phone = usePhone();
+  const creator = useRef<HTMLElement>(null);
   const nodeTypes = useEditor((s) => s.nodeTypes);
   const hasNodes = useEditor((s) => s.nodes.length > 0);
   const hasTrigger = useEditor((s) => s.nodes.some((n) => s.nodeTypes[n.data.wf.type]?.descriptor.kind === 'trigger'));
@@ -564,6 +569,7 @@ export function NodeCreator() {
     list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
+  useDialogFocus(creator, phone && Boolean(request && mode));
   if (!request || !mode) return null;
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -596,7 +602,11 @@ export function NodeCreator() {
 
   return (
     <aside
-      className="absolute bottom-0 right-0 top-0 z-30 flex w-[384px] animate-panel flex-col border-l border-hair bg-sf shadow-[-12px_0_32px_rgba(0,0,0,0.06)]"
+      ref={creator}
+      role={phone ? 'dialog' : undefined}
+      aria-modal={phone || undefined}
+      aria-label={phone ? 'Add a step' : undefined}
+      className="absolute bottom-0 right-0 top-0 z-30 flex w-[384px] animate-panel flex-col border-l border-hair bg-sf shadow-[-12px_0_32px_rgba(0,0,0,0.06)] max-md:fixed max-md:inset-0 max-md:z-40 max-md:w-auto max-md:border-l-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]"
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div className="shrink-0 px-5 pb-3 pt-4">
@@ -605,7 +615,7 @@ export function NodeCreator() {
             <button
               onClick={pop}
               aria-label="Back"
-              className="-ml-1.5 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1"
+              className="-ml-1.5 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1 max-md:-mt-2 max-md:size-11"
             >
               <ArrowLeft className="size-4" />
             </button>
@@ -617,7 +627,7 @@ export function NodeCreator() {
           <button
             onClick={close}
             aria-label="Close"
-            className="-mr-1.5 grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1"
+            className="-mr-1.5 grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:-mt-2 max-md:size-11"
           >
             <X className="size-4" />
           </button>

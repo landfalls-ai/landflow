@@ -25,7 +25,7 @@ export function UserMenu() {
   }, [open]);
 
   if (!viewer) return null;
-  const item = 'flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-t2 transition-colors duration-[120ms] hover:bg-acdim hover:text-t1';
+  const item = 'flex h-8 max-md:h-11 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-t2 transition-colors duration-[120ms] hover:bg-acdim hover:text-t1';
 
   return (
     <div ref={root} className="relative">

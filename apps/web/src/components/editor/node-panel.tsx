@@ -20,6 +20,7 @@ import { TriggerUrl } from './trigger-url';
 import { syncTeamName } from './turn-into-team';
 import { TeamNodePanel } from './team-node-panel';
 import { useNewLook } from '../shell/look-toggle';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 import { isPhone, usePhone } from '@/lib/client/use-phone';
 
 function Segmented<T extends string>({
@@ -108,10 +109,9 @@ export function NodePanel() {
     wasOpen.current = Boolean(openNodeId);
   }, [openNodeId]);
   const backButton = useRef<HTMLButtonElement>(null);
-  // A phone's editor is a dialog: focus moves into it when it opens.
-  useEffect(() => {
-    if (openNodeId && isPhone()) backButton.current?.focus();
-  }, [openNodeId]);
+  const card = useRef<HTMLDivElement>(null);
+  // A phone's editor is a dialog: focus moves to its back arrow, stays inside, and goes back to the step when it closes.
+  useDialogFocus(card, phone && Boolean(openNodeId && node), { initial: backButton });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -239,6 +239,7 @@ export function NodePanel() {
       )}
       <div
         onMouseDown={(e) => e.stopPropagation()}
+        ref={card}
         data-node-editor
         role={phone ? 'dialog' : undefined}
         aria-modal={phone || undefined}
@@ -323,7 +324,7 @@ export function NodePanel() {
                     setPane(key === 'settings' ? 'parameters' : key);
                     if (key === 'settings' || key === 'parameters') setTab(key);
                   }}
-                  className={cn('h-10 flex-1 rounded-full text-[13px] font-semibold', on ? 'bg-acdim text-ac' : 'text-t2')}
+                  className={cn('h-11 flex-1 rounded-full text-[13px] font-semibold', on ? 'bg-acdim text-ac' : 'text-t2')}
                 >
                   {label}
                 </button>
