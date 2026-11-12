@@ -111,6 +111,10 @@ describe('templates', () => {
     // An icon asked for stays an icon.
     const iconic = await call<{ agent: { id: string } }>(agentsRoute.POST, 'POST', { name: 'Iconic', avatar: { kind: 'icon', solid: true } });
     expect(agentStore.get(iconic.data.agent.id)?.avatar).toEqual({ kind: 'icon', solid: true });
+    // Spotlight's newAgent: what it does and how, as a draft nobody has published.
+    const proposed = await call<{ agent: { id: string } }>(agentsRoute.POST, 'POST', { name: 'Contract reviewer', description: 'Reviews vendor contracts', instructions: 'List risky clauses.' });
+    expect(agentStore.get(proposed.data.agent.id)).toMatchObject({ name: 'Contract reviewer', description: 'Reviews vendor contracts', instructions: 'List risky clauses.' });
+    expect(agentStore.get(proposed.data.agent.id)?.published).toBeUndefined();
   });
 
   it('saves an agent as a template without its tools, channels, schedules, team or credential, and starts new agents from it', async () => {

@@ -103,8 +103,8 @@ export function planOf(workflow: Workflow, ops: AssistantOp[], lookup: Descripto
         steps.push({
           id,
           kind: 'add',
-          title: `Add ${name}`,
-          doing: `Adding ${name}`,
+          title: op.newAgent ? `Create the agent ${name}` : `Add ${name}`,
+          doing: op.newAgent ? `Creating the agent ${name}` : `Adding ${name}`,
           parts: [name, ...(kind && kind !== name ? [kind] : []), ...(near ? [near] : [])],
           adds: nodeId && ghostIds.has(nodeId) ? [nodeId] : [],
           links,

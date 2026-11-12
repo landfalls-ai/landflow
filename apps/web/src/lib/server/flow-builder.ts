@@ -5,6 +5,7 @@
  * manual trigger is added when the model forgot one.
  */
 import type { ConnectionType, NodeItem, NodeTypeInfo, PropertyDescriptor } from '@/lib/shared/types';
+import { describeAgents, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
 import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import { registry } from './plugins/registry';
 import { collectionShape } from '@/lib/shared/assistant-ops';
@@ -94,7 +95,8 @@ Rules:
 - Parameters: only the parameter names listed for that node. Reference fields of the current item with expressions such as "{{ $json.title }}". Field parameters (like "field") take a plain field name such as "text", not an expression.
 - Nodes that write a result object into "outputField" (see the parameter notes, e.g. "receives {score, label}") nest it: compare "{{ $json.sentiment.label }}" or "{{ $json.sentiment.score }}", never the whole object.
 - connections: {"from": key, "to": key, "output": n}. "output" is the source's output index (If/Filter-like nodes: 0 = true, 1 = false). AI sub-nodes attach to an AI Agent with "type" ai_languageModel, ai_memory or ai_tool, from the sub-node to the agent. RAG: a vector store (mode retrieve-as-tool) attaches to an agent as ai_tool, or (mode retrieve) to a Question and Answer Chain as ai_retriever; embeddings attach to a vector store as ai_embedding, a data loader as ai_document, a text splitter to the loader as ai_textSplitter.
-- testData: 2–4 realistic sample items the flow can be tested with when run manually (objects with the fields the flow reads); just 1 when the flow runs an agent or a team, since each item is a whole agent run.
+- Agents: when a step needs an agent, first look at "Your agents" and "Published agent teams" after the catalog. If one's description, skills and tools cover the step, run it: core.messageAgent with its agentId (or core.runTeam with its teamId) and a "message" saying what to do with the item. Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). Never invent an agentId or teamId.
+- testData: 2–4 realistic sample items the flow can be tested with when run manually (objects with the fields the flow reads); just 1 when the flow runs an agent or a team, since each item is a whole agent run. With a Webhook trigger, each item is what a call brings: {"body": {…}} (plus the "headers" or "query" the flow reads); with a Form trigger, the form's fields.
 
 ${PARAMETER_FORMATS}`;
 
@@ -119,6 +121,18 @@ function catalog(types: NodeTypeInfo[]): string {
     })
     .join('\n');
 }
+
+/** A Run an Agent node keeps only an agent the caller has: an id the model made up is cleared, so the node asks for one. */
+function knownAgent(parameters: Record<string, unknown>, agents: readonly AgentBrief[]): Record<string, unknown> {
+  const id = typeof parameters.agentId === 'string' ? parameters.agentId : '';
+  return !id || id.includes('{{') || agents.some((a) => a.id === id) ? parameters : { ...parameters, agentId: '' };
+}
+
+/**
+ * Triggers the draft's test items are pinned on. A Webhook or Form trigger with pinned data runs from it when tested, so
+ * Spotlight's Test and fix (autonomous by default) runs the draft at once instead of waiting for a test event.
+ */
+const PINNED_TRIGGERS = new Set(['core.manualTrigger', 'core.webhook', 'core.formTrigger']);
 
 /** Nodes that run a whole agent (or team) session per item: a test run of a flow with one gets one sample item. */
 const AGENT_TYPES = new Set(['core.aiAgent', 'core.messageAgent', 'core.runTeam', 'core.a2aAgent']);
@@ -147,6 +161,28 @@ export function cleanTestItems(items: NodeItem[] | undefined, trigger: Pick<Draf
   // When the flow names the fields it reads and the items carry none of them, the items are noise on the trigger.
   const read = new Set([...text.matchAll(/\$json(?:\.|\[\\?['"])(\w+)/g), ...text.matchAll(/\.json\.(\w+)/g)].map((m) => m[1]));
   return read.size && !cleaned.some((item) => Object.keys(item.json).some((k) => read.has(k))) ? undefined : cleaned;
+}
+
+/** Triggers a test run waits on for an event unless test data is pinned. */
+const WAITING_TRIGGERS = new Set(['core.webhook', 'core.formTrigger']);
+
+/**
+ * One made-up item for a Webhook or Form trigger the model gave no usable test data for, so Test and fix runs the flow
+ * instead of waiting for a call: the fields the steps read, at the top or under "body" as they read them.
+ */
+export function sampleItems(trigger: Pick<DraftNode, 'key' | 'type'> | undefined, nodes: DraftNode[]): NodeItem[] | undefined {
+  if (!trigger || !WAITING_TRIGGERS.has(trigger.type)) return undefined;
+  const text = JSON.stringify(nodes.filter((n) => n.key !== trigger.key).map((n) => n.parameters ?? {}));
+  const top = new Set<string>();
+  const body = new Set<string>();
+  for (const [, field, inner] of text.matchAll(/\$json\.(\w+)(?:\.(\w+))?/g)) {
+    if (field === 'body' && inner) body.add(inner);
+    else if (!['body', 'headers', 'query', 'params'].includes(field)) top.add(field);
+  }
+  const sample = (field: string) => `Sample ${field.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').toLowerCase()}`;
+  const json: NodeItem['json'] = Object.fromEntries([...top].map((f) => [f, sample(f)]));
+  if (body.size || trigger.type === 'core.webhook') json.body = Object.fromEntries([...(body.size ? body : ['text'])].map((f) => [f, sample(f)]));
+  return [{ json }];
 }
 
 /** The draft as text from Ollama's chat API, held to SCHEMA by its `format`. */
@@ -211,14 +247,18 @@ export function jsonOf(text: string): string {
   return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed || '{}';
 }
 
-/** `teams`: the published agent teams the caller can see, so a Run a Team node gets a real team (by id, never a guess). */
-export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = []): Promise<FlowDraft> {
+/**
+ * `teams` and `agents`: the published agent teams and agents the caller can see, so a step that needs an agent runs one
+ * that fits, and a Run a Team or Run an Agent node gets a real one (by id, never a guess).
+ */
+export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = []): Promise<FlowDraft> {
   const types = registry.nodeTypes().filter((t) => t.available);
   const byType = new Map(types.map((t) => [t.type, t]));
   const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
   const started = Date.now();
   const timeoutMs = builderTimeoutMs();
-  const request = `Node catalog:\n${catalog(types)}${teamsNote}\n\nBuild this workflow:\n${prompt}`;
+  const agentsNote = byType.has('core.messageAgent') && agents.length ? `\n\nYour agents (core.messageAgent: put the agent's agentId in agentId, never its name):\n${describeAgents(agents)}` : '';
+  const request = `Node catalog:\n${catalog(types)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}`;
   const content = /^(anthropic|openai)\//.test(model) ? await draftWithProvider(model, request, timeoutMs) : await draftWithOllama(model, request, timeoutMs);
   let raw: { name?: string; nodes?: unknown[]; connections?: unknown[]; testData?: unknown };
   try {
@@ -226,7 +266,6 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   } catch {
     throw new Error('The model did not return valid JSON. Try again or rephrase.');
   }
-
 
   const dropped: string[] = [];
   const nodes: DraftNode[] = [];
@@ -242,7 +281,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
     const known = new Set(info.descriptor.properties.map((p) => p.name));
     const kept = Object.fromEntries(Object.entries(n.parameters ?? {}).filter(([k]) => known.has(k)));
     // Models write the team's name where its id goes: the one published team it names becomes the id.
-    const parameters = info.type === 'core.runTeam' ? withTeamId(kept, teams) : kept;
+    const parameters = info.type === 'core.runTeam' ? withTeamId(kept, teams) : info.type === 'core.messageAgent' ? knownAgent(withAgentId(kept, agents), agents) : kept;
     nodes.push({ key: n.key, type: info.type, name: (n.name ?? info.descriptor.displayName).slice(0, 60), x: 0, y: 0, parameters });
   }
   if (!nodes.length) throw new Error('The model did not produce any usable nodes. Try describing the steps more concretely.');
@@ -280,7 +319,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
     nodes.unshift(trigger);
     for (const root of roots) edges.push([trigger.key, root.key, 0, 'main']);
   }
-  const testItems = cleanTestItems(asItems(raw.testData), trigger, nodes)?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
-  const pinData = trigger && trigger.type === 'core.manualTrigger' && testItems ? { [trigger.key]: testItems } : undefined;
+  const testItems = (cleanTestItems(asItems(raw.testData), trigger, nodes) ?? sampleItems(trigger, nodes))?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
+  const pinData = trigger && PINNED_TRIGGERS.has(trigger.type) && testItems ? { [trigger.key]: testItems } : undefined;
   return { name: (raw.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped };
 }

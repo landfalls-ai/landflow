@@ -6,10 +6,9 @@
  */
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
-import { teamBrief } from '@/lib/shared/agent-teams';
-import { agentTeamStore } from '@/lib/server/agent-teams/store';
 import { runChat, type ChatEvent } from '@/lib/server/assistant/chat';
 import { errorText } from '@/lib/server/assistant/model';
+import { roster } from '@/lib/server/assistant/roster';
 import { allowedTypes } from '@/lib/server/assistant/scope';
 import { currentPrincipal } from '@/lib/server/auth/guard';
 import { handler, parseBody, sseHeaders } from '@/lib/server/http';
@@ -49,9 +48,8 @@ export const POST = handler(async (request: Request) => {
   if (!parsed.ok) return parsed.response;
   const { workflow, workflowId, ...rest } = parsed.data;
   const types = allowedTypes(workflowId);
-  // The published teams the caller can see: Spotlight can propose a Run a Team node for one.
-  const visible = new Set(withOwnership(routeActor(), 'agentTeam', agentTeamStore.summaries()).map((t) => t.id));
-  const teams = agentTeamStore.list().filter((t) => visible.has(t.id)).flatMap((t) => teamBrief(t) ?? []).slice(0, 20);
+  // The published agents and teams the caller can see: Spotlight runs one that fits a step, or proposes a new agent.
+  const { agents, teams } = roster();
   const encoder = new TextEncoder();
   const abort = new AbortController();
   request.signal.addEventListener('abort', () => abort.abort());
@@ -69,7 +67,7 @@ export const POST = handler(async (request: Request) => {
         }
       };
       try {
-        await runChat({ ...rest, types, teams, workflow: { id: workflowId ?? 'draft', ...workflow } as Workflow, signal: abort.signal, onEvent: send });
+        await runChat({ ...rest, types, teams, agents, workflow: { id: workflowId ?? 'draft', ...workflow } as Workflow, signal: abort.signal, onEvent: send });
       } catch (caught) {
         if (!abort.signal.aborted) send({ type: 'error', message: errorText(caught) });
       } finally {

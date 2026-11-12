@@ -22,6 +22,7 @@ import { store } from '../store';
 import { traceAssistant } from '../telemetry/assistant';
 import { recordUsage } from '../usage/ledger';
 import { recoverToolCalls, withoutInventedIds, withoutRepeats } from './chat';
+import { chooseModel, type AgentResources } from './agent-resources';
 import { assistantModel, modelLabel } from './model';
 import { catalogSummary, nodeDocs, searchNodes } from './research';
 
@@ -39,15 +40,20 @@ export interface ArchitectInput {
   actor: Actor;
   signal?: AbortSignal;
   onEvent: (event: ArchitectEvent) => void;
+  /** The models, knowledge bases and embeddings this host has (agentResources): the draft gets a model and may search a knowledge base. */
+  resources?: AgentResources;
+  /** The only tools the model is offered (designAgent's short attempt offers propose_agent alone); all of them when absent. */
+  only?: string[];
 }
 
 const TOOL_SCHEMA = {
   type: 'object',
   properties: {
-    type: { type: 'string', enum: ['node', 'workflow', 'agent'] },
+    type: { type: 'string', enum: ['node', 'workflow', 'agent', 'knowledge'] },
+    collection: { type: 'string', description: 'knowledge: a collection from list_knowledge_bases, or a new name (lowercase-dashes) for an empty one the user fills with documents' },
     nodeType: { type: 'string', description: 'node: the node type id from search_nodes' },
     name: { type: 'string', description: 'node: the tool name the model sees, snake_case (post_to_slack)' },
-    description: { type: 'string', description: 'node / workflow: when the agent should call it, one sentence' },
+    description: { type: 'string', description: 'node / workflow / knowledge: when the agent should call or search it, one sentence' },
     parameters: { type: 'object', description: 'node: parameter values from get_node_docs; what the agent decides per call is "{{ $fromAI(\'key\', \'description\', \'string\') }}"' },
     workflowId: { type: 'string', description: 'workflow: an id from list_workflows' },
     agentId: { type: 'string', description: 'agent: an id from list_agents' },
@@ -83,6 +89,16 @@ const TOOLS: ToolSpec[] = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'list_models',
+    description: 'The chat models the agent can run on, best first: local Ollama models (which call tools) before hosted ones.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'list_knowledge_bases',
+    description: 'The knowledge bases other agents search (vector store collections of documents), with what each holds, and whether a new empty one can be started.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'list_templates',
     description: 'Persona templates to start from (support lead, researcher, incident responder…), with ids, roles and tones.',
     inputSchema: { type: 'object', properties: {} },
@@ -106,6 +122,7 @@ const TOOLS: ToolSpec[] = [
         always: { type: 'array', items: { type: 'string' }, description: 'Rules, a sentence each' },
         never: { type: 'array', items: { type: 'string' } },
         instructions: { type: 'string', description: 'How it works, step by step, naming its tools' },
+        model: { type: 'string', description: 'The chat model it runs on, as list_models gives it ("ollama/qwen3-coder:30b"): the first one unless the job needs another' },
         icon: { type: 'string', description: 'A lucide icon name: bot, headset, siren, search, database, chart-line, mail, calendar, code, shield, rocket, newspaper, briefcase' },
         tools: { type: 'array', items: TOOL_SCHEMA },
         missing: { type: 'array', items: { type: 'string' }, description: 'Parts of the job no node online can do, left out of the tools, as the app’s name, a colon and what the agent would do: "Grafana: read firing alerts"' },
@@ -114,20 +131,71 @@ const TOOLS: ToolSpec[] = [
     },
   },
 ];
-const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
+
+/**
+ * propose_agent with only plain strings, for designAgent's short attempt: qwen3-coder writes a tool call as XML, and
+ * Ollama's parser fails on the nested arrays of objects propose_agent takes ("XML syntax error … unexpected EOF").
+ * `fromDesign` turns it into propose_agent's arguments.
+ */
+const DESIGN_TOOL: ToolSpec = {
+  name: 'propose_design',
+  description: 'Propose the agent. Every value is plain text.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      role: { type: 'string', description: 'What it is in a few words ("Contract reviewer")' },
+      description: { type: 'string', description: 'One sentence: what it does' },
+      instructions: { type: 'string', description: 'How it works, step by step, naming its tools' },
+      whatIDo: { type: 'string', description: 'Up to 3 short lines for its team card, one per line' },
+      tones: { type: 'string', description: '2–3 words, comma-separated: Precise, Direct, Thorough…' },
+      model: { type: 'string', description: 'One of the models listed ("ollama/qwen3-coder:30b")' },
+      knowledge: { type: 'string', description: 'A knowledge base collection it searches (an existing one, or a new lowercase-dashes name); empty for none' },
+      knowledgeDescription: { type: 'string', description: 'What that knowledge base holds, one sentence' },
+      nodeTools: { type: 'string', description: 'Node type ids it calls as tools, comma-separated; empty for none' },
+      missing: { type: 'string', description: 'What no node here can do, one per line: "Grafana: read firing alerts"; empty for none' },
+    },
+    required: ['role', 'instructions', 'model'],
+  },
+};
+
+const plain = (value: unknown) => (typeof value === 'string' ? value.replace(LEAKED_MARKUP, '').trim() : '');
+
+/** propose_design's plain strings as propose_agent's arguments. */
+export function fromDesign(args: Record<string, unknown>): Record<string, unknown> {
+  const list = (value: unknown, split: RegExp) => plain(value).split(split).map((v) => v.trim()).filter(Boolean);
+  const knowledge = plain(args.knowledge);
+  const tools = [
+    ...(knowledge && !/^(none|no|n\/a|-)$/i.test(knowledge) ? [{ type: 'knowledge', collection: knowledge, ...(plain(args.knowledgeDescription) && { description: plain(args.knowledgeDescription) }) }] : []),
+    ...list(args.nodeTools, /[,\n]/).filter((t) => !/^(none|no|n\/a|-)$/i.test(t)).map((nodeType) => ({ type: 'node', nodeType })),
+  ];
+  return {
+    summary: 'Designed for Spotlight',
+    name: plain(args.name) || 'Agent',
+    role: plain(args.role),
+    ...(plain(args.description) && { description: plain(args.description) }),
+    instructions: plain(args.instructions),
+    whatIDo: list(args.whatIDo, /\n/),
+    tones: list(args.tones, /,/),
+    ...(plain(args.model) && { model: plain(args.model) }),
+    tools,
+    missing: list(args.missing, /\n/).filter((m) => !/^(none|no|n\/a|-)$/i.test(m)),
+  };
+}
 
 const SYSTEM = `You are the Agent architect in Landflow, an n8n-like automation platform where every node comes from a plugin (TypeScript, Python or Go). You design agents with the user: who the agent is, how it talks, its instructions and the tools it uses. You never create the agent: you propose it, and the user reviews the draft and clicks Create.
 
 An agent is:
 - a persona: name, role, who it helps (audience), what it does for them (mission), 2–3 tones, answer length, rules it always and never follows;
 - instructions: how it works, step by step, naming its tools;
-- tools: plugin nodes it calls (type "node"), workflows it calls (type "workflow"), other agents it delegates to (type "agent").
+- a model: the chat model it runs on (list_models; a local one first, the first listed unless the job needs another);
+- tools: plugin nodes it calls (type "node"), workflows it calls (type "workflow"), other agents it delegates to (type "agent"), knowledge bases it searches (type "knowledge").
 
 How to work:
 - If the request is too vague to pick tools (no task, or no system to work in), ask one short question. Otherwise don't ask: design.
 - Research before proposing: search_nodes for each thing the agent must do (read tickets, post to Slack, query a database…), get_node_docs for each node you use, list_workflows and list_agents when an existing workflow or agent could do part of the job, list_credentials to see what works right away, list_templates when one fits as a start.
 - Use only node types search_nodes returned, and ids list_workflows and list_agents returned. If nothing online can do a part of the job, leave it out of the tools, list it in propose_agent's "missing" as the app's name, a colon and what the agent would do ("Grafana: read firing alerts"), and say so in one sentence; never invent a node type.
 - A node tool's parameters: set what is fixed for this agent (the operation, a resource); what the agent decides per call is "{{ $fromAI('key', 'what it is', 'string') }}". Never make up ids, channels, URLs or emails the user didn't give: leave those for the user.
+- An agent that answers from documents (policies, contracts, docs, past tickets) searches a knowledge base: list_knowledge_bases, use one whose description fits, else start an empty one (type "knowledge" with a new collection name) and tell the user to add documents to it.
 - Give each node tool a snake_case name and a one-sentence description of when to call it.
 - Tools are actions the agent takes. How it is started (a webhook, a schedule, Slack or Teams, a workflow) isn't a tool: the user sets that on the agent's Deploy tab, so say it in your reply instead.
 - The model itself reads, parses, summarises and formats text: don't add a tool (a Code node, a formatter) for that.
@@ -140,8 +208,13 @@ const squash = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
 const text = (value: unknown, max: number) => (typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : undefined);
 /** A list the model may send as an array or as one string, split on `split` ("Precise, Calm" or rules a line each). */
+/** Tool-call markup a local model leaks into a value ("<parameter=0>", "</function>"). */
+const LEAKED_MARKUP = /<\/?(?:parameter|function|tool_call)\b[^>]*>/g;
+
 const texts = (value: unknown, max: number, count: number, split: RegExp) =>
-  (Array.isArray(value) ? value : typeof value === 'string' ? value.split(split) : []).flatMap((v) => text(typeof v === 'string' ? v.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '') : v, max) ?? []).slice(0, count);
+  (Array.isArray(value) ? value : typeof value === 'string' ? value.split(split) : [])
+    .flatMap((v) => text(typeof v === 'string' ? v.replace(LEAKED_MARKUP, '').replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '') : v, max) ?? [])
+    .slice(0, count);
 
 /** A tool name the providers accept: lower snake_case, at most 64 characters. */
 export const toolName = (value: string) =>
@@ -186,7 +259,7 @@ export interface DraftResult {
  * against what exists, parameters kept to the node's own (over its defaults), invented ids left out. `keep` is the
  * draft so far: its avatar, colour and team (the user may have changed them) carry over.
  */
-export function draftFrom(args: Record<string, unknown>, context: { types: NodeTypeInfo[]; actor: Actor; known: string; keep?: Partial<AgentConfig>; templates?: AgentTemplate[] }): DraftResult {
+export function draftFrom(args: Record<string, unknown>, context: { types: NodeTypeInfo[]; actor: Actor; known: string; keep?: Partial<AgentConfig>; templates?: AgentTemplate[]; resources?: AgentResources }): DraftResult {
   const { types, actor, known, keep } = context;
   const dropped: string[] = [];
   const needs: ArchitectNeed[] = [];
@@ -294,10 +367,36 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
       }
       if (tools.some((t) => t.type === 'agent' && t.agentId === agent.id)) continue;
       tools.push({ id: `tl_${nanoid(8)}`, type: 'agent', agentId: agent.id, ...(text(tool.useWhen ?? tool.description, 300) && { useWhen: text(tool.useWhen ?? tool.description, 300) }) });
+    } else if (kind === 'knowledge') {
+      const collection = text(tool.collection ?? tool.name, 80)?.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+      if (!collection) {
+        dropped.push('a knowledge base without a collection');
+        continue;
+      }
+      if (tools.some((t) => t.type === 'knowledge' && t.collection === collection)) continue;
+      const existing = context.resources?.knowledge.find((k) => k.collection === collection);
+      const embeddings = existing?.embeddings ?? context.resources?.embeddings;
+      if (!embeddings) {
+        dropped.push(`the knowledge base “${collection}”: no embeddings model is pulled in Ollama (ollama pull nomic-embed-text)`);
+        continue;
+      }
+      const label = unique(text(tool.name, 64) ?? `search_${collection}`);
+      const description = text(tool.description, 300) ?? existing?.description ?? `Search the ${collection} documents`;
+      if (existing) {
+        const { usedBy: _usedBy, ...base } = existing;
+        tools.push({ ...base, id: `tl_${nanoid(8)}`, type: 'knowledge', name: label, description });
+      } else {
+        tools.push({ id: `tl_${nanoid(8)}`, type: 'knowledge', name: label, description, store: 'sqlite', collection, embeddings });
+        needs.push({ tool: label, kind: 'parameter', text: `${label}: add documents to the new “${collection}” knowledge base (the agent's Knowledge tab)` });
+      }
     } else {
       dropped.push(`a tool of kind “${String(kind ?? 'unknown')}”`);
     }
   }
+  // The model it runs on: one the host has, the local one Spotlight uses unless another was named.
+  const model = context.resources ? chooseModel(args.model, context.resources.models) : undefined;
+  if (args.model && model && !String(args.model).endsWith(model.model)) dropped.push(`the model “${String(args.model)}”, which isn't here: it runs on ${model.provider}/${model.model}`);
+  if (context.resources && !model) needs.push({ tool: 'model', kind: 'parameter', text: 'Pick a model: no local model is pulled in Ollama' });
 
   const config: Partial<AgentConfig> = {
     ...(template && { ...base, tools: undefined }),
@@ -309,6 +408,7 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
     ...(keep?.team && { team: keep.team }),
     ...(Object.keys(persona).length && { persona }),
     instructions: text(args.instructions, 8000) ?? base.instructions ?? '',
+    ...((model ?? keep?.model ?? base.model) && { model: model ?? keep?.model ?? base.model }),
     tools,
   };
   return { config, needs, dropped, missing };
@@ -317,6 +417,8 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
 export async function runArchitect(input: ArchitectInput): Promise<void> {
   const { onEvent, actor } = input;
   const types = input.types.filter(usableAsTool);
+  const tools = input.only ? [...TOOLS, DESIGN_TOOL].filter((t) => input.only!.includes(t.name)) : TOOLS;
+  const toolNames = new Set(tools.map((t) => t.name));
   const model = assistantModel(input.model);
   const started = Date.now();
   let draft = input.draft;
@@ -339,8 +441,9 @@ export async function runArchitect(input: ArchitectInput): Promise<void> {
       onEvent({ type: 'tool', name: call.name, label, ok });
       return { id: call.id, name: call.name, content, ...(!ok && { isError: true }) };
     };
-    const args = call.input ?? {};
-    switch (call.name) {
+    const design = call.name === DESIGN_TOOL.name;
+    const args = design ? fromDesign(call.input ?? {}) : (call.input ?? {});
+    switch (design ? 'propose_agent' : call.name) {
       case 'search_nodes': {
         const query = String(args.query ?? '');
         const hits = searchNodes(query, types).map(({ score: _score, ...hit }) => {
@@ -375,6 +478,15 @@ export async function runArchitect(input: ArchitectInput): Promise<void> {
         const list = withOwnership(actor, 'credential', credentials.list()).map((c) => ({ name: c.name, type: c.type }));
         return result(list.length ? JSON.stringify(list) : 'The user has no credentials yet.', `Listed ${list.length} credential${list.length === 1 ? '' : 's'}`);
       }
+      case 'list_models': {
+        const list = input.resources?.models ?? [];
+        return result(list.length ? JSON.stringify(list.map((m) => ({ model: `${m.provider}/${m.model}`, note: m.note }))) : 'No models are known here: leave the model out; the user picks one.', `Listed ${list.length} model${list.length === 1 ? '' : 's'}`);
+      }
+      case 'list_knowledge_bases': {
+        const list = input.resources?.knowledge ?? [];
+        const fresh = input.resources?.embeddings ? `A new empty one can be started (type "knowledge" with a new collection name), embedded with ${input.resources.embeddings.model}.` : 'No embeddings model is pulled, so no new one can be started.';
+        return result(`${list.length ? JSON.stringify(list.map((k) => ({ collection: k.collection, description: k.description, store: k.store, usedBy: k.usedBy }))) : 'No agent searches a knowledge base yet.'} ${fresh}`, `Listed ${list.length} knowledge base${list.length === 1 ? '' : 's'}`);
+      }
       case 'list_templates': {
         const list = agentTemplates
           .list(actor)
@@ -387,7 +499,7 @@ export async function runArchitect(input: ArchitectInput): Promise<void> {
         const asSent = JSON.stringify(rest);
         if (asSent === lastProposal) return result('Nothing changes: you proposed exactly this agent already. Do not propose it again; answer the user.', 'Skipped a repeated proposal');
         lastProposal = asSent;
-        const { config, needs, dropped, missing } = draftFrom(args, { types, actor, known: known(), keep: draft });
+        const { config, needs, dropped, missing } = draftFrom(args, { types, actor, known: known(), keep: draft, ...(input.resources && { resources: input.resources }) });
         const summary = shorten(text(args.summary, 200) ?? `Draft: ${config.name}`, 140);
         draft = config;
         proposals++;
@@ -413,16 +525,16 @@ export async function runArchitect(input: ArchitectInput): Promise<void> {
     let finished = false;
     while (steps < MAX_ARCHITECT_STEPS && !finished) {
       steps++;
-      const generate = () => model.generate({ system, messages: history, tools: TOOLS, ...(input.signal && { signal: input.signal }) });
-      // Ollama answers 500 when it can't parse the tool call qwen3-coder wrote ("XML syntax error"): ask once more.
+      const generate = () => model.generate({ system, messages: history, tools, ...(input.signal && { signal: input.signal }) });
+      // Ollama answers 500 when it can't parse the tool call qwen3-coder wrote ("XML syntax error", sometimes with no detail): ask once more.
       const turn = await generate().catch((error: unknown) => {
-        if (input.signal?.aborted || !/XML syntax error|tool call|unexpected end/i.test(String((error as Error)?.message ?? error))) throw error;
+        if (input.signal?.aborted || !/XML syntax error|tool call|unexpected end|Ollama error 500/i.test(String((error as Error)?.message ?? error))) throw error;
         span.addEvent('assistant.retry', { 'landflow.reason': String((error as Error)?.message ?? error).slice(0, 200) });
         return generate();
       });
       usage.inputTokens += turn.usage?.inputTokens ?? 0;
       usage.outputTokens += turn.usage?.outputTokens ?? 0;
-      const { text: reply, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text, TOOL_NAMES);
+      const { text: reply, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text, toolNames);
       if (reply.trim()) {
         const shown = withoutRepeats(reply, said);
         said += `\n${reply}`;
@@ -444,4 +556,89 @@ export async function runArchitect(input: ArchitectInput): Promise<void> {
     span.setAttribute('landflow.architect.proposals', proposals);
     onEvent({ type: 'done', model: modelLabel(model), durationMs: Date.now() - started, steps, usage });
   });
+}
+
+/** What Spotlight knows of an agent it proposes (its `newAgent`), and where in the flow it runs. */
+export interface AgentSpec {
+  name: string;
+  description: string;
+  instructions: string;
+  /** The workflow it runs in, and the step before and after it, for the architect's request. */
+  workflow?: string;
+  after?: string;
+  before?: string;
+}
+
+/** The request the architect gets for Spotlight's newAgent: design it now, model, tools and knowledge included. */
+export function designRequest(spec: AgentSpec): string {
+  const where = [spec.workflow && `in the workflow “${spec.workflow}”`, spec.after && `after the step “${spec.after}”`, spec.before && `before “${spec.before}”`].filter(Boolean).join(', ');
+  return [
+    `Design this agent now and propose it, without asking me anything. It runs as a step${where ? ` ${where}` : ''}: each item that reaches it is a message to it.`,
+    `Name: ${spec.name}`,
+    `What it does: ${spec.description || '(see the instructions)'}`,
+    spec.instructions && `How: ${spec.instructions}`,
+    'Pick its model (list_models: a local one), the tools it needs from the plugins online (search_nodes), and a knowledge base if it works from documents (list_knowledge_bases). Keep the name.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * What the architect would look up for `spec`, written into the request: the host's models, its knowledge bases and
+ * the nodes that match what the agent does. With these in hand one propose_agent call is enough, which is what a local
+ * model gets right: a long look-around grows the context until Ollama fails on the proposal.
+ */
+const FILLER = new Set('the and for with each when its into from that this then them they their what which who your you any all are was has have not but per one two its also only must should will can new'.split(' '));
+
+/** A request's own words for a node search: two-letter words ("to", "on") are inside half the node names. */
+const searchWords = (value: string | undefined) =>
+  (value ?? '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 2 && !FILLER.has(w))
+    .join(' ');
+
+export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types' | 'resources'>): string {
+  const types = input.types.filter(usableAsTool);
+  const hits = new Map<string, string>();
+  for (const query of [spec.description, spec.instructions, spec.name].map(searchWords)) {
+    // A score under 4 is words of the request found only in a node's description: not a match.
+    for (const hit of query ? searchNodes(query, types, 6) : []) if (hit.score >= 4 && !hits.has(hit.type) && hits.size < 8) hits.set(hit.type, `${hit.type} (${hit.displayName}): ${shorten(hit.description, 120)}`);
+  }
+  const models = input.resources?.models ?? [];
+  const knowledge = input.resources?.knowledge ?? [];
+  return [
+    models.length ? `Models (pick one, the first is best here): ${models.map((m) => `${m.provider}/${m.model} (${m.note})`).join('; ')}` : 'Models: none known; leave the model out.',
+    knowledge.length ? `Knowledge bases: ${knowledge.map((k) => `${k.collection}: ${k.description}`).join('; ')}` : 'Knowledge bases: none yet.',
+    input.resources?.embeddings
+      ? 'Knowledge: only if its job means looking things up in documents (policies, contracts, playbooks, past answers). Use an existing collection only if it holds those documents; else a new name (lowercase-dashes) for an empty one the user fills. Most agents that act need none: leave knowledge empty.'
+      : 'No new knowledge base can be started here (no embeddings model): leave knowledge empty.',
+    'Node tools: only for what it must do outside its reply (post a message, create a ticket, fetch a record). Reading, judging or summarising the message it gets needs no tool: then leave nodeTools empty.',
+    hits.size ? `Nodes that matched the request (most are probably not needed): ${[...hits.values()].join('; ')}` : 'No node matched the request.',
+    'If it must act in an app none of these nodes covers (Slack, Jira…), name it in missing ("Slack: post a message") instead of picking a node that doesn\'t do it.',
+  ].join('\n');
+}
+
+/**
+ * Spotlight's newAgent, designed by the architect without a conversation (POST /api/agents/design): its last draft,
+ * named as Spotlight named it. The first try hands the model what it would look up (designBrief) and offers only
+ * propose_agent; the second lets it look around. When neither proposes (or both fail), the agent is what Spotlight gave,
+ * on the first model the host has, so the step still has an agent to run.
+ */
+export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only'>): Promise<DraftResult & { designed: boolean }> {
+  let last: DraftResult | undefined;
+  const onEvent: ArchitectInput['onEvent'] = (event) => {
+    if (event.type === 'draft') last = { config: event.config, needs: event.needs, dropped: event.dropped, missing: event.missing };
+  };
+  const attempts: Array<Pick<ArchitectInput, 'messages' | 'only'>> = [
+    { messages: [{ role: 'user', content: `${designRequest(spec)}\n\n${designBrief(spec, input)}\n\nPropose it in one propose_design call now: short instructions, only the tools it needs.` }], only: [DESIGN_TOOL.name] },
+    { messages: [{ role: 'user', content: designRequest(spec) }] },
+  ];
+  for (const attempt of attempts) {
+    if (last || input.signal?.aborted) break;
+    await runArchitect({ ...input, ...attempt, onEvent }).catch(() => undefined);
+  }
+  if (last) return { ...last, config: { ...last.config, name: spec.name, description: last.config.description || spec.description }, designed: true };
+  const model = input.resources ? chooseModel(undefined, input.resources.models) : undefined;
+  return { config: { name: spec.name, description: spec.description, instructions: spec.instructions, tools: [], ...(model && { model }) }, needs: [], dropped: [], missing: [], designed: false };
 }

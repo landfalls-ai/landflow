@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Activity, BookOpenCheck, BookOpenText, Bot, Brain, ChartColumn, House, KeyRound, LayoutTemplate, Menu, Puzzle, Search, Settings, Store, Table2, Workflow, X } from 'lucide-react';
+import { Activity, BookOpenCheck, BookOpenText, Bot, Brain, ChartColumn, House, KeyRound, LayoutTemplate, Menu, PanelLeftClose, PanelLeftOpen, Puzzle, Search, Settings, Store, Table2, Workflow, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useLiveConnected, useLiveEvents } from '@/lib/client/live';
@@ -43,9 +43,12 @@ const GROUPS: Array<{ label: string; items: Array<{ href: string; label: string;
   },
 ];
 
+const RAIL_KEY = 'landflow-rail-collapsed';
+
 /**
  * The left rail: product mark, grouped navigation, live status, the user menu. Not on sign-in and public pages. On a phone
- * (below `md`) the rail is a drawer behind a slim top bar with a menu button.
+ * (below `md`) the rail is a drawer behind a slim top bar with a menu button. On a desktop it folds to its icons (the
+ * button beside the mark), so the editor's canvas and Spotlight get the room; the choice is kept in the browser.
  */
 export function Sidebar() {
   const pathname = usePathname();
@@ -81,9 +84,34 @@ function PhoneBar({ onMenu }: { onMenu: () => void }) {
   );
 }
 
+/** The desktop rail folded to its icons: read after mount, so the server's HTML (unfolded) matches the first render. */
+function useRailCollapsed(): [boolean, (collapsed: boolean) => void] {
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem(RAIL_KEY) === 'yes');
+    } catch {
+      // Private mode: unfolded.
+    }
+  }, []);
+  const set = (value: boolean) => {
+    setCollapsed(value);
+    try {
+      localStorage.setItem(RAIL_KEY, value ? 'yes' : 'no');
+    } catch {
+      // Private mode: the choice holds for this page.
+    }
+  };
+  return [collapsed, set];
+}
+
 function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; onClose: () => void }) {
   const connected = useLiveConnected();
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
+  const [railCollapsed, setRailCollapsed] = useRailCollapsed();
+  // Folded on a desktop only: the phone drawer always shows the labels.
+  const folded = railCollapsed && !open;
+  const label = folded ? 'md:hidden' : '';
 
   const load = () => api<{ plugins: PluginSummary[] }>('/api/plugins').then((r) => setPlugins(r.plugins)).catch(() => {});
   useEffect(() => {
@@ -97,24 +125,40 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
   return (
     <aside
       className={cn(
-        'top-0 h-screen w-[196px] shrink-0 flex-col border-r border-hair bg-sf2 px-1.5 py-2.5 md:sticky md:z-30 md:flex md:shadow-none',
+        'top-0 h-screen w-[196px] shrink-0 flex-col border-r border-hair bg-sf2 px-1.5 py-2.5 transition-[width] duration-150 md:sticky md:z-30 md:flex md:shadow-none',
+        folded && 'md:w-[56px]',
         open ? 'fixed left-0 z-50 flex overflow-y-auto shadow-pop' : 'hidden',
       )}
     >
       <button type="button" aria-label="Close the menu" onClick={onClose} className="absolute right-1.5 top-2.5 grid size-8 place-items-center rounded-lg text-t3 hover:bg-acdim hover:text-t1 md:hidden">
         <X className="size-4" />
       </button>
-      <Link href="/" className="mb-2 flex items-center gap-2.5 px-2.5 py-1">
-        <span className="grid size-[34px] shrink-0 place-items-center rounded-[9px] border border-acbd bg-ac2 text-[12px] font-bold tracking-[0.02em] text-on-ac">LF</span>
-        <span className="truncate text-[13px] font-semibold text-t1">Landflow</span>
-      </Link>
-      <EnvironmentBadge />
-      <ProjectSwitcher />
+      <div className={cn('mb-2 flex items-center gap-1', folded && 'md:flex-col')}>
+        <Link href="/" title="Landflow" className={cn('flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1', folded && 'md:px-0.5')}>
+          <span className="grid size-[34px] shrink-0 place-items-center rounded-[9px] border border-acbd bg-ac2 text-[12px] font-bold tracking-[0.02em] text-on-ac">LF</span>
+          <span className={cn('truncate text-[13px] font-semibold text-t1', label)}>Landflow</span>
+        </Link>
+        <button
+          type="button"
+          onClick={() => setRailCollapsed(!railCollapsed)}
+          aria-label={folded ? 'Show the menu' : 'Hide the menu'}
+          aria-expanded={!folded}
+          title={folded ? 'Show the menu' : 'Hide the menu'}
+          className="hidden size-8 shrink-0 place-items-center rounded-lg text-t3 hover:bg-acdim hover:text-t1 md:grid"
+        >
+          {folded ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+        </button>
+      </div>
+      <div className={label}>
+        <EnvironmentBadge />
+        <ProjectSwitcher />
+      </div>
 
       <nav className="flex flex-col">
         {GROUPS.map((group) => (
           <div key={group.label} className="flex flex-col gap-0.5">
-            <div className="px-2.5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">{group.label}</div>
+            <div className={cn('px-2.5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3', label)}>{group.label}</div>
+            {folded && <div className="mx-2 my-2 hidden border-t border-hair md:block" aria-hidden />}
             {group.items.map((item) => {
               const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
               const Icon = item.icon;
@@ -123,12 +167,14 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
                   key={item.href}
                   href={item.href}
                   aria-current={active ? 'page' : undefined}
-                  className={cn('flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13px] transition-colors duration-[120ms]', active ? 'bg-acdim font-semibold text-t1' : 'text-t2 hover:bg-acdim hover:text-t1')}
+                  aria-label={folded ? item.label : undefined}
+                  title={folded ? item.label : undefined}
+                  className={cn('flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13px] transition-colors duration-[120ms]', folded && 'md:justify-center md:px-0', active ? 'bg-acdim font-semibold text-t1' : 'text-t2 hover:bg-acdim hover:text-t1')}
                 >
                   <Icon className="size-[18px] shrink-0" strokeWidth={1.7} />
-                  <span className="truncate">{item.label}</span>
-                  {item.preview && <span className="ml-auto rounded-full border border-acbd bg-acdim px-1.5 text-[10px] font-semibold leading-4 text-ac">Preview</span>}
-                  {item.href === '/plugins' && plugins.length > 0 && <span className="ml-auto font-mono text-[11px] font-normal text-t3">{online}/{plugins.length}</span>}
+                  <span className={cn('truncate', label)}>{item.label}</span>
+                  {item.preview && <span className={cn('ml-auto rounded-full border border-acbd bg-acdim px-1.5 text-[10px] font-semibold leading-4 text-ac', label)}>Preview</span>}
+                  {item.href === '/plugins' && plugins.length > 0 && <span className={cn('ml-auto font-mono text-[11px] font-normal text-t3', label)}>{online}/{plugins.length}</span>}
                 </Link>
               );
             })}
@@ -139,25 +185,28 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
       <Link
         href="/settings"
         aria-current={pathname.startsWith('/settings') ? 'page' : undefined}
+        aria-label={folded ? 'Settings' : undefined}
+        title={folded ? 'Settings' : undefined}
         className={cn(
           'mb-2 mt-auto flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13px] transition-colors duration-[120ms]',
+          folded && 'md:justify-center md:px-0',
           pathname.startsWith('/settings') ? 'bg-acdim font-semibold text-t1' : 'text-t2 hover:bg-acdim hover:text-t1',
         )}
       >
         <Settings className="size-[18px] shrink-0" strokeWidth={1.7} />
-        <span className="truncate">Settings</span>
+        <span className={cn('truncate', label)}>Settings</span>
       </Link>
-      <div className="flex flex-col gap-2.5 px-2.5 pb-1">
+      <div className={cn('flex flex-col gap-2.5 px-2.5 pb-1', folded && 'md:items-center md:px-0')}>
         <div className="flex items-center gap-2 text-[12px] text-t3" title={connected ? 'Receiving live events' : 'Reconnecting to the event stream'}>
           <StatusDot status={connected ? 'online' : 'offline'} />
-          {connected ? 'Live' : 'Reconnecting…'}
+          <span className={label}>{connected ? 'Live' : 'Reconnecting…'}</span>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className={cn('flex flex-wrap items-center gap-1.5', label)}>
           <ThemeToggle />
           <LookToggle />
         </div>
       </div>
-      <div className="mt-2 border-t border-hair pt-2">
+      <div className={cn('mt-2 border-t border-hair pt-2', label)}>
         <UserMenu />
       </div>
     </aside>

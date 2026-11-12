@@ -1,10 +1,7 @@
 import { z } from 'zod';
-import { agentTeamStore } from '@/lib/server/agent-teams/store';
+import { roster } from '@/lib/server/assistant/roster';
 import { buildFlow } from '@/lib/server/flow-builder';
 import { error, handler, json, parseBody } from '@/lib/server/http';
-import { withOwnership } from '@/lib/server/projects';
-import { routeActor } from '@/lib/server/projects/http';
-import { teamBrief } from '@/lib/shared/agent-teams';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,10 +12,10 @@ export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
   try {
-    // The published teams the caller can see, as Spotlight's chat gets them: a Run a Team node needs a real one.
-    const visible = new Set(withOwnership(routeActor(), 'agentTeam', agentTeamStore.summaries()).map((t) => t.id));
-    const teams = agentTeamStore.list().filter((t) => visible.has(t.id)).flatMap((t) => teamBrief(t) ?? []).slice(0, 20);
-    return json({ draft: await buildFlow(parsed.data.prompt, parsed.data.model, teams) });
+    // The published agents and teams the caller can see, as Spotlight's chat gets them: a step that needs an agent runs
+    // one of them when one fits, and Run an Agent and Run a Team need real ones.
+    const { agents, teams } = roster();
+    return json({ draft: await buildFlow(parsed.data.prompt, parsed.data.model, teams, agents) });
   } catch (e) {
     return error((e as Error).message, 502);
   }

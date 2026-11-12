@@ -30,6 +30,11 @@ export type AssistantOp =
       before?: string;
       /** Output of `after` to wire from (If/Switch-like nodes: 0 = first branch). */
       output?: number;
+      /**
+       * A Run an Agent node for an agent that doesn't exist yet (Spotlight's `newAgent`): the editor saves it as a draft
+       * when the change is applied and points the node at it; a person gives it tools and publishes it before it runs.
+       */
+      newAgent?: NewAgentSpec;
     }
   | { op: 'setParameters'; node: string; parameters: Record<string, unknown> }
   | { op: 'connect'; from: string; to: string; output?: number; input?: number; type?: ConnectionType }
@@ -45,6 +50,25 @@ export type AssistantOp =
   | { op: 'setNodeSettings'; node: string; settings: NodeSettingsPatch }
   /** The workflow's settings: its error workflow, timeout, automatic retries. */
   | { op: 'setWorkflowSettings'; settings: WorkflowSettingsPatch };
+
+/** A dedicated agent Spotlight proposes when none of the published ones fits a step (docs/assistant.md#agents-and-teams). */
+export interface NewAgentSpec {
+  name: string;
+  /** What it does, one or two sentences: the Agents page shows it and other flows find it by it. */
+  description: string;
+  /** Its system instructions: how it does the job. */
+  instructions: string;
+}
+
+/** The node type that runs an agent as a step. */
+export const RUN_AGENT_TYPE = 'core.messageAgent';
+
+/** A model's `newAgent` fields, cut to size; undefined without a name. */
+export function newAgentSpec(o: Record<string, unknown> | undefined): NewAgentSpec | undefined {
+  const name = text(o?.name)?.slice(0, 80);
+  if (!name) return undefined;
+  return { name, description: text(o?.description)?.slice(0, 500) ?? '', instructions: text(o?.instructions)?.slice(0, 4000) ?? '' };
+}
 
 /** The node settings an op may change. */
 export interface NodeSettingsPatch {
@@ -167,6 +191,7 @@ function parseOp(o: Record<string, unknown> | undefined): AssistantOp | undefine
         ...(text(o.after) && { after: text(o.after) }),
         ...(text(o.before) && { before: text(o.before) }),
         ...(index(o.output) !== undefined && { output: index(o.output) }),
+        ...(type === RUN_AGENT_TYPE && newAgentSpec(record(o.newAgent)) && { newAgent: newAgentSpec(record(o.newAgent)) }),
       };
     }
     case 'setParameters':
@@ -192,6 +217,22 @@ function parseOp(o: Record<string, unknown> | undefined): AssistantOp | undefine
     }
     case 'turnIntoTeam':
       return node ? { op: 'turnIntoTeam', node } : undefined;
+    case 'newAgent': {
+      // A new agent and the Run an Agent node that runs it: an addNode the editor finishes by saving the agent.
+      const spec = newAgentSpec(record(o.agent) ?? o);
+      if (!spec) return undefined;
+      return {
+        op: 'addNode',
+        type: RUN_AGENT_TYPE,
+        name: text(o.nodeName) ?? spec.name,
+        newAgent: spec,
+        ...(text(o.ref) && { ref: text(o.ref) }),
+        ...(record(o.parameters) && { parameters: record(o.parameters) }),
+        ...(text(o.after) && { after: text(o.after) }),
+        ...(text(o.before) && { before: text(o.before) }),
+        ...(index(o.output) !== undefined && { output: index(o.output) }),
+      };
+    }
     case 'setNodeSettings': {
       const settings = settingsOf<NodeSettingsPatch>(o.settings, NODE_SETTINGS);
       return node && settings ? { op: 'setNodeSettings', node, settings } : undefined;
@@ -543,6 +584,7 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
           ...(after && { after: handle(after) }),
           ...(before && { before: handle(before) }),
           ...(after && op.output !== undefined && { output: op.output }),
+          ...(op.newAgent && op.type === RUN_AGENT_TYPE && { newAgent: op.newAgent }),
         });
         break;
       }
@@ -1018,6 +1060,11 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
     switch (op.op) {
       case 'addNode': {
         const label = op.name ?? lookup?.(op.type)?.displayName ?? op.type;
+        if (op.newAgent) {
+          if (op.ref) names.set(op.ref, label);
+          const at = op.before ? ` before “${name(op.before)}”` : op.after ? ` after “${name(op.after)}”` : '';
+          return { sign: '+', text: `new agent “${op.newAgent.name}” (saved as a draft) and a Run an Agent step for it${at}${op.newAgent.description ? ` · ${preview(op.newAgent.description)}` : ''}` };
+        }
         if (op.ref) names.set(op.ref, label);
         const kind = lookup?.(op.type)?.displayName;
         const where = op.before

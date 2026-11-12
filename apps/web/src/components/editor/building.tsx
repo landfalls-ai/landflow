@@ -1,17 +1,17 @@
 'use client';
 /**
  * Building, step by step (docs/assistant.md#building-step-by-step), drawn in the new look only. While Spotlight works on a
- * change, the conversation folds to a card at the side of the canvas that lists the steps and ticks each one off; the nodes
- * the plan adds appear on the canvas as dashed ghosts (the one being made shimmers) with dashed new connections; a thin bar
- * on top of the canvas shows how far the plan is. It is still a plan: nothing changes in the workflow until Apply, and
- * "Ask for a change…" sends a follow-up (stopping the reply first when it is still going).
+ * change, its reply in the Spotlight panel lists the steps and ticks each one off (LiveSteps); the nodes the plan adds
+ * appear on the canvas as dashed ghosts (the one being made shimmers) with dashed new connections; a thin bar on top of the
+ * canvas shows how far the plan is. It is still a plan: nothing changes in the workflow until it is applied (by Apply, or
+ * by autonomous mode as the reply ends).
  *
  * A proposal arrives whole, so its steps are revealed one by one on a short timer (`useReveal`); the tool calls before it
  * (Read the workflow, Searched nodes…) are steps as they stream.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { BaseEdge, Handle, Position, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
-import { ArrowUp, Check, Loader2, Maximize2, Sparkles, Square, TriangleAlert } from 'lucide-react';
+import { Check, Loader2, TriangleAlert } from 'lucide-react';
 import { create } from 'zustand';
 import { buildSteps, planOf, stepProgress, visibleGhosts, type BuildStep, type GhostNode, type Plan } from '@/lib/shared/build-steps';
 import { nodeColor } from '@/lib/client/node-style';
@@ -21,6 +21,7 @@ import { NodeIcon } from '../ui/icon';
 import { edgePath, useLane } from '../canvas/edge-path';
 import { useNewLook } from '../shell/look-toggle';
 import { applyChanges, editorLookup, sendFeedback, useAssistant, useWorking, type Proposal } from './assistant';
+import { useAutonomous } from './autonomous';
 import { handleId, useEditor } from './store';
 
 /** How long a step takes to tick off once the plan is there. */
@@ -29,7 +30,7 @@ const STEP_MS = 520;
 /** The steps revealed so far, for the reply they belong to. */
 const useRevealed = create<{ reply?: string; revealed: number }>(() => ({ revealed: 0 }));
 
-interface Live {
+export interface Live {
   replyId: string;
   ask?: string;
   proposals: Array<{ itemId: string; proposal: Proposal }>;
@@ -87,12 +88,6 @@ export function useLive(): Live | undefined {
   };
 }
 
-/** Spotlight folds its conversation into the card while a change is being built. */
-export const useBuilding = () => {
-  const live = useLive();
-  return Boolean(live);
-};
-
 /** Reveals the plan's steps one by one while the change is being built. */
 function useReveal(live: Live | undefined) {
   const id = live?.replyId;
@@ -148,12 +143,12 @@ function StepRow({ step }: { step: BuildStep }) {
   );
 }
 
-/** The card at the top left of the canvas while a change is built: steps, Apply, and an input to redirect. */
-export function BuildCard() {
-  const live = useLive();
-  const detail = useAssistant((s) => s.detail);
-  const [text, setText] = useState('');
-  if (!live || detail) return null;
+/**
+ * A change being built, as the steps of its reply in the Spotlight panel's timeline: each ticks off as the ghosts appear
+ * on the canvas. Apply and Dismiss when autonomous mode is off; on, Spotlight applies it as the reply ends.
+ */
+export function LiveSteps({ live }: { live: Live }) {
+  const autonomous = useAutonomous((s) => s.on);
   const { streaming, plan, revealed, steps } = live;
   const ready = !streaming && live.proposals.length > 0;
   const all = revealed >= plan.steps.length;
@@ -167,57 +162,27 @@ export function BuildCard() {
     const label = live.proposals.length === 1 ? live.proposals[0].proposal.summary : `${live.proposals.length} changes`;
     if (!applyChanges(live.proposals.map((p) => ({ ops: p.proposal.ops, kind: 'proposal' as const })), label)) return;
     decide('applied');
-    useAssistant.getState().setOpen(false);
-  };
-  const send = () => {
-    const message = text.trim();
-    if (!message) return;
-    setText('');
-    const assistant = useAssistant.getState();
-    // Redirecting mid-way: stop the reply that is going, then ask again with what it had.
-    if (assistant.pending) assistant.stop();
-    void useAssistant.getState().send(message);
   };
 
   return (
-    <div role="status" aria-live="polite" className="pointer-events-auto absolute left-3 top-3 z-20 flex max-h-[calc(100%-7rem)] w-[320px] max-w-[calc(100%-5rem)] animate-fade-up flex-col overflow-hidden rounded-2xl border border-hair bg-sf/95 shadow-pop backdrop-blur">
-      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-hair pl-3 pr-1">
-        {streaming ? <Loader2 className="size-3.5 shrink-0 animate-spin text-viz-7" /> : <Sparkles className="size-3.5 shrink-0 text-viz-7" />}
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-t1">{streaming ? 'Building the change' : all ? 'Ready to apply' : 'Building the change'}</span>
-        {streaming && (
-          <button title="Stop" aria-label="Stop" onClick={() => useAssistant.getState().stop()} className="grid size-6 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd">
-            <Square className="size-3" fill="currentColor" />
-          </button>
-        )}
-        <button title="Show the conversation" aria-label="Show the conversation" onClick={() => useAssistant.setState({ detail: true, open: true })} className="grid size-6 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1">
-          <Maximize2 className="size-3.5" />
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {live.ask && (
-          <p className="truncate px-3 pt-2 text-[11.5px] text-t3" title={live.ask}>
-            “{live.ask}”
-          </p>
-        )}
-        <ol className="space-y-2 px-3 py-2.5">
-          {steps.map((step) => (
-            <StepRow key={step.id} step={step} />
-          ))}
-        </ol>
-        {live.text && !streaming && <p className="line-clamp-4 px-3 pb-2 text-[12px] leading-snug text-t2 [overflow-wrap:anywhere]">{live.text}</p>}
-        {ready && warnings.length > 0 && (
-          <p className="flex items-start gap-1.5 px-3 pb-2 text-[11px] leading-snug text-warn">
-            <TriangleAlert className="mt-px size-3 shrink-0" /> Leaves {warnings.join('; ')}.
-          </p>
-        )}
-        {ready && dropped > 0 && (
-          <p className="px-3 pb-2 text-[11px] text-t3" title={live.proposals.flatMap((p) => p.proposal.dropped).join('\n')}>
-            {dropped} part{dropped === 1 ? '' : 's'} left out (hover for why)
-          </p>
-        )}
-      </div>
-      {ready && (
-        <div className="flex items-center gap-1.5 border-t border-hair px-3 py-2">
+    <div className="space-y-2">
+      <ol className="space-y-2">
+        {steps.map((step) => (
+          <StepRow key={step.id} step={step} />
+        ))}
+      </ol>
+      {ready && warnings.length > 0 && (
+        <p className="flex items-start gap-1.5 text-[11px] leading-snug text-warn">
+          <TriangleAlert className="mt-px size-3 shrink-0" /> Leaves {warnings.join('; ')}.
+        </p>
+      )}
+      {ready && dropped > 0 && (
+        <p className="text-[11px] text-t3" title={live.proposals.flatMap((p) => p.proposal.dropped).join('\n')}>
+          {dropped} part{dropped === 1 ? '' : 's'} left out (hover for why)
+        </p>
+      )}
+      {ready && all && !autonomous && (
+        <div className="flex items-center gap-1.5">
           <Button size="sm" variant="primary" onClick={apply}>
             Apply
           </Button>
@@ -234,18 +199,6 @@ export function BuildCard() {
           <span className="ml-auto text-[11px] text-t3">Nothing changes until you apply</span>
         </div>
       )}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-        className="flex items-center gap-1.5 border-t border-hair py-1.5 pl-3 pr-1.5"
-      >
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask for a change…" aria-label="Ask for a change" className="h-7 min-w-0 flex-1 bg-transparent text-[12.5px] text-t1 outline-none placeholder:text-t3" />
-        <button type="submit" disabled={!text.trim()} aria-label="Send" className="grid size-7 shrink-0 place-items-center rounded-full bg-ac2 text-on-ac transition-opacity disabled:opacity-30">
-          <ArrowUp className="size-3.5" />
-        </button>
-      </form>
     </div>
   );
 }

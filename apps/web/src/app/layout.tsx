@@ -30,8 +30,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <main className="relative min-w-0 flex-1">{children}</main>
           </div>
         </ViewerProvider>
+        {/* Clear of the editor's Spotlight panel: it sets --toast-right (desktop) and --toast-bottom (its phone sheet). */}
         <Toaster
           position="bottom-right"
+          offset={{ right: 'var(--toast-right, 24px)', bottom: 'var(--toast-bottom, 24px)' }}
+          mobileOffset={{ bottom: 'var(--toast-bottom, 16px)' }}
           toastOptions={{ className: '!bg-sf !border-hair !text-t1 !rounded-xl !shadow-pop !text-[13px]' }}
         />
       </body>

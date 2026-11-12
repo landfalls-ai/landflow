@@ -1,8 +1,8 @@
 'use client';
-import { memo } from 'react';
+import { memo, useEffect } from 'react';
 import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
-import { CircleDot, Copy, Loader2, Play, Power, Settings2, SkipForward, Trash2, UsersRound } from 'lucide-react';
+import { CircleDot, Copy, Loader2, Play, Power, Settings2, SkipForward, Trash2, UsersRound, Wrench, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ExecutionEvent } from '@/lib/shared/types';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
@@ -62,6 +62,8 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   const fresh = useEditor((s) => s.lastAddedId === id);
   // Spotlight's test-and-fix session is asking for a fix to this node.
   const fixing = useAssistant((s) => s.fixing === id);
+  // What the session fixed here: a bubble until dismissed or a minute passes.
+  const fixNote = useAssistant((s) => s.fixNotes[id]);
   // What it reports while it runs: a team's working member, a remote agent's step.
   const progress = useEditor((s) => s.progress[id]);
   const runs = useEditor((s) => s.runs[id]);
@@ -143,6 +145,12 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
           </NodeToolbar>
         )
       )}
+      {fixNote && (
+        // Above the progress line or the selection toolbar when either shows.
+        <NodeToolbar isVisible={!fixing} position={Position.Top} offset={(compact ? 12 : 14) + (selected || progress || teamId ? 36 : 0)}>
+          <FixNote nodeId={id} text={fixNote.text} at={fixNote.at} />
+        </NodeToolbar>
+      )}
       <NodeToolbar isVisible={fixing && !selected} position={Position.Top} offset={compact ? 12 : 14}>
         <span className="flex animate-pop items-center gap-1 rounded-full border border-acbd bg-sf px-2 py-0.5 text-[11px] font-semibold text-viz-7 shadow-pop">
           <Loader2 className="size-3 animate-spin" /> Spotlight is fixing this
@@ -186,3 +194,26 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
     </NodeTile>
   );
 });
+
+/** How long a fix's bubble stays on its node unless dismissed. */
+const FIX_NOTE_MS = 60_000;
+
+/** What Spotlight's test-and-fix session changed on this node, with × to dismiss it. */
+function FixNote({ nodeId, text, at }: { nodeId: string; text: string; at: number }) {
+  useEffect(() => {
+    const timer = setTimeout(() => useAssistant.getState().dismissFix(nodeId), Math.max(0, at + FIX_NOTE_MS - Date.now()));
+    return () => clearTimeout(timer);
+  }, [nodeId, at]);
+  return (
+    <div role="status" className="nodrag flex w-max max-w-[min(240px,70vw)] animate-pop items-start gap-1.5 rounded-xl border border-acbd bg-sf py-1 pl-2 pr-1 text-[11.5px] leading-snug text-t1 shadow-pop">
+      <Wrench className="mt-px size-3 shrink-0 text-viz-7" />
+      <span className="min-w-0 [overflow-wrap:anywhere]">
+        <span className="font-semibold text-viz-7">Fixed: </span>
+        {text}
+      </span>
+      <button type="button" aria-label="Dismiss" title="Dismiss" onClick={() => useAssistant.getState().dismissFix(nodeId)} className="-my-1 grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:size-9">
+        <X className="size-3.5" />
+      </button>
+    </div>
+  );
+}
