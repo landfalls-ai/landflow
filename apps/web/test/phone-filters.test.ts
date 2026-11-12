@@ -19,3 +19,17 @@ describe('filters on a phone', () => {
     expect(renderToStaticMarkup(createElement(Sheet, { open: false, onClose: () => {}, title: 'Filters' }, 'chips'))).toBe('');
   });
 });
+
+describe('the phone’s field picker', () => {
+  it('lists the input’s fields depth first, each with the expression a drop would insert', async () => {
+    const { fieldList } = await import('@/components/run/data-view');
+    const list = fieldList([{ json: { ticket: { subject: 'Login fails', 'odd key': 1 }, tags: ['a'] } }]);
+    expect(list.map((f) => [f.key, f.depth, f.expression])).toEqual([
+      ['ticket', 0, '{{ $json.ticket }}'],
+      ['subject', 1, '{{ $json.ticket.subject }}'],
+      ['odd key', 1, "{{ $json.ticket['odd key'] }}"],
+      ['tags', 0, '{{ $json.tags }}'],
+    ]);
+    expect(fieldList(undefined)).toEqual([]);
+  });
+});

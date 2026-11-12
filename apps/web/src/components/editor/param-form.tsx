@@ -10,7 +10,9 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { NodeItem, PropertyDescriptor } from '@/lib/shared/types';
 import { sessionKeyProblem, WORKFLOW_NODES_METHOD, type HintNode } from '@/lib/shared/chat-roster-hints';
-import { FIELD_DRAG_TYPE } from '../run/data-view';
+import { FIELD_DRAG_TYPE, fieldList } from '../run/data-view';
+import { Sheet } from '../ui/sheet';
+import { usePhone } from '@/lib/client/use-phone';
 import { Input, Select, Switch } from '../ui/inputs';
 import { sampleOf, type CompletionData } from './expression-completions';
 import { ExpressionDataContext, ExpressionInput, loadSecretNames, ParamScopeContext as ScopeContext, type ParamScope } from './expression-input';
@@ -84,10 +86,27 @@ function ExpressionPreview({ value }: { value: string }) {
   );
 }
 
-/** Highlights a field while an input field is dragged over it; the drop inserts `{{ $json.path }}` (an empty value is replaced). */
+/** An expression goes in as a dropped field does: an empty value is replaced, otherwise it is added after a space. */
+const withField = (value: unknown, expression: string) => {
+  const current = value === undefined || value === null ? '' : String(value);
+  return current.trim() === '' ? expression : `${current} ${expression}`;
+};
+
+/**
+ * Highlights a field while an input field is dragged over it; the drop inserts `{{ $json.path }}` (an empty value is
+ * replaced). A phone can't drag: a `{}` button beside the field lists the input's fields to tap (docs/mobile.md#the-node-editor).
+ */
 function DropTarget({ value, onChange, children }: { value: unknown; onChange: (v: unknown) => void; children: ReactNode }) {
   const [over, setOver] = useState(false);
+  const phone = usePhone();
   const accepts = (e: DragEvent) => e.dataTransfer.types.includes(FIELD_DRAG_TYPE);
+  if (phone)
+    return (
+      <div className="flex items-start gap-1.5">
+        <div className="min-w-0 flex-1">{children}</div>
+        <FieldPicker onPick={(expression) => onChange(withField(value, expression))} />
+      </div>
+    );
   return (
     <div
       onDragOver={(e) => {
@@ -100,14 +119,56 @@ function DropTarget({ value, onChange, children }: { value: unknown; onChange: (
         setOver(false);
         if (!accepts(e)) return;
         e.preventDefault();
-        const expression = e.dataTransfer.getData('text/plain');
-        const current = value === undefined || value === null ? '' : String(value);
-        onChange(current.trim() === '' ? expression : `${current} ${expression}`);
+        onChange(withField(value, e.dataTransfer.getData('text/plain')));
       }}
       className={cn('rounded-[10px] transition-shadow duration-150', over && 'shadow-[0_0_0_2px_var(--ac)] animate-pulse')}
     >
       {children}
     </div>
+  );
+}
+
+/** A phone's `{}`: the fields of the step's input, as a sheet to tap one from. */
+function FieldPicker({ onPick }: { onPick: (expression: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const items = useContext(PreviewContext)?.items;
+  const fields = useMemo(() => (open ? fieldList(items) : []), [open, items]);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label="Insert an input field"
+        aria-haspopup="dialog"
+        className="grid size-11 shrink-0 place-items-center rounded-[10px] border border-bd bg-wl font-mono text-[14px] font-semibold text-t2"
+      >
+        {'{}'}
+      </button>
+      <Sheet open={open} onClose={() => setOpen(false)} title="Insert an input field">
+        {fields.length ? (
+          <ul className="-mx-1 flex flex-col">
+            {fields.map((field) => (
+              <li key={field.expression}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onPick(field.expression);
+                    setOpen(false);
+                  }}
+                  className="flex min-h-11 w-full items-center gap-2 rounded-lg px-1 text-left hover:bg-acdim"
+                  style={{ paddingLeft: 4 + field.depth * 16 }}
+                >
+                  <span className="shrink-0 font-mono text-[13px] font-medium text-t1">{field.key}</span>
+                  <span className="min-w-0 truncate font-mono text-[12px] text-t3">{field.sample}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-[13px] text-t2">No input yet. Run the steps before this one, then its fields are here to tap.</p>
+        )}
+      </Sheet>
+    </>
   );
 }
 
@@ -526,11 +587,11 @@ function FixedCollectionField({ nodeType, property, value, onChange }: { nodeTyp
                       <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">
                         {group.displayName} {multiple && index + 1}
                       </span>
-                      <button onClick={() => write(entries.filter((_, i) => i !== index))} className="grid size-6 place-items-center rounded-full text-t3 opacity-0 transition hover:bg-rddim hover:text-rd group-hover/entry:opacity-100">
+                      <button onClick={() => write(entries.filter((_, i) => i !== index))} aria-label="Remove" className="grid size-6 place-items-center rounded-full text-t3 opacity-0 transition hover:bg-rddim hover:text-rd group-hover/entry:opacity-100 max-md:size-9 max-md:opacity-100">
                         <Trash2 className="size-3.5" />
                       </button>
                     </div>
-                    <div className={cn('grid gap-2', group.values.length === 3 ? 'grid-cols-[1fr_auto_1fr] items-end' : 'grid-cols-1')}>
+                    <div className={cn('grid gap-2', group.values.length === 3 ? 'grid-cols-[1fr_auto_1fr] items-end max-md:grid-cols-1' : 'grid-cols-1')}>
                       {group.values.map((child) =>
                         isNestedVisible(child, entry, root) ? (
                           <Field key={child.name} nodeType={nodeType} property={child} value={entry[child.name]} parameters={entry} onChange={(v) => write(entries.map((e, i) => (i === index ? { ...e, [child.name]: v } : e)))} />

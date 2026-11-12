@@ -139,6 +139,19 @@ function schemaOf(values: unknown[], base: Path): SchemaField[] {
   });
 }
 
+/** Every field of the items, depth first, with its expression: for picking one by tapping on a phone (param-form.tsx). */
+export function fieldList(items: NodeItem[] | undefined): Array<{ key: string; depth: number; expression: string; sample: string }> {
+  const out: Array<{ key: string; depth: number; expression: string; sample: string }> = [];
+  const walk = (fields: SchemaField[], depth: number) => {
+    for (const field of fields) {
+      out.push({ key: field.key, depth, expression: fieldExpression(field.path), sample: sampleText(field) });
+      if (field.children) walk(field.children, depth + 1);
+    }
+  };
+  walk(schemaOf((items ?? []).map((i) => i.json), []), 0);
+  return out;
+}
+
 function sampleText(field: SchemaField): string {
   const { type, sample } = field;
   if (type === 'array') return `${(sample as unknown[]).length} item${(sample as unknown[]).length === 1 ? '' : 's'}${!field.children ? ` · ${(sample as unknown[]).slice(0, 4).map((v) => JSON.stringify(v)).join(', ')}` : ''}`;

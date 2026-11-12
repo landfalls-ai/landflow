@@ -63,7 +63,10 @@ name at the top. Under it, **Input**, **Parameters**, **Output** and **Settings*
 no Input). At the foot, **‹** and **›** move to the step before and after, and **Run step** runs just this step and then
 shows its output. The pane stays as you move between steps, so outputs can be compared one step at a time (a trigger,
 which has no Input, shows Parameters); opening a step from the canvas starts at Parameters, or at Input when a debug run is
-paused before it. **Breakpoint** and **Run from here** lead the Settings pane. Focus moves to the back arrow when the
+paused before it. **Breakpoint** and **Run from here** lead the Settings pane. A phone can't drag a field from Input into a parameter, so each field that takes one
+has a **{}** beside it: it lists the input's fields, with a sample of each, and a tap puts `{{ $json.field }}` in (an
+empty field is replaced, otherwise it goes after a space, as a drop does). Rows of a collection (Name, Type, Value) stack
+on a phone, and their remove button shows without hovering. Focus moves to the back arrow when the
 editor opens, and toasts sit just above the foot bar.
 
 ## Spotlight's dock
@@ -114,8 +117,7 @@ that opened it.
 2. ~~Phone app bar~~.
 3. ~~Bottom tab bar~~.
 4. ~~Editor header that fits~~.
-5. ~~The node editor as a full-screen page~~ (above). Still to come: a `{}` picker that inserts an input field into a
-   parameter by tapping (dragging fields from Input doesn't work by touch).
+5. ~~The node editor as a full-screen page~~, with a **{}** picker for input fields.
 6. ~~Tap to open a step, no zoom rail, one canvas toolbar~~.
 7. ~~A Steps view as the phone's default~~.
 8. ~~Runs on the step cards~~ (the Execute bar stays at the foot in place of the Logs panel).
