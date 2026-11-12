@@ -13,8 +13,8 @@
 import { createHash } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import type { Workflow } from '@landflow/engine';
-import type { DetectorId, DismissReason, Proposal, ProposalInput, ProposalRisk, ProposalSource, ProposalStatus } from '../../shared/brain';
-import { DETECTORS } from '../../shared/brain';
+import type { DetectorId, DetectorStat, DismissReason, FlowDetectorId, Proposal, ProposalAction, ProposalDecision, ProposalInput, ProposalRisk, ProposalSource, ProposalStatus } from '../../shared/brain';
+import { DETECTOR_LABELS, DETECTORS, flowDetectorWorkflow, isFlowDetector, MAX_PROPOSAL_ACTIONS, quietBar, RESERVED_ACTION_IDS, detectorFilter } from '../../shared/brain';
 import { agentStore } from '../agents/store';
 import { validateOps } from '../assistant/ops';
 import { database, type Database } from '../db';
@@ -25,8 +25,12 @@ import { workflowForCall } from '../publish';
 import { store } from '../store';
 import { recordUsage } from '../usage/ledger';
 import type { UsageScope } from '../usage/query';
-import { baselineFor, checkEffect } from './effect';
+import { cleanAudience, inAudience, mirrorDecision, mirrorNew } from './audience';
+import { decidedBuilders, decisionListeners, dispatchDecision } from './decision-trigger';
+import { baselineFor, checkEffectAsync, settleBaseline, unsettled } from './effect';
+import { getEntity, entityKey, entityProject } from './entities';
 import { upsertFact } from './facts';
+import { listFlowDetectors } from './flow-detectors';
 
 const DAY_MS = 86_400_000;
 export const STALE_DAYS = 14;
@@ -59,6 +63,9 @@ const parse = (text: string): Proposal | undefined => {
     return undefined;
   }
 };
+
+/** Write a suggestion as it is (the Slack mirror records its message refs this way). */
+export const saveProposal = (proposal: Proposal, db: Database = database()): Proposal => save(proposal, db);
 
 function save(proposal: Proposal, db: Database = database()): Proposal {
   db.upsert('proposals', {
@@ -93,11 +100,12 @@ function inScope(p: Proposal, scope?: UsageScope): boolean {
   if (p.target.type === 'workflow') return Boolean(p.target.id && scope.workflows?.has(p.target.id));
   if (p.target.type === 'agent') return Boolean(p.target.id && scope.agents?.has(p.target.id));
   if (p.target.type === 'team') return Boolean(p.target.id && scope.teams?.has(p.target.id));
+  if (p.target.type === 'entity') return Boolean(p.target.id && scope.entities?.has(p.target.id));
   return false;
 }
 
 export function listProposals(
-  filter: { status?: ProposalStatus | 'all'; workflowId?: string; agentId?: string; detector?: DetectorId; scope?: UsageScope; limit?: number } = {},
+  filter: { status?: ProposalStatus | 'all'; workflowId?: string; agentId?: string; detector?: DetectorId; scope?: UsageScope; limit?: number; viewer?: { id: string; email?: string }; forMe?: boolean } = {},
   db: Database = database(),
 ): Proposal[] {
   const where: string[] = [];
@@ -117,7 +125,8 @@ export function listProposals(
     .map((p) => awake(p))
     .filter((p) => (status === 'all' ? true : p.status === status))
     .filter((p) => !filter.agentId || (p.target.type === 'agent' && p.target.id === filter.agentId))
-    .filter((p) => inScope(p, filter.scope))
+    // The people a suggestion is addressed to see it wherever it is about.
+    .filter((p) => (filter.forMe ? inAudience(filter.viewer, p) : inScope(p, filter.scope) || inAudience(filter.viewer, p)))
     .slice(0, filter.limit ?? 200);
 }
 
@@ -150,7 +159,13 @@ export function upsertProposal(input: NewProposal, db: Database = database(), no
   const open = db
     .all<{ data: string }>("SELECT data FROM proposals WHERE fingerprint = ? AND status IN ('open', 'snoozed')", input.fingerprint)
     .flatMap((r) => parse(r.data) ?? [])[0];
-  if (open) return save({ ...open, ...input, id: open.id, status: open.status, createdAt: open.createdAt, updatedAt: at, ...(open.snoozedUntil && { snoozedUntil: open.snoozedUntil }) }, db);
+  if (open) {
+    // A refresh keeps the Slack messages already posted (they are not posted again); a member added since gets one.
+    const slack = input.slack || open.slack ? { credential: (input.slack ?? open.slack)!.credential, messages: open.slack?.messages ?? [] } : undefined;
+    const refreshed = save({ ...open, ...input, ...(slack && { slack }), id: open.id, status: open.status, createdAt: open.createdAt, updatedAt: at, ...(open.snoozedUntil && { snoozedUntil: open.snoozedUntil }) }, db);
+    mirrorNew(refreshed);
+    return refreshed;
+  }
   if (heldBack(input.fingerprint, now, db)) return undefined;
   if (input.target.type === 'workflow' && input.target.id) {
     const week = db
@@ -162,11 +177,55 @@ export function upsertProposal(input: NewProposal, db: Database = database(), no
       save({ ...weakest, status: 'expired', updatedAt: at, note: 'Replaced by a stronger suggestion' }, db);
     }
   }
-  return save({ ...input, id: `pr_${nanoid(12)}`, status: 'open', createdAt: at, updatedAt: at }, db);
+  const added = save({ ...input, id: `pr_${nanoid(12)}`, status: 'open', createdAt: at, updatedAt: at }, db);
+  mirrorNew(added);
+  return added;
 }
 
-/** A suggestion from a workflow (Suggest Improvement) or the analyst: its ops are checked against the target workflow. */
-export function proposeFrom(input: ProposalInput, source: Exclude<ProposalSource, 'detector'>, db: Database = database()): Proposal | undefined {
+/** The buttons a flow asked for: at most 4, slug-like ids, none of the decisions' own names. Throws ProposalError when they don't fit. */
+export function cleanActions(value: unknown): ProposalAction[] {
+  let list = value;
+  if (typeof list === 'string') {
+    if (!list.trim()) return [];
+    try {
+      list = JSON.parse(list);
+    } catch {
+      throw new ProposalError('Actions is not valid JSON');
+    }
+  }
+  // The node's fixed collection hands over { buttons: [...] }.
+  if (list && typeof list === 'object' && !Array.isArray(list)) list = (list as { buttons?: unknown }).buttons;
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list)) throw new ProposalError('Actions must be a list of { id, label }');
+  const out: ProposalAction[] = [];
+  for (const raw of list) {
+    const a = (raw ?? {}) as Record<string, unknown>;
+    const id = typeof a.id === 'string' ? a.id.trim() : '';
+    const label = typeof a.label === 'string' ? a.label.trim() : '';
+    if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id)) throw new ProposalError(`Action id “${id}” must be lowercase letters, digits, - or _ (up to 32)`);
+    if (RESERVED_ACTION_IDS.includes(id)) throw new ProposalError(`Action id “${id}” is taken by a decision`);
+    if (!label) throw new ProposalError(`Action ${id} needs a label`);
+    if (out.some((x) => x.id === id)) throw new ProposalError(`Action id “${id}” is used twice`);
+    const confirm = typeof a.confirm === 'string' ? a.confirm.trim().slice(0, 200) : '';
+    out.push({ id, label: label.slice(0, 40), ...(a.style === 'primary' || a.style === 'default' ? { style: a.style } : {}), ...(confirm && { confirm }) });
+  }
+  if (out.length > MAX_PROPOSAL_ACTIONS) throw new ProposalError(`A suggestion can have at most ${MAX_PROPOSAL_ACTIONS} actions`);
+  return out;
+}
+
+/**
+ * A suggestion from a workflow (Suggest Improvement) or the analyst: its ops are checked against the target workflow.
+ * `detector`: a flow detector's Suggest Improvement (./flow-detectors.ts) posts as that detector, and a finding under the
+ * bar its quieting sets (quietBar) is held back.
+ * `preview` (a backtest, ./backtest.ts): nothing is written. A finding that clears the bar (made with the `quiet`
+ * multiplier given) comes back as the suggestion it would have been, with its fingerprint, and one under it as undefined.
+ */
+export function proposeFrom(
+  input: ProposalInput,
+  source: Exclude<ProposalSource, 'detector'>,
+  db: Database = database(),
+  options: { detector?: FlowDetectorId; preview?: { quiet: number; at: number } } = {},
+): Proposal | undefined {
   const title = input.title?.trim();
   const why = input.why?.trim();
   if (!title || !why) throw new ProposalError('A suggestion needs a title and a reason (why)');
@@ -174,41 +233,62 @@ export function proposeFrom(input: ProposalInput, source: Exclude<ProposalSource
   if (input.workflowId && !workflow) throw new ProposalError(`No workflow ${input.workflowId}`, 404);
   const agent = input.agentId ? agentStore.get(input.agentId) : undefined;
   if (input.agentId && !agent) throw new ProposalError(`No agent ${input.agentId}`, 404);
+  const actions = cleanActions(input.actions);
+  const entity = input.entity ? getEntity(input.entity.type, input.entity.id, db) : undefined;
+  if (input.entity && !entity) throw new ProposalError(`No ${input.entity.type} ${input.entity.id}`, 404);
+  const audience = cleanAudience(input.audience);
   const validated = workflow && input.ops ? validateOps(workflow, input.ops) : undefined;
   const node = workflow && input.nodeName ? workflow.nodes.find((n) => n.name === input.nodeName) : undefined;
   const target: Proposal['target'] = workflow
     ? { type: 'workflow', id: workflow.id, name: workflow.name, ...(node && { nodeId: node.id, nodeName: node.name }) }
     : agent
       ? { type: 'agent', id: agent.id, name: agent.name }
-      : { type: 'instance' };
-  // Advice about a node that already has open advice is the same suggestion in other words.
-  if (node && !validated?.ops.length && !input.draft && !input.agentChange) {
+      : entity
+        ? { type: 'entity', id: entityKey(entity), name: entity.name }
+        : { type: 'instance' };
+  // A flow detector's fingerprints are its own, as a built-in detector's are (detectors.ts `base`).
+  const given = input.fingerprint?.trim().slice(0, 64);
+  const fingerprint = options.detector
+    ? fingerprintOf(options.detector, ...(given ? [given] : [target.type, target.id, title]))
+    : given || fingerprintOf(source, input.label, target.type, target.id, title);
+  // Advice about a node that already has open advice is the same suggestion in other words (the same one again refreshes it).
+  if (!options.preview && node && !validated?.ops.length && !input.draft && !input.agentChange) {
     const open = listProposals({ status: 'open', workflowId: workflow!.id }, db);
-    if (open.some((p) => p.target.nodeId === node.id && !p.ops.length && !p.draft && !p.agentChange)) return undefined;
+    if (open.some((p) => p.fingerprint !== fingerprint && p.target.nodeId === node.id && !p.ops.length && !p.draft && !p.agentChange)) return undefined;
   }
   const risk: ProposalRisk = input.risk ?? (validated?.ops.length ? 'medium' : 'low');
   const confidence = Math.max(0, Math.min(1, input.confidence ?? 0.6));
-  return upsertProposal(
-    {
-      source,
-      ...(input.label && { label: input.label.slice(0, 80) }),
-      fingerprint: input.fingerprint?.slice(0, 64) || fingerprintOf(source, input.label, target.type, target.id, title),
-      ...((workflow || agent) && { projectId: homeProjectId(workflow ? 'workflow' : 'agent', (workflow ?? agent)!.id) }),
-      target,
-      title: title.slice(0, 160),
-      why: why.slice(0, 2_000),
-      evidence: (input.evidence ?? []).slice(0, 12),
-      ...(input.effect && { effect: input.effect.slice(0, 300) }),
-      ops: validated?.ops ?? [],
-      ...(validated && (validated.warnings.length || validated.dropped.length) && { warnings: [...validated.warnings, ...validated.dropped] }),
-      ...(input.draft && { draft: input.draft }),
-      ...(input.agentChange && agent && { agentChange: input.agentChange }),
-      risk,
-      confidence,
-      score: confidence * (risk === 'low' ? 10 : risk === 'medium' ? 8 : 5),
-    },
-    db,
-  );
+  const detector = options.detector;
+  if (detector && confidence < quietBar(options.preview ? options.preview.quiet : quietOf(detector, db))) return undefined;
+  const built: NewProposal = {
+    source: detector ? 'detector' : source,
+    ...(detector && { detector }),
+    ...(input.label && { label: input.label.slice(0, 80) }),
+    fingerprint,
+    ...((workflow || agent) && { projectId: homeProjectId(workflow ? 'workflow' : 'agent', (workflow ?? agent)!.id) }),
+    ...(!workflow && !agent && entity && entityProject(entity) && { projectId: entityProject(entity) }),
+    target,
+    title: title.slice(0, 160),
+    why: why.slice(0, 2_000),
+    evidence: (input.evidence ?? []).slice(0, 12),
+    ...(input.effect && { effect: input.effect.slice(0, 300) }),
+    ...(actions.length && { actions }),
+    ...(audience.length && { audience }),
+    ...(audience.length && input.slackCredential && { slack: { credential: input.slackCredential, messages: [] } }),
+    ops: validated?.ops ?? [],
+    ...(validated && (validated.warnings.length || validated.dropped.length) && { warnings: [...validated.warnings, ...validated.dropped] }),
+    ...(input.draft && { draft: input.draft }),
+    ...(input.agentChange && agent && { agentChange: input.agentChange }),
+    ...(detector && input.metricSpec && { metricSpec: input.metricSpec }),
+    risk,
+    confidence,
+    score: confidence * (risk === 'low' ? 10 : risk === 'medium' ? 8 : 5),
+  };
+  if (options.preview) {
+    const at = new Date(options.preview.at).toISOString();
+    return { ...built, id: 'preview', status: 'open', createdAt: at, updatedAt: at };
+  }
+  return upsertProposal(built, db);
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +297,8 @@ export function proposeFrom(input: ProposalInput, source: Exclude<ProposalSource
 
 export interface ApplyOptions {
   actorId?: string;
+  /** The workflow making the decision, when one does (a workflow that starts from On Suggestion Decided never starts one). */
+  viaWorkflowId?: string;
   /** Creates a draft's workflow in the right project (the route passes createIn). */
   createWorkflow?: (save: () => Workflow, id: string) => Workflow;
 }
@@ -225,7 +307,7 @@ export interface ApplyResult {
   proposal: Proposal;
   workflow?: Workflow;
   warnings: string[];
-  /** For a missing tool: the workflows its approval starts. */
+  /** The workflows this decision starts: On Usage Event on proposal.applied (Build it) and On Suggestion Decided. */
   started?: Array<{ id: string; name: string }>;
 }
 
@@ -270,16 +352,74 @@ export function applyProposal(id: string, options: ApplyOptions = {}, db: Databa
     // "Build it": a published workflow that starts from On Usage Event on proposal.applied builds the tool (an agentic
     // flow that writes the plugin, docs/second-brain.md). Applying only records the go-ahead.
     if (!builders().length) warnings.push('Nothing builds it yet: publish a workflow that starts from On Usage Event on proposal.applied (Suggestion From: Missing tool)');
-  } else {
+  } else if (!startersFor(proposal, decisionOf('applied', options.actorId), options.viaWorkflowId).length) {
     throw new ProposalError('This suggestion is advice only: there is nothing to apply. Mark it done once you have handled it.', 400);
   }
+  // Advice with a flow listening (On Suggestion Decided) falls through: applying records the go-ahead, as a missing tool does.
 
-  const started = proposal.detector === 'missing-tool' ? builders() : undefined;
-  return { proposal: markApplied(proposal, { actorId: options.actorId, createdWorkflowId }, db), ...(workflow && { workflow }), warnings, ...(started?.length && { started }) };
+  const done = finishApplied(proposal, { actorId: options.actorId, createdWorkflowId, viaWorkflowId: options.viaWorkflowId }, db);
+  return { proposal: done.proposal, ...(workflow && { workflow }), warnings, ...(done.started.length && { started: done.started }) };
 }
 
-/** Published workflows that start when a missing-tool suggestion is applied. */
-export function builders(): Array<{ id: string; name: string }> {
+/**
+ * Take one of the buttons a flow put on a suggestion. It records the decision (`decision.action` is the button's id),
+ * counts as applied (effect measurement and quieting see it so), and starts the flows listening. It changes nothing
+ * else: what the button means is up to the flow.
+ */
+export function actOnProposal(
+  id: string,
+  action: string,
+  options: { note?: string; actorId?: string; viaWorkflowId?: string } = {},
+  db: Database = database(),
+): ApplyResult {
+  const proposal = getProposal(id, db);
+  if (!proposal) throw new ProposalError('Suggestion not found', 404);
+  const button = proposal.actions?.find((a) => a.id === action);
+  if (!button) throw new ProposalError(`This suggestion has no action “${action}”`, 400);
+  if (proposal.status !== 'open' && proposal.status !== 'snoozed') throw new ProposalError(`This suggestion is ${proposal.status}`, 409);
+  const done = finishApplied(proposal, { actorId: options.actorId, viaWorkflowId: options.viaWorkflowId, action: button, note: options.note }, db);
+  const warnings = done.started.length ? [] : ['No published workflow listens for this yet: publish one that starts from On Suggestion Decided'];
+  return { proposal: done.proposal, warnings, ...(done.started.length && { started: done.started }) };
+}
+
+const NAMES = { applied: 'Applied', dismissed: 'Dismissed', snoozed: 'Snoozed' } as const;
+
+function decisionOf(action: keyof typeof NAMES | ProposalAction, by?: string, extra: { note?: string; reason?: DismissReason } = {}, now = Date.now()): ProposalDecision {
+  const id = typeof action === 'string' ? action : action.id;
+  return {
+    action: id,
+    label: typeof action === 'string' ? NAMES[action] : action.label,
+    ...(by && { by }),
+    at: new Date(now).toISOString(),
+    ...(extra.note && { note: extra.note.slice(0, 500) }),
+    ...(extra.reason && { reason: extra.reason }),
+  };
+}
+
+/** Everything a decision starts: On Usage Event on proposal.applied (for an apply or action) and On Suggestion Decided. */
+function startersFor(proposal: Proposal, decision: ProposalDecision, via?: string): Array<{ id: string; name: string }> {
+  const applies = decision.action !== 'dismissed' && decision.action !== 'snoozed';
+  const found = [...(applies ? usageBuilders(proposal.detector) : []), ...decisionListeners(proposal, decision, via).map((l) => ({ id: l.workflow.id, name: l.workflow.name }))];
+  return [...new Map(found.map((w) => [w.id, w])).values()];
+}
+
+/** Mark applied (a button, Apply, or the editor applying a change itself), then start the flows listening. */
+export function finishApplied(
+  proposal: Proposal,
+  options: { actorId?: string; createdWorkflowId?: string; viaWorkflowId?: string; action?: ProposalAction; note?: string },
+  db: Database,
+): { proposal: Proposal; started: Array<{ id: string; name: string }> } {
+  const next = markApplied(proposal, options, db);
+  // markApplied returns an already-applied suggestion as it is, without a new decision.
+  const decision = next.decision;
+  if (!decision || next === proposal) return { proposal: next, started: [] };
+  const usage = usageBuilders(proposal.detector);
+  const decided = dispatchDecision(next, decision, options.viaWorkflowId);
+  return { proposal: next, started: [...new Map([...usage, ...decided].map((w) => [w.id, w])).values()] };
+}
+
+/** Published workflows with On Usage Event on proposal.applied that take suggestions from this detector (unset: any). */
+function usageBuilders(detector?: string): Array<{ id: string; name: string }> {
   return store
     .listWorkflows()
     .filter((saved) => saved.active)
@@ -288,15 +428,26 @@ export function builders(): Array<{ id: string; name: string }> {
       w.nodes.some((n) => {
         if (n.type !== 'core.usageTrigger' || n.disabled) return false;
         const kinds = Array.isArray(n.parameters?.kinds) ? n.parameters.kinds : [];
-        const detector = n.parameters?.detector;
-        return (!kinds.length || kinds.includes('proposal.applied')) && (!detector || detector === 'missing-tool');
+        const wanted = detectorFilter(n.parameters?.detector);
+        return (!kinds.length || kinds.includes('proposal.applied')) && (!wanted || wanted === detector);
       }),
     )
     .map((w) => ({ id: w.id, name: w.name }));
 }
 
+/** Published workflows that start when a missing-tool suggestion is applied: On Usage Event on proposal.applied, or On Suggestion Decided. */
+export function builders(): Array<{ id: string; name: string }> {
+  const found = [...usageBuilders('missing-tool'), ...decidedBuilders('missing-tool')];
+  return [...new Map(found.map((w) => [w.id, w])).values()];
+}
+
 /** Record a suggestion as applied (the editor applies a workflow's ops itself, then calls this). */
-export function markApplied(proposalOrId: Proposal | string, options: { actorId?: string; createdWorkflowId?: string } = {}, db: Database = database(), now = Date.now()): Proposal {
+export function markApplied(
+  proposalOrId: Proposal | string,
+  options: { actorId?: string; createdWorkflowId?: string; viaWorkflowId?: string; action?: ProposalAction; note?: string } = {},
+  db: Database = database(),
+  now = Date.now(),
+): Proposal {
   const proposal = typeof proposalOrId === 'string' ? getProposal(proposalOrId, db) : proposalOrId;
   if (!proposal) throw new ProposalError('Suggestion not found', 404);
   if (proposal.status === 'applied') return proposal;
@@ -311,27 +462,45 @@ export function markApplied(proposalOrId: Proposal | string, options: { actorId?
     ...(options.actorId && { appliedBy: options.actorId }),
     ...(options.createdWorkflowId && { createdWorkflowId: options.createdWorkflowId }),
     ...(baseline && { baseline, outcome: 'pending' as const }),
+    decision: decisionOf(options.action ?? 'applied', options.actorId, { note: options.note }, now),
     snoozedUntil: undefined,
   };
   save(next, db);
+  mirrorDecision(next);
   recordUsage({
     kind: 'proposal.applied',
     ...(proposal.target.type === 'workflow' && proposal.target.id && { workflowId: proposal.target.id }),
     ...(proposal.target.type === 'agent' && proposal.target.id && { agentId: proposal.target.id }),
     ...(options.actorId && { actorId: options.actorId }),
-    attrs: { proposal: proposal.id, source: proposal.source, ...(proposal.detector && { detector: proposal.detector }) },
+    attrs: { proposal: proposal.id, source: proposal.source, ...(proposal.detector && { detector: proposal.detector }), ...(options.action && { action: options.action.id }) },
   });
+  // A declared sub-workflow metric needs a run for its baseline: it starts now and is saved when it is done, so Apply
+  // doesn't wait for it (the brain's next look retries a baseline that failed).
+  if (unsettled(next)) void settleBaselineOf(next.id, db).catch(() => undefined);
   return next;
 }
 
-export function dismissProposal(id: string, reason: DismissReason, options: { note?: string; actorId?: string } = {}, db: Database = database()): Proposal {
+/** Run a pending (or failed) sub-workflow baseline and save it. Returns the suggestion as saved. */
+export async function settleBaselineOf(id: string, db: Database = database()): Promise<Proposal | undefined> {
+  const proposal = getProposal(id, db);
+  if (!proposal || !unsettled(proposal)) return proposal;
+  const baseline = await settleBaseline(proposal);
+  if (!baseline) return proposal;
+  // Read it again: the person may have acted while the sub-workflow ran.
+  const latest = getProposal(id, db) ?? proposal;
+  return save({ ...latest, baseline }, db);
+}
+
+export function dismissProposal(id: string, reason: DismissReason, options: { note?: string; actorId?: string; viaWorkflowId?: string } = {}, db: Database = database()): Proposal {
   const proposal = getProposal(id, db);
   if (!proposal) throw new ProposalError('Suggestion not found', 404);
   if (proposal.status === 'applied' || proposal.status === 'dismissed') throw new ProposalError(`This suggestion is ${proposal.status}`, 409);
   const at = new Date().toISOString();
-  const next: Proposal = { ...proposal, status: 'dismissed', reason, updatedAt: at, snoozedUntil: undefined, ...(options.note && { note: options.note.slice(0, 500) }) };
+  const decision = decisionOf('dismissed', options.actorId, { note: options.note, reason });
+  const next: Proposal = { ...proposal, status: 'dismissed', reason, decision, updatedAt: at, snoozedUntil: undefined, ...(options.note && { note: options.note.slice(0, 500) }) };
   save(next, db);
-  if (reason === 'intended' && proposal.target.id && (proposal.target.type === 'workflow' || proposal.target.type === 'agent' || proposal.target.type === 'credential')) {
+  mirrorDecision(next);
+  if (reason === 'intended' && proposal.target.id && (proposal.target.type === 'workflow' || proposal.target.type === 'agent' || proposal.target.type === 'credential' || proposal.target.type === 'entity')) {
     upsertFact(
       {
         id: `${proposal.target.type}:${proposal.target.id}:intended:${proposal.fingerprint}`,
@@ -354,15 +523,20 @@ export function dismissProposal(id: string, reason: DismissReason, options: { no
     ...(options.actorId && { actorId: options.actorId }),
     attrs: { proposal: proposal.id, reason, source: proposal.source, ...(proposal.detector && { detector: proposal.detector }) },
   });
+  dispatchDecision(next, decision, options.viaWorkflowId);
   return next;
 }
 
-export function snoozeProposal(id: string, days: number, db: Database = database()): Proposal {
+export function snoozeProposal(id: string, days: number, db: Database = database(), options: { actorId?: string; viaWorkflowId?: string } = {}): Proposal {
   const proposal = getProposal(id, db);
   if (!proposal) throw new ProposalError('Suggestion not found', 404);
   if (proposal.status !== 'open' && proposal.status !== 'snoozed') throw new ProposalError(`This suggestion is ${proposal.status}`, 409);
   const until = new Date(Date.now() + Math.max(1, Math.min(90, days)) * DAY_MS).toISOString();
-  return save({ ...proposal, status: 'snoozed', snoozedUntil: until, updatedAt: new Date().toISOString() }, db);
+  const decision = decisionOf('snoozed', options.actorId, { note: `${Math.max(1, Math.min(90, days))} days` });
+  const next = save({ ...proposal, status: 'snoozed', snoozedUntil: until, decision, updatedAt: new Date().toISOString() }, db);
+  mirrorDecision(next);
+  dispatchDecision(next, decision, options.viaWorkflowId);
+  return next;
 }
 
 /** Detector suggestions no detector confirmed for 14 days expire. */
@@ -376,12 +550,22 @@ export function expireStale(db: Database = database(), now = Date.now()): number
   return rows.length;
 }
 
-/** Run the effect checks that are due (./effect.ts). Returns how many suggestions changed. */
-export function checkEffects(db: Database = database(), now = Date.now()): number {
+/**
+ * Run the effect checks that are due (./effect.ts), settling baselines that still wait for their sub-workflow first.
+ * Returns how many suggestions changed.
+ */
+export async function checkEffects(db: Database = database(), now = Date.now()): Promise<number> {
   let changed = 0;
   for (const row of db.all<{ data: string }>("SELECT data FROM proposals WHERE status = 'applied'")) {
-    const p = parse(row.data);
-    const next = p && checkEffect(p, now, db);
+    let p = parse(row.data);
+    if (p && unsettled(p)) {
+      const settled = await settleBaselineOf(p.id, db);
+      if (settled && !unsettled(settled)) {
+        p = settled;
+        changed++;
+      }
+    }
+    const next = p && (await checkEffectAsync(p, now, db));
     if (next) {
       save(next, db);
       changed++;
@@ -394,24 +578,33 @@ export function checkEffects(db: Database = database(), now = Date.now()): numbe
 // Learning from dismissals
 // ---------------------------------------------------------------------------
 
-export interface DetectorStat {
-  id: DetectorId;
-  made: number;
-  applied: number;
-  dismissed: number;
-  /** 1 = normal; higher means its thresholds are multiplied (it was mostly dismissed as wrong or not relevant). */
-  quiet: number;
+export type { DetectorStat };
+
+/** How a set of a detector's suggestions decides its quiet factor: 5 decided, then the share rejected. */
+function statOf(rows: Array<{ status: string; data: string }>): Pick<DetectorStat, 'made' | 'applied' | 'dismissed' | 'quiet'> {
+  const applied = rows.filter((r) => r.status === 'applied').length;
+  const rejected = rows.filter((r) => r.status === 'dismissed' && ['wrong', 'not-relevant'].includes(parse(r.data)?.reason ?? '')).length;
+  const decided = applied + rejected;
+  const rate = decided ? rejected / decided : 0;
+  const quiet = decided < 5 ? 1 : rate >= 0.8 ? 3 : rate >= 0.6 ? 2 : rate >= 0.4 ? 1.5 : 1;
+  return { made: rows.length, applied, dismissed: rejected, quiet };
 }
 
+/** One detector's quiet factor (1 = normal). */
+export function quietOf(id: DetectorId, db: Database = database()): number {
+  return statOf(db.all<{ status: string; data: string }>("SELECT status, data FROM proposals WHERE source = 'detector' AND detector = ?", id)).quiet;
+}
+
+/** Every built-in detector, then every flow detector (a workflow with a Detector Trigger, or one that made suggestions). */
 export function detectorStats(db: Database = database()): DetectorStat[] {
   const rows = db.all<{ detector: string; status: string; data: string }>("SELECT detector, status, data FROM proposals WHERE source = 'detector'");
-  return DETECTORS.map((id) => {
-    const mine = rows.filter((r) => r.detector === id);
-    const applied = mine.filter((r) => r.status === 'applied').length;
-    const rejected = mine.filter((r) => r.status === 'dismissed' && ['wrong', 'not-relevant'].includes(parse(r.data)?.reason ?? '')).length;
-    const decided = applied + rejected;
-    const rate = decided ? rejected / decided : 0;
-    const quiet = decided < 5 ? 1 : rate >= 0.8 ? 3 : rate >= 0.6 ? 2 : rate >= 0.4 ? 1.5 : 1;
-    return { id, made: mine.length, applied, dismissed: rejected, quiet };
-  });
+  const builtin = DETECTORS.map((id) => ({ id, label: DETECTOR_LABELS[id], ...statOf(rows.filter((r) => r.detector === id)) }));
+  const flows = new Map(listFlowDetectors().map((f) => [f.id, f]));
+  for (const r of rows) {
+    if (!isFlowDetector(r.detector) || flows.has(r.detector)) continue;
+    // The workflow is gone or no longer a detector: its record stays, under the name its suggestions carry.
+    flows.set(r.detector, { id: r.detector, workflowId: flowDetectorWorkflow(r.detector), name: parse(r.data)?.label ?? 'Flow detector', active: false });
+  }
+  const flow = [...flows.values()].map((f) => ({ id: f.id, label: f.name, workflowId: f.workflowId, active: f.active, ...statOf(rows.filter((r) => r.detector === f.id)) }));
+  return [...builtin, ...flow];
 }

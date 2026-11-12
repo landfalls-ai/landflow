@@ -81,11 +81,15 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   // The second brain (docs/second-brain.md): reading usage and facts is like reading insights; the editor reports its own
   // signals; suggestions are decided by builders (the routes check the target); running it now is for admins.
   if (path === '/api/usage/signal') return { scope: 'workflows:write' };
+  // Declaring a custom event kind (Record Event's shapes) is building, like editing a workflow.
+  if (under('/api/usage/kinds')) return { scope: read ? 'executions:read' : 'workflows:write' };
   if (under('/api/usage')) return { scope: 'executions:read' };
-  if (path === '/api/brain/run') return { scope: 'admin', action: 'settings:manage' };
+  if (path === '/api/brain/run' || path === '/api/brain/backtest') return { scope: 'admin', action: 'settings:manage' };
   if (path === '/api/brain/analyst') return { scope: 'workflows:write' };
   if (under('/api/brain')) return { scope: 'executions:read' };
   if (under('/api/proposals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
+  // Entities (initiatives, people, customers, systems): the routes check the entity's project, like suggestions.
+  if (under('/api/entities')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   return { scope: 'admin' };
 }
 

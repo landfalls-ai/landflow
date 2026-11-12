@@ -6,11 +6,11 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, ChevronRight, Clock, FilePlus2, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, FilePlus2, MessageSquare, MoreHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { DETECTOR_LABELS, type DismissReason, type Proposal } from '@/lib/shared/brain';
+import { detectorLabel, ENTITY_LABELS, parseEntityRef, type DismissReason, type Proposal, type ProposalAction } from '@/lib/shared/brain';
 import { Badge, Chip, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { MenuItem, Popover } from '../ui/popover';
@@ -41,6 +41,8 @@ const APPLY_LABEL = { draft: 'Create workflow', agent: 'Apply', ops: 'Apply', bu
 export interface ProposalActions {
   busy?: string;
   apply: (p: Proposal) => void;
+  /** Take one of the buttons a flow put on the suggestion. */
+  act: (p: Proposal, action: ProposalAction) => void;
   dismiss: (p: Proposal, reason: DismissReason) => void;
   snooze: (p: Proposal, days: number) => void;
 }
@@ -60,25 +62,41 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
       onDone(p.id);
     } catch (e) {
       const status = (e as { status?: number }).status;
-      if (status === 403) onForbidden?.();
+      // A person it is addressed to may not edit what it is about: say so instead of hiding the inbox.
+      if (status === 403 && !p.audience?.length) onForbidden?.();
       else toast.error((e as Error).message);
     } finally {
       setBusy(undefined);
     }
+  };
+  /** The toast that names the workflows a decision started (the missing tool's "Build it" and any On Suggestion Decided). */
+  const startedToast = (started?: Array<{ id: string; name: string }>, verb = 'Started') => {
+    if (started?.length) toast.success(`${verb}: ${started.map((w) => `“${w.name}”`).join(', ')}`, { action: { label: 'Executions', onClick: () => router.push('/executions') } });
   };
   const patch = (p: Proposal, json: unknown) => api(`/api/proposals/${encodeURIComponent(p.id)}`, { method: 'PATCH', json });
 
   return {
     busy,
     dismiss: (p, reason) => void run(p, async () => void (await patch(p, { action: 'dismiss', reason }))),
+    act: (p, action) => {
+      if (action.confirm && !window.confirm(action.confirm)) return;
+      void run(p, async () => {
+        const result = await api<{ warnings: string[]; started?: Array<{ id: string; name: string }> }>(`/api/proposals/${encodeURIComponent(p.id)}/act`, { method: 'POST', json: { action: action.id } });
+        for (const warning of result.warnings) toast.warning(warning);
+        if (result.started?.length) startedToast(result.started);
+        else toast.success(`${action.label}: done`);
+      });
+    },
     snooze: (p, days) => void run(p, async () => void (await patch(p, { action: 'snooze', days }))),
     apply: (p) => {
       const kind = proposalKind(p);
+      // Advice with buttons of its own has no Apply (see the card); without them, "Mark done".
       if (kind === 'advice') return void run(p, async () => void (await patch(p, { action: 'dismiss', reason: 'done' })));
       void run(p, async () => {
         if (kind === 'ops' && localApply) {
           if (!localApply(p)) throw new Error('The change no longer fits this workflow.');
-          await api(`/api/proposals/${encodeURIComponent(p.id)}/applied`, { method: 'POST' });
+          const applied = await api<{ started?: Array<{ id: string; name: string }> }>(`/api/proposals/${encodeURIComponent(p.id)}/applied`, { method: 'POST' });
+          startedToast(applied.started, 'Started');
           return;
         }
         const projectId = p.projectId ? `?projectId=${encodeURIComponent(p.projectId)}` : '';
@@ -89,7 +107,10 @@ export function useProposalActions({ onDone, onForbidden, localApply }: { onDone
           router.push(`/workflows/${result.workflow.id}`);
         } else if (kind === 'build') {
           if (result.started?.length) toast.success(`Approved: ${result.started.map((w) => `“${w.name}”`).join(', ')} builds it`, { action: { label: 'Executions', onClick: () => router.push('/executions') } });
-        } else toast.success(kind === 'note' ? 'Kept for the project' : 'Applied');
+        } else {
+          toast.success(kind === 'note' ? 'Kept for the project' : 'Applied');
+          startedToast(result.started);
+        }
       });
     },
   };
@@ -154,10 +175,12 @@ function Changes({ proposal }: { proposal: Proposal }) {
 }
 
 export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal: Proposal; actions: ProposalActions; compact?: boolean; onFocus?: () => void }) {
-  const tag = proposal.detector ? DETECTOR_LABELS[proposal.detector] : (proposal.label ?? 'Suggestion');
+  const tag = proposal.detector ? detectorLabel(proposal.detector, proposal.label) : (proposal.label ?? 'Suggestion');
   const kind = proposalKind(proposal);
   const busy = actions.busy === proposal.id;
-  const target = [proposal.target.name, proposal.target.nodeName].filter(Boolean).join(' · ');
+  // An entity says what kind it is: “Invoice reminders · Initiative”.
+  const entityType = proposal.target.type === 'entity' ? parseEntityRef(proposal.target.id)?.type : undefined;
+  const target = [proposal.target.name, entityType && ENTITY_LABELS[entityType], proposal.target.nodeName].filter(Boolean).join(' · ');
   return (
     <div className={cn('animate-fade-up space-y-1.5 rounded-[10px] border border-hair bg-wl', compact ? 'p-2.5' : 'p-3')}>
       <div className="flex items-start gap-2">
@@ -180,15 +203,33 @@ export function ProposalCard({ proposal, actions, compact, onFocus }: { proposal
         ) : (
           <div className="text-[11.5px] text-t3">{target}</div>
         ))}
+      {!!proposal.audience?.length && (
+        <div className="flex items-center gap-1.5 text-[11.5px] text-t3">
+          <span>For {proposal.audience.map((m) => m.name ?? m.email ?? m.slackUserId).join(', ')}</span>
+          {!!proposal.slack?.messages.length && <MessageSquare className="size-3 text-ac" aria-label="Mirrored to Slack" />}
+        </div>
+      )}
       <p className="text-[12px] leading-relaxed text-t2">{proposal.why}</p>
       {!compact && <Evidence proposal={proposal} />}
       {proposal.effect && <p className="text-[12px] leading-relaxed text-t1">Expected: {proposal.effect}</p>}
+      {proposal.metricSpec && (
+        <p className="text-[11.5px] leading-relaxed text-t3">
+          Measured by: {proposal.metricSpec.label} ({proposal.metricSpec.better} is better)
+        </p>
+      )}
       <Changes proposal={proposal} />
       <Warnings warnings={proposal.warnings} />
-      <div className="flex items-center gap-1.5 pt-0.5">
-        <Button size="sm" variant="primary" onClick={() => actions.apply(proposal)} loading={busy} disabled={!!actions.busy && !busy}>
-          {APPLY_LABEL[kind]}
-        </Button>
+      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+        {proposal.actions?.map((a) => (
+          <Button key={a.id} size="sm" variant={a.style === 'primary' ? 'primary' : 'outline'} onClick={() => actions.act(proposal, a)} loading={busy} disabled={!!actions.busy && !busy}>
+            {a.label}
+          </Button>
+        ))}
+        {(kind !== 'advice' || !proposal.actions?.length) && (
+          <Button size="sm" variant={proposal.actions?.length ? 'outline' : 'primary'} onClick={() => actions.apply(proposal)} loading={busy} disabled={!!actions.busy && !busy}>
+            {APPLY_LABEL[kind]}
+          </Button>
+        )}
         <Popover
           align="start"
           trigger={({ toggle }) => (

@@ -55,6 +55,8 @@ export interface NodeSettingsPatch {
   onError?: 'stop' | 'continue';
   timeoutSeconds?: number;
   alwaysOutputData?: boolean;
+  /** Run once for all input items, with the first item, instead of once per item. */
+  executeOnce?: boolean;
   disabled?: boolean;
 }
 
@@ -74,6 +76,7 @@ const NODE_SETTINGS: Record<keyof NodeSettingsPatch, 'boolean' | 'number' | 'onE
   onError: 'onError',
   timeoutSeconds: 'number',
   alwaysOutputData: 'boolean',
+  executeOnce: 'boolean',
   disabled: 'boolean',
 };
 const WORKFLOW_SETTINGS: Record<keyof WorkflowSettingsPatch, 'string' | 'number'> = {

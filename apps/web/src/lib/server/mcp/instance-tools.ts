@@ -27,6 +27,7 @@ import { inScope, type McpScope } from './project-servers';
 import { createIn } from '../projects/http';
 import type { ResourceAction } from '../../shared/projects';
 import { MCP_SERVER_VERSION, textResult } from './server';
+import { registerBrainTools } from './brain-tools';
 import { registerDebugTools } from './debug-tools';
 import { normalizeWorkflow, validateWorkflow, type WorkflowInput } from './workflows';
 
@@ -38,6 +39,7 @@ How to build one:
 3. Connections go from source to target by node name. "sourceIndex" picks the output (If/Filter: 0 = true, 1 = false). AI sub-nodes (chat models, memory, tools) connect from the sub-node to the root node with type ai_languageModel, ai_memory or ai_tool.
 4. validate_workflow (it warns when an expression reads a field the node before it does not write), then create_workflow or update_workflow (nodes and connections given to update_workflow replace the current ones), then execute_workflow to test and get_execution to see each node's output.
 5. When a run fails: explain_failure (failing node, resolved parameters, sample input, upstream fields, what to check), get_run_trace (the journal), get_plugin_logs (a node plugin's output), then run_node to reproduce on a pinned input and retry_execution to continue after a fix.
+The second brain: check_overlap before building (is anyone already doing this?), brain_search_facts, brain_workflow_knowledge, brain_list_suggestions, brain_usage_report, and brain_suggest to post a suggestion.
 Credentials can't be created here: nodes that need one get it chosen in the editor (the workflow's url).
 
 ${PARAMETER_FORMATS}`;
@@ -479,6 +481,8 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
     workflowUrl,
     digest: executionDigest,
   });
+
+  registerBrainTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure });
 
   return server;
 }

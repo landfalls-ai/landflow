@@ -7,7 +7,8 @@ import { definePlugin } from '@landflow/sdk';
 import { a2aAgentNode } from './a2a';
 import { runTeamNode } from './run-team';
 import { messageAgentNode, workflowTrigger } from './agents';
-import { landflowUsageNode, suggestImprovementNode, usageTriggerNode } from './usage';
+import { brainEntityNode } from './entities';
+import { detectorTriggerNode, findSimilarNode, landflowUsageNode, recordEventNode, suggestImprovementNode, suggestionDecidedTriggerNode, usageTriggerNode } from './usage';
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
 import { aiStep } from './composites';
@@ -23,6 +24,7 @@ import { kagentCredential } from './kagent-credential';
 import { microsoftBotCredential } from './microsoft-bot-credential';
 import { evaluationNode, evaluationTrigger } from './evaluation';
 import { convertToFileNode, extractFromFileNode, readWriteFileNode } from './files';
+import { confirmDraftNode } from './confirm';
 import { filterNode, ifNode, limitNode, mergeNode, noOpNode, respondToWebhookNode, sortNode, splitInBatchesNode, stopAndErrorNode, switchNode, waitNode } from './flow';
 import { formNode, formTrigger } from './forms';
 import { guardrailsNode } from './guardrails';
@@ -82,6 +84,7 @@ export const corePlugin = definePlugin({
     renameKeysNode,
     dateTimeNode,
     waitNode,
+    confirmDraftNode,
     splitInBatchesNode,
     executeWorkflowNode,
     findRunbookNode,
@@ -99,7 +102,12 @@ export const corePlugin = definePlugin({
     runTeamNode,
     a2aAgentNode,
     landflowUsageNode,
+    recordEventNode,
+    brainEntityNode,
+    findSimilarNode,
     usageTriggerNode,
+    suggestionDecidedTriggerNode,
+    detectorTriggerNode,
     suggestImprovementNode,
     chainLlmNode,
     textClassifierNode,

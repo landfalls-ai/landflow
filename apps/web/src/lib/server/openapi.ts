@@ -668,10 +668,10 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Executions',
     id: 'decideExecutionApproval',
     summary: 'Approve or reject one waiting tool call, optionally with an edited input',
-    description: 'Streams `decision` (`{ status: \'waiting\' | \'resumed\', approval }`), then, once every call has a decision, the resumed run’s `execution` events and a `result`. `input` (only with `approved: true`) is the tool’s input as a person changed it: the tool runs with it instead of the call’s own, and the run’s journal marks the wait `edited` (`editedBy`) and says “Approved … with changes”. It must be a JSON object (up to 200 KB). Errors before anything is decided are JSON: 400 (a bad edit), 404, 409 (already decided, or nothing to approve).',
+    description: 'Streams `decision` (`{ status: \'waiting\' | \'resumed\', approval }`), then, once every call has a decision, the resumed run’s `execution` events and a `result`. `input` (only with `approved: true`) is the tool’s input as a person changed it: the tool runs with it instead of the call’s own, and the run’s journal marks the wait `edited` (`editedBy`) and says “Approved … with changes”. It must be a JSON object (up to 200 KB). An Ask a Person node’s request (`approval.confirm`, call id `confirm`) takes `text` (with `approved: true`, only when the node allows editing) and `comment` instead. Errors before anything is decided are JSON: 400 (a bad edit), 403 (not one of the people who may answer, or editing is not allowed), 404, 409 (already decided, or nothing to approve).',
     pathParams: { id: 'The execution id' },
-    body: jsonBody(object({ callId: { type: 'string' }, approved: { type: 'boolean' }, input: { type: 'object', additionalProperties: true, description: 'The tool’s input as edited; replaces the call’s own input. Approvals only.' } }, ['callId', 'approved'])),
-    responses: { 200: reply('The decision, then the resumed run', { type: 'string', description: '`event: <name>` and `data: <JSON>` lines' }, 'text/event-stream'), 400: invalid, 404: notFound, 409: errorRef('Already decided, or the run is not waiting for a tool approval') },
+    body: jsonBody(object({ callId: { type: 'string' }, approved: { type: 'boolean' }, input: { type: 'object', additionalProperties: true, description: 'The tool’s input as edited; replaces the call’s own input. Approvals only.' }, text: { type: 'string', description: 'Ask a Person: the draft as edited. Approvals only.' }, comment: { type: 'string', description: 'Ask a Person: a note left with the decision' } }, ['callId', 'approved'])),
+    responses: { 200: reply('The decision, then the resumed run', { type: 'string', description: '`event: <name>` and `data: <JSON>` lines' }, 'text/event-stream'), 400: invalid, 403: errorRef('Not one of the people who may answer'), 404: notFound, 409: errorRef('Already decided, or the run is not waiting for a tool approval') },
   });
   add('get', '/api/runs/needs-you', {
     tag: 'Executions',
@@ -1854,13 +1854,13 @@ function paths(): Record<string, Record<string, Json>> {
     text('signature', 'One failure signature'),
     text('limit', 'At most this many rows'),
   ];
-  const proposal = { type: 'object', description: 'A Proposal (lib/shared/brain.ts): target, title, why, evidence, effect, ops or a draft or persona rules, risk, confidence, score, status' };
+  const proposal = { type: 'object', description: 'A Proposal (lib/shared/brain.ts): target, title, why, evidence, effect, actions (buttons a flow added), decision (the latest), ops or a draft or persona rules, risk, confidence, score, status' };
   add('get', '/api/usage', {
     tag: 'Second brain',
     id: 'usageReport',
     summary: 'A grouped report of the usage ledger',
-    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent or model (default kind). Counts, failures, durations, items, tokens and cost per group; windows past USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
-    query: [{ name: 'groupBy', description: 'What to group by', schema: { type: 'string', enum: ['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model'] } }, ...usageQuery],
+    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent, model or attr (default kind; attr needs `groupAttr`, and reads the raw events). `kinds` takes custom kinds too (work.ticket_moved). Counts, failures, durations, items, tokens and cost per group; windows past USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
+    query: [{ name: 'groupBy', description: 'What to group by', schema: { type: 'string', enum: ['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model', 'attr'] } }, text('groupAttr', 'For groupBy=attr: the attribute to group by, such as team'), text('attr.<name>', 'Only events whose attribute <name> equals the value, such as attr.team=billing'), ...usageQuery],
     responses: { 200: reply('The report', object({ from: { type: 'string' }, to: { type: 'string' }, groupBy: { type: 'string' }, rows: array({ type: 'object' }), totals: { type: 'object' } }, ['rows', 'totals'])) },
   });
   add('get', '/api/usage/events', {
@@ -1870,12 +1870,35 @@ function paths(): Record<string, Record<string, Json>> {
     query: usageQuery,
     responses: { 200: reply('The events', object({ events: array({ type: 'object' }) }, ['events'])) },
   });
+  const usageKind = { type: 'object', description: 'A declared custom kind: kind, description, fields [{ name, type: string|number|boolean, required, description }], projectId, createdBy, createdAt, updatedAt' };
+  const kindBody = object({ kind: { type: 'string', description: '<namespace>.<name>, such as work.ticket_moved; not a built-in namespace (run, node, ai, workflow, credential, assistant, spotlight, search, agent, feedback, template, plugin, proposal, tool)' }, description: { type: 'string' }, fields: array({ type: 'object' }) }, ['kind']);
+  add('get', '/api/usage/kinds', {
+    tag: 'Second brain',
+    id: 'listUsageKinds',
+    summary: 'List the custom event kinds',
+    description: 'The kinds flows record with the Record Event node, with the attributes each declares.',
+    responses: { 200: reply('The kinds', object({ kinds: array(usageKind) }, ['kinds'])) },
+  });
+  add('post', '/api/usage/kinds', {
+    tag: 'Second brain',
+    id: 'declareUsageKind',
+    summary: 'Declare a custom event kind, or update its fields',
+    body: jsonBody(kindBody, 'The kind and its attributes'),
+    responses: { 200: reply('Updated', object({ kind: usageKind }, ['kind'])), 201: reply('Declared', object({ kind: usageKind }, ['kind'])), 400: invalid },
+  });
+  add('delete', '/api/usage/kinds/{kind}', {
+    tag: 'Second brain',
+    id: 'deleteUsageKind',
+    summary: 'Forget a custom event kind’s declaration',
+    description: 'Events already recorded stay in the ledger.',
+    responses: { 200: reply('Forgotten', object({ ok: { type: 'boolean' } }, ['ok'])), 404: notFound },
+  });
   add('get', '/api/proposals', {
     tag: 'Second brain',
     id: 'listProposals',
     summary: 'List suggestions',
-    description: 'Best first. `status`: open (default), applied, dismissed, snoozed, expired or all. Members see suggestions about the workflows and agents they can open.',
-    query: [text('status', 'open (default), applied, dismissed, snoozed, expired or all'), text('workflowId', 'About one workflow'), text('agentId', 'About one agent'), text('detector', 'From one detector'), text('limit', 'At most this many (200)')],
+    description: 'Best first. `status`: open (default), applied, dismissed, snoozed, expired or all. Members see suggestions about the workflows and agents they can open, and the ones addressed to them (`audience`).',
+    query: [text('status', 'open (default), applied, dismissed, snoozed, expired or all'), text('workflowId', 'About one workflow'), text('agentId', 'About one agent'), text('detector', 'From one detector'), text('for', '`me`: only suggestions addressed to the caller'), text('limit', 'At most this many (200)')],
     responses: { 200: reply('The suggestions', object({ proposals: array(proposal) }, ['proposals'])) },
   });
   add('post', '/api/proposals', {
@@ -1883,7 +1906,7 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'createProposal',
     summary: 'Add a suggestion',
     description: 'Source `analyst`. Its ops are checked against the workflow; the same fingerprint refreshes the open suggestion. Needs edit access to the workflow or agent. `proposal: null` when it is held back (dismissed or applied recently, or the weekly cap is full).',
-    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' } }, ['title', 'why'])),
+    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, entity: object({ type: { type: 'string', enum: ['initiative', 'person', 'customer', 'system'] }, id: { type: 'string' } }, ['type', 'id']), nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' }, actions: array(object({ id: { type: 'string' }, label: { type: 'string' }, style: { type: 'string', enum: ['primary', 'default'] }, confirm: { type: 'string' } }, ['id', 'label'])), audience: array(object({ userId: { type: 'string' }, email: { type: 'string' }, slackUserId: { type: 'string' }, name: { type: 'string' } })) }, ['title', 'why'])),
     responses: { 200: reply('Held back', object({ proposal: { type: 'null' }, reason: { type: 'string' } })), 201: reply('The suggestion', object({ proposal }, ['proposal'])), 400: invalid, 404: notFound },
   });
   add('get', '/api/proposals/{id}', { tag: 'Second brain', id: 'getProposal', summary: 'Get a suggestion', responses: { 200: reply('The suggestion', object({ proposal }, ['proposal'])), 404: notFound } });
@@ -1902,13 +1925,67 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'Ops are checked against the workflow as it is now and saved through governance; a draft becomes a new workflow (`?projectId=`); persona rules go to the agent’s draft.',
     responses: { 200: reply('Applied', object({ proposal, workflow: ref('Workflow'), warnings: array({ type: 'string' }) }, ['proposal', 'warnings'])), 400: errorRef('Advice only: nothing to apply'), 404: notFound, 409: errorRef('The changes no longer fit, or it is already decided') },
   });
+  add('post', '/api/proposals/{id}/act', {
+    tag: 'Second brain',
+    id: 'actOnProposal',
+    summary: 'Take one of a suggestion’s actions',
+    description:
+      'The buttons a flow put on the suggestion (`actions`). Records `decision: { action, label, by, at, note }`, counts it as applied and starts the workflows on On Suggestion Decided. `started` names them; `warnings` says when none listens.',
+    body: jsonBody(object({ action: { type: 'string' }, note: { type: 'string' } }, ['action'])),
+    responses: { 200: reply('Done', object({ proposal, warnings: array({ type: 'string' }), started: array(object({ id: { type: 'string' }, name: { type: 'string' } })) }, ['proposal', 'warnings'])), 400: errorRef('No such action'), 404: notFound, 409: errorRef('Already decided') },
+  });
   add('get', '/api/brain/facts', {
     tag: 'Second brain',
     id: 'listBrainFacts',
     summary: 'What the second brain learned',
     description: '`q` searches (keywords fused with the vector index); otherwise lists by subjectType, subjectId, kind and status.',
-    query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential or instance'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (100)')],
+    query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential, instance or entity (subjectId is then <type>/<id>)'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (100)')],
     responses: { 200: reply('The facts', object({ facts: array({ type: 'object' }) }, ['facts'])) },
+  });
+  const entity = { type: 'object', description: 'A BrainEntity (lib/shared/brain.ts): type (initiative, person, customer, system), id, name, description, owner, ownerName, projectId, attrs, source, createdAt, updatedAt' };
+  const entityBody = (required: string[]) =>
+    jsonBody(object({ type: { type: 'string', enum: ['initiative', 'person', 'customer', 'system'] }, id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, owner: { type: 'string', description: 'A user id or a free name' }, projectId: { type: 'string' }, attrs: { type: 'object', description: 'Flat values; null removes one' } }, required));
+  add('get', '/api/entities', {
+    tag: 'Second brain',
+    id: 'listEntities',
+    summary: 'List entities',
+    description: 'Initiatives, people, customers and systems the second brain reasons about, by name. Members see those in projects they can open.',
+    query: [text('type', 'initiative, person, customer or system'), text('owner', 'A user id or name'), text('q', 'Words in the name, description, owner or attributes'), text('projectId', 'One project'), text('limit', 'At most this many (500)')],
+    responses: { 200: reply('The entities', object({ entities: array(entity) }, ['entities'])), 400: invalid },
+  });
+  add('post', '/api/entities', {
+    tag: 'Second brain',
+    id: 'upsertEntity',
+    summary: 'Add an entity, or update the one with this id',
+    description: 'Needs editor access to the project (`projectId`, else your personal project). With an `id` that exists it updates (fields left out stay).',
+    body: entityBody(['type']),
+    responses: { 200: reply('Updated', object({ entity }, ['entity'])), 201: reply('Added', object({ entity }, ['entity'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound },
+  });
+  add('get', '/api/entities/{type}/{id}', { tag: 'Second brain', id: 'getEntity', summary: 'An entity with what the brain knows', description: 'The entity, its profile, the facts about it and its open suggestions.', responses: { 200: reply('The entity', object({ entity, profile: { type: 'object' }, facts: array({ type: 'object' }), proposals: array(proposal) }, ['entity', 'facts', 'proposals'])), 404: notFound } });
+  add('patch', '/api/entities/{type}/{id}', { tag: 'Second brain', id: 'updateEntity', summary: 'Change an entity', body: entityBody([]), responses: { 200: reply('The entity', object({ entity }, ['entity'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('delete', '/api/entities/{type}/{id}', { tag: 'Second brain', id: 'deleteEntity', summary: 'Delete an entity', description: 'Its facts and profile go with it and its open suggestions expire.', responses: { 200: reply('Deleted', object({ ok: { type: 'boolean' } }, ['ok'])), 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('post', '/api/entities/{type}/{id}/facts', {
+    tag: 'Second brain',
+    id: 'addEntityFact',
+    summary: 'Add a fact about an entity',
+    description: 'A statement the brain keeps and searches. `kind` is purpose, health, cost, failure, slow, change, dependency, usage, quality or intended.',
+    body: jsonBody(object({ kind: { type: 'string' }, statement: { type: 'string' }, confidence: { type: 'number' } }, ['kind', 'statement'])),
+    responses: { 201: reply('The fact', object({ fact: { type: 'object' } }, ['fact'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound },
+  });
+  add('post', '/api/brain/backtest', {
+    tag: 'Second brain',
+    id: 'backtestDetector',
+    summary: 'Backtest a detector against past decisions',
+    description: 'Reruns the detector as of past points (`days` back, 30 by default, one point every `step` days) without suggesting anything, and scores its findings against how people decided the same suggestions: precision, recall, hits, false alarms, misses. `quiet` tests another threshold multiplier; a precision under `threshold` (0.5) fails the gate. Owners and admins; waits for the run.',
+    body: jsonBody(object({ detector: { type: 'string', description: 'A built-in detector id or flow:<workflowId> (published)' }, days: { type: 'integer' }, step: { type: 'integer' }, quiet: { type: 'number' }, threshold: { type: 'number' } }, ['detector'])),
+    responses: { 200: reply('The result', object({ backtest: { type: 'object' } }, ['backtest'])), 400: errorRef('Bad window or detector'), 404: notFound, 409: errorRef('The flow is not published') },
+  });
+  add('get', '/api/brain/backtest', {
+    tag: 'Second brain',
+    id: 'listBacktests',
+    summary: 'Past backtests, newest first',
+    query: [text('detector', 'One detector'), text('limit', 'At most this many (10)')],
+    responses: { 200: reply('The results', object({ backtests: array({ type: 'object' }) }, ['backtests'])) },
   });
   add('get', '/api/brain/status', { tag: 'Second brain', id: 'brainStatus', summary: 'What the second brain holds and when it last looked', responses: { 200: reply('The status', { type: 'object' }) } });
   return out;

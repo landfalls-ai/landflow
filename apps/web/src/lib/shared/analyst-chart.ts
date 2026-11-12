@@ -23,7 +23,7 @@ export function sourcesOfTool(tool: string): AnalystSource[] {
   const name = tool.toLowerCase();
   if (name.startsWith('usage_report')) return ['runs', 'usage'];
   if (name.startsWith('workflow_knowledge')) return ['runs', 'facts'];
-  if (name.startsWith('search_facts')) return ['facts'];
+  if (name.startsWith('search_facts') || name.startsWith('entity_knowledge') || name === 'entities' || name.startsWith('note_entity')) return ['facts'];
   if (name.startsWith('open_suggestions') || name.startsWith('suggest_improvement')) return ['suggestions'];
   if (name.includes('notebook')) return ['notebook'];
   return [];

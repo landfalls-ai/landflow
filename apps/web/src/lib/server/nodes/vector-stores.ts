@@ -19,6 +19,7 @@ import {
   type PortDescriptor,
   type PropertyDescriptor,
 } from '@landflow/sdk';
+import { isBrainCollection } from '../../shared/brain';
 import { toToolName, type AgentTool, type AiDocument, type DocumentLoader, type Embeddings, type Reranker, type Retriever } from '@landflow/engine';
 import {
   insertDocuments,
@@ -228,6 +229,13 @@ function vectorStoreNode(spec: StoreSpec) {
   const collectionOf = (ctx: IBaseContext) => {
     const collection = String(ctx.getNodeParameter('collection', 0, '') ?? '').trim();
     if (!collection) throw new NodeOperationError('No collection set', { description: 'Set “Collection” to the name the documents are kept under.' });
+    // The second brain's collections hold facts of every project, so no workflow or agent reads or writes them
+    // (docs/second-brain.md#find-similar): Find Similar and Landflow Usage answer with the caller's access.
+    if (isBrainCollection(collection)) {
+      throw new NodeOperationError(`“${collection}” is the second brain’s own collection`, {
+        description: 'Workflows and agents can’t read or write the brain’s vector collections. Use a Find Similar or Landflow Usage node, which only return what the workflow’s creator can see.',
+      });
+    }
     return collection;
   };
   const embeddingsOf = (ctx: Parameters<typeof connected>[0]) =>

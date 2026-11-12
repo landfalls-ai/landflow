@@ -1,12 +1,13 @@
 /**
  * The second brain (docs/second-brain.md): the leader runs it (bootstrap's `leaderService`). On start it fills the ledger
  * once from what is on disk; then every LANDFLOW_BRAIN_INTERVAL_MINUTES (60) it rolls the ledger up, prunes it, runs the
- * detectors, expires stale suggestions and checks the effect of applied ones, and once a day it studies (./study.ts).
+ * detectors (the built-in ones, then the published detector flows, ./flow-detectors.ts), expires stale suggestions and
+ * checks the effect of applied ones, and once a day it studies (./study.ts).
  * POST /api/brain/run does any of it now.
  */
 import type { LanguageModel } from '@landflow/engine';
 import type { BrainStatus, DetectorId } from '../../shared/brain';
-import { DETECTORS } from '../../shared/brain';
+import { DETECTORS, isBuiltinDetector, isFlowDetector } from '../../shared/brain';
 import { database, type Database } from '../db';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
@@ -15,7 +16,9 @@ import { brainEnabled } from '../usage/ledger';
 import { ledgerSize, pruneUsage, rollupRecent } from '../usage/query';
 import { DETECTOR_RUNS, detectContext, type Finding } from './detectors';
 import { countFacts } from './facts';
+import { runFlowDetectors, type FlowDetectorRun } from './flow-detectors';
 import { checkEffects, detectorStats, expireStale, upsertProposal } from './proposals';
+import { countEntities } from './entities';
 import { study, type StudyResult } from './study';
 import { brainModelName, enrichFindings } from './writer';
 
@@ -38,18 +41,25 @@ export interface DetectResult {
   saved: number;
   held: number;
   byDetector: Partial<Record<DetectorId, number>>;
+  /** Each detector flow's run (./flow-detectors.ts). */
+  flows?: FlowDetectorRun[];
   durationMs: number;
 }
 
-/** Run the detectors, let the model enrich what needs it, and keep the suggestions. */
-export async function runDetectors(options: { model?: LanguageModel; db?: Database; now?: number; only?: DetectorId[]; enrich?: boolean; signal?: AbortSignal } = {}): Promise<DetectResult> {
+/**
+ * Run the detectors, let the model enrich what needs it, and keep the suggestions; then run the detector flows, whose
+ * Suggest Improvement nodes keep their own. `only` picks detectors, built-in or `flow:<workflowId>`.
+ */
+export async function runDetectors(
+  options: { model?: LanguageModel; db?: Database; now?: number; only?: DetectorId[]; enrich?: boolean; signal?: AbortSignal; reason?: 'tick' | 'run-now' } = {},
+): Promise<DetectResult> {
   const db = options.db ?? database();
   const started = Date.now();
   const quiet = Object.fromEntries(detectorStats(db).map((s) => [s.id, s.quiet])) as Record<DetectorId, number>;
   const ctx = detectContext(quiet, db, options.now);
   const findings: Finding[] = [];
   const byDetector: Partial<Record<DetectorId, number>> = {};
-  for (const id of options.only ?? DETECTORS) {
+  for (const id of options.only?.filter(isBuiltinDetector) ?? DETECTORS) {
     try {
       const found = DETECTOR_RUNS[id](ctx);
       byDetector[id] = found.length;
@@ -61,8 +71,16 @@ export async function runDetectors(options: { model?: LanguageModel; db?: Databa
   const enriched = options.enrich === false ? findings : await enrichFindings(findings, { model: options.model, signal: options.signal });
   let saved = 0;
   for (const finding of enriched) if (upsertProposal(finding.proposal, db, options.now)) saved++;
+  let found = findings.length;
+  const onlyFlows = options.only?.filter(isFlowDetector);
+  const flows = !options.only || onlyFlows?.length ? await runFlowDetectors({ only: onlyFlows, quiet: (id) => quiet[id] ?? 1, db, now: options.now, signal: options.signal, reason: options.reason }) : [];
+  for (const run of flows) {
+    byDetector[run.id] = run.found;
+    found += run.found;
+    saved += run.saved;
+  }
   stamp(KEYS.detect, db);
-  return { found: findings.length, saved, held: findings.length - saved, byDetector, durationMs: Date.now() - started };
+  return { found, saved, held: found - saved, byDetector, ...(flows.length && { flows }), durationMs: Date.now() - started };
 }
 
 export interface RunResult {
@@ -74,21 +92,21 @@ export interface RunResult {
 }
 
 /** Run parts of the brain now: `detect`, `study`, `effects` (with expiry and pruning), or `all`. */
-export async function runBrain(what: 'detect' | 'study' | 'effects' | 'all', options: { model?: LanguageModel; db?: Database; now?: number } = {}): Promise<RunResult> {
+export async function runBrain(what: 'detect' | 'study' | 'effects' | 'all', options: { model?: LanguageModel; db?: Database; now?: number; reason?: 'tick' | 'run-now' } = {}): Promise<RunResult> {
   const db = options.db ?? database();
   const result: RunResult = {};
   if (what === 'effects' || what === 'all') {
     rollupRecent(db);
     result.pruned = pruneUsage(db, options.now);
     result.expired = expireStale(db, options.now);
-    result.effects = checkEffects(db, options.now);
+    result.effects = await checkEffects(db, options.now);
     stamp(KEYS.effects, db);
   }
   if (what === 'study' || what === 'all') {
     result.study = await study({ model: options.model, db, now: options.now });
     stamp(KEYS.study, db);
   }
-  if (what === 'detect' || what === 'all') result.detect = await runDetectors({ model: options.model, db, now: options.now });
+  if (what === 'detect' || what === 'all') result.detect = await runDetectors({ model: options.model, db, now: options.now, reason: options.reason });
   return result;
 }
 
@@ -104,6 +122,7 @@ export function brainStatus(db: Database = database()): BrainStatus {
     ...(oldest && { oldestEvent: oldest }),
     facts,
     profiles,
+    entities: countEntities(db),
     open,
     ...(at(KEYS.detect) && { lastDetect: at(KEYS.detect) }),
     ...(at(KEYS.study) && { lastStudy: at(KEYS.study) }),
