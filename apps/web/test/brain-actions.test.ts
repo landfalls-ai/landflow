@@ -187,6 +187,8 @@ describe('On Suggestion Decided', () => {
     const d = { action: 'intro', label: 'Intro', at: '' };
     expect(decidedMatches(p, d, {})).toBe(true);
     expect(decidedMatches(p, d, { detector: 'flow:x' })).toBe(false);
+    // "any" (as Spotlight writes it), "all" and "*" mean any detector, like the empty choice.
+    for (const any of ['any', 'All', '*']) expect(decidedMatches(p, d, { detector: any })).toBe(true);
     expect(decidedMatches(p, d, { label: 'tools' })).toBe(true);
     expect(decidedMatches(p, d, { decisions: 'applied, book' })).toBe(false);
     expect(decidedMatches(p, d, { decisions: 'applied, intro' })).toBe(true);

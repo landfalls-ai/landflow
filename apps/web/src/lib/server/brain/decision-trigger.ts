@@ -9,7 +9,7 @@
  */
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { NodeItem } from '@landflow/sdk';
-import type { Proposal, ProposalDecision } from '../../shared/brain';
+import { detectorFilter, type Proposal, type ProposalDecision } from '../../shared/brain';
 import { workflowForCall } from '../publish';
 import { runWorkflow } from '../runner';
 import { singleton } from '../singleton';
@@ -52,7 +52,7 @@ const kindOf = (decision: ProposalDecision) => decision.action;
 
 /** Whether a trigger node with these parameters asks for this decision of this suggestion. */
 export function decidedMatches(proposal: Proposal, decision: ProposalDecision, parameters: Record<string, unknown>): boolean {
-  const detector = typeof parameters.detector === 'string' ? parameters.detector.trim() : '';
+  const detector = detectorFilter(parameters.detector);
   if (detector && proposal.detector !== detector) return false;
   const label = typeof parameters.label === 'string' ? parameters.label.trim().toLowerCase() : '';
   if (label && (proposal.label ?? '').trim().toLowerCase() !== label) return false;
@@ -76,7 +76,7 @@ export function decisionListeners(proposal: Proposal, decision: ProposalDecision
 export function decidedBuilders(detector: string): Array<{ id: string; name: string }> {
   return armed()
     .filter((l) => {
-      const wanted = typeof l.node.parameters?.detector === 'string' ? l.node.parameters.detector.trim() : '';
+      const wanted = detectorFilter(l.node.parameters?.detector);
       const decisions = asList(l.node.parameters?.decisions);
       return (!wanted || wanted === detector) && (!decisions.length || decisions.includes('applied'));
     })

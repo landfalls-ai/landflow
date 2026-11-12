@@ -7,7 +7,7 @@
  */
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { NodeItem } from '@landflow/sdk';
-import { attrsMatch, parseAttrEquals, type UsageEvent, type UsageKind } from '../../shared/brain';
+import { attrsMatch, detectorFilter, parseAttrEquals, type UsageEvent, type UsageKind } from '../../shared/brain';
 import { workflowForCall } from '../publish';
 import { runWorkflow } from '../runner';
 import { singleton } from '../singleton';
@@ -60,7 +60,7 @@ export function matches(event: UsageEvent, parameters: Record<string, unknown>):
   if (!attrsMatch(event.attrs, parseAttrEquals(parameters.attrEquals))) return false;
   const workflowId = typeof parameters.workflowId === 'string' ? parameters.workflowId.trim() : '';
   if (workflowId && event.workflowId !== workflowId) return false;
-  const detector = typeof parameters.detector === 'string' ? parameters.detector.trim() : '';
+  const detector = detectorFilter(parameters.detector);
   if (detector && event.kind === 'proposal.applied' && event.attrs?.detector !== detector) return false;
   const minCost = Number(parameters.minCost ?? 0);
   if (minCost > 0 && (event.cost ?? 0) < minCost) return false;

@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import type { Workflow } from '@landflow/engine';
 import type { DetectorId, DetectorStat, DismissReason, FlowDetectorId, Proposal, ProposalAction, ProposalDecision, ProposalInput, ProposalRisk, ProposalSource, ProposalStatus } from '../../shared/brain';
-import { DETECTOR_LABELS, DETECTORS, flowDetectorWorkflow, isFlowDetector, MAX_PROPOSAL_ACTIONS, quietBar, RESERVED_ACTION_IDS } from '../../shared/brain';
+import { DETECTOR_LABELS, DETECTORS, flowDetectorWorkflow, isFlowDetector, MAX_PROPOSAL_ACTIONS, quietBar, RESERVED_ACTION_IDS, detectorFilter } from '../../shared/brain';
 import { agentStore } from '../agents/store';
 import { validateOps } from '../assistant/ops';
 import { database, type Database } from '../db';
@@ -401,7 +401,7 @@ function usageBuilders(detector?: string): Array<{ id: string; name: string }> {
       w.nodes.some((n) => {
         if (n.type !== 'core.usageTrigger' || n.disabled) return false;
         const kinds = Array.isArray(n.parameters?.kinds) ? n.parameters.kinds : [];
-        const wanted = n.parameters?.detector;
+        const wanted = detectorFilter(n.parameters?.detector);
         return (!kinds.length || kinds.includes('proposal.applied')) && (!wanted || wanted === detector);
       }),
     )

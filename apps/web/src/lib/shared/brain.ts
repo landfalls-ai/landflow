@@ -210,6 +210,11 @@ export type DetectorId = BuiltinDetectorId | FlowDetectorId;
 export const isBuiltinDetector = (id: unknown): id is BuiltinDetectorId => (DETECTORS as readonly unknown[]).includes(id);
 export const isFlowDetector = (id: unknown): id is FlowDetectorId => typeof id === 'string' && id.startsWith('flow:') && id.length > 'flow:'.length;
 export const isDetectorId = (id: unknown): id is DetectorId => isBuiltinDetector(id) || isFlowDetector(id);
+/** A trigger's "Suggestion From" value as a detector id, or '' for any detector (also "any", "all" or "*", as people and Spotlight write it). */
+export const detectorFilter = (value: unknown): string => {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return ['any', 'all', '*'].includes(text.toLowerCase()) ? '' : text;
+};
 export const flowDetectorId = (workflowId: string): FlowDetectorId => `flow:${workflowId}`;
 export const flowDetectorWorkflow = (id: FlowDetectorId) => id.slice('flow:'.length);
 
