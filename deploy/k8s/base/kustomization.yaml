@@ -18,6 +18,9 @@ resources:
   - plugins/google-workspace.yaml
   - plugins/databases.yaml
   - plugins/github.yaml
+  - plugins/linear.yaml
+  - plugins/attio.yaml
+  - plugins/fathom.yaml
 configMapGenerator:
   # The MCP gateway sidecar's base config: a copy of deploy/mcp-gateway/config.sidecar.yaml (kustomize can't read outside
   # this directory; keep the two the same). The host writes the targets at runtime.
