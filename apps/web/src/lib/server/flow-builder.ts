@@ -32,6 +32,16 @@ export interface FlowDraft {
 const OLLAMA_URL = (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
 const DEFAULT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';
 
+/**
+ * How long one draft may take (LANDFLOW_BUILDER_TIMEOUT_SECONDS, default 600): the model reads the whole node catalog
+ * before it writes, and a dense local model on a host with many plugins can spend minutes on that alone. The limit only
+ * keeps a request from hanging on a stuck Ollama. Read per call, so a changed value applies to the next draft.
+ */
+export function builderTimeoutMs(value: string | undefined = process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS): number {
+  const seconds = Number(value);
+  return value !== undefined && value.trim() !== '' && Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 600_000;
+}
+
 const SCHEMA = {
   type: 'object',
   properties: {
@@ -143,10 +153,11 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   const byType = new Map(types.map((t) => [t.type, t]));
   const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
   const started = Date.now();
+  const timeoutMs = builderTimeoutMs();
   const response = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
       stream: false,
@@ -158,6 +169,10 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
       ],
     }),
   }).catch((e: Error) => {
+    // A timeout means Ollama answered too slowly, not that it is down: say so, and what to change.
+    if (e.name === 'TimeoutError') {
+      throw new Error(`${model} on Ollama at ${OLLAMA_URL} did not finish the draft within ${timeoutMs / 1000} s. The model may be slow or still loading: raise LANDFLOW_BUILDER_TIMEOUT_SECONDS, or set a faster LANDFLOW_BUILDER_MODEL`);
+    }
     throw new Error(`Could not reach Ollama at ${OLLAMA_URL}: ${e.message}`);
   });
   if (!response.ok) throw new Error(`Ollama returned ${response.status}: ${(await response.text()).slice(0, 200)}`);
