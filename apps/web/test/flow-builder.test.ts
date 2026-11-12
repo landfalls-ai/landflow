@@ -17,7 +17,7 @@ Object.assign(process.env, ENV);
 
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
-const { buildFlow, builderTimeoutMs } = await import('@/lib/server/flow-builder');
+const { buildFlow, builderTimeoutMs, jsonOf } = await import('@/lib/server/flow-builder');
 registry.registerBuiltin(corePlugin);
 
 afterAll(async () => {
@@ -84,6 +84,36 @@ describe('AI builder timeout', () => {
     } finally {
       slowMs = 0;
       delete process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS;
+    }
+  });
+});
+
+describe('AI builder on Claude or an OpenAI-compatible API', () => {
+  it('takes the JSON object out of a reply with a fence or prose around it', () => {
+    expect(jsonOf('{"a":1}')).toBe('{"a":1}');
+    expect(jsonOf('```json\n{"a":1}\n```')).toBe('{"a":1}');
+    expect(jsonOf('Here it is: {"a":{"b":2}} done')).toBe('{"a":{"b":2}}');
+    expect(jsonOf('')).toBe('{}');
+  });
+
+  it('drafts through anthropic/<model> with the server key, the schema in the system prompt', async () => {
+    const saved = { key: process.env.ANTHROPIC_API_KEY, base: process.env.ANTHROPIC_BASE_URL };
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-for-tests';
+    process.env.ANTHROPIC_BASE_URL = fake.url.replace(/\/v1$/, '');
+    answer = '```json\n' + draft([{ key: 'set', type: 'core.set', name: 'Set' }]) + '\n```';
+    try {
+      const built = await buildFlow('a manual flow that sets a field', 'anthropic/claude-sonnet-5-5');
+      expect(built.nodes.map((n) => n.name)).toEqual(['Start', 'Set']);
+      const request = fake.last('/v1/messages')!;
+      expect(request.body.model).toBe('claude-sonnet-5-5');
+      expect(request.body.max_tokens).toBe(16000);
+      expect(request.body.temperature).toBeUndefined();
+      expect(String(JSON.stringify(request.body.system))).toContain('matching this JSON schema');
+    } finally {
+      for (const [k, v] of [['ANTHROPIC_API_KEY', saved.key], ['ANTHROPIC_BASE_URL', saved.base]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
   });
 });
