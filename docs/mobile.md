@@ -30,6 +30,25 @@ under [What's next](#whats-next), and this page grows as they land.
   notch and home bar (`viewport-fit=cover`), and the tab bar and headers pad for them. A **Skip to content** link is the
   first stop for the keyboard (`#main`). Toasts sit above the tab bar.
 
+## The Steps view
+
+On a phone the editor opens on **Steps**: the flow as a list of cards in the order it runs (`StepList` in
+`components/editor/step-list.tsx`, ordered by `stepOrder()` in `step-order.ts`). **Steps | Canvas** at the top left
+switches to the flow chart and back; the canvas stays loaded underneath. A desktop always shows the canvas.
+
+- **The order.** From the triggers (top first), along the main connections, like a program's blocks. A step with more
+  than one way on (an If, a Switch) opens one indented group per output, labelled with the output's name (*true*,
+  *false*). A step that several lead into (a Merge, or one step that two triggers share) comes once all of them are
+  listed, back where the split was, so after a branch the main line goes on. A connection back to an earlier step (a
+  loop) shows as *then “Loop”* on the step it comes from. Steps that nothing reaches are listed at the end.
+- **The cards.** Each shows the step's number, name and kind, and how its last run went: a tick with its items and
+  time, a red mark with the error, or a spinner while it runs. Off, pinned output and a breakpoint show as marks.
+  Sub-nodes (a chat model, a tool, a memory, and theirs) are chips on the step they serve, and a tap opens them.
+- **Opening and adding.** A tap opens the step full screen ([the node editor](#the-node-editor)). **Add a step** at the
+  end opens the node picker, connected from the last step that doesn't go on yet.
+- **Runs.** **Execute workflow** stays at the foot. In the Steps view the Logs panel is hidden on a phone, because the
+  cards say how each step went; the Canvas view still has it.
+
 ## The canvas and the node editor
 
 - **Tap to open.** On a phone the first tap on a step selects it (its toolbar shows above it), and a second tap opens it.
@@ -78,8 +97,8 @@ that opened it.
 5. ~~The node editor as a full-screen page~~ (above). Still to come: a `{}` picker that inserts an input field into a
    parameter by tapping (dragging fields from Input doesn't work by touch).
 6. ~~Tap to open a step, no zoom rail, one canvas toolbar~~.
-7. A Steps view as the phone's default: the flow as a list of step cards, with Steps | Canvas to switch.
-8. Runs on the step cards, with a sticky Run bar in place of the Logs panel.
+7. ~~A Steps view as the phone's default~~.
+8. ~~Runs on the step cards~~ (the Execute bar stays at the foot in place of the Logs panel).
 9. Spotlight's dock with three heights: bar, peek and half screen.
 10. ~~Executions as cards~~.
 11. Sheets and full-screen dialogs, with dialog roles and focus kept inside (`Sheet` is in, used by Filters; the other

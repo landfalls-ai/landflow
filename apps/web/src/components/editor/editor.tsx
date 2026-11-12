@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils';
 import { api, streamEvents } from '@/lib/client/api';
 import { duration, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
-import { isPhone } from '@/lib/client/use-phone';
+import { isPhone, usePhone } from '@/lib/client/use-phone';
 import { tint } from '@/lib/client/node-style';
 import { TEMPLATES } from '@/lib/client/templates';
 import type { DebugCommand, ExecutionEvent, ExecutionRecord, ImportReport, NodeTypeInfo, Workflow } from '@/lib/shared/types';
@@ -53,6 +53,7 @@ import { canvasGraph, type GroupProxyEdge } from './groups';
 import { ImportReportDialog, showImportReport } from './import-report';
 import { NodeCreator } from './node-creator';
 import { NodePanel } from './node-panel';
+import { StepList } from './step-list';
 import { EditorLogs } from './editor-logs';
 import { ShortcutsDialog, useShortcuts } from './shortcuts-dialog';
 import { StickyNodeView } from './sticky-node';
@@ -630,6 +631,11 @@ function StatusStrip() {
 export function Editor({ workflowId }: { workflowId: string }) {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
+  // A phone: the flow as a list of steps first, the canvas a tap away. A desktop always shows the canvas.
+  const phone = usePhone();
+  const [view, setView] = useState<'steps' | 'canvas'>('steps');
+  const hasSteps = useEditor((s) => s.nodes.length > 0);
+  const showSteps = phone && hasSteps && view === 'steps';
   const [chatOpen, setChatOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   // Stop pressed before the server named the execution: stopped as soon as it does.
@@ -962,9 +968,11 @@ export function Editor({ workflowId }: { workflowId: string }) {
             <div className="relative min-h-0 flex-1">
               <Canvas onSave={() => void save()} />
               <EmptyCanvas />
-              <CanvasToolbar />
+              {/* A phone opens on the Steps view (docs/mobile.md#the-steps-view); the canvas stays mounted under it. */}
+              {showSteps ? <StepList /> : <CanvasToolbar />}
+              {phone && hasSteps && <ViewSwitch view={view} onChange={setView} />}
               <BuildProgressBar />
-              <BrainCanvasCard />
+              {!showSteps && <BrainCanvasCard />}
               {/* The run controls at the bottom, clear of zoom and the minimap. */}
               <div className={cn('pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 pl-14 pr-[232px] max-md:bottom-3 max-md:pr-3', spotlightWorks && 'max-md:hidden')}>
                 <ExecuteBar
@@ -979,8 +987,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
                 />
               </div>
             </div>
-            {/* On a phone, Spotlight's open sheet says how each run went: the logs give the canvas their room. */}
-            <div className={cn('contents', spotlightOpen && 'max-md:hidden')}>
+            {/* On a phone, Spotlight's open sheet or the step cards say how each run went: the logs give them their room. */}
+            <div className={cn('contents', (spotlightOpen || showSteps) && 'max-md:hidden')}>
               <EditorLogs />
             </div>
           </div>
@@ -995,6 +1003,30 @@ export function Editor({ workflowId }: { workflowId: string }) {
         <ImportReportDialog />
       </div>
     </ReactFlowProvider>
+  );
+}
+
+/** A phone's switch between the Steps view and the canvas, top left over both. */
+function ViewSwitch({ view, onChange }: { view: 'steps' | 'canvas'; onChange: (view: 'steps' | 'canvas') => void }) {
+  return (
+    <div role="group" aria-label="View" className="absolute left-3 top-3 z-20 flex rounded-full border border-hair bg-sf p-0.5 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+      {(
+        [
+          ['steps', 'Steps'],
+          ['canvas', 'Canvas'],
+        ] as const
+      ).map(([key, label]) => (
+        <button
+          key={key}
+          type="button"
+          aria-pressed={view === key}
+          onClick={() => onChange(key)}
+          className={cn('h-10 rounded-full px-4 text-[13px] font-semibold', view === key ? 'bg-acdim text-ac' : 'text-t2')}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 
