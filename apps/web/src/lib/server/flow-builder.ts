@@ -9,6 +9,8 @@ import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-te
 import { registry } from './plugins/registry';
 import { collectionShape } from '@/lib/shared/assistant-ops';
 import { outputFields } from './assistant/research';
+import { assistantModel } from './assistant/model';
+import { anthropicModel } from './nodes/models';
 
 export interface DraftNode {
   key: string;
@@ -31,6 +33,16 @@ export interface FlowDraft {
 
 const OLLAMA_URL = (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
 const DEFAULT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';
+
+/**
+ * How long one draft may take (LANDFLOW_BUILDER_TIMEOUT_SECONDS, default 600): the model reads the whole node catalog
+ * before it writes, and a dense local model on a host with many plugins can spend minutes on that alone. The limit only
+ * keeps a request from hanging on a stuck Ollama. Read per call, so a changed value applies to the next draft.
+ */
+export function builderTimeoutMs(value: string | undefined = process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS): number {
+  const seconds = Number(value);
+  return value !== undefined && value.trim() !== '' && Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 600_000;
+}
 
 const SCHEMA = {
   type: 'object',
@@ -137,16 +149,12 @@ export function cleanTestItems(items: NodeItem[] | undefined, trigger: Pick<Draf
   return read.size && !cleaned.some((item) => Object.keys(item.json).some((k) => read.has(k))) ? undefined : cleaned;
 }
 
-/** `teams`: the published agent teams the caller can see, so a Run a Team node gets a real team (by id, never a guess). */
-export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = []): Promise<FlowDraft> {
-  const types = registry.nodeTypes().filter((t) => t.available);
-  const byType = new Map(types.map((t) => [t.type, t]));
-  const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
-  const started = Date.now();
+/** The draft as text from Ollama's chat API, held to SCHEMA by its `format`. */
+async function draftWithOllama(model: string, request: string, timeoutMs: number): Promise<string> {
   const response = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
       stream: false,
@@ -154,20 +162,71 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
       options: { temperature: 0.2 },
       messages: [
         { role: 'system', content: SYSTEM },
-        { role: 'user', content: `Node catalog:\n${catalog(types)}${teamsNote}\n\nBuild this workflow:\n${prompt}` },
+        { role: 'user', content: request },
       ],
     }),
   }).catch((e: Error) => {
+    // A timeout means Ollama answered too slowly, not that it is down: say so, and what to change.
+    if (e.name === 'TimeoutError') {
+      throw new Error(`${model} on Ollama at ${OLLAMA_URL} did not finish the draft within ${timeoutMs / 1000} s. The model may be slow or still loading: raise LANDFLOW_BUILDER_TIMEOUT_SECONDS, or set a faster LANDFLOW_BUILDER_MODEL`);
+    }
     throw new Error(`Could not reach Ollama at ${OLLAMA_URL}: ${e.message}`);
   });
   if (!response.ok) throw new Error(`Ollama returned ${response.status}: ${(await response.text()).slice(0, 200)}`);
   const body = (await response.json()) as { message?: { content?: string } };
+  return body.message?.content ?? '{}';
+}
+
+/**
+ * The draft as text from `anthropic/<model>` or `openai/<model>` through the model adapters: the server's
+ * ANTHROPIC_API_KEY (or `ant auth login`), or OPENAI_API_KEY and OPENAI_BASE_URL. These have no schema-held format here,
+ * so the schema goes in the system prompt and jsonOf() takes the object out of the reply.
+ */
+async function draftWithProvider(model: string, request: string, timeoutMs: number): Promise<string> {
+  const [provider, ...rest] = model.split('/');
+  // A whole draft needs more room than the assistant's 4096 tokens; non-streaming, so ~16000 keeps under SDK timeouts.
+  // `fallback`: a refused draft is retried server-side on another model (Anthropic's `fallbacks: "default"`).
+  const llm = provider === 'anthropic' ? anthropicModel({ model: rest.join('/'), effort: 'medium', maxTokens: 16_000, fallback: true }) : assistantModel(model);
+  const system = `${SYSTEM}\n\nAnswer with one JSON object and nothing else (no prose, no code fence), matching this JSON schema:\n${JSON.stringify(SCHEMA)}`;
+  try {
+    const turn = await llm.generate({ system, messages: [{ role: 'user', content: request }], tools: [], responseFormat: 'json', signal: AbortSignal.timeout(timeoutMs) });
+    if (turn.stopReason === 'refusal') throw new Error(`${model} declined to draft this workflow: ${turn.text}`);
+    return turn.text;
+  } catch (e) {
+    if ((e as Error).name === 'TimeoutError' || (e as Error).name === 'AbortError') {
+      throw new Error(`${model} did not finish the draft within ${timeoutMs / 1000} s: raise LANDFLOW_BUILDER_TIMEOUT_SECONDS`);
+    }
+    throw e;
+  }
+}
+
+/** The JSON object in a model's reply: the whole text, or what a code fence or prose around it holds. */
+export function jsonOf(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{')) return trimmed;
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(trimmed)?.[1]?.trim();
+  if (fenced?.startsWith('{')) return fenced;
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed || '{}';
+}
+
+/** `teams`: the published agent teams the caller can see, so a Run a Team node gets a real team (by id, never a guess). */
+export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = []): Promise<FlowDraft> {
+  const types = registry.nodeTypes().filter((t) => t.available);
+  const byType = new Map(types.map((t) => [t.type, t]));
+  const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
+  const started = Date.now();
+  const timeoutMs = builderTimeoutMs();
+  const request = `Node catalog:\n${catalog(types)}${teamsNote}\n\nBuild this workflow:\n${prompt}`;
+  const content = /^(anthropic|openai)\//.test(model) ? await draftWithProvider(model, request, timeoutMs) : await draftWithOllama(model, request, timeoutMs);
   let raw: { name?: string; nodes?: unknown[]; connections?: unknown[]; testData?: unknown };
   try {
-    raw = JSON.parse(body.message?.content ?? '{}');
+    raw = JSON.parse(jsonOf(content));
   } catch {
     throw new Error('The model did not return valid JSON. Try again or rephrase.');
   }
+
 
   const dropped: string[] = [];
   const nodes: DraftNode[] = [];

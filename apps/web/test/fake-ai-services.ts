@@ -20,6 +20,8 @@ export interface FakeReply {
   toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
   /** `cacheRead` / `cacheWrite`: OpenAI reports cached input inside `input`; Anthropic reports both next to `input`. */
   usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+  /** Ollama /api/chat without streaming: wait this long before answering (a slow model). */
+  delayMs?: number;
 }
 
 type Provider = 'openai' | 'ollama' | 'anthropic';
@@ -107,6 +109,7 @@ export async function startFakeModels(options: { reply?: (provider: Provider, bo
     if (path === '/api/chat') {
       const toolCalls = (reply.toolCalls ?? []).map((call) => ({ function: { name: call.name, arguments: call.arguments } }));
       if (!body.stream) {
+        if (reply.delayMs) await sleep(reply.delayMs);
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ model: body.model, message: { role: 'assistant', content: text, ...(toolCalls.length && { tool_calls: toolCalls }) }, done: true, done_reason: 'stop', prompt_eval_count: usage.input, eval_count: usage.output }));
         return;
