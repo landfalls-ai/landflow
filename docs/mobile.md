@@ -30,6 +30,23 @@ under [What's next](#whats-next), and this page grows as they land.
   notch and home bar (`viewport-fit=cover`), and the tab bar and headers pad for them. A **Skip to content** link is the
   first stop for the keyboard (`#main`). Toasts sit above the tab bar.
 
+## The canvas and the node editor
+
+- **Tap to open.** On a phone the first tap on a step selects it (its toolbar shows above it), and a second tap opens it.
+  A double tap still opens it too. Tapping the canvas starts again.
+- **One toolbar.** The zoom rail is gone (pinch to zoom). The toolbar at the top right keeps add a step, add a note, tidy
+  up and fit view, gets **Undo** and **Redo**, and its buttons are 44 px.
+
+### The node editor
+
+On a phone a step opens full screen (`NodePanel` in `components/editor/node-panel.tsx`), with a back arrow and the step's
+name at the top. Under it, **Input**, **Parameters**, **Output** and **Settings** show one pane at a time (a trigger has
+no Input). At the foot, **‹** and **›** move to the step before and after, and **Run step** runs just this step and then
+shows its output. The pane stays as you move between steps, so outputs can be compared one step at a time (a trigger,
+which has no Input, shows Parameters); opening a step from the canvas starts at Parameters, or at Input when a debug run is
+paused before it. **Breakpoint** and **Run from here** lead the Settings pane. Focus moves to the back arrow when the
+editor opens, and toasts sit just above the foot bar.
+
 ## Lists and filters
 
 - **Executions as cards.** On a phone each run is a card: the workflow and its menu on the first line, the status and how
@@ -58,9 +75,9 @@ that opened it.
 2. ~~Phone app bar~~.
 3. ~~Bottom tab bar~~.
 4. ~~Editor header that fits~~.
-5. The node editor as a full-screen page: Parameters, Input, Output and Settings as segments, a sticky **Run step**,
-   ‹ › between steps, and a `{}` picker that inserts fields by tapping.
-6. Tap to open a step (tap selects, a second tap opens), no zoom rail, one canvas toolbar.
+5. ~~The node editor as a full-screen page~~ (above). Still to come: a `{}` picker that inserts an input field into a
+   parameter by tapping (dragging fields from Input doesn't work by touch).
+6. ~~Tap to open a step, no zoom rail, one canvas toolbar~~.
 7. A Steps view as the phone's default: the flow as a list of step cards, with Steps | Canvas to switch.
 8. Runs on the step cards, with a sticky Run bar in place of the Logs panel.
 9. Spotlight's dock with three heights: bar, peek and half screen.

@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, ChevronLeft, ChevronRight, CircleDot, Pause, PencilLine, Pin, PinOff, Play, SkipForward, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, CircleDot, Pause, PencilLine, Pin, PinOff, Play, SkipForward, X } from 'lucide-react';
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { duration, languageMeta } from '@/lib/client/format';
@@ -20,6 +20,7 @@ import { TriggerUrl } from './trigger-url';
 import { syncTeamName } from './turn-into-team';
 import { TeamNodePanel } from './team-node-panel';
 import { useNewLook } from '../shell/look-toggle';
+import { isPhone, usePhone } from '@/lib/client/use-phone';
 
 function Segmented<T extends string>({
   value,
@@ -82,6 +83,10 @@ export function NodePanel() {
   const [runIndex, setRunIndex] = useState(0);
   const [branch, setBranch] = useState(0);
   const close = () => useEditor.getState().openNode(undefined);
+  // A phone shows one pane at a time (docs/mobile.md#the-node-editor): Input, Parameters, Output, or Settings
+  // (Parameters with the Settings tab).
+  const phone = usePhone();
+  const [pane, setPane] = useState<'input' | 'parameters' | 'output'>('parameters');
 
   useEffect(() => {
     setRunIndex(Math.max(0, (runs?.length ?? 1) - 1));
@@ -90,6 +95,22 @@ export function NodePanel() {
   useEffect(() => {
     setPinDraft(null);
     setPinError(undefined);
+  }, [openNodeId]);
+  // Opened from the canvas: Parameters. Moved with ‹ ›: the same pane, to compare steps.
+  const wasOpen = useRef(false);
+  // A phone also starts on the Parameters tab (not Settings), or on Input when the run is paused here (its notice is there).
+  useEffect(() => {
+    if (!wasOpen.current && openNodeId) {
+      const pausedHere = useEditor.getState().paused?.nodeId === openNodeId;
+      setPane(pausedHere ? 'input' : 'parameters');
+      if (isPhone()) setTab('parameters');
+    }
+    wasOpen.current = Boolean(openNodeId);
+  }, [openNodeId]);
+  const backButton = useRef<HTMLButtonElement>(null);
+  // A phone's editor is a dialog: focus moves into it when it opens.
+  useEffect(() => {
+    if (openNodeId && isPhone()) backButton.current?.focus();
   }, [openNodeId]);
 
   useEffect(() => {
@@ -154,6 +175,8 @@ export function NodePanel() {
   const credentialRequirements = descriptor?.credentials?.filter((c) => isPropertyVisible(c, withPropertyDefaults(descriptor.properties, wf.parameters))) ?? [];
   const update = (patch: Parameters<ReturnType<typeof useEditor.getState>['updateNode']>[1]) => useEditor.getState().updateNode(openNodeId, patch);
   const isTrigger = descriptor?.kind === 'trigger';
+  // A trigger has no Input pane: moving to one from Input shows its Parameters.
+  const shown = isTrigger && pane === 'input' ? 'parameters' : pane;
   const isSubnode = descriptor?.kind === 'subnode';
   const outputPorts = descriptor?.outputs.filter((p) => p.type === 'main') ?? [];
   const runNode = (scope: 'from' | 'only') => useEditor.getState().run?.({ kind: 'node', nodeId: openNodeId, scope });
@@ -193,13 +216,13 @@ export function NodePanel() {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-overlay p-6" onMouseDown={close}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-overlay p-6 max-md:p-0" onMouseDown={close}>
       {parents[0] && (
         <button
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => useEditor.getState().openNode(parents[0]!.id)}
           title={`Previous: ${parents[0].data.wf.name}`}
-          className="absolute left-1 top-1/2 z-10 grid h-16 w-5 -translate-y-1/2 place-items-center rounded-full bg-sf text-t2 shadow-pop transition-colors hover:text-t1"
+          className="absolute left-1 top-1/2 z-10 grid h-16 w-5 -translate-y-1/2 place-items-center rounded-full bg-sf text-t2 shadow-pop transition-colors hover:text-t1 max-md:hidden"
         >
           <ChevronLeft className="size-4" />
         </button>
@@ -209,23 +232,30 @@ export function NodePanel() {
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => useEditor.getState().openNode(children[0]!.id)}
           title={`Next: ${children[0].data.wf.name}`}
-          className="absolute right-1 top-1/2 z-10 grid h-16 w-5 -translate-y-1/2 place-items-center rounded-full bg-sf text-t2 shadow-pop transition-colors hover:text-t1"
+          className="absolute right-1 top-1/2 z-10 grid h-16 w-5 -translate-y-1/2 place-items-center rounded-full bg-sf text-t2 shadow-pop transition-colors hover:text-t1 max-md:hidden"
         >
           <ChevronRight className="size-4" />
         </button>
       )}
       <div
         onMouseDown={(e) => e.stopPropagation()}
-        className="flex h-full max-h-[860px] w-full max-w-[1480px] animate-in flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop"
+        data-node-editor
+        role={phone ? 'dialog' : undefined}
+        aria-modal={phone || undefined}
+        aria-label={phone ? wf.name : undefined}
+        className="flex h-full max-h-[860px] w-full max-w-[1480px] animate-in flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop max-md:max-h-none max-md:rounded-none max-md:border-0 max-md:pt-[env(safe-area-inset-top)]"
       >
         {/* header */}
-        <div className="flex shrink-0 items-center gap-3 border-b border-hair px-4 py-2.5">
-          <div className="grid size-9 place-items-center rounded-lg border border-hair bg-wl">
+        <div className="flex shrink-0 items-center gap-3 border-b border-hair px-4 py-2.5 max-md:gap-2 max-md:px-1.5 max-md:py-1">
+          <button ref={backButton} type="button" onClick={close} aria-label="Back to the flow" className="grid size-11 shrink-0 place-items-center rounded-full text-t2 hover:text-t1 md:hidden">
+            <ArrowLeft className="size-5" />
+          </button>
+          <div className="grid size-9 place-items-center rounded-lg border border-hair bg-wl max-md:shrink-0">
             <NodeIcon icon={descriptor?.icon} size={17} className="text-t1" strokeWidth={1.6} />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 max-md:flex-1">
             <NodeNameInput nodeId={openNodeId} name={wf.name} />
-            <div className="flex items-center gap-2 text-[12px] text-t3">
+            <div className="flex items-center gap-2 text-[12px] text-t3 max-md:hidden">
               <span className="font-mono">{wf.type}</span>
               {info && info.pluginId !== 'core' && (
                 <>
@@ -236,7 +266,8 @@ export function NodePanel() {
               {info?.pluginId === 'core' && <TransportBadge transport="in-process" />}
             </div>
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          {/* A phone: running and moving between steps are in the bar at the foot. */}
+          <div className="ml-auto flex items-center gap-2 max-md:hidden">
             {descriptor?.documentationUrl && (
               <a href={descriptor.documentationUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[13px] text-t2 hover:text-ac">
                 <BookOpen className="size-3.5" /> Docs
@@ -272,15 +303,44 @@ export function NodePanel() {
           </div>
         </div>
 
+        {phone && (
+          <div role="group" aria-label="Pane" className="flex shrink-0 gap-1 border-b border-hair px-2 py-1.5">
+            {(
+              [
+                ...(isTrigger ? [] : ([['input', 'Input']] as const)),
+                ['parameters', 'Parameters'],
+                ['output', 'Output'],
+                ['settings', 'Settings'],
+              ] as const
+            ).map(([key, label]) => {
+              const on = key === 'settings' ? shown === 'parameters' && tab === 'settings' : key === 'parameters' ? shown === 'parameters' && tab === 'parameters' : shown === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => {
+                    setPane(key === 'settings' ? 'parameters' : key);
+                    if (key === 'settings' || key === 'parameters') setTab(key);
+                  }}
+                  className={cn('h-10 flex-1 rounded-full text-[13px] font-semibold', on ? 'bg-acdim text-ac' : 'text-t2')}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         <div
           className={cn(
-            'grid min-h-0 flex-1',
+            'grid min-h-0 flex-1 max-md:flex max-md:flex-col',
             isTrigger ? 'grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]' : 'grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1fr)]',
           )}
         >
           {/* input */}
           {!isTrigger && (
-            <div className="flex min-h-0 flex-col border-r border-hair bg-sf2">
+            <div className={cn('flex min-h-0 flex-col border-r border-hair bg-sf2 max-md:flex-1 max-md:border-r-0', phone && shown !== 'input' && 'hidden')}>
               <PaneHeader title="Input" />
               {paused && (
                 <div className="mx-3 mt-3 flex items-center gap-2 rounded-[10px] border border-warnbd bg-warndim px-3 py-2 text-[12px] text-warn">
@@ -296,7 +356,7 @@ export function NodePanel() {
                     <>
                       No input yet.
                       <br />
-                      Run the workflow to see what flows into this node, then drag fields into parameters.
+                      Run the workflow to see what flows into this node{phone ? '.' : ', then drag fields into parameters.'}
                     </>
                   }
                 />
@@ -305,8 +365,8 @@ export function NodePanel() {
           )}
 
           {/* parameters */}
-          <div className="flex min-h-0 flex-col">
-            <div className="flex h-10 shrink-0 items-end gap-1 border-b border-hair px-3">
+          <div className={cn('flex min-h-0 flex-col max-md:flex-1', phone && shown !== 'parameters' && 'hidden')}>
+            <div className="flex h-10 shrink-0 items-end gap-1 border-b border-hair px-3 max-md:hidden">
               {(['parameters', 'settings'] as const).map((t) => (
                 <button
                   key={t}
@@ -320,7 +380,7 @@ export function NodePanel() {
                 </button>
               ))}
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto p-5 max-md:p-4">
               {tab === 'parameters' ? (
                 <>
                   {descriptor?.description && <p className="mb-4 text-[13px] text-t2">{descriptor.description}</p>}
@@ -369,6 +429,24 @@ export function NodePanel() {
                 </>
               ) : (
                 <div className="space-y-2">
+                  {phone && !isSubnode && (
+                    // A phone's header has no room for these: they lead the Settings pane.
+                    <div className="flex flex-wrap gap-2 pb-2">
+                      <Button className={cn('h-11', breakpoint && 'text-rd')} onClick={() => useEditor.getState().toggleBreakpoint(openNodeId)}>
+                        <CircleDot className="size-4" /> {breakpoint ? 'Breakpoint on' : 'Breakpoint'}
+                      </Button>
+                      <Button
+                        className="h-11"
+                        disabled={running}
+                        onClick={() => {
+                          runNode('from');
+                          setPane('output');
+                        }}
+                      >
+                        <SkipForward className="size-4" /> Run from here
+                      </Button>
+                    </div>
+                  )}
                   <SettingRow label="Disabled" hint="Pass input straight through without running">
                     <Switch checked={Boolean(wf.disabled)} onChange={(v) => update({ disabled: v })} />
                   </SettingRow>
@@ -456,7 +534,7 @@ export function NodePanel() {
           </div>
 
           {/* output */}
-          <div className="flex min-h-0 flex-col border-l border-hair bg-sf2">
+          <div className={cn('flex min-h-0 flex-col border-l border-hair bg-sf2 max-md:flex-1 max-md:border-l-0', phone && shown !== 'output' && 'hidden')}>
             <PaneHeader title="Output">
               {pinned && pinDraft === null && (
                 <span className="flex animate-pop items-center gap-1 rounded-full bg-viz-7 px-2 py-px text-[11px] font-semibold text-white">
@@ -605,6 +683,40 @@ export function NodePanel() {
             </div>
           </div>
         </div>
+        {phone && !isSubnode && (
+          // A phone's foot: the step before, Run step (then its output), the step after.
+          <div className="flex shrink-0 items-center gap-2 border-t border-hair px-2 pt-2 pb-[max(8px,env(safe-area-inset-bottom))]">
+            <button
+              type="button"
+              disabled={!parents[0]}
+              onClick={() => parents[0] && useEditor.getState().openNode(parents[0].id)}
+              aria-label={parents[0] ? `Previous step: ${parents[0].data.wf.name}` : 'No previous step'}
+              className="grid size-11 shrink-0 place-items-center rounded-full border border-hair text-t2 disabled:opacity-30"
+            >
+              <ChevronLeft className="size-5" />
+            </button>
+            <Button
+              variant="primary"
+              className="h-11 flex-1"
+              disabled={running}
+              onClick={() => {
+                runNode('only');
+                setPane('output');
+              }}
+            >
+              <Play className="size-4" fill="currentColor" /> Run step
+            </Button>
+            <button
+              type="button"
+              disabled={!children[0]}
+              onClick={() => children[0] && useEditor.getState().openNode(children[0].id)}
+              aria-label={children[0] ? `Next step: ${children[0].data.wf.name}` : 'No next step'}
+              className="grid size-11 shrink-0 place-items-center rounded-full border border-hair text-t2 disabled:opacity-30"
+            >
+              <ChevronRight className="size-5" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -762,7 +874,7 @@ function NodeNameInput({ nodeId, name }: { nodeId: string; name: string }) {
       aria-label="Node name"
       aria-invalid={taken || undefined}
       title={taken ? 'Another node already has this name' : undefined}
-      className={cn('w-[320px] bg-transparent text-[15px] font-semibold text-t1 outline-none', taken && 'text-rd')}
+      className={cn('w-[320px] bg-transparent max-md:w-full text-[15px] font-semibold text-t1 outline-none', taken && 'text-rd')}
     />
   );
 }

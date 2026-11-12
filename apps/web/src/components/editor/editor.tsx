@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { api, streamEvents } from '@/lib/client/api';
 import { duration, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
+import { isPhone } from '@/lib/client/use-phone';
 import { tint } from '@/lib/client/node-style';
 import { TEMPLATES } from '@/lib/client/templates';
 import type { DebugCommand, ExecutionEvent, ExecutionRecord, ImportReport, NodeTypeInfo, Workflow } from '@/lib/shared/types';
@@ -357,6 +358,11 @@ function Canvas({ onSave }: { onSave: () => void }) {
         if (event) moved.current = true;
       }}
       onNodeDoubleClick={(_e, node) => node.type === 'lf' && openNode(node.id)}
+      // A phone: the first tap selects a step (its toolbar shows), a tap on a step that was already selected opens it.
+      // The node passed is as it was before this click, so `selected` means it was selected already.
+      onNodeClick={(_e, node) => {
+        if (isPhone() && node.type === 'lf' && node.selected) openNode(node.id);
+      }}
       onPaneClick={() => useEditor.getState().palette && openPalette(undefined)}
       isValidConnection={(c) => (c.sourceHandle ?? 'main').split(':')[0] === (c.targetHandle ?? 'main').split(':')[0] && c.source !== c.target}
       deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
@@ -371,7 +377,8 @@ function Canvas({ onSave }: { onSave: () => void }) {
       <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--canvas-dot)" />
       <KeepRunningInView moved={moved} />
       <KeepGhostsInView ids={ghostIds} />
-      <Controls position="bottom-left" showInteractive={false} className="!bottom-3 !left-3">
+      {/* A phone pinches to zoom; undo and redo are in the toolbar (CanvasToolbar). */}
+      <Controls position="bottom-left" showInteractive={false} className="!bottom-3 !left-3 max-md:!hidden">
         <ControlButton onClick={() => useEditor.getState().undo()} disabled={!canUndo} title="Undo (⌘Z)" aria-label="Undo">
           <Undo2 />
         </ControlButton>
@@ -493,8 +500,10 @@ function CanvasToolbar() {
     const center = pane ? screenToFlowPosition({ x: pane.left + pane.width / 2, y: pane.top + pane.height / 2 }) : { x: 0, y: 0 };
     useEditor.getState().addSticky({ x: center.x - 130, y: center.y - 90 });
   };
+  const canUndo = useEditor((s) => s.history.past > 0);
+  const canRedo = useEditor((s) => s.history.future > 0);
   if (creatorOpen) return null;
-  const button = 'grid size-9 place-items-center text-t2 transition-colors hover:bg-acdim hover:text-t1';
+  const button = 'grid size-9 place-items-center text-t2 transition-colors hover:bg-acdim hover:text-t1 max-md:size-11 disabled:opacity-40';
   return (
     <>
       <div className="absolute right-3 top-3 z-20 flex animate-fade-up flex-col overflow-hidden rounded-xl border border-hair bg-sf shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
@@ -530,6 +539,13 @@ function CanvasToolbar() {
             </button>
           </>
         )}
+        {/* A phone has no zoom rail, so undo and redo live here. */}
+        <button title="Undo" aria-label="Undo" disabled={!canUndo} onClick={() => useEditor.getState().undo()} className={cn(button, 'border-t border-hair md:hidden')}>
+          <Undo2 className="size-4" />
+        </button>
+        <button title="Redo" aria-label="Redo" disabled={!canRedo} onClick={() => useEditor.getState().redo()} className={cn(button, 'border-t border-hair md:hidden')}>
+          <Redo2 className="size-4" />
+        </button>
       </div>
     </>
   );
