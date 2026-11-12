@@ -44,7 +44,7 @@ const { study } = await import('@/lib/server/brain/study');
 const { analystConfig } = await import('@/lib/server/brain/analyst');
 const { matches, dispatchUsage, resetUsageTrigger, usageItems } = await import('@/lib/server/brain/usage-trigger');
 const { landflowUsageNode, suggestImprovementNode, findSimilarNode } = await import('@/lib/server/nodes/usage');
-const { findSimilar } = await import('@/lib/server/brain/similar');
+const { findSimilar, vectorBonus, VECTOR_FLOOR } = await import('@/lib/server/brain/similar');
 const { scopeForActor } = await import('@/lib/server/brain/scope');
 const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
 const { createTeamProject, setHomeProject, setMember } = await import('@/lib/server/projects/store');
@@ -706,6 +706,15 @@ describe('find similar', () => {
     facts.upsertFact({ subjectType: 'workflow', subjectId: 'wf_inv_b', subjectName: 'Overdue invoice nagger', kind: 'usage', statement: 'Nags unpaid invoice customers using the sk-hidden-fact key', evidence: [{ label: 'secret evidence' }], confidence: 0.9, projectId: beta.id });
     facts.upsertFact({ subjectType: 'workflow', subjectId: 'wf_inv_a', subjectName: 'Invoice reminders', kind: 'usage', statement: 'Reminds unpaid invoice customers by email', evidence: [], confidence: 0.9, projectId: alpha.id });
   }
+
+  it('gives the vector search nothing below its floor, and at most 0.5', () => {
+    // The nearest facts always come back, related or not: rank alone must not score an unrelated workflow.
+    expect(vectorBonus(0.45)).toBe(0);
+    expect(vectorBonus(VECTOR_FLOOR)).toBe(0);
+    expect(vectorBonus(0.76)).toBeGreaterThan(0.2);
+    expect(vectorBonus(0.76)).toBeLessThan(0.3);
+    expect(vectorBonus(0.99)).toBe(0.5);
+  });
 
   it('ranks workflows by shared words without a model, best first', async () => {
     await seed();

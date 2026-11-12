@@ -414,6 +414,11 @@ export async function embedFacts(db: Database = database()): Promise<number> {
 
 /** Fact ids from a vector search of the collections `projects` may read (undefined: all of them). */
 export async function vectorFactHits(query: string, projects: Set<string> | undefined, limit = 20): Promise<string[]> {
+  return (await vectorFactScores(query, projects, limit)).map((hit) => hit.factId);
+}
+
+/** The facts nearest to a query with their cosine similarity (0..1), best first; [] with embeddings off or on failure. */
+export async function vectorFactScores(query: string, projects: Set<string> | undefined, limit = 20): Promise<Array<{ factId: string; similarity: number }>> {
   const model = process.env.LANDFLOW_BRAIN_EMBEDDINGS?.trim();
   if (model?.toLowerCase() === 'off' || !query.trim()) return [];
   try {
@@ -426,8 +431,8 @@ export async function vectorFactHits(query: string, projects: Set<string> | unde
     const hits = (await Promise.all(readable.map((n) => vectors.similaritySearch(n, vector, limit)))).flat();
     return hits
       .sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0))
-      .map((d) => String(d.metadata?.factId ?? ''))
-      .filter(Boolean)
+      .map((d) => ({ factId: String(d.metadata?.factId ?? ''), similarity: Number(d.score ?? 0) }))
+      .filter((hit) => hit.factId)
       .slice(0, limit);
   } catch {
     return [];
